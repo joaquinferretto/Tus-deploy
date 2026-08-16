@@ -1,0 +1,17 @@
+{
+  "name": "@golden/workflows",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Workflow orchestration contracts bridging TS/JS surfaces and Python LangGraph runtime",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@golden/config": "workspace:*",
+    "@golden/contracts": "workspace:*",
+    "@golden/observability": "workspace:*"
+  }
+}

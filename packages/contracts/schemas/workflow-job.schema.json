@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/workflow-job.v1.schema.json",
+  "title": "WorkflowJobV1",
+  "description": "Canonical workflow job contract exchanged between the API edge, schedulers and runtimes.",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "jobId",
+    "workflowId",
+    "runId",
+    "kind",
+    "status",
+    "priority",
+    "createdAt",
+    "trace",
+    "payload"
+  ],
+  "properties": {
+    "contractVersion": {
+      "const": "1.0.0"
+    },
+    "jobId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9:_-]+$"
+    },
+    "workflowId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": ["ingest", "transform", "render", "publish"]
+    },
+    "status": {
+      "enum": ["pending", "leased", "running", "waiting", "succeeded", "failed", "cancelled"]
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 50
+    },
+    "lease": {
+      "type": "object",
+      "required": ["attempt", "maxAttempts"],
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "leasedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "leaseExpiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scheduledFor": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace": {
+      "type": "object",
+      "required": ["traceId", "correlationId"],
+      "properties": {
+        "traceId": {
+          "type": "string",
+          "minLength": 16
+        },
+        "spanId": {
+          "type": "string",
+          "minLength": 8
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 8
+        },
+        "causationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "payload": {
+      "type": "object",
+      "required": ["assetId", "inputUri"],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputUri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "outputUri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "assetMetadata": {
+          "$ref": "./asset-metadata.schema.json"
+        }
+      },
+      "additionalProperties": true
+    },
+    "labels": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z0-9_.-]+$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 256
+      }
+    }
+  },
+  "additionalProperties": false
+}

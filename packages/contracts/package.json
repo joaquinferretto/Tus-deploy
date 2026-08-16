@@ -1,0 +1,13 @@
+{
+  "name": "@golden/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-runtime JSON Schema contracts for API edge and Python workflow runtime",
+  "scripts": {
+    "validate:schemas": "node ./scripts/validate-schemas.mjs"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1"
+  }
+}
