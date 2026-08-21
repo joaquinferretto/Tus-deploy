@@ -8,10 +8,10 @@ Prove that the factory is usable end to end without turning the core into tusser
 
 ### Requirement: End-to-end neutral proof
 
-The reference application MUST demonstrate registration/verification, tenant membership and authorization, generic CRUD/search, assets, notifications, jobs, AI/RAG, audit, telemetry, web/mobile/API integration, and separate product superadmin; UI clients MUST render state and capture intent while server/runtime owns policy and orchestration. Rationale: a reference flow is the evidence that contracts compose.
+The reference application MUST demonstrate registration/verification, tenant membership and authorization, generic CRUD/search, assets, notifications, jobs, AI/RAG, audit, telemetry, web/mobile/API integration, and separate product superadmin through a complete Compose or supported production profile; UI clients MUST render state and capture intent while server/runtime owns policy and orchestration. Native local API/web smoke is a developer check only and MUST NOT substitute for this end-to-end proof. Rationale: a reference flow is the evidence that contracts compose.
 
 #### Scenario: Happy-path product team
-- GIVEN a fresh local profile and a neutral workspace
+- GIVEN a fresh complete integration profile and a neutral workspace
 - WHEN a user signs up, verifies, creates a resource, uploads knowledge, runs a job, and views a result
 - THEN each step is tenant-scoped, observable, idempotent where retried, and visible through the documented contract
 
