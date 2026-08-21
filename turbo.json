@@ -1,6 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["**/.env"],
+  "globalDependencies": ["package.json", "pnpm-lock.yaml", "**/.env.example"],
   "pipeline": {
     "build": {
       "dependsOn": ["^build"],
@@ -18,10 +18,7 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
-    "test": {
-      "dependsOn": ["^build"],
-      "outputs": ["coverage/**"]
-    },
+    "test": { "dependsOn": [], "outputs": ["coverage/**"] },
     "clean": {
       "cache": false
     }

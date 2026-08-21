@@ -1,5 +1,5 @@
 {
-  "extends": "@repo/eslint-config/index.js",
+  "extends": "@factory/eslint-config/index.js",
   "plugins": ["security"],
   "rules": {
     "security/detect-object-injection": "error",

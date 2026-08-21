@@ -5,17 +5,11 @@ WORKDIR /app
 # Install pnpm
 RUN npm install -g pnpm@9
 
-# Copy workspace files
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
-COPY apps/web/package.json ./apps/web/
-COPY packages/*/package.json ./packages/
+# Copy the workspace with a root build context so workspace dependencies resolve.
+COPY . .
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile
-
-# Copy source code
-COPY apps/web ./apps/web
-COPY packages ./packages
+# Install dependencies without lifecycle side effects.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Build
 WORKDIR /app/apps/web

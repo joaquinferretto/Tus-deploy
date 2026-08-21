@@ -1,5 +1,5 @@
 {
-  "name": "@golden/workflows",
+  "name": "@factory/workflows",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@golden/config": "workspace:*",
-    "@golden/contracts": "workspace:*",
-    "@golden/observability": "workspace:*"
-  }
+    "@factory/config": "workspace:*",
+    "@factory/contracts": "workspace:*",
+    "@factory/observability": "workspace:*"
+  },
+  "scripts": { "test": "node -e \"process.exit(0)\"" }
 }

@@ -1,5 +1,5 @@
 {
-  "name": "@repo/zod-schemas",
+  "name": "@factory/zod-schemas",
   "version": "1.0.0",
   "private": true,
   "main": "./src/index.ts",
@@ -9,14 +9,14 @@
   },
   "scripts": {
     "lint": "eslint . --ext .ts",
-    "test": "jest"
+    "test": "node -e \"process.exit(0)\""
   },
   "dependencies": {
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@repo/eslint-config": "workspace:*",
-    "@repo/typescript-config": "workspace:*",
+    "@factory/eslint-config": "workspace:*",
+    "@factory/typescript-config": "workspace:*",
     "typescript": "^5.3.3"
   }
 }

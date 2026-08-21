@@ -5,17 +5,11 @@ WORKDIR /app
 # Install pnpm
 RUN npm install -g pnpm@9
 
-# Copy workspace files
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
-COPY apps/api/package.json ./apps/api/
-COPY packages/*/package.json ./packages/
+# Copy the workspace with a root build context so workspace dependencies resolve.
+COPY . .
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile
-
-# Copy source code
-COPY apps/api ./apps/api
-COPY packages ./packages
+# Install dependencies without lifecycle side effects.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Generate Prisma client
 WORKDIR /app/apps/api
@@ -34,6 +28,7 @@ RUN npm install -g pnpm@9
 # Copy dependencies
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/apps/api/package.json ./apps/api/
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma

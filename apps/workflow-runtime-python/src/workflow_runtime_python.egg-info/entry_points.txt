@@ -1,0 +1,2 @@
+[console_scripts]
+workflow-runtime = worker.main:main

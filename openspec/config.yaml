@@ -1,0 +1,47 @@
+schema: spec-driven
+project: tuscompras-b2b
+product: tusservicios.com
+artifact_store: hybrid
+strict_tdd: true
+
+context: |
+  Stack: pnpm/Turborepo TypeScript monorepo with Next.js 15 web, Express API, Expo mobile, and Python LangGraph runtime.
+  Architecture: Clean/Hexagonal boundaries in the API and layered boundaries in mobile; shared contracts and packages bridge runtimes.
+  Data: PostgreSQL/Prisma, pg, MongoDB/Mongoose, Redis/ioredis, plus workflow contracts for Python services.
+  Style: Strict TypeScript, Prettier single quotes/no semicolons, ESLint security checks, and dependency-injected domain/application code.
+  Testing: Jest scripts, mobile jest-expo with Testing Library, optional Python pytest; no integration/E2E runner or coverage command detected.
+
+testing:
+  strict_tdd: true
+  test_command: pnpm test
+  build_command: pnpm build
+  lint_command: pnpm lint
+  coverage_command: ""
+  unit:
+    available: true
+    tools: Jest, jest-expo, Testing Library, pytest (Python optional dependency)
+  integration:
+    available: false
+    tools: ""
+  e2e:
+    available: false
+    tools: ""
+
+rules:
+  proposal:
+    - Define intent, scope, non-goals, risks, and rollback for risky changes.
+  specs:
+    - Use Given/When/Then scenarios and RFC 2119 keywords.
+  design:
+    - Preserve Clean/Hexagonal boundaries and document decisions with rationale.
+  tasks:
+    - Group tasks by phase and keep each task independently verifiable.
+  apply:
+    tdd: true
+    test_command: pnpm test
+  verify:
+    test_command: pnpm test
+    build_command: pnpm build
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas.

@@ -120,7 +120,7 @@
           "additionalProperties": true
         },
         "assetMetadata": {
-          "$ref": "./asset-metadata.schema.json"
+          "$ref": "./asset-metadata.v1.schema.json"
         }
       },
       "additionalProperties": true

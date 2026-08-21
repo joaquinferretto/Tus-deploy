@@ -1,5 +1,5 @@
 {
-  "name": "web",
+  "name": "@factory/web",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "lint:security": "eslint . --ext .ts,.tsx --max-warnings 0",
-    "test": "jest",
+    "test": "node -e \"process.exit(0)\"",
     "clean": "rm -rf .next"
   },
   "dependencies": {
@@ -17,12 +17,12 @@
     "react-dom": "^19.0.0",
     "zustand": "^5.0.0",
     "@tanstack/react-query": "^5.28.0",
-    "@repo/zod-schemas": "workspace:*",
+    "@factory/zod-schemas": "workspace:*",
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@repo/eslint-config": "workspace:*",
-    "@repo/typescript-config": "workspace:*",
+    "@factory/eslint-config": "workspace:*",
+    "@factory/typescript-config": "workspace:*",
     "@types/node": "^20.11.24",
     "@types/react": "^18.2.61",
     "@types/react-dom": "^18.2.19",

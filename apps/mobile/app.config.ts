@@ -6,9 +6,9 @@ const AppProfileSchema = z.enum(PROFILE_VALUES);
 type AppProfile = z.infer<typeof AppProfileSchema>;
 
 const BUNDLE_IDENTIFIERS: Record<AppProfile, string> = {
-  prod: 'com.alqui',
-  staging: 'com.alqui.staging',
-  dev: 'com.alqui.dev',
+  prod: 'com.productfactory.core',
+  staging: 'com.productfactory.core.staging',
+  dev: 'com.productfactory.core.dev',
 };
 
 const PROFILE_DEFAULTS: Record<
@@ -25,28 +25,28 @@ const PROFILE_DEFAULTS: Record<
   }
 > = {
   dev: {
-    displayName: 'Alqui Dev',
-    scheme: 'alqui-dev',
+    displayName: 'Factory Dev',
+    scheme: 'factory-dev',
     apiUrl: 'http://localhost:3000',
-    oauthIssuer: 'https://auth-dev.alqui.example.com',
-    oauthClientId: 'alqui-mobile-dev',
+    oauthIssuer: 'https://auth-dev.example.invalid',
+    oauthClientId: 'factory-mobile-dev',
     sentryEnvironment: 'development',
     requireTls: false,
     enableMockAuth: true,
   },
   staging: {
-    displayName: 'Alqui Staging',
-    scheme: 'alqui-staging',
-    apiUrl: 'https://api-staging.alqui.example.com',
-    oauthIssuer: 'https://auth-staging.alqui.example.com',
-    oauthClientId: 'alqui-mobile-staging',
+    displayName: 'Factory Staging',
+    scheme: 'factory-staging',
+    apiUrl: 'https://api-staging.example.invalid',
+    oauthIssuer: 'https://auth-staging.example.invalid',
+    oauthClientId: 'factory-mobile-staging',
     sentryEnvironment: 'staging',
     requireTls: true,
     enableMockAuth: false,
   },
   prod: {
-    displayName: 'Alqui',
-    scheme: 'alqui',
+    displayName: 'Factory',
+    scheme: 'factory',
     apiUrl: '',
     oauthIssuer: '',
     oauthClientId: '',
@@ -164,7 +164,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   return {
     ...config,
     name: runtime.displayName,
-    slug: 'alqui',
+    slug: 'product-factory-core',
     scheme: runtime.scheme,
     version: '1.0.0',
     orientation: 'portrait',

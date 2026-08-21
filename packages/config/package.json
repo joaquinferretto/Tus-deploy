@@ -1,5 +1,5 @@
 {
-  "name": "@golden/config",
+  "name": "@factory/config",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,5 +8,6 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
-  }
+  },
+  "scripts": { "test": "node --experimental-strip-types --test ../../tests/foundation/p0-config-lifecycle.test.mjs" }
 }

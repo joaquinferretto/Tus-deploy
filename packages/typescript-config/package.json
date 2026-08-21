@@ -1,6 +1,7 @@
 {
-  "name": "@repo/typescript-config",
+  "name": "@factory/typescript-config",
   "version": "1.0.0",
   "private": true,
-  "files": ["base.json", "nextjs.json", "node.json"]
+  "files": ["base.json", "nextjs.json", "node.json"],
+  "scripts": { "test": "node -e \"process.exit(0)\"" }
 }

@@ -1,16 +1,20 @@
 {
-  "name": "turborepo-production-boilerplate",
-  "version": "1.0.0",
+  "name": "product-factory-core",
+  "version": "0.1.0",
   "private": true,
-  "description": "Production-ready Turborepo monorepo with Next.js 15, Express, and hybrid database strategy",
+  "description": "Neutral, deterministic product factory foundation",
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --parallel",
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "node scripts/test-runner.mjs",
+    "test:foundation": "node --experimental-strip-types --test tests/foundation/*.test.mjs",
     "lint": "turbo run lint",
-    "lint:security": "turbo run lint:security",
+    "lint:security": "node scripts/security/scan-secrets.mjs --tracked",
+    "security:scan": "node scripts/security/scan-secrets.mjs --tracked",
+    "typecheck": "turbo run typecheck",
+    "contracts:validate": "node packages/contracts/scripts/validate-schemas.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean"
   },
   "devDependencies": {
     "prettier": "^3.2.5",
@@ -18,8 +22,8 @@
     "typescript": "^5.3.3"
   },
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9.0.0"
+    "node": ">=20.11.0 <23",
+    "pnpm": ">=9.15.9 <10"
   },
-  "packageManager": "pnpm@9.0.0"
+  "packageManager": "pnpm@9.15.9"
 }

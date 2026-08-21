@@ -2,10 +2,12 @@ export const CONFIG_CONTRACT_VERSION = "1.0.0" as const;
 
 export type RuntimeRole = "api-edge" | "workflow-runtime" | "worker";
 export type Environment = "development" | "test" | "staging" | "production";
+export type RuntimeProfile = "local" | "render" | "aws";
 
 export interface RuntimeConfig {
   role: RuntimeRole;
   environment: Environment;
+  profile: RuntimeProfile;
   contractVersion: typeof CONFIG_CONTRACT_VERSION;
   serviceName: string;
   serviceVersion: string;
@@ -21,6 +23,19 @@ export interface RuntimeConfig {
   runtime: {
     shutdownTimeoutMs: number;
     maxConcurrency: number;
+  };
+  providers: {
+    llm: string;
+    objectStorage: string;
+    queue: string;
+  };
+  databases: {
+    postgres: string;
+    mongo: string;
+    redis: string;
+  };
+  security: {
+    secretStoreRef?: string;
   };
 }
 
@@ -41,11 +56,18 @@ export class ProcessEnvReader implements EnvReader {
 
 export function loadRuntimeConfig(reader: EnvReader = new ProcessEnvReader()): RuntimeConfig {
   const environment = readEnum(reader, "NODE_ENV", ["development", "test", "staging", "production"], "development");
+  const profile = readEnum(reader, "FACTORY_PROFILE", ["local", "render", "aws"], "local");
+  const secretStoreRef = reader.get("SECRET_STORE_REF");
+
+  if (environment === "production" && !secretStoreRef) {
+    throw new Error("Missing required secret-store reference: SECRET_STORE_REF");
+  }
 
   return {
     contractVersion: CONFIG_CONTRACT_VERSION,
     role: readEnum(reader, "RUNTIME_ROLE", ["api-edge", "workflow-runtime", "worker"], "api-edge"),
     environment,
+    profile,
     serviceName: readRequired(reader, "SERVICE_NAME", "golden-runtime"),
     serviceVersion: readRequired(reader, "SERVICE_VERSION", "0.1.0"),
     telemetry: {
@@ -61,6 +83,17 @@ export function loadRuntimeConfig(reader: EnvReader = new ProcessEnvReader()): R
       shutdownTimeoutMs: readNumber(reader, "SHUTDOWN_TIMEOUT_MS", 10_000, { min: 1 }),
       maxConcurrency: readNumber(reader, "MAX_CONCURRENCY", 8, { min: 1 }),
     },
+    providers: {
+      llm: readRequired(reader, "LLM_PROVIDER", "fake"),
+      objectStorage: readRequired(reader, "OBJECT_STORAGE_PROVIDER", "fake"),
+      queue: readRequired(reader, "QUEUE_PROVIDER", "local"),
+    },
+    databases: {
+      postgres: readRequired(reader, "POSTGRES_PROVIDER", "local"),
+      mongo: readRequired(reader, "MONGO_PROVIDER", "local"),
+      redis: readRequired(reader, "REDIS_PROVIDER", "local"),
+    },
+    security: { secretStoreRef },
   };
 }
 

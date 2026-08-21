@@ -1,0 +1,12 @@
+{
+  "contractVersion": "1.0.0",
+  "jobId": "job-fixture",
+  "workflowId": "workflow-fixture",
+  "runId": "run-fixture",
+  "kind": "ingest",
+  "status": "pending",
+  "priority": 50,
+  "createdAt": "2026-01-01T00:00:00Z",
+  "trace": { "traceId": "0123456789abcdef", "correlationId": "correlation-fixture" },
+  "payload": { "assetId": "asset-fixture", "inputUri": "https://example.invalid/asset" }
+}

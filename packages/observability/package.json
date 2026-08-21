@@ -1,5 +1,5 @@
 {
-  "name": "@golden/observability",
+  "name": "@factory/observability",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,5 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "dependencies": {
-    "@opentelemetry/api": "^1.9.0"
-  }
+  "scripts": { "test": "node --experimental-strip-types --test ../../tests/foundation/p0-observability.test.mjs" }
 }

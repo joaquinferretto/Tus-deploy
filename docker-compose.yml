@@ -1,76 +1,107 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: monorepo-postgres
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: appdb
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      POSTGRES_USER: factory_user
+      POSTGRES_PASSWORD: factory_password
+      POSTGRES_DB: factory_local
+    ports: ['5432:5432']
+    volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ['CMD-SHELL', 'pg_isready -U factory_user -d factory_local']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   mongodb:
     image: mongo:7-jammy
-    container_name: monorepo-mongodb
     environment:
-      MONGO_INITDB_DATABASE: appdb
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
+      MONGO_INITDB_DATABASE: factory_local
+    ports: ['27017:27017']
+    volumes: [mongodb_data:/data/db]
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand({ ping: 1 }).ok']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   redis:
     image: redis:7-alpine
-    container_name: monorepo-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
+    ports: ['6379:6379']
+    volumes: [redis_data:/data]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
-    container_name: monorepo-api
-    ports:
-      - "3001:3001"
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports: ['3001:3001']
     environment:
-      DATABASE_URL: "postgresql://user:password@postgres:5432/appdb"
-      MONGODB_URL: "mongodb://mongodb:27017/appdb"
-      REDIS_URL: "redis://redis:6379"
-      API_PORT: 3001
+      FACTORY_PROFILE: local
+      RUNTIME_ROLE: api-edge
+      SERVICE_NAME: product-factory-api
+      SERVICE_VERSION: 0.1.0
       NODE_ENV: development
-      CORS_ORIGINS: "http://localhost:3000"
+      API_PORT: 3001
+      POSTGRES_PROVIDER: local
+      MONGO_PROVIDER: local
+      REDIS_PROVIDER: local
+      DATABASE_URL: postgresql://factory_user:factory_password@postgres:5432/factory_local
+      MONGODB_URL: mongodb://mongodb:27017/factory_local
+      REDIS_URL: redis://redis:6379/0
+      LLM_PROVIDER: fake
+      OBJECT_STORAGE_PROVIDER: fake
+      QUEUE_PROVIDER: local
     depends_on:
-      postgres:
-        condition: service_healthy
-      mongodb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./apps/api:/app
-      - /app/node_modules
-    command: npm run dev
+      postgres: { condition: service_healthy }
+      mongodb: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports: ['3000:3000']
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    depends_on: [api]
+
+  mobile-support:
+    image: node:20-alpine
+    working_dir: /workspace
+    volumes: ['.:/workspace:ro']
+    command: ['node', 'scripts/dev/mobile-support.mjs']
+    environment:
+      FACTORY_PROFILE: local
+      API_URL: http://api:3001
+    depends_on: [api]
+
+  workflow-runtime:
+    build:
+      context: .
+      dockerfile: apps/workflow-runtime-python/Dockerfile
+    environment:
+      WORKER_ENVIRONMENT: development
+      WORKER_SERVICE_NAME: workflow-runtime-python
+      WORKER_CONTRACTS_ROOT: /workspace/packages/contracts/schemas
+      WORKER_REDIS_URL: redis://redis:6379/0
+      WORKER_POSTGRES_DSN: postgresql://factory_user:factory_password@postgres:5432/factory_local
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  local-fakes:
+    image: node:20-alpine
+    working_dir: /workspace
+    volumes: ['.:/workspace:ro']
+    command: ['node', 'scripts/dev/local-fakes.mjs']
+    environment:
+      FAKE_PROVIDER_MODE: deterministic
 
 volumes:
   postgres_data:

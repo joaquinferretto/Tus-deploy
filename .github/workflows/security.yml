@@ -6,19 +6,15 @@ on:
     branches: [main]
 
 jobs:
-  trufflehog:
+  secrets:
     name: Secret Scanning
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Trufflehog Secret Scan
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+      - name: Deterministic tracked-secret scan
+        run: node scripts/security/scan-secrets.mjs --tracked
 
   sast:
     name: Static Analysis
@@ -32,7 +28,7 @@ jobs:
         with:
           node-version: 20
           cache: 'pnpm'
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run lint:security
       
   dependency-audit:
