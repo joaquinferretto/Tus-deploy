@@ -44,6 +44,34 @@ export interface RuntimePorts {
   metrics?: number;
 }
 
+export type DependencyMode = "required" | "optional" | "disabled" | "fake";
+export type DependencyStatus = "ready" | "unavailable";
+export type NativeDependency = "postgres" | "mongodb" | "redis" | "pythonWorker" | "mobileSupport" | "externalProviders";
+export type NativeDependencyModes = Record<Exclude<NativeDependency, "postgres">, DependencyMode>;
+
+export interface DependencyReport {
+  mode: DependencyMode;
+  status: DependencyStatus;
+  blocksApiReadiness: boolean;
+}
+
+export interface NativeReadiness {
+  profile: "native" | "compose";
+  postgres: DependencyReport;
+  mongodb: DependencyReport;
+  redis: DependencyReport;
+  pythonWorker: DependencyReport;
+  mobileSupport: DependencyReport;
+  externalProviders: DependencyReport;
+}
+
+export interface NativeReadinessOptions {
+  profile?: "native" | "compose";
+  postgresCheck?: () => Promise<boolean> | boolean;
+  modes?: Partial<NativeDependencyModes>;
+  checks?: Partial<Record<Exclude<NativeDependency, "postgres">, () => Promise<boolean> | boolean>>;
+}
+
 export interface EnvReader {
   get(name: string): string | undefined;
 }
@@ -52,6 +80,81 @@ export class ProcessEnvReader implements EnvReader {
   get(name: string): string | undefined {
     return process.env[name];
   }
+}
+
+const DEFAULT_NATIVE_MODES: NativeDependencyModes = {
+  mongodb: "disabled",
+  redis: "disabled",
+  pythonWorker: "disabled",
+  mobileSupport: "fake",
+  externalProviders: "disabled",
+};
+
+const DEFAULT_COMPOSE_MODES: NativeDependencyModes = {
+  mongodb: "required",
+  redis: "required",
+  pythonWorker: "required",
+  mobileSupport: "required",
+  externalProviders: "fake",
+};
+
+export function loadNativeDependencyModes(
+  reader: EnvReader = new ProcessEnvReader(),
+  defaults: NativeDependencyModes = DEFAULT_NATIVE_MODES,
+): NativeDependencyModes {
+  const mode = (name: string, fallback: DependencyMode): DependencyMode => {
+    const value = reader.get(name);
+    if (value === undefined) return fallback;
+    if (!["required", "optional", "disabled", "fake"].includes(value)) {
+      throw new Error(`Invalid native dependency mode for ${name}`);
+    }
+    return value as DependencyMode;
+  };
+
+  return {
+    mongodb: mode("NATIVE_MONGODB_MODE", defaults.mongodb),
+    redis: mode("NATIVE_REDIS_MODE", defaults.redis),
+    pythonWorker: mode("NATIVE_PYTHON_WORKER_MODE", defaults.pythonWorker),
+    mobileSupport: mode("NATIVE_MOBILE_SUPPORT_MODE", defaults.mobileSupport),
+    externalProviders: mode("NATIVE_EXTERNAL_PROVIDERS_MODE", defaults.externalProviders),
+  };
+}
+
+async function checkDependency(
+  mode: DependencyMode,
+  check?: () => Promise<boolean> | boolean,
+): Promise<DependencyStatus> {
+  if (mode === "disabled" || mode === "fake") return "ready";
+  if (!check) return "unavailable";
+
+  try {
+    return (await check()) ? "ready" : "unavailable";
+  } catch {
+    return "unavailable";
+  }
+}
+
+function report(mode: DependencyMode, status: DependencyStatus): DependencyReport {
+  return { mode, status, blocksApiReadiness: mode === "required" && status === "unavailable" };
+}
+
+export async function buildNativeReadiness(options: NativeReadinessOptions = {}): Promise<NativeReadiness> {
+  const profile = options.profile ?? "native";
+  const defaults = profile === "native" ? DEFAULT_NATIVE_MODES : DEFAULT_COMPOSE_MODES;
+  const modes = { ...loadNativeDependencyModes(new ProcessEnvReader(), defaults), ...options.modes };
+  const postgresStatus = await checkDependency("required", options.postgresCheck);
+  const dependencyReports = await Promise.all(
+    (Object.keys(modes) as Array<keyof NativeDependencyModes>).map(async (key) => [
+      key,
+      report(modes[key], await checkDependency(modes[key], options.checks?.[key])),
+    ] as const),
+  );
+
+  return {
+    profile,
+    postgres: report("required", postgresStatus),
+    ...Object.fromEntries(dependencyReports),
+  } as NativeReadiness;
 }
 
 export function loadRuntimeConfig(reader: EnvReader = new ProcessEnvReader()): RuntimeConfig {

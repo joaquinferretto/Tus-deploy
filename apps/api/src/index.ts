@@ -3,13 +3,9 @@ import os from 'os'
 import { startServer } from './server'
 
 const numCPUs = os.cpus().length
-const WORKERS = process.env.NODE_ENV === 'production' ? numCPUs : 1
+const WORKERS = process.env['NODE_ENV'] === 'production' ? numCPUs : 1
 
 if (cluster.isPrimary) {
-  console.log(`Master ${process.pid} is running`)
-  console.log(`Spawning ${WORKERS} worker(s)...`)
-
-  // Fork workers
   for (let i = 0; i < WORKERS; i++) {
     cluster.fork()
   }
@@ -19,7 +15,5 @@ if (cluster.isPrimary) {
     cluster.fork()
   })
 } else {
-  // Workers can share TCP connection
   startServer()
-  console.log(`Worker ${process.pid} started`)
 }

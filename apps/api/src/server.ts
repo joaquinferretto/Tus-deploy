@@ -1,13 +1,11 @@
-import express, { Application } from 'express'
-import dotenv from 'dotenv'
+import express from 'express'
+import type { Application } from 'express'
 import { helmetMiddleware } from './presentation/middleware/helmet'
 import { rateLimitMiddleware } from './presentation/middleware/rate-limit'
 import { corsMiddleware } from './presentation/middleware/cors'
 import { healthRouter } from './presentation/routes/health'
 
-dotenv.config()
-
-const PORT = process.env.API_PORT || 3001
+const PORT = Number(process.env['API_PORT'] || process.env['PORT'] || 3001)
 
 export function createApp(): Application {
   const app = express()

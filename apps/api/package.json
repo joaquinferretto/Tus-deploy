@@ -27,6 +27,7 @@
     "mongoose": "^8.2.1",
     "ioredis": "^5.3.2",
     "dotenv": "^16.4.5",
+    "@factory/config": "workspace:*",
     "@factory/zod-schemas": "workspace:*",
     "@factory/observability": "workspace:*"
   },

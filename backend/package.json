@@ -1,0 +1,7 @@
+{
+  "name": "native-api-wrapper",
+  "private": true,
+  "scripts": {
+    "dev": "node ../scripts/dev/native-profile.mjs api"
+  }
+}

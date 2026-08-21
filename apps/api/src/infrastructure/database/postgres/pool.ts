@@ -1,10 +1,11 @@
-import { Pool, PoolConfig } from 'pg'
+import { Pool } from 'pg'
+import type { PoolConfig } from 'pg'
 
 let pool: Pool
 
 function createPool(): Pool {
   const config: PoolConfig = {
-    connectionString: process.env.DATABASE_URL,
+    connectionString: process.env['DATABASE_URL'],
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,

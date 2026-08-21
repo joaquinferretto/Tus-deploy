@@ -20,6 +20,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@factory/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@factory/observability':
         specifier: workspace:*
         version: link:../../packages/observability

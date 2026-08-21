@@ -1,15 +1,20 @@
 import rateLimit from 'express-rate-limit'
 import RedisStore from 'rate-limit-redis'
-import { getRedisClient } from '../../infrastructure/database/redis/client'
 
-const redisClient = getRedisClient()
+const useRedisStore = process.env['NATIVE_PROFILE'] !== '1' && Boolean(process.env['REDIS_URL'])
+const redisStore = useRedisStore
+  ? new RedisStore({
+      sendCommand: async (...args: string[]) => {
+        const { getRedisClient } = await import('../../infrastructure/database/redis/client.js')
+        const client = getRedisClient() as unknown as { call(...command: string[]): Promise<never> }
+        return client.call(...args)
+      },
+      prefix: 'rl:',
+    })
+  : undefined
 
 export const rateLimitMiddleware = rateLimit({
-  store: new RedisStore({
-    // @ts-expect-error - RedisStore types mismatch with ioredis
-    client: redisClient,
-    prefix: 'rl:',
-  }),
+  ...(redisStore ? { store: redisStore } : {}),
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // Limit each IP to 100 requests per windowMs
   message: {
