@@ -9,7 +9,7 @@ context: |
   Architecture: Clean/Hexagonal boundaries in the API and layered boundaries in mobile; shared contracts and packages bridge runtimes.
   Data: PostgreSQL/Prisma, pg, MongoDB/Mongoose, Redis/ioredis, plus workflow contracts for Python services.
   Style: Strict TypeScript, Prettier single quotes/no semicolons, ESLint security checks, and dependency-injected domain/application code.
-  Testing: Jest scripts, mobile jest-expo with Testing Library, optional Python pytest; no integration/E2E runner or coverage command detected.
+  Testing: Root Node test runner with foundation suites, PostgreSQL HTTP integration smoke, mobile Jest/Testing Library suites, and optional Python pytest; no repository E2E harness or coverage command detected.
 
 testing:
   strict_tdd: true
@@ -19,10 +19,10 @@ testing:
   coverage_command: ""
   unit:
     available: true
-    tools: Jest, jest-expo, Testing Library, pytest (Python optional dependency)
+    tools: Node node:test, Jest/jest-expo, Testing Library, pytest (Python optional dependency)
   integration:
-    available: false
-    tools: ""
+    available: true
+    tools: PostgreSQL HTTP smoke via tests/integration/tus/postgres-http-smoke.test.mjs
   e2e:
     available: false
     tools: ""
