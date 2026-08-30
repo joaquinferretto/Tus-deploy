@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/workflow-result.v1.schema.json",
+  "title": "WorkflowResultV1",
+  "description": "Versioned tenant-scoped terminal result emitted by the authoritative workflow runtime.",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "messageId",
+    "messageType",
+    "workflowId",
+    "runId",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "idempotencyKey",
+    "lineage",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "messageId": { "type": "string", "minLength": 1 },
+    "messageType": { "const": "workflow.result" },
+    "workflowId": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "lineage": {
+      "type": "object",
+      "required": ["rootMessageId", "source"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "parentMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "occurredAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "payload": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["succeeded", "failed", "cancelled"] },
+        "output": { "type": "object", "additionalProperties": true },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string", "minLength": 1 },
+            "message": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

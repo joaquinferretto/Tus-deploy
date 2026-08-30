@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tusservicios.com/contracts/tus/readiness-evidence.v1.schema.json",
+  "title": "TUS readiness evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "evidenceId",
+    "tenantId",
+    "capability",
+    "gate",
+    "owner",
+    "scope",
+    "evidenceType",
+    "evidenceRef",
+    "policyVersion",
+    "issuedAt",
+    "expiresAt",
+    "revoked",
+    "source"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "evidenceId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "capability": {
+      "enum": ["publication", "provider-actions", "settlement", "fleet", "release-jobs"]
+    },
+    "gate": {
+      "enum": [
+        "legal",
+        "kyc",
+        "kyb",
+        "tax",
+        "mercadoPago",
+        "posPilot",
+        "aws",
+        "groqMigration",
+        "runtimeProvider"
+      ]
+    },
+    "owner": { "type": "string", "minLength": 1 },
+    "scope": { "type": "string", "minLength": 1 },
+    "evidenceType": { "type": "string", "minLength": 1 },
+    "evidenceRef": { "type": "string", "minLength": 1 },
+    "policyVersion": { "type": "string", "minLength": 1 },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": ["string", "null"], "format": "date-time" },
+    "revoked": { "type": "boolean" },
+    "source": { "enum": ["authorized-external", "local-deterministic", "local-postgresql-http", "deferred"] }
+    ,"profile": { "enum": ["native-local", "render-native", "aws-terraform", "local-postgresql-http"] }
+    ,"execution": { "enum": ["local-verification", "live"] }
+    ,"evidenceClass": { "enum": ["authorized-external", "local-deterministic", "local-postgresql-http", "deferred"] }
+    ,"liveConformance": { "type": "boolean" }
+  }
+}

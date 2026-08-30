@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tus/whatsapp-action.v1",
+  "title": "TUS governed WhatsApp action",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "type", "tenantId"],
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "type": { "enum": ["search", "quote", "cart", "status", "handoff", "confirm"] },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "commitmentId": { "type": "string", "minLength": 1 },
+    "confirmationId": { "type": "string", "minLength": 1 }
+  }
+}

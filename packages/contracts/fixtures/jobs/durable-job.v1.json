@@ -1,0 +1,17 @@
+{
+  "contractVersion": "1.0.0",
+  "jobId": "job-fixture",
+  "tenantId": "tenant-fixture",
+  "runId": "run-fixture",
+  "jobType": "asset.process",
+  "status": "pending",
+  "attempts": 0,
+  "maxAttempts": 3,
+  "availableAt": "2026-01-01T00:00:00.000Z",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "claim": null,
+  "lastError": null,
+  "payload": {
+    "assetId": "asset-fixture"
+  }
+}

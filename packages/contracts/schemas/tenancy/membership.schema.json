@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/tenancy/membership.v1.schema.json",
+  "title": "MembershipV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "tenantId", "userId", "status", "roleIds"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "userId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["active", "invited", "suspended", "revoked"] },
+    "roleIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "contractVersion": "1.0.0",
+  "messageId": "message-result-fixture",
+  "messageType": "workflow.result",
+  "workflowId": "workflow-fixture",
+  "runId": "run-fixture",
+  "tenantId": "tenant-fixture",
+  "actorId": "worker-fixture",
+  "correlationId": "correlation-fixture",
+  "idempotencyKey": "idempotency-fixture-result",
+  "lineage": {
+    "rootMessageId": "message-request-fixture",
+    "parentMessageId": "message-progress-fixture",
+    "source": "python-worker-fixture"
+  },
+  "occurredAt": "2026-01-01T00:00:02.000Z",
+  "payload": {
+    "status": "succeeded",
+    "output": {
+      "accepted": true
+    }
+  }
+}

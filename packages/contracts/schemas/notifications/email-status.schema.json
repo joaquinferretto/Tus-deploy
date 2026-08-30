@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/notifications/email-status.v1.schema.json",
+  "title": "Email delivery status",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "emailId": { "type": "string", "minLength": 1 },
+    "notificationId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["queued", "sending", "sent", "retryable", "failed", "suppressed"] },
+    "attempts": { "type": "integer", "minimum": 0 },
+    "nextAttemptAt": { "type": ["integer", "null"] },
+    "providerMessageId": { "type": ["string", "null"] },
+    "failureReason": { "type": ["string", "null"] }
+  },
+  "required": [
+    "contractVersion",
+    "emailId",
+    "notificationId",
+    "status",
+    "attempts",
+    "nextAttemptAt",
+    "providerMessageId",
+    "failureReason"
+  ]
+}

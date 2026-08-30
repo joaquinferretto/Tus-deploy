@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/auth/mfa.v1.schema.json",
+  "title": "MfaLifecycleV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["accountId", "operation", "challenge"],
+  "properties": {
+    "accountId": { "type": "string", "minLength": 1 },
+    "operation": { "enum": ["enroll", "challenge", "recovery"] },
+    "challenge": { "type": "string", "minLength": 1 }
+  }
+}

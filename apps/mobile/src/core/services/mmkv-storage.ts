@@ -2,6 +2,7 @@ import * as Crypto from 'expo-crypto';
 import { MMKV } from 'react-native-mmkv';
 import type { StateStorage } from 'zustand/middleware';
 
+import { parseMobileRuntimeConfig, type MobileRuntimeConfig } from '../config/runtime-profile.ts';
 import { SecureCredentialStore, type SensitiveItemStore } from './secure-credential-store';
 
 export const MMKV_STORAGE_ERROR_KIND = {
@@ -19,7 +20,7 @@ export interface MMKVEncryptionConfig {
 }
 
 export interface MMKVLocalStorageOptions {
-  profile: string;
+  runtime: MobileRuntimeConfig;
   namespace?: string;
   keyPrefix?: string;
   encryption?: MMKVEncryptionConfig;
@@ -38,6 +39,16 @@ export class MMKVStorageError extends Error {
       this.originalError = originalError;
     }
   }
+}
+
+export function buildMMKVStorageIdentity(runtime: MobileRuntimeConfig, namespace = 'cache'): { id: string; keyPrefix: string } {
+  const resolvedRuntime = parseMobileRuntimeConfig(runtime);
+  const normalizedNamespace = namespace.trim();
+  if (normalizedNamespace.length === 0) throw new Error('MMKV namespace is required');
+  return {
+    id: `alqui-${resolvedRuntime.profile}-${normalizedNamespace}`,
+    keyPrefix: `alqui:${resolvedRuntime.profile}`,
+  };
 }
 
 export class MMKVLocalStorageClient {
@@ -86,8 +97,15 @@ export async function createEncryptedMMKVClient(
   options: MMKVLocalStorageOptions,
 ): Promise<MMKVLocalStorageClient> {
   const namespace = options.namespace ?? 'cache';
-  const id = `alqui-${options.profile}-${namespace}`;
-  const keyPrefix = options.keyPrefix ?? `alqui:${options.profile}`;
+  const identity = buildMMKVStorageIdentity(options.runtime, namespace);
+  const id = identity.id;
+  const keyPrefix = options.keyPrefix ?? identity.keyPrefix;
+  if (keyPrefix !== identity.keyPrefix && !keyPrefix.startsWith(`${identity.keyPrefix}:`)) {
+    throw new MMKVStorageError(
+      MMKV_STORAGE_ERROR_KIND.INITIALIZATION_FAILED,
+      `MMKV key prefix must remain within the ${identity.keyPrefix} profile namespace`,
+    );
+  }
 
   try {
     const encryptionKey = await resolveEncryptionKey(options);
@@ -129,9 +147,13 @@ async function resolveEncryptionKey(options: MMKVLocalStorageOptions): Promise<s
     return encryption.key;
   }
 
-  const secureStoreKey = encryption.secureStoreKey ?? 'mmkv.encryptionKey';
+  const runtime = parseMobileRuntimeConfig(options.runtime);
+  const secureStoreKey = buildProfiledEncryptionKey(
+    runtime,
+    encryption.secureStoreKey ?? 'mmkv.encryptionKey',
+  );
   const sensitiveStore =
-    options.sensitiveStore ?? new SecureCredentialStore({ profile: options.profile });
+    options.sensitiveStore ?? new SecureCredentialStore({ runtime });
 
   try {
     const existingKey = await sensitiveStore.getItem(secureStoreKey);
@@ -149,6 +171,12 @@ async function resolveEncryptionKey(options: MMKVLocalStorageOptions): Promise<s
       error,
     );
   }
+}
+
+function buildProfiledEncryptionKey(runtime: MobileRuntimeConfig, key: string): string {
+  const normalizedKey = key.trim();
+  if (normalizedKey.startsWith(`alqui.${runtime.profile}.`)) return normalizedKey;
+  return `alqui.${runtime.profile}.${normalizedKey}`;
 }
 
 async function generateEncryptionKey(): Promise<string> {

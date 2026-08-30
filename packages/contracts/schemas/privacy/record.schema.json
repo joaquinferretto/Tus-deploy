@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/privacy/record.v1.schema.json",
+  "title": "PrivacyRecordV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "tenantId", "subjectUserId", "resourceType", "purpose", "classification", "createdAt"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "subjectUserId": { "type": "string", "minLength": 1 },
+    "resourceType": { "type": "string", "minLength": 1 },
+    "purpose": { "enum": ["service_delivery", "support", "security", "analytics", "ai_improvement", "legal"] },
+    "classification": { "enum": ["public", "internal", "personal", "sensitive", "secret"] },
+    "createdAt": { "type": "integer", "minimum": 0 },
+    "updatedAt": { "type": "integer", "minimum": 0 },
+    "deletedAt": { "type": ["integer", "null"], "minimum": 0 },
+    "anonymizedAt": { "type": ["integer", "null"], "minimum": 0 }
+  }
+}

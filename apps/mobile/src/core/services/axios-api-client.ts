@@ -20,14 +20,15 @@ import {
 import type { LoggerService } from '@core/domain';
 
 import type { CredentialStore, TokenPair } from './secure-credential-store';
+import { parseMobileRuntimeConfig, type MobileRuntimeConfig } from '../config/runtime-profile.ts';
 
 interface AxiosApiClientOptions {
-  baseUrl: string;
+  runtime: MobileRuntimeConfig;
+  baseUrl?: string;
   credentialStore: CredentialStore;
   tokenRefresher: AuthTokenRefresher;
   logger: LoggerService;
   timeoutMs?: number;
-  requireTls?: boolean;
   createCorrelationId?: () => string;
   onRefreshFailure?: () => Promise<void> | void;
 }
@@ -66,8 +67,9 @@ export class AxiosApiClient implements ApiClient {
   private refreshInFlight: Promise<TokenPair> | null = null;
 
   constructor(options: AxiosApiClientOptions) {
-    if (options.requireTls === true && !options.baseUrl.startsWith('https://')) {
-      throw new Error('AxiosApiClient requires an HTTPS baseUrl when requireTls is enabled.');
+    const runtime = parseMobileRuntimeConfig(options.runtime);
+    if (options.baseUrl !== undefined && options.baseUrl.replace(/\/$/, '') !== runtime.apiUrl) {
+      throw new Error('AxiosApiClient rejects a baseUrl that differs from the resolved mobile runtime.');
     }
 
     this.credentialStore = options.credentialStore;
@@ -76,7 +78,8 @@ export class AxiosApiClient implements ApiClient {
     this.createCorrelationId = options.createCorrelationId ?? createDefaultCorrelationId;
     this.onRefreshFailure = options.onRefreshFailure;
     this.instance = axios.create({
-      baseURL: options.baseUrl,
+      baseURL: runtime.apiUrl,
+      allowAbsoluteUrls: false,
       timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
 

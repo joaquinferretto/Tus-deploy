@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.tusservicios.com/tus/ledger-entry.v1.schema.json",
+  "title": "TUS immutable ledger entry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entryId", "tenantId", "commitmentId", "entryType", "amount", "currency", "reason", "immutable"],
+  "properties": {
+    "entryId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "commitmentId": { "type": "string", "minLength": 1 },
+    "entryType": { "enum": ["gross_authorized", "commission_reserved", "merchant_payable_held", "merchant_release", "refund_compensation", "chargeback_compensation"] },
+    "amount": { "type": "number", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 1 },
+    "linkedEntryId": { "type": ["string", "null"] },
+    "reason": { "type": "string", "minLength": 1 },
+    "immutable": { "const": true }
+  }
+}

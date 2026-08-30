@@ -3,11 +3,12 @@ import { fileURLToPath } from 'node:url'
 
 import {
   DEFAULT_TEST_TIMEOUT_MS,
+  createFailureRecord,
   discoverTestFiles,
   selectTestFiles,
 } from './test-runner-lib.mjs'
 
-export { DEFAULT_TEST_TIMEOUT_MS, discoverTestFiles, selectTestFiles }
+export { DEFAULT_TEST_TIMEOUT_MS, createFailureRecord, discoverTestFiles, selectTestFiles }
 
 function timeoutMs() {
   const value = Number(process.env.TEST_FILE_TIMEOUT_MS ?? DEFAULT_TEST_TIMEOUT_MS)
@@ -32,19 +33,36 @@ function run() {
   for (const file of files) {
     const result = spawnSync(
       process.execPath,
-      ['--experimental-strip-types', '--test', '--test-concurrency=1', file],
+      [
+        '--experimental-strip-types',
+        '--experimental-loader',
+        './scripts/node-strip-types-loader.mjs',
+        '--test',
+        '--test-concurrency=1',
+        file,
+      ],
       {
         cwd: process.cwd(),
-        stdio: 'inherit',
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
         timeout: timeoutMs(),
         killSignal: 'SIGTERM',
       }
     )
 
+    if (result.stdout) process.stdout.write(result.stdout)
+    if (result.stderr) process.stderr.write(result.stderr)
+
     if (result.status !== 0) {
       exitCode = 1
-      const reason = result.error?.code === 'ETIMEDOUT' ? `timeout after ${timeoutMs()}ms` : `exit ${result.status ?? 'unknown'}`
-      console.error(`Validation file failed: ${file} (${reason})`)
+      const timedOut = result.error?.code === 'ETIMEDOUT'
+      const record = createFailureRecord({
+        file,
+        output: `${result.stdout ?? ''}\n${result.stderr ?? ''}`,
+        exitCode: result.status ?? 1,
+        timedOut,
+      })
+      console.error(`Validation failure: ${JSON.stringify(record)}`)
     }
   }
 

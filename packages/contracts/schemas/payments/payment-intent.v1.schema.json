@@ -1,0 +1,33 @@
+{
+  "$id": "https://golden-boilerplate.dev/contracts/payments/payment-intent.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tenant-scoped payment intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "paymentId",
+    "tenantId",
+    "externalPaymentId",
+    "amount",
+    "currency",
+    "status",
+    "idempotencyKey",
+    "correlationId",
+    "updatedAt",
+    "sourceEventId"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "paymentId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "externalPaymentId": { "type": "string", "minLength": 1 },
+    "amount": { "type": "number", "minimum": 0 },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "status": { "enum": ["pending", "approved", "rejected", "refunded", "cancelled", "failed"] },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "integer", "minimum": 0 },
+    "sourceEventId": { "type": "string", "minLength": 1 }
+  }
+}

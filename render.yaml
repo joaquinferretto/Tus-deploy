@@ -1,0 +1,229 @@
+# Render-native profile: native runtimes only; production containers are not used.
+# Explicit deployment flags: api=true web=true workers=true tusRoutes=false providers=false releaseJobs=false fleetJobs=false.
+# Activation gates are evidence-controlled and remain false in plan-only composition.
+services:
+  - type: web
+    name: factory-api
+    runtime: node
+    rootDir: .
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @factory/api build
+    startCommand: pnpm --filter @factory/api start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FACTORY_PROFILE
+        value: render
+      - key: RUNTIME_ROLE
+        value: api-edge
+      - key: SERVICE_NAME
+        value: factory-api
+      - key: SERVICE_VERSION
+        value: 0.1.0
+      - key: DATABASE_URL
+        sync: false
+      - key: POSTGRES_PROVIDER
+        value: neon
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGO_PROVIDER
+        value: managed-mongodb
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_PROVIDER
+        value: render-managed-redis
+      - key: B2_ENDPOINT
+        sync: false
+      - key: B2_BUCKET
+        sync: false
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      - key: OBJECT_STORAGE_PROVIDER
+        value: b2
+      - key: QUEUE_PROVIDER
+        value: redis
+      - key: QUEUE_REF
+        value: render-managed-redis
+      - key: SECRET_STORE_REF
+        sync: false
+      - key: TUS_DEPLOYMENT_PROFILE
+        value: render-native
+      - key: TUS_ROUTES_ENABLED
+        value: false
+      - key: TUS_PROVIDER_ACTIONS_ENABLED
+        value: false
+      - key: TUS_RELEASE_JOBS_ENABLED
+        value: false
+       - key: TUS_FLEET_JOBS_ENABLED
+         value: false
+       - key: TUS_MERCADOPAGO_ENABLED
+         value: false
+       - key: TUS_WHATSAPP_ENABLED
+         value: false
+       - key: TUS_AWS_ENABLED
+         value: false
+       - key: TUS_RENDER_ENABLED
+         value: false
+       - key: TUS_CLOUD_ENABLED
+         value: false
+       - key: TUS_LEGAL_ENABLED
+         value: false
+       - key: TUS_TAX_ENABLED
+         value: false
+       - key: TUS_KYC_ENABLED
+         value: false
+       - key: TUS_KYB_ENABLED
+         value: false
+       - key: TUS_POSTGRESQL_ENABLED
+         value: false
+       - key: TUS_BROWSER_ENABLED
+         value: false
+       - key: TUS_DEVICE_ENABLED
+         value: false
+       - key: TUS_POS_PILOT_ENABLED
+         value: false
+       - key: TUS_PRODUCTION_OPERATIONS_ENABLED
+         value: false
+
+  - type: web
+    name: factory-web
+    runtime: node
+    rootDir: .
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @factory/web build
+    startCommand: pnpm --filter @factory/web start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FACTORY_PROFILE
+        value: render
+      - key: RUNTIME_ROLE
+        value: api-edge
+      - key: SERVICE_NAME
+        value: factory-web
+      - key: SERVICE_VERSION
+        value: 0.1.0
+      - key: API_BASE_URL
+        sync: false
+      - key: TUS_DEPLOYMENT_PROFILE
+        value: render-native
+      - key: TUS_ROUTES_ENABLED
+        value: false
+      - key: TUS_PROVIDER_ACTIONS_ENABLED
+        value: false
+      - key: TUS_RELEASE_JOBS_ENABLED
+        value: false
+       - key: TUS_FLEET_JOBS_ENABLED
+         value: false
+       - key: TUS_MERCADOPAGO_ENABLED
+         value: false
+       - key: TUS_WHATSAPP_ENABLED
+         value: false
+       - key: TUS_AWS_ENABLED
+         value: false
+       - key: TUS_RENDER_ENABLED
+         value: false
+       - key: TUS_CLOUD_ENABLED
+         value: false
+       - key: TUS_LEGAL_ENABLED
+         value: false
+       - key: TUS_TAX_ENABLED
+         value: false
+       - key: TUS_KYC_ENABLED
+         value: false
+       - key: TUS_KYB_ENABLED
+         value: false
+       - key: TUS_POSTGRESQL_ENABLED
+         value: false
+       - key: TUS_BROWSER_ENABLED
+         value: false
+       - key: TUS_DEVICE_ENABLED
+         value: false
+       - key: TUS_POS_PILOT_ENABLED
+         value: false
+       - key: TUS_PRODUCTION_OPERATIONS_ENABLED
+         value: false
+
+  - type: worker
+    name: factory-workflow-worker
+    runtime: python
+    rootDir: .
+    buildCommand: python -m pip install --upgrade pip && python -m pip install -e ./apps/workflow-runtime-python
+    startCommand: python -m worker.main
+    envVars:
+      - key: FACTORY_PROFILE
+        value: render
+      - key: RUNTIME_ROLE
+        value: workflow-runtime
+      - key: SERVICE_NAME
+        value: factory-workflow-worker
+      - key: SERVICE_VERSION
+        value: 0.2.0
+      - key: DATABASE_URL
+        sync: false
+      - key: POSTGRES_PROVIDER
+        value: neon
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGO_PROVIDER
+        value: managed-mongodb
+      - key: REDIS_URL
+        sync: false
+      - key: REDIS_PROVIDER
+        value: render-managed-redis
+      - key: B2_ENDPOINT
+        sync: false
+      - key: B2_BUCKET
+        sync: false
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      - key: OBJECT_STORAGE_PROVIDER
+        value: b2
+      - key: QUEUE_PROVIDER
+        value: redis
+      - key: QUEUE_REF
+        value: render-managed-redis
+      - key: SECRET_STORE_REF
+        sync: false
+      - key: TUS_DEPLOYMENT_PROFILE
+        value: render-native
+      - key: TUS_ROUTES_ENABLED
+        value: false
+      - key: TUS_PROVIDER_ACTIONS_ENABLED
+        value: false
+      - key: TUS_RELEASE_JOBS_ENABLED
+        value: false
+       - key: TUS_FLEET_JOBS_ENABLED
+         value: false
+       - key: TUS_MERCADOPAGO_ENABLED
+         value: false
+       - key: TUS_WHATSAPP_ENABLED
+         value: false
+       - key: TUS_AWS_ENABLED
+         value: false
+       - key: TUS_RENDER_ENABLED
+         value: false
+       - key: TUS_CLOUD_ENABLED
+         value: false
+       - key: TUS_LEGAL_ENABLED
+         value: false
+       - key: TUS_TAX_ENABLED
+         value: false
+       - key: TUS_KYC_ENABLED
+         value: false
+       - key: TUS_KYB_ENABLED
+         value: false
+       - key: TUS_POSTGRESQL_ENABLED
+         value: false
+       - key: TUS_BROWSER_ENABLED
+         value: false
+       - key: TUS_DEVICE_ENABLED
+         value: false
+       - key: TUS_POS_PILOT_ENABLED
+         value: false
+       - key: TUS_PRODUCTION_OPERATIONS_ENABLED
+         value: false

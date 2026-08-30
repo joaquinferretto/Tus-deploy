@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tusservicios.com/contracts/tus/readiness-decision.v1.schema.json",
+  "title": "TUS readiness decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "tenantId",
+    "capability",
+    "evaluatedAt",
+    "enabled",
+    "disposition",
+    "failedGates",
+    "evidenceIds",
+    "deterministic"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "capability": {
+      "enum": ["publication", "provider-actions", "settlement", "fleet", "release-jobs"]
+    },
+    "evaluatedAt": { "type": "string", "format": "date-time" },
+    "enabled": { "type": "boolean" },
+    "disposition": { "enum": ["authorized", "disabled", "unavailable-deferred"] },
+    "failedGates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate", "reason"],
+        "properties": {
+          "gate": {
+            "enum": [
+              "legal",
+              "kyc",
+              "kyb",
+              "tax",
+              "mercadoPago",
+              "posPilot",
+              "aws",
+              "groqMigration",
+              "runtimeProvider"
+            ]
+          },
+          "reason": {
+            "enum": [
+              "evidence_missing",
+              "evidence_out_of_scope",
+                "evidence_expired",
+                "evidence_revoked",
+                "deterministic_test_only",
+                "evidence_not_yet_valid",
+                "evidence_malformed",
+                "evidence_conflict",
+                "evidence_deferred",
+                "legacy_conflict"
+            ]
+          }
+        }
+      }
+    },
+    "evidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate", "evidenceIds"],
+        "properties": {
+          "gate": { "enum": ["legal", "kyc", "kyb", "tax", "mercadoPago", "posPilot", "aws", "groqMigration", "runtimeProvider"] },
+          "evidenceIds": { "type": "array", "items": { "type": "string" } },
+          "source": { "enum": ["evidence", "legacy-boolean"] }
+        }
+      }
+    },
+    "deterministic": { "type": "boolean" },
+    "reason": { "type": "string", "minLength": 1 },
+    "evidencePreserved": { "const": true },
+    "auditPreserved": { "const": true }
+    ,"profile": { "enum": ["native-local", "render-native", "aws-terraform", "local-postgresql-http"] }
+    ,"execution": { "enum": ["local-verification", "live"] }
+    ,"evidenceClass": { "enum": ["authorized-external", "local-deterministic", "local-postgresql-http", "deferred"] }
+    ,"policyVersion": { "type": "string", "minLength": 1 }
+    ,"scope": { "type": "string", "minLength": 1 }
+    ,"actorId": { "type": "string", "minLength": 1 }
+    ,"jobId": { "type": "string", "minLength": 1 }
+    ,"correlationId": { "type": "string", "minLength": 1 }
+  }
+}

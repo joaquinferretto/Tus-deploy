@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.tusservicios.com/tus/financial-payment-intent.v1.schema.json",
+  "title": "TUS financial payment intent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "paymentId", "tenantId", "commitmentId", "provider", "providerStatus", "commercialStatus", "amount", "currency", "credentialsCollected", "source"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "paymentId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "commitmentId": { "type": "string", "minLength": 1 },
+    "provider": { "const": "mercado-pago" },
+    "providerReference": { "type": ["string", "null"] },
+    "providerStatus": { "enum": ["pending", "approved", "rejected", "refunded", "cancelled"] },
+    "commercialStatus": { "enum": ["held", "released", "frozen", "refunded"] },
+    "amount": { "type": "number", "exclusiveMinimum": 0 },
+    "currency": { "type": "string", "minLength": 1 },
+    "credentialsCollected": { "const": false },
+    "source": { "enum": ["authorized", "deterministic-test-only", "held-no-provider"] }
+  }
+}

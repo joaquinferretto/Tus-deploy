@@ -1,0 +1,29 @@
+{
+  "$id": "https://golden-boilerplate.dev/contracts/payments/payment-delivery.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Payment webhook delivery and quarantine",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "jobId",
+    "tenantId",
+    "eventId",
+    "attempts",
+    "maxAttempts",
+    "status",
+    "nextAttemptAt",
+    "lastError"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "eventId": { "type": "string", "minLength": 1 },
+    "attempts": { "type": "integer", "minimum": 1 },
+    "maxAttempts": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["pending", "processing", "completed", "dead_letter"] },
+    "nextAttemptAt": { "type": "integer", "minimum": 0 },
+    "lastError": { "type": ["string", "null"] }
+  }
+}

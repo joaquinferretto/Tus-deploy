@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/crud/record.v1.schema.json",
+  "title": "TenantScopedCrudRecordV1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "tenantId"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 }
+  }
+}

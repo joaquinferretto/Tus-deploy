@@ -44,3 +44,26 @@ def validate_workflow_job(payload: dict[str, Any]) -> dict[str, Any]:
         except Exception as error:
             raise ContractValidationError("Workflow job does not satisfy JSON Schema") from error
     return payload
+
+
+def validate_durable_job(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate the canonical P2.10 durable-job producer/consumer contract."""
+    return _validate_schema(payload, "jobs/durable-job.v1.schema.json")
+
+
+def validate_run_event(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate the canonical P2.10 run-event producer/consumer contract."""
+    return _validate_schema(payload, "jobs/run-event.v1.schema.json")
+
+
+def _validate_schema(payload: dict[str, Any], schema_name: str) -> dict[str, Any]:
+    if payload.get("contractVersion") != CONTRACT_VERSION:
+        raise ContractValidationError(f"Invalid {schema_name} contract version")
+    if Draft202012Validator is not None:
+        schema_path = Path(__file__).resolve().parents[2] / "schemas" / schema_name
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        try:
+            Draft202012Validator(schema).validate(payload)
+        except Exception as error:
+            raise ContractValidationError(f"Payload does not satisfy {schema_name}") from error
+    return payload

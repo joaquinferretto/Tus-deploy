@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/ai-governance/deletion-propagation.v1.schema.json",
+  "title": "AIDeletionPropagationV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "tenantId", "recordId", "status", "completedDestinations", "failedDestinations", "evidenceId"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "recordId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["completed", "partial", "failed"] },
+    "completedDestinations": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "failedDestinations": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "evidenceId": { "type": "string", "minLength": 1 }
+  }
+}

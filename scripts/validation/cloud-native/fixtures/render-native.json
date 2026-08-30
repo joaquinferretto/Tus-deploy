@@ -1,0 +1,10 @@
+{
+  "profile": "render-native",
+  "infrastructureAuthority": "render-native-service-model",
+  "declaredBoundaries": ["postgresql", "mongodb", "redis", "object-storage", "queues"],
+  "validation": "plan-only",
+  "provisioned": false,
+  "cloudCalls": false,
+  "liveConformance": false,
+  "fallback": "deterministic-fakes-until-authorized"
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://goldenrepo.local/contracts/messaging/messaging-delivery.v1.schema.json",
+  "title": "Messaging delivery v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "deliveryId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "eventId": { "type": "string", "minLength": 1 },
+    "messageId": { "type": "string", "minLength": 1 },
+    "attempts": { "type": "integer", "minimum": 0 },
+    "maxAttempts": { "type": "integer", "minimum": 1 },
+    "nextAttemptAt": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["pending", "processing", "completed", "dead_letter"] },
+    "lastError": { "type": ["string", "null"] }
+  },
+  "required": [
+    "contractVersion",
+    "deliveryId",
+    "tenantId",
+    "eventId",
+    "messageId",
+    "attempts",
+    "maxAttempts",
+    "nextAttemptAt",
+    "status",
+    "lastError"
+  ]
+}

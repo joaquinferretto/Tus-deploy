@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.tusservicios.com/tus/marketplace-listing.v1.schema.json",
+  "title": "TUS marketplace listing v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "listingId",
+    "tenantId",
+    "merchantId",
+    "kind",
+    "name",
+    "description",
+    "cohort",
+    "locationId",
+    "currency",
+    "price",
+    "availabilityVersion",
+    "published",
+    "policyVersion"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "listingId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "merchantId": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["product", "service"] },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "cohort": { "enum": ["beauty-personal-care", "repairs-trades"] },
+    "locationId": { "type": "string", "minLength": 1 },
+    "currency": { "type": "string", "minLength": 1 },
+    "price": { "type": "number", "minimum": 0 },
+    "availabilityVersion": { "type": "integer", "minimum": 1 },
+    "published": { "type": "boolean" },
+    "policyVersion": { "type": "string", "minLength": 1 },
+    "stock": { "type": ["integer", "null"], "minimum": 0 },
+    "durationMinutes": { "type": ["integer", "null"], "minimum": 1 },
+    "capacity": { "type": ["integer", "null"], "minimum": 1 },
+    "workingHours": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["day", "start", "end"],
+        "properties": {
+          "day": { "type": "integer", "minimum": 0, "maximum": 6 },
+          "start": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
+          "end": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" }
+        }
+      }
+    },
+    "availableQuantity": { "type": "integer", "minimum": 0 },
+    "timezone": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "product" } } },
+      "then": { "required": ["stock"], "properties": { "stock": { "type": "integer", "minimum": 0 }, "durationMinutes": { "const": null }, "capacity": { "const": null } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "service" } } },
+      "then": { "required": ["durationMinutes", "capacity", "workingHours"], "properties": { "stock": { "const": null }, "durationMinutes": { "type": "integer", "minimum": 1 }, "capacity": { "type": "integer", "minimum": 1 }, "workingHours": { "minItems": 1 } } }
+    }
+  ]
+}

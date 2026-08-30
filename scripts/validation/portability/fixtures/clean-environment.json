@@ -1,0 +1,26 @@
+{
+  "version": "clean-environment.v1",
+  "checkout": {
+    "profileSelection": "explicit",
+    "maintainerKnowledgeRequired": false,
+    "envFilesRead": false,
+    "secretValuesPresent": false,
+    "cloudCalls": false,
+    "provisioned": false
+  },
+  "native": {
+    "commands": ["cd backend && pnpm run dev", "cd frontend && pnpm run dev"],
+    "databaseKey": "DATABASE_URL",
+    "postgresqlRequired": true,
+    "limitationsDocumented": true
+  },
+  "cloudNative": {
+    "profiles": ["render-native", "aws-terraform"],
+    "planCommand": "node scripts/validation/cloud-native/validate-plan.mjs",
+    "planOnly": true,
+    "authorizationRequired": true,
+    "fallback": "deterministic-fakes-until-authorized",
+    "composeFallback": false,
+    "liveConformance": false
+  }
+}

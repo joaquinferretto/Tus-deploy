@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/quotas/reservation.v1.schema.json",
+  "title": "Quota Reservation",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "reservationId": { "type": "string", "minLength": 1 },
+    "profile": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "productId": { "type": ["string", "null"] },
+    "resource": { "type": "string", "minLength": 1 },
+    "unit": {
+      "enum": ["requests", "tokens", "audio_seconds", "image_units", "storage_bytes", "custom"]
+    },
+    "units": { "type": "number", "exclusiveMinimum": 0 },
+    "costUnits": { "type": "number", "minimum": 0 },
+    "policyVersion": { "type": "integer", "minimum": 1 },
+    "usageWindowStart": { "type": "integer" },
+    "rateWindowStart": { "type": "integer" },
+    "status": { "enum": ["held", "committed", "released", "expired"] },
+    "createdAt": { "type": "integer" },
+    "expiresAt": { "type": "integer" },
+    "completedAt": { "type": ["integer", "null"] }
+  },
+  "required": [
+    "contractVersion",
+    "reservationId",
+    "profile",
+    "tenantId",
+    "productId",
+    "resource",
+    "unit",
+    "units",
+    "costUnits",
+    "policyVersion",
+    "usageWindowStart",
+    "rateWindowStart",
+    "status",
+    "createdAt",
+    "expiresAt",
+    "completedAt"
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "$id": "https://golden-boilerplate.dev/ai-contracts/recommendations/request.v1.schema.json",
+  "title": "Recommendation request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "lineage",
+    "retention",
+    "query",
+    "candidates",
+    "limit",
+    "model"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "lineage": { "$ref": "#/$defs/lineage" },
+    "retention": { "$ref": "#/$defs/retention" },
+    "query": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/candidate" }
+    },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 20 },
+    "model": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootMessageId", "source"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expiresAt", "encrypted", "keyRef", "algorithm"],
+      "properties": {
+        "expiresAt": { "type": "integer", "minimum": 0 },
+        "encrypted": { "const": true },
+        "keyRef": { "type": "string", "minLength": 1 },
+        "algorithm": { "type": "string", "minLength": 1 }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidateId", "title", "tags"],
+      "properties": {
+        "candidateId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "tenantId": { "type": ["string", "null"], "minLength": 1 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "tags": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        }
+      }
+    }
+  }
+}

@@ -2,7 +2,8 @@
   "extends": "@factory/typescript-config/node.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "rewriteRelativeImportExtensions": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

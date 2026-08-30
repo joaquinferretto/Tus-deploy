@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tusservicios.com/contracts/tus/delivery-task.v1.schema.json",
+  "title": "TUS delivery task",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "taskId", "tenantId", "commitmentId", "merchantId", "context", "zoneId", "shiftId", "operatorId", "status", "version", "settlementClaim"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "taskId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "commitmentId": { "type": "string", "minLength": 1 },
+    "merchantId": { "type": "string", "minLength": 1 },
+    "context": { "const": "product" },
+    "zoneId": { "type": "string", "minLength": 1 },
+    "shiftId": { "type": "string", "minLength": 1 },
+    "operatorId": { "type": ["string", "null"] },
+    "status": { "enum": ["queued", "accepted", "picked-up", "in-transit", "handed-off", "returned", "incident-review"] },
+    "version": { "type": "integer", "minimum": 0 },
+    "settlementClaim": { "const": "not-claimed" },
+    "proof": {
+      "type": ["object", "null"],
+      "required": ["contractVersion", "proofId", "tenantId", "taskId", "commitmentId", "recipientName", "capturedAt", "evidenceSource"],
+      "properties": {
+        "contractVersion": { "const": "1.0.0" },
+        "proofId": { "type": "string", "minLength": 1 },
+        "tenantId": { "type": "string", "minLength": 1 },
+        "taskId": { "type": "string", "minLength": 1 },
+        "commitmentId": { "type": "string", "minLength": 1 },
+        "recipientName": { "type": "string", "minLength": 1 },
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "evidenceSource": { "enum": ["authorized", "deterministic-test-only"] }
+      }
+    },
+    "incident": {
+      "type": ["object", "null"],
+      "required": ["contractVersion", "incidentId", "tenantId", "taskId", "reason", "status", "createdAt"],
+      "properties": {
+        "contractVersion": { "const": "1.0.0" },
+        "incidentId": { "type": "string", "minLength": 1 },
+        "tenantId": { "type": "string", "minLength": 1 },
+        "taskId": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["open", "resolved"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

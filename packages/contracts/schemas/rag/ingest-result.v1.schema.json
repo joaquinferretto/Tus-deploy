@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/rag/ingest-result.v1.schema.json",
+  "title": "RagIngestResultV1",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "ingestId",
+    "sourceId",
+    "tenantId",
+    "idempotencyKey",
+    "status",
+    "chunkCount",
+    "checksum",
+    "retryable"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "ingestId": { "type": "string", "minLength": 1 },
+    "sourceId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": ["completed", "duplicate", "quarantined", "partial"]
+    },
+    "chunkCount": { "type": "integer", "minimum": 0 },
+    "checksum": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "reason": { "type": ["string", "null"], "minLength": 1 },
+    "retryable": { "type": "boolean" },
+    "resumeToken": { "type": ["string", "null"], "minLength": 1 }
+  },
+  "additionalProperties": false
+}

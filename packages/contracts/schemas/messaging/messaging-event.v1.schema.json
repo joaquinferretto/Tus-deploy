@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://goldenrepo.local/contracts/messaging/messaging-event.v1.schema.json",
+  "title": "Messaging normalized event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "eventId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "provider": { "const": "whatsapp" },
+    "eventType": { "const": "message.received" },
+    "messageId": { "type": "string", "minLength": 1 },
+    "phoneNumberId": { "type": "string", "minLength": 1 },
+    "from": { "type": "string", "minLength": 1 },
+    "to": { "type": "string", "minLength": 1 },
+    "messageType": { "const": "text" },
+    "text": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "integer", "minimum": 1 }
+  },
+  "required": [
+    "contractVersion",
+    "eventId",
+    "tenantId",
+    "provider",
+    "eventType",
+    "messageId",
+    "phoneNumberId",
+    "from",
+    "to",
+    "messageType",
+    "text",
+    "correlationId",
+    "createdAt"
+  ]
+}

@@ -1,5 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 
+import { parseMobileRuntimeConfig, type MobileRuntimeConfig } from '../config/runtime-profile.ts';
+
 export const SECURE_STORE_ERROR_KIND = {
   UNAVAILABLE: 'unavailable',
   READ_FAILED: 'read_failed',
@@ -39,9 +41,15 @@ export interface SensitiveItemStore {
 }
 
 export interface SecureCredentialStoreOptions {
-  profile: string;
+  runtime: MobileRuntimeConfig;
   namespace?: string;
   secureStoreOptions?: ExpoSecureStoreOptions;
+}
+
+export function buildSecureStorageKey(runtime: MobileRuntimeConfig, key: string, namespace = 'alqui'): string {
+  const resolvedRuntime = parseMobileRuntimeConfig(runtime);
+  if (key.trim().length === 0) throw new Error('SecureStore key is required');
+  return `${namespace}.${resolvedRuntime.profile}.${key}`;
 }
 
 export class SecureStoreStorageError extends Error {
@@ -61,12 +69,12 @@ export class SecureStoreStorageError extends Error {
 }
 
 export class SecureCredentialStore implements CredentialStore, SensitiveItemStore {
-  private readonly profile: string;
+  private readonly runtime: MobileRuntimeConfig;
   private readonly namespace: string;
   private readonly secureStoreOptions: ExpoSecureStoreOptions | undefined;
 
   constructor(options: SecureCredentialStoreOptions) {
-    this.profile = options.profile;
+    this.runtime = parseMobileRuntimeConfig(options.runtime);
     this.namespace = options.namespace ?? 'alqui';
     this.secureStoreOptions = options.secureStoreOptions;
   }
@@ -106,6 +114,10 @@ export class SecureCredentialStore implements CredentialStore, SensitiveItemStor
       await this.clear().catch(() => undefined);
       throw error;
     }
+  }
+
+  async setSessionToken(accessToken: string, expiresAt: number): Promise<void> {
+    await this.setTokens({ accessToken, refreshToken: '', expiresAt })
   }
 
   async clear(): Promise<void> {
@@ -165,7 +177,7 @@ export class SecureCredentialStore implements CredentialStore, SensitiveItemStor
   }
 
   private resolveKey(key: string): string {
-    const prefix = `${this.namespace}.${this.profile}.`;
+    const prefix = `${this.namespace}.${this.runtime.profile}.`;
     return key.startsWith(prefix) ? key : `${prefix}${key}`;
   }
 

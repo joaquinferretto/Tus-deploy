@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tusservicios.com/contracts/tus/pos-receipt.v1.schema.json",
+  "title": "TUS POS receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "receiptId", "tenantId", "operationId", "kind", "context", "amount", "currency", "status", "source", "providerCapture", "settlement", "integrityHash", "createdAt"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "receiptId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "operationId": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["manual-sale", "manual-service"] },
+    "context": { "enum": ["product", "service"] },
+    "amount": { "type": "number", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["pending", "accepted"] },
+    "source": { "enum": ["authorized", "deterministic-test-only"] },
+    "providerCapture": { "const": "not-claimed" },
+    "settlement": { "const": "not-claimed" },
+    "integrityHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

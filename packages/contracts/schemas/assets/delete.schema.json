@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/assets/delete.v1.schema.json",
+  "title": "AssetDeleteV1",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "tenantId",
+    "workspaceId",
+    "assetId",
+    "requestedBy",
+    "idempotencyKey"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "workspaceId": { "type": "string", "minLength": 1 },
+    "assetId": { "type": "string", "minLength": 1 },
+    "requestedBy": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

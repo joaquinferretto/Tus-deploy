@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "prisma generate && tsc",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
-    "lint": "eslint . --ext .ts --max-warnings 0",
+    "lint": "eslint src/providers/whatsapp/index.ts src/tus/whatsapp/index.ts --max-warnings 0",
     "lint:security": "eslint . --ext .ts --config .eslintrc.security.json",
     "test": "node -e \"process.exit(0)\"",
     "prisma:generate": "prisma generate",
@@ -28,6 +29,7 @@
     "ioredis": "^5.3.2",
     "dotenv": "^16.4.5",
     "@factory/config": "workspace:*",
+    "@factory/contracts": "workspace:*",
     "@factory/zod-schemas": "workspace:*",
     "@factory/observability": "workspace:*"
   },

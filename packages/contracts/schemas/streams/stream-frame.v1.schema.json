@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/stream-frame.v1.schema.json",
+  "title": "StreamFrameV1",
+  "description": "Versioned tenant and actor scoped token, audio, event, or progress stream frame.",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "streamId",
+    "runId",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "sequence",
+    "cursor",
+    "kind",
+    "status",
+    "payload",
+    "emittedAt"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "streamId": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "cursor": { "type": "string", "pattern": "^.+:[1-9][0-9]*$" },
+    "kind": { "enum": ["token", "audio", "event", "progress"] },
+    "status": { "enum": ["partial", "progress", "completed", "failed", "cancelled"] },
+    "payload": { "type": "object", "additionalProperties": true },
+    "emittedAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    }
+  },
+  "additionalProperties": false
+}

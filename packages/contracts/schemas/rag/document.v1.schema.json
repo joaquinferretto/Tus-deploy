@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/rag/document.v1.schema.json",
+  "title": "RagDocumentV1",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "documentId",
+    "sourceId",
+    "tenantId",
+    "workspaceId",
+    "mimeType",
+    "checksum",
+    "byteSize",
+    "parserVersion",
+    "status",
+    "retentionUntil",
+    "lineage"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "documentId": { "type": "string", "minLength": 1 },
+    "sourceId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "workspaceId": { "type": "string", "minLength": 1 },
+    "mimeType": { "type": "string", "minLength": 1 },
+    "checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "byteSize": { "type": "integer", "minimum": 0 },
+    "parserVersion": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["active", "quarantined"] },
+    "retentionUntil": { "type": ["integer", "null"], "minimum": 0 },
+    "lineage": {
+      "type": "object",
+      "required": [
+        "tenantId",
+        "workspaceId",
+        "actorId",
+        "sourceAssetId",
+        "sourceUri",
+        "checksum",
+        "rootMessageId",
+        "correlationId",
+        "parserVersion",
+        "chunkerVersion"
+      ],
+      "properties": {
+        "tenantId": { "type": "string", "minLength": 1 },
+        "workspaceId": { "type": "string", "minLength": 1 },
+        "actorId": { "type": "string", "minLength": 1 },
+        "sourceAssetId": { "type": "string", "minLength": 1 },
+        "sourceUri": { "type": "string", "pattern": "^b2://.+" },
+        "checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "correlationId": { "type": "string", "minLength": 1 },
+        "parserVersion": { "type": "string", "minLength": 1 },
+        "chunkerVersion": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -5,8 +5,27 @@
   "type": "module",
   "description": "Cross-runtime JSON Schema contracts for API edge and Python workflow runtime",
   "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "validate:schemas": "node ./scripts/validate-schemas.mjs",
     "test": "node --experimental-strip-types --test ../../tests/foundation/p0-contracts.test.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./tus": {
+      "types": "./dist/tus.d.ts",
+      "import": "./dist/tus.js",
+      "default": "./dist/tus.js"
+    },
+    "./streams": {
+      "types": "./dist/streams.d.ts",
+      "import": "./dist/streams.js",
+      "default": "./dist/streams.js"
+    }
   },
   "devDependencies": {
     "ajv": "^8.17.1"

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/rag/chunk.v1.schema.json",
+  "title": "RagChunkV1",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "chunkId",
+    "sourceId",
+    "tenantId",
+    "workspaceId",
+    "chunkIndex",
+    "text",
+    "checksum",
+    "startOffset",
+    "endOffset",
+    "lineage",
+    "retentionUntil"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "chunkId": { "type": "string", "minLength": 1 },
+    "sourceId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "workspaceId": { "type": "string", "minLength": 1 },
+    "chunkIndex": { "type": "integer", "minimum": 0 },
+    "text": { "type": "string", "minLength": 1 },
+    "checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "startOffset": { "type": "integer", "minimum": 0 },
+    "endOffset": { "type": "integer", "minimum": 1 },
+    "lineage": {
+      "$ref": "https://golden-boilerplate.dev/contracts/rag/document.v1.schema.json#/properties/lineage"
+    },
+    "retentionUntil": { "type": ["integer", "null"], "minimum": 0 }
+  },
+  "additionalProperties": false
+}

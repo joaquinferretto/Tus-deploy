@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tus/support-case.v1",
+  "title": "TUS support case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "caseId", "commitmentId", "tenantId", "actorId", "correlationId", "category", "status"],
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "caseId": { "type": "string", "minLength": 1 },
+    "commitmentId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "category": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["open", "resolved"] }
+  }
+}

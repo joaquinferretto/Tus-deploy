@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/notifications/notification.v1.schema.json",
+  "title": "Notification",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "notificationId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "workspaceId": { "type": "string", "minLength": 1 },
+    "userId": { "type": "string", "minLength": 1 },
+    "recipient": { "type": "string", "format": "email" },
+    "category": { "enum": ["product", "security", "marketing"] },
+    "template": { "enum": ["verification", "recovery", "invitation", "notification"] },
+    "status": {
+      "enum": ["queued", "sending", "sent", "retryable", "failed", "suppressed", "quota_exceeded"]
+    },
+    "attempts": { "type": "integer", "minimum": 0 },
+    "nextAttemptAt": { "type": ["integer", "null"] },
+    "providerMessageId": { "type": ["string", "null"] },
+    "failureReason": { "type": ["string", "null"] },
+    "createdAt": { "type": "integer" },
+    "updatedAt": { "type": "integer" }
+  },
+  "required": [
+    "contractVersion",
+    "notificationId",
+    "tenantId",
+    "workspaceId",
+    "userId",
+    "recipient",
+    "category",
+    "template",
+    "status",
+    "attempts",
+    "nextAttemptAt",
+    "providerMessageId",
+    "failureReason",
+    "createdAt",
+    "updatedAt"
+  ]
+}

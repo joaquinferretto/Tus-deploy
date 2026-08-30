@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/ai-governance/guardrail-outcome.v1.schema.json",
+  "title": "AIGuardrailOutcomeV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "tenantId", "actorId", "correlationId", "decision", "category", "policyVersion", "auditId", "lineage"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "decision": { "enum": ["allow", "deny", "escalate"] },
+    "category": { "type": "string", "minLength": 1 },
+    "policyVersion": { "type": "string", "minLength": 1 },
+    "auditId": { "type": "string", "minLength": 1 },
+    "reviewId": { "type": ["string", "null"] },
+    "lineage": { "type": "object", "additionalProperties": { "type": "string" } }
+  }
+}

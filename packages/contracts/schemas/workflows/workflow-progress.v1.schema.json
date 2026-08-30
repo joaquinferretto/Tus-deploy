@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/workflow-progress.v1.schema.json",
+  "title": "WorkflowProgressV1",
+  "description": "Versioned tenant-scoped progress message emitted by the authoritative workflow runtime.",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "messageId",
+    "messageType",
+    "workflowId",
+    "runId",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "idempotencyKey",
+    "lineage",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "messageId": { "type": "string", "minLength": 1 },
+    "messageType": { "const": "workflow.progress" },
+    "workflowId": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "lineage": {
+      "type": "object",
+      "required": ["rootMessageId", "source"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "parentMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "occurredAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "payload": {
+      "type": "object",
+      "required": ["status", "step", "progress"],
+      "properties": {
+        "status": { "enum": ["queued", "running", "paused", "completed", "failed", "cancelled"] },
+        "step": { "type": "string", "minLength": 1 },
+        "progress": { "type": "integer", "minimum": 0, "maximum": 100 }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

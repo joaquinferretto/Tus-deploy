@@ -2,11 +2,12 @@ import { QueryClient, type Query } from '@tanstack/react-query';
 import type { PersistedClient, Persister } from '@tanstack/react-query-persist-client';
 
 import { createEncryptedMMKVClient, type MMKVLocalStorageClient } from './mmkv-storage';
+import { parseMobileRuntimeConfig, type MobileRuntimeConfig } from '../config/runtime-profile.ts';
 
 export const QUERY_CACHE_SCHEMA_VERSION = 1;
 
 export interface OfflineQueryClientOptions {
-  profile: string;
+  runtime: MobileRuntimeConfig;
   maxAgeMs?: number;
   staleTimeMs?: number;
   gcTimeMs?: number;
@@ -37,22 +38,22 @@ const DEFAULT_THROTTLE_TIME_MS = 1000;
 export async function createOfflineQueryClient(
   options: OfflineQueryClientOptions,
 ): Promise<OfflineQueryClientSetup> {
+  const runtime = parseMobileRuntimeConfig(options.runtime);
   const maxAge = options.maxAgeMs ?? DEFAULT_QUERY_MAX_AGE_MS;
   const storage =
     options.storage ??
     (await createEncryptedMMKVClient({
-      profile: options.profile,
+      runtime,
       namespace: 'cache',
-      keyPrefix: `alqui:${options.profile}`,
       encryption: { enabled: true, secureStoreKey: 'mmkv.encryptionKey' },
     }));
-  const cacheKey = buildQueryCacheKey(options.profile);
+  const cacheKey = buildQueryCacheKey(runtime);
   const persister = createMMKVQueryPersister({
     storage,
     key: cacheKey,
     throttleTimeMs: options.throttleTimeMs ?? DEFAULT_THROTTLE_TIME_MS,
   });
-  const buster = options.buster ?? buildQueryCacheBuster(options.profile);
+  const buster = options.buster ?? buildQueryCacheBuster(runtime);
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -137,12 +138,12 @@ export function createMMKVQueryPersister(options: MMKVQueryPersisterOptions): Pe
   };
 }
 
-export function buildQueryCacheKey(profile: string): string {
-  return `alqui:${profile}:tanstack:query`;
+export function buildQueryCacheKey(runtime: MobileRuntimeConfig): string {
+  return `alqui:${parseMobileRuntimeConfig(runtime).profile}:tanstack:query`;
 }
 
-export function buildQueryCacheBuster(profile: string): string {
-  return `${profile}:query-schema-v${QUERY_CACHE_SCHEMA_VERSION}`;
+export function buildQueryCacheBuster(runtime: MobileRuntimeConfig): string {
+  return `${parseMobileRuntimeConfig(runtime).profile}:query-schema-v${QUERY_CACHE_SCHEMA_VERSION}`;
 }
 
 function shouldDehydrateQuery(query: Query): boolean {

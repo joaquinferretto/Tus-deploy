@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.tusservicios.com/tus/marketplace-discovery.v1.schema.json",
+  "title": "TUS marketplace discovery v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "evidence", "items"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "evidence": { "enum": ["local-deterministic", "local-postgresql-http", "authorized-external", "deferred"] },
+    "items": {
+      "type": "array",
+      "items": { "$ref": "marketplace-listing.v1.schema.json" }
+    }
+  }
+}

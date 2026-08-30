@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/auth/oauth-oidc.v1.schema.json",
+  "title": "OAuthOidcCallbackV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["providerId", "redirectUri", "state", "code"],
+  "properties": {
+    "providerId": { "type": "string", "minLength": 1 },
+    "redirectUri": { "type": "string", "pattern": "^https://" },
+    "state": { "type": "string", "minLength": 16 },
+    "code": { "type": "string", "minLength": 1 }
+  }
+}

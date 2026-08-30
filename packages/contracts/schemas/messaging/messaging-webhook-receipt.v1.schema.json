@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://goldenrepo.local/contracts/messaging/messaging-webhook-receipt.v1.schema.json",
+  "title": "Messaging webhook receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "receiptId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "provider": { "const": "whatsapp" },
+    "eventId": { "type": "string", "minLength": 1 },
+    "requestId": { "type": "string", "minLength": 1 },
+    "messageId": { "type": "string", "minLength": 1 },
+    "phoneNumberId": { "type": "string", "minLength": 1 },
+    "signatureDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "receivedAt": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["received", "processed", "rejected", "failed"] },
+    "reason": { "type": ["string", "null"] },
+    "processedAt": { "type": ["integer", "null"] }
+  },
+  "required": [
+    "contractVersion",
+    "receiptId",
+    "tenantId",
+    "provider",
+    "eventId",
+    "requestId",
+    "messageId",
+    "phoneNumberId",
+    "signatureDigest",
+    "receivedAt",
+    "status",
+    "reason",
+    "processedAt"
+  ]
+}

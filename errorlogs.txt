@@ -1,0 +1,139 @@
+front terminal:Retrying 1/3...
+ ✓ Compiled / in 134.3s (1650 modules)
+ GET / 200 in 139622ms
+ ✓ Compiled in 5.5s (770 modules)
+ ⚠ The "images.domains" configuration is deprecated. Please use "images.remotePatterns" configuration instead.
+ ○ Compiling /diagnosticos ...
+ ✓ Compiled /diagnosticos in 44s (1647 modules)
+ GET /diagnosticos 200 in 6386ms
+ GET /diagnosticos 200 in 970ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 5.1s (1650 modules)
+ GET /.well-known/appspecific/com.chrome.devtools.json 404 in 6796ms
+backend terminal: ✅ Todas las variables requeridas están configuradas
+
+⚠️  Variables opcionales no configuradas (recomendadas):
+
+  ⚠️  IOT_API_KEY parece demasiado corta (menos de 20 caracteres). Verifica que sea correcta.
+
+✅ Validación de entorno completada
+
+]: UNCAUGHT EXCEPTION
+Error: listen EADDRINUSE: address already in use :::3001
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at file:///C:/Users/mmmau/medbotAll/apps/backend/index.js:140:8
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:665:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+{
+  "error": "listen EADDRINUSE: address already in use :::3001"
+}
+
+herramientas de desarrollo:
+contentscript.js:14083 MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit
+n @ contentscript.js:14083
+contentscript.js:14083 MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit
+n @ contentscript.js:14083
+2contentscript.js:14083 ObjectMultiplex - orphaned data for stream "app-init-liveness"
+warn @ contentscript.js:14083
+2contentscript.js:14083 ObjectMultiplex - orphaned data for stream "background-liveness"
+warn @ contentscript.js:14083
+2AuthContext.tsx:112 [AuthProvider] inicializando desde localStorage
+diagnosticos:1 Access to fetch at 'http://127.0.0.1:3001/api/consultations/start' from origin 'http://localhost:3002' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+127.0.0.1:3001/api/consultations/start:1  Failed to load resource: net::ERR_FAILED
+diagnosticos:1 Access to fetch at 'http://127.0.0.1:3001/api/consultations/start' from origin 'http://localhost:3002' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+127.0.0.1:3001/api/consultations/start:1  Failed to load resource: net::ERR_FAILED
+diagnosticos:1 Access to fetch at 'http://127.0.0.1:3001/api/consultations/start' from origin 'http://localhost:3002' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+127.0.0.1:3001/api/consultations/start:1  Failed to load resource: net::ERR_FAILED
+hot-reloader-client.js:187 [Fast Refresh] rebuilding
+hot-reloader-client.js:44 [Fast Refresh] done in 1847ms
+diagnosticos:1 Access to fetch at 'http://127.0.0.1:3001/api/consultations/start' from origin 'http://localhost:3002' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+patientConsultationClient.ts:98  POST http://127.0.0.1:3001/api/consultations/start net::ERR_FAILED
+postJson @ patientConsultationClient.ts:98
+startConsultation @ patientConsultationClient.ts:60
+(anónimo) @ PatientConsultation.tsx:108
+(anónimo) @ PatientConsultation.tsx:95
+(anónimo) @ PatientConsultation.tsx:224
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+diagnosticos:1 Access to fetch at 'http://127.0.0.1:3001/api/consultations/start' from origin 'http://localhost:3002' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+patientConsultationClient.ts:98  POST http://127.0.0.1:3001/api/consultations/start net::ERR_FAILED
+postJson @ patientConsultationClient.ts:98
+startConsultation @ patientConsultationClient.ts:60
+(anónimo) @ PatientConsultation.tsx:108
+(anónimo) @ PatientConsultation.tsx:95
+(anónimo) @ PatientConsultation.tsx:224
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+diagnosticos:1 Access to fetch at 'http://127.0.0.1:3001/api/consultations/start' from origin 'http://localhost:3002' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+patientConsultationClient.ts:98  POST http://127.0.0.1:3001/api/consultations/start net::ERR_FAILED
+postJson @ patientConsultationClient.ts:98
+startConsultation @ patientConsultationClient.ts:60
+(anónimo) @ PatientConsultation.tsx:108
+(anónimo) @ PatientConsultation.tsx:95
+(anónimo) @ PatientConsultation.tsx:224
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+diagnosticos:1 Access to fetch at 'http://127.0.0.1:3001/api/consultations/start' from origin 'http://localhost:3002' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+patientConsultationClient.ts:98  POST http://127.0.0.1:3001/api/consultations/start net::ERR_FAILED
+postJson @ patientConsultationClient.ts:98
+startConsultation @ patientConsultationClient.ts:60
+(anónimo) @ PatientConsultation.tsx:108
+(anónimo) @ PatientConsultation.tsx:95
+(anónimo) @ PatientConsultation.tsx:224
+callCallback @ react-dom.development.js:20565
+invokeGuardedCallbackImpl @ react-dom.development.js:20614
+invokeGuardedCallback @ react-dom.development.js:20689
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:20703
+executeDispatch @ react-dom.development.js:32128
+processDispatchQueueItemsInOrder @ react-dom.development.js:32160
+processDispatchQueue @ react-dom.development.js:32173
+dispatchEventsForPlugins @ react-dom.development.js:32184
+eval @ react-dom.development.js:32374
+batchedUpdates$1 @ react-dom.development.js:24953
+batchedUpdates @ react-dom.development.js:28844
+dispatchEventForPluginEventSystem @ react-dom.development.js:32373
+dispatchEvent @ react-dom.development.js:30141
+dispatchDiscreteEvent @ react-dom.development.js:30112
+diagnosticos:1 Access to fetch at 'http://127.0.0.1:3001/api/consultations/start' from origin 'http://localhost:3002' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+patientConsultationClient.ts:98
+
+

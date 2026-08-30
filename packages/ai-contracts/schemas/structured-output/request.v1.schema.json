@@ -1,0 +1,37 @@
+{
+  "$id": "https://golden-boilerplate.dev/ai-contracts/structured-output/request.v1.schema.json",
+  "title": "Structured output request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "lineage",
+    "prompt",
+    "schema",
+    "maxAttempts"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "lineage": { "$ref": "#/$defs/lineage" },
+    "prompt": { "type": "string", "minLength": 1 },
+    "schema": { "type": "object" },
+    "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 3 }
+  },
+  "$defs": {
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootMessageId", "source"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

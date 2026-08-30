@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/stream-control.v1.schema.json",
+  "title": "StreamControlV1",
+  "description": "Versioned reconnect, acknowledgement, and cancellation control for a stream.",
+  "type": "object",
+  "required": ["contractVersion", "streamId", "tenantId", "actorId", "correlationId", "operation"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "streamId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "operation": { "enum": ["connect", "poll", "ack", "cancel"] },
+    "connectionId": { "type": "string", "minLength": 1 },
+    "cursor": { "type": "string", "pattern": "^.+:[1-9][0-9]*$" },
+    "maxInFlight": { "type": "integer", "minimum": 1 },
+    "reason": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

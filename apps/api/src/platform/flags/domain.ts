@@ -1,0 +1,16 @@
+export {
+  CONFIGURATION_ERROR_CODE,
+  CONFIGURATION_SCOPE,
+  DELIVERY_PROFILE,
+  ConfigurationValidationError,
+  configurationScopeKey,
+  resolveConfigurationLayers,
+  validateConfigurationRevision,
+  type ConfigurationContext,
+  type ConfigurationErrorCode,
+  type ConfigurationRevision,
+  type ConfigurationScope,
+  type ConfigurationValue,
+  type DeliveryProfile,
+  type ResolvedConfiguration,
+} from '@factory/config'

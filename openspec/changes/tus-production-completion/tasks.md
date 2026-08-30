@@ -36,12 +36,16 @@ Non-goals: global launch, rentals, regulated healthcare, financing, custody/escr
 
 ## Phase 1: Foundation
 - [x] 1.1 Complete PR1 validation baseline with RED → GREEN → REFACTOR evidence and serial rerun proof.
-- [ ] 1.2 Complete PR2 readiness in order after PR1.
-- [ ] 1.3 Complete PR3 identity and HTTP in order after PR2.
-- [ ] 1.4 Complete PR4 marketplace in order after PR3.
+- [x] 1.2 Complete PR2 readiness in order after PR1.
+- [x] 1.3 Complete PR3 identity and HTTP in order after PR2.
+- [x] 1.4 Complete PR4 marketplace in order after PR3.
 
 ## Phase 2: Durable Commerce and Operations
-- [ ] 2.1–2.3 Complete PRs 5–7; keep catalog, commitments, finance, delivery, and POS bounded contexts separate.
+- [x] 2.1 Complete PR5 durable product/service commitment lifecycle, atomic persistence, replay/conflict handling, compensation, audit/outbox recovery, and workflow handoff.
+- [x] 2.2 Complete PR6 finance; keep catalog, commitments, finance, delivery, and POS bounded contexts separate.
+- [x] 2.3 Complete PR7 delivery/POS; keep catalog, commitments, finance, delivery, and POS bounded contexts separate.
 
 ## Phase 3: Surfaces and Activation
-- [ ] 3.1–3.3 Complete PRs 8–10; run `pnpm build` only after all local slices pass, without claiming external evidence.
+- [x] 3.1 Complete PR8 support/reporting operations with governed messaging, bilateral disputes, reporting/SEO, and redacted evidence.
+- [x] 3.2 Complete PR9 UI contracts; run `pnpm build` only after all local slices pass, without claiming external evidence.
+- [x] 3.3 Complete PR10 activation evidence; run `pnpm build` only after all local slices pass, without claiming external evidence.

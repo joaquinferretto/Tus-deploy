@@ -1,0 +1,22 @@
+{
+  "version": "reference-contamination.v1",
+  "valid": true,
+  "scannedFiles": 65,
+  "scannedRoots": [
+    "apps/reference/api/src",
+    "apps/reference/web/src",
+    "apps/reference/mobile/src",
+    "apps/web/src/lib/neutral-contract-client.ts",
+    "apps/mobile/src/application/neutral-contract-client.ts",
+    "packages"
+  ],
+  "findings": [],
+  "exclusions": [
+    "apps/reference/fallback/**",
+    "node_modules/**",
+    "dist/**",
+    ".next/**",
+    ".turbo/**"
+  ],
+  "liveConformance": false
+}

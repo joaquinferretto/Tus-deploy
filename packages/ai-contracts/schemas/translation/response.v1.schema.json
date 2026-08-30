@@ -1,0 +1,90 @@
+{
+  "$id": "https://golden-boilerplate.dev/ai-contracts/translation/response.v1.schema.json",
+  "title": "Translation response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "lineage",
+    "retention",
+    "translatedText",
+    "sourceLanguage",
+    "targetLanguage",
+    "provider",
+    "model",
+    "usage",
+    "safety",
+    "availability"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "lineage": { "$ref": "#/$defs/lineage" },
+    "retention": { "$ref": "#/$defs/retention" },
+    "translatedText": { "type": "string" },
+    "sourceLanguage": { "type": "string", "minLength": 1 },
+    "targetLanguage": { "type": "string", "minLength": 1 },
+    "provider": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "usage": { "$ref": "#/$defs/usage" },
+    "safety": { "$ref": "#/$defs/safety" },
+    "availability": { "$ref": "#/$defs/availability" }
+  },
+  "$defs": {
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootMessageId", "source"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expiresAt", "encrypted", "keyRef", "algorithm"],
+      "properties": {
+        "expiresAt": { "type": "integer", "minimum": 0 },
+        "encrypted": { "const": true },
+        "keyRef": { "type": "string", "minLength": 1 },
+        "algorithm": { "type": "string", "minLength": 1 }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputCharacters", "outputCharacters", "estimatedCostUsd"],
+      "properties": {
+        "inputCharacters": { "type": "integer", "minimum": 0 },
+        "outputCharacters": { "type": "integer", "minimum": 0 },
+        "estimatedCostUsd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "category", "policyVersion"],
+      "properties": {
+        "decision": { "enum": ["allow"] },
+        "category": { "type": "string", "minLength": 1 },
+        "policyVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "alternative"],
+      "properties": {
+        "status": { "enum": ["active", "alternative", "gated", "unavailable", "deferred"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "alternative": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

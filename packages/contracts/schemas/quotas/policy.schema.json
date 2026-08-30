@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/quotas/policy.v1.schema.json",
+  "title": "Quota Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "id": { "type": "string", "minLength": 1 },
+    "scope": { "enum": ["profile", "tenant", "product"] },
+    "scopeId": { "type": "string", "minLength": 1 },
+    "resource": { "type": "string", "minLength": 1 },
+    "version": { "type": "integer", "minimum": 1 },
+    "limitUnits": { "type": "number", "minimum": 0 },
+    "budgetUnits": { "type": "number", "minimum": 0 },
+    "windowMs": { "type": "integer", "minimum": 1 },
+    "rateLimit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxRequests": { "type": "integer", "minimum": 1 },
+        "windowMs": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["maxRequests", "windowMs"]
+    }
+  },
+  "required": [
+    "contractVersion",
+    "id",
+    "scope",
+    "scopeId",
+    "resource",
+    "version",
+    "limitUnits",
+    "budgetUnits",
+    "windowMs",
+    "rateLimit"
+  ]
+}

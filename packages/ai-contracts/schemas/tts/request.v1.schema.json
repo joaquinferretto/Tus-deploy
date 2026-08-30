@@ -1,0 +1,52 @@
+{
+  "$id": "https://golden-boilerplate.dev/ai-contracts/tts/request.v1.schema.json",
+  "title": "Text-to-speech request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "lineage",
+    "retention",
+    "text",
+    "voice",
+    "responseFormat",
+    "model"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "lineage": { "$ref": "#/$defs/lineage" },
+    "retention": { "$ref": "#/$defs/retention" },
+    "text": { "type": "string", "minLength": 1 },
+    "voice": { "type": "string", "minLength": 1 },
+    "responseFormat": { "enum": ["wav", "mp3"] },
+    "model": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootMessageId", "source"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expiresAt", "encrypted", "keyRef", "algorithm"],
+      "properties": {
+        "expiresAt": { "type": "integer", "minimum": 0 },
+        "encrypted": { "const": true },
+        "keyRef": { "type": "string", "minLength": 1 },
+        "algorithm": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

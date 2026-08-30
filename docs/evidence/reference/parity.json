@@ -1,0 +1,37 @@
+{
+  "version": "reference-parity.v1",
+  "valid": true,
+  "liveConformance": false,
+  "cloud": {
+    "kind": "unavailable-deferred",
+    "liveConformance": false,
+    "profiles": [
+      { "profile": "render-native", "valid": true, "errors": [] },
+      { "profile": "aws-terraform", "valid": true, "errors": [] }
+    ],
+    "reason": "Cloud credentials, managed resources, and authorized smoke are unavailable; only local plan fixtures were evaluated"
+  },
+  "clients": {
+    "api": { "status": "pass", "contractVersion": "neutral-reference.v1" },
+    "web": { "status": "pass", "contractVersion": "neutral-reference.v1" },
+    "mobile": { "status": "pass", "contractVersion": "neutral-reference.v1" }
+  },
+  "runtime": {
+    "status": "pass",
+    "contractVersion": "1.0.0",
+    "tenantId": "tenant-a",
+    "correlationId": "corr-runtime-tenant-a",
+    "liveConformance": false
+  },
+  "security": {
+    "clientPolicyBypass": false,
+    "contaminationFindings": 0
+  },
+  "scenarios": {
+    "crossTenant": "pass",
+    "failure": "pass",
+    "retry": "pass",
+    "rollback": "pass"
+  },
+  "disposition": "No live cloud/provider/database/credential/secret/.env access or claim"
+}

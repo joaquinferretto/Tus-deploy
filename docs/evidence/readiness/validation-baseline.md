@@ -14,7 +14,8 @@ reported with its cause and isolated rerun; it is not converted into a pass.
 ## Runner contract
 
 `pnpm test` discovers deterministic suites in sorted order and starts one Node
-test process per file with `--test-concurrency=1`. A file has a default
+22 strip-only test process per file with the repository's JavaScript-to-TypeScript
+specifier loader and `--test-concurrency=1`. A file has a default
 `120000ms` timeout, configurable with `TEST_FILE_TIMEOUT_MS`. A requested file
 may be run directly with:
 
@@ -65,11 +66,11 @@ new file-specific record. Any new signature is `unexplained` until triaged.
 
 | Check | Command | Result | Evidence class |
 |---|---|---|---|
-| Focused baseline tests | `pnpm test -- tests/foundation/p9-validation-baseline.test.mjs` | Exit 0; 7 tests, 7 passed, 0 failed, 0 skipped | `local-deterministic` |
-| Full deterministic runner | `pnpm test` | Exit 0; 379 tests, 379 passed, 0 failed, 0 skipped across 73 files | `local-deterministic` |
+| Focused baseline tests | `pnpm test -- tests/foundation/p9-validation-baseline.test.mjs` | Exit 0; 14 tests, 14 passed, 0 failed, 0 skipped | `local-deterministic` |
+| Full deterministic runner | `pnpm test` | Exit 0; 435 tests, 435 passed, 0 failed, 0 skipped across 73 files | `local-deterministic` |
 | Build | `pnpm build` | Exit 0; Turbo reports 4 successful build tasks across 18 packages in scope | `local-deterministic` |
-| Lint | `pnpm lint` | Exit 1; `apps/web` entered Next.js interactive ESLint configuration because no web ESLint config is present; no lint pass claimed | `environmental` |
-| Contract validation | `pnpm contracts:validate` | Exit 0; validated 90 JSON Schema contracts; Ajv emitted existing unknown-format warnings | `local-deterministic` |
+| Lint | `pnpm lint` | Exit 0; serial Turbo lint completed without interactive configuration or task-discovery errors | `local-deterministic` |
+| Contract validation | `pnpm contracts:validate` | Exit 0; validated 98 JSON Schema contracts; Ajv emitted existing unknown-format warnings | `local-deterministic` |
 | Security | `pnpm run security:scan` | Exit 0; tracked-secret scan completed with no findings | `local-deterministic` |
 | PostgreSQL HTTP smoke | `pnpm test -- tests/integration/tus/postgres-http-smoke.test.mjs` | Deferred unless an authorized `TUS_POSTGRES_URL` and later authenticated harness are supplied | `local-postgresql-http` / `deferred` |
 
@@ -79,8 +80,8 @@ not labeled `local-postgresql-http` success.
 
 ## Rollback boundary
 
-Revert only the validation runner/library, baseline tests, smoke-boundary test,
+Revert only the validation runner/library and Node 22 loader, baseline tests, smoke-boundary test,
 contamination-scope correction, stale contract assertions, archived
 traceability reference correction, and this evidence document. No Prisma
 migration, application behavior, provider activation, or durable data is
-changed by Work Unit 1.1.
+changed by Work Unit PR1.

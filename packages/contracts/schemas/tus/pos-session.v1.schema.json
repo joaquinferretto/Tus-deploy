@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tusservicios.com/contracts/tus/pos-session.v1.schema.json",
+  "title": "TUS POS session",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "sessionId", "tenantId", "deviceId", "actorId", "shiftId", "status", "openedAt"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "deviceId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "shiftId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["open", "closed"] },
+    "openedAt": { "type": "string", "format": "date-time" },
+    "closedAt": { "type": "string", "format": "date-time" }
+  }
+}

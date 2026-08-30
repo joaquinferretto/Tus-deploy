@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/quotas/usage.v1.schema.json",
+  "title": "Quota Usage",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "profile": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "productId": { "type": ["string", "null"] },
+    "resource": { "type": "string", "minLength": 1 },
+    "unit": {
+      "enum": ["requests", "tokens", "audio_seconds", "image_units", "storage_bytes", "custom"]
+    },
+    "windowStart": { "type": "integer" },
+    "windowEnd": { "type": "integer" },
+    "rateWindowStart": { "type": "integer" },
+    "units": { "type": "number", "minimum": 0 },
+    "costUnits": { "type": "number", "minimum": 0 },
+    "reservedUnits": { "type": "number", "minimum": 0 },
+    "reservedCostUnits": { "type": "number", "minimum": 0 },
+    "requestCount": { "type": "integer", "minimum": 0 }
+  },
+  "required": [
+    "contractVersion",
+    "profile",
+    "tenantId",
+    "productId",
+    "resource",
+    "unit",
+    "windowStart",
+    "windowEnd",
+    "rateWindowStart",
+    "units",
+    "costUnits",
+    "reservedUnits",
+    "reservedCostUnits",
+    "requestCount"
+  ]
+}

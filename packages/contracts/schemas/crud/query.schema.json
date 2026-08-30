@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/crud/query.v1.schema.json",
+  "title": "TenantSafeCrudQueryV1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "page": { "type": "integer", "minimum": 1 },
+    "pageSize": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "search": { "type": "string", "maxLength": 256 },
+    "filters": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "operator", "value"],
+        "properties": {
+          "field": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$" },
+          "operator": { "enum": ["eq", "ne", "contains", "startsWith", "in", "gt", "gte", "lt", "lte"] },
+          "value": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "number" },
+              { "type": "boolean" },
+              { "type": "null" },
+              { "type": "array", "items": { "type": ["string", "number", "boolean", "null"] }, "minItems": 1 }
+            ]
+          }
+        }
+      }
+    },
+    "sort": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "direction"],
+        "properties": {
+          "field": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$" },
+          "direction": { "enum": ["asc", "desc"] }
+        }
+      }
+    }
+  }
+}

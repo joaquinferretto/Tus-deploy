@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/auth/account-linking.v1.schema.json",
+  "title": "AccountLinkingV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["accountId", "providerId", "subject", "issuer"],
+  "properties": {
+    "accountId": { "type": "string", "minLength": 1 },
+    "providerId": { "type": "string", "minLength": 1 },
+    "subject": { "type": "string", "minLength": 1 },
+    "issuer": { "type": "string", "pattern": "^https://" }
+  }
+}

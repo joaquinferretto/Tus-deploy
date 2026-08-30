@@ -1,0 +1,21 @@
+{
+  "contractVersion": "1.0.0",
+  "messageId": "message-request-fixture",
+  "messageType": "workflow.request",
+  "workflowId": "workflow-fixture",
+  "runId": "run-fixture",
+  "tenantId": "tenant-fixture",
+  "actorId": "actor-fixture",
+  "correlationId": "correlation-fixture",
+  "idempotencyKey": "idempotency-fixture",
+  "lineage": {
+    "rootMessageId": "message-request-fixture",
+    "source": "api-fixture"
+  },
+  "occurredAt": "2026-01-01T00:00:00.000Z",
+  "payload": {
+    "input": {
+      "assetId": "asset-fixture"
+    }
+  }
+}

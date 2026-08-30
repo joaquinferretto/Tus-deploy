@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tusservicios.com/contracts/tus/pos-operation.v1.schema.json",
+  "title": "TUS POS manual operation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "operationId", "tenantId", "actorId", "deviceId", "shiftId", "idempotencyKey", "schemaVersion", "createdAt", "kind", "context", "amount", "currency"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "operationId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "deviceId": { "type": "string", "minLength": 1 },
+    "shiftId": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "schemaVersion": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "expectedVersion": { "type": "integer", "minimum": 0 },
+    "kind": { "enum": ["manual-sale", "manual-service"] },
+    "context": { "enum": ["product", "service"] },
+    "amount": { "type": "number", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 1 }
+  }
+}

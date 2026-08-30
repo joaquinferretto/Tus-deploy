@@ -1,0 +1,28 @@
+{
+  "name": "@factory/providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/core/index.ts",
+    "./b2": "./src/b2/index.ts",
+    "./postgres": "./src/postgres/index.ts",
+    "./mongo": "./src/mongo/index.ts",
+    "./redis": "./src/redis/index.ts",
+    "./sqs": "./src/sqs/index.ts",
+    "./aws": "./src/aws/index.ts",
+    "./email": "./src/email/index.ts",
+    "./notifications": "./src/notifications/index.ts",
+    "./groq": "./src/groq/index.ts",
+    "./bedrock": "./src/bedrock/index.ts",
+    "./guardrails": "./src/guardrails/index.ts",
+    "./polly": "./src/polly/index.ts",
+    "./rekognition": "./src/rekognition/index.ts",
+    "./textract": "./src/textract/index.ts",
+    "./transcribe": "./src/transcribe/index.ts",
+    "./translate": "./src/translate/index.ts"
+  }
+}

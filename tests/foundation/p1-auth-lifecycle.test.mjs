@@ -50,7 +50,7 @@ test('identity schemas participate in the canonical contract validation command'
     }
   )
 
-  assert.match(output, /Validated 90 JSON Schema contract\(s\)/)
+  assert.match(output, /Validated 98 JSON Schema contract\(s\)/)
 })
 
 test('verified sign-in issues a scoped session and records redacted security metadata', () => {

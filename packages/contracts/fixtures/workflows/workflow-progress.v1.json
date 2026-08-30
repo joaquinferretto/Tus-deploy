@@ -1,0 +1,22 @@
+{
+  "contractVersion": "1.0.0",
+  "messageId": "message-progress-fixture",
+  "messageType": "workflow.progress",
+  "workflowId": "workflow-fixture",
+  "runId": "run-fixture",
+  "tenantId": "tenant-fixture",
+  "actorId": "worker-fixture",
+  "correlationId": "correlation-fixture",
+  "idempotencyKey": "idempotency-fixture-progress",
+  "lineage": {
+    "rootMessageId": "message-request-fixture",
+    "parentMessageId": "message-request-fixture",
+    "source": "python-worker-fixture"
+  },
+  "occurredAt": "2026-01-01T00:00:01.000Z",
+  "payload": {
+    "status": "running",
+    "step": "validate-input",
+    "progress": 50
+  }
+}

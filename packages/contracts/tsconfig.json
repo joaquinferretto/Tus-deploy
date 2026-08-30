@@ -1,0 +1,11 @@
+{
+  "extends": "../typescript-config/node.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "rewriteRelativeImportExtensions": true,
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src/base.ts", "src/index.ts", "src/streams.ts", "src/tus.ts", "src/tus-ui.ts"],
+  "exclude": ["node_modules", "dist"]
+}

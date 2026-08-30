@@ -1,0 +1,31 @@
+{
+  "$id": "https://golden-boilerplate.dev/contracts/payments/payment-event.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Normalized payment event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "eventId",
+    "tenantId",
+    "aggregateType",
+    "aggregateId",
+    "eventType",
+    "paymentId",
+    "externalPaymentId",
+    "status",
+    "createdAt"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "eventId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "aggregateType": { "const": "payment" },
+    "aggregateId": { "type": "string", "minLength": 1 },
+    "eventType": { "type": "string", "minLength": 1 },
+    "paymentId": { "type": "string", "minLength": 1 },
+    "externalPaymentId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["pending", "approved", "rejected", "refunded", "cancelled", "failed"] },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

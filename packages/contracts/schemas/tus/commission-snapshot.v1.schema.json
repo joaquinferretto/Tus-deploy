@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.tusservicios.com/tus/commission-snapshot.v1.schema.json",
+  "title": "TUS immutable commission snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "snapshotId", "tenantId", "commitmentId", "context", "grossAmount", "deductions", "commissionableBase", "rateBps", "ruleVersion", "commissionAmount", "netAmount", "currency", "providerReference", "evidenceId", "ledgerStatus"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "snapshotId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "commitmentId": { "type": "string", "minLength": 1 },
+    "context": { "enum": ["product", "service"] },
+    "grossAmount": { "type": "number", "minimum": 0 },
+    "deductions": { "type": "number", "minimum": 0 },
+    "commissionableBase": { "type": "number", "minimum": 0 },
+    "rateBps": { "type": "integer", "minimum": 0 },
+    "ruleVersion": { "type": "string", "minLength": 1 },
+    "commissionAmount": { "type": "number", "minimum": 0 },
+    "netAmount": { "type": "number", "minimum": 0 },
+    "currency": { "type": "string", "minLength": 1 },
+    "providerReference": { "type": "string", "minLength": 1 },
+    "evidenceId": { "type": "string", "minLength": 1 },
+    "ledgerStatus": { "enum": ["held", "released", "frozen", "compensated"] }
+  }
+}

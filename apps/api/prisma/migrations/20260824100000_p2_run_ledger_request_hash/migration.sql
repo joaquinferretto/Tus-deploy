@@ -1,0 +1,3 @@
+ALTER TABLE "RunLedger" ADD COLUMN "requestHash" TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE "RunLedger" ALTER COLUMN "requestHash" DROP DEFAULT;

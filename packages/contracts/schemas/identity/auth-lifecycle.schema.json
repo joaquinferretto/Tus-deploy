@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/identity/auth-lifecycle.v1.schema.json",
+  "title": "IdentityAuthLifecycleEventV1",
+  "description": "Redacted, tenant-aware security event envelope for the neutral authentication lifecycle.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "kind", "occurredAt", "actorId", "tenantId", "outcome"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "kind": {
+      "enum": [
+        "account.registered",
+        "account.verified",
+        "auth.signed_in",
+        "auth.failed",
+        "credential.password_changed",
+        "credential.disabled",
+        "recovery.requested",
+        "recovery.completed",
+        "session.created"
+      ]
+    },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "actorId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "outcome": { "enum": ["success", "denied", "accepted"] },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "null"]
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/assets/record.v1.schema.json",
+  "title": "AssetRecordV1",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "assetId",
+    "tenantId",
+    "workspaceId",
+    "source",
+    "accessPolicy",
+    "retentionUntil"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "assetId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "workspaceId": { "type": "string", "minLength": 1 },
+    "source": { "const": "b2" },
+    "accessPolicy": {
+      "type": "object",
+      "required": ["tenantId", "workspaceId", "allowedActorIds"],
+      "properties": {
+        "tenantId": { "type": "string", "minLength": 1 },
+        "workspaceId": { "type": "string", "minLength": 1 },
+        "allowedActorIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "retentionUntil": { "type": ["integer", "null"], "minimum": 0 },
+    "status": { "enum": ["active", "deleted"] },
+    "deletedAt": { "type": ["integer", "null"], "minimum": 0 }
+  },
+  "additionalProperties": false
+}

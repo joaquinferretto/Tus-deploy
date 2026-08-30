@@ -5,13 +5,13 @@
   "description": "Neutral, deterministic product factory foundation",
   "scripts": {
     "dev": "turbo run dev --parallel",
-    "build": "turbo run build",
+    "build": "turbo run build --concurrency=1",
     "test": "node scripts/test-runner.mjs",
-    "test:foundation": "node --experimental-strip-types --test tests/foundation/*.test.mjs",
-    "lint": "turbo run lint",
+    "test:foundation": "node --experimental-strip-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test tests/foundation/*.test.mjs",
+    "lint": "turbo run lint --concurrency=1",
     "lint:security": "node scripts/security/scan-secrets.mjs --tracked",
     "security:scan": "node scripts/security/scan-secrets.mjs --tracked",
-    "typecheck": "turbo run typecheck",
+    "typecheck": "turbo run typecheck --concurrency=1",
     "contracts:validate": "node packages/contracts/scripts/validate-schemas.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "clean": "turbo run clean"

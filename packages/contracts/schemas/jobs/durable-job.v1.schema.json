@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/durable-job.v1.schema.json",
+  "title": "DurableJobV1",
+  "description": "Tenant-scoped producer/consumer contract for durable jobs backed by the run ledger.",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "jobId",
+    "tenantId",
+    "runId",
+    "jobType",
+    "status",
+    "attempts",
+    "maxAttempts",
+    "availableAt",
+    "createdAt",
+    "payload"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "jobId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "jobType": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": ["pending", "claimed", "retryable", "succeeded", "dead_letter", "cancelled"]
+    },
+    "attempts": { "type": "integer", "minimum": 0 },
+    "maxAttempts": { "type": "integer", "minimum": 1 },
+    "availableAt": { "type": "string", "format": "date-time" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "claim": {
+      "type": ["object", "null"],
+      "properties": {
+        "workerId": { "type": "string", "minLength": 1 },
+        "until": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "lastError": { "type": ["string", "null"] },
+    "payload": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/ai-governance/data-record.v1.schema.json",
+  "title": "AIDataRecordV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "tenantId", "recordId", "dataType", "purpose", "retentionStatus", "expiresAt", "encryption", "lineage"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "recordId": { "type": "string", "minLength": 1 },
+    "dataType": { "type": "string", "minLength": 1 },
+    "purpose": { "enum": ["ai_improvement", "memory", "trace", "service_delivery"] },
+    "retentionStatus": { "enum": ["retained", "deleted"] },
+    "expiresAt": { "type": "integer", "minimum": 0 },
+    "encryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["encrypted", "algorithm", "keyRef", "ciphertextDigest"],
+      "properties": {
+        "encrypted": { "const": true },
+        "algorithm": { "type": "string", "minLength": 1 },
+        "keyRef": { "type": "string", "minLength": 1 },
+        "ciphertextDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootMessageId", "source", "parentIds"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "parentIds": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/tenancy/organization.v1.schema.json",
+  "title": "OrganizationV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "slug", "defaultWorkspaceId"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "slug": { "type": "string", "minLength": 1 },
+    "defaultWorkspaceId": { "type": "string", "minLength": 1 }
+  }
+}

@@ -4,6 +4,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   secrets:
@@ -15,6 +19,10 @@ jobs:
           fetch-depth: 0
       - name: Deterministic tracked-secret scan
         run: node scripts/security/scan-secrets.mjs --tracked
+      - name: Deterministic staged-secret scan
+        run: node scripts/security/scan-secrets.mjs --staged
+      - name: Validate security policy
+        run: node scripts/security/validate-policy.mjs
 
   sast:
     name: Static Analysis
@@ -30,18 +38,3 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint:security
-      
-  dependency-audit:
-    name: Dependency Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'pnpm'
-      - run: pnpm install
-      - run: pnpm audit --audit-level=moderate

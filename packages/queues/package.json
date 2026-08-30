@@ -1,0 +1,15 @@
+{
+  "name": "@factory/queues",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-neutral durable queue ports and deterministic transports",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node -e \"process.exit(0)\""
+  }
+}

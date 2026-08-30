@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tusservicios.com/contracts/tus/pos-device.v1.schema.json",
+  "title": "TUS POS device",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "deviceId", "tenantId", "label", "fingerprint", "status", "createdAt", "updatedAt"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "deviceId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "label": { "type": "string", "minLength": 1 },
+    "fingerprint": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["active", "revoked"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}

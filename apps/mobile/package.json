@@ -22,6 +22,7 @@
     "@shopify/flash-list": "^2.0.3",
     "@tanstack/react-query": "^5.90.12",
     "@tanstack/react-query-persist-client": "^5.90.12",
+    "@factory/contracts": "workspace:*",
     "axios": "^1.13.2",
     "expo": "~54.0.24",
     "expo-auth-session": "~7.0.9",

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/ai-governance/consent.v1.schema.json",
+  "title": "AIConsentV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "tenantId", "purpose", "granted", "version", "recordedAt"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "purpose": { "enum": ["ai_improvement", "memory", "trace", "service_delivery"] },
+    "granted": { "type": "boolean" },
+    "version": { "type": "string", "minLength": 1 },
+    "recordedAt": { "type": "integer", "minimum": 0 }
+  }
+}

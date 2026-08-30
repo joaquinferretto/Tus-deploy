@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/quotas/rate-limit.v1.schema.json",
+  "title": "Quota Rate Limit",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "resource": { "type": "string", "minLength": 1 },
+    "maxRequests": { "type": "integer", "minimum": 1 },
+    "windowMs": { "type": "integer", "minimum": 1 },
+    "scope": { "enum": ["profile", "tenant", "product"] },
+    "scopeId": { "type": "string", "minLength": 1 }
+  },
+  "required": ["contractVersion", "resource", "maxRequests", "windowMs", "scope", "scopeId"]
+}

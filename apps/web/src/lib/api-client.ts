@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+const API_BASE_URL = process.env['NEXT_PUBLIC_API_URL'] || 'http://localhost:3001'
 
 export class ApiError extends Error {
   constructor(
@@ -17,10 +17,7 @@ interface FetchOptions extends RequestInit {
   timeout?: number
 }
 
-async function fetchWithTimeout(
-  url: string,
-  options: FetchOptions = {}
-): Promise<Response> {
+async function fetchWithTimeout(url: string, options: FetchOptions = {}): Promise<Response> {
   const { timeout = 10000, ...fetchOptions } = options
 
   const controller = new AbortController()
@@ -57,11 +54,7 @@ export async function apiClient<T>(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
-      throw new ApiError(
-        response.status,
-        errorData.message || `HTTP ${response.status}`,
-        errorData
-      )
+      throw new ApiError(response.status, errorData.message || `HTTP ${response.status}`, errorData)
     }
 
     const data = await response.json()
@@ -75,6 +68,8 @@ export async function apiClient<T>(
     if (error instanceof ApiError) {
       throw error
     }
-    throw new Error(`API request failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    throw new Error(
+      `API request failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    )
   }
 }

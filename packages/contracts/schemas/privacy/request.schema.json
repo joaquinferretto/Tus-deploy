@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/privacy/request.v1.schema.json",
+  "title": "PrivacyRequestV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "tenantId", "subjectUserId", "type", "status", "idempotencyKey", "createdAt"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "subjectUserId": { "type": "string", "minLength": 1 },
+    "type": { "enum": ["access", "export", "delete"] },
+    "status": { "enum": ["pending", "completed", "held", "failed"] },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "integer", "minimum": 0 },
+    "completedAt": { "type": ["integer", "null"], "minimum": 0 },
+    "attemptCount": { "type": "integer", "minimum": 0 },
+    "lastError": { "type": ["string", "null"] }
+  }
+}

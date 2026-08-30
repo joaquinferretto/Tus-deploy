@@ -1,0 +1,35 @@
+{
+  "$id": "https://golden-boilerplate.dev/contracts/payments/payment-webhook-receipt.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Signed payment webhook receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "receiptId",
+    "tenantId",
+    "provider",
+    "eventId",
+    "requestId",
+    "externalPaymentId",
+    "signatureDigest",
+    "receivedAt",
+    "status",
+    "reason",
+    "processedAt"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "receiptId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "provider": { "const": "mercado-pago" },
+    "eventId": { "type": "string", "minLength": 1 },
+    "requestId": { "type": "string", "minLength": 1 },
+    "externalPaymentId": { "type": "string", "minLength": 1 },
+    "signatureDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "receivedAt": { "type": "integer", "minimum": 0 },
+    "status": { "enum": ["received", "processed", "rejected", "failed"] },
+    "reason": { "type": ["string", "null"] },
+    "processedAt": { "type": ["integer", "null"], "minimum": 0 }
+  }
+}

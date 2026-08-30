@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/privacy/consent.v1.schema.json",
+  "title": "PrivacyConsentV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenantId", "subjectUserId", "purpose", "version", "granted", "recordedAt"],
+  "properties": {
+    "tenantId": { "type": "string", "minLength": 1 },
+    "subjectUserId": { "type": "string", "minLength": 1 },
+    "purpose": { "enum": ["service_delivery", "support", "security", "analytics", "ai_improvement", "legal"] },
+    "version": { "type": "string", "minLength": 1 },
+    "granted": { "type": "boolean" },
+    "recordedAt": { "type": "integer", "minimum": 0 }
+  }
+}

@@ -1,50 +1,68 @@
 # Native Smoke Evidence
 
-## Scope
+## Scope and boundary
 
-This document records only the Docker-free native API/web smoke. It is not
-production-readiness evidence and it does not close the Docker Compose gate.
+This receipt records the current Docker-free, provider-free local evidence only.
+It is deterministic verification, not production-readiness, browser/device, POS
+pilot, PostgreSQL durability, provider, cloud, compliance, or production evidence.
+The Docker Compose gate is **open/unverified** and is not closed by this receipt.
+The current repository-wide attempt is `pnpm test`: **exit 0; 498 passed, 0
+failed, 0 skipped across 88 isolated suites** on Node 22. This is local
+deterministic evidence only and does not authorize any deferred external gate.
 
-## Execution record
+## Current execution record
 
-| Check | Command / result |
-|---|---|
-| API wrapper | `cd backend && pnpm run dev` — PASS; native process served on port 3001 |
-| Web wrapper | `cd frontend && pnpm run dev` — PASS; native page returned HTTP 200 on port 3000 |
-| API health/readiness | `/health` HTTP 200; `/ready` HTTP 200 |
-| PostgreSQL | `required/ready`; connectivity verified by native readiness; URL omitted |
-| Dependency reports | MongoDB `disabled/ready`; Redis `disabled/ready`; Python worker `disabled/ready`; mobile support `fake/ready`; external providers `disabled/ready` |
-| Secret boundary | PASS; diagnostics report only `database-configured=true`; no URL value or copied `.env` recorded |
-| Required focused tests | `pnpm test -- foundation` — PASS, 29/29; this forwards the `foundation` argument to the same `scripts/test-runner.mjs` that enumerates all foundation tests |
-| Foundation alias comparison | `pnpm test:foundation` — PASS, 29/29; equivalent result and test set to `pnpm test -- foundation` |
-| Full tests | `pnpm test` — PASS, 29/29 |
-| Secret scan | `pnpm security:scan` — BLOCKED by pre-existing secret-like content in `apps/api/backendFiles/FRONTEND_GROQ_MODULES.md`; value not reproduced |
-| Rollback | PASS; deterministic local scenario stops traffic before partial serving, preserves replayable ledger/outbox/DLQ records, restores the last passing version, and records version/reason/health evidence |
+| Check | Command / exact result | Boundary |
+|---|---|---|
+| Full deterministic suite | `pnpm test` — **exit 0; 498 passed, 0 failed, 0 skipped across 88 isolated suites** | `local-deterministic`; provider-free serial runner; verified locally |
+| Focused readiness/activation evidence | `pnpm test -- tests/foundation/p9-activation.test.mjs tests/foundation/p9-tus-runtime-readiness.test.mjs` — **exit 0; 2 suites, 17 passed, 0 failed** | `local-deterministic`; provider-free readiness fixture |
+| Contracts | `pnpm contracts:validate` — **exit 0; 98 JSON Schema contracts validated**; AJV ignored `date-time`, `uri`, and `email` format warnings | `local-deterministic`; schema validation only |
+| Typecheck | `pnpm typecheck` — **exit 0; 8 Turbo tasks successful** | `local-deterministic`; workspace type safety |
+| Build | `pnpm build` — **exit 0; 4 Turbo tasks successful**; mobile has no build script | `local-deterministic`; local compilation only |
+| Lint | `pnpm lint` — **exit 1; 3 tasks successful, 1 task blocked** because `@factory/mobile` lints the generated `dist/_expo` bundle outside its TypeScript project; 6 warnings also remain | `local-deterministic`; static analysis is blocked by generated output, not by this slice |
+| Secret scan | `pnpm security:scan` — **exit 0; no tracked-secret findings** | `local-deterministic`; no credentials or provider calls |
+| Policy | `node scripts/security/validate-policy.mjs` — **exit 0** | `local-deterministic`; policy structure only |
+| Cloud plans | `pnpm exec node scripts/validation/cloud-native/validate-plan.mjs` — **exit 0; Render and AWS profiles valid, plan-only, provisioned=false, cloudCalls=false, liveConformance=false** | `local-deterministic`; synthetic plan shape, no provisioning |
+| PostgreSQL HTTP smoke boundary | `pnpm test -- tests/integration/tus/postgres-http-smoke.test.mjs` — **exit 0; 20 deferred-boundary tests pass; TUS_POSTGRES_URL and DATABASE_URL unavailable** | `local-postgresql-http` boundary is deferred; no authenticated PostgreSQL durability was executed |
+| Render activation | `node scripts/activation/tus-readiness.mjs render-native` — **not-production-ready; unavailable-deferred; deferred; liveConformance=false**; TUS routes/providers/release jobs/fleet jobs disabled | `deferred`; no credentials or external calls |
+| AWS activation | `node scripts/activation/tus-readiness.mjs aws-terraform` — **not-production-ready; unavailable-deferred; deferred; liveConformance=false**; TUS routes/providers/release jobs/fleet jobs disabled | `deferred`; no credentials or external calls |
 
-## Deterministic rollback evidence
+All local rows above are supporting evidence only. A passing local check cannot
+be relabeled `authorized-external` or used to claim production readiness.
 
-The provider-free scenario is executed with:
+## Deferred external evidence
 
-```text
-node --experimental-strip-types --test tests/foundation/p0-native-rollback.test.mjs
-```
+The following boundaries remain unavailable or deferred and keep activation
+fail-closed: PostgreSQL authenticated durability and managed-service recovery;
+Mercado Pago, WhatsApp, AWS, Groq, and other provider smoke; cloud runtime
+conformance; browser and screen-reader conformance; physical-device and POS
+pilot evidence; legal, tax, KYC, and KYB approval; and production operations.
+These boundaries require current, owner-authorized, profile-scoped evidence and
+are not exercised by this local receipt.
 
-Result: **PASS, 3/3 tests**. The scenario records this ordered contract:
+The activation result remains `status: not-production-ready`,
+`disposition: unavailable-deferred`, `evidenceClass: deferred`, and
+`liveConformance: false`. No credentials, provider payloads, cloud resources, or
+production traffic were accessed. Excluded MVP scopes remain disabled.
 
-1. `native-p0.6a-failing` reports `ready=false` for `postgres-unavailable`.
-2. Traffic is stopped before partial serving; zero requests are accepted while
-   the failing version is active.
-3. The committed ledger record, pending transactional outbox record, and eligible
-   DLQ record are preserved and remain replayable; the input records are unchanged.
-4. `native-p0.6a-last-pass` is restored and health is verified as `ready=true`.
-5. Traffic resumes only after health verification.
+## Superseded history
 
-The evidence record includes deployed/restored version, rollback reason, operator,
-timestamp, and both failing/restored health reports. This is local scenario
-evidence, not Compose or production traffic evidence.
+The following statements are historical and **superseded**, not current proof:
 
-## Acceptance status
+- The earlier `29/29` and `466 passed, 1 failed, 0 skipped across 87 isolated
+  suites` snapshots are superseded by the current `498 passed, 0 failed, 0
+  skipped across 88 isolated suites` attempt. The older all-green `464` snapshot
+  is historical and does not override the current receipt.
+- The earlier blocked secret-scan statement is superseded by the current
+  `pnpm security:scan` exit-zero result; no historical scan status overrides it.
 
-Native evidence is accepted only for developer smoke. **Compose gate: open/unverified.**
-Docker Compose acceptance is separate until its own config, startup, and readiness
-commands run successfully.
+## Rollback boundary
+
+Revert this receipt and the PR5 evidence assertions in
+`tests/foundation/p9-activation.test.mjs` and
+`tests/foundation/p0-native-boundaries.test.mjs` to remove only the current
+evidence-refresh documentation checks. Do not change activation gates,
+provider-disabled defaults, durable state, or any PR1–PR4 implementation. If a
+deferred gate later fails, stop intake, drain or quarantine affected work,
+preserve audit/evidence/ledger/outbox/DLQ state, and replay only after new
+authorized evidence.

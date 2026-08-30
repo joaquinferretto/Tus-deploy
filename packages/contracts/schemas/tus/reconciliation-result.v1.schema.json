@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.tusservicios.com/tus/reconciliation-result.v1.schema.json",
+  "title": "TUS reconciliation result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reconciliationId", "tenantId", "commitmentId", "providerReference", "providerAmount", "status", "reason", "deterministic"],
+  "properties": {
+    "reconciliationId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "commitmentId": { "type": "string", "minLength": 1 },
+    "providerReference": { "type": "string", "minLength": 1 },
+    "providerAmount": { "type": "number", "minimum": 0 },
+    "status": { "enum": ["clean", "quarantined"] },
+    "reason": { "enum": ["matched", "provider_amount_mismatch", "provider_reference_mismatch"] },
+    "deterministic": { "type": "boolean" }
+  }
+}

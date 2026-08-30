@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/ai-governance/human-review.v1.schema.json",
+  "title": "AIHumanReviewV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "tenantId", "reviewId", "requesterActorId", "category", "status", "auditId"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "reviewId": { "type": "string", "minLength": 1 },
+    "requesterActorId": { "type": "string", "minLength": 1 },
+    "category": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["pending", "approved", "rejected"] },
+    "auditId": { "type": "string", "minLength": 1 }
+  }
+}

@@ -35,5 +35,5 @@ test('P4.1 AI contracts are included in canonical validation', () => {
     }
   )
 
-  assert.match(output, /Validated 90 JSON Schema contract\(s\)\./)
+  assert.match(output, /Validated 98 JSON Schema contract\(s\)\./)
 })

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/run-event.v1.schema.json",
+  "title": "RunEventV1",
+  "description": "Tenant-scoped event contract emitted by job producers and consumed by durable workers.",
+  "type": "object",
+  "required": ["contractVersion", "eventId", "tenantId", "runId", "type", "createdAt", "payload"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "eventId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": false
+}

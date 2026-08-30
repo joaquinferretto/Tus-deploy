@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/tenancy/authorization.v1.schema.json",
+  "title": "AuthorizationDecisionV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["allowed", "code", "reason"],
+  "properties": {
+    "allowed": { "type": "boolean" },
+    "code": {
+      "enum": [
+        "ALLOWED",
+        "INVALID_TENANT_CONTEXT",
+        "FORBIDDEN",
+        "NOT_FOUND",
+        "CONFLICT",
+        "EXPIRED",
+        "REPLAYED",
+        "INVALID"
+      ]
+    },
+    "reason": { "type": "string", "minLength": 1 }
+  }
+}

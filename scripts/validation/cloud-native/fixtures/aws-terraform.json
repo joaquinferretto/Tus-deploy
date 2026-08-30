@@ -1,0 +1,10 @@
+{
+  "profile": "aws-terraform",
+  "infrastructureAuthority": "terraform",
+  "declaredBoundaries": ["postgresql", "mongodb", "redis", "object-storage", "queues"],
+  "validation": "plan-only",
+  "provisioned": false,
+  "cloudCalls": false,
+  "liveConformance": false,
+  "fallback": "deterministic-fakes-until-authorized"
+}

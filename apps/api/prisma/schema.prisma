@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,12 +7,1218 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Add your models here
-// Example:
-// model User {
-//   id        String   @id @default(uuid())
-//   email     String   @unique
-//   name      String?
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-// }
+model User {
+  id              String       @id @default(uuid())
+  email           String       @unique
+  normalizedEmail String       @unique
+  displayName     String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  accounts        Account[]
+  memberships     Membership[]
+}
+
+model Account {
+  id                 String               @id
+  userId             String
+  tenantId           String
+  roles              String[]             @default([])
+  status             String
+  emailVerifiedAt    DateTime?
+  createdAt          DateTime
+  updatedAt          DateTime
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentials        PasswordCredential[]
+  verificationTokens VerificationToken[]
+  recoveryTokens     RecoveryToken[]
+  devices            Device[]
+  sessions           Session[]
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+}
+
+model PasswordCredential {
+  id           String    @id
+  accountId    String    @unique
+  passwordHash String
+  status       String
+  createdAt    DateTime
+  updatedAt    DateTime
+  lastUsedAt   DateTime?
+  account      Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  id          String    @id
+  accountId   String
+  tokenDigest String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  account     Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model RecoveryToken {
+  id          String    @id
+  accountId   String
+  tokenDigest String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  account     Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+model Device {
+  id          String   @id @default(uuid())
+  accountId   String
+  deviceId    String
+  label       String
+  firstSeenAt DateTime
+  lastSeenAt  DateTime
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, deviceId], name: "accountId_deviceId")
+  @@index([accountId])
+}
+
+model Session {
+  id                String    @id
+  accountId         String
+  tenantId          String
+  deviceId          String
+  accessTokenDigest String    @unique
+  roles             String[]  @default([])
+  permissions       String[]  @default([])
+  createdAt         DateTime
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  account           Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, revokedAt])
+  @@index([tenantId])
+}
+
+// P2.1 relational source-of-truth records. MongoDB, Redis, queues, and
+// object storage may receive projections or delivery state, but never own
+// these records.
+model Organization {
+  id          String       @id
+  name        String
+  slug        String       @default("")
+  defaultWorkspaceId String @default("")
+  createdAt   DateTime
+  updatedAt   DateTime
+  workspaces  Workspace[]
+  memberships Membership[]
+
+  @@index([createdAt])
+}
+
+model Workspace {
+  id             String       @id
+  organizationId String
+  name           String
+  slug           String
+  createdAt      DateTime
+  updatedAt      DateTime
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships    Membership[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model Membership {
+  id             String       @id
+  organizationId String
+  workspaceId    String
+  userId         String
+  role           String
+  roleIds        String[]  @default([])
+  status         String
+  createdAt      DateTime
+  updatedAt      DateTime
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([organizationId, userId])
+  @@index([workspaceId, status])
+}
+
+model TenantRole {
+  id             String   @id
+  tenantId       String
+  name           String
+  permissions    String[]
+  resourceScopes String[]
+  createdAt      DateTime
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Invitation {
+  id          String    @id
+  tenantId    String
+  email       String
+  roleIds     String[]
+  tokenDigest String    @unique
+  status      String
+  expiresAt   DateTime
+  createdAt   DateTime
+  acceptedAt  DateTime?
+
+  @@index([tenantId, status])
+}
+
+model TenantResource {
+  id       String @id
+  tenantId String
+  type     String
+  value    String
+
+  @@index([tenantId, type])
+}
+
+model AuditEvent {
+  id             String    @id
+  tenantId       String
+  actorId        String?
+  correlationId  String
+  eventType      String
+  outcome        String
+  metadata       Json
+  occurredAt     DateTime
+  retentionUntil DateTime?
+
+  @@index([tenantId, occurredAt])
+  @@index([correlationId])
+  @@index([eventType, occurredAt])
+}
+
+model SearchRecord {
+  id            String   @id
+  tenantId      String
+  entityType    String
+  entityId      String
+  searchText    String
+  payload       Json?
+  sourceVersion Int
+  createdAt     DateTime
+  updatedAt     DateTime
+
+  @@unique([tenantId, entityType, entityId])
+  @@index([tenantId, entityType])
+  @@index([updatedAt])
+}
+
+model AggregateSnapshot {
+  id            String   @id
+  tenantId      String
+  aggregateType String
+  aggregateId   String
+  version       Int
+  state         Json
+  createdAt     DateTime
+  updatedAt     DateTime
+
+  @@unique([tenantId, aggregateType, aggregateId])
+  @@index([tenantId, aggregateType, version])
+}
+
+model QuotaAccount {
+  id           String             @id
+  tenantId     String
+  metric       String
+  limit        Int
+  used         Int                @default(0)
+  reserved     Int                @default(0)
+  createdAt    DateTime
+  updatedAt    DateTime
+  reservations QuotaReservation[]
+
+  @@unique([tenantId, metric])
+  @@index([tenantId, updatedAt])
+}
+
+model QuotaReservation {
+  id             String       @id
+  quotaAccountId String
+  idempotencyKey String
+  units          Int
+  status         String
+  expiresAt      DateTime
+  createdAt      DateTime
+  quotaAccount   QuotaAccount @relation(fields: [quotaAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([quotaAccountId, idempotencyKey])
+  @@index([quotaAccountId, status])
+  @@index([expiresAt, status])
+}
+
+model IdempotencyRecord {
+  id          String   @id
+  tenantId    String
+  key         String
+  requestHash String
+  status      String
+  response    Json?
+  createdAt   DateTime
+  expiresAt   DateTime
+
+  @@unique([tenantId, key])
+  @@index([expiresAt])
+}
+
+model OutboxEvent {
+  id            String    @id
+  tenantId      String
+  aggregateType String
+  aggregateId   String
+  eventType     String
+  payload       Json
+  status        String
+  attempts      Int       @default(0)
+  availableAt   DateTime
+  lastError     String?
+  createdAt     DateTime
+  publishedAt   DateTime?
+  claimId       String?
+  claimUntil    DateTime?
+
+  @@index([status, availableAt])
+  @@index([status, availableAt, claimUntil])
+  @@index([tenantId, status, claimUntil])
+  @@index([tenantId, aggregateType, aggregateId])
+  @@index([createdAt])
+}
+
+model RunLedger {
+  id             String   @id
+  tenantId       String
+  idempotencyKey String
+  requestHash    String
+  runType        String
+  status         String
+  input          Json
+  result         Json?
+  error          Json?
+  createdAt      DateTime
+  updatedAt      DateTime
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, updatedAt])
+}
+
+model OwnershipRecord {
+  id              String   @id @default(uuid())
+  dataClass       String   @unique
+  owner           String
+  rebuildStrategy String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// PostgreSQL/PGVector owns retrieval metadata and vectors. B2 lineage remains
+// the rebuild source; this table is never a durable source-document store.
+model RagEmbedding {
+  id                String   @id
+  tenantId          String
+  workspaceId       String
+  sourceId          String
+  chunkId           String
+  chunkIndex        Int
+  embeddingModel    String
+  embeddingVersion  String
+  indexVersion      String
+  vector            Unsupported("vector")
+  sourceChecksum    String
+  sourceUri         String
+  parserVersion     String
+  chunkerVersion    String
+  retentionUntil    DateTime?
+  metadata          Json
+  createdAt         DateTime
+  updatedAt         DateTime
+
+  @@unique([tenantId, sourceId, chunkIndex, embeddingVersion, indexVersion])
+  @@index([tenantId, indexVersion])
+  @@index([tenantId, sourceId])
+}
+
+// P4.3 owns the auditable, versioned AI catalog. Registry APIs must enforce
+// tenant scope before reaching these relational records.
+model PromptDefinition {
+  id          String          @id
+  tenantId    String
+  key         String
+  owner       String
+  description String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  versions    PromptVersion[]
+  rollouts    Rollout[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId, updatedAt])
+}
+
+model PromptVersion {
+  id               String           @id
+  tenantId         String
+  promptId         String
+  version          Int
+  template         String
+  checksum         String
+  status           String
+  createdBy        String
+  approvedBy       String?
+  deprecatedReason String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  prompt            PromptDefinition @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, promptId, version])
+  @@index([tenantId, promptId, status])
+}
+
+model ModelDefinition {
+  id           String              @id
+  tenantId     String
+  key          String
+  provider     String
+  modelName    String
+  owner        String
+  status       String
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  availability ModelAvailability[]
+  rollouts     Rollout[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId, provider, status])
+}
+
+model ModelAvailability {
+  id         String          @id
+  tenantId   String
+  modelId    String
+  status     String
+  reason     String
+  observedAt DateTime
+  model      ModelDefinition @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, modelId])
+  @@index([tenantId, status, observedAt])
+}
+
+model Rollout {
+  id              String           @id
+  tenantId        String
+  promptId        String
+  promptVersion   Int
+  modelId         String
+  percentage      Int
+  state           String
+  createdBy       String
+  rolloutVersion  Int
+  previousRolloutId String?
+  failureReason   String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  prompt          PromptDefinition @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  model           ModelDefinition  @relation(fields: [modelId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, promptId, state])
+  @@index([tenantId, modelId, state])
+}
+
+model Approval {
+  id           String   @id
+  tenantId     String
+  resourceType String
+  resourceId   String
+  requestedBy  String
+  status       String
+  approverId   String?
+  reason       String
+  createdAt    DateTime @default(now())
+  decidedAt    DateTime?
+
+  @@index([tenantId, resourceType, resourceId, status])
+}
+
+model RegistryAudit {
+  id           String   @id
+  tenantId     String
+  actorId      String
+  correlationId String
+  action       String
+  resourceType String
+  resourceId   String
+  version      Int?
+  outcome      String
+  metadata     Json
+  occurredAt   DateTime @default(now())
+
+  @@index([tenantId, occurredAt])
+  @@index([tenantId, resourceType, resourceId, occurredAt])
+  @@index([correlationId])
+}
+
+model TusReadinessEvidence {
+  id            String    @id
+  contractVersion String  @default("1.0.0")
+  tenantId      String
+  capability    String
+  gate          String
+  owner         String
+  scope         String
+  evidenceType  String
+  evidenceRef   String
+  policyVersion String
+  issuedAt      DateTime
+  expiresAt     DateTime?
+  revoked       Boolean   @default(false)
+  source        String
+  profile       String    @default("legacy-unscoped")
+  execution     String    @default("live")
+  evidenceClass String    @default("deferred")
+  liveConformance Boolean  @default(false)
+  createdAt     DateTime
+  updatedAt     DateTime
+
+  @@unique([tenantId, capability, gate, evidenceRef])
+  @@index([tenantId, capability, gate, revoked])
+  @@index([expiresAt])
+}
+
+model TusReadinessDecision {
+  id               String   @id
+  tenantId         String
+  capability       String
+  evaluatedAt      DateTime
+  enabled          Boolean
+  disposition      String
+  failedGates      Json
+  evidenceIds      String[]
+  deterministic    Boolean
+  conflicts        Json?
+  reason           String?
+  evidencePreserved Boolean?
+  auditPreserved   Boolean?
+  actorId          String   @default("legacy")
+  jobId            String?
+  correlationId    String   @default("legacy")
+  profile          String   @default("legacy-unscoped")
+  scope            String   @default("legacy")
+  outcome          String   @default("blocked")
+  createdAt        DateTime
+
+  @@index([tenantId, capability, evaluatedAt])
+  @@index([tenantId, capability, enabled])
+}
+
+// TUS commerce source-of-truth records. Every query and unique key is tenant
+// scoped; projections and provider adapters must not own these aggregates.
+model TusCommitment {
+  id              String   @id
+  contractVersion String
+  commitmentId    String
+  cartId          String
+  tenantId        String
+  merchantId      String
+  context         String
+  amount          Float
+  currency        String
+  status          String
+  lineIds         String[]
+  version         Int      @default(1)
+  createdAt       DateTime
+  updatedAt       DateTime
+
+  @@unique([tenantId, commitmentId])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, cartId])
+}
+
+model TusCommitmentTransition {
+  id            String   @id
+  tenantId      String
+  commitmentId  String
+  fromStatus    String
+  toStatus      String
+  version       Int
+  actorId       String
+  correlationId String
+  reason        String
+  createdAt     DateTime
+
+  @@unique([tenantId, commitmentId, version])
+  @@index([tenantId, commitmentId, createdAt])
+}
+
+model TusCommitmentCompensation {
+  id             String   @id
+  compensationId String
+  tenantId       String
+  commitmentId   String
+  actorId        String
+  correlationId  String
+  amount         Float
+  currency       String
+  reason         String
+  createdAt      DateTime
+
+  @@unique([tenantId, compensationId])
+  @@unique([tenantId, commitmentId])
+  @@index([tenantId, commitmentId, createdAt])
+}
+
+model TusAuditReference {
+  id             String   @id
+  referenceId    String
+  tenantId       String
+  actorId        String
+  correlationId  String
+  commitmentId   String
+  referenceType  String
+  metadata       Json?
+  createdAt      DateTime
+
+  @@unique([tenantId, referenceId])
+  @@index([tenantId, commitmentId, createdAt])
+  @@index([tenantId, correlationId])
+}
+
+model TusMerchant {
+  id                     String   @id
+  tenantId               String   @unique
+  merchantId             String
+  cohort                 String
+  locationId             String
+  timezone               String
+  staffRoles             String[]
+  operatingPolicyVersion String
+  status                 String
+  createdAt              DateTime
+  updatedAt              DateTime
+  listings               TusListing[]
+
+  @@index([tenantId, status])
+}
+
+model TusListing {
+  id                   String       @id
+  contractVersion      String
+  tenantId             String
+  merchantId           String
+  kind                 String
+  name                 String
+  description          String
+  cohort               String
+  locationId           String
+  currency             String
+  price                Float
+  availabilityVersion  Int
+  published            Boolean
+  policyVersion        String
+  stock                Int?
+  durationMinutes      Int?
+  capacity             Int?
+  workingHours         Json
+  createdAt            DateTime
+  updatedAt            DateTime
+  merchant             TusMerchant   @relation(fields: [tenantId], references: [tenantId], onDelete: Cascade)
+
+  @@index([tenantId, published])
+  @@index([tenantId, availabilityVersion])
+  @@index([merchantId, kind])
+}
+
+model TusMarketplaceCommitment {
+  id                   String   @id
+  contractVersion      String
+  commitmentId         String
+  cartId               String
+  tenantId             String
+  merchantId           String
+  listingId            String
+  context              String
+  lineIds              String[]
+  quantity             Int
+  amount               Float
+  currency             String
+  status               String
+  availabilityVersion  Int
+  policyVersion        String
+  slotStart            DateTime?
+  slotEnd              DateTime?
+  createdAt            DateTime
+  updatedAt            DateTime
+
+  @@unique([tenantId, commitmentId])
+  @@index([tenantId, createdAt])
+  @@index([listingId, slotStart, slotEnd])
+  @@index([merchantId, context, status])
+}
+
+model TusMarketplaceAudit {
+  id             String   @id
+  tenantId       String
+  actorId        String
+  correlationId  String
+  action         String
+  resourceType   String
+  resourceId     String
+  outcome        String
+  createdAt      DateTime
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, resourceType, resourceId])
+}
+
+// TUS finance source-of-truth records. Provider state is deliberately separate
+// from commercial state; ledger entries are append-only and corrections link to
+// their originating entry instead of rewriting history.
+model TusPaymentIntent {
+  id                  String   @id
+  contractVersion     String
+  paymentId           String
+  tenantId            String
+  commitmentId        String
+  provider            String
+  providerReference   String?
+  providerStatus      String
+  commercialStatus    String
+  amount              Float
+  currency            String
+  idempotencyKey      String
+  correlationId       String
+  credentialsCollected Boolean
+  source              String
+  createdAt           DateTime
+  updatedAt           DateTime
+
+  @@unique([tenantId, paymentId])
+  @@unique([tenantId, commitmentId])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, providerStatus])
+  @@index([tenantId, commercialStatus])
+}
+
+model TusFinanceIdempotency {
+  id             String   @id
+  tenantId       String
+  idempotencyKey String
+  requestHash    String
+  response       Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, updatedAt])
+}
+
+model TusCommissionSnapshot {
+  id                 String   @id
+  contractVersion    String
+  snapshotId         String
+  tenantId           String
+  commitmentId       String
+  context            String
+  grossAmount        Float
+  deductions         Float
+  commissionableBase Float
+  rateBps            Int
+  ruleVersion        String
+  commissionAmount   Float
+  netAmount          Float
+  currency           String
+  providerReference  String
+  evidenceId         String
+  ledgerStatus       String
+  createdAt          DateTime
+
+  @@unique([tenantId, snapshotId])
+  @@unique([tenantId, commitmentId])
+  @@index([tenantId, ruleVersion])
+}
+
+model TusLedgerEntry {
+  id            String   @id
+  entryId       String
+  tenantId      String
+  commitmentId  String
+  entryType     String
+  amount        Float
+  currency      String
+  linkedEntryId String?
+  reason        String
+  immutable     Boolean  @default(true)
+  createdAt     DateTime
+
+  @@unique([tenantId, entryId])
+  @@index([tenantId, commitmentId, createdAt])
+  @@index([tenantId, linkedEntryId])
+}
+
+model TusFinancialEvidence {
+  id            String   @id
+  contractVersion String
+  evidenceId    String
+  tenantId      String
+  commitmentId  String
+  actorId       String
+  correlationId String
+  kind          String
+  occurredAt    DateTime
+  createdAt     DateTime
+
+  @@unique([tenantId, evidenceId])
+  @@index([tenantId, commitmentId, kind])
+}
+
+model TusFinancialConfirmation {
+  id             String   @id
+  confirmationId String
+  tenantId       String
+  commitmentId   String
+  actorId        String
+  correlationId  String
+  confirmedAt    DateTime
+  createdAt      DateTime
+
+  @@unique([tenantId, confirmationId])
+  @@unique([tenantId, commitmentId])
+  @@index([tenantId, commitmentId, confirmedAt])
+}
+
+model TusFinancialFreeze {
+  id            String   @id
+  freezeId      String
+  tenantId      String
+  commitmentId  String
+  reason        String
+  actorId       String
+  correlationId String
+  active        Boolean  @default(true)
+  createdAt     DateTime
+
+  @@unique([tenantId, freezeId])
+  @@unique([tenantId, commitmentId])
+  @@index([tenantId, reason, active])
+}
+
+model TusReconciliationRecord {
+  id               String   @id
+  reconciliationId String
+  tenantId         String
+  commitmentId     String
+  providerReference String
+  providerAmount   Float
+  evidenceId       String
+  actorId          String
+  correlationId    String
+  status           String
+  reason           String
+  deterministic    Boolean
+  createdAt        DateTime
+
+  @@unique([tenantId, reconciliationId])
+  @@unique([tenantId, commitmentId])
+  @@index([tenantId, status, createdAt])
+}
+
+// Delivery and POS are operational source-of-truth aggregates. They never
+// mutate product/service commitments or claim payment settlement locally.
+model TusDeliveryZone {
+  id          String   @id
+  tenantId    String
+  zoneId      String
+  name        String
+  postalCodes String[]
+  active      Boolean
+  createdAt   DateTime
+  updatedAt   DateTime
+
+  @@unique([tenantId, zoneId])
+  @@index([tenantId, active])
+}
+
+model TusDeliveryShift {
+  id         String   @id
+  tenantId   String
+  shiftId    String
+  zoneId     String
+  startsAt   DateTime
+  endsAt     DateTime
+  operatorIds String[]
+  status     String
+  createdAt  DateTime
+  updatedAt  DateTime
+
+  @@unique([tenantId, shiftId])
+  @@index([tenantId, zoneId, status])
+}
+
+model TusDeliveryTask {
+  id              String   @id
+  tenantId        String
+  taskId          String
+  commitmentId    String
+  merchantId      String
+  context         String
+  zoneId           String
+  shiftId          String
+  operatorId      String?
+  status          String
+  version         Int
+  proof           Json?
+  incident        Json?
+  settlementClaim String
+  createdAt       DateTime
+  updatedAt       DateTime
+
+  @@unique([tenantId, taskId])
+  @@index([tenantId, commitmentId])
+  @@index([tenantId, shiftId, status])
+}
+
+model TusDeliveryProof {
+  id             String   @id
+  tenantId       String
+  proofId        String
+  taskId         String
+  commitmentId   String
+  recipientName  String
+  capturedAt     DateTime
+  evidenceSource String
+  createdAt      DateTime
+
+  @@unique([tenantId, proofId])
+  @@index([tenantId, taskId])
+}
+
+model TusDeliveryIncident {
+  id         String   @id
+  tenantId   String
+  incidentId String
+  taskId     String
+  reason     String
+  status     String
+  createdAt  DateTime
+
+  @@unique([tenantId, incidentId])
+  @@index([tenantId, taskId, status])
+}
+
+model TusDeliveryAudit {
+  id           String   @id
+  tenantId     String
+  auditId      String
+  actorId      String
+  correlationId String
+  action       String
+  resourceType String
+  resourceId   String
+  outcome      String
+  createdAt    DateTime
+
+  @@unique([tenantId, auditId])
+  @@index([tenantId, createdAt])
+}
+
+model TusPosOperation {
+  id              String   @id
+  tenantId        String
+  operationId     String
+  idempotencyKey  String
+  schemaVersion   String
+  actorId         String
+  deviceId        String
+  shiftId         String
+  createdAt       DateTime
+  expectedVersion Int?
+  kind            String
+  context         String
+  amount          Float
+  currency        String
+  response        Json?
+
+  @@unique([tenantId, operationId])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, shiftId, createdAt])
+}
+
+model TusPosVersion {
+  id        String   @id
+  tenantId  String
+  shiftId   String
+  version   Int      @default(0)
+  createdAt DateTime
+  updatedAt DateTime
+
+  @@unique([tenantId, shiftId])
+  @@index([tenantId, shiftId, version])
+}
+
+model TusPosReceipt {
+  id             String   @id
+  tenantId       String
+  receiptId      String
+  operationId    String
+  kind           String
+  context        String
+  amount         Float
+  currency       String
+  status         String
+  source         String
+  providerCapture String
+  settlement     String
+  integrityHash  String
+  createdAt      DateTime
+
+  @@unique([tenantId, receiptId])
+  @@index([tenantId, operationId])
+}
+
+model TusPosDevice {
+  id          String   @id
+  tenantId    String
+  deviceId    String
+  label       String
+  fingerprint String
+  status      String
+  createdAt   DateTime
+  updatedAt   DateTime
+
+  @@unique([tenantId, deviceId])
+  @@index([tenantId, status])
+}
+
+model TusPosSession {
+  id        String   @id
+  tenantId  String
+  sessionId String
+  deviceId  String
+  actorId   String
+  shiftId   String
+  status    String
+  openedAt  DateTime
+  closedAt  DateTime?
+
+  @@unique([tenantId, sessionId])
+  @@index([tenantId, deviceId, shiftId, status])
+}
+
+model TusPosConflict {
+  id              String   @id
+  tenantId        String
+  conflictId      String
+  operationId     String
+  reason          String
+  expectedVersion Int?
+  actualVersion   Int?
+  status          String
+  createdAt       DateTime
+
+  @@unique([tenantId, conflictId])
+  @@index([tenantId, operationId, status])
+}
+
+model TusDeliveryOutbox {
+  id          String   @id
+  tenantId    String
+  eventId     String
+  correlationId String  @default("legacy")
+  eventType   String
+  aggregateId String
+  payload     Json
+  status      String
+  attempts    Int
+  createdAt   DateTime
+
+  @@unique([tenantId, eventId])
+  @@index([tenantId, status, createdAt])
+}
+
+model TusPosOutbox {
+  id          String   @id
+  tenantId    String
+  eventId     String
+  eventType   String
+  aggregateId String
+  payload     Json
+  status      String
+  attempts    Int
+  createdAt   DateTime
+
+  @@unique([tenantId, eventId])
+  @@index([tenantId, status, createdAt])
+}
+
+model TusPosAudit {
+  id            String   @id
+  tenantId      String
+  auditId       String
+  actorId       String
+  correlationId String
+  action        String
+  operationId   String
+  outcome       String
+  createdAt     DateTime
+
+  @@unique([tenantId, auditId])
+  @@index([tenantId, operationId, createdAt])
+}
+
+// Support and discovery projections remain tenant-scoped. They preserve the
+// evidence and audit trail when support actions or publication gates are
+// disabled; no model here authorizes settlement or provider activity.
+model TusSupportCase {
+  id           String    @id
+  caseId       String
+  disputeId    String
+  tenantId     String
+  correlationId String   @default("legacy")
+  commitmentId String
+  openedBy     String
+  category     String
+  status       String
+  outcome      String?
+  createdAt    DateTime
+  resolvedAt   DateTime?
+
+  @@unique([tenantId, caseId])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, commitmentId])
+}
+
+model TusSupportEvidence {
+  id          String   @id
+  evidenceId  String
+  caseId      String
+  tenantId    String
+  correlationId String @default("legacy")
+  party       String
+  summary     String
+  submittedBy String
+  createdAt   DateTime
+
+  @@unique([tenantId, evidenceId])
+  @@index([tenantId, caseId, party])
+}
+
+model TusSupportTimeline {
+  id        String   @id
+  entryId   String
+  caseId    String
+  tenantId  String
+  correlationId String @default("legacy")
+  action    String
+  actorId   String
+  createdAt DateTime
+
+  @@unique([tenantId, entryId])
+  @@index([tenantId, caseId, createdAt])
+}
+
+model TusSupportCompensation {
+  id          String   @id
+  entryId     String
+  caseId      String
+  tenantId    String
+  correlationId String @default("legacy")
+  amount      Float
+  currency    String
+  reason      String
+  status      String
+  settlement  String
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, entryId])
+  @@unique([tenantId, caseId])
+  @@index([tenantId, caseId, createdAt])
+}
+
+model TusSupportOutbox {
+  id            String   @id
+  tenantId      String
+  eventId       String
+  correlationId String
+  eventType     String
+  aggregateId   String
+  payload       Json
+  status        String
+  createdAt     DateTime
+
+  @@unique([tenantId, eventId])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, correlationId])
+}
+
+model TusWhatsAppAction {
+  id             String   @id
+  tenantId       String
+  idempotencyKey String
+  requestHash    String
+  status         String
+  response       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, createdAt])
+}
+
+model TusWhatsAppConfirmation {
+  id             String   @id
+  confirmationId String
+  tenantId       String
+  senderId       String
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  items          Json
+  createdAt      DateTime @default(now())
+
+  @@unique([tenantId, confirmationId])
+  @@index([tenantId, senderId, expiresAt])
+}
+
+model TusWhatsAppAudit {
+  id            String   @id
+  tenantId      String
+  action        String
+  outcome       String
+  actorId       String
+  senderId      String
+  correlationId String
+  createdAt     DateTime
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, correlationId])
+}
+
+model TusOperationsRecord {
+  id              String   @id
+  tenantId        String
+  context         String
+  channel         String
+  geography       String
+  outcome         String
+  amount          Float
+  currency        String
+  ledgerStatus    String
+  whatsappActions Int
+  disputes        Int
+  posOffline      Int
+  createdAt       DateTime
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, context, channel, geography])
+}

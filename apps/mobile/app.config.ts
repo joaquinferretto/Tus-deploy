@@ -1,9 +1,11 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 import { z } from 'zod';
 
+import { resolveMobileRuntimeConfig, type MobileProfile } from './src/core/config/runtime-profile.ts';
+
 const PROFILE_VALUES = ['dev', 'staging', 'prod'] as const;
 const AppProfileSchema = z.enum(PROFILE_VALUES);
-type AppProfile = z.infer<typeof AppProfileSchema>;
+type AppProfile = MobileProfile;
 
 const BUNDLE_IDENTIFIERS: Record<AppProfile, string> = {
   prod: 'com.productfactory.core',
@@ -16,43 +18,31 @@ const PROFILE_DEFAULTS: Record<
   {
     displayName: string;
     scheme: string;
-    apiUrl: string;
     oauthIssuer: string;
     oauthClientId: string;
     sentryEnvironment: string;
-    requireTls: boolean;
-    enableMockAuth: boolean;
   }
 > = {
   dev: {
     displayName: 'Factory Dev',
     scheme: 'factory-dev',
-    apiUrl: 'http://localhost:3000',
     oauthIssuer: 'https://auth-dev.example.invalid',
     oauthClientId: 'factory-mobile-dev',
     sentryEnvironment: 'development',
-    requireTls: false,
-    enableMockAuth: true,
   },
   staging: {
     displayName: 'Factory Staging',
     scheme: 'factory-staging',
-    apiUrl: 'https://api-staging.example.invalid',
     oauthIssuer: 'https://auth-staging.example.invalid',
     oauthClientId: 'factory-mobile-staging',
     sentryEnvironment: 'staging',
-    requireTls: true,
-    enableMockAuth: false,
   },
   prod: {
     displayName: 'Factory',
     scheme: 'factory',
-    apiUrl: '',
     oauthIssuer: '',
     oauthClientId: '',
     sentryEnvironment: 'production',
-    requireTls: true,
-    enableMockAuth: false,
   },
 };
 
@@ -68,6 +58,8 @@ const RuntimeConfigSchema = z
     sentryDsn: z.string().url().or(z.literal('')),
     sentryEnvironment: z.string().min(1),
     requireTls: z.boolean(),
+    storageVersion: z.literal(1),
+    tusContractVersion: z.literal('1.0.0'),
     featureFlags: z.object({
       offlineCache: z.boolean(),
       sentry: z.boolean(),
@@ -118,24 +110,22 @@ const env = {
   EAS_PROJECT_ID: process.env.EAS_PROJECT_ID,
 } as const;
 
-function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
-  if (raw === undefined) return fallback;
-  return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
-}
-
-function readProfile(): AppProfile {
-  return AppProfileSchema.parse(env.APP_PROFILE ?? env.EXPO_PUBLIC_APP_PROFILE ?? 'dev');
-}
-
 function envOrDefault(profile: AppProfile, raw: string | undefined, fallback: string): string {
   if (raw !== undefined && raw.length > 0) return raw;
   return profile === 'prod' ? '' : fallback;
 }
 
 function resolveRuntimeConfig(): RuntimeConfig {
-  const profile = readProfile();
+  const identity = resolveMobileRuntimeConfig({
+    appProfile: env.APP_PROFILE,
+    publicAppProfile: env.EXPO_PUBLIC_APP_PROFILE,
+    publicApiUrl: env.EXPO_PUBLIC_API_URL,
+    publicRequireTls: env.EXPO_PUBLIC_REQUIRE_TLS,
+    publicOfflineCache: env.EXPO_PUBLIC_OFFLINE_CACHE,
+    publicMockAuth: env.EXPO_PUBLIC_ENABLE_MOCK_AUTH,
+  });
+  const profile = AppProfileSchema.parse(identity.profile);
   const defaults = PROFILE_DEFAULTS[profile];
-  const requireTls = parseBoolean(env.EXPO_PUBLIC_REQUIRE_TLS, defaults.requireTls);
   const sentryDsn = env.SENTRY_DSN ?? env.EXPO_PUBLIC_SENTRY_DSN ?? '';
 
   return RuntimeConfigSchema.parse({
@@ -143,17 +133,19 @@ function resolveRuntimeConfig(): RuntimeConfig {
     displayName: defaults.displayName,
     scheme: defaults.scheme,
     bundleIdentifier: BUNDLE_IDENTIFIERS[profile],
-    apiUrl: envOrDefault(profile, env.EXPO_PUBLIC_API_URL, defaults.apiUrl),
+    apiUrl: identity.apiUrl,
     oauthIssuer: envOrDefault(profile, env.EXPO_PUBLIC_OAUTH_ISSUER, defaults.oauthIssuer),
     oauthClientId: envOrDefault(profile, env.EXPO_PUBLIC_OAUTH_CLIENT_ID, defaults.oauthClientId),
     sentryDsn,
     sentryEnvironment: env.SENTRY_ENVIRONMENT ?? defaults.sentryEnvironment,
-    requireTls,
+    requireTls: identity.requireTls,
+    storageVersion: identity.storageVersion,
+    tusContractVersion: identity.tusContractVersion,
     featureFlags: {
-      offlineCache: parseBoolean(env.EXPO_PUBLIC_OFFLINE_CACHE, true),
+      offlineCache: identity.featureFlags.offlineCache,
       sentry: sentryDsn.length > 0,
-      mockAuth: parseBoolean(env.EXPO_PUBLIC_ENABLE_MOCK_AUTH, defaults.enableMockAuth),
-      strictTls: requireTls,
+      mockAuth: identity.featureFlags.mockAuth,
+      strictTls: identity.requireTls,
     },
   });
 }

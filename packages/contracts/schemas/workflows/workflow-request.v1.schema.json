@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/workflow-request.v1.schema.json",
+  "title": "WorkflowRequestV1",
+  "description": "Versioned tenant-scoped request sent to the authoritative workflow runtime.",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "messageId",
+    "messageType",
+    "workflowId",
+    "runId",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "idempotencyKey",
+    "lineage",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "messageId": { "type": "string", "minLength": 1 },
+    "messageType": { "const": "workflow.request" },
+    "workflowId": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "lineage": {
+      "type": "object",
+      "required": ["rootMessageId", "source"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "parentMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "occurredAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "payload": {
+      "type": "object",
+      "required": ["input"],
+      "properties": {
+        "input": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

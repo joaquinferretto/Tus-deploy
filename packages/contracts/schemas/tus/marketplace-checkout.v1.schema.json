@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.tusservicios.com/tus/marketplace-checkout.v1.schema.json",
+  "title": "TUS marketplace checkout v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "cartId", "requestHash", "idempotencyKey", "lines"],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "cartId": { "type": "string", "minLength": 1 },
+    "requestHash": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "lines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["lineId", "listingId", "context", "quantity", "availabilityVersion"],
+        "properties": {
+          "lineId": { "type": "string", "minLength": 1 },
+          "listingId": { "type": "string", "minLength": 1 },
+          "context": { "enum": ["product", "service"] },
+          "quantity": { "type": "integer", "minimum": 1 },
+          "availabilityVersion": { "type": "integer", "minimum": 1 },
+          "price": { "type": "number", "exclusiveMinimum": 0 },
+          "slotStart": { "type": "string", "format": "date-time" },
+          "slotEnd": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

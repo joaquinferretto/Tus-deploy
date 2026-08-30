@@ -1,0 +1,153 @@
+{
+  "$id": "https://golden-boilerplate.dev/ai-contracts/recommendations/response.v1.schema.json",
+  "title": "Recommendation response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "lineage",
+    "retention",
+    "recommendations",
+    "provider",
+    "model",
+    "usage",
+    "safety",
+    "latency",
+    "audit",
+    "availability"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "lineage": { "$ref": "#/$defs/lineage" },
+    "retention": { "$ref": "#/$defs/retention" },
+    "recommendations": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/recommendation" }
+    },
+    "provider": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "usage": { "$ref": "#/$defs/usage" },
+    "safety": { "$ref": "#/$defs/safety" },
+    "latency": { "$ref": "#/$defs/latency" },
+    "audit": { "$ref": "#/$defs/audit" },
+    "availability": { "$ref": "#/$defs/availability" }
+  },
+  "$defs": {
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootMessageId", "source"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expiresAt", "encrypted", "keyRef", "algorithm"],
+      "properties": {
+        "expiresAt": { "type": "integer", "minimum": 0 },
+        "encrypted": { "const": true },
+        "keyRef": { "type": "string", "minLength": 1 },
+        "algorithm": { "type": "string", "minLength": 1 }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidateId", "rank", "score", "reasonCode"],
+      "properties": {
+        "candidateId": { "type": "string", "minLength": 1 },
+        "rank": { "type": "integer", "minimum": 1 },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reasonCode": { "type": "string", "minLength": 1 }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inputCharacters",
+        "candidateCount",
+        "returnedCount",
+        "estimatedCostUsd",
+        "currency"
+      ],
+      "properties": {
+        "inputCharacters": { "type": "integer", "minimum": 0 },
+        "candidateCount": { "type": "integer", "minimum": 0 },
+        "returnedCount": { "type": "integer", "minimum": 0 },
+        "estimatedCostUsd": { "type": "number", "minimum": 0 },
+        "currency": { "const": "USD" }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "category", "reason", "policyVersion"],
+      "properties": {
+        "decision": { "enum": ["allow", "deny", "escalate"] },
+        "category": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "policyVersion": { "type": "string", "minLength": 1 },
+        "reviewId": { "type": ["string", "null"] }
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["latencyMs", "budgetMs", "withinBudget"],
+      "properties": {
+        "latencyMs": { "type": "integer", "minimum": 0 },
+        "budgetMs": { "type": "integer", "minimum": 1 },
+        "withinBudget": { "type": "boolean" }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "auditId",
+        "tenantId",
+        "actorId",
+        "correlationId",
+        "idempotencyKey",
+        "outcome",
+        "category",
+        "policyVersion",
+        "lineage"
+      ],
+      "properties": {
+        "auditId": { "type": "string", "minLength": 1 },
+        "tenantId": { "type": "string", "minLength": 1 },
+        "actorId": { "type": "string", "minLength": 1 },
+        "correlationId": { "type": "string", "minLength": 1 },
+        "idempotencyKey": { "type": "string", "minLength": 1 },
+        "outcome": {
+          "enum": ["allowed", "denied", "escalated", "approved", "rejected"]
+        },
+        "category": { "type": "string", "minLength": 1 },
+        "policyVersion": { "type": "string", "minLength": 1 },
+        "lineage": { "type": "object", "minProperties": 2 }
+      }
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "alternative"],
+      "properties": {
+        "status": { "enum": ["active", "alternative", "gated", "unavailable", "deferred"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "alternative": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

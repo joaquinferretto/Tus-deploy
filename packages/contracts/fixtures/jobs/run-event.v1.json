@@ -1,0 +1,11 @@
+{
+  "contractVersion": "1.0.0",
+  "eventId": "event-fixture",
+  "tenantId": "tenant-fixture",
+  "runId": "run-fixture",
+  "type": "run.queued",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "payload": {
+    "jobId": "job-fixture"
+  }
+}

@@ -4,7 +4,7 @@ let redisClient: Redis
 
 export function getRedisClient(): Redis {
   if (!redisClient) {
-    redisClient = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    redisClient = new Redis(process.env['REDIS_URL'] || 'redis://localhost:6379', {
       maxRetriesPerRequest: 3,
       retryStrategy(times) {
         const delay = Math.min(times * 50, 2000)

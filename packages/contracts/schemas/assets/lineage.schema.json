@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/assets/lineage.v1.schema.json",
+  "title": "AssetLineageV1",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "lineageId",
+    "tenantId",
+    "assetId",
+    "parents",
+    "operation",
+    "recordedAt",
+    "invalidatedAt"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "lineageId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "assetId": { "type": "string", "minLength": 1 },
+    "parents": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["assetId", "relationship"],
+        "properties": {
+          "assetId": { "type": "string", "minLength": 1 },
+          "relationship": { "enum": ["source", "reference", "mask", "audio", "template"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "operation": {
+      "type": "object",
+      "required": ["stage", "tool", "performedBy", "jobId"],
+      "properties": {
+        "stage": { "enum": ["ingest", "transform", "generate", "publish"] },
+        "tool": { "type": "string", "minLength": 1 },
+        "performedBy": { "type": "string", "minLength": 1 },
+        "jobId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "recordedAt": { "type": "integer", "minimum": 0 },
+    "invalidatedAt": { "type": ["integer", "null"], "minimum": 0 }
+  },
+  "additionalProperties": false
+}

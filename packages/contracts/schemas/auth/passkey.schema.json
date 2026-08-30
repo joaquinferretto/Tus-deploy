@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/auth/passkey.v1.schema.json",
+  "title": "PasskeyCeremonyV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ceremonyId", "challenge", "rpId", "origin"],
+  "properties": {
+    "ceremonyId": { "type": "string", "minLength": 1 },
+    "challenge": { "type": "string", "minLength": 1 },
+    "rpId": { "type": "string", "minLength": 1 },
+    "origin": { "type": "string", "pattern": "^https://" }
+  }
+}

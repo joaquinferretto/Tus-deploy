@@ -1,0 +1,37 @@
+{
+  "$id": "https://golden-boilerplate.dev/ai-contracts/tools/definition.v1.schema.json",
+  "title": "Permissioned tool definition v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "tenantId",
+    "actorId",
+    "correlationId",
+    "lineage",
+    "name",
+    "permission",
+    "inputSchema"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "lineage": { "$ref": "#/$defs/lineage" },
+    "name": { "type": "string", "minLength": 1 },
+    "permission": { "type": "string", "minLength": 1 },
+    "inputSchema": { "type": "object" }
+  },
+  "$defs": {
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootMessageId", "source"],
+      "properties": {
+        "rootMessageId": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/rag/source.v1.schema.json",
+  "title": "RagSourceV1",
+  "type": "object",
+  "required": [
+    "contractVersion",
+    "sourceId",
+    "source",
+    "tenantId",
+    "workspaceId",
+    "objectKey",
+    "mimeType",
+    "checksum",
+    "authorization",
+    "retentionUntil"
+  ],
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "sourceId": { "type": "string", "minLength": 1 },
+    "source": { "const": "b2" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "workspaceId": { "type": "string", "minLength": 1 },
+    "objectKey": { "type": "string", "pattern": "^[^/]+/.+" },
+    "mimeType": {
+      "enum": ["text/plain", "text/markdown", "text/csv", "application/json"]
+    },
+    "checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "authorization": {
+      "type": "object",
+      "required": ["tenantId", "workspaceId", "actorId"],
+      "properties": {
+        "tenantId": { "type": "string", "minLength": 1 },
+        "workspaceId": { "type": "string", "minLength": 1 },
+        "actorId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "retentionUntil": { "type": ["integer", "null"], "minimum": 0 }
+  },
+  "additionalProperties": false
+}

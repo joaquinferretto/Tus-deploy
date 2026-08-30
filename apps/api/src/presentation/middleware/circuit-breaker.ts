@@ -13,10 +13,10 @@ const defaultOptions: CircuitBreakerOptions = {
   resetTimeout: 30000,
 }
 
-export function createCircuitBreaker<T>(
-  asyncFunction: (...args: any[]) => Promise<T>,
+export function createCircuitBreaker<TArgs extends unknown[], T>(
+  asyncFunction: (...args: TArgs) => Promise<T>,
   options: Partial<CircuitBreakerOptions> = {}
-): CircuitBreaker<any[], T> {
+): CircuitBreaker<TArgs, T> {
   const breaker = new CircuitBreaker(asyncFunction, {
     ...defaultOptions,
     ...options,

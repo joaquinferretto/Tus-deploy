@@ -24,9 +24,9 @@ test('native documentation separates smoke scope from the Docker Compose gate', 
   assert.match(runbook, /ledger[\s\S]*outbox[\s\S]*DLQ/i)
   assert.match(runbook, /native-p0\.6a-failing/)
   assert.match(runbook, /stops traffic before any partial serving/i)
-  assert.match(nativeEvidence, /29\/29/)
-  assert.match(nativeEvidence, /deployed\/restored version/i)
-  assert.match(nativeEvidence, /zero requests/i)
+  assert.match(nativeEvidence, /498 passed, 0 failed, 0 skipped across 88 isolated suites/i)
+  assert.match(nativeEvidence, /superseded[\s\S]*29\/29/i)
+  assert.match(nativeEvidence, /rollback boundary/i)
 })
 
 test('native wrappers have no source or secret copy boundary', () => {

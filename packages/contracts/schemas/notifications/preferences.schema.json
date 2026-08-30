@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/notifications/preferences.v1.schema.json",
+  "title": "Notification preferences",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "contractVersion": { "const": "1.0.0" },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "userId": { "type": ["string", "null"] },
+    "category": { "enum": ["product", "security", "marketing"] },
+    "emailOptIn": { "type": "boolean" },
+    "updatedAt": { "type": "integer" }
+  },
+  "required": ["contractVersion", "tenantId", "userId", "category", "emailOptIn", "updatedAt"]
+}

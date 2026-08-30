@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://golden-boilerplate.dev/contracts/identity/auth-request.v1.schema.json",
+  "title": "IdentityAuthRequestV1",
+  "description": "Neutral edge contract for credential-based authentication requests.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["email", "password"],
+  "properties": {
+    "email": { "type": "string", "format": "email", "maxLength": 320 },
+    "password": { "type": "string", "minLength": 12, "maxLength": 256 },
+    "deviceId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "deviceLabel": { "type": "string", "minLength": 1, "maxLength": 200 }
+  }
+}
