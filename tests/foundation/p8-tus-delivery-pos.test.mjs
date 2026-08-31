@@ -208,7 +208,7 @@ test('WU5 mounts authenticated delivery and POS routes while denying spoofed ten
 test('WU5 persists pending POS commands across client instances and reconciles only after explicit retry', () => {
   const result = runTypeScriptScenario(`
     const { createTusMobileClient } = (await import('./apps/mobile/src/application/tus-client.ts')).default
-    const runtime = { profile: 'dev', apiUrl: 'http://localhost:3001', requireTls: false, storageVersion: 1, tusContractVersion: '1.0.0', featureFlags: { offlineCache: true, mockAuth: true } }
+    const runtime = { profile: 'dev', apiUrl: 'http://localhost:3101', requireTls: false, storageVersion: 1, tusContractVersion: '1.0.0', featureFlags: { offlineCache: true, mockAuth: true } }
     let records = { profile: 'dev', storageVersion: 1, operations: [] }
     let online = false
     const storage = { load: () => records, save: (envelope) => { records = envelope } }

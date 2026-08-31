@@ -7,6 +7,7 @@ import { test } from 'node:test'
 
 const root = join(import.meta.dirname, '..', '..')
 const nativeProfile = await import('../../scripts/dev/native-profile.mjs')
+const { OwnedChild } = await import('../../scripts/test-runner-lib.mjs')
 
 function temporaryRoot(envContents) {
   const directory = mkdtempSync(join(tmpdir(), 'native-profile-'))
@@ -53,4 +54,50 @@ test('native diagnostics redact values and child exit codes propagate', async ()
 
   const result = await nativeProfile.runChild(process.execPath, ['-e', 'process.exit(17)'], { cwd: root })
   assert.equal(result, 17)
+})
+
+test('native child execution is bounded and cleans up a timed-out process', async () => {
+  const startedAt = Date.now()
+  const result = await nativeProfile.runChild(process.execPath, ['-e', 'while (true) {}'], {
+    cwd: root,
+    env: nativeProfile.buildNativeChildEnvironment({ baseEnvironment: process.env }),
+    requestMs: 25,
+    shutdownMs: 25,
+  })
+
+  assert.equal(result, 124)
+  assert.equal(Date.now() - startedAt < 500, true)
+})
+
+test('owned child treats Windows close as termination and escalates only the owned PID', async () => {
+  const signals = []
+  let closeHandler
+  const child = {
+    pid: 43,
+    spawncwd: process.cwd(),
+    spawnargs: ['node', '-e', 'while (true) {}'],
+    exitCode: null,
+    once: (event, callback) => {
+      if (event === 'close') closeHandler = callback
+    },
+    kill: (signal) => {
+      signals.push(signal)
+      if (signal === 'SIGKILL') {
+        child.exitCode = null
+        closeHandler?.(null, signal)
+      }
+      return true
+    },
+  }
+  const owned = new OwnedChild({
+    child,
+    command: 'node',
+    args: ['-e', 'while (true) {}'],
+    cwd: process.cwd(),
+    shutdownMs: 25,
+  })
+
+  await owned.stop()
+
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL'])
 })

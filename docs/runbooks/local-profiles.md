@@ -7,17 +7,30 @@ and not the complete integration profile. From the repository root, run the exac
 source-free wrappers:
 
 ```text
-cd backend && pnpm run dev
-cd frontend && pnpm run dev
+node scripts/dev/native-profile.mjs api
+node scripts/dev/native-profile.mjs web
 ```
+
+The canonical local API port is `3101`. The API wrapper sets `API_PORT=3101`
+when it is not already provided; an explicit `API_PORT` remains authoritative.
+The wrappers target `apps/api` and `apps/web`. The web wrapper points to
+`http://localhost:3101` and the web app remains on Next's default port `3000`
+unless `PORT` is explicitly supplied.
 
 The wrapper resolves the repository-root `.env` by explicit path and consumes only
 the `DATABASE_URL` key. The root file is authoritative; ambient process values do
 not override it. The value is never logged or copied into either wrapper. Any
-database operation also requires the target identity, owner, disposable
-non-production proof described in the TUS environment inventory. PostgreSQL is
-required for API readiness; a missing, unsafe, or unreachable database leaves
-`/ready` unavailable without a connection or write.
+database operation is profile-gated: local runs require the existing
+`FACTORY_PROFILE=local` and/or `NODE_ENV=development|test` values, while Render/AWS
+production runs use `NODE_ENV=production` and a deployment profile and are refused
+by the seed safety gate. PostgreSQL is required for API readiness; a missing,
+unsafe, or unreachable database leaves `/ready` unavailable without a connection
+or write.
+
+The seed is never implicit. Run `node scripts/postgres-seed.mjs seed` only after
+confirming the root profile is local or test. If the profile does not prove a
+non-production target, the command fails closed with one remediation line; no
+additional `TUS_TEST_*` metadata or alternate database URL is required or read.
 
 Native dependency states are reported independently:
 

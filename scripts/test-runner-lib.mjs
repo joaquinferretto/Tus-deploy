@@ -14,29 +14,20 @@ export const TEST_DIRECTORIES = Object.freeze([
 
 export const DEFAULT_TEST_TIMEOUT_MS = 120_000
 export const POSTGRES_SMOKE_TIMEOUT_MS = 120_000
+export const POSTGRES_STARTUP_ATTEMPT_TIMEOUT_MS = 60_000
+export const POSTGRES_STARTUP_RETRY_COUNT = 1
 export const MAX_CHILD_DEADLINE_MS = 120_000
-export const SAFE_TARGET_PROOF_KEYS = Object.freeze([
-  'TUS_TEST_TARGET_IDENTITY',
-  'TUS_TEST_TARGET_ID',
-  'TUS_TEST_TARGET_OWNER',
-  'TUS_TEST_TARGET_DISPOSABLE',
-  'TUS_TEST_TARGET_ENV',
-  'TUS_TEST_TARGET_NON_PRODUCTION',
-])
-export const APPROVED_POSTGRES_ENV_VARS = Object.freeze([
-  'TUS_POSTGRES_URL',
-  'DATABASE_URL',
-  'TUS_POSTGRES_DISPOSABLE',
-  'TUS_POSTGRES_TARGET_ID',
-  'TUS_POSTGRES_PROFILE',
-])
+const MIN_CHILD_TERMINATION_WAIT_MS = 100
+export const APPROVED_POSTGRES_ENV_VARS = Object.freeze(['DATABASE_URL'])
+export const POSTGRES_SEED_INTENT = 'seed'
+export const POSTGRES_SEED_CONFIRMATION_FLAG = '--confirm-development-target'
 
 const execFileAsync = promisify(execFile)
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const API_ROOT = join(REPO_ROOT, 'apps', 'api')
 const API_TSX_CLI = join(API_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
 const POSTGRES_SMOKE_TEST = 'tests/integration/tus/postgres-http-smoke.test.mjs'
-const POSTGRES_RERUN_COMMAND = `TUS_POSTGRES_URL=<authorized-disposable-postgres-url> TUS_POSTGRES_DISPOSABLE=1 TUS_POSTGRES_TARGET_ID=<unique-disposable-target-id> TUS_POSTGRES_PROFILE=<local-disposable|test-disposable> pnpm test -- ${POSTGRES_SMOKE_TEST}`
+const POSTGRES_RERUN_COMMAND = `FACTORY_PROFILE=local NODE_ENV=development pnpm test -- ${POSTGRES_SMOKE_TEST} (uses repository-root .env DATABASE_URL)`
 const SAFE_CHILD_ENV_VARS = Object.freeze([
   'PATH',
   'Path',
@@ -51,7 +42,6 @@ const SAFE_CHILD_ENV_VARS = Object.freeze([
   'LOCALAPPDATA',
 ])
 const SAFE_CHILD_EXTRA_ENV_VARS = Object.freeze(['API_PORT', 'NODE_ENV', 'NATIVE_PROFILE'])
-const DISPOSABLE_PROFILES = Object.freeze(['local-disposable', 'test-disposable'])
 const SETTLEMENT_GATES = Object.freeze([
   'legal',
   'kyc',
@@ -88,8 +78,6 @@ export const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
   TusPosVersion: ['tenantId', 'shiftId', 'version'],
 })
 
-const SAFE_TARGET_ENVIRONMENTS = Object.freeze(['local', 'test'])
-
 /**
  * A child process wrapper that can only stop the exact process it launched.
  * It deliberately keeps no name-based or process-tree kill capability.
@@ -108,15 +96,18 @@ export class OwnedChild {
 
   async verify() {
     if (!Number.isInteger(this.pid) || this.pid <= 0 || this.child.pid !== this.pid || this.child.exitCode !== null) return false
+    const observedCwd = this.child.spawncwd ?? this.child.cwd
+    if (typeof observedCwd !== 'string' || resolve(observedCwd) !== resolve(this.cwd)) return false
     const observedArgv = Array.isArray(this.child.spawnargs) ? this.child.spawnargs : []
     return observedArgv.length === this.argv.length && observedArgv.every((value, index) => value === this.argv[index])
   }
 
   async stop() {
     if (this.child.exitCode !== null) return true
+    if (!(await this.verify())) throw new Error(`Refusing to stop owned child ${this.pid} with mismatched ownership`)
     const exited = await waitForChildExit(this.child, 'SIGTERM', this.shutdownMs)
     if (exited) return true
-    const forceExited = await waitForChildExit(this.child, undefined, this.shutdownMs)
+    const forceExited = await waitForChildExit(this.child, 'SIGKILL', this.shutdownMs)
     if (!forceExited) throw new Error(`Owned child ${this.pid} did not terminate within the shutdown deadline`)
     return true
   }
@@ -131,14 +122,20 @@ function waitForChildExit(child, signal, timeoutMs) {
   if (child.exitCode !== null) return Promise.resolve(true)
   return new Promise((resolve) => {
     let settled = false
+    const terminationWaitMs = Math.max(timeoutMs, MIN_CHILD_TERMINATION_WAIT_MS)
+    const onExit = () => finish(true)
+    const onClose = () => finish(true)
     const finish = (exited) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      child.removeListener?.('exit', onExit)
+      child.removeListener?.('close', onClose)
       resolve(exited)
     }
-    const timer = setTimeout(() => finish(false), timeoutMs)
-    child.once('exit', () => finish(true))
+    const timer = setTimeout(() => finish(false), terminationWaitMs)
+    child.once('exit', onExit)
+    child.once('close', onClose)
     if (signal === undefined) child.kill()
     else child.kill(signal)
   })
@@ -280,64 +277,216 @@ export function createFailureRecord({ file, output = '', exitCode = 1, timedOut 
   }
 }
 
-export function resolvePostgresTarget(environment = process.env) {
-  return resolvePostgresTargetDetails(environment).target
+export function resolvePostgresTarget({ rootDirectory = REPO_ROOT, environment = process.env } = {}) {
+  return resolvePostgresTargetDetails(rootDirectory, environment).target
 }
 
 /**
  * Resolves the application database target without returning the credential.
- * Root .env is the application source; runner URLs are only accepted through
- * the explicit runner key or its legacy runner-only alias.
+ * Root .env is the application source; ambient and runner URL variables are
+ * never accepted by the canonical target resolver.
  */
-export function resolveSafeTarget({ rootDirectory = REPO_ROOT, environment = process.env } = {}) {
-  const details = resolveSafeTargetDetails({ rootDirectory, environment })
+export function resolveSafeTarget({ rootDirectory = REPO_ROOT, environment = process.env, allowRemoteDevelopment = false } = {}) {
+  const details = resolveSafeTargetDetails({ rootDirectory, environment, allowRemoteDevelopment })
   return details.target
 }
 
-function resolveSafeTargetDetails({ rootDirectory = REPO_ROOT, environment = process.env } = {}) {
-  const rootUrl = readRootDatabaseUrl(rootDirectory)
-  const runnerUrl = nonBlank(environment?.TUS_TEST_RUNNER_POSTGRES_URL) ?? nonBlank(environment?.TUS_POSTGRES_URL)
-  const databaseUrl = runnerUrl ?? rootUrl ?? (rootUrl === undefined && environment !== process.env ? nonBlank(environment?.DATABASE_URL) : undefined)
-  const source = runnerUrl
-    ? 'test-runner-override'
-    : databaseUrl
-      ? 'root-dotenv-DATABASE_URL'
-      : null
-  const proof = {
-    targetId: nonBlank(environment?.TUS_TEST_TARGET_ID) ?? '',
-    owner: nonBlank(environment?.TUS_TEST_TARGET_OWNER) ?? '',
-    disposable: environment?.TUS_TEST_TARGET_DISPOSABLE === 'true',
-    environment: nonBlank(environment?.TUS_TEST_TARGET_ENV) ?? '',
-    nonProduction: environment?.TUS_TEST_TARGET_NON_PRODUCTION === 'true',
+/**
+ * Resolve the database used by the focused seed operation. Ambient database
+ * variables and runner overrides are deliberately excluded from this path.
+ */
+export function resolveRootSafeTarget({ rootDirectory = REPO_ROOT, environment = process.env, allowRemoteDevelopment = false } = {}) {
+  return redactSafeTarget(resolveSafeTarget({ rootDirectory, environment, allowRemoteDevelopment }))
+}
+
+export function parsePostgresSeedArguments(argumentsList = []) {
+  const [intent, ...flags] = argumentsList
+  const invalidArguments = flags.filter((argument) => argument !== POSTGRES_SEED_CONFIRMATION_FLAG)
+  return {
+    intent,
+    confirmed: flags.includes(POSTGRES_SEED_CONFIRMATION_FLAG),
+    invalidArguments,
   }
+}
+
+export async function withBoundedPostgresStartupRetry(
+  startup,
+  {
+    attemptTimeoutMs = POSTGRES_STARTUP_ATTEMPT_TIMEOUT_MS,
+    backoffMs = 250,
+    sleep = (durationMs) => new Promise((resolveSleep) => setTimeout(resolveSleep, durationMs)),
+    onAttemptFailure = async () => undefined,
+  } = {},
+) {
+  if (typeof startup !== 'function') throw new TypeError('PostgreSQL startup operation is required')
+
+  const timeoutMs = boundedPostgresStartupTimeout(attemptTimeoutMs)
+  const diagnostics = []
+  for (let attempt = 1; attempt <= POSTGRES_STARTUP_RETRY_COUNT + 1; attempt += 1) {
+    try {
+      const value = await withBoundedPromise(Promise.resolve().then(() => startup({ attempt, timeoutMs })), timeoutMs)
+      diagnostics.push({ attempt, timeoutMs, status: 'passed' })
+      return { value, diagnostics }
+    } catch {
+      diagnostics.push({ attempt, timeoutMs, status: 'failed' })
+      try {
+        await onAttemptFailure({ attempt, timeoutMs })
+      } catch {
+        // Cleanup diagnostics remain redacted; a cleanup failure never leaks its cause.
+      }
+      if (attempt > POSTGRES_STARTUP_RETRY_COUNT) break
+      await sleep(Math.min(Math.max(Number(backoffMs) || 0, 0), 1_000))
+    }
+  }
+
+  const error = new Error('PostgreSQL startup failed after two bounded attempts; diagnostics redacted')
+  error.name = 'PostgresStartupError'
+  error.attempts = diagnostics.length
+  error.diagnostics = diagnostics
+  throw error
+}
+
+function boundedPostgresStartupTimeout(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, POSTGRES_STARTUP_ATTEMPT_TIMEOUT_MS)
+    : POSTGRES_STARTUP_ATTEMPT_TIMEOUT_MS
+}
+
+function withBoundedPromise(promise, timeoutMs) {
+  let timer
+  const guarded = Promise.resolve(promise)
+  guarded.catch(() => undefined)
+  return new Promise((resolvePromise, rejectPromise) => {
+    timer = setTimeout(() => rejectPromise(new Error('PostgreSQL startup attempt timed out')), timeoutMs)
+    guarded.then(
+      (value) => {
+        clearTimeout(timer)
+        resolvePromise(value)
+      },
+      () => {
+        clearTimeout(timer)
+        rejectPromise(new Error('PostgreSQL startup attempt failed'))
+      },
+    )
+  })
+}
+
+function redactSafeTarget(target) {
+  return {
+    ...target,
+    redactedTarget: target.redactedTarget ?? (target.status === 'ready' ? 'postgresql://<redacted-host>/<redacted-database>' : null),
+    identity: target.identity ? '<redacted>' : null,
+    proof: {
+      ...target.proof,
+      targetId: target.proof.targetId ? '<redacted>' : '',
+      owner: target.proof.owner ? '<redacted>' : '',
+    },
+  }
+}
+
+function resolveSafeTargetDetails({ rootDirectory = REPO_ROOT, environment = process.env, allowRemoteDevelopment = false } = {}) {
+  const rootEnvironment = readRootEnvironment(rootDirectory)
+  const databaseUrl = rootEnvironment.DATABASE_URL
+  const profile = resolveProfile(environment, rootEnvironment)
   const base = {
     status: databaseUrl ? 'invalid' : 'deferred',
-    source,
-    identity: nonBlank(environment?.TUS_TEST_TARGET_IDENTITY) ?? null,
-    proof,
-    reason: databaseUrl ? 'proof-required' : 'no-database-url',
+    source: databaseUrl ? 'root-dotenv-DATABASE_URL' : null,
+    redactedTarget: databaseUrl ? 'postgresql://<redacted-host>/<redacted-database>' : null,
+    profile: profile.name,
+    environment: profile.environment,
+    classification: databaseUrl ? 'unclassified-database-target' : 'database-target-not-configured',
+    proof: {
+      environment: profile.environment,
+      nonProduction: profile.nonProduction,
+    },
+    reason: databaseUrl ? 'non-production-profile-required' : 'no-database-url',
   }
   if (!databaseUrl) return { target: base, postgresUrl: null }
-  if (!parsePostgresUrl(databaseUrl)) return { target: { ...base, reason: 'invalid-postgresql-url' }, postgresUrl: null }
-  if (!base.identity) return { target: { ...base, reason: 'target-identity-required' }, postgresUrl: null }
-  if (!proof.targetId || !/^[a-z0-9][a-z0-9._-]{2,127}$/iu.test(proof.targetId)) return { target: { ...base, reason: 'target-id-required' }, postgresUrl: null }
-  if (!proof.owner) return { target: { ...base, reason: 'target-owner-required' }, postgresUrl: null }
-  if (!proof.disposable) return { target: { ...base, reason: 'disposable-proof-required' }, postgresUrl: null }
-  if (!SAFE_TARGET_ENVIRONMENTS.includes(proof.environment)) return { target: { ...base, reason: 'non-production-environment-required' }, postgresUrl: null }
-  if (!proof.nonProduction) return { target: { ...base, reason: 'non-production-proof-required' }, postgresUrl: null }
-  return { target: { ...base, status: 'ready', reason: 'authorized-disposable-target' }, postgresUrl: databaseUrl }
+  if (profile.production) return { target: { ...base, reason: 'production-target-refused' }, postgresUrl: null }
+  const parsed = parsePostgresUrl(databaseUrl)
+  if (!parsed) return { target: { ...base, reason: 'invalid-postgresql-url' }, postgresUrl: null }
+  if (!profile.nonProduction) return { target: base, postgresUrl: null }
+  if (!isLocalHost(parsed.hostname)) {
+    if (allowRemoteDevelopment && environment?.NODE_ENV === 'development') {
+      return {
+        target: {
+          ...base,
+          status: 'ready',
+          classification: 'remote-development-attested',
+          reason: 'operator-confirmed-remote-development-target',
+          attestation: 'operator-confirmed',
+          proof: {
+            ...base.proof,
+            attestation: 'operator-confirmed',
+            targetSafety: 'operator-attested-development-only',
+          },
+        },
+        postgresUrl: databaseUrl,
+      }
+    }
+    if (isUnsafeHost(parsed.hostname)) return { target: { ...base, classification: 'shared-or-production-target', reason: 'shared-or-production-host' }, postgresUrl: null }
+    return { target: { ...base, classification: 'remote-development-unattested', reason: 'non-production-target-unproven' }, postgresUrl: null }
+  }
+  return {
+    target: {
+      ...base,
+      status: 'ready',
+      classification: 'local-development-target',
+      reason: 'explicit-non-production-profile',
+    },
+    postgresUrl: databaseUrl,
+  }
+}
+
+function readRootEnvironment(rootDirectory) {
+  const envPath = join(rootDirectory, '.env')
+  if (!existsSync(envPath)) return {}
+  const environment = {}
+  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/u)
+    if (!match) continue
+    const value = match[2].replace(/^(['"])(.*)\1$/u, '$2').trim()
+    if (value) environment[match[1]] = value
+  }
+  return environment
+}
+
+function resolveProfile(environment, rootEnvironment) {
+  const values = [environment?.NODE_ENV, environment?.FACTORY_PROFILE, rootEnvironment.NODE_ENV, rootEnvironment.FACTORY_PROFILE]
+    .map(nonBlank)
+    .filter(Boolean)
+  const normalized = values.map((value) => value.toLowerCase())
+  const production = normalized.some((value) => ['production', 'prod', 'render', 'aws'].includes(value))
+  const nonProductionNode = hasProfileValue([environment?.NODE_ENV, rootEnvironment.NODE_ENV], ['development', 'test'])
+  const nonProductionProfile = hasProfileValue([environment?.FACTORY_PROFILE, rootEnvironment.FACTORY_PROFILE], ['local', 'test', 'development'])
+  const profile = nonBlank(environment?.FACTORY_PROFILE) ?? nonBlank(rootEnvironment.FACTORY_PROFILE)
+  return {
+    name: profile ?? null,
+    environment: nonProductionProfile
+      ? 'local'
+      : nonProductionNode
+        ? normalized.includes('development') ? 'development' : 'test'
+        : null,
+    production,
+    nonProduction: !production && (nonProductionNode || nonProductionProfile),
+  }
+}
+
+function hasProfileValue(values, accepted) {
+  return values.map(nonBlank).filter(Boolean).some((value) => accepted.includes(value.toLowerCase()))
 }
 
 function readRootDatabaseUrl(rootDirectory) {
-  const envPath = join(rootDirectory, '.env')
-  if (!existsSync(envPath)) return undefined
-  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-    const match = line.match(/^\s*DATABASE_URL\s*=\s*(.*?)\s*$/u)
-    if (!match) continue
-    const value = match[1].replace(/^(['"])(.*)\1$/u, '$2').trim()
-    if (value) return value
-  }
-  return undefined
+  return readRootEnvironment(rootDirectory).DATABASE_URL
+}
+
+function isLocalHost(hostname) {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+}
+
+function isUnsafeHost(hostname) {
+  return /(?:^|[-_.])(prod|production|shared|pooler|staging|stage)(?:[-_.]|$)/iu.test(hostname)
 }
 
 export function buildPostgresChildEnvironment({ postgresUrl, baseEnvironment = process.env, extra = {} } = {}) {
@@ -364,8 +513,8 @@ function zeroPostgresActions() {
   }
 }
 
-export function resolvePostgresSmokeEvidence({ postgresUrl, environment = process.env } = {}) {
-  const targetDetails = resolvePostgresTargetDetails(withExplicitPostgresUrl(environment, postgresUrl))
+export function resolvePostgresSmokeEvidence({ rootDirectory = REPO_ROOT, environment = process.env } = {}) {
+  const targetDetails = resolvePostgresTargetDetails(rootDirectory, environment)
   if (targetDetails.target.status !== 'ready') {
     return deferredPostgresSmoke(targetDetails.target.reason, 'PostgreSQL target safety', {}, targetDetails.target)
   }
@@ -379,19 +528,317 @@ export function resolvePostgresSmokeEvidence({ postgresUrl, environment = proces
   }
 }
 
-export async function runTusPostgresHttpSmoke({
-  postgresUrl,
+/**
+ * Execute only the explicit hardening fixture seed against the repository-root
+ * DATABASE_URL. The URL is kept inside this function and never appears in the
+ * returned evidence or diagnostics.
+ */
+export async function runTusPostgresSeed({
+  rootDirectory = REPO_ROOT,
   environment = process.env,
+  intent,
+  confirmed = false,
+  runId = 'focused-seed',
+  operations = {},
+} = {}) {
+  if (intent !== POSTGRES_SEED_INTENT) {
+    return buildSeedEvidence({
+      status: 'deferred',
+      reason: 'explicit-seed-intent-required',
+      remediation: 'Run node scripts/postgres-seed.mjs seed after confirming a local or test profile.',
+      target: redactSafeTarget(resolveSafeTarget({ rootDirectory, environment })),
+      sideEffects: zeroSeedActions(),
+      connectionAttempts: [],
+      seedRuns: 0,
+      cleanupState: 'not-started',
+    })
+  }
+
+  const target = resolveRootSafeTarget({ rootDirectory, environment, allowRemoteDevelopment: confirmed })
+  const safetyReasons = []
+  if (target.status !== 'ready') safetyReasons.push(target.reason)
+  if (safetyReasons.length > 0) {
+    return buildSeedEvidence({
+      status: 'deferred',
+      reason: safetyReasons[0],
+      remediation: target.reason === 'non-production-profile-required'
+        ? 'Set NODE_ENV=development or FACTORY_PROFILE=local/test and rerun the explicit seed command.'
+        : undefined,
+      safetyReasons,
+      target,
+      sideEffects: zeroSeedActions(),
+      connectionAttempts: [],
+      seedRuns: 0,
+      cleanupState: 'not-started',
+    })
+  }
+
+  if (environment?.NODE_ENV !== 'development') {
+    return buildSeedEvidence({
+      status: 'deferred',
+      reason: 'development-environment-required',
+      remediation: 'Set NODE_ENV=development and rerun the explicit seed command.',
+      target,
+      sideEffects: zeroSeedActions(),
+      connectionAttempts: [],
+      seedRuns: 0,
+      cleanupState: 'not-started',
+    })
+  }
+
+  if (!confirmed) {
+    return buildSeedEvidence({
+      status: 'deferred',
+      reason: 'explicit-development-confirmation-required',
+      remediation: `Run NODE_ENV=development node scripts/postgres-seed.mjs seed ${POSTGRES_SEED_CONFIRMATION_FLAG}.`,
+      target,
+      sideEffects: zeroSeedActions(),
+      connectionAttempts: [],
+      seedRuns: 0,
+      cleanupState: 'not-started',
+    })
+  }
+
+  const postgresUrl = readRootDatabaseUrl(rootDirectory)
+  const actions = zeroSeedActions()
+  let pool
+  let connectionAttempts = []
+  let seedRuns = 0
+  let finalEvidence
+  const runtimeOperations = {
+    connectPool: connectRootSeedPool,
+    isMigrationRequired: isRootSeedMigrationRequired,
+    deployMigrations: deployRootAdditiveSeedMigration,
+    seedFixture: seedRootFixture,
+    verifyFixture: verifyRootFixture,
+    closePool: closeRootSeedPool,
+    ...operations,
+  }
+
+  try {
+    const connection = await withBoundedPostgresStartupRetry(
+      ({ attempt, timeoutMs }) => {
+        actions.connections += 1
+        return runtimeOperations.connectPool(postgresUrl, { attempt, timeoutMs })
+      },
+      {
+        onAttemptFailure: async () => {
+          if (pool) {
+            await runtimeOperations.closePool(pool)
+            pool = undefined
+          }
+        },
+      },
+    )
+    connectionAttempts = connection.diagnostics
+    pool = instrumentSeedPool(connection.value, actions)
+
+    if (await runtimeOperations.isMigrationRequired(pool)) {
+      actions.migrations += 1
+      await runtimeOperations.deployMigrations(pool, POSTGRES_STARTUP_ATTEMPT_TIMEOUT_MS)
+    }
+
+    const { buildTusHardeningFixture } = await import('../apps/api/prisma/seed.ts')
+    const fixture = buildTusHardeningFixture(runId)
+    actions.fixtures = 1
+
+    await runtimeOperations.seedFixture(pool, target, fixture)
+    seedRuns += 1
+    actions.seedInvocations += 1
+    actions.writes += 1
+    const firstRun = await runtimeOperations.verifyFixture(pool, fixture)
+
+    await runtimeOperations.seedFixture(pool, target, fixture)
+    seedRuns += 1
+    actions.seedInvocations += 1
+    actions.writes += 1
+    const secondRun = await runtimeOperations.verifyFixture(pool, fixture)
+    const duplicateFixtures = Math.max(0, secondRun.total - secondRun.distinctIdentity)
+    if (!firstRun.stableIdentityMatches || !secondRun.stableIdentityMatches || duplicateFixtures !== 0) {
+      throw new Error('PostgreSQL seed verification failed; redacted fixture identity mismatch')
+    }
+
+    finalEvidence = buildSeedEvidence({
+      status: 'passed',
+      reason: 'Idempotent hardening fixture seed and aggregate verification passed',
+      target,
+      sideEffects: actions,
+      connectionAttempts,
+      seedRuns,
+      verification: { firstRun, secondRun, duplicateFixtures },
+    })
+  } catch (error) {
+    finalEvidence = buildSeedEvidence({
+      status: 'deferred',
+      reason: error?.name === 'PostgresStartupError'
+        ? 'PostgreSQL startup failed after one bounded retry; diagnostics redacted'
+        : 'PostgreSQL seed could not complete safely; diagnostics redacted',
+      target,
+      sideEffects: actions,
+      connectionAttempts: error?.diagnostics ?? connectionAttempts,
+      seedRuns,
+      failure: { classification: error?.name === 'PostgresStartupError' ? 'startup-failure' : 'seed-failure', redacted: true },
+    })
+  } finally {
+    if (pool) {
+      try {
+        await runtimeOperations.closePool(pool)
+      } catch {
+        if (finalEvidence) {
+          finalEvidence.status = 'failed'
+          finalEvidence.cleanupState = 'pool-close-failed'
+        }
+      }
+    }
+    if (finalEvidence?.cleanupState === 'pending') finalEvidence.cleanupState = pool ? 'closed' : 'not-started'
+  }
+
+  return finalEvidence
+}
+
+function zeroSeedActions() {
+  return {
+    connections: 0,
+    migrations: 0,
+    queries: 0,
+    fixtures: 0,
+    seedInvocations: 0,
+    writes: 0,
+    deletes: 0,
+    providerCalls: 0,
+  }
+}
+
+function buildSeedEvidence({
+  status,
+  reason,
+  target,
+  sideEffects,
+  connectionAttempts,
+  seedRuns,
+  safetyReasons,
+  remediation,
+  verification,
+  failure,
+  cleanupState = 'pending',
+}) {
+  return {
+    status,
+    evidenceClass: 'real-postgres',
+    liveConformance: status === 'passed',
+    reason,
+    target,
+    ...(safetyReasons ? { safetyReasons } : {}),
+    ...(remediation ? { remediation } : {}),
+    connectionAttempts,
+    seedRuns,
+    ...(verification ? { verification } : {}),
+    ...(failure ? { failure } : {}),
+    sideEffects,
+    cleanupState,
+  }
+}
+
+function instrumentSeedPool(pool, actions) {
+  return new Proxy(pool, {
+    get(target, property, receiver) {
+      if (property !== 'query') return Reflect.get(target, property, receiver)
+      return (...args) => {
+        actions.queries += 1
+        return target.query(...args)
+      }
+    },
+  })
+}
+
+async function connectRootSeedPool(postgresUrl, { timeoutMs }) {
+  let pool
+  try {
+    const requireFromApi = createRequire(join(API_ROOT, 'package.json'))
+    const { Pool } = requireFromApi('pg')
+    const driverTimeoutMs = Math.max(1, timeoutMs - 100)
+    pool = new Pool({
+      connectionString: postgresUrl,
+      max: 1,
+      idleTimeoutMillis: 5_000,
+      connectionTimeoutMillis: driverTimeoutMs,
+      statement_timeout: driverTimeoutMs,
+    })
+    await pool.query('SELECT 1')
+    return pool
+  } catch {
+    try {
+      await pool?.end()
+    } catch {
+      // Startup failure remains redacted; the next bounded attempt is still safe.
+    }
+    throw new Error('PostgreSQL seed connection failed; diagnostics redacted')
+  }
+}
+
+async function isRootSeedMigrationRequired(pool) {
+  const tables = await pool.query(
+    'SELECT to_regclass($1) AS fixture_table, to_regclass($2) AS migration_table',
+    ['public."TusHardeningFixture"', 'public."_prisma_migrations"'],
+  )
+  const row = tables.rows[0] ?? {}
+  if (!row.fixture_table || !row.migration_table) return true
+
+  const migration = await pool.query(
+    'SELECT EXISTS (SELECT 1 FROM "_prisma_migrations" WHERE "migration_name" = $1 AND "finished_at" IS NOT NULL) AS completed',
+    ['20260831170000_tus_real_db_runtime_audit'],
+  )
+  return migration.rows[0]?.completed !== true
+}
+
+async function seedRootFixture(pool, target, fixture) {
+  const { seedTusHardeningFixture } = await import('../apps/api/prisma/seed.ts')
+  await seedTusHardeningFixture({
+    fixture: {
+      upsert: async ({ create }) => {
+        await pool.query(
+          'INSERT INTO "TusHardeningFixture" ("id", "tag", "version", "runId", "tenantId", "actorId", "productListingId", "serviceListingId", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CURRENT_TIMESTAMP) ON CONFLICT ("tag", "version", "runId") DO UPDATE SET "tenantId" = EXCLUDED."tenantId", "actorId" = EXCLUDED."actorId", "productListingId" = EXCLUDED."productListingId", "serviceListingId" = EXCLUDED."serviceListingId", "updatedAt" = CURRENT_TIMESTAMP',
+          [create.id, create.tag, create.version, create.runId, create.tenantId, create.actorId, create.productListingId, create.serviceListingId],
+        )
+      },
+    },
+  }, target, fixture)
+}
+
+async function verifyRootFixture(pool, fixture) {
+  const result = await pool.query(
+    'SELECT COUNT(*)::int AS total, COUNT(DISTINCT ("tag", "version", "runId"))::int AS "distinctIdentity", COUNT(*) FILTER (WHERE "id" = $4 AND "tenantId" = $5 AND "actorId" = $6 AND "productListingId" = $7 AND "serviceListingId" = $8)::int AS "matchingIdentity" FROM "TusHardeningFixture" WHERE "tag" = $1 AND "version" = $2 AND "runId" = $3',
+    [fixture.tag, fixture.version, fixture.runId, fixture.id, fixture.tenantId, fixture.actorId, fixture.productListingId, fixture.serviceListingId],
+  )
+  const row = result.rows[0] ?? {}
+  return {
+    total: Number(row.total ?? 0),
+    distinctIdentity: Number(row.distinctIdentity ?? 0),
+    stableIdentityMatches: Number(row.matchingIdentity ?? 0) === 1,
+  }
+}
+
+async function closeRootSeedPool(pool) {
+  if (typeof pool.end === 'function') return pool.end()
+  if (typeof pool.close === 'function') return pool.close()
+  throw new Error('PostgreSQL seed pool has no cleanup method')
+}
+
+export async function runTusPostgresHttpSmoke({
+  rootDirectory = REPO_ROOT,
+  environment = process.env,
+  confirmed = false,
   applyMigrations = false,
   timeoutMs = POSTGRES_SMOKE_TIMEOUT_MS,
   operations = {},
 } = {}) {
-  const targetDetails = resolvePostgresTargetDetails(withExplicitPostgresUrl(environment, postgresUrl))
+  const targetDetails = resolvePostgresTargetDetails(rootDirectory, environment, confirmed)
   const target = targetDetails.target
   if (target.status !== 'ready') return deferredPostgresSmoke(target.reason, 'PostgreSQL target safety', {}, target)
 
   const runtimeOperations = {
     validatePrismaSchema,
+    validateMigrationPreconditions,
     deployPrismaMigrations,
     connectSmokePool,
     validateDatabaseSchema,
@@ -411,13 +858,19 @@ export async function runTusPostgresHttpSmoke({
   try {
     await runtimeOperations.validatePrismaSchema(resolvedPostgresUrl, timeoutMs)
     if (applyMigrations) {
+      actions.connections += 1
+      pool = await runtimeOperations.connectSmokePool(resolvedPostgresUrl)
+      pool = instrumentSmokePool(pool, actions)
+      await runtimeOperations.validateMigrationPreconditions(pool)
       actions.migrations += 1
       await runtimeOperations.deployPrismaMigrations(resolvedPostgresUrl, timeoutMs)
     }
 
-    actions.connections += 1
-    pool = await runtimeOperations.connectSmokePool(resolvedPostgresUrl)
-    pool = instrumentSmokePool(pool, actions)
+    if (!pool) {
+      actions.connections += 1
+      pool = await runtimeOperations.connectSmokePool(resolvedPostgresUrl)
+      pool = instrumentSmokePool(pool, actions)
+    }
     await runtimeOperations.validateDatabaseSchema(pool)
     fixture = runtimeOperations.createSmokeFixture()
     actions.fixtures += 1
@@ -643,6 +1096,45 @@ async function deployPrismaMigrations(postgresUrl, timeoutMs) {
   }
 }
 
+async function deployRootAdditiveSeedMigration(pool, timeoutMs) {
+  await withBoundedPromise(
+    pool.query(`
+      CREATE TABLE IF NOT EXISTS "TusHardeningFixture" (
+        "id" TEXT NOT NULL,
+        "tag" TEXT NOT NULL,
+        "version" TEXT NOT NULL,
+        "runId" TEXT NOT NULL,
+        "tenantId" TEXT NOT NULL,
+        "actorId" TEXT NOT NULL,
+        "productListingId" TEXT NOT NULL,
+        "serviceListingId" TEXT NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL,
+        CONSTRAINT "TusHardeningFixture_pkey" PRIMARY KEY ("id")
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS "TusHardeningFixture_tag_version_runId_key"
+        ON "TusHardeningFixture" ("tag", "version", "runId");
+      CREATE INDEX IF NOT EXISTS "TusHardeningFixture_tenantId_tag_version_idx"
+        ON "TusHardeningFixture" ("tenantId", "tag", "version");
+    `),
+    boundedPostgresStartupTimeout(timeoutMs),
+  )
+}
+
+async function validateMigrationPreconditions(pool) {
+  const checks = [
+    ['POS operation duplicate identity', 'SELECT "tenantId", "operationId" FROM "TusPosOperation" GROUP BY "tenantId", "operationId" HAVING COUNT(*) > 1 LIMIT 1'],
+    ['POS idempotency duplicate identity', 'SELECT "tenantId", "idempotencyKey" FROM "TusPosOperation" GROUP BY "tenantId", "idempotencyKey" HAVING COUNT(*) > 1 LIMIT 1'],
+    ['POS receipt orphan', 'SELECT 1 FROM "TusPosReceipt" receipt WHERE NOT EXISTS (SELECT 1 FROM "TusPosOperation" operation WHERE operation."tenantId" = receipt."tenantId" AND operation."operationId" = receipt."operationId") LIMIT 1'],
+    ['POS session device orphan', 'SELECT 1 FROM "TusPosSession" session WHERE NOT EXISTS (SELECT 1 FROM "TusPosDevice" device WHERE device."tenantId" = session."tenantId" AND device."deviceId" = session."deviceId") LIMIT 1'],
+    ['POS conflict operation orphan', 'SELECT 1 FROM "TusPosConflict" conflict WHERE NOT EXISTS (SELECT 1 FROM "TusPosOperation" operation WHERE operation."tenantId" = conflict."tenantId" AND operation."operationId" = conflict."operationId") LIMIT 1'],
+  ]
+  for (const [boundary, sql] of checks) {
+    const result = await pool.query(sql)
+    if (result.rows.length > 0) throw new SmokeInfrastructureError(`Existing data failed the additive migration preflight: ${boundary}`, 'PostgreSQL migration preflight')
+  }
+}
+
 async function runPrismaCommand(args, postgresUrl, timeoutMs) {
   if (!(args.length === 1 && args[0] === 'validate') && !(args.length === 2 && args[0] === 'migrate' && args[1] === 'deploy')) {
     throw new SmokeInfrastructureError('Unsupported or destructive Prisma command was denied', 'Prisma command policy')
@@ -718,87 +1210,19 @@ function instrumentSmokePool(pool, actions) {
   })
 }
 
-function resolvePostgresTargetDetails(environment = process.env) {
-  const approvedEnvironment = approvedPostgresEnvironment(environment)
-  const rootUrl = environment === process.env ? readRootDatabaseUrl(REPO_ROOT) : undefined
-  const selected = selectPostgresUrl(approvedEnvironment, rootUrl)
-  const profile = nonBlank(approvedEnvironment.TUS_POSTGRES_PROFILE)
-  const targetId = nonBlank(approvedEnvironment.TUS_POSTGRES_TARGET_ID)
+function resolvePostgresTargetDetails(rootDirectory = REPO_ROOT, environment = process.env, allowRemoteDevelopment = false) {
+  const safeTarget = resolveSafeTargetDetails({ rootDirectory, environment, allowRemoteDevelopment })
   const base = {
-    status: 'no-target',
-    source: selected.source,
-    redactedTarget: null,
-    targetId: targetId ?? null,
-    profile: profile ?? null,
-    environment: profile === 'test-disposable' ? 'test' : 'local',
+    ...safeTarget.target,
     runtimeRole: 'validation-runner',
     service: 'tus-postgres-http-smoke',
     providerMode: 'provider-free',
-    databaseMode: 'postgresql-disposable-only',
+    databaseMode: 'postgresql-profile-gated',
     productionSecretStore: 'not-used',
-    reason: 'no-approved-postgresql-target',
     owner: 'runtime owner',
     rerunCommand: POSTGRES_RERUN_COMMAND,
   }
-
-  if (!selected.value) return { target: base, postgresUrl: null }
-
-  const parsed = parsePostgresUrl(selected.value)
-  if (!parsed) {
-    return {
-      target: { ...base, status: 'invalid-target', reason: 'invalid-postgresql-url', source: selected.source },
-      postgresUrl: null,
-    }
-  }
-
-  const redactedTarget = 'postgresql://<redacted-host>/<redacted-database>'
-  const classified = { ...base, status: 'unsafe-target', redactedTarget, source: selected.source }
-  if (approvedEnvironment.TUS_POSTGRES_DISPOSABLE !== '1') {
-    return { target: { ...classified, reason: 'disposable-proof-required' }, postgresUrl: null }
-  }
-  if (!DISPOSABLE_PROFILES.includes(profile)) {
-    return { target: { ...classified, reason: 'non-production-profile-required' }, postgresUrl: null }
-  }
-  if (!targetId || !/^[a-z0-9][a-z0-9._-]{2,127}$/iu.test(targetId) || !/(?:^|[-_.])(local|test|disposable)(?:[-_.]|$)/iu.test(targetId)) {
-    return { target: { ...classified, reason: 'disposable-target-id-required' }, postgresUrl: null }
-  }
-  if (!parsed.tls) return { target: { ...classified, reason: 'tls-required' }, postgresUrl: null }
-  if (/(?:^|[-_.])(prod|production|shared|pooler|staging|stage)(?:[-_.]|$)/iu.test(parsed.hostname)) {
-    return { target: { ...classified, reason: 'shared-or-production-host' }, postgresUrl: null }
-  }
-
-  return {
-    target: {
-      ...classified,
-      status: 'ready',
-      reason: 'authorized-disposable-target',
-    },
-    postgresUrl: selected.value,
-  }
-}
-
-function approvedPostgresEnvironment(environment) {
-  return Object.fromEntries(
-    APPROVED_POSTGRES_ENV_VARS
-      .filter((name) => typeof environment?.[name] === 'string')
-      .map((name) => [name, environment[name]]),
-  )
-}
-
-function withExplicitPostgresUrl(environment, postgresUrl) {
-  if (postgresUrl === undefined) return environment
-  const approved = approvedPostgresEnvironment(environment)
-  approved.TUS_POSTGRES_URL = postgresUrl
-  return approved
-}
-
-function selectPostgresUrl(environment, rootUrl) {
-  for (const name of ['TUS_POSTGRES_URL', 'DATABASE_URL']) {
-    const value = nonBlank(environment[name])
-    if (value) return { source: name, value }
-  }
-  if (rootUrl) return { source: 'DATABASE_URL', value: rootUrl }
-  return { source: null, value: null }
+  return { target: base, postgresUrl: safeTarget.postgresUrl }
 }
 
 function parsePostgresUrl(value) {
@@ -924,7 +1348,7 @@ async function durableCounts(pool, _fixture, tenantId) {
 }
 
 export async function cleanupSmokeFixture(pool, fixture, target) {
-  if (!approvedCleanupTarget(target)) throw new SmokeInfrastructureError('Cleanup requires an approved disposable target', 'PostgreSQL disposable fixture cleanup')
+  if (!approvedCleanupTarget(target)) throw new SmokeInfrastructureError('Cleanup requires an approved non-production target', 'PostgreSQL fixture cleanup')
   try {
     await pool.query('BEGIN')
     await pool.query('DELETE FROM "TusMarketplaceCommitment" WHERE "id" = $1', [fixture.deliveryCommitmentId])
@@ -941,14 +1365,13 @@ export async function cleanupSmokeFixture(pool, fixture, target) {
     await pool.query('COMMIT')
   } catch {
     await pool.query('ROLLBACK').catch(() => undefined)
-    throw new SmokeInfrastructureError('Disposable PostgreSQL fixture cleanup failed; the original smoke classification is preserved', 'PostgreSQL disposable fixture cleanup')
+    throw new SmokeInfrastructureError('PostgreSQL fixture cleanup failed; the original smoke classification is preserved', 'PostgreSQL fixture cleanup')
   }
 }
 
 function approvedCleanupTarget(target) {
   if (target?.status !== 'ready') return false
-  if (target.proof) return target.proof.disposable === true && target.proof.nonProduction === true && SAFE_TARGET_ENVIRONMENTS.includes(target.proof.environment)
-  return DISPOSABLE_PROFILES.includes(target.profile) && typeof target.targetId === 'string' && target.targetId.length > 0
+  return target.proof?.nonProduction === true
 }
 
 async function startSmokeApi(postgresUrl, timeoutMs) {
@@ -973,6 +1396,7 @@ async function startSmokeApi(postgresUrl, timeoutMs) {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
+  child.spawncwd = API_ROOT
   const baseUrl = `http://127.0.0.1:${port}`
   const owned = new OwnedChild({
     child,

@@ -69,11 +69,11 @@ This starts:
 - PostgreSQL at `localhost:5432`
 - MongoDB at `localhost:27017`
 - Redis at `localhost:6379`
-- Backend API at `http://localhost:3001`
+- Backend API at `http://localhost:3101`
 
 ### 4. Start Frontend
 ```bash
-pnpm --filter web dev
+pnpm --filter @factory/web dev
 ```
 
 Frontend will be available at `http://localhost:3000`.
@@ -134,15 +134,15 @@ make clean       # Clean up (removes volumes and node_modules)
 ### Frontend (Vercel)
 1. Push to GitHub
 2. Connect repository to Vercel
-3. Set environment variables: `NEXT_PUBLIC_API_URL`
+3. In Vercel Project Settings, set the production and preview `NEXT_PUBLIC_API_URL` to the deployed API URL. `vercel.json` intentionally carries no URL or secret.
 4. Deploy
 
 ### Backend (Render)
 1. Push to GitHub
 2. Create a new Web Service on Render
-3. Set build command: `pnpm install && pnpm --filter api run build`
-4. Set start command: `pnpm --filter api start`
-5. Add environment variables: `DATABASE_URL`, `MONGODB_URL`, `REDIS_URL`, `CORS_ORIGINS`
+3. Use the checked-in build command: `pnpm install --frozen-lockfile && pnpm --filter @factory/api build`
+4. Use the checked-in pre-deploy migration: `pnpm --filter @factory/api prisma:migrate:deploy`, then start with `pnpm --filter @factory/api start`
+5. Add environment variables: `DATABASE_URL`, `MONGODB_URL` (the `MONGODB_URI` compatibility alias is accepted only by the API adapter), `REDIS_URL`, `CORS_ORIGINS`
 
 ### Database (Railway)
 1. Create PostgreSQL, MongoDB, and Redis services

@@ -15,17 +15,26 @@ export interface IdentitySeedRecord {
 
 export const TUS_HARDENING_FIXTURE_TAG = 'tus-product-hardening'
 export const TUS_HARDENING_FIXTURE_VERSION = '20260830.v1'
+const TUS_SEED_TARGET_ATTESTATION = { OPERATOR_CONFIRMED: 'operator-confirmed' } as const
+const TUS_SEED_TARGET_SAFETY = { DEVELOPMENT_ONLY: 'operator-attested-development-only' } as const
+
+type TusSeedTargetAttestation = (typeof TUS_SEED_TARGET_ATTESTATION)[keyof typeof TUS_SEED_TARGET_ATTESTATION]
+type TusSeedTargetSafety = (typeof TUS_SEED_TARGET_SAFETY)[keyof typeof TUS_SEED_TARGET_SAFETY]
+
+export interface TusHardeningSeedProof {
+  environment: string
+  nonProduction: boolean
+  attestation?: TusSeedTargetAttestation
+  targetSafety?: TusSeedTargetSafety
+}
 
 export interface TusHardeningSeedTarget {
   status: 'ready' | 'deferred' | 'invalid'
-  proof: {
-    disposable: boolean
-    environment: string
-    nonProduction: boolean
-  }
+  proof: TusHardeningSeedProof
 }
 
 export interface TusHardeningFixture {
+  id: string
   tag: typeof TUS_HARDENING_FIXTURE_TAG
   version: typeof TUS_HARDENING_FIXTURE_VERSION
   runId: string
@@ -49,6 +58,7 @@ export function buildTusHardeningFixture(runId: string): TusHardeningFixture {
   const normalizedRunId = runId.trim()
   if (!/^[a-z0-9][a-z0-9-]{2,127}$/u.test(normalizedRunId)) throw new Error('TUS hardening fixture runId must be namespaced and stable')
   return {
+    id: `${TUS_HARDENING_FIXTURE_TAG}:${TUS_HARDENING_FIXTURE_VERSION}:${normalizedRunId}`,
     tag: TUS_HARDENING_FIXTURE_TAG,
     version: TUS_HARDENING_FIXTURE_VERSION,
     runId: normalizedRunId,
@@ -60,8 +70,13 @@ export function buildTusHardeningFixture(runId: string): TusHardeningFixture {
 }
 
 export function assertTusHardeningSeedTarget(target: TusHardeningSeedTarget): void {
-  if (target.status !== 'ready' || !target.proof.disposable || !['local', 'test'].includes(target.proof.environment) || !target.proof.nonProduction) {
-    throw new Error('TUS hardening fixtures require an approved disposable non-production target')
+  const localTarget = ['local', 'test'].includes(target.proof.environment) && target.proof.nonProduction
+  const attestedRemoteTarget = target.proof.environment === 'development'
+    && target.proof.nonProduction
+    && target.proof.attestation === TUS_SEED_TARGET_ATTESTATION.OPERATOR_CONFIRMED
+    && target.proof.targetSafety === TUS_SEED_TARGET_SAFETY.DEVELOPMENT_ONLY
+  if (target.status !== 'ready' || !(localTarget || attestedRemoteTarget)) {
+    throw new Error('TUS hardening fixtures require an approved non-production target')
   }
 }
 

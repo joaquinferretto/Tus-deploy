@@ -700,7 +700,7 @@ test('web fetch transport forwards tenant context without accepting payment cred
     })
 
     assert.equal(response.credentialsCollected, false)
-    assert.equal(calls[0].url, 'http://localhost:3001/tus/v1/whatsapp/handoff')
+    assert.equal(calls[0].url, 'http://localhost:3101/tus/v1/whatsapp/handoff')
     assert.equal(calls[0].options.headers['X-Tenant-Id'], 'tenant-a')
     assert.equal(calls[0].options.headers.Authorization, undefined)
   } finally {

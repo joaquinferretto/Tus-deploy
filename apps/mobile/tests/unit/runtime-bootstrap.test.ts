@@ -7,7 +7,7 @@ import {
 
 describe('mobile runtime startup diagnostics', () => {
   it.each([
-    { profile: 'dev' as const, apiUrl: 'http://localhost:3001', requireTls: false },
+    { profile: 'dev' as const, apiUrl: 'http://localhost:3101', requireTls: false },
     { profile: 'staging' as const, apiUrl: 'https://api-staging.example.invalid', requireTls: true },
   ])('reports a safe, versioned %s runtime identity', (input) => {
     const runtime = resolveMobileRuntimeConfig(input)

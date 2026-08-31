@@ -9,6 +9,12 @@ function read(relativePath) {
   return readFileSync(join(root, relativePath), 'utf8')
 }
 
+function serviceSection(content, serviceName, nextServiceName) {
+  const start = content.indexOf(`name: ${serviceName}`)
+  const end = nextServiceName ? content.indexOf(`name: ${nextServiceName}`, start) : content.length
+  return content.slice(start, end)
+}
+
 test('deployment profiles expose explicit TUS composition flags with safe defaults', () => {
   const renderBlueprint = read('render.yaml')
   const renderTerraform = read('infra/terraform/environments/render/main.tf')
@@ -51,12 +57,33 @@ test('deterministic CI records test, contract, security, policy, and build check
   assert.doesNotMatch(workflow, /AWS_ACCESS_KEY|MERCADOPAGO_ACCESS_TOKEN|WHATSAPP_TOKEN|\.env/)
 })
 
-test('Render web deployment uses the declared native start contract without standalone tracing', () => {
+test('Render web deployment starts the generated standalone server on the platform port', () => {
   const nextConfig = read('apps/web/next.config.js')
+  const webPackage = JSON.parse(read('apps/web/package.json'))
+  const renderBlueprint = read('render.yaml')
+  const deploymentRunbook = read('docs/runbooks/tus-deployment.md')
+  const renderDocs = read('docs/deployment/render.md')
 
-  assert.doesNotMatch(nextConfig, /output:\s*['"]standalone['"]/
-  )
-  assert.match(nextConfig, /typedRoutes:\s*true/)
+  assert.equal(webPackage.scripts.start, 'node .next/standalone/server.js')
+  assert.match(renderBlueprint, /name: factory-web[\s\S]*?startCommand: PORT=\$PORT pnpm --filter @factory\/web start/u)
+  assert.match(nextConfig, /output:\s*['"]standalone['"]/u)
+  assert.match(nextConfig, /typedRoutes:\s*true/u)
+  assert.match(deploymentRunbook, /apps\/web\/\.next\/standalone\/server\.js/u)
+  assert.match(deploymentRunbook, /PORT=\$PORT pnpm --filter @factory\/web start/u)
+  assert.match(renderDocs, /apps\/web\/\.next\/standalone\/server\.js/u)
+  assert.match(renderDocs, /PORT=\$PORT pnpm --filter @factory\/web start/u)
+})
+
+test('standalone correction does not activate the external-blocked worker', () => {
+  const webPackage = JSON.parse(read('apps/web/package.json'))
+  const renderBlueprint = read('render.yaml')
+  const webService = serviceSection(renderBlueprint, 'factory-web', 'factory-workflow-worker')
+  const workerService = serviceSection(renderBlueprint, 'factory-workflow-worker')
+
+  assert.doesNotMatch(webPackage.scripts.start, /next start/u)
+  assert.doesNotMatch(webService, /next start/u)
+  assert.match(workerService, /WORKER_DEPLOYMENT_STATUS[\s\S]*external-blocked-placeholder/u)
+  assert.match(workerService, /startCommand: python -m worker\.main/u)
 })
 
 test('missing TUS evidence disables gated composition and preserves deterministic reporting', async () => {

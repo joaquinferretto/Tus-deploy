@@ -1060,6 +1060,11 @@ model TusPosOutbox {
   payload     Json
   status      String
   attempts    Int
+  availableAt DateTime @default(now())
+  lastError   String?
+  claimId     String?
+  claimUntil  DateTime?
+  publishedAt DateTime?
   createdAt   DateTime
 
   @@unique([tenantId, eventId])
@@ -1080,6 +1085,23 @@ model TusPosAudit {
 
   @@unique([tenantId, auditId])
   @@index([tenantId, operationId, createdAt])
+}
+
+model TusHardeningFixture {
+  id               String   @id
+  tag              String
+  version          String
+  runId            String
+  tenantId         String
+  actorId          String
+  productListingId String
+  serviceListingId String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([tag, version, runId])
+  @@index([tenantId])
+  @@index([tenantId, tag, version])
 }
 
 // Support and discovery projections remain tenant-scoped. They preserve the

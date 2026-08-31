@@ -97,7 +97,7 @@ test('PR7 preserves delivery incidents and conflicts for explicit resolution wit
 test('PR7 keeps offline POS conflicts pending until an explicit retry or discard and survives client reconstruction', () => {
   const result = runTypeScriptScenario(`
     const { createTusMobileClient } = (await import('./apps/mobile/src/application/tus-client.ts')).default
-    const runtime = { profile: 'dev', apiUrl: 'http://localhost:3001', requireTls: false, storageVersion: 1, tusContractVersion: '1.0.0', featureFlags: { offlineCache: true, mockAuth: true } }
+    const runtime = { profile: 'dev', apiUrl: 'http://localhost:3101', requireTls: false, storageVersion: 1, tusContractVersion: '1.0.0', featureFlags: { offlineCache: true, mockAuth: true } }
     let records = { profile: 'dev', storageVersion: 1, operations: [] }
     let online = false
     let serverConflict = true

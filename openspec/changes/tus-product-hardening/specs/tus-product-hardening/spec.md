@@ -8,16 +8,16 @@ Make persistence and evidence reproducible without secrets or unsafe writes. Evi
 
 ### Requirement: Safe database configuration
 
-The system MUST load root `.env` `DATABASE_URL` internally and MUST NOT print, persist, screenshot, or expose it. Before connection, migration, or write, it MUST prove target identity, disposable/test ownership, and non-production status; otherwise it fails closed.
+The system MUST load root `.env` `DATABASE_URL` internally and MUST NOT print, persist, screenshot, or expose it. Before connection, migration, or write, it MUST refuse explicit production profiles and require existing local/test profile intent plus a provable local target; otherwise it fails closed. The system MUST NOT require new metadata variables or alternate database URLs.
 
 #### Scenario: Unsafe target
-- GIVEN identity, ownership, or non-production proof fails
+- GIVEN production is explicit, local/test profile intent is absent, or the target is not provably local
 - WHEN any database operation is requested
 - THEN it is rejected before side effects and diagnostics contain no credential (**deterministic**; approved checks **real-postgres**)
 
 ### Requirement: Idempotent fixtures and non-destructive cleanup
 
-The system MUST require explicit seeding with stable, namespaced identities. Repeated seeds MUST be idempotent. Cleanup MUST affect only tagged fixtures on an approved disposable target; reset, truncate, cascade, and untagged deletion are prohibited.
+The system MUST require an explicit seed command with stable, namespaced identities. Repeated seeds MUST be idempotent. Cleanup MUST affect only tagged fixtures on an approved non-production target; reset, truncate, cascade, and untagged deletion are prohibited.
 
 #### Scenario: Replay and refusal
 - GIVEN a fixture version is seeded twice, then cleanup is requested on a shared or production target

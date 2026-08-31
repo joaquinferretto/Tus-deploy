@@ -18,9 +18,10 @@ export function createEvidenceReceipt({ tag, status, liveConformance = false, re
   }
 }
 
-export async function runTusRuntimeAudit({ browserAvailable = false, mobileAvailable = false, providerAvailable = false, runFlow, timeoutMs = MAX_FLOW_MS } = {}) {
+export async function runTusRuntimeAudit({ browserAvailable = false, mobileAvailable = false, providerAvailable = false, runFlow, cleanupFlow, captureScreenshot, timeoutMs = MAX_FLOW_MS } = {}) {
   const boundedTimeout = Math.min(Math.max(Number(timeoutMs) || MAX_FLOW_MS, 1), MAX_FLOW_MS)
   const receipts = []
+  const screenshots = []
   for (const flow of FLOWS) {
     const available = flow === 'mobile-export' ? mobileAvailable : flow === 'pos' ? browserAvailable && mobileAvailable : browserAvailable
     if (!available) {
@@ -35,8 +36,17 @@ export async function runTusRuntimeAudit({ browserAvailable = false, mobileAvail
       receipts.push(createEvidenceReceipt({ tag: 'external-blocked', status: 'deferred', reason: `${flow} runner is not configured` }))
       continue
     }
+    const controller = new AbortController()
+    let started = false
     try {
-      const result = await withTimeout(Promise.resolve().then(() => runFlow(flow)), boundedTimeout)
+      const result = await withTimeout(Promise.resolve().then(() => {
+        started = true
+        return runFlow(flow, { signal: controller.signal, timeoutMs: boundedTimeout })
+      }), boundedTimeout)
+      if (typeof captureScreenshot === 'function' && flow !== 'authenticated-api') {
+        await withTimeout(Promise.resolve().then(() => captureScreenshot(flow)), boundedTimeout)
+        screenshots.push(flow)
+      }
       receipts.push(createEvidenceReceipt({
         tag: result?.tag ?? 'browser/mobile',
         status: result?.status ?? 'failed',
@@ -45,11 +55,17 @@ export async function runTusRuntimeAudit({ browserAvailable = false, mobileAvail
       }))
     } catch {
       receipts.push(createEvidenceReceipt({ tag: 'external-blocked', status: 'deferred', reason: `${flow} could not complete within the bounded audit` }))
+    } finally {
+      controller.abort()
+      if (started && typeof cleanupFlow === 'function') {
+        await withTimeout(Promise.resolve().then(() => cleanupFlow(flow)), boundedTimeout).catch(() => undefined)
+      }
     }
   }
   return {
     status: receipts.some((receipt) => receipt.status === 'failed') ? 'failed' : receipts.every((receipt) => receipt.status === 'deferred') ? 'external-blocked' : 'completed',
     maxFlowMs: MAX_FLOW_MS,
+    screenshots,
     receipts,
   }
 }
@@ -69,10 +85,10 @@ function sanitizeReason(reason) {
 }
 
 function withTimeout(promise, timeoutMs) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('runtime audit timeout')), timeoutMs)),
-  ])
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('runtime audit timeout')), timeoutMs)
+    promise.then(resolve, reject).finally(() => clearTimeout(timer))
+  })
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

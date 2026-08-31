@@ -11,11 +11,12 @@ provider-free. It reads committed synthetic fixtures only; it never reads
 From a clean checkout, use the following order:
 
 1. Install the pinned workspace dependencies with `pnpm install --frozen-lockfile`.
-2. Run the native developer commands exactly as documented:
+2. Run the native developer commands exactly as documented from the repository
+   root. The API uses canonical local port `3101`; the web app uses `3000`:
 
    ```text
-   cd backend && pnpm run dev
-   cd frontend && pnpm run dev
+   node scripts/dev/native-profile.mjs api
+   node scripts/dev/native-profile.mjs web
    ```
 
    Native requires PostgreSQL through the existing `DATABASE_URL` key. MongoDB,

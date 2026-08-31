@@ -83,6 +83,11 @@ export interface PosOutboxRecord {
   status: 'pending' | 'published' | 'dead-letter'
   attempts: number
   createdAt: string
+  availableAt?: string
+  lastError?: string | null
+  claimId?: string | null
+  claimUntil?: string | null
+  publishedAt?: string | null
 }
 
 export interface PosAuditRecord {
@@ -118,7 +123,13 @@ export interface PosStorePort {
   saveSession(session: PosSession): MaybePromise<void>
   saveConflict(conflict: PosConflict): MaybePromise<void>
   listConflicts(tenantId: string): MaybePromise<PosConflict[]>
-  outbox: { append(record: PosOutboxRecord): MaybePromise<void>; list(tenantId: string): MaybePromise<PosOutboxRecord[]> }
+  outbox: {
+    append(record: PosOutboxRecord): MaybePromise<void>
+    list(tenantId: string): MaybePromise<PosOutboxRecord[]>
+    claim?(tenantId: string, workerId: string, now: number, leaseMs: number): MaybePromise<PosOutboxRecord | null>
+    acknowledge?(input: { tenantId: string; eventId: string; claimId: string; publishedAt: number }): MaybePromise<boolean>
+    recover?(now: number): MaybePromise<number>
+  }
   listOutbox(tenantId: string): MaybePromise<PosOutboxRecord[]>
 }
 
@@ -188,6 +199,37 @@ export class InMemoryPosStore implements PosStorePort {
   readonly outbox = {
     append: (record: PosOutboxRecord) => { this.outboxRecords.set(key(record.tenantId, record.eventId), clone(record)) },
     list: (tenantId: string) => [...this.outboxRecords.values()].filter((record) => record.tenantId === tenantId).map(clone),
+    claim: (tenantId: string, workerId: string, now: number, leaseMs: number) => {
+      const candidate = [...this.outboxRecords.values()].find((record) => record.tenantId === tenantId
+        && record.status === 'pending'
+        && (record.availableAt === undefined || Date.parse(record.availableAt) <= now)
+        && (record.claimUntil === undefined || record.claimUntil === null || Date.parse(record.claimUntil) <= now))
+      if (!candidate) return null
+      const claimed: PosOutboxRecord = {
+        ...candidate,
+        status: 'pending',
+        attempts: candidate.attempts + 1,
+        claimId: `${workerId}:${candidate.eventId}:${candidate.attempts + 1}`,
+        claimUntil: new Date(now + leaseMs).toISOString(),
+      }
+      this.outboxRecords.set(key(tenantId, candidate.eventId), clone(claimed))
+      return clone(claimed)
+    },
+    acknowledge: ({ tenantId, eventId, claimId, publishedAt }: { tenantId: string; eventId: string; claimId: string; publishedAt: number }) => {
+      const existing = this.outboxRecords.get(key(tenantId, eventId))
+      if (!existing || existing.claimId !== claimId) return false
+      this.outboxRecords.set(key(tenantId, eventId), clone({ ...existing, status: 'published', claimId: null, claimUntil: null, publishedAt: new Date(publishedAt).toISOString() }))
+      return true
+    },
+    recover: (now: number) => {
+      let recovered = 0
+      for (const [entryKey, record] of this.outboxRecords.entries()) {
+        if (record.status !== 'pending' || !record.claimUntil || Date.parse(record.claimUntil) > now) continue
+        this.outboxRecords.set(entryKey, clone({ ...record, claimId: null, claimUntil: null, availableAt: new Date(now).toISOString() }))
+        recovered += 1
+      }
+      return recovered
+    },
   }
   listOutbox(tenantId: string) { return this.outbox.list(tenantId) }
 
@@ -402,7 +444,8 @@ export function verifyPosReceipt(receipt: PosReceipt): boolean {
 }
 
 function receiptIntegrityHash(receipt: PosReceipt): string {
-  const { integrityHash: _integrityHash, ...unsigned } = receipt
+  const { integrityHash, ...unsigned } = receipt
+  void integrityHash
   return createHash('sha256').update(JSON.stringify(unsigned)).digest('hex')
 }
 

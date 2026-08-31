@@ -8,7 +8,7 @@ import {
 } from '@factory/contracts'
 
 import { createTusWebSession, type TusWebSession } from './tus-ui-contract'
-import { normalizeTusApiBaseUrl } from './tus-client'
+import { resolveWebApiBaseUrl } from './api-url'
 
 export const TUS_WEB_SESSION_STORAGE_KEY = 'tus.session.v1'
 const DEFAULT_RETURN_TO = '/tus'
@@ -116,7 +116,11 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
 }
 
 export function createTusWebAuthFetchTransport(): TusWebAuthTransport {
-  const baseUrl = normalizeTusApiBaseUrl(process.env['NEXT_PUBLIC_API_URL'])
+  const baseUrl = resolveWebApiBaseUrl({
+    canonicalUrl: process.env['NEXT_PUBLIC_API_URL'],
+    legacyUrl: process.env['API_BASE_URL'],
+    nodeEnv: process.env['NODE_ENV'],
+  })
   return {
     async request<TResponse>(input: TusWebAuthRequest) {
       const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Correlation-Id': input.correlationId }

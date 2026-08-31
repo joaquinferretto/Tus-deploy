@@ -8,16 +8,16 @@ Deliver the approved hardening scope in the existing pnpm/Turborepo Clean/Hexago
 
 | Decision | Choice | Alternatives rejected | Rationale |
 |---|---|---|---|
-| Database gate | Before any connection, migration, seed, or write, validate URL syntax and proof fields: `TUS_TEST_TARGET_IDENTITY`, `TUS_TEST_TARGET_ID`, `TUS_TEST_TARGET_OWNER`, `TUS_TEST_TARGET_DISPOSABLE=true`, `TUS_TEST_TARGET_ENV=local|test`, and `TUS_TEST_TARGET_NON_PRODUCTION=true`. | Implicit dotenv search; process-env precedence; reset-based setup. | Proves the exact target, disposable ownership, and non-production status before side effects. |
-| Test override | `TUS_TEST_RUNNER_POSTGRES_URL` is the only separately named runner override. Existing `TUS_POSTGRES_URL`, if retained, is a runner-only alias; it can never configure the application. Its normalized identity must match the proof identity and the root `.env` safety contract, or the run fails closed. | Letting a runner URL bypass `DATABASE_URL` validation. | Preserves the approved application source while allowing explicitly isolated tests. |
+| Database gate | Before any connection, migration, seed, or write, read only root `.env` `DATABASE_URL`; refuse explicit production (`NODE_ENV` or `FACTORY_PROFILE`) and require an existing local/test profile plus a local loopback target. | Implicit dotenv search; process-env precedence; six metadata variables; free-tier labels; reset-based setup. | Keeps the contract small while refusing targets whose non-production status cannot be proven from existing profile inputs. |
+| Seed intent | The seed entrypoint requires the literal `seed` command argument. Without it, the operation returns redacted deferred evidence and performs no database action. | Import-time or default seeding. | Makes writes an explicit operator action without adding environment variables. |
 | Persistence | Prisma/PostgreSQL remains the source of truth; transaction ports atomically persist product/service POS operation, receipt, version, audit, and outbox records with tenant-scoped idempotency and conflicts. | Application-only locks or provider-owned state. | Matches existing `PosStorePort`, readiness guard, and durable replay requirements. No new settlement, TLS/profile-gating, or receipt-hashing claim is introduced. |
 | Process ownership | `OwnedChild` records and verifies exact PID, cwd, and argv. Startup, request, and shutdown each have an explicit deadline of ≤120 seconds. A `finally` path cleans up on success, failure, timeout, and interruption, waits for termination, and proves no owned PID remains. | Name-based killing or unbounded child lifetimes. | Prevents collateral termination and orphaned processes. |
-| Environment contract | Create an inventory with source path, variable, consumer, canonical name/source, alias status, and removal evidence. Aliases remain supported with clear failure behavior until repository-wide proof shows they are unused. | Delete variables based on local search only. | Makes normalization auditable across code, tests, docs, and manifests. |
+| Environment contract | Create an inventory with source path, variable, consumer, canonical name/source, alias status, and removal evidence. `DATABASE_URL` is the sole database URL; existing `NODE_ENV`/`FACTORY_PROFILE` are the only safety profile inputs. | Delete variables based on local search only; runner URL aliases; six-field metadata. | Makes normalization auditable without adding proof variables or silently selecting another target. |
 
 ## Data Flow
 
 ```text
-root .env DATABASE_URL -> proof gate -> Prisma/app or isolated runner child
+root .env DATABASE_URL + existing profile -> proof gate -> Prisma/app child
 authenticated web/mobile/POS -> API ports -> tenant transaction -> audit/outbox
 owned child -> bounded request -> finally cleanup -> redacted evidence index
 ```
@@ -36,7 +36,7 @@ owned child -> bounded request -> finally cleanup -> redacted evidence index
 ## Interfaces / Contracts
 
 ```ts
-interface SafeTarget { status: 'ready' | 'deferred' | 'invalid'; source: 'root-dotenv-DATABASE_URL' | 'test-runner-override' | null; identity: string | null; proof: { targetId: string; owner: string; disposable: true; environment: 'local' | 'test'; nonProduction: true } }
+interface SafeTarget { status: 'ready' | 'deferred' | 'invalid'; source: 'root-dotenv-DATABASE_URL' | null; profile: string | null; environment: 'local' | 'test' | null; proof: { environment: 'local' | 'test' | null; nonProduction: boolean } }
 interface OwnedChild { pid: number; cwd: string; argv: readonly string[]; startupMs: number; requestMs: number; shutdownMs: number; stop(): Promise<void>; verify(): Promise<boolean> }
 interface EvidenceReceipt { tag: 'deterministic' | 'real-postgres' | 'browser/mobile' | 'deployment' | 'external-blocked'; status: 'passed' | 'deferred' | 'failed'; liveConformance: false | true; redacted: true }
 ```

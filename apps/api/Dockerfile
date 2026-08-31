@@ -36,7 +36,7 @@ COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 # Use non-root user
 USER node
 
-EXPOSE 3001
+EXPOSE 3101
 
 ENV NODE_ENV=production
 

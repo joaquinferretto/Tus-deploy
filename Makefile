@@ -8,8 +8,8 @@ install: ## Install dependencies
 
 up: ## Start development environment
 	docker compose up --build
-	@echo "✅ Backend running at http://localhost:3001"
-	@echo "✅ Frontend: Run 'pnpm --filter web dev' (will be at http://localhost:3000)"
+	@echo "✅ Backend running at http://localhost:3101"
+	@echo "✅ Frontend: Run 'pnpm --filter @factory/web dev' (will be at http://localhost:3000)"
 
 down: ## Stop development environment
 	docker compose down --remove-orphans

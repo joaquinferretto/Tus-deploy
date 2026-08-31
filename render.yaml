@@ -1,12 +1,15 @@
 # Render-native profile: native runtimes only; production containers are not used.
 # Explicit deployment flags: api=true web=true workers=true tusRoutes=false providers=false releaseJobs=false fleetJobs=false.
 # Activation gates are evidence-controlled and remain false in plan-only composition.
+# API ordering is build -> preDeployCommand (Prisma deploy) -> start. The migration
+# command is a checked-in contract and is not executed by local validation.
 services:
   - type: web
     name: factory-api
     runtime: node
     rootDir: .
     buildCommand: pnpm install --frozen-lockfile && pnpm --filter @factory/api build
+    preDeployCommand: pnpm --filter @factory/api prisma:migrate:deploy
     startCommand: pnpm --filter @factory/api start
     healthCheckPath: /health
     envVars:
@@ -24,7 +27,7 @@ services:
         sync: false
       - key: POSTGRES_PROVIDER
         value: neon
-      - key: MONGODB_URI
+      - key: MONGODB_URL
         sync: false
       - key: MONGO_PROVIDER
         value: managed-mongodb
@@ -92,7 +95,7 @@ services:
     runtime: node
     rootDir: .
     buildCommand: pnpm install --frozen-lockfile && pnpm --filter @factory/web build
-    startCommand: pnpm --filter @factory/web start
+    startCommand: PORT=$PORT pnpm --filter @factory/web start
     healthCheckPath: /
     envVars:
       - key: NODE_ENV
@@ -105,7 +108,13 @@ services:
         value: factory-web
       - key: SERVICE_VERSION
         value: 0.1.0
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
       - key: API_BASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPPORT_WHATSAPP_URL
         sync: false
       - key: TUS_DEPLOYMENT_PROFILE
         value: render-native
@@ -151,6 +160,8 @@ services:
     runtime: python
     rootDir: .
     buildCommand: python -m pip install --upgrade pip && python -m pip install -e ./apps/workflow-runtime-python
+    # external-blocked placeholder: this one-shot example exits after one job
+    # and is not a production-ready long-lived worker.
     startCommand: python -m worker.main
     envVars:
       - key: FACTORY_PROFILE
@@ -161,11 +172,13 @@ services:
         value: factory-workflow-worker
       - key: SERVICE_VERSION
         value: 0.2.0
+      - key: WORKER_DEPLOYMENT_STATUS
+        value: external-blocked-placeholder
       - key: DATABASE_URL
         sync: false
       - key: POSTGRES_PROVIDER
         value: neon
-      - key: MONGODB_URI
+      - key: MONGODB_URL
         sync: false
       - key: MONGO_PROVIDER
         value: managed-mongodb

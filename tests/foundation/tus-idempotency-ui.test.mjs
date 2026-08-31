@@ -11,6 +11,7 @@ function runTypeScriptScenario(source) {
   const output = execFileSync(process.execPath, [tsxCli, '--eval', wrapped], {
     cwd: root,
     encoding: 'utf8',
+    env: { ...process.env, NODE_ENV: 'development', NEXT_PUBLIC_API_URL: 'http://localhost:3101' },
   })
   return JSON.parse(output.trim())
 }
@@ -118,7 +119,7 @@ test('PR4 joins API URLs once and preserves contract transport headers and idemp
     }
   `)
 
-  assert.equal(result.url, 'http://localhost:3001/tus/v1/marketplace/checkout')
+  assert.equal(result.url, 'http://localhost:3101/tus/v1/marketplace/checkout')
   assert.equal(result.joined, 'https://api.example/tus/v1/marketplace')
   assert.equal(result.headers['X-Tenant-Id'], 'tenant-a')
   assert.equal(result.headers['X-Actor-Id'], 'actor-a')

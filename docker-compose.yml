@@ -39,14 +39,14 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    ports: ['3001:3001']
+    ports: ['3101:3101']
     environment:
       FACTORY_PROFILE: local
       RUNTIME_ROLE: api-edge
       SERVICE_NAME: product-factory-api
       SERVICE_VERSION: 0.1.0
       NODE_ENV: development
-      API_PORT: 3001
+      API_PORT: 3101
       POSTGRES_PROVIDER: local
       MONGO_PROVIDER: local
       REDIS_PROVIDER: local
@@ -68,7 +68,7 @@ services:
     ports: ['3000:3000']
     environment:
       NODE_ENV: development
-      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NEXT_PUBLIC_API_URL: http://localhost:3101
     depends_on: [api]
 
   mobile-support:
@@ -78,7 +78,7 @@ services:
     command: ['node', 'scripts/dev/mobile-support.mjs']
     environment:
       FACTORY_PROFILE: local
-      API_URL: http://api:3001
+      API_URL: http://api:3101
     depends_on: [api]
 
   workflow-runtime:

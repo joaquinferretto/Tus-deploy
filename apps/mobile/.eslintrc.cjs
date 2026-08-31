@@ -7,6 +7,7 @@ module.exports = {
     project: './tsconfig.json',
     tsconfigRootDir: __dirname,
   },
+  ignorePatterns: ['dist/**'],
   plugins: ['@typescript-eslint', 'boundaries', 'import'],
   settings: {
     'import/resolver': {
@@ -43,6 +44,17 @@ module.exports = {
     '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],
   },
   overrides: [
+    {
+      files: ['*.js', '*.cjs', 'src/**/*.js'],
+      parser: 'espree',
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'script',
+      },
+      rules: {
+        '@typescript-eslint/consistent-type-imports': 'off',
+      },
+    },
     {
       files: ['src/core/**/*.{ts,tsx}', 'src/application/**/*.{ts,tsx}'],
       rules: {

@@ -13,6 +13,22 @@ through secret-store references. The queue boundary is Redis-backed and keeps
 the PostgreSQL ledger/outbox/DLQ authoritative. No `dockerCommand`, Dockerfile,
 or production container is part of this profile.
 
+### Web standalone entrypoint
+
+The Render web build is executed by the `@factory/web` workspace package, so the
+generated standalone server is `apps/web/.next/standalone/server.js` from the
+repository root, or `.next/standalone/server.js` from that package's working
+directory. Render starts it with:
+
+```text
+PORT=$PORT pnpm --filter @factory/web start
+```
+
+The package `start` script runs `node .next/standalone/server.js`. The generated
+server reads the platform-provided `PORT`; `next start` must not be used with
+`output: 'standalone'`. This is a checked-in contract only and does not claim a
+live Render deployment.
+
 ## Profile contract
 
 | Boundary       | Configuration source           | Owner         | Rollback                                              | Fake/disabled state                  | Activation gate                                                |

@@ -72,7 +72,7 @@ new file-specific record. Any new signature is `unexplained` until triaged.
 | Lint | `pnpm lint` | Exit 0; serial Turbo lint completed without interactive configuration or task-discovery errors | `local-deterministic` |
 | Contract validation | `pnpm contracts:validate` | Exit 0; validated 98 JSON Schema contracts; Ajv emitted existing unknown-format warnings | `local-deterministic` |
 | Security | `pnpm run security:scan` | Exit 0; tracked-secret scan completed with no findings | `local-deterministic` |
-| PostgreSQL HTTP smoke | `pnpm test -- tests/integration/tus/postgres-http-smoke.test.mjs` | Deferred unless an authorized `TUS_POSTGRES_URL` and later authenticated harness are supplied | `local-postgresql-http` / `deferred` |
+| PostgreSQL HTTP smoke | `pnpm test -- tests/integration/tus/postgres-http-smoke.test.mjs` | Deferred unless the guarded harness is explicitly run with root `.env` `DATABASE_URL` and existing local/test profile intent | `local-postgresql-http` / `deferred` |
 
 The smoke boundary is intentionally separate from the default deterministic
 runner. A fake transport, in-memory composition, or unavailable database is

@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-const API_BASE_URL = process.env['NEXT_PUBLIC_API_URL'] || 'http://localhost:3001'
+import { resolveWebApiBaseUrl } from './api-url'
+
+const API_BASE_URL = resolveWebApiBaseUrl({
+  canonicalUrl: process.env['NEXT_PUBLIC_API_URL'],
+  legacyUrl: process.env['API_BASE_URL'],
+  nodeEnv: process.env['NODE_ENV'],
+})
 
 export class ApiError extends Error {
   constructor(

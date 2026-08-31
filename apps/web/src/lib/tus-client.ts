@@ -6,8 +6,9 @@ import type {
   WhatsAppAction,
 } from '@factory/contracts/tus'
 
+import { resolveWebApiBaseUrl } from './api-url'
+
 export const TUS_API_VERSION = 'v1' as const
-export const TUS_DEFAULT_API_URL = 'http://localhost:3001' as const
 
 export type TusWebContext = TusTenantContext & {
   accessToken?: string
@@ -434,7 +435,11 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
 }
 
 export function createTusWebFetchTransport(): TusWebTransport {
-  const baseUrl = normalizeTusApiBaseUrl(process.env['NEXT_PUBLIC_API_URL'])
+  const baseUrl = resolveWebApiBaseUrl({
+    canonicalUrl: process.env['NEXT_PUBLIC_API_URL'],
+    legacyUrl: process.env['API_BASE_URL'],
+    nodeEnv: process.env['NODE_ENV'],
+  })
 
   return {
     request: async <TResponse>(input: TusWebRequest): Promise<TResponse> => {
@@ -469,11 +474,7 @@ export function createTusWebFetchTransport(): TusWebTransport {
 }
 
 export function normalizeTusApiBaseUrl(value: string | undefined): string {
-  const trimmedValue = value?.trim()
-  const candidate = trimmedValue === undefined || trimmedValue.length === 0 || /^\/+$/u.test(trimmedValue)
-    ? TUS_DEFAULT_API_URL
-    : trimmedValue
-  return candidate.replace(/\/+$/, '')
+  return resolveWebApiBaseUrl({ canonicalUrl: value, nodeEnv: 'production' })
 }
 
 export function joinTusApiUrl(baseUrl: string, path: string): string {
@@ -484,7 +485,6 @@ export function joinTusApiUrl(baseUrl: string, path: string): string {
 
 export default {
   TUS_API_VERSION,
-  TUS_DEFAULT_API_URL,
   classifyTusRequestError,
   createStableIdempotencyKey,
   createTusWebClient,

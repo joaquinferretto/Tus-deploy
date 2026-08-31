@@ -324,7 +324,7 @@ DATABASE_URL=postgresql://user:pass@host:5432/db
 MONGODB_URL=mongodb://host:27017/db
 REDIS_URL=redis://host:6379
 CORS_ORIGINS=http://localhost:3000,https://app.example.com
-API_PORT=3001
+API_PORT=3101
 NODE_ENV=production
 ```
 

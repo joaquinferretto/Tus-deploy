@@ -10,7 +10,7 @@ export const MOBILE_RUNTIME_STORAGE_VERSION = 1 as const
 export const MOBILE_RUNTIME_CONTRACT_VERSION = '1.0.0' as const
 
 const PROFILE_DEFAULTS: Record<MobileProfile, { apiUrl: string; requireTls: boolean; mockAuth: boolean }> = {
-  dev: { apiUrl: 'http://localhost:3001', requireTls: false, mockAuth: true },
+  dev: { apiUrl: 'http://localhost:3101', requireTls: false, mockAuth: true },
   staging: { apiUrl: 'https://api-staging.example.invalid', requireTls: true, mockAuth: false },
   prod: { apiUrl: '', requireTls: true, mockAuth: false },
 }

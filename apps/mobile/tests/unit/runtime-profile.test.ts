@@ -27,7 +27,7 @@ describe('mobile runtime profile', () => {
   })
 
   it('uses the API server port for the development default and never defaults a missing profile', () => {
-    expect(resolveMobileRuntimeConfig({ profile: 'dev' }).apiUrl).toBe('http://localhost:3001')
+    expect(resolveMobileRuntimeConfig({ profile: 'dev' }).apiUrl).toBe('http://localhost:3101')
     expect(() => resolveMobileRuntimeConfig({})).toThrow(/profile/i)
   })
 

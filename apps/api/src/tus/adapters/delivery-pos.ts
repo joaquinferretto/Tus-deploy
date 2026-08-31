@@ -36,7 +36,7 @@ interface Delegate {
   update(input: { where: Row; data: Row }): Promise<Row>
   findUnique(input: { where: Row }): Promise<Row | null>
   findMany(input: { where: Row }): Promise<Row[]>
-  updateMany?(input: { where: Row; data: Row }): Promise<{ count: number }>
+  updateMany(input: { where: Row; data: Row }): Promise<{ count: number }>
 }
 
 export class PrismaDeliveryStore implements DeliveryStorePort {
@@ -143,8 +143,8 @@ export class PrismaPosStore implements PosStorePort {
         throw new Error('POS shift version could not be initialized')
       }
     }
-    const result = await this.client.tusPosVersion.updateMany?.({ where: { tenantId, shiftId, version: expected }, data: { version: { increment: 1 }, updatedAt: new Date() } })
-    if (!result || result.count !== 1) throw versionConflictError()
+    const result = await this.client.tusPosVersion.updateMany({ where: { tenantId, shiftId, version: expected }, data: { version: { increment: 1 }, updatedAt: new Date() } })
+    if (result.count !== 1) throw versionConflictError()
     return expected + 1
   }
 
@@ -165,9 +165,43 @@ export class PrismaPosStore implements PosStorePort {
   async saveConflict(conflict: PosConflict): Promise<void> { const data = { id: conflict.conflictId, tenantId: conflict.tenantId, conflictId: conflict.conflictId, operationId: conflict.operationId, reason: conflict.reason, expectedVersion: conflict.expectedVersion, actualVersion: conflict.actualVersion, status: conflict.status, createdAt: new Date(conflict.createdAt) }; const existing = await this.client.tusPosConflict.findUnique({ where: { tenantId_conflictId: { tenantId: conflict.tenantId, conflictId: conflict.conflictId } } }); if (existing) await this.client.tusPosConflict.update({ where: { tenantId_conflictId: { tenantId: conflict.tenantId, conflictId: conflict.conflictId } }, data }); else await this.client.tusPosConflict.create({ data }) }
   async listConflicts(tenantId: string): Promise<PosConflict[]> { return (await this.client.tusPosConflict.findMany({ where: { tenantId } })).map(mapConflict) }
   readonly outbox = {
-    append: async (record: PosOutboxRecord) => { await this.client.tusPosOutbox.create({ data: { id: record.eventId, ...record, createdAt: new Date(record.createdAt) } }) },
-     list: async (tenantId: string): Promise<PosOutboxRecord[]> => this.listOutboxRecords(tenantId),
-   }
+    append: async (record: PosOutboxRecord) => {
+      await this.client.tusPosOutbox.create({ data: {
+        id: record.eventId,
+        tenantId: record.tenantId,
+        eventId: record.eventId,
+        eventType: record.eventType,
+        aggregateId: record.aggregateId,
+        payload: record.payload,
+        status: record.status,
+        attempts: record.attempts,
+        availableAt: new Date(record.availableAt ?? record.createdAt),
+        lastError: record.lastError ?? null,
+        claimId: record.claimId ?? null,
+        claimUntil: record.claimUntil ? new Date(record.claimUntil) : null,
+        publishedAt: record.publishedAt ? new Date(record.publishedAt) : null,
+        createdAt: new Date(record.createdAt),
+      } })
+    },
+    list: async (tenantId: string): Promise<PosOutboxRecord[]> => this.listOutboxRecords(tenantId),
+    claim: async (tenantId: string, workerId: string, now: number, leaseMs: number): Promise<PosOutboxRecord | null> => {
+      const rows = await this.client.tusPosOutbox.findMany({ where: { tenantId, status: 'pending', availableAt: { lte: new Date(now) } } })
+      const row = rows.find((candidate) => candidate['claimUntil'] === null || candidate['claimUntil'] === undefined || new Date(String(candidate['claimUntil'])).getTime() <= now)
+      if (!row) return null
+      const attempts = Number(row['attempts'] ?? 0) + 1
+      const claimId = `${workerId}:${String(row['eventId'] ?? row['id'])}:${attempts}`
+      const result = await this.client.tusPosOutbox.updateMany({ where: { id: String(row['id']), tenantId, status: 'pending' }, data: { attempts, claimId, claimUntil: new Date(now + leaseMs) } })
+      return result.count === 1 ? fromPrismaPosOutbox(row, { attempts, claimId, claimUntil: new Date(now + leaseMs).toISOString() }) : null
+    },
+    acknowledge: async ({ tenantId, eventId, claimId, publishedAt }: { tenantId: string; eventId: string; claimId: string; publishedAt: number }): Promise<boolean> => {
+      const result = await this.client.tusPosOutbox.updateMany({ where: { id: eventId, tenantId, status: 'pending', claimId }, data: { status: 'published', claimId: null, claimUntil: null, publishedAt: new Date(publishedAt) } })
+      return result.count === 1
+    },
+    recover: async (now: number): Promise<number> => {
+      const result = await this.client.tusPosOutbox.updateMany({ where: { status: 'pending', claimUntil: { lte: new Date(now) } }, data: { claimId: null, claimUntil: null, availableAt: new Date(now) } })
+      return result.count
+    },
+  }
   async listOutbox(tenantId: string): Promise<PosOutboxRecord[]> { return this.listOutboxRecords(tenantId) }
 
   async listAuditRecords(tenantId: string): Promise<PosAuditRecord[]> {
@@ -184,13 +218,32 @@ function mapShift(row: Row): DeliveryShift { return { shiftId: row.shiftId, tena
 function mapTask(row: Row): DeliveryTask { return { contractVersion: '1.0.0', taskId: row.taskId, tenantId: row.tenantId, commitmentId: row.commitmentId, merchantId: row.merchantId, context: 'product', zoneId: row.zoneId, shiftId: row.shiftId, operatorId: row.operatorId, status: row.status, version: row.version, proof: row.proof, incident: row.incident, settlementClaim: 'not-claimed', createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } }
 function mapProof(row: Row): DeliveryProof { return { contractVersion: '1.0.0', proofId: row.proofId, tenantId: row.tenantId, taskId: row.taskId, commitmentId: row.commitmentId, recipientName: row.recipientName, capturedAt: row.capturedAt.toISOString(), evidenceSource: row.evidenceSource } }
 function mapIncident(row: Row): DeliveryIncident { return { contractVersion: '1.0.0', incidentId: row.incidentId, tenantId: row.tenantId, taskId: row.taskId, reason: row.reason, status: row.status, createdAt: row.createdAt.toISOString() } }
-function mapOperation(row: Row): PosManualOperation { const { response: _response, ...operation } = row; return { contractVersion: '1.0.0', ...operation, createdAt: row.createdAt.toISOString() } as PosManualOperation }
+function mapOperation(row: Row): PosManualOperation { const operation = { ...row }; delete operation.response; return { contractVersion: '1.0.0', ...operation, createdAt: row.createdAt.toISOString() } as PosManualOperation }
 function mapReceipt(row: Row): PosReceipt { return { contractVersion: '1.0.0', ...row, createdAt: row.createdAt.toISOString() } as PosReceipt }
 function mapDevice(row: Row): PosDevice { return { contractVersion: '1.0.0', deviceId: row.deviceId, tenantId: row.tenantId, label: row.label, fingerprint: row.fingerprint, status: row.status, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } }
 function mapSession(row: Row): PosSession { return { contractVersion: '1.0.0', sessionId: row.sessionId, tenantId: row.tenantId, deviceId: row.deviceId, actorId: row.actorId, shiftId: row.shiftId, status: row.status, openedAt: row.openedAt.toISOString(), ...(row.closedAt ? { closedAt: row.closedAt.toISOString() } : {}) } }
 function mapConflict(row: Row): PosConflict { return { contractVersion: '1.0.0', conflictId: row.conflictId, tenantId: row.tenantId, operationId: row.operationId, reason: row.reason, ...(row.expectedVersion === null ? {} : { expectedVersion: row.expectedVersion }), ...(row.actualVersion === null ? {} : { actualVersion: row.actualVersion }), status: row.status, createdAt: row.createdAt.toISOString() } }
 function mapAudit(row: Row): PosAuditRecord { return { auditId: row.auditId, tenantId: row.tenantId, actorId: row.actorId, correlationId: row.correlationId, action: row.action, operationId: row.operationId, outcome: row.outcome, createdAt: row.createdAt.toISOString() } }
-function mapOutbox(row: Row): PosOutboxRecord { return { eventId: row.eventId, tenantId: row.tenantId, eventType: row.eventType, aggregateId: row.aggregateId, payload: row.payload, status: row.status, attempts: row.attempts, createdAt: row.createdAt.toISOString() } }
+function mapOutbox(row: Row): PosOutboxRecord { return fromPrismaPosOutbox(row) }
+
+function fromPrismaPosOutbox(row: Row, overrides: Partial<PosOutboxRecord> = {}): PosOutboxRecord {
+  return {
+    eventId: String(row.eventId ?? row.id),
+    tenantId: String(row.tenantId),
+    eventType: String(row.eventType),
+    aggregateId: String(row.aggregateId),
+    payload: row.payload as Record<string, unknown>,
+    status: row.status as PosOutboxRecord['status'],
+    attempts: Number(row.attempts ?? 0),
+    availableAt: new Date(String(row.availableAt ?? row.createdAt)).toISOString(),
+    lastError: row.lastError === null || row.lastError === undefined ? null : String(row.lastError),
+    claimId: row.claimId === null || row.claimId === undefined ? null : String(row.claimId),
+    claimUntil: row.claimUntil ? new Date(String(row.claimUntil)).toISOString() : null,
+    publishedAt: row.publishedAt ? new Date(String(row.publishedAt)).toISOString() : null,
+    createdAt: new Date(String(row.createdAt)).toISOString(),
+    ...overrides,
+  }
+}
 
 function versionConflictError(): PosError {
   return new PosError(409, 'VERSION_CONFLICT', 'POS shift version differs from the offline expectation')

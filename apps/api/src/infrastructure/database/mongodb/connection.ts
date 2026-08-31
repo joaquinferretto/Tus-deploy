@@ -8,7 +8,8 @@ export async function connectMongoDB(): Promise<void> {
   }
 
   try {
-    await mongoose.connect(process.env['MONGODB_URL'] || 'mongodb://localhost:27017/appdb', {
+    const mongoUrl = process.env['MONGODB_URL'] || process.env['MONGODB_URI'] || 'mongodb://localhost:27017/appdb'
+    await mongoose.connect(mongoUrl, {
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,

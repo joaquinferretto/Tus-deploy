@@ -56,3 +56,34 @@ test('available authenticated flows use the bounded runner while unavailable pro
   assert.equal(evidence.receipts.filter((receipt) => receipt.status === 'passed').length, 3)
   assert.equal(evidence.maxFlowMs, 180_000)
 })
+
+test('timed runtime flows receive cancellation and always run owned cleanup', async () => {
+  const events = []
+  const evidence = await runTusRuntimeAudit({
+    browserAvailable: true,
+    timeoutMs: 20,
+    runFlow: async (_flow, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => { events.push('aborted'); reject(new Error('aborted')) }, { once: true })
+      void resolve
+    }),
+    cleanupFlow: async (flow) => { events.push(`cleanup:${flow}`) },
+  })
+
+  assert.equal(evidence.receipts[0].status, 'deferred')
+  assert.deepEqual(events, ['aborted', 'cleanup:authenticated-api', 'aborted', 'cleanup:authenticated-web'])
+})
+
+test('successful browser and mobile flows record bounded screenshot references without exposing paths', async () => {
+  const screenshots = []
+  const evidence = await runTusRuntimeAudit({
+    browserAvailable: true,
+    mobileAvailable: true,
+    providerAvailable: false,
+    runFlow: async (flow) => ({ tag: flow === 'authenticated-api' ? 'deterministic' : 'browser/mobile', status: 'passed', reason: `${flow} passed` }),
+    captureScreenshot: async (flow) => { screenshots.push(flow); return 'C:\\private\\evidence\\secret-user-path.png' },
+  })
+
+  assert.deepEqual(screenshots, ['authenticated-web', 'mobile-export'])
+  assert.deepEqual(evidence.screenshots, ['authenticated-web', 'mobile-export'])
+  assert.doesNotMatch(JSON.stringify(evidence), /private|secret-user-path|C:\\/i)
+})

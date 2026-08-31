@@ -7,7 +7,7 @@ Make the implemented TUS product reproducible and evidence-based across PostgreS
 ## Scope
 
 ### In Scope
-- Load root `.env` `DATABASE_URL` internally; prove disposable/test ownership before any connection, migration, or write.
+- Load root `.env` `DATABASE_URL` internally; require explicit local/test intent before any connection, migration, or write.
 - Add explicit idempotent fixtures; harden Prisma schema/migrations, tenant constraints/indexes, state transitions, product/service POS transactions, audit/outbox, replay, and recovery.
 - Map environment consumers before normalization; bound child cleanup; audit real API/web/mobile/POS behavior with bounded browser tooling/screenshots; prepare local, Render, and Vercel paths.
 
@@ -26,7 +26,7 @@ Make the implemented TUS product reproducible and evidence-based across PostgreS
 ## Approach
 
 Deliver one PR through gated phases:
-1. **Safety:** map consumers, validate manifests/startup, load root `.env` without logging it, and require target identity, disposable ownership, and non-production proof.
+1. **Safety:** map consumers, validate manifests/startup, load root `.env` without logging it, refuse production profiles, and require existing local/test intent plus explicit seed intent.
 2. **Durability:** seed explicitly; validate additive migrations/tenant isolation; prove atomic product/service POS, idempotency, conflicts, audit/outbox, transitions, restart/replay, and recovery on approved PostgreSQL.
 3. **Runtime:** expand bounded API smoke and child cleanup; exercise authenticated web/mobile/POS with Playwright/Chrome DevTools/screenshots; classify unavailable hardware/device evidence.
 4. **Deployment:** reproduce local startup and validate Render/Vercel build/start contracts; keep external gates fail-closed.

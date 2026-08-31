@@ -23,7 +23,7 @@ deterministic evidence only and does not authorize any deferred external gate.
 | Secret scan | `pnpm security:scan` — **exit 0; no tracked-secret findings** | `local-deterministic`; no credentials or provider calls |
 | Policy | `node scripts/security/validate-policy.mjs` — **exit 0** | `local-deterministic`; policy structure only |
 | Cloud plans | `pnpm exec node scripts/validation/cloud-native/validate-plan.mjs` — **exit 0; Render and AWS profiles valid, plan-only, provisioned=false, cloudCalls=false, liveConformance=false** | `local-deterministic`; synthetic plan shape, no provisioning |
-| PostgreSQL HTTP smoke boundary | `pnpm test -- tests/integration/tus/postgres-http-smoke.test.mjs` — **exit 0; 20 deferred-boundary tests pass; TUS_POSTGRES_URL and DATABASE_URL unavailable** | `local-postgresql-http` boundary is deferred; no authenticated PostgreSQL durability was executed |
+| PostgreSQL HTTP smoke boundary | `pnpm test -- tests/integration/tus/postgres-http-smoke.test.mjs` — **exit 0; guarded root-only/profile tests pass; live target not run** | `local-postgresql-http` boundary is deferred; no authenticated PostgreSQL durability was executed |
 | Render activation | `node scripts/activation/tus-readiness.mjs render-native` — **not-production-ready; unavailable-deferred; deferred; liveConformance=false**; TUS routes/providers/release jobs/fleet jobs disabled | `deferred`; no credentials or external calls |
 | AWS activation | `node scripts/activation/tus-readiness.mjs aws-terraform` — **not-production-ready; unavailable-deferred; deferred; liveConformance=false**; TUS routes/providers/release jobs/fleet jobs disabled | `deferred`; no credentials or external calls |
 

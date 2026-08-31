@@ -17,7 +17,7 @@ import { createPrismaTenancyService } from './tenancy/composition.ts'
 import { createTenancyRouter } from './tenancy/http/tenancy-router.ts'
 import type { TenantPrismaClient } from './tenancy/adapters/prisma.ts'
 
-const PORT = Number(process.env['API_PORT'] || process.env['PORT'] || 3001)
+const PORT = Number(process.env['API_PORT'] || process.env['PORT'] || 3101)
 
 export function createApp(options: { tusRouter?: Router } = {}): Application {
   const app = express()
