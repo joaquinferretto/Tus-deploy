@@ -1,0 +1,5 @@
+# Ignore everything in .codegraph/ except the durable database and this file.
+# Transient databases, daemon logs, PIDs, and sockets remain ignored.
+*
+!.gitignore
+!codegraph.db

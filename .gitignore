@@ -20,8 +20,6 @@ package-lock.json
 coverage/
 *.log
 .DS_Store
-.atl/
-.codegraph/
 .pnpm-store/
 __pycache__/
 *.py[cod]
