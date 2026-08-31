@@ -13,6 +13,68 @@ export interface IdentitySeedRecord {
   displayName: string
 }
 
+export const TUS_HARDENING_FIXTURE_TAG = 'tus-product-hardening'
+export const TUS_HARDENING_FIXTURE_VERSION = '20260830.v1'
+
+export interface TusHardeningSeedTarget {
+  status: 'ready' | 'deferred' | 'invalid'
+  proof: {
+    disposable: boolean
+    environment: string
+    nonProduction: boolean
+  }
+}
+
+export interface TusHardeningFixture {
+  tag: typeof TUS_HARDENING_FIXTURE_TAG
+  version: typeof TUS_HARDENING_FIXTURE_VERSION
+  runId: string
+  tenantId: string
+  actorId: string
+  productListingId: string
+  serviceListingId: string
+}
+
+export interface TusHardeningSeedClient {
+  fixture: {
+    upsert(args: {
+      where: { tag_version_runId: { tag: string; version: string; runId: string } }
+      create: TusHardeningFixture
+      update: Pick<TusHardeningFixture, 'tenantId' | 'actorId' | 'productListingId' | 'serviceListingId'>
+    }): Promise<unknown>
+  }
+}
+
+export function buildTusHardeningFixture(runId: string): TusHardeningFixture {
+  const normalizedRunId = runId.trim()
+  if (!/^[a-z0-9][a-z0-9-]{2,127}$/u.test(normalizedRunId)) throw new Error('TUS hardening fixture runId must be namespaced and stable')
+  return {
+    tag: TUS_HARDENING_FIXTURE_TAG,
+    version: TUS_HARDENING_FIXTURE_VERSION,
+    runId: normalizedRunId,
+    tenantId: `${TUS_HARDENING_FIXTURE_TAG}:${normalizedRunId}:tenant`,
+    actorId: `${TUS_HARDENING_FIXTURE_TAG}:${normalizedRunId}:actor`,
+    productListingId: `${TUS_HARDENING_FIXTURE_TAG}:${normalizedRunId}:product`,
+    serviceListingId: `${TUS_HARDENING_FIXTURE_TAG}:${normalizedRunId}:service`,
+  }
+}
+
+export function assertTusHardeningSeedTarget(target: TusHardeningSeedTarget): void {
+  if (target.status !== 'ready' || !target.proof.disposable || !['local', 'test'].includes(target.proof.environment) || !target.proof.nonProduction) {
+    throw new Error('TUS hardening fixtures require an approved disposable non-production target')
+  }
+}
+
+export async function seedTusHardeningFixture(client: TusHardeningSeedClient, target: TusHardeningSeedTarget, fixture: TusHardeningFixture): Promise<void> {
+  // The fixture is tagged and namespaced so cleanup can target it precisely.
+  assertTusHardeningSeedTarget(target)
+  await client.fixture.upsert({
+    where: { tag_version_runId: { tag: fixture.tag, version: fixture.version, runId: fixture.runId } },
+    create: fixture,
+    update: { tenantId: fixture.tenantId, actorId: fixture.actorId, productListingId: fixture.productListingId, serviceListingId: fixture.serviceListingId },
+  })
+}
+
 export interface IdentitySeedClient {
   user: {
     upsert(args: {
@@ -134,4 +196,16 @@ export async function seedDatabaseOwnership(
       },
     })
   }
+}
+
+export default {
+  buildIdentitySeed,
+  seedIdentity,
+  buildTenantSeed,
+  seedTenant,
+  buildDatabaseSeed,
+  seedDatabaseOwnership,
+  buildTusHardeningFixture,
+  assertTusHardeningSeedTarget,
+  seedTusHardeningFixture,
 }

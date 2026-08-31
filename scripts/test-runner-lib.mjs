@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +14,15 @@ export const TEST_DIRECTORIES = Object.freeze([
 
 export const DEFAULT_TEST_TIMEOUT_MS = 120_000
 export const POSTGRES_SMOKE_TIMEOUT_MS = 120_000
+export const MAX_CHILD_DEADLINE_MS = 120_000
+export const SAFE_TARGET_PROOF_KEYS = Object.freeze([
+  'TUS_TEST_TARGET_IDENTITY',
+  'TUS_TEST_TARGET_ID',
+  'TUS_TEST_TARGET_OWNER',
+  'TUS_TEST_TARGET_DISPOSABLE',
+  'TUS_TEST_TARGET_ENV',
+  'TUS_TEST_TARGET_NON_PRODUCTION',
+])
 export const APPROVED_POSTGRES_ENV_VARS = Object.freeze([
   'TUS_POSTGRES_URL',
   'DATABASE_URL',
@@ -78,6 +87,62 @@ export const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
   TusPosAudit: ['tenantId', 'auditId', 'operationId', 'correlationId'],
   TusPosVersion: ['tenantId', 'shiftId', 'version'],
 })
+
+const SAFE_TARGET_ENVIRONMENTS = Object.freeze(['local', 'test'])
+
+/**
+ * A child process wrapper that can only stop the exact process it launched.
+ * It deliberately keeps no name-based or process-tree kill capability.
+ */
+export class OwnedChild {
+  constructor({ child, command, args = [], cwd, startupMs = MAX_CHILD_DEADLINE_MS, requestMs = MAX_CHILD_DEADLINE_MS, shutdownMs = MAX_CHILD_DEADLINE_MS } = {}) {
+    if (!child || typeof child.kill !== 'function' || typeof child.once !== 'function') throw new TypeError('OwnedChild requires a spawned child')
+    this.child = child
+    this.pid = Number(child.pid)
+    this.cwd = cwd
+    this.argv = Object.freeze([command, ...args])
+    this.startupMs = boundedDeadline(startupMs)
+    this.requestMs = boundedDeadline(requestMs)
+    this.shutdownMs = boundedDeadline(shutdownMs)
+  }
+
+  async verify() {
+    if (!Number.isInteger(this.pid) || this.pid <= 0 || this.child.pid !== this.pid || this.child.exitCode !== null) return false
+    const observedArgv = Array.isArray(this.child.spawnargs) ? this.child.spawnargs : []
+    return observedArgv.length === this.argv.length && observedArgv.every((value, index) => value === this.argv[index])
+  }
+
+  async stop() {
+    if (this.child.exitCode !== null) return true
+    const exited = await waitForChildExit(this.child, 'SIGTERM', this.shutdownMs)
+    if (exited) return true
+    const forceExited = await waitForChildExit(this.child, undefined, this.shutdownMs)
+    if (!forceExited) throw new Error(`Owned child ${this.pid} did not terminate within the shutdown deadline`)
+    return true
+  }
+}
+
+function boundedDeadline(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_CHILD_DEADLINE_MS) : MAX_CHILD_DEADLINE_MS
+}
+
+function waitForChildExit(child, signal, timeoutMs) {
+  if (child.exitCode !== null) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (exited) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(exited)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    child.once('exit', () => finish(true))
+    if (signal === undefined) child.kill()
+    else child.kill(signal)
+  })
+}
 
 function relativeTestPath(rootDirectory, filePath) {
   return relative(rootDirectory, filePath).replaceAll('\\', '/')
@@ -217,6 +282,62 @@ export function createFailureRecord({ file, output = '', exitCode = 1, timedOut 
 
 export function resolvePostgresTarget(environment = process.env) {
   return resolvePostgresTargetDetails(environment).target
+}
+
+/**
+ * Resolves the application database target without returning the credential.
+ * Root .env is the application source; runner URLs are only accepted through
+ * the explicit runner key or its legacy runner-only alias.
+ */
+export function resolveSafeTarget({ rootDirectory = REPO_ROOT, environment = process.env } = {}) {
+  const details = resolveSafeTargetDetails({ rootDirectory, environment })
+  return details.target
+}
+
+function resolveSafeTargetDetails({ rootDirectory = REPO_ROOT, environment = process.env } = {}) {
+  const rootUrl = readRootDatabaseUrl(rootDirectory)
+  const runnerUrl = nonBlank(environment?.TUS_TEST_RUNNER_POSTGRES_URL) ?? nonBlank(environment?.TUS_POSTGRES_URL)
+  const databaseUrl = runnerUrl ?? rootUrl ?? (rootUrl === undefined && environment !== process.env ? nonBlank(environment?.DATABASE_URL) : undefined)
+  const source = runnerUrl
+    ? 'test-runner-override'
+    : databaseUrl
+      ? 'root-dotenv-DATABASE_URL'
+      : null
+  const proof = {
+    targetId: nonBlank(environment?.TUS_TEST_TARGET_ID) ?? '',
+    owner: nonBlank(environment?.TUS_TEST_TARGET_OWNER) ?? '',
+    disposable: environment?.TUS_TEST_TARGET_DISPOSABLE === 'true',
+    environment: nonBlank(environment?.TUS_TEST_TARGET_ENV) ?? '',
+    nonProduction: environment?.TUS_TEST_TARGET_NON_PRODUCTION === 'true',
+  }
+  const base = {
+    status: databaseUrl ? 'invalid' : 'deferred',
+    source,
+    identity: nonBlank(environment?.TUS_TEST_TARGET_IDENTITY) ?? null,
+    proof,
+    reason: databaseUrl ? 'proof-required' : 'no-database-url',
+  }
+  if (!databaseUrl) return { target: base, postgresUrl: null }
+  if (!parsePostgresUrl(databaseUrl)) return { target: { ...base, reason: 'invalid-postgresql-url' }, postgresUrl: null }
+  if (!base.identity) return { target: { ...base, reason: 'target-identity-required' }, postgresUrl: null }
+  if (!proof.targetId || !/^[a-z0-9][a-z0-9._-]{2,127}$/iu.test(proof.targetId)) return { target: { ...base, reason: 'target-id-required' }, postgresUrl: null }
+  if (!proof.owner) return { target: { ...base, reason: 'target-owner-required' }, postgresUrl: null }
+  if (!proof.disposable) return { target: { ...base, reason: 'disposable-proof-required' }, postgresUrl: null }
+  if (!SAFE_TARGET_ENVIRONMENTS.includes(proof.environment)) return { target: { ...base, reason: 'non-production-environment-required' }, postgresUrl: null }
+  if (!proof.nonProduction) return { target: { ...base, reason: 'non-production-proof-required' }, postgresUrl: null }
+  return { target: { ...base, status: 'ready', reason: 'authorized-disposable-target' }, postgresUrl: databaseUrl }
+}
+
+function readRootDatabaseUrl(rootDirectory) {
+  const envPath = join(rootDirectory, '.env')
+  if (!existsSync(envPath)) return undefined
+  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*DATABASE_URL\s*=\s*(.*?)\s*$/u)
+    if (!match) continue
+    const value = match[1].replace(/^(['"])(.*)\1$/u, '$2').trim()
+    if (value) return value
+  }
+  return undefined
 }
 
 export function buildPostgresChildEnvironment({ postgresUrl, baseEnvironment = process.env, extra = {} } = {}) {
@@ -400,13 +521,12 @@ export async function runTusPostgresHttpSmoke({
     }
     if (pool && fixture) {
       try {
-        await runtimeOperations.cleanupSmokeFixture(pool, fixture)
+        await runtimeOperations.cleanupSmokeFixture(pool, fixture, target)
         if (finalEvidence && !finalEvidence.cleanupFailure && !finalEvidence.shutdownFailure) {
           finalEvidence.scenarios.cleanup = { status: 'passed', targeted: true, preservedEvidence: true }
         }
       } catch {
         if (finalEvidence) {
-          finalEvidence.cleanupFailure = true
           finalEvidence.cleanupFailure = { classification: 'cleanup-failure', owner: 'runtime owner', boundary: 'PostgreSQL disposable fixture cleanup', rerunCommand: POSTGRES_RERUN_COMMAND }
           finalEvidence.scenarios.cleanup = { status: 'failed', classification: 'cleanup-failure' }
         }
@@ -600,7 +720,8 @@ function instrumentSmokePool(pool, actions) {
 
 function resolvePostgresTargetDetails(environment = process.env) {
   const approvedEnvironment = approvedPostgresEnvironment(environment)
-  const selected = selectPostgresUrl(approvedEnvironment)
+  const rootUrl = environment === process.env ? readRootDatabaseUrl(REPO_ROOT) : undefined
+  const selected = selectPostgresUrl(approvedEnvironment, rootUrl)
   const profile = nonBlank(approvedEnvironment.TUS_POSTGRES_PROFILE)
   const targetId = nonBlank(approvedEnvironment.TUS_POSTGRES_TARGET_ID)
   const base = {
@@ -665,16 +786,18 @@ function approvedPostgresEnvironment(environment) {
 }
 
 function withExplicitPostgresUrl(environment, postgresUrl) {
+  if (postgresUrl === undefined) return environment
   const approved = approvedPostgresEnvironment(environment)
-  if (postgresUrl !== undefined) approved.TUS_POSTGRES_URL = postgresUrl
+  approved.TUS_POSTGRES_URL = postgresUrl
   return approved
 }
 
-function selectPostgresUrl(environment) {
+function selectPostgresUrl(environment, rootUrl) {
   for (const name of ['TUS_POSTGRES_URL', 'DATABASE_URL']) {
     const value = nonBlank(environment[name])
     if (value) return { source: name, value }
   }
+  if (rootUrl) return { source: 'DATABASE_URL', value: rootUrl }
   return { source: null, value: null }
 }
 
@@ -800,9 +923,18 @@ async function durableCounts(pool, _fixture, tenantId) {
   return Object.fromEntries(Object.entries(result.rows[0]).map(([key, value]) => [key, Number(value)]))
 }
 
-export async function cleanupSmokeFixture(pool, fixture) {
+export async function cleanupSmokeFixture(pool, fixture, target) {
+  if (!approvedCleanupTarget(target)) throw new SmokeInfrastructureError('Cleanup requires an approved disposable target', 'PostgreSQL disposable fixture cleanup')
   try {
     await pool.query('BEGIN')
+    await pool.query('DELETE FROM "TusMarketplaceCommitment" WHERE "id" = $1', [fixture.deliveryCommitmentId])
+    await pool.query('DELETE FROM "TusDeliveryProof" WHERE "id" = $1', [fixture.deliveryProofId])
+    await pool.query('DELETE FROM "TusDeliveryTask" WHERE "id" = $1', [fixture.deliveryTaskId])
+    await pool.query('DELETE FROM "TusDeliveryShift" WHERE "id" = $1', [fixture.deliveryShiftId])
+    await pool.query('DELETE FROM "TusDeliveryZone" WHERE "id" = $1', [fixture.deliveryZoneId])
+    await pool.query('DELETE FROM "TusPosSession" WHERE "id" = $1', [fixture.posSessionId])
+    await pool.query('DELETE FROM "TusPosDevice" WHERE "id" = $1', [fixture.posDeviceId])
+    await pool.query('DELETE FROM "TusPosVersion" WHERE "id" = $1', [fixture.posShiftId])
     await pool.query('DELETE FROM "TusListing" WHERE "id" IN ($1,$2)', [fixture.productListingId, fixture.serviceListingId])
     await pool.query('DELETE FROM "TusMerchant" WHERE "id" IN ($1,$2)', [fixture.productMerchantId, fixture.serviceMerchantId])
     await pool.query('DELETE FROM "User" WHERE "normalizedEmail" IN ($1,$2)', [fixture.emailA, fixture.emailB])
@@ -811,6 +943,12 @@ export async function cleanupSmokeFixture(pool, fixture) {
     await pool.query('ROLLBACK').catch(() => undefined)
     throw new SmokeInfrastructureError('Disposable PostgreSQL fixture cleanup failed; the original smoke classification is preserved', 'PostgreSQL disposable fixture cleanup')
   }
+}
+
+function approvedCleanupTarget(target) {
+  if (target?.status !== 'ready') return false
+  if (target.proof) return target.proof.disposable === true && target.proof.nonProduction === true && SAFE_TARGET_ENVIRONMENTS.includes(target.proof.environment)
+  return DISPOSABLE_PROFILES.includes(target.profile) && typeof target.targetId === 'string' && target.targetId.length > 0
 }
 
 async function startSmokeApi(postgresUrl, timeoutMs) {
@@ -825,7 +963,8 @@ async function startSmokeApi(postgresUrl, timeoutMs) {
     "process.on('SIGTERM', stop)",
     "process.on('SIGINT', stop)",
   ].join(';')
-  const child = spawn(process.execPath, [API_TSX_CLI, '--eval', source], {
+  const args = [API_TSX_CLI, '--eval', source]
+  const child = spawn(process.execPath, args, {
     cwd: API_ROOT,
     env: buildPostgresChildEnvironment({
       postgresUrl,
@@ -835,11 +974,21 @@ async function startSmokeApi(postgresUrl, timeoutMs) {
     windowsHide: true,
   })
   const baseUrl = `http://127.0.0.1:${port}`
+  const owned = new OwnedChild({
+    child,
+    command: process.execPath,
+    args,
+    cwd: API_ROOT,
+    startupMs: Math.min(timeoutMs, MAX_CHILD_DEADLINE_MS),
+    requestMs: Math.min(timeoutMs, MAX_CHILD_DEADLINE_MS),
+    shutdownMs: Math.min(timeoutMs, MAX_CHILD_DEADLINE_MS),
+  })
   try {
+    if (!(await owned.verify())) throw new Error('API runtime ownership verification failed')
     await waitForSmokeApi(child, baseUrl, timeoutMs)
-    return { child, baseUrl }
+    return { child, baseUrl, owned }
   } catch {
-    await stopSmokeApi({ child })
+    await stopSmokeApi({ child, owned })
     throw new SmokeInfrastructureError('API runtime did not become ready within the bounded smoke timeout', 'API runtime startup')
   }
 }
@@ -861,6 +1010,11 @@ async function waitForSmokeApi(child, baseUrl, timeoutMs) {
 
 export async function stopSmokeApi(api) {
   if (!api?.child || api.child.exitCode !== null) return
+  if (api.owned) {
+    if (!(await api.owned.verify())) throw new Error('Refusing to stop an API process with mismatched ownership')
+    await api.owned.stop()
+    return
+  }
   const exitedAfterTerm = await requestChildExit(api.child, 'SIGTERM', 5_000)
   if (exitedAfterTerm) return
   await requestChildExit(api.child, undefined, 5_000)

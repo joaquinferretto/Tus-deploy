@@ -180,7 +180,7 @@ test('child process environment passes only the explicit PostgreSQL target and s
 })
 
 test('PostgreSQL HTTP smoke is an explicit opt-in boundary, never a fake local pass', () => {
-  const evidence = resolvePostgresSmokeEvidence({})
+  const evidence = resolvePostgresSmokeEvidence({ environment: {} })
   const { scenarios: _scenarios, ...coreEvidence } = evidence
   assert.deepEqual(coreEvidence, {
     status: 'deferred',
@@ -340,7 +340,11 @@ test('PR3 cleanup targets only generated mutable fixtures and preserves durable 
   }
   const fixture = createSmokeFixture()
 
-  await cleanupSmokeFixture(pool, fixture)
+  await cleanupSmokeFixture(pool, fixture, {
+    status: 'ready',
+    targetId: 'tus-test-cleanup',
+    profile: 'test-disposable',
+  })
 
   const sql = statements.map(({ text }) => text).join('\n')
   assert.equal(sql.includes('DELETE FROM "TusPosAudit"'), false)
@@ -354,6 +358,13 @@ test('PR3 cleanup targets only generated mutable fixtures and preserves durable 
   assert.equal(sql.includes('DELETE FROM "TusListing" WHERE "id" IN'), true)
   assert.equal(statements.some(({ parameters = [] }) => parameters.includes(fixture.tenantA)), false)
   assert.equal(statements.some(({ parameters = [] }) => parameters.includes(fixture.productMerchantId)), true)
+})
+
+test('cleanup refuses without an approved disposable target and performs zero SQL side effects', async () => {
+  const statements = []
+  const pool = { query: async (text) => { statements.push(text); return { rows: [] } } }
+  await assert.rejects(cleanupSmokeFixture(pool, createSmokeFixture()), /approved disposable target/)
+  assert.deepEqual(statements, [])
 })
 
 test('PR3 awaits a child process shutdown and does not leave a live API child behind', async () => {

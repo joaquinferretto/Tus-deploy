@@ -56,36 +56,36 @@ services:
         value: false
       - key: TUS_RELEASE_JOBS_ENABLED
         value: false
-       - key: TUS_FLEET_JOBS_ENABLED
-         value: false
-       - key: TUS_MERCADOPAGO_ENABLED
-         value: false
-       - key: TUS_WHATSAPP_ENABLED
-         value: false
-       - key: TUS_AWS_ENABLED
-         value: false
-       - key: TUS_RENDER_ENABLED
-         value: false
-       - key: TUS_CLOUD_ENABLED
-         value: false
-       - key: TUS_LEGAL_ENABLED
-         value: false
-       - key: TUS_TAX_ENABLED
-         value: false
-       - key: TUS_KYC_ENABLED
-         value: false
-       - key: TUS_KYB_ENABLED
-         value: false
-       - key: TUS_POSTGRESQL_ENABLED
-         value: false
-       - key: TUS_BROWSER_ENABLED
-         value: false
-       - key: TUS_DEVICE_ENABLED
-         value: false
-       - key: TUS_POS_PILOT_ENABLED
-         value: false
-       - key: TUS_PRODUCTION_OPERATIONS_ENABLED
-         value: false
+      - key: TUS_FLEET_JOBS_ENABLED
+        value: false
+      - key: TUS_MERCADOPAGO_ENABLED
+        value: false
+      - key: TUS_WHATSAPP_ENABLED
+        value: false
+      - key: TUS_AWS_ENABLED
+        value: false
+      - key: TUS_RENDER_ENABLED
+        value: false
+      - key: TUS_CLOUD_ENABLED
+        value: false
+      - key: TUS_LEGAL_ENABLED
+        value: false
+      - key: TUS_TAX_ENABLED
+        value: false
+      - key: TUS_KYC_ENABLED
+        value: false
+      - key: TUS_KYB_ENABLED
+        value: false
+      - key: TUS_POSTGRESQL_ENABLED
+        value: false
+      - key: TUS_BROWSER_ENABLED
+        value: false
+      - key: TUS_DEVICE_ENABLED
+        value: false
+      - key: TUS_POS_PILOT_ENABLED
+        value: false
+      - key: TUS_PRODUCTION_OPERATIONS_ENABLED
+        value: false
 
   - type: web
     name: factory-web
@@ -115,36 +115,36 @@ services:
         value: false
       - key: TUS_RELEASE_JOBS_ENABLED
         value: false
-       - key: TUS_FLEET_JOBS_ENABLED
-         value: false
-       - key: TUS_MERCADOPAGO_ENABLED
-         value: false
-       - key: TUS_WHATSAPP_ENABLED
-         value: false
-       - key: TUS_AWS_ENABLED
-         value: false
-       - key: TUS_RENDER_ENABLED
-         value: false
-       - key: TUS_CLOUD_ENABLED
-         value: false
-       - key: TUS_LEGAL_ENABLED
-         value: false
-       - key: TUS_TAX_ENABLED
-         value: false
-       - key: TUS_KYC_ENABLED
-         value: false
-       - key: TUS_KYB_ENABLED
-         value: false
-       - key: TUS_POSTGRESQL_ENABLED
-         value: false
-       - key: TUS_BROWSER_ENABLED
-         value: false
-       - key: TUS_DEVICE_ENABLED
-         value: false
-       - key: TUS_POS_PILOT_ENABLED
-         value: false
-       - key: TUS_PRODUCTION_OPERATIONS_ENABLED
-         value: false
+      - key: TUS_FLEET_JOBS_ENABLED
+        value: false
+      - key: TUS_MERCADOPAGO_ENABLED
+        value: false
+      - key: TUS_WHATSAPP_ENABLED
+        value: false
+      - key: TUS_AWS_ENABLED
+        value: false
+      - key: TUS_RENDER_ENABLED
+        value: false
+      - key: TUS_CLOUD_ENABLED
+        value: false
+      - key: TUS_LEGAL_ENABLED
+        value: false
+      - key: TUS_TAX_ENABLED
+        value: false
+      - key: TUS_KYC_ENABLED
+        value: false
+      - key: TUS_KYB_ENABLED
+        value: false
+      - key: TUS_POSTGRESQL_ENABLED
+        value: false
+      - key: TUS_BROWSER_ENABLED
+        value: false
+      - key: TUS_DEVICE_ENABLED
+        value: false
+      - key: TUS_POS_PILOT_ENABLED
+        value: false
+      - key: TUS_PRODUCTION_OPERATIONS_ENABLED
+        value: false
 
   - type: worker
     name: factory-workflow-worker
@@ -197,33 +197,33 @@ services:
         value: false
       - key: TUS_RELEASE_JOBS_ENABLED
         value: false
-       - key: TUS_FLEET_JOBS_ENABLED
-         value: false
-       - key: TUS_MERCADOPAGO_ENABLED
-         value: false
-       - key: TUS_WHATSAPP_ENABLED
-         value: false
-       - key: TUS_AWS_ENABLED
-         value: false
-       - key: TUS_RENDER_ENABLED
-         value: false
-       - key: TUS_CLOUD_ENABLED
-         value: false
-       - key: TUS_LEGAL_ENABLED
-         value: false
-       - key: TUS_TAX_ENABLED
-         value: false
-       - key: TUS_KYC_ENABLED
-         value: false
-       - key: TUS_KYB_ENABLED
-         value: false
-       - key: TUS_POSTGRESQL_ENABLED
-         value: false
-       - key: TUS_BROWSER_ENABLED
-         value: false
-       - key: TUS_DEVICE_ENABLED
-         value: false
-       - key: TUS_POS_PILOT_ENABLED
-         value: false
-       - key: TUS_PRODUCTION_OPERATIONS_ENABLED
-         value: false
+      - key: TUS_FLEET_JOBS_ENABLED
+        value: false
+      - key: TUS_MERCADOPAGO_ENABLED
+        value: false
+      - key: TUS_WHATSAPP_ENABLED
+        value: false
+      - key: TUS_AWS_ENABLED
+        value: false
+      - key: TUS_RENDER_ENABLED
+        value: false
+      - key: TUS_CLOUD_ENABLED
+        value: false
+      - key: TUS_LEGAL_ENABLED
+        value: false
+      - key: TUS_TAX_ENABLED
+        value: false
+      - key: TUS_KYC_ENABLED
+        value: false
+      - key: TUS_KYB_ENABLED
+        value: false
+      - key: TUS_POSTGRESQL_ENABLED
+        value: false
+      - key: TUS_BROWSER_ENABLED
+        value: false
+      - key: TUS_DEVICE_ENABLED
+        value: false
+      - key: TUS_POS_PILOT_ENABLED
+        value: false
+      - key: TUS_PRODUCTION_OPERATIONS_ENABLED
+        value: false

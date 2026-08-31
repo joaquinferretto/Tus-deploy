@@ -887,6 +887,7 @@ model TusDeliveryTask {
   @@unique([tenantId, taskId])
   @@index([tenantId, commitmentId])
   @@index([tenantId, shiftId, status])
+  @@index([tenantId, commitmentId, status])
 }
 
 model TusDeliveryProof {
@@ -953,6 +954,7 @@ model TusPosOperation {
   @@unique([tenantId, operationId])
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, shiftId, createdAt])
+  @@index([tenantId, context, kind])
 }
 
 model TusPosVersion {
@@ -985,6 +987,7 @@ model TusPosReceipt {
 
   @@unique([tenantId, receiptId])
   @@index([tenantId, operationId])
+  @@index([tenantId, operationId, createdAt])
 }
 
 model TusPosDevice {
@@ -1029,6 +1032,7 @@ model TusPosConflict {
 
   @@unique([tenantId, conflictId])
   @@index([tenantId, operationId, status])
+  @@index([tenantId, status, createdAt])
 }
 
 model TusDeliveryOutbox {
@@ -1060,6 +1064,7 @@ model TusPosOutbox {
 
   @@unique([tenantId, eventId])
   @@index([tenantId, status, createdAt])
+  @@index([tenantId, aggregateId, status])
 }
 
 model TusPosAudit {

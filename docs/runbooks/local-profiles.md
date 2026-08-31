@@ -12,9 +12,12 @@ cd frontend && pnpm run dev
 ```
 
 The wrapper resolves the repository-root `.env` by explicit path and consumes only
-the `DATABASE_URL` key. A non-empty process `DATABASE_URL` takes precedence. The
-value is never logged or copied into either wrapper. PostgreSQL is required for API
-readiness; a missing or unreachable database leaves `/ready` unavailable.
+the `DATABASE_URL` key. The root file is authoritative; ambient process values do
+not override it. The value is never logged or copied into either wrapper. Any
+database operation also requires the target identity, owner, disposable
+non-production proof described in the TUS environment inventory. PostgreSQL is
+required for API readiness; a missing, unsafe, or unreachable database leaves
+`/ready` unavailable without a connection or write.
 
 Native dependency states are reported independently:
 

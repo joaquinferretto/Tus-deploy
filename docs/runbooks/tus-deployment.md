@@ -1,7 +1,8 @@
 # TUS deployment activation and rollback runbook
 
 Use this runbook for the final TUS deployment/evidence slice. It applies to
-`render-native` and `aws-terraform` only; Compose is not a fallback.
+`render-native`, `aws-terraform`, and the Next.js/Vercel web contract; Compose is
+not a fallback.
 
 ## Readiness procedure
 
@@ -38,6 +39,19 @@ Local deterministic tests, plan fixtures, and in-process HTTP harnesses are
 `deterministic-test-only` or `cloud-plan-validation`. They do not establish
 live provider, legal, database, browser, device, POS, or production evidence.
 Unavailable evidence is recorded explicitly and remains fail-closed.
+
+## Local, Render, and Vercel contracts
+
+| Target | Build/start contract | Required external proof |
+|---|---|---|
+| Local native | `cd backend && pnpm run dev` or `cd frontend && pnpm run dev`; root `.env` is authoritative | Disposable database proof before any database operation |
+| Render API | `pnpm install --frozen-lockfile && pnpm --filter @factory/api build`; `pnpm --filter @factory/api start` | Render-managed secret ownership and direct health evidence |
+| Render web | `pnpm install --frozen-lockfile && pnpm --filter @factory/web build`; `pnpm --filter @factory/web start` | Authenticated web evidence and API URL contract |
+| Vercel web | `pnpm install --frozen-lockfile`; `pnpm --filter @factory/web build`; Next.js framework | Vercel project ownership, environment proof, and authenticated browser evidence |
+
+No provider, cloud, compliance, production, hardware, or native-device claim is
+inferred from a successful build. Missing external proof is tagged
+`external-blocked` and leaves the corresponding capability disabled.
 
 ## Authorized retry
 

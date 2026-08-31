@@ -1,0 +1,34 @@
+{
+  "status": "external-blocked",
+  "maxFlowMs": 180000,
+  "receipts": [
+    {
+      "tag": "external-blocked",
+      "status": "deferred",
+      "liveConformance": false,
+      "redacted": true,
+      "reason": "authenticated-api unavailable in this environment"
+    },
+    {
+      "tag": "external-blocked",
+      "status": "deferred",
+      "liveConformance": false,
+      "redacted": true,
+      "reason": "authenticated-web unavailable in this environment"
+    },
+    {
+      "tag": "external-blocked",
+      "status": "deferred",
+      "liveConformance": false,
+      "redacted": true,
+      "reason": "mobile-export unavailable in this environment"
+    },
+    {
+      "tag": "external-blocked",
+      "status": "deferred",
+      "liveConformance": false,
+      "redacted": true,
+      "reason": "pos unavailable in this environment"
+    }
+  ]
+}
