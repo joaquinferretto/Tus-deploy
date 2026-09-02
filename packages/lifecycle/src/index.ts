@@ -52,7 +52,10 @@ export function createLifecycle(options: LifecycleOptions) {
       if (current === 'stopped' || current === 'stopping') return
       current = 'stopping'
       options.onEvent?.(`stopping:${reason}`)
-      const deadline = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('shutdown timeout')), options.shutdownTimeoutMs))
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('shutdown timeout')), options.shutdownTimeoutMs)
+      })
       try {
         await Promise.race([closeResources(resources, options.onEvent), deadline])
         current = 'stopped'
@@ -61,14 +64,23 @@ export function createLifecycle(options: LifecycleOptions) {
         current = 'stopped'
         options.onEvent?.('shutdown-failed')
         throw error
+      } finally {
+        if (timer) clearTimeout(timer)
       }
     },
   }
 }
 
 async function closeResources(resources: Array<{ name: string; close: () => void | Promise<void> }>, onEvent?: (event: string) => void) {
+  let firstError: unknown
   for (const resource of [...resources].reverse()) {
-    await resource.close()
-    onEvent?.(`closed:${resource.name}`)
+    try {
+      await resource.close()
+      onEvent?.(`closed:${resource.name}`)
+    } catch (error) {
+      firstError ??= error
+      onEvent?.(`close-failed:${resource.name}`)
+    }
   }
+  if (firstError) throw firstError
 }

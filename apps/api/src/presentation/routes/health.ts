@@ -2,27 +2,40 @@ import express from 'express'
 import type { Request, Response, Router as ExpressRouter } from 'express'
 import { buildNativeReadiness } from '@factory/config'
 import type { NativeReadiness } from '@factory/config'
+import { checkPostgresSchema, type DatabaseLifecycle, type SchemaReadiness } from '../../infrastructure/database/lifecycle.ts'
+import { getPostgresPool } from '../../infrastructure/database/postgres/pool.ts'
 
 const dependencyKeys = ['postgres', 'mongodb', 'redis', 'pythonWorker', 'mobileSupport', 'externalProviders'] as const
 const { Router } = express
 
-async function getDefaultReadiness(): Promise<NativeReadiness> {
+export type ApiReadiness = NativeReadiness & { schema?: SchemaReadiness }
+
+async function getDefaultReadiness(databaseLifecycle?: DatabaseLifecycle): Promise<ApiReadiness> {
   const [{ checkPostgres }, { checkMongoDB }, { checkRedis }] = await Promise.all([
     import('../../infrastructure/database/postgres/pool.js'),
     import('../../infrastructure/database/mongodb/connection.js'),
     import('../../infrastructure/database/redis/client.js'),
   ])
 
-  return buildNativeReadiness({
+  const schema = databaseLifecycle
+    ? await databaseLifecycle.checkSchema()
+    : await checkPostgresSchema(getPostgresPool())
+  const readiness = await buildNativeReadiness({
     profile: process.env['NATIVE_PROFILE'] === '1' ? 'native' : 'compose',
-    postgresCheck: checkPostgres,
+    postgresCheck: databaseLifecycle ? () => schema.compatible : checkPostgres,
     checks: { mongodb: checkMongoDB, redis: checkRedis },
   })
+  return { ...readiness, schema }
 }
 
-export function createHealthRouter(options: { getReadiness?: () => Promise<NativeReadiness> } = {}): ExpressRouter {
+export interface HealthRouterOptions {
+  getReadiness?: () => Promise<ApiReadiness>
+  databaseLifecycle?: DatabaseLifecycle
+}
+
+export function createHealthRouter(options: HealthRouterOptions = {}): ExpressRouter {
   const router = Router()
-  const getReadiness = options.getReadiness ?? getDefaultReadiness
+  const getReadiness = options.getReadiness ?? (() => getDefaultReadiness(options.databaseLifecycle))
 
   router.get('/health', (_req: Request, res: Response) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() })
@@ -32,13 +45,18 @@ export function createHealthRouter(options: { getReadiness?: () => Promise<Nativ
     try {
       const dependencies = await getReadiness()
       const reports = dependencyKeys.map((key) => dependencies[key])
-      const ready = reports.every((report) => !report.blocksApiReadiness)
+      const schemaReady = dependencies.schema?.compatible ?? true
+      const ready = schemaReady && reports.every((report) => !report.blocksApiReadiness)
 
       res.status(ready ? 200 : 503).json({
         ready,
         profile: dependencies.profile,
         dependencies,
-        checks: Object.fromEntries(dependencyKeys.map((key) => [key, dependencies[key].status === 'ready'])),
+        ...(dependencies.schema ? { schema: dependencies.schema } : {}),
+        checks: {
+          ...Object.fromEntries(dependencyKeys.map((key) => [key, dependencies[key].status === 'ready'])),
+          ...(dependencies.schema ? { schema: dependencies.schema.compatible } : {}),
+        },
         timestamp: new Date().toISOString(),
       })
     } catch {

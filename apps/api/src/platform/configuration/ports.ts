@@ -4,6 +4,11 @@ import type {
   ConfigurationScope,
   DeliveryProfile,
 } from '@factory/config'
+import type { ApiRuntimeConfig, ApiRuntimeConfigOptions } from './domain.js'
+
+export interface ApiRuntimeConfigurationPort {
+  load: (options?: ApiRuntimeConfigOptions) => ApiRuntimeConfig
+}
 
 export interface ConfigurationStore {
   save(revision: ConfigurationRevision): Promise<void>

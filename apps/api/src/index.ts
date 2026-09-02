@@ -1,19 +1,12 @@
-import cluster from 'cluster'
-import os from 'os'
-import { startServer } from './server'
+import { startServer } from './server.ts'
 
-const numCPUs = os.cpus().length
-const WORKERS = process.env['NODE_ENV'] === 'production' ? numCPUs : 1
+export async function runApi(): Promise<void> {
+  await startServer()
+}
 
-if (cluster.isPrimary) {
-  for (let i = 0; i < WORKERS; i++) {
-    cluster.fork()
-  }
-
-  cluster.on('exit', (worker, code, signal) => {
-    console.log(`Worker ${worker.process.pid} died (${signal || code}). Restarting...`)
-    cluster.fork()
+if (process.argv[1]?.endsWith('/index.ts') || process.argv[1]?.endsWith('\\index.ts') || process.argv[1]?.endsWith('/index.js') || process.argv[1]?.endsWith('\\index.js')) {
+  runApi().catch(() => {
+    console.error('API startup failed; diagnostics redacted')
+    process.exitCode = 1
   })
-} else {
-  startServer()
 }
