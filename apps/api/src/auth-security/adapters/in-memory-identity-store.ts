@@ -15,6 +15,7 @@ export class InMemoryIdentityStore implements IdentityStore {
   readonly recoveryTokens = new Map<string, RecoveryToken>()
   readonly sessions = new Map<string, Session>()
   readonly devices = new Map<string, Device>()
+  private transactionTail: Promise<void> = Promise.resolve()
 
   async findAccountByEmail(normalizedEmail: string): Promise<Account | undefined> {
     return [...this.accounts.values()].find(
@@ -84,4 +85,43 @@ export class InMemoryIdentityStore implements IdentityStore {
   async saveDevice(accountId: string, device: Device): Promise<void> {
     this.devices.set(`${accountId}:${device.deviceId}`, device)
   }
+
+  async transaction<TValue>(operation: (store: IdentityStore) => Promise<TValue>): Promise<TValue> {
+    const previous = this.transactionTail
+    let release!: () => void
+    this.transactionTail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
+    const snapshot = {
+      accounts: cloneMap(this.accounts),
+      credentials: cloneMap(this.credentials),
+      verificationTokens: cloneMap(this.verificationTokens),
+      recoveryTokens: cloneMap(this.recoveryTokens),
+      sessions: cloneMap(this.sessions),
+      devices: cloneMap(this.devices),
+    }
+    try {
+      return await operation(this)
+    } catch (error) {
+      restoreMap(this.accounts, snapshot.accounts)
+      restoreMap(this.credentials, snapshot.credentials)
+      restoreMap(this.verificationTokens, snapshot.verificationTokens)
+      restoreMap(this.recoveryTokens, snapshot.recoveryTokens)
+      restoreMap(this.sessions, snapshot.sessions)
+      restoreMap(this.devices, snapshot.devices)
+      throw error
+    } finally {
+      release()
+    }
+  }
+}
+
+function cloneMap<TKey, TValue>(source: Map<TKey, TValue>): Map<TKey, TValue> {
+  return new Map([...source].map(([key, value]) => [key, structuredClone(value)]))
+}
+
+function restoreMap<TKey, TValue>(target: Map<TKey, TValue>, source: Map<TKey, TValue>): void {
+  target.clear()
+  for (const [key, value] of source) target.set(key, structuredClone(value))
 }

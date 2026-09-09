@@ -2,6 +2,8 @@ import express from 'express'
 import type { Request, Response, Router } from 'express'
 import type { AuthService } from '../application/auth-service.js'
 import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../../tus/ports/index.ts'
+import { asyncHandler, createErrorEnvelope } from '../../presentation/middleware/error.ts'
+import { getCorrelationId } from '../../presentation/middleware/correlation.ts'
 
 export interface AuthRouterDependencies {
   service: AuthService
@@ -11,7 +13,7 @@ export interface AuthRouterDependencies {
 export function createAuthRouter({ service, sessions }: AuthRouterDependencies): Router {
   const router = express.Router()
 
-  router.post('/auth/register', async (request: Request, response: Response) => {
+  router.post('/auth/register', asyncHandler(async (request: Request, response: Response) => {
     const body = asRecord(request.body)
     try {
       const result = await service.register({
@@ -21,12 +23,12 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
         tenantId: readOptionalString(body, 'tenantId'),
       })
       response.status(201).json({ account: result.account, credential: result.credential })
-    } catch {
-      response.status(400).json({ error: 'Invalid registration request' })
+    } catch (error) {
+      response.status(400).json(createErrorEnvelope(error, getCorrelationId(request), 'INVALID_REQUEST'))
     }
-  })
+  }))
 
-  router.post('/auth/sign-in', async (request: Request, response: Response) => {
+  router.post('/auth/sign-in', asyncHandler(async (request: Request, response: Response) => {
     const body = asRecord(request.body)
     const result = await service.signIn({
       email: readString(body, 'email'),
@@ -37,56 +39,56 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
       },
     })
     if (!result.ok) {
-      response.status(401).json({ error: result.message, code: result.code })
+      response.status(401).json(createErrorEnvelope(new Error(result.message), getCorrelationId(request), result.code))
       return
     }
     response.status(200).json({ session: result.session })
-  })
+  }))
 
-  router.get('/auth/session', async (request: Request, response: Response) => {
+  router.get('/auth/session', asyncHandler(async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context) {
-      response.status(401).json({ error: 'Authentication is required', code: 'UNAUTHORIZED' })
+      response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
       return
     }
     response.status(200).json({ context })
-  })
+  }))
 
-  router.post('/auth/sign-out', async (request: Request, response: Response) => {
+  router.post('/auth/sign-out', asyncHandler(async (request: Request, response: Response) => {
     const accessToken = bearerToken(request)
     const context = await authenticate(request, sessions)
     if (!context || !accessToken) {
-      response.status(401).json({ error: 'Authentication is required', code: 'UNAUTHORIZED' })
+      response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
       return
     }
-    sendLifecycleResult(response, await service.signOut({ accessToken }), 204)
-  })
+    sendLifecycleResult(response, await service.signOut({ accessToken }), 204, getCorrelationId(request))
+  }))
 
-  router.post('/auth/verify-email', async (request: Request, response: Response) => {
+  router.post('/auth/verify-email', asyncHandler(async (request: Request, response: Response) => {
     const result = await service.verifyEmail({ token: readString(asRecord(request.body), 'token') })
-    sendLifecycleResult(response, result, 204)
-  })
+    sendLifecycleResult(response, result, 204, getCorrelationId(request))
+  }))
 
-  router.post('/auth/recovery/request', async (request: Request, response: Response) => {
+  router.post('/auth/recovery/request', asyncHandler(async (request: Request, response: Response) => {
     const result = await service.requestPasswordRecovery({
       email: readString(asRecord(request.body), 'email'),
     })
-    response.status(202).json(result.public)
-  })
+    response.status(202).json({ ...result.public, correlationId: getCorrelationId(request) })
+  }))
 
-  router.post('/auth/recovery/complete', async (request: Request, response: Response) => {
+  router.post('/auth/recovery/complete', asyncHandler(async (request: Request, response: Response) => {
     const body = asRecord(request.body)
     const result = await service.completePasswordRecovery({
       token: readString(body, 'token'),
       newPassword: readString(body, 'newPassword'),
     })
-    sendLifecycleResult(response, result, 204)
-  })
+    sendLifecycleResult(response, result, 204, getCorrelationId(request))
+  }))
 
-  router.patch('/auth/accounts/:accountId', async (request: Request, response: Response) => {
+  router.patch('/auth/accounts/:accountId', asyncHandler(async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context) {
-      response.status(401).json({ error: 'Authentication is required', code: 'UNAUTHORIZED' })
+      response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
       return
     }
     const result = await service.updateAccount({
@@ -95,18 +97,17 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
       changes: asRecord(request.body),
     })
     if (!result.ok) {
-      response
-        .status(result.code === 'FORBIDDEN' ? 403 : 400)
-        .json({ error: result.message, code: result.code })
+      response.status(result.code === 'FORBIDDEN' ? 403 : 400)
+        .json(createErrorEnvelope(new Error(result.message), getCorrelationId(request), result.code))
       return
     }
     response.status(200).json({ account: result.account })
-  })
+  }))
 
-  router.post('/auth/credentials/password', async (request: Request, response: Response) => {
+  router.post('/auth/credentials/password', asyncHandler(async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context) {
-      response.status(401).json({ error: 'Authentication is required', code: 'UNAUTHORIZED' })
+      response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
       return
     }
     const body = asRecord(request.body)
@@ -115,23 +116,23 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
       currentPassword: readString(body, 'currentPassword'),
       newPassword: readString(body, 'newPassword'),
     })
-    sendLifecycleResult(response, result, 204)
-  })
+    sendLifecycleResult(response, result, 204, getCorrelationId(request))
+  }))
 
   router.post(
     '/auth/credentials/:credentialId/disable',
-    async (request: Request, response: Response) => {
+    asyncHandler(async (request: Request, response: Response) => {
       const context = await authenticate(request, sessions)
       if (!context) {
-        response.status(401).json({ error: 'Authentication is required', code: 'UNAUTHORIZED' })
+        response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
         return
       }
       const result = await service.disableCredential({
         actorId: context.subjectId,
         credentialId: request.params['credentialId'] ?? '',
       })
-      sendLifecycleResult(response, result, 204)
-    }
+      sendLifecycleResult(response, result, 204, getCorrelationId(request))
+    })
   )
 
   return router
@@ -140,12 +141,13 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
 function sendLifecycleResult(
   response: Response,
   result: { ok: true } | { ok: false; code: string; message: string },
-  successStatus: number
+  successStatus: number,
+  correlationId: string,
 ): void {
   if (!result.ok) {
     response
       .status(result.code === 'FORBIDDEN' ? 403 : result.code === 'INVALID_TOKEN' ? 400 : 422)
-      .json({ error: result.message, code: result.code })
+      .json(createErrorEnvelope(new Error(result.message), correlationId, result.code))
     return
   }
   response.status(successStatus).send()

@@ -1,6 +1,8 @@
 import express, { type Request, type Response, type Router } from 'express'
 import type { TenancyService } from '../application/tenancy-service.js'
 import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../../tus/ports/index.ts'
+import { asyncHandler, createErrorEnvelope } from '../../presentation/middleware/error.ts'
+import { getCorrelationId } from '../../presentation/middleware/correlation.ts'
 
 export interface TenancyRouterDependencies {
   service?: TenancyService
@@ -10,19 +12,19 @@ export interface TenancyRouterDependencies {
 export function createTenancyRouter({ service, sessions }: TenancyRouterDependencies): Router {
   const router = express.Router()
 
-  router.post('/tenancy/organizations', async (request: Request, response: Response) => {
+  router.post('/tenancy/organizations', asyncHandler(async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context) {
-      response.status(401).json({ error: 'Authentication is required', code: 'UNAUTHORIZED' })
+      response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
       return
     }
     const body = asRecord(request.body)
     if (hasSpoofedAuthority(body, context)) {
-      response.status(403).json({ error: 'Client authority fields do not match the authenticated session', code: 'FORBIDDEN' })
+      response.status(403).json(createErrorEnvelope(new Error('client authority rejected'), getCorrelationId(request), 'FORBIDDEN'))
       return
     }
     if (!service) {
-      response.status(503).json({ error: 'Tenant persistence is unavailable', code: 'UNAVAILABLE' })
+      response.status(503).json(createErrorEnvelope(new Error('tenant persistence unavailable'), getCorrelationId(request), 'UNAVAILABLE'))
       return
     }
     const result = await service.createOrganization({
@@ -32,13 +34,13 @@ export function createTenancyRouter({ service, sessions }: TenancyRouterDependen
       correlationId: context.correlationId,
       organizationId: context.tenantId,
     })
-    sendResult(response, result, 201)
-  })
+    sendResult(response, result, 201, getCorrelationId(request))
+  }))
 
-  router.post('/tenancy/invitations', async (request: Request, response: Response) => {
+  router.post('/tenancy/invitations', asyncHandler(async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !service) {
-      response.status(context ? 503 : 401).json({ error: context ? 'Tenant persistence is unavailable' : 'Authentication is required', code: context ? 'UNAVAILABLE' : 'UNAUTHORIZED' })
+      response.status(context ? 503 : 401).json(createErrorEnvelope(new Error(context ? 'tenant persistence unavailable' : 'authentication required'), getCorrelationId(request), context ? 'UNAVAILABLE' : 'UNAUTHORIZED'))
       return
     }
     const body = asRecord(request.body)
@@ -47,23 +49,23 @@ export function createTenancyRouter({ service, sessions }: TenancyRouterDependen
       email: readString(body['email']),
       roleIds: readStringArray(body['roleIds']),
     })
-    sendResult(response, result, 201)
-  })
+    sendResult(response, result, 201, getCorrelationId(request))
+  }))
 
   router.delete(
     '/tenancy/memberships/:membershipId',
-    async (request: Request, response: Response) => {
+    asyncHandler(async (request: Request, response: Response) => {
       const context = await authenticate(request, sessions)
       if (!context || !service) {
-        response.status(context ? 503 : 401).json({ error: context ? 'Tenant persistence is unavailable' : 'Authentication is required', code: context ? 'UNAVAILABLE' : 'UNAUTHORIZED' })
+        response.status(context ? 503 : 401).json(createErrorEnvelope(new Error(context ? 'tenant persistence unavailable' : 'authentication required'), getCorrelationId(request), context ? 'UNAVAILABLE' : 'UNAUTHORIZED'))
         return
       }
       const result = await service.revokeMembership({
         context: tenancyContext(context),
         membershipId: readString(request.params['membershipId']),
       })
-      sendResult(response, result, 204)
-    }
+      sendResult(response, result, 204, getCorrelationId(request))
+    })
   )
 
   return router
@@ -114,12 +116,13 @@ function readStringArray(value: unknown): string[] {
 function sendResult(
   response: Response,
   result: { ok: boolean; code?: string; message?: string },
-  successStatus: number
+  successStatus: number,
+  correlationId: string,
 ): void {
   if (!result.ok) {
     response
       .status(result.code === 'FORBIDDEN' || result.code === 'INVALID_TENANT_CONTEXT' ? 403 : 422)
-      .json({ error: result.message, code: result.code })
+      .json(createErrorEnvelope(new Error(result.message ?? 'tenant request rejected'), correlationId, result.code ?? 'TENANT_REQUEST_REJECTED'))
     return
   }
   response.status(successStatus).json(result)

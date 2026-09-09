@@ -4,6 +4,7 @@ import type { ContractVersion } from './base.ts'
 export { CONTRACT_VERSION, ContractValidationError } from './base.ts'
 
 export type { ContractVersion } from './base.ts'
+export { addMoney, createMoney, type Money } from './money.ts'
 
 export interface TraceContext {
   traceId: string

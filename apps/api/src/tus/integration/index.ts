@@ -14,6 +14,8 @@ import {
   type WhatsAppWebhookRequest,
 } from '../../providers/whatsapp/index.ts'
 import { TusReadinessBlockedError, type TusReadinessGuard, type TusReadinessProfile } from '../readiness/index.ts'
+import { asyncHandler, createErrorEnvelope } from '../../presentation/middleware/error.ts'
+import { getCorrelationId } from '../../presentation/middleware/correlation.ts'
 
 export type TusActivationStatus = ReturnType<typeof evaluateReadinessGates>
 
@@ -103,36 +105,38 @@ export type TusIntegrationRouterOptions = {
   readinessGuard?: TusReadinessGuard
   readinessProfile?: TusReadinessProfile
   readinessScope?: string
+  providerActionsEnabled?: boolean
 }
 
 export function createTusIntegrationRouter(options: TusIntegrationRouterOptions): Router {
   const router = express.Router()
 
-  router.post('/tus/providers/mercado-pago/webhook', async (request: Request, response: Response) => {
-    if (!options.mercadoPago) {
-      response.status(503).json({ error: 'Mercado Pago provider is unavailable' })
+  router.post('/tus/providers/mercado-pago/webhook', asyncHandler(async (request: Request, response: Response) => {
+    if (!options.providerActionsEnabled || !options.mercadoPago) {
+      response.status(503).json(createErrorEnvelope(new Error('provider disabled'), getCorrelationId(request), 'PROVIDER_UNAVAILABLE'))
       return
     }
-    await sendWebhookResult(response, () =>
+    await sendWebhookResult(response, getCorrelationId(request), () =>
       requireProviderReadiness(options, request, 'provider:mercado-pago').then(() => options.mercadoPago!.receiveWebhook(request.body as MercadoPagoWebhookRequest)),
     )
-  })
+  }))
 
-  router.post('/tus/providers/whatsapp/webhook', async (request: Request, response: Response) => {
-    if (!options.whatsapp) {
-      response.status(503).json({ error: 'WhatsApp provider is unavailable' })
+  router.post('/tus/providers/whatsapp/webhook', asyncHandler(async (request: Request, response: Response) => {
+    if (!options.providerActionsEnabled || !options.whatsapp) {
+      response.status(503).json(createErrorEnvelope(new Error('provider disabled'), getCorrelationId(request), 'PROVIDER_UNAVAILABLE'))
       return
     }
-    await sendWebhookResult(response, () =>
+    await sendWebhookResult(response, getCorrelationId(request), () =>
       requireProviderReadiness(options, request, 'provider:whatsapp').then(() => options.whatsapp!.receiveWebhook(request.body as WhatsAppWebhookRequest)),
     )
-  })
+  }))
 
   return router
 }
 
 async function sendWebhookResult<TValue extends { status: string }>(
   response: Response,
+  correlationId: string,
   operation: () => Promise<TValue>,
 ): Promise<void> {
   try {
@@ -145,10 +149,10 @@ async function sendWebhookResult<TValue extends { status: string }>(
     response.status(status).json(body)
   } catch (error) {
     if (error instanceof TusReadinessBlockedError) {
-      response.status(error.status).json({ code: error.code, error: error.message })
+      response.status(error.status).json(createErrorEnvelope(error, correlationId, error.code))
       return
     }
-    response.status(503).json({ error: 'Provider request unavailable' })
+    response.status(503).json(createErrorEnvelope(error, correlationId, 'PROVIDER_UNAVAILABLE'))
   }
 }
 

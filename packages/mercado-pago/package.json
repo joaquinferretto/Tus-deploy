@@ -1,0 +1,24 @@
+{
+  "name": "@repo/mercado-pago",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Portable Mercado Pago HTTP adapter for checkout, payments, refunds, webhooks, and optional Money Out",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "pnpm run build && node --test tests/mercado-pago.test.cjs"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^20.11.24",
+    "typescript": "^5.3.3"
+  }
+}

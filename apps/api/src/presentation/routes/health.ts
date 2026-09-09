@@ -4,6 +4,7 @@ import { buildNativeReadiness } from '@factory/config'
 import type { NativeReadiness } from '@factory/config'
 import { checkPostgresSchema, type DatabaseLifecycle, type SchemaReadiness } from '../../infrastructure/database/lifecycle.ts'
 import { getPostgresPool } from '../../infrastructure/database/postgres/pool.ts'
+import { getCorrelationId } from '../middleware/correlation.ts'
 
 const dependencyKeys = ['postgres', 'mongodb', 'redis', 'pythonWorker', 'mobileSupport', 'externalProviders'] as const
 const { Router } = express
@@ -37,11 +38,15 @@ export function createHealthRouter(options: HealthRouterOptions = {}): ExpressRo
   const router = Router()
   const getReadiness = options.getReadiness ?? (() => getDefaultReadiness(options.databaseLifecycle))
 
-  router.get('/health', (_req: Request, res: Response) => {
-    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() })
+  router.get('/health', (req: Request, res: Response) => {
+    const correlationId = getCorrelationId(req)
+    res.setHeader('X-Correlation-Id', correlationId)
+    res.status(200).json({ status: 'ok', service: 'factory-api', correlationId, timestamp: new Date().toISOString() })
   })
 
-  router.get('/ready', async (_req: Request, res: Response) => {
+  router.get('/ready', async (req: Request, res: Response) => {
+    const correlationId = getCorrelationId(req)
+    res.setHeader('X-Correlation-Id', correlationId)
     try {
       const dependencies = await getReadiness()
       const reports = dependencyKeys.map((key) => dependencies[key])
@@ -50,6 +55,8 @@ export function createHealthRouter(options: HealthRouterOptions = {}): ExpressRo
 
       res.status(ready ? 200 : 503).json({
         ready,
+        status: ready ? 'ready' : dependencies.schema?.activation === 'incomplete-schema' ? 'incomplete-schema' : 'not-ready',
+        correlationId,
         profile: dependencies.profile,
         dependencies,
         ...(dependencies.schema ? { schema: dependencies.schema } : {}),
@@ -60,7 +67,7 @@ export function createHealthRouter(options: HealthRouterOptions = {}): ExpressRo
         timestamp: new Date().toISOString(),
       })
     } catch {
-      res.status(503).json({ ready: false, error: 'Readiness unavailable', timestamp: new Date().toISOString() })
+      res.status(503).json({ ready: false, status: 'not-ready', correlationId, error: 'Readiness unavailable', timestamp: new Date().toISOString() })
     }
   })
 

@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
+from worker.core.config import get_settings
 
 try:
     from langgraph.graph import END, StateGraph
@@ -155,7 +157,25 @@ def run_once(job: dict[str, Any]) -> dict[str, Any]:
     return graph.invoke(initial_state)
 
 
+def worker_activation_status(environment: dict[str, str] | None = None) -> str:
+    values = environment or {}
+    if values.get("WORKER_DEPLOYMENT_STATUS", "external-blocked-placeholder") != "active":
+        return "external-blocked-placeholder"
+    if values.get("WORKER_ENABLE_CONSUMER", "false").lower() != "true":
+        return "disabled"
+    if not values.get("DATABASE_URL", "").strip():
+        return "missing-database-url"
+    return "active"
+
+
 def main() -> None:
+    status = worker_activation_status(dict(os.environ))
+    if status != "active":
+        print(json.dumps({"status": status, "providerCalls": 0, "jobsClaimed": 0}))
+        return
+    if not get_settings().consumer_ready:
+        print(json.dumps({"status": "external-blocked", "providerCalls": 0, "jobsClaimed": 0}))
+        return
     result = run_once(example_job_payload())
     print(json.dumps(result, indent=2))
 

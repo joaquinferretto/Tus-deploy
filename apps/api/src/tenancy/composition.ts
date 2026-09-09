@@ -7,7 +7,7 @@ import {
 } from './adapters/in-memory.js'
 import { SystemTenancyClock } from './adapters/system.js'
 import type { TenancyClock, TenancyStore } from './ports.js'
-import { PrismaTenancyStore, type TenantPrismaClient } from './adapters/prisma.js'
+import { PrismaTenancyAuditSink, PrismaTenancyStore, type TenantPrismaClient } from './adapters/prisma.js'
 
 export interface InMemoryTenancyServiceOptions {
   now?: () => number
@@ -53,7 +53,31 @@ export function createInMemoryTenancyService(options: InMemoryTenancyServiceOpti
 }
 
 export function createPrismaTenancyService(client: TenantPrismaClient) {
-  return createTenancyService({ store: new PrismaTenancyStore(client) })
+  const store = new PrismaTenancyStore(client)
+  const audit = client.auditEvent ? new PrismaTenancyAuditSink(client) : new InMemoryTenancyAuditSink()
+  const service = new TenancyService({
+    store,
+    audit,
+    ids: new DeterministicTenancyIdGenerator(),
+    tokens: new DeterministicTenancyTokenIssuer(),
+    clock: new SystemTenancyClock(),
+  })
+  return {
+    service,
+    store,
+    audit,
+    createOrganization: service.createOrganization.bind(service),
+    createWorkspace: service.createWorkspace.bind(service),
+    createRole: service.createRole.bind(service),
+    addMembership: service.addMembership.bind(service),
+    revokeMembership: service.revokeMembership.bind(service),
+    inviteMember: service.inviteMember.bind(service),
+    acceptInvitation: service.acceptInvitation.bind(service),
+    authorize: service.authorize.bind(service),
+    readResource: service.readResource.bind(service),
+    writeResource: service.writeResource.bind(service),
+    listResources: service.listResources.bind(service),
+  }
 }
 
 export { TenancyService } from './application/tenancy-service.js'
@@ -61,3 +85,4 @@ export { InMemoryTenancyStore, InMemoryTenancyAuditSink } from './adapters/in-me
 export type * from './domain.js'
 export type * from './ports.js'
 export { PrismaTenancyStore } from './adapters/prisma.js'
+export { PrismaTenancyAuditSink } from './adapters/prisma.js'

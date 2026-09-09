@@ -4,9 +4,11 @@ import type {
   Organization,
   Role,
   TenantResource,
+  TenancyAuditEvent,
   Workspace,
 } from '../domain.js'
 import type { TenancyStore } from '../ports.js'
+import type { TenancyAuditSink } from '../ports.js'
 
 interface OrganizationRow { id: string; name: string; slug: string; defaultWorkspaceId: string; createdAt: Date }
 interface WorkspaceRow { id: string; organizationId: string; name: string; slug: string; createdAt: Date }
@@ -46,6 +48,31 @@ export interface TenantPrismaClient {
     findUnique(args: { where: { id: string } }): Promise<ResourceRow | null>
     findMany(args: { where: { tenantId: string; type: string } }): Promise<ResourceRow[]>
     upsert(args: { where: { id: string }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<ResourceRow>
+  }
+  auditEvent?: {
+    create(args: { data: Record<string, unknown> }): Promise<unknown>
+  }
+}
+
+export class PrismaTenancyAuditSink implements TenancyAuditSink {
+  readonly events: TenancyAuditEvent[] = []
+
+  constructor(private readonly client: TenantPrismaClient) {}
+
+  async record(event: Parameters<TenancyAuditSink['record']>[0]): Promise<void> {
+    this.events.push({ ...event, metadata: { ...event.metadata } })
+    await this.client.auditEvent?.create({
+      data: {
+        id: `${event.correlationId}:${event.action}:${event.occurredAt}`,
+        tenantId: event.tenantId ?? 'unknown',
+        actorId: event.actorId,
+        correlationId: event.correlationId,
+        eventType: event.action,
+        outcome: event.outcome,
+        metadata: event.metadata,
+        occurredAt: new Date(event.occurredAt),
+      },
+    })
   }
 }
 

@@ -4,9 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { addMoney, createMoney } from '../../../packages/contracts/src/money.ts'
+
 import {
   CONNECTION_TIMEOUT_MS,
+  LAUNCH_MIGRATION_NAME,
   REPAIR_MIGRATION_NAME,
+  REQUIRED_LAUNCH_TABLES,
+  REQUIRED_MONEY_COLUMNS,
   REQUIRED_POS_TABLES,
   REQUIRED_SCHEMA_COLUMNS,
   classifySqlStatement,
@@ -19,6 +24,7 @@ import {
   runRepair,
   splitSqlStatements,
   validatePreflight,
+  verifyRestorableBackup,
   verifySchemaSnapshot,
   withBoundedRetry,
 } from '../../../scripts/tus-migration-repair-lib.mjs'
@@ -40,11 +46,12 @@ test('inventory classifies the complete backlog and excludes comment-only destru
   const inventory = await inventoryMigrations({ migrationsDirectory: MIGRATIONS_ROOT })
 
   assert.equal(inventory.pendingMigrations.length, 25)
-  assert.equal(inventory.migrations.length, 26)
+  assert.equal(inventory.migrations.length, 27)
   assert.equal(inventory.destructiveStatementCount, 19)
   assert.deepEqual(inventory.destructiveTokens, ['CASCADE', 'DROP'])
   assert.equal(inventory.commentOnlyTokenCount > 0, true)
   assert.equal(inventory.migrations.some((migration) => migration.name === REPAIR_MIGRATION_NAME), true)
+  assert.equal(inventory.migrations.some((migration) => migration.name === LAUNCH_MIGRATION_NAME), true)
   assert.equal(inventory.pendingMigrations.every((migration) => migration.historical === true), true)
   assert.equal(classifySqlStatement('-- DROP TABLE ignored\n'), 'comment-only')
 })
@@ -166,6 +173,45 @@ test('ledger marker is one forward-only completed repair row and required table 
   for (const table of REQUIRED_POS_TABLES) assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS "${table}"`, 'u'))
 })
 
+test('launch baseline covers the full marketplace database with exact money and no destructive SQL', async () => {
+  const migration = await readFile(join(MIGRATIONS_ROOT, `${LAUNCH_MIGRATION_NAME}`, 'migration.sql'), 'utf8')
+  const gate = gateInventory({ statements: splitSqlStatements(migration) })
+  assert.equal(gate.status, 'passed')
+  assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE|CASCADE|DELETE\s+FROM)\b/iu)
+  assert.match(migration, /BIGINT/u)
+  assert.match(migration, /rateBps" INTEGER/u)
+  for (const table of REQUIRED_LAUNCH_TABLES) assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS "${table}"`, 'u'))
+  for (const column of REQUIRED_MONEY_COLUMNS) assert.match(migration, new RegExp(`"${column}" BIGINT`, 'u'))
+})
+
+test('Prisma launch money fields use BigInt rather than Float', async () => {
+  const schema = await readFile(join(REPO_ROOT, 'apps', 'api', 'prisma', 'schema.prisma'), 'utf8')
+  assert.doesNotMatch(schema, /(?:amount|price|grossAmount|deductions|commissionableBase|commissionAmount|netAmount|providerAmount)\s+Float/u)
+  assert.match(schema, /model TusCommitment[\s\S]*?amount\s+BigInt/u)
+  assert.match(schema, /model TusLedgerEntry[\s\S]*?amount\s+BigInt/u)
+})
+
+test('Money keeps currency explicit and adds only same-currency minor units', () => {
+  const total = addMoney(createMoney('ARS', 1250n), createMoney('ARS', 750n))
+  assert.deepEqual(total, { currency: 'ARS', minor: 2000n })
+  assert.throws(() => addMoney(createMoney('ARS', 1n), createMoney('USD', 1n)), /currency/u)
+})
+
+test('backup verification requires a restorable artifact and verifies restore before DDL', async () => {
+  const calls = []
+  const result = await verifyRestorableBackup({
+    backupId: 'backup-operator-handle',
+    operations: {
+      assertRestorable: async (id) => calls.push(`assert:${id}`),
+      restoreToScratch: async () => calls.push('restore'),
+      verifyRestore: async () => calls.push('verify'),
+    },
+  })
+  assert.equal(result.status, 'passed')
+  assert.deepEqual(calls, ['assert:backup-operator-handle', 'restore', 'verify'])
+  await assert.rejects(() => verifyRestorableBackup({ backupId: 'backup-operator-handle', operations: {} }), /backup verification unavailable/u)
+})
+
 test('safe additive path applies once, preserves the ledger, closes the pool, and defers POS runtime', async () => {
   await withTempRoot('DATABASE_URL=postgresql://user:secret@db.example.test/tus\n', async (rootDirectory) => {
     const calls = []
@@ -187,13 +233,13 @@ test('safe additive path applies once, preserves the ledger, closes the pool, an
       confirmed: true,
       backupId: 'backup-operator-handle',
       operations: {
-        backup: { assertRestorable: async (id) => calls.push(`backup:${id}`) },
+        backup: { assertRestorable: async (id) => calls.push(`backup:${id}`), verifyRestore: async () => calls.push('verify-backup') },
         connect: async (_url, timeoutMs, attempt) => {
           calls.push(`connect:${timeoutMs}:${attempt}`)
           return { query: async () => ({ rows: [] }) }
         },
         inspect: async () => snapshot,
-        applyBaseline: async (_pool, sql) => calls.push(`apply:${sql.includes(REPAIR_MIGRATION_NAME)}`),
+        applyBaseline: async (_pool, sql) => calls.push(`apply:${sql.includes(LAUNCH_MIGRATION_NAME)}`),
         recordLedger: async (_pool, marker) => calls.push(`ledger:${marker.migration_name}`),
         verifySchema: async () => ({ status: 'passed', requiredTableCount: 15, presentTableCount: 15, repairMarkerCount: 1 }),
         verifyDurablePos: async () => ({ status: 'external-blocked', providerCalls: 0, reason: 'runtime-harness-prohibited-in-this-phase' }),
@@ -208,6 +254,6 @@ test('safe additive path applies once, preserves the ledger, closes the pool, an
     assert.equal(result.posVerification.providerCalls, 0)
     assert.equal(verifySchemaSnapshot(snapshot).status, 'passed')
     assert.equal(result.cleanupState, 'verified')
-    assert.deepEqual(calls, ['backup:backup-operator-handle', 'connect:60000:1', `apply:true`, `ledger:${REPAIR_MIGRATION_NAME}`, 'close'])
+    assert.deepEqual(calls, ['backup:backup-operator-handle', 'verify-backup', 'connect:60000:1', `apply:true`, `ledger:${LAUNCH_MIGRATION_NAME}`, 'close'])
   })
 })

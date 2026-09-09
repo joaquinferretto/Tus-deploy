@@ -95,6 +95,10 @@ export class AuthService {
   }
 
   async register(input: RegisterInput): Promise<RegisterResult> {
+    return this.runTransaction((store) => this.registerWithinStore(input, store))
+  }
+
+  private async registerWithinStore(input: RegisterInput, store: IdentityStore): Promise<RegisterResult> {
     const normalizedEmail = normalizeEmail(input.email)
     if (
       !validateEmail(normalizedEmail) ||
@@ -103,7 +107,7 @@ export class AuthService {
     ) {
       throw new Error('Invalid registration input')
     }
-    if (await this.dependencies.store.findAccountByEmail(normalizedEmail)) {
+    if (await store.findAccountByEmail(normalizedEmail)) {
       throw new Error('Account already exists')
     }
 
@@ -131,9 +135,9 @@ export class AuthService {
     }
     const verificationToken = this.dependencies.tokens.issue()
 
-    await this.dependencies.store.saveAccount(account)
-    await this.dependencies.store.saveCredential(credential)
-    await this.dependencies.store.saveVerificationToken({
+    await store.saveAccount(account)
+    await store.saveCredential(credential)
+    await store.saveVerificationToken({
       id: this.dependencies.ids.next(),
       accountId: account.id,
       tokenDigest: this.dependencies.tokens.digest(verificationToken),
@@ -153,11 +157,21 @@ export class AuthService {
     }
   }
 
+  private runTransaction<TValue>(operation: (store: IdentityStore) => Promise<TValue>): Promise<TValue> {
+    return this.dependencies.store.transaction
+      ? this.dependencies.store.transaction(operation)
+      : operation(this.dependencies.store)
+  }
+
   async signIn(input: SignInInput): Promise<SignInResult> {
+    return this.runTransaction((store) => this.signInWithinStore(input, store))
+  }
+
+  private async signInWithinStore(input: SignInInput, store: IdentityStore): Promise<SignInResult> {
     const normalizedEmail = normalizeEmail(input.email)
-    const account = await this.dependencies.store.findAccountByEmail(normalizedEmail)
+    const account = await store.findAccountByEmail(normalizedEmail)
     const credential = account
-      ? await this.dependencies.store.findPasswordCredential(account.id)
+      ? await store.findPasswordCredential(account.id)
       : undefined
     const hash = credential?.passwordHash ?? this.dependencies.passwordHasher.dummyHash
     const passwordMatches = await this.dependencies.passwordHasher.verify(input.password, hash)
@@ -177,7 +191,7 @@ export class AuthService {
     const now = this.dependencies.clock.now()
     const deviceId = input.device?.deviceId?.trim() || this.dependencies.ids.next()
     const deviceLabel = input.device?.label?.trim() || 'Unspecified device'
-    await this.dependencies.store.saveDevice(account.id, {
+    await store.saveDevice(account.id, {
       deviceId,
       label: deviceLabel,
       firstSeenAt: now,
@@ -185,7 +199,7 @@ export class AuthService {
     })
     credential.lastUsedAt = now
     credential.updatedAt = now
-    await this.dependencies.store.saveCredential(credential)
+    await store.saveCredential(credential)
 
     const accessToken = this.dependencies.tokens.issue()
     const session: Session = {
@@ -203,7 +217,7 @@ export class AuthService {
       expiresAt: now + SESSION_TTL_MS,
       revokedAt: null,
     }
-    await this.dependencies.store.saveSession(session)
+    await store.saveSession(session)
     await this.record(account, AUTH_EVENT_KIND.AUTH_SIGNED_IN, 'success', 'credential_verified')
     await this.record(account, AUTH_EVENT_KIND.SESSION_CREATED, 'success', 'scoped_session_issued')
 
@@ -226,11 +240,15 @@ export class AuthService {
   }
 
   async verifyEmail(input: { token: string }): Promise<LifecycleResult> {
+    return this.runTransaction((store) => this.verifyEmailWithinStore(input, store))
+  }
+
+  private async verifyEmailWithinStore(input: { token: string }, store: IdentityStore): Promise<LifecycleResult> {
     const now = this.dependencies.clock.now()
-    const token = await this.dependencies.store.findVerificationToken(
+    const token = await store.findVerificationToken(
       this.dependencies.tokens.digest(input.token)
     )
-    const account = token ? await this.dependencies.store.getAccount(token.accountId) : undefined
+    const account = token ? await store.getAccount(token.accountId) : undefined
     if (!token || !account || token.consumedAt !== null || token.expiresAt <= now) {
       await this.record(
         account,
@@ -244,14 +262,18 @@ export class AuthService {
     token.consumedAt = now
     account.emailVerifiedAt = now
     account.updatedAt = now
-    await this.dependencies.store.saveVerificationToken(token)
-    await this.dependencies.store.saveAccount(account)
+    await store.saveVerificationToken(token)
+    await store.saveAccount(account)
     await this.record(account, AUTH_EVENT_KIND.ACCOUNT_VERIFIED, 'success', 'email_verified')
     return { ok: true }
   }
 
   async signOut(input: { accessToken: string }): Promise<LifecycleResult> {
-    const account = await this.dependencies.store.revokeSession(
+    return this.runTransaction((store) => this.signOutWithinStore(input, store))
+  }
+
+  private async signOutWithinStore(input: { accessToken: string }, store: IdentityStore): Promise<LifecycleResult> {
+    const account = await store.revokeSession(
       this.dependencies.tokens.digest(input.accessToken),
       this.dependencies.clock.now()
     )
@@ -261,12 +283,16 @@ export class AuthService {
   }
 
   async requestPasswordRecovery(input: { email: string }): Promise<RecoveryRequestResult> {
+    return this.runTransaction((store) => this.requestPasswordRecoveryWithinStore(input, store))
+  }
+
+  private async requestPasswordRecoveryWithinStore(input: { email: string }, store: IdentityStore): Promise<RecoveryRequestResult> {
     const normalizedEmail = normalizeEmail(input.email)
     const allowed = this.dependencies.recoveryRateLimiter.allow(
       normalizedEmail,
       this.dependencies.clock.now()
     )
-    const account = await this.dependencies.store.findAccountByEmail(normalizedEmail)
+    const account = await store.findAccountByEmail(normalizedEmail)
     if (!allowed) {
       await this.record(account, AUTH_EVENT_KIND.RECOVERY_REQUESTED, 'accepted', 'rate_limited')
       return { public: { accepted: true, message: GENERIC_RECOVERY_MESSAGE } }
@@ -282,7 +308,7 @@ export class AuthService {
     }
 
     const recoveryToken = this.dependencies.tokens.issue()
-    await this.dependencies.store.saveRecoveryToken({
+    await store.saveRecoveryToken({
       id: this.dependencies.ids.next(),
       accountId: account.id,
       tokenDigest: this.dependencies.tokens.digest(recoveryToken),
@@ -298,14 +324,21 @@ export class AuthService {
     token: string
     newPassword: string
   }): Promise<LifecycleResult> {
+    return this.runTransaction((store) => this.completePasswordRecoveryWithinStore(input, store))
+  }
+
+  private async completePasswordRecoveryWithinStore(input: {
+    token: string
+    newPassword: string
+  }, store: IdentityStore): Promise<LifecycleResult> {
     if (!validatePassword(input.newPassword)) {
       return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Password does not meet policy')
     }
     const now = this.dependencies.clock.now()
-    const token = await this.dependencies.store.findRecoveryToken(
+    const token = await store.findRecoveryToken(
       this.dependencies.tokens.digest(input.token)
     )
-    const account = token ? await this.dependencies.store.getAccount(token.accountId) : undefined
+    const account = token ? await store.getAccount(token.accountId) : undefined
     if (!token || !account || token.consumedAt !== null || token.expiresAt <= now) {
       await this.record(
         account,
@@ -316,7 +349,7 @@ export class AuthService {
       return failure(AUTH_RESULT_CODE.INVALID_TOKEN, 'Invalid or expired token')
     }
 
-    const credential = await this.dependencies.store.findPasswordCredential(account.id)
+    const credential = await store.findPasswordCredential(account.id)
     if (!credential) {
       await this.record(
         account,
@@ -330,9 +363,9 @@ export class AuthService {
     credential.status = CREDENTIAL_STATUS.ACTIVE
     credential.updatedAt = now
     token.consumedAt = now
-    await this.dependencies.store.saveCredential(credential)
-    await this.dependencies.store.saveRecoveryToken(token)
-    await this.dependencies.store.revokeSessions(account.id, now)
+    await store.saveCredential(credential)
+    await store.saveRecoveryToken(token)
+    await store.revokeSessions(account.id, now)
     await this.record(account, AUTH_EVENT_KIND.RECOVERY_COMPLETED, 'success', 'credential_reset')
     return { ok: true }
   }
@@ -342,12 +375,20 @@ export class AuthService {
     currentPassword: string
     newPassword: string
   }): Promise<LifecycleResult> {
+    return this.runTransaction((store) => this.changePasswordWithinStore(input, store))
+  }
+
+  private async changePasswordWithinStore(input: {
+    actorId: string
+    currentPassword: string
+    newPassword: string
+  }, store: IdentityStore): Promise<LifecycleResult> {
     if (!validatePassword(input.newPassword)) {
       return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Password does not meet policy')
     }
-    const account = await this.dependencies.store.getAccount(input.actorId)
+    const account = await store.getAccount(input.actorId)
     const credential = account
-      ? await this.dependencies.store.findPasswordCredential(account.id)
+      ? await store.findPasswordCredential(account.id)
       : undefined
     const currentMatches = credential
       ? await this.dependencies.passwordHasher.verify(
@@ -371,8 +412,8 @@ export class AuthService {
     credential.passwordHash = await this.dependencies.passwordHasher.hash(input.newPassword)
     const now = this.dependencies.clock.now()
     credential.updatedAt = now
-    await this.dependencies.store.saveCredential(credential)
-    await this.dependencies.store.revokeSessions(account.id, now)
+    await store.saveCredential(credential)
+    await store.revokeSessions(account.id, now)
     await this.record(
       account,
       AUTH_EVENT_KIND.CREDENTIAL_PASSWORD_CHANGED,
@@ -386,9 +427,16 @@ export class AuthService {
     actorId: string
     credentialId: string
   }): Promise<LifecycleResult> {
-    const account = await this.dependencies.store.getAccount(input.actorId)
+    return this.runTransaction((store) => this.disableCredentialWithinStore(input, store))
+  }
+
+  private async disableCredentialWithinStore(input: {
+    actorId: string
+    credentialId: string
+  }, store: IdentityStore): Promise<LifecycleResult> {
+    const account = await store.getAccount(input.actorId)
     const credential = account
-      ? await this.dependencies.store.findPasswordCredential(account.id)
+      ? await store.findPasswordCredential(account.id)
       : undefined
     if (!account || !credential || credential.id !== input.credentialId) {
       await this.record(
@@ -402,8 +450,8 @@ export class AuthService {
     credential.status = CREDENTIAL_STATUS.DISABLED
     const now = this.dependencies.clock.now()
     credential.updatedAt = now
-    await this.dependencies.store.saveCredential(credential)
-    await this.dependencies.store.revokeSessions(account.id, now)
+    await store.saveCredential(credential)
+    await store.revokeSessions(account.id, now)
     await this.record(
       account,
       AUTH_EVENT_KIND.CREDENTIAL_DISABLED,
@@ -418,7 +466,15 @@ export class AuthService {
     accountId: string
     changes: Record<string, unknown>
   }): Promise<AccountUpdateResult> {
-    const account = await this.dependencies.store.getAccount(input.accountId)
+    return this.runTransaction((store) => this.updateAccountWithinStore(input, store))
+  }
+
+  private async updateAccountWithinStore(input: {
+    actorId: string
+    accountId: string
+    changes: Record<string, unknown>
+  }, store: IdentityStore): Promise<AccountUpdateResult> {
+    const account = await store.getAccount(input.accountId)
     if (!account || account.id !== input.actorId || hasPrivilegeMutation(input.changes)) {
       await this.record(account, AUTH_EVENT_KIND.AUTH_FAILED, 'denied', 'account_update_forbidden')
       return failure(AUTH_RESULT_CODE.FORBIDDEN, 'Account update is not permitted')
@@ -432,7 +488,7 @@ export class AuthService {
     }
     if (typeof displayName === 'string') account.displayName = displayName.trim()
     account.updatedAt = this.dependencies.clock.now()
-    await this.dependencies.store.saveAccount(account)
+    await store.saveAccount(account)
     return { ok: true, account: this.safeAccount(account) }
   }
 

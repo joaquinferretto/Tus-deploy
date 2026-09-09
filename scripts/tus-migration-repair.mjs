@@ -1,7 +1,6 @@
 import { fileURLToPath } from 'node:url'
 
 import {
-  REPAIR_MIGRATION_NAME,
   parseRepairArguments,
   redactText,
   runRepair,
@@ -53,7 +52,7 @@ export async function main(argumentsList = process.argv.slice(2)) {
         ? 'The additive baseline and all requested bounded verification completed.'
         : 'The additive migration repair stopped before an unsafe or unproven operation.',
     artifacts: [
-      'apps/api/prisma/migrations/20260831180000_tus_additive_migration_repair/migration.sql',
+      'apps/api/prisma/migrations/20260909090000_tus_argentina_market_launch/migration.sql',
       'scripts/tus-migration-repair-lib.mjs',
       'scripts/tus-migration-repair.mjs',
       'tests/integration/tus/migration-repair.test.mjs',

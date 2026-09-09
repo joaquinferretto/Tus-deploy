@@ -18,7 +18,7 @@ export const REQUIRED_API_SCHEMA_TABLES = [
 
 export interface SchemaReadiness {
   compatible: boolean
-  activation: 'active' | 'incompatible' | 'unverified'
+  activation: 'active' | 'incomplete-schema' | 'incompatible' | 'unverified'
   missing: string[]
   migration: 'forward-only' | 'unverified'
 }
@@ -111,9 +111,9 @@ export async function checkPostgresSchema(
     const missing = requiredTables.filter((table) => !present.has(table))
     return missing.length === 0
       ? { compatible: true, activation: 'active', missing: [], migration: 'forward-only' }
-      : { compatible: false, activation: 'incompatible', missing, migration: 'unverified' }
+      : incompleteSchema(missing)
   } catch {
-    return incompatibleSchema('schema-check-failed')
+    return incompleteSchema(['schema-check-failed'])
   }
 }
 
@@ -122,6 +122,15 @@ function incompatibleSchema(reason: string): SchemaReadiness {
     compatible: false,
     activation: reason === 'database-not-connected' ? 'unverified' : 'incompatible',
     missing: [reason],
+    migration: 'unverified',
+  }
+}
+
+export function incompleteSchema(missing: readonly string[]): SchemaReadiness {
+  return {
+    compatible: false,
+    activation: 'incomplete-schema',
+    missing: [...missing],
     migration: 'unverified',
   }
 }

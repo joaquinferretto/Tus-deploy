@@ -60,7 +60,7 @@ export function readRootDatabaseUrl(rootDirectory: string = findRepositoryRoot(p
 export function loadApiRuntimeConfig(options: ApiRuntimeConfigOptions = {}): ApiRuntimeConfig {
   const environment = options.environment ?? process.env
   const environmentName = environment['NODE_ENV'] ?? 'development'
-  const databaseUrl = readRootDatabaseUrl(options.rootDirectory)
+  const databaseUrl = environment['DATABASE_URL']?.trim() || readRootDatabaseUrl(options.rootDirectory)
 
   if (!databaseUrl) throw new Error('Missing canonical PostgreSQL configuration')
   if (!/^postgres(?:ql)?:\/\//iu.test(databaseUrl)) throw new Error('Invalid canonical PostgreSQL configuration')

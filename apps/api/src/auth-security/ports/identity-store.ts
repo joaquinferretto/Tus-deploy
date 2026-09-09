@@ -28,4 +28,5 @@ export interface IdentityStore {
   revokeSession(accessTokenDigest: string, revokedAt: number): Promise<Account | undefined>
   revokeSessions(accountId: string, revokedAt: number): Promise<void>
   saveDevice(accountId: string, device: Device): Promise<void>
+  transaction?<TValue>(operation: (store: IdentityStore) => Promise<TValue>): Promise<TValue>
 }

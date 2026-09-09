@@ -1,20 +1,32 @@
 import cors from 'cors'
 
-const allowedOrigins = process.env['CORS_ORIGINS']?.split(',') || ['http://localhost:3000']
+export const CORS_ALLOWED_HEADERS = [
+  'Content-Type',
+  'Authorization',
+  'X-Correlation-Id',
+  'X-Tenant-Id',
+  'X-Session-Id',
+  'X-Idempotency-Key',
+  'X-Request-Id',
+] as const
 
-export const corsMiddleware = cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl)
-    if (!origin) return callback(null, true)
+export function createCorsMiddleware(environment: Record<string, string | undefined> = process.env) {
+  const allowedOrigins = (environment['CORS_ORIGINS'] ?? 'http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
 
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true)
-    } else {
-      callback(new Error('Not allowed by CORS'))
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  maxAge: 86400, // 24 hours
-})
+  return cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
+      const error = Object.assign(new Error('Origin is not allowed'), { code: 'CORS_ORIGIN_DENIED' })
+      callback(error)
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: [...CORS_ALLOWED_HEADERS],
+    maxAge: 86400,
+  })
+}
+
+export const corsMiddleware = createCorsMiddleware()

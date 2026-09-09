@@ -29,8 +29,11 @@ import {
 import { disconnectMongoDB } from './infrastructure/database/mongodb/connection.ts'
 import { disconnectRedis } from './infrastructure/database/redis/client.ts'
 import { createApiLifecycle, type ApiLifecycle } from './platform/lifecycle.ts'
-
-const DEFAULT_PORT = 3101
+import { createBodyLimitMiddleware } from './presentation/middleware/body-limits.ts'
+import { correlationMiddleware } from './presentation/middleware/correlation.ts'
+import { createErrorHandler, createNotFoundHandler } from './presentation/middleware/error.ts'
+import { resolveListenHost, resolveListenPort } from './platform/runtime.ts'
+import { createSafeLogger } from './presentation/middleware/logger.ts'
 
 export interface StartServerOptions {
   app?: Application
@@ -38,6 +41,7 @@ export interface StartServerOptions {
   runtimeConfig?: ApiRuntimeConfig
   rootDirectory?: string
   port?: number
+  host?: string
   installSignalHandlers?: boolean
 }
 
@@ -51,6 +55,8 @@ export interface CreateAppOptions {
   tusRouter?: Router
   databaseLifecycle?: DatabaseLifecycle
   getReadiness?: () => Promise<ApiReadiness>
+  tusRoutesEnabled?: boolean
+  providerRoutesEnabled?: boolean
 }
 
 export function createApp(options: CreateAppOptions = {}): Application {
@@ -66,13 +72,13 @@ export function createApp(options: CreateAppOptions = {}): Application {
   })
 
   // Security middleware
+  app.use(correlationMiddleware)
   app.use(helmetMiddleware)
   app.use(corsMiddleware)
   app.use(rateLimitMiddleware)
 
   // Body parsing
-  app.use(express.json())
-  app.use(express.urlencoded({ extended: true }))
+  app.use(createBodyLimitMiddleware())
 
   // Routes
   app.use(options.getReadiness || options.databaseLifecycle ? createHealthRouter({
@@ -81,13 +87,14 @@ export function createApp(options: CreateAppOptions = {}): Application {
   }) : healthRouter)
   app.use(createAuthRouter({ service: auth.service, sessions }))
   app.use(createTenancyRouter({ service: tenancy.service, sessions }))
-  app.use(tusRouter)
-  app.use(createTusIntegrationRouter({ readinessGuard: application.readinessGuard }))
+  const tusRoutesEnabled = options.tusRoutesEnabled ?? process.env['TUS_ROUTES_ENABLED'] === 'true'
+  const providerRoutesEnabled = options.providerRoutesEnabled ?? process.env['TUS_PROVIDER_ACTIONS_ENABLED'] === 'true'
+  if (tusRoutesEnabled) app.use(tusRouter)
+  if (providerRoutesEnabled) app.use(createTusIntegrationRouter({ readinessGuard: application.readinessGuard, providerActionsEnabled: true }))
 
   // 404 handler
-  app.use((req, res) => {
-    res.status(404).json({ error: 'Not Found' })
-  })
+  app.use(createNotFoundHandler())
+  app.use(createErrorHandler())
 
   return app
 }
@@ -95,16 +102,18 @@ export function createApp(options: CreateAppOptions = {}): Application {
 export async function startServer(options: StartServerOptions = {}): Promise<StartedServer> {
   const runtimeConfig = options.runtimeConfig ?? loadApiRuntimeConfig({ rootDirectory: options.rootDirectory })
   const databaseLifecycle = options.databaseLifecycle ?? createDatabaseLifecycle({ config: runtimeConfig })
-  const port = options.port ?? Number(process.env['API_PORT'] || process.env['PORT'] || DEFAULT_PORT)
+  const port = options.port ?? resolveListenPort(process.env, runtimeConfig.environment)
+  const host = options.host ?? resolveListenHost(process.env)
   const lifecycle = createApiLifecycle(runtimeConfig.shutdownTimeoutMs)
+  const logger = createSafeLogger()
   let server: Server | undefined
   let signalHandlersInstalled = false
 
   try {
-    await databaseLifecycle.connect()
+    await withTimeout(databaseLifecycle.connect(), Math.min(runtimeConfig.dbAttemptTimeoutMs * runtimeConfig.dbMaxAttempts + 5_000, 180_000))
 
     const app = options.app ?? createApp({ databaseLifecycle })
-    server = await listen(app, port)
+    server = await listen(app, port, host, runtimeConfig.shutdownTimeoutMs)
     lifecycle.register('database', databaseLifecycle.close)
     lifecycle.register('mongodb', disconnectMongoDB)
     lifecycle.register('redis', disconnectRedis)
@@ -128,21 +137,43 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       signalHandlersInstalled = true
     }
 
-    console.log(`API server listening on http://localhost:${port}`)
+    logger.info('api listening', { details: { host, port } })
     return { server, lifecycle, shutdown }
   } catch {
+    if (server?.listening) await closeHttpServer(server, runtimeConfig.shutdownTimeoutMs).catch(() => undefined)
     await databaseLifecycle.close().catch(() => undefined)
     throw new Error('API startup failed; diagnostics redacted')
   }
 }
 
-function listen(app: Application, port: number): Promise<Server> {
+function listen(app: Application, port: number, host: string, timeoutMs: number): Promise<Server> {
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, '127.0.0.1', () => resolve(server))
-    server.once('error', (error) => {
-      server.close(() => undefined)
+    let server: Server | undefined
+    const timer = setTimeout(() => {
+      server?.close(() => undefined)
+      reject(new Error('API listener startup timeout'))
+    }, timeoutMs)
+    const listener = app.listen(port, host, () => {
+      clearTimeout(timer)
+      resolve(listener)
+    })
+    server = listener
+    listener.once('error', (error) => {
+      clearTimeout(timer)
+      listener.close(() => undefined)
       reject(error)
     })
+  })
+}
+
+function withTimeout<TValue>(promise: Promise<TValue>, timeoutMs: number): Promise<TValue> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return new Promise<TValue>((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('API startup timeout')), timeoutMs)
+    promise.then(
+      (value) => { if (timer) clearTimeout(timer); resolve(value) },
+      (error: unknown) => { if (timer) clearTimeout(timer); reject(error) },
+    )
   })
 }
 

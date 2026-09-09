@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto'
 import type { IdentityStore } from '../../ports/identity-store.js'
+import type { AuditSink } from '../../ports/security.js'
 import type {
   Account,
   Device,
@@ -91,6 +93,9 @@ export interface PrismaIdentityClient {
   recoveryToken: TokenDelegate<RecoveryTokenRow>
   session: SessionDelegate
   device: DeviceDelegate
+  auditEvent?: {
+    create(args: { data: Record<string, unknown> }): Promise<unknown>
+  }
   $transaction<T>(callback: (client: PrismaIdentityClient) => Promise<T>): Promise<T>
 }
 
@@ -188,6 +193,10 @@ export class PrismaIdentityStore implements IdentityStore {
     this.client = client
   }
 
+  transaction<TValue>(operation: (store: IdentityStore) => Promise<TValue>): Promise<TValue> {
+    return this.client.$transaction((client) => operation(new PrismaIdentityStore(client)))
+  }
+
   async findAccountByEmail(normalizedEmail: string): Promise<Account | undefined> {
     const user = await this.client.user.findUnique({
       where: { normalizedEmail },
@@ -206,60 +215,59 @@ export class PrismaIdentityStore implements IdentityStore {
   }
 
   async saveAccount(account: Account): Promise<void> {
-    await this.client.$transaction(async (client) => {
-      const existing = await client.account.findUnique({
-        where: { id: account.id },
-        include: { user: true },
-      })
-      if (existing) {
-        await client.user.update({
-          where: { id: existing.user.id },
-          data: {
-            email: account.email,
-            normalizedEmail: account.normalizedEmail,
-            displayName: account.displayName,
-          },
-        })
-        await client.account.update({
-          where: { id: account.id },
-          data: {
-            tenantId: account.tenantId,
-            roles: [...account.roles],
-            status: account.status,
-            emailVerifiedAt: toDate(account.emailVerifiedAt),
-            updatedAt: toRequiredDate(account.updatedAt),
-          },
-        })
-        return
-      }
-
-      const user = await client.user.findUnique({
-        where: { normalizedEmail: account.normalizedEmail },
-        include: { accounts: { take: 1 } },
-      })
-      const userId = user?.id ?? account.id
-      if (!user) {
-        await client.user.create({
-          data: {
-            id: userId,
-            email: account.email,
-            normalizedEmail: account.normalizedEmail,
-            displayName: account.displayName,
-          },
-        })
-      }
-      await client.account.create({
+    const client = this.client
+    const existing = await client.account.findUnique({
+      where: { id: account.id },
+      include: { user: true },
+    })
+    if (existing) {
+      await client.user.update({
+        where: { id: existing.user.id },
         data: {
-          id: account.id,
-          userId,
+          email: account.email,
+          normalizedEmail: account.normalizedEmail,
+          displayName: account.displayName,
+        },
+      })
+      await client.account.update({
+        where: { id: account.id },
+        data: {
           tenantId: account.tenantId,
           roles: [...account.roles],
           status: account.status,
           emailVerifiedAt: toDate(account.emailVerifiedAt),
-          createdAt: toRequiredDate(account.createdAt),
           updatedAt: toRequiredDate(account.updatedAt),
         },
       })
+      return
+    }
+
+    const user = await client.user.findUnique({
+      where: { normalizedEmail: account.normalizedEmail },
+      include: { accounts: { take: 1 } },
+    })
+    const userId = user?.id ?? account.id
+    if (!user) {
+      await client.user.create({
+        data: {
+          id: userId,
+          email: account.email,
+          normalizedEmail: account.normalizedEmail,
+          displayName: account.displayName,
+        },
+      })
+    }
+    await client.account.create({
+      data: {
+        id: account.id,
+        userId,
+        tenantId: account.tenantId,
+        roles: [...account.roles],
+        status: account.status,
+        emailVerifiedAt: toDate(account.emailVerifiedAt),
+        createdAt: toRequiredDate(account.createdAt),
+        updatedAt: toRequiredDate(account.updatedAt),
+      },
     })
   }
 
@@ -383,5 +391,24 @@ export class PrismaIdentityStore implements IdentityStore {
       return
     }
     await delegate.create({ data })
+  }
+}
+
+export class PrismaSecurityAuditSink implements AuditSink {
+  constructor(private readonly client: PrismaIdentityClient) {}
+
+  async record(event: Parameters<AuditSink['record']>[0]): Promise<void> {
+    await this.client.auditEvent?.create({
+      data: {
+        id: randomUUID(),
+        tenantId: event.tenantId,
+        actorId: event.actorId === 'anonymous' ? null : event.actorId,
+        correlationId: event.correlationId,
+        eventType: event.kind,
+        outcome: event.outcome,
+        metadata: event.metadata,
+        occurredAt: new Date(event.occurredAt),
+      },
+    })
   }
 }

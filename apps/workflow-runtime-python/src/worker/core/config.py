@@ -28,7 +28,9 @@ class RuntimeSettings(BaseSettings):
     langsmith_project: str = Field(default="golden-boilerplate")
 
     redis_url: str = Field(default="redis://localhost:6379/0")
-    postgres_dsn: str = Field(default="postgresql://postgres:postgres@localhost:5432/workflows")
+    database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
+    enable_consumer: bool = Field(default=False, validation_alias="WORKER_ENABLE_CONSUMER")
+    deployment_status: str = Field(default="external-blocked-placeholder", validation_alias="WORKER_DEPLOYMENT_STATUS")
     vector_store_backend: str = Field(default="pgvector")
     vector_collection: str = Field(default="workflow_documents")
     checkpoint_backend: str = Field(default="postgres")
@@ -59,6 +61,17 @@ class RuntimeSettings(BaseSettings):
     def require_llm_credentials(self) -> None:
         if not self.openai_api_key and not self.anthropic_api_key:
             raise RuntimeError("Set OPENAI_API_KEY or ANTHROPIC_API_KEY before invoking graph nodes.")
+
+    @property
+    def postgres_dsn(self) -> str:
+        """Compatibility accessor; only the canonical root DATABASE_URL may supply it."""
+        if not self.database_url:
+            raise RuntimeError("DATABASE_URL is required for PostgreSQL worker operations")
+        return self.database_url
+
+    @property
+    def consumer_ready(self) -> bool:
+        return self.enable_consumer and self.deployment_status == "active" and bool(self.database_url)
 
 
 @lru_cache(maxsize=1)

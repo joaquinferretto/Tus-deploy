@@ -90,7 +90,9 @@ services:
       WORKER_SERVICE_NAME: workflow-runtime-python
       WORKER_CONTRACTS_ROOT: /workspace/packages/contracts/schemas
       WORKER_REDIS_URL: redis://redis:6379/0
-      WORKER_POSTGRES_DSN: postgresql://factory_user:factory_password@postgres:5432/factory_local
+      DATABASE_URL: postgresql://factory_user:factory_password@postgres:5432/factory_local
+      WORKER_ENABLE_CONSUMER: 'false'
+      WORKER_DEPLOYMENT_STATUS: external-blocked-placeholder
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

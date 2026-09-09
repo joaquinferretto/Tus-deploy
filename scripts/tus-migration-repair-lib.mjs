@@ -7,12 +7,21 @@ import { fileURLToPath } from 'node:url'
 export const CONNECTION_TIMEOUT_MS = 60_000
 export const RETRY_COUNT = 1
 export const REPAIR_MIGRATION_NAME = '20260831180000_tus_additive_migration_repair'
+export const LAUNCH_MIGRATION_NAME = '20260909090000_tus_argentina_market_launch'
 export const REPAIR_MIGRATION_PATH = join(
   'apps',
   'api',
   'prisma',
   'migrations',
   REPAIR_MIGRATION_NAME,
+  'migration.sql',
+)
+export const LAUNCH_MIGRATION_PATH = join(
+  'apps',
+  'api',
+  'prisma',
+  'migrations',
+  LAUNCH_MIGRATION_NAME,
   'migration.sql',
 )
 
@@ -33,6 +42,89 @@ export const REQUIRED_POS_TABLES = Object.freeze([
   'TusPosOutbox',
   'TusPosAudit',
 ])
+
+export const REQUIRED_LAUNCH_TABLES = Object.freeze([
+  'TusTenant', 'User', 'Account', 'Session', 'Membership', 'TenantRole',
+  'TusMerchant', 'TusProduct', 'TusService', 'TusListing', 'TusInventory',
+  'TusCalendar', 'TusCalendarRule', 'TusCalendarException', 'TusBooking',
+  'TusCommitment', 'TusCommitmentTransition', 'TusCommitmentCompensation', 'TusMarketplaceCommitment',
+  'TusPaymentIntent', 'TusPaymentWebhookEvent', 'TusCommissionSnapshot', 'TusLedgerEntry',
+  'TusFinancialEvidence', 'TusFinancialConfirmation', 'TusFinancialFreeze', 'TusReconciliationRecord',
+  'TusWhatsAppConsent', 'TusWhatsAppMessage', 'TusWhatsAppWebhookEvent',
+  'TusInvoice', 'TusInvoiceLine', 'TusCreditNote', 'TusSubscription', 'TusTaxProfile',
+  'AuditEvent', 'TusMarketplaceAudit', 'TusDeliveryAudit', 'TusPosAudit', 'TusWhatsAppAudit',
+  'OutboxEvent', 'TusDeliveryOutbox', 'TusPosOutbox', 'TusSupportOutbox', 'TusJob', 'TusDeadLetter',
+  'TusHardeningFixture',
+  ...REQUIRED_POS_TABLES,
+])
+
+export const REQUIRED_MONEY_COLUMNS = Object.freeze([
+  'amount', 'price', 'grossAmount', 'deductions', 'commissionableBase',
+  'commissionAmount', 'netAmount', 'providerAmount', 'taxAmount', 'feeAmount',
+  'amountMinor', 'unitMinor', 'taxMinor', 'totalMinor',
+])
+
+export const REQUIRED_LAUNCH_SCHEMA_COLUMNS = Object.freeze({
+  TusTenant: ['id', 'slug', 'name', 'status', 'createdAt', 'updatedAt'],
+  User: ['id', 'email', 'normalizedEmail', 'displayName', 'createdAt', 'updatedAt'],
+  Account: ['id', 'userId', 'tenantId', 'roles', 'status', 'createdAt', 'updatedAt'],
+  Session: ['id', 'accountId', 'tenantId', 'deviceId', 'accessTokenDigest', 'roles', 'permissions', 'createdAt', 'expiresAt', 'revokedAt'],
+  Membership: ['id', 'organizationId', 'workspaceId', 'userId', 'role', 'roleIds', 'status', 'createdAt', 'updatedAt'],
+  TenantRole: ['id', 'tenantId', 'name', 'permissions', 'resourceScopes', 'createdAt'],
+  TusMerchant: ['id', 'tenantId', 'merchantId', 'locationId', 'timezone', 'status'],
+  TusProduct: ['id', 'tenantId', 'sku', 'name', 'status', 'createdAt', 'updatedAt'],
+  TusService: ['id', 'tenantId', 'serviceCode', 'name', 'durationMinutes', 'capacity', 'status', 'createdAt', 'updatedAt'],
+  TusListing: ['id', 'tenantId', 'kind', 'currency', 'price', 'availabilityVersion', 'published'],
+  TusInventory: ['id', 'tenantId', 'productId', 'quantity', 'reserved', 'version'],
+  TusCalendar: ['id', 'tenantId', 'serviceId', 'timezone', 'status'],
+  TusCalendarRule: ['id', 'tenantId', 'calendarId', 'weekday', 'startsAt', 'endsAt', 'capacity'],
+  TusCalendarException: ['id', 'tenantId', 'calendarId', 'startsAt', 'endsAt', 'status'],
+  TusBooking: ['id', 'tenantId', 'bookingId', 'serviceId', 'calendarId', 'customerId', 'startsAt', 'endsAt', 'status', 'version'],
+  TusCommitment: ['id', 'tenantId', 'commitmentId', 'amount', 'currency', 'status', 'version'],
+  TusCommitmentTransition: ['id', 'tenantId', 'commitmentId', 'version', 'actorId', 'correlationId'],
+  TusCommitmentCompensation: ['id', 'tenantId', 'compensationId', 'commitmentId', 'amount', 'currency'],
+  TusMarketplaceCommitment: ['id', 'tenantId', 'commitmentId', 'listingId', 'amount', 'currency', 'status'],
+  TusPaymentIntent: ['id', 'tenantId', 'paymentId', 'commitmentId', 'amount', 'currency', 'idempotencyKey'],
+  TusPaymentWebhookEvent: ['id', 'tenantId', 'provider', 'providerEventId', 'signature', 'status'],
+  TusCommissionSnapshot: ['id', 'tenantId', 'snapshotId', 'commitmentId', 'grossAmount', 'commissionAmount', 'netAmount', 'rateBps'],
+  TusLedgerEntry: ['id', 'tenantId', 'entryId', 'commitmentId', 'amount', 'currency', 'immutable', 'createdAt'],
+  TusFinancialEvidence: ['id', 'tenantId', 'evidenceId', 'commitmentId', 'correlationId', 'kind'],
+  TusFinancialConfirmation: ['id', 'tenantId', 'confirmationId', 'commitmentId', 'correlationId'],
+  TusFinancialFreeze: ['id', 'tenantId', 'freezeId', 'commitmentId', 'active'],
+  TusReconciliationRecord: ['id', 'tenantId', 'reconciliationId', 'commitmentId', 'providerAmount', 'status'],
+  TusWhatsAppConsent: ['id', 'tenantId', 'recipientId', 'status', 'grantedAt'],
+  TusWhatsAppMessage: ['id', 'tenantId', 'messageId', 'recipientId', 'consentId', 'status'],
+  TusWhatsAppWebhookEvent: ['id', 'tenantId', 'providerEventId', 'signature', 'status'],
+  TusWhatsAppAudit: ['id', 'tenantId', 'correlationId', 'action', 'outcome'],
+  TusInvoice: ['id', 'tenantId', 'invoiceId', 'commitmentId', 'subtotal', 'taxAmount', 'feeAmount', 'total', 'currency', 'status'],
+  TusInvoiceLine: ['id', 'tenantId', 'invoiceId', 'unitMinor', 'taxMinor', 'totalMinor'],
+  TusCreditNote: ['id', 'tenantId', 'creditNoteId', 'invoiceId', 'amountMinor', 'currency', 'status'],
+  TusSubscription: ['id', 'tenantId', 'subscriptionId', 'customerId', 'amountMinor', 'currency', 'status'],
+  TusTaxProfile: ['id', 'tenantId', 'partyId', 'taxIdentity', 'taxCategory', 'status'],
+  AuditEvent: ['id', 'tenantId', 'correlationId', 'eventType', 'outcome', 'metadata', 'occurredAt'],
+  TusMarketplaceAudit: ['id', 'tenantId', 'actorId', 'correlationId', 'action', 'outcome'],
+  OutboxEvent: ['id', 'tenantId', 'aggregateType', 'aggregateId', 'eventType', 'status', 'payload'],
+  TusSupportOutbox: ['id', 'tenantId', 'eventId', 'correlationId', 'eventType', 'status'],
+  TusJob: ['id', 'tenantId', 'jobId', 'jobType', 'status', 'attempts', 'availableAt', 'payload'],
+  TusDeadLetter: ['id', 'tenantId', 'jobId', 'reason', 'correlationId', 'payload'],
+})
+
+export const REQUIRED_MONEY_TYPES = Object.freeze({
+  TusListing: ['price'],
+  TusCommitment: ['amount'],
+  TusCommitmentCompensation: ['amount'],
+  TusMarketplaceCommitment: ['amount'],
+  TusPaymentIntent: ['amount'],
+  TusCommissionSnapshot: ['grossAmount', 'deductions', 'commissionableBase', 'commissionAmount', 'netAmount'],
+  TusLedgerEntry: ['amount'],
+  TusReconciliationRecord: ['providerAmount'],
+  TusPosOperation: ['amount'],
+  TusPosReceipt: ['amount'],
+  TusInvoice: ['subtotal', 'taxAmount', 'feeAmount', 'total'],
+  TusInvoiceLine: ['unitMinor', 'taxMinor', 'totalMinor'],
+  TusCreditNote: ['amountMinor'],
+  TusSubscription: ['amountMinor'],
+})
 
 export const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
   TusDeliveryZone: ['id', 'tenantId', 'zoneId', 'name', 'postalCodes', 'active', 'createdAt', 'updatedAt'],
@@ -262,10 +354,11 @@ export function classifySqlStatement(sql) {
   if (!executable) return 'comment-only'
   if (DESTRUCTIVE_TOKEN_PATTERN.test(executable)) return 'destructive'
   if (DELETE_PATTERN.test(executable) && !TAGGED_CLEANUP_PATTERN.test(original)) return 'destructive'
-  if (/INSERT\s+INTO\s+"_prisma_migrations"/iu.test(executable) && new RegExp(REPAIR_MIGRATION_NAME, 'u').test(executable)) return 'additive'
+  if (/INSERT\s+INTO\s+"_prisma_migrations"/iu.test(executable)
+    && new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME})`, 'u').test(executable)) return 'additive'
   if (/\b(?:_prisma_migrations|migration_name|finished_at|rolled_back_at)\b/iu.test(executable)
     && !/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"_prisma_migrations"/iu.test(executable)
-    && !new RegExp(REPAIR_MIGRATION_NAME, 'u').test(executable)) return 'ambiguous'
+    && !new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME})`, 'u').test(executable)) return 'ambiguous'
   if (MUTATING_PATTERN.test(executable)) return 'ambiguous'
   if (/^CREATE\s+TABLE\b/iu.test(executable)) return 'additive'
   if (/^CREATE\s+(?:UNIQUE\s+)?INDEX\b/iu.test(executable)) return 'additive'
@@ -274,10 +367,11 @@ export function classifySqlStatement(sql) {
   return 'ambiguous'
 }
 
-export async function inventoryMigrations({ migrationsDirectory, repairMigrationName = REPAIR_MIGRATION_NAME } = {}) {
+export async function inventoryMigrations({ migrationsDirectory, repairMigrationName = REPAIR_MIGRATION_NAME, repairMigrationNames } = {}) {
   const directory = migrationsDirectory ?? join(ROOT_DIRECTORY, 'apps', 'api', 'prisma', 'migrations')
   const entries = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))
   const migrations = []
+  const nonHistoricalNames = new Set(repairMigrationNames ?? [repairMigrationName, LAUNCH_MIGRATION_NAME])
   let destructiveStatementCount = 0
   let ambiguousStatementCount = 0
   let commentOnlyTokenCount = 0
@@ -286,7 +380,7 @@ export async function inventoryMigrations({ migrationsDirectory, repairMigration
     const path = join(directory, entry.name, 'migration.sql')
     if (!MIGRATION_FILE_PATTERN.test(path)) continue
     if (!existsSync(path)) {
-      migrations.push({ name: entry.name, historical: entry.name !== repairMigrationName, statements: [{ classification: 'ambiguous', sql: '<missing migration.sql>' }] })
+      migrations.push({ name: entry.name, historical: !nonHistoricalNames.has(entry.name), statements: [{ classification: 'ambiguous', sql: '<missing migration.sql>' }] })
       ambiguousStatementCount += 1
       continue
     }
@@ -303,7 +397,7 @@ export async function inventoryMigrations({ migrationsDirectory, repairMigration
       if (classification === 'comment-only') commentOnlyTokenCount += 1
       return { classification, sql: redactText(statement) }
     })
-    migrations.push({ name: entry.name, historical: entry.name !== repairMigrationName, statements })
+    migrations.push({ name: entry.name, historical: !nonHistoricalNames.has(entry.name), statements })
   }
   const pendingMigrations = migrations.filter((migration) => migration.historical)
   return {
@@ -394,9 +488,22 @@ export function validateBackupHandle(backupId) {
   return { status: 'ready', handle: '<redacted>' }
 }
 
+export async function verifyRestorableBackup({ backupId, operations = {} } = {}) {
+  const handle = validateBackupHandle(backupId)
+  if (handle.status !== 'ready') throw new Error(handle.reason)
+  if (typeof operations.assertRestorable !== 'function' || typeof operations.verifyRestore !== 'function') {
+    throw new Error('backup verification unavailable; restorable backup is required before DDL')
+  }
+  await operations.assertRestorable(backupId)
+  if (typeof operations.restoreToScratch === 'function') await operations.restoreToScratch(backupId)
+  await operations.verifyRestore(backupId)
+  return { status: 'passed', handle: '<redacted>', restoreVerified: true }
+}
+
 export function validatePreflight(snapshot = {}) {
   if (snapshot.reason || Number(snapshot.orphans ?? 0) > 0) return { status: 'blocked', writesAllowed: false, reason: 'preflight-mismatch' }
   if (snapshot.ledger?.repairMarkerCount > 1) return { status: 'blocked', writesAllowed: false, reason: 'preflight-mismatch' }
+  if (!validateMoneyTypes(snapshot)) return { status: 'blocked', writesAllowed: false, reason: 'exact-money-type-mismatch' }
   for (const table of REQUIRED_POS_TABLES) {
     const observed = snapshot.tables?.[table]
     if (!observed || observed.present === false) continue
@@ -407,18 +514,22 @@ export function validatePreflight(snapshot = {}) {
 }
 
 export function verifySchemaSnapshot(snapshot = {}) {
-  const missingTables = REQUIRED_POS_TABLES.filter((table) => snapshot.tables?.[table]?.present !== true)
-  const mismatchedTables = REQUIRED_POS_TABLES.filter((table) => {
+  const launchSnapshot = Object.keys(snapshot.tables ?? {}).some((table) => table !== 'TusHardeningFixture' && !REQUIRED_POS_TABLES.includes(table))
+  const requiredTables = launchSnapshot ? REQUIRED_LAUNCH_TABLES : REQUIRED_POS_TABLES
+  const missingTables = requiredTables.filter((table) => snapshot.tables?.[table]?.present !== true)
+  const mismatchedTables = requiredTables.filter((table) => {
     const observed = snapshot.tables?.[table]
-    return observed?.present === true && (!sameMembers(observed.columns, REQUIRED_SCHEMA_COLUMNS[table]) || observed.primaryKey !== true || observed.requiredIndexes !== true || observed.requiredConstraints !== true)
+    const expectedColumns = launchSnapshot ? (REQUIRED_LAUNCH_SCHEMA_COLUMNS[table] ?? REQUIRED_SCHEMA_COLUMNS[table] ?? []) : REQUIRED_SCHEMA_COLUMNS[table]
+    const columnsMatch = launchSnapshot ? includesMembers(observed?.columns, expectedColumns) : sameMembers(observed?.columns, expectedColumns)
+    return observed?.present === true && (!columnsMatch || observed.primaryKey !== true || observed.requiredIndexes !== true || observed.requiredConstraints !== true)
   })
   const fixture = snapshot.tables?.TusHardeningFixture
   const fixtureReady = fixture?.present === true && sameMembers(fixture.columns, ['id', 'tag', 'version', 'runId', 'tenantId', 'actorId', 'productListingId', 'serviceListingId', 'createdAt', 'updatedAt']) && fixture.primaryKey === true
   const markerCount = Number(snapshot.ledger?.repairMarkerCount ?? 0)
   return {
-    status: missingTables.length === 0 && mismatchedTables.length === 0 && fixtureReady && markerCount === 1 ? 'passed' : 'blocked',
-    requiredTableCount: REQUIRED_POS_TABLES.length,
-    presentTableCount: REQUIRED_POS_TABLES.length - missingTables.length,
+    status: missingTables.length === 0 && mismatchedTables.length === 0 && fixtureReady && markerCount === 1 && validateMoneyTypes(snapshot) ? 'passed' : 'blocked',
+    requiredTableCount: requiredTables.length,
+    presentTableCount: requiredTables.length - missingTables.length,
     missingTables,
     mismatchedTables,
     fixtureReady,
@@ -426,11 +537,11 @@ export function verifySchemaSnapshot(snapshot = {}) {
   }
 }
 
-export function createLedgerMarker(checksum) {
+export function createLedgerMarker(checksum, migrationName = REPAIR_MIGRATION_NAME) {
   return {
-    id: 'tus-additive-repair-marker',
+    id: migrationName === REPAIR_MIGRATION_NAME ? 'tus-additive-repair-marker' : `${migrationName}-marker`,
     checksum: String(checksum ?? ''),
-    migration_name: REPAIR_MIGRATION_NAME,
+    migration_name: migrationName,
     logs: null,
     rolled_back_at: null,
     started_at: 'CURRENT_TIMESTAMP',
@@ -474,8 +585,8 @@ export async function runRepair({
 } = {}) {
   const configuredMigrations = join(rootDirectory, 'apps', 'api', 'prisma', 'migrations')
   const inventory = await inventoryMigrations({ migrationsDirectory: existsSync(configuredMigrations) ? configuredMigrations : join(ROOT_DIRECTORY, 'apps', 'api', 'prisma', 'migrations') })
-  const migrationRoot = existsSync(join(rootDirectory, REPAIR_MIGRATION_PATH)) ? rootDirectory : ROOT_DIRECTORY
-  const migrationSql = selectedMigrationSql ?? await readFile(join(migrationRoot, REPAIR_MIGRATION_PATH), 'utf8')
+  const migrationRoot = existsSync(join(rootDirectory, LAUNCH_MIGRATION_PATH)) ? rootDirectory : ROOT_DIRECTORY
+  const migrationSql = selectedMigrationSql ?? await readFile(join(migrationRoot, LAUNCH_MIGRATION_PATH), 'utf8')
   const staticGate = gateInventory({ statements: splitSqlStatements(migrationSql) })
   const sideEffects = { connections: 0, writes: 0, deletes: 0, migrationInvocations: 0, providerCalls: 0 }
   const base = { inventory, staticGate, sideEffects, connectionAttempts: [], cleanupState: 'not-started' }
@@ -494,7 +605,10 @@ export async function runRepair({
     verifySchema: async (pool) => verifySchemaSnapshot(await runtime.inspect(pool)),
     verifyDurablePos: async () => ({ status: 'external-blocked', providerCalls: 0, reason: 'runtime-harness-prohibited-in-this-phase' }),
     close: defaultClose,
-    backup: { assertRestorable: async () => undefined },
+    backup: {
+      assertRestorable: async () => undefined,
+      verifyRestore: async () => { throw new Error('backup verification unavailable; restorable backup is required before DDL') },
+    },
     ...operations,
   }
   let pool
@@ -504,7 +618,7 @@ export async function runRepair({
   let schemaVerification = { status: 'not-started' }
   let posVerification = { status: 'not-started', providerCalls: 0 }
   try {
-    await runtime.backup.assertRestorable(backupId, redactTarget(target))
+    await verifyRestorableBackup({ backupId, operations: runtime.backup })
     const connection = await withBoundedRetry(
       async ({ attempt, timeoutMs }) => {
         sideEffects.connections += 1
@@ -522,8 +636,8 @@ export async function runRepair({
     sideEffects.writes += 1
     sideEffects.migrationInvocations += 1
     await runtime.applyBaseline(pool, migrationSql)
-    await runtime.recordLedger(pool, createLedgerMarker('repair-migration-checksum'))
-    migrationResult = { status: 'passed', appliedCount: 1, marker: REPAIR_MIGRATION_NAME }
+    await runtime.recordLedger(pool, createLedgerMarker('launch-migration-checksum', LAUNCH_MIGRATION_NAME))
+    migrationResult = { status: 'passed', appliedCount: 1, marker: LAUNCH_MIGRATION_NAME }
     schemaVerification = await runtime.verifySchema(pool)
     if (schemaVerification.status !== 'passed') {
       resultToReturn = buildRunResult(base, { status: 'blocked', safetyGate: 'schema-verification', reason: 'schema-verification-failed', target: redactTarget(target), backup, preflight, migrationResult, schemaVerification })
@@ -603,11 +717,29 @@ function isExplicitlySafeAdditive(sql) {
     || /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\b/iu.test(executable)
     || /^ALTER\s+TABLE[\s\S]*\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/iu.test(executable)
     || /^DO\s+\$\$[\s\S]*\bALTER\s+TABLE\b[\s\S]*\bADD\s+CONSTRAINT\b/iu.test(executable)
-    || (/INSERT\s+INTO\s+"_prisma_migrations"/iu.test(executable) && new RegExp(REPAIR_MIGRATION_NAME, 'u').test(executable))
+    || (/INSERT\s+INTO\s+"_prisma_migrations"/iu.test(executable)
+      && new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME})`, 'u').test(executable))
 }
 
 function sameMembers(left = [], right = []) {
   return Array.isArray(left) && left.length === right.length && [...left].sort().every((value, index) => value === [...right].sort()[index])
+}
+
+function includesMembers(left = [], right = []) {
+  return Array.isArray(left) && right.every((value) => left.includes(value))
+}
+
+function validateMoneyTypes(snapshot) {
+  const tables = snapshot.tables ?? {}
+  for (const [table, columns] of Object.entries(REQUIRED_MONEY_TYPES)) {
+    const observed = tables[table]
+    if (!observed?.types && !observed?.columnTypes) continue
+    const types = observed.types ?? observed.columnTypes
+    for (const column of columns) {
+      if (!['bigint', 'int8'].includes(String(types[column]).toLowerCase())) return false
+    }
+  }
+  return true
 }
 
 function redactTarget(target) {
@@ -647,18 +779,21 @@ async function defaultConnect(postgresUrl, timeoutMs) {
 
 async function defaultInspect(pool) {
   const tableRows = await pool.query('SELECT table_name FROM information_schema.tables WHERE table_schema = $1', ['public'])
-  const columnRows = await pool.query('SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = $1', ['public'])
+  const columnRows = await pool.query('SELECT table_name, column_name, udt_name FROM information_schema.columns WHERE table_schema = $1', ['public'])
   const primaryRows = await pool.query("SELECT tc.table_name FROM information_schema.table_constraints tc WHERE tc.table_schema = $1 AND tc.constraint_type = 'PRIMARY KEY'", ['public'])
   const indexRows = await pool.query('SELECT tablename AS table_name, indexname FROM pg_indexes WHERE schemaname = $1', ['public'])
   const constraintRows = await pool.query("SELECT c.relname AS table_name, con.conname AS constraint_name FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1", ['public'])
-  const ledgerRows = await pool.query('SELECT migration_name FROM "_prisma_migrations" WHERE migration_name = $1', [REPAIR_MIGRATION_NAME]).catch(() => ({ rows: [] }))
-  const allTables = [...REQUIRED_POS_TABLES, 'TusHardeningFixture']
+  const ledgerRows = await pool.query('SELECT migration_name FROM "_prisma_migrations" WHERE migration_name IN ($1, $2)', [REPAIR_MIGRATION_NAME, LAUNCH_MIGRATION_NAME]).catch(() => ({ rows: [] }))
+  const schemaColumns = { ...REQUIRED_LAUNCH_SCHEMA_COLUMNS, ...REQUIRED_SCHEMA_COLUMNS }
+  const allTables = [...new Set([...REQUIRED_LAUNCH_TABLES, 'TusHardeningFixture'])]
   const tables = Object.fromEntries(allTables.map((table) => [table, {
     present: tableRows.rows.some((row) => row.table_name === table),
     columns: columnRows.rows.filter((row) => row.table_name === table).map((row) => row.column_name),
+    types: Object.fromEntries(columnRows.rows.filter((row) => row.table_name === table).map((row) => [row.column_name, row.udt_name])),
     primaryKey: primaryRows.rows.some((row) => row.table_name === table),
-    requiredIndexes: REQUIRED_SCHEMA_INDEXES[table].every((index) => indexRows.rows.some((row) => row.table_name === table && row.indexname === index)),
+    requiredIndexes: (REQUIRED_SCHEMA_INDEXES[table] ?? []).every((index) => indexRows.rows.some((row) => row.table_name === table && row.indexname === index)),
     requiredConstraints: (REQUIRED_CONSTRAINTS[table] ?? []).every((constraint) => constraintRows.rows.some((row) => row.table_name === table && row.constraint_name === constraint)),
+    expectedColumns: schemaColumns[table] ?? [],
   }]))
   return { tables, rowCounts: await readRowCounts(pool, allTables), orphans: await readOrphanCount(pool), ledger: { present: tableRows.rows.some((row) => row.table_name === '_prisma_migrations'), repairMarkerCount: ledgerRows.rows.length } }
 }

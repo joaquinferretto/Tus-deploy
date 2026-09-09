@@ -7,6 +7,7 @@ import {
 import { InMemoryIdentityStore } from './adapters/in-memory-identity-store.js'
 import {
   PrismaIdentityStore,
+  PrismaSecurityAuditSink,
   type PrismaIdentityClient,
 } from './adapters/postgres/prisma-identity-store.js'
 import {
@@ -17,6 +18,7 @@ import {
 import { SystemClock } from './adapters/system.js'
 import type { Clock } from './ports/clock.js'
 import type { IdentityStore } from './ports/identity-store.js'
+import type { AuditSink } from './ports/security.js'
 
 export interface InMemoryAuthServiceOptions {
   now?: () => number
@@ -25,10 +27,11 @@ export interface InMemoryAuthServiceOptions {
 export interface AuthServiceFactoryOptions {
   store: IdentityStore
   now?: () => number
+  audit?: AuditSink
 }
 
 export function createAuthService(options: AuthServiceFactoryOptions) {
-  const audit = new InMemoryAuditSink()
+  const audit = options.audit ?? new InMemoryAuditSink()
   const email = new InMemoryEmailSender()
   const clock: Clock = options.now ? { now: options.now } : new SystemClock()
   const service = new AuthService({
@@ -68,12 +71,14 @@ export function createPrismaAuthService(
   options: InMemoryAuthServiceOptions = {}
 ) {
   const store = new PrismaIdentityStore(client)
-  return { ...createAuthService({ store, now: options.now }), store }
+  const audit = client.auditEvent ? new PrismaSecurityAuditSink(client) : undefined
+  return { ...createAuthService({ store, now: options.now, audit }), store }
 }
 
 export { AuthService } from './application/auth-service.js'
 export { InMemoryIdentityStore } from './adapters/in-memory-identity-store.js'
 export { PrismaIdentityStore } from './adapters/postgres/prisma-identity-store.js'
+export { PrismaSecurityAuditSink } from './adapters/postgres/prisma-identity-store.js'
 export {
   InMemoryAuditSink,
   InMemoryEmailSender,
