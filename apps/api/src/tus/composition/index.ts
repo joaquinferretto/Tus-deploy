@@ -9,6 +9,7 @@ import {
 } from '../adapters/in-memory.ts'
 import { TusApplicationService, type TusApplicationDependencies } from '../application/tus-application-service.ts'
 import { InMemoryMarketplaceStore, TusMarketplaceService } from '../catalog/index.ts'
+import { InMemoryServiceCalendarStore, ServiceCalendarService } from '../calendar/index.ts'
 import {
   PrismaTusAuditStore,
   PrismaTusCommitmentStore,
@@ -20,6 +21,7 @@ import {
   PrismaTusReadinessEvidenceStore,
 } from '../adapters/prisma.ts'
 import { PrismaMarketplaceStore } from '../adapters/prisma-marketplace.ts'
+import { PrismaServiceCalendarStore } from '../adapters/prisma-calendar.ts'
 import {
   DeterministicMercadoPagoFinanceProvider,
   InMemoryFinanceStore,
@@ -48,6 +50,7 @@ export function createTusApplication(
     readinessProfile: options.readinessProfile,
     readinessScope: options.readinessScope,
   })
+  const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore(), options.now)
   const commitmentLookup = async (commitmentId: string) => (await commitments.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
   const finance = new TusFinanceService({
     store: new InMemoryFinanceStore(),
@@ -75,6 +78,7 @@ export function createTusApplication(
     compensations,
     transaction: new InMemoryTusTransaction({ commitments, audits, idempotency, outbox, compensations }),
     marketplace,
+    calendar,
     finance,
     delivery,
     pos,
@@ -88,6 +92,7 @@ export function createTusApplication(
 export function createPrismaTusApplication(client: TusPrismaClient): TusApplicationService {
   const readinessGuard = new TusReadinessGuard(new PrismaTusReadinessEvidenceStore(client))
   const marketplace = createPrismaMarketplaceService(client, readinessGuard)
+  const calendar = new ServiceCalendarService(new PrismaServiceCalendarStore(client))
   const commitmentStore = new PrismaTusCommitmentStore(client)
   const commitmentLookup = async (commitmentId: string) => (await commitmentStore.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
   const delivery = new TusDeliveryService({
@@ -107,6 +112,7 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
     outbox: new PrismaTusOutboxStore(client),
     transaction: new PrismaTusTransaction(client),
     marketplace,
+    calendar,
     finance: new TusFinanceService({
       store: new PrismaTusFinanceStore(client as unknown as PrismaFinanceClient),
       provider: new UnavailableMercadoPagoFinanceProvider(),

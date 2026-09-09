@@ -122,6 +122,29 @@ interface PrismaMarketplaceAuditDelegate {
   findMany(input: { where: Record<string, unknown> }): Promise<Record<string, unknown>[]>
 }
 
+interface PrismaCalendarDelegate {
+  upsert(input: { where: { id: string }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
+  findUnique(input: { where: { id: string } }): Promise<Record<string, unknown> | null>
+}
+
+interface PrismaCalendarRuleDelegate {
+  deleteMany(input: { where: Record<string, unknown> }): Promise<{ count: number }>
+  createMany(input: { data: Record<string, unknown>[] }): Promise<{ count: number }>
+  findMany(input: { where: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+}
+
+interface PrismaCalendarExceptionDelegate {
+  deleteMany(input: { where: Record<string, unknown> }): Promise<{ count: number }>
+  createMany(input: { data: Record<string, unknown>[] }): Promise<{ count: number }>
+  findMany(input: { where: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+}
+
+interface PrismaBookingDelegate {
+  upsert(input: { where: { id: string }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
+  findUnique(input: { where: { id: string } }): Promise<Record<string, unknown> | null>
+  findMany(input: { where: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+}
+
 interface PrismaReadinessEvidenceDelegate {
   findMany(input: { where: { tenantId: string; capability: string } }): Promise<Record<string, unknown>[]>
 }
@@ -141,6 +164,10 @@ export interface TusPrismaClient {
   tusListing: PrismaMarketplaceListingDelegate
   tusMarketplaceCommitment: PrismaMarketplaceCommitmentDelegate
   tusMarketplaceAudit: PrismaMarketplaceAuditDelegate
+  tusCalendar: PrismaCalendarDelegate
+  tusCalendarRule: PrismaCalendarRuleDelegate
+  tusCalendarException: PrismaCalendarExceptionDelegate
+  tusBooking: PrismaBookingDelegate
   tusReadinessEvidence: PrismaReadinessEvidenceDelegate
   tusReadinessDecision: PrismaReadinessDecisionDelegate
   $transaction<TValue>(callback: (client: TusPrismaClient) => Promise<TValue>): Promise<TValue>

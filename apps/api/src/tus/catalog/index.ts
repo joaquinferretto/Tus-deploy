@@ -56,6 +56,8 @@ export interface MarketplaceListing {
   locationId: string
   currency: string
   price: number
+  priceMinor: bigint
+  priceSnapshot: MarketplaceMoneySnapshot
   availabilityVersion: number
   published: boolean
   policyVersion: string
@@ -79,6 +81,8 @@ export interface MarketplaceDiscoveryItem {
   locationId: string
   currency: string
   price: number
+  priceMinor: bigint
+  priceSnapshot: MarketplaceMoneySnapshot
   availabilityVersion: number
   policyVersion: string
   availableQuantity?: number
@@ -96,6 +100,7 @@ export interface MarketplaceListingInput {
   locationId: string
   currency: string
   price: number
+  priceMinor?: bigint
   stock?: number
   durationMinutes?: number
   capacity?: number
@@ -132,6 +137,12 @@ export type MarketplaceCommitment = TusCommitment & {
   policyVersion: string
   slotStart?: string
   slotEnd?: string
+  priceSnapshot: MarketplaceMoneySnapshot
+}
+
+export interface MarketplaceMoneySnapshot {
+  currency: string
+  minor: bigint
 }
 
 export interface MarketplaceAuditRecord {
@@ -345,6 +356,7 @@ export class TusMarketplaceService {
 
   async onboard(context: TusAuthenticatedTenantContext, input: Partial<MarketplaceMerchantProfile>): Promise<MarketplaceMerchantProfile> {
     assertPermission(context, 'tus:marketplace:write')
+    assertMerchantRole(context)
     await this.requireReadiness(context, 'publication')
     if (input.tenantId !== undefined && input.tenantId !== context.tenantId) throw new MarketplaceError(403, 'FORBIDDEN', 'merchant tenant does not match authenticated session')
     const cohort = input.cohort
@@ -377,10 +389,11 @@ export class TusMarketplaceService {
 
   async createListing(context: TusAuthenticatedTenantContext, input: MarketplaceListingInput): Promise<MarketplaceListing> {
     assertPermission(context, 'tus:marketplace:write')
+    assertMerchantRole(context)
     await this.requireReadiness(context, 'publication')
-    if (input.merchantId !== context.tenantId) throw new MarketplaceError(403, 'FORBIDDEN', 'listing tenant does not match authenticated session')
     const merchant = await this.store.merchant.find(context.tenantId)
     if (!merchant || merchant.status !== 'approved') throw new MarketplaceError(409, 'MERCHANT_NOT_READY', 'merchant onboarding is incomplete')
+    if (input.merchantId !== merchant.merchantId) throw new MarketplaceError(403, 'FORBIDDEN', 'listing merchant is outside the authenticated tenant')
     validateListingInput(input, merchant)
     const now = new Date().toISOString()
     const listing: MarketplaceListing = {
@@ -393,8 +406,10 @@ export class TusMarketplaceService {
       description: input.description.trim(),
       cohort: input.cohort,
       locationId: input.locationId,
-      currency: input.currency,
+      currency: input.currency.trim().toUpperCase(),
       price: input.price,
+      priceMinor: normalizeMoney(input.currency, input.price, input.priceMinor).minor,
+      priceSnapshot: normalizeMoney(input.currency, input.price, input.priceMinor),
       availabilityVersion: 1,
       published: false,
       policyVersion: merchant.operatingPolicyVersion,
@@ -416,6 +431,7 @@ export class TusMarketplaceService {
 
   async publishListing(context: TusAuthenticatedTenantContext, listingId: string): Promise<MarketplaceListing> {
     assertPermission(context, 'tus:marketplace:write')
+    assertMerchantRole(context)
     await this.requireReadiness(context, 'publication')
     const listing = await this.store.listings.find(listingId)
     if (!listing || listing.tenantId !== context.tenantId) throw new MarketplaceError(403, 'FORBIDDEN', 'listing is outside the authenticated tenant')
@@ -438,6 +454,7 @@ export class TusMarketplaceService {
     const items = await Promise.all(listings.map(async (listing) => {
       const merchant = await this.store.merchant.find(listing.tenantId)
       if (!merchant || merchant.status !== MARKETPLACE_MERCHANT_STATUSES.APPROVED || merchant.cohort !== listing.cohort || merchant.operatingPolicyVersion !== listing.policyVersion) return null
+      if (listing.kind === 'product' && (listing.stock ?? 0) <= 0) return null
       if (filters.locationId !== undefined && filters.locationId !== listing.locationId) return null
       if (filters.cohort !== undefined && filters.cohort !== listing.cohort) return null
       return {
@@ -452,6 +469,8 @@ export class TusMarketplaceService {
         locationId: listing.locationId,
         currency: listing.currency,
         price: listing.price,
+        priceMinor: listing.priceMinor,
+        priceSnapshot: structuredClone(listing.priceSnapshot),
         availabilityVersion: listing.availabilityVersion,
         policyVersion: listing.policyVersion,
         ...(listing.kind === 'product' ? { availableQuantity: Math.max(0, listing.stock ?? 0) } : {}),
@@ -464,6 +483,7 @@ export class TusMarketplaceService {
 
   async merchantOperations(context: TusAuthenticatedTenantContext): Promise<{ merchant: MarketplaceMerchantProfile | null; listings: MarketplaceListing[] }> {
     assertPermission(context, 'tus:marketplace:read')
+    assertMerchantRole(context)
     const merchant = await this.store.merchant.find(context.tenantId)
     const listings = await this.store.listings.forTenant(context.tenantId)
     return { merchant, listings: merchant && hasLocationAccess(context, merchant.locationId) ? listings : [] }
@@ -528,6 +548,7 @@ export class TusMarketplaceService {
             quantity: line.quantity,
             availabilityVersion: line.availabilityVersion,
             policyVersion: listing.policyVersion,
+            priceSnapshot: structuredClone(listing.priceSnapshot),
             ...(line.slotStart ? { slotStart: line.slotStart } : {}),
             ...(line.slotEnd ? { slotEnd: line.slotEnd } : {}),
           }
@@ -603,14 +624,28 @@ function assertPermission(context: TusAuthenticatedTenantContext, permission: st
   if (!context.permissions.includes(permission) && !context.permissions.includes('tus:*')) throw new MarketplaceError(403, 'FORBIDDEN', 'TUS marketplace operation is not authorized')
 }
 
+function assertMerchantRole(context: TusAuthenticatedTenantContext): void {
+  if (!context.roles.some((role) => ['merchant', 'merchant-admin', 'owner', 'admin', 'operator'].includes(role))) throw new MarketplaceError(403, 'FORBIDDEN', 'merchant or operator role is required')
+}
+
 function isMarketplaceCohort(value: unknown): value is MarketplaceCohort {
   return MARKETPLACE_COHORTS.includes(value as MarketplaceCohort)
 }
 
 function validateListingInput(input: MarketplaceListingInput, merchant: MarketplaceMerchantProfile): void {
-  if (!input.name.trim() || !input.description.trim() || input.locationId !== merchant.locationId || input.cohort !== merchant.cohort || !input.currency.trim() || !Number.isFinite(input.price) || input.price <= 0) throw new MarketplaceError(400, 'INVALID_LISTING', 'listing commercial and location facts are invalid')
+  if (!input.name.trim() || !input.description.trim() || input.locationId !== merchant.locationId || input.cohort !== merchant.cohort || !/^[A-Z]{3}$/u.test(input.currency.trim().toUpperCase()) || !Number.isFinite(input.price) || input.price <= 0) throw new MarketplaceError(400, 'INVALID_LISTING', 'listing commercial and location facts are invalid')
+  normalizeMoney(input.currency, input.price, input.priceMinor)
   if (input.kind === 'product' && (!Number.isInteger(input.stock) || input.stock! < 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'product stock is required')
   if (input.kind === 'service' && (!Number.isInteger(input.durationMinutes) || input.durationMinutes! <= 0 || !Number.isInteger(input.capacity) || input.capacity! <= 0 || !Array.isArray(input.workingHours) || input.workingHours.length === 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service duration, capacity, and working hours are required')
+}
+
+function normalizeMoney(currency: string, price: number, priceMinor?: bigint): MarketplaceMoneySnapshot {
+  const normalizedCurrency = currency.trim().toUpperCase()
+  if (!/^[A-Z]{3}$/u.test(normalizedCurrency) || !Number.isFinite(price) || price <= 0) throw new MarketplaceError(400, 'INVALID_MONEY', 'currency and price are invalid')
+  const derivedMinor = BigInt(Math.round(price * 100))
+  if (priceMinor !== undefined && (typeof priceMinor !== 'bigint' || priceMinor <= 0n || priceMinor !== derivedMinor)) throw new MarketplaceError(400, 'INVALID_MONEY', 'price and exact minor units do not match')
+  if (priceMinor === undefined && Math.abs(price - Number(derivedMinor) / 100) > Number.EPSILON * Math.max(1, price)) throw new MarketplaceError(400, 'INVALID_MONEY', 'price must resolve to exact minor units')
+  return { currency: normalizedCurrency, minor: priceMinor ?? derivedMinor }
 }
 
 function validateCheckoutLine(line: MarketplaceCheckoutLine, listing: MarketplaceListing): void {

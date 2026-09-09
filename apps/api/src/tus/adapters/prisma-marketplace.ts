@@ -68,11 +68,11 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
         return { status: 'claimed' as const }
       }
       if (existing.requestHash !== requestHash) return { status: 'conflict' as const }
-      if (existing.status === 'completed' && existing.response) return { status: 'replay' as const, response: existing.response as MarketplaceCheckoutResponse }
+      if (existing.status === 'completed' && existing.response) return { status: 'replay' as const, response: decodeMarketplaceResponse(existing.response) }
       return { status: 'in_progress' as const }
     },
     complete: async ({ tenantId, key, response }: { tenantId: string; key: string; response: MarketplaceCheckoutResponse }) => {
-      await this.client.idempotencyRecord.update({ where: { tenantId_key: { tenantId, key } }, data: { status: 'completed', response } })
+      await this.client.idempotencyRecord.update({ where: { tenantId_key: { tenantId, key } }, data: { status: 'completed', response: encodeMarketplaceResponse(response) } })
     },
     release: async ({ tenantId, key }: { tenantId: string; key: string }) => {
       await this.client.idempotencyRecord.delete({ where: { tenantId_key: { tenantId, key } } })
@@ -106,11 +106,11 @@ function merchantRow(profile: MarketplaceMerchantProfile): Record<string, unknow
 }
 
 function listingRow(listing: MarketplaceListing): Record<string, unknown> {
-  return { id: listing.listingId, contractVersion: listing.contractVersion, tenantId: listing.tenantId, merchantId: listing.merchantId, kind: listing.kind, name: listing.name, description: listing.description, cohort: listing.cohort, locationId: listing.locationId, currency: listing.currency, price: listing.price, availabilityVersion: listing.availabilityVersion, published: listing.published, policyVersion: listing.policyVersion, stock: listing.stock, durationMinutes: listing.durationMinutes, capacity: listing.capacity, workingHours: listing.workingHours, createdAt: new Date(listing.createdAt), updatedAt: new Date(listing.updatedAt) }
+  return { id: listing.listingId, contractVersion: listing.contractVersion, tenantId: listing.tenantId, merchantId: listing.merchantId, kind: listing.kind, name: listing.name, description: listing.description, cohort: listing.cohort, locationId: listing.locationId, currency: listing.currency, price: BigInt(listing.priceMinor), availabilityVersion: listing.availabilityVersion, published: listing.published, policyVersion: listing.policyVersion, stock: listing.stock, durationMinutes: listing.durationMinutes, capacity: listing.capacity, workingHours: listing.workingHours, createdAt: new Date(listing.createdAt), updatedAt: new Date(listing.updatedAt) }
 }
 
 function commitmentRow(commitment: MarketplaceCommitment): Record<string, unknown> {
-  return { id: commitment.commitmentId, contractVersion: commitment.contractVersion, commitmentId: commitment.commitmentId, cartId: commitment.cartId, tenantId: commitment.tenantId, merchantId: commitment.merchantId, listingId: commitment.listingId, context: commitment.context, lineIds: commitment.lineIds, quantity: commitment.quantity, amount: commitment.amount, currency: commitment.currency, status: commitment.status, availabilityVersion: commitment.availabilityVersion, policyVersion: commitment.policyVersion, slotStart: commitment.slotStart ? new Date(commitment.slotStart) : null, slotEnd: commitment.slotEnd ? new Date(commitment.slotEnd) : null, createdAt: new Date(commitment.createdAt), updatedAt: new Date(commitment.createdAt) }
+  return { id: commitment.commitmentId, contractVersion: commitment.contractVersion, commitmentId: commitment.commitmentId, cartId: commitment.cartId, tenantId: commitment.tenantId, merchantId: commitment.merchantId, listingId: commitment.listingId, context: commitment.context, lineIds: commitment.lineIds, quantity: commitment.quantity, amount: BigInt(commitment.priceSnapshot.minor) * BigInt(commitment.quantity), currency: commitment.priceSnapshot.currency, status: commitment.status, availabilityVersion: commitment.availabilityVersion, policyVersion: commitment.policyVersion, slotStart: commitment.slotStart ? new Date(commitment.slotStart) : null, slotEnd: commitment.slotEnd ? new Date(commitment.slotEnd) : null, createdAt: new Date(commitment.createdAt), updatedAt: new Date(commitment.createdAt) }
 }
 
 function toMerchant(row: Record<string, unknown>): MarketplaceMerchantProfile {
@@ -118,11 +118,14 @@ function toMerchant(row: Record<string, unknown>): MarketplaceMerchantProfile {
 }
 
 function toListing(row: Record<string, unknown>): MarketplaceListing {
-  return { listingId: String(row['id']), contractVersion: String(row['contractVersion']) as MarketplaceListing['contractVersion'], tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), kind: row['kind'] as MarketplaceListing['kind'], name: String(row['name']), description: String(row['description']), cohort: row['cohort'] as MarketplaceListing['cohort'], locationId: String(row['locationId']), currency: String(row['currency']), price: Number(row['price']), availabilityVersion: Number(row['availabilityVersion']), published: Boolean(row['published']), policyVersion: String(row['policyVersion']), stock: row['stock'] === null ? null : Number(row['stock']), durationMinutes: row['durationMinutes'] === null ? null : Number(row['durationMinutes']), capacity: row['capacity'] === null ? null : Number(row['capacity']), workingHours: row['workingHours'] as MarketplaceListing['workingHours'], createdAt: new Date(String(row['createdAt'])).toISOString(), updatedAt: new Date(String(row['updatedAt'])).toISOString() }
+  const priceMinor = toBigInt(row['price'])
+  return { listingId: String(row['id']), contractVersion: String(row['contractVersion']) as MarketplaceListing['contractVersion'], tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), kind: row['kind'] as MarketplaceListing['kind'], name: String(row['name']), description: String(row['description']), cohort: row['cohort'] as MarketplaceListing['cohort'], locationId: String(row['locationId']), currency: String(row['currency']).toUpperCase(), price: Number(priceMinor) / 100, priceMinor, priceSnapshot: { currency: String(row['currency']).toUpperCase(), minor: priceMinor }, availabilityVersion: Number(row['availabilityVersion']), published: Boolean(row['published']), policyVersion: String(row['policyVersion']), stock: row['stock'] === null ? null : Number(row['stock']), durationMinutes: row['durationMinutes'] === null ? null : Number(row['durationMinutes']), capacity: row['capacity'] === null ? null : Number(row['capacity']), workingHours: row['workingHours'] as MarketplaceListing['workingHours'], createdAt: new Date(String(row['createdAt'])).toISOString(), updatedAt: new Date(String(row['updatedAt'])).toISOString() }
 }
 
 function toCommitment(row: Record<string, unknown>): MarketplaceCommitment {
-  return { contractVersion: String(row['contractVersion']) as MarketplaceCommitment['contractVersion'], commitmentId: String(row['commitmentId']), cartId: String(row['cartId']), tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), context: row['context'] as MarketplaceCommitment['context'], amount: Number(row['amount']), currency: String(row['currency']), status: row['status'] as MarketplaceCommitment['status'], lineIds: Array.isArray(row['lineIds']) ? row['lineIds'].map(String) : [], version: Number(row['version'] ?? 1), createdAt: new Date(String(row['createdAt'])).toISOString(), listingId: String(row['listingId']), quantity: Number(row['quantity']), availabilityVersion: Number(row['availabilityVersion']), policyVersion: String(row['policyVersion']), ...(row['slotStart'] ? { slotStart: new Date(String(row['slotStart'])).toISOString() } : {}), ...(row['slotEnd'] ? { slotEnd: new Date(String(row['slotEnd'])).toISOString() } : {}) }
+  const amountMinor = toBigInt(row['amount'])
+  const currency = String(row['currency']).toUpperCase()
+  return { contractVersion: String(row['contractVersion']) as MarketplaceCommitment['contractVersion'], commitmentId: String(row['commitmentId']), cartId: String(row['cartId']), tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), context: row['context'] as MarketplaceCommitment['context'], amount: Number(amountMinor) / 100, currency, status: row['status'] as MarketplaceCommitment['status'], lineIds: Array.isArray(row['lineIds']) ? row['lineIds'].map(String) : [], version: Number(row['version'] ?? 1), createdAt: new Date(String(row['createdAt'])).toISOString(), listingId: String(row['listingId']), quantity: Number(row['quantity']), availabilityVersion: Number(row['availabilityVersion']), policyVersion: String(row['policyVersion']), priceSnapshot: { currency, minor: Number(row['quantity']) > 0 ? amountMinor / BigInt(Number(row['quantity'])) : amountMinor }, ...(row['slotStart'] ? { slotStart: new Date(String(row['slotStart'])).toISOString() } : {}), ...(row['slotEnd'] ? { slotEnd: new Date(String(row['slotEnd'])).toISOString() } : {}) }
 }
 
 function toAudit(row: Record<string, unknown>): MarketplaceAuditRecord {
@@ -165,6 +168,18 @@ function toIsoString(value: unknown): string {
 
 function toTimestamp(value: unknown): number {
   return value instanceof Date ? value.getTime() : Date.parse(String(value))
+}
+
+function toBigInt(value: unknown): bigint {
+  return typeof value === 'bigint' ? value : BigInt(String(value))
+}
+
+function encodeMarketplaceResponse(value: MarketplaceCheckoutResponse): unknown {
+  return JSON.parse(JSON.stringify(value, (_key, item: unknown) => typeof item === 'bigint' ? `${item}n` : item))
+}
+
+function decodeMarketplaceResponse(value: unknown): MarketplaceCheckoutResponse {
+  return JSON.parse(JSON.stringify(value), (key, item) => key === 'minor' && typeof item === 'string' && /^\d+n$/u.test(item) ? BigInt(item.slice(0, -1)) : item) as MarketplaceCheckoutResponse
 }
 
 export default { PrismaMarketplaceStore }

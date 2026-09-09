@@ -1,5 +1,6 @@
 import type { TusCommitment } from '@factory/contracts'
 import type { TusMarketplaceService } from '../catalog/index.ts'
+import type { ServiceCalendarService } from '../calendar/index.ts'
 import type {
   ReleaseEligibility,
   ReleaseEligibilityInput,
@@ -60,6 +61,7 @@ export interface TusApplicationDependencies {
   now?: () => number
   releasePolicy?: TusReleasePolicy
   marketplace?: TusMarketplaceService
+  calendar?: ServiceCalendarService
   finance?: TusFinanceService
   delivery?: TusDeliveryService
   pos?: TusPosService
@@ -75,6 +77,7 @@ export interface TusApplicationDependencies {
 export class TusApplicationService {
   readonly outbox: TusOutboxStorePort
   readonly marketplace?: TusMarketplaceService
+  readonly calendar?: ServiceCalendarService
   readonly finance?: TusFinanceService
   readonly delivery?: TusDeliveryService
   readonly pos?: TusPosService
@@ -90,6 +93,7 @@ export class TusApplicationService {
     this.dependencies = dependencies
     this.outbox = dependencies.outbox
     this.marketplace = dependencies.marketplace
+    this.calendar = dependencies.calendar
     this.finance = dependencies.finance
     this.delivery = dependencies.delivery
     this.pos = dependencies.pos

@@ -35,10 +35,10 @@ All tests are `pnpm test -- <file>` ≤120s; builds ≤180s; runtime is `N/A (pl
 - [ ] 2.1 RED hardening tests for root `.env`, 60s+one retry, tenant/auth, CORS/limits/redaction; GREEN `apps/api/src/platform/{configuration,lifecycle}`, `auth-security`, `tenancy`, `tus/readiness`, `packages/{errors,lifecycle}`; REFACTOR `evaluateReadinessGates`/worker observability.
 
 ## Phase 3: Marketplace / Catalog
-- [ ] 3.1 RED stale/cross-tenant/stock-race/retry tests; GREEN `apps/api/src/tus/catalog/{index.ts,domain,application,adapters}` and `tus/http/router.ts`; REFACTOR separate product/service snapshots.
+- [x] 3.1 RED stale/cross-tenant/stock-race/retry tests; GREEN `apps/api/src/tus/catalog/{index.ts,domain,application,adapters}` and `tus/http/router.ts`; REFACTOR separate product/service snapshots.
 
 ## Phase 4: Calendar / Booking
-- [ ] 4.1 RED timezone/blackout/overlap/cutoff/cancellation/no-show/race tests; GREEN `apps/api/src/tus/calendar/{rules,slots,bookings}.ts`; REFACTOR locks and completion evidence.
+- [x] 4.1 RED timezone/blackout/overlap/cutoff/cancellation/no-show/race tests; GREEN `apps/api/src/tus/calendar/{rules,slots,bookings}.ts`; REFACTOR locks and completion evidence.
 
 ## Phase 5: Durable POS
 - [ ] 5.1 RED closed-shift, same-key, offline/revoked replay, printer-failure, atomicity tests; GREEN `apps/api/src/tus/pos/{index.ts,application,adapters}` and client queues; REFACTOR leases, conflicts, refunds.

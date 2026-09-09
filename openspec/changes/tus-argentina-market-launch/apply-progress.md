@@ -3,7 +3,7 @@
 ## Status
 
 - Phase 0, Phase 1, and Phase 2 implementation is present but not complete.
-- Tasks remain unchecked until the focused test runner is available and passes.
+- Phase 3 and Phase 4 implementation is complete for deterministic in-memory coverage; the focused runner is available through the repository's pinned NVM Node toolchain.
 - Runtime database execution remains intentionally blocked; no database writes were performed.
 
 ## Completed Implementation Work
@@ -19,6 +19,9 @@
 - Added Prisma security/tenancy audit sinks, tenancy persistence adapters, normalized auth/tenancy errors, provider-disabled fail-closed routing, and worker activation gates.
 - Updated `render.yaml`, `docker-compose.yml`, worker configuration, and root `.env` to use canonical `DATABASE_URL` while keeping activation disabled until external evidence exists.
 - Added Phase 2 RED coverage in `tests/foundation/backend-runtime-security.test.mjs`.
+- Added Phase 3 marketplace/catalog ownership, exact price snapshots, zero-stock publication filtering, conditional inventory reservation, customer/merchant boundaries, idempotent checkout replay, and marketplace route integration.
+- Added Phase 4 calendar rules, timezone-aware buffered slot generation, blackout handling, role/tenant-scoped booking service, capacity locking, cutoff/cancellation/no-show transitions, audit/outbox boundaries, Prisma persistence adapter, and authenticated API routes.
+- Added `tests/integration/tus/catalog-booking.test.mjs` with five focused scenarios covering catalog races/replay and calendar policy/race behavior.
 
 ## TDD Cycle Evidence
 
@@ -27,6 +30,8 @@
 | 0.1 | Tests written first in `tests/foundation/sdd-git-boundary.test.mjs` | Blocked: Node/pnpm unavailable in the environment | Static source review completed; runtime refactor pending |
 | 1.1 | Tests written first in `tests/integration/tus/migration-repair.test.mjs` | Blocked: Node/pnpm unavailable; PostgreSQL client tools unavailable | Static SQL/schema review completed; runtime refactor pending |
 | 2.1 | Tests written first in `tests/foundation/backend-runtime-security.test.mjs` | Blocked: Node/pnpm unavailable in the environment | Static TypeScript/Python/YAML review completed; runtime refactor pending |
+| 3.1 | Tests written first in `tests/integration/tus/catalog-booking.test.mjs` | Passed: 6/6 focused tests | Triangulated tenant split, exact price, zero-stock filtering, race, replay, and forbidden access | Passed: focused suite remained 6/6 after adapter/router/catalog cleanup |
+| 4.1 | Tests written first in `tests/integration/tus/catalog-booking.test.mjs` | Passed: 6/6 focused tests | Triangulated timezone, blackout, buffer, capacity, cutoff, cancellation, no-show, idempotency, role, and tenant paths | Passed: focused suite remained 6/6 after validation/idempotency cleanup |
 
 ## Work Unit Evidence
 
@@ -46,6 +51,8 @@
 - PowerShell static database/schema check: passed; 56 required launch tables found, no forbidden destructive SQL tokens, and no Prisma `Float` fields remain.
 - Model/migration comparison: launch tables have corresponding Prisma models except the expected `_prisma_migrations` table; pre-existing Prisma models remain represented by historical migrations.
 - Post-fix `git diff --check`: passed.
+- Commerce focused test: `C:\Users\mmmau\AppData\Local\nvm\v22.22.2\pnpm.cmd test -- tests/integration/tus/catalog-booking.test.mjs`; exit 0, 6 passed, 0 failed.
+- Commerce runtime harness: deterministic in-memory catalog/calendar command scenarios passed; external API/database runtime intentionally not started.
 
 ## Blockers
 
@@ -54,3 +61,9 @@
 - Resolve whether pre-existing historical `Float` columns require an approved additive backfill before treating the Prisma exact-money conversion as runtime-ready.
 - Install/provide Node.js and pnpm before claiming Phase 2 focused tests or TypeScript compilation pass.
 - Review generated `apps/api/tsconfig.tsbuildinfo` separately; it was not intentionally changed by this Phase 2 slice.
+- API typecheck and the backend foundation test remain blocked by the existing `@factory/errors` workspace module-resolution failure; this is not live PostgreSQL evidence.
+- Live calendar persistence remains blocked pending an approved additive schema for separate booking owner/customer tenancy and persisted duration/policy/snapshot fields.
+
+## Phase 3/4 Database Boundary
+
+No PostgreSQL connection, DDL, migration, seed, backup, restore, or write was performed. Existing `database-evidence.md` remains authoritative for the database block.

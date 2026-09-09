@@ -17,6 +17,7 @@ import { PosError } from '../pos/index.ts'
 import { ReportingError, createDiscoverySeoModel, createRobots, createSitemap } from '../reporting/index.ts'
 import { SupportError } from '../support/index.ts'
 import { WhatsAppActionError } from '../whatsapp/index.ts'
+import { ServiceCalendarError } from '../calendar/index.ts'
 import { TusReadinessBlockedError, type TusReadinessGuard, type TusReadinessProfile } from '../readiness/index.ts'
 
 const TUS_API_VERSION = 'v1'
@@ -400,6 +401,71 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       }
       sendMarketplaceError(response, error)
     }
+  })
+
+  router.post('/tus/v1/calendar', async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:calendar:write', 'tus:marketplace:write']) || hasSpoofedAuthority(body, request, context)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS calendar management is not authorized')
+      return
+    }
+    try {
+      response.status(201).json(await requireCalendar(application).createCalendar(context, body as never))
+    } catch (error) { sendCalendarError(response, error) }
+  })
+
+  router.get('/tus/v1/calendar/:calendarId/slots', async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasAnyPermission(context, ['tus:calendar:read', 'tus:marketplace:read']) || hasSpoofedAuthority({}, request, context)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS calendar access is not authorized')
+      return
+    }
+    const date = readQueryString(request.query['date'])
+    if (!date) { sendError(response, 400, 'INVALID', 'date is required'); return }
+    try {
+      response.status(200).json({ slots: await requireCalendar(application).slots(context, request.params['calendarId'] ?? '', date, readQueryString(request.query['now'])) })
+    } catch (error) { sendCalendarError(response, error) }
+  })
+
+  router.post('/tus/v1/calendar/bookings', async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:calendar:read', 'tus:marketplace:read']) || hasSpoofedAuthority(body, request, context)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS service booking is not authorized')
+      return
+    }
+    const idempotencyKey = readHeader(request, 'idempotency-key') || readString(body, 'idempotencyKey')
+    const requestHash = readString(body, 'requestHash')
+    if (!idempotencyKey || !requestHash) { sendError(response, 400, 'INVALID', 'requestHash and idempotency-key are required'); return }
+    try {
+      const result = await requireCalendar(application).book(context, { calendarId: readString(body, 'calendarId'), serviceId: readString(body, 'serviceId'), customerId: readString(body, 'customerId'), slotId: readString(body, 'slotId'), idempotencyKey, requestHash, now: readString(body, 'now') || new Date(now()).toISOString() })
+      response.status(result.status === 'replay' ? 200 : result.status === 'rejected' ? 409 : 201).json(result)
+    } catch (error) { sendCalendarError(response, error) }
+  })
+
+  router.post('/tus/v1/calendar/bookings/:bookingId/cancel', async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:calendar:read', 'tus:marketplace:read']) || hasSpoofedAuthority(body, request, context)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS booking cancellation is not authorized')
+      return
+    }
+    try {
+      response.status(200).json(await requireCalendar(application).cancel(context, { bookingId: request.params['bookingId'] ?? '', now: readString(body, 'now') || new Date(now()).toISOString(), reason: readString(body, 'reason'), ...(readFiniteNumber(body, 'expectedVersion') === undefined ? {} : { expectedVersion: readFiniteNumber(body, 'expectedVersion') }) }))
+    } catch (error) { sendCalendarError(response, error) }
+  })
+
+  router.post('/tus/v1/calendar/bookings/:bookingId/no-show', async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasPermission(context, 'tus:calendar:write') || hasSpoofedAuthority(body, request, context)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS no-show management is not authorized')
+      return
+    }
+    try {
+      response.status(200).json(await requireCalendar(application).markNoShow(context, { bookingId: request.params['bookingId'] ?? '', now: readString(body, 'now') || new Date(now()).toISOString() }))
+    } catch (error) { sendCalendarError(response, error) }
   })
 
   router.post(['/tus/finance/payment-intents', '/tus/v1/finance/payment-intents'], async (request: Request, response: Response) => {
@@ -925,6 +991,11 @@ function requireMarketplace(application: TusApplicationService) {
   return application.marketplace
 }
 
+function requireCalendar(application: TusApplicationService) {
+  if (!application.calendar) throw new ServiceCalendarError(503, 'UNAVAILABLE', 'TUS calendar composition is unavailable')
+  return application.calendar
+}
+
 async function recordMarketplaceDenied(application: TusApplicationService, context: TusAuthenticatedTenantContext | null, action: string, resourceId: string): Promise<void> {
   if (context && application.marketplace) await application.marketplace.recordDenied(context, action, resourceId)
 }
@@ -939,6 +1010,14 @@ function sendMarketplaceError(response: Response, error: unknown): void {
     return
   }
   sendError(response, 500, 'UNAVAILABLE', 'TUS marketplace operation was not committed')
+}
+
+function sendCalendarError(response: Response, error: unknown): void {
+  if (error instanceof ServiceCalendarError) {
+    response.status(error.status).json({ code: error.code, error: error.message })
+    return
+  }
+  sendError(response, 500, 'UNAVAILABLE', 'TUS calendar operation was not committed')
 }
 
 function sendCommitmentError(response: Response, error: unknown): void {

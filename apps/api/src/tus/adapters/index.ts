@@ -1,4 +1,5 @@
 export * from './in-memory.ts'
 export * from './prisma.ts'
 export * from './prisma-marketplace.ts'
+export * from './prisma-calendar.ts'
 export * from './delivery-pos.ts'
