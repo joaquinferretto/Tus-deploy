@@ -177,11 +177,13 @@ export class PrismaTusFinanceStore implements FinanceStore {
 }
 
 function paymentToRow(value: FinancePaymentIntent): Row {
-  return { ...value, id: value.paymentId, createdAt: new Date(value.createdAt), updatedAt: new Date(value.updatedAt) }
+  return { ...value, id: value.paymentId, releaseAt: new Date(value.releaseAt), providerEventAt: value.providerEventAt === null ? null : new Date(value.providerEventAt), createdAt: new Date(value.createdAt), updatedAt: new Date(value.updatedAt) }
 }
 
 function paymentFromRow(row: Row): FinancePaymentIntent {
-  return { contractVersion: text(row.contractVersion) as FinancePaymentIntent['contractVersion'], paymentId: text(row.paymentId), tenantId: text(row.tenantId), commitmentId: text(row.commitmentId), provider: 'mercado-pago', providerReference: nullableText(row.providerReference), providerStatus: text(row.providerStatus) as FinancePaymentIntent['providerStatus'], commercialStatus: text(row.commercialStatus) as FinancePaymentIntent['commercialStatus'], amount: number(row.amount), currency: text(row.currency), idempotencyKey: text(row.idempotencyKey), correlationId: text(row.correlationId), credentialsCollected: false, source: text(row.source) as FinancePaymentIntent['source'], createdAt: dateMillis(row.createdAt), updatedAt: dateMillis(row.updatedAt) }
+  const createdAt = dateMillis(row.createdAt)
+  const splitPolicy: FinancePaymentIntent['splitPolicy'] = row['splitPolicy'] && typeof row['splitPolicy'] === 'object' ? row['splitPolicy'] as FinancePaymentIntent['splitPolicy'] : { name: 'five-day-intermediary', version: 'legacy', holdDays: 5, releaseRule: 'completion-confirmation-or-approved-policy', merchantOfRecord: 'tus-intermediary', providerEvidenceId: null, legalEvidenceId: null }
+  return { contractVersion: text(row.contractVersion) as FinancePaymentIntent['contractVersion'], paymentId: text(row.paymentId), tenantId: text(row.tenantId), commitmentId: text(row.commitmentId), provider: 'mercado-pago', providerReference: nullableText(row.providerReference), providerStatus: text(row.providerStatus) as FinancePaymentIntent['providerStatus'], commercialStatus: text(row.commercialStatus) as FinancePaymentIntent['commercialStatus'], amount: number(row.amount), currency: text(row.currency), idempotencyKey: text(row.idempotencyKey), correlationId: text(row.correlationId), credentialsCollected: false, source: text(row.source) as FinancePaymentIntent['source'], orderId: optionalText(row['orderId']) ?? text(row.commitmentId), posOperationId: optionalText(row['posOperationId']) ?? null, merchantOfRecord: 'tus-intermediary', collectionModel: 'intermediary', splitPolicy, releaseAt: row['releaseAt'] ? dateMillis(row['releaseAt']) : createdAt, providerEventAt: row['providerEventAt'] ? dateMillis(row['providerEventAt']) : null, providerError: (optionalText(row['providerError']) as FinancePaymentIntent['providerError']) ?? null, createdAt, updatedAt: dateMillis(row.updatedAt) }
 }
 
 function snapshotToRow(value: FinanceCommissionSnapshot): Row {
@@ -248,8 +250,9 @@ function optionalText(value: unknown): string | undefined {
 }
 
 function number(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('finance persistence number field is invalid')
-  return value
+  const normalized = typeof value === 'bigint' ? Number(value) : value
+  if (typeof normalized !== 'number' || !Number.isSafeInteger(normalized) || normalized < 0) throw new Error('finance persistence number field is invalid')
+  return normalized
 }
 
 function dateMillis(value: unknown): number {

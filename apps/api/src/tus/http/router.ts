@@ -487,7 +487,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      const result = await requireFinance(application).createPaymentIntent({ ...financeContext(context), commitmentId, requestHash, idempotencyKey })
+       const result = await requireFinance(application).createPaymentIntent({ ...financeContext(context), commitmentId, orderId: readString(body, 'orderId') || undefined, posOperationId: readString(body, 'posOperationId') || null, requestHash, idempotencyKey })
       response.status(result.status === 'replay' ? 200 : result.status === 'held' ? 202 : 201).json(result)
     } catch (error) {
       sendFinanceError(response, error)
@@ -693,6 +693,10 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.acceptTask(context, request.params['taskId'] ?? '', readVersion(body)))
   })
 
+  router.post(['/tus/delivery/tasks/:taskId/assign', '/tus/v1/delivery/tasks/:taskId/assign'], async (request: Request, response: Response) => {
+    await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.assignTask(context, request.params['taskId'] ?? '', readString(body, 'operatorId'), readVersion(body)))
+  })
+
   router.post(['/tus/delivery/tasks/:taskId/pick-up', '/tus/v1/delivery/tasks/:taskId/pick-up'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.transitionTask(context, request.params['taskId'] ?? '', 'picked-up', readVersion(body)))
   })
@@ -721,6 +725,10 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.returnTask(context, request.params['taskId'] ?? '', readVersion(body)))
   })
 
+  router.post(['/tus/delivery/tasks/:taskId/cancel', '/tus/v1/delivery/tasks/:taskId/cancel'], async (request: Request, response: Response) => {
+    await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.cancelTask(context, request.params['taskId'] ?? '', readVersion(body), readString(body, 'reason')))
+  })
+
   router.get(['/tus/delivery/tasks', '/tus/v1/delivery/tasks'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:delivery:read') || hasSpoofedAuthority({}, request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS delivery access is not authorized'); return }
@@ -742,6 +750,39 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       const result = await requirePos(application).recordManualOperation(context, body as never)
       response.status(result.status === 'conflict' ? 409 : 201).json(result)
     } catch (error) { sendPosError(response, error) }
+  })
+
+  router.get(['/tus/pos/operations/:operationId/status', '/tus/v1/pos/operations/:operationId/status'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasAnyPermission(context, ['tus:pos:write', 'tus:pos:read']) || hasSpoofedAuthority({}, request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS POS status access is not authorized'); return }
+    try { response.status(200).json(await requirePos(application).getOperationStatus(context, request.params['operationId'] ?? '')) } catch (error) { sendPosError(response, error) }
+  })
+
+  router.post(['/tus/pos/refunds', '/tus/v1/pos/refunds'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:pos:refund', 'tus:pos:write']) || hasSpoofedAuthority(body, request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS POS refund access is not authorized'); return }
+    try {
+      const result = await requirePos(application).refund(context, { refundId: readString(body, 'refundId'), originalOperationId: readString(body, 'originalOperationId'), idempotencyKey: readHeader(request, 'idempotency-key') || readString(body, 'idempotencyKey'), amount: readFiniteNumber(body, 'amount') ?? NaN, reason: readString(body, 'reason'), expectedVersion: readFiniteNumber(body, 'expectedVersion') ?? NaN })
+      response.status(201).json(result)
+    } catch (error) { sendPosError(response, error) }
+  })
+
+  router.post(['/tus/pos/operations/:operationId/cancel', '/tus/v1/pos/operations/:operationId/cancel'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:pos:refund', 'tus:pos:write']) || hasSpoofedAuthority(body, request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS POS cancellation access is not authorized'); return }
+    try {
+      const result = await requirePos(application).cancelOperation(context, { cancellationId: readString(body, 'cancellationId'), originalOperationId: request.params['operationId'] ?? '', idempotencyKey: readHeader(request, 'idempotency-key') || readString(body, 'idempotencyKey'), reason: readString(body, 'reason'), expectedVersion: readFiniteNumber(body, 'expectedVersion') ?? NaN })
+      response.status(201).json(result)
+    } catch (error) { sendPosError(response, error) }
+  })
+
+  router.post(['/tus/pos/printer-failures', '/tus/v1/pos/printer-failures'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasPermission(context, 'tus:pos:write') || hasSpoofedAuthority(body, request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS POS printer recovery is not authorized'); return }
+    try { response.status(201).json(await requirePos(application).recordPrinterFailure(context, { failureId: readString(body, 'failureId'), operationId: readString(body, 'operationId'), reason: readString(body, 'reason') })) } catch (error) { sendPosError(response, error) }
   })
 
   router.post(['/tus/pos/devices', '/tus/v1/pos/devices'], async (request: Request, response: Response) => {
@@ -771,6 +812,40 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     const resolution = readString(body, 'resolution')
     if (resolution !== 'discard' && resolution !== 'retry') { sendError(response, 400, 'INVALID', 'resolution must be discard or retry'); return }
     try { response.status(200).json(await requirePos(application).resolveConflict(context, request.params['conflictId'] ?? '', resolution)) } catch (error) { sendPosError(response, error) }
+  })
+
+  router.post(['/tus/whatsapp/consent', '/tus/v1/whatsapp/consent'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasPermission(context, 'tus:whatsapp:write') || hasSpoofedAuthority(body, request, context)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS WhatsApp consent is not authorized')
+      return
+    }
+    try {
+      response.status(200).json(await requireWhatsApp(application).recordConsent(context, { recipientType: readString(body, 'recipientType') as 'tenant' | 'merchant' | 'customer', recipientId: readString(body, 'recipientId'), source: readString(body, 'source'), granted: body['granted'] === true }))
+    } catch (error) { sendWhatsAppError(response, error) }
+  })
+
+  router.post(['/tus/whatsapp/templates', '/tus/v1/whatsapp/templates'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasPermission(context, 'tus:whatsapp:write') || hasSpoofedAuthority(body, request, context)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS WhatsApp templates are not authorized')
+      return
+    }
+    try {
+      response.status(202).json(await requireWhatsApp(application).sendTemplate(context, { recipientType: readString(body, 'recipientType') as 'tenant' | 'merchant' | 'customer', recipientId: readString(body, 'recipientId'), template: readString(body, 'template'), templateVersion: readString(body, 'templateVersion'), variables: asRecord(body['variables']), idempotencyKey: readHeader(request, 'idempotency-key') || readString(body, 'idempotencyKey'), requestHash: readString(body, 'requestHash') }))
+    } catch (error) { sendWhatsAppError(response, error) }
+  })
+
+  router.post(['/tus/whatsapp/support-handoff', '/tus/v1/whatsapp/support-handoff'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasPermission(context, 'tus:whatsapp:write') || hasSpoofedAuthority(body, request, context)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS WhatsApp handoff is not authorized')
+      return
+    }
+    try { response.status(200).json(await requireWhatsApp(application).handoffToSupport(context, { senderId: readString(body, 'senderId'), reason: readString(body, 'reason') })) } catch (error) { sendWhatsAppError(response, error) }
   })
 
   router.post(['/tus/whatsapp/actions', '/tus/v1/whatsapp/actions', '/tus/v1/whatsapp/handoff'], async (request: Request, response: Response) => {

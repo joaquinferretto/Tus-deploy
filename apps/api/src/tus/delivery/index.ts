@@ -1,8 +1,36 @@
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import type { TusReadinessGuard, TusReadinessProfile } from '../readiness/index.ts'
 
-export type DeliveryTaskStatus = 'queued' | 'accepted' | 'picked-up' | 'in-transit' | 'handed-off' | 'returned' | 'incident-review'
+export const DELIVERY_TASK_STATUS = {
+  QUEUED: 'queued',
+  ACCEPTED: 'accepted',
+  PICKED_UP: 'picked-up',
+  IN_TRANSIT: 'in-transit',
+  HANDED_OFF: 'handed-off',
+  DELIVERED: 'delivered',
+  RETURNED: 'returned',
+  CANCELLED: 'cancelled',
+  INCIDENT_REVIEW: 'incident-review',
+} as const
+
+export type DeliveryTaskStatus = (typeof DELIVERY_TASK_STATUS)[keyof typeof DELIVERY_TASK_STATUS]
 export type DeliveryEvidenceSource = 'authorized' | 'deterministic-test-only'
+
+export interface DeliverySla {
+  pickupDueAt: string
+  dropoffDueAt: string
+  status: 'on-time' | 'breached'
+  breachedAt: string | null
+}
+
+export interface DeliveryPickupEvidence {
+  pickedUpAt: string | null
+  inTransitAt: string | null
+}
+
+export interface DeliveryDropoffEvidence {
+  handedOffAt: string | null
+}
 
 export interface DeliveryZone {
   zoneId: string
@@ -66,6 +94,11 @@ export interface DeliveryTask {
   version: number
   proof: DeliveryProof | null
   incident: DeliveryIncident | null
+  sla: DeliverySla
+  pickup: DeliveryPickupEvidence
+  dropoff: DeliveryDropoffEvidence
+  cancelledAt: string | null
+  failureReason: string | null
   settlementClaim: 'not-claimed'
   createdAt: string
   updatedAt: string
@@ -171,6 +204,7 @@ export interface CreateDeliveryTaskInput {
   zoneId: string
   shiftId: string
   operatorId?: string
+  sla?: { pickupDueAt: string; dropoffDueAt: string }
 }
 
 export class TusDeliveryService {
@@ -225,7 +259,9 @@ export class TusDeliveryService {
     if (shift.zoneId !== zone.zoneId || shift.status !== 'open') throw new DeliveryError(409, 'SHIFT_UNAVAILABLE', 'delivery shift is not active for this zone')
     if (input.operatorId !== undefined && !shift.operatorIds.includes(input.operatorId)) throw new DeliveryError(403, 'FORBIDDEN', 'operator is not assigned to this shift')
     const now = new Date(this.now()).toISOString()
-    const task: DeliveryTask = { contractVersion: '1.0.0', taskId: input.taskId, tenantId: context.tenantId, commitmentId: input.commitment.commitmentId, merchantId: input.commitment.merchantId, context: 'product', zoneId: zone.zoneId, shiftId: shift.shiftId, operatorId: input.operatorId ?? (shift.operatorIds.length === 1 ? shift.operatorIds[0]! : null), status: 'queued', version: 0, proof: null, incident: null, settlementClaim: 'not-claimed', createdAt: now, updatedAt: now }
+    const sla = input.sla ?? { pickupDueAt: shift.startsAt, dropoffDueAt: shift.endsAt }
+    if (!validInterval(sla.pickupDueAt, sla.dropoffDueAt)) throw new DeliveryError(400, 'INVALID_SLA', 'pickup and dropoff SLA deadlines are required')
+    const task: DeliveryTask = { contractVersion: '1.0.0', taskId: input.taskId, tenantId: context.tenantId, commitmentId: input.commitment.commitmentId, merchantId: input.commitment.merchantId, context: 'product', zoneId: zone.zoneId, shiftId: shift.shiftId, operatorId: input.operatorId ?? (shift.operatorIds.length === 1 ? shift.operatorIds[0]! : null), status: DELIVERY_TASK_STATUS.QUEUED, version: 0, proof: null, incident: null, sla: { ...sla, status: 'on-time', breachedAt: null }, pickup: { pickedUpAt: null, inTransitAt: null }, dropoff: { handedOffAt: null }, cancelledAt: null, failureReason: null, settlementClaim: 'not-claimed', createdAt: now, updatedAt: now }
     await this.store.tasks.save(task)
     await this.recordAudit(context, 'delivery.task.created', 'task', task.taskId, 'allowed')
     await this.recordOutbox(context, 'delivery.task.created', task.taskId, task)
@@ -261,13 +297,46 @@ export class TusDeliveryService {
     return this.transitionTask(context, taskId, 'accepted', expectedVersion)
   }
 
-  async transitionTask(context: TusAuthenticatedTenantContext, taskId: string, status: Extract<DeliveryTaskStatus, 'accepted' | 'picked-up' | 'in-transit' | 'handed-off'>, expectedVersion: number): Promise<DeliveryTask> {
+  async transitionTask(context: TusAuthenticatedTenantContext, taskId: string, status: Extract<DeliveryTaskStatus, 'accepted' | 'picked-up' | 'in-transit' | 'handed-off' | 'delivered'>, expectedVersion: number): Promise<DeliveryTask> {
     this.authorize(context, 'tus:delivery:write')
     await this.requireReadiness(context)
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
-    if (!isAllowedTransition(task.status, status) || (status === 'handed-off' && task.proof === null)) throw new DeliveryError(409, 'INVALID_TRANSITION', 'delivery task transition is not supported by its current evidence')
-    return this.saveTask(context, { ...task, status, version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }, `delivery.task.${status}`)
+    if (status !== DELIVERY_TASK_STATUS.ACCEPTED && task.operatorId !== context.subjectId) throw new DeliveryError(403, 'FORBIDDEN', 'only the assigned internal operator may update this delivery')
+    if (!isAllowedTransition(task.status, status) || (['handed-off', 'delivered'].includes(status) && task.proof === null)) throw new DeliveryError(409, 'INVALID_TRANSITION', 'delivery task transition is not supported by its current evidence')
+    const timestamp = new Date(this.now()).toISOString()
+    const updated: DeliveryTask = {
+      ...task,
+      status,
+      pickup: status === DELIVERY_TASK_STATUS.PICKED_UP ? { ...task.pickup, pickedUpAt: timestamp } : status === DELIVERY_TASK_STATUS.IN_TRANSIT ? { ...task.pickup, inTransitAt: timestamp } : task.pickup,
+      dropoff: ['handed-off', 'delivered'].includes(status) ? { ...task.dropoff, handedOffAt: task.dropoff.handedOffAt ?? timestamp } : task.dropoff,
+      version: task.version + 1,
+      updatedAt: timestamp,
+    }
+    return this.saveTask(context, updated, `delivery.task.${status}`)
+  }
+
+  async evaluateSla(context: TusAuthenticatedTenantContext, taskId: string, at = this.now()): Promise<{ status: DeliverySla['status']; pickupDueAt: string; dropoffDueAt: string; breachedAt: string | null }> {
+    this.authorize(context, 'tus:delivery:read')
+    const task = await this.requireTask(context, taskId)
+    const breached = at > Date.parse(task.sla.dropoffDueAt)
+    if (breached && task.sla.status !== 'breached') {
+      const timestamp = new Date(at).toISOString()
+      const updated = await this.saveTask(context, { ...task, sla: { ...task.sla, status: 'breached', breachedAt: timestamp }, version: task.version + 1, updatedAt: timestamp }, 'delivery.sla.breached')
+      return { status: updated.sla.status, pickupDueAt: updated.sla.pickupDueAt, dropoffDueAt: updated.sla.dropoffDueAt, breachedAt: updated.sla.breachedAt }
+    }
+    return { status: breached || task.sla.status === 'breached' ? 'breached' : 'on-time', pickupDueAt: task.sla.pickupDueAt, dropoffDueAt: task.sla.dropoffDueAt, breachedAt: breached ? task.sla.breachedAt ?? new Date(at).toISOString() : task.sla.breachedAt }
+  }
+
+  async cancelTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number, reason: string): Promise<DeliveryTask> {
+    this.authorize(context, 'tus:delivery:write')
+    await this.requireReadiness(context)
+    const task = await this.requireTask(context, taskId)
+    this.assertVersion(task, expectedVersion)
+    this.assertOperator(task, context)
+    if (!reason.trim() || ![DELIVERY_TASK_STATUS.QUEUED, DELIVERY_TASK_STATUS.ACCEPTED].includes(task.status)) throw new DeliveryError(409, 'INVALID_CANCELLATION', 'only queued or accepted deliveries can be cancelled')
+    const timestamp = new Date(this.now()).toISOString()
+    return this.saveTask(context, { ...task, status: DELIVERY_TASK_STATUS.CANCELLED, cancelledAt: timestamp, failureReason: reason.trim(), version: task.version + 1, updatedAt: timestamp }, 'delivery.task.cancelled')
   }
 
   async recordProof(context: TusAuthenticatedTenantContext, input: Omit<DeliveryProof, 'tenantId' | 'commitmentId'>, expectedVersion: number): Promise<DeliveryTask> {
@@ -275,6 +344,7 @@ export class TusDeliveryService {
     await this.requireReadiness(context)
     const task = await this.requireTask(context, input.taskId)
     this.assertVersion(task, expectedVersion)
+    this.assertOperator(task, context)
     if (task.status !== 'in-transit') throw new DeliveryError(409, 'INVALID_PROOF_STATE', 'delivery proof requires an in-transit task')
     if (!input.recipientName.trim() || !Number.isFinite(Date.parse(input.capturedAt)) || !['authorized', 'deterministic-test-only'].includes(input.evidenceSource)) throw new DeliveryError(400, 'INVALID_PROOF', 'recipient, timestamp, and evidence source are required')
     const proof: DeliveryProof = { contractVersion: '1.0.0', ...input, tenantId: context.tenantId, commitmentId: task.commitmentId }
@@ -291,10 +361,12 @@ export class TusDeliveryService {
     await this.requireReadiness(context)
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
+    this.assertOperator(task, context)
+    if ([DELIVERY_TASK_STATUS.CANCELLED, DELIVERY_TASK_STATUS.RETURNED, DELIVERY_TASK_STATUS.DELIVERED, DELIVERY_TASK_STATUS.INCIDENT_REVIEW].includes(task.status)) throw new DeliveryError(409, 'INVALID_TRANSITION', 'terminal or incident delivery tasks cannot fail again')
     if (!input.incidentId.trim() || !input.reason.trim()) throw new DeliveryError(400, 'INVALID_INCIDENT', 'incident id and reason are required')
     const incident: DeliveryIncident = { contractVersion: '1.0.0', incidentId: input.incidentId, tenantId: context.tenantId, taskId, reason: input.reason.trim(), status: 'open', createdAt: new Date(this.now()).toISOString() }
     await this.store.incidents.save(incident)
-    const updated = { ...task, status: 'incident-review' as const, incident, version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }
+    const updated = { ...task, status: DELIVERY_TASK_STATUS.INCIDENT_REVIEW, incident, failureReason: input.reason.trim(), version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }
     await this.store.tasks.save(updated)
     await this.recordAudit(context, 'delivery.incident.opened', 'incident', incident.incidentId, 'allowed')
     await this.recordOutbox(context, 'delivery.incident.opened', taskId, incident)
@@ -306,6 +378,7 @@ export class TusDeliveryService {
     await this.requireReadiness(context)
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
+    this.assertOperator(task, context)
     if (task.status !== 'incident-review' || task.incident === null) throw new DeliveryError(409, 'INVALID_INCIDENT_STATE', 'only an open delivery incident can be resolved')
     const incident = { ...task.incident, status: 'resolved' as const }
     const updated = { ...task, incident, status: 'returned' as const, version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }
@@ -321,6 +394,7 @@ export class TusDeliveryService {
     await this.requireReadiness(context)
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
+    this.assertOperator(task, context)
     if (!['in-transit', 'incident-review'].includes(task.status)) throw new DeliveryError(409, 'INVALID_TRANSITION', 'only an active or incident delivery can be returned')
     return this.saveTask(context, { ...task, status: 'returned', version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }, 'delivery.task.returned')
   }
@@ -387,6 +461,10 @@ export class TusDeliveryService {
     if (!Number.isInteger(expectedVersion) || task.version !== expectedVersion) throw new DeliveryError(409, 'VERSION_CONFLICT', 'delivery task version differs from the offline expectation')
   }
 
+  private assertOperator(task: DeliveryTask, context: TusAuthenticatedTenantContext): void {
+    if (task.operatorId !== context.subjectId) throw new DeliveryError(403, 'FORBIDDEN', 'only the assigned internal operator may update this delivery')
+  }
+
   private authorize(context: TusAuthenticatedTenantContext, permission: string): void {
     if (!context.tenantId.trim() || !context.subjectId.trim() || !context.correlationId.trim() || (!context.permissions.includes(permission) && !context.permissions.includes('tus:*'))) throw new DeliveryError(403, 'FORBIDDEN', 'TUS delivery operation is not authorized')
   }
@@ -401,7 +479,7 @@ export class TusDeliveryService {
 }
 
 function isAllowedTransition(from: DeliveryTaskStatus, to: DeliveryTaskStatus): boolean {
-  return (from === 'queued' && to === 'accepted') || (from === 'accepted' && to === 'picked-up') || (from === 'picked-up' && to === 'in-transit') || (from === 'in-transit' && to === 'handed-off')
+  return (from === 'queued' && to === 'accepted') || (from === 'accepted' && to === 'picked-up') || (from === 'picked-up' && to === 'in-transit') || (from === 'in-transit' && to === 'handed-off') || (from === 'handed-off' && to === 'delivered')
 }
 
 function validInterval(start: string, end: string): boolean {

@@ -701,6 +701,14 @@ model TusPaymentIntent {
   correlationId       String
   credentialsCollected Boolean
   source              String
+  orderId             String   @default("")
+  posOperationId      String?
+  merchantOfRecord    String   @default("tus-intermediary")
+  collectionModel     String   @default("intermediary")
+  splitPolicy         Json?
+  releaseAt           DateTime @default(now())
+  providerEventAt     DateTime?
+  providerError       String?
   createdAt           DateTime
   updatedAt           DateTime
 
@@ -880,6 +888,11 @@ model TusDeliveryTask {
   version         Int
   proof           Json?
   incident        Json?
+  sla             Json?
+  pickup          Json?
+  dropoff         Json?
+  cancelledAt     DateTime?
+  failureReason   String?
   settlementClaim String
   createdAt       DateTime
   updatedAt       DateTime
@@ -1226,6 +1239,7 @@ model TusWhatsAppAudit {
   senderId      String
   correlationId String
   createdAt     DateTime
+  retentionUntil DateTime?
 
   @@index([tenantId, createdAt])
   @@index([tenantId, correlationId])
@@ -1390,6 +1404,7 @@ model TusWhatsAppConsent {
   id         String   @id
   tenantId   String
   recipientId String
+  recipientType String
   status     String
   source     String
   grantedAt  DateTime
@@ -1409,8 +1424,11 @@ model TusWhatsAppMessage {
   template       String
   templateVersion String
   consentId      String
+  requestHash    String
+  variables      Json?
   status         String
   correlationId  String
+  retentionUntil DateTime?
   createdAt      DateTime
   updatedAt      DateTime
 
@@ -1431,21 +1449,51 @@ model TusWhatsAppWebhookEvent {
   @@index([tenantId, status, occurredAt])
 }
 
+model TusWhatsAppOutbox {
+  id             String   @id
+  tenantId       String
+  eventId        String
+  correlationId  String
+  eventType      String
+  aggregateId    String
+  payload        Json
+  status         String
+  createdAt      DateTime
+  retentionUntil DateTime
+
+  @@unique([tenantId, eventId])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, correlationId])
+}
+
 model TusInvoice {
   id            String   @id
   tenantId      String
   invoiceId     String
+  accountId     String   @default("")
   commitmentId  String
+  paymentId     String   @default("")
+  orderId       String   @default("")
+  posOperationId String?
   currency      String
   subtotal      BigInt
   taxAmount     BigInt
   feeAmount     BigInt
   total         BigInt
+  subtotalMinor BigInt   @default(0)
+  taxMinor      BigInt   @default(0)
+  feeMinor      BigInt   @default(0)
+  totalMinor    BigInt   @default(0)
   status        String
+  number        String?
+  invoiceType   String   @default("commercial")
   taxReference  String?
+  taxSnapshot   Json?
+  snapshotVersion Int    @default(1)
   issuedAt      DateTime?
   createdAt     DateTime
   updatedAt     DateTime
+  lines         TusInvoiceLine[]
 
   @@unique([tenantId, invoiceId])
   @@index([tenantId, commitmentId, status])
@@ -1455,12 +1503,16 @@ model TusInvoiceLine {
   id          String   @id
   tenantId    String
   invoiceId   String
+  lineId      String   @default("")
   description String
   quantity    Int
   unitMinor   BigInt
   taxMinor    BigInt
   totalMinor  BigInt
+  currency    String   @default("ARS")
+  snapshot    Json?
   createdAt   DateTime
+  invoice     TusInvoice @relation(fields: [tenantId, invoiceId], references: [tenantId, invoiceId])
 
   @@unique([tenantId, id])
   @@index([tenantId, invoiceId])
@@ -1471,6 +1523,9 @@ model TusCreditNote {
   tenantId     String
   creditNoteId String
   invoiceId    String
+  paymentId    String   @default("")
+  orderId      String   @default("")
+  posOperationId String?
   currency     String
   amountMinor  BigInt
   reason       String
@@ -1486,10 +1541,14 @@ model TusSubscription {
   tenantId       String
   subscriptionId String
   customerId     String
+  planId         String   @default("")
+  planSnapshot   Json?
   currency       String
   amountMinor    BigInt
   interval       String
   status         String
+  dunningAttempt Int      @default(0)
+  cancelReason   String?
   cancelledAt    DateTime?
   createdAt      DateTime
   updatedAt      DateTime
@@ -1506,11 +1565,165 @@ model TusTaxProfile {
   taxCategory   String
   status        String
   evidenceRef   String
+  authority     String   @default("ARCA/AFIP-external")
+  ivaTreatment  String?
+  withholdingTreatment String?
+  externalApprovalReference String?
   createdAt     DateTime
   updatedAt     DateTime
 
   @@unique([tenantId, partyId])
   @@index([tenantId, status])
+}
+
+model TusBillingAccount {
+  id               String   @id
+  tenantId         String
+  billingAccountId String
+  partyId          String
+  role             String
+  status           String
+  createdAt        DateTime
+  updatedAt        DateTime
+
+  @@unique([tenantId, billingAccountId])
+  @@index([tenantId, partyId, status])
+}
+
+model TusSubscriptionPlan {
+  id         String   @id
+  tenantId   String
+  planId     String
+  name       String
+  amountMinor BigInt
+  currency   String
+  interval   String
+  status     String
+  createdAt  DateTime
+  updatedAt  DateTime
+
+  @@unique([tenantId, planId])
+  @@index([tenantId, status])
+}
+
+model TusBillingRefund {
+  id            String   @id
+  tenantId      String
+  refundId      String
+  invoiceId     String
+  paymentId     String
+  orderId       String
+  posOperationId String?
+  currency      String
+  amountMinor   BigInt
+  reason        String
+  status        String
+  createdAt     DateTime
+
+  @@unique([tenantId, refundId])
+  @@index([tenantId, invoiceId])
+}
+
+model TusBillingLedger {
+  id            String   @id
+  tenantId      String
+  entryId       String
+  invoiceId     String
+  entryType     String
+  amountMinor   BigInt
+  currency      String
+  linkedEntryId String?
+  creditNoteId  String?
+  refundId      String?
+  paymentId     String
+  orderId       String
+  posOperationId String?
+  immutable     Boolean  @default(true)
+  createdAt     DateTime
+
+  @@unique([tenantId, entryId])
+  @@index([tenantId, invoiceId, createdAt])
+}
+
+model TusBillingIdempotency {
+  id          String   @id
+  tenantId    String
+  key         String
+  requestHash String
+  response    Json
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, key])
+  @@index([tenantId, createdAt])
+}
+
+model TusBillingAudit {
+  id            String   @id
+  tenantId      String
+  auditId       String
+  actorId       String
+  correlationId String
+  action        String
+  resourceId    String
+  outcome       String
+  reason        String?
+  createdAt     DateTime
+
+  @@unique([tenantId, auditId])
+  @@index([tenantId, correlationId, createdAt])
+}
+
+model TusBillingOutbox {
+  id            String   @id
+  tenantId      String
+  eventId       String
+  correlationId String
+  eventType     String
+  aggregateId   String
+  payload       Json
+  status        String
+  attempts      Int
+  availableAt   DateTime
+  createdAt     DateTime
+
+  @@unique([tenantId, eventId])
+  @@index([tenantId, status, availableAt])
+}
+
+model TusBillingDunning {
+  id             String   @id
+  tenantId       String
+  dunningId      String
+  subscriptionId String
+  attempt        Int
+  reason         String
+  status         String
+  retryAt        DateTime?
+  createdAt      DateTime
+
+  @@unique([tenantId, dunningId])
+  @@index([tenantId, subscriptionId, createdAt])
+}
+
+model TusBillingNumberSequence {
+  id         String   @id
+  tenantId   String   @unique
+  nextNumber Int
+}
+
+model TusAccountingExport {
+  id                       String   @id
+  tenantId                 String
+  exportId                 String
+  invoiceIds               String[]
+  ledgerEntryIds           String[]
+  externalApprovalReference String
+  status                   String
+  postedExternally         Boolean  @default(false)
+  createdAt                DateTime
+
+  @@unique([tenantId, exportId])
+  @@index([tenantId, createdAt])
 }
 
 model TusJob {

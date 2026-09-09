@@ -45,8 +45,8 @@ async function withTempRoot(contents, callback) {
 test('inventory classifies the complete backlog and excludes comment-only destructive words', async () => {
   const inventory = await inventoryMigrations({ migrationsDirectory: MIGRATIONS_ROOT })
 
-  assert.equal(inventory.pendingMigrations.length, 25)
-  assert.equal(inventory.migrations.length, 27)
+  assert.equal(inventory.pendingMigrations.length, 28)
+  assert.equal(inventory.migrations.length, 30)
   assert.equal(inventory.destructiveStatementCount, 19)
   assert.deepEqual(inventory.destructiveTokens, ['CASCADE', 'DROP'])
   assert.equal(inventory.commentOnlyTokenCount > 0, true)

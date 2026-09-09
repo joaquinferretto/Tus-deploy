@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { CommitmentContext, TusCommitment } from '@factory/contracts'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import { createCompletionEvidence, type CompletionEvidenceInput } from '../domain/evidence.ts'
@@ -10,7 +11,17 @@ export type FinancialGateKey = (typeof FINANCIAL_GATE_KEYS)[number]
 export type FinancialPayoutGateKey = (typeof FINANCIAL_PAYOUT_GATE_KEYS)[number]
 export type FinancialReadiness = Record<FinancialGateKey, boolean> & Partial<Record<FinancialPayoutGateKey, boolean>>
 
-export type FinancePaymentProviderStatus = 'pending' | 'approved' | 'rejected' | 'refunded' | 'cancelled'
+export const FINANCE_PROVIDER_STATUSES = {
+  PENDING: 'pending',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+  EXPIRED: 'expired',
+  CANCELLED: 'cancelled',
+  REFUNDED: 'refunded',
+  CHARGED_BACK: 'charged_back',
+  PROVIDER_ERROR: 'provider_error',
+} as const
+export type FinancePaymentProviderStatus = (typeof FINANCE_PROVIDER_STATUSES)[keyof typeof FINANCE_PROVIDER_STATUSES]
 export type FinanceCommercialStatus = 'held' | 'released' | 'frozen' | 'refunded'
 export type FinanceLedgerEntryType =
   | 'gross_authorized'
@@ -20,6 +31,16 @@ export type FinanceLedgerEntryType =
   | 'refund_compensation'
   | 'chargeback_compensation'
   | 'reconciliation_compensation'
+
+export interface FinanceSplitPolicy {
+  name: 'five-day-intermediary'
+  version: string
+  holdDays: 5
+  releaseRule: 'completion-confirmation-or-approved-policy'
+  merchantOfRecord: 'tus-intermediary'
+  providerEvidenceId: string | null
+  legalEvidenceId: string | null
+}
 
 export interface FinancePaymentIntent {
   contractVersion: typeof TUS_CONTRACT_VERSION
@@ -36,6 +57,14 @@ export interface FinancePaymentIntent {
   correlationId: string
   credentialsCollected: false
   source: 'authorized' | 'deterministic-test-only' | 'held-no-provider'
+  orderId: string
+  posOperationId: string | null
+  merchantOfRecord: 'tus-intermediary'
+  collectionModel: 'intermediary'
+  splitPolicy: FinanceSplitPolicy
+  releaseAt: number
+  providerEventAt: number | null
+  providerError: 'timeout' | 'unavailable' | 'failed' | null
   createdAt: number
   updatedAt: number
 }
@@ -51,7 +80,7 @@ export interface FinanceProviderPaymentInput {
 
 export interface FinanceProviderPaymentResult {
   providerReference: string
-  status: FinancePaymentProviderStatus
+  status: Extract<FinancePaymentProviderStatus, 'pending' | 'approved' | 'rejected'>
 }
 
 export interface FinancePaymentProvider {
@@ -168,6 +197,28 @@ export type ReconciliationResult = {
   createdAt: number
 }
 
+export interface FinanceWebhookInput {
+  tenantId: string
+  actorId: string
+  correlationId: string
+  commitmentId: string
+  paymentId: string
+  providerReference: string
+  status: FinancePaymentProviderStatus
+  amount: number
+  currency: string
+  eventId: string
+  requestId: string
+  timestamp: number
+  signature: string
+}
+
+export type FinanceWebhookResult =
+  | { status: 'processed'; payment: FinancePaymentIntent }
+  | { status: 'replay'; payment: FinancePaymentIntent | null }
+  | { status: 'out_of_order'; payment: FinancePaymentIntent }
+  | { status: 'rejected'; reason: 'invalid_signature' | 'expired_signature' | 'invalid_request'; payment: FinancePaymentIntent | null }
+
 export class FinanceError extends Error {
   readonly status: number
   readonly code: string
@@ -212,6 +263,7 @@ export class InMemoryFinanceStore implements FinanceStore {
   }
 
   appendLedger(entry: FinanceLedgerEntry): FinanceLedgerEntry {
+    if (!isSafeMinor(entry.amount) || !entry.currency.trim()) throw new FinanceError(400, 'INVALID_MONEY', 'ledger amount must be an exact minor unit')
     const existing = this.ledger.get(entry.entryId)
     if (existing) {
       if (JSON.stringify(existing) !== JSON.stringify(entry)) throw new FinanceError(409, 'LEDGER_IMMUTABLE', 'ledger entries are append-only')
@@ -311,6 +363,11 @@ export interface TusFinanceServiceOptions {
   readinessGuard?: TusReadinessGuard
   readinessProfile?: TusReadinessProfile
   readinessScope?: string
+  providerEnabled?: boolean
+  webhookSecret?: string
+  providerRetry?: { maxAttempts: number; delayMs?: number }
+  splitPolicy?: Partial<FinanceSplitPolicy>
+  enforceFiveDayHold?: boolean
 }
 
 export class TusFinanceService {
@@ -325,6 +382,11 @@ export class TusFinanceService {
   private readonly readinessGuard?: TusReadinessGuard
   private readonly readinessProfile: TusReadinessProfile
   private readonly readinessScope: string
+  private readonly providerEnabled: boolean
+  private readonly webhookSecret: string
+  private readonly providerRetry: { maxAttempts: number; delayMs: number }
+  private readonly splitPolicy: FinanceSplitPolicy
+  private readonly enforceFiveDayHold: boolean
 
   constructor(options: TusFinanceServiceOptions) {
     this.store = options.store
@@ -338,7 +400,22 @@ export class TusFinanceService {
     this.readinessGuard = options.readinessGuard
     this.readinessProfile = options.readinessProfile ?? 'native-local'
     this.readinessScope = options.readinessScope ?? 'argentina-stage-1'
+    this.providerEnabled = options.providerEnabled ?? true
+    this.webhookSecret = options.webhookSecret?.trim() ?? ''
+    this.providerRetry = { maxAttempts: options.providerRetry?.maxAttempts ?? 1, delayMs: options.providerRetry?.delayMs ?? 0 }
+    this.splitPolicy = {
+      name: 'five-day-intermediary',
+      version: options.splitPolicy?.version ?? 'argentina-five-day-v1',
+      holdDays: 5,
+      releaseRule: 'completion-confirmation-or-approved-policy',
+      merchantOfRecord: 'tus-intermediary',
+      providerEvidenceId: options.splitPolicy?.providerEvidenceId ?? null,
+      legalEvidenceId: options.splitPolicy?.legalEvidenceId ?? null,
+    }
+    this.enforceFiveDayHold = options.enforceFiveDayHold ?? false
     if (!Number.isInteger(this.commissionRateBps) || this.commissionRateBps < 0) throw new Error('commissionRateBps must be a non-negative integer')
+    if (!Number.isInteger(this.providerRetry.maxAttempts) || this.providerRetry.maxAttempts < 1) throw new Error('providerRetry.maxAttempts must be positive')
+    if (!Number.isFinite(this.providerRetry.delayMs) || this.providerRetry.delayMs < 0) throw new Error('providerRetry.delayMs must be non-negative')
   }
 
   readinessStatus(): { enabled: boolean; failedGates: FinancialGateKey[] } {
@@ -359,7 +436,7 @@ export class TusFinanceService {
     return this.releaseJobs.enqueue({ tenantId: input.tenantId, jobId: `release-${input.commitmentId}` })
   }
 
-  async createPaymentIntent(input: FinanceCommandContext & { commitmentId: string; idempotencyKey: string; requestHash: string }): Promise<PaymentIntentResult> {
+  async createPaymentIntent(input: FinanceCommandContext & { commitmentId: string; orderId?: string; posOperationId?: string | null; idempotencyKey: string; requestHash: string }): Promise<PaymentIntentResult> {
     assertContext(input)
     await this.requireReadiness(input, 'provider-actions')
     if (!input.idempotencyKey.trim() || !input.requestHash.trim()) throw new FinanceError(400, 'INVALID', 'idempotencyKey and requestHash are required')
@@ -372,27 +449,84 @@ export class TusFinanceService {
     const now = this.now()
     const gates = this.readinessStatus()
     let payment: FinancePaymentIntent
-    if (!gates.enabled) {
-      payment = createPayment(input, commitment, null, 'pending', 'held', 'held-no-provider', now)
+    if (!gates.enabled || !this.providerEnabled) {
+      payment = createPayment(input, commitment, null, 'pending', 'held', 'held-no-provider', now, this.splitPolicy)
       await this.store.savePayment(payment)
-      const response = { status: 'held' as const, reason: 'financial_gates_incomplete' as const, payment }
+      const response = { status: 'held' as const, reason: !this.providerEnabled ? 'provider_disabled' as const : 'financial_gates_incomplete' as const, payment }
       await this.store.saveIdempotency(input.tenantId, input.idempotencyKey, { requestHash: input.requestHash, response })
       return response
     }
-    const providerPayment = await this.provider.createPaymentIntent({
-      tenantId: input.tenantId,
-      commitmentId: input.commitmentId,
-      amount: commitment.amount,
-      currency: commitment.currency,
-      correlationId: input.correlationId,
-      idempotencyKey: input.idempotencyKey,
-    })
-    payment = createPayment(input, commitment, providerPayment.providerReference, providerPayment.status, providerPayment.status === 'approved' ? 'held' : 'held', this.provider.source, now)
+    let providerPayment: FinanceProviderPaymentResult
+    try {
+      providerPayment = await this.createProviderPayment({
+        tenantId: input.tenantId,
+        commitmentId: input.commitmentId,
+        amount: commitment.amount,
+        currency: commitment.currency,
+        correlationId: input.correlationId,
+        idempotencyKey: input.idempotencyKey,
+      })
+    } catch (error) {
+      const reason = error instanceof FinanceError && error.code === 'PROVIDER_TIMEOUT' ? 'timeout' : 'unavailable'
+      payment = createPayment(input, commitment, null, 'provider_error', 'frozen', 'held-no-provider', now, this.splitPolicy)
+      payment = { ...payment, providerError: reason }
+      await this.store.savePayment(payment)
+      const response = { status: 'frozen' as const, reason: reason === 'timeout' ? 'provider_timeout' as const : 'provider_unavailable' as const, payment }
+      await this.store.saveIdempotency(input.tenantId, input.idempotencyKey, { requestHash: input.requestHash, response })
+      return response
+    }
+    payment = createPayment(input, commitment, providerPayment.providerReference, providerPayment.status, 'held', this.provider.source, now, this.splitPolicy)
     await this.store.savePayment(payment)
     if (providerPayment.status === 'approved') await this.recordAuthoritativeSnapshot(input, commitment, payment, now)
     const response = { status: 'created' as const, payment }
     await this.store.saveIdempotency(input.tenantId, input.idempotencyKey, { requestHash: input.requestHash, response })
     return response
+  }
+
+  async handleWebhook(input: FinanceWebhookInput, nowMs = this.now()): Promise<FinanceWebhookResult> {
+    assertContext(input)
+    if (!input.eventId.trim() || !input.requestId.trim() || !input.paymentId.trim() || !input.providerReference.trim() || !isSafeMinor(input.amount) || !input.currency.trim() || !Number.isSafeInteger(input.timestamp) || input.timestamp <= 0) {
+      return { status: 'rejected', reason: 'invalid_request', payment: null }
+    }
+    if (!this.webhookSecret || !verifyFinanceWebhookSignature(this.webhookSecret, input)) return { status: 'rejected', reason: 'invalid_signature', payment: null }
+    if (Math.abs(nowMs - input.timestamp * 1_000) > 300_000) return { status: 'rejected', reason: 'expired_signature', payment: null }
+    const payment = await this.requirePayment(input.tenantId, input.commitmentId)
+    if (payment.paymentId !== input.paymentId || payment.providerReference !== input.providerReference) return { status: 'rejected', reason: 'invalid_request', payment: null }
+    if (payment.amount !== input.amount || payment.currency !== input.currency) {
+      await this.freeze({ ...input, reason: 'provider-mismatch' })
+      return { status: 'rejected', reason: 'invalid_request', payment: payment }
+    }
+    const idempotencyKey = `webhook:${input.eventId}`
+    const existing = await this.store.getIdempotency(input.tenantId, idempotencyKey)
+    if (existing) return { status: 'replay', payment: clone(existing.response) as FinancePaymentIntent | null }
+    const eventAt = input.timestamp * 1_000
+    if (payment.providerEventAt !== null && eventAt <= payment.providerEventAt) {
+      await this.store.saveIdempotency(input.tenantId, idempotencyKey, { requestHash: webhookHash(input), response: payment })
+      return { status: 'out_of_order', payment }
+    }
+    if (!isAllowedProviderTransition(payment.providerStatus, input.status)) return { status: 'rejected', reason: 'invalid_request', payment }
+    const updated = { ...payment, providerStatus: input.status, commercialStatus: input.status === 'charged_back' ? 'frozen' as const : input.status === 'refunded' ? 'refunded' as const : payment.commercialStatus, providerEventAt: eventAt, updatedAt: this.now(), providerError: null }
+    await this.store.savePayment(updated)
+    if (input.status === 'approved' && !await this.store.getSnapshot(input.tenantId, input.commitmentId)) {
+      await this.recordAuthoritativeSnapshot({ tenantId: input.tenantId, actorId: input.actorId, correlationId: input.correlationId, commitmentId: input.commitmentId }, await this.requireCommitment(input.tenantId, input.commitmentId), updated, this.now())
+    }
+    if (input.status === 'charged_back') await this.freeze({ ...input, reason: 'chargeback' })
+    await this.store.saveIdempotency(input.tenantId, idempotencyKey, { requestHash: webhookHash(input), response: updated })
+    return { status: 'processed', payment: updated }
+  }
+
+  private async createProviderPayment(input: FinanceProviderPaymentInput): Promise<FinanceProviderPaymentResult> {
+    let lastError: unknown
+    for (let attempt = 1; attempt <= this.providerRetry.maxAttempts; attempt += 1) {
+      try {
+        return await this.provider.createPaymentIntent(input)
+      } catch (error) {
+        lastError = error
+        if (attempt < this.providerRetry.maxAttempts && this.providerRetry.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.providerRetry.delayMs))
+      }
+    }
+    const reason = providerErrorReason(lastError)
+    throw new FinanceError(503, reason === 'timeout' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE', `Mercado Pago provider ${reason}`)
   }
 
   async recordEvidence(input: CompletionEvidenceInput): Promise<FinancialEvidence> {
@@ -423,6 +557,7 @@ export class TusFinanceService {
       const previousRelease = (await this.store.listLedger(input.tenantId, input.commitmentId)).find((entry) => entry.entryType === 'merchant_release')
       return { status: 'released', reason: releaseReason(previousRelease?.reason) }
     }
+    if (this.enforceFiveDayHold && Date.parse(input.now) < payment.releaseAt) return { status: 'held', reason: 'five_day_hold_pending' }
     if (payment.providerStatus !== 'approved') return { status: 'held', reason: 'provider_confirmation_pending' }
     const freeze = await this.store.getFreeze(input.tenantId, input.commitmentId)
     if (freeze) return { status: 'frozen', reason: 'absolute_freeze', freeze }
@@ -475,10 +610,13 @@ export class TusFinanceService {
       return clone(existing.response) as RefundResult
     }
     const payment = await this.requirePayment(input.tenantId, input.commitmentId)
-    if (!Number.isFinite(input.amount) || input.amount <= 0 || input.amount > payment.amount) throw new FinanceError(400, 'INVALID_REFUND', 'refund amount is outside the payment amount')
+    if (!isSafeMinor(input.amount) || input.amount <= 0) throw new FinanceError(400, 'INVALID_REFUND', 'refund amount is outside the payment amount')
+    const refundedAmount = sumMinor((await this.store.listLedger(input.tenantId, input.commitmentId)).filter((entry) => entry.entryType === 'refund_compensation').map((entry) => entry.amount))
+    if (input.amount > payment.amount - refundedAmount) throw new FinanceError(409, 'REFUND_EXCEEDS_REMAINING', 'refund amount exceeds the remaining payment')
     const result: RefundResult = { status: 'compensated', refundId: `refund-${input.commitmentId}-${input.idempotencyKey}`, commitmentId: input.commitmentId, amount: input.amount, reason: input.reason, deterministic: this.provider.source === 'deterministic-test-only' }
     await this.freeze({ ...input, reason: 'refund' })
     await this.store.appendLedger(this.entry(input, 'refund_compensation', input.amount, payment.currency, input.reason, `gross-${input.commitmentId}`, result.refundId))
+    if (input.amount === payment.amount - refundedAmount) await this.store.savePayment({ ...payment, providerStatus: 'refunded', commercialStatus: 'refunded', updatedAt: this.now() })
     await this.store.saveIdempotency(input.tenantId, input.idempotencyKey, { requestHash, response: result })
     return result
   }
@@ -496,7 +634,7 @@ export class TusFinanceService {
     const existing = await this.store.getReconciliation(input.tenantId, input.commitmentId)
     if (existing) return existing
     const payment = await this.requirePayment(input.tenantId, input.commitmentId)
-    const matches = payment.providerReference === input.providerReference && payment.amount === input.providerAmount
+    const matches = payment.providerReference === input.providerReference && isSafeMinor(input.providerAmount) && payment.amount === input.providerAmount
     const result: ReconciliationResult = {
       reconciliationId: `reconciliation-${input.commitmentId}`,
       tenantId: input.tenantId,
@@ -546,8 +684,8 @@ export class TusFinanceService {
     return payment
   }
 
-  private async recordAuthoritativeSnapshot(input: FinanceCommandContext, commitment: TusCommitment, payment: FinancePaymentIntent, now: number): Promise<FinanceCommissionSnapshot> {
-    const commissionAmount = Math.round((commitment.amount * this.commissionRateBps) / 10_000)
+  private async recordAuthoritativeSnapshot(input: FinanceCommandContext & { commitmentId: string }, commitment: TusCommitment, payment: FinancePaymentIntent, now: number): Promise<FinanceCommissionSnapshot> {
+    const commissionAmount = calculateCommissionAmount(commitment.amount, this.commissionRateBps)
     const snapshot = createCommissionSnapshot({ snapshotId: `snapshot-${commitment.commitmentId}`, tenantId: input.tenantId, commitmentId: commitment.commitmentId, context: commitment.context, grossAmount: commitment.amount, deductions: 0, commissionableBase: commitment.amount, rateBps: this.commissionRateBps, ruleVersion: this.ruleVersion, currency: commitment.currency, providerReference: payment.providerReference!, evidenceId: `payment-authorized:${payment.paymentId}`, commissionAmount, netAmount: commitment.amount - commissionAmount, ledgerStatus: 'held', createdAt: now })
     await this.store.saveSnapshot(snapshot)
     const ledgerContext = { ...input, commitmentId: commitment.commitmentId }
@@ -565,19 +703,20 @@ export class TusFinanceService {
 export type FinanceCommandContext = { tenantId: string; actorId: string; correlationId: string }
 export type PaymentIntentResult =
   | { status: 'created'; payment: FinancePaymentIntent }
-  | { status: 'held'; reason: 'financial_gates_incomplete'; payment: FinancePaymentIntent }
+  | { status: 'held'; reason: 'financial_gates_incomplete' | 'provider_disabled'; payment: FinancePaymentIntent }
+  | { status: 'frozen'; reason: 'provider_timeout' | 'provider_unavailable'; payment: FinancePaymentIntent }
   | { status: 'replay'; payment: FinancePaymentIntent }
 export type ReleaseResult =
   | { status: 'released'; reason: Exclude<ReleaseEligibility, { eligible: false }>['reason'] }
-  | { status: 'held'; reason: Exclude<ReleaseEligibility, { eligible: true }>['reason'] | 'provider_confirmation_pending' | 'completion_confirmation_required' }
+  | { status: 'held'; reason: Exclude<ReleaseEligibility, { eligible: true }>['reason'] | 'provider_confirmation_pending' | 'completion_confirmation_required' | 'five_day_hold_pending' }
   | { status: 'frozen'; reason: 'absolute_freeze'; freeze: FinancialFreeze }
 export type RefundResult = { status: 'compensated'; refundId: string; commitmentId: string; amount: number; reason: string; deterministic: boolean }
 
 export function createCommissionSnapshot(input: Omit<FinanceCommissionSnapshot, 'contractVersion'>): FinanceCommissionSnapshot {
-  if (!Number.isFinite(input.grossAmount) || input.grossAmount < 0 || !Number.isFinite(input.deductions) || input.deductions < 0 || !Number.isFinite(input.commissionableBase) || input.commissionableBase < 0 || !Number.isFinite(input.commissionAmount) || input.commissionAmount < 0 || !Number.isFinite(input.netAmount) || input.netAmount < 0) throw new Error('commission amounts must be non-negative')
+  if (!isSafeMinor(input.grossAmount) || !isSafeMinor(input.deductions) || !isSafeMinor(input.commissionableBase) || !isSafeMinor(input.commissionAmount) || !isSafeMinor(input.netAmount)) throw new Error('commission amounts must be non-negative exact minor units')
   if (!Number.isInteger(input.rateBps) || input.rateBps < 0) throw new Error('rateBps must be a non-negative integer')
   if (input.deductions > input.grossAmount || input.commissionableBase > input.grossAmount - input.deductions) throw new Error('commissionable base exceeds gross amount after deductions')
-  if (input.commissionAmount !== Math.round((input.commissionableBase * input.rateBps) / 10_000)) throw new Error('commission amount does not match the snapshotted rate and base')
+  if (input.commissionAmount !== calculateCommissionAmount(input.commissionableBase, input.rateBps)) throw new Error('commission amount does not match the snapshotted rate and base')
   if (input.netAmount !== input.grossAmount - input.deductions - input.commissionAmount) throw new Error('net amount does not match the snapshotted commission')
   return Object.freeze({ contractVersion: TUS_CONTRACT_VERSION, ...input })
 }
@@ -587,8 +726,70 @@ function releaseReason(reason: string | undefined): Exclude<ReleaseEligibility, 
   return 'customer_confirmed'
 }
 
-function createPayment(input: FinanceCommandContext & { commitmentId: string; idempotencyKey: string }, commitment: TusCommitment, providerReference: string | null, providerStatus: FinancePaymentProviderStatus, commercialStatus: FinanceCommercialStatus, source: FinancePaymentIntent['source'], now: number): FinancePaymentIntent {
-  return { contractVersion: TUS_CONTRACT_VERSION, paymentId: `payment-${commitment.commitmentId}`, tenantId: input.tenantId, commitmentId: commitment.commitmentId, provider: 'mercado-pago', providerReference, providerStatus, commercialStatus, amount: commitment.amount, currency: commitment.currency, idempotencyKey: input.idempotencyKey, correlationId: input.correlationId, credentialsCollected: false, source, createdAt: now, updatedAt: now }
+function createPayment(input: FinanceCommandContext & { commitmentId: string; orderId?: string; posOperationId?: string | null; idempotencyKey: string }, commitment: TusCommitment, providerReference: string | null, providerStatus: FinancePaymentProviderStatus, commercialStatus: FinanceCommercialStatus, source: FinancePaymentIntent['source'], now: number, splitPolicy: FinanceSplitPolicy): FinancePaymentIntent {
+  assertExactMoney(commitment.currency, commitment.amount)
+  return { contractVersion: TUS_CONTRACT_VERSION, paymentId: `payment-${commitment.commitmentId}`, tenantId: input.tenantId, commitmentId: commitment.commitmentId, provider: 'mercado-pago', providerReference, providerStatus, commercialStatus, amount: commitment.amount, currency: commitment.currency, idempotencyKey: input.idempotencyKey, correlationId: input.correlationId, credentialsCollected: false, source, orderId: input.orderId?.trim() || commitment.cartId, posOperationId: input.posOperationId?.trim() || null, merchantOfRecord: 'tus-intermediary', collectionModel: 'intermediary', splitPolicy: Object.freeze({ ...splitPolicy }), releaseAt: now + 5 * 24 * 60 * 60 * 1000, providerEventAt: null, providerError: null, createdAt: now, updatedAt: now }
+}
+
+export function createFinanceMoney(currency: string, minor: bigint): { currency: string; minor: bigint } {
+  const normalizedCurrency = currency.trim().toUpperCase()
+  if (!/^[A-Z]{3}$/u.test(normalizedCurrency)) throw new Error('currency must be an ISO 4217 code')
+  if (typeof minor !== 'bigint' || minor < 0n) throw new TypeError('money minor units must be a non-negative bigint')
+  return { currency: normalizedCurrency, minor }
+}
+
+export function createFinanceWebhookSignature(input: { secret: string; eventId: string; requestId: string; timestamp: number }): string {
+  if (!input.secret.trim() || !input.eventId.trim() || !input.requestId.trim() || !Number.isSafeInteger(input.timestamp) || input.timestamp <= 0) throw new Error('webhook signing context is invalid')
+  const manifest = `id:${input.eventId};request-id:${input.requestId};ts:${input.timestamp};`
+  return `ts=${input.timestamp},v1=${createHmac('sha256', input.secret).update(manifest).digest('hex')}`
+}
+
+export function verifyFinanceWebhookSignature(secret: string, input: Pick<FinanceWebhookInput, 'eventId' | 'requestId' | 'timestamp' | 'signature'>): boolean {
+  if (!secret.trim()) return false
+  const expected = createFinanceWebhookSignature({ secret, eventId: input.eventId, requestId: input.requestId, timestamp: input.timestamp }).split('v1=')[1] ?? ''
+  const parts = input.signature.split(',').map((part) => part.trim())
+  const signedTimestamp = Number(parts.find((part) => part.startsWith('ts='))?.slice(3) ?? Number.NaN)
+  if (!Number.isSafeInteger(signedTimestamp) || signedTimestamp !== input.timestamp) return false
+  const supplied = parts.find((part) => part.startsWith('v1='))?.slice(3) ?? ''
+  const expectedBytes = Buffer.from(expected, 'hex')
+  const suppliedBytes = Buffer.from(supplied, 'hex')
+  return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes)
+}
+
+function isSafeMinor(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function sumMinor(values: number[]): number {
+  const total = values.reduce((sum, value) => sum + value, 0)
+  if (!isSafeMinor(total)) throw new FinanceError(409, 'MONEY_OVERFLOW', 'money total exceeds the supported exact range')
+  return total
+}
+
+function calculateCommissionAmount(base: number, rateBps: number): number {
+  const amount = (BigInt(base) * BigInt(rateBps) + 5_000n) / 10_000n
+  const normalized = Number(amount)
+  if (!isSafeMinor(normalized)) throw new FinanceError(409, 'MONEY_OVERFLOW', 'commission exceeds the supported exact range')
+  return normalized
+}
+
+function assertExactMoney(currency: string, minor: number): void {
+  createFinanceMoney(currency, BigInt(minor))
+}
+
+function providerErrorReason(error: unknown): 'timeout' | 'unavailable' {
+  return error instanceof Error && (error as Error & { code?: string }).code === 'PROVIDER_TIMEOUT' ? 'timeout' : 'unavailable'
+}
+
+function webhookHash(input: FinanceWebhookInput): string {
+  return `${input.eventId}:${input.paymentId}:${input.status}:${input.timestamp}`
+}
+
+function isAllowedProviderTransition(current: FinancePaymentProviderStatus, next: FinancePaymentProviderStatus): boolean {
+  if (current === next) return true
+  if (current === 'pending') return true
+  if (current === 'approved') return next === 'refunded' || next === 'charged_back'
+  return false
 }
 
 function assertContext(input: FinanceCommandContext): void {
@@ -603,4 +804,4 @@ function clone<T>(value: T): T {
   return value === null ? value : structuredClone(value)
 }
 
-export default { DeterministicMercadoPagoFinanceProvider, FinanceError, InMemoryFinanceStore, TusFinanceService, UnavailableMercadoPagoFinanceProvider, createCommissionSnapshot }
+export default { DeterministicMercadoPagoFinanceProvider, FinanceError, InMemoryFinanceStore, TusFinanceService, UnavailableMercadoPagoFinanceProvider, createCommissionSnapshot, createFinanceMoney, createFinanceWebhookSignature, verifyFinanceWebhookSignature }

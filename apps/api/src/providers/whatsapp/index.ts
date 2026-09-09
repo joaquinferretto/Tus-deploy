@@ -168,6 +168,10 @@ export type WhatsAppAdapterOptions = {
   policies: readonly WhatsAppTenantPolicy[]
   maxAttempts?: number
   retryDelayMs?: number
+  clock?: () => number
+  freshnessMs?: number
+  providerEnabled?: boolean
+  rateLimit?: { maxPerWindow: number; windowMs: number }
 }
 
 export type WhatsAppWebhookResult =
@@ -175,7 +179,7 @@ export type WhatsAppWebhookResult =
   | { status: 'replay'; receipt: WhatsAppReceipt; message: WhatsAppMessage | null }
   | {
       status: 'rejected'
-      reason: 'invalid_signature' | 'invalid_request' | 'tenant_policy_denied'
+      reason: 'invalid_signature' | 'invalid_request' | 'tenant_policy_denied' | 'stale_signature' | 'provider_disabled' | 'rate_limited'
       receipt: WhatsAppReceipt
     }
   | { status: 'retryable'; reason: string; receipt: WhatsAppReceipt }
@@ -598,46 +602,44 @@ export class WhatsAppAdapter {
   private readonly maxAttempts: number
   private readonly retryDelayMs: number
   private readonly options: WhatsAppAdapterOptions
+  private readonly clock?: () => number
+  private readonly freshnessMs?: number
+  private readonly providerEnabled: boolean
+  private readonly rateLimit?: { maxPerWindow: number; windowMs: number }
+  private readonly requestWindows = new Map<string, number[]>()
 
   constructor(options: WhatsAppAdapterOptions) {
     this.options = options
     if (!options.secret.trim()) throw new Error('WhatsApp signature secret reference is required')
     this.maxAttempts = options.maxAttempts ?? 3
     this.retryDelayMs = options.retryDelayMs ?? 1_000
+    this.clock = options.clock
+    this.freshnessMs = options.freshnessMs
+    this.providerEnabled = options.providerEnabled ?? true
+    this.rateLimit = options.rateLimit
     if (!Number.isInteger(this.maxAttempts) || this.maxAttempts < 1)
       throw new Error('WhatsApp maxAttempts must be positive')
     if (options.policies.length === 0) throw new Error('WhatsApp tenant policy is required')
+    if (this.freshnessMs !== undefined && (!Number.isFinite(this.freshnessMs) || this.freshnessMs <= 0)) throw new Error('WhatsApp freshnessMs must be positive')
+    if (this.rateLimit && (!Number.isInteger(this.rateLimit.maxPerWindow) || this.rateLimit.maxPerWindow < 1 || !Number.isFinite(this.rateLimit.windowMs) || this.rateLimit.windowMs <= 0)) throw new Error('WhatsApp rate limit must be positive')
   }
 
   async receiveWebhook(input: WhatsAppWebhookRequest): Promise<WhatsAppWebhookResult> {
     const now = input.timestamp * 1_000
     const recorded = this.options.store.recordReceipt(input, now)
+    const reject = (reason: Extract<WhatsAppWebhookResult, { status: 'rejected' }>['reason']): WhatsAppWebhookResult => ({
+      status: 'rejected',
+      reason,
+      receipt: recorded.fresh ? this.options.store.markReceipt(input.context.tenantId, input.eventId, { status: RECEIPT_STATUS.REJECTED, reason }) : recorded.receipt,
+    })
     if (!validWebhook(input)) {
-      return {
-        status: 'rejected',
-        reason: 'invalid_request',
-        receipt: this.options.store.markReceipt(input.context.tenantId, input.eventId, {
-          status: RECEIPT_STATUS.REJECTED,
-          reason: 'invalid_request',
-        }),
-      }
-    }
-    if (!recorded.fresh) {
-      return {
-        status: 'replay',
-        receipt: recorded.receipt,
-        message: this.options.store.getMessage(input.context.tenantId, input.messageId),
-      }
+      return reject('invalid_request')
     }
     if (!policyAllows(this.options.policies, input)) {
-      return {
-        status: 'rejected',
-        reason: 'tenant_policy_denied',
-        receipt: this.options.store.markReceipt(input.context.tenantId, input.eventId, {
-          status: RECEIPT_STATUS.REJECTED,
-          reason: 'tenant_policy_denied',
-        }),
-      }
+      return reject('tenant_policy_denied')
+    }
+    if (this.clock && this.freshnessMs !== undefined && Math.abs(this.clock() - input.timestamp * 1_000) > this.freshnessMs) {
+      return reject('stale_signature')
     }
     if (
       !verifyWhatsAppSignature(
@@ -648,14 +650,20 @@ export class WhatsAppAdapter {
         input.signature
       )
     ) {
+      return reject('invalid_signature')
+    }
+    if (!recorded.fresh) {
       return {
-        status: 'rejected',
-        reason: 'invalid_signature',
-        receipt: this.options.store.markReceipt(input.context.tenantId, input.eventId, {
-          status: RECEIPT_STATUS.REJECTED,
-          reason: 'invalid_signature',
-        }),
+        status: 'replay',
+        receipt: recorded.receipt,
+        message: this.options.store.getMessage(input.context.tenantId, input.messageId),
       }
+    }
+    if (!this.providerEnabled) {
+      return reject('provider_disabled')
+    }
+    if (!this.allowRate(input.context.tenantId)) {
+      return reject('rate_limited')
     }
     return this.process(input, recorded.receipt, 1)
   }
@@ -815,6 +823,20 @@ export class WhatsAppAdapter {
       })
       return { status: 'retryable', reason, receipt: failed }
     }
+  }
+
+  private allowRate(tenantId: string): boolean {
+    if (!this.rateLimit) return true
+    const now = this.clock?.() ?? Date.now()
+    const cutoff = now - this.rateLimit.windowMs
+    const current = (this.requestWindows.get(tenantId) ?? []).filter((value) => value > cutoff)
+    if (current.length >= this.rateLimit.maxPerWindow) {
+      this.requestWindows.set(tenantId, current)
+      return false
+    }
+    current.push(now)
+    this.requestWindows.set(tenantId, current)
+    return true
   }
 }
 

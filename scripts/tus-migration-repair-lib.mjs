@@ -101,6 +101,16 @@ export const REQUIRED_LAUNCH_SCHEMA_COLUMNS = Object.freeze({
   TusCreditNote: ['id', 'tenantId', 'creditNoteId', 'invoiceId', 'amountMinor', 'currency', 'status'],
   TusSubscription: ['id', 'tenantId', 'subscriptionId', 'customerId', 'amountMinor', 'currency', 'status'],
   TusTaxProfile: ['id', 'tenantId', 'partyId', 'taxIdentity', 'taxCategory', 'status'],
+  TusBillingAccount: ['id', 'tenantId', 'billingAccountId', 'partyId', 'role', 'status'],
+  TusSubscriptionPlan: ['id', 'tenantId', 'planId', 'amountMinor', 'currency', 'interval', 'status'],
+  TusBillingRefund: ['id', 'tenantId', 'refundId', 'invoiceId', 'paymentId', 'orderId', 'amountMinor', 'currency', 'status'],
+  TusBillingLedger: ['id', 'tenantId', 'entryId', 'invoiceId', 'entryType', 'amountMinor', 'currency', 'immutable'],
+  TusBillingIdempotency: ['id', 'tenantId', 'key', 'requestHash', 'response'],
+  TusBillingAudit: ['id', 'tenantId', 'auditId', 'actorId', 'correlationId', 'action', 'outcome'],
+  TusBillingOutbox: ['id', 'tenantId', 'eventId', 'correlationId', 'eventType', 'aggregateId', 'status', 'payload'],
+  TusBillingDunning: ['id', 'tenantId', 'dunningId', 'subscriptionId', 'attempt', 'status'],
+  TusBillingNumberSequence: ['id', 'tenantId', 'nextNumber'],
+  TusAccountingExport: ['id', 'tenantId', 'exportId', 'invoiceIds', 'ledgerEntryIds', 'externalApprovalReference', 'status'],
   AuditEvent: ['id', 'tenantId', 'correlationId', 'eventType', 'outcome', 'metadata', 'occurredAt'],
   TusMarketplaceAudit: ['id', 'tenantId', 'actorId', 'correlationId', 'action', 'outcome'],
   OutboxEvent: ['id', 'tenantId', 'aggregateType', 'aggregateId', 'eventType', 'status', 'payload'],
@@ -124,6 +134,9 @@ export const REQUIRED_MONEY_TYPES = Object.freeze({
   TusInvoiceLine: ['unitMinor', 'taxMinor', 'totalMinor'],
   TusCreditNote: ['amountMinor'],
   TusSubscription: ['amountMinor'],
+  TusSubscriptionPlan: ['amountMinor'],
+  TusBillingRefund: ['amountMinor'],
+  TusBillingLedger: ['amountMinor'],
 })
 
 export const REQUIRED_SCHEMA_COLUMNS = Object.freeze({

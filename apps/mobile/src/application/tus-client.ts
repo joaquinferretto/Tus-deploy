@@ -31,6 +31,7 @@ export const MOBILE_QUEUE_QUARANTINE_REASON = {
   PROFILE_MISMATCH: 'profile_mismatch',
   TENANT_MISMATCH: 'tenant_mismatch',
   INVALID_OPERATION: 'invalid_operation',
+  DEVICE_REVOKED: 'device_revoked',
 } as const;
 
 export type MobileQueueQuarantineReason = (typeof MOBILE_QUEUE_QUARANTINE_REASON)[keyof typeof MOBILE_QUEUE_QUARANTINE_REASON];
@@ -126,6 +127,7 @@ export interface TusMobileRequest {
 
 export interface TusMobileTransport {
   request(input: TusMobileRequest): Promise<PosCommandResult>;
+  queryStatus?(operationId: string, operation?: ManualPosOperation): Promise<PosCommandResult>;
 }
 
 export type OfflinePosResult =
@@ -204,6 +206,7 @@ export interface TusMobileClient {
     operationId: string,
     resolution: ConflictResolution,
   ): Promise<PosCommandResult | { status: 'discarded'; operationId: string } | { status: 'not-found'; operationId: string }>;
+  queryOperationStatus(operationId: string): Promise<PosCommandResult>;
 }
 
 export interface TusMobileClientOptions {
@@ -265,6 +268,12 @@ export function createTusMobileClient(
         operation,
       });
       if (result.status === 'accepted' || result.status === 'replayed') pending.delete(operation.operationId);
+      else if (result.status === 'conflict' && result.reason === MOBILE_QUEUE_QUARANTINE_REASON.DEVICE_REVOKED) {
+        pending.delete(operation.operationId);
+        const entry: MobileQueueQuarantineRecord = { profile: runtime?.profile ?? 'dev', reason: MOBILE_QUEUE_QUARANTINE_REASON.DEVICE_REVOKED, data: redactQueueData(operation) };
+        quarantined.push(entry);
+        options.storage?.quarantine?.(entry);
+      }
       else pending.set(operation.operationId, operation);
       if (!persist()) {
         pending.set(operation.operationId, operation);
@@ -337,6 +346,14 @@ export function createTusMobileClient(
       if (!isOnline()) return { status: 'conflict', operationId, reason: 'offline' };
       return submit(operation);
     },
+
+    async queryOperationStatus(operationId) {
+      if (quarantined.some((entry) => asRecord(entry.data)['operationId'] === operationId)) return { status: 'pending', operationId, reason: 'quarantined' };
+      const operation = pending.get(operationId);
+      if (operation === undefined) return { status: 'error', operationId, reason: 'not_found' };
+      if (transport.queryStatus === undefined) return { status: 'pending', operationId, reason: 'in_progress' };
+      return transport.queryStatus(operationId, operation);
+    },
   };
 }
 
@@ -402,6 +419,18 @@ export function createTusMobileFetchTransport(runtime?: MobileRuntimeConfig): Tu
       }
       if (!response.ok) throw new Error(`POS request failed with HTTP ${response.status}`);
       return parsePosCommandResponse(body, operation.operationId);
+    },
+    async queryStatus(operationId, operation) {
+      const response = await fetch(`${baseUrl}/tus/v1/pos/operations/${encodeURIComponent(operationId)}/status`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(operation?.correlationId ? { 'X-Correlation-Id': operation.correlationId } : {}),
+          ...(operation?.accessToken ? { Authorization: `Bearer ${operation.accessToken}` } : {}),
+        },
+      });
+      const body: unknown = await response.json().catch(() => null);
+      return response.ok ? parsePosCommandResponse(body, operationId) : { status: 'pending', operationId, reason: 'status_unavailable' };
     },
   };
 }

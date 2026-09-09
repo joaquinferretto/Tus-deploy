@@ -41,19 +41,19 @@ All tests are `pnpm test -- <file>` ≤120s; builds ≤180s; runtime is `N/A (pl
 - [x] 4.1 RED timezone/blackout/overlap/cutoff/cancellation/no-show/race tests; GREEN `apps/api/src/tus/calendar/{rules,slots,bookings}.ts`; REFACTOR locks and completion evidence.
 
 ## Phase 5: Durable POS
-- [ ] 5.1 RED closed-shift, same-key, offline/revoked replay, printer-failure, atomicity tests; GREEN `apps/api/src/tus/pos/{index.ts,application,adapters}` and client queues; REFACTOR leases, conflicts, refunds.
+- [x] 5.1 RED closed-shift, same-key, offline/revoked replay, printer-failure, atomicity tests; GREEN `apps/api/src/tus/pos/{index.ts,application,adapters}` and client queues; REFACTOR leases, conflicts, refunds.
 
 ## Phase 6: Mercado Pago
-- [ ] 6.1 RED five-day gate, HMAC/freshness, event replay, refund/chargeback/mismatch tests; GREEN `packages/mercado-pago/src/index.ts` and `apps/api/src/tus/finance/index.ts`; REFACTOR freeze/release/ledger.
+- [x] 6.1 RED five-day gate, HMAC/freshness, event replay, refund/chargeback/mismatch tests; GREEN `packages/mercado-pago/src/index.ts` and `apps/api/src/tus/finance/index.ts`; REFACTOR freeze/release/ledger.
 
 ## Phase 7: WhatsApp
-- [ ] 7.1 RED consent/opt-out/template/signature/credential/handoff tests; GREEN `apps/api/src/tus/whatsapp/{index.ts,router.ts}`; REFACTOR tenant routing, TTL, rate limit, idempotent audit/outbox.
+- [x] 7.1 RED consent/opt-out/template/signature/credential/handoff tests; GREEN `apps/api/src/tus/whatsapp/{index.ts,router.ts}`; REFACTOR tenant routing, TTL, rate limit, idempotent audit/outbox.
 
 ## Phase 8: Own Delivery
-- [ ] 8.1 RED transitions/SLA/unsafe-handoff/proof tests; GREEN `apps/api/src/tus/delivery/index.ts` (`DeliveryTask`, `DeliveryStorePort`); REFACTOR internal-only fencing and immutable ledger boundary.
+- [x] 8.1 RED transitions/SLA/unsafe-handoff/proof tests; GREEN `apps/api/src/tus/delivery/index.ts` (`DeliveryTask`, `DeliveryStorePort`); REFACTOR internal-only fencing and immutable ledger boundary.
 
 ## Phase 9: Billing / Tax
-- [ ] 9.1 RED invoice/credit/refund/subscription/tax-gate tests; GREEN `apps/api/src/tus/billing/{index.ts,application,adapters}`; REFACTOR exact immutable accounting and AFIP/ARCA/IVA external gates.
+- [x] 9.1 RED invoice/credit/refund/subscription/tax-gate tests; GREEN `apps/api/src/tus/billing/{index.ts,application,adapters}`; REFACTOR exact immutable accounting and AFIP/ARCA/IVA external gates.
 
 ## Phase 10: Web / PWA
 - [ ] 10.1 RED role/idempotency/offline/accessibility/URL tests; GREEN `apps/web/src/lib/{tus-client.ts,tus-auth-client.ts,api-url.ts}` journeys; REFACTOR thin fail-closed UI.
