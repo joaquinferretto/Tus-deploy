@@ -1,5 +1,5 @@
 {
-  "name": "@repo/mercado-pago",
+  "name": "@factory/mercado-pago",
   "version": "1.0.0",
   "private": true,
   "description": "Portable Mercado Pago HTTP adapter for checkout, payments, refunds, webhooks, and optional Money Out",
@@ -17,7 +17,7 @@
     "test": "pnpm run build && node --test tests/mercado-pago.test.cjs"
   },
   "devDependencies": {
-    "@repo/typescript-config": "workspace:*",
+    "@factory/typescript-config": "workspace:*",
     "@types/node": "^20.11.24",
     "typescript": "^5.3.3"
   }

@@ -334,7 +334,7 @@ export class TusDeliveryService {
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
     this.assertOperator(task, context)
-    if (!reason.trim() || ![DELIVERY_TASK_STATUS.QUEUED, DELIVERY_TASK_STATUS.ACCEPTED].includes(task.status)) throw new DeliveryError(409, 'INVALID_CANCELLATION', 'only queued or accepted deliveries can be cancelled')
+    if (!reason.trim() || !([DELIVERY_TASK_STATUS.QUEUED, DELIVERY_TASK_STATUS.ACCEPTED] as DeliveryTaskStatus[]).includes(task.status)) throw new DeliveryError(409, 'INVALID_CANCELLATION', 'only queued or accepted deliveries can be cancelled')
     const timestamp = new Date(this.now()).toISOString()
     return this.saveTask(context, { ...task, status: DELIVERY_TASK_STATUS.CANCELLED, cancelledAt: timestamp, failureReason: reason.trim(), version: task.version + 1, updatedAt: timestamp }, 'delivery.task.cancelled')
   }
@@ -362,7 +362,7 @@ export class TusDeliveryService {
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
     this.assertOperator(task, context)
-    if ([DELIVERY_TASK_STATUS.CANCELLED, DELIVERY_TASK_STATUS.RETURNED, DELIVERY_TASK_STATUS.DELIVERED, DELIVERY_TASK_STATUS.INCIDENT_REVIEW].includes(task.status)) throw new DeliveryError(409, 'INVALID_TRANSITION', 'terminal or incident delivery tasks cannot fail again')
+    if (([DELIVERY_TASK_STATUS.CANCELLED, DELIVERY_TASK_STATUS.RETURNED, DELIVERY_TASK_STATUS.DELIVERED, DELIVERY_TASK_STATUS.INCIDENT_REVIEW] as DeliveryTaskStatus[]).includes(task.status)) throw new DeliveryError(409, 'INVALID_TRANSITION', 'terminal or incident delivery tasks cannot fail again')
     if (!input.incidentId.trim() || !input.reason.trim()) throw new DeliveryError(400, 'INVALID_INCIDENT', 'incident id and reason are required')
     const incident: DeliveryIncident = { contractVersion: '1.0.0', incidentId: input.incidentId, tenantId: context.tenantId, taskId, reason: input.reason.trim(), status: 'open', createdAt: new Date(this.now()).toISOString() }
     await this.store.incidents.save(incident)
