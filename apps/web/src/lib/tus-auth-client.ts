@@ -8,7 +8,7 @@ import {
 } from '@factory/contracts'
 
 import { createTusWebSession, type TusWebSession } from './tus-ui-contract'
-import { resolveWebApiBaseUrl } from './api-url'
+import { resolveWebApiBaseUrl } from './api-url.ts'
 
 export const TUS_WEB_SESSION_STORAGE_KEY = 'tus.session.v1'
 const DEFAULT_RETURN_TO = '/tus'

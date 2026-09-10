@@ -417,7 +417,7 @@ test('server mounts signed provider webhook routes and keeps invalid requests fa
   const paymentProvider = new DeterministicMercadoPagoProvider()
   paymentProvider.setPayment('payment-route', { amount: 500, currency: 'ARS', status: 'approved' })
   const mercadoPago = new MercadoPagoAdapter({ secret: 'route-secret', store: paymentStore, provider: paymentProvider })
-  const router = createTusIntegrationRouter({ mercadoPago })
+  const router = createTusIntegrationRouter({ mercadoPago, providerActionsEnabled: true })
   const app = createApp({ tusRouter: router })
   const server = app.listen(0)
 
@@ -676,6 +676,7 @@ test('mobile POS queues manual operations offline and preserves conflicts for ex
 
 test('web fetch transport forwards tenant context without accepting payment credentials', async () => {
   const originalFetch = globalThis.fetch
+  const originalApiUrl = process.env.NEXT_PUBLIC_API_URL
   const calls = []
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options })
@@ -689,6 +690,7 @@ test('web fetch transport forwards tenant context without accepting payment cred
   }
 
   try {
+    process.env.NEXT_PUBLIC_API_URL = 'http://localhost:3101'
     const { createTusWebFetchTransport } = await import('../../apps/web/src/lib/tus-client.ts')
     const response = await createTusWebFetchTransport().request({
       method: 'POST',
@@ -705,6 +707,8 @@ test('web fetch transport forwards tenant context without accepting payment cred
     assert.equal(calls[0].options.headers.Authorization, undefined)
   } finally {
     globalThis.fetch = originalFetch
+    if (originalApiUrl === undefined) delete process.env.NEXT_PUBLIC_API_URL
+    else process.env.NEXT_PUBLIC_API_URL = originalApiUrl
   }
 })
 

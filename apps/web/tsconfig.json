@@ -2,6 +2,7 @@
   "extends": "@factory/typescript-config/nextjs.json",
   "compilerOptions": {
     "plugins": [{ "name": "next" }],
+    "allowImportingTsExtensions": true,
     "rootDir": "../..",
     "paths": {
       "@/*": ["./src/*"]

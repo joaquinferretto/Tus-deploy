@@ -894,3 +894,66 @@ prohibits API/POS runtime execution in this phase.
 - Next action is an explicitly approved, lossless target conversion/backfill
   plan followed by a fresh bounded retry; do not use historical migrations,
   reset, `db push`, seed rerun, truncate, cascade, or untagged deletes.
+
+## Focused Corrective Slice: P7/P8 Local Contracts
+
+- Corrected the web ESM imports of `api-url.ts` in `api-client.ts`,
+  `tus-client.ts`, and `tus-auth-client.ts`. The explicit `.ts` specifiers are
+  required by the repository's Node 22 strip-types test loader; the web
+  TypeScript project now permits those specifiers through
+  `allowImportingTsExtensions`.
+- Reconciled the P8 deployment assertion with the existing cross-platform
+  contract: Windows local builds keep `output` disabled to avoid pnpm symlink
+  privilege failures, while non-Windows production builds retain
+  `output: 'standalone'` for Render/Vercel deployment.
+- Updated only the P7 test setup where the current fail-closed contracts were
+  already explicit: provider webhook actions are enabled for the invalid-
+  signature branch, and the web transport receives a synthetic local API URL.
+  No production provider or network behavior was enabled by these test
+  fixtures.
+
+### Focused Corrective TDD Cycle Evidence
+
+| Correction | Test file | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|
+| Extensionless `api-url` ESM imports | `tests/foundation/p7-tus-marketplace-operations.test.mjs` | ✅ Baseline failed during module resolution | ✅ Existing P7 regression failed on extensionless `api-url` import | ✅ P7 passed 22/22 | ✅ Web client, auth client, and API client all use explicit TypeScript specifiers; web typecheck passed | ✅ Added the minimum compiler option required by TypeScript; no URL semantics changed |
+| Windows/Render standalone deployment contract | `tests/foundation/p8-tus-deployment.test.mjs` | ✅ Baseline failed on the stale literal `standalone` assertion | ✅ P8 passed 8/8 | ✅ Conditional Windows/non-Windows output and existing Render start/docs checks remain covered | ✅ Assertion now verifies the public platform-conditioned contract |
+
+### Focused Corrective Work Unit Evidence
+
+| Evidence | Exact result |
+|---|---|
+| Focused test command and exact result | `C:\\Users\\mmmau\\AppData\\Local\\nvm\\v22.22.2\\pnpm.cmd test -- tests/foundation/p7-tus-marketplace-operations.test.mjs tests/foundation/p8-tus-deployment.test.mjs` — exit `0`; P7 `22/22` and P8 `8/8` passed, `0` failed, `0` skipped. |
+| Relevant typecheck | `pnpm.cmd --filter @factory/web typecheck` — exit `0`. |
+| Relevant lint | `pnpm.cmd --filter @factory/web lint` — exit `0`; existing warnings only, no errors. |
+| Static diff check | `git diff --check` — exit `0`; existing CRLF normalization warnings only. |
+| Runtime harness command/scenario and exact result | N/A by explicit user boundary: no API service, database, provider, browser, Docker, cloud, deployment, or external runtime was started or contacted; only deterministic local tests and web static checks ran. |
+| Rollback boundary | Revert only `apps/web/src/lib/{api-client.ts,tus-auth-client.ts,tus-client.ts}`, `apps/web/tsconfig.json`, and the P7/P8 test assertion/setup changes. Preserve all prior launch phases, external-blocked evidence, and `Goldenrepo-js_py` exclusion. |
+
+### Focused Corrective Result Fields
+
+- `status`: `success` for this bounded deterministic correction; launch remains
+  `NO-GO` and `liveConformance: false`.
+- `executive_summary`: P7 now resolves the web API URL module under the pinned
+  Node ESM loader and P8 verifies the intended Windows-safe/Linux-standalone
+  deployment contract without changing live deployment configuration.
+- `tasks_completed`: All cumulative implementation tasks plus R1 remain
+  checked; this corrective slice adds no new phase task.
+- `tests`: P7 `22/22`; P8 `8/8`; web typecheck passed; web lint passed with
+  existing warnings only; `git diff --check` passed.
+- `database_effects`: None.
+- `provider_effects`: None.
+- `risks`: Live PostgreSQL, provider, browser/device, worker, cloud,
+  deployment, backup/restore, DNS/TLS, legal/tax, and production evidence
+  remain external-blocked. Windows standalone output remains intentionally
+  disabled locally; Render/Linux standalone behavior remains static-contract
+  only and is not live verification.
+- `next_recommended`: `sdd-verify` against this corrective evidence; retain
+  `liveConformance: false`.
+- `skill_resolution`: Strict TDD active; requested `sdd-apply`, `_shared`,
+  `typescript`, and `work-unit-commits` skills loaded. `.codegraph/` existed;
+  CodeGraph exploration was attempted and bounded fallback inspection was
+  used for the exact files. No review command or new review transaction was
+  created.
+- `cleanup_state`: Complete. No runtime process or external resource was
+  started; no secret values were read or emitted.

@@ -6,7 +6,7 @@ import type {
   WhatsAppAction,
 } from '@factory/contracts/tus'
 
-import { resolveWebApiBaseUrl } from './api-url'
+import { resolveWebApiBaseUrl } from './api-url.ts'
 
 export const TUS_API_VERSION = 'v1' as const
 
