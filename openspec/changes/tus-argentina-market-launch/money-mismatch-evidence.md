@@ -24,7 +24,9 @@ current_attempt:
   transaction: "One psql read-only repeatable-read metadata transaction was attempted; no metadata receipt was accepted and the redacted failure was not retried."
   query_scope: "information_schema.columns for public columns matching amount|total|price|fee|tax|balance|credit|debit|value|money|currency, plus _prisma_migrations existence/count only"
   authorized_query_count: 1
-  psql_invocations: 1
+  metadata_query_attempts: 1
+  psql_invocations: 2
+  local_setup_note: "One option-rejected psql invocation opened no connection; the single valid metadata query then made the only connection attempt."
   row_values_read: 0
   row_values_emitted: 0
   failure_category: connection-unavailable
@@ -46,7 +48,7 @@ connection_attempts:
   explicit_development_confirmation: true
   source: repository-root .env DATABASE_URL only
   outcome: "One read-only metadata attempt ended in a redacted connection-or-query failure; no retry or third attempt."
-  authorized_query_count: 5
+  authorized_query_count: 1
 
 psql_path: "C:\\Users\\mmmau\\AppData\\Local\\Temp\\opencode\\postgresql-client-16.2\\pgsql\\bin\\psql.exe"
 psql_client_source: official-postgresql-16.2-windows-x64-binaries
@@ -120,7 +122,8 @@ side_effects:
   row_values_read: 0
   row_values_emitted: 0
   successful_fresh_connection: not-confirmed
-  psql_invocations: 1
+  metadata_query_attempts: 1
+  psql_invocations: 2
   metadata_transaction_writes: 0
 
 cleanup_state:
