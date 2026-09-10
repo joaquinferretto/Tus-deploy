@@ -71,6 +71,9 @@ export default function LoginScreen() {
           <Pressable accessibilityRole="button" accessibilityState={{ disabled: submitting }} disabled={submitting} onPress={() => void submit()} style={styles.button}>
             <Text style={styles.buttonText}>{submitting ? 'Verifying with TUS…' : 'Sign in securely'}</Text>
           </Pressable>
+          <Pressable accessibilityLabel="Recover account access" accessibilityRole="button" onPress={() => router.push('/(auth)/recovery')} style={styles.recoveryButton}>
+            <Text style={styles.recoveryText}>Recover account access</Text>
+          </Pressable>
         </View>
         <Text style={styles.note}>No tenant, actor, permission, or financial authority is entered on this screen.</Text>
       </View>
@@ -166,5 +169,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     marginTop: 20,
+  },
+  recoveryButton: {
+    alignItems: 'center',
+    minHeight: 48,
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  recoveryText: {
+    color: '#344B36',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });

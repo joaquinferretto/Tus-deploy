@@ -4,10 +4,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { addMoney, createMoney } from '../../../packages/contracts/src/money.ts'
+import {
+  addMoney,
+  createMoney,
+  deserializeMoney,
+  exactMoneyJsonStringify,
+  parseDecimalToMinor,
+  serializeMoney,
+} from '../../../packages/contracts/src/money.ts'
 
 import {
   CONNECTION_TIMEOUT_MS,
+  createDefaultBackupOperations,
   LAUNCH_MIGRATION_NAME,
   REPAIR_MIGRATION_NAME,
   REQUIRED_LAUNCH_TABLES,
@@ -15,15 +23,18 @@ import {
   REQUIRED_POS_TABLES,
   REQUIRED_SCHEMA_COLUMNS,
   classifySqlStatement,
+  createExactMoneyBackfillPlan,
   createLedgerMarker,
   gateInventory,
   inventoryMigrations,
+  inspectBackupTooling,
   parseRepairArguments,
   redactText,
   resolveRepairTarget,
   runRepair,
   splitSqlStatements,
   validatePreflight,
+  validateExactMoneySql,
   verifyRestorableBackup,
   verifySchemaSnapshot,
   withBoundedRetry,
@@ -169,14 +180,18 @@ test('ledger marker is one forward-only completed repair row and required table 
   const migration = await readFile(join(MIGRATIONS_ROOT, '20260831180000_tus_additive_migration_repair', 'migration.sql'), 'utf8')
   const gate = gateInventory({ statements: splitSqlStatements(migration) })
   assert.equal(gate.status, 'passed')
+  assert.equal(validateExactMoneySql(migration).status, 'passed')
   assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE|CASCADE|DELETE\s+FROM)\b/iu)
+  assert.doesNotMatch(migration, /"amount"\s+DOUBLE\s+PRECISION/iu)
   for (const table of REQUIRED_POS_TABLES) assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS "${table}"`, 'u'))
 })
 
 test('launch baseline covers the full marketplace database with exact money and no destructive SQL', async () => {
   const migration = await readFile(join(MIGRATIONS_ROOT, `${LAUNCH_MIGRATION_NAME}`, 'migration.sql'), 'utf8')
   const gate = gateInventory({ statements: splitSqlStatements(migration) })
+  const exactMoneyGate = validateExactMoneySql(migration)
   assert.equal(gate.status, 'passed')
+  assert.equal(exactMoneyGate.status, 'passed')
   assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE|CASCADE|DELETE\s+FROM)\b/iu)
   assert.match(migration, /BIGINT/u)
   assert.match(migration, /rateBps" INTEGER/u)
@@ -197,6 +212,46 @@ test('Money keeps currency explicit and adds only same-currency minor units', ()
   assert.throws(() => addMoney(createMoney('ARS', 1n), createMoney('USD', 1n)), /currency/u)
 })
 
+test('Money JSON uses decimal strings and never leaks bigint serialization errors', () => {
+  const money = createMoney('ARS', 1250n)
+  assert.deepEqual(serializeMoney(money), { currency: 'ARS', minor: '1250' })
+  assert.deepEqual(deserializeMoney({ currency: 'ARS', minor: '1250' }), money)
+  assert.equal(exactMoneyJsonStringify({ amount: 1250n }), '{"amount":"1250"}')
+  assert.throws(() => deserializeMoney({ currency: 'ARS', minor: '12.50' }), /integer string/u)
+  assert.throws(() => parseDecimalToMinor('XXX', '1.00'), /currency scale/u)
+})
+
+test('exact-money conversion is decimal-only and backfill remains explicitly gated', () => {
+  assert.equal(parseDecimalToMinor('ARS', '12.345', { scale: 2, rounding: 'half-up' }), 1235n)
+  assert.throws(() => parseDecimalToMinor('ARS', '12.345', { scale: 2, rounding: 'reject' }), /fraction/u)
+
+  const blocked = createExactMoneyBackfillPlan({
+    table: 'TusListing',
+    sourceColumn: 'price',
+    targetColumn: 'priceMinor',
+    currencyColumn: 'currency',
+    approved: false,
+  })
+  assert.deepEqual(blocked, { status: 'blocked', reason: 'exact-money-backfill-approval-required' })
+
+  const approved = createExactMoneyBackfillPlan({
+    table: 'TusListing',
+    sourceColumn: 'price',
+    targetColumn: 'priceMinor',
+    currencyColumn: 'currency',
+    approved: true,
+    approvalId: 'money-policy-ars-v1',
+  })
+  assert.equal(approved.status, 'ready')
+  assert.match(approved.sql, /ADD COLUMN IF NOT EXISTS "priceMinor" BIGINT/u)
+  assert.match(approved.sql, /exact-money-backfill-fractional-or-overflow/u)
+  assert.match(approved.sql, /exact-money-backfill-unknown-currency/u)
+  assert.match(approved.sql, /WHERE "priceMinor" IS NULL/u)
+  assert.doesNotMatch(approved.sql, /\b(?:DROP|TRUNCATE|CASCADE|DELETE\s+FROM)\b/iu)
+  assert.equal(approved.requiresBackupRestore, true)
+  assert.equal(approved.approvalId, 'money-policy-ars-v1')
+})
+
 test('backup verification requires a restorable artifact and verifies restore before DDL', async () => {
   const calls = []
   const result = await verifyRestorableBackup({
@@ -210,6 +265,57 @@ test('backup verification requires a restorable artifact and verifies restore be
   assert.equal(result.status, 'passed')
   assert.deepEqual(calls, ['assert:backup-operator-handle', 'restore', 'verify'])
   await assert.rejects(() => verifyRestorableBackup({ backupId: 'backup-operator-handle', operations: {} }), /backup verification unavailable/u)
+})
+
+test('backup tooling is an explicit pre-connection gate and never falls back to a fake dump', async () => {
+  const tooling = inspectBackupTooling()
+  assert.deepEqual(Object.keys(tooling).sort(), ['pgDump', 'pgRestore'])
+  assert.equal(typeof tooling.pgDump, 'string')
+  assert.equal(typeof tooling.pgRestore, 'string')
+
+  await withTempRoot('DATABASE_URL=postgresql://user:secret@db.example.test/tus\n', async (rootDirectory) => {
+    const calls = []
+    const result = await runRepair({
+      rootDirectory,
+      environment: { NODE_ENV: 'development' },
+      confirmed: true,
+      backupId: 'backup-operator-handle',
+      operations: {
+        backup: { assertRestorable: async () => { throw new Error('backup-tooling-unavailable') } },
+        connect: async () => calls.push('connect'),
+      },
+    })
+    assert.equal(result.status, 'blocked')
+    assert.equal(result.safetyGate, 'backup-gate')
+    assert.equal(result.reason, 'backup-tooling-unavailable')
+    assert.equal(result.sideEffects.connections, 0)
+    assert.deepEqual(calls, [])
+  })
+})
+
+test('default backup gate validates a nonzero custom archive with pg_restore list before DDL', async () => {
+  const rootDirectory = await mkdtemp(join(tmpdir(), 'tus-backup-gate-'))
+  const backupPath = join(rootDirectory, 'backup.dump')
+  const calls = []
+  try {
+    await writeFile(backupPath, 'custom-format-placeholder', 'utf8')
+    const operations = createDefaultBackupOperations({
+      pgRestorePath: 'pg_restore.exe',
+      spawn: (executable, argumentsList, options) => {
+        calls.push({ executable, argumentsList, options })
+        return { status: 0 }
+      },
+    })
+
+    const result = await verifyRestorableBackup({ backupId: backupPath, operations })
+
+    assert.equal(result.status, 'passed')
+    assert.equal(calls.length, 1)
+    assert.deepEqual(calls[0].argumentsList, ['--format=custom', '--list', backupPath])
+    assert.equal(calls[0].options.stdio, 'ignore')
+  } finally {
+    await rm(rootDirectory, { recursive: true, force: true })
+  }
 })
 
 test('safe additive path applies once, preserves the ledger, closes the pool, and defers POS runtime', async () => {

@@ -1,11 +1,13 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createTusWebAuthClient, sanitizeTusReturnTo } from '@/lib/tus-auth-client'
 import { TusActionButton, TusFieldError, TusSkipLink } from '@/app/tus/tus-ui'
 
 export default function SignInPage(): React.ReactNode {
+  const router = useRouter()
   const [returnTo, setReturnTo] = useState('/tus')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -27,7 +29,7 @@ export default function SignInPage(): React.ReactNode {
       return
     }
     // The protected route is entered only after both auth endpoints confirm scope.
-    window.location.assign(result.returnTo ?? returnTo)
+    router.replace((result.returnTo ?? returnTo) as Parameters<typeof router.replace>[0])
   }
 
   return (

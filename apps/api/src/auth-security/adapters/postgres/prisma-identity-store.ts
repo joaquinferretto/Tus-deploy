@@ -395,7 +395,11 @@ export class PrismaIdentityStore implements IdentityStore {
 }
 
 export class PrismaSecurityAuditSink implements AuditSink {
-  constructor(private readonly client: PrismaIdentityClient) {}
+  private readonly client: PrismaIdentityClient
+
+  constructor(client: PrismaIdentityClient) {
+    this.client = client
+  }
 
   async record(event: Parameters<AuditSink['record']>[0]): Promise<void> {
     await this.client.auditEvent?.create({

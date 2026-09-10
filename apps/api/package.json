@@ -9,8 +9,9 @@
     "start": "node dist/index.js",
     "lint": "eslint src/providers/whatsapp/index.ts src/tus/whatsapp/index.ts --max-warnings 0",
     "lint:security": "eslint . --ext .ts --config .eslintrc.security.json",
-    "test": "node -e \"process.exit(0)\"",
+    "test": "node ../../scripts/test-runner.mjs tests/foundation/p12-deployment-operations.test.mjs",
     "prisma:generate": "prisma generate",
+    "prisma:validate": "node ../../scripts/prisma-validate.mjs",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "clean": "rm -rf dist"
@@ -31,6 +32,7 @@
     "dotenv": "^16.4.5",
     "@factory/config": "workspace:*",
     "@factory/contracts": "workspace:*",
+    "@factory/errors": "workspace:*",
     "@factory/zod-schemas": "workspace:*",
     "@factory/observability": "workspace:*"
   },

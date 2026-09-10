@@ -22,4 +22,4 @@ export function createCorrelationMiddleware(): RequestHandler {
   }
 }
 
-export const correlationMiddleware = createCorrelationMiddleware()
+export const correlationMiddleware: RequestHandler = createCorrelationMiddleware()

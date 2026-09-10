@@ -107,3 +107,61 @@ risks:
   - "All live schema, tenant, POS, outbox, audit, replay, and isolation proof remains pending."
 
 next_recommended: "Provide an operator-supplied restorable backup handle, rerun the same bounded additive apply, then perform the separately bounded POS rerun."
+
+## Current Authorized Repair Attempt
+
+```yaml
+status: external-blocked
+backup_state: passed
+backup_handle: file:tus-argentina-market-launch-backup.dump
+sql_gate:
+  selected_file: apps/api/prisma/migrations/20260909090000_tus_argentina_market_launch/migration.sql
+  files_scanned: 1
+  statements_scanned: 124
+  destructive_statements: 0
+  ambiguous_statements: 0
+  non_additive_statements: 0
+  result: passed
+target:
+  node_env: development
+  confirmation_flag: --confirm-development-target
+  source: repository-root .env DATABASE_URL only
+connection_attempts:
+  count: 1
+  timeout_ms_per_attempt: 60000
+  retry_count_allowed: 1
+  third_attempt: prohibited
+migration_result:
+  status: not-started
+  reason: exact-money-type-mismatch
+  ddl: 0
+  dml: 0
+  historical_migrations_invoked: 0
+  ledger_mutations: 0
+schema_verification:
+  status: deferred
+  reason: preflight-failed-before-ddl
+durable_pos:
+  status: external-blocked
+  reason: schema-proof-not-reached-and-runtime-boundary-prohibited
+side_effects:
+  aggregate_catalog_preflight: 1
+  writes: 0
+  deletes: 0
+  provider_calls: 0
+  row_data_emitted: 0
+cleanup_state:
+  status: verified
+  pools_closed: 1
+  owned_children_remaining: 0
+```
+
+The target contains an existing monetary column whose type is incompatible with
+the exact `BIGINT` launch requirement. The approved conversion planner was not
+invoked because it requires an explicit approval identifier. Historical files
+and ledger rows were untouched; no DDL began.
+
+Tags retained: `static-migration-inventory`, `static-sql-gate`,
+`authorized-remote-development`, `real-postgres-schema`, `durable-pos`.
+`real-postgres-schema` and `durable-pos` remain incomplete evidence classes,
+not success claims.

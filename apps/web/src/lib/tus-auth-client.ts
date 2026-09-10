@@ -13,9 +13,17 @@ import { resolveWebApiBaseUrl } from './api-url'
 export const TUS_WEB_SESSION_STORAGE_KEY = 'tus.session.v1'
 const DEFAULT_RETURN_TO = '/tus'
 
+let volatileCredential: StoredCredential | null = null
+
 export interface TusWebAuthRequest {
   method: 'GET' | 'POST'
-  path: '/auth/sign-in' | '/auth/session' | '/auth/sign-out'
+  path:
+    | '/auth/sign-in'
+    | '/auth/session'
+    | '/auth/sign-out'
+    | '/auth/register'
+    | '/auth/recovery/request'
+    | '/auth/recovery/complete'
   correlationId: string
   accessToken?: string
   body?: unknown
@@ -26,8 +34,6 @@ export interface TusWebAuthTransport {
 }
 
 export interface TusWebAuthStorage {
-  read(): string | null
-  write(value: string): void
   clear(): void
 }
 
@@ -40,6 +46,9 @@ export interface TusWebAuthClientOptions {
 
 export interface TusWebAuthClient {
   signIn(input: { email: string; password: string }): Promise<TusSessionState>
+  register(input: { email: string; password: string; displayName: string }): Promise<TusAuthActionState>
+  requestRecovery(email: string): Promise<TusAuthActionState>
+  completeRecovery(input: { token: string; newPassword: string }): Promise<TusAuthActionState>
   restore(returnTo?: string): Promise<TusSessionState>
   signOut(): Promise<void>
   clearLocalSession(): void
@@ -52,6 +61,27 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
   const now = options.now ?? (() => Date.now())
 
   return {
+    async register(input) {
+      return authAction(transport, createCorrelationId, {
+        method: 'POST',
+        path: '/auth/register',
+        body: input,
+      })
+    },
+    async requestRecovery(email) {
+      return authAction(transport, createCorrelationId, {
+        method: 'POST',
+        path: '/auth/recovery/request',
+        body: { email },
+      })
+    },
+    async completeRecovery(input) {
+      return authAction(transport, createCorrelationId, {
+        method: 'POST',
+        path: '/auth/recovery/complete',
+        body: input,
+      })
+    },
     async signIn(input) {
       try {
         const correlationId = createCorrelationId()
@@ -62,7 +92,7 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
           throw new TusAuthError('The server returned an inconsistent session scope.', 502, 'SESSION_SCOPE_MISMATCH')
         }
         const session = createTusAuthenticatedSession({ accessToken: serverSession.accessToken, expiresAt: serverSession.expiresAt, context })
-        storage.write(serializeCredential(session))
+        volatileCredential = { accessToken: session.accessToken, expiresAt: session.expiresAt }
         return authenticatedState(session)
       } catch (error: unknown) {
         return authState(error, undefined, 'Sign-in could not be confirmed by TUS.')
@@ -71,20 +101,14 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
 
     async restore(returnTo) {
       const safeReturnTo = sanitizeTusReturnTo(returnTo)
-      let raw: string | null
-      try {
-        raw = storage.read()
-      } catch {
-        return state(TUS_SESSION_STATUS.UNAVAILABLE, 'TUS could not access the local session. Try again when storage is available.', safeReturnTo)
-      }
-      if (raw === null) return state(TUS_SESSION_STATUS.UNAUTHENTICATED, 'Sign in to enter your TUS workspace.', safeReturnTo)
-      let credential: StoredCredential
-      try { credential = parseCredential(raw) } catch {
+      const credential = volatileCredential
+      if (credential === null) {
         clearStorage(storage)
-        return state(TUS_SESSION_STATUS.UNAUTHENTICATED, 'Your local session was not valid. Sign in again.', safeReturnTo)
+        return state(TUS_SESSION_STATUS.UNAUTHENTICATED, 'Sign in to enter your TUS workspace.', safeReturnTo)
       }
 
       if (credential.expiresAt <= now()) {
+        volatileCredential = null
         clearStorage(storage)
         return state(TUS_SESSION_STATUS.EXPIRED, 'Your TUS session expired. Sign in again to continue.', safeReturnTo)
       }
@@ -94,6 +118,7 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
         const session = createTusAuthenticatedSession({ accessToken: credential.accessToken, expiresAt: credential.expiresAt, context })
         return authenticatedState(session, safeReturnTo)
       } catch (error: unknown) {
+        volatileCredential = null
         clearStorage(storage)
         if (statusOf(error) === 401) return state(TUS_SESSION_STATUS.EXPIRED, 'Your TUS session is no longer valid. Sign in again.', safeReturnTo)
         return authState(error, safeReturnTo, 'TUS could not restore the session. Try again.')
@@ -101,18 +126,44 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
     },
 
     async signOut() {
-      const credential = readCredential(storage)
+      const credential = volatileCredential
       try {
         if (credential !== null) await transport.request({ method: 'POST', path: '/auth/sign-out', correlationId: createCorrelationId(), accessToken: credential.accessToken })
       } finally {
+        volatileCredential = null
         clearStorage(storage)
       }
     },
 
     clearLocalSession() {
+      volatileCredential = null
       clearStorage(storage)
     },
   }
+}
+
+export interface TusAuthActionState {
+  status: 'accepted' | 'error'
+  message: string
+  code?: string
+}
+
+async function authAction(
+  transport: TusWebAuthTransport,
+  createCorrelationId: () => string,
+  input: Omit<TusWebAuthRequest, 'correlationId'>,
+): Promise<TusAuthActionState> {
+  try {
+    await transport.request({ ...input, correlationId: createCorrelationId() })
+    return { status: 'accepted', message: 'TUS accepted the request. Continue only after the server confirms the next state.' }
+  } catch (error: unknown) {
+    return { status: 'error', message: 'The request could not be completed. Try again or contact support.', ...(safeCode(error) === undefined ? {} : { code: safeCode(error) }) }
+  }
+}
+
+function safeCode(error: unknown): string | undefined {
+  const value = error instanceof Error && 'code' in error ? (error as Error & { code?: unknown }).code : undefined
+  return typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(value) ? value : undefined
 }
 
 export function createTusWebAuthFetchTransport(): TusWebAuthTransport {
@@ -125,7 +176,7 @@ export function createTusWebAuthFetchTransport(): TusWebAuthTransport {
     async request<TResponse>(input: TusWebAuthRequest) {
       const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Correlation-Id': input.correlationId }
       if (input.accessToken !== undefined) headers['Authorization'] = `Bearer ${input.accessToken}`
-      const response = await fetch(`${baseUrl}${input.path}`, { method: input.method, headers, ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }) })
+       const response = await fetch(`${baseUrl}${input.path}`, { method: input.method, headers, credentials: 'omit', ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }) })
       if (!response.ok) {
         const body = await response.json().catch(() => null) as Record<string, unknown> | null
         throw new TusAuthError('The authentication service did not confirm this request.', response.status, typeof body?.['code'] === 'string' ? body['code'] : undefined)
@@ -170,26 +221,6 @@ async function bootstrapContext(transport: TusWebAuthTransport, accessToken: str
   return parseTusSessionContext(response)
 }
 
-function parseCredential(raw: string): StoredCredential {
-  const parsed: unknown = JSON.parse(raw)
-  const record = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
-  if (typeof record['accessToken'] !== 'string' || record['accessToken'].trim().length === 0 || typeof record['expiresAt'] !== 'number' || !Number.isFinite(record['expiresAt'])) throw new Error('Invalid stored credential')
-  return { accessToken: record['accessToken'], expiresAt: record['expiresAt'] }
-}
-
-function serializeCredential(session: TusAuthenticatedSession): string {
-  return JSON.stringify({ accessToken: session.accessToken, expiresAt: session.expiresAt })
-}
-
-function readCredential(storage: TusWebAuthStorage): StoredCredential | null {
-  try {
-    const raw = storage.read()
-    return raw === null ? null : parseCredential(raw)
-  } catch {
-    return null
-  }
-}
-
 function authenticatedState(session: TusAuthenticatedSession, returnTo?: string): TusSessionState {
   return { status: TUS_SESSION_STATUS.AUTHENTICATED, message: 'TUS confirmed your session and tenant scope.', session, ...(returnTo === undefined ? {} : { returnTo }) }
 }
@@ -215,7 +246,7 @@ function clearStorage(storage: TusWebAuthStorage): void {
 }
 
 function createBrowserSessionStorage(): TusWebAuthStorage {
-  return { read: () => window.sessionStorage.getItem(TUS_WEB_SESSION_STORAGE_KEY), write: (value) => window.sessionStorage.setItem(TUS_WEB_SESSION_STORAGE_KEY, value), clear: () => window.sessionStorage.removeItem(TUS_WEB_SESSION_STORAGE_KEY) }
+  return { clear: () => window.sessionStorage.removeItem(TUS_WEB_SESSION_STORAGE_KEY) }
 }
 
 function createDefaultCorrelationId(): string {

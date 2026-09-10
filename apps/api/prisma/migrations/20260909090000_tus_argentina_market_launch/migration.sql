@@ -77,6 +77,26 @@ CREATE TABLE IF NOT EXISTS "TusPosOutbox" ("id" TEXT NOT NULL, "tenantId" TEXT N
 CREATE TABLE IF NOT EXISTS "TusPosAudit" ("id" TEXT NOT NULL, "tenantId" TEXT NOT NULL, "auditId" TEXT NOT NULL, "actorId" TEXT NOT NULL, "correlationId" TEXT NOT NULL, "action" TEXT NOT NULL, "operationId" TEXT NOT NULL, "outcome" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TusPosAudit_pkey" PRIMARY KEY ("id"));
 CREATE TABLE IF NOT EXISTS "TusHardeningFixture" ("id" TEXT NOT NULL, "tag" TEXT NOT NULL, "version" TEXT NOT NULL, "runId" TEXT NOT NULL, "tenantId" TEXT NOT NULL, "actorId" TEXT NOT NULL, "productListingId" TEXT NOT NULL, "serviceListingId" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "TusHardeningFixture_pkey" PRIMARY KEY ("id"));
 
+DO $$
+DECLARE table_name TEXT;
+BEGIN
+  FOREACH table_name IN ARRAY ARRAY[
+    'TusListing', 'TusCommitment', 'TusCommitmentCompensation',
+    'TusMarketplaceCommitment', 'TusPaymentIntent', 'TusCommissionSnapshot',
+    'TusLedgerEntry', 'TusReconciliationRecord', 'TusInvoice', 'TusCreditNote',
+    'TusSubscription', 'TusPosOperation', 'TusPosReceipt'
+  ] LOOP
+    BEGIN
+      EXECUTE format(
+        'ALTER TABLE %I ADD CONSTRAINT %I CHECK ("currency" ~ ''^[A-Z]{3}$'')',
+        table_name,
+        table_name || '_currency_iso_check'
+      );
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END;
+  END LOOP;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS "TusTenant_slug_key" ON "TusTenant" ("slug");
 CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key" ON "User" ("email");
 CREATE UNIQUE INDEX IF NOT EXISTS "User_normalizedEmail_key" ON "User" ("normalizedEmail");

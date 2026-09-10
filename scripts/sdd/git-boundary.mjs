@@ -6,11 +6,12 @@ export const FORBIDDEN_REPOSITORY_NAME = 'Goldenrepo-js_py'
 export function resolveRepositoryBoundary({ cwd, gitRoot, args = [] } = {}) {
   if (cwd) rejectForbiddenPath(resolve(cwd))
   const explicitRoot = gitRoot ? resolve(gitRoot) : null
+  if (explicitRoot) assertAllowedRepositoryPath(explicitRoot)
   const gitC = parseGitC(args)
   const selectedRoot = gitC ? resolve(cwd ?? process.cwd(), gitC) : explicitRoot
   if (!selectedRoot) throw new Error('repository boundary must be explicit')
-  if (gitC && explicitRoot && selectedRoot !== explicitRoot) throw new Error('repository boundary selection is ambiguous')
   assertAllowedRepositoryPath(selectedRoot)
+  if (gitC && explicitRoot && selectedRoot !== explicitRoot) throw new Error('repository boundary selection is ambiguous')
   return { status: 'ready', repositoryName: ALLOWED_REPOSITORY_NAME, root: selectedRoot }
 }
 
@@ -18,26 +19,31 @@ export function assertAllowedRepositoryPath(repositoryPath) {
   const normalized = resolve(repositoryPath)
   const name = basename(normalized)
   rejectForbiddenPath(normalized)
-  if (name !== ALLOWED_REPOSITORY_NAME) throw new Error(`repository boundary requires ${ALLOWED_REPOSITORY_NAME}`)
+  if (name.toLowerCase() !== ALLOWED_REPOSITORY_NAME.toLowerCase()) throw new Error(`repository boundary requires ${ALLOWED_REPOSITORY_NAME}`)
   return normalized
 }
 
 function rejectForbiddenPath(repositoryPath) {
-  if (basename(repositoryPath) === FORBIDDEN_REPOSITORY_NAME || repositoryPath.includes(`\\${FORBIDDEN_REPOSITORY_NAME}\\`) || repositoryPath.includes(`/${FORBIDDEN_REPOSITORY_NAME}/`)) {
+  const normalized = repositoryPath.replaceAll('\\', '/').toLowerCase()
+  const forbidden = FORBIDDEN_REPOSITORY_NAME.toLowerCase()
+  if (basename(repositoryPath).toLowerCase() === forbidden || normalized.includes(`/${forbidden}/`)) {
     throw new Error(`repository boundary rejects ${FORBIDDEN_REPOSITORY_NAME}`)
   }
 }
 
-export function validateGitAction({ action, stagedFiles = [], commitAll = false, remote, branch, refspec } = {}) {
+export function validateGitAction({ action, stagedFiles = [], commitAll = false, indexState = 'intended', remote, branch, refspec } = {}) {
   if (action === 'commit') {
     if (commitAll) throw new Error('repository boundary refuses commit -a')
     if (!Array.isArray(stagedFiles) || stagedFiles.length === 0) throw new Error('repository boundary requires intended staged files')
+    if (indexState !== 'intended') throw new Error('repository boundary requires the intended index')
+    if (stagedFiles.some((file) => !isSafeStagedPath(file))) throw new Error('repository boundary rejects unsafe staged path')
     return { status: 'ready', action }
   }
   if (action === 'push') {
     if (!nonBlank(remote)) throw new Error('push destination remote is required')
     if (!nonBlank(branch)) throw new Error('push destination branch is required')
     if (!nonBlank(refspec)) throw new Error('push destination refspec must be explicit')
+    if (!isExplicitRefspec(refspec, branch)) throw new Error('push destination refspec must target the explicit branch')
     return { status: 'ready', action }
   }
   throw new Error(`unsupported git action: ${String(action ?? '')}`)
@@ -47,7 +53,7 @@ export function buildExplicitGitCommand({ action, repositoryRoot, remote, refspe
   const root = assertAllowedRepositoryPath(repositoryRoot)
   validateGitAction({ action, remote, refspec, ...state })
   if (action === 'push') return ['git', '-C', root, 'push', remote, refspec]
-  return ['git', '-C', root, 'commit']
+  return ['git', '-C', root, 'commit', '--', ...state.stagedFiles]
 }
 
 function parseGitC(args) {
@@ -62,6 +68,21 @@ function parseGitC(args) {
 
 function nonBlank(value) {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+function isSafeStagedPath(value) {
+  return nonBlank(value) && !isAbsolutePath(value) && value !== '.' && value !== '..' && !value.includes('..\\') && !value.includes('../') && !value.startsWith('-')
+}
+
+function isAbsolutePath(value) {
+  return /^[A-Za-z]:[\\/]|^[\\/]{2}|^[\\/]/u.test(value)
+}
+
+function isExplicitRefspec(refspec, branch) {
+  if (!nonBlank(refspec) || !nonBlank(branch) || refspec.includes('*') || refspec.startsWith('+')) return false
+  const target = `refs/heads/${branch}`
+  const match = refspec.match(/^(?:HEAD|refs\/heads\/[A-Za-z0-9._/-]+):(refs\/heads\/[A-Za-z0-9._/-]+)$/u)
+  return match?.[1] === target
 }
 
 export default {

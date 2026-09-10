@@ -39,6 +39,7 @@ USER node
 EXPOSE 3101
 
 ENV NODE_ENV=production
+ENV PORT=3101
 
 WORKDIR /app/apps/api
 CMD ["node", "dist/index.js"]

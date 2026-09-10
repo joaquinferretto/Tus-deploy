@@ -27,14 +27,17 @@ test('PR4 publishes durable marketplace facts and emits tenant-scoped audit/outb
     const listing = await marketplace.createListing(merchantContext, { merchantId: 'merchant-a', kind: 'product', name: '  Botanical balm  ', description: 'A local care product', cohort: 'beauty-personal-care', locationId: 'location-a', currency: 'ARS', price: 1200, stock: 3 })
     const published = await marketplace.publishListing(merchantContext, listing.listingId)
     const discovery = await marketplace.discover({ locationId: 'location-a', cohort: 'beauty-personal-care' })
-    console.log(JSON.stringify({ published, discovery, audits: store.audit.list('merchant-a'), outbox: store.outbox.list('merchant-a'), contract: validateTusMarketplaceListing(published), version: TUS_CONTRACT_VERSION }))
+    const serializeJson = (value) => JSON.stringify(value, (_key, nested) => typeof nested === 'bigint' ? nested.toString() : nested)
+    console.log(serializeJson({ published, discovery, audits: store.audit.list('merchant-a'), outbox: store.outbox.list('merchant-a'), contract: validateTusMarketplaceListing(published), version: TUS_CONTRACT_VERSION }))
   `)
 
   assert.equal(result.published.contractVersion, result.version)
   assert.equal(result.published.name, 'Botanical balm')
   assert.equal(result.published.published, true)
+  assert.equal(result.published.priceMinor, '120000')
   assert.equal(result.discovery.items[0].availableQuantity, 3)
   assert.equal(result.discovery.items[0].price, 1200)
+  assert.equal(result.discovery.items[0].priceMinor, '120000')
   assert.deepEqual(result.discovery.items[0].policyVersion, 'stage-1-v1')
   assert.deepEqual(result.audits.map(({ action, outcome }) => ({ action, outcome })), [
     { action: 'merchant.onboarded', outcome: 'allowed' },
@@ -73,7 +76,8 @@ test('PR4 creates separate product/service commitments with current facts, repla
     try { await marketplace.checkout({ ...input, idempotencyKey: 'checkout-stale-price', cartId: 'cart-stale-price', requestHash: 'hash-stale-price', lines: [{ ...input.lines[0], lineId: 'stale-price', price: 1 }] }) } catch (error) { stalePriceCode = error instanceof MarketplaceError ? error.code : 'unknown' }
     const discoveryAfter = await marketplace.discover()
     const commitments = await marketplace.customerCommitments(customerContext)
-    console.log(JSON.stringify({ first, replay, secondService, thirdServiceCode, stalePriceCode, productAvailable: discoveryAfter.items.find(({ listingId }) => listingId === product.listingId).availableQuantity, commitments, outbox: store.outbox.list('customer-a'), audits: store.audit.list('customer-a') }))
+    const serializeJson = (value) => JSON.stringify(value, (_key, nested) => typeof nested === 'bigint' ? nested.toString() : nested)
+    console.log(serializeJson({ first, replay, secondService, thirdServiceCode, stalePriceCode, productAvailable: discoveryAfter.items.find(({ listingId }) => listingId === product.listingId).availableQuantity, commitments, outbox: store.outbox.list('customer-a'), audits: store.audit.list('customer-a') }))
   `)
 
   assert.equal(result.first.status, 'executed')
@@ -81,6 +85,8 @@ test('PR4 creates separate product/service commitments with current facts, repla
     { context: 'product', policyVersion: 'stage-1-v1' },
     { context: 'service', policyVersion: 'stage-1-v1' },
   ])
+  assert.equal(result.first.commitments[0].priceSnapshot.minor, '100000')
+  assert.equal(result.first.commitments[1].priceSnapshot.minor, '200000')
   assert.notEqual(result.first.commitments[0].commitmentId, result.first.commitments[1].commitmentId)
   assert.equal(result.replay.status, 'replay')
   assert.deepEqual(result.replay.commitments, result.first.commitments)

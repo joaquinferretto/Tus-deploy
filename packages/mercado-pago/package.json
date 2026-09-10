@@ -17,7 +17,7 @@
     "test": "pnpm run build && node --test tests/mercado-pago.test.cjs"
   },
   "devDependencies": {
-    "@repo/typescript-config": "workspace:*",
+    "@factory/typescript-config": "workspace:*",
     "@types/node": "^20.11.24",
     "typescript": "^5.3.3"
   }

@@ -9,8 +9,8 @@ services:
     runtime: node
     rootDir: .
     buildCommand: pnpm install --frozen-lockfile && pnpm --filter @factory/api build
-    preDeployCommand: pnpm --filter @factory/api prisma:migrate:deploy
-    startCommand: pnpm --filter @factory/api start
+    preDeployCommand: node scripts/deployment/render-predeploy.mjs
+    startCommand: PORT=$PORT pnpm --filter @factory/api start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
@@ -24,6 +24,14 @@ services:
       - key: SERVICE_VERSION
         value: 0.1.0
       - key: DATABASE_URL
+        sync: false
+      - key: TUS_MIGRATION_BACKUP_VERIFIED
+        sync: false
+      - key: TUS_MIGRATION_PLAN
+        sync: false
+      - key: TUS_MIGRATION_HISTORY_RECONCILED
+        sync: false
+      - key: TUS_MIGRATION_SELECTED
         sync: false
       - key: POSTGRES_PROVIDER
         value: neon
@@ -160,8 +168,9 @@ services:
     runtime: python
     rootDir: .
     buildCommand: python -m pip install --upgrade pip && python -m pip install -e ./apps/workflow-runtime-python
-    # external-blocked placeholder: consumer activation is fail-closed until
-    # durable ownership, lease, and live deployment evidence are supplied.
+    # The entrypoint is a durable consumer when explicitly activated. This
+    # profile stays fail-closed until queue ownership, leases, and live evidence
+    # are supplied by the operator.
     startCommand: python -m worker.main
     envVars:
       - key: FACTORY_PROFILE
@@ -176,6 +185,8 @@ services:
         value: external-blocked-placeholder
       - key: WORKER_ENABLE_CONSUMER
         value: false
+      - key: WORKER_QUEUE_OWNERSHIP
+        value: external-blocked-placeholder
       - key: DATABASE_URL
         sync: false
       - key: POSTGRES_PROVIDER

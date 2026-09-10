@@ -76,3 +76,31 @@ historical_files_changed: 0
 ## Status
 
 8/11 implementation tasks complete in this change. Tasks `3.2` and `3.3` remain blocked/deferred by the backup gate and the explicit no-runtime-process constraint.
+
+## Current Authorized Remote-Development Attempt
+
+- The preserved external custom-format backup passed nonzero-file and `pg_restore --format=custom --list` verification before DDL.
+- The selected launch baseline passed the static gate: one SQL file, 124 statements, zero destructive/ambiguous/non-additive statements.
+- The pinned CLI used `NODE_ENV=development`, the exact `--confirm-development-target` flag, and only root `.env` `DATABASE_URL`.
+- One bounded connection succeeded and aggregate preflight stopped before DDL with `exact-money-type-mismatch`; no retry was needed and no third attempt occurred.
+- Migration result is `not-started`: zero DDL, zero DML, zero historical migration invocations, zero ledger mutations, and zero provider calls. Schema verification and durable POS are deferred.
+- Cleanup is verified: the pool closed; no API, POS, provider, browser, mobile, Docker, deployment, or worker runtime was started.
+- Task `3.2` remains unchecked because the target-specific preflight gate failed. Task `3.3` remains unchecked because schema proof did not run and the explicit runtime boundary prohibits its harness.
+
+### Current TDD Cycle Evidence
+
+| Change | Test file | Safety net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|
+| Default backup archive gate | `tests/integration/tus/migration-repair.test.mjs` | 16/16 passed | New helper import failed before implementation | 17/17 passed | Injected fake backup plus real nonzero archive/`pg_restore --list` command contract | Shared bounded timeout and secret-safe output |
+
+### Current Work Unit Evidence
+
+| Evidence | Exact result |
+|---|---|
+| Focused test command and exact result | Pinned Node runner `scripts/test-runner.mjs tests/integration/tus/migration-repair.test.mjs`; exit 0, 17 passed, 0 failed. |
+| Runtime harness command/scenario and exact result | Explicit development CLI with preserved backup path; backup and SQL gates passed, one connection/preflight ran, exact-money mismatch stopped before DDL, pool closed. No API/POS/provider/browser/mobile/Docker/deployment runtime. |
+| Rollback boundary | Revert only `createDefaultBackupOperations` and its focused test plus this appended evidence; preserve the external backup and all historical/unrelated files. |
+
+The remaining blocker is no longer backup availability: it is the existing
+target's incompatible exact-money shape and the absence of an explicit approved
+conversion/backfill identifier.

@@ -15,8 +15,10 @@ Values are never copied into this document or emitted by a runner.
 | `EXPO_PUBLIC_API_URL` | `apps/mobile/app.config.ts` and mobile client | Canonical mobile public API URL | No removal: app config and tests consume it |
 | `API_BASE_URL` | `render.yaml` web service | Deployment alias; retain | Render manifest still supplies it |
 | `MONGODB_URL` | Active API adapter, examples, and Render | Canonical MongoDB application name | Repository-wide consumers use this name |
-| `MONGODB_URI` | Compatibility input for the active API adapter and legacy backend-file integrations | Compatibility alias; retain until legacy consumers are migrated | Never emit both names from a manifest; no removal without repository-wide proof |
+| `MONGODB_URI` | Compatibility input for the active API adapter resolver | Compatibility alias; retain until the resolver migration is approved | The resolver still reads it when `MONGODB_URL` is absent; never emit it from a manifest |
 | `REDIS_URL` / `REDIS_PROVIDER` | API queue adapters and Render | Infrastructure contract; retain | Runtime and deployment consumers are present |
+| `TUS_MIGRATION_BACKUP_VERIFIED` / `TUS_MIGRATION_PLAN` / `TUS_MIGRATION_HISTORY_RECONCILED` / `TUS_MIGRATION_SELECTED` | Render API pre-deploy wrapper | Release guard; deployment-owned | Missing backup, history reconciliation, or exact additive selection denies migration before Prisma |
+| `WORKER_ENABLE_CONSUMER` / `WORKER_DEPLOYMENT_STATUS` / `WORKER_QUEUE_OWNERSHIP` | Python worker and Render | Fail-closed activation gate | Render remains disabled and external-blocked until Redis, queue, lease, and owner evidence is present |
 
 ## Consumer map
 
@@ -46,3 +48,4 @@ Similar names are not proof that a variable is unused.
 | 2026-08-30 | Initial inventory for TUS product hardening | Aliases retained; no unproven variable removed | deterministic |
 | 2026-08-30 | Render/Vercel contract review | Render remains fail-closed; Vercel uses the Next app contract and has no provider activation | deployment / external-blocked |
 | 2026-08-31 | PostgreSQL safety simplification | Root `DATABASE_URL` only; explicit local/test profile and seed intent; former runner URL/metadata inputs removed from active consumers | deterministic |
+| 2026-09-09 | Phase 12 deployment operations | Added backup-gated additive migration metadata and durable-worker activation inventory; no values emitted | deterministic / external-blocked |

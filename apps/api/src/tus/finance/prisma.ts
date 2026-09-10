@@ -13,49 +13,50 @@ import { FinanceError } from './index.ts'
 // Prisma delegates are narrowed at the boundary; row fields are validated by
 // the conversion helpers below before entering the finance domain.
 type Row = {
-  [key: string]: any
-  id?: any
-  contractVersion?: any
-  paymentId?: any
-  tenantId?: any
-  commitmentId?: any
-  providerReference?: any
-  providerStatus?: any
-  commercialStatus?: any
-  amount?: any
-  currency?: any
-  idempotencyKey?: any
-  correlationId?: any
-  source?: any
-  createdAt?: any
-  updatedAt?: any
-  snapshotId?: any
-  context?: any
-  grossAmount?: any
-  deductions?: any
-  commissionableBase?: any
-  rateBps?: any
-  ruleVersion?: any
-  commissionAmount?: any
-  netAmount?: any
-  evidenceId?: any
-  ledgerStatus?: any
-  entryId?: any
-  entryType?: any
-  linkedEntryId?: any
-  reason?: any
-  occurredAt?: any
-  actorId?: any
-  kind?: any
-  confirmationId?: any
-  confirmedAt?: any
-  freezeId?: any
-  reconciliationId?: any
-  providerAmount?: any
-  status?: any
-  deterministic?: any
-  response?: any
-  requestHash?: any
+  [key: string]: unknown
+  id?: unknown
+  contractVersion?: unknown
+  paymentId?: unknown
+  tenantId?: unknown
+  commitmentId?: unknown
+  providerReference?: unknown
+  providerStatus?: unknown
+  commercialStatus?: unknown
+  amount?: unknown
+  currency?: unknown
+  idempotencyKey?: unknown
+  correlationId?: unknown
+  source?: unknown
+  createdAt?: unknown
+  updatedAt?: unknown
+  snapshotId?: unknown
+  context?: unknown
+  grossAmount?: unknown
+  deductions?: unknown
+  commissionableBase?: unknown
+  rateBps?: unknown
+  ruleVersion?: unknown
+  commissionAmount?: unknown
+  netAmount?: unknown
+  evidenceId?: unknown
+  ledgerStatus?: unknown
+  entryId?: unknown
+  entryType?: unknown
+  linkedEntryId?: unknown
+  reason?: unknown
+  occurredAt?: unknown
+  actorId?: unknown
+  kind?: unknown
+  confirmationId?: unknown
+  confirmedAt?: unknown
+  freezeId?: unknown
+  reconciliationId?: unknown
+  providerAmount?: unknown
+  status?: unknown
+  deterministic?: unknown
+  response?: unknown
+  requestHash?: unknown
+  splitPolicy?: unknown
 }
 
 type Delegate = {
@@ -183,7 +184,7 @@ function paymentToRow(value: FinancePaymentIntent): Row {
 function paymentFromRow(row: Row): FinancePaymentIntent {
   const createdAt = dateMillis(row.createdAt)
   const splitPolicy: FinancePaymentIntent['splitPolicy'] = row['splitPolicy'] && typeof row['splitPolicy'] === 'object' ? row['splitPolicy'] as FinancePaymentIntent['splitPolicy'] : { name: 'five-day-intermediary', version: 'legacy', holdDays: 5, releaseRule: 'completion-confirmation-or-approved-policy', merchantOfRecord: 'tus-intermediary', providerEvidenceId: null, legalEvidenceId: null }
-  return { contractVersion: text(row.contractVersion) as FinancePaymentIntent['contractVersion'], paymentId: text(row.paymentId), tenantId: text(row.tenantId), commitmentId: text(row.commitmentId), provider: 'mercado-pago', providerReference: nullableText(row.providerReference), providerStatus: text(row.providerStatus) as FinancePaymentIntent['providerStatus'], commercialStatus: text(row.commercialStatus) as FinancePaymentIntent['commercialStatus'], amount: number(row.amount), currency: text(row.currency), idempotencyKey: text(row.idempotencyKey), correlationId: text(row.correlationId), credentialsCollected: false, source: text(row.source) as FinancePaymentIntent['source'], orderId: optionalText(row['orderId']) ?? text(row.commitmentId), posOperationId: optionalText(row['posOperationId']) ?? null, merchantOfRecord: 'tus-intermediary', collectionModel: 'intermediary', splitPolicy, releaseAt: row['releaseAt'] ? dateMillis(row['releaseAt']) : createdAt, providerEventAt: row['providerEventAt'] ? dateMillis(row['providerEventAt']) : null, providerError: (optionalText(row['providerError']) as FinancePaymentIntent['providerError']) ?? null, createdAt, updatedAt: dateMillis(row.updatedAt) }
+  return { contractVersion: text(row.contractVersion) as FinancePaymentIntent['contractVersion'], paymentId: text(row.paymentId), tenantId: text(row.tenantId), commitmentId: text(row.commitmentId), provider: 'mercado-pago', providerReference: nullableText(row.providerReference), providerStatus: text(row.providerStatus) as FinancePaymentIntent['providerStatus'], commercialStatus: text(row.commercialStatus) as FinancePaymentIntent['commercialStatus'], amount: safeMinorNumber(row.amount), currency: text(row.currency), idempotencyKey: text(row.idempotencyKey), correlationId: text(row.correlationId), credentialsCollected: false, source: text(row.source) as FinancePaymentIntent['source'], orderId: optionalText(row['orderId']) ?? text(row.commitmentId), posOperationId: optionalText(row['posOperationId']) ?? null, merchantOfRecord: 'tus-intermediary', collectionModel: 'intermediary', splitPolicy, releaseAt: row['releaseAt'] ? dateMillis(row['releaseAt']) : createdAt, providerEventAt: row['providerEventAt'] ? dateMillis(row['providerEventAt']) : null, providerError: (optionalText(row['providerError']) as FinancePaymentIntent['providerError']) ?? null, createdAt, updatedAt: dateMillis(row.updatedAt) }
 }
 
 function snapshotToRow(value: FinanceCommissionSnapshot): Row {
@@ -191,7 +192,7 @@ function snapshotToRow(value: FinanceCommissionSnapshot): Row {
 }
 
 function snapshotFromRow(row: Row): FinanceCommissionSnapshot {
-  return { contractVersion: text(row.contractVersion) as FinanceCommissionSnapshot['contractVersion'], snapshotId: text(row.snapshotId), tenantId: text(row.tenantId), commitmentId: text(row.commitmentId), context: text(row.context) as FinanceCommissionSnapshot['context'], grossAmount: number(row.grossAmount), deductions: number(row.deductions), commissionableBase: number(row.commissionableBase), rateBps: number(row.rateBps), ruleVersion: text(row.ruleVersion), commissionAmount: number(row.commissionAmount), netAmount: number(row.netAmount), currency: text(row.currency), providerReference: text(row.providerReference), evidenceId: text(row.evidenceId), ledgerStatus: text(row.ledgerStatus) as FinanceCommissionSnapshot['ledgerStatus'], createdAt: dateMillis(row.createdAt) }
+  return { contractVersion: text(row.contractVersion) as FinanceCommissionSnapshot['contractVersion'], snapshotId: text(row.snapshotId), tenantId: text(row.tenantId), commitmentId: text(row.commitmentId), context: text(row.context) as FinanceCommissionSnapshot['context'], grossAmount: safeMinorNumber(row.grossAmount), deductions: safeMinorNumber(row.deductions), commissionableBase: safeMinorNumber(row.commissionableBase), rateBps: safeMinorNumber(row.rateBps), ruleVersion: text(row.ruleVersion), commissionAmount: safeMinorNumber(row.commissionAmount), netAmount: safeMinorNumber(row.netAmount), currency: text(row.currency), providerReference: text(row.providerReference), evidenceId: text(row.evidenceId), ledgerStatus: text(row.ledgerStatus) as FinanceCommissionSnapshot['ledgerStatus'], createdAt: dateMillis(row.createdAt) }
 }
 
 function ledgerToRow(value: FinanceLedgerEntry): Row {
@@ -199,7 +200,7 @@ function ledgerToRow(value: FinanceLedgerEntry): Row {
 }
 
 function ledgerFromRow(row: Row): FinanceLedgerEntry {
-  return { entryId: text(row.entryId), tenantId: text(row.tenantId), commitmentId: text(row.commitmentId), entryType: text(row.entryType) as FinanceLedgerEntry['entryType'], amount: number(row.amount), currency: text(row.currency), linkedEntryId: nullableText(row.linkedEntryId), reason: text(row.reason), immutable: true, createdAt: dateMillis(row.createdAt) }
+  return { entryId: text(row.entryId), tenantId: text(row.tenantId), commitmentId: text(row.commitmentId), entryType: text(row.entryType) as FinanceLedgerEntry['entryType'], amount: safeMinorNumber(row.amount), currency: text(row.currency), linkedEntryId: nullableText(row.linkedEntryId), reason: text(row.reason), immutable: true, createdAt: dateMillis(row.createdAt) }
 }
 
 function evidenceToRow(value: FinancialEvidence): Row {
@@ -233,7 +234,7 @@ function reconciliationToRow(value: ReconciliationResult): Row {
 function reconciliationFromRow(row: Row): ReconciliationResult {
   const reconciliationId = text(row.reconciliationId)
   const commitmentId = text(row.commitmentId)
-  return { reconciliationId, tenantId: text(row.tenantId), commitmentId, providerReference: text(row.providerReference), providerAmount: number(row.providerAmount), evidenceId: optionalText(row.evidenceId) ?? `reconciliation-evidence-${commitmentId}`, actorId: optionalText(row.actorId) ?? 'finance-reconciliation', correlationId: optionalText(row.correlationId) ?? `reconciliation-${reconciliationId}`, status: text(row.status) as ReconciliationResult['status'], reason: text(row.reason) as ReconciliationResult['reason'], deterministic: row.deterministic === true, createdAt: dateMillis(row.createdAt) }
+  return { reconciliationId, tenantId: text(row.tenantId), commitmentId, providerReference: text(row.providerReference), providerAmount: safeMinorNumber(row.providerAmount), evidenceId: optionalText(row.evidenceId) ?? `reconciliation-evidence-${commitmentId}`, actorId: optionalText(row.actorId) ?? 'finance-reconciliation', correlationId: optionalText(row.correlationId) ?? `reconciliation-${reconciliationId}`, status: text(row.status) as ReconciliationResult['status'], reason: text(row.reason) as ReconciliationResult['reason'], deterministic: row.deterministic === true, createdAt: dateMillis(row.createdAt) }
 }
 
 function text(value: unknown): string {
@@ -249,9 +250,10 @@ function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
-function number(value: unknown): number {
+function safeMinorNumber(value: unknown): number {
   const normalized = typeof value === 'bigint' ? Number(value) : value
-  if (typeof normalized !== 'number' || !Number.isSafeInteger(normalized) || normalized < 0) throw new Error('finance persistence number field is invalid')
+  if (typeof normalized !== 'number' || !Number.isSafeInteger(normalized) || normalized < 0) throw new Error('finance persistence exact minor field is invalid')
+  if (typeof value === 'bigint' && BigInt(normalized) !== value) throw new Error('finance persistence exact minor field exceeds safe boundary')
   return normalized
 }
 

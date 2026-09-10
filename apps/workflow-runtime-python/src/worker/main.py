@@ -8,10 +8,12 @@ behavior.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import signal
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -165,7 +167,34 @@ def worker_activation_status(environment: dict[str, str] | None = None) -> str:
         return "disabled"
     if not values.get("DATABASE_URL", "").strip():
         return "missing-database-url"
+    if not values.get("REDIS_URL", "").strip():
+        return "missing-redis-url"
+    if not values.get("QUEUE_REF", "").strip():
+        return "missing-queue-ref"
+    if values.get("WORKER_QUEUE_OWNERSHIP", "external-blocked-placeholder") != "active":
+        return "queue-ownership-unverified"
     return "active"
+
+
+async def run_consumer() -> None:
+    """Run the owned queue consumer until the process receives a stop signal."""
+    from worker.queue.consumer import WorkflowQueueConsumer
+
+    consumer = WorkflowQueueConsumer()
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for stop_signal in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(stop_signal, stop_event.set)
+        except (NotImplementedError, RuntimeError):
+            # Windows and embedded interpreters may not support asyncio signal
+            # handlers; the platform still owns process termination there.
+            pass
+
+    try:
+        await consumer.consume_forever(stop_event)
+    finally:
+        await consumer.close()
 
 
 def main() -> None:
@@ -176,8 +205,7 @@ def main() -> None:
     if not get_settings().consumer_ready:
         print(json.dumps({"status": "external-blocked", "providerCalls": 0, "jobsClaimed": 0}))
         return
-    result = run_once(example_job_payload())
-    print(json.dumps(result, indent=2))
+    asyncio.run(run_consumer())
 
 
 if __name__ == "__main__":

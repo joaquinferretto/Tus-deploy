@@ -29,15 +29,38 @@ test('repository selection rejects the underscore sibling and ambiguous git -C i
   assert.throws(() => resolveRepositoryBoundary({ cwd: REPO_ROOT, gitRoot: '', args: [] }), /repository boundary/u)
 })
 
+test('relative git -C paths resolve from cwd and matching explicit roots are not ambiguous', () => {
+  for (const selection of [
+    { cwd: 'C:\\Users\\mmmau\\tuscompras-b2b', gitRoot: REPO_ROOT, args: ['git', '-C', 'Goldenrepo-js-py'] },
+    { cwd: REPO_ROOT, gitRoot: REPO_ROOT, args: ['-C', '.'] },
+  ]) {
+    assert.equal(resolveRepositoryBoundary(selection).root, REPO_ROOT)
+  }
+  assert.throws(
+    () => resolveRepositoryBoundary({ cwd: 'C:\\Users\\mmmau\\tuscompras-b2b', args: ['-C', 'Goldenrepo-js_py'] }),
+    /Goldenrepo-js_py/u,
+  )
+})
+
 test('commit boundary requires an intended staged index and refuses commit-all or empty state', () => {
   assert.throws(() => validateGitAction({ action: 'commit', stagedFiles: [] }), /staged/u)
   assert.throws(() => validateGitAction({ action: 'commit', stagedFiles: ['safe.ts'], commitAll: true }), /commit -a/u)
+  assert.throws(() => validateGitAction({ action: 'commit', stagedFiles: ['safe.ts'], indexState: 'foreign' }), /index/u)
   assert.deepEqual(validateGitAction({ action: 'commit', stagedFiles: ['safe.ts'] }), { status: 'ready', action: 'commit' })
+  assert.deepEqual(
+    buildExplicitGitCommand({
+      action: 'commit',
+      repositoryRoot: REPO_ROOT,
+      stagedFiles: ['scripts/sdd/git-boundary.mjs'],
+      indexState: 'intended',
+    }),
+    ['git', '-C', REPO_ROOT, 'commit', '--', 'scripts/sdd/git-boundary.mjs'],
+  )
 })
 
 test('push boundary requires an explicit destination and refspec without inferred tracking', () => {
   assert.throws(() => validateGitAction({ action: 'push', remote: 'origin', branch: 'feature/db' }), /refspec/u)
   assert.throws(() => validateGitAction({ action: 'push', refspec: 'HEAD' }), /remote/u)
   assert.deepEqual(validateGitAction({ action: 'push', remote: 'origin', branch: 'feature/db', refspec: 'HEAD:refs/heads/feature/db', tracking: true }), { status: 'ready', action: 'push' })
-  assert.deepEqual(buildExplicitGitCommand({ action: 'push', repositoryRoot: REPO_ROOT, remote: 'origin', refspec: 'HEAD:refs/heads/feature/db' }), ['git', '-C', REPO_ROOT, 'push', 'origin', 'HEAD:refs/heads/feature/db'])
+  assert.deepEqual(buildExplicitGitCommand({ action: 'push', repositoryRoot: REPO_ROOT, remote: 'origin', branch: 'feature/db', refspec: 'HEAD:refs/heads/feature/db' }), ['git', '-C', REPO_ROOT, 'push', 'origin', 'HEAD:refs/heads/feature/db'])
 })

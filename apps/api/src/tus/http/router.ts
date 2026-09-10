@@ -260,7 +260,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
     try {
       const listing = await requireMarketplace(application).createListing(context, body as unknown as MarketplaceListingInput)
-      response.status(201).json(listing)
+      sendMarketplaceJson(response, 201, listing)
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -282,7 +282,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
     try {
       const listing = await requireMarketplace(application).publishListing(context, listingId)
-      response.status(200).json(listing)
+      sendMarketplaceJson(response, 200, listing)
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -290,7 +290,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
 
   router.get('/tus/v1/marketplace/discovery', async (request: Request, response: Response) => {
     try {
-      response.status(200).json(await requireMarketplace(application).discover({
+      sendMarketplaceJson(response, 200, await requireMarketplace(application).discover({
         ...(readQueryString(request.query['locationId']) ? { locationId: readQueryString(request.query['locationId']) } : {}),
         ...(readQueryString(request.query['cohort']) ? { cohort: readQueryString(request.query['cohort']) as 'beauty-personal-care' | 'repairs-trades' } : {}),
       }))
@@ -311,7 +311,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      response.status(200).json(await requireMarketplace(application).merchantOperations(context))
+      sendMarketplaceJson(response, 200, await requireMarketplace(application).merchantOperations(context))
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -358,7 +358,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
         createdAt: readString(body, 'createdAt') || new Date().toISOString(),
         lines,
       })
-      response.status(result.status === 'replay' ? 200 : 201).json(result)
+      sendMarketplaceJson(response, result.status === 'replay' ? 200 : 201, result)
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -376,7 +376,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      response.status(200).json(await requireMarketplace(application).customerCommitments(context))
+      sendMarketplaceJson(response, 200, await requireMarketplace(application).customerCommitments(context))
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -394,7 +394,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      response.status(200).json(await requireMarketplace(application).customerCommitment(context, request.params['commitmentId'] ?? ''))
+      sendMarketplaceJson(response, 200, await requireMarketplace(application).customerCommitment(context, request.params['commitmentId'] ?? ''))
     } catch (error) {
       if (error instanceof MarketplaceError && error.code === 'FORBIDDEN') {
         await recordMarketplaceDenied(application, context, 'customer.commitment.read', request.params['commitmentId'] ?? '')
@@ -1085,6 +1085,19 @@ function sendMarketplaceError(response: Response, error: unknown): void {
     return
   }
   sendError(response, 500, 'UNAVAILABLE', 'TUS marketplace operation was not committed')
+}
+
+function sendMarketplaceJson(response: Response, status: number, payload: unknown): void {
+  response.status(status).json(serializeMarketplaceJson(payload))
+}
+
+function serializeMarketplaceJson(value: unknown): unknown {
+  if (typeof value === 'bigint') return value.toString()
+  if (Array.isArray(value)) return value.map(serializeMarketplaceJson)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, serializeMarketplaceJson(nested)]))
+  }
+  return value
 }
 
 function sendCalendarError(response: Response, error: unknown): void {

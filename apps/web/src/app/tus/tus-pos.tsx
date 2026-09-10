@@ -10,8 +10,10 @@ import {
   createStableIdempotencyKey,
   createTusWebClient,
   createTusWebFetchTransport,
+  parseTusPosResponse,
   type TusPosOperation,
 } from '@/lib/tus-client'
+import { createTusOfflineRecord } from '@/lib/tus-web-contract'
 import { resolveTusRoleLabel } from '../../lib/tus-journeys'
 import { TusActionButton, TusFieldError, TusSkipLink, TusStateMessage } from './tus-ui'
 
@@ -44,8 +46,14 @@ export function TusPosSurface(): React.ReactNode {
   const [feedback, setFeedback] = useState<PosFeedback | null>(null)
   const [operation, setOperation] = useState<TusPosOperation | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [online, setOnline] = useState(true)
 
   useEffect(() => {
+    setOnline(window.navigator.onLine)
+    const handleOnline = () => setOnline(true)
+    const handleOffline = () => setOnline(false)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
     void createTusWebAuthClient()
       .restore(window.location.pathname)
       .then((result) => {
@@ -53,6 +61,10 @@ export function TusPosSurface(): React.ReactNode {
         setAuthMessage(result.message)
         setSession(result.session === undefined ? null : toTusWebSession(result.session))
       })
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
   }, [])
 
   async function recordOperation(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -73,6 +85,22 @@ export function TusPosSurface(): React.ReactNode {
     setSubmitting(true)
     setFeedback(null)
     try {
+      if (!online) {
+        const offlinePayload = { ...nextOperation }
+        delete offlinePayload.accessToken
+        const offlineRecord = createTusOfflineRecord({
+          kind: nextOperation.kind,
+          operationId: nextOperation.operationId,
+          idempotencyKey: nextOperation.idempotencyKey,
+          payload: offlinePayload,
+        })
+        window.sessionStorage.setItem(
+          `tus.offline.${nextOperation.operationId}`,
+          JSON.stringify(offlineRecord)
+        )
+        setFeedback(posFeedback(offlineRecord))
+        return
+      }
       const response = await createTusWebClient(createTusWebFetchTransport()).recordManualOperation(
         nextOperation
       )
@@ -82,25 +110,34 @@ export function TusPosSurface(): React.ReactNode {
         createTusWebAuthClient().clearLocalSession()
         setSession(null)
       }
-      const classified = classifyTusRequestError(error, nextOperation.operationId)
-      setFeedback({
-        status:
-          classified.status === 'conflict'
-            ? 'conflict'
-            : classified.status === 'pending'
-              ? 'pending'
-              : 'error',
+      setFeedback(classifyPosError(error, nextOperation.operationId))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function refreshOperationStatus(nextOperation: TusPosOperation): Promise<void> {
+    setSubmitting(true)
+    setFeedback(null)
+    try {
+      if (!online) {
+        setFeedback({
+          status: 'pending',
+          operationId: nextOperation.operationId,
+          message: 'TUS status is still unavailable while this device is offline.',
+          evidence: 'No status request was sent and the original operation was not resubmitted.',
+          retryable: false,
+          action: 'refresh',
+        })
+        return
+      }
+      const response = await createTusWebClient(createTusWebFetchTransport()).getPosOperationStatus({
+        ...nextOperation,
         operationId: nextOperation.operationId,
-        message: classified.message,
-        evidence: classified.evidence,
-        retryable: classified.retryable,
-        action:
-          classified.action === 'resolve'
-            ? 'resolve'
-            : classified.action === 'refresh'
-              ? 'refresh'
-              : 'retry',
       })
+      setFeedback(posFeedback(parseTusPosResponse(response, nextOperation.operationId)))
+    } catch (error) {
+      setFeedback(classifyPosError(error, nextOperation.operationId))
     } finally {
       setSubmitting(false)
     }
@@ -223,14 +260,19 @@ export function TusPosSurface(): React.ReactNode {
                 )}
               </label>
             </div>
-            <TusActionButton
+           <TusActionButton
               disabled={!canSubmit}
               loading={submitting}
               loadingLabel="Waiting for TUS…"
               type="submit"
             >
-              Send to TUS
+              {online ? 'Send to TUS' : 'Queue securely for reconnect'}
             </TusActionButton>
+            <p className="tus-field-note" role="status">
+              {online
+                ? 'Online: the operation will be sent for server acknowledgement.'
+                : 'Offline: no provider call is made; the same idempotent operation is queued locally.'}
+            </p>
             {feedback === null ? (
               <p className="tus-boundary-note">
                 No local success state is shown. Pending and conflicts stay visible until the server
@@ -261,11 +303,15 @@ export function TusPosSurface(): React.ReactNode {
                   </TusActionButton>
                 ) : operation === null ? null : (
                   <TusActionButton
-                    disabled={submitting}
-                    loading={submitting}
-                    loadingLabel="Checking TUS…"
-                    onClick={() => void sendOperation(operation)}
-                    type="button"
+                        disabled={submitting}
+                        loading={submitting}
+                        loadingLabel="Checking TUS…"
+                        onClick={() =>
+                          void (feedback.action === 'refresh'
+                            ? refreshOperationStatus(operation)
+                            : sendOperation(operation))
+                        }
+                        type="button"
                   >
                     {feedback.action === 'refresh'
                       ? 'Refresh server status'
@@ -279,6 +325,28 @@ export function TusPosSurface(): React.ReactNode {
       </main>
     </>
   )
+}
+
+function classifyPosError(error: unknown, operationId: string): PosFeedback {
+  const classified = classifyTusRequestError(error, operationId)
+  return {
+    status:
+      classified.status === 'conflict'
+        ? 'conflict'
+        : classified.status === 'pending'
+          ? 'pending'
+          : 'error',
+    operationId,
+    message: classified.message,
+    evidence: classified.evidence,
+    retryable: classified.retryable,
+    action:
+      classified.action === 'resolve'
+        ? 'resolve'
+        : classified.action === 'refresh'
+          ? 'refresh'
+          : 'retry',
+  }
 }
 
 function createOperation(

@@ -13,6 +13,11 @@ through secret-store references. The queue boundary is Redis-backed and keeps
 the PostgreSQL ledger/outbox/DLQ authoritative. No `dockerCommand`, Dockerfile,
 or production container is part of this profile.
 
+The canonical MongoDB secret key for both Render services that declare MongoDB
+is `MONGODB_URL`. `MONGODB_URI` is accepted only by the API connection resolver
+as a compatibility input when the canonical key is absent; it is not declared
+by Render and must never be printed or copied into a manifest.
+
 ### Web standalone entrypoint
 
 The Render web build is executed by the `@factory/web` workspace package, so the
@@ -28,6 +33,19 @@ The package `start` script runs `node .next/standalone/server.js`. The generated
 server reads the platform-provided `PORT`; `next start` must not be used with
 `output: 'standalone'`. This is a checked-in contract only and does not claim a
 live Render deployment.
+
+The checked-in Next configuration is platform-conditioned: Windows local builds
+use no standalone output because pnpm symlink copying requires elevated link
+privileges, while Render Linux production retains `output: 'standalone'`. This
+local portability branch does not weaken the Linux/Render standalone entrypoint
+or suppress TypeScript and ESLint build failures.
+
+The API follows the same external-port contract with
+`PORT=$PORT pnpm --filter @factory/api start`. Its release order is build,
+backup-gated additive pre-deploy (`node scripts/deployment/render-predeploy.mjs`),
+then start. The wrapper invokes only `prisma migrate deploy` after the approved
+backup, additive plan, reconciled migration history, and exact selected migration
+metadata are present.
 
 ## Profile contract
 
@@ -63,6 +81,12 @@ Authorized smoke is a separate, explicitly approved operation. A failed
 deployment stops traffic before partial serving, selects the last passing
 service configuration, preserves the PostgreSQL ledger/outbox/DLQ, and records
 the version, reason, operator, and health evidence.
+
+The Render Python worker starts `python -m worker.main`. When explicitly owned
+and enabled with canonical Redis/queue settings, the entrypoint runs a long-lived
+Redis queue consumer with bounded polling and signal-aware resource closure. The checked-in profile remains
+`external-blocked-placeholder` with `WORKER_ENABLE_CONSUMER=false`, so it exits
+without claiming work until queue ownership, leases, and live evidence exist.
 
 ## AWS parity shape
 

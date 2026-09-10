@@ -17,6 +17,12 @@ durable records rather than treated as rollback authority.
 4. Preserve the PostgreSQL ledger, outbox, idempotency records, and DLQ. Keep
    the failed version available for diagnosis without serving it.
 
+The Render pre-deploy boundary is additionally gated by a verified backup,
+`TUS_MIGRATION_PLAN=additive-only`, reconciled historical migration state, and
+the exact selected launch migration. Without all four attestations, Prisma is not
+invoked. Historical destructive or ambiguous migrations are never replayed as a
+rollback strategy.
+
 ## Rollback
 
 1. Select the last passing versioned profile/configuration.

@@ -1,11 +1,15 @@
 import { readFile, readdir } from 'node:fs/promises'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const CONNECTION_TIMEOUT_MS = 60_000
 export const RETRY_COUNT = 1
+export const EXACT_MONEY_BACKFILL_APPROVAL = 'exact-money-backfill-approval-required'
+export const EXACT_MONEY_BACKFILL_TAG = 'repair:exact-money-backfill'
+export const EXACT_MONEY_CURRENCY_SCALES = Object.freeze({ ARS: 2, USD: 2, EUR: 2 })
 export const REPAIR_MIGRATION_NAME = '20260831180000_tus_additive_migration_repair'
 export const LAUNCH_MIGRATION_NAME = '20260909090000_tus_argentina_market_launch'
 export const REPAIR_MIGRATION_PATH = join(
@@ -501,6 +505,97 @@ export function validateBackupHandle(backupId) {
   return { status: 'ready', handle: '<redacted>' }
 }
 
+export function validateExactMoneySql(sql) {
+  const executable = stripSqlComments(sql)
+  const forbiddenMoneyType = /(?:DOUBLE\s+PRECISION|REAL|FLOAT(?:\s*\(\s*\d+\s*\))?)/iu
+  const monetaryDeclaration = new RegExp(`(?:"(?:${REQUIRED_MONEY_COLUMNS.join('|')})"|\\b(?:${REQUIRED_MONEY_COLUMNS.join('|')})\\b)\\s+`, 'iu')
+  if (forbiddenMoneyType.test(executable) && monetaryDeclaration.test(executable)) {
+    return { status: 'rejected', reason: 'exact-money-floating-type', writesAllowed: false }
+  }
+  if (monetaryDeclaration.test(executable) && !/\bBIGINT\b/iu.test(executable) && !/\bNUMERIC\s*\(/iu.test(executable)) {
+    return { status: 'rejected', reason: 'exact-money-type-missing', writesAllowed: false }
+  }
+  return { status: 'passed', reason: 'exact-money-sql-compatible', writesAllowed: true }
+}
+
+export function inspectBackupTooling() {
+  return {
+    pgDump: locateExecutable('pg_dump'),
+    pgRestore: locateExecutable('pg_restore'),
+  }
+}
+
+export function createDefaultBackupOperations({ pgRestorePath = locateExecutablePath('pg_restore'), spawn = spawnSync } = {}) {
+  return {
+    assertRestorable: async (backupId) => {
+      const backupPath = resolveBackupPath(backupId)
+      if (!backupPath) throw new Error('backup-handle-invalid')
+      let metadata
+      try {
+        metadata = statSync(backupPath)
+      } catch {
+        throw new Error('backup-file-unavailable')
+      }
+      if (!metadata.isFile() || metadata.size <= 0) throw new Error('backup-file-empty')
+      if (!pgRestorePath) throw new Error('backup-tooling-unavailable')
+
+      const result = spawn(pgRestorePath, ['--format=custom', '--list', backupPath], {
+        stdio: 'ignore',
+        timeout: CONNECTION_TIMEOUT_MS,
+        windowsHide: true,
+      })
+      if (result?.error || result?.status !== 0) throw new Error('backup-archive-list-verification-failed')
+    },
+    verifyRestore: async () => undefined,
+  }
+}
+
+export function createExactMoneyBackfillPlan({
+  table,
+  sourceColumn,
+  targetColumn,
+  currencyColumn,
+  currency = 'ARS',
+  scale = 2,
+  approved = false,
+  approvalId,
+} = {}) {
+  if (!approved) return { status: 'blocked', reason: EXACT_MONEY_BACKFILL_APPROVAL }
+  if (typeof approvalId !== 'string' || approvalId.trim().length === 0) return { status: 'blocked', reason: EXACT_MONEY_BACKFILL_APPROVAL }
+  for (const identifier of [table, sourceColumn, targetColumn, currencyColumn]) {
+    if (!isSafeSqlIdentifier(identifier)) throw new Error('exact-money backfill identifier is invalid')
+  }
+  const normalizedCurrency = String(currency).trim().toUpperCase()
+  if (!(normalizedCurrency in EXACT_MONEY_CURRENCY_SCALES) || scale !== EXACT_MONEY_CURRENCY_SCALES[normalizedCurrency]) throw new Error('exact-money backfill policy is invalid')
+
+  const factor = 10n ** BigInt(scale)
+  const maxBigInt = '9223372036854775807'
+  const minBigInt = '-9223372036854775808'
+  const escapedCurrency = normalizedCurrency.replaceAll("'", "''")
+  const quotedTable = quoteIdentifier(table)
+  const quotedSource = quoteIdentifier(sourceColumn)
+  const quotedTarget = quoteIdentifier(targetColumn)
+  const quotedCurrency = quoteIdentifier(currencyColumn)
+  return {
+    status: 'ready',
+    approvalId: approvalId.trim(),
+    currency: normalizedCurrency,
+    scale,
+    requiresBackupRestore: true,
+    requiresDevelopmentConfirmation: true,
+    sql: [
+      `-- ${EXACT_MONEY_BACKFILL_TAG}`,
+      `DO $$ BEGIN`,
+      `  IF EXISTS (SELECT 1 FROM ${quotedTable} WHERE ${quotedCurrency} IS NULL OR UPPER(${quotedCurrency}) <> '${escapedCurrency}') THEN RAISE EXCEPTION 'exact-money-backfill-unknown-currency'; END IF;`,
+      `  IF EXISTS (SELECT 1 FROM ${quotedTable} WHERE ${quotedSource} IS NULL OR ${quotedSource}::text IN ('NaN', 'Infinity', '-Infinity')) THEN RAISE EXCEPTION 'exact-money-backfill-invalid-number'; END IF;`,
+      `  IF EXISTS (SELECT 1 FROM ${quotedTable} WHERE ${quotedSource}::numeric <> trunc(${quotedSource}::numeric, ${scale}) OR ${quotedSource}::numeric * ${factor} < ${minBigInt}::numeric OR ${quotedSource}::numeric * ${factor} > ${maxBigInt}::numeric) THEN RAISE EXCEPTION 'exact-money-backfill-fractional-or-overflow'; END IF;`,
+      `END $$;`,
+      `ALTER TABLE ${quotedTable} ADD COLUMN IF NOT EXISTS ${quotedTarget} BIGINT;`,
+      `UPDATE ${quotedTable} SET ${quotedTarget} = (${quotedSource}::numeric * ${factor})::BIGINT WHERE ${quotedTarget} IS NULL AND UPPER(${quotedCurrency}) = '${escapedCurrency}';`,
+    ].join('\n'),
+  }
+}
+
 export async function verifyRestorableBackup({ backupId, operations = {} } = {}) {
   const handle = validateBackupHandle(backupId)
   if (handle.status !== 'ready') throw new Error(handle.reason)
@@ -601,15 +696,18 @@ export async function runRepair({
   const migrationRoot = existsSync(join(rootDirectory, LAUNCH_MIGRATION_PATH)) ? rootDirectory : ROOT_DIRECTORY
   const migrationSql = selectedMigrationSql ?? await readFile(join(migrationRoot, LAUNCH_MIGRATION_PATH), 'utf8')
   const staticGate = gateInventory({ statements: splitSqlStatements(migrationSql) })
+  const exactMoneyGate = validateExactMoneySql(migrationSql)
   const sideEffects = { connections: 0, writes: 0, deletes: 0, migrationInvocations: 0, providerCalls: 0 }
-  const base = { inventory, staticGate, sideEffects, connectionAttempts: [], cleanupState: 'not-started' }
+  const base = { inventory, staticGate, exactMoneyGate, sideEffects, connectionAttempts: [], cleanupState: 'not-started' }
   if (staticGate.status !== 'passed') return { ...base, status: 'blocked', safetyGate: 'static-sql-gate', reason: staticGate.reason }
+  if (exactMoneyGate.status !== 'passed') return { ...base, status: 'blocked', safetyGate: 'exact-money-sql-gate', reason: exactMoneyGate.reason }
 
   const target = resolveRepairTarget({ rootDirectory, environment, confirmed })
   if (target.status !== 'ready') return { ...base, status: 'blocked', safetyGate: 'target-gate', reason: target.reason, target: redactTarget(target) }
   const backup = validateBackupHandle(backupId)
   if (backup.status !== 'ready') return { ...base, status: 'blocked', safetyGate: 'backup-gate', reason: backup.reason, target: redactTarget(target), backup }
 
+  const defaultBackupOperations = createDefaultBackupOperations()
   const runtime = {
     connect: defaultConnect,
     inspect: defaultInspect,
@@ -618,11 +716,8 @@ export async function runRepair({
     verifySchema: async (pool) => verifySchemaSnapshot(await runtime.inspect(pool)),
     verifyDurablePos: async () => ({ status: 'external-blocked', providerCalls: 0, reason: 'runtime-harness-prohibited-in-this-phase' }),
     close: defaultClose,
-    backup: {
-      assertRestorable: async () => undefined,
-      verifyRestore: async () => { throw new Error('backup verification unavailable; restorable backup is required before DDL') },
-    },
     ...operations,
+    backup: { ...defaultBackupOperations, ...(operations.backup ?? {}) },
   }
   let pool
   let resultToReturn
@@ -669,10 +764,13 @@ export async function runRepair({
     })
     return resultToReturn
   } catch (error) {
+    const errorReason = error instanceof Error && /backup-(?:tooling-unavailable|restore-verification-required)/u.test(error.message)
+      ? error.message
+      : null
     resultToReturn = buildRunResult(base, {
       status: 'blocked',
-      safetyGate: 'runtime-gate',
-      reason: error?.name === 'BoundedRetryError' ? 'connection-retry-exhausted' : 'repair-operation-failed-restore-required',
+      safetyGate: errorReason ? 'backup-gate' : 'runtime-gate',
+      reason: errorReason ?? (error?.name === 'BoundedRetryError' ? 'connection-retry-exhausted' : 'repair-operation-failed-restore-required'),
       target: redactTarget(target),
       backup,
       preflight,
@@ -738,21 +836,62 @@ function sameMembers(left = [], right = []) {
   return Array.isArray(left) && left.length === right.length && [...left].sort().every((value, index) => value === [...right].sort()[index])
 }
 
+function locateExecutable(name) {
+  return locateExecutablePath(name) ? '<available>' : '<unavailable>'
+}
+
+function locateExecutablePath(name) {
+  const pathEntries = String(process.env.PATH ?? process.env.Path ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+  const suffixes = process.platform === 'win32' ? ['', '.exe', '.cmd'] : ['']
+  for (const directory of pathEntries) {
+    for (const suffix of suffixes) {
+      const candidate = join(directory, `${name}${suffix}`)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  if (process.platform === 'win32') {
+    const result = spawnSync('where.exe', [name], { encoding: 'utf8', timeout: 1_000, windowsHide: true })
+    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim().split(/\r?\n/u)[0]
+  }
+  return null
+}
+
+function resolveBackupPath(backupId) {
+  if (typeof backupId !== 'string' || backupId.trim().length === 0) return null
+  if (/^(?:postgres(?:ql)?:\/\/|file:)/iu.test(backupId)) return null
+  if (/password|secret|token/iu.test(backupId)) return null
+  return backupId
+}
+
+function isSafeSqlIdentifier(value) {
+  return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/u.test(value)
+}
+
+function quoteIdentifier(value) {
+  return `"${value.replaceAll('"', '""')}` + '"'
+}
+
 function includesMembers(left = [], right = []) {
   return Array.isArray(left) && right.every((value) => left.includes(value))
 }
 
 function validateMoneyTypes(snapshot) {
   const tables = snapshot.tables ?? {}
+  let presentMoneyTable = false
   for (const [table, columns] of Object.entries(REQUIRED_MONEY_TYPES)) {
     const observed = tables[table]
     if (!observed?.types && !observed?.columnTypes) continue
+    if (observed.present === true) presentMoneyTable = true
     const types = observed.types ?? observed.columnTypes
     for (const column of columns) {
       if (!['bigint', 'int8'].includes(String(types[column]).toLowerCase())) return false
     }
   }
-  return true
+  const currencies = snapshot.money?.currencies ?? []
+  if (currencies.some((currency) => !/^[A-Z]{3}$/u.test(String(currency)))) return false
+  return presentMoneyTable ? currencies.every((currency) => String(currency) === String(currency).toUpperCase()) : true
 }
 
 function redactTarget(target) {

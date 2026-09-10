@@ -141,11 +141,51 @@ export class TusRequestError extends Error {
   }
 }
 
-export interface TusWebRequest<TBody = unknown> extends TusWebContext {
+export interface TusWebRequest<TBody = unknown> extends Partial<TusWebContext> {
   method: 'GET' | 'POST'
   path: string
   idempotencyKey?: string
   body?: TBody
+}
+
+export interface TusRegistrationInput {
+  email: string
+  password: string
+  displayName: string
+}
+
+export interface TusRecoveryCompletionInput {
+  token: string
+  newPassword: string
+}
+
+export type TusServiceSlotsInput = TusWebContext & {
+  calendarId: string
+  date: string
+}
+
+export type TusBookingInput = TusWebContext & {
+  idempotencyKey: string
+  requestHash: string
+  calendarId: string
+  serviceId: string
+  customerId: string
+  slotId: string
+}
+
+export type TusPaymentIntentInput = TusWebContext & {
+  idempotencyKey: string
+  requestHash: string
+  commitmentId: string
+  orderId: string
+}
+
+export type TusPosStatusInput = TusWebContext & { operationId: string }
+
+export type TusSupportCaseInput = TusWebContext & {
+  caseId: string
+  commitmentId: string
+  category: string
 }
 
 export interface TusWebTransport {
@@ -200,6 +240,15 @@ export type TusPosResponse = {
 }
 
 export interface TusWebClient {
+  register(input: TusRegistrationInput): Promise<unknown>
+  requestRecovery(email: string): Promise<unknown>
+  completeRecovery(input: TusRecoveryCompletionInput): Promise<unknown>
+  listServiceSlots(input: TusServiceSlotsInput): Promise<unknown>
+  bookService(input: TusBookingInput): Promise<unknown>
+  createPaymentIntent(input: TusPaymentIntentInput): Promise<unknown>
+  getPosOperationStatus(input: TusPosStatusInput): Promise<unknown>
+  listDeliveryTasks(context: TusWebContext): Promise<unknown>
+  openSupportCase(input: TusSupportCaseInput): Promise<unknown>
   discover(context: TusWebContext): Promise<TusDiscoveryResponse>
   merchantOperations(context: TusWebContext): Promise<TusMerchantOperationsResponse>
   merchantMarketplaceOperations(context: TusWebContext): Promise<TusMerchantOperationsResponse>
@@ -334,6 +383,32 @@ export function tusIntentFeedback(result: TusCheckoutResult): TusIntentFeedback 
 
 export function createTusWebClient(transport: TusWebTransport): TusWebClient {
   return {
+    register: (input) => transport.request({ method: 'POST', path: '/auth/register', body: input }),
+    requestRecovery: (email) => transport.request({ method: 'POST', path: '/auth/recovery/request', body: { email } }),
+    completeRecovery: (input) => transport.request({ method: 'POST', path: '/auth/recovery/complete', body: input }),
+    listServiceSlots: ({ calendarId, date, ...context }) =>
+      transport.request({ method: 'GET', path: `/tus/v1/calendar/${encodeURIComponent(calendarId)}/slots?date=${encodeURIComponent(date)}`, ...context }),
+    bookService: ({ idempotencyKey, requestHash, calendarId, serviceId, customerId, slotId, ...context }) =>
+      transport.request({
+        method: 'POST',
+        path: '/tus/v1/calendar/bookings',
+        idempotencyKey,
+        body: { requestHash, calendarId, serviceId, customerId, slotId },
+        ...context,
+      }),
+    createPaymentIntent: ({ idempotencyKey, requestHash, commitmentId, orderId, ...context }) =>
+      transport.request({
+        method: 'POST',
+        path: '/tus/v1/finance/payment-intents',
+        idempotencyKey,
+        body: { requestHash, commitmentId, orderId },
+        ...context,
+      }),
+    getPosOperationStatus: ({ operationId, ...context }) =>
+      transport.request({ method: 'GET', path: `/tus/v1/pos/operations/${encodeURIComponent(operationId)}/status`, ...context }),
+    listDeliveryTasks: (context) => transport.request({ method: 'GET', path: '/tus/v1/delivery/tasks', ...context }),
+    openSupportCase: ({ caseId, commitmentId, category, ...context }) =>
+      transport.request({ method: 'POST', path: '/tus/v1/support/cases', body: { caseId, commitmentId, category }, ...context }),
     discover: (context) =>
       transport.request<TusDiscoveryResponse>({
         ...context,
@@ -445,12 +520,12 @@ export function createTusWebFetchTransport(): TusWebTransport {
     request: async <TResponse>(input: TusWebRequest): Promise<TResponse> => {
       const headers: Record<string, string> = {
         Accept: 'application/json',
-        'X-Tenant-Id': input.tenantId,
-        'X-Actor-Id': input.actorId,
-        'X-Correlation-Id': input.correlationId,
         'X-TUS-API-Version': TUS_API_VERSION,
         'X-TUS-Contract-Version': TUS_CONTRACT_VERSION,
       }
+      if (input.tenantId !== undefined) headers['X-Tenant-Id'] = input.tenantId
+      if (input.actorId !== undefined) headers['X-Actor-Id'] = input.actorId
+      if (input.correlationId !== undefined) headers['X-Correlation-Id'] = input.correlationId
       if ('accessToken' in input && typeof input.accessToken === 'string' && input.accessToken.length > 0) headers['Authorization'] = `Bearer ${input.accessToken}`
       if (input.idempotencyKey !== undefined) headers['Idempotency-Key'] = input.idempotencyKey
 
@@ -458,6 +533,7 @@ export function createTusWebFetchTransport(): TusWebTransport {
       const response = await fetch(joinTusApiUrl(baseUrl, input.path), {
         method: input.method,
         headers,
+        credentials: 'omit',
         ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
       })
       if (!response.ok) {
