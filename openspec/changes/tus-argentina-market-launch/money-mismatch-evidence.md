@@ -21,11 +21,14 @@ current_attempt:
   node_env: development
   explicit_development_confirmation: true
   source: repository-root .env DATABASE_URL only
-  transaction: "One read-only repeatable-read metadata transaction was attempted; no metadata receipt was accepted and the redacted failure was not retried."
-  authorized_metadata_shapes: 5
+  transaction: "One psql read-only repeatable-read metadata transaction was attempted; no metadata receipt was accepted and the redacted failure was not retried."
+  query_scope: "information_schema.columns for public columns matching amount|total|price|fee|tax|balance|credit|debit|value|money|currency, plus _prisma_migrations existence/count only"
+  authorized_query_count: 1
+  psql_invocations: 1
   row_values_read: 0
   row_values_emitted: 0
-  outcome: "The single bounded attempt ended in a redacted connection-or-query failure. No DDL, DML, migration, seed, provider, service, or application process was run."
+  failure_category: connection-unavailable
+  outcome: "The single bounded psql attempt ended in the redacted connection-unavailable category before a metadata receipt. No DDL, DML, migration, seed, provider, service, or application process was run."
 
 prior_psql_probe:
   status: psql-absent
@@ -45,21 +48,23 @@ connection_attempts:
   outcome: "One read-only metadata attempt ended in a redacted connection-or-query failure; no retry or third attempt."
   authorized_query_count: 5
 
-psql_path: "C:\\Users\\mmmau\\Tools\\postgresql-client-16.2\\bin\\psql.exe"
+psql_path: "C:\\Users\\mmmau\\AppData\\Local\\Temp\\opencode\\postgresql-client-16.2\\pgsql\\bin\\psql.exe"
+psql_client_source: official-postgresql-16.2-windows-x64-binaries
+psql_client_lifecycle: "Extracted for this session, used once, and removed during verified cleanup."
 
 live_columns:
   status: unavailable
   result: not-returned
-  reason: "The current single attempt returned no accepted metadata receipt; no table names, column names, types, precision, scale, nullability, constraints, or indexes were read or invented."
-  scope_requested: "All public columns with monetary names or numeric/float types, including table, column, type, precision, scale, and nullability metadata."
+  reason: "The current single psql attempt returned no accepted metadata receipt; no table names, column names, types, precision, scale, or nullability were read or invented."
+  scope_requested: "Public columns whose names match amount|total|price|fee|tax|balance|credit|debit|value|money|currency, returning table, column, type, precision, scale, and nullability only."
   row_values_read: 0
   row_values_emitted: 0
 
 ledger:
   status: unavailable
   prisma_migrations_exists: unavailable
-  public_table_count: unavailable
-  reason: "The current single attempt returned no accepted ledger metadata receipt; the prior psql-absent probe also did not execute its ledger query."
+  prisma_migrations_count: unavailable
+  reason: "The current single psql attempt returned no accepted ledger existence/count receipt; the prior psql-absent probe also did not execute its ledger query."
   row_values_read: 0
   row_values_emitted: 0
 
@@ -79,19 +84,20 @@ static_expected_exact_money:
   historical_float_inventory: "Older historical migrations still contain DOUBLE PRECISION monetary declarations; they remain inventory-only and must not be replayed."
 
 mismatch_location:
-  classification: live-database
-  confidence: prior-bounded-preflight
-  exact_live_identity: unresolved
-  evidence: "The prior bounded development preflight recorded exact-money-type-mismatch before DDL in database-evidence.md and apply-progress.md. This single fresh metadata transaction produced no accepted receipt, so the exact live table and column remain unresolved."
-  repository_schema: "not the mismatch source; static contract uses BigInt"
-  selected_sql: "not the mismatch source; static launch and repair SQL use BIGINT"
-  verifier_code: "the verifier is the fail-closed detector, not the live mismatch source; it rejects any present required money type other than bigint/int8"
-  live_database: "prior preflight indicates an existing incompatible monetary column, but this run cannot identify it without a successful metadata receipt"
+  classification: unresolved-redacted
+  current_failure_category: connection-unavailable
+  confidence: none-current-attempt
+  exact_live_identity: unavailable
+  evidence: "The single psql metadata attempt failed before a receipt, so this run cannot distinguish live schema, repository/repair verifier, or no mismatch. Prior bounded preflight evidence recorded exact-money-type-mismatch before DDL, but it is not fresh live-column identity evidence."
+  repository_schema: "static contract expects BigInt; not attributable by this failed live probe"
+  selected_sql: "static launch and repair SQL use BIGINT; not attributable by this failed live probe"
+  verifier_code: "validatePreflight is the fail-closed detector and rejects present required money types other than bigint/int8; no fresh snapshot was obtained"
+  live_database: "unresolved because the redacted connection-unavailable category occurred before metadata"
   historical_migration_replay: prohibited
 
 safe_correction:
-  status: blocked-until-exact-identity-and-approval
-  minimum_lossless_shape: "After a separately authorized successful metadata-only diagnosis, use an additive BIGINT minor-unit shadow/cutover for the exact live table and column; do not rewrite or drop the source."
+  status: blocked-until-successful-metadata-diagnosis-and-approval
+  minimum_lossless_shape: "Do not correct from this redacted failure. After a separately authorized successful metadata-only diagnosis, use an additive BIGINT minor-unit shadow/cutover for the exact live table and column; do not rewrite or drop the source."
   required_validation:
     - currency scale and supported currency
     - fractional precision rejection
@@ -114,32 +120,34 @@ side_effects:
   row_values_read: 0
   row_values_emitted: 0
   successful_fresh_connection: not-confirmed
-  psql_invocations: 0
+  psql_invocations: 1
   metadata_transaction_writes: 0
 
 cleanup_state:
   status: verified
   owned_processes_remaining: 0
+  installer_directory_removed: true
+  installer_archive_removed: true
+  query_output_files_removed: true
   database_cleanup: not-applicable-no-write-started
   backup: preserved-not-modified
   repository_files_changed: 1
   changed_file: openspec/changes/tus-argentina-market-launch/money-mismatch-evidence.md
 
 risks:
-  - "The current single metadata-only attempt ended in a redacted connection-or-query failure, so no fresh metadata receipt was possible."
-  - "The prior exact requested PostgreSQL client executable was absent; that timeout/psql evidence is preserved above."
-  - "Fresh live columns, constraint/index metadata, and ledger status remain unavailable."
-  - "The prior mismatch classification is actionable evidence, but its exact live table and column identity remains unresolved."
+  - "The current single psql metadata attempt ended in the redacted connection-unavailable category, so no fresh metadata receipt was possible."
+  - "The official PostgreSQL 16.2 client was session-local and was removed after the attempt; no persistent tool directory was changed."
+  - "Fresh live columns and ledger existence/count remain unavailable."
+  - "The prior mismatch classification is historical evidence only; its exact live table and column identity remains unresolved."
   - "Losslessness cannot be asserted without values; no values were read by this diagnosis."
   - "Historical floating-point migrations remain prohibited from replay."
   - "The pre-existing dirty worktree was preserved; no application code was edited."
 
-next_recommended: "Stop this probe. Do not retry in this run and do not run DDL or backfill. Resolve the redacted connection/query prerequisite in a separately authorized bounded metadata-only window, then identify the exact live column before designing any correction."
+next_recommended: "Stop this probe. Do not retry in this run and do not run DDL or backfill. Resolve the redacted connection-unavailable prerequisite in a separately authorized bounded metadata-only window, then identify the exact live column before designing any correction."
 
 skill_resolution:
-  apply: C:\Users\mmmau\.config\opencode\skills\sdd-apply\SKILL.md
   shared: C:\Users\mmmau\.config\opencode\skills\_shared\SKILL.md
-  typescript: C:\Users\mmmau\.config\opencode\skills\curated\typescript\SKILL.md
   loaded: true
+  current_session: "shared instructions loaded; no implementation skill required"
   code_edits: none
-  probe: "one custom metadata-only Python/psycopg attempt; no repository probe script, service, provider, migration, seed, or application process"
+  probe: "one official psql metadata-only attempt; no repository probe script, service, provider, migration, seed, or application process"
