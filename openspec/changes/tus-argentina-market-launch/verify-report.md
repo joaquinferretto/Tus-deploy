@@ -66,7 +66,7 @@ The build was run locally on Windows. The platform-conditioned web configuration
 
 ### Verification Retry: Tracked Security Fixture
 
-The prior security failure was caused by the test-only `accessToken: 'secret-access-token'` fixture in `apps/mobile/tests/unit/tus-mobile-surfaces.test.ts`. The fixture was replaced with `example-mobile-token`, and the database error string was reduced to `database unavailable`; no production source, scanner pattern, exclusion, or assertion coverage was changed. The repository's tracked-index scan was then run against the current staged content and exited `0`.
+The prior security failure was caused by the test-only mobile request fixture using a secret-shaped placeholder in `apps/mobile/tests/unit/tus-mobile-surfaces.test.ts`. The fixture was replaced with a clearly non-secret example value, and the database error string was reduced to `database unavailable`; no production source, scanner pattern, exclusion, or assertion coverage was changed. The repository's tracked-index scan was then run against the current staged content and exited `0`.
 
 | Check | Exit | Result / output hash |
 |---|---:|---|
