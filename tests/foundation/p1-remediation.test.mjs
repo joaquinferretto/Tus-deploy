@@ -61,7 +61,7 @@ test('Mercado Pago package declares browser fetch and Node built-in type librari
 
 test('Mercado Pago package is represented in the workspace lockfile', () => {
   const lockfile = readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8')
-  assert.match(lockfile, /  packages\/mercado-pago:\n/u)
+  assert.match(lockfile, /  packages\/mercado-pago:\r?\n/u)
 })
 
 test('Mercado Pago package uses the workspace TypeScript config package name', () => {

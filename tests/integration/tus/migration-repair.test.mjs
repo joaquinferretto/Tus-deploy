@@ -17,10 +17,18 @@ import {
   CONNECTION_TIMEOUT_MS,
   createDefaultBackupOperations,
   LAUNCH_MIGRATION_NAME,
+  LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME,
+  POS_INDEX_CONSTRAINT_REPAIR_NAME,
   REPAIR_MIGRATION_NAME,
+  REQUIRED_CONFORMANCE_MONEY_COLUMNS,
+  REQUIRED_CONFORMANCE_PRIMARY_KEYS,
+  REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES,
   REQUIRED_LAUNCH_TABLES,
   REQUIRED_MONEY_COLUMNS,
   REQUIRED_POS_TABLES,
+  REQUIRED_POS_REPAIR_CONSTRAINTS,
+  REQUIRED_POS_REPAIR_INDEXES,
+  REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES,
   REQUIRED_SCHEMA_COLUMNS,
   classifySqlStatement,
   createExactMoneyBackfillPlan,
@@ -33,15 +41,27 @@ import {
   resolveRepairTarget,
   runRepair,
   splitSqlStatements,
+  validateConformancePreflight,
   validatePreflight,
   validateExactMoneySql,
   verifyRestorableBackup,
+  verifyLiveSchemaSnapshot,
   verifySchemaSnapshot,
   withBoundedRetry,
 } from '../../../scripts/tus-migration-repair-lib.mjs'
 
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..')
 const MIGRATIONS_ROOT = join(REPO_ROOT, 'apps', 'api', 'prisma', 'migrations')
+const POS_INDEX_CONSTRAINT_REPAIR_PATH = join(
+  MIGRATIONS_ROOT,
+  POS_INDEX_CONSTRAINT_REPAIR_NAME,
+  'migration.sql',
+)
+const LIVE_SCHEMA_CONFORMANCE_REPAIR_PATH = join(
+  MIGRATIONS_ROOT,
+  LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME,
+  'migration.sql',
+)
 
 async function withTempRoot(contents, callback) {
   const root = await mkdtemp(join(tmpdir(), 'tus-migration-repair-'))
@@ -57,7 +77,7 @@ test('inventory classifies the complete backlog and excludes comment-only destru
   const inventory = await inventoryMigrations({ migrationsDirectory: MIGRATIONS_ROOT })
 
   assert.equal(inventory.pendingMigrations.length, 28)
-  assert.equal(inventory.migrations.length, 30)
+  assert.equal(inventory.migrations.length, 32)
   assert.equal(inventory.destructiveStatementCount, 19)
   assert.deepEqual(inventory.destructiveTokens, ['CASCADE', 'DROP'])
   assert.equal(inventory.commentOnlyTokenCount > 0, true)
@@ -229,6 +249,21 @@ test('launch baseline covers the full marketplace database with exact money and 
   for (const column of REQUIRED_MONEY_COLUMNS) assert.match(migration, new RegExp(`"${column}" BIGINT`, 'u'))
 })
 
+test('currency checks skip reconciliation records without a currency column while preserving safety gates', async () => {
+  const migration = await readFile(join(MIGRATIONS_ROOT, `${LAUNCH_MIGRATION_NAME}`, 'migration.sql'), 'utf8')
+  const currencyCheck = migration.match(/DO \$\$[\s\S]*?END \$\$/u)?.[0]
+  const reconciliationTable = migration.match(/CREATE TABLE IF NOT EXISTS "TusReconciliationRecord" \([\s\S]*?\);/u)?.[0]
+
+  assert.ok(currencyCheck)
+  assert.ok(reconciliationTable)
+  assert.doesNotMatch(currencyCheck, /'TusReconciliationRecord'/u)
+  assert.doesNotMatch(reconciliationTable, /"currency"/u)
+  assert.match(reconciliationTable, /"providerAmount" BIGINT/u)
+  assert.equal(gateInventory({ statements: splitSqlStatements(migration) }).status, 'passed')
+  assert.equal(validateExactMoneySql(migration).status, 'passed')
+  assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE|CASCADE|DELETE\s+FROM)\b/iu)
+})
+
 test('Prisma launch money fields use BigInt rather than Float', async () => {
   const schema = await readFile(join(REPO_ROOT, 'apps', 'api', 'prisma', 'schema.prisma'), 'utf8')
   assert.doesNotMatch(schema, /(?:amount|price|grossAmount|deductions|commissionableBase|commissionAmount|netAmount|providerAmount)\s+Float/u)
@@ -323,7 +358,7 @@ test('backup tooling is an explicit pre-connection gate and never falls back to 
   })
 })
 
-test('default backup gate validates a nonzero custom archive with pg_restore list before DDL', async () => {
+test('default backup gate requires isolated restore verification after pg_restore list', async () => {
   const rootDirectory = await mkdtemp(join(tmpdir(), 'tus-backup-gate-'))
   const backupPath = join(rootDirectory, 'backup.dump')
   const calls = []
@@ -337,9 +372,10 @@ test('default backup gate validates a nonzero custom archive with pg_restore lis
       },
     })
 
-    const result = await verifyRestorableBackup({ backupId: backupPath, operations })
-
-    assert.equal(result.status, 'passed')
+    await assert.rejects(
+      () => verifyRestorableBackup({ backupId: backupPath, operations }),
+      /backup-restore-verification-required/u,
+    )
     assert.equal(calls.length, 1)
     assert.deepEqual(calls[0].argumentsList, ['--format=custom', '--list', backupPath])
     assert.equal(calls[0].options.stdio, 'ignore')
@@ -392,5 +428,328 @@ test('safe additive path applies once, preserves the ledger, closes the pool, an
     assert.equal(verifySchemaSnapshot(snapshot).status, 'passed')
     assert.equal(result.cleanupState, 'verified')
     assert.deepEqual(calls, ['backup:backup-operator-handle', 'verify-backup', 'connect:60000:1', `apply:true`, `ledger:${LAUNCH_MIGRATION_NAME}`, 'close'])
+  })
+})
+
+test('POS index and constraint repair declares the exact missing additive objects', async () => {
+  const migration = await readFile(POS_INDEX_CONSTRAINT_REPAIR_PATH, 'utf8')
+  const normalizedMigration = migration.replace(/\s+/gu, ' ')
+  assert.equal(gateInventory({ statements: splitSqlStatements(migration) }).status, 'passed')
+  const expectedIndexes = [
+    ['TusDeliveryZone_tenantId_active_idx', 'TusDeliveryZone', 'tenantId', 'active', false],
+    ['TusDeliveryShift_tenantId_zoneId_status_idx', 'TusDeliveryShift', 'tenantId', 'zoneId', 'status', false],
+    ['TusDeliveryTask_tenantId_commitmentId_idx', 'TusDeliveryTask', 'tenantId', 'commitmentId', false],
+    ['TusDeliveryTask_tenantId_shiftId_status_idx', 'TusDeliveryTask', 'tenantId', 'shiftId', 'status', false],
+    ['TusDeliveryTask_tenantId_commitmentId_status_idx', 'TusDeliveryTask', 'tenantId', 'commitmentId', 'status', false],
+    ['TusDeliveryProof_tenantId_taskId_idx', 'TusDeliveryProof', 'tenantId', 'taskId', false],
+    ['TusDeliveryIncident_tenantId_taskId_status_idx', 'TusDeliveryIncident', 'tenantId', 'taskId', 'status', false],
+    ['TusDeliveryAudit_tenantId_auditId_key', 'TusDeliveryAudit', 'tenantId', 'auditId', true],
+    ['TusDeliveryAudit_tenantId_createdAt_idx', 'TusDeliveryAudit', 'tenantId', 'createdAt', false],
+    ['TusPosOperation_tenantId_shiftId_createdAt_idx', 'TusPosOperation', 'tenantId', 'shiftId', 'createdAt', false],
+    ['TusPosOperation_tenantId_context_kind_idx', 'TusPosOperation', 'tenantId', 'context', 'kind', false],
+    ['TusPosReceipt_tenantId_operationId_idx', 'TusPosReceipt', 'tenantId', 'operationId', false],
+    ['TusPosReceipt_tenantId_operationId_createdAt_idx', 'TusPosReceipt', 'tenantId', 'operationId', 'createdAt', false],
+    ['TusPosDevice_tenantId_status_idx', 'TusPosDevice', 'tenantId', 'status', false],
+    ['TusPosSession_tenantId_deviceId_shiftId_status_idx', 'TusPosSession', 'tenantId', 'deviceId', 'shiftId', 'status', false],
+    ['TusPosConflict_tenantId_operationId_status_idx', 'TusPosConflict', 'tenantId', 'operationId', 'status', false],
+    ['TusPosConflict_tenantId_status_createdAt_idx', 'TusPosConflict', 'tenantId', 'status', 'createdAt', false],
+    ['TusPosVersion_tenantId_shiftId_version_idx', 'TusPosVersion', 'tenantId', 'shiftId', 'version', false],
+    ['TusDeliveryOutbox_tenantId_status_createdAt_idx', 'TusDeliveryOutbox', 'tenantId', 'status', 'createdAt', false],
+    ['TusPosOutbox_tenantId_status_createdAt_idx', 'TusPosOutbox', 'tenantId', 'status', 'createdAt', false],
+    ['TusPosOutbox_tenantId_aggregateId_status_idx', 'TusPosOutbox', 'tenantId', 'aggregateId', 'status', false],
+    ['TusPosAudit_tenantId_operationId_createdAt_idx', 'TusPosAudit', 'tenantId', 'operationId', 'createdAt', false],
+  ]
+
+  for (const [name, table, ...columnsWithUniqueness] of expectedIndexes) {
+    const unique = columnsWithUniqueness.pop()
+    const columns = columnsWithUniqueness.map((column) => `"${column}"`).join(', ')
+    const createPrefix = unique ? 'CREATE UNIQUE INDEX IF NOT EXISTS' : 'CREATE INDEX IF NOT EXISTS'
+    assert.match(migration, new RegExp(`${createPrefix} "${name}"[\\s\\S]*?ON "${table}"[\\s\\S]*?\\(${columns}\\)`, 'u'))
+  }
+
+  const expectedConstraints = [
+    ['TusPosConflict_tenant_operation_fk', 'FOREIGN KEY ("tenantId", "operationId") REFERENCES "TusPosOperation" ("tenantId", "operationId")'],
+    ['TusPosOperation_amount_non_negative_check', 'CHECK ("amount" >= 0)'],
+    ['TusPosVersion_version_non_negative_check', 'CHECK ("version" >= 0)'],
+  ]
+  for (const [name, definition] of expectedConstraints) {
+    assert.match(normalizedMigration, new RegExp(`IF NOT EXISTS[\\s\\S]*?ADD CONSTRAINT "${name}"`, 'u'))
+    assert.ok(normalizedMigration.includes(definition))
+  }
+
+  assert.match(migration, /INSERT INTO "_prisma_migrations"[\s\S]*?20260911120000_tus_pos_index_constraint_repair/u)
+  assert.doesNotMatch(migration, /\b(?:DROP|TRUNCATE|CASCADE|DELETE\s+FROM)\b/iu)
+})
+
+test('POS index and constraint repair requires the launch marker and never replays the baseline', async () => {
+  await withTempRoot('DATABASE_URL=postgresql://user:secret@db.example.test/tus\n', async (rootDirectory) => {
+    const calls = []
+    const result = await runRepair({
+      repairUnit: 'pos-index-constraint',
+      rootDirectory,
+      environment: { NODE_ENV: 'development' },
+      confirmed: true,
+      backupId: 'backup-operator-handle',
+      operations: {
+        backup: { assertRestorable: async () => calls.push('backup'), verifyRestore: async () => calls.push('verify-backup') },
+        connect: async (_url, timeoutMs, attempt) => {
+          calls.push(`connect:${timeoutMs}:${attempt}`)
+          return { query: async () => ({ rows: [] }) }
+        },
+        inspect: async () => ({
+          tables: {},
+          ledger: { launchMarkerCount: 1, posIndexConstraintRepairMarkerCount: 0 },
+          orphans: 0,
+        }),
+        applyBaseline: async (_pool, sql) => calls.push(`apply:${sql.includes(POS_INDEX_CONSTRAINT_REPAIR_NAME)}`),
+        verifySchema: async () => ({ status: 'passed', requiredTableCount: 15, presentTableCount: 15, repairMarkerCount: 1 }),
+        verifyDurablePos: async () => ({ status: 'external-blocked', providerCalls: 0, reason: 'runtime-harness-prohibited-in-this-phase' }),
+        close: async () => calls.push('close'),
+      },
+    })
+
+    assert.equal(result.status, 'partial')
+    assert.equal(result.migrationResult.marker, POS_INDEX_CONSTRAINT_REPAIR_NAME)
+    assert.deepEqual(calls, ['backup', 'verify-backup', 'connect:60000:1', 'apply:true', 'close'])
+  })
+})
+
+test('metadata verification rejects wrong repair index columns, uniqueness, and constraint definitions', () => {
+  const result = verifySchemaSnapshot({
+    tables: {},
+    indexes: [{
+      table: REQUIRED_POS_REPAIR_INDEXES[0].table,
+      name: REQUIRED_POS_REPAIR_INDEXES[0].name,
+      columns: ['active', 'tenantId'],
+      unique: true,
+    }],
+    constraints: [{
+      table: REQUIRED_POS_REPAIR_CONSTRAINTS[0].table,
+      name: REQUIRED_POS_REPAIR_CONSTRAINTS[0].name,
+      type: 'f',
+      definition: 'FOREIGN KEY ("tenantId", "operationId") REFERENCES "WrongTable" ("tenantId", "operationId") NOT VALID',
+    }],
+    ledger: { repairMarkerCount: 1 },
+  })
+
+  assert.equal(result.status, 'blocked')
+  assert.ok(result.missingIndexes.includes(REQUIRED_POS_REPAIR_INDEXES[0].name))
+  assert.ok(result.missingConstraints.includes(REQUIRED_POS_REPAIR_CONSTRAINTS[0].name))
+})
+
+test('metadata verification accepts PostgreSQL redundant outer parentheses in equivalent checks', () => {
+  const result = verifySchemaSnapshot({
+    tables: {},
+    indexes: [],
+    constraints: [
+      {
+        table: 'TusPosConflict',
+        name: 'TusPosConflict_tenant_operation_fk',
+        type: 'f',
+        definition: 'FOREIGN KEY ("tenantId", "operationId") REFERENCES "TusPosOperation"("tenantId", "operationId") NOT VALID',
+      },
+      {
+        table: 'TusPosOperation',
+        name: 'TusPosOperation_amount_non_negative_check',
+        type: 'c',
+        definition: 'CHECK ( amount >= 0 )',
+      },
+      {
+        table: 'TusPosVersion',
+        name: 'TusPosVersion_version_non_negative_check',
+        type: 'c',
+        definition: 'CHECK (( version >= 0 ))',
+      },
+    ],
+    ledger: { repairMarkerCount: 1 },
+  })
+
+  assert.deepEqual(result.missingConstraints, [])
+})
+
+test('metadata verification rejects materially different check predicates after normalization', () => {
+  const result = verifySchemaSnapshot({
+    tables: {},
+    indexes: [],
+    constraints: [{
+      table: 'TusPosOperation',
+      name: 'TusPosOperation_amount_non_negative_check',
+      type: 'c',
+      definition: 'CHECK ((amount > 0))',
+    }],
+    ledger: { repairMarkerCount: 1 },
+  })
+
+  assert.ok(result.missingConstraints.includes('TusPosOperation_amount_non_negative_check'))
+})
+
+function completeConformanceSnapshot(overrides = {}) {
+  const tableNames = [...new Set(REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES)]
+  const billingTables = REQUIRED_CONFORMANCE_PRIMARY_KEYS.map((contract) => contract.table)
+  const moneyTables = Object.keys(Object.fromEntries(REQUIRED_CONFORMANCE_MONEY_COLUMNS.map(({ table }) => [table, true])))
+  const tables = Object.fromEntries([...new Set([...tableNames, ...billingTables, ...moneyTables])].map((table) => [table, {
+    present: true,
+    columns: ['id', ...REQUIRED_CONFORMANCE_MONEY_COLUMNS.filter((column) => column.table === table).map((column) => column.column)],
+    types: Object.fromEntries(REQUIRED_CONFORMANCE_MONEY_COLUMNS.filter((column) => column.table === table).map((column) => [column.column, 'int8'])),
+    columnShapes: {
+      id: { udtName: 'text', nullable: false, defaultValue: null },
+      ...Object.fromEntries(REQUIRED_CONFORMANCE_MONEY_COLUMNS.filter((column) => column.table === table).map((column) => [column.column, { udtName: 'int8', nullable: false, defaultValue: null }])),
+    },
+    primaryKey: true,
+  }]))
+
+  return {
+    tables,
+    rowCounts: Object.fromEntries(REQUIRED_CONFORMANCE_PRIMARY_KEYS.map(({ table }) => [table, 0])),
+    idAggregates: Object.fromEntries(REQUIRED_CONFORMANCE_PRIMARY_KEYS.map(({ table }) => [table, { rowCount: 0, nullCount: 0, duplicateCount: 0 }])),
+    primaryKeys: Object.fromEntries(REQUIRED_CONFORMANCE_PRIMARY_KEYS.map(({ table }) => [table, ['id']])),
+    indexes: REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES.map((index) => ({ ...index, predicate: null })),
+    constraints: REQUIRED_POS_REPAIR_CONSTRAINTS,
+    ledger: {
+      markerCounts: {
+        [LAUNCH_MIGRATION_NAME]: 1,
+        [POS_INDEX_CONSTRAINT_REPAIR_NAME]: 1,
+        [LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME]: 1,
+        [REPAIR_MIGRATION_NAME]: 0,
+      },
+      launchMarkerCount: 1,
+      posIndexConstraintRepairMarkerCount: 1,
+      liveSchemaConformanceRepairMarkerCount: 1,
+      historicalAdditiveRepairMarkerCount: 0,
+    },
+    rowValuesRead: 0,
+    ...overrides,
+  }
+}
+
+test('live conformance SQL is exact, additive, guarded, and never reconstructs historical lineage', async () => {
+  const migration = await readFile(LIVE_SCHEMA_CONFORMANCE_REPAIR_PATH, 'utf8')
+  const statements = splitSqlStatements(migration)
+  const gate = gateInventory({ statements })
+
+  assert.equal(gate.status, 'passed')
+  assert.equal(validateExactMoneySql(migration).status, 'passed')
+  assert.equal((migration.match(/ADD COLUMN "amountMinor" BIGINT NOT NULL/gu) ?? []).length, 3)
+  assert.equal((migration.match(/_pkey'/gu) ?? []).length, 10)
+  assert.doesNotMatch(migration, /DEFAULT\s+0|UPDATE\s+|\b(?:DROP|TRUNCATE|CASCADE|DELETE\s+FROM)\b/iu)
+  assert.doesNotMatch(migration, new RegExp(REPAIR_MIGRATION_NAME, 'u'))
+  assert.match(migration, new RegExp(LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME, 'u'))
+
+  for (const index of REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES.filter(({ legacyAlias }) => legacyAlias)) {
+    assert.match(migration, new RegExp(index.legacyAlias, 'u'))
+    assert.match(migration, new RegExp(`'${index.name}', '${index.table}', ARRAY\\[${index.columns.map((column) => `'${column}'`).join(', ')}\\]`, 'u'))
+  }
+})
+
+test('live conformance contracts are source-derived with exact counts and ordered aliases', () => {
+  assert.equal(REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES.length, 62)
+  assert.equal(new Set(REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES).size, 58)
+  assert.equal(REQUIRED_CONFORMANCE_MONEY_COLUMNS.length, 26)
+  assert.equal(REQUIRED_CONFORMANCE_PRIMARY_KEYS.length, 68)
+  assert.equal(REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES.length, 22)
+  assert.equal(REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES.filter(({ legacyAlias }) => legacyAlias).length, 14)
+  assert.deepEqual(
+    REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES.filter(({ legacyAlias }) => legacyAlias).map(({ legacyAlias }) => legacyAlias),
+    Array.from({ length: 14 }, (_, index) => `tus_lscr_legacy_${String(index + 1).padStart(2, '0')}`),
+  )
+  assert.deepEqual(REQUIRED_CONFORMANCE_MONEY_COLUMNS.filter(({ table }) => table.startsWith('TusBilling') || table === 'TusSubscriptionPlan'), [
+    { table: 'TusSubscriptionPlan', column: 'amountMinor', udtName: 'int8', nullable: false, defaultValue: null },
+    { table: 'TusBillingRefund', column: 'amountMinor', udtName: 'int8', nullable: false, defaultValue: null },
+    { table: 'TusBillingLedger', column: 'amountMinor', udtName: 'int8', nullable: false, defaultValue: null },
+  ])
+})
+
+test('conformance preflight fails closed for every unsafe aggregate, catalog, alias, and marker gate', () => {
+  const cases = [
+    ['non-empty money table', { rowCounts: { TusSubscriptionPlan: 1 } }],
+    ['null id aggregate', { idAggregates: { TusBillingAccount: { rowCount: 1, nullCount: 1, duplicateCount: 0 } } }],
+    ['duplicate id aggregate', { idAggregates: { TusBillingAccount: { rowCount: 2, nullCount: 0, duplicateCount: 1 } } }],
+    ['incompatible id metadata', { tables: { TusBillingAccount: { present: true, columns: ['id'], columnShapes: { id: { udtName: 'varchar', nullable: false, defaultValue: null } }, primaryKey: false } } }],
+    ['incompatible existing primary key', { primaryKeys: { TusBillingAccount: ['tenantId'] } }],
+    ['occupied alias', { indexes: [{ name: 'tus_lscr_legacy_01', table: 'OtherTable', columns: ['id'], unique: false, predicate: null }] }],
+    ['missing launch marker', { ledger: { launchMarkerCount: 0, posIndexConstraintRepairMarkerCount: 1, liveSchemaConformanceRepairMarkerCount: 0, historicalAdditiveRepairMarkerCount: 0, markerCounts: {} } }],
+    ['historical marker present', { ledger: { launchMarkerCount: 1, posIndexConstraintRepairMarkerCount: 1, liveSchemaConformanceRepairMarkerCount: 0, historicalAdditiveRepairMarkerCount: 1, markerCounts: {} } }],
+  ]
+
+  for (const [label, overrides] of cases) {
+    const result = validateConformancePreflight(completeConformanceSnapshot(overrides))
+    assert.equal(result.status, 'blocked', label)
+    assert.equal(result.writesAllowed, false, label)
+  }
+})
+
+test('unsafe conformance preflight refuses connection-side writes and preserves zero side effects', async () => {
+  await withTempRoot('DATABASE_URL=postgresql://user:secret@db.example.test/tus\n', async (rootDirectory) => {
+    const calls = []
+    const result = await runRepair({
+      repairUnit: 'live-schema-conformance',
+      rootDirectory,
+      environment: { NODE_ENV: 'development' },
+      confirmed: true,
+      backupId: 'backup-operator-handle',
+      operations: {
+        backup: { assertRestorable: async () => calls.push('backup'), verifyRestore: async () => calls.push('verify-backup') },
+        connect: async () => { calls.push('connect'); return {} },
+        inspect: async () => completeConformanceSnapshot({ rowCounts: { TusSubscriptionPlan: 1 } }),
+        applyBaseline: async () => calls.push('apply'),
+        close: async () => calls.push('close'),
+      },
+    })
+
+    assert.equal(result.status, 'blocked')
+    assert.equal(result.safetyGate, 'preflight-gate')
+    assert.equal(result.sideEffects.writes, 0)
+    assert.equal(result.sideEffects.migrationInvocations, 0)
+    assert.deepEqual(calls, ['backup', 'verify-backup', 'connect', 'close'])
+  })
+})
+
+test('accepted metadata receipt proves exact live conformance and keeps rowValuesRead at zero', () => {
+  const receipt = verifyLiveSchemaSnapshot(completeConformanceSnapshot())
+
+  assert.equal(receipt.status, 'passed')
+  assert.equal(receipt.tableCheck.expected, 62)
+  assert.equal(receipt.moneyCheck.expected, 26)
+  assert.equal(receipt.primaryKeyCheck.expected, 68)
+  assert.equal(receipt.indexCheck.expected, 22)
+  assert.equal(receipt.constraintCheck.expected, 3)
+  assert.deepEqual(receipt.markerLineage, {
+    launch: 1,
+    pos: 1,
+    conformance: 1,
+    historicalAdditiveRepair: 0,
+  })
+  assert.equal(receipt.rowValuesRead, 0)
+  assert.equal(receipt.liveConformance, true)
+  assert.equal(receipt.noGo, false)
+  assert.equal(receipt.runtimeActivity.seedInvocations, 0)
+  assert.equal(receipt.runtimeActivity.providerCalls, 0)
+  assert.equal(receipt.runtimeActivity.posInvocations, 0)
+})
+
+test('accepted conformance repair is idempotent when marker and exact catalog already exist', async () => {
+  await withTempRoot('DATABASE_URL=postgresql://user:secret@db.example.test/tus\n', async (rootDirectory) => {
+    const calls = []
+    const result = await runRepair({
+      repairUnit: 'live-schema-conformance',
+      rootDirectory,
+      environment: { NODE_ENV: 'development' },
+      confirmed: true,
+      backupId: 'backup-operator-handle',
+      operations: {
+        backup: { assertRestorable: async () => calls.push('backup'), verifyRestore: async () => calls.push('verify-backup') },
+        connect: async () => { calls.push('connect'); return {} },
+        inspect: async () => completeConformanceSnapshot(),
+        applyBaseline: async () => calls.push('apply'),
+        verifySchema: async () => verifyLiveSchemaSnapshot(completeConformanceSnapshot()),
+        close: async () => calls.push('close'),
+      },
+    })
+
+    assert.equal(result.status, 'success')
+    assert.equal(result.migrationResult.appliedCount, 0)
+    assert.equal(result.migrationResult.idempotent, true)
+    assert.equal(result.sideEffects.writes, 0)
+    assert.deepEqual(calls, ['backup', 'verify-backup', 'connect', 'close'])
   })
 })

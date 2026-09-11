@@ -12,6 +12,11 @@ export const EXACT_MONEY_BACKFILL_TAG = 'repair:exact-money-backfill'
 export const EXACT_MONEY_CURRENCY_SCALES = Object.freeze({ ARS: 2, USD: 2, EUR: 2 })
 export const REPAIR_MIGRATION_NAME = '20260831180000_tus_additive_migration_repair'
 export const LAUNCH_MIGRATION_NAME = '20260909090000_tus_argentina_market_launch'
+export const POS_INDEX_CONSTRAINT_REPAIR_NAME = '20260911120000_tus_pos_index_constraint_repair'
+export const LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME = '20260911130000_tus_live_schema_conformance_repair'
+export const REPAIR_UNIT = Object.freeze({
+  LIVE_SCHEMA_CONFORMANCE: 'live-schema-conformance',
+})
 export const REPAIR_MIGRATION_PATH = join(
   'apps',
   'api',
@@ -26,6 +31,22 @@ export const LAUNCH_MIGRATION_PATH = join(
   'prisma',
   'migrations',
   LAUNCH_MIGRATION_NAME,
+  'migration.sql',
+)
+export const POS_INDEX_CONSTRAINT_REPAIR_PATH = join(
+  'apps',
+  'api',
+  'prisma',
+  'migrations',
+  POS_INDEX_CONSTRAINT_REPAIR_NAME,
+  'migration.sql',
+)
+export const LIVE_SCHEMA_CONFORMANCE_REPAIR_PATH = join(
+  'apps',
+  'api',
+  'prisma',
+  'migrations',
+  LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME,
   'migration.sql',
 )
 
@@ -60,6 +81,21 @@ export const REQUIRED_LAUNCH_TABLES = Object.freeze([
   'OutboxEvent', 'TusDeliveryOutbox', 'TusPosOutbox', 'TusSupportOutbox', 'TusJob', 'TusDeadLetter',
   'TusHardeningFixture',
   ...REQUIRED_POS_TABLES,
+])
+
+export const REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES = Object.freeze([...REQUIRED_LAUNCH_TABLES])
+
+const REQUIRED_BILLING_PRIMARY_KEY_TABLES = Object.freeze([
+  'TusBillingAccount',
+  'TusSubscriptionPlan',
+  'TusBillingRefund',
+  'TusBillingLedger',
+  'TusBillingIdempotency',
+  'TusBillingAudit',
+  'TusBillingOutbox',
+  'TusBillingDunning',
+  'TusBillingNumberSequence',
+  'TusAccountingExport',
 ])
 
 export const REQUIRED_MONEY_COLUMNS = Object.freeze([
@@ -143,6 +179,21 @@ export const REQUIRED_MONEY_TYPES = Object.freeze({
   TusBillingLedger: ['amountMinor'],
 })
 
+export const REQUIRED_CONFORMANCE_MONEY_COLUMNS = Object.freeze(
+  Object.entries(REQUIRED_MONEY_TYPES).flatMap(([table, columns]) => columns.map((column) => ({
+    table,
+    column,
+    udtName: 'int8',
+    nullable: false,
+    defaultValue: null,
+  }))),
+)
+
+export const REQUIRED_CONFORMANCE_PRIMARY_KEYS = Object.freeze([
+  ...[...new Set(REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES)].map((table) => ({ table, columns: ['id'] })),
+  ...REQUIRED_BILLING_PRIMARY_KEY_TABLES.map((table) => ({ table, columns: ['id'] })),
+])
+
 export const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
   TusDeliveryZone: ['id', 'tenantId', 'zoneId', 'name', 'postalCodes', 'active', 'createdAt', 'updatedAt'],
   TusDeliveryShift: ['id', 'tenantId', 'shiftId', 'zoneId', 'startsAt', 'endsAt', 'operatorIds', 'status', 'createdAt', 'updatedAt'],
@@ -191,6 +242,62 @@ const REQUIRED_CONSTRAINTS = Object.freeze({
   TusPosOperation: ['TusPosOperation_amount_non_negative_check'],
   TusPosVersion: ['TusPosVersion_version_non_negative_check'],
 })
+
+export const REQUIRED_POS_REPAIR_INDEXES = Object.freeze([
+  { name: 'TusDeliveryZone_tenantId_active_idx', table: 'TusDeliveryZone', columns: ['tenantId', 'active'], unique: false },
+  { name: 'TusDeliveryShift_tenantId_zoneId_status_idx', table: 'TusDeliveryShift', columns: ['tenantId', 'zoneId', 'status'], unique: false },
+  { name: 'TusDeliveryTask_tenantId_commitmentId_idx', table: 'TusDeliveryTask', columns: ['tenantId', 'commitmentId'], unique: false },
+  { name: 'TusDeliveryTask_tenantId_shiftId_status_idx', table: 'TusDeliveryTask', columns: ['tenantId', 'shiftId', 'status'], unique: false },
+  { name: 'TusDeliveryTask_tenantId_commitmentId_status_idx', table: 'TusDeliveryTask', columns: ['tenantId', 'commitmentId', 'status'], unique: false },
+  { name: 'TusDeliveryProof_tenantId_taskId_idx', table: 'TusDeliveryProof', columns: ['tenantId', 'taskId'], unique: false },
+  { name: 'TusDeliveryIncident_tenantId_taskId_status_idx', table: 'TusDeliveryIncident', columns: ['tenantId', 'taskId', 'status'], unique: false },
+  { name: 'TusDeliveryAudit_tenantId_auditId_key', table: 'TusDeliveryAudit', columns: ['tenantId', 'auditId'], unique: true },
+  { name: 'TusDeliveryAudit_tenantId_createdAt_idx', table: 'TusDeliveryAudit', columns: ['tenantId', 'createdAt'], unique: false },
+  { name: 'TusPosOperation_tenantId_shiftId_createdAt_idx', table: 'TusPosOperation', columns: ['tenantId', 'shiftId', 'createdAt'], unique: false },
+  { name: 'TusPosOperation_tenantId_context_kind_idx', table: 'TusPosOperation', columns: ['tenantId', 'context', 'kind'], unique: false },
+  { name: 'TusPosReceipt_tenantId_operationId_idx', table: 'TusPosReceipt', columns: ['tenantId', 'operationId'], unique: false },
+  { name: 'TusPosReceipt_tenantId_operationId_createdAt_idx', table: 'TusPosReceipt', columns: ['tenantId', 'operationId', 'createdAt'], unique: false },
+  { name: 'TusPosDevice_tenantId_status_idx', table: 'TusPosDevice', columns: ['tenantId', 'status'], unique: false },
+  { name: 'TusPosSession_tenantId_deviceId_shiftId_status_idx', table: 'TusPosSession', columns: ['tenantId', 'deviceId', 'shiftId', 'status'], unique: false },
+  { name: 'TusPosConflict_tenantId_operationId_status_idx', table: 'TusPosConflict', columns: ['tenantId', 'operationId', 'status'], unique: false },
+  { name: 'TusPosConflict_tenantId_status_createdAt_idx', table: 'TusPosConflict', columns: ['tenantId', 'status', 'createdAt'], unique: false },
+  { name: 'TusPosVersion_tenantId_shiftId_version_idx', table: 'TusPosVersion', columns: ['tenantId', 'shiftId', 'version'], unique: false },
+  { name: 'TusDeliveryOutbox_tenantId_status_createdAt_idx', table: 'TusDeliveryOutbox', columns: ['tenantId', 'status', 'createdAt'], unique: false },
+  { name: 'TusPosOutbox_tenantId_status_createdAt_idx', table: 'TusPosOutbox', columns: ['tenantId', 'status', 'createdAt'], unique: false },
+  { name: 'TusPosOutbox_tenantId_aggregateId_status_idx', table: 'TusPosOutbox', columns: ['tenantId', 'aggregateId', 'status'], unique: false },
+  { name: 'TusPosAudit_tenantId_operationId_createdAt_idx', table: 'TusPosAudit', columns: ['tenantId', 'operationId', 'createdAt'], unique: false },
+])
+
+const LIVE_SCHEMA_LEGACY_ALIASES = Object.freeze({
+  TusDeliveryZone_tenantId_active_idx: 'tus_lscr_legacy_01',
+  TusDeliveryShift_tenantId_zoneId_status_idx: 'tus_lscr_legacy_02',
+  TusDeliveryTask_tenantId_shiftId_status_idx: 'tus_lscr_legacy_03',
+  TusDeliveryTask_tenantId_commitmentId_status_idx: 'tus_lscr_legacy_04',
+  TusDeliveryIncident_tenantId_taskId_status_idx: 'tus_lscr_legacy_05',
+  TusPosOperation_tenantId_context_kind_idx: 'tus_lscr_legacy_06',
+  TusPosDevice_tenantId_status_idx: 'tus_lscr_legacy_07',
+  TusPosSession_tenantId_deviceId_shiftId_status_idx: 'tus_lscr_legacy_08',
+  TusPosConflict_tenantId_operationId_status_idx: 'tus_lscr_legacy_09',
+  TusPosConflict_tenantId_status_createdAt_idx: 'tus_lscr_legacy_10',
+  TusPosVersion_tenantId_shiftId_version_idx: 'tus_lscr_legacy_11',
+  TusDeliveryOutbox_tenantId_status_createdAt_idx: 'tus_lscr_legacy_12',
+  TusPosOutbox_tenantId_status_createdAt_idx: 'tus_lscr_legacy_13',
+  TusPosOutbox_tenantId_aggregateId_status_idx: 'tus_lscr_legacy_14',
+})
+
+export const REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES = Object.freeze(
+  REQUIRED_POS_REPAIR_INDEXES.map((index) => ({
+    ...index,
+    predicate: null,
+    legacyAlias: LIVE_SCHEMA_LEGACY_ALIASES[index.name] ?? null,
+  })),
+)
+
+export const REQUIRED_POS_REPAIR_CONSTRAINTS = Object.freeze([
+  { name: 'TusPosConflict_tenant_operation_fk', table: 'TusPosConflict', type: 'f', definition: 'FOREIGN KEY ("tenantId", "operationId") REFERENCES "TusPosOperation" ("tenantId", "operationId") NOT VALID' },
+  { name: 'TusPosOperation_amount_non_negative_check', table: 'TusPosOperation', type: 'c', definition: 'CHECK ((amount >= 0))' },
+  { name: 'TusPosVersion_version_non_negative_check', table: 'TusPosVersion', type: 'c', definition: 'CHECK ((version >= 0))' },
+])
 
 const ROOT_DIRECTORY = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const MIGRATION_FILE_PATTERN = /migration\.sql$/u
@@ -372,15 +479,16 @@ export function classifySqlStatement(sql) {
   if (DESTRUCTIVE_TOKEN_PATTERN.test(executable)) return 'destructive'
   if (DELETE_PATTERN.test(executable) && !TAGGED_CLEANUP_PATTERN.test(original)) return 'destructive'
   if (/INSERT\s+INTO\s+"_prisma_migrations"/iu.test(executable)
-    && new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME})`, 'u').test(executable)) return 'additive'
+    && new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME}|${POS_INDEX_CONSTRAINT_REPAIR_NAME}|${LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME})`, 'u').test(executable)) return 'additive'
   if (/\b(?:_prisma_migrations|migration_name|finished_at|rolled_back_at)\b/iu.test(executable)
     && !/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"_prisma_migrations"/iu.test(executable)
-    && !new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME})`, 'u').test(executable)) return 'ambiguous'
+    && !new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME}|${POS_INDEX_CONSTRAINT_REPAIR_NAME}|${LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME})`, 'u').test(executable)) return 'ambiguous'
   if (MUTATING_PATTERN.test(executable)) return 'ambiguous'
   if (/^CREATE\s+TABLE\b/iu.test(executable)) return 'additive'
   if (/^CREATE\s+(?:UNIQUE\s+)?INDEX\b/iu.test(executable)) return 'additive'
   if (/^ALTER\s+TABLE[\s\S]*\bADD\s+(?:COLUMN|CONSTRAINT)\b/iu.test(executable)) return 'additive'
-  if (/^DO\s+\$\$[\s\S]*\bALTER\s+TABLE\b[\s\S]*\bADD\s+CONSTRAINT\b/iu.test(executable)) return 'additive'
+  if (/^DO\s+\$\$[\s\S]*\b(?:ALTER\s+TABLE[\s\S]*\bADD\s+(?:COLUMN|CONSTRAINT)|ALTER\s+INDEX[\s\S]*\bRENAME\s+TO\b|CREATE\s+(?:UNIQUE\s+)?INDEX)\b/iu.test(executable)) return 'additive'
+  if (/^DO\s+\$\$[\s\S]*tus-live-schema-conformance-/iu.test(executable)) return 'additive'
   return 'ambiguous'
 }
 
@@ -388,7 +496,7 @@ export async function inventoryMigrations({ migrationsDirectory, repairMigration
   const directory = migrationsDirectory ?? join(ROOT_DIRECTORY, 'apps', 'api', 'prisma', 'migrations')
   const entries = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))
   const migrations = []
-  const nonHistoricalNames = new Set(repairMigrationNames ?? [repairMigrationName, LAUNCH_MIGRATION_NAME])
+  const nonHistoricalNames = new Set(repairMigrationNames ?? [repairMigrationName, LAUNCH_MIGRATION_NAME, POS_INDEX_CONSTRAINT_REPAIR_NAME, LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME])
   let destructiveStatementCount = 0
   let ambiguousStatementCount = 0
   let commentOnlyTokenCount = 0
@@ -508,7 +616,7 @@ export function validateBackupHandle(backupId) {
 export function validateExactMoneySql(sql) {
   const executable = stripSqlComments(sql)
   const forbiddenMoneyType = /(?:DOUBLE\s+PRECISION|REAL|FLOAT(?:\s*\(\s*\d+\s*\))?)/iu
-  const monetaryDeclaration = new RegExp(`(?:"(?:${REQUIRED_MONEY_COLUMNS.join('|')})"|\\b(?:${REQUIRED_MONEY_COLUMNS.join('|')})\\b)\\s+`, 'iu')
+  const monetaryDeclaration = new RegExp(`(?:^|,)\\s*(?:"(?:${REQUIRED_MONEY_COLUMNS.join('|')})"|\\b(?:${REQUIRED_MONEY_COLUMNS.join('|')})\\b)\\s+(?:BIGINT|DOUBLE\\s+PRECISION|REAL|FLOAT(?:\\s*\\(\\s*\\d+\\s*\\))?|NUMERIC(?:\\s*\\([^)]*\\))?)`, 'imu')
   if (forbiddenMoneyType.test(executable) && monetaryDeclaration.test(executable)) {
     return { status: 'rejected', reason: 'exact-money-floating-type', writesAllowed: false }
   }
@@ -546,7 +654,9 @@ export function createDefaultBackupOperations({ pgRestorePath = locateExecutable
       })
       if (result?.error || result?.status !== 0) throw new Error('backup-archive-list-verification-failed')
     },
-    verifyRestore: async () => undefined,
+    verifyRestore: async () => {
+      throw new Error('backup-restore-verification-required')
+    },
   }
 }
 
@@ -621,7 +731,127 @@ export function validatePreflight(snapshot = {}) {
   return { status: 'ready', writesAllowed: true, reason: 'preflight-passed' }
 }
 
-export function verifySchemaSnapshot(snapshot = {}) {
+export function validatePosIndexConstraintRepairPreflight(snapshot = {}) {
+  const base = validatePreflight(snapshot)
+  if (base.status !== 'ready') return base
+  const ledger = snapshot.ledger ?? {}
+  const launchMarkerCount = Number(ledger.launchMarkerCount ?? (ledger.names ?? []).filter((name) => name === LAUNCH_MIGRATION_NAME).length)
+  const repairMarkerCount = Number(ledger.posIndexConstraintRepairMarkerCount ?? (ledger.names ?? []).filter((name) => name === POS_INDEX_CONSTRAINT_REPAIR_NAME).length)
+  if (launchMarkerCount !== 1 || repairMarkerCount !== 0) {
+    return { status: 'blocked', writesAllowed: false, reason: 'repair-preflight-mismatch' }
+  }
+  return { status: 'ready', writesAllowed: true, reason: 'repair-preflight-passed' }
+}
+
+export function validateConformancePreflight(snapshot = {}) {
+  const ledger = snapshot.ledger ?? {}
+  const markerLineage = getConformanceMarkerLineage(ledger)
+  if (markerLineage.launch !== 1 || markerLineage.pos !== 1 || markerLineage.historicalAdditiveRepair !== 0 || markerLineage.conformance > 1) {
+    return { status: 'blocked', writesAllowed: false, reason: 'marker-lineage-gate', markerLineage }
+  }
+
+  for (const expected of REQUIRED_CONFORMANCE_MONEY_COLUMNS) {
+    const observed = snapshot.tables?.[expected.table]
+    if (observed?.present !== true) return { status: 'blocked', writesAllowed: false, reason: 'missing-money-table', table: expected.table }
+    const shape = getColumnShape(observed, expected.column)
+    const hasColumn = Array.isArray(observed.columns) && observed.columns.includes(expected.column)
+    if (!hasColumn) {
+      if (!isApprovedMissingMoneyColumn(expected) || Number(snapshot.rowCounts?.[expected.table]) !== 0) {
+        return { status: 'blocked', writesAllowed: false, reason: 'exact-money-column-gate', table: expected.table, column: expected.column }
+      }
+      continue
+    }
+    if (!columnShapeMatches(shape, expected)) return { status: 'blocked', writesAllowed: false, reason: 'exact-money-column-gate', table: expected.table, column: expected.column }
+  }
+
+  for (const expected of REQUIRED_CONFORMANCE_PRIMARY_KEYS) {
+    const observed = snapshot.tables?.[expected.table]
+    if (observed?.present !== true) return { status: 'blocked', writesAllowed: false, reason: 'missing-primary-key-table', table: expected.table }
+    const idShape = getColumnShape(observed, 'id')
+    if (!columnShapeMatches(idShape, { column: 'id', udtName: 'text', nullable: false, defaultValue: null })) {
+      return { status: 'blocked', writesAllowed: false, reason: 'primary-key-column-gate', table: expected.table }
+    }
+    const aggregate = snapshot.idAggregates?.[expected.table]
+    if (!aggregate || Number(aggregate.nullCount) !== 0 || Number(aggregate.duplicateCount) !== 0 || Number(aggregate.rowCount) !== Number(snapshot.rowCounts?.[expected.table] ?? aggregate.rowCount)) {
+      return { status: 'blocked', writesAllowed: false, reason: 'primary-key-data-gate', table: expected.table }
+    }
+    const primaryKey = snapshot.primaryKeys?.[expected.table] ?? (observed.primaryKey ? ['id'] : [])
+    if (primaryKey.length > 0 && !sameOrderedMembers(primaryKey, expected.columns)) {
+      return { status: 'blocked', writesAllowed: false, reason: 'primary-key-compatibility-gate', table: expected.table }
+    }
+  }
+
+  for (const expected of REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES) {
+    const exact = (snapshot.indexes ?? []).some((observed) => indexContractMatches(observed, expected))
+    if (exact) continue
+    const canonical = (snapshot.indexes ?? []).find((observed) => observed?.name === expected.name)
+    if (canonical && canonical.table !== expected.table) return { status: 'blocked', writesAllowed: false, reason: 'index-name-collision-gate', index: expected.name }
+    const aliasOccupied = expected.legacyAlias && (snapshot.indexes ?? []).some((observed) => observed?.name === expected.legacyAlias)
+    if (aliasOccupied) return { status: 'blocked', writesAllowed: false, reason: 'index-alias-collision-gate', index: expected.name, alias: expected.legacyAlias }
+  }
+
+  if (markerLineage.conformance === 1) return { status: 'ready', writesAllowed: true, alreadyApplied: true, reason: 'conformance-repair-already-applied', markerLineage }
+  return { status: 'ready', writesAllowed: true, alreadyApplied: false, reason: 'conformance-preflight-passed', markerLineage }
+}
+
+export function verifyLiveSchemaSnapshot(snapshot = {}) {
+  const missingTables = REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES.filter((table) => snapshot.tables?.[table]?.present !== true)
+  const missingMoney = []
+  const incorrectMoney = []
+  for (const expected of REQUIRED_CONFORMANCE_MONEY_COLUMNS) {
+    const observed = snapshot.tables?.[expected.table]
+    const shape = getColumnShape(observed, expected.column)
+    if (observed?.present !== true || !(observed.columns ?? []).includes(expected.column)) missingMoney.push(`${expected.table}.${expected.column}`)
+    else if (!columnShapeMatches(shape, expected)) incorrectMoney.push(`${expected.table}.${expected.column}`)
+  }
+
+  const missingPrimaryKeys = REQUIRED_CONFORMANCE_PRIMARY_KEYS
+    .filter((expected) => !sameOrderedMembers(snapshot.primaryKeys?.[expected.table], expected.columns))
+    .map(({ table }) => table)
+  const missingIndexes = REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES
+    .filter((expected) => !(snapshot.indexes ?? []).some((observed) => indexContractMatches(observed, expected)))
+    .map(({ name }) => name)
+  const missingConstraints = REQUIRED_POS_REPAIR_CONSTRAINTS
+    .filter((expected) => !(snapshot.constraints ?? []).some((observed) => constraintContractMatches(observed, expected)))
+    .map(({ name }) => name)
+  const markerLineage = getConformanceMarkerLineage(snapshot.ledger)
+  const rowValuesRead = Number(snapshot.rowValuesRead ?? 0)
+  const runtimeActivity = {
+    seedInvocations: Number(snapshot.runtimeActivity?.seedInvocations ?? 0),
+    providerCalls: Number(snapshot.runtimeActivity?.providerCalls ?? 0),
+    posInvocations: Number(snapshot.runtimeActivity?.posInvocations ?? 0),
+  }
+  const passed = missingTables.length === 0
+    && missingMoney.length === 0
+    && incorrectMoney.length === 0
+    && missingPrimaryKeys.length === 0
+    && missingIndexes.length === 0
+    && missingConstraints.length === 0
+    && markerLineage.launch === 1
+    && markerLineage.pos === 1
+    && markerLineage.conformance === 1
+    && markerLineage.historicalAdditiveRepair === 0
+    && rowValuesRead === 0
+    && Object.values(runtimeActivity).every((value) => value === 0)
+
+  return {
+    status: passed ? 'passed' : 'blocked',
+    tableCheck: { expected: REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES.length, present: REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES.length - missingTables.length, missing: missingTables },
+    moneyCheck: { expected: REQUIRED_CONFORMANCE_MONEY_COLUMNS.length, present: REQUIRED_CONFORMANCE_MONEY_COLUMNS.length - missingMoney.length - incorrectMoney.length, missing: missingMoney, incorrect: incorrectMoney },
+    primaryKeyCheck: { expected: REQUIRED_CONFORMANCE_PRIMARY_KEYS.length, present: REQUIRED_CONFORMANCE_PRIMARY_KEYS.length - missingPrimaryKeys.length, missing: missingPrimaryKeys },
+    indexCheck: { expected: REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES.length, present: REQUIRED_LIVE_SCHEMA_REPAIR_INDEXES.length - missingIndexes.length, missing: missingIndexes },
+    constraintCheck: { expected: REQUIRED_POS_REPAIR_CONSTRAINTS.length, present: REQUIRED_POS_REPAIR_CONSTRAINTS.length - missingConstraints.length, missing: missingConstraints },
+    markerLineage,
+    historicalMarkerIntentionallyAbsent: markerLineage.historicalAdditiveRepair === 0,
+    rowValuesRead,
+    runtimeActivity,
+    liveConformance: passed,
+    noGo: !passed,
+  }
+}
+
+export function verifySchemaSnapshot(snapshot = {}, { markerName } = {}) {
+  if (markerName === LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME) return verifyLiveSchemaSnapshot(snapshot)
   const launchSnapshot = Object.keys(snapshot.tables ?? {}).some((table) => table !== 'TusHardeningFixture' && !REQUIRED_POS_TABLES.includes(table))
   const requiredTables = launchSnapshot ? REQUIRED_LAUNCH_TABLES : REQUIRED_POS_TABLES
   const missingTables = requiredTables.filter((table) => snapshot.tables?.[table]?.present !== true)
@@ -633,15 +863,26 @@ export function verifySchemaSnapshot(snapshot = {}) {
   })
   const fixture = snapshot.tables?.TusHardeningFixture
   const fixtureReady = fixture?.present === true && sameMembers(fixture.columns, ['id', 'tag', 'version', 'runId', 'tenantId', 'actorId', 'productListingId', 'serviceListingId', 'createdAt', 'updatedAt']) && fixture.primaryKey === true
-  const markerCount = Number(snapshot.ledger?.repairMarkerCount ?? 0)
+  const markerCount = Number(markerName
+    ? snapshot.ledger?.markerCounts?.[markerName] ?? 0
+    : snapshot.ledger?.repairMarkerCount ?? 0)
+  const missingIndexes = Array.isArray(snapshot.indexes)
+    ? REQUIRED_POS_REPAIR_INDEXES.filter((expected) => !snapshot.indexes.some((observed) => indexContractMatches(observed, expected))).map((expected) => expected.name)
+    : []
+  const missingConstraints = Array.isArray(snapshot.constraints)
+    ? REQUIRED_POS_REPAIR_CONSTRAINTS.filter((expected) => !snapshot.constraints.some((observed) => constraintContractMatches(observed, expected))).map((expected) => expected.name)
+    : []
+  const repairCatalogReady = missingIndexes.length === 0 && missingConstraints.length === 0
   return {
-    status: missingTables.length === 0 && mismatchedTables.length === 0 && fixtureReady && markerCount === 1 && validateMoneyTypes(snapshot) ? 'passed' : 'blocked',
+    status: missingTables.length === 0 && mismatchedTables.length === 0 && fixtureReady && markerCount === 1 && validateMoneyTypes(snapshot) && repairCatalogReady ? 'passed' : 'blocked',
     requiredTableCount: requiredTables.length,
     presentTableCount: requiredTables.length - missingTables.length,
     missingTables,
     mismatchedTables,
     fixtureReady,
     repairMarkerCount: markerCount,
+    missingIndexes,
+    missingConstraints,
   }
 }
 
@@ -688,13 +929,22 @@ export async function runRepair({
   environment = process.env,
   confirmed = false,
   backupId,
+  repairUnit = 'launch-baseline',
   selectedMigrationSql,
   operations = {},
 } = {}) {
+  const isLiveSchemaConformanceRepair = repairUnit === REPAIR_UNIT.LIVE_SCHEMA_CONFORMANCE
+  const isPosIndexConstraintRepair = repairUnit === 'pos-index-constraint'
+  const selectedMigrationName = isLiveSchemaConformanceRepair
+    ? LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME
+    : isPosIndexConstraintRepair ? POS_INDEX_CONSTRAINT_REPAIR_NAME : LAUNCH_MIGRATION_NAME
+  const selectedMigrationPath = isLiveSchemaConformanceRepair
+    ? LIVE_SCHEMA_CONFORMANCE_REPAIR_PATH
+    : isPosIndexConstraintRepair ? POS_INDEX_CONSTRAINT_REPAIR_PATH : LAUNCH_MIGRATION_PATH
   const configuredMigrations = join(rootDirectory, 'apps', 'api', 'prisma', 'migrations')
   const inventory = await inventoryMigrations({ migrationsDirectory: existsSync(configuredMigrations) ? configuredMigrations : join(ROOT_DIRECTORY, 'apps', 'api', 'prisma', 'migrations') })
-  const migrationRoot = existsSync(join(rootDirectory, LAUNCH_MIGRATION_PATH)) ? rootDirectory : ROOT_DIRECTORY
-  const migrationSql = selectedMigrationSql ?? await readFile(join(migrationRoot, LAUNCH_MIGRATION_PATH), 'utf8')
+  const migrationRoot = existsSync(join(rootDirectory, selectedMigrationPath)) ? rootDirectory : ROOT_DIRECTORY
+  const migrationSql = selectedMigrationSql ?? await readFile(join(migrationRoot, selectedMigrationPath), 'utf8')
   const staticGate = gateInventory({ statements: splitSqlStatements(migrationSql) })
   const exactMoneyGate = validateExactMoneySql(migrationSql)
   const sideEffects = { connections: 0, writes: 0, deletes: 0, migrationInvocations: 0, providerCalls: 0 }
@@ -713,7 +963,7 @@ export async function runRepair({
     inspect: defaultInspect,
     applyBaseline: defaultApplyBaseline,
     recordLedger: async () => undefined,
-    verifySchema: async (pool) => verifySchemaSnapshot(await runtime.inspect(pool)),
+    verifySchema: async (pool) => verifySchemaSnapshot(await runtime.inspect(pool, { readOnly: true }), { markerName: selectedMigrationName }),
     verifyDurablePos: async () => ({ status: 'external-blocked', providerCalls: 0, reason: 'runtime-harness-prohibited-in-this-phase' }),
     close: defaultClose,
     ...operations,
@@ -736,16 +986,30 @@ export async function runRepair({
     )
     pool = connection.value
     base.connectionAttempts = connection.diagnostics
-    preflight = validatePreflight(await runtime.inspect(pool))
+    const snapshot = await runtime.inspect(pool)
+    preflight = isLiveSchemaConformanceRepair
+      ? validateConformancePreflight(snapshot)
+      : isPosIndexConstraintRepair
+        ? validatePosIndexConstraintRepairPreflight(snapshot)
+        : validatePreflight(snapshot)
     if (preflight.status !== 'ready') {
       resultToReturn = buildRunResult(base, { status: 'blocked', safetyGate: 'preflight-gate', reason: preflight.reason, target: redactTarget(target), backup, preflight })
       return resultToReturn
     }
-    sideEffects.writes += 1
-    sideEffects.migrationInvocations += 1
-    await runtime.applyBaseline(pool, migrationSql)
-    await runtime.recordLedger(pool, createLedgerMarker('launch-migration-checksum', LAUNCH_MIGRATION_NAME))
-    migrationResult = { status: 'passed', appliedCount: 1, marker: LAUNCH_MIGRATION_NAME }
+    if (preflight.alreadyApplied) {
+      migrationResult = { status: 'idempotent', appliedCount: 0, idempotent: true, marker: selectedMigrationName }
+    } else {
+      sideEffects.writes += 1
+      sideEffects.migrationInvocations += 1
+      await runtime.applyBaseline(pool, migrationSql)
+      if (!isLiveSchemaConformanceRepair) {
+        await runtime.recordLedger(pool, createLedgerMarker(
+          isPosIndexConstraintRepair ? 'pos-index-constraint-repair-checksum' : 'launch-migration-checksum',
+          selectedMigrationName,
+        ))
+      }
+      migrationResult = { status: 'passed', appliedCount: 1, marker: selectedMigrationName }
+    }
     schemaVerification = await runtime.verifySchema(pool)
     if (schemaVerification.status !== 'passed') {
       resultToReturn = buildRunResult(base, { status: 'blocked', safetyGate: 'schema-verification', reason: 'schema-verification-failed', target: redactTarget(target), backup, preflight, migrationResult, schemaVerification })
@@ -753,7 +1017,9 @@ export async function runRepair({
     }
     posVerification = await runtime.verifyDurablePos()
     resultToReturn = buildRunResult(base, {
-      status: posVerification.status === 'passed' ? 'success' : 'partial',
+      status: isLiveSchemaConformanceRepair
+        ? schemaVerification.liveConformance ? 'success' : 'blocked'
+        : posVerification.status === 'passed' ? 'success' : 'partial',
       safetyGate: 'passed',
       target: redactTarget(target),
       backup,
@@ -764,9 +1030,11 @@ export async function runRepair({
     })
     return resultToReturn
   } catch (error) {
-    const errorReason = error instanceof Error && /backup-(?:tooling-unavailable|restore-verification-required)/u.test(error.message)
+    const errorReason = error instanceof Error && /backup-(?:tooling-unavailable|restore-verification-required|handle-invalid|file-unavailable|file-empty|archive-list-verification-failed)/u.test(error.message)
       ? error.message
       : null
+    const sqlstate = sanitizeSqlState(error?.code ?? error?.sqlstate)
+    if (!pool && errorReason) base.cleanupState = 'verified'
     resultToReturn = buildRunResult(base, {
       status: 'blocked',
       safetyGate: errorReason ? 'backup-gate' : 'runtime-gate',
@@ -776,7 +1044,8 @@ export async function runRepair({
       preflight,
       migrationResult,
       schemaVerification,
-      rollback: { status: 'restore-required', metadataOnly: true },
+      rollback: { status: 'restore-required', metadataOnly: true, sqlstate },
+      sqlstate,
     })
     return resultToReturn
   } finally {
@@ -827,13 +1096,61 @@ function isExplicitlySafeAdditive(sql) {
   return /^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b/iu.test(executable)
     || /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\b/iu.test(executable)
     || /^ALTER\s+TABLE[\s\S]*\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/iu.test(executable)
-    || /^DO\s+\$\$[\s\S]*\bALTER\s+TABLE\b[\s\S]*\bADD\s+CONSTRAINT\b/iu.test(executable)
+    || /^DO\s+\$\$[\s\S]*\b(?:ALTER\s+TABLE[\s\S]*\bADD\s+(?:COLUMN|CONSTRAINT)|ALTER\s+INDEX[\s\S]*\bRENAME\s+TO\b|CREATE\s+(?:UNIQUE\s+)?INDEX)\b/iu.test(executable)
+    || /^DO\s+\$\$[\s\S]*tus-live-schema-conformance-/iu.test(executable)
     || (/INSERT\s+INTO\s+"_prisma_migrations"/iu.test(executable)
-      && new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME})`, 'u').test(executable))
+      && new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME}|${POS_INDEX_CONSTRAINT_REPAIR_NAME}|${LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME})`, 'u').test(executable))
 }
 
 function sameMembers(left = [], right = []) {
   return Array.isArray(left) && left.length === right.length && [...left].sort().every((value, index) => value === [...right].sort()[index])
+}
+
+function sanitizeSqlState(value) {
+  return /^[0-9A-Z]{5}$/u.test(String(value ?? '')) ? String(value) : null
+}
+
+function sameOrderedMembers(left = [], right = []) {
+  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function getColumnShape(observed, column) {
+  const explicit = observed?.columnShapes?.[column]
+  if (explicit) return explicit
+  const type = observed?.types?.[column] ?? observed?.columnTypes?.[column]
+  if (type === undefined) return null
+  return {
+    udtName: type,
+    nullable: observed?.nullable?.[column] === undefined ? false : observed.nullable[column],
+    defaultValue: observed?.defaults?.[column] ?? null,
+  }
+}
+
+function columnShapeMatches(observed, expected) {
+  return Boolean(observed)
+    && String(observed.udtName ?? observed.type ?? '').toLowerCase() === String(expected.udtName).toLowerCase()
+    && normalizeNullable(observed.nullable) === Boolean(expected.nullable)
+    && (observed.defaultValue ?? observed.default ?? null) === expected.defaultValue
+}
+
+function normalizeNullable(value) {
+  return value === true || String(value).toUpperCase() === 'YES'
+}
+
+function isApprovedMissingMoneyColumn(expected) {
+  return expected.table === 'TusSubscriptionPlan'
+    || expected.table === 'TusBillingRefund'
+    || expected.table === 'TusBillingLedger'
+}
+
+function getConformanceMarkerLineage(ledger = {}) {
+  const markerCounts = ledger.markerCounts ?? {}
+  return {
+    launch: Number(ledger.launchMarkerCount ?? markerCounts[LAUNCH_MIGRATION_NAME] ?? 0),
+    pos: Number(ledger.posIndexConstraintRepairMarkerCount ?? markerCounts[POS_INDEX_CONSTRAINT_REPAIR_NAME] ?? 0),
+    conformance: Number(ledger.liveSchemaConformanceRepairMarkerCount ?? markerCounts[LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME] ?? 0),
+    historicalAdditiveRepair: Number(ledger.historicalAdditiveRepairMarkerCount ?? markerCounts[REPAIR_MIGRATION_NAME] ?? 0),
+  }
 }
 
 function locateExecutable(name) {
@@ -875,6 +1192,58 @@ function quoteIdentifier(value) {
 
 function includesMembers(left = [], right = []) {
   return Array.isArray(left) && right.every((value) => left.includes(value))
+}
+
+function indexContractMatches(observed, expected) {
+  return observed?.table === expected.table
+    && observed?.name === expected.name
+    && observed?.unique === expected.unique
+    && (observed?.predicate ?? null) === (expected?.predicate ?? null)
+    && JSON.stringify(observed?.columns) === JSON.stringify(expected.columns)
+}
+
+function constraintContractMatches(observed, expected) {
+  if (observed?.table !== expected.table || observed?.name !== expected.name || observed?.type !== expected.type) return false
+  return normalizeConstraintDefinition(observed.definition) === normalizeConstraintDefinition(expected.definition)
+}
+
+function normalizeConstraintDefinition(value) {
+  const compact = String(value ?? '').replaceAll('"', '').replaceAll(/\s+/gu, '').toLowerCase()
+  const checkMatch = compact.match(/^check\((.*)\)$/u)
+  if (!checkMatch) return compact
+  return `check(${unwrapRedundantOuterParentheses(checkMatch[1])})`
+}
+
+function unwrapRedundantOuterParentheses(value) {
+  let expression = value
+  while (isWrappedBySingleParentheses(expression)) expression = expression.slice(1, -1)
+  return expression
+}
+
+function isWrappedBySingleParentheses(value) {
+  if (!value.startsWith('(') || !value.endsWith(')')) return false
+  let depth = 0
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === '(') depth += 1
+    if (value[index] === ')') depth -= 1
+    if (depth === 0 && index < value.length - 1) return false
+  }
+  return depth === 0
+}
+
+function parseIndexCatalogRow(row) {
+  const definition = String(row?.indexdef ?? '')
+  const columnsMatch = definition.match(/\(([^()]*)\)\s*$/u)
+  const columns = columnsMatch
+    ? [...columnsMatch[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1])
+    : []
+  return {
+    table: row?.table_name,
+    name: row?.indexname,
+    columns,
+    unique: /^CREATE UNIQUE INDEX\b/iu.test(definition),
+    predicate: /\sWHERE\s/iu.test(definition) ? definition.slice(definition.search(/\sWHERE\s/iu.test(definition))).trim() : null,
+  }
 }
 
 function validateMoneyTypes(snapshot) {
@@ -930,25 +1299,66 @@ async function defaultConnect(postgresUrl, timeoutMs) {
   }
 }
 
-async function defaultInspect(pool) {
-  const tableRows = await pool.query('SELECT table_name FROM information_schema.tables WHERE table_schema = $1', ['public'])
-  const columnRows = await pool.query('SELECT table_name, column_name, udt_name FROM information_schema.columns WHERE table_schema = $1', ['public'])
-  const primaryRows = await pool.query("SELECT tc.table_name FROM information_schema.table_constraints tc WHERE tc.table_schema = $1 AND tc.constraint_type = 'PRIMARY KEY'", ['public'])
-  const indexRows = await pool.query('SELECT tablename AS table_name, indexname FROM pg_indexes WHERE schemaname = $1', ['public'])
-  const constraintRows = await pool.query("SELECT c.relname AS table_name, con.conname AS constraint_name FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1", ['public'])
-  const ledgerRows = await pool.query('SELECT migration_name FROM "_prisma_migrations" WHERE migration_name IN ($1, $2)', [REPAIR_MIGRATION_NAME, LAUNCH_MIGRATION_NAME]).catch(() => ({ rows: [] }))
-  const schemaColumns = { ...REQUIRED_LAUNCH_SCHEMA_COLUMNS, ...REQUIRED_SCHEMA_COLUMNS }
-  const allTables = [...new Set([...REQUIRED_LAUNCH_TABLES, 'TusHardeningFixture'])]
-  const tables = Object.fromEntries(allTables.map((table) => [table, {
-    present: tableRows.rows.some((row) => row.table_name === table),
-    columns: columnRows.rows.filter((row) => row.table_name === table).map((row) => row.column_name),
-    types: Object.fromEntries(columnRows.rows.filter((row) => row.table_name === table).map((row) => [row.column_name, row.udt_name])),
-    primaryKey: primaryRows.rows.some((row) => row.table_name === table),
-    requiredIndexes: (REQUIRED_SCHEMA_INDEXES[table] ?? []).every((index) => indexRows.rows.some((row) => row.table_name === table && row.indexname === index)),
-    requiredConstraints: (REQUIRED_CONSTRAINTS[table] ?? []).every((constraint) => constraintRows.rows.some((row) => row.table_name === table && row.constraint_name === constraint)),
-    expectedColumns: schemaColumns[table] ?? [],
-  }]))
-  return { tables, rowCounts: await readRowCounts(pool, allTables), orphans: await readOrphanCount(pool), ledger: { present: tableRows.rows.some((row) => row.table_name === '_prisma_migrations'), repairMarkerCount: ledgerRows.rows.length } }
+async function defaultInspect(pool, { readOnly = false } = {}) {
+  const client = readOnly && typeof pool.connect === 'function' ? await pool.connect() : pool
+  let transactionStarted = false
+  try {
+    if (client !== pool) {
+      await client.query('BEGIN')
+      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+      transactionStarted = true
+    }
+    const tableRows = await client.query('SELECT table_name FROM information_schema.tables WHERE table_schema = $1', ['public'])
+    const columnRows = await client.query('SELECT table_name, column_name, udt_name, is_nullable, column_default, data_type FROM information_schema.columns WHERE table_schema = $1', ['public'])
+    const primaryRows = await client.query("SELECT tc.table_name, kcu.column_name, kcu.ordinal_position FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name WHERE tc.table_schema = $1 AND tc.constraint_type = 'PRIMARY KEY' ORDER BY tc.table_name, kcu.ordinal_position", ['public'])
+    const indexRows = await client.query('SELECT tablename AS table_name, indexname, indexdef FROM pg_indexes WHERE schemaname = $1', ['public'])
+    const constraintRows = await client.query("SELECT c.relname AS table_name, con.conname AS constraint_name, con.contype, pg_get_constraintdef(con.oid, true) AS definition FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1", ['public'])
+    const ledgerRows = await client.query('SELECT migration_name FROM "_prisma_migrations" WHERE migration_name IN ($1, $2, $3, $4)', [REPAIR_MIGRATION_NAME, LAUNCH_MIGRATION_NAME, POS_INDEX_CONSTRAINT_REPAIR_NAME, LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME]).catch(() => ({ rows: [] }))
+    const schemaColumns = { ...REQUIRED_LAUNCH_SCHEMA_COLUMNS, ...REQUIRED_SCHEMA_COLUMNS }
+    const allTables = [...new Set([...REQUIRED_LIVE_SCHEMA_TABLE_ENTRIES, ...REQUIRED_BILLING_PRIMARY_KEY_TABLES, 'TusHardeningFixture'])]
+    const primaryKeys = Object.fromEntries([...new Set(primaryRows.rows.map((row) => row.table_name))].map((table) => [table, primaryRows.rows.filter((row) => row.table_name === table).sort((left, right) => left.ordinal_position - right.ordinal_position).map((row) => row.column_name)]))
+    const tables = Object.fromEntries(allTables.map((table) => {
+      const columns = columnRows.rows.filter((row) => row.table_name === table)
+      return [table, {
+        present: tableRows.rows.some((row) => row.table_name === table),
+        columns: columns.map((row) => row.column_name),
+        types: Object.fromEntries(columns.map((row) => [row.column_name, row.udt_name])),
+        columnShapes: Object.fromEntries(columns.map((row) => [row.column_name, { udtName: row.udt_name, nullable: row.is_nullable === 'YES', defaultValue: row.column_default }])),
+        primaryKey: primaryKeys[table]?.length > 0,
+        requiredIndexes: (REQUIRED_SCHEMA_INDEXES[table] ?? []).every((index) => indexRows.rows.some((row) => row.table_name === table && row.indexname === index))
+          && REQUIRED_POS_REPAIR_INDEXES.filter((index) => index.table === table).every((expected) => indexRows.rows.some((row) => row.table_name === table && indexContractMatches(parseIndexCatalogRow(row), expected))),
+        requiredConstraints: (REQUIRED_CONSTRAINTS[table] ?? []).every((constraint) => constraintRows.rows.some((row) => row.table_name === table && row.constraint_name === constraint)),
+        indexes: indexRows.rows.filter((row) => row.table_name === table).map(parseIndexCatalogRow),
+        constraints: constraintRows.rows.filter((row) => row.table_name === table).map((row) => ({ table: row.table_name, name: row.constraint_name, type: row.contype, definition: row.definition })),
+        expectedColumns: schemaColumns[table] ?? [],
+      }]
+    }))
+    const ledgerNames = ledgerRows.rows.map((row) => row.migration_name)
+    const markerCounts = Object.fromEntries([REPAIR_MIGRATION_NAME, LAUNCH_MIGRATION_NAME, POS_INDEX_CONSTRAINT_REPAIR_NAME, LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME].map((name) => [name, ledgerNames.filter((value) => value === name).length]))
+    return {
+      tables,
+      indexes: Object.values(tables).flatMap((table) => table.indexes ?? []),
+      constraints: Object.values(tables).flatMap((table) => table.constraints ?? []),
+      primaryKeys,
+      rowCounts: await readRowCounts(client, allTables),
+      idAggregates: await readIdAggregates(client, REQUIRED_CONFORMANCE_PRIMARY_KEYS.map(({ table }) => table)),
+      orphans: await readOrphanCount(client),
+      rowValuesRead: 0,
+      ledger: {
+        present: tableRows.rows.some((row) => row.table_name === '_prisma_migrations'),
+        names: ledgerNames,
+        markerCounts,
+        repairMarkerCount: ledgerNames.filter((name) => name === REPAIR_MIGRATION_NAME || name === LAUNCH_MIGRATION_NAME).length,
+        launchMarkerCount: markerCounts[LAUNCH_MIGRATION_NAME],
+        posIndexConstraintRepairMarkerCount: markerCounts[POS_INDEX_CONSTRAINT_REPAIR_NAME],
+        liveSchemaConformanceRepairMarkerCount: markerCounts[LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME],
+        historicalAdditiveRepairMarkerCount: markerCounts[REPAIR_MIGRATION_NAME],
+      },
+    }
+  } finally {
+    if (transactionStarted) await client.query('ROLLBACK').catch(() => undefined)
+    if (client !== pool) client.release?.()
+  }
 }
 
 async function readRowCounts(pool, tables) {
@@ -957,6 +1367,21 @@ async function readRowCounts(pool, tables) {
     counts[table] = await pool.query(`SELECT COUNT(*)::int AS count FROM "${table}"`).then((result) => Number(result.rows[0]?.count ?? 0)).catch(() => 0)
   }
   return counts
+}
+
+async function readIdAggregates(pool, tables) {
+  const aggregates = {}
+  for (const table of tables) {
+    aggregates[table] = await pool.query(`SELECT COUNT(*)::int AS row_count, COUNT("id")::int AS non_null_count, (COUNT(*) - COUNT(DISTINCT "id"))::int AS duplicate_count FROM "${table}"`).then((result) => {
+      const row = result.rows[0] ?? {}
+      return {
+        rowCount: Number(row.row_count ?? 0),
+        nullCount: Number(row.row_count ?? 0) - Number(row.non_null_count ?? 0),
+        duplicateCount: Number(row.duplicate_count ?? 0),
+      }
+    }).catch(() => null)
+  }
+  return aggregates
 }
 
 async function readOrphanCount(pool) {

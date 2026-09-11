@@ -83,7 +83,7 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'TusListing', 'TusCommitment', 'TusCommitmentCompensation',
     'TusMarketplaceCommitment', 'TusPaymentIntent', 'TusCommissionSnapshot',
-    'TusLedgerEntry', 'TusReconciliationRecord', 'TusInvoice', 'TusCreditNote',
+    'TusLedgerEntry', 'TusInvoice', 'TusCreditNote',
     'TusSubscription', 'TusPosOperation', 'TusPosReceipt'
   ] LOOP
     BEGIN

@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 
 import {
+  LIVE_SCHEMA_CONFORMANCE_REPAIR_PATH,
   parseRepairArguments,
   redactText,
   runRepair,
@@ -42,17 +43,19 @@ export async function main(argumentsList = process.argv.slice(2)) {
       skill_resolution: skillResolution(),
     }
   }
-  const result = await runRepair({ confirmed: parsed.confirmed, backupId: parsed.backupId })
+  const result = await runRepair({
+    confirmed: parsed.confirmed,
+    backupId: parsed.backupId,
+    repairUnit: 'live-schema-conformance',
+  })
   const blockedRisk = result.reason ? [result.reason] : []
   return {
     status: result.status,
-    executive_summary: result.status === 'partial'
-      ? 'The additive baseline completed; durable POS rerun remains bounded to the next phase.'
-      : result.status === 'success'
-        ? 'The additive baseline and all requested bounded verification completed.'
-        : 'The additive migration repair stopped before an unsafe or unproven operation.',
+    executive_summary: result.status === 'success'
+      ? 'The additive live schema conformance repair and metadata verification completed.'
+      : 'The live schema conformance repair stopped before an unsafe or unproven operation.',
     artifacts: [
-      'apps/api/prisma/migrations/20260909090000_tus_argentina_market_launch/migration.sql',
+      LIVE_SCHEMA_CONFORMANCE_REPAIR_PATH,
       'scripts/tus-migration-repair-lib.mjs',
       'scripts/tus-migration-repair.mjs',
       'tests/integration/tus/migration-repair.test.mjs',
@@ -66,7 +69,7 @@ export async function main(argumentsList = process.argv.slice(2)) {
     side_effects: result.sideEffects,
     cleanup_state: result.cleanupState,
     risks: blockedRisk,
-    next_recommended: result.status === 'partial' ? 'bounded-pos-rerun' : result.status === 'success' ? 'none' : 'provide-restorable-backup-handle',
+    next_recommended: result.status === 'success' ? 'none' : 'provide-restorable-backup-handle',
     skill_resolution: skillResolution(),
   }
 }

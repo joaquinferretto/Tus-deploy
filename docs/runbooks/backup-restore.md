@@ -41,6 +41,14 @@ outbox, and DLQ, and return to the last verified restore point and passing
 application/schema version. Do not overwrite the source backup or silently
 restore another tenant.
 
+## Live schema conformance repair
+
+Before `tus-live-schema-conformance-repair`, verify a non-empty custom-format
+archive with `pg_restore --format=custom --list`. The archive is a gate only;
+do not print its path, contents, URL, or credentials. If a post-commit metadata
+receipt is incomplete, restore only into an isolated target under owner approval.
+Never restore over the current development target as an undo mechanism.
+
 ## Rollback boundary
 
 The boundary is the selected restore target, restore operation, recovery flag,

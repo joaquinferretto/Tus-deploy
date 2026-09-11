@@ -24,6 +24,13 @@ present in the approved service environment. It invokes only `prisma migrate
 deploy`; `migrate reset`, `db push`, destructive SQL, and historical replay are
 not rollback tools.
 
+The live schema conformance correction is a separately authorized development
+operation, not a production pre-deploy shortcut. Run it only with
+`NODE_ENV=development`, `--confirm-development-target`, the root `.env`
+`DATABASE_URL`, and a verified custom-format backup. Do not start seed, POS,
+providers, browsers, devices, or hosted deployment until its metadata-only
+receipt proves the exact catalog counts and marker lineage.
+
 Next uses `output: 'standalone'` and the web package starts the generated
 `.next/standalone/server.js` directly. `next start` is not compatible with this
 standalone contract. Render supplies its externally assigned `PORT`; local
@@ -174,3 +181,7 @@ browser/mobile, deployment, provider, legal/tax/privacy, or external-blocked.
 Static YAML, a build, a plan fixture, or a disabled worker is not live deployment
 proof. Missing Render/Vercel/DNS/worker/backup access remains
 `external-blocked`/`not-production-ready`; no production success is emitted.
+
+The conformance receipt may set `liveConformance=true` only for the exact
+metadata gate. Provider, browser/device, cloud, deployment, operations, and
+legal/tax gates remain separate NO-GO conditions until independently proven.

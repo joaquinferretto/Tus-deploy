@@ -453,6 +453,14 @@ No PostgreSQL connection, DDL, migration, seed, backup, restore, or write was pe
 - PostgreSQL was not connected, migrated, seeded, read, written, or restored. The Render migration wrapper remains backup-gated and was not invoked.
 - Existing unrelated working-tree changes were preserved. `Goldenrepo-js_py` remains excluded.
 
+## Verifier-Only Database Blocker Cross-Reference
+
+- Corrected only `constraintContractMatches` normalization in `scripts/tus-migration-repair-lib.mjs`; redundant outer parentheses/whitespace are accepted only when the CHECK predicate remains identical. Added focused equivalent and materially-different predicate tests.
+- RED/GREEN/REFACTOR evidence: migration-repair `25/26` RED then `26/26` GREEN/refactor; finance regression set `48/48`; API typecheck/lint, `git diff --check`, and Prisma schema validation passed.
+- One read-only metadata verification attempt against only the root `.env` database with development confirmation returned a redacted blocked result. It used one connection, no retry, rollback/client cleanup verified, and read zero row values.
+- No migration replay, DDL/DML, seed, restore, provider, browser/device, Docker, deployment, or review command was run. Seed remains deferred because task `3.3` does not explicitly authorize it and schema verification did not pass.
+- `liveConformance: false`; NO-GO remains authoritative and no production readiness is claimed.
+
 ## Phase 12 Recovery Pass
 
 - Revalidated the deployment files, Phase 12 test/evidence, umbrella proposal/design/specification, environment inventory, and current migration inventory without restarting earlier phases.
@@ -1144,3 +1152,222 @@ remediation `R1`.
 - `seed`: deferred; no seed invocation.
 - `side_effects`: one repair connection, one metadata-only check connection, one entered write phase, no persisted DDL/DML/deletes/provider calls/row values.
 - `cleanup_state`: verified; repair pool closed and no owned processes remain.
+
+## Bounded Database Repair Slice: Sequential Failure Diagnosis
+
+- Revalidated the selected launch baseline before connecting: `125` statements,
+  `0` destructive, `0` ambiguous, `unsafe_alter=false`, no transaction-incompatible
+  statements, no forbidden destructive tokens, and exact-money SQL passed.
+- Used only the repository-root `.env` `DATABASE_URL`, one Node `pg` client
+  session, one connection attempt, and 60,000 ms connection/statement/query
+  bounds. No retry or alternate URL was used.
+- Entered a real `BEGIN` transaction and executed the selected statements
+  sequentially. Statement `60` failed after `59` completed with sanitized
+  SQLSTATE `42703`, category `schema-reference`; the diagnostic message removed
+  identifiers and connection details.
+- Executed `ROLLBACK` in `finally`; rollback passed. Metadata-only verification
+  after rollback found one public table (`TusHardeningFixture`), ten public
+  columns, no `_prisma_migrations` table, no ledger rows or selected markers,
+  and emitted zero row values.
+- Comparing the trial with `runRepair` localizes the prior generic
+  `repair-operation-failed-restore-required` to statement execution for this
+  target. Rollback passed, the default ledger recorder is a no-op, and the
+  post-apply verifier was not reached by the failed statement path.
+
+### Sequential Diagnostic Result Fields
+
+- `status`: `blocked`
+- `runtime_path`: `C:\Users\mmmau\Tools\node-v22.23.2-win-x64\node.exe`
+- `connection_attempts`: `1`; retry count `0`; connection/statement/query bounds `60000 ms`
+- `static_gate`: passed; `125` selected statements; destructive `0`; ambiguous `0`; unsafe-alter `false`
+- `transaction_attempt`: failed at statement `60`; `59` statements completed
+- `failed_statement_index`: `60`
+- `sanitized_sqlstate`: `42703`
+- `sanitized_error_category`: `schema-reference`
+- `sanitized_error`: PostgreSQL schema reference error; identifiers and connection details redacted
+- `rollback`: attempted in `finally`, passed
+- `post_rollback_metadata`: passed; one table, ten columns, no Prisma ledger table or selected marker
+- `mismatch_location`: `statement`
+- `root_cause`: dynamic currency-check constraint block at selected statement `60` raised the schema-reference error
+- `safe_next_action`: do not retry repair; resolve the target/schema reference through a separately authorized metadata-only diagnosis before any new additive attempt
+- `persistent_side_effects`: DDL `0`, DML `0`, deletes `0`, ledger mutations `0`, row values read/emitted `0`
+- `cleanup_state`: verified; the single client session was closed
+- `risks`: exact failing identifier remains redacted; no ledger-recording or post-apply verifier phase was executed in this no-commit trial
+- `skill_resolution`: `_shared` and `typescript` loaded from the exact requested paths; CodeGraph fallback used after two malformed-index failures
+
+### Sequential Diagnostic Work Unit Evidence
+
+| Evidence | Exact result |
+|---|---|
+| Static gate | Passed; selected launch SQL `125/125`, destructive `0`, ambiguous `0`, unsafe-alter `false`, exact-money `passed` |
+| Runtime path | One bounded Node `pg` session against root `.env` `DATABASE_URL`; no alternate URL, retry, production CLI, migration, seed, provider, service, browser, Docker, deployment, or review command |
+| Transaction | `BEGIN`; statement-by-statement execution; failure at statement `60` with sanitized `42703`; `ROLLBACK` in `finally` passed |
+| Post-rollback metadata | One public table and ten columns remained; no `_prisma_migrations`; zero row values read/emitted |
+| Persistent effects | Zero persistent DDL/DML/deletes/ledger mutations; no commit issued |
+| Cleanup | One session closed; no temporary runtime artifact retained |
+
+## Cross-Reference: Narrow Currency-Check Repair
+
+The focused `tus-additive-migration-repair` correction removed only
+`TusReconciliationRecord` from the launch migration's dynamic currency-check
+list. Its `providerAmount BIGINT` definition remains unchanged; no currency
+column or conversion was introduced. RED/GREEN focused coverage is recorded as
+`20/21` then `21/21`, with exact-money and additive-only gates preserved.
+
+One bounded development apply used only the root `.env` `DATABASE_URL`,
+`NODE_ENV=development`, explicit `--confirm-development-target`, and the
+preserved custom backup. It committed the selected additive baseline and launch
+marker, then blocked at metadata-only schema verification because required POS
+indexes/constraints were missing. No seed, provider, browser/device, Docker,
+hosted deployment, or production-readiness claim was made; `liveConformance:
+false` remains authoritative. Full redacted evidence is in
+`openspec/changes/tus-additive-migration-repair/apply-progress.md`.
+
+## Cross-Reference: POS Index / Constraint Repair Unit
+
+The additive repair change now contains a dedicated forward-only migration at
+`apps/api/prisma/migrations/20260911120000_tus_pos_index_constraint_repair/migration.sql`.
+It targets only the exact 22 missing delivery/POS indexes and 3 missing POS
+constraints identified by the metadata verifier, preserves the existing launch
+marker, and adds an idempotent repair marker without replaying the baseline or
+historical migrations.
+
+Static repair SQL safety passed (`26` statements, destructive `0`, ambiguous
+`0`, exact-money compatible). The bounded live attempt used only root `.env`
+`DATABASE_URL`, development mode, and explicit confirmation, but stopped before
+connection because the required restorable backup artifact was unavailable.
+No additional DDL/DML, seed, provider, runtime, or row-value read occurred;
+the latest metadata receipt remains authoritative (`22` indexes and `3`
+constraints missing, tables/columns/money types present, launch marker present,
+row values read `0`). `liveConformance: false` remains unchanged.
+
+## Latest Additive POS Repair Attempt
+
+- Backup tooling/source was verified from the official PostgreSQL 16.2 Windows
+  binaries; the external custom archive passed `pg_restore --format=custom
+  --list` with exit `0`, and its contents were not read.
+- One bounded `NODE_ENV=development` attempt used only the root `.env`
+  `DATABASE_URL` and `--confirm-development-target`. Preflight passed with the
+  launch/baseline ledger marker present, no retry, and no third attempt.
+- Only `20260911120000_tus_pos_index_constraint_repair` was applied in a
+  controlled additive transaction. The repair marker was recorded and no
+  historical or baseline migration was replayed.
+- Metadata-only verification blocked the unit: 62/62 required tables were
+  present and exact money types passed, but 14/22 expected indexes and 2/3
+  expected constraints remained missing. No row values were read.
+- No restore-over-current operation or destructive down rollback was issued
+  after the post-commit verifier failure. Seed, durable POS, provider, browser,
+  Docker, deployment, and review commands remain deferred; `liveConformance:
+  false` and NO-GO remain authoritative.
+
+## Latest Read-Only POS Metadata Comparison
+
+- One bounded Node `pg` session used only the root `.env` `DATABASE_URL`,
+  `NODE_ENV=development`, and explicit `--confirm-development-target` context.
+- The transaction was `REPEATABLE READ READ ONLY`, queried only
+  `information_schema.tables` and `pg_catalog.pg_index`/`pg_constraint`, then
+  rolled back; one connection attempt, no retry, no third attempt, and zero row
+  values read.
+- The current catalog has all 22 expected indexes with exact identifier, column
+  order, uniqueness, and null predicate. No indexes are missing.
+- The foreign key matches exactly. Both named check constraints exist, but the
+  catalog definitions are `CHECK (amount >= 0)` and `CHECK (version >= 0)` while
+  the current verifier expects `CHECK ((amount >= 0))` and
+  `CHECK ((version >= 0))`; they are therefore incorrect-shape, not absent.
+- The repair migration source contains all 22 index statements, all 3
+  constraint statements, and its marker insert. No skipped statement is proven
+  by this catalog-only comparison; the two check statements are source-present
+  but produce a verifier-incompatible shape.
+- The current comparison intentionally did not query `_prisma_migrations`, so
+  current ledger-marker presence is not freshly asserted from a row value.
+- No write, DDL, DML, migration invocation, seed, provider, browser, Docker,
+  deployment, or review command occurred. Cleanup is verified.
+
+## Fresh Integrated Schema-Verifier Diagnosis
+
+The one fresh bounded read-only Node/`pg` session used only the root `.env`
+`DATABASE_URL`, development mode, explicit confirmation, and one connection with
+no retry. It attempted the isolated table, money, index, constraint, ledger, and
+POS catalog stages in a repeatable-read read-only transaction, then rolled back.
+The wrapper failed locally after cleanup while resolving an in-memory contract
+because the current library declares `export const` and the wrapper searched for
+`const`. No accepted metadata receipt or integrated verifier result was produced.
+
+```yaml
+status: blocked
+runtime_path: C:\Users\mmmau\Tools\node-v22.23.2-win-x64\node.exe
+connection_attempts: 1
+failed_stage: diagnostic_contract_resolution
+sqlstate: null
+sanitized_error_category: diagnostic-contract-resolution-failed
+sanitized_error: "Local wrapper exception after the read-only transaction; PostgreSQL identifiers and connection details were not retained."
+table_check: attempted-no-stage-receipt
+money_check: attempted-no-stage-receipt
+index_check: attempted-no-stage-receipt
+constraint_check: attempted-no-stage-receipt
+ledger_check: attempted-no-stage-receipt
+pos_check: attempted-no-stage-receipt
+integrated_verifier_cause: {category: diagnostic-contract-resolution-failed, status: not-invoked}
+row_values_read: 0
+persistent_side_effects: {database_writes: 0, ddl: 0, dml: 0, migration_invocations: 0, seed_invocations: 0, provider_calls: 0, row_values_read: 0}
+cleanup_state: {transaction_rolled_back: true, client_released: true, pool_closed: true, owned_processes_remaining: 0}
+safe_next_action: "Do not retry this run or mutate the database; authorize a corrected bounded metadata-only pass before changing schema-verification state."
+```
+
+This does not supersede the prior accepted live catalog comparison or the
+verifier-normalization evidence; it records only that this fresh integrated
+receipt was invalidated by the local wrapper exception. `liveConformance: false`
+and NO-GO remain authoritative.
+
+## Single Bounded Live Schema Verification: Blocked Local Scope
+
+- `status`: `blocked`; no accepted receipt was emitted.
+- `runtime_path`: `C:\Users\mmmau\Tools\node-v22.23.2-win-x64\node.exe`
+- `connection_attempts`: `1`; retry count `0`; no third attempt.
+- `source`: repository-root `.env` `DATABASE_URL` only; `NODE_ENV=development`; explicit `--confirm-development-target`.
+- `table_check`: passed for `62` expected entries (`58` unique names), with `62` present entries, no missing expected columns, and no primary-key failures.
+- `money_check`: blocked locally after `23/26` expected source money columns were queried; `TusSubscriptionPlan`, `TusBillingRefund`, and `TusBillingLedger` were outside the query scope. No live mismatch is inferred.
+- `index_check`, `constraint_check`, `ledger_check`, and `integrated_verifier_exercised`: no receipt issued after the local contract failure; marker row values were not returned.
+- `row_values_read`: `0`.
+- `persistent_side_effects`: database writes `0`, DDL `0`, DML `0`, migration invocations `0`, provider calls `0`.
+- `cleanup_state`: read-only transaction rolled back; client/session closed; no owned processes remained.
+- `safe_next_action`: do not retry this run or invoke repair/apply; authorize a corrected metadata-only pass separately if required.
+
+The direct Node/`pg` session stopped because the receipt builder omitted three
+money-table declarations from the current repair source. This is a local
+verifier-scope defect, not a database conformance result. No migration, DDL,
+DML, seed, restore, provider, browser, Docker, deployment, or review lifecycle
+command was invoked.
+
+## Complete Bounded Metadata Receipt
+
+```yaml
+status: complete-nonconformant
+runtime_path: C:\Users\mmmau\Tools\node-v22.23.2-win-x64\node.exe
+connection_attempts: 1
+retry_count: 0
+third_attempt: prohibited
+receipt_version: tus-live-schema-verification/v1
+source: repository-root .env DATABASE_URL only
+node_env: development
+explicit_confirmation: --confirm-development-target
+contract_source: {status: resolved, table_entries: 62, unique_table_names: 58, money_columns: 26, money_tables: 17, primary_key_tables: 68, repair_indexes: 22, repair_constraints: 3, required_constraints_exported: false, required_constraints_parsed_from_current_source: 9}
+table_check: {status: passed, expected: 62 source-derived entries, present: 62 source-derived entries, missing: [], incorrect: []}
+money_check: {status: failed, expected: 26 source-derived columns, present: 23, missing: [TusSubscriptionPlan.amountMinor, TusBillingRefund.amountMinor, TusBillingLedger.amountMinor], incorrect: []}
+primary_key_check: {status: failed, expected: 68 source-derived tables, present: 58, missing: [TusBillingAccount, TusSubscriptionPlan, TusBillingRefund, TusBillingLedger, TusBillingIdempotency, TusBillingAudit, TusBillingOutbox, TusBillingDunning, TusBillingNumberSequence, TusAccountingExport], incorrect: []}
+index_check: {status: failed, expected: 22 source-derived indexes, present: 8 exact, missing: [], incorrect: [14 named indexes with incomplete ordered-column definitions]}
+constraint_check: {status: passed, expected: 3 source-derived constraints, present: 3, missing: [], incorrect: []}
+ledger_check: {status: failed, expected: [20260831180000_tus_additive_migration_repair, 20260909090000_tus_argentina_market_launch, 20260911120000_tus_pos_index_constraint_repair], present: [20260909090000_tus_argentina_market_launch, 20260911120000_tus_pos_index_constraint_repair], missing: [20260831180000_tus_additive_migration_repair], incorrect: [], counts_only: true}
+row_values_read: 0
+overall_schema_conformance: {status: failed, verdict: non-conformant, metadata_only: true}
+integrated_verifier_exercised: {status: failed, verifier: verifySchemaSnapshot, repair_marker_count: 1, missing_indexes: 14, missing_constraints: 0}
+persistent_side_effects: {database_writes: 0, ddl: 0, dml: 0, migration_invocations: 0, seed_invocations: 0, provider_calls: 0, row_values_read: 0}
+cleanup_state: {transaction_rolled_back: true, client_closed: true, session_closed: true, owned_processes_remaining: 0}
+risks: [billing money and PK metadata are absent, 14 index definitions are incorrect, baseline marker count is zero, metadata-only evidence does not prove runtime behavior]
+safe_next_action: Do not run repair/apply or any DDL/DML; remediate the reported metadata gaps in a separately authorized change, then request a new bounded receipt.
+skill_resolution: {shared: loaded, typescript: loaded, codegraph: fallback-after-upstream-cli-unavailable}
+```
+
+The receipt is complete diagnostic evidence, not a conformant-schema
+acceptance. No mutation-capable path was invoked and prior evidence remains
+preserved.

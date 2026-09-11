@@ -50,6 +50,16 @@ zero, create unique fixtures, and keep the failed migration evidence immutable
 and separate from the new attempt. A retry failure remains
 `not-production-ready` and follows this rollback procedure again.
 
+## Live schema conformance correction
+
+The conformance correction is forward-only and runs once in a bounded
+transaction after the root `.env` development target, backup, aggregate
+preflight, and marker-lineage gates pass. There is no down migration. A
+statement failure must roll back the transaction; an uncertain commit or
+post-commit metadata mismatch requires an owner-approved isolated restore.
+Do not replay the historical additive marker, baseline, POS repair, or any
+pending migration backlog.
+
 ## Evidence
 
 Record the prior and selected versions, migration identifier, backup/restore
