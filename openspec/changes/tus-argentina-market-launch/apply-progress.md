@@ -852,10 +852,13 @@ No PostgreSQL connection, DDL, migration, seed, backup, restore, or write was pe
 |---|---|---|---|---|---|---|
 | Default backup archive gate | `tests/integration/tus/migration-repair.test.mjs` | 16/16 passed | Import failed because the new helper was absent | 17/17 passed | Existing injected backup contract plus nonzero archive/`pg_restore --list` path | Shared bounded helper, ignored output, and redacted failure reasons |
 
-The focused change is not marked complete in the focused task artifact: task
-`3.2` remains pending because exact-money preflight failed before DDL, and task
-`3.3` remains pending because schema proof did not run and the user boundary
-prohibits API/POS runtime execution in this phase.
+The focused database evidence remains blocked by the target-specific
+`exact-money-type-mismatch` preflight result, and schema proof did not run.
+The current 14-task plan has no corresponding database subtask identifiers;
+this evidence is therefore retained as an external-blocked database/evidence
+condition, not as pending implementation tasks. The implementation task artifact remains
+the authority for the checked identifiers `0.1` through `13.1`, plus scoped
+remediation `R1`.
 
 ## Latest Full Launch Migration Retry After Exact-Money Reconciliation
 
@@ -889,11 +892,45 @@ prohibits API/POS runtime execution in this phase.
 
 ### Latest Status
 
-- Tasks `3.2` and `3.3` remain unchecked. The exact-money static contract is
-  reconciled, but the live target-specific type mismatch is still a blocker.
+- The exact-money static contract is reconciled, but the live target-specific
+  type mismatch remains an external blocker. No stale database subtask
+  references are used as task status; the current 14 implementation tasks and
+  scoped remediation `R1` remain checked in `tasks.md`.
 - Next action is an explicitly approved, lossless target conversion/backfill
   plan followed by a fresh bounded retry; do not use historical migrations,
   reset, `db push`, seed rerun, truncate, cascade, or untagged deletes.
+
+## Phase-Contract Gate Reconciliation
+
+- `status`: `success`
+- `executive_summary`: Reconciled stale database subtask references out of the
+  cumulative apply-progress artifact because they are not identifiers in the
+  current 14-task plan. Preserved the factual target-specific database
+  blocker and all prior P7/P8 correction evidence without changing source,
+  config, tests, or runtime state.
+- `artifacts`:
+  - `openspec/changes/tus-argentina-market-launch/apply-progress.md`
+  - `openspec/changes/tus-argentina-market-launch/tasks.md`
+  - `sdd/tus-argentina-market-launch/apply-progress`
+- `next_recommended`: `sdd-verify` only; retain `NO-GO` and
+  `liveConformance: false`.
+- `risks`: Live PostgreSQL, provider, browser/device, worker, cloud,
+  deployment, backup/restore, DNS/TLS, legal/tax, and production evidence
+  remain external-blocked. No live or production verification is claimed.
+- `skill_resolution`: Exact requested paths loaded:
+  `C:\Users\mmmau\.config\opencode\skills\sdd-apply\SKILL.md`,
+  `C:\Users\mmmau\.config\opencode\skills\_shared\SKILL.md`, and
+  `C:\Users\mmmau\.config\opencode\skills\work-unit-commits\SKILL.md`.
+  Strict TDD remained active, but no test/build command was run because this
+  was documentation/artifact reconciliation only.
+
+### Contract-Reconciliation Work Unit Evidence
+
+| Evidence | Exact result |
+|---|---|
+| Focused test command and exact result | `N/A` — no test or build command was run by explicit user instruction; this unit only reconciled Markdown artifacts. |
+| Runtime harness command/scenario and exact result | `N/A` — no runtime, database, provider, browser, deployment, or production verification was started or claimed. |
+| Rollback boundary | Revert only the stale-reference edits and this reconciliation section in `openspec/changes/tus-argentina-market-launch/apply-progress.md`; preserve all prior P7/P8 evidence and unrelated artifacts. |
 
 ## Focused Corrective Slice: P7/P8 Local Contracts
 
@@ -957,3 +994,153 @@ prohibits API/POS runtime execution in this phase.
   created.
 - `cleanup_state`: Complete. No runtime process or external resource was
   started; no secret values were read or emitted.
+
+## Verification Retry: Mobile Security Fixture Remediation
+
+- Replaced two test-only secret-like literals in
+  `apps/mobile/tests/unit/tus-mobile-surfaces.test.ts` with deterministic,
+  non-secret fixtures: `example-mobile-token` and `database unavailable`.
+  The production transport, authorization behavior, and redaction coverage
+  were not changed.
+- The prior `pnpm security:scan` finding was a false positive caused by the
+  tracked test fixture `secret-access-token`; the scanner patterns and scanner
+  policy were not weakened, excluded, or modified.
+- The file was staged only so the repository's `--tracked` scanner evaluated
+  its current content. No unrelated file was staged and no secret value was
+  read, printed, or committed.
+
+### Verification Retry Work Unit Evidence
+
+| Evidence | Exact result |
+|---|---|
+| Focused mobile test | `pnpm --filter @factory/mobile exec jest tests/unit/tus-mobile-surfaces.test.ts --runInBand` — exit `0`; 5 passed, 0 failed; output hash `sha256:195276c24806c0d97b4568d813fbde02ec11fda57efec6216645aa8c94778dab` |
+| Full deterministic suite | `pnpm test` — exit `0`; 586 passed, 0 failed, 0 skipped, 0 cancelled across 98 runner segments; output hash `sha256:c9893e69b17a0e909c181f68b53aaee361083b1107c7c6eec9e1cd724a345491` |
+| Security scan | `pnpm security:scan` — exit `0`; no findings; final output hash `sha256:196951165aabf2254f43d8d373cfb1fe395d4c3d20df6e791b807adc7651dcbd` |
+| Typecheck/lint | Mobile typecheck exit `0`; mobile lint exit `0` with 11 existing warnings and 0 errors; root typecheck exit `0`; root lint exit `0` with existing warnings only |
+| Build/contracts | `pnpm build` exit `0`, output hash `sha256:039774cc8c3d5d3e5cedd9e59e01d054ab9cd74f21fbb4a65878fe57bfcf2a33`; `pnpm contracts:validate` exit `0`, 98 schemas, output hash `sha256:c7390189eca7667e3405de14376487e4ab5f224c85b847931914ab49b98ebe45` |
+| Runtime boundary | No PostgreSQL, migration/seed, provider, browser/device, Docker, deployment, or review lifecycle operation was started. |
+
+### Verification Retry Result Fields
+
+- `status`: `success` for the bounded deterministic security-fixture correction; launch remains `NO-GO` and `liveConformance: false` because external gates remain unproven.
+- `executive_summary`: The tracked mobile security finding was a false positive from a test fixture. The fixture was replaced minimally, the tracked scan is clean, and the full deterministic suite remains green.
+- `tasks_completed`: All cumulative implementation tasks plus scoped remediation `R1` remain checked; no phase task was added or reopened.
+- `database_effects`: None.
+- `provider_effects`: None.
+- `risks`: PostgreSQL durability, provider, browser/device, hosted deployment/worker, operations/support, and legal/tax evidence remain external-blocked.
+- `next_recommended`: Preserve deterministic PASS WITH WARNINGS and obtain separately authorized external evidence; do not claim production readiness.
+- `skill_resolution`: Strict TDD verification used the exact requested `sdd-verify`, `_shared`, and `typescript` skill paths plus the strict verification module.
+- `cleanup_state`: Complete. No long-lived process or external resource was started; only the intended mobile test file was staged for the tracked scan.
+
+## Bounded Database Repair Slice — Fresh Gate Retry
+
+- Re-ran the selected additive launch SQL safety gate before database access:
+  125 statements scanned, 0 destructive, 0 ambiguous, 0 unsafe-alter, no
+  forbidden destructive tokens, and exact-money SQL passed. Historical
+  migrations remained inventory-only and were not invoked.
+- Rechecked the preserved custom-format backup with
+  `pg_restore --format=custom --list`: exit `0`, nonzero archive, contents not
+  read, and the redacted handle remained preserved outside the repository.
+- Ran the existing safe repair CLI with `NODE_ENV=development`, the exact
+  `--confirm-development-target` attestation, root `.env` `DATABASE_URL` only,
+  60-second connection/query bounds, and no retry because the first connection
+  succeeded. The redacted preflight result was `blocked` with the exact reason
+  `exact-money-type-mismatch`.
+- The fresh metadata-only evidence remains authoritative for live-column
+  identity: it found 10 public columns, zero current monetary-looking columns,
+  one public table, no `_prisma_migrations`, and read zero row values. The
+  repair verifier classification is therefore retained without inferring or
+  correcting a live mismatch.
+- Because preflight did not pass, no DDL transaction, ledger marker, schema
+  verification, seed, historical migration, reset, `db push`, destructive SQL,
+  delete, truncate, cascade, provider, browser, Docker, deployment, or row
+  value read occurred. Pool/process cleanup was verified.
+
+### Database Slice TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|---|
+| 1.1 external database gate retry | `tests/integration/tus/migration-repair.test.mjs` | Integration contract | ✅ Existing implementation baseline | ➖ No source behavior was changed; external gate only | ✅ `pnpm test -- tests/integration/tus/migration-repair.test.mjs`: 18/18 passed | ✅ Static unsafe-SQL, target, retry, money, backup, and guarded-apply scenarios covered by existing suite | ➖ No source refactor; evidence-only update |
+
+### Database Slice Work Unit Evidence
+
+| Evidence | Exact result |
+|---|---|
+| Focused test command and exact result | `C:\Users\mmmau\AppData\Local\nvm\v22.22.2\pnpm.cmd test -- tests/integration/tus/migration-repair.test.mjs` — exit `0`; 18 passed, 0 failed, 0 skipped. |
+| Runtime harness command/scenario and exact result | `NODE_ENV=development` safe repair CLI with `--confirm-development-target` and preserved backup handle — exit `1`; static SQL and backup gates passed, one 60-second-bounded connection/preflight ran, verifier returned `exact-money-type-mismatch`, DDL did not start, pool cleanup verified. |
+| Rollback boundary | Revert only the appended fresh database evidence sections in `database-evidence.md`, `money-mismatch-evidence.md`, and this `apply-progress.md`; no database rollback is required because DDL did not begin. |
+
+### Database Slice Result Fields
+
+- `status`: `blocked` before DDL; no production readiness is claimed.
+- `executive_summary`: Static SQL and backup gates passed, but the safe repair verifier stopped at the exact redacted preflight classification `exact-money-type-mismatch`; fresh metadata does not map that classification to a live column.
+- `artifacts`: `database-evidence.md`; `money-mismatch-evidence.md`; `apply-progress.md`; preserved external backup handle.
+- `migration`: not started; `ddl=0`, `dml=0`, historical migrations `0`, ledger mutations `0`.
+- `schema_verification`: deferred because preflight failed before DDL.
+- `seed`: deferred because schema verification was not reached.
+- `tests`: focused migration-repair suite 18/18 passed.
+- `side_effects`: one successful bounded database connection; zero writes, deletes, DDL, DML, migrations, seeds, providers, services, browser/device, Docker, deployment, and row-value reads.
+- `cleanup_state`: verified; pool closed and no owned processes remain.
+- `remaining_blockers`: reconcile the verifier's generic mismatch classification with a safe metadata-only snapshot before any new DDL attempt; keep the launch `NO-GO` and `liveConformance: false`.
+- `skill_resolution`: exact requested `sdd-apply`, `_shared`, `typescript`, and `work-unit-commits` paths loaded; Strict TDD remained active; no source change was needed.
+
+## Corrective Retry: Exact-Money Preflight Verifier
+
+- Root cause was isolated in `validateMoneyTypes`: `defaultInspect` creates
+  `present: false` metadata entries with empty `types` objects for absent
+  required tables, and the verifier treated those placeholders as existing
+  money tables. Missing or incompatible types on a genuinely present table
+  remain fail-closed.
+- Added focused regression coverage proving absent current monetary columns
+  allow additive creation and an existing incompatible monetary column still
+  blocks.
+- The corrected bounded repair run passed the selected static SQL gate, the
+  preserved custom backup gate, target gate, and one 60-second development
+  connection/preflight. It then entered the selected additive transaction and
+  stopped with the existing redacted `repair-operation-failed-restore-required`
+  runtime classification. No second repair retry was attempted.
+- A separate read-only metadata check confirmed the target still has one public
+  table, no current public money columns, no `_prisma_migrations` table, and no
+  persisted launch schema. No row values were read or emitted.
+- No historical migration, seed, provider, browser/device, Docker, hosted
+  deployment, or production operation occurred. `liveConformance: false` and
+  launch NO-GO remain authoritative.
+
+### Corrective Retry Strict TDD Cycle Evidence
+
+| Correction | Test file | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|---|---|
+| Absent-vs-existing exact-money metadata | `tests/integration/tus/migration-repair.test.mjs` | ✅ 18/18 before new assertions | ✅ 19/20: absent-table case failed with `exact-money-type-mismatch` | ✅ 20/20 after the minimal `present:true` guard | ✅ Absent current money columns proceed; incompatible existing `numeric` money column blocks | ✅ 20/20 after updating the compatible existing-table fixture with explicit `int8` metadata |
+
+### Corrective Retry Work Unit Evidence
+
+| Evidence | Exact result |
+|---|---|
+| Focused tests | `pnpm test -- tests/integration/tus/migration-repair.test.mjs`; exit 0, 20 passed, 0 failed. Finance set (`finance-webhook`, `p8-tus-finance`, `p9-finance`) plus migration repair: exit 0, 42 passed, 0 failed. |
+| Relevant type/lint checks | `pnpm --filter @factory/api typecheck`; exit 0. Root `pnpm lint`; exit 0 with existing warning-only diagnostics. |
+| Static SQL gate | Selected launch SQL: 125 statements, 0 destructive, 0 ambiguous, unsafe-alter false, exact-money passed. |
+| Backup gate | Preserved custom archive; `pg_restore --format=custom --list` exit 0; contents not read. |
+| Safe live preflight/runtime | One development connection using only root `.env` `DATABASE_URL`, explicit confirmation, 60-second bound, zero retry; preflight passed, additive transaction then failed with redacted `repair-operation-failed-restore-required`. |
+| Post-failure schema check | Metadata-only check: one public table, no launch tables, zero money columns, no `_prisma_migrations`, zero row values read. |
+| Runtime harness | No seed or durable POS/provider/API/browser/device/Docker/hosted runtime; deferred because migration did not complete. |
+| Rollback boundary | Revert only `scripts/tus-migration-repair-lib.mjs`, the two focused migration-repair assertions/fixture metadata changes, and these corrective evidence sections; preserve all prior phase work and unrelated changes. |
+
+### Corrective Retry Result Fields
+
+- `status`: `blocked`
+- `executive_summary`: The verifier now permits absent current monetary columns while preserving fail-closed rejection of incompatible existing types; the one bounded additive repair transaction still failed with a redacted runtime restore-required classification and left no persisted launch schema.
+- `artifacts`: `scripts/tus-migration-repair-lib.mjs`; `tests/integration/tus/migration-repair.test.mjs`; `database-evidence.md`; `money-mismatch-evidence.md`; this `apply-progress.md`.
+- `next_recommended`: `resolve-blockers`; do not start another apply retry in this run.
+- `risks`: The migration runtime failure remains unresolved/redacted; schema and seed evidence remain unavailable; all external launch gates remain blocked.
+- `skill_resolution`: `paths-injected`; exact `sdd-apply`, `_shared`, `typescript`, and `work-unit-commits` skills plus `sdd-apply/strict-tdd.md` were loaded; no review lifecycle command was used.
+- `root_cause`: Absent required-table metadata was treated as present by the money-type verifier.
+- `changed_files`: the two source/test files above plus the three evidence artifacts; no temporary probe file retained.
+- `tests`: migration repair 20/20; finance set plus migration repair 42/42; API typecheck 0; root lint 0 with existing warnings.
+- `sql_gate`: passed, 125 statements, additive-only, exact-money passed.
+- `backup_gate`: passed, preserved custom archive and `pg_restore --list` exit 0.
+- `preflight`: passed after the verifier correction; one connection, zero retry, development confirmation.
+- `migration`: blocked during the selected additive transaction; persistent DDL 0; historical migrations 0.
+- `schema_verification`: deferred after the transaction failure; metadata-only post-failure check found no launch schema.
+- `seed`: deferred; no seed invocation.
+- `side_effects`: one repair connection, one metadata-only check connection, one entered write phase, no persisted DDL/DML/deletes/provider calls/row values.
+- `cleanup_state`: verified; repair pool closed and no owned processes remain.

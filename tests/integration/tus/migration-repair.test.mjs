@@ -170,6 +170,36 @@ test('preflight rejects shape, data, orphan, and unsafe ledger states', () => {
   assert.equal(result.writesAllowed, false)
 })
 
+test('preflight allows absent current monetary columns so the additive schema can create them', () => {
+  const absentTables = Object.fromEntries([...REQUIRED_POS_TABLES].map((table) => [table, {
+    present: false,
+    columns: [],
+    types: {},
+  }]))
+
+  const result = validatePreflight({ tables: absentTables, ledger: { repairMarkerCount: 0 } })
+
+  assert.equal(result.status, 'ready')
+  assert.equal(result.writesAllowed, true)
+  assert.equal(result.reason, 'preflight-passed')
+})
+
+test('preflight blocks an existing monetary column with an incompatible type', () => {
+  const result = validatePreflight({
+    tables: {
+      TusPosOperation: {
+        present: true,
+        columns: ['amount'],
+        types: { amount: 'numeric' },
+      },
+    },
+  })
+
+  assert.equal(result.status, 'blocked')
+  assert.equal(result.writesAllowed, false)
+  assert.equal(result.reason, 'exact-money-type-mismatch')
+})
+
 test('ledger marker is one forward-only completed repair row and required table inventory is stable', async () => {
   const marker = createLedgerMarker('checksum-redacted')
   assert.equal(marker.migration_name, REPAIR_MIGRATION_NAME)
@@ -325,6 +355,7 @@ test('safe additive path applies once, preserves the ledger, closes the pool, an
       tables: Object.fromEntries([...REQUIRED_POS_TABLES, 'TusHardeningFixture'].map((table) => [table, {
         present: true,
         columns: REQUIRED_SCHEMA_COLUMNS[table] ?? ['id', 'tag', 'version', 'runId', 'tenantId', 'actorId', 'productListingId', 'serviceListingId', 'createdAt', 'updatedAt'],
+        types: table === 'TusPosOperation' || table === 'TusPosReceipt' ? { amount: 'int8' } : {},
         primaryKey: true,
         requiredIndexes: true,
         requiredConstraints: true,

@@ -9,7 +9,7 @@ const context: MobileSurfaceContext = {
   tenantId: 'tenant-arg',
   actorId: 'staff-arg',
   correlationId: 'corr-mobile',
-  accessToken: 'secret-access-token',
+  accessToken: 'example-mobile-token',
 }
 
 describe('TUS mobile contract surfaces', () => {
@@ -81,7 +81,7 @@ describe('TUS mobile contract surfaces', () => {
   })
 
   it('classifies provider/database failures as unavailable without inventing success', () => {
-    expect(() => createTusMobileSurfaceClient({ request: async () => { throw new Error('database password=secret') } })).not.toThrow()
+    expect(() => createTusMobileSurfaceClient({ request: async () => { throw new Error('database unavailable') } })).not.toThrow()
     expect(createTusMobileSurfaceClient({ request: async () => ({ ok: true }) }).classifyFailure({ status: 503, code: 'READINESS_BLOCKED' })).toEqual({ status: 'unavailable', retryable: true, code: 'READINESS_BLOCKED' })
     expect(createTusMobileSurfaceClient({ request: async () => ({ ok: true }) }).classifyFailure({ status: 403, code: 'FORBIDDEN' })).toEqual({ status: 'denied', retryable: false, code: 'FORBIDDEN' })
   })
@@ -102,7 +102,7 @@ describe('TUS mobile contract surfaces', () => {
     }
 
     expect(requests[0]?.url).toBe('https://api-staging.example.invalid/tus/v1/delivery/tasks')
-    expect(requests[0]?.headers).toMatchObject({ authorization: 'Bearer secret-access-token', 'x-correlation-id': 'corr-mobile' })
+    expect(requests[0]?.headers).toMatchObject({ authorization: 'Bearer example-mobile-token', 'x-correlation-id': 'corr-mobile' })
     expect(requests[0]?.headers['x-tenant-id']).toBeUndefined()
     expect(requests[0]?.headers['x-actor-id']).toBeUndefined()
   })

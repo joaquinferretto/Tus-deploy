@@ -882,9 +882,10 @@ function validateMoneyTypes(snapshot) {
   let presentMoneyTable = false
   for (const [table, columns] of Object.entries(REQUIRED_MONEY_TYPES)) {
     const observed = tables[table]
-    if (!observed?.types && !observed?.columnTypes) continue
-    if (observed.present === true) presentMoneyTable = true
+    if (observed?.present !== true) continue
+    presentMoneyTable = true
     const types = observed.types ?? observed.columnTypes
+    if (!types || typeof types !== 'object') return false
     for (const column of columns) {
       if (!['bigint', 'int8'].includes(String(types[column]).toLowerCase())) return false
     }
