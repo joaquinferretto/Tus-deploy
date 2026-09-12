@@ -15,13 +15,13 @@ Values are never copied into this document or emitted by a runner.
 | `EXPO_PUBLIC_API_URL` | `apps/mobile/app.config.ts` and mobile client | Canonical mobile public API URL | No removal: app config and tests consume it |
 | `API_BASE_URL` | `render.yaml` web service | Deployment alias; retain | Render manifest still supplies it |
 | `MONGODB_URL` | Active API adapter, examples, and Render | Canonical MongoDB application name | Repository-wide consumers use this name |
-| `MONGODB_URI` | Compatibility input for the active API adapter and legacy backend-file integrations | Compatibility alias; retain until legacy consumers are migrated | Never emit both names from a manifest; no removal without repository-wide proof |
+| `MONGODB_URI` | Compatibility input for the active API adapter | Compatibility alias; retain until legacy consumers are migrated | Never emit both names from a manifest; no removal without repository-wide proof |
 | `REDIS_URL` / `REDIS_PROVIDER` | API queue adapters and Render | Infrastructure contract; retain | Runtime and deployment consumers are present |
 
 ## Consumer map
 
 The map covers examples, application manifests, mobile/web configuration,
-`render.yaml`, Terraform, tests, docs, and `apps/api/backendFiles/`. Before
+`render.yaml`, Terraform, tests, docs. Before
 changing a name, search all of those roots and record the exact consumer here.
 Similar names are not proof that a variable is unused.
 

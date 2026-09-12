@@ -165,7 +165,7 @@ test('environment inventory records canonical sources and preserves aliases with
   assert.match(inventory, /DATABASE_URL/)
   assert.match(inventory, /only database URL key/i)
   assert.match(inventory, /former six-field/i)
-  assert.match(inventory, /apps\/api\/backendFiles/)
+  assert.doesNotMatch(inventory, /apps\/api\/backendFiles/u)
   assert.match(inventory, /render\.yaml[\s\S]*Vercel/i)
 })
 

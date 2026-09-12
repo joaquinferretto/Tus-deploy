@@ -11,7 +11,7 @@ and secret-store references are allowed. Any approved fallback has an isolated r
 
 | Source / vocabulary | Classification | Core action | Isolated boundary | Evidence gate |
 |---|---|---|---|---|
-| `apps/api/backendFiles` | mixed copied provider and vertical material | do not import from core; selectively extract later | provider/reference slice | import scan |
+| `apps/api/backendFiles` | mixed copied provider and vertical material | do not import from core; selectively extract later | provider/reference slice | import scan | *eliminado* |
 | Alqui identifiers in mobile/config | product contamination | replace with profile-neutral names in assigned slices | none in core | vocabulary scan |
 | Travelers SQL | vertical schema | do not use as core persistence model | reference fixture only if approved | schema scan |
 | DocPhone/medical schemas | vertical behavior | excluded from core contracts | isolated reference only | contract scan |
