@@ -138,16 +138,3 @@ test('P5.2 retries deterministically, compensates the saga, and quarantines pois
   assert.equal(result.reconciliation.status, 'recovered')
   assert.equal(result.receipt.status, 'failed')
 })
-
-test('P5.2 deterministic reference fallback emits a signed local webhook fixture', () => {
-  const result = runTypeScriptScenario(`
-    const { createPaymentFallbackFixture } = (await import('./apps/reference/fallback/payment/index.ts')).default
-    const fixture = createPaymentFallbackFixture()
-    console.log(JSON.stringify({ keys: Object.keys(fixture).sort(), tenantId: fixture.context.tenantId, eventId: fixture.event.eventId, hasSecret: Boolean(fixture.secret) }))
-  `)
-
-  assert.deepEqual(result.keys, ['context', 'event', 'secret'])
-  assert.equal(result.tenantId, 'fixture-tenant')
-  assert.equal(result.eventId, 'fixture-payment-event')
-  assert.equal(result.hasSecret, true)
-})

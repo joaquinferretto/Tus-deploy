@@ -246,8 +246,8 @@ export function classifyFailure({ file, output = '', exitCode = 1, timedOut = fa
     return {
       ...base,
       disposition: 'accepted pre-existing',
-      owner: 'neutral reference boundary',
-      cause: 'legacy neutral-boundary validation scope or vocabulary drift',
+      owner: 'frontera de contaminacion del nucleo',
+      cause: 'desvio de vocabulario vertical o import fallback en superficies core',
     }
   }
 

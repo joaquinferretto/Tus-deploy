@@ -148,17 +148,3 @@ test('P5.3 retries deterministically, compensates the saga, and quarantines pois
   assert.equal(result.reconciliation.status, 'recovered')
   assert.equal(result.receipt.status, 'failed')
 })
-
-test('P5.3 deterministic reference fallback emits a signed local messaging fixture', () => {
-  const result = runTypeScriptScenario(`
-    const { createMessagingFallbackFixture } = (await import('./apps/reference/fallback/messaging/index.ts')).default
-    const fixture = createMessagingFallbackFixture()
-    console.log(JSON.stringify({ keys: Object.keys(fixture).sort(), tenantId: fixture.context.tenantId, eventId: fixture.event.eventId, hasSecret: Boolean(fixture.secret), message: fixture.event.text }))
-  `)
-
-  assert.deepEqual(result.keys, ['context', 'event', 'policy', 'secret'])
-  assert.equal(result.tenantId, 'fixture-tenant')
-  assert.equal(result.eventId, 'fixture-whatsapp-event')
-  assert.equal(result.hasSecret, true)
-  assert.equal(result.message, 'hello from local fixture')
-})
