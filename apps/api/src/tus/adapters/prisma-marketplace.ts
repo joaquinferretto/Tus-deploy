@@ -46,7 +46,7 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
       await this.client.tusMarketplaceCommitment.createMany({ data: commitments.map(commitmentRow) })
     },
     find: async (commitmentId: string) => {
-      const row = await this.client.tusMarketplaceCommitment.findUnique({ where: { commitmentId } })
+      const row = await this.client.tusMarketplaceCommitment.findUnique({ where: { id: commitmentId } })
       return row ? toCommitment(row) : null
     },
     forTenant: async (tenantId: string) => (await this.client.tusMarketplaceCommitment.findMany({ where: { tenantId } })).map(toCommitment),
@@ -55,7 +55,17 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
 
   readonly audit = {
     append: async (records: readonly MarketplaceAuditRecord[]) => {
-      await this.client.tusMarketplaceAudit.createMany({ data: records.map((record) => ({ ...record, id: record.auditId })) })
+      await this.client.tusMarketplaceAudit.createMany({ data: records.map((record) => ({
+        id: record.auditId,
+        tenantId: record.tenantId,
+        actorId: record.actorId,
+        correlationId: record.correlationId,
+        action: record.action,
+        resourceType: record.resourceType,
+        resourceId: record.resourceId,
+        outcome: record.outcome,
+        createdAt: new Date(record.createdAt),
+      })) })
     },
     list: async (tenantId: string): Promise<MarketplaceAuditRecord[]> => (await this.client.tusMarketplaceAudit.findMany({ where: { tenantId } })).map(toAudit),
   }

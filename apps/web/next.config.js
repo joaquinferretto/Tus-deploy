@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   typedRoutes: true,
-  output: 'standalone',
+  ...(process.env.NEXT_DISABLE_STANDALONE === 'true' ? {} : { output: 'standalone' }),
   typescript: {
     ignoreBuildErrors: false,
   },

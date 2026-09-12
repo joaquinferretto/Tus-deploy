@@ -338,7 +338,7 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
       transport.request<TusDiscoveryResponse>({
         ...context,
         method: 'GET',
-        path: '/tus/v1/discovery/offers',
+        path: MARKETPLACE_PATHS.DISCOVERY,
       }),
     recordManualOperation: async ({ accessToken, ...operation }) => {
       const response = await transport.request<unknown>({
@@ -354,7 +354,7 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
       transport.request<TusMerchantOperationsResponse>({
         ...context,
         method: 'GET',
-        path: '/tus/v1/merchant/operations',
+        path: MARKETPLACE_PATHS.MERCHANT_OPERATIONS,
       }),
     merchantMarketplaceOperations: (context) =>
       transport.request<TusMerchantOperationsResponse>({
@@ -366,7 +366,7 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
       transport.request<TusCustomerCommitmentsResponse>({
         ...context,
         method: 'GET',
-        path: '/tus/v1/customer/commitments',
+        path: MARKETPLACE_PATHS.CUSTOMER_COMMITMENTS,
       }),
     marketplaceCustomerCommitments: (context) =>
       transport.request<TusCustomerCommitmentsResponse>({

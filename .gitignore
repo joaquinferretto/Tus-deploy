@@ -23,3 +23,10 @@ coverage/
 .pnpm-store/
 __pycache__/
 *.py[cod]
+*.tsbuildinfo
+*.egg-info/
+apps/workflow-runtime-python/build/
+packages/contracts/src/streams.js
+packages/contracts/src/streams.js.map
+packages/contracts/src/streams.d.ts
+packages/contracts/src/streams.d.ts.map

@@ -1,0 +1,46 @@
+- generic [active] [ref=f3e1]:
+  - button "Open Next.js Dev Tools" [ref=f3e12] [cursor=pointer]
+  - alert [ref=f3e16]
+  - link "Skip to main content" [ref=f3e17] [cursor=pointer]:
+    - /url: "#tus-main-content"
+  - main [ref=f3e18]:
+    - navigation "TUS workspace navigation" [ref=f3e19]:
+      - link "TUS / workspace" [ref=f3e20] [cursor=pointer]:
+        - /url: /tus
+      - generic [ref=f3e21]:
+        - generic [ref=f3e22]: "Tenant scope: 5a888593-27d9-4a14-9868-86228578e642"
+        - generic [ref=f3e23]: Customer · discovery
+        - button "Refresh truth" [ref=f3e24] [cursor=pointer]
+        - button "Sign out" [ref=f3e25] [cursor=pointer]
+        - link "Staff POS" [ref=f3e26] [cursor=pointer]:
+          - /url: /tus/pos
+    - generic [ref=f3e27]:
+      - generic [ref=f3e28]:
+        - paragraph [ref=f3e29]: Authenticated surface / contract pending
+        - heading [level=1] [ref=f3e30]:
+          - text: Run the day
+          - emphasis [ref=f3e31]: without guessing.
+      - paragraph [ref=f3e32]:
+        - strong [ref=f3e33]: Server truth only
+        - text: Every status below is either returned by TUS or explicitly marked pending, disabled, conflicted, or unavailable.
+    - navigation "Workspace surfaces" [ref=f3e34]:
+      - link "Discover" [ref=f3e35] [cursor=pointer]:
+        - /url: /tus?surface=discovery
+      - link "Commitments" [ref=f3e36] [cursor=pointer]:
+        - /url: /tus?surface=commitments
+      - generic [ref=f3e37]:
+        - text: Operations
+        - generic [ref=f3e38]: This destination is unavailable for the authorized scope.
+      - link "Staff POS ↗" [ref=f3e39] [cursor=pointer]:
+        - /url: /tus/pos
+        - text: Staff POS
+        - generic [ref=f3e40]: ↗
+    - region [ref=f3e41]:
+      - generic [ref=f3e42]:
+        - generic [ref=f3e43]: "01"
+        - heading "Current offers, close by." [level=2] [ref=f3e44]
+      - alert [ref=f3e45]:
+        - heading "Customer discovery" [level=3] [ref=f3e46]
+        - strong [ref=f3e47]: Unable to load
+        - paragraph [ref=f3e48]: Customer discovery could not be loaded from TUS. Retry this resource for a fresh server response.
+        - button "Retry Customer discovery" [ref=f3e49] [cursor=pointer]

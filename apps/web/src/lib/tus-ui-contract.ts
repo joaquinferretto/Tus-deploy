@@ -163,11 +163,16 @@ export function resolveTusUiState<TData>({
 }
 
 export function createTusWebSession(input: TusWebSessionInput): TusWebSession {
-  for (const [name, value] of Object.entries(input)) {
-    if (name !== 'sessionId' && (!name || typeof value !== 'string' || value.trim().length === 0)) {
-      throw new Error(`TUS session field ${name} is required`)
-    }
+  for (const [name, value] of Object.entries({ accessToken: input.accessToken, tenantId: input.tenantId, actorId: input.actorId, correlationId: input.correlationId })) {
+    if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`TUS session field ${name} is required`)
   }
+  for (const [name, value] of Object.entries({ sessionId: input.sessionId, subjectId: input.subjectId })) {
+    if (value !== undefined && (typeof value !== 'string' || value.trim().length === 0)) throw new Error(`TUS session field ${name} is invalid`)
+  }
+  for (const [name, value] of Object.entries({ roles: input.roles, permissions: input.permissions })) {
+    if (value !== undefined && (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.trim().length === 0))) throw new Error(`TUS session field ${name} is invalid`)
+  }
+  if (input.expiresAt !== undefined && !Number.isFinite(input.expiresAt)) throw new Error('TUS session field expiresAt is invalid')
   return {
     accessToken: input.accessToken.trim(),
     tenantId: input.tenantId.trim(),

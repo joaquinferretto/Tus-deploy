@@ -113,7 +113,7 @@ interface PrismaMarketplaceListingDelegate {
 
 interface PrismaMarketplaceCommitmentDelegate {
   createMany(input: { data: Record<string, unknown>[] }): Promise<{ count: number }>
-  findUnique(input: { where: { commitmentId: string } }): Promise<Record<string, unknown> | null>
+  findUnique(input: { where: { id: string } }): Promise<Record<string, unknown> | null>
   findMany(input: { where: Record<string, unknown> }): Promise<Record<string, unknown>[]>
 }
 

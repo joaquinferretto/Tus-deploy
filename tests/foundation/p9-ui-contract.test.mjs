@@ -47,7 +47,7 @@ test('PR9 maps loading, empty, disabled, error, and authoritative data without i
 test('PR9 accepts only complete authenticated sessions and derives request authority from that session', () => {
   const result = runTypeScriptScenario(`
     const { createTusWebSession, sessionRequestContext } = (await import('./apps/web/src/lib/tus-ui-contract.ts')).default
-    const session = createTusWebSession({ accessToken: 'secret-token', tenantId: 'tenant-a', actorId: 'customer-a', correlationId: 'corr-a' })
+    const session = createTusWebSession({ accessToken: 'secret-token', tenantId: 'tenant-a', actorId: 'customer-a', correlationId: 'corr-a', sessionId: 'session-a', roles: ['owner'], permissions: ['tus:marketplace:read'], expiresAt: 1700003600000 })
     let rejected = false
     try { createTusWebSession({ accessToken: '', tenantId: 'tenant-a', actorId: 'customer-a', correlationId: 'corr-a' }) } catch { rejected = true }
     console.log(JSON.stringify({ session, request: sessionRequestContext(session), rejected }))
@@ -55,6 +55,9 @@ test('PR9 accepts only complete authenticated sessions and derives request autho
 
   assert.equal(result.session.tenantId, 'tenant-a')
   assert.equal(result.session.actorId, 'customer-a')
+  assert.deepEqual(result.session.roles, ['owner'])
+  assert.deepEqual(result.session.permissions, ['tus:marketplace:read'])
+  assert.equal(result.session.expiresAt, 1700003600000)
   assert.equal(result.request.accessToken, 'secret-token')
   assert.equal(result.request.tenantId, 'tenant-a')
   assert.equal(result.rejected, true)
@@ -69,10 +72,16 @@ test('PR9 web client sends authenticated tenant-safe requests and uses real mark
     await client.discoverMarketplace(context)
     await client.marketplaceCustomerCommitments(context)
     await client.merchantMarketplaceOperations(context)
+    await client.discover(context)
+    await client.customerCommitments(context)
+    await client.merchantOperations(context)
     console.log(JSON.stringify(requests))
   `)
 
   assert.deepEqual(result.map(({ method, path, tenantId, accessToken }) => ({ method, path, tenantId, accessToken })), [
+    { method: 'GET', path: '/tus/v1/marketplace/discovery', tenantId: 'tenant-a', accessToken: 'token-a' },
+    { method: 'GET', path: '/tus/v1/marketplace/customer/commitments', tenantId: 'tenant-a', accessToken: 'token-a' },
+    { method: 'GET', path: '/tus/v1/marketplace/merchant/operations', tenantId: 'tenant-a', accessToken: 'token-a' },
     { method: 'GET', path: '/tus/v1/marketplace/discovery', tenantId: 'tenant-a', accessToken: 'token-a' },
     { method: 'GET', path: '/tus/v1/marketplace/customer/commitments', tenantId: 'tenant-a', accessToken: 'token-a' },
     { method: 'GET', path: '/tus/v1/marketplace/merchant/operations', tenantId: 'tenant-a', accessToken: 'token-a' },

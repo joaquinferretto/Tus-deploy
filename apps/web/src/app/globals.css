@@ -793,6 +793,13 @@ a {
 }
 
 @media (max-width: 720px) {
+  .tus-nav-links,
+  .tus-surface-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    white-space: normal;
+  }
+
   .tus-hero {
     display: block;
     margin-bottom: 80px;

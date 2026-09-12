@@ -5,7 +5,11 @@ export const CORS_ALLOWED_HEADERS = [
   'Authorization',
   'X-Correlation-Id',
   'X-Tenant-Id',
+  'X-Actor-Id',
   'X-Session-Id',
+  'X-TUS-API-Version',
+  'X-TUS-Contract-Version',
+  'Idempotency-Key',
   'X-Idempotency-Key',
   'X-Request-Id',
 ] as const

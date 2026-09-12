@@ -116,12 +116,15 @@ test('ambient DATABASE_URL cannot substitute for the explicit root dotenv source
 
 test('native child environment is allowlisted and carries only safe profile metadata', () => {
   const environment = buildNativeChildEnvironment({
-    baseEnvironment: { PATH: 'safe', AWS_SECRET_ACCESS_KEY: 'must-not-pass', DATABASE_URL: SAFE_URL, NODE_ENV: 'development', FACTORY_PROFILE: 'local' },
+    baseEnvironment: { PATH: 'safe', AWS_SECRET_ACCESS_KEY: 'must-not-pass', DATABASE_URL: SAFE_URL, NODE_ENV: 'development', FACTORY_PROFILE: 'local', CORS_ORIGINS: 'http://localhost:3000', TUS_ROUTES_ENABLED: 'true', TUS_PROVIDER_ACTIONS_ENABLED: 'false' },
     databaseUrl: SAFE_URL,
   })
   assert.equal(environment.DATABASE_URL, SAFE_URL)
   assert.equal('AWS_SECRET_ACCESS_KEY' in environment, false)
   assert.equal(environment.FACTORY_PROFILE, 'local')
+  assert.equal(environment.CORS_ORIGINS, 'http://localhost:3000')
+  assert.equal(environment.TUS_ROUTES_ENABLED, 'true')
+  assert.equal(environment.TUS_PROVIDER_ACTIONS_ENABLED, 'false')
   assert.equal('TUS_TEST_TARGET_ID' in environment, false)
 })
 

@@ -150,6 +150,44 @@ test('Prisma adapter scopes credential, token, session, and device operations to
   })
 })
 
+test('Prisma registration bootstrap creates the generated tenant structure before the account', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaIdentityStore } = (await import('./apps/api/src/auth-security/adapters/postgres/prisma-identity-store.ts')).default
+    const calls = []
+    const delegate = (name) => ({ create: async ({ data }) => (calls.push([name, data]), data) })
+    const client = {
+      user: {
+        findUnique: async () => null,
+        create: async ({ data }) => (calls.push(['user', data]), data),
+      },
+      account: {
+        findUnique: async () => null,
+        create: async ({ data }) => (calls.push(['account', data]), data),
+      },
+      tusTenant: delegate('tenant'),
+      organization: delegate('organization'),
+      workspace: delegate('workspace'),
+      tenantRole: delegate('role'),
+      membership: delegate('membership'),
+    }
+    const store = new PrismaIdentityStore(client)
+    await store.saveAccount({
+      id: 'user-a', email: 'member@example.com', normalizedEmail: 'member@example.com', displayName: 'Member',
+      tenantId: 'tenant-a', roles: ['member'], status: 'active', emailVerifiedAt: null,
+      createdAt: 1700000000000, updatedAt: 1700000000000,
+    }, { bootstrapTenant: true })
+    console.log(JSON.stringify(calls))
+  `)
+
+  assert.deepEqual(result.map(([name]) => name), [
+    'user', 'tenant', 'organization', 'workspace', 'role', 'membership', 'account',
+  ])
+  assert.equal(result[5][1].organizationId, 'tenant-a')
+  assert.equal(result[5][1].workspaceId, 'tenant-a:default')
+  assert.equal(result[5][1].userId, 'user-a')
+  assert.ok(result[4][1].permissions.includes('tus:marketplace:write'))
+})
+
 test('seed plan is deterministic, idempotent, and contains no usable credential material', () => {
   const result = runTypeScriptScenario(`
     const { buildIdentitySeed, seedIdentity } = (await import('./apps/api/prisma/seed.ts')).default

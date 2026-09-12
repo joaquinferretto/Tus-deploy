@@ -32,6 +32,7 @@ const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000
 const RECOVERY_TTL_MS = 60 * 60 * 1000
 const SESSION_TTL_MS = 60 * 60 * 1000
 const MEMBER_PERMISSIONS = ['tus:checkout', 'tus:marketplace:read', 'tus:read'] as const
+const OWNER_PERMISSIONS = [...MEMBER_PERMISSIONS, 'tus:marketplace:write'] as const
 
 export interface RegisterInput {
   email: string
@@ -112,13 +113,14 @@ export class AuthService {
     }
 
     const now = this.dependencies.clock.now()
+    const requestedTenantId = input.tenantId?.trim()
     const account: Account = {
       id: this.dependencies.ids.next(),
       email: input.email.trim(),
       normalizedEmail,
       displayName: input.displayName.trim(),
-      tenantId: input.tenantId?.trim() || this.dependencies.ids.next(),
-      roles: ['member'],
+      tenantId: requestedTenantId || this.dependencies.ids.next(),
+      roles: requestedTenantId ? ['member'] : ['owner'],
       status: 'active',
       emailVerifiedAt: null,
       createdAt: now,
@@ -135,7 +137,7 @@ export class AuthService {
     }
     const verificationToken = this.dependencies.tokens.issue()
 
-    await store.saveAccount(account)
+    await store.saveAccount(account, { bootstrapTenant: !requestedTenantId })
     await store.saveCredential(credential)
     await store.saveVerificationToken({
       id: this.dependencies.ids.next(),
@@ -211,7 +213,7 @@ export class AuthService {
       scope: {
         tenantId: account.tenantId,
         roles: [...account.roles],
-        permissions: [...MEMBER_PERMISSIONS],
+        permissions: account.roles.includes('owner') ? [...OWNER_PERMISSIONS] : [...MEMBER_PERMISSIONS],
       },
       createdAt: now,
       expiresAt: now + SESSION_TTL_MS,

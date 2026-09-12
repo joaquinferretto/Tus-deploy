@@ -12,6 +12,7 @@ export const NATIVE_WEB_API_URL = 'http://localhost:3101'
 const SAFE_NATIVE_ENV_KEYS = Object.freeze([
   'PATH', 'Path', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP',
   'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'API_PORT', 'NODE_ENV', 'FACTORY_PROFILE', 'NEXT_PUBLIC_API_URL',
+  'CORS_ORIGINS', 'TUS_ROUTES_ENABLED', 'TUS_PROVIDER_ACTIONS_ENABLED',
 ])
 
 function parseDatabaseLine(line) {

@@ -1,0 +1,17 @@
+- generic [active] [ref=f2e1]:
+  - link "Skip to main content" [ref=f2e2] [cursor=pointer]:
+    - /url: "#tus-main-content"
+  - main [ref=f2e3]:
+    - status "TUS status" [ref=f2e4]:
+      - strong [ref=f2e5]: Loading
+      - paragraph [ref=f2e6]: Restoring your secure session…
+  - generic [ref=f2e11] [cursor=pointer]:
+    - button "Open Next.js Dev Tools" [ref=f2e12]
+    - generic [ref=f2e16]:
+      - button "Open issues overlay" [ref=f2e17]:
+        - generic [ref=f2e18]:
+          - generic [aria-hidden] [ref=f2e19]: "0"
+          - generic [ref=f2e20]: "1"
+        - generic [ref=f2e21]: Issue
+      - button "Collapse issues badge" [ref=f2e22]
+  - alert [ref=f2e25]

@@ -1,0 +1,30 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#tus-main-content"
+  - main [ref=e3]:
+    - navigation "TUS primary navigation" [ref=e4]:
+      - link "TUS / entry" [ref=e5] [cursor=pointer]:
+        - /url: /
+      - link "Back to overview" [ref=e6] [cursor=pointer]:
+        - /url: /
+    - region [ref=e7]:
+      - paragraph [ref=e8]: Argentina-first workspace
+      - heading [level=1] [ref=e9]:
+        - text: Come back to the work
+        - emphasis [ref=e10]: with the facts intact.
+      - paragraph [ref=e11]: TUS confirms your identity and tenant scope with the server before showing workspace data. Nothing is inferred from this form.
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - text: Email address
+          - textbox "Email address" [invalid] [ref=e14]: baseline-local-20260910@example.invalid
+        - generic [ref=e15]:
+          - text: Password
+          - textbox "Password" [invalid] [ref=e16]: TUS local baseline 2026!
+        - alert [ref=e30]: Sign-in could not be confirmed by TUS.
+        - button "Sign in securely" [ref=e17] [cursor=pointer]
+      - paragraph [ref=e18]:
+        - link "Session expired or unavailable?" [ref=e19] [cursor=pointer]:
+          - /url: /recovery?returnTo=%2Ftus
+        - text: Recovery clears the local credential before asking you to authenticate again.
+  - button "Open Next.js Dev Tools" [ref=e25] [cursor=pointer]
+  - alert [ref=e29]

@@ -621,9 +621,9 @@ test('web client keeps discovery, merchant, customer, and WhatsApp handoff reque
   })
 
   assert.deepEqual(requests.map(({ method, path, tenantId }) => ({ method, path, tenantId })), [
-    { method: 'GET', path: '/tus/v1/discovery/offers', tenantId: 'tenant-a' },
-    { method: 'GET', path: '/tus/v1/merchant/operations', tenantId: 'tenant-a' },
-    { method: 'GET', path: '/tus/v1/customer/commitments', tenantId: 'tenant-a' },
+    { method: 'GET', path: '/tus/v1/marketplace/discovery', tenantId: 'tenant-a' },
+    { method: 'GET', path: '/tus/v1/marketplace/merchant/operations', tenantId: 'tenant-a' },
+    { method: 'GET', path: '/tus/v1/marketplace/customer/commitments', tenantId: 'tenant-a' },
     { method: 'POST', path: '/tus/v1/whatsapp/handoff', tenantId: 'tenant-a' },
   ])
   assert.equal(requests[3].body.commitmentId, 'commitment-1')

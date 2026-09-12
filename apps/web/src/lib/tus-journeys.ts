@@ -139,7 +139,7 @@ export function createTusSurfaceHref(surface: TusSurface, options: TusSurfaceHre
 export function resolveTusRoleLabel(roles: readonly string[] = []): string {
   const normalized = roles.map((role) => role.trim().toLowerCase())
   if (normalized.some((role) => role === 'operations' || role === 'admin' || role === 'operator')) return 'Operations · reporting'
-  if (normalized.some((role) => role === 'merchant' || role === 'seller')) return 'Merchant · catalog'
+  if (normalized.some((role) => role === 'owner' || role === 'merchant' || role === 'seller')) return 'Merchant · catalog'
   if (normalized.some((role) => role === 'staff' || role === 'pos')) return 'Staff · POS'
   return 'Customer · discovery'
 }

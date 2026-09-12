@@ -1,0 +1,7 @@
+- generic [active] [ref=f6e1]:
+  - link "Skip to main content" [ref=f6e2] [cursor=pointer]:
+    - /url: "#tus-main-content"
+  - main [ref=f6e3]:
+    - status "TUS status" [ref=f6e4]:
+      - strong [ref=f6e5]: Loading
+      - paragraph [ref=f6e6]: Restoring your secure session…

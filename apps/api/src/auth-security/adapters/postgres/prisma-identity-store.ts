@@ -85,6 +85,10 @@ interface DeviceDelegate {
   }): Promise<unknown>
 }
 
+interface CreateDelegate {
+  create(args: { data: Record<string, unknown> }): Promise<unknown>
+}
+
 export interface PrismaIdentityClient {
   user: UserDelegate
   account: AccountDelegate
@@ -93,6 +97,11 @@ export interface PrismaIdentityClient {
   recoveryToken: TokenDelegate<RecoveryTokenRow>
   session: SessionDelegate
   device: DeviceDelegate
+  tusTenant: CreateDelegate
+  organization: CreateDelegate
+  workspace: CreateDelegate
+  tenantRole: CreateDelegate
+  membership: CreateDelegate
   auditEvent?: {
     create(args: { data: Record<string, unknown> }): Promise<unknown>
   }
@@ -214,7 +223,7 @@ export class PrismaIdentityStore implements IdentityStore {
     return row ? mapAccountRow(row) : undefined
   }
 
-  async saveAccount(account: Account): Promise<void> {
+  async saveAccount(account: Account, options: { bootstrapTenant?: boolean } = {}): Promise<void> {
     const client = this.client
     const existing = await client.account.findUnique({
       where: { id: account.id },
@@ -257,6 +266,9 @@ export class PrismaIdentityStore implements IdentityStore {
         },
       })
     }
+    if (options.bootstrapTenant) {
+      await this.bootstrapTenant(account, userId)
+    }
     await client.account.create({
       data: {
         id: account.id,
@@ -267,6 +279,75 @@ export class PrismaIdentityStore implements IdentityStore {
         emailVerifiedAt: toDate(account.emailVerifiedAt),
         createdAt: toRequiredDate(account.createdAt),
         updatedAt: toRequiredDate(account.updatedAt),
+      },
+    })
+  }
+
+  private async bootstrapTenant(account: Account, userId: string): Promise<void> {
+    const createdAt = toRequiredDate(account.createdAt)
+    const workspaceId = `${account.tenantId}:default`
+    const roleId = `${account.tenantId}:owner`
+    const permissions = [
+      'membership:invite',
+      'membership:revoke',
+      'resource:read',
+      'resource:write',
+      'role:manage',
+      'tus:marketplace:write',
+      'workspace:write',
+    ]
+
+    await this.client.tusTenant.create({
+      data: {
+        id: account.tenantId,
+        slug: account.tenantId,
+        name: account.displayName,
+        status: 'active',
+        createdAt,
+        updatedAt: createdAt,
+      },
+    })
+    await this.client.organization.create({
+      data: {
+        id: account.tenantId,
+        name: account.displayName,
+        slug: account.tenantId,
+        defaultWorkspaceId: workspaceId,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    })
+    await this.client.workspace.create({
+      data: {
+        id: workspaceId,
+        organizationId: account.tenantId,
+        name: 'Default',
+        slug: 'default',
+        createdAt,
+        updatedAt: createdAt,
+      },
+    })
+    await this.client.tenantRole.create({
+      data: {
+        id: roleId,
+        tenantId: account.tenantId,
+        name: 'Owner',
+        permissions,
+        resourceScopes: ['*'],
+        createdAt,
+      },
+    })
+    await this.client.membership.create({
+      data: {
+        id: `${account.tenantId}:${userId}`,
+        organizationId: account.tenantId,
+        workspaceId,
+        userId,
+        role: roleId,
+        roleIds: [roleId],
+        status: 'active',
+        createdAt,
+        updatedAt: createdAt,
       },
     })
   }

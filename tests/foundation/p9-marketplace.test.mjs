@@ -144,6 +144,7 @@ test('PR4 adds the additive marketplace migration and versioned contract schemas
   const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260827090300_tus_marketplace/migration.sql'), 'utf8')
   const listingSchema = readFileSync(join(root, 'packages/contracts/schemas/tus/marketplace-listing.v1.schema.json'), 'utf8')
   const checkoutSchema = readFileSync(join(root, 'packages/contracts/schemas/tus/marketplace-checkout.v1.schema.json'), 'utf8')
+  const priceMigration = readFileSync(join(root, 'apps/api/prisma/migrations/20260911120000_tus_listing_price_minor/migration.sql'), 'utf8')
 
   assert.match(schema, /model TusListing[\s\S]*?contractVersion\s+String/)
   assert.match(schema, /model TusMarketplaceCommitment[\s\S]*?policyVersion\s+String/)
@@ -154,11 +155,14 @@ test('PR4 adds the additive marketplace migration and versioned contract schemas
   assert.match(listingSchema, /"availableQuantity"/)
   assert.match(checkoutSchema, /"idempotencyKey"/)
   assert.match(checkoutSchema, /"availabilityVersion"/)
+  assert.match(priceMigration, /ALTER COLUMN "price" TYPE BIGINT/)
+  assert.match(priceMigration, /ROUND\("price" \* 100\)::BIGINT/)
 })
 
 test('PR1 exposes tenant-scoped marketplace audit and outbox readback from the Prisma adapter', () => {
   const result = runTypeScriptScenario(`
     const { PrismaMarketplaceStore } = (await import('./apps/api/src/tus/adapters/prisma-marketplace.ts')).default
+    const writes = []
     const audits = [
       { id: 'audit-tenant-a', tenantId: 'tenant-a', actorId: 'actor-a', correlationId: 'corr-a', action: 'listing.published', resourceType: 'listing', resourceId: 'listing-a', outcome: 'allowed', createdAt: new Date('2026-08-27T12:00:00.000Z') },
       { id: 'audit-tenant-b', tenantId: 'tenant-b', actorId: 'actor-b', correlationId: 'corr-b', action: 'listing.published', resourceType: 'listing', resourceId: 'listing-b', outcome: 'allowed', createdAt: new Date('2026-08-27T12:00:00.000Z') },
@@ -168,17 +172,78 @@ test('PR1 exposes tenant-scoped marketplace audit and outbox readback from the P
       { id: 'event-tenant-b', tenantId: 'tenant-b', aggregateType: 'listing', aggregateId: 'listing-b', eventType: 'tus.marketplace.listing.published', payload: { auditIds: ['audit-tenant-b'], correlationId: 'corr-b' }, status: 'pending', attempts: 0, createdAt: new Date('2026-08-27T12:00:00.000Z') },
     ]
     const client = {
-      tusMarketplaceAudit: { findMany: async ({ where }) => audits.filter((row) => row.tenantId === where.tenantId) },
+      tusMarketplaceAudit: {
+        findMany: async ({ where }) => audits.filter((row) => row.tenantId === where.tenantId),
+        createMany: async ({ data }) => (writes.push(...data), { count: data.length }),
+      },
       outboxEvent: { findMany: async ({ where }) => outbox.filter((row) => row.tenantId === where.tenantId) },
     }
     const store = new PrismaMarketplaceStore(client)
+    await store.audit.append([{ auditId: 'audit-write', tenantId: 'tenant-a', actorId: 'actor-a', correlationId: 'corr-write', action: 'merchant.onboarded', resourceType: 'merchant', resourceId: 'merchant-a', outcome: 'allowed', createdAt: '2026-08-27T12:00:00.000Z' }])
     const tenantAudits = await store.audit.list('tenant-a')
     const tenantOutbox = await store.outbox.list('tenant-a')
-    console.log(JSON.stringify({ tenantAudits, tenantOutbox }))
+    console.log(JSON.stringify({ tenantAudits, tenantOutbox, writes }))
   `)
 
   assert.deepEqual(result.tenantAudits.map(({ tenantId, correlationId, resourceId }) => ({ tenantId, correlationId, resourceId })), [{ tenantId: 'tenant-a', correlationId: 'corr-a', resourceId: 'listing-a' }])
   assert.deepEqual(result.tenantOutbox.map(({ tenantId, correlationId, aggregateId, eventType }) => ({ tenantId, correlationId, aggregateId, eventType })), [{ tenantId: 'tenant-a', correlationId: 'corr-a', aggregateId: 'listing-a', eventType: 'tus.marketplace.listing.published' }])
+  assert.equal(result.writes[0].id, 'audit-write')
+  assert.equal('auditId' in result.writes[0], false)
+  assert.equal(result.writes[0].createdAt, '2026-08-27T12:00:00.000Z')
+})
+
+test('PR1 looks up marketplace commitments through the Prisma primary key', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaMarketplaceStore } = (await import('./apps/api/src/tus/adapters/prisma-marketplace.ts')).default
+    const calls = []
+    const client = {
+      tusMarketplaceCommitment: {
+        findUnique: async (args) => (calls.push(args), null),
+      },
+    }
+    const store = new PrismaMarketplaceStore(client)
+    const commitment = await store.commitments.find('commitment-a')
+    console.log(JSON.stringify({ calls, commitment }))
+  `)
+
+  assert.deepEqual(result.calls, [{ where: { id: 'commitment-a' } }])
+  assert.equal(result.commitment, null)
+})
+
+test('PR4 exposes JSON-safe public marketplace listing facts over HTTP', () => {
+  const result = runTypeScriptScenario(`
+    const { createTusApplication } = (await import('./apps/api/src/tus/composition/index.ts')).default
+    const { createTusHttpRouter } = (await import('./apps/api/src/tus/http/router.ts')).default
+    const { InMemoryTusSessionResolver } = (await import('./apps/api/src/tus/adapters/in-memory.ts')).default
+    const { createApp } = (await import('./apps/api/src/server.ts')).default
+    const application = createTusApplication()
+    const sessions = new InMemoryTusSessionResolver()
+    sessions.add('merchant-token', { sessionId: 'merchant-session', subjectId: 'merchant-admin', tenantId: 'merchant-a', roles: ['merchant-admin'], permissions: ['tus:marketplace:write', 'tus:marketplace:read'] })
+    const server = createApp({ tusRouter: createTusHttpRouter({ application, sessions }), tusRoutesEnabled: true }).listen(0)
+    const base = 'http://127.0.0.1:' + server.address().port
+    const headers = { authorization: 'Bearer merchant-token', 'content-type': 'application/json', 'x-correlation-id': 'corr-public-listing' }
+    await fetch(base + '/tus/v1/marketplace/onboarding', { method: 'POST', headers, body: JSON.stringify({ merchantId: 'merchant-a', cohort: 'beauty-personal-care', locationId: 'location-a', timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'], operatingPolicyVersion: 'stage-1-v1' }) })
+    const createdResponse = await fetch(base + '/tus/v1/marketplace/listings', { method: 'POST', headers, body: JSON.stringify({ merchantId: 'merchant-a', kind: 'product', name: 'Soap', description: 'Soap', cohort: 'beauty-personal-care', locationId: 'location-a', currency: 'ARS', price: 100, stock: 1 }) })
+    const created = await createdResponse.json()
+    const publishedResponse = await fetch(base + '/tus/v1/marketplace/listings/' + created.listingId + '/publish', { method: 'POST', headers, body: '{}' })
+    const published = await publishedResponse.json()
+    const discoveryResponse = await fetch(base + '/tus/v1/marketplace/discovery')
+    const discovery = await discoveryResponse.json()
+    const operationsResponse = await fetch(base + '/tus/v1/marketplace/merchant/operations', { headers })
+    const operations = await operationsResponse.json()
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    console.log(JSON.stringify({ statuses: [createdResponse.status, publishedResponse.status, discoveryResponse.status, operationsResponse.status], created, published, discovery, operations }))
+  `)
+
+  assert.deepEqual(result.statuses, [201, 200, 200, 200])
+  assert.equal(result.created.price, 100)
+  assert.equal('priceMinor' in result.created, false)
+  assert.equal('priceSnapshot' in result.created, false)
+  assert.equal(result.published.published, true)
+  assert.equal(result.discovery.items[0].listingId, result.created.listingId)
+  assert.equal('priceMinor' in result.discovery.items[0], false)
+  assert.equal(result.operations.listings[0].listingId, result.created.listingId)
+  assert.equal('priceMinor' in result.operations.listings[0], false)
 })
 
 test('PR1 completes one server-derived actor, tenant, and session flow for marketplace and POS contracts', () => {

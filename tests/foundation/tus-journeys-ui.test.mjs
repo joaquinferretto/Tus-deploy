@@ -24,12 +24,14 @@ test('PR5 creates deep-linkable journey navigation and denies unscoped staff sur
       filtered: createTusSurfaceHref('discovery', { filter: 'services', returnTo: '/tus/operations' }),
       external: createTusSurfaceHref('operations', { returnTo: 'https://evil.example' }),
       role: resolveTusRoleLabel(['merchant']),
+      ownerRole: resolveTusRoleLabel(['owner']),
     }))
   `)
 
   assert.equal(result.filtered, '/tus?surface=discovery&filter=services&returnTo=%2Ftus%2Foperations')
   assert.equal(result.external, '/tus?surface=operations')
   assert.equal(result.role, 'Merchant · catalog')
+  assert.equal(result.ownerRole, 'Merchant · catalog')
   assert.equal(result.links.find((link) => link.key === 'discovery').href, '/tus?surface=discovery')
   assert.equal(result.links.find((link) => link.key === 'operations').allowed, false)
   assert.match(result.links.find((link) => link.key === 'operations').description, /authorized scope/i)

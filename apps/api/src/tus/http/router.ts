@@ -8,6 +8,8 @@ import type {
 import {
   MarketplaceError,
   type MarketplaceCheckoutLine,
+  type MarketplaceDiscoveryItem,
+  type MarketplaceListing,
   type MarketplaceListingInput,
 } from '../catalog/index.ts'
 import { TusCommitmentError } from '../commitments/index.ts'
@@ -260,7 +262,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
     try {
       const listing = await requireMarketplace(application).createListing(context, body as unknown as MarketplaceListingInput)
-      response.status(201).json(listing)
+      response.status(201).json(toPublicMarketplaceListing(listing))
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -282,7 +284,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
     try {
       const listing = await requireMarketplace(application).publishListing(context, listingId)
-      response.status(200).json(listing)
+      response.status(200).json(toPublicMarketplaceListing(listing))
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -290,10 +292,11 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
 
   router.get('/tus/v1/marketplace/discovery', async (request: Request, response: Response) => {
     try {
-      response.status(200).json(await requireMarketplace(application).discover({
+      const discovery = await requireMarketplace(application).discover({
         ...(readQueryString(request.query['locationId']) ? { locationId: readQueryString(request.query['locationId']) } : {}),
         ...(readQueryString(request.query['cohort']) ? { cohort: readQueryString(request.query['cohort']) as 'beauty-personal-care' | 'repairs-trades' } : {}),
-      }))
+      })
+      response.status(200).json({ ...discovery, items: discovery.items.map(toPublicMarketplaceListing) })
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -311,7 +314,8 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      response.status(200).json(await requireMarketplace(application).merchantOperations(context))
+      const operations = await requireMarketplace(application).merchantOperations(context)
+      response.status(200).json({ ...operations, listings: operations.listings.map(toPublicMarketplaceListing) })
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -1064,6 +1068,11 @@ function readMarketplaceLines(value: unknown): MarketplaceCheckoutLine[] | null 
 function requireMarketplace(application: TusApplicationService) {
   if (!application.marketplace) throw new MarketplaceError(503, 'UNAVAILABLE', 'TUS marketplace composition is unavailable')
   return application.marketplace
+}
+
+function toPublicMarketplaceListing(listing: MarketplaceListing | MarketplaceDiscoveryItem) {
+  const { priceMinor: _priceMinor, priceSnapshot: _priceSnapshot, ...publicListing } = listing
+  return publicListing
 }
 
 function requireCalendar(application: TusApplicationService) {

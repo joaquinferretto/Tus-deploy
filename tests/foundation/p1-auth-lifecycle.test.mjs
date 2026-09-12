@@ -89,6 +89,29 @@ test('verified sign-in issues a scoped session and records redacted security met
   })
 })
 
+test('registration without a tenant creates an owner session for marketplace bootstrap', () => {
+  const result = runTypeScriptScenario(`
+    const { createInMemoryAuthService } = (await import('./apps/api/src/auth-security/composition.ts')).default
+    const auth = createInMemoryAuthService({ now: () => 1_700_000_000_000 })
+    const registration = await auth.register({
+      email: 'owner@example.com',
+      password: 'Correct horse battery staple 42!',
+      displayName: 'TUS Owner',
+    })
+    await auth.verifyEmail({ token: registration.verificationToken })
+    const signIn = await auth.signIn({ email: 'owner@example.com', password: 'Correct horse battery staple 42!' })
+    console.log(JSON.stringify({
+      roles: registration.account.roles,
+      sessionRoles: signIn.ok ? signIn.session.scope.roles : [],
+      permissions: signIn.ok ? signIn.session.scope.permissions : [],
+    }))
+  `)
+
+  assert.deepEqual(result.roles, ['owner'])
+  assert.deepEqual(result.sessionRoles, ['owner'])
+  assert.ok(result.permissions.includes('tus:marketplace:write'))
+})
+
 test('unknown credentials and recovery requests are non-enumerating', () => {
   const result = runTypeScriptScenario(`
     const { createInMemoryAuthService } = (await import('./apps/api/src/auth-security/composition.ts')).default

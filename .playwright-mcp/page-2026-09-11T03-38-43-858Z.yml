@@ -1,0 +1,57 @@
+- generic [active] [ref=f5e1]:
+  - button "Open Next.js Dev Tools" [ref=f5e12] [cursor=pointer]
+  - alert [ref=f5e16]
+  - link "Skip to main content" [ref=f5e17] [cursor=pointer]:
+    - /url: "#tus-main-content"
+  - main [ref=f5e18]:
+    - navigation "TUS workspace navigation" [ref=f5e19]:
+      - link "TUS / workspace" [ref=f5e20] [cursor=pointer]:
+        - /url: /tus
+      - generic [ref=f5e21]:
+        - generic [ref=f5e22]: "Tenant scope: 5a888593-27d9-4a14-9868-86228578e642"
+        - generic [ref=f5e23]: Merchant · catalog
+        - button "Refresh truth" [ref=f5e24] [cursor=pointer]
+        - button "Sign out" [ref=f5e25] [cursor=pointer]
+        - link "Staff POS" [ref=f5e26] [cursor=pointer]:
+          - /url: /tus/pos
+    - generic [ref=f5e27]:
+      - generic [ref=f5e28]:
+        - paragraph [ref=f5e29]: Authenticated surface / contract 1.0.0
+        - heading [level=1] [ref=f5e30]:
+          - text: Run the day
+          - emphasis [ref=f5e31]: without guessing.
+      - paragraph [ref=f5e32]:
+        - strong [ref=f5e33]: Server truth only
+        - text: Every status below is either returned by TUS or explicitly marked pending, disabled, conflicted, or unavailable.
+    - navigation "Workspace surfaces" [ref=f5e34]:
+      - link "Discover" [ref=f5e35] [cursor=pointer]:
+        - /url: /tus?surface=discovery
+      - link "Commitments" [ref=f5e36] [cursor=pointer]:
+        - /url: /tus?surface=commitments
+      - generic [ref=f5e37]:
+        - text: Operations
+        - generic [ref=f5e38]: This destination is unavailable for the authorized scope.
+      - link "Staff POS ↗" [ref=f5e39] [cursor=pointer]:
+        - /url: /tus/pos
+        - text: Staff POS
+        - generic [ref=f5e40]: ↗
+    - region [ref=f5e41]:
+      - generic [ref=f5e42]:
+        - generic [ref=f5e43]: "01"
+        - heading "Current offers, close by." [level=2] [ref=f5e44]
+      - paragraph [ref=f5e45]: "Evidence: local-deterministic · Locale and currency come from each listing."
+      - generic [ref=f5e46]:
+        - text: Show
+        - combobox "Show" [ref=f5e47]:
+          - option "all offers" [selected]
+          - option "products only"
+          - option "services only"
+      - article [ref=f5e49]:
+        - generic [ref=f5e50]: Product · beauty-personal-care
+        - heading "Producto baseline TUS" [level=3] [ref=f5e51]
+        - paragraph [ref=f5e52]: Producto local para verificar discovery canonico
+        - generic [ref=f5e53]:
+          - strong [ref=f5e54]: ARS 12,500.00
+          - generic [ref=f5e55]: 3 units available
+        - button "Start product commitment" [ref=f5e56] [cursor=pointer]
+        - text: Stock is rechecked by TUS before the product commitment is created.

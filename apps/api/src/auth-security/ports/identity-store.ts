@@ -16,7 +16,7 @@ export interface IdentityStore {
   readonly devices?: Map<string, Device>
   findAccountByEmail(normalizedEmail: string): Promise<Account | undefined>
   getAccount(accountId: string): Promise<Account | undefined>
-  saveAccount(account: Account): Promise<void>
+  saveAccount(account: Account, options?: { bootstrapTenant?: boolean }): Promise<void>
   saveCredential(credential: PasswordCredential): Promise<void>
   findPasswordCredential(accountId: string): Promise<PasswordCredential | undefined>
   saveVerificationToken(token: VerificationToken): Promise<void>
