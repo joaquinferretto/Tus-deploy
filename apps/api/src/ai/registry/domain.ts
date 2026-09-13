@@ -108,7 +108,7 @@ export interface Approval {
   reason: string
 }
 
-export interface RegistryAudit {
+export interface RegistroAuditoriaCatalogoIA {
   id: string
   tenantId: string
   actorId: string

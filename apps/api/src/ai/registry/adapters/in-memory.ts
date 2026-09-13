@@ -10,7 +10,7 @@ import type {
   PromptVersion,
   RegisterModelInput,
   RegisterPromptInput,
-  RegistryAudit,
+  RegistroAuditoriaCatalogoIA,
   RegistryContext,
   RollbackInput,
   Rollout,
@@ -72,7 +72,7 @@ export class InMemoryAIRegistry {
   private readonly availability = new Map<string, ModelAvailability>()
   private readonly rollouts = new Map<string, Rollout>()
   private readonly approvals = new Map<string, Approval>()
-  private readonly audits: RegistryAudit[] = []
+  private readonly audits: RegistroAuditoriaCatalogoIA[] = []
   private readonly evaluator = new DeterministicFakeEvaluator()
 
   constructor(options: InMemoryAIRegistryOptions = {}) {
@@ -436,7 +436,7 @@ export class InMemoryAIRegistry {
     if (!row) throw new Error('No active tenant-scoped rollout')
     return clone(row)
   }
-  auditLog(context: RegistryContext): RegistryAudit[] {
+  auditLog(context: RegistryContext): RegistroAuditoriaCatalogoIA[] {
     return this.audits.filter((row) => row.tenantId === context.tenantId).map(clone)
   }
 

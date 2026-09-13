@@ -129,7 +129,7 @@ class Approval:
 
 
 @dataclass(frozen=True, slots=True)
-class RegistryAudit:
+class RegistroAuditoriaCatalogoIA:
     id: str
     tenant_id: str
     actor_id: str
@@ -188,7 +188,7 @@ class InMemoryAIRegistry:
         self._availability: dict[str, ModelAvailability] = {}
         self._rollouts: dict[str, Rollout] = {}
         self._approvals: dict[str, Approval] = {}
-        self._audits: list[RegistryAudit] = []
+        self._audits: list[RegistroAuditoriaCatalogoIA] = []
         self._evaluator = DeterministicFakeEvaluator()
 
     def register_prompt(
@@ -202,7 +202,7 @@ class InMemoryAIRegistry:
             raise RegistryStateError("Prompt key already registered")
         prompt = PromptDefinition(self._id("prompt"), context.tenant_id, key, owner, description)
         self._prompts[prompt.id] = prompt
-        self._audit(context, "prompt.registered", "prompt", prompt.id, None, "success")
+        self._registrarAuditoria(context, "prompt.registered", "prompt", prompt.id, None, "success")
         return prompt
 
     def create_prompt_version(
@@ -238,7 +238,7 @@ class InMemoryAIRegistry:
             context.actor_id,
         )
         self._prompt_versions[row.id] = row
-        self._audit(
+        self._registrarAuditoria(
             context, "prompt.version.created", "prompt_version", row.id, row.version, "success"
         )
         return row
@@ -274,7 +274,7 @@ class InMemoryAIRegistry:
             "availability not approved",
             self._clock(),
         )
-        self._audit(context, "model.registered", "model", row.id, None, "success")
+        self._registrarAuditoria(context, "model.registered", "model", row.id, None, "success")
         return row
 
     def set_model_availability(
@@ -292,7 +292,7 @@ class InMemoryAIRegistry:
             self._id("availability"), model.tenant_id, model.id, status, reason, self._clock()
         )
         self._availability[model.id] = row
-        self._audit(
+        self._registrarAuditoria(
             context,
             "model.availability.changed",
             "model",
@@ -318,7 +318,7 @@ class InMemoryAIRegistry:
             reason=reason,
         )
         self._approvals[row.id] = row
-        self._audit(context, "approval.requested", "approval", row.id, None, "success")
+        self._registrarAuditoria(context, "approval.requested", "approval", row.id, None, "success")
         return row
 
     def approve(self, context: RegistryContext, approval_id: str) -> Approval:
@@ -334,7 +334,7 @@ class InMemoryAIRegistry:
             self._prompt_versions[target.id] = replace(
                 target, status=PromptVersionStatus.APPROVED, approved_by=context.actor_id
             )
-        self._audit(
+        self._registrarAuditoria(
             context,
             "approval.approved",
             "approval",
@@ -381,7 +381,7 @@ class InMemoryAIRegistry:
             context.actor_id,
         )
         self._rollouts[row.id] = row
-        self._audit(context, "rollout.created", "rollout", row.id, version.version, "success")
+        self._registrarAuditoria(context, "rollout.created", "rollout", row.id, version.version, "success")
         return row
 
     def activate_rollout(self, context: RegistryContext, rollout_id: str) -> Rollout:
@@ -398,7 +398,7 @@ class InMemoryAIRegistry:
                 self._rollouts[current_id] = replace(current, state=RolloutState.PAUSED)
         updated = replace(row, state=RolloutState.ACTIVE)
         self._rollouts[row.id] = updated
-        self._audit(context, "rollout.activated", "rollout", row.id, row.prompt_version, "success")
+        self._registrarAuditoria(context, "rollout.activated", "rollout", row.id, row.prompt_version, "success")
         return updated
 
     def deprecate_prompt_version(
@@ -411,7 +411,7 @@ class InMemoryAIRegistry:
         for rollout_id, rollout in tuple(self._rollouts.items()):
             if rollout.prompt_id == prompt_id and rollout.prompt_version == version:
                 self._rollouts[rollout_id] = replace(rollout, state=RolloutState.DEPRECATED)
-        self._audit(
+        self._registrarAuditoria(
             context, "prompt.version.deprecated", "prompt_version", row.id, version, "success"
         )
         return updated
@@ -439,7 +439,7 @@ class InMemoryAIRegistry:
             current.id,
         )
         self._rollouts[restored.id] = restored
-        self._audit(
+        self._registrarAuditoria(
             context,
             "rollout.rolled_back",
             "rollout",
@@ -466,7 +466,7 @@ class InMemoryAIRegistry:
                 self._rollouts[rollout_id] = replace(
                     rollout, state=RolloutState.PAUSED, failure_reason="provider unavailable"
                 )
-        self._audit(
+        self._registrarAuditoria(
             context, "provider.failure", "model", model_id, None, "failed", {"reason": "redacted"}
         )
 
@@ -483,7 +483,7 @@ class InMemoryAIRegistry:
         if row.state is not RolloutState.ACTIVE:
             raise RegistryStateError("Rollout is not active")
         result = self._evaluator.evaluate(row, payload)
-        self._audit(
+        self._registrarAuditoria(
             context,
             "evaluation.completed",
             "rollout",
@@ -540,7 +540,7 @@ class InMemoryAIRegistry:
             deepcopy(row) for row in self._approvals.values() if row.tenant_id == context.tenant_id
         )
 
-    def audit_log(self, context: RegistryContext) -> tuple[RegistryAudit, ...]:
+    def audit_log(self, context: RegistryContext) -> tuple[RegistroAuditoriaCatalogoIA, ...]:
         return tuple(deepcopy(row) for row in self._audits if row.tenant_id == context.tenant_id)
 
     def _assert_rollout_ready(self, context: RegistryContext, row: Rollout) -> None:
@@ -605,7 +605,7 @@ class InMemoryAIRegistry:
         self._sequence += 1
         return f"{prefix}-{self._sequence}"
 
-    def _audit(
+    def _registrarAuditoria(
         self,
         context: RegistryContext,
         action: str,
@@ -616,7 +616,7 @@ class InMemoryAIRegistry:
         metadata: Mapping[str, object] | None = None,
     ) -> None:
         self._audits.append(
-            RegistryAudit(
+            RegistroAuditoriaCatalogoIA(
                 self._id("audit"),
                 context.tenant_id,
                 context.actor_id,
@@ -688,7 +688,7 @@ __all__ = [
     "PromptDefinition",
     "PromptVersion",
     "PromptVersionStatus",
-    "RegistryAudit",
+    "RegistroAuditoriaCatalogoIA",
     "RegistryContext",
     "RegistryStateError",
     "RegistryValidationError",
