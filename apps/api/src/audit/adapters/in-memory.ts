@@ -1,25 +1,25 @@
-import type { AuditEvent } from '../domain.js'
-import { redactAuditMetadata } from '../domain.js'
-import type { AuditEventInput, AuditIdGenerator, AuditSink } from '../ports.js'
+import type { EventoAuditoria } from '../domain.js'
+import { redactarMetadatosAuditoria } from '../domain.js'
+import type { EntradaEventoAuditoria, GeneradorIdAuditoria, ReceptorAuditoria } from '../ports.js'
 
-export class InMemoryAuditSink implements AuditSink {
-  private readonly storedEvents: AuditEvent[] = []
+export class ReceptorAuditoriaEnMemoria implements ReceptorAuditoria {
+  private readonly storedEvents: EventoAuditoria[] = []
 
-  get events(): readonly AuditEvent[] {
+  get events(): readonly EventoAuditoria[] {
     return this.storedEvents.map((event) => ({ ...event, metadata: { ...event.metadata } }))
   }
 
-  async record(input: AuditEventInput, occurredAt: number): Promise<void> {
+  async record(input: EntradaEventoAuditoria, occurredAt: number): Promise<void> {
     this.storedEvents.push({
       id: `audit-${this.storedEvents.length + 1}`,
       ...input,
       occurredAt: new Date(occurredAt).toISOString(),
-      metadata: redactAuditMetadata(input.metadata),
+      metadata: redactarMetadatosAuditoria(input.metadata),
     })
   }
 }
 
-export class DeterministicAuditIdGenerator implements AuditIdGenerator {
+export class GeneradorIdAuditoriaDeterminista implements GeneradorIdAuditoria {
   private sequence = 0
 
   next(): string {

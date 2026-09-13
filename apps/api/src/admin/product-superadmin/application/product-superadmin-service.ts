@@ -1,4 +1,4 @@
-import { digestAuditValue, type AuditSink } from '../../../audit/index.js'
+import { calcularHuellaAuditoria, type ReceptorAuditoria } from '../../../audit/index.js'
 import {
   SUPERADMIN_RESULT_CODE,
   SUPERADMIN_STATUS,
@@ -24,7 +24,7 @@ const MAX_SUPPORT_SESSION_TTL_MS = 30 * 60 * 1000
 
 export interface ProductSuperadminServiceDependencies {
   store: ProductSuperadminStore
-  audit: AuditSink
+  audit: ReceptorAuditoria
   ids: ProductAdminIdGenerator
   clock: ProductAdminClock
 }
@@ -185,7 +185,7 @@ export class ProductSuperadminService {
     await this.record(input, 'break-glass:request', 'success', 'break_glass_issued', {
       grantId: grant.id,
       expiresAt: grant.expiresAt,
-      reasonHash: digestAuditValue(grant.reason),
+      reasonHash: calcularHuellaAuditoria(grant.reason),
     })
     return { ok: true, breakGlassId: grant.id, expiresAt: grant.expiresAt }
   }
@@ -224,7 +224,7 @@ export class ProductSuperadminService {
     await this.record(input, 'policy:publish', 'success', 'policy_version_published', {
       version: versionNumber,
       permissionsCount: version.permissions.length,
-      reasonHash: digestAuditValue(version.reason),
+      reasonHash: calcularHuellaAuditoria(version.reason),
     })
     return { ok: true, version }
   }
@@ -252,7 +252,7 @@ export class ProductSuperadminService {
     await this.dependencies.store.savePolicy(nextPolicy)
     await this.record(input, 'policy:rollback', 'success', 'policy_rolled_back', {
       version: target.version,
-      reasonHash: digestAuditValue(input.reason.trim()),
+      reasonHash: calcularHuellaAuditoria(input.reason.trim()),
     })
     return { ok: true, version: { ...target, status: 'active' } }
   }
@@ -293,7 +293,7 @@ export class ProductSuperadminService {
       sessionId: session.id,
       targetActorId: session.targetActorId ?? 'none',
       tenantId: session.tenantId,
-      reasonHash: digestAuditValue(input.reason.trim()),
+      reasonHash: calcularHuellaAuditoria(input.reason.trim()),
     })
     return {
       ok: true,
@@ -381,7 +381,7 @@ export class ProductSuperadminService {
     await this.record(input, 'emergency:revoke', 'success', 'support_access_revoked', {
       sessionId: input.sessionId ?? 'actor-sessions',
       targetActorId: input.targetActorId ?? 'session-target',
-      reasonHash: digestAuditValue(input.reason.trim()),
+      reasonHash: calcularHuellaAuditoria(input.reason.trim()),
     })
     return { ok: true }
   }
@@ -402,7 +402,7 @@ export class ProductSuperadminService {
     policy.disabledReason = input.reason.trim()
     await this.dependencies.store.savePolicy(policy)
     await this.record(input, 'emergency:disable-product', 'success', 'product_disabled', {
-      reasonHash: digestAuditValue(input.reason.trim()),
+      reasonHash: calcularHuellaAuditoria(input.reason.trim()),
     })
     return { ok: true }
   }
@@ -419,7 +419,7 @@ export class ProductSuperadminService {
     await this.dependencies.store.saveIdentity(target)
     await this.record(input, 'emergency:revoke-superadmin', 'success', 'superadmin_revoked', {
       targetActorId: target.actorId,
-      reasonHash: digestAuditValue(input.reason.trim()),
+      reasonHash: calcularHuellaAuditoria(input.reason.trim()),
     })
     return { ok: true }
   }

@@ -1,4 +1,4 @@
-import { InMemoryAuditSink } from '../../audit/adapters/in-memory.js'
+import { ReceptorAuditoriaEnMemoria } from '../../audit/adapters/in-memory.js'
 import { ProductSuperadminService } from './application/product-superadmin-service.js'
 import {
   DeterministicProductAdminIdGenerator,
@@ -17,7 +17,7 @@ export interface ProductSuperadminServiceFactoryOptions {
 }
 
 export function createProductSuperadminService(options: ProductSuperadminServiceFactoryOptions) {
-  const audit = new InMemoryAuditSink()
+  const audit = new ReceptorAuditoriaEnMemoria()
   const service = new ProductSuperadminService({
     store: options.store,
     audit,

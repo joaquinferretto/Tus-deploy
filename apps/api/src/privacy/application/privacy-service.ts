@@ -1,4 +1,4 @@
-import { digestAuditValue, type AuditSink } from '../../audit/index.js'
+import { calcularHuellaAuditoria, type ReceptorAuditoria } from '../../audit/index.js'
 import {
   CONSENT_REQUIRED_PURPOSES,
   DATA_PURPOSE,
@@ -34,7 +34,7 @@ import type {
 
 export interface PrivacyServiceDependencies {
   store: PrivacyStore
-  audit: AuditSink
+  audit: ReceptorAuditoria
   ids: PrivacyIdGenerator
   clock: PrivacyClock
   propagation: PrivacyPropagationPort
@@ -154,7 +154,7 @@ export class PrivacyService {
     }
     await this.dependencies.store.saveRecord(record)
     await this.record(input.context, 'privacy:record:create', 'success', 'privacy_record_created', {
-      recordIdHash: digestAuditValue(record.id),
+      recordIdHash: calcularHuellaAuditoria(record.id),
       fieldCount: Object.keys(record.values).length,
       purpose: record.purpose,
     })
@@ -321,7 +321,7 @@ export class PrivacyService {
       tenantId: input.context?.tenantId ?? '',
       subjectUserId: input.subjectUserId,
       recordId: input.recordId ?? null,
-      reasonDigest: digestAuditValue(input.reason.trim()),
+      reasonDigest: calcularHuellaAuditoria(input.reason.trim()),
       createdAt: this.dependencies.clock.now(),
       releasedAt: null,
     }

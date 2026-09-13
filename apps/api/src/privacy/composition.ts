@@ -1,4 +1,4 @@
-import { InMemoryAuditSink } from '../audit/adapters/in-memory.js'
+import { ReceptorAuditoriaEnMemoria } from '../audit/adapters/in-memory.js'
 import { PrivacyService } from './application/privacy-service.js'
 import {
   DeterministicPrivacyIdGenerator,
@@ -20,7 +20,7 @@ export interface PrivacyServiceFactoryOptions {
 }
 
 export function createPrivacyService(options: PrivacyServiceFactoryOptions) {
-  const audit = new InMemoryAuditSink()
+  const audit = new ReceptorAuditoriaEnMemoria()
   const service = new PrivacyService({
     store: options.store,
     audit,

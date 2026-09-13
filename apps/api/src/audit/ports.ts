@@ -1,21 +1,21 @@
-import type { AuditEvent, AuditMetadata, AuditOutcome } from './domain.js'
+import type { EventoAuditoria, MetadatosAuditoria, ResultadoAuditoria } from './domain.js'
 
-export interface AuditEventInput {
+export interface EntradaEventoAuditoria {
   action: string
   actorId: string | null
   productId: string | null
   tenantId: string | null
   correlationId: string
-  outcome: AuditOutcome
+  outcome: ResultadoAuditoria
   reason: string
-  metadata: AuditMetadata
+  metadata: MetadatosAuditoria
 }
 
-export interface AuditSink {
-  readonly events: readonly AuditEvent[]
-  record(input: AuditEventInput, occurredAt: number): Promise<void>
+export interface ReceptorAuditoria {
+  readonly events: readonly EventoAuditoria[]
+  record(input: EntradaEventoAuditoria, occurredAt: number): Promise<void>
 }
 
-export interface AuditIdGenerator {
+export interface GeneradorIdAuditoria {
   next(): string
 }
