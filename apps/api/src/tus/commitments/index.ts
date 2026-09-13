@@ -1,9 +1,9 @@
 import { TUS_COMMITMENT_STATUSES, TUS_CONTRACT_VERSION, type CommitmentStatus, type TusCommitment } from '@factory/contracts'
 import type { MarketplaceCommitment } from '../catalog/index.ts'
 import {
-  TUS_AUDIT_REFERENCE_TYPES,
+  TIPOS_REFERENCIA_AUDITORIA,
   TUS_OUTBOX_EVENT_TYPES,
-  type TusAuditReference,
+  type ReferenciaAuditoria,
   type TusCheckoutResponse,
   type TusCommitmentCompensation,
   type TusCommandContext,
@@ -51,7 +51,7 @@ export interface TusCommitmentCompensationCommand extends TusCommandContext {
 export type TusCommitmentMutationResult = {
   status: 'executed' | 'replay'
   commitment: TusCommitment
-  auditReferences: TusAuditReference[]
+  auditReferences: ReferenciaAuditoria[]
   compensation?: TusCommitmentCompensation
 }
 
@@ -103,7 +103,7 @@ export class TusCommitmentLifecycleService {
       const updated = { ...current, status: input.toStatus, version: current.version + 1 }
       const persisted = await repositories.commitments.update({ tenantId: input.tenantId, commitmentId: input.commitmentId, expectedVersion: input.expectedVersion, commitment: updated })
       if (!persisted) throw new TusCommitmentError(409, 'VERSION_CONFLICT', 'commitment version is stale')
-      const audit = lifecycleAudit(input, current, persisted, TUS_AUDIT_REFERENCE_TYPES.STATUS_CHANGED)
+      const audit = auditoriaCicloVida(input, current, persisted, TIPOS_REFERENCIA_AUDITORIA.STATUS_CHANGED)
       const response = mutationResponse(persisted, [audit], 'transition')
       await repositories.audits.append([audit])
       await repositories.outbox.append(lifecycleOutbox(input, current, persisted, [audit], TUS_OUTBOX_EVENT_TYPES.STATUS_CHANGED))
@@ -134,7 +134,7 @@ export class TusCommitmentLifecycleService {
       if (!persisted) throw new TusCommitmentError(409, 'VERSION_CONFLICT', 'commitment version is stale')
       const compensation: TusCommitmentCompensation = { compensationId: `compensation-${input.tenantId}-${input.commitmentId}-${persisted.version}`, tenantId: input.tenantId, commitmentId: input.commitmentId, actorId: input.actorId, correlationId: input.correlationId, amount: input.amount, currency: current.currency, reason: input.reason, createdAt: input.createdAt }
       await repositories.compensations.save(compensation)
-      const audit = lifecycleAudit(input, current, persisted, TUS_AUDIT_REFERENCE_TYPES.COMPENSATED)
+      const audit = auditoriaCicloVida(input, current, persisted, TIPOS_REFERENCIA_AUDITORIA.COMPENSATED)
       const response = mutationResponse(persisted, [audit], 'compensation', compensation)
       await repositories.audits.append([audit])
       await repositories.outbox.append(lifecycleOutbox(input, current, persisted, [audit], TUS_OUTBOX_EVENT_TYPES.COMPENSATED, compensation))
@@ -169,15 +169,15 @@ function isValidTransition(from: CommitmentStatus, to: CommitmentStatus): boolea
   return transitions[from].includes(to)
 }
 
-function lifecycleAudit(input: TusCommandContext & { createdAt: string; reason: string }, previous: TusCommitment, updated: TusCommitment, referenceType: TusAuditReference['referenceType']): TusAuditReference {
+function auditoriaCicloVida(input: TusCommandContext & { createdAt: string; reason: string }, previous: TusCommitment, updated: TusCommitment, referenceType: ReferenciaAuditoria['referenceType']): ReferenciaAuditoria {
   return { referenceId: `audit-${updated.commitmentId}-${updated.version}`, tenantId: input.tenantId, actorId: input.actorId, correlationId: input.correlationId, commitmentId: updated.commitmentId, referenceType, previousStatus: previous.status, status: updated.status, reason: input.reason, createdAt: input.createdAt }
 }
 
-function lifecycleOutbox(input: TusCommandContext & { createdAt: string; idempotencyKey: string; requestHash: string }, previous: TusCommitment, updated: TusCommitment, audits: readonly TusAuditReference[], eventType: TusOutboxRecord['eventType'], compensation?: TusCommitmentCompensation): TusOutboxRecord {
+function lifecycleOutbox(input: TusCommandContext & { createdAt: string; idempotencyKey: string; requestHash: string }, previous: TusCommitment, updated: TusCommitment, audits: readonly ReferenciaAuditoria[], eventType: TusOutboxRecord['eventType'], compensation?: TusCommitmentCompensation): TusOutboxRecord {
   return { eventId: `outbox-${updated.commitmentId}-${updated.version}`, tenantId: input.tenantId, eventType, aggregateId: updated.commitmentId, payload: { commitmentIds: [updated.commitmentId], auditReferenceIds: audits.map((audit) => audit.referenceId), commitmentContext: updated.context, idempotencyKey: input.idempotencyKey, requestHash: input.requestHash, workflowRunId: `tus-commitment-${updated.context}-${updated.commitmentId}`, ...(compensation ? { compensationId: compensation.compensationId } : {}) } as TusOutboxRecord['payload'], createdAt: Date.parse(input.createdAt), status: 'pending', attempts: 0, availableAt: Date.parse(input.createdAt), lastError: null, claimId: null, claimUntil: null }
 }
 
-function mutationResponse(commitment: TusCommitment, auditReferences: TusAuditReference[], operation: TusCheckoutResponse['operation'], compensation?: TusCommitmentCompensation): TusCheckoutResponse {
+function mutationResponse(commitment: TusCommitment, auditReferences: ReferenciaAuditoria[], operation: TusCheckoutResponse['operation'], compensation?: TusCommitmentCompensation): TusCheckoutResponse {
   return { commitments: [commitment], auditReferences, operation, commitment, ...(compensation ? { compensation } : {}) }
 }
 

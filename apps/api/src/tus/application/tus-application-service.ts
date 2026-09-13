@@ -23,13 +23,13 @@ import type { TusOperationsTelemetry } from '@factory/observability'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 import { TUS_BOUNDED_CONTEXTS } from '../ports/index.ts'
 import type {
-  TusAuditReference,
+  ReferenciaAuditoria,
   TusCheckoutCommand,
   TusCheckoutResponse,
   TusCommandContext,
   TusCommitmentStorePort,
   TusCommitmentCompensationStorePort,
-  TusAuditStorePort,
+  PuertoReferenciasAuditoria,
   TusBoundedContext,
   TusIdempotencyStorePort,
   TusOutboxRecord,
@@ -54,7 +54,7 @@ export interface TusReleasePolicy {
 export interface TusApplicationDependencies {
   commitments: TusCommitmentStorePort
   compensations: TusCommitmentCompensationStorePort
-  audits: TusAuditStorePort
+  audits: PuertoReferenciasAuditoria
   idempotency: TusIdempotencyStorePort
   outbox: TusOutboxStorePort
   transaction?: TusTransactionPort
@@ -130,7 +130,7 @@ export class TusApplicationService {
         if (claim.status !== 'claimed') return claim
         const commitments = splitCartIntoCommitments(input)
         if (commitments.length === 0) throw new Error('checkout requires at least one commitment line')
-        const auditReferences = createAuditReferences(input, commitments)
+        const auditReferences = crearReferenciasAuditoria(input, commitments)
         const response: TusCheckoutResponse = { commitments, auditReferences }
         await repositories.commitments.saveMany(commitments)
         await repositories.audits.append(auditReferences)
@@ -206,10 +206,10 @@ export class TusApplicationService {
   }
 }
 
-function createAuditReferences(
+function crearReferenciasAuditoria(
   input: TusCheckoutCommand,
   commitments: readonly TusCommitment[],
-): TusAuditReference[] {
+): ReferenciaAuditoria[] {
   return commitments.map((commitment) => ({
     referenceId: `audit-${commitment.commitmentId}`,
     tenantId: input.tenantId,
@@ -224,7 +224,7 @@ function createAuditReferences(
 function createCheckoutEvent(
   input: TusCheckoutCommand,
   commitments: readonly TusCommitment[],
-  auditReferences: readonly TusAuditReference[],
+  auditReferences: readonly ReferenciaAuditoria[],
   createdAt: number,
 ): TusOutboxRecord {
   return {

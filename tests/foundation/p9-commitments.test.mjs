@@ -54,9 +54,9 @@ test('WU2 commits product and service aggregates atomically and replays the orig
 test('WU2 rolls back every durable commitment side effect when an outbox write fails', () => {
   const result = runTypeScriptScenario(`
     const { TusApplicationService } = (await import('./apps/api/src/tus/application/tus-application-service.ts')).default
-    const { InMemoryTusCommitmentStore, InMemoryTusAuditStore, InMemoryTusCompensationStore, InMemoryTusIdempotencyStore, InMemoryTusOutboxStore, InMemoryTusTransaction } = (await import('./apps/api/src/tus/adapters/in-memory.ts')).default
+    const { InMemoryTusCommitmentStore, AlmacenReferenciasAuditoriaEnMemoria, InMemoryTusCompensationStore, InMemoryTusIdempotencyStore, InMemoryTusOutboxStore, InMemoryTusTransaction } = (await import('./apps/api/src/tus/adapters/in-memory.ts')).default
     const commitments = new InMemoryTusCommitmentStore()
-    const audits = new InMemoryTusAuditStore()
+    const audits = new AlmacenReferenciasAuditoriaEnMemoria()
     const idempotency = new InMemoryTusIdempotencyStore()
     const outbox = new InMemoryTusOutboxStore()
     const failingOutbox = outbox
@@ -80,9 +80,9 @@ test('WU2 rolls back every durable commitment side effect when an outbox write f
 test('WU2 persists lifecycle transitions, version conflicts, compensation, and outbox recovery across service reconstruction', () => {
   const result = runTypeScriptScenario(`
     const { TusApplicationService } = (await import('./apps/api/src/tus/application/tus-application-service.ts')).default
-    const { InMemoryTusCommitmentStore, InMemoryTusAuditStore, InMemoryTusCompensationStore, InMemoryTusIdempotencyStore, InMemoryTusOutboxStore, InMemoryTusTransaction } = (await import('./apps/api/src/tus/adapters/in-memory.ts')).default
+    const { InMemoryTusCommitmentStore, AlmacenReferenciasAuditoriaEnMemoria, InMemoryTusCompensationStore, InMemoryTusIdempotencyStore, InMemoryTusOutboxStore, InMemoryTusTransaction } = (await import('./apps/api/src/tus/adapters/in-memory.ts')).default
     const commitments = new InMemoryTusCommitmentStore()
-    const audits = new InMemoryTusAuditStore()
+    const audits = new AlmacenReferenciasAuditoriaEnMemoria()
     const idempotency = new InMemoryTusIdempotencyStore()
     const outbox = new InMemoryTusOutboxStore()
     const compensations = new InMemoryTusCompensationStore()

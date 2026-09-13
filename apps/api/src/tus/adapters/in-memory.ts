@@ -1,8 +1,8 @@
 import type { TusCommitment } from '@factory/contracts'
 import {
   TUS_OUTBOX_STATUSES,
-  type TusAuditReference,
-  type TusAuditStorePort,
+  type ReferenciaAuditoria,
+  type PuertoReferenciasAuditoria,
   type TusCheckoutResponse,
   type TusCommitmentCompensation,
   type TusCommitmentCompensationStorePort,
@@ -18,8 +18,8 @@ import {
   type TusTransactionRepositories,
 } from '../ports/index.ts'
 /*
-  TusAuditReference,
-  TusAuditStorePort,
+  ReferenciaAuditoria,
+  PuertoReferenciasAuditoria,
   TusCheckoutResponse,
   TusCommitmentCompensation,
   TusCommitmentCompensationStorePort,
@@ -100,26 +100,26 @@ export class InMemoryTusCompensationStore implements TusCommitmentCompensationSt
   }
 }
 
-export class InMemoryTusAuditStore implements TusAuditStorePort {
-  private readonly references = new Map<string, TusAuditReference>()
+export class AlmacenReferenciasAuditoriaEnMemoria implements PuertoReferenciasAuditoria {
+  private readonly references = new Map<string, ReferenciaAuditoria>()
 
-  async append(references: readonly TusAuditReference[]): Promise<void> {
+  async append(references: readonly ReferenciaAuditoria[]): Promise<void> {
     for (const reference of references) {
       this.references.set(referenceKey(reference.tenantId, reference.referenceId), structuredClone(reference))
     }
   }
 
-  list(tenantId: string): TusAuditReference[] {
+  list(tenantId: string): ReferenciaAuditoria[] {
     return [...this.references.values()]
       .filter((reference) => reference.tenantId === tenantId)
       .map((reference) => structuredClone(reference))
   }
 
-  snapshot(): Map<string, TusAuditReference> {
+  snapshot(): Map<string, ReferenciaAuditoria> {
     return new Map([...this.references].map(([key, value]) => [key, structuredClone(value)]))
   }
 
-  restore(snapshot: Map<string, TusAuditReference>): void {
+  restore(snapshot: Map<string, ReferenciaAuditoria>): void {
     this.references.clear()
     for (const [key, value] of snapshot) this.references.set(key, structuredClone(value))
   }
@@ -296,7 +296,7 @@ export class InMemoryTusTransaction implements TusTransactionPort {
 
 type SnapshotableTusTransactionRepositories = TusTransactionRepositories & {
   commitments: InMemoryTusCommitmentStore
-  audits: InMemoryTusAuditStore
+  audits: AlmacenReferenciasAuditoriaEnMemoria
   idempotency: InMemoryTusIdempotencyStore
   outbox: InMemoryTusOutboxStore
   compensations: InMemoryTusCompensationStore
@@ -317,7 +317,7 @@ export class InMemoryTusSessionResolver implements TusSessionResolverPort {
 }
 
 export default {
-  InMemoryTusAuditStore,
+  AlmacenReferenciasAuditoriaEnMemoria,
   InMemoryTusCommitmentStore,
   InMemoryTusCompensationStore,
   InMemoryTusIdempotencyStore,

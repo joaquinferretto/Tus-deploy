@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto'
 import { TUS_CONTRACT_VERSION, type TusCommitment, type TusReadinessEvidence as EvidenciaHabilitacionContrato, type ReadinessCapability as CapacidadHabilitacionContrato } from '@factory/contracts'
 import {
   TUS_OUTBOX_STATUSES,
-  type TusAuditReference,
-  type TusAuditStorePort,
+  type ReferenciaAuditoria,
+  type PuertoReferenciasAuditoria,
   type TusCommitmentStorePort,
   type TusIdempotencyClaim,
   type TusIdempotencyStorePort,
@@ -20,8 +20,8 @@ import {
 } from '../ports/index.ts'
 import { evaluarHabilitacion, type RegistroAuditoriaHabilitacion, type PuertoEvidenciaHabilitacion, type SolicitudHabilitacion } from '../readiness/index.ts'
 /*
-  TusAuditReference,
-  TusAuditStorePort,
+  ReferenciaAuditoria,
+  PuertoReferenciasAuditoria,
   TusCommitmentStorePort,
   TusIdempotencyClaim,
   TusIdempotencyStorePort,
@@ -75,7 +75,7 @@ interface PrismaCompensationDelegate {
   findFirst(input: { where: Record<string, unknown> }): Promise<Record<string, unknown> | null>
 }
 
-interface PrismaAuditDelegate {
+interface DelegadoPrismaReferenciasAuditoria {
   createMany(input: { data: Record<string, unknown>[] }): Promise<{ count: number }>
 }
 
@@ -156,7 +156,7 @@ interface DelegadoPrismaDecisionHabilitacion {
 export interface TusPrismaClient {
   tusCommitment: PrismaCommitmentDelegate
   tusCommitmentCompensation: PrismaCompensationDelegate
-  tusAuditReference: PrismaAuditDelegate
+  tusAuditReference: DelegadoPrismaReferenciasAuditoria
   session: PrismaSessionDelegate
   idempotencyRecord: PrismaIdempotencyDelegate
   outboxEvent: PrismaOutboxDelegate
@@ -331,14 +331,14 @@ export class PrismaTusCompensationStore implements TusCommitmentCompensationStor
   }
 }
 
-export class PrismaTusAuditStore implements TusAuditStorePort {
+export class AlmacenPrismaReferenciasAuditoria implements PuertoReferenciasAuditoria {
   private readonly client: TusPrismaClient
 
   constructor(client: TusPrismaClient) {
     this.client = client
   }
 
-  async append(references: readonly TusAuditReference[]): Promise<void> {
+  async append(references: readonly ReferenciaAuditoria[]): Promise<void> {
     await this.client.tusAuditReference.createMany({ data: references.map((reference) => ({
       id: reference.referenceId,
       referenceId: reference.referenceId,
@@ -352,7 +352,7 @@ export class PrismaTusAuditStore implements TusAuditStorePort {
     })) })
   }
 
-  list(_tenantId: string): TusAuditReference[] {
+  list(_tenantId: string): ReferenciaAuditoria[] {
     throw new Error('Tenant-scoped audit listing is exposed through reporting adapters, not the write transaction')
   }
 }
@@ -474,7 +474,7 @@ export class PrismaTusTransaction implements TusTransactionPort {
     return this.client.$transaction(async (client) => operation({
       commitments: new PrismaTusCommitmentStore(client),
       compensations: new PrismaTusCompensationStore(client),
-      audits: new PrismaTusAuditStore(client),
+      audits: new AlmacenPrismaReferenciasAuditoria(client),
       idempotency: new PrismaTusIdempotencyStore(client),
       outbox: new PrismaTusOutboxStore(client),
     }))
@@ -506,7 +506,7 @@ export class PrismaTusSessionResolver implements TusSessionResolverPort {
 }
 
 export default {
-  PrismaTusAuditStore,
+  AlmacenPrismaReferenciasAuditoria,
   PrismaTusCommitmentStore,
   PrismaTusCompensationStore,
   PrismaTusIdempotencyStore,

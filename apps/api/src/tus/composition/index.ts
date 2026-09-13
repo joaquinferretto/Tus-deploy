@@ -1,5 +1,5 @@
 import {
-  InMemoryTusAuditStore,
+  AlmacenReferenciasAuditoriaEnMemoria,
   InMemoryTusCommitmentStore,
   InMemoryTusCompensationStore,
   InMemoryTusIdempotencyStore,
@@ -11,7 +11,7 @@ import { TusApplicationService, type TusApplicationDependencies } from '../appli
 import { InMemoryMarketplaceStore, TusMarketplaceService } from '../catalog/index.ts'
 import { InMemoryServiceCalendarStore, ServiceCalendarService } from '../calendar/index.ts'
 import {
-  PrismaTusAuditStore,
+  AlmacenPrismaReferenciasAuditoria,
   PrismaTusCommitmentStore,
   PrismaTusCompensationStore,
   PrismaTusIdempotencyStore,
@@ -42,7 +42,7 @@ export function createTusApplication(
 ): TusApplicationService {
   const commitments = new InMemoryTusCommitmentStore()
   const compensations = new InMemoryTusCompensationStore()
-  const audits = new InMemoryTusAuditStore()
+  const audits = new AlmacenReferenciasAuditoriaEnMemoria()
   const idempotency = new InMemoryTusIdempotencyStore()
   const outbox = new InMemoryTusOutboxStore()
   const marketplace = new TusMarketplaceService(new InMemoryMarketplaceStore(), {
@@ -107,7 +107,7 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
   return new TusApplicationService({
     commitments: commitmentStore,
     compensations: new PrismaTusCompensationStore(client),
-    audits: new PrismaTusAuditStore(client),
+    audits: new AlmacenPrismaReferenciasAuditoria(client),
     idempotency: new PrismaTusIdempotencyStore(client),
     outbox: new PrismaTusOutboxStore(client),
     transaction: new PrismaTusTransaction(client),

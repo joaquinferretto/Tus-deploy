@@ -116,9 +116,9 @@ test('WU2 executes durable mixed checkout with session-derived tenant context an
 
 test('WU2 rolls back commitments, audit references, outbox, and idempotency when the transaction fails', () => {
   const result = runTypeScriptScenario(`
-    const { InMemoryTusCommitmentStore, InMemoryTusAuditStore, InMemoryTusIdempotencyStore, InMemoryTusOutboxStore, InMemoryTusTransaction } = (await import('./apps/api/src/tus/adapters/in-memory.ts')).default
+    const { InMemoryTusCommitmentStore, AlmacenReferenciasAuditoriaEnMemoria, InMemoryTusIdempotencyStore, InMemoryTusOutboxStore, InMemoryTusTransaction } = (await import('./apps/api/src/tus/adapters/in-memory.ts')).default
     const commitments = new InMemoryTusCommitmentStore()
-    const audits = new InMemoryTusAuditStore()
+    const audits = new AlmacenReferenciasAuditoriaEnMemoria()
     const idempotency = new InMemoryTusIdempotencyStore()
     const outbox = new InMemoryTusOutboxStore()
     const transaction = new InMemoryTusTransaction({ commitments, audits, idempotency, outbox })

@@ -1,13 +1,13 @@
 import type { CommitmentStatus, TusCartLine, TusCommitment, TusTenantContext } from '@factory/contracts'
 
-export const TUS_AUDIT_REFERENCE_TYPES = {
+export const TIPOS_REFERENCIA_AUDITORIA = {
   CREATED: 'commitment.created',
   STATUS_CHANGED: 'commitment.status_changed',
   COMPENSATED: 'commitment.compensated',
   DENIED: 'commitment.denied',
 } as const
 
-export type TusAuditReferenceType = (typeof TUS_AUDIT_REFERENCE_TYPES)[keyof typeof TUS_AUDIT_REFERENCE_TYPES]
+export type TipoReferenciaAuditoria = (typeof TIPOS_REFERENCIA_AUDITORIA)[keyof typeof TIPOS_REFERENCIA_AUDITORIA]
 
 export const TUS_OUTBOX_EVENT_TYPES = {
   CHECKOUT_CREATED: 'tus.checkout.created',
@@ -54,13 +54,13 @@ export interface TusSessionResolverPort {
   resolve(accessToken: string, correlationId: string): Promise<TusAuthenticatedTenantContext | null>
 }
 
-export interface TusAuditReference {
+export interface ReferenciaAuditoria {
   referenceId: string
   tenantId: string
   actorId: string
   correlationId: string
   commitmentId: string
-  referenceType: TusAuditReferenceType
+  referenceType: TipoReferenciaAuditoria
   status?: CommitmentStatus
   previousStatus?: CommitmentStatus
   reason?: string
@@ -91,9 +91,9 @@ export interface TusCommitmentCompensationStorePort {
   find(tenantId: string, commitmentId: string): Promise<TusCommitmentCompensation | null>
 }
 
-export interface TusAuditStorePort {
-  append(references: readonly TusAuditReference[]): Promise<void>
-  list(tenantId: string): TusAuditReference[]
+export interface PuertoReferenciasAuditoria {
+  append(references: readonly ReferenciaAuditoria[]): Promise<void>
+  list(tenantId: string): ReferenciaAuditoria[]
 }
 
 export interface TusCheckoutCommand extends TusTenantContext {
@@ -141,7 +141,7 @@ export interface TusOutboxStorePort {
 export interface TusTransactionRepositories {
   commitments: TusCommitmentStorePort
   compensations: TusCommitmentCompensationStorePort
-  audits: TusAuditStorePort
+  audits: PuertoReferenciasAuditoria
   idempotency: TusIdempotencyStorePort
   outbox: TusOutboxStorePort
 }
@@ -170,7 +170,7 @@ export interface TusIdempotencyStorePort {
 
 export interface TusCheckoutResponse {
   commitments: TusCommitment[]
-  auditReferences: TusAuditReference[]
+  auditReferences: ReferenciaAuditoria[]
   operation?: 'checkout' | 'transition' | 'compensation'
   commitment?: TusCommitment
   compensation?: TusCommitmentCompensation
