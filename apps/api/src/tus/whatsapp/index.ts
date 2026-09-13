@@ -84,7 +84,7 @@ export interface WhatsAppCommitInput {
   items: readonly WhatsAppDiscoveryItem[]
 }
 
-export interface WhatsAppActionAudit {
+export interface RegistroAuditoriaAccionWhatsApp {
   action: string
   outcome: 'allowed' | 'denied' | 'handoff'
   tenantId: string
@@ -174,8 +174,8 @@ export interface WhatsAppActionStorePort {
   saveConfirmation(value: WhatsAppConfirmation): MaybePromise<void>
   getConfirmation(tenantId: string, confirmationId: string): MaybePromise<WhatsAppConfirmation | null>
   consumeConfirmation(tenantId: string, confirmationId: string, senderId: string, now: number): MaybePromise<boolean>
-  recordAudit(value: WhatsAppActionAudit): MaybePromise<void>
-  listAudits(tenantId: string): WhatsAppActionAudit[]
+  registrarAuditoriaWhatsApp(value: RegistroAuditoriaAccionWhatsApp): MaybePromise<void>
+  listAudits(tenantId: string): RegistroAuditoriaAccionWhatsApp[]
   saveConsent?(value: WhatsAppConsent): MaybePromise<void>
   getConsent?(tenantId: string, recipientType: WhatsAppRecipientType, recipientId: string): MaybePromise<WhatsAppConsent | null>
   saveTemplateMessage?(value: WhatsAppTemplateMessage): MaybePromise<void>
@@ -199,7 +199,7 @@ export class WhatsAppActionError extends Error {
 export class InMemoryWhatsAppActionStore implements WhatsAppActionStorePort {
   private readonly actions = new Map<string, StoredAction>()
   private readonly confirmations = new Map<string, WhatsAppConfirmation>()
-  private readonly audits: WhatsAppActionAudit[] = []
+  private readonly audits: RegistroAuditoriaAccionWhatsApp[] = []
   private readonly consents = new Map<string, WhatsAppConsent>()
   private readonly templateMessages = new Map<string, WhatsAppTemplateMessage>()
   private readonly outboxRecords = new Map<string, WhatsAppTemplateOutboxRecord>()
@@ -243,11 +243,11 @@ export class InMemoryWhatsAppActionStore implements WhatsAppActionStorePort {
     return true
   }
 
-  recordAudit(value: WhatsAppActionAudit): void {
+  registrarAuditoriaWhatsApp(value: RegistroAuditoriaAccionWhatsApp): void {
     this.audits.push(clone(value))
   }
 
-  listAudits(tenantId: string): WhatsAppActionAudit[] {
+  listAudits(tenantId: string): RegistroAuditoriaAccionWhatsApp[] {
     return this.audits.filter((audit) => audit.tenantId === tenantId).map(clone)
   }
 
@@ -306,7 +306,7 @@ interface PrismaWhatsAppClient {
 }
 
 export class PrismaWhatsAppActionStore implements WhatsAppActionStorePort {
-  private readonly audits: WhatsAppActionAudit[] = []
+  private readonly audits: RegistroAuditoriaAccionWhatsApp[] = []
   private readonly outboxRecords: WhatsAppTemplateOutboxRecord[] = []
   private readonly client: PrismaWhatsAppClient
 
@@ -358,12 +358,12 @@ export class PrismaWhatsAppActionStore implements WhatsAppActionStorePort {
     return result.count === 1
   }
 
-  async recordAudit(value: WhatsAppActionAudit): Promise<void> {
+  async registrarAuditoriaWhatsApp(value: RegistroAuditoriaAccionWhatsApp): Promise<void> {
     this.audits.push(clone(value))
     await this.client.tusWhatsAppAudit.create({ data: { id: `${value.tenantId}:${value.action}:${value.createdAt}:${this.audits.length}`, ...value, createdAt: new Date(value.createdAt) } })
   }
 
-  listAudits(tenantId: string): WhatsAppActionAudit[] {
+  listAudits(tenantId: string): RegistroAuditoriaAccionWhatsApp[] {
     return this.audits.filter((audit) => audit.tenantId === tenantId).map(clone)
   }
 
@@ -430,7 +430,7 @@ export interface TusWhatsAppServiceOptions {
 
 export class TusWhatsAppService {
   readonly store: WhatsAppActionStorePort
-  readonly audit: { list(tenantId: string): WhatsAppActionAudit[] }
+  readonly audit: { list(tenantId: string): RegistroAuditoriaAccionWhatsApp[] }
   private readonly discover: (tenantId: string) => Promise<readonly WhatsAppDiscoveryItem[]>
   private readonly commitments: (tenantId: string, commitmentId: string) => Promise<Record<string, unknown> | null>
   private readonly commit?: (input: WhatsAppCommitInput) => Promise<Record<string, unknown>>
@@ -639,8 +639,8 @@ export class TusWhatsAppService {
     return result
   }
 
-  private async auditRecord(input: TusAuthenticatedTenantContext, action: string, outcome: WhatsAppActionAudit['outcome'], senderId = input.subjectId): Promise<void> {
-    await this.store.recordAudit({
+  private async auditRecord(input: TusAuthenticatedTenantContext, action: string, outcome: RegistroAuditoriaAccionWhatsApp['outcome'], senderId = input.subjectId): Promise<void> {
+    await this.store.registrarAuditoriaWhatsApp({
       action,
       outcome,
       tenantId: input.tenantId,
