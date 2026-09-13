@@ -180,7 +180,7 @@ export interface PosOutboxRecord {
   publishedAt?: string | null
 }
 
-export interface PosAuditRecord {
+export interface RegistroAuditoriaPOS {
   auditId: string
   tenantId: string
   actorId: string
@@ -204,8 +204,8 @@ export interface PosStorePort {
   saveReceipt(receipt: PosReceipt): MaybePromise<void>
   listOperations(tenantId: string): MaybePromise<PosManualOperation[]>
   listReceipts(tenantId: string): MaybePromise<PosReceipt[]>
-  saveAudit(record: PosAuditRecord): MaybePromise<void>
-  listAudit(tenantId: string): MaybePromise<PosAuditRecord[]>
+  saveAudit(record: RegistroAuditoriaPOS): MaybePromise<void>
+  listAudit(tenantId: string): MaybePromise<RegistroAuditoriaPOS[]>
   getDevice(tenantId: string, deviceId: string): MaybePromise<PosDevice | null>
   saveDevice(device: PosDevice): MaybePromise<void>
   getSession(tenantId: string, sessionId: string): MaybePromise<PosSession | null>
@@ -246,7 +246,7 @@ export class InMemoryPosStore implements PosStorePort {
   private readonly versions = new Map<string, number>()
   private readonly operations = new Map<string, PosManualOperation>()
   private readonly receipts = new Map<string, PosReceipt>()
-  private readonly audits = new Map<string, PosAuditRecord>()
+  private readonly audits = new Map<string, RegistroAuditoriaPOS>()
   private readonly devices = new Map<string, PosDevice>()
   private readonly sessions = new Map<string, PosSession>()
   private readonly conflicts = new Map<string, PosConflict>()
@@ -286,7 +286,7 @@ export class InMemoryPosStore implements PosStorePort {
   saveReceipt(receipt: PosReceipt) { this.receipts.set(key(receipt.tenantId, receipt.receiptId), clone(receipt)) }
   listOperations(tenantId: string) { return [...this.operations.values()].filter((operation) => operation.tenantId === tenantId).map(clone) }
   listReceipts(tenantId: string) { return [...this.receipts.values()].filter((receipt) => receipt.tenantId === tenantId).map(clone) }
-  saveAudit(record: PosAuditRecord) { this.audits.set(record.auditId, clone(record)) }
+  saveAudit(record: RegistroAuditoriaPOS) { this.audits.set(record.auditId, clone(record)) }
   listAudit(tenantId: string) { return [...this.audits.values()].filter((record) => record.tenantId === tenantId).map(clone) }
   getDevice(tenantId: string, deviceId: string) { return clone(this.devices.get(key(tenantId, deviceId)) ?? null) }
   saveDevice(device: PosDevice) { this.devices.set(key(device.tenantId, device.deviceId), clone(device)) }
@@ -385,7 +385,7 @@ export class InMemoryPosStore implements PosStorePort {
 
 export class TusPosService {
   readonly store: PosStorePort
-  readonly audit: { list(tenantId: string): MaybePromise<PosAuditRecord[]> }
+  readonly audit: { list(tenantId: string): MaybePromise<RegistroAuditoriaPOS[]> }
   private readonly now: () => number
   private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
   private readonly perfilHabilitacion: PerfilHabilitacion
@@ -408,7 +408,7 @@ export class TusPosService {
     const device: PosDevice = { contractVersion: '1.0.0', deviceId: input.deviceId, tenantId: context.tenantId, label: input.label.trim(), fingerprint: input.fingerprint, status: 'active', createdAt: now, updatedAt: now }
     return this.store.transaction(async (store) => {
       await store.saveDevice(device)
-      await this.recordAudit(context, 'pos.device.registered', device.deviceId, 'allowed', store)
+      await this.registrarAuditoriaPOS(context, 'pos.device.registered', device.deviceId, 'allowed', store)
       await this.recordOutbox(context, 'pos.device.registered', device.deviceId, device, store)
       return clone(device)
     })
@@ -422,7 +422,7 @@ export class TusPosService {
     const revoked = { ...device, status: 'revoked' as const, updatedAt: new Date(this.now()).toISOString() }
     return this.store.transaction(async (store) => {
       await store.saveDevice(revoked)
-      await this.recordAudit(context, 'pos.device.revoked', deviceId, 'allowed', store)
+      await this.registrarAuditoriaPOS(context, 'pos.device.revoked', deviceId, 'allowed', store)
       await this.recordOutbox(context, 'pos.device.revoked', deviceId, revoked, store)
       return revoked
     })
@@ -443,7 +443,7 @@ export class TusPosService {
     return this.store.transaction(async (store) => {
       await store.saveSession(session)
       await store.saveShift?.(shift)
-      await this.recordAudit(context, 'pos.session.opened', session.sessionId, 'allowed', store)
+      await this.registrarAuditoriaPOS(context, 'pos.session.opened', session.sessionId, 'allowed', store)
       await this.recordOutbox(context, 'pos.session.opened', session.sessionId, session, store)
       return clone(session)
     })
@@ -465,7 +465,7 @@ export class TusPosService {
     return this.store.transaction(async (store) => {
       await store.saveSession(closed)
       if (shift && store.saveShift) await store.saveShift({ ...shift, status: 'closed', closedAt: closed.closedAt, reconciliation })
-      await this.recordAudit(context, 'pos.session.closed', sessionId, 'allowed', store)
+      await this.registrarAuditoriaPOS(context, 'pos.session.closed', sessionId, 'allowed', store)
       await this.recordOutbox(context, 'pos.session.closed', sessionId, closed, store)
       return { ...closed, reconciliation }
     })
@@ -475,7 +475,7 @@ export class TusPosService {
     this.authorize(context)
     await this.requerirHabilitacion(context)
     if ((input.tenantId !== undefined && input.tenantId !== context.tenantId) || (input.actorId !== undefined && input.actorId !== context.subjectId)) {
-      await this.recordAudit(context, 'pos.operation.denied', input.operationId, 'denied')
+      await this.registrarAuditoriaPOS(context, 'pos.operation.denied', input.operationId, 'denied')
       throw new PosError(403, 'FORBIDDEN', 'POS authority fields do not match the authenticated session')
     }
     const operation: PosManualOperation = { contractVersion: '1.0.0', ...input, tenantId: context.tenantId, actorId: context.subjectId }
@@ -496,7 +496,7 @@ export class TusPosService {
       const existing = await transactionStore.getIdempotency(context.tenantId, operation.idempotencyKey)
       if (existing) {
         if (existing.fingerprint !== fingerprint) {
-          await this.recordAudit(context, 'pos.operation.conflict', operation.operationId, 'denied', transactionStore)
+          await this.registrarAuditoriaPOS(context, 'pos.operation.conflict', operation.operationId, 'denied', transactionStore)
           await this.recordConflict(context, operation, 'idempotency_conflict', undefined, transactionStore)
           return { status: 'conflict', operationId: operation.operationId, reason: 'idempotency_conflict' }
         }
@@ -504,7 +504,7 @@ export class TusPosService {
       }
       const currentVersion = await transactionStore.getVersion(context.tenantId, operation.shiftId)
       if (operation.expectedVersion !== undefined && operation.expectedVersion !== currentVersion) {
-        await this.recordAudit(context, 'pos.operation.conflict', operation.operationId, 'denied', transactionStore)
+        await this.registrarAuditoriaPOS(context, 'pos.operation.conflict', operation.operationId, 'denied', transactionStore)
         await this.recordConflict(context, operation, 'version_conflict', currentVersion, transactionStore)
         return { status: 'conflict', operationId: operation.operationId, reason: 'version_conflict' }
       }
@@ -521,7 +521,7 @@ export class TusPosService {
         await transactionStore.saveShift({ ...storedShift, version: nextVersion, totals: { ...storedShift.totals, sales, expectedCash: storedShift.totals.openingFloat + sales + storedShift.totals.cashIn - storedShift.totals.cashOut - storedShift.totals.refunds } })
       }
       await transactionStore.saveIdempotency(context.tenantId, operation.idempotencyKey, { fingerprint, response })
-      await this.recordAudit(context, 'pos.operation.accepted', operation.operationId, 'allowed', transactionStore)
+      await this.registrarAuditoriaPOS(context, 'pos.operation.accepted', operation.operationId, 'allowed', transactionStore)
       await this.recordOutbox(context, 'pos.operation.accepted', operation.operationId, response, transactionStore)
       return clone(response)
     })
@@ -570,7 +570,7 @@ export class TusPosService {
     const failure: PosPrinterFailure = { failureId: input.failureId, tenantId: context.tenantId, operationId: input.operationId, reason: input.reason.trim(), status: POS_PRINTER_FAILURE_STATUS.RETRYABLE, createdAt: new Date(this.now()).toISOString() }
     return this.store.transaction(async (store) => {
       await store.savePrinterFailure?.(failure)
-      await this.recordAudit(context, 'pos.printer.failure', input.operationId, 'allowed', store)
+      await this.registrarAuditoriaPOS(context, 'pos.printer.failure', input.operationId, 'allowed', store)
       await this.recordOutbox(context, 'pos.printer.retryable', input.operationId, failure, store)
       return clone(failure)
     })
@@ -583,7 +583,7 @@ export class TusPosService {
     return this.store.transaction(async (store) => {
       const currentVersion = await store.getVersion(context.tenantId, (await store.listOperations(context.tenantId)).find((operation) => operation.operationId === input.originalOperationId)?.shiftId ?? '')
       if (currentVersion !== input.expectedVersion) {
-        await this.recordAudit(context, `pos.${input.kind}.denied`, input.originalOperationId, 'denied', store)
+        await this.registrarAuditoriaPOS(context, `pos.${input.kind}.denied`, input.originalOperationId, 'denied', store)
         throw new PosError(409, 'VERSION_CONFLICT', 'POS shift version differs from the offline expectation')
       }
       await store.saveCompensation?.(compensation)
@@ -596,7 +596,7 @@ export class TusPosService {
         }
       }
       await store.incrementVersion(context.tenantId, (original?.shiftId ?? ''), currentVersion)
-      await this.recordAudit(context, `pos.${input.kind}.accepted`, input.originalOperationId, 'allowed', store)
+      await this.registrarAuditoriaPOS(context, `pos.${input.kind}.accepted`, input.originalOperationId, 'allowed', store)
       await this.recordOutbox(context, `pos.${input.kind}.accepted`, input.compensationId, compensation, store)
       return { status: 'accepted', compensation: clone(compensation) }
     })
@@ -610,13 +610,13 @@ export class TusPosService {
       if (!conflict) throw new PosError(404, 'NOT_FOUND', 'POS conflict was not found')
       const resolved = { ...conflict, status: resolution === 'discard' ? 'discarded' as const : 'resolved' as const }
       await transactionStore.saveConflict(resolved)
-      await this.recordAudit(context, `pos.conflict.${resolved.status}`, conflict.operationId, 'allowed', transactionStore)
+      await this.registrarAuditoriaPOS(context, `pos.conflict.${resolved.status}`, conflict.operationId, 'allowed', transactionStore)
       await this.recordOutbox(context, `pos.conflict.${resolved.status}`, conflict.operationId, resolved, transactionStore)
       return clone(resolved)
     })
   }
 
-  private async recordAudit(context: TusAuthenticatedTenantContext, action: string, operationId: string, outcome: PosAuditRecord['outcome'], store = this.store): Promise<void> {
+  private async registrarAuditoriaPOS(context: TusAuthenticatedTenantContext, action: string, operationId: string, outcome: RegistroAuditoriaPOS['outcome'], store = this.store): Promise<void> {
     await store.saveAudit({ auditId: `${action}-${operationId}-${this.now()}`, tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, action, operationId, outcome, createdAt: new Date(this.now()).toISOString() })
   }
 

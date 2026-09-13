@@ -8,7 +8,7 @@ import type {
   DeliveryZone,
   DeliveryOutboxRecord,
 } from '../delivery/index.ts'
-import { PosError, type PosAuditRecord, type PosCommandResult, type PosConflict, type PosDevice, type PosManualOperation, type PosOutboxRecord, type PosReceipt, type PosSession, type PosStorePort } from '../pos/index.ts'
+import { PosError, type RegistroAuditoriaPOS, type PosCommandResult, type PosConflict, type PosDevice, type PosManualOperation, type PosOutboxRecord, type PosReceipt, type PosSession, type PosStorePort } from '../pos/index.ts'
 
 type Row = any
 
@@ -155,8 +155,8 @@ export class PrismaPosStore implements PosStorePort {
   async saveReceipt(receipt: PosReceipt): Promise<void> { await this.client.tusPosReceipt.create({ data: { id: receipt.receiptId, tenantId: receipt.tenantId, receiptId: receipt.receiptId, operationId: receipt.operationId, kind: receipt.kind, context: receipt.context, amount: receipt.amount, currency: receipt.currency, status: receipt.status, source: receipt.source, providerCapture: receipt.providerCapture, settlement: receipt.settlement, integrityHash: receipt.integrityHash, createdAt: new Date(receipt.createdAt) } }) }
   async listOperations(tenantId: string): Promise<PosManualOperation[]> { return (await this.client.tusPosOperation.findMany({ where: { tenantId } })).map(mapOperation) }
   async listReceipts(tenantId: string): Promise<PosReceipt[]> { return (await this.client.tusPosReceipt.findMany({ where: { tenantId } })).map(mapReceipt) }
-  async saveAudit(record: PosAuditRecord): Promise<void> { await this.client.tusPosAudit.create({ data: { id: record.auditId, ...record, createdAt: new Date(record.createdAt) } }) }
-  async listAudit(tenantId: string): Promise<PosAuditRecord[]> { return this.listAuditRecords(tenantId) }
+  async saveAudit(record: RegistroAuditoriaPOS): Promise<void> { await this.client.tusPosAudit.create({ data: { id: record.auditId, ...record, createdAt: new Date(record.createdAt) } }) }
+  async listAudit(tenantId: string): Promise<RegistroAuditoriaPOS[]> { return this.listAuditRecords(tenantId) }
   async getDevice(tenantId: string, deviceId: string): Promise<PosDevice | null> { const row = await this.client.tusPosDevice.findUnique({ where: { tenantId_deviceId: { tenantId, deviceId } } }); return row ? mapDevice(row) : null }
   async saveDevice(device: PosDevice): Promise<void> { const data = { id: device.deviceId, tenantId: device.tenantId, deviceId: device.deviceId, label: device.label, fingerprint: device.fingerprint, status: device.status, createdAt: new Date(device.createdAt), updatedAt: new Date(device.updatedAt) }; const existing = await this.client.tusPosDevice.findUnique({ where: { tenantId_deviceId: { tenantId: device.tenantId, deviceId: device.deviceId } } }); if (existing) await this.client.tusPosDevice.update({ where: { tenantId_deviceId: { tenantId: device.tenantId, deviceId: device.deviceId } }, data }); else await this.client.tusPosDevice.create({ data }) }
   async getSession(tenantId: string, sessionId: string): Promise<PosSession | null> { const row = await this.client.tusPosSession.findUnique({ where: { tenantId_sessionId: { tenantId, sessionId } } }); return row ? mapSession(row) : null }
@@ -204,8 +204,8 @@ export class PrismaPosStore implements PosStorePort {
   }
   async listOutbox(tenantId: string): Promise<PosOutboxRecord[]> { return this.listOutboxRecords(tenantId) }
 
-  async listAuditRecords(tenantId: string): Promise<PosAuditRecord[]> {
-    return (await this.client.tusPosAudit.findMany({ where: { tenantId } })).map(mapAudit)
+  async listAuditRecords(tenantId: string): Promise<RegistroAuditoriaPOS[]> {
+    return (await this.client.tusPosAudit.findMany({ where: { tenantId } })).map(mapearAuditoriaPOS)
   }
 
   async listOutboxRecords(tenantId: string): Promise<PosOutboxRecord[]> {
@@ -223,7 +223,7 @@ function mapReceipt(row: Row): PosReceipt { return { contractVersion: '1.0.0', .
 function mapDevice(row: Row): PosDevice { return { contractVersion: '1.0.0', deviceId: row.deviceId, tenantId: row.tenantId, label: row.label, fingerprint: row.fingerprint, status: row.status, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } }
 function mapSession(row: Row): PosSession { return { contractVersion: '1.0.0', sessionId: row.sessionId, tenantId: row.tenantId, deviceId: row.deviceId, actorId: row.actorId, shiftId: row.shiftId, status: row.status, openedAt: row.openedAt.toISOString(), ...(row.closedAt ? { closedAt: row.closedAt.toISOString() } : {}) } }
 function mapConflict(row: Row): PosConflict { return { contractVersion: '1.0.0', conflictId: row.conflictId, tenantId: row.tenantId, operationId: row.operationId, reason: row.reason, ...(row.expectedVersion === null ? {} : { expectedVersion: row.expectedVersion }), ...(row.actualVersion === null ? {} : { actualVersion: row.actualVersion }), status: row.status, createdAt: row.createdAt.toISOString() } }
-function mapAudit(row: Row): PosAuditRecord { return { auditId: row.auditId, tenantId: row.tenantId, actorId: row.actorId, correlationId: row.correlationId, action: row.action, operationId: row.operationId, outcome: row.outcome, createdAt: row.createdAt.toISOString() } }
+function mapearAuditoriaPOS(row: Row): RegistroAuditoriaPOS { return { auditId: row.auditId, tenantId: row.tenantId, actorId: row.actorId, correlationId: row.correlationId, action: row.action, operationId: row.operationId, outcome: row.outcome, createdAt: row.createdAt.toISOString() } }
 function mapOutbox(row: Row): PosOutboxRecord { return fromPrismaPosOutbox(row) }
 
 function fromPrismaPosOutbox(row: Row, overrides: Partial<PosOutboxRecord> = {}): PosOutboxRecord {
