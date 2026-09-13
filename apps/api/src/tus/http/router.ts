@@ -20,7 +20,7 @@ import { ReportingError, createDiscoverySeoModel, createRobots, createSitemap } 
 import { SupportError } from '../support/index.ts'
 import { WhatsAppActionError } from '../whatsapp/index.ts'
 import { ServiceCalendarError } from '../calendar/index.ts'
-import { TusReadinessBlockedError, type TusReadinessGuard, type TusReadinessProfile } from '../readiness/index.ts'
+import { HabilitacionBloqueadaError, type EvaluadorHabilitacion, type PerfilHabilitacion } from '../readiness/index.ts'
 
 const TUS_API_VERSION = 'v1'
 
@@ -29,7 +29,7 @@ export interface TusHttpRouterDependencies {
   sessions: TusSessionResolverPort
   now?: () => number
   onAuthorizationDenied?: (event: TusAuthorizationDeniedEvent) => Promise<void>
-  readinessGuard?: TusReadinessGuard
+  evaluadorHabilitacion?: EvaluadorHabilitacion
 }
 
 export interface TusAuthorizationDeniedEvent {
@@ -57,9 +57,9 @@ function rejectUnsupportedTusApiVersion(request: Request, response: Response, ne
   next()
 }
 
-export function createTusHttpRouter({ application, sessions, now = () => Date.now(), onAuthorizationDenied, readinessGuard }: TusHttpRouterDependencies): Router {
+export function createTusHttpRouter({ application, sessions, now = () => Date.now(), onAuthorizationDenied, evaluadorHabilitacion }: TusHttpRouterDependencies): Router {
   const router = express.Router()
-  const guard = readinessGuard ?? application.readinessGuard
+  const guard = evaluadorHabilitacion ?? application.evaluadorHabilitacion
 
   router.use(canonicalizeLegacyMarketplacePath)
   router.use(rejectUnsupportedTusApiVersion)
@@ -69,13 +69,13 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       next()
       return
     }
-    const capability = readinessCapabilityForRoute(request.path)
+    const capability = capacidadHabilitacionPorRuta(request.path)
     if (!capability || routeIsGuardedByApplication(request.path, application)) {
       next()
       return
     }
     const context = await authenticate(request, sessions)
-    if (!context || !hasReadinessPermission(context, capability)) {
+    if (!context || !tienePermisoHabilitacion(context, capability)) {
       next()
       return
     }
@@ -85,12 +85,12 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
         actorId: context.subjectId,
         correlationId: context.correlationId,
         capability,
-        profile: (readHeader(request, 'x-tus-readiness-profile') || 'native-local') as TusReadinessProfile,
+        profile: (readHeader(request, 'x-tus-readiness-profile') || 'native-local') as PerfilHabilitacion,
         scope: readHeader(request, 'x-tus-readiness-scope') || 'argentina-stage-1',
       })
       next()
     } catch (error) {
-      sendTusReadinessError(response, error)
+      enviarErrorHabilitacion(response, error)
     }
   })
 
@@ -134,8 +134,8 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       })
       sendCheckoutResult(response, result)
     } catch (error) {
-      if (error instanceof TusReadinessBlockedError) {
-        sendTusReadinessError(response, error)
+      if (error instanceof HabilitacionBloqueadaError) {
+        enviarErrorHabilitacion(response, error)
         return
       }
       sendError(response, 500, 'UNAVAILABLE', 'TUS checkout was not committed')
@@ -1085,8 +1085,8 @@ async function recordMarketplaceDenied(application: TusApplicationService, conte
 }
 
 function sendMarketplaceError(response: Response, error: unknown): void {
-  if (error instanceof TusReadinessBlockedError) {
-    sendTusReadinessError(response, error)
+  if (error instanceof HabilitacionBloqueadaError) {
+    enviarErrorHabilitacion(response, error)
     return
   }
   if (error instanceof MarketplaceError) {
@@ -1105,8 +1105,8 @@ function sendCalendarError(response: Response, error: unknown): void {
 }
 
 function sendCommitmentError(response: Response, error: unknown): void {
-  if (error instanceof TusReadinessBlockedError) {
-    sendTusReadinessError(response, error)
+  if (error instanceof HabilitacionBloqueadaError) {
+    enviarErrorHabilitacion(response, error)
     return
   }
   if (error instanceof TusCommitmentError) {
@@ -1163,8 +1163,8 @@ async function deliveryMutation(
 }
 
 function sendFinanceError(response: Response, error: unknown): void {
-  if (error instanceof TusReadinessBlockedError) {
-    sendTusReadinessError(response, error)
+  if (error instanceof HabilitacionBloqueadaError) {
+    enviarErrorHabilitacion(response, error)
     return
   }
   if (error instanceof FinanceError) {
@@ -1175,8 +1175,8 @@ function sendFinanceError(response: Response, error: unknown): void {
 }
 
 function sendDeliveryError(response: Response, error: unknown): void {
-  if (error instanceof TusReadinessBlockedError) {
-    sendTusReadinessError(response, error)
+  if (error instanceof HabilitacionBloqueadaError) {
+    enviarErrorHabilitacion(response, error)
     return
   }
   if (error instanceof DeliveryError) { response.status(error.status).json({ code: error.code, error: error.message }); return }
@@ -1184,8 +1184,8 @@ function sendDeliveryError(response: Response, error: unknown): void {
 }
 
 function sendPosError(response: Response, error: unknown): void {
-  if (error instanceof TusReadinessBlockedError) {
-    sendTusReadinessError(response, error)
+  if (error instanceof HabilitacionBloqueadaError) {
+    enviarErrorHabilitacion(response, error)
     return
   }
   if (error instanceof PosError) { response.status(error.status).json({ code: error.code, error: error.message }); return }
@@ -1193,8 +1193,8 @@ function sendPosError(response: Response, error: unknown): void {
 }
 
 function sendWhatsAppError(response: Response, error: unknown): void {
-  if (error instanceof TusReadinessBlockedError) {
-    sendTusReadinessError(response, error)
+  if (error instanceof HabilitacionBloqueadaError) {
+    enviarErrorHabilitacion(response, error)
     return
   }
   if (error instanceof WhatsAppActionError) { response.status(error.status).json({ code: error.code, error: error.message }); return }
@@ -1202,8 +1202,8 @@ function sendWhatsAppError(response: Response, error: unknown): void {
 }
 
 function sendSupportError(response: Response, error: unknown): void {
-  if (error instanceof TusReadinessBlockedError) {
-    sendTusReadinessError(response, error)
+  if (error instanceof HabilitacionBloqueadaError) {
+    enviarErrorHabilitacion(response, error)
     return
   }
   if (error instanceof SupportError) { response.status(error.status).json({ code: error.code, error: error.message }); return }
@@ -1211,8 +1211,8 @@ function sendSupportError(response: Response, error: unknown): void {
 }
 
 function sendReportingError(response: Response, error: unknown): void {
-  if (error instanceof TusReadinessBlockedError) {
-    sendTusReadinessError(response, error)
+  if (error instanceof HabilitacionBloqueadaError) {
+    enviarErrorHabilitacion(response, error)
     return
   }
   if (error instanceof ReportingError) { response.status(error.status).json({ code: error.code, error: error.message }); return }
@@ -1243,15 +1243,15 @@ function sendError(response: Response, status: number, code: string, error: stri
   response.status(status).json({ code, error })
 }
 
-function sendTusReadinessError(response: Response, error: unknown): void {
-  if (error instanceof TusReadinessBlockedError) {
+function enviarErrorHabilitacion(response: Response, error: unknown): void {
+  if (error instanceof HabilitacionBloqueadaError) {
     sendError(response, error.status, error.code, error.message)
     return
   }
   sendError(response, 409, 'TUS_READINESS_BLOCKED', 'TUS readiness requirements are not satisfied')
 }
 
-function readinessCapabilityForRoute(path: string): 'publication' | 'provider-actions' | 'settlement' | 'fleet' | null {
+function capacidadHabilitacionPorRuta(path: string): 'publication' | 'provider-actions' | 'settlement' | 'fleet' | null {
   if (path.includes('/marketplace/checkout') || path.includes('/finance/release') || path.includes('/finance/disputes') || path.includes('/finance/refunds') || path.includes('/finance/chargebacks') || path.includes('/finance/reconciliation') || path.includes('/support/')) return 'settlement'
   if (path.includes('/marketplace/') || path.includes('/seo/')) return 'publication'
   if (path.includes('/finance/')) return path.includes('/payment-intents') || path.includes('/evidence') || path.includes('/confirmations') ? 'provider-actions' : 'settlement'
@@ -1262,11 +1262,11 @@ function readinessCapabilityForRoute(path: string): 'publication' | 'provider-ac
 }
 
 function routeIsGuardedByApplication(path: string, application: TusApplicationService): boolean {
-  if (!application.readinessGuard) return false
+  if (!application.evaluadorHabilitacion) return false
   return path.includes('/checkout') || path.includes('/marketplace/onboarding') || path.includes('/marketplace/listings')
 }
 
-function hasReadinessPermission(context: TusAuthenticatedTenantContext, capability: ReturnType<typeof readinessCapabilityForRoute>): boolean {
+function tienePermisoHabilitacion(context: TusAuthenticatedTenantContext, capability: ReturnType<typeof capacidadHabilitacionPorRuta>): boolean {
   if (capability === 'publication') return hasPermission(context, 'tus:marketplace:write') || hasPermission(context, 'tus:reporting:write')
   if (capability === 'provider-actions') return hasPermission(context, 'tus:finance:write') || hasPermission(context, 'tus:whatsapp:write')
   if (capability === 'settlement') return hasPermission(context, 'tus:checkout') || hasPermission(context, 'tus:finance:write') || hasPermission(context, 'tus:support:write') || hasPermission(context, 'tus:commitments:write')

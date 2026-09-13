@@ -21,7 +21,7 @@ import type {
   JobReplayInput,
   ReconciliationReport,
 } from '../ports.js'
-import type { TusReadinessGuard, TusReadinessProfile } from '../../../tus/readiness/index.ts'
+import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../../../tus/readiness/index.ts'
 
 export type SubmitJobResult =
   | { status: 'created'; run: RunLedgerRecord; job: JobRecord }
@@ -41,15 +41,15 @@ export type ServiceFailureResult =
 
 export class DurableJobService {
   private readonly platform: DurableJobPlatformPort
-  private readonly readinessGuard?: TusReadinessGuard
-  private readonly readinessProfile: TusReadinessProfile
-  private readonly readinessScope: string
+  private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
+  private readonly perfilHabilitacion: PerfilHabilitacion
+  private readonly alcanceHabilitacion: string
 
-  constructor(platform: DurableJobPlatformPort, options: { readinessGuard?: TusReadinessGuard; readinessProfile?: TusReadinessProfile; readinessScope?: string } = {}) {
+  constructor(platform: DurableJobPlatformPort, options: { evaluadorHabilitacion?: EvaluadorHabilitacion; perfilHabilitacion?: PerfilHabilitacion; alcanceHabilitacion?: string } = {}) {
     this.platform = platform
-    this.readinessGuard = options.readinessGuard
-    this.readinessProfile = options.readinessProfile ?? 'native-local'
-    this.readinessScope = options.readinessScope ?? 'argentina-stage-1'
+    this.evaluadorHabilitacion = options.evaluadorHabilitacion
+    this.perfilHabilitacion = options.perfilHabilitacion ?? 'native-local'
+    this.alcanceHabilitacion = options.alcanceHabilitacion ?? 'argentina-stage-1'
   }
 
   async submit(input: SubmitJobInput): Promise<SubmitJobResult> {
@@ -259,7 +259,7 @@ export class DurableJobService {
   }
 
   private requireReadiness(tenantId: string, actorId: string, correlationId: string, now: number): Promise<unknown> {
-    return this.readinessGuard?.require({ tenantId, actorId, correlationId, capability: 'release-jobs', profile: this.readinessProfile, scope: this.readinessScope, now: new Date(now).toISOString() }) ?? Promise.resolve()
+    return this.evaluadorHabilitacion?.require({ tenantId, actorId, correlationId, capability: 'release-jobs', profile: this.perfilHabilitacion, scope: this.alcanceHabilitacion, now: new Date(now).toISOString() }) ?? Promise.resolve()
   }
 
   private appendRunEvent(

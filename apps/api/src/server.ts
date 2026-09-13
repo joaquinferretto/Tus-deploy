@@ -90,7 +90,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const tusRoutesEnabled = options.tusRoutesEnabled ?? process.env['TUS_ROUTES_ENABLED'] === 'true'
   const providerRoutesEnabled = options.providerRoutesEnabled ?? process.env['TUS_PROVIDER_ACTIONS_ENABLED'] === 'true'
   if (tusRoutesEnabled) app.use(tusRouter)
-  if (providerRoutesEnabled) app.use(createTusIntegrationRouter({ readinessGuard: application.readinessGuard, providerActionsEnabled: true }))
+  if (providerRoutesEnabled) app.use(createTusIntegrationRouter({ evaluadorHabilitacion: application.evaluadorHabilitacion, providerActionsEnabled: true }))
 
   // 404 handler
   app.use(createNotFoundHandler())

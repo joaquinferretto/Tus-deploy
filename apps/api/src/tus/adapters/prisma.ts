@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { TUS_CONTRACT_VERSION, type TusCommitment, type TusReadinessEvidence, type ReadinessCapability } from '@factory/contracts'
+import { TUS_CONTRACT_VERSION, type TusCommitment, type TusReadinessEvidence as EvidenciaHabilitacionContrato, type ReadinessCapability as CapacidadHabilitacionContrato } from '@factory/contracts'
 import {
   TUS_OUTBOX_STATUSES,
   type TusAuditReference,
@@ -18,7 +18,7 @@ import {
   type TusCommitmentCompensationStorePort,
   type TusOutboxStatus,
 } from '../ports/index.ts'
-import { evaluateTusReadiness, type TusReadinessAuditRecord, type TusReadinessEvidencePort, type TusReadinessRequest } from '../readiness/index.ts'
+import { evaluarHabilitacion, type RegistroAuditoriaHabilitacion, type PuertoEvidenciaHabilitacion, type SolicitudHabilitacion } from '../readiness/index.ts'
 /*
   TusAuditReference,
   TusAuditStorePort,
@@ -145,11 +145,11 @@ interface PrismaBookingDelegate {
   findMany(input: { where: Record<string, unknown> }): Promise<Record<string, unknown>[]>
 }
 
-interface PrismaReadinessEvidenceDelegate {
+interface DelegadoPrismaEvidenciaHabilitacion {
   findMany(input: { where: { tenantId: string; capability: string } }): Promise<Record<string, unknown>[]>
 }
 
-interface PrismaReadinessDecisionDelegate {
+interface DelegadoPrismaDecisionHabilitacion {
   create(input: { data: Record<string, unknown> }): Promise<unknown>
 }
 
@@ -168,26 +168,26 @@ export interface TusPrismaClient {
   tusCalendarRule: PrismaCalendarRuleDelegate
   tusCalendarException: PrismaCalendarExceptionDelegate
   tusBooking: PrismaBookingDelegate
-  tusReadinessEvidence: PrismaReadinessEvidenceDelegate
-  tusReadinessDecision: PrismaReadinessDecisionDelegate
+  tusReadinessEvidence: DelegadoPrismaEvidenciaHabilitacion
+  tusReadinessDecision: DelegadoPrismaDecisionHabilitacion
   $transaction<TValue>(callback: (client: TusPrismaClient) => Promise<TValue>): Promise<TValue>
 }
 
-export class PrismaTusReadinessEvidenceStore implements TusReadinessEvidencePort {
+export class AlmacenPrismaEvidenciaHabilitacion implements PuertoEvidenciaHabilitacion {
   private readonly client: TusPrismaClient
 
   constructor(client: TusPrismaClient) {
     this.client = client
   }
 
-  async listEvidence(tenantId: string, capability: ReadinessCapability): Promise<readonly TusReadinessEvidence[]> {
+  async listEvidence(tenantId: string, capability: CapacidadHabilitacionContrato): Promise<readonly EvidenciaHabilitacionContrato[]> {
     const rows = await this.client.tusReadinessEvidence.findMany({ where: { tenantId, capability } })
     return rows.map((row) => ({
       contractVersion: TUS_CONTRACT_VERSION,
       evidenceId: String(row['id']),
       tenantId: String(row['tenantId']),
-      capability: row['capability'] as ReadinessCapability,
-      gate: row['gate'] as TusReadinessEvidence['gate'],
+      capability: row['capability'] as CapacidadHabilitacionContrato,
+      gate: row['gate'] as EvidenciaHabilitacionContrato['gate'],
       owner: String(row['owner']),
       scope: String(row['scope']),
       evidenceType: String(row['evidenceType']),
@@ -196,17 +196,17 @@ export class PrismaTusReadinessEvidenceStore implements TusReadinessEvidencePort
       issuedAt: toIsoString(row['issuedAt'] ?? row['createdAt']),
       expiresAt: row['expiresAt'] === null || row['expiresAt'] === undefined ? null : toIsoString(row['expiresAt']),
       revoked: Boolean(row['revoked']),
-      source: row['source'] as TusReadinessEvidence['source'],
-      ...(isReadinessProfile(row['profile']) ? { profile: row['profile'] } : {}),
-      ...(isReadinessExecution(row['execution']) ? { execution: row['execution'] } : {}),
-      ...(isReadinessEvidenceClass(row['evidenceClass']) ? { evidenceClass: row['evidenceClass'] } : {}),
+      source: row['source'] as EvidenciaHabilitacionContrato['source'],
+      ...(esPerfilHabilitacion(row['profile']) ? { profile: row['profile'] } : {}),
+      ...(esEjecucionHabilitacion(row['execution']) ? { execution: row['execution'] } : {}),
+      ...(esClaseEvidenciaHabilitacion(row['evidenceClass']) ? { evidenceClass: row['evidenceClass'] } : {}),
       ...(typeof row['liveConformance'] === 'boolean' ? { liveConformance: row['liveConformance'] } : {}),
     }))
   }
 
-  async evaluate(request: TusReadinessRequest) {
+  async evaluate(request: SolicitudHabilitacion) {
     const evidence = await this.listEvidence(request.tenantId, request.capability)
-    return evaluateTusReadiness({
+    return evaluarHabilitacion({
       tenantId: request.tenantId,
       capability: request.capability,
       scope: request.scope,
@@ -215,7 +215,7 @@ export class PrismaTusReadinessEvidenceStore implements TusReadinessEvidencePort
     })
   }
 
-  async recordDecision(record: TusReadinessAuditRecord): Promise<void> {
+  async recordDecision(record: RegistroAuditoriaHabilitacion): Promise<void> {
     await this.client.tusReadinessDecision.create({
       data: {
         id: `tus-readiness-${record.correlationId}-${Date.now()}`,
@@ -247,15 +247,15 @@ function toIsoString(value: unknown): string {
   return value instanceof Date ? value.toISOString() : new Date(String(value)).toISOString()
 }
 
-function isReadinessProfile(value: unknown): value is 'native-local' | 'render-native' | 'aws-terraform' | 'local-postgresql-http' {
+function esPerfilHabilitacion(value: unknown): value is 'native-local' | 'render-native' | 'aws-terraform' | 'local-postgresql-http' {
   return ['native-local', 'render-native', 'aws-terraform', 'local-postgresql-http'].includes(String(value))
 }
 
-function isReadinessExecution(value: unknown): value is 'local-verification' | 'live' {
+function esEjecucionHabilitacion(value: unknown): value is 'local-verification' | 'live' {
   return value === 'local-verification' || value === 'live'
 }
 
-function isReadinessEvidenceClass(value: unknown): value is 'authorized-external' | 'local-deterministic' | 'local-postgresql-http' | 'deferred' {
+function esClaseEvidenciaHabilitacion(value: unknown): value is 'authorized-external' | 'local-deterministic' | 'local-postgresql-http' | 'deferred' {
   return ['authorized-external', 'local-deterministic', 'local-postgresql-http', 'deferred'].includes(String(value))
 }
 

@@ -18,7 +18,7 @@ import {
   PrismaTusOutboxStore,
   PrismaTusTransaction,
   type TusPrismaClient,
-  PrismaTusReadinessEvidenceStore,
+  AlmacenPrismaEvidenciaHabilitacion,
 } from '../adapters/prisma.ts'
 import { PrismaMarketplaceStore } from '../adapters/prisma-marketplace.ts'
 import { PrismaServiceCalendarStore } from '../adapters/prisma-calendar.ts'
@@ -35,10 +35,10 @@ import { PrismaDeliveryStore, PrismaPosStore } from '../adapters/delivery-pos.ts
 import { InMemorySupportStore, PrismaSupportStore, TusSupportService } from '../support/index.ts'
 import { InMemoryWhatsAppActionStore, PrismaWhatsAppActionStore, TusWhatsAppService } from '../whatsapp/index.ts'
 import { InMemoryReportingStore, PrismaReportingStore, TusReportingService } from '../reporting/index.ts'
-import { TusReadinessGuard } from '../readiness/index.ts'
+import { EvaluadorHabilitacion } from '../readiness/index.ts'
 
 export function createTusApplication(
-  options: Pick<TusApplicationDependencies, 'now' | 'releasePolicy' | 'operationsTelemetry' | 'readinessGuard' | 'readinessProfile' | 'readinessScope'> = {},
+  options: Pick<TusApplicationDependencies, 'now' | 'releasePolicy' | 'operationsTelemetry' | 'evaluadorHabilitacion' | 'perfilHabilitacion' | 'alcanceHabilitacion'> = {},
 ): TusApplicationService {
   const commitments = new InMemoryTusCommitmentStore()
   const compensations = new InMemoryTusCompensationStore()
@@ -46,9 +46,9 @@ export function createTusApplication(
   const idempotency = new InMemoryTusIdempotencyStore()
   const outbox = new InMemoryTusOutboxStore()
   const marketplace = new TusMarketplaceService(new InMemoryMarketplaceStore(), {
-    readinessGuard: options.readinessGuard,
-    readinessProfile: options.readinessProfile,
-    readinessScope: options.readinessScope,
+    evaluadorHabilitacion: options.evaluadorHabilitacion,
+    perfilHabilitacion: options.perfilHabilitacion,
+    alcanceHabilitacion: options.alcanceHabilitacion,
   })
   const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore(), options.now)
   const commitmentLookup = async (commitmentId: string) => (await commitments.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
@@ -62,13 +62,13 @@ export function createTusApplication(
     store: new InMemoryDeliveryStore(),
     commitmentLookup,
     now: options.now,
-    readinessGuard: options.readinessGuard,
-    readinessProfile: options.readinessProfile,
-    readinessScope: options.readinessScope,
+    evaluadorHabilitacion: options.evaluadorHabilitacion,
+    perfilHabilitacion: options.perfilHabilitacion,
+    alcanceHabilitacion: options.alcanceHabilitacion,
   })
-  const pos = new TusPosService({ store: new InMemoryPosStore(), now: options.now, readinessGuard: options.readinessGuard, readinessProfile: options.readinessProfile, readinessScope: options.readinessScope })
-  const support = new TusSupportService({ store: new InMemorySupportStore(), commitmentLookup, now: options.now, telemetry: options.operationsTelemetry, readinessGuard: options.readinessGuard, readinessProfile: options.readinessProfile, readinessScope: options.readinessScope })
-  const whatsapp = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), now: options.now, telemetry: options.operationsTelemetry, readinessGuard: options.readinessGuard, readinessProfile: options.readinessProfile, readinessScope: options.readinessScope })
+  const pos = new TusPosService({ store: new InMemoryPosStore(), now: options.now, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
+  const support = new TusSupportService({ store: new InMemorySupportStore(), commitmentLookup, now: options.now, telemetry: options.operationsTelemetry, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
+  const whatsapp = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), now: options.now, telemetry: options.operationsTelemetry, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
   const reporting = new TusReportingService({ store: new InMemoryReportingStore(), now: options.now, telemetry: options.operationsTelemetry })
   return new TusApplicationService({
     commitments,
@@ -90,19 +90,19 @@ export function createTusApplication(
 }
 
 export function createPrismaTusApplication(client: TusPrismaClient): TusApplicationService {
-  const readinessGuard = new TusReadinessGuard(new PrismaTusReadinessEvidenceStore(client))
-  const marketplace = createPrismaMarketplaceService(client, readinessGuard)
+  const evaluadorHabilitacion = new EvaluadorHabilitacion(new AlmacenPrismaEvidenciaHabilitacion(client))
+  const marketplace = createPrismaMarketplaceService(client, evaluadorHabilitacion)
   const calendar = new ServiceCalendarService(new PrismaServiceCalendarStore(client))
   const commitmentStore = new PrismaTusCommitmentStore(client)
   const commitmentLookup = async (commitmentId: string) => (await commitmentStore.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
   const delivery = new TusDeliveryService({
     store: new PrismaDeliveryStore(client),
     commitmentLookup,
-    readinessGuard,
+    evaluadorHabilitacion,
   })
-  const pos = new TusPosService({ store: new PrismaPosStore(client), readinessGuard })
-  const support = new TusSupportService({ store: new PrismaSupportStore(client as never), commitmentLookup, readinessGuard })
-  const whatsapp = new TusWhatsAppService({ store: new PrismaWhatsAppActionStore(client as never), readinessGuard })
+  const pos = new TusPosService({ store: new PrismaPosStore(client), evaluadorHabilitacion })
+  const support = new TusSupportService({ store: new PrismaSupportStore(client as never), commitmentLookup, evaluadorHabilitacion })
+  const whatsapp = new TusWhatsAppService({ store: new PrismaWhatsAppActionStore(client as never), evaluadorHabilitacion })
   const reporting = new TusReportingService({ store: new PrismaReportingStore(client as never) })
   return new TusApplicationService({
     commitments: commitmentStore,
@@ -117,21 +117,21 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
       store: new PrismaTusFinanceStore(client as unknown as PrismaFinanceClient),
       provider: new UnavailableMercadoPagoFinanceProvider(),
       commitmentLookup,
-      readinessGuard,
+       evaluadorHabilitacion,
     }),
     delivery,
     pos,
     support,
     whatsapp,
     reporting,
-    readinessGuard,
-    readinessProfile: 'native-local',
-    readinessScope: 'argentina-stage-1',
+    evaluadorHabilitacion,
+    perfilHabilitacion: 'native-local',
+    alcanceHabilitacion: 'argentina-stage-1',
   })
 }
 
-function createPrismaMarketplaceService(client: TusPrismaClient, readinessGuard?: TusReadinessGuard): TusMarketplaceService {
-  return new TusMarketplaceService(new PrismaMarketplaceStore(client), { readinessGuard })
+function createPrismaMarketplaceService(client: TusPrismaClient, evaluadorHabilitacion?: EvaluadorHabilitacion): TusMarketplaceService {
+  return new TusMarketplaceService(new PrismaMarketplaceStore(client), { evaluadorHabilitacion })
 }
 
 export * from '../application/index.ts'

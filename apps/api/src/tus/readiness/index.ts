@@ -1,26 +1,26 @@
 import {
-  READINESS_GATE_KEYS,
+  READINESS_GATE_KEYS as CLAVES_REQUISITOS_HABILITACION_CONTRATO,
   TUS_CONTRACT_VERSION,
-  type ReadinessCapability,
-  type ReadinessConflict,
-  type ReadinessGateFailure,
-  type ReadinessGateKey,
-  type TusReadinessDecision,
-  type TusReadinessEvidence,
-  validateTusReadinessEvidence,
+  type ReadinessCapability as CapacidadHabilitacionContrato,
+  type ReadinessConflict as ConflictoHabilitacionContrato,
+  type ReadinessGateFailure as FallaRequisitoHabilitacionContrato,
+  type ReadinessGateKey as ClaveRequisitoHabilitacionContrato,
+  type TusReadinessDecision as DecisionHabilitacionContrato,
+  type TusReadinessEvidence as EvidenciaHabilitacionContrato,
+  validateTusReadinessEvidence as validarEvidenciaHabilitacionContrato,
 } from '@factory/contracts'
 
-export const REQUIRED_READINESS_GATES = READINESS_GATE_KEYS
+export const REQUISITOS_HABILITACION_REQUERIDOS = CLAVES_REQUISITOS_HABILITACION_CONTRATO
 
-const REQUIRED_GATES_BY_CAPABILITY: Record<ReadinessCapability, readonly ReadinessGateKey[]> = {
+const REQUISITOS_POR_CAPACIDAD: Record<CapacidadHabilitacionContrato, readonly ClaveRequisitoHabilitacionContrato[]> = {
   publication: ['legal', 'kyb', 'tax', 'runtimeProvider'],
   'provider-actions': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'aws', 'groqMigration', 'runtimeProvider'],
-  settlement: REQUIRED_READINESS_GATES,
+  settlement: REQUISITOS_HABILITACION_REQUERIDOS,
   fleet: ['legal', 'kyc', 'kyb', 'tax', 'posPilot', 'runtimeProvider'],
   'release-jobs': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'posPilot', 'runtimeProvider'],
 }
 
-const LEGACY_READINESS_GATE_KEYS = [
+const CLAVES_REQUISITO_LEGACY = [
   'legal',
   'kyc',
   'kyb',
@@ -31,25 +31,25 @@ const LEGACY_READINESS_GATE_KEYS = [
   'groqMigration',
 ] as const
 
-export type CreateReadinessEvidenceInput = Omit<
-  TusReadinessEvidence,
+export type EntradaCrearEvidenciaHabilitacion = Omit<
+  EvidenciaHabilitacionContrato,
   'contractVersion' | 'issuedAt' | 'source'
 >
 
-export type ReadinessEvidenceSourceInput = TusReadinessEvidence['source']
+export type FuenteEvidenciaHabilitacion = EvidenciaHabilitacionContrato['source']
 
 const COMPATIBILITY_ISSUED_AT = '1970-01-01T00:00:00.000Z'
 
-function normalizeEvidenceSource(source: ReadinessEvidenceSourceInput): TusReadinessEvidence['source'] {
+function normalizarFuenteEvidencia(source: FuenteEvidenciaHabilitacion): EvidenciaHabilitacionContrato['source'] {
   if (source === 'authorized') return 'authorized-external'
   if (source === 'deterministic-test-only') return 'local-deterministic'
   return source
 }
 
-export function createReadinessEvidence(
-  input: CreateReadinessEvidenceInput & { issuedAt?: string; source: ReadinessEvidenceSourceInput },
-): TusReadinessEvidence {
-  const source = normalizeEvidenceSource(input.source)
+export function crearEvidenciaHabilitacion(
+  input: EntradaCrearEvidenciaHabilitacion & { issuedAt?: string; source: FuenteEvidenciaHabilitacion },
+): EvidenciaHabilitacionContrato {
+  const source = normalizarFuenteEvidencia(input.source)
   const profile = input.profile ?? 'native-local'
   const execution = input.execution ?? (profile === 'native-local' || profile === 'local-postgresql-http' ? 'local-verification' : 'live')
   const evidence = Object.freeze({
@@ -62,16 +62,16 @@ export function createReadinessEvidence(
     evidenceClass: input.evidenceClass ?? source,
     liveConformance: input.liveConformance ?? (execution === 'live' && source === 'authorized-external'),
   })
-  return validateTusReadinessEvidence(evidence)
+  return validarEvidenciaHabilitacionContrato(evidence)
 }
 
-export interface Stage1PublicationReadinessInput {
+export interface EntradaHabilitacionPublicacionEtapa1 {
   tenantId: string
   cohort: string
   regulatedHealthcare: boolean
 }
 
-export type Stage1PublicationReadinessDecision =
+export type DecisionHabilitacionPublicacionEtapa1 =
   | {
       allowed: true
       reason: 'approved_stage_1_cohort'
@@ -85,9 +85,9 @@ export type Stage1PublicationReadinessDecision =
       nonClaim: 'regulated_vertical_excluded' | 'cohort_not_enabled'
     }
 
-export function evaluateStage1PublicationReadiness(
-  input: Stage1PublicationReadinessInput,
-): Stage1PublicationReadinessDecision {
+export function evaluarHabilitacionPublicacionEtapa1(
+  input: EntradaHabilitacionPublicacionEtapa1,
+): DecisionHabilitacionPublicacionEtapa1 {
   if (input.regulatedHealthcare) {
     return {
       allowed: false,
@@ -112,19 +112,19 @@ export function evaluateStage1PublicationReadiness(
   }
 }
 
-export interface EvaluateTusReadinessInput {
+export interface EntradaEvaluarHabilitacion {
   tenantId: string
-  capability: ReadinessCapability
+  capability: CapacidadHabilitacionContrato
   scope?: string
   now: string
-  evidence: readonly TusReadinessEvidence[]
+  evidence: readonly EvidenciaHabilitacionContrato[]
 }
 
-export function evaluateTusReadiness(input: EvaluateTusReadinessInput): TusReadinessDecision {
-  const failures: ReadinessGateFailure[] = []
+export function evaluarHabilitacion(input: EntradaEvaluarHabilitacion): DecisionHabilitacionContrato {
+  const failures: FallaRequisitoHabilitacionContrato[] = []
   const evidenceIds: string[] = []
-  const conflicts: ReadinessConflict[] = []
-  const requiredGates = REQUIRED_GATES_BY_CAPABILITY[input.capability]
+  const conflicts: ConflictoHabilitacionContrato[] = []
+  const requiredGates = REQUISITOS_POR_CAPACIDAD[input.capability]
   const now = Date.parse(input.now)
   if (!Number.isFinite(now)) throw new Error('readiness evaluation requires a valid ISO timestamp')
 
@@ -148,7 +148,7 @@ export function evaluateTusReadiness(input: EvaluateTusReadinessInput): TusReadi
 
     const malformed = scopedCandidates.find((candidate) => {
       try {
-        validateTusReadinessEvidence(candidate)
+        validarEvidenciaHabilitacionContrato(candidate)
         return false
       } catch {
         return true
@@ -218,27 +218,27 @@ export function evaluateTusReadiness(input: EvaluateTusReadinessInput): TusReadi
   }
 }
 
-export interface LegacyReadinessStatus {
+export interface EstadoHabilitacionLegacy {
   enabled: boolean
-  failedGates: ReadinessGateKey[]
+  failedGates: ClaveRequisitoHabilitacionContrato[]
 }
 
-export function evaluateLegacyReadinessGates(
-  gates: Partial<Record<ReadinessGateKey, boolean>>,
-): LegacyReadinessStatus {
-  const failedGates = LEGACY_READINESS_GATE_KEYS.filter((gate) => gates[gate] !== true)
+export function evaluarRequisitosHabilitacionLegacy(
+  gates: Partial<Record<ClaveRequisitoHabilitacionContrato, boolean>>,
+): EstadoHabilitacionLegacy {
+  const failedGates = CLAVES_REQUISITO_LEGACY.filter((gate) => gates[gate] !== true)
   return { enabled: failedGates.length === 0, failedGates }
 }
 
-export function reconcileReadinessDecision(
-  canonical: TusReadinessDecision,
-  legacy: LegacyReadinessStatus,
-): TusReadinessDecision {
+export function conciliarDecisionHabilitacion(
+  canonical: DecisionHabilitacionContrato,
+  legacy: EstadoHabilitacionLegacy,
+): DecisionHabilitacionContrato {
   if (canonical.enabled === legacy.enabled) return canonical
 
   const gates = legacy.enabled ? canonical.failedGates.map(({ gate }) => gate) : legacy.failedGates
-  const failedGates: ReadinessGateFailure[] = gates.map((gate) => ({ gate, reason: 'legacy_conflict' }))
-  const conflicts: ReadinessConflict[] = gates.map((gate) => ({ gate, evidenceIds: [], source: 'legacy-boolean' }))
+  const failedGates: FallaRequisitoHabilitacionContrato[] = gates.map((gate) => ({ gate, reason: 'legacy_conflict' }))
+  const conflicts: ConflictoHabilitacionContrato[] = gates.map((gate) => ({ gate, evidenceIds: [], source: 'legacy-boolean' }))
   return {
     ...canonical,
     enabled: false,
@@ -249,11 +249,11 @@ export function reconcileReadinessDecision(
   }
 }
 
-export function rollbackReadiness(
-  decision: TusReadinessDecision,
+export function revertirHabilitacion(
+  decision: DecisionHabilitacionContrato,
   reason: string,
   evaluatedAt: string,
-): TusReadinessDecision {
+): DecisionHabilitacionContrato {
   return {
     ...decision,
     evaluatedAt,
@@ -266,57 +266,57 @@ export function rollbackReadiness(
   }
 }
 
-export const TUS_READINESS_PROFILES = [
+export const PERFILES_HABILITACION = [
   'native-local',
   'render-native',
   'aws-terraform',
   'local-postgresql-http',
 ] as const
 
-export type TusReadinessProfile = (typeof TUS_READINESS_PROFILES)[number]
+export type PerfilHabilitacion = (typeof PERFILES_HABILITACION)[number]
 
-export interface TusReadinessRequest {
+export interface SolicitudHabilitacion {
   tenantId: string
   actorId: string
   correlationId: string
-  capability: ReadinessCapability
-  profile: TusReadinessProfile
+  capability: CapacidadHabilitacionContrato
+  profile: PerfilHabilitacion
   scope: string
   jobId?: string
   now?: string
 }
 
-export interface TusReadinessAuditRecord extends TusReadinessRequest {
-  decision: TusReadinessDecision
+export interface RegistroAuditoriaHabilitacion extends SolicitudHabilitacion {
+  decision: DecisionHabilitacionContrato
   outcome: 'authorized' | 'blocked'
 }
 
-export interface TusReadinessEvidencePort {
-  listEvidence(tenantId: string, capability: ReadinessCapability): Promise<readonly TusReadinessEvidence[]> | readonly TusReadinessEvidence[]
-  evaluate?(request: TusReadinessRequest): Promise<TusReadinessDecision> | TusReadinessDecision
-  recordDecision?(record: TusReadinessAuditRecord): Promise<void> | void
+export interface PuertoEvidenciaHabilitacion {
+  listEvidence(tenantId: string, capability: CapacidadHabilitacionContrato): Promise<readonly EvidenciaHabilitacionContrato[]> | readonly EvidenciaHabilitacionContrato[]
+  evaluate?(request: SolicitudHabilitacion): Promise<DecisionHabilitacionContrato> | DecisionHabilitacionContrato
+  recordDecision?(record: RegistroAuditoriaHabilitacion): Promise<void> | void
 }
 
-export class TusReadinessBlockedError extends Error {
+export class HabilitacionBloqueadaError extends Error {
   readonly code = 'TUS_READINESS_BLOCKED'
   readonly status = 409
-  readonly decision: TusReadinessDecision
+  readonly decision: DecisionHabilitacionContrato
 
-  constructor(decision: TusReadinessDecision) {
+  constructor(decision: DecisionHabilitacionContrato) {
     super('TUS readiness requirements are not satisfied')
     this.name = 'TusReadinessBlockedError'
     this.decision = decision
   }
 }
 
-export class InMemoryTusReadinessAuditStore {
-  private readonly records: TusReadinessAuditRecord[] = []
+export class AlmacenMemoriaAuditoriaHabilitacion {
+  private readonly records: RegistroAuditoriaHabilitacion[] = []
 
-  async record(record: TusReadinessAuditRecord): Promise<void> {
+  async record(record: RegistroAuditoriaHabilitacion): Promise<void> {
     this.records.push(structuredClone(record))
   }
 
-  list(tenantId?: string): TusReadinessAuditRecord[] {
+  list(tenantId?: string): RegistroAuditoriaHabilitacion[] {
     return this.records
       .filter((record) => tenantId === undefined || record.tenantId === tenantId)
       .map((record) => structuredClone(record))
@@ -324,53 +324,54 @@ export class InMemoryTusReadinessAuditStore {
   }
 }
 
-export interface InMemoryTusReadinessPortOptions {
-  evidence?: readonly TusReadinessEvidence[]
-  legacy?: LegacyReadinessStatus
+export interface OpcionesPuertoMemoriaHabilitacion {
+  evidence?: readonly EvidenciaHabilitacionContrato[]
+  legacy?: EstadoHabilitacionLegacy
   now?: string
-  audit?: InMemoryTusReadinessAuditStore
+  audit?: AlmacenMemoriaAuditoriaHabilitacion
 }
 
-export class InMemoryTusReadinessPort implements TusReadinessEvidencePort {
-  private readonly evidence: readonly TusReadinessEvidence[]
-  private readonly legacy?: LegacyReadinessStatus
+export class PuertoMemoriaHabilitacion implements PuertoEvidenciaHabilitacion {
+  private readonly evidence: readonly EvidenciaHabilitacionContrato[]
+  private readonly legacy?: EstadoHabilitacionLegacy
   private readonly now?: string
 
-  constructor(options: InMemoryTusReadinessPortOptions = {}) {
+  constructor(options: OpcionesPuertoMemoriaHabilitacion = {}) {
     this.evidence = options.evidence ?? []
     this.legacy = options.legacy
     this.now = options.now
   }
 
-  listEvidence(tenantId: string, capability: ReadinessCapability): readonly TusReadinessEvidence[] {
+  listEvidence(tenantId: string, capability: CapacidadHabilitacionContrato): readonly EvidenciaHabilitacionContrato[] {
     return this.evidence.filter((item) => item.tenantId === tenantId && item.capability === capability)
   }
 
-  evaluate(request: TusReadinessRequest): TusReadinessDecision {
+  evaluate(request: SolicitudHabilitacion): DecisionHabilitacionContrato {
     const profileEvidence = this.evidence.filter((item) => item.profile === undefined || item.profile === request.profile)
-    const canonical = evaluateTusReadiness({
+    const canonical = evaluarHabilitacion({
       tenantId: request.tenantId,
       capability: request.capability,
       scope: request.scope,
       now: request.now ?? this.now ?? new Date().toISOString(),
       evidence: profileEvidence,
     })
-    return this.legacy === undefined ? canonical : reconcileReadinessDecision(canonical, this.legacy)
+    return this.legacy === undefined ? canonical : conciliarDecisionHabilitacion(canonical, this.legacy)
   }
 }
 
-export class TusReadinessGuard {
-  readonly audit: InMemoryTusReadinessAuditStore
-  private readonly port: TusReadinessEvidencePort
+/** Evaluates habilitation evidence and blocks operations without an authorized decision. */
+export class EvaluadorHabilitacion {
+  readonly audit: AlmacenMemoriaAuditoriaHabilitacion
+  private readonly port: PuertoEvidenciaHabilitacion
 
-  constructor(port: TusReadinessEvidencePort, audit = new InMemoryTusReadinessAuditStore()) {
+  constructor(port: PuertoEvidenciaHabilitacion, audit = new AlmacenMemoriaAuditoriaHabilitacion()) {
     this.port = port
     this.audit = audit
   }
 
-  async require(request: TusReadinessRequest): Promise<TusReadinessDecision> {
+  async require(request: SolicitudHabilitacion): Promise<DecisionHabilitacionContrato> {
     const baseDecision = await this.evaluate(request)
-    const decision: TusReadinessDecision = {
+    const decision: DecisionHabilitacionContrato = {
       ...baseDecision,
       profile: request.profile,
       execution: request.profile === 'native-local' || request.profile === 'local-postgresql-http' ? 'local-verification' : 'live',
@@ -382,24 +383,24 @@ export class TusReadinessGuard {
       ...(request.jobId ? { jobId: request.jobId } : {}),
       correlationId: request.correlationId,
     }
-    const record: TusReadinessAuditRecord = {
+    const record: RegistroAuditoriaHabilitacion = {
       ...request,
       decision,
       outcome: decision.enabled && decision.disposition === 'authorized' ? 'authorized' : 'blocked',
     }
     await this.audit.record(record)
     await this.port.recordDecision?.(record)
-    if (record.outcome === 'blocked') throw new TusReadinessBlockedError(decision)
+    if (record.outcome === 'blocked') throw new HabilitacionBloqueadaError(decision)
     return decision
   }
 
-  async authorize(request: TusReadinessRequest): Promise<TusReadinessDecision> {
+  async authorize(request: SolicitudHabilitacion): Promise<DecisionHabilitacionContrato> {
     return this.require(request)
   }
 
-  private async evaluate(request: TusReadinessRequest): Promise<TusReadinessDecision> {
+  private async evaluate(request: SolicitudHabilitacion): Promise<DecisionHabilitacionContrato> {
     if (!request.tenantId || !request.actorId || !request.correlationId || !request.scope) {
-      throw new TusReadinessBlockedError({
+      throw new HabilitacionBloqueadaError({
         contractVersion: TUS_CONTRACT_VERSION,
         tenantId: request.tenantId,
         capability: request.capability,
@@ -412,8 +413,8 @@ export class TusReadinessGuard {
         reason: 'readiness_context_missing',
       })
     }
-    if (!TUS_READINESS_PROFILES.includes(request.profile)) {
-      throw new TusReadinessBlockedError({
+    if (!PERFILES_HABILITACION.includes(request.profile)) {
+      throw new HabilitacionBloqueadaError({
         contractVersion: TUS_CONTRACT_VERSION,
         tenantId: request.tenantId,
         capability: request.capability,
@@ -430,7 +431,7 @@ export class TusReadinessGuard {
       return this.port.evaluate(request)
     }
     const evidence = await this.port.listEvidence(request.tenantId, request.capability)
-    return evaluateTusReadiness({
+    return evaluarHabilitacion({
       tenantId: request.tenantId,
       capability: request.capability,
       scope: request.scope,

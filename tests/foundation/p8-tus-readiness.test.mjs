@@ -7,11 +7,11 @@ import {
   validateTusReadinessEvidence,
 } from '../../packages/contracts/src/index.ts'
 import {
-  REQUIRED_READINESS_GATES,
-  createReadinessEvidence,
-  evaluateStage1PublicationReadiness,
-  evaluateTusReadiness,
-  rollbackReadiness,
+  REQUISITOS_HABILITACION_REQUERIDOS,
+  crearEvidenciaHabilitacion,
+  evaluarHabilitacionPublicacionEtapa1,
+  evaluarHabilitacion,
+  revertirHabilitacion,
 } from '../../apps/api/src/tus/readiness/index.ts'
 
 const baseEvidence = {
@@ -27,8 +27,8 @@ const baseEvidence = {
 }
 
 function completeEvidence(overrides = {}) {
-  return REQUIRED_READINESS_GATES.map((gate) =>
-    createReadinessEvidence({
+  return REQUISITOS_HABILITACION_REQUERIDOS.map((gate) =>
+    crearEvidenciaHabilitacion({
       ...baseEvidence,
       gate,
       evidenceId: `evidence-${gate}`,
@@ -40,7 +40,7 @@ function completeEvidence(overrides = {}) {
 
 test('Stage 1 readiness allows approved cohorts and records auditable non-claims', () => {
   assert.deepEqual(
-    evaluateStage1PublicationReadiness({
+    evaluarHabilitacionPublicacionEtapa1({
       tenantId: 'tenant-a',
       cohort: 'beauty-personal-care',
       regulatedHealthcare: false,
@@ -53,7 +53,7 @@ test('Stage 1 readiness allows approved cohorts and records auditable non-claims
     },
   )
   assert.deepEqual(
-    evaluateStage1PublicationReadiness({
+    evaluarHabilitacionPublicacionEtapa1({
       tenantId: 'tenant-a',
       cohort: 'regulated-healthcare',
       regulatedHealthcare: true,
@@ -66,7 +66,7 @@ test('Stage 1 readiness allows approved cohorts and records auditable non-claims
     },
   )
   assert.deepEqual(
-    evaluateStage1PublicationReadiness({
+    evaluarHabilitacionPublicacionEtapa1({
       tenantId: 'tenant-a',
       cohort: 'rentals',
       regulatedHealthcare: false,
@@ -82,7 +82,7 @@ test('Stage 1 readiness allows approved cohorts and records auditable non-claims
 
 test('complete authorized evidence enables a scoped readiness capability', () => {
   const evidence = completeEvidence()
-  const decision = evaluateTusReadiness({
+  const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'settlement',
     scope: 'argentina-stage-1',
@@ -105,7 +105,7 @@ test('missing, expired, or revoked evidence fails closed with exact gate reasons
     evidenceRef: 'ref-legal',
   }).filter(({ gate }) => gate !== 'tax' && gate !== 'posPilot')
   evidence.push(
-    createReadinessEvidence({
+    crearEvidenciaHabilitacion({
       ...baseEvidence,
       gate: 'tax',
       evidenceId: 'evidence-tax',
@@ -114,7 +114,7 @@ test('missing, expired, or revoked evidence fails closed with exact gate reasons
     }),
   )
   evidence.push(
-    createReadinessEvidence({
+    crearEvidenciaHabilitacion({
       ...baseEvidence,
       gate: 'mercadoPago',
       evidenceId: 'evidence-mercado-pago',
@@ -123,7 +123,7 @@ test('missing, expired, or revoked evidence fails closed with exact gate reasons
     }),
   )
 
-  const decision = evaluateTusReadiness({
+    const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'settlement',
     scope: 'argentina-stage-1',
@@ -141,7 +141,7 @@ test('missing, expired, or revoked evidence fails closed with exact gate reasons
 })
 
 test('deterministic proof is labeled test-only and cannot activate production readiness', () => {
-  const decision = evaluateTusReadiness({
+    const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'settlement',
     scope: 'argentina-stage-1',
@@ -157,7 +157,7 @@ test('deterministic proof is labeled test-only and cannot activate production re
 })
 
 test('rollback disables readiness while preserving evidence and audit references', () => {
-  const decision = evaluateTusReadiness({
+    const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'settlement',
     scope: 'argentina-stage-1',
@@ -165,7 +165,7 @@ test('rollback disables readiness while preserving evidence and audit references
     evidence: completeEvidence(),
   })
 
-  assert.deepEqual(rollbackReadiness(decision, 'provider-readiness-regressed', '2026-08-26T13:00:00.000Z'), {
+  assert.deepEqual(revertirHabilitacion(decision, 'provider-readiness-regressed', '2026-08-26T13:00:00.000Z'), {
     contractVersion: TUS_CONTRACT_VERSION,
     tenantId: 'tenant-a',
     capability: 'settlement',
@@ -182,7 +182,7 @@ test('rollback disables readiness while preserving evidence and audit references
 })
 
 test('readiness evidence carries versioned ownership, scope, policy, expiry, and revocation fields', () => {
-  const evidence = createReadinessEvidence({
+  const evidence = crearEvidenciaHabilitacion({
     ...baseEvidence,
     gate: 'legal',
     evidenceId: 'evidence-legal-contract',
@@ -198,7 +198,7 @@ test('readiness evidence carries versioned ownership, scope, policy, expiry, and
 
 test('capability evaluation honors scope and non-expiring evidence explicitly', () => {
   const evidence = completeEvidence({ capability: 'publication', expiresAt: null })
-  const decision = evaluateTusReadiness({
+  const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'publication',
     scope: 'argentina-stage-1',
@@ -209,7 +209,7 @@ test('capability evaluation honors scope and non-expiring evidence explicitly', 
   assert.equal(decision.enabled, true)
   assert.deepEqual(decision.failedGates, [])
 
-  const outOfScope = evaluateTusReadiness({
+  const outOfScope = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'publication',
     scope: 'argentina-stage-1',
@@ -229,7 +229,7 @@ test('capability evaluation honors scope and non-expiring evidence explicitly', 
 test('readiness contracts reject malformed timestamps and contradictory dispositions', () => {
   assert.throws(
     () =>
-      createReadinessEvidence({
+      crearEvidenciaHabilitacion({
         ...baseEvidence,
         gate: 'legal',
         evidenceId: 'evidence-invalid-expiry',
@@ -239,7 +239,7 @@ test('readiness contracts reject malformed timestamps and contradictory disposit
     /expiresAt must be a valid ISO timestamp/i,
   )
 
-  const decision = evaluateTusReadiness({
+  const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'publication',
     scope: 'argentina-stage-1',
@@ -254,7 +254,7 @@ test('readiness contracts reject malformed timestamps and contradictory disposit
 })
 
 test('readiness contracts accept RFC3339 offsets and preserve deferred deterministic state', () => {
-  const evidence = createReadinessEvidence({
+  const evidence = crearEvidenciaHabilitacion({
     ...baseEvidence,
     capability: 'publication',
     gate: 'legal',
@@ -265,7 +265,7 @@ test('readiness contracts accept RFC3339 offsets and preserve deferred determini
 
   assert.equal(evidence.expiresAt, '2027-01-01T00:00:00+03:00')
 
-  const decision = evaluateTusReadiness({
+  const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'publication',
     scope: 'argentina-stage-1',

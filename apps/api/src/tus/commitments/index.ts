@@ -10,7 +10,7 @@ import {
   type TusOutboxRecord,
   type TusTransactionPort,
 } from '../ports/index.ts'
-import type { TusReadinessGuard, TusReadinessProfile } from '../readiness/index.ts'
+import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 
 export type TusMarketplaceCommitment = MarketplaceCommitment
 
@@ -70,21 +70,21 @@ export class TusCommitmentError extends Error {
 export class TusCommitmentLifecycleService {
   private readonly transaction: TusTransactionPort
   private readonly now: () => number
-  private readonly readinessGuard?: TusReadinessGuard
-  private readonly readinessProfile: TusReadinessProfile
-  private readonly readinessScope: string
+  private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
+  private readonly perfilHabilitacion: PerfilHabilitacion
+  private readonly alcanceHabilitacion: string
 
-  constructor(transaction: TusTransactionPort, now: () => number = () => Date.now(), options: { readinessGuard?: TusReadinessGuard; readinessProfile?: TusReadinessProfile; readinessScope?: string } = {}) {
+  constructor(transaction: TusTransactionPort, now: () => number = () => Date.now(), options: { evaluadorHabilitacion?: EvaluadorHabilitacion; perfilHabilitacion?: PerfilHabilitacion; alcanceHabilitacion?: string } = {}) {
     this.transaction = transaction
     this.now = now
-    this.readinessGuard = options.readinessGuard
-    this.readinessProfile = options.readinessProfile ?? 'native-local'
-    this.readinessScope = options.readinessScope ?? 'argentina-stage-1'
+    this.evaluadorHabilitacion = options.evaluadorHabilitacion
+    this.perfilHabilitacion = options.perfilHabilitacion ?? 'native-local'
+    this.alcanceHabilitacion = options.alcanceHabilitacion ?? 'argentina-stage-1'
   }
 
   async transition(input: TusCommitmentLifecycleCommand): Promise<TusCommitmentMutationResult> {
     requireCommandText(input)
-    await this.requireReadiness(input)
+    await this.requerirHabilitacion(input)
     if (input.toStatus === TUS_COMMITMENT_STATUSES.COMPENSATED) {
       throw new TusCommitmentError(400, 'INVALID_TRANSITION', 'use compensation for compensated commitments')
     }
@@ -114,7 +114,7 @@ export class TusCommitmentLifecycleService {
 
   async compensate(input: TusCommitmentCompensationCommand): Promise<TusCommitmentMutationResult> {
     requireCommandText(input)
-    await this.requireReadiness(input)
+    await this.requerirHabilitacion(input)
     if (!Number.isFinite(input.amount) || input.amount < 0) throw new TusCommitmentError(400, 'INVALID_COMPENSATION', 'compensation amount must be non-negative')
     return this.transaction.run(async (repositories) => {
       const claim = await repositories.idempotency.claim({ tenantId: input.tenantId, key: input.idempotencyKey, requestHash: input.requestHash, now: this.now(), expiresAt: this.now() + 15 * 60 * 1000 })
@@ -143,8 +143,8 @@ export class TusCommitmentLifecycleService {
     })
   }
 
-  private requireReadiness(input: TusCommandContext): Promise<unknown> {
-    return this.readinessGuard?.require({ tenantId: input.tenantId, actorId: input.actorId, correlationId: input.correlationId, capability: 'settlement', profile: this.readinessProfile, scope: this.readinessScope }) ?? Promise.resolve()
+  private requerirHabilitacion(input: TusCommandContext): Promise<unknown> {
+    return this.evaluadorHabilitacion?.require({ tenantId: input.tenantId, actorId: input.actorId, correlationId: input.correlationId, capability: 'settlement', profile: this.perfilHabilitacion, scope: this.alcanceHabilitacion }) ?? Promise.resolve()
   }
 }
 

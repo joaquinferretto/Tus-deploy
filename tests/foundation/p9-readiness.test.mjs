@@ -10,12 +10,12 @@ import {
   validateTusReadinessEvidence,
 } from '../../packages/contracts/src/index.ts'
 import {
-  REQUIRED_READINESS_GATES,
-  createReadinessEvidence,
-  evaluateTusReadiness,
-  reconcileReadinessDecision,
+  REQUISITOS_HABILITACION_REQUERIDOS,
+  crearEvidenciaHabilitacion,
+  evaluarHabilitacion,
+  conciliarDecisionHabilitacion,
 } from '../../apps/api/src/tus/readiness/index.ts'
-import { evaluateReadinessGates } from '../../apps/api/src/tus/domain/readiness.ts'
+import { evaluarRequisitosHabilitacion } from '../../apps/api/src/tus/domain/readiness.ts'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 
@@ -33,7 +33,7 @@ const evidenceDefaults = {
 }
 
 function evidence(gate, overrides = {}) {
-  return createReadinessEvidence({
+  return crearEvidenciaHabilitacion({
     ...evidenceDefaults,
     gate,
     evidenceId: `evidence-${gate}-${overrides.evidenceId ?? 'one'}`,
@@ -65,7 +65,7 @@ test('duplicate current evidence for one gate fails closed and records a conflic
     evidence('legal', { evidenceId: 'two', evidenceRef: 'two', owner: 'owner-b' }),
   ]
 
-  const decision = evaluateTusReadiness({
+  const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'publication',
     scope: 'argentina-stage-1',
@@ -83,14 +83,14 @@ test('duplicate current evidence for one gate fails closed and records a conflic
 })
 
 test('legacy boolean readiness is a compatibility adapter and cannot override a stricter canonical decision', () => {
-  const canonical = evaluateTusReadiness({
+  const canonical = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'publication',
     scope: 'argentina-stage-1',
     now: '2026-08-26T12:00:00.000Z',
     evidence: completePublicationEvidence(),
   })
-  const legacy = evaluateReadinessGates({
+  const legacy = evaluarRequisitosHabilitacion({
     legal: true,
     kyc: true,
     kyb: true,
@@ -102,7 +102,7 @@ test('legacy boolean readiness is a compatibility adapter and cannot override a 
   })
 
   assert.equal(legacy.enabled, true)
-  const reconciled = reconcileReadinessDecision(canonical, { ...legacy, enabled: false, failedGates: ['legal'] })
+  const reconciled = conciliarDecisionHabilitacion(canonical, { ...legacy, enabled: false, failedGates: ['legal'] })
   assert.equal(reconciled.enabled, false)
   assert.equal(reconciled.disposition, 'disabled')
   assert.deepEqual(reconciled.failedGates, [{ gate: 'legal', reason: 'legacy_conflict' }])
@@ -115,7 +115,7 @@ test('canonical evaluation fails closed for missing, expired, revoked, and out-o
     evidence('kyb', { revoked: true }),
     evidence('tax', { scope: 'other-scope' }),
   ]
-  const decision = evaluateTusReadiness({
+  const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'publication',
     scope: 'argentina-stage-1',
@@ -133,7 +133,7 @@ test('canonical evaluation fails closed for missing, expired, revoked, and out-o
 })
 
 test('provider-free evidence remains deferred without being mislabeled as deterministic authorization', () => {
-  const decision = evaluateTusReadiness({
+  const decision = evaluarHabilitacion({
     tenantId: 'tenant-a',
     capability: 'publication',
     scope: 'argentina-stage-1',
@@ -160,5 +160,5 @@ test('readiness migration adds canonical validity and conflict persistence witho
   assert.match(migration, /TusReadinessEvidence/i)
   assert.match(migration, /TusReadinessDecision/i)
   assert.match(migration, /preserve|rollback|not delete/i)
-  assert.equal(REQUIRED_READINESS_GATES.includes('runtimeProvider'), true)
+  assert.equal(REQUISITOS_HABILITACION_REQUERIDOS.includes('runtimeProvider'), true)
 })

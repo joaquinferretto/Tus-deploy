@@ -4,11 +4,11 @@ import { test } from 'node:test'
 import express from '../../apps/api/node_modules/express/index.js'
 
 import {
-  createReadinessEvidence,
-  InMemoryTusReadinessPort,
-  InMemoryTusReadinessAuditStore,
-  TusReadinessBlockedError,
-  TusReadinessGuard,
+  crearEvidenciaHabilitacion,
+  PuertoMemoriaHabilitacion,
+  AlmacenMemoriaAuditoriaHabilitacion,
+  HabilitacionBloqueadaError,
+  EvaluadorHabilitacion,
 } from '../../apps/api/src/tus/readiness/index.ts'
 import { createTusApplication } from '../../apps/api/src/tus/composition/index.ts'
 import { createTusHttpRouter } from '../../apps/api/src/tus/http/router.ts'
@@ -32,7 +32,7 @@ const BASE = {
 }
 
 function evidence(gate, overrides = {}) {
-  return createReadinessEvidence({
+  return crearEvidenciaHabilitacion({
     ...BASE,
     gate,
     evidenceId: `evidence-${gate}`,
@@ -42,9 +42,9 @@ function evidence(gate, overrides = {}) {
 }
 
 function guardFor(records, legacy) {
-  return new TusReadinessGuard(
-    new InMemoryTusReadinessPort({ evidence: records, legacy }),
-    new InMemoryTusReadinessAuditStore(),
+  return new EvaluadorHabilitacion(
+    new PuertoMemoriaHabilitacion({ evidence: records, legacy }),
+    new AlmacenMemoriaAuditoriaHabilitacion(),
   )
 }
 
@@ -70,7 +70,7 @@ test('runtime readiness denies every invalid evidence state before the caller ef
       }),
       (error) => {
         effects += 1
-        return error instanceof TusReadinessBlockedError && error.status === 409 && error.code === 'TUS_READINESS_BLOCKED'
+        return error instanceof HabilitacionBloqueadaError && error.status === 409 && error.code === 'TUS_READINESS_BLOCKED'
       },
     )
     assert.equal(effects, 1)
@@ -79,7 +79,7 @@ test('runtime readiness denies every invalid evidence state before the caller ef
 
 test('a direct service or HTTP route cannot bypass the injected guard', async () => {
   const guard = guardFor([])
-  const application = createTusApplication({ readinessGuard: guard })
+  const application = createTusApplication({ evaluadorHabilitacion: guard })
   const outboxBefore = application.marketplace.store.outbox.list('tenant-a').length
   const context = {
     subjectId: 'actor-a',
@@ -99,7 +99,7 @@ test('a direct service or HTTP route cannot bypass the injected guard', async ()
       staffRoles: ['owner'],
       operatingPolicyVersion: 'stage-1-v1',
     }),
-    (error) => error instanceof TusReadinessBlockedError,
+    (error) => error instanceof HabilitacionBloqueadaError,
   )
   assert.equal(application.marketplace.store.outbox.list('tenant-a').length, outboxBefore)
 
@@ -134,16 +134,16 @@ test('a direct service or HTTP route cannot bypass the injected guard', async ()
 
 test('denied job intake has no queue side effect and approved scope is auditable', async () => {
   const delegate = new InMemoryJobTransport()
-  const denied = new ActivationGatedJobTransport(delegate, { readinessGuard: guardFor([]) })
+  const denied = new ActivationGatedJobTransport(delegate, { evaluadorHabilitacion: guardFor([]) })
   denied.activate()
   await assert.rejects(
     denied.enqueue({ tenantId: 'tenant-a', jobId: 'job-a' }),
-    (error) => error instanceof TusReadinessBlockedError,
+    (error) => error instanceof HabilitacionBloqueadaError,
   )
   assert.deepEqual(delegate.queued, [])
 
   const durablePlatform = createInMemoryDurableJobPlatform()
-  const durableService = new DurableJobService(durablePlatform, { readinessGuard: guardFor([]) })
+  const durableService = new DurableJobService(durablePlatform, { evaluadorHabilitacion: guardFor([]) })
   await assert.rejects(
     durableService.submit({
       tenantId: 'tenant-a',
@@ -157,7 +157,7 @@ test('denied job intake has no queue side effect and approved scope is auditable
       maxAttempts: 3,
       now: Date.parse(NOW),
     }),
-    (error) => error instanceof TusReadinessBlockedError,
+    (error) => error instanceof HabilitacionBloqueadaError,
   )
   assert.deepEqual(durablePlatform.jobs.list('tenant-a'), [])
   assert.deepEqual(durablePlatform.runs.list('tenant-a'), [])

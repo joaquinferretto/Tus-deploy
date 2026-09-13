@@ -1,9 +1,9 @@
-import { evaluateLegacyReadinessGates, type LegacyReadinessStatus } from '../readiness/index.ts'
-import type { ReadinessGateKey } from '@factory/contracts'
+import { evaluarRequisitosHabilitacionLegacy, type EstadoHabilitacionLegacy } from '../readiness/index.ts'
+import type { ReadinessGateKey as ClaveRequisitoHabilitacionContrato } from '@factory/contracts'
 
-export type ReadinessGates = Partial<Record<ReadinessGateKey, boolean>>
+export type RequisitosHabilitacion = Partial<Record<ClaveRequisitoHabilitacionContrato, boolean>>
 
-/** @deprecated Compatibility adapter. Canonical authorization uses TusReadinessDecision. */
-export function evaluateReadinessGates(gates: ReadinessGates): LegacyReadinessStatus {
-  return evaluateLegacyReadinessGates(gates)
+/** @deprecated Adaptador de compatibilidad. La autorización canónica usa DecisionHabilitacionContrato. */
+export function evaluarRequisitosHabilitacion(gates: RequisitosHabilitacion): EstadoHabilitacionLegacy {
+  return evaluarRequisitosHabilitacionLegacy(gates)
 }

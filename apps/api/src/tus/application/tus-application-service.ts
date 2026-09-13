@@ -20,7 +20,7 @@ import type { TusSupportService } from '../support/index.ts'
 import type { TusWhatsAppService } from '../whatsapp/index.ts'
 import type { TusReportingService } from '../reporting/index.ts'
 import type { TusOperationsTelemetry } from '@factory/observability'
-import type { TusReadinessGuard, TusReadinessProfile } from '../readiness/index.ts'
+import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 import { TUS_BOUNDED_CONTEXTS } from '../ports/index.ts'
 import type {
   TusAuditReference,
@@ -69,9 +69,9 @@ export interface TusApplicationDependencies {
   whatsapp?: TusWhatsAppService
   reporting?: TusReportingService
   operationsTelemetry?: TusOperationsTelemetry
-  readinessGuard?: TusReadinessGuard
-  readinessProfile?: TusReadinessProfile
-  readinessScope?: string
+  evaluadorHabilitacion?: EvaluadorHabilitacion
+  perfilHabilitacion?: PerfilHabilitacion
+  alcanceHabilitacion?: string
 }
 
 export class TusApplicationService {
@@ -87,7 +87,7 @@ export class TusApplicationService {
   readonly contexts = TUS_BOUNDED_CONTEXTS
   private readonly dependencies: TusApplicationDependencies
   private readonly lifecycle: TusCommitmentLifecycleService
-  readonly readinessGuard?: TusReadinessGuard
+  readonly evaluadorHabilitacion?: EvaluadorHabilitacion
 
   constructor(dependencies: TusApplicationDependencies) {
     this.dependencies = dependencies
@@ -100,24 +100,24 @@ export class TusApplicationService {
     this.support = dependencies.support
     this.whatsapp = dependencies.whatsapp
     this.reporting = dependencies.reporting
-    this.readinessGuard = dependencies.readinessGuard
+    this.evaluadorHabilitacion = dependencies.evaluadorHabilitacion
     if (!dependencies.transaction) throw new Error('TUS transaction boundary is required')
     this.lifecycle = new TusCommitmentLifecycleService(dependencies.transaction, dependencies.now, {
-      readinessGuard: dependencies.readinessGuard,
-      readinessProfile: dependencies.readinessProfile,
-      readinessScope: dependencies.readinessScope,
+      evaluadorHabilitacion: dependencies.evaluadorHabilitacion,
+      perfilHabilitacion: dependencies.perfilHabilitacion,
+      alcanceHabilitacion: dependencies.alcanceHabilitacion,
     })
   }
 
   async checkout(input: TusCheckoutCommand): Promise<TusCheckoutResult> {
     assertCommandContext(input)
-    await this.readinessGuard?.require({
+    await this.evaluadorHabilitacion?.require({
       tenantId: input.tenantId,
       actorId: input.actorId,
       correlationId: input.correlationId,
       capability: 'settlement',
-      profile: this.dependencies.readinessProfile ?? 'native-local',
-      scope: this.dependencies.readinessScope ?? 'argentina-stage-1',
+      profile: this.dependencies.perfilHabilitacion ?? 'native-local',
+      scope: this.dependencies.alcanceHabilitacion ?? 'argentina-stage-1',
       now: input.createdAt,
     })
     if (!input.idempotencyKey?.trim() || !input.requestHash.trim()) throw new Error('idempotency key and request fingerprint are required')

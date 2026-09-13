@@ -2,8 +2,8 @@ import express, { type Request, type Response, type Router } from 'express'
 import type { JobTransportInput, JobTransportPort } from '../../platform/jobs/ports.ts'
 import { ActivationGatedJobTransport } from '../../platform/jobs/adapters/activation-gated.ts'
 import {
-  evaluateReadinessGates,
-  type ReadinessGates,
+  evaluarRequisitosHabilitacion,
+  type RequisitosHabilitacion,
 } from '../domain/readiness.ts'
 import {
   MercadoPagoAdapter,
@@ -13,13 +13,13 @@ import {
   WhatsAppAdapter,
   type WhatsAppWebhookRequest,
 } from '../../providers/whatsapp/index.ts'
-import { TusReadinessBlockedError, type TusReadinessGuard, type TusReadinessProfile } from '../readiness/index.ts'
+import { HabilitacionBloqueadaError, type EvaluadorHabilitacion, type PerfilHabilitacion } from '../readiness/index.ts'
 import { asyncHandler, createErrorEnvelope } from '../../presentation/middleware/error.ts'
 import { getCorrelationId } from '../../presentation/middleware/correlation.ts'
 
-export type TusActivationStatus = ReturnType<typeof evaluateReadinessGates>
+export type TusActivationStatus = ReturnType<typeof evaluarRequisitosHabilitacion>
 
-const DISABLED_GATES: ReadinessGates = {
+const DISABLED_GATES: RequisitosHabilitacion = {
   legal: false,
   kyc: false,
   kyb: false,
@@ -54,14 +54,14 @@ export class TusActivationController {
   private current: TusActivationStatus
   private readonly compensating = new Map<number, TusCompensatingEntry>()
 
-  constructor(delegate: JobTransportPort, now: () => number = () => Date.now(), options: { readinessGuard?: TusReadinessGuard; readinessProfile?: TusReadinessProfile; readinessScope?: string } = {}) {
+  constructor(delegate: JobTransportPort, now: () => number = () => Date.now(), options: { evaluadorHabilitacion?: EvaluadorHabilitacion; perfilHabilitacion?: PerfilHabilitacion; alcanceHabilitacion?: string } = {}) {
     this.releaseJobs = new ActivationGatedJobTransport(delegate, options)
     this.now = now
-    this.current = evaluateReadinessGates(DISABLED_GATES)
+    this.current = evaluarRequisitosHabilitacion(DISABLED_GATES)
   }
 
-  evaluate(gates: ReadinessGates): TusActivationStatus {
-    this.current = evaluateReadinessGates(gates)
+  evaluate(gates: RequisitosHabilitacion): TusActivationStatus {
+    this.current = evaluarRequisitosHabilitacion(gates)
     if (this.current.enabled) this.releaseJobs.activate()
     else this.releaseJobs.deactivate()
     return this.status()
@@ -79,7 +79,7 @@ export class TusActivationController {
   rollback(reason: string): TusCompensatingEntry {
     if (!reason.trim()) throw new Error('rollback reason is required')
     this.releaseJobs.deactivate()
-    this.current = evaluateReadinessGates(DISABLED_GATES)
+    this.current = evaluarRequisitosHabilitacion(DISABLED_GATES)
     const createdAt = this.now()
     const sequence = this.compensating.size + 1
     const entry: TusCompensatingEntry = {
@@ -102,9 +102,9 @@ export class TusActivationController {
 export type TusIntegrationRouterOptions = {
   mercadoPago?: MercadoPagoAdapter
   whatsapp?: WhatsAppAdapter
-  readinessGuard?: TusReadinessGuard
-  readinessProfile?: TusReadinessProfile
-  readinessScope?: string
+  evaluadorHabilitacion?: EvaluadorHabilitacion
+  perfilHabilitacion?: PerfilHabilitacion
+  alcanceHabilitacion?: string
   providerActionsEnabled?: boolean
 }
 
@@ -117,7 +117,7 @@ export function createTusIntegrationRouter(options: TusIntegrationRouterOptions)
       return
     }
     await sendWebhookResult(response, getCorrelationId(request), () =>
-      requireProviderReadiness(options, request, 'provider:mercado-pago').then(() => options.mercadoPago!.receiveWebhook(request.body as MercadoPagoWebhookRequest)),
+      requerirHabilitacionProvider(options, request, 'provider:mercado-pago').then(() => options.mercadoPago!.receiveWebhook(request.body as MercadoPagoWebhookRequest)),
     )
   }))
 
@@ -127,7 +127,7 @@ export function createTusIntegrationRouter(options: TusIntegrationRouterOptions)
       return
     }
     await sendWebhookResult(response, getCorrelationId(request), () =>
-      requireProviderReadiness(options, request, 'provider:whatsapp').then(() => options.whatsapp!.receiveWebhook(request.body as WhatsAppWebhookRequest)),
+      requerirHabilitacionProvider(options, request, 'provider:whatsapp').then(() => options.whatsapp!.receiveWebhook(request.body as WhatsAppWebhookRequest)),
     )
   }))
 
@@ -148,7 +148,7 @@ async function sendWebhookResult<TValue extends { status: string }>(
         : result
     response.status(status).json(body)
   } catch (error) {
-    if (error instanceof TusReadinessBlockedError) {
+    if (error instanceof HabilitacionBloqueadaError) {
       response.status(error.status).json(createErrorEnvelope(error, correlationId, error.code))
       return
     }
@@ -156,15 +156,15 @@ async function sendWebhookResult<TValue extends { status: string }>(
   }
 }
 
-async function requireProviderReadiness(options: TusIntegrationRouterOptions, request: Request, actorId: string): Promise<void> {
+async function requerirHabilitacionProvider(options: TusIntegrationRouterOptions, request: Request, actorId: string): Promise<void> {
   const body = typeof request.body === 'object' && request.body !== null ? request.body as Record<string, unknown> : {}
-  await options.readinessGuard?.require({
+  await options.evaluadorHabilitacion?.require({
     tenantId: typeof body['tenantId'] === 'string' ? body['tenantId'] : '',
     actorId,
     correlationId: request.header('x-correlation-id') ?? (typeof body['correlationId'] === 'string' ? body['correlationId'] : ''),
     capability: 'provider-actions',
-    profile: (request.header('x-tus-readiness-profile') ?? options.readinessProfile ?? 'native-local') as TusReadinessProfile,
-    scope: request.header('x-tus-readiness-scope') ?? options.readinessScope ?? 'argentina-stage-1',
+    profile: (request.header('x-tus-readiness-profile') ?? options.perfilHabilitacion ?? 'native-local') as PerfilHabilitacion,
+    scope: request.header('x-tus-readiness-scope') ?? options.alcanceHabilitacion ?? 'argentina-stage-1',
   })
 }
 

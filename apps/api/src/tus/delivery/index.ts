@@ -1,5 +1,5 @@
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
-import type { TusReadinessGuard, TusReadinessProfile } from '../readiness/index.ts'
+import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 
 export const DELIVERY_TASK_STATUS = {
   QUEUED: 'queued',
@@ -212,23 +212,23 @@ export class TusDeliveryService {
   readonly audit: DeliveryStorePort['audit']
   private readonly commitmentLookup?: (commitmentId: string) => Promise<DeliveryCommitmentReference | null>
   private readonly now: () => number
-  private readonly readinessGuard?: TusReadinessGuard
-  private readonly readinessProfile: TusReadinessProfile
-  private readonly readinessScope: string
+  private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
+  private readonly perfilHabilitacion: PerfilHabilitacion
+  private readonly alcanceHabilitacion: string
 
-  constructor(options: { store: DeliveryStorePort; commitmentLookup?: (commitmentId: string) => Promise<DeliveryCommitmentReference | null>; now?: () => number; readinessGuard?: TusReadinessGuard; readinessProfile?: TusReadinessProfile; readinessScope?: string }) {
+  constructor(options: { store: DeliveryStorePort; commitmentLookup?: (commitmentId: string) => Promise<DeliveryCommitmentReference | null>; now?: () => number; evaluadorHabilitacion?: EvaluadorHabilitacion; perfilHabilitacion?: PerfilHabilitacion; alcanceHabilitacion?: string }) {
     this.store = options.store
     this.audit = options.store.audit
     this.commitmentLookup = options.commitmentLookup
     this.now = options.now ?? (() => Date.now())
-    this.readinessGuard = options.readinessGuard
-    this.readinessProfile = options.readinessProfile ?? 'native-local'
-    this.readinessScope = options.readinessScope ?? 'argentina-stage-1'
+    this.evaluadorHabilitacion = options.evaluadorHabilitacion
+    this.perfilHabilitacion = options.perfilHabilitacion ?? 'native-local'
+    this.alcanceHabilitacion = options.alcanceHabilitacion ?? 'argentina-stage-1'
   }
 
   async createZone(context: TusAuthenticatedTenantContext, input: { zoneId: string; name: string; postalCodes: string[] }): Promise<DeliveryZone> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     if (!input.zoneId.trim() || !input.name.trim() || !Array.isArray(input.postalCodes)) throw new DeliveryError(400, 'INVALID', 'zone id, name, and postal codes are required')
     const zone = { zoneId: input.zoneId, tenantId: context.tenantId, name: input.name.trim(), postalCodes: [...input.postalCodes], active: true }
     await this.store.zones.save(zone)
@@ -239,7 +239,7 @@ export class TusDeliveryService {
 
   async openShift(context: TusAuthenticatedTenantContext, input: Omit<DeliveryShift, 'tenantId' | 'status'>): Promise<DeliveryShift> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const zone = await this.requireZone(context, input.zoneId)
     if (!validInterval(input.startsAt, input.endsAt) || !Array.isArray(input.operatorIds) || input.operatorIds.length === 0) throw new DeliveryError(400, 'INVALID', 'shift interval and internal operators are required')
     const shift: DeliveryShift = { ...input, tenantId: zone.tenantId, status: 'open', operatorIds: [...input.operatorIds] }
@@ -251,7 +251,7 @@ export class TusDeliveryService {
 
   async createTask(context: TusAuthenticatedTenantContext, input: CreateDeliveryTaskInput): Promise<DeliveryTask> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     if (input.commitment.tenantId !== context.tenantId) throw new DeliveryError(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
     if (input.commitment.context !== 'product') throw new DeliveryError(409, 'CONTEXT_MISMATCH', 'delivery tasks only accept product commitments')
     const zone = await this.requireZone(context, input.zoneId)
@@ -277,7 +277,7 @@ export class TusDeliveryService {
 
   async assignTask(context: TusAuthenticatedTenantContext, taskId: string, operatorId: string, expectedVersion: number): Promise<DeliveryTask> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
     const shift = await this.requireShift(context, task.shiftId)
     if (!shift.operatorIds.includes(operatorId)) throw new DeliveryError(403, 'FORBIDDEN', 'operator is not assigned to this shift')
@@ -291,7 +291,7 @@ export class TusDeliveryService {
 
   async acceptTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<DeliveryTask> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
     if (task.operatorId !== context.subjectId) throw new DeliveryError(403, 'FORBIDDEN', 'only the assigned internal operator may accept the task')
     return this.transitionTask(context, taskId, 'accepted', expectedVersion)
@@ -299,7 +299,7 @@ export class TusDeliveryService {
 
   async transitionTask(context: TusAuthenticatedTenantContext, taskId: string, status: Extract<DeliveryTaskStatus, 'accepted' | 'picked-up' | 'in-transit' | 'handed-off' | 'delivered'>, expectedVersion: number): Promise<DeliveryTask> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
     if (status !== DELIVERY_TASK_STATUS.ACCEPTED && task.operatorId !== context.subjectId) throw new DeliveryError(403, 'FORBIDDEN', 'only the assigned internal operator may update this delivery')
@@ -330,7 +330,7 @@ export class TusDeliveryService {
 
   async cancelTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number, reason: string): Promise<DeliveryTask> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
     this.assertOperator(task, context)
@@ -341,7 +341,7 @@ export class TusDeliveryService {
 
   async recordProof(context: TusAuthenticatedTenantContext, input: Omit<DeliveryProof, 'tenantId' | 'commitmentId'>, expectedVersion: number): Promise<DeliveryTask> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, input.taskId)
     this.assertVersion(task, expectedVersion)
     this.assertOperator(task, context)
@@ -358,7 +358,7 @@ export class TusDeliveryService {
 
   async failTask(context: TusAuthenticatedTenantContext, taskId: string, input: { incidentId: string; reason: string }, expectedVersion: number): Promise<{ status: 'incident-review'; task: DeliveryTask; incident: DeliveryIncident }> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
     this.assertOperator(task, context)
@@ -375,7 +375,7 @@ export class TusDeliveryService {
 
   async resolveIncident(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<DeliveryTask> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
     this.assertOperator(task, context)
@@ -391,7 +391,7 @@ export class TusDeliveryService {
 
   async returnTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<DeliveryTask> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
     this.assertVersion(task, expectedVersion)
     this.assertOperator(task, context)
@@ -401,7 +401,7 @@ export class TusDeliveryService {
 
   async closeShift(context: TusAuthenticatedTenantContext, shiftId: string): Promise<DeliveryShift> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const shift = await this.requireShift(context, shiftId)
     if (shift.status === 'closed') return shift
     const closed = { ...shift, status: 'closed' as const }
@@ -423,7 +423,7 @@ export class TusDeliveryService {
 
   async openPublicBidding(context: TusAuthenticatedTenantContext, _input: { taskId: string }): Promise<never> {
     this.authorize(context, 'tus:delivery:write')
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     await this.recordAudit(context, 'delivery.public-bidding.denied', 'authorization', 'public-bidding', 'denied')
     throw new DeliveryError(400, 'OUT_OF_SCOPE', 'public courier bidding is outside Stage 1 delivery')
   }
@@ -434,8 +434,8 @@ export class TusDeliveryService {
     return zone
   }
 
-  private requireReadiness(context: TusAuthenticatedTenantContext): Promise<unknown> {
-    return this.readinessGuard?.require({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, capability: 'fleet', profile: this.readinessProfile, scope: this.readinessScope }) ?? Promise.resolve()
+  private requerirHabilitacion(context: TusAuthenticatedTenantContext): Promise<unknown> {
+    return this.evaluadorHabilitacion?.require({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, capability: 'fleet', profile: this.perfilHabilitacion, scope: this.alcanceHabilitacion }) ?? Promise.resolve()
   }
 
   private async requireShift(context: TusAuthenticatedTenantContext, shiftId: string): Promise<DeliveryShift> {

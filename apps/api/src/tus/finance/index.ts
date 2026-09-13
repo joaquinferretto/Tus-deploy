@@ -3,7 +3,7 @@ import type { CommitmentContext, TusCommitment } from '@factory/contracts'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import { createCompletionEvidence, type CompletionEvidenceInput } from '../domain/evidence.ts'
 import { isReleaseEligible, type ReleaseEligibility } from '../domain/settlement.ts'
-import type { TusReadinessGuard, TusReadinessProfile } from '../readiness/index.ts'
+import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 
 export const FINANCIAL_GATE_KEYS = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'reconciliation'] as const
 export const FINANCIAL_PAYOUT_GATE_KEYS = ['payout', 'custody'] as const
@@ -360,9 +360,9 @@ export interface TusFinanceServiceOptions {
   commissionRateBps?: number
   ruleVersion?: string
   releaseJobs?: FinanceReleaseJobTransport
-  readinessGuard?: TusReadinessGuard
-  readinessProfile?: TusReadinessProfile
-  readinessScope?: string
+  evaluadorHabilitacion?: EvaluadorHabilitacion
+  perfilHabilitacion?: PerfilHabilitacion
+  alcanceHabilitacion?: string
   providerEnabled?: boolean
   webhookSecret?: string
   providerRetry?: { maxAttempts: number; delayMs?: number }
@@ -379,9 +379,9 @@ export class TusFinanceService {
   private readonly commissionRateBps: number
   private readonly ruleVersion: string
   private readonly releaseJobs?: FinanceReleaseJobTransport
-  private readonly readinessGuard?: TusReadinessGuard
-  private readonly readinessProfile: TusReadinessProfile
-  private readonly readinessScope: string
+  private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
+  private readonly perfilHabilitacion: PerfilHabilitacion
+  private readonly alcanceHabilitacion: string
   private readonly providerEnabled: boolean
   private readonly webhookSecret: string
   private readonly providerRetry: { maxAttempts: number; delayMs: number }
@@ -397,9 +397,9 @@ export class TusFinanceService {
     this.commissionRateBps = options.commissionRateBps ?? 1000
     this.ruleVersion = options.ruleVersion ?? 'mvp-10-percent-v1'
     this.releaseJobs = options.releaseJobs
-    this.readinessGuard = options.readinessGuard
-    this.readinessProfile = options.readinessProfile ?? 'native-local'
-    this.readinessScope = options.readinessScope ?? 'argentina-stage-1'
+    this.evaluadorHabilitacion = options.evaluadorHabilitacion
+    this.perfilHabilitacion = options.perfilHabilitacion ?? 'native-local'
+    this.alcanceHabilitacion = options.alcanceHabilitacion ?? 'argentina-stage-1'
     this.providerEnabled = options.providerEnabled ?? true
     this.webhookSecret = options.webhookSecret?.trim() ?? ''
     this.providerRetry = { maxAttempts: options.providerRetry?.maxAttempts ?? 1, delayMs: options.providerRetry?.delayMs ?? 0 }
@@ -430,7 +430,7 @@ export class TusFinanceService {
 
   async enqueueReleaseJob(input: FinanceCommandContext & { commitmentId: string }): Promise<{ status: 'queued'; tenantId: string; jobId: string }> {
     assertContext(input)
-    await this.requireReadiness(input, 'release-jobs')
+    await this.requerirHabilitacion(input, 'release-jobs')
     if (!this.readinessStatus().enabled || !this.payoutReadinessStatus().enabled) throw new FinanceError(409, 'FINANCIAL_GATES_INCOMPLETE', 'release jobs are disabled until Argentina financial and payout custody gates pass')
     if (!this.releaseJobs) throw new FinanceError(503, 'RELEASE_JOBS_UNAVAILABLE', 'release job transport is unavailable')
     return this.releaseJobs.enqueue({ tenantId: input.tenantId, jobId: `release-${input.commitmentId}` })
@@ -438,7 +438,7 @@ export class TusFinanceService {
 
   async createPaymentIntent(input: FinanceCommandContext & { commitmentId: string; orderId?: string; posOperationId?: string | null; idempotencyKey: string; requestHash: string }): Promise<PaymentIntentResult> {
     assertContext(input)
-    await this.requireReadiness(input, 'provider-actions')
+    await this.requerirHabilitacion(input, 'provider-actions')
     if (!input.idempotencyKey.trim() || !input.requestHash.trim()) throw new FinanceError(400, 'INVALID', 'idempotencyKey and requestHash are required')
     const existing = await this.store.getIdempotency(input.tenantId, input.idempotencyKey)
     if (existing) {
@@ -531,7 +531,7 @@ export class TusFinanceService {
 
   async recordEvidence(input: CompletionEvidenceInput): Promise<FinancialEvidence> {
     assertContext(input)
-    await this.requireReadiness(input, 'provider-actions')
+    await this.requerirHabilitacion(input, 'provider-actions')
     const commitment = await this.requireCommitment(input.tenantId, input.commitmentId)
     if (!['completion', 'check-in', 'delivery-accepted'].includes(input.kind)) throw new FinanceError(400, 'INVALID_EVIDENCE', 'unsupported financial evidence kind')
     if (!Number.isFinite(Date.parse(input.occurredAt))) throw new FinanceError(400, 'INVALID_EVIDENCE', 'evidence timestamp is invalid')
@@ -541,7 +541,7 @@ export class TusFinanceService {
 
   async confirmCompletion(input: FinanceCommandContext & { commitmentId: string; confirmationId: string; confirmedAt: string }): Promise<ReleaseResult> {
     assertContext(input)
-    await this.requireReadiness(input, 'settlement')
+    await this.requerirHabilitacion(input, 'settlement')
     await this.requireCommitment(input.tenantId, input.commitmentId)
     if (!Number.isFinite(Date.parse(input.confirmedAt))) throw new FinanceError(400, 'INVALID', 'confirmation timestamp is invalid')
     await this.store.saveConfirmation({ confirmationId: input.confirmationId, tenantId: input.tenantId, commitmentId: input.commitmentId, actorId: input.actorId, correlationId: input.correlationId, confirmedAt: input.confirmedAt })
@@ -550,7 +550,7 @@ export class TusFinanceService {
 
   async release(input: FinanceCommandContext & { commitmentId: string; now: string }): Promise<ReleaseResult> {
     assertContext(input)
-    await this.requireReadiness(input, 'settlement')
+    await this.requerirHabilitacion(input, 'settlement')
     if (!this.readinessStatus().enabled) throw new FinanceError(409, 'FINANCIAL_GATES_INCOMPLETE', 'settlement release is held until Argentina financial gates pass')
     const payment = await this.requirePayment(input.tenantId, input.commitmentId)
     if (payment.commercialStatus === 'released') {
@@ -588,7 +588,7 @@ export class TusFinanceService {
 
   async freeze(input: FinanceCommandContext & { commitmentId: string; reason: FinancialFreeze['reason'] }): Promise<{ status: 'frozen'; freeze: FinancialFreeze }> {
     assertContext(input)
-    await this.requireReadiness(input, 'settlement')
+    await this.requerirHabilitacion(input, 'settlement')
     await this.requirePayment(input.tenantId, input.commitmentId)
     const freeze = await this.store.saveFreeze({ freezeId: `freeze-${input.commitmentId}-${this.now()}`, tenantId: input.tenantId, commitmentId: input.commitmentId, reason: input.reason, actorId: input.actorId, correlationId: input.correlationId, active: true, createdAt: this.now() })
     const payment = (await this.store.getPayment(input.tenantId, input.commitmentId))!
@@ -602,7 +602,7 @@ export class TusFinanceService {
 
   async refund(input: FinanceCommandContext & { commitmentId: string; amount: number; reason: string; idempotencyKey: string }): Promise<RefundResult> {
     assertContext(input)
-    await this.requireReadiness(input, 'settlement')
+    await this.requerirHabilitacion(input, 'settlement')
     const requestHash = `refund:${input.commitmentId}:${input.amount}:${input.reason}`
     const existing = await this.store.getIdempotency(input.tenantId, input.idempotencyKey)
     if (existing) {
@@ -630,7 +630,7 @@ export class TusFinanceService {
 
   async reconcile(input: FinanceCommandContext & { commitmentId: string; providerReference: string; providerAmount: number }): Promise<ReconciliationResult> {
     assertContext(input)
-    await this.requireReadiness(input, 'settlement')
+    await this.requerirHabilitacion(input, 'settlement')
     const existing = await this.store.getReconciliation(input.tenantId, input.commitmentId)
     if (existing) return existing
     const payment = await this.requirePayment(input.tenantId, input.commitmentId)
@@ -664,17 +664,17 @@ export class TusFinanceService {
     return commitment
   }
 
-  private requireReadiness(
+  private requerirHabilitacion(
     input: FinanceCommandContext,
     capability: 'provider-actions' | 'settlement' | 'release-jobs',
   ): Promise<unknown> {
-    return this.readinessGuard?.require({
+    return this.evaluadorHabilitacion?.require({
       tenantId: input.tenantId,
       actorId: input.actorId,
       correlationId: input.correlationId,
       capability,
-      profile: this.readinessProfile,
-      scope: this.readinessScope,
+      profile: this.perfilHabilitacion,
+      scope: this.alcanceHabilitacion,
     }) ?? Promise.resolve()
   }
 

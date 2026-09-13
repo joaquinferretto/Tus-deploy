@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { TusCommitment, TusContractVersion } from '@factory/contracts'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
-import type { TusReadinessGuard, TusReadinessProfile } from '../readiness/index.ts'
+import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 
 export const MARKETPLACE_COHORTS = ['beauty-personal-care', 'repairs-trades'] as const
 export type MarketplaceCohort = (typeof MARKETPLACE_COHORTS)[number]
@@ -33,9 +33,9 @@ export interface MarketplaceMerchantProfile {
 
 export interface MarketplacePolicy {
   allowedCohorts?: readonly MarketplaceCohort[]
-  readinessGuard?: TusReadinessGuard
-  readinessProfile?: TusReadinessProfile
-  readinessScope?: string
+  evaluadorHabilitacion?: EvaluadorHabilitacion
+  perfilHabilitacion?: PerfilHabilitacion
+  alcanceHabilitacion?: string
 }
 
 export interface MarketplaceWorkingHours {
@@ -341,23 +341,23 @@ export class TusMarketplaceService {
   readonly audit: MarketplaceStorePort['audit']
 
   private readonly allowedCohorts: readonly MarketplaceCohort[]
-  private readonly readinessGuard?: TusReadinessGuard
-  private readonly readinessProfile: TusReadinessProfile
-  private readonly readinessScope: string
+  private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
+  private readonly perfilHabilitacion: PerfilHabilitacion
+  private readonly alcanceHabilitacion: string
 
   constructor(store: MarketplaceStorePort, policy: MarketplacePolicy = {}) {
     this.store = store
     this.audit = store.audit
     this.allowedCohorts = policy.allowedCohorts ?? MARKETPLACE_COHORTS
-    this.readinessGuard = policy.readinessGuard
-    this.readinessProfile = policy.readinessProfile ?? 'native-local'
-    this.readinessScope = policy.readinessScope ?? 'argentina-stage-1'
+    this.evaluadorHabilitacion = policy.evaluadorHabilitacion
+    this.perfilHabilitacion = policy.perfilHabilitacion ?? 'native-local'
+    this.alcanceHabilitacion = policy.alcanceHabilitacion ?? 'argentina-stage-1'
   }
 
   async onboard(context: TusAuthenticatedTenantContext, input: Partial<MarketplaceMerchantProfile>): Promise<MarketplaceMerchantProfile> {
     assertPermission(context, 'tus:marketplace:write')
     assertMerchantRole(context)
-    await this.requireReadiness(context, 'publication')
+    await this.requerirHabilitacion(context, 'publication')
     if (input.tenantId !== undefined && input.tenantId !== context.tenantId) throw new MarketplaceError(403, 'FORBIDDEN', 'merchant tenant does not match authenticated session')
     const cohort = input.cohort
     if (!isMarketplaceCohort(cohort) || !this.allowedCohorts.includes(cohort)) throw new MarketplaceError(400, 'COHORT_NOT_SUPPORTED', 'merchant cohort is outside Stage 1')
@@ -390,7 +390,7 @@ export class TusMarketplaceService {
   async createListing(context: TusAuthenticatedTenantContext, input: MarketplaceListingInput): Promise<MarketplaceListing> {
     assertPermission(context, 'tus:marketplace:write')
     assertMerchantRole(context)
-    await this.requireReadiness(context, 'publication')
+    await this.requerirHabilitacion(context, 'publication')
     const merchant = await this.store.merchant.find(context.tenantId)
     if (!merchant || merchant.status !== 'approved') throw new MarketplaceError(409, 'MERCHANT_NOT_READY', 'merchant onboarding is incomplete')
     if (input.merchantId !== merchant.merchantId) throw new MarketplaceError(403, 'FORBIDDEN', 'listing merchant is outside the authenticated tenant')
@@ -432,7 +432,7 @@ export class TusMarketplaceService {
   async publishListing(context: TusAuthenticatedTenantContext, listingId: string): Promise<MarketplaceListing> {
     assertPermission(context, 'tus:marketplace:write')
     assertMerchantRole(context)
-    await this.requireReadiness(context, 'publication')
+    await this.requerirHabilitacion(context, 'publication')
     const listing = await this.store.listings.find(listingId)
     if (!listing || listing.tenantId !== context.tenantId) throw new MarketplaceError(403, 'FORBIDDEN', 'listing is outside the authenticated tenant')
     const merchant = await this.store.merchant.find(context.tenantId)
@@ -490,13 +490,13 @@ export class TusMarketplaceService {
   }
 
   async checkout(input: MarketplaceCheckoutCommand): Promise<{ status: 'executed' | 'replay' } & MarketplaceCheckoutResponse> {
-    await this.readinessGuard?.require({
+    await this.evaluadorHabilitacion?.require({
       tenantId: input.tenantId,
       actorId: input.actorId,
       correlationId: input.correlationId,
       capability: 'settlement',
-      profile: this.readinessProfile,
-      scope: this.readinessScope,
+      profile: this.perfilHabilitacion,
+      scope: this.alcanceHabilitacion,
       now: input.createdAt,
     })
     if (!input.idempotencyKey.trim() || !input.requestHash.trim()) throw new MarketplaceError(400, 'INVALID', 'idempotency-key and requestHash are required')
@@ -591,14 +591,14 @@ export class TusMarketplaceService {
     await this.store.audit.append([createAudit({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: new Date().toISOString() }, action, resourceType, resourceId, outcome)])
   }
 
-  private requireReadiness(context: TusAuthenticatedTenantContext, capability: 'publication' | 'settlement'): Promise<unknown> {
-    return this.readinessGuard?.require({
+  private requerirHabilitacion(context: TusAuthenticatedTenantContext, capability: 'publication' | 'settlement'): Promise<unknown> {
+    return this.evaluadorHabilitacion?.require({
       tenantId: context.tenantId,
       actorId: context.subjectId,
       correlationId: context.correlationId,
       capability,
-      profile: this.readinessProfile,
-      scope: this.readinessScope,
+      profile: this.perfilHabilitacion,
+      scope: this.alcanceHabilitacion,
     }) ?? Promise.resolve()
   }
 }

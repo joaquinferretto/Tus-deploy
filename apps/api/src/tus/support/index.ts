@@ -1,6 +1,6 @@
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import type { TusOperationsTelemetry } from '@factory/observability'
-import type { TusReadinessGuard, TusReadinessProfile } from '../readiness/index.ts'
+import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 
 const SUPPORT_PERMISSIONS = {
   WRITE: 'tus:support:write',
@@ -246,9 +246,9 @@ export interface TusSupportServiceOptions {
   commitmentLookup?: (commitmentId: string) => Promise<{ tenantId: string } | null>
   now?: () => number
   telemetry?: TusOperationsTelemetry
-  readinessGuard?: TusReadinessGuard
-  readinessProfile?: TusReadinessProfile
-  readinessScope?: string
+  evaluadorHabilitacion?: EvaluadorHabilitacion
+  perfilHabilitacion?: PerfilHabilitacion
+  alcanceHabilitacion?: string
 }
 
 export class TusSupportService {
@@ -258,18 +258,18 @@ export class TusSupportService {
   private readonly telemetry?: TusOperationsTelemetry
   private readonly auditRecords: SupportTimelineEntry[] = []
   private readonly sessions = new Map<string, string>()
-  private readonly readinessGuard?: TusReadinessGuard
-  private readonly readinessProfile: TusReadinessProfile
-  private readonly readinessScope: string
+  private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
+  private readonly perfilHabilitacion: PerfilHabilitacion
+  private readonly alcanceHabilitacion: string
   private readonly commitmentLookup?: TusSupportServiceOptions['commitmentLookup']
 
   constructor(options: TusSupportServiceOptions) {
     this.store = options.store
     this.now = options.now ?? (() => Date.now())
     this.telemetry = options.telemetry
-    this.readinessGuard = options.readinessGuard
-    this.readinessProfile = options.readinessProfile ?? 'native-local'
-    this.readinessScope = options.readinessScope ?? 'argentina-stage-1'
+    this.evaluadorHabilitacion = options.evaluadorHabilitacion
+    this.perfilHabilitacion = options.perfilHabilitacion ?? 'native-local'
+    this.alcanceHabilitacion = options.alcanceHabilitacion ?? 'argentina-stage-1'
     this.commitmentLookup = options.commitmentLookup
     this.audit = { list: (tenantId) => this.auditRecords.filter((entry) => entry.tenantId === tenantId).map(clone) }
   }
@@ -279,7 +279,7 @@ export class TusSupportService {
     input: { caseId: string; commitmentId: string; category: string; disputeId?: string },
   ): Promise<SupportCase> {
     this.authorize(context, SUPPORT_PERMISSIONS.WRITE)
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     if (!input.caseId.trim() || !input.commitmentId.trim() || !input.category.trim()) {
       throw new SupportError(400, 'INVALID', 'case, commitment, and category are required')
     }
@@ -308,7 +308,7 @@ export class TusSupportService {
     input: { caseId: string; evidenceId: string; party: EvidenceParty; summary: string },
   ): Promise<SupportEvidence> {
     this.authorize(context, SUPPORT_PERMISSIONS.WRITE)
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const supportCase = await this.requireCase(context, input.caseId)
     if (supportCase.status !== CASE_STATUS.OPEN) throw new SupportError(409, 'CASE_RESOLVED', 'resolved support cases cannot accept evidence')
     if (!input.evidenceId.trim() || !input.summary.trim() || !['customer', 'merchant'].includes(input.party)) {
@@ -334,7 +334,7 @@ export class TusSupportService {
     input: { caseId: string; outcome: DisputeOutcome; amount?: number; reason: string },
   ): Promise<ResolvedSupportCase> {
     this.authorize(context, SUPPORT_PERMISSIONS.DECIDE)
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const supportCase = await this.requireCase(context, input.caseId)
     if (supportCase.status !== CASE_STATUS.OPEN) throw new SupportError(409, 'CASE_RESOLVED', 'support case is already resolved')
     const evidence = await this.store.evidence.list(context.tenantId, supportCase.caseId)
@@ -394,8 +394,8 @@ export class TusSupportService {
     if (commitment.tenantId !== context.tenantId) throw new SupportError(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
   }
 
-  private requireReadiness(context: TusAuthenticatedTenantContext): Promise<unknown> {
-    return this.readinessGuard?.require({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, capability: 'settlement', profile: this.readinessProfile, scope: this.readinessScope }) ?? Promise.resolve()
+  private requerirHabilitacion(context: TusAuthenticatedTenantContext): Promise<unknown> {
+    return this.evaluadorHabilitacion?.require({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, capability: 'settlement', profile: this.perfilHabilitacion, scope: this.alcanceHabilitacion }) ?? Promise.resolve()
   }
 
   private authorize(context: TusAuthenticatedTenantContext, permission: string): void {

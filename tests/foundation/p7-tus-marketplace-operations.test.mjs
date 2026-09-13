@@ -14,7 +14,7 @@ import {
   createMercadoPagoHandoff,
   createSettlementSnapshot,
   createSupportCase,
-  evaluateReadinessGates,
+  evaluarRequisitosHabilitacion,
   evaluateStage1Publication,
   isReleaseEligible,
   isSupportedWhatsAppAction,
@@ -251,7 +251,7 @@ test('WhatsApp allows discovery and secure payment handoff but rejects unsupport
 
 test('readiness gates fail closed until every required production gate is ready', () => {
   assert.deepEqual(
-    evaluateReadinessGates({
+    evaluarRequisitosHabilitacion({
       legal: true,
       kyc: true,
       kyb: true,
@@ -264,7 +264,7 @@ test('readiness gates fail closed until every required production gate is ready'
     { enabled: false, failedGates: ['posPilot'] },
   )
   assert.deepEqual(
-    evaluateReadinessGates({
+    evaluarRequisitosHabilitacion({
       legal: true,
       kyc: true,
       kyb: true,
@@ -280,7 +280,7 @@ test('readiness gates fail closed until every required production gate is ready'
 
 test('readiness gates require the AWS target and Groq migration backlog before activation', () => {
   assert.deepEqual(
-    evaluateReadinessGates({
+    evaluarRequisitosHabilitacion({
       legal: true,
       kyc: true,
       kyb: true,

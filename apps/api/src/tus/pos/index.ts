@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
-import type { TusReadinessGuard, TusReadinessProfile } from '../readiness/index.ts'
+import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 
 export type PosOperationKind = 'manual-sale' | 'manual-service'
 export type PosOperationContext = 'product' | 'service'
@@ -387,22 +387,22 @@ export class TusPosService {
   readonly store: PosStorePort
   readonly audit: { list(tenantId: string): MaybePromise<PosAuditRecord[]> }
   private readonly now: () => number
-  private readonly readinessGuard?: TusReadinessGuard
-  private readonly readinessProfile: TusReadinessProfile
-  private readonly readinessScope: string
+  private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
+  private readonly perfilHabilitacion: PerfilHabilitacion
+  private readonly alcanceHabilitacion: string
 
-  constructor(options: { store: PosStorePort; now?: () => number; readinessGuard?: TusReadinessGuard; readinessProfile?: TusReadinessProfile; readinessScope?: string }) {
+  constructor(options: { store: PosStorePort; now?: () => number; evaluadorHabilitacion?: EvaluadorHabilitacion; perfilHabilitacion?: PerfilHabilitacion; alcanceHabilitacion?: string }) {
     this.store = options.store
     this.audit = { list: (tenantId) => options.store.listAudit(tenantId) }
     this.now = options.now ?? (() => Date.now())
-    this.readinessGuard = options.readinessGuard
-    this.readinessProfile = options.readinessProfile ?? 'native-local'
-    this.readinessScope = options.readinessScope ?? 'argentina-stage-1'
+    this.evaluadorHabilitacion = options.evaluadorHabilitacion
+    this.perfilHabilitacion = options.perfilHabilitacion ?? 'native-local'
+    this.alcanceHabilitacion = options.alcanceHabilitacion ?? 'argentina-stage-1'
   }
 
   async registerDevice(context: TusAuthenticatedTenantContext, input: { deviceId: string; label: string; fingerprint: string }): Promise<PosDevice> {
     this.authorize(context)
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     if (!input.deviceId.trim() || !input.label.trim() || !input.fingerprint.trim()) throw new PosError(400, 'INVALID_DEVICE', 'device id, label, and fingerprint are required')
     const now = new Date(this.now()).toISOString()
     const device: PosDevice = { contractVersion: '1.0.0', deviceId: input.deviceId, tenantId: context.tenantId, label: input.label.trim(), fingerprint: input.fingerprint, status: 'active', createdAt: now, updatedAt: now }
@@ -416,7 +416,7 @@ export class TusPosService {
 
   async revokeDevice(context: TusAuthenticatedTenantContext, deviceId: string): Promise<PosDevice> {
     this.authorize(context)
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const device = await this.store.getDevice(context.tenantId, deviceId)
     if (!device) throw new PosError(404, 'NOT_FOUND', 'POS device was not found')
     const revoked = { ...device, status: 'revoked' as const, updatedAt: new Date(this.now()).toISOString() }
@@ -430,7 +430,7 @@ export class TusPosService {
 
   async openSession(context: TusAuthenticatedTenantContext, input: { sessionId: string; deviceId: string; shiftId: string; openingFloat?: number }): Promise<PosSession> {
     this.authorize(context)
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     if (!input.sessionId.trim() || !input.deviceId.trim() || !input.shiftId.trim()) throw new PosError(400, 'INVALID_SESSION', 'session, device, and shift are required')
     const device = await this.store.getDevice(context.tenantId, input.deviceId)
     if (!device || device.status !== 'active') throw new PosError(409, 'DEVICE_UNAVAILABLE', 'POS device is not active')
@@ -451,7 +451,7 @@ export class TusPosService {
 
   async closeSession(context: TusAuthenticatedTenantContext, sessionId: string, input: { countedCash?: number } = {}): Promise<PosSession & { reconciliation?: PosShift['reconciliation'] }> {
     this.authorize(context)
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     const session = await this.store.getSession(context.tenantId, sessionId)
     if (!session || session.actorId !== context.subjectId) throw new PosError(404, 'NOT_FOUND', 'POS session was not found')
     if (session.status === 'closed') return session
@@ -473,7 +473,7 @@ export class TusPosService {
 
   async recordManualOperation(context: TusAuthenticatedTenantContext, input: Omit<PosManualOperation, 'tenantId' | 'actorId'> & Partial<Pick<PosManualOperation, 'tenantId' | 'actorId'>>): Promise<PosCommandResult> {
     this.authorize(context)
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     if ((input.tenantId !== undefined && input.tenantId !== context.tenantId) || (input.actorId !== undefined && input.actorId !== context.subjectId)) {
       await this.recordAudit(context, 'pos.operation.denied', input.operationId, 'denied')
       throw new PosError(403, 'FORBIDDEN', 'POS authority fields do not match the authenticated session')
@@ -604,7 +604,7 @@ export class TusPosService {
 
   async resolveConflict(context: TusAuthenticatedTenantContext, conflictId: string, resolution: 'discard' | 'retry'): Promise<PosConflict> {
     this.authorize(context)
-    await this.requireReadiness(context)
+    await this.requerirHabilitacion(context)
     return this.store.transaction(async (transactionStore) => {
       const conflict = (await transactionStore.listConflicts(context.tenantId)).find((item) => item.conflictId === conflictId)
       if (!conflict) throw new PosError(404, 'NOT_FOUND', 'POS conflict was not found')
@@ -620,8 +620,8 @@ export class TusPosService {
     await store.saveAudit({ auditId: `${action}-${operationId}-${this.now()}`, tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, action, operationId, outcome, createdAt: new Date(this.now()).toISOString() })
   }
 
-  private requireReadiness(context: TusAuthenticatedTenantContext): Promise<unknown> {
-    return this.readinessGuard?.require({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, capability: 'fleet', profile: this.readinessProfile, scope: this.readinessScope }) ?? Promise.resolve()
+  private requerirHabilitacion(context: TusAuthenticatedTenantContext): Promise<unknown> {
+    return this.evaluadorHabilitacion?.require({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, capability: 'fleet', profile: this.perfilHabilitacion, scope: this.alcanceHabilitacion }) ?? Promise.resolve()
   }
 
   private async recordConflict(context: TusAuthenticatedTenantContext, operation: PosManualOperation, reason: PosConflict['reason'], actualVersion?: number, store = this.store): Promise<void> {

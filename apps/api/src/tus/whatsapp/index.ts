@@ -1,7 +1,7 @@
 import type { WhatsAppAction } from '@factory/contracts'
 import type { TusOperationsTelemetry } from '@factory/observability'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
-import type { TusReadinessGuard, TusReadinessProfile } from '../readiness/index.ts'
+import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 
 const ACTION_STATUS = {
   COMPLETED: 'completed',
@@ -419,9 +419,9 @@ export interface TusWhatsAppServiceOptions {
   telemetry?: TusOperationsTelemetry
   now?: () => number
   confirmationTtlMs?: number
-  readinessGuard?: TusReadinessGuard
-  readinessProfile?: TusReadinessProfile
-  readinessScope?: string
+  evaluadorHabilitacion?: EvaluadorHabilitacion
+  perfilHabilitacion?: PerfilHabilitacion
+  alcanceHabilitacion?: string
   providerEnabled?: boolean
   templateAllowlist?: readonly WhatsAppTemplateAllowlistEntry[]
   supportHandoff?: (input: { tenantId: string; senderId: string; reason: string; correlationId: string }) => Promise<{ handoffId: string }>
@@ -440,9 +440,9 @@ export class TusWhatsAppService {
   private readonly now: () => number
   private readonly confirmationTtlMs: number
   private readonly sessions = new Map<string, string>()
-  private readonly readinessGuard?: TusReadinessGuard
-  private readonly readinessProfile: TusReadinessProfile
-  private readonly readinessScope: string
+  private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
+  private readonly perfilHabilitacion: PerfilHabilitacion
+  private readonly alcanceHabilitacion: string
   private readonly providerEnabled: boolean
   private readonly templateAllowlist: ReadonlyMap<string, WhatsAppTemplateAllowlistEntry>
   private readonly supportHandoff?: TusWhatsAppServiceOptions['supportHandoff']
@@ -458,9 +458,9 @@ export class TusWhatsAppService {
     this.telemetry = options.telemetry
     this.now = options.now ?? (() => Date.now())
     this.confirmationTtlMs = options.confirmationTtlMs ?? 5 * 60 * 1000
-    this.readinessGuard = options.readinessGuard
-    this.readinessProfile = options.readinessProfile ?? 'native-local'
-    this.readinessScope = options.readinessScope ?? 'argentina-stage-1'
+    this.evaluadorHabilitacion = options.evaluadorHabilitacion
+    this.perfilHabilitacion = options.perfilHabilitacion ?? 'native-local'
+    this.alcanceHabilitacion = options.alcanceHabilitacion ?? 'argentina-stage-1'
     this.providerEnabled = options.providerEnabled ?? true
     this.templateAllowlist = new Map((options.templateAllowlist ?? []).map((entry) => [`${entry.name}:${entry.version}`, { ...entry, variables: [...entry.variables] }]))
     this.supportHandoff = options.supportHandoff
@@ -554,7 +554,7 @@ export class TusWhatsAppService {
   async execute(input: WhatsAppActionRequest): Promise<WhatsAppActionResult> {
     const startedAt = this.now()
     this.validateRequest(input)
-    await this.readinessGuard?.require({ tenantId: input.tenantId, actorId: input.subjectId, correlationId: input.correlationId, capability: 'provider-actions', profile: this.readinessProfile, scope: this.readinessScope })
+    await this.evaluadorHabilitacion?.require({ tenantId: input.tenantId, actorId: input.subjectId, correlationId: input.correlationId, capability: 'provider-actions', profile: this.perfilHabilitacion, scope: this.alcanceHabilitacion })
     const claim = await this.store.claim(input.tenantId, input.idempotencyKey, input.requestHash)
     if (claim === 'conflict') return this.finish(input, await this.handoff(input, 'idempotency_conflict'), startedAt)
     if (claim === 'replay') {
