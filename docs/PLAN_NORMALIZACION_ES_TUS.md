@@ -64,6 +64,8 @@ Este documento convierte el inventario previo en decisiones ejecutables. No auto
 
 **Decisión:** mantener tres conceptos con responsabilidades distintas hasta completar una migracion de identidad autorizada.
 
+`Organization` y `TusTenant` se mantienen provisionalmente como conceptos separados. No deben unificarse, eliminarse ni tratarse como sinonimos durante la normalizacion hasta que exista evidencia que demuestre que representan la misma responsabilidad.
+
 | Concepto | Responsabilidad | Nombre normativo | Estado actual |
 | --- | --- | --- | --- |
 | Tenant | Aislamiento tecnico de datos y autorizacion | `Tenant`, `tenantId` | Usado por TUS y mantenido como excepcion |
@@ -74,6 +76,7 @@ Reglas:
 
 - No usar `Organization` como sinonimo general de `Tenant`.
 - No eliminar `TusTenant` ni `Organization` en esta fase.
+- No unificar `Organization` y `TusTenant` ni tratarlos como sinonimos sin evidencia de que representan la misma responsabilidad.
 - Para tenants nuevos, conservar el mismo identificador como correlacion tecnica solo mientras se documente que son raices distintas.
 - El camino de registro con `tenantId` solicitado debe validar que el tenant existe y que la incorporacion esta autorizada; no debe permitir seleccionar arbitrariamente un tenant desde el payload publico.
 - `TenantContext` actual solo expresa tenant, actor y correlacion. La propagacion de `workspaceId` debe ser una decision separada antes de convertir `Workspace` en frontera obligatoria.
@@ -241,7 +244,7 @@ Los aliases `/tus/marketplace/*`, `/tus/commitments/*`, `/tus/finance/*`, `/tus/
 | Documentacion | `docs/**`, `README.md`, `ARCHITECTURE.md` | Traducir vigente y marcar snapshots obsoletos | Bajo |
 | Legacy eliminado | `backendFiles`, `apps/reference` | No recrear; actualizar referencias historicas | Bajo |
 
-## 7. Primer bloque ejecutable
+## 7. Bloque 0 — Preparación y cierre de decisiones
 
 El primer bloque debe ser pequeno, reversible y sin renombrar tablas. Su objetivo es eliminar ambiguedad antes de tocar el dominio.
 
@@ -255,8 +258,7 @@ El primer bloque debe ser pequeno, reversible y sin renombrar tablas. Su objetiv
 6. Confirmar la matriz `tenantId/workspaceId` para assets, notificaciones, tenancy y TUS.
 7. Confirmar la unidad de cada importe financiero.
 8. Definir el flujo de refresh: activo, preparado o fuera de alcance publico.
-9. Traducir exclusivamente copy visible de una pantalla piloto, sin cambiar payloads.
-10. Ejecutar contratos, lint dirigido y pruebas de aislamiento sobre la rama de trabajo.
+9. Ejecutar contratos, lint dirigido y pruebas de aislamiento sobre la rama de trabajo.
 
 ### Excluido
 
@@ -369,7 +371,9 @@ Orden recomendado:
 El plan se considera listo para implementacion cuando:
 
 - cada uno de los 14 temas del primer bloque tiene una decisión o un bloqueo explicito;
-- no queda una traduccion ambigua para `Tenant`, `Organization`, `Workspace`, `Service Capture`, `Checkout` o `Disposition`;
+- los terminos todavia ambiguos bloquean unicamente los bloques que dependen de ellos, no la normalizacion completa;
+- `Service Capture` no bloquea una normalizacion independiente de `Readiness`/`Habilitacion`;
+- no queda una traduccion ambigua en los bloques que ya estan listos para implementarse;
 - todos los cambios incompatibles tienen estrategia de version o alias;
 - la persistencia tiene backup y estrategia forward-only definidos;
 - Web, Mobile, API y worker tienen consumidores identificados;
