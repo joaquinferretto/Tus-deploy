@@ -104,7 +104,7 @@ export interface DeliveryTask {
   updatedAt: string
 }
 
-export interface DeliveryAuditRecord {
+export interface RegistroAuditoriaEntrega {
   auditId: string
   tenantId: string
   actorId: string
@@ -134,7 +134,7 @@ export interface DeliveryStorePort {
   tasks: { save(task: DeliveryTask): Promise<void>; find(tenantId: string, taskId: string): Promise<DeliveryTask | null>; forTenant(tenantId: string): Promise<DeliveryTask[]> }
   proofs: { save(proof: DeliveryProof): Promise<void>; find(tenantId: string, proofId: string): Promise<DeliveryProof | null> }
   incidents: { save(incident: DeliveryIncident): Promise<void>; find(tenantId: string, incidentId: string): Promise<DeliveryIncident | null> }
-  audit: { append(record: DeliveryAuditRecord): Promise<void>; list(tenantId: string): DeliveryAuditRecord[] }
+  audit: { append(record: RegistroAuditoriaEntrega): Promise<void>; list(tenantId: string): RegistroAuditoriaEntrega[] }
   outbox: { append(record: DeliveryOutboxRecord): Promise<void>; list(tenantId: string): DeliveryOutboxRecord[] }
   listOutbox(tenantId: string): DeliveryOutboxRecord[]
 }
@@ -157,7 +157,7 @@ export class InMemoryDeliveryStore implements DeliveryStorePort {
   private readonly taskRecords = new Map<string, DeliveryTask>()
   private readonly proofRecords = new Map<string, DeliveryProof>()
   private readonly incidentRecords = new Map<string, DeliveryIncident>()
-  private readonly auditRecords = new Map<string, DeliveryAuditRecord>()
+  private readonly auditRecords = new Map<string, RegistroAuditoriaEntrega>()
   private readonly outboxRecords = new Map<string, DeliveryOutboxRecord>()
 
   readonly zones = {
@@ -187,7 +187,7 @@ export class InMemoryDeliveryStore implements DeliveryStorePort {
   }
 
   readonly audit = {
-    append: async (record: DeliveryAuditRecord) => { this.auditRecords.set(record.auditId, clone(record)) },
+    append: async (record: RegistroAuditoriaEntrega) => { this.auditRecords.set(record.auditId, clone(record)) },
     list: (tenantId: string) => [...this.auditRecords.values()].filter((record) => record.tenantId === tenantId).map(clone),
   }
 
@@ -232,7 +232,7 @@ export class TusDeliveryService {
     if (!input.zoneId.trim() || !input.name.trim() || !Array.isArray(input.postalCodes)) throw new DeliveryError(400, 'INVALID', 'zone id, name, and postal codes are required')
     const zone = { zoneId: input.zoneId, tenantId: context.tenantId, name: input.name.trim(), postalCodes: [...input.postalCodes], active: true }
     await this.store.zones.save(zone)
-    await this.recordAudit(context, 'delivery.zone.created', 'zone', zone.zoneId, 'allowed')
+    await this.registrarAuditoriaEntrega(context, 'delivery.zone.created', 'zone', zone.zoneId, 'allowed')
     await this.recordOutbox(context, 'delivery.zone.created', zone.zoneId, zone)
     return zone
   }
@@ -244,7 +244,7 @@ export class TusDeliveryService {
     if (!validInterval(input.startsAt, input.endsAt) || !Array.isArray(input.operatorIds) || input.operatorIds.length === 0) throw new DeliveryError(400, 'INVALID', 'shift interval and internal operators are required')
     const shift: DeliveryShift = { ...input, tenantId: zone.tenantId, status: 'open', operatorIds: [...input.operatorIds] }
     await this.store.shifts.save(shift)
-    await this.recordAudit(context, 'delivery.shift.opened', 'shift', shift.shiftId, 'allowed')
+    await this.registrarAuditoriaEntrega(context, 'delivery.shift.opened', 'shift', shift.shiftId, 'allowed')
     await this.recordOutbox(context, 'delivery.shift.opened', shift.shiftId, shift)
     return shift
   }
@@ -263,7 +263,7 @@ export class TusDeliveryService {
     if (!validInterval(sla.pickupDueAt, sla.dropoffDueAt)) throw new DeliveryError(400, 'INVALID_SLA', 'pickup and dropoff SLA deadlines are required')
     const task: DeliveryTask = { contractVersion: '1.0.0', taskId: input.taskId, tenantId: context.tenantId, commitmentId: input.commitment.commitmentId, merchantId: input.commitment.merchantId, context: 'product', zoneId: zone.zoneId, shiftId: shift.shiftId, operatorId: input.operatorId ?? (shift.operatorIds.length === 1 ? shift.operatorIds[0]! : null), status: DELIVERY_TASK_STATUS.QUEUED, version: 0, proof: null, incident: null, sla: { ...sla, status: 'on-time', breachedAt: null }, pickup: { pickedUpAt: null, inTransitAt: null }, dropoff: { handedOffAt: null }, cancelledAt: null, failureReason: null, settlementClaim: 'not-claimed', createdAt: now, updatedAt: now }
     await this.store.tasks.save(task)
-    await this.recordAudit(context, 'delivery.task.created', 'task', task.taskId, 'allowed')
+    await this.registrarAuditoriaEntrega(context, 'delivery.task.created', 'task', task.taskId, 'allowed')
     await this.recordOutbox(context, 'delivery.task.created', task.taskId, task)
     return task
   }
@@ -284,7 +284,7 @@ export class TusDeliveryService {
     this.assertVersion(task, expectedVersion)
     const updated = { ...task, operatorId, version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }
     await this.store.tasks.save(updated)
-    await this.recordAudit(context, 'delivery.task.assigned', 'task', task.taskId, 'allowed')
+    await this.registrarAuditoriaEntrega(context, 'delivery.task.assigned', 'task', task.taskId, 'allowed')
     await this.recordOutbox(context, 'delivery.task.assigned', task.taskId, updated)
     return updated
   }
@@ -351,7 +351,7 @@ export class TusDeliveryService {
     await this.store.proofs.save(proof)
     const updated = { ...task, proof, version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }
     await this.store.tasks.save(updated)
-    await this.recordAudit(context, 'delivery.proof.recorded', 'proof', proof.proofId, 'allowed')
+    await this.registrarAuditoriaEntrega(context, 'delivery.proof.recorded', 'proof', proof.proofId, 'allowed')
     await this.recordOutbox(context, 'delivery.proof.recorded', proof.proofId, { ...proof, commitmentId: task.commitmentId, evidenceId: proof.proofId })
     return updated
   }
@@ -368,7 +368,7 @@ export class TusDeliveryService {
     await this.store.incidents.save(incident)
     const updated = { ...task, status: DELIVERY_TASK_STATUS.INCIDENT_REVIEW, incident, failureReason: input.reason.trim(), version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }
     await this.store.tasks.save(updated)
-    await this.recordAudit(context, 'delivery.incident.opened', 'incident', incident.incidentId, 'allowed')
+    await this.registrarAuditoriaEntrega(context, 'delivery.incident.opened', 'incident', incident.incidentId, 'allowed')
     await this.recordOutbox(context, 'delivery.incident.opened', taskId, incident)
     return { status: 'incident-review', task: updated, incident }
   }
@@ -384,7 +384,7 @@ export class TusDeliveryService {
     const updated = { ...task, incident, status: 'returned' as const, version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }
     await this.store.incidents.save(incident)
     await this.store.tasks.save(updated)
-    await this.recordAudit(context, 'delivery.incident.resolved', 'incident', incident.incidentId, 'allowed')
+    await this.registrarAuditoriaEntrega(context, 'delivery.incident.resolved', 'incident', incident.incidentId, 'allowed')
     await this.recordOutbox(context, 'delivery.incident.resolved', taskId, updated)
     return updated
   }
@@ -406,7 +406,7 @@ export class TusDeliveryService {
     if (shift.status === 'closed') return shift
     const closed = { ...shift, status: 'closed' as const }
     await this.store.shifts.save(closed)
-    await this.recordAudit(context, 'delivery.shift.closed', 'shift', shiftId, 'allowed')
+    await this.registrarAuditoriaEntrega(context, 'delivery.shift.closed', 'shift', shiftId, 'allowed')
     await this.recordOutbox(context, 'delivery.shift.closed', shiftId, closed)
     return closed
   }
@@ -424,7 +424,7 @@ export class TusDeliveryService {
   async openPublicBidding(context: TusAuthenticatedTenantContext, _input: { taskId: string }): Promise<never> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
-    await this.recordAudit(context, 'delivery.public-bidding.denied', 'authorization', 'public-bidding', 'denied')
+    await this.registrarAuditoriaEntrega(context, 'delivery.public-bidding.denied', 'authorization', 'public-bidding', 'denied')
     throw new DeliveryError(400, 'OUT_OF_SCOPE', 'public courier bidding is outside Stage 1 delivery')
   }
 
@@ -452,7 +452,7 @@ export class TusDeliveryService {
 
   private async saveTask(context: TusAuthenticatedTenantContext, task: DeliveryTask, action: string): Promise<DeliveryTask> {
     await this.store.tasks.save(task)
-    await this.recordAudit(context, action, 'task', task.taskId, 'allowed')
+    await this.registrarAuditoriaEntrega(context, action, 'task', task.taskId, 'allowed')
     await this.recordOutbox(context, action, task.taskId, task)
     return task
   }
@@ -469,7 +469,7 @@ export class TusDeliveryService {
     if (!context.tenantId.trim() || !context.subjectId.trim() || !context.correlationId.trim() || (!context.permissions.includes(permission) && !context.permissions.includes('tus:*'))) throw new DeliveryError(403, 'FORBIDDEN', 'TUS delivery operation is not authorized')
   }
 
-  private async recordAudit(context: TusAuthenticatedTenantContext, action: string, resourceType: DeliveryAuditRecord['resourceType'], resourceId: string, outcome: DeliveryAuditRecord['outcome']): Promise<void> {
+  private async registrarAuditoriaEntrega(context: TusAuthenticatedTenantContext, action: string, resourceType: RegistroAuditoriaEntrega['resourceType'], resourceId: string, outcome: RegistroAuditoriaEntrega['outcome']): Promise<void> {
     await this.store.audit.append({ auditId: `${action}-${resourceId}-${this.now()}`, tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, action, resourceType, resourceId, outcome, createdAt: new Date(this.now()).toISOString() })
   }
 

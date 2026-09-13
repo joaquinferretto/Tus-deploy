@@ -1,5 +1,5 @@
 import type {
-  DeliveryAuditRecord,
+  RegistroAuditoriaEntrega,
   DeliveryIncident,
   DeliveryProof,
   DeliveryShift,
@@ -91,8 +91,8 @@ export class PrismaDeliveryStore implements DeliveryStorePort {
   }
 
   readonly audit = {
-    append: async (record: DeliveryAuditRecord) => { await this.client.tusDeliveryAudit.create({ data: { id: record.auditId, ...record, createdAt: new Date(record.createdAt) } }) },
-    list: (_tenantId: string): DeliveryAuditRecord[] => { throw new Error('Tenant-scoped audit listing is exposed through reporting adapters') },
+    append: async (record: RegistroAuditoriaEntrega) => { await this.client.tusDeliveryAudit.create({ data: { id: record.auditId, ...record, createdAt: new Date(record.createdAt) } }) },
+    list: (_tenantId: string): RegistroAuditoriaEntrega[] => { throw new Error('Tenant-scoped audit listing is exposed through reporting adapters') },
   }
 
   readonly outbox = {
