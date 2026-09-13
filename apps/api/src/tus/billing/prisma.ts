@@ -1,7 +1,7 @@
 import type {
   BillingAccount,
   BillingAccountingExport,
-  BillingAuditRecord,
+  RegistroAuditoriaFacturacion,
   BillingCreditNote,
   BillingDunningRecord,
   BillingInvoice,
@@ -123,8 +123,8 @@ export class PrismaBillingStore implements BillingStore {
     }
     await this.client.tusBillingIdempotency.create({ data: { id: `billing-idempotency-${tenantId}-${key}`, tenantId, key, requestHash: value.requestHash, response: value.response } })
   }
-  async appendAudit(value: BillingAuditRecord): Promise<void> { await this.client.tusBillingAudit.create({ data: auditToRow(value) }) }
-  async listAudit(tenantId: string): Promise<BillingAuditRecord[]> { return (await this.client.tusBillingAudit.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })).map(auditFromRow) }
+  async appendAudit(value: RegistroAuditoriaFacturacion): Promise<void> { await this.client.tusBillingAudit.create({ data: auditoriaAFila(value) }) }
+  async listAudit(tenantId: string): Promise<RegistroAuditoriaFacturacion[]> { return (await this.client.tusBillingAudit.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })).map(auditoriaDesdeFila) }
   async appendOutbox(value: BillingOutboxRecord): Promise<void> { await this.client.tusBillingOutbox.create({ data: outboxToRow(value) }) }
   async listOutbox(tenantId: string): Promise<BillingOutboxRecord[]> { return (await this.client.tusBillingOutbox.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })).map(outboxFromRow) }
   async saveAccountingExport(value: BillingAccountingExport): Promise<BillingAccountingExport> { return exportFromRow(await this.client.tusAccountingExport.create({ data: exportToRow(value) })) }
@@ -148,8 +148,8 @@ function ledgerToRow(value: BillingLedgerEntry): Row { return { id: value.entryI
 function ledgerFromRow(row: Row): BillingLedgerEntry { return { entryId: text(row, 'entryId'), tenantId: text(row, 'tenantId'), invoiceId: text(row, 'invoiceId'), entryType: field(row, 'entryType'), amountMinor: bigint(field(row, 'amountMinor')), currency: BILLING_CURRENCY, linkedEntryId: nullableText(row, 'linkedEntryId'), creditNoteId: nullableText(row, 'creditNoteId'), refundId: nullableText(row, 'refundId'), paymentId: text(row, 'paymentId'), orderId: text(row, 'orderId'), posOperationId: nullableText(row, 'posOperationId'), immutable: true, createdAt: date(field(row, 'createdAt')) } }
 function dunningToRow(value: BillingDunningRecord): Row { return { id: value.dunningId, ...value, retryAt: value.retryAt === null ? null : new Date(value.retryAt), createdAt: new Date(value.createdAt) } }
 function dunningFromRow(row: Row): BillingDunningRecord { const retryAt = field<unknown>(row, 'retryAt'); return { dunningId: text(row, 'dunningId'), tenantId: text(row, 'tenantId'), subscriptionId: text(row, 'subscriptionId'), attempt: Number(field(row, 'attempt')), reason: text(row, 'reason'), status: field(row, 'status'), retryAt: retryAt ? date(retryAt) : null, createdAt: date(field(row, 'createdAt')) } }
-function auditToRow(value: BillingAuditRecord): Row { return { id: value.auditId, ...value, createdAt: new Date(value.createdAt) } }
-function auditFromRow(row: Row): BillingAuditRecord { return { auditId: text(row, 'auditId'), tenantId: text(row, 'tenantId'), actorId: text(row, 'actorId'), correlationId: text(row, 'correlationId'), action: text(row, 'action'), resourceId: text(row, 'resourceId'), outcome: field(row, 'outcome'), reason: nullableText(row, 'reason'), createdAt: date(field(row, 'createdAt')) } }
+function auditoriaAFila(value: RegistroAuditoriaFacturacion): Row { return { id: value.auditId, ...value, createdAt: new Date(value.createdAt) } }
+function auditoriaDesdeFila(row: Row): RegistroAuditoriaFacturacion { return { auditId: text(row, 'auditId'), tenantId: text(row, 'tenantId'), actorId: text(row, 'actorId'), correlationId: text(row, 'correlationId'), action: text(row, 'action'), resourceId: text(row, 'resourceId'), outcome: field(row, 'outcome'), reason: nullableText(row, 'reason'), createdAt: date(field(row, 'createdAt')) } }
 function outboxToRow(value: BillingOutboxRecord): Row { return { id: value.eventId, ...value, availableAt: new Date(value.availableAt), createdAt: new Date(value.createdAt) } }
 function outboxFromRow(row: Row): BillingOutboxRecord { return { eventId: text(row, 'eventId'), tenantId: text(row, 'tenantId'), correlationId: text(row, 'correlationId'), eventType: text(row, 'eventType'), aggregateId: text(row, 'aggregateId'), payload: recordField(row, 'payload'), status: field(row, 'status'), attempts: Number(field(row, 'attempts')), availableAt: date(field(row, 'availableAt')), createdAt: date(field(row, 'createdAt')) } }
 function exportToRow(value: BillingAccountingExport): Row { return { id: value.exportId, ...value, createdAt: new Date(value.createdAt) } }

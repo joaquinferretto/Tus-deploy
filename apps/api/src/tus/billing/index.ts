@@ -150,7 +150,7 @@ export interface BillingLedgerEntry {
   createdAt: number
 }
 
-export interface BillingAuditRecord {
+export interface RegistroAuditoriaFacturacion {
   auditId: string
   tenantId: string
   actorId: string
@@ -221,8 +221,8 @@ export interface BillingStore {
   saveDunning(record: BillingDunningRecord): Promise<BillingDunningRecord>
   getIdempotency(tenantId: string, key: string): Promise<BillingIdempotencyRecord | null>
   saveIdempotency(tenantId: string, key: string, record: BillingIdempotencyRecord): Promise<void>
-  appendAudit(record: BillingAuditRecord): Promise<void>
-  listAudit(tenantId: string): Promise<BillingAuditRecord[]>
+  appendAudit(record: RegistroAuditoriaFacturacion): Promise<void>
+  listAudit(tenantId: string): Promise<RegistroAuditoriaFacturacion[]>
   appendOutbox(record: BillingOutboxRecord): Promise<void>
   listOutbox(tenantId: string): Promise<BillingOutboxRecord[]>
   saveAccountingExport(value: BillingAccountingExport): Promise<BillingAccountingExport>
@@ -250,7 +250,7 @@ export class InMemoryBillingStore implements BillingStore {
   private readonly ledger = new Map<string, BillingLedgerEntry>()
   private readonly dunning = new Map<string, BillingDunningRecord>()
   private readonly idempotency = new Map<string, BillingIdempotencyRecord>()
-  private readonly audits = new Map<string, BillingAuditRecord>()
+  private readonly audits = new Map<string, RegistroAuditoriaFacturacion>()
   private readonly outbox = new Map<string, BillingOutboxRecord>()
   private readonly exports = new Map<string, BillingAccountingExport>()
   private readonly invoiceSequences = new Map<string, number>()
@@ -310,13 +310,13 @@ export class InMemoryBillingStore implements BillingStore {
     if (existing && recordFingerprint(existing) !== recordFingerprint(value)) throw new BillingError(409, 'IDEMPOTENCY_CONFLICT', 'billing idempotency records are immutable')
     this.idempotency.set(recordKey, clone(value))
   }
-  async appendAudit(value: BillingAuditRecord): Promise<void> {
+  async appendAudit(value: RegistroAuditoriaFacturacion): Promise<void> {
     const recordKey = key(value.tenantId, value.auditId)
     const existing = this.audits.get(recordKey)
     if (existing && recordFingerprint(existing) !== recordFingerprint(value)) throw new BillingError(409, 'BILLING_AUDIT_IMMUTABLE', 'billing audit records are append-only')
     this.audits.set(recordKey, clone(value))
   }
-  async listAudit(tenantId: string): Promise<BillingAuditRecord[]> { return [...this.audits.values()].filter((value) => value.tenantId === tenantId).map(clone) }
+  async listAudit(tenantId: string): Promise<RegistroAuditoriaFacturacion[]> { return [...this.audits.values()].filter((value) => value.tenantId === tenantId).map(clone) }
   async appendOutbox(value: BillingOutboxRecord): Promise<void> {
     const recordKey = key(value.tenantId, value.eventId)
     const existing = this.outbox.get(recordKey)
@@ -536,7 +536,7 @@ export class BillingService {
   private async requireSubscription(tenantId: string, subscriptionId: string): Promise<BillingSubscription> { const subscription = await this.store.getSubscription(tenantId, subscriptionId); if (!subscription) throw new BillingError(404, 'SUBSCRIPTION_NOT_FOUND', 'subscription was not found'); return subscription }
   private async idempotent(input: BillingCommandContext): Promise<unknown> { const existing = await this.store.getIdempotency(input.tenantId, input.idempotencyKey); if (!existing) return null; if (existing.requestHash !== input.requestHash) throw new BillingError(409, 'IDEMPOTENCY_CONFLICT', 'billing idempotency key was already used for another request'); return clone(existing.response) }
   private async completeIdempotency(input: BillingCommandContext, response: unknown): Promise<void> { await this.store.saveIdempotency(input.tenantId, input.idempotencyKey, { requestHash: input.requestHash, response: clone(response) }) }
-  private async recordEffects(input: BillingContext, eventType: string, aggregateId: string, outcome: BillingAuditRecord['outcome'], reason: string | null, payload: Record<string, unknown>): Promise<void> {
+  private async recordEffects(input: BillingContext, eventType: string, aggregateId: string, outcome: RegistroAuditoriaFacturacion['outcome'], reason: string | null, payload: Record<string, unknown>): Promise<void> {
     const now = this.now()
     await this.store.appendAudit({ auditId: `billing-audit-${input.correlationId}-${eventType}-${aggregateId}`, tenantId: input.tenantId, actorId: input.actorId, correlationId: input.correlationId, action: eventType, resourceId: aggregateId, outcome, reason, createdAt: now })
     await this.store.appendOutbox({ eventId: `billing-outbox-${eventType}-${aggregateId}`, tenantId: input.tenantId, correlationId: input.correlationId, eventType, aggregateId, payload, status: 'pending', attempts: 0, availableAt: now, createdAt: now })
