@@ -117,7 +117,7 @@ interface PrismaMarketplaceCommitmentDelegate {
   findMany(input: { where: Record<string, unknown> }): Promise<Record<string, unknown>[]>
 }
 
-interface PrismaMarketplaceAuditDelegate {
+interface DelegadoPrismaAuditoriaMercadoServicios {
   createMany(input: { data: Record<string, unknown>[] }): Promise<{ count: number }>
   findMany(input: { where: Record<string, unknown> }): Promise<Record<string, unknown>[]>
 }
@@ -163,7 +163,7 @@ export interface TusPrismaClient {
   tusMerchant: PrismaMarketplaceMerchantDelegate
   tusListing: PrismaMarketplaceListingDelegate
   tusMarketplaceCommitment: PrismaMarketplaceCommitmentDelegate
-  tusMarketplaceAudit: PrismaMarketplaceAuditDelegate
+  tusMarketplaceAudit: DelegadoPrismaAuditoriaMercadoServicios
   tusCalendar: PrismaCalendarDelegate
   tusCalendarRule: PrismaCalendarRuleDelegate
   tusCalendarException: PrismaCalendarExceptionDelegate

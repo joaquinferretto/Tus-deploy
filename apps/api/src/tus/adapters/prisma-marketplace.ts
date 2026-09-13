@@ -1,4 +1,4 @@
-import type { MarketplaceAuditRecord, MarketplaceCheckoutResponse, MarketplaceCommitment, MarketplaceListing, MarketplaceMerchantProfile, MarketplaceOutboxRecord, MarketplaceStorePort } from '../catalog/index.ts'
+import type { RegistroAuditoriaMercadoServicios, MarketplaceCheckoutResponse, MarketplaceCommitment, MarketplaceListing, MarketplaceMerchantProfile, MarketplaceOutboxRecord, MarketplaceStorePort } from '../catalog/index.ts'
 import type { TusPrismaClient } from './prisma.ts'
 
 export class PrismaMarketplaceStore implements MarketplaceStorePort {
@@ -54,7 +54,7 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
   }
 
   readonly audit = {
-    append: async (records: readonly MarketplaceAuditRecord[]) => {
+    append: async (records: readonly RegistroAuditoriaMercadoServicios[]) => {
       await this.client.tusMarketplaceAudit.createMany({ data: records.map((record) => ({
         id: record.auditId,
         tenantId: record.tenantId,
@@ -67,7 +67,7 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
         createdAt: new Date(record.createdAt),
       })) })
     },
-    list: async (tenantId: string): Promise<MarketplaceAuditRecord[]> => (await this.client.tusMarketplaceAudit.findMany({ where: { tenantId } })).map(toAudit),
+    list: async (tenantId: string): Promise<RegistroAuditoriaMercadoServicios[]> => (await this.client.tusMarketplaceAudit.findMany({ where: { tenantId } })).map(mapearAuditoriaMercadoServicios),
   }
 
   readonly idempotency = {
@@ -138,16 +138,16 @@ function toCommitment(row: Record<string, unknown>): MarketplaceCommitment {
   return { contractVersion: String(row['contractVersion']) as MarketplaceCommitment['contractVersion'], commitmentId: String(row['commitmentId']), cartId: String(row['cartId']), tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), context: row['context'] as MarketplaceCommitment['context'], amount: Number(amountMinor) / 100, currency, status: row['status'] as MarketplaceCommitment['status'], lineIds: Array.isArray(row['lineIds']) ? row['lineIds'].map(String) : [], version: Number(row['version'] ?? 1), createdAt: new Date(String(row['createdAt'])).toISOString(), listingId: String(row['listingId']), quantity: Number(row['quantity']), availabilityVersion: Number(row['availabilityVersion']), policyVersion: String(row['policyVersion']), priceSnapshot: { currency, minor: Number(row['quantity']) > 0 ? amountMinor / BigInt(Number(row['quantity'])) : amountMinor }, ...(row['slotStart'] ? { slotStart: new Date(String(row['slotStart'])).toISOString() } : {}), ...(row['slotEnd'] ? { slotEnd: new Date(String(row['slotEnd'])).toISOString() } : {}) }
 }
 
-function toAudit(row: Record<string, unknown>): MarketplaceAuditRecord {
+function mapearAuditoriaMercadoServicios(row: Record<string, unknown>): RegistroAuditoriaMercadoServicios {
   return {
     auditId: String(row['id'] ?? row['auditId']),
     tenantId: String(row['tenantId']),
     actorId: String(row['actorId']),
     correlationId: String(row['correlationId']),
     action: String(row['action']),
-    resourceType: row['resourceType'] as MarketplaceAuditRecord['resourceType'],
+    resourceType: row['resourceType'] as RegistroAuditoriaMercadoServicios['resourceType'],
     resourceId: String(row['resourceId']),
-    outcome: row['outcome'] as MarketplaceAuditRecord['outcome'],
+    outcome: row['outcome'] as RegistroAuditoriaMercadoServicios['outcome'],
     createdAt: toIsoString(row['createdAt']),
   }
 }

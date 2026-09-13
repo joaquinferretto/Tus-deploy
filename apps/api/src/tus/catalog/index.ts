@@ -145,7 +145,7 @@ export interface MarketplaceMoneySnapshot {
   minor: bigint
 }
 
-export interface MarketplaceAuditRecord {
+export interface RegistroAuditoriaMercadoServicios {
   auditId: string
   tenantId: string
   actorId: string
@@ -160,7 +160,7 @@ export interface MarketplaceAuditRecord {
 export interface MarketplaceCheckoutResponse {
   contractVersion: typeof TUS_CONTRACT_VERSION
   commitments: MarketplaceCommitment[]
-  audits: MarketplaceAuditRecord[]
+  audits: RegistroAuditoriaMercadoServicios[]
 }
 
 export interface MarketplaceOutboxRecord {
@@ -197,8 +197,8 @@ export interface MarketplaceStorePort {
     forListing(listingId: string): Promise<MarketplaceCommitment[]>
   }
   audit: {
-    append(records: readonly MarketplaceAuditRecord[]): Promise<void>
-    list(tenantId: string): MarketplaceAuditRecord[] | Promise<MarketplaceAuditRecord[]>
+    append(records: readonly RegistroAuditoriaMercadoServicios[]): Promise<void>
+    list(tenantId: string): RegistroAuditoriaMercadoServicios[] | Promise<RegistroAuditoriaMercadoServicios[]>
   }
   idempotency: {
     claim(input: { tenantId: string; key: string; requestHash: string }): Promise<{ status: 'claimed' | 'replay' | 'in_progress' | 'conflict'; response?: MarketplaceCheckoutResponse }>
@@ -230,7 +230,7 @@ export class InMemoryMarketplaceStore implements MarketplaceStorePort {
   private readonly merchantRecords = new Map<string, MarketplaceMerchantProfile>()
   private readonly listingRecords = new Map<string, MarketplaceListing>()
   private readonly commitmentRecords = new Map<string, MarketplaceCommitment>()
-  private readonly audits = new Map<string, MarketplaceAuditRecord>()
+  private readonly audits = new Map<string, RegistroAuditoriaMercadoServicios>()
   private readonly outboxRecords = new Map<string, MarketplaceOutboxRecord>()
   private readonly idempotencyRecords = new Map<string, { requestHash: string; response?: MarketplaceCheckoutResponse }>()
   private transactionTail: Promise<void> = Promise.resolve()
@@ -261,7 +261,7 @@ export class InMemoryMarketplaceStore implements MarketplaceStorePort {
   }
 
   readonly audit = {
-    append: async (records: readonly MarketplaceAuditRecord[]) => records.forEach((record) => this.audits.set(record.auditId, structuredClone(record))),
+    append: async (records: readonly RegistroAuditoriaMercadoServicios[]) => records.forEach((record) => this.audits.set(record.auditId, structuredClone(record))),
     list: (tenantId: string) => [...this.audits.values()].filter((record) => record.tenantId === tenantId).map((record) => structuredClone(record)),
   }
 
@@ -380,7 +380,7 @@ export class TusMarketplaceService {
     }
     return this.store.transaction(async (store) => {
       await store.merchant.save(profile)
-      const audit = createAudit({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: now }, 'merchant.onboarded', 'merchant', profile.merchantId, 'allowed')
+      const audit = crearAuditoriaMercadoServicios({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: now }, 'merchant.onboarded', 'merchant', profile.merchantId, 'allowed')
       await store.audit.append([audit])
       await store.outbox.append(createOutbox({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: now }, MARKETPLACE_OUTBOX_EVENT_TYPES.MERCHANT_ONBOARDED, 'merchant', profile.merchantId, [audit.auditId]))
       return profile
@@ -422,7 +422,7 @@ export class TusMarketplaceService {
     }
     return this.store.transaction(async (store) => {
       await store.listings.save(listing)
-      const audit = createAudit({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: now }, 'listing.created', 'listing', listing.listingId, 'allowed')
+      const audit = crearAuditoriaMercadoServicios({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: now }, 'listing.created', 'listing', listing.listingId, 'allowed')
       await store.audit.append([audit])
       await store.outbox.append(createOutbox({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: now }, MARKETPLACE_OUTBOX_EVENT_TYPES.LISTING_CREATED, 'listing', listing.listingId, [audit.auditId]))
       return listing
@@ -442,7 +442,7 @@ export class TusMarketplaceService {
     const published = { ...listing, contractVersion: TUS_CONTRACT_VERSION, published: true, updatedAt: new Date().toISOString() }
     return this.store.transaction(async (store) => {
       await store.listings.save(published)
-      const audit = createAudit({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: published.updatedAt }, 'listing.published', 'listing', listingId, 'allowed')
+      const audit = crearAuditoriaMercadoServicios({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: published.updatedAt }, 'listing.published', 'listing', listingId, 'allowed')
       await store.audit.append([audit])
       await store.outbox.append(createOutbox({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: published.updatedAt }, MARKETPLACE_OUTBOX_EVENT_TYPES.LISTING_PUBLISHED, 'listing', listingId, [audit.auditId]))
       return published
@@ -508,7 +508,7 @@ export class TusMarketplaceService {
       {
         if (input.lines.length === 0) throw new MarketplaceError(400, 'INVALID', 'checkout requires at least one marketplace line')
         const commitments: MarketplaceCommitment[] = []
-        const audits: MarketplaceAuditRecord[] = []
+        const audits: RegistroAuditoriaMercadoServicios[] = []
         const productQuantities = new Map<string, number>()
         const expectedVersions = new Map<string, number>()
         for (const line of input.lines) {
@@ -553,7 +553,7 @@ export class TusMarketplaceService {
             ...(line.slotEnd ? { slotEnd: line.slotEnd } : {}),
           }
           commitments.push(commitment)
-          audits.push(createAudit(input, 'commitment.created', 'commitment', commitment.commitmentId, 'allowed'))
+          audits.push(crearAuditoriaMercadoServicios(input, 'commitment.created', 'commitment', commitment.commitmentId, 'allowed'))
         }
         for (const [listingId, quantity] of productQuantities) {
           const listing = await store.listings.find(listingId)
@@ -584,11 +584,11 @@ export class TusMarketplaceService {
   }
 
   async recordDenied(context: TusAuthenticatedTenantContext, action: string, resourceId: string): Promise<void> {
-    await this.recordAudit(context, action, 'authorization', resourceId, 'denied')
+    await this.registrarAuditoriaMercadoServicios(context, action, 'authorization', resourceId, 'denied')
   }
 
-  private async recordAudit(context: TusAuthenticatedTenantContext, action: string, resourceType: MarketplaceAuditRecord['resourceType'], resourceId: string, outcome: MarketplaceAuditRecord['outcome']): Promise<void> {
-    await this.store.audit.append([createAudit({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: new Date().toISOString() }, action, resourceType, resourceId, outcome)])
+  private async registrarAuditoriaMercadoServicios(context: TusAuthenticatedTenantContext, action: string, resourceType: RegistroAuditoriaMercadoServicios['resourceType'], resourceId: string, outcome: RegistroAuditoriaMercadoServicios['outcome']): Promise<void> {
+    await this.store.audit.append([crearAuditoriaMercadoServicios({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, createdAt: new Date().toISOString() }, action, resourceType, resourceId, outcome)])
   }
 
   private requerirHabilitacion(context: TusAuthenticatedTenantContext, capability: 'publication' | 'settlement'): Promise<unknown> {
@@ -603,7 +603,7 @@ export class TusMarketplaceService {
   }
 }
 
-function createAudit(input: Pick<MarketplaceCheckoutCommand, 'tenantId' | 'actorId' | 'correlationId' | 'createdAt'>, action: string, resourceType: MarketplaceAuditRecord['resourceType'], resourceId: string, outcome: MarketplaceAuditRecord['outcome']): MarketplaceAuditRecord {
+function crearAuditoriaMercadoServicios(input: Pick<MarketplaceCheckoutCommand, 'tenantId' | 'actorId' | 'correlationId' | 'createdAt'>, action: string, resourceType: RegistroAuditoriaMercadoServicios['resourceType'], resourceId: string, outcome: RegistroAuditoriaMercadoServicios['outcome']): RegistroAuditoriaMercadoServicios {
   return { auditId: randomUUID(), tenantId: input.tenantId, actorId: input.actorId, correlationId: input.correlationId, action, resourceType, resourceId, outcome, createdAt: input.createdAt }
 }
 
