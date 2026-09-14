@@ -160,10 +160,10 @@ export interface TusPrismaClient {
   session: PrismaSessionDelegate
   idempotencyRecord: PrismaIdempotencyDelegate
   outboxEvent: PrismaOutboxDelegate
-  tusMerchant: PrismaMarketplaceMerchantDelegate
-  tusListing: PrismaMarketplaceListingDelegate
-  tusMarketplaceCommitment: PrismaMarketplaceCommitmentDelegate
-  tusMarketplaceAudit: DelegadoPrismaAuditoriaMercadoServicios
+  prestador: PrismaMarketplaceMerchantDelegate
+  publicacion: PrismaMarketplaceListingDelegate
+  compromisoMercadoServicios: PrismaMarketplaceCommitmentDelegate
+  auditoriaMercadoServicios: DelegadoPrismaAuditoriaMercadoServicios
   tusCalendar: PrismaCalendarDelegate
   tusCalendarRule: PrismaCalendarRuleDelegate
   tusCalendarException: PrismaCalendarExceptionDelegate

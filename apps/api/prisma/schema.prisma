@@ -598,91 +598,95 @@ model TusAuditReference {
   @@index([tenantId, correlationId])
 }
 
-model TusMerchant {
-  id                     String   @id
-  tenantId               String   @unique
-  merchantId             String
-  cohort                 String
-  locationId             String
-  timezone               String
-  staffRoles             String[]
-  operatingPolicyVersion String
-  status                 String
-  createdAt              DateTime
-  updatedAt              DateTime
-  listings               TusListing[]
+model Prestador {
+  id                     String   @id(map: "TusMerchant_pkey")
+  tenantId               String   @unique(map: "TusMerchant_tenantId_key") @map("tenantId")
+  prestadorId            String   @map("merchantId")
+  cohorte                String   @map("cohort")
+  ubicacionId            String   @map("locationId")
+  zonaHoraria            String   @map("timezone")
+  rolesPersonal          String[] @map("staffRoles")
+  versionPoliticaOperativa String @map("operatingPolicyVersion")
+  estado                 String   @map("status")
+  fechaCreacion          DateTime @map("createdAt")
+  fechaActualizacion     DateTime @map("updatedAt")
+  publicaciones          Publicacion[]
 
-  @@index([tenantId, status])
+  @@index([tenantId, estado], map: "TusMerchant_tenantId_status_idx")
+  @@map("TusMerchant")
 }
 
-model TusListing {
-  id                   String       @id
-  contractVersion      String
-  tenantId             String
-  merchantId           String
-  kind                 String
-  name                 String
-  description          String
-  cohort               String
-  locationId           String
-  currency             String
-  price                BigInt
-  availabilityVersion  Int
-  published            Boolean
-  policyVersion        String
-  stock                Int?
-  durationMinutes      Int?
-  capacity             Int?
-  workingHours         Json
-  createdAt            DateTime
-  updatedAt            DateTime
-  merchant             TusMerchant   @relation(fields: [tenantId], references: [tenantId], onDelete: Cascade)
+model Publicacion {
+  id                   String       @id(map: "TusListing_pkey")
+  versionContrato      String       @map("contractVersion")
+  tenantId             String       @map("tenantId")
+  prestadorId          String       @map("merchantId")
+  tipo                 String       @map("kind")
+  nombre               String       @map("name")
+  descripcion          String       @map("description")
+  cohorte              String       @map("cohort")
+  ubicacionId          String       @map("locationId")
+  moneda               String       @map("currency")
+  precio               BigInt       @map("price")
+  versionDisponibilidad Int         @map("availabilityVersion")
+  publicada             Boolean     @map("published")
+  versionPolitica     String       @map("policyVersion")
+  existencias          Int?         @map("stock")
+  duracionMinutos      Int?         @map("durationMinutes")
+  capacidad            Int?         @map("capacity")
+  horarioTrabajo       Json         @map("workingHours")
+  fechaCreacion        DateTime     @map("createdAt")
+  fechaActualizacion    DateTime     @map("updatedAt")
+  prestadorRelacionLegacy Prestador @relation(fields: [tenantId], references: [tenantId], onDelete: Cascade, map: "TusListing_tenantId_fkey")
 
-  @@index([tenantId, published])
-  @@index([tenantId, availabilityVersion])
-  @@index([merchantId, kind])
+  @@index([tenantId, publicada], map: "TusListing_tenantId_published_idx")
+  @@index([tenantId, versionDisponibilidad], map: "TusListing_tenantId_availabilityVersion_idx")
+  @@index([prestadorId, tipo], map: "TusListing_merchantId_kind_idx")
+  @@map("TusListing")
 }
 
-model TusMarketplaceCommitment {
-  id                   String   @id
-  contractVersion      String
-  commitmentId         String
-  cartId               String
-  tenantId             String
-  merchantId           String
-  listingId            String
-  context              String
-  lineIds              String[]
-  quantity             Int
-  amount               BigInt
-  currency             String
-  status               String
-  availabilityVersion  Int
-  policyVersion        String
-  slotStart            DateTime?
-  slotEnd              DateTime?
-  createdAt            DateTime
-  updatedAt            DateTime
+model CompromisoMercadoServicios {
+  id                   String   @id(map: "TusMarketplaceCommitment_pkey")
+  versionContrato      String   @map("contractVersion")
+  compromisoId         String   @map("commitmentId")
+  carritoId            String   @map("cartId")
+  tenantId             String   @map("tenantId")
+  prestadorId          String   @map("merchantId")
+  publicacionId        String   @map("listingId")
+  contexto             String   @map("context")
+  idsLineas            String[] @map("lineIds")
+  cantidad             Int      @map("quantity")
+  monto                BigInt   @map("amount")
+  moneda               String   @map("currency")
+  estado               String   @map("status")
+  versionDisponibilidad Int     @map("availabilityVersion")
+  versionPolitica      String   @map("policyVersion")
+  franjaInicio         DateTime? @map("slotStart")
+  franjaFin            DateTime? @map("slotEnd")
+  fechaCreacion        DateTime @map("createdAt")
+  fechaActualizacion   DateTime @map("updatedAt")
 
-  @@unique([tenantId, commitmentId])
-  @@index([tenantId, createdAt])
-  @@index([listingId, slotStart, slotEnd])
-  @@index([merchantId, context, status])
+  @@unique([tenantId, compromisoId], map: "TusMarketplaceCommitment_tenantId_commitmentId_key")
+  @@index([tenantId, fechaCreacion], map: "TusMarketplaceCommitment_tenantId_createdAt_idx")
+  @@index([publicacionId, franjaInicio, franjaFin], map: "TusMarketplaceCommitment_listingId_slotStart_slotEnd_idx")
+  @@index([prestadorId, contexto, estado], map: "TusMarketplaceCommitment_merchantId_context_status_idx")
+  @@map("TusMarketplaceCommitment")
 }
 
-model TusMarketplaceAudit {
-  id             String   @id
-  tenantId       String
-  actorId        String
-  correlationId  String
-  action         String
-  resourceType   String
-  resourceId     String
-  outcome        String
-  createdAt      DateTime
+model AuditoriaMercadoServicios {
+  id             String   @id(map: "TusMarketplaceAudit_pkey")
+  tenantId       String   @map("tenantId")
+  actorId        String   @map("actorId")
+  correlacionId  String   @map("correlationId")
+  accion         String   @map("action")
+  tipoRecurso    String   @map("resourceType")
+  recursoId      String   @map("resourceId")
+  resultado      String   @map("outcome")
+  fechaCreacion  DateTime @map("createdAt")
 
-  @@index([tenantId, createdAt])
-  @@index([tenantId, resourceType, resourceId])
+  @@index([tenantId, fechaCreacion], map: "TusMarketplaceAudit_tenantId_createdAt_idx")
+  @@index([tenantId, tipoRecurso, recursoId], map: "TusMarketplaceAudit_tenantId_resourceType_resourceId_idx")
+  @@map("TusMarketplaceAudit")
 }
 
 // TUS finance source-of-truth records. Provider state is deliberately separate

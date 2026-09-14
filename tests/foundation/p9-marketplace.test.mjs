@@ -146,8 +146,8 @@ test('PR4 adds the additive marketplace migration and versioned contract schemas
   const checkoutSchema = readFileSync(join(root, 'packages/contracts/schemas/tus/marketplace-checkout.v1.schema.json'), 'utf8')
   const priceMigration = readFileSync(join(root, 'apps/api/prisma/migrations/20260911120000_tus_listing_price_minor/migration.sql'), 'utf8')
 
-  assert.match(schema, /model TusListing[\s\S]*?contractVersion\s+String/)
-  assert.match(schema, /model TusMarketplaceCommitment[\s\S]*?policyVersion\s+String/)
+  assert.match(schema, /model Publicacion[\s\S]*?versionContrato\s+String/)
+  assert.match(schema, /model CompromisoMercadoServicios[\s\S]*?versionPolitica\s+String/)
   assert.match(migration, /ALTER TABLE "TusListing"[\s\S]*?ADD COLUMN IF NOT EXISTS "contractVersion"/)
   assert.match(migration, /ALTER TABLE "TusMarketplaceCommitment"[\s\S]*?ADD COLUMN IF NOT EXISTS "policyVersion"/)
   assert.match(migration, /CREATE INDEX IF NOT EXISTS "TusMarketplaceCommitment_tenantId_listingId_idx"/)
@@ -164,15 +164,15 @@ test('PR1 exposes tenant-scoped marketplace audit and outbox readback from the P
     const { PrismaMarketplaceStore } = (await import('./apps/api/src/tus/adapters/prisma-marketplace.ts')).default
     const writes = []
     const audits = [
-      { id: 'audit-tenant-a', tenantId: 'tenant-a', actorId: 'actor-a', correlationId: 'corr-a', action: 'listing.published', resourceType: 'listing', resourceId: 'listing-a', outcome: 'allowed', createdAt: new Date('2026-08-27T12:00:00.000Z') },
-      { id: 'audit-tenant-b', tenantId: 'tenant-b', actorId: 'actor-b', correlationId: 'corr-b', action: 'listing.published', resourceType: 'listing', resourceId: 'listing-b', outcome: 'allowed', createdAt: new Date('2026-08-27T12:00:00.000Z') },
+      { id: 'audit-tenant-a', tenantId: 'tenant-a', actorId: 'actor-a', correlacionId: 'corr-a', accion: 'listing.published', tipoRecurso: 'listing', recursoId: 'listing-a', resultado: 'allowed', fechaCreacion: new Date('2026-08-27T12:00:00.000Z') },
+      { id: 'audit-tenant-b', tenantId: 'tenant-b', actorId: 'actor-b', correlacionId: 'corr-b', accion: 'listing.published', tipoRecurso: 'listing', recursoId: 'listing-b', resultado: 'allowed', fechaCreacion: new Date('2026-08-27T12:00:00.000Z') },
     ]
     const outbox = [
       { id: 'event-tenant-a', tenantId: 'tenant-a', aggregateType: 'listing', aggregateId: 'listing-a', eventType: 'tus.marketplace.listing.published', payload: { auditIds: ['audit-tenant-a'], correlationId: 'corr-a' }, status: 'pending', attempts: 0, createdAt: new Date('2026-08-27T12:00:00.000Z') },
       { id: 'event-tenant-b', tenantId: 'tenant-b', aggregateType: 'listing', aggregateId: 'listing-b', eventType: 'tus.marketplace.listing.published', payload: { auditIds: ['audit-tenant-b'], correlationId: 'corr-b' }, status: 'pending', attempts: 0, createdAt: new Date('2026-08-27T12:00:00.000Z') },
     ]
     const client = {
-      tusMarketplaceAudit: {
+      auditoriaMercadoServicios: {
         findMany: async ({ where }) => audits.filter((row) => row.tenantId === where.tenantId),
         createMany: async ({ data }) => (writes.push(...data), { count: data.length }),
       },
@@ -189,7 +189,8 @@ test('PR1 exposes tenant-scoped marketplace audit and outbox readback from the P
   assert.deepEqual(result.tenantOutbox.map(({ tenantId, correlationId, aggregateId, eventType }) => ({ tenantId, correlationId, aggregateId, eventType })), [{ tenantId: 'tenant-a', correlationId: 'corr-a', aggregateId: 'listing-a', eventType: 'tus.marketplace.listing.published' }])
   assert.equal(result.writes[0].id, 'audit-write')
   assert.equal('auditId' in result.writes[0], false)
-  assert.equal(result.writes[0].createdAt, '2026-08-27T12:00:00.000Z')
+  assert.equal('createdAt' in result.writes[0], false)
+  assert.equal(result.writes[0].fechaCreacion, '2026-08-27T12:00:00.000Z')
 })
 
 test('PR1 looks up marketplace commitments through the Prisma primary key', () => {
@@ -197,7 +198,7 @@ test('PR1 looks up marketplace commitments through the Prisma primary key', () =
     const { PrismaMarketplaceStore } = (await import('./apps/api/src/tus/adapters/prisma-marketplace.ts')).default
     const calls = []
     const client = {
-      tusMarketplaceCommitment: {
+      compromisoMercadoServicios: {
         findUnique: async (args) => (calls.push(args), null),
       },
     }

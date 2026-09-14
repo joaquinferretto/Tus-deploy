@@ -45,7 +45,7 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
   }
 
   readonly audit = {
-    append: async (record: CalendarAuditRecord) => { await this.client.tusMarketplaceAudit.createMany({ data: [{ id: record.auditId, tenantId: record.tenantId, actorId: record.actorId, correlationId: record.correlationId, action: record.action, resourceType: 'calendar', resourceId: record.resourceId, outcome: record.outcome, createdAt: new Date(record.createdAt) }] }) },
+    append: async (record: CalendarAuditRecord) => { await this.client.auditoriaMercadoServicios.createMany({ data: [{ id: record.auditId, tenantId: record.tenantId, actorId: record.actorId, correlacionId: record.correlationId, accion: record.action, tipoRecurso: 'calendar', recursoId: record.resourceId, resultado: record.outcome, fechaCreacion: new Date(record.createdAt) }] }) },
     list: (_tenantId: string) => [] as CalendarAuditRecord[],
   }
 
