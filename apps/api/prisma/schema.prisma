@@ -964,105 +964,111 @@ model AuditoriaEntrega {
   @@map("TusDeliveryAudit")
 }
 
-model TusPosOperation {
-  id              String   @id
-  tenantId        String
-  operationId     String
-  idempotencyKey  String
-  schemaVersion   String
-  actorId         String
-  deviceId        String
-  shiftId         String
-  createdAt       DateTime
-  expectedVersion Int?
-  kind            String
-  context         String
-  amount          BigInt
-  currency        String
-  response        Json?
+model OperacionPOS {
+  id                String   @id(map: "TusPosOperation_pkey")
+  tenantId          String   @map("tenantId")
+  operacionId       String   @map("operationId")
+  claveIdempotencia String   @map("idempotencyKey")
+  versionEsquema    String   @map("schemaVersion")
+  actorId           String   @map("actorId")
+  dispositivoId     String   @map("deviceId")
+  turnoId           String   @map("shiftId")
+  fechaCreacion     DateTime @map("createdAt")
+  versionEsperada   Int?     @map("expectedVersion")
+  tipo              String   @map("kind")
+  contexto          String   @map("context")
+  monto             BigInt   @map("amount")
+  moneda            String   @map("currency")
+  respuesta         Json?    @map("response")
 
-  @@unique([tenantId, operationId])
-  @@unique([tenantId, idempotencyKey])
-  @@index([tenantId, shiftId, createdAt])
-  @@index([tenantId, context, kind])
+  @@unique([tenantId, operacionId], map: "TusPosOperation_tenantId_operationId_key")
+  @@unique([tenantId, claveIdempotencia], map: "TusPosOperation_tenantId_idempotencyKey_key")
+  @@index([tenantId, turnoId, fechaCreacion], map: "TusPosOperation_tenantId_shiftId_createdAt_idx")
+  @@index([tenantId, contexto, tipo], map: "TusPosOperation_tenantId_context_kind_idx")
+  @@map("TusPosOperation")
 }
 
-model TusPosVersion {
-  id        String   @id
-  tenantId  String
-  shiftId   String
-  version   Int      @default(0)
-  createdAt DateTime
-  updatedAt DateTime
+model VersionPOS {
+  id                String   @id(map: "TusPosVersion_pkey")
+  tenantId          String   @map("tenantId")
+  turnoId           String   @map("shiftId")
+  version           Int      @default(0)
+  fechaCreacion     DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, shiftId])
-  @@index([tenantId, shiftId, version])
+  @@unique([tenantId, turnoId], map: "TusPosVersion_tenantId_shiftId_key")
+  @@index([tenantId, turnoId, version], map: "TusPosVersion_tenantId_shiftId_version_idx")
+  @@map("TusPosVersion")
 }
 
-model TusPosReceipt {
-  id             String   @id
-  tenantId       String
-  receiptId      String
-  operationId    String
-  kind           String
-  context        String
-  amount         BigInt
-  currency       String
-  status         String
-  source         String
-  providerCapture String
-  settlement     String
-  integrityHash  String
-  createdAt      DateTime
+model ComprobantePOS {
+  id               String   @id(map: "TusPosReceipt_pkey")
+  tenantId         String   @map("tenantId")
+  comprobanteId    String   @map("receiptId")
+  operacionId      String   @map("operationId")
+  tipo             String   @map("kind")
+  contexto         String   @map("context")
+  monto            BigInt   @map("amount")
+  moneda           String   @map("currency")
+  estado           String   @map("status")
+  origen           String   @map("source")
+  capturaProveedor String   @map("providerCapture")
+  liquidacion      String   @map("settlement")
+  hashIntegridad   String   @map("integrityHash")
+  fechaCreacion    DateTime @map("createdAt")
 
-  @@unique([tenantId, receiptId])
-  @@index([tenantId, operationId])
-  @@index([tenantId, operationId, createdAt])
+  @@unique([tenantId, comprobanteId], map: "TusPosReceipt_tenantId_receiptId_key")
+  @@index([tenantId, operacionId], map: "TusPosReceipt_tenantId_operationId_idx")
+  @@index([tenantId, operacionId, fechaCreacion], map: "TusPosReceipt_tenantId_operationId_createdAt_idx")
+  @@map("TusPosReceipt")
 }
 
-model TusPosDevice {
-  id          String   @id
-  tenantId    String
-  deviceId    String
-  label       String
-  fingerprint String
-  status      String
-  createdAt   DateTime
-  updatedAt   DateTime
+model DispositivoPOS {
+  id                String   @id(map: "TusPosDevice_pkey")
+  tenantId          String   @map("tenantId")
+  dispositivoId     String   @map("deviceId")
+  etiqueta          String   @map("label")
+  huella            String   @map("fingerprint")
+  estado            String   @map("status")
+  fechaCreacion     DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, deviceId])
-  @@index([tenantId, status])
+  @@unique([tenantId, dispositivoId], map: "TusPosDevice_tenantId_deviceId_key")
+  @@index([tenantId, estado], map: "TusPosDevice_tenantId_status_idx")
+  @@map("TusPosDevice")
 }
 
-model TusPosSession {
-  id        String   @id
-  tenantId  String
-  sessionId String
-  deviceId  String
-  actorId   String
-  shiftId   String
-  status    String
-  openedAt  DateTime
-  closedAt  DateTime?
+model SesionPOS {
+  id            String   @id(map: "TusPosSession_pkey")
+  tenantId      String   @map("tenantId")
+  sesionId      String   @map("sessionId")
+  dispositivoId String   @map("deviceId")
+  actorId       String   @map("actorId")
+  turnoId       String   @map("shiftId")
+  estado        String   @map("status")
+  fechaApertura DateTime @map("openedAt")
+  fechaCierre   DateTime? @map("closedAt")
 
-  @@unique([tenantId, sessionId])
-  @@index([tenantId, deviceId, shiftId, status])
+  @@unique([tenantId, sesionId], map: "TusPosSession_tenantId_sessionId_key")
+  @@index([tenantId, dispositivoId, turnoId, estado], map: "TusPosSession_tenantId_deviceId_shiftId_status_idx")
+  @@map("TusPosSession")
 }
 
-model TusPosConflict {
-  id              String   @id
-  tenantId        String
-  conflictId      String
-  operationId     String
-  reason          String
-  expectedVersion Int?
-  actualVersion   Int?
-  status          String
-  createdAt       DateTime
+model ConflictoPOS {
+  id              String   @id(map: "TusPosConflict_pkey")
+  tenantId        String   @map("tenantId")
+  conflictoId     String   @map("conflictId")
+  operacionId     String   @map("operationId")
+  motivo          String   @map("reason")
+  versionEsperada Int?     @map("expectedVersion")
+  versionActual   Int?     @map("actualVersion")
+  estado          String   @map("status")
+  fechaCreacion   DateTime @map("createdAt")
 
-  @@unique([tenantId, conflictId])
-  @@index([tenantId, operationId, status])
-  @@index([tenantId, status, createdAt])
+  @@unique([tenantId, conflictoId], map: "TusPosConflict_tenantId_conflictId_key")
+  @@index([tenantId, operacionId, estado], map: "TusPosConflict_tenantId_operationId_status_idx")
+  @@index([tenantId, estado, fechaCreacion], map: "TusPosConflict_tenantId_status_createdAt_idx")
+  @@map("TusPosConflict")
 }
 
 model TusDeliveryOutbox {
@@ -1102,19 +1108,20 @@ model TusPosOutbox {
   @@index([tenantId, aggregateId, status])
 }
 
-model TusPosAudit {
-  id            String   @id
-  tenantId      String
-  auditId       String
-  actorId       String
-  correlationId String
-  action        String
-  operationId   String
-  outcome       String
-  createdAt     DateTime
+model AuditoriaPOS {
+  id            String   @id(map: "TusPosAudit_pkey")
+  tenantId      String   @map("tenantId")
+  auditoriaId  String   @map("auditId")
+  actorId       String   @map("actorId")
+  correlacionId String   @map("correlationId")
+  accion        String   @map("action")
+  operacionId   String   @map("operationId")
+  resultado     String   @map("outcome")
+  fechaCreacion DateTime @map("createdAt")
 
-  @@unique([tenantId, auditId])
-  @@index([tenantId, operationId, createdAt])
+  @@unique([tenantId, auditoriaId], map: "TusPosAudit_tenantId_auditId_key")
+  @@index([tenantId, operacionId, fechaCreacion], map: "TusPosAudit_tenantId_operationId_createdAt_idx")
+  @@map("TusPosAudit")
 }
 
 model TusHardeningFixture {

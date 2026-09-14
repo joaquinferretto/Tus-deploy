@@ -134,10 +134,10 @@ test('PR7 publishes delivery/POS contracts and additive durable conflict/session
 
   assert.equal(result.operation, 'operation-contract-9')
   assert.equal(result.receipt, 'receipt-contract-9')
-  assert.match(schema, /model TusPosDevice[\s\S]*?deviceId\s+String/)
-  assert.match(schema, /model TusPosSession[\s\S]*?shiftId\s+String/)
-  assert.match(schema, /model TusPosConflict[\s\S]*?reason\s+String/)
-  assert.match(schema, /integrityHash\s+String/)
+  assert.match(schema, /model DispositivoPOS[\s\S]*?dispositivoId\s+String/)
+  assert.match(schema, /model SesionPOS[\s\S]*?turnoId\s+String/)
+  assert.match(schema, /model ConflictoPOS[\s\S]*?motivo\s+String/)
+  assert.match(schema, /model ComprobantePOS[\s\S]*?hashIntegridad\s+String/)
   assert.match(migration, /CREATE TABLE "TusPosDevice"/)
   assert.match(migration, /CREATE TABLE "TusPosSession"/)
   assert.match(migration, /CREATE TABLE "TusPosConflict"/)
@@ -283,7 +283,7 @@ test('PR2 uses a durable tenant-and-shift version row instead of counting operat
   const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
   const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260829120000_tus_pos_runtime_correction/migration.sql'), 'utf8')
 
-  assert.match(schema, /model TusPosVersion[\s\S]*?tenantId\s+String[\s\S]*?shiftId\s+String[\s\S]*?version\s+Int/)
+  assert.match(schema, /model VersionPOS[\s\S]*?tenantId\s+String[\s\S]*?turnoId\s+String[\s\S]*?version\s+Int/)
   assert.match(migration, /CREATE TABLE "TusPosVersion"/)
   assert.match(migration, /tenantId.*shiftId/)
   assert.match(migration, /version.*INTEGER/i)
@@ -321,15 +321,15 @@ test('PR1 exposes tenant-scoped POS audit and outbox readback from the Prisma ad
   const result = runTypeScriptScenario(`
     const { PrismaPosStore } = (await import('./apps/api/src/tus/adapters/delivery-pos.ts')).default
     const audits = [
-      { auditId: 'audit-pos-a', tenantId: 'tenant-a', actorId: 'actor-a', correlationId: 'corr-a', action: 'pos.operation.accepted', operationId: 'operation-a', outcome: 'allowed', createdAt: new Date('2026-08-27T12:00:00.000Z') },
-      { auditId: 'audit-pos-b', tenantId: 'tenant-b', actorId: 'actor-b', correlationId: 'corr-b', action: 'pos.operation.accepted', operationId: 'operation-b', outcome: 'allowed', createdAt: new Date('2026-08-27T12:00:00.000Z') },
+      { auditoriaId: 'audit-pos-a', tenantId: 'tenant-a', actorId: 'actor-a', correlacionId: 'corr-a', accion: 'pos.operation.accepted', operacionId: 'operation-a', resultado: 'allowed', fechaCreacion: new Date('2026-08-27T12:00:00.000Z') },
+      { auditoriaId: 'audit-pos-b', tenantId: 'tenant-b', actorId: 'actor-b', correlacionId: 'corr-b', accion: 'pos.operation.accepted', operacionId: 'operation-b', resultado: 'allowed', fechaCreacion: new Date('2026-08-27T12:00:00.000Z') },
     ]
     const outbox = [
       { eventId: 'event-pos-a', tenantId: 'tenant-a', eventType: 'pos.operation.accepted', aggregateId: 'operation-a', payload: { status: 'accepted' }, status: 'pending', attempts: 0, createdAt: new Date('2026-08-27T12:00:00.000Z') },
       { eventId: 'event-pos-b', tenantId: 'tenant-b', eventType: 'pos.operation.accepted', aggregateId: 'operation-b', payload: { status: 'accepted' }, status: 'pending', attempts: 0, createdAt: new Date('2026-08-27T12:00:00.000Z') },
     ]
     const client = {
-      tusPosAudit: { findMany: async ({ where }) => audits.filter((row) => row.tenantId === where.tenantId) },
+      auditoriaPOS: { findMany: async ({ where }) => audits.filter((row) => row.tenantId === where.tenantId) },
       tusPosOutbox: { findMany: async ({ where }) => outbox.filter((row) => row.tenantId === where.tenantId) },
     }
     const store = new PrismaPosStore(client)
@@ -342,12 +342,35 @@ test('PR1 exposes tenant-scoped POS audit and outbox readback from the Prisma ad
   assert.deepEqual(result.tenantOutbox.map(({ tenantId, aggregateId, eventType }) => ({ tenantId, aggregateId, eventType })), [{ tenantId: 'tenant-a', aggregateId: 'operation-a', eventType: 'pos.operation.accepted' }])
 })
 
+test('PR1 reads and writes idempotency through normalized POS operation fields', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaPosStore } = (await import('./apps/api/src/tus/adapters/delivery-pos.ts')).default
+    const response = { status: 'conflict', operationId: 'operation-a', reason: 'version_conflict' }
+    const calls = []
+    const client = {
+      operacionPOS: {
+        findUnique: async (input) => { calls.push(input); return { respuesta: { fingerprint: 'fingerprint-a', response } } },
+        update: async (input) => { calls.push(input); return {} },
+      },
+    }
+    const store = new PrismaPosStore(client)
+    const replay = await store.getIdempotency('tenant-a', 'key-a')
+    await store.saveIdempotency('tenant-a', 'key-a', { fingerprint: 'fingerprint-a', response })
+    console.log(JSON.stringify({ replay, calls }))
+  `)
+
+  assert.deepEqual(result.replay, { fingerprint: 'fingerprint-a', response: { status: 'conflict', operationId: 'operation-a', reason: 'version_conflict' } })
+  assert.deepEqual(result.calls[0].where, { tenantId_claveIdempotencia: { tenantId: 'tenant-a', claveIdempotencia: 'key-a' } })
+  assert.deepEqual(result.calls[1].where, { tenantId_operacionId: { tenantId: 'tenant-a', operacionId: 'operation-a' } })
+  assert.deepEqual(result.calls[1].data.respuesta, { fingerprint: 'fingerprint-a', response: { status: 'conflict', operationId: 'operation-a', reason: 'version_conflict' } })
+})
+
 test('PR3 maps a durable POS version race to a deterministic version conflict', () => {
   const result = runTypeScriptScenario(`
     const { PrismaPosStore } = (await import('./apps/api/src/tus/adapters/delivery-pos.ts')).default
     const client = {
-      tusPosVersion: {
-        findUnique: async () => ({ tenantId: 'tenant-a', shiftId: 'shift-a', version: 2 }),
+      versionPOS: {
+        findUnique: async () => ({ tenantId: 'tenant-a', turnoId: 'shift-a', version: 2 }),
         updateMany: async () => ({ count: 0 }),
       },
     }
