@@ -1230,47 +1230,50 @@ model TusSupportOutbox {
   @@index([tenantId, correlationId])
 }
 
-model TusWhatsAppAction {
-  id             String   @id
-  tenantId       String
-  idempotencyKey String
-  requestHash    String
-  status         String
-  response       Json?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+model AccionWhatsApp {
+  id                 String   @id(map: "TusWhatsAppAction_pkey")
+  tenantId           String   @map("tenantId")
+  claveIdempotencia  String   @map("idempotencyKey")
+  hashSolicitud      String   @map("requestHash")
+  estado             String   @map("status")
+  respuesta          Json?    @map("response")
+  fechaCreacion      DateTime @default(now()) @map("createdAt")
+  fechaActualizacion DateTime @updatedAt @map("updatedAt")
 
-  @@unique([tenantId, idempotencyKey])
-  @@index([tenantId, createdAt])
+  @@unique([tenantId, claveIdempotencia], map: "TusWhatsAppAction_tenantId_idempotencyKey_key")
+  @@index([tenantId, fechaCreacion], map: "TusWhatsAppAction_tenantId_createdAt_idx")
+  @@map("TusWhatsAppAction")
 }
 
-model TusWhatsAppConfirmation {
-  id             String   @id
-  confirmationId String
-  tenantId       String
-  senderId       String
-  expiresAt      DateTime
-  consumedAt     DateTime?
-  items          Json
-  createdAt      DateTime @default(now())
+model ConfirmacionWhatsApp {
+  id              String   @id(map: "TusWhatsAppConfirmation_pkey")
+  confirmacionId  String   @map("confirmationId")
+  tenantId        String   @map("tenantId")
+  remitenteId     String   @map("senderId")
+  fechaExpiracion DateTime @map("expiresAt")
+  fechaConsumo    DateTime? @map("consumedAt")
+  elementos       Json     @map("items")
+  fechaCreacion   DateTime @default(now()) @map("createdAt")
 
-  @@unique([tenantId, confirmationId])
-  @@index([tenantId, senderId, expiresAt])
+  @@unique([tenantId, confirmacionId], map: "TusWhatsAppConfirmation_tenantId_confirmationId_key")
+  @@index([tenantId, remitenteId, fechaExpiracion], map: "TusWhatsAppConfirmation_tenantId_senderId_expiresAt_idx")
+  @@map("TusWhatsAppConfirmation")
 }
 
-model TusWhatsAppAudit {
-  id            String   @id
-  tenantId      String
-  action        String
-  outcome       String
-  actorId       String
-  senderId      String
-  correlationId String
-  createdAt     DateTime
-  retentionUntil DateTime?
+model AuditoriaWhatsApp {
+  id            String   @id(map: "TusWhatsAppAudit_pkey")
+  tenantId      String   @map("tenantId")
+  accion        String   @map("action")
+  resultado     String   @map("outcome")
+  actorId       String   @map("actorId")
+  remitenteId   String   @map("senderId")
+  correlacionId String   @map("correlationId")
+  fechaCreacion DateTime @map("createdAt")
+  retencionHasta DateTime? @map("retentionUntil")
 
-  @@index([tenantId, createdAt])
-  @@index([tenantId, correlationId])
+  @@index([tenantId, fechaCreacion], map: "TusWhatsAppAudit_tenantId_createdAt_idx")
+  @@index([tenantId, correlacionId], map: "TusWhatsAppAudit_tenantId_correlationId_idx")
+  @@map("TusWhatsAppAudit")
 }
 
 model TusOperationsRecord {
@@ -1432,53 +1435,56 @@ model TusPaymentWebhookEvent {
   @@index([tenantId, status, occurredAt])
 }
 
-model TusWhatsAppConsent {
-  id         String   @id
-  tenantId   String
-  recipientId String
-  recipientType String
-  status     String
-  source     String
-  grantedAt  DateTime
-  revokedAt  DateTime?
-  createdAt  DateTime
-  updatedAt  DateTime
+model ConsentimientoWhatsApp {
+  id                 String   @id(map: "TusWhatsAppConsent_pkey")
+  tenantId           String   @map("tenantId")
+  destinatarioId     String   @map("recipientId")
+  tipoDestinatario   String   @map("recipientType")
+  estado             String   @map("status")
+  origen             String   @map("source")
+  fechaOtorgamiento  DateTime @map("grantedAt")
+  fechaRevocacion    DateTime? @map("revokedAt")
+  fechaCreacion      DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, recipientId])
-  @@index([tenantId, status])
+  @@unique([tenantId, destinatarioId], map: "TusWhatsAppConsent_tenantId_recipientId_key")
+  @@index([tenantId, estado], map: "TusWhatsAppConsent_tenantId_status_idx")
+  @@map("TusWhatsAppConsent")
 }
 
-model TusWhatsAppMessage {
-  id             String   @id
-  tenantId       String
-  messageId      String
-  recipientId    String
-  template       String
-  templateVersion String
-  consentId      String
-  requestHash    String
-  variables      Json?
-  status         String
-  correlationId  String
-  retentionUntil DateTime?
-  createdAt      DateTime
-  updatedAt      DateTime
+model MensajeWhatsApp {
+  id                 String   @id(map: "TusWhatsAppMessage_pkey")
+  tenantId           String   @map("tenantId")
+  mensajeId          String   @map("messageId")
+  destinatarioId     String   @map("recipientId")
+  plantilla          String   @map("template")
+  versionPlantilla   String   @map("templateVersion")
+  consentimientoId  String   @map("consentId")
+  hashSolicitud      String   @map("requestHash")
+  variables          Json?    @map("variables")
+  estado             String   @map("status")
+  correlacionId      String   @map("correlationId")
+  retencionHasta     DateTime? @map("retentionUntil")
+  fechaCreacion      DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, messageId])
-  @@index([tenantId, recipientId, status])
+  @@unique([tenantId, mensajeId], map: "TusWhatsAppMessage_tenantId_messageId_key")
+  @@index([tenantId, destinatarioId, estado], map: "TusWhatsAppMessage_tenantId_recipientId_status_idx")
+  @@map("TusWhatsAppMessage")
 }
 
-model TusWhatsAppWebhookEvent {
-  id             String   @id
-  tenantId       String
-  providerEventId String
-  signature      String
-  occurredAt     DateTime
-  status         String
-  createdAt      DateTime
+model EventoWebhookWhatsApp {
+  id               String   @id(map: "TusWhatsAppWebhookEvent_pkey")
+  tenantId         String   @map("tenantId")
+  eventoProveedorId String  @map("providerEventId")
+  firma            String   @map("signature")
+  fechaOcurrencia  DateTime @map("occurredAt")
+  estado           String   @map("status")
+  fechaCreacion    DateTime @map("createdAt")
 
-  @@unique([tenantId, providerEventId])
-  @@index([tenantId, status, occurredAt])
+  @@unique([tenantId, eventoProveedorId], map: "TusWhatsAppWebhookEvent_tenantId_providerEventId_key")
+  @@index([tenantId, estado, fechaOcurrencia], map: "TusWhatsAppWebhookEvent_tenantId_status_occurredAt_idx")
+  @@map("TusWhatsAppWebhookEvent")
 }
 
 model TusWhatsAppOutbox {

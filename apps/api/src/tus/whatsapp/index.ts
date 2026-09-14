@@ -277,27 +277,27 @@ export class InMemoryWhatsAppActionStore implements PuertoAlmacenAccionWhatsApp 
 }
 
 interface ClientePrismaWhatsApp {
-  tusWhatsAppAction: {
-    findUnique(input: { where: { tenantId_idempotencyKey: { tenantId: string; idempotencyKey: string } } }): Promise<Record<string, unknown> | null>
-    findFirst(input: { where: { idempotencyKey: string } }): Promise<Record<string, unknown> | null>
+  accionWhatsApp: {
+    findUnique(input: { where: { tenantId_claveIdempotencia: { tenantId: string; claveIdempotencia: string } } }): Promise<Record<string, unknown> | null>
+    findFirst(input: { where: { claveIdempotencia: string } }): Promise<Record<string, unknown> | null>
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
-    update(input: { where: { tenantId_idempotencyKey: { tenantId: string; idempotencyKey: string } }; data: Record<string, unknown> }): Promise<Record<string, unknown>>
+    update(input: { where: { tenantId_claveIdempotencia: { tenantId: string; claveIdempotencia: string } }; data: Record<string, unknown> }): Promise<Record<string, unknown>>
   }
-  tusWhatsAppConfirmation: {
-    upsert(input: { where: { tenantId_confirmationId: { tenantId: string; confirmationId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
-    findUnique(input: { where: { tenantId_confirmationId: { tenantId: string; confirmationId: string } } }): Promise<Record<string, unknown> | null>
+  confirmacionWhatsApp: {
+    upsert(input: { where: { tenantId_confirmacionId: { tenantId: string; confirmacionId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
+    findUnique(input: { where: { tenantId_confirmacionId: { tenantId: string; confirmacionId: string } } }): Promise<Record<string, unknown> | null>
     updateMany(input: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>
   }
-  tusWhatsAppAudit: {
+  auditoriaWhatsApp: {
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
   }
-  tusWhatsAppConsent?: {
-    upsert(input: { where: { tenantId_recipientId: { tenantId: string; recipientId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
-    findUnique(input: { where: { tenantId_recipientId: { tenantId: string; recipientId: string } } }): Promise<Record<string, unknown> | null>
+  consentimientoWhatsApp?: {
+    upsert(input: { where: { tenantId_destinatarioId: { tenantId: string; destinatarioId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
+    findUnique(input: { where: { tenantId_destinatarioId: { tenantId: string; destinatarioId: string } } }): Promise<Record<string, unknown> | null>
   }
-  tusWhatsAppMessage?: {
-    upsert(input: { where: { tenantId_messageId: { tenantId: string; messageId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
-    findUnique(input: { where: { tenantId_messageId: { tenantId: string; messageId: string } } }): Promise<Record<string, unknown> | null>
+  mensajeWhatsApp?: {
+    upsert(input: { where: { tenantId_mensajeId: { tenantId: string; mensajeId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
+    findUnique(input: { where: { tenantId_mensajeId: { tenantId: string; mensajeId: string } } }): Promise<Record<string, unknown> | null>
   }
   tusWhatsAppOutbox?: {
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
@@ -315,52 +315,52 @@ export class PrismaWhatsAppActionStore implements PuertoAlmacenAccionWhatsApp {
   }
 
   async claim(tenantId: string, key: string, requestHash: string): Promise<'claimed' | 'replay' | 'in_progress' | 'conflict'> {
-    const existing = await this.client.tusWhatsAppAction.findUnique({ where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: key } } })
-    const foreign = await this.client.tusWhatsAppAction.findFirst({ where: { idempotencyKey: key } })
+    const existing = await this.client.accionWhatsApp.findUnique({ where: { tenantId_claveIdempotencia: { tenantId, claveIdempotencia: key } } })
+    const foreign = await this.client.accionWhatsApp.findFirst({ where: { claveIdempotencia: key } })
     if (foreign && String(foreign['tenantId']) !== tenantId) return 'conflict'
     if (!existing) {
       try {
-        await this.client.tusWhatsAppAction.create({ data: { id: `wa-action-${tenantId}-${key}`, tenantId, idempotencyKey: key, requestHash, status: 'pending', response: null, createdAt: new Date(), updatedAt: new Date() } })
+        await this.client.accionWhatsApp.create({ data: { id: `wa-action-${tenantId}-${key}`, tenantId, claveIdempotencia: key, hashSolicitud: requestHash, estado: 'pending', respuesta: null, fechaCreacion: new Date(), fechaActualizacion: new Date() } })
         return 'claimed'
       } catch {
         return this.claim(tenantId, key, requestHash)
       }
     }
-    if (String(existing['requestHash']) !== requestHash) return 'conflict'
-    return existing['status'] === 'completed' && existing['response'] ? 'replay' : 'in_progress'
+    if (String(existing['hashSolicitud']) !== requestHash) return 'conflict'
+    return existing['estado'] === 'completed' && existing['respuesta'] ? 'replay' : 'in_progress'
   }
 
   async response(tenantId: string, key: string): Promise<ResultadoAccionWhatsApp | null> {
-    const row = await this.client.tusWhatsAppAction.findUnique({ where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: key } } })
-    return row?.['response'] ? row['response'] as ResultadoAccionWhatsApp : null
+    const row = await this.client.accionWhatsApp.findUnique({ where: { tenantId_claveIdempotencia: { tenantId, claveIdempotencia: key } } })
+    return row?.['respuesta'] ? row['respuesta'] as ResultadoAccionWhatsApp : null
   }
 
   async complete(tenantId: string, key: string, response: ResultadoAccionWhatsApp): Promise<void> {
-    await this.client.tusWhatsAppAction.update({ where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: key } }, data: { status: 'completed', response, updatedAt: new Date() } })
+    await this.client.accionWhatsApp.update({ where: { tenantId_claveIdempotencia: { tenantId, claveIdempotencia: key } }, data: { estado: 'completed', respuesta: response, fechaActualizacion: new Date() } })
   }
 
   async saveConfirmation(value: ConfirmacionWhatsApp): Promise<void> {
-    await this.client.tusWhatsAppConfirmation.upsert({
-      where: { tenantId_confirmationId: { tenantId: value.tenantId, confirmationId: value.confirmationId } },
-      create: { id: `${value.tenantId}:${value.confirmationId}`, confirmationId: value.confirmationId, tenantId: value.tenantId, senderId: value.senderId, expiresAt: new Date(value.expiresAt), consumedAt: null, items: value.items, createdAt: new Date() },
-      update: { senderId: value.senderId, expiresAt: new Date(value.expiresAt), consumedAt: null, items: value.items },
+    await this.client.confirmacionWhatsApp.upsert({
+      where: { tenantId_confirmacionId: { tenantId: value.tenantId, confirmacionId: value.confirmationId } },
+      create: { id: `${value.tenantId}:${value.confirmationId}`, confirmacionId: value.confirmationId, tenantId: value.tenantId, remitenteId: value.senderId, fechaExpiracion: new Date(value.expiresAt), fechaConsumo: null, elementos: value.items, fechaCreacion: new Date() },
+      update: { remitenteId: value.senderId, fechaExpiracion: new Date(value.expiresAt), fechaConsumo: null, elementos: value.items },
     })
   }
 
   async getConfirmation(tenantId: string, confirmationId: string): Promise<ConfirmacionWhatsApp | null> {
-    const row = await this.client.tusWhatsAppConfirmation.findUnique({ where: { tenantId_confirmationId: { tenantId, confirmationId } } })
+    const row = await this.client.confirmacionWhatsApp.findUnique({ where: { tenantId_confirmacionId: { tenantId, confirmacionId: confirmationId } } })
     if (!row) return null
-    return { confirmationId: String(row['confirmationId']), tenantId: String(row['tenantId']), senderId: String(row['senderId']), expiresAt: new Date(String(row['expiresAt'])).getTime(), consumed: row['consumedAt'] !== null, items: row['items'] as ItemDescubrimientoWhatsApp[] }
+    return { confirmationId: String(row['confirmacionId']), tenantId: String(row['tenantId']), senderId: String(row['remitenteId']), expiresAt: new Date(String(row['fechaExpiracion'])).getTime(), consumed: row['fechaConsumo'] !== null, items: row['elementos'] as ItemDescubrimientoWhatsApp[] }
   }
 
   async consumeConfirmation(tenantId: string, confirmationId: string, senderId: string, now: number): Promise<boolean> {
-    const result = await this.client.tusWhatsAppConfirmation.updateMany({ where: { tenantId, confirmationId, senderId, consumedAt: null, expiresAt: { gt: new Date(now) } }, data: { consumedAt: new Date(now) } })
+    const result = await this.client.confirmacionWhatsApp.updateMany({ where: { tenantId, confirmacionId: confirmationId, remitenteId: senderId, fechaConsumo: null, fechaExpiracion: { gt: new Date(now) } }, data: { fechaConsumo: new Date(now) } })
     return result.count === 1
   }
 
   async registrarAuditoriaWhatsApp(value: RegistroAuditoriaAccionWhatsApp): Promise<void> {
     this.audits.push(clone(value))
-    await this.client.tusWhatsAppAudit.create({ data: { id: `${value.tenantId}:${value.action}:${value.createdAt}:${this.audits.length}`, ...value, createdAt: new Date(value.createdAt) } })
+    await this.client.auditoriaWhatsApp.create({ data: { id: `${value.tenantId}:${value.action}:${value.createdAt}:${this.audits.length}`, tenantId: value.tenantId, accion: value.action, resultado: value.outcome, actorId: value.actorId, remitenteId: value.senderId, correlacionId: value.correlationId, fechaCreacion: new Date(value.createdAt), retencionHasta: value.retentionUntil ? new Date(value.retentionUntil) : null } })
   }
 
   listAudits(tenantId: string): RegistroAuditoriaAccionWhatsApp[] {
@@ -368,35 +368,35 @@ export class PrismaWhatsAppActionStore implements PuertoAlmacenAccionWhatsApp {
   }
 
   async saveConsent(value: ConsentimientoWhatsApp): Promise<void> {
-    if (!this.client.tusWhatsAppConsent) return
-    await this.client.tusWhatsAppConsent.upsert({
-      where: { tenantId_recipientId: { tenantId: value.tenantId, recipientId: value.recipientId } },
-      create: { id: value.consentId, ...value, grantedAt: new Date(value.grantedAt), revokedAt: value.revokedAt ? new Date(value.revokedAt) : null, updatedAt: new Date(value.updatedAt), retentionUntil: new Date(value.retentionUntil) },
-      update: { recipientType: value.recipientType, status: value.status, source: value.source, grantedAt: new Date(value.grantedAt), revokedAt: value.revokedAt ? new Date(value.revokedAt) : null, updatedAt: new Date(value.updatedAt), retentionUntil: new Date(value.retentionUntil) },
+    if (!this.client.consentimientoWhatsApp) return
+    await this.client.consentimientoWhatsApp.upsert({
+      where: { tenantId_destinatarioId: { tenantId: value.tenantId, destinatarioId: value.recipientId } },
+      create: { id: value.consentId, tenantId: value.tenantId, destinatarioId: value.recipientId, tipoDestinatario: value.recipientType, estado: value.status, origen: value.source, fechaOtorgamiento: new Date(value.grantedAt), fechaRevocacion: value.revokedAt ? new Date(value.revokedAt) : null, fechaCreacion: new Date(value.grantedAt), fechaActualizacion: new Date(value.updatedAt) },
+      update: { tipoDestinatario: value.recipientType, estado: value.status, origen: value.source, fechaOtorgamiento: new Date(value.grantedAt), fechaRevocacion: value.revokedAt ? new Date(value.revokedAt) : null, fechaActualizacion: new Date(value.updatedAt) },
     })
   }
 
   async getConsent(tenantId: string, _recipientType: TipoDestinatarioWhatsApp, recipientId: string): Promise<ConsentimientoWhatsApp | null> {
-    if (!this.client.tusWhatsAppConsent) return null
-    const row = await this.client.tusWhatsAppConsent.findUnique({ where: { tenantId_recipientId: { tenantId, recipientId } } })
+    if (!this.client.consentimientoWhatsApp) return null
+    const row = await this.client.consentimientoWhatsApp.findUnique({ where: { tenantId_destinatarioId: { tenantId, destinatarioId: recipientId } } })
     if (!row) return null
-    return { consentId: String(row['id']), tenantId: String(row['tenantId']), recipientType: String(row['recipientType']) as TipoDestinatarioWhatsApp, recipientId: String(row['recipientId']), status: String(row['status']) as EstadoConsentimientoWhatsApp, source: String(row['source']), grantedAt: new Date(String(row['grantedAt'])).toISOString(), revokedAt: row['revokedAt'] ? new Date(String(row['revokedAt'])).toISOString() : null, updatedAt: new Date(String(row['updatedAt'])).toISOString(), retentionUntil: new Date(String(row['retentionUntil'])).toISOString() }
+    return { consentId: String(row['id']), tenantId: String(row['tenantId']), recipientType: String(row['tipoDestinatario']) as TipoDestinatarioWhatsApp, recipientId: String(row['destinatarioId']), status: String(row['estado']) as EstadoConsentimientoWhatsApp, source: String(row['origen']), grantedAt: new Date(String(row['fechaOtorgamiento'])).toISOString(), revokedAt: row['fechaRevocacion'] ? new Date(String(row['fechaRevocacion'])).toISOString() : null, updatedAt: new Date(String(row['fechaActualizacion'])).toISOString(), retentionUntil: new Date(String(row['fechaActualizacion'])).toISOString() }
   }
 
   async saveTemplateMessage(value: MensajePlantillaWhatsApp): Promise<void> {
-    if (!this.client.tusWhatsAppMessage) return
-    await this.client.tusWhatsAppMessage.upsert({
-      where: { tenantId_messageId: { tenantId: value.tenantId, messageId: value.messageId } },
-      create: { id: `${value.tenantId}:${value.messageId}`, messageId: value.messageId, tenantId: value.tenantId, recipientId: value.recipientId, template: value.template, templateVersion: value.templateVersion, consentId: value.consentId, requestHash: value.requestHash, variables: value.variables, status: value.status, correlationId: value.correlationId, createdAt: new Date(value.createdAt), updatedAt: new Date(value.createdAt), retentionUntil: new Date(value.retentionUntil) },
-      update: { variables: value.variables, status: value.status, updatedAt: new Date(value.createdAt), retentionUntil: new Date(value.retentionUntil) },
+    if (!this.client.mensajeWhatsApp) return
+    await this.client.mensajeWhatsApp.upsert({
+      where: { tenantId_mensajeId: { tenantId: value.tenantId, mensajeId: value.messageId } },
+      create: { id: `${value.tenantId}:${value.messageId}`, tenantId: value.tenantId, mensajeId: value.messageId, destinatarioId: value.recipientId, plantilla: value.template, versionPlantilla: value.templateVersion, consentimientoId: value.consentId, hashSolicitud: value.requestHash, variables: value.variables, estado: value.status, correlacionId: value.correlationId, fechaCreacion: new Date(value.createdAt), fechaActualizacion: new Date(value.createdAt), retencionHasta: new Date(value.retentionUntil) },
+      update: { variables: value.variables, estado: value.status, fechaActualizacion: new Date(value.createdAt), retencionHasta: new Date(value.retentionUntil) },
     })
   }
 
   async getTemplateMessage(tenantId: string, idempotencyKey: string): Promise<MensajePlantillaWhatsApp | null> {
-    if (!this.client.tusWhatsAppMessage) return null
-    const row = await this.client.tusWhatsAppMessage.findUnique({ where: { tenantId_messageId: { tenantId, messageId: idempotencyKey } } })
+    if (!this.client.mensajeWhatsApp) return null
+    const row = await this.client.mensajeWhatsApp.findUnique({ where: { tenantId_mensajeId: { tenantId, mensajeId: idempotencyKey } } })
     if (!row) return null
-    return { messageId: String(row['messageId']), tenantId: String(row['tenantId']), recipientType: 'customer', recipientId: String(row['recipientId']), template: String(row['template']), templateVersion: String(row['templateVersion']), consentId: String(row['consentId']), requestHash: String(row['requestHash'] ?? ''), variables: row['variables'] as Record<string, string>, correlationId: String(row['correlationId']), status: 'queued', createdAt: new Date(String(row['createdAt'])).toISOString(), retentionUntil: new Date(String(row['retentionUntil'])).toISOString() }
+    return { messageId: String(row['mensajeId']), tenantId: String(row['tenantId']), recipientType: 'customer', recipientId: String(row['destinatarioId']), template: String(row['plantilla']), templateVersion: String(row['versionPlantilla']), consentId: String(row['consentimientoId']), requestHash: String(row['hashSolicitud'] ?? ''), variables: row['variables'] as Record<string, string>, correlationId: String(row['correlacionId']), status: 'queued', createdAt: new Date(String(row['fechaCreacion'])).toISOString(), retentionUntil: new Date(String(row['retencionHasta'])).toISOString() }
   }
 
   async saveOutbox(value: RegistroBandejaSalidaPlantillaWhatsApp): Promise<void> {
