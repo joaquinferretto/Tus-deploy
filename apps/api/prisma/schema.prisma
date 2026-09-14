@@ -696,51 +696,53 @@ model AuditoriaMercadoServicios {
 // TUS finance source-of-truth records. Provider state is deliberately separate
 // from commercial state; ledger entries are append-only and corrections link to
 // their originating entry instead of rewriting history.
-model TusPaymentIntent {
-  id                  String   @id
-  contractVersion     String
-  paymentId           String
-  tenantId            String
-  commitmentId        String
-  provider            String
-  providerReference   String?
-  providerStatus      String
-  commercialStatus    String
-  amount              BigInt
-  currency            String
-  idempotencyKey      String
-  correlationId       String
-  credentialsCollected Boolean
-  source              String
-  orderId             String   @default("")
-  posOperationId      String?
-  merchantOfRecord    String   @default("tus-intermediary")
-  collectionModel     String   @default("intermediary")
-  splitPolicy         Json?
-  releaseAt           DateTime @default(now())
-  providerEventAt     DateTime?
-  providerError       String?
-  createdAt           DateTime
-  updatedAt           DateTime
+model IntencionPago {
+  id                      String   @id(map: "TusPaymentIntent_pkey")
+  versionContrato         String   @map("contractVersion")
+  pagoId                  String   @map("paymentId")
+  tenantId                String   @map("tenantId")
+  compromisoId            String   @map("commitmentId")
+  proveedor               String   @map("provider")
+  referenciaProveedor     String?  @map("providerReference")
+  estadoProveedor         String   @map("providerStatus")
+  estadoComercial         String   @map("commercialStatus")
+  monto                   BigInt   @map("amount")
+  moneda                  String   @map("currency")
+  claveIdempotencia       String   @map("idempotencyKey")
+  correlacionId           String   @map("correlationId")
+  credencialesRecolectadas Boolean @map("credentialsCollected")
+  origen                  String   @map("source")
+  ordenId                 String   @default("") @map("orderId")
+  operacionPosId          String?  @map("posOperationId")
+  comercianteRegistro     String   @default("tus-intermediary") @map("merchantOfRecord")
+  modeloCobro             String   @default("intermediary") @map("collectionModel")
+  politicaDistribucion    Json?    @map("splitPolicy")
+  fechaLiberacion         DateTime @default(now()) @map("releaseAt")
+  fechaEventoProveedor    DateTime? @map("providerEventAt")
+  errorProveedor          String?  @map("providerError")
+  fechaCreacion           DateTime @map("createdAt")
+  fechaActualizacion      DateTime @map("updatedAt")
 
-  @@unique([tenantId, paymentId])
-  @@unique([tenantId, commitmentId])
-  @@unique([tenantId, idempotencyKey])
-  @@index([tenantId, providerStatus])
-  @@index([tenantId, commercialStatus])
+  @@unique([tenantId, pagoId], map: "TusPaymentIntent_tenantId_paymentId_key")
+  @@unique([tenantId, compromisoId], map: "TusPaymentIntent_tenantId_commitmentId_key")
+  @@unique([tenantId, claveIdempotencia], map: "TusPaymentIntent_tenantId_idempotencyKey_key")
+  @@index([tenantId, estadoProveedor], map: "TusPaymentIntent_tenantId_providerStatus_idx")
+  @@index([tenantId, estadoComercial], map: "TusPaymentIntent_tenantId_commercialStatus_idx")
+  @@map("TusPaymentIntent")
 }
 
-model TusFinanceIdempotency {
-  id             String   @id
-  tenantId       String
-  idempotencyKey String
-  requestHash    String
-  response       Json
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+model IdempotenciaFinanciera {
+  id                String   @id(map: "TusFinanceIdempotency_pkey")
+  tenantId          String   @map("tenantId")
+  claveIdempotencia String   @map("idempotencyKey")
+  hashSolicitud     String   @map("requestHash")
+  respuesta         Json     @map("response")
+  fechaCreacion     DateTime @default(now()) @map("createdAt")
+  fechaActualizacion DateTime @updatedAt @map("updatedAt")
 
-  @@unique([tenantId, idempotencyKey])
-  @@index([tenantId, updatedAt])
+  @@unique([tenantId, claveIdempotencia], map: "TusFinanceIdempotency_tenantId_idempotencyKey_key")
+  @@index([tenantId, fechaActualizacion], map: "TusFinanceIdempotency_tenantId_updatedAt_idx")
+  @@map("TusFinanceIdempotency")
 }
 
 model TusCommissionSnapshot {
@@ -1424,19 +1426,20 @@ model Reserva {
   @@map("TusBooking")
 }
 
-model TusPaymentWebhookEvent {
-  id             String   @id
-  tenantId       String
-  provider       String
-  providerEventId String
-  signature      String
-  occurredAt     DateTime
-  payload        Json
-  status         String
-  createdAt      DateTime
+model EventoWebhookPago {
+  id                String   @id(map: "TusPaymentWebhookEvent_pkey")
+  tenantId          String   @map("tenantId")
+  proveedor         String   @map("provider")
+  eventoProveedorId String   @map("providerEventId")
+  firma             String   @map("signature")
+  fechaOcurrencia   DateTime @map("occurredAt")
+  datosEvento       Json     @map("payload")
+  estado            String   @map("status")
+  fechaCreacion     DateTime @map("createdAt")
 
-  @@unique([tenantId, provider, providerEventId])
-  @@index([tenantId, status, occurredAt])
+  @@unique([tenantId, proveedor, eventoProveedorId], map: "TusPaymentWebhookEvent_tenant_provider_event_key")
+  @@index([tenantId, estado, fechaOcurrencia], map: "TusPaymentWebhookEvent_tenantId_status_occurredAt_idx")
+  @@map("TusPaymentWebhookEvent")
 }
 
 model ConsentimientoWhatsApp {

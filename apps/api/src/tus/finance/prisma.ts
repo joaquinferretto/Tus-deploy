@@ -56,6 +56,31 @@ type Row = {
   deterministic?: any
   response?: any
   requestHash?: any
+  versionContrato?: any
+  pagoId?: any
+  compromisoId?: any
+  proveedor?: any
+  referenciaProveedor?: any
+  estadoProveedor?: any
+  estadoComercial?: any
+  monto?: any
+  moneda?: any
+  claveIdempotencia?: any
+  correlacionId?: any
+  credencialesRecolectadas?: any
+  origen?: any
+  ordenId?: any
+  operacionPosId?: any
+  comercianteRegistro?: any
+  modeloCobro?: any
+  politicaDistribucion?: any
+  fechaLiberacion?: any
+  fechaEventoProveedor?: any
+  errorProveedor?: any
+  fechaCreacion?: any
+  fechaActualizacion?: any
+  hashSolicitud?: any
+  respuesta?: any
 }
 
 type Delegate = {
@@ -66,14 +91,15 @@ type Delegate = {
 }
 
 export type ClientePrismaFinanzas = {
-  tusPaymentIntent: Delegate
+  intencionPago: Delegate
   tusCommissionSnapshot: Delegate
   tusLedgerEntry: Delegate
   tusFinancialEvidence: Delegate
   tusFinancialConfirmation: Delegate
   tusFinancialFreeze: Delegate
   tusReconciliationRecord: Delegate
-  tusFinanceIdempotency: Delegate
+  idempotenciaFinanciera: Delegate
+  eventoWebhookPago: Delegate
 }
 
 export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
@@ -84,13 +110,13 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
   }
 
   async getPayment(tenantId: string, commitmentId: string): Promise<IntencionPago | null> {
-    const row = await this.client.tusPaymentIntent.findUnique({ where: { tenantId_commitmentId: { tenantId, commitmentId } } })
+    const row = await this.client.intencionPago.findUnique({ where: { tenantId_compromisoId: { tenantId, compromisoId: commitmentId } } })
     return row ? convertirFilaEnIntencionPago(row) : null
   }
 
   async savePayment(payment: IntencionPago): Promise<IntencionPago> {
-    const row = await this.client.tusPaymentIntent.upsert({
-      where: { tenantId_commitmentId: { tenantId: payment.tenantId, commitmentId: payment.commitmentId } },
+    const row = await this.client.intencionPago.upsert({
+      where: { tenantId_compromisoId: { tenantId: payment.tenantId, compromisoId: payment.commitmentId } },
       create: convertirIntencionPagoEnFila(payment),
       update: convertirIntencionPagoEnFila(payment),
     })
@@ -157,12 +183,12 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
   }
 
   async getIdempotency(tenantId: string, idempotencyKey: string): Promise<{ requestHash: string; response: unknown } | null> {
-    const row = await this.client.tusFinanceIdempotency.findUnique({ where: { tenantId_idempotencyKey: { tenantId, idempotencyKey } } })
-    return row ? { requestHash: texto(row.requestHash), response: row.response } : null
+    const row = await this.client.idempotenciaFinanciera.findUnique({ where: { tenantId_claveIdempotencia: { tenantId, claveIdempotencia: idempotencyKey } } })
+    return row ? { requestHash: texto(row.hashSolicitud), response: row.respuesta } : null
   }
 
   async saveIdempotency(tenantId: string, idempotencyKey: string, record: { requestHash: string; response: unknown }): Promise<void> {
-    await this.client.tusFinanceIdempotency.upsert({ where: { tenantId_idempotencyKey: { tenantId, idempotencyKey } }, create: { id: `finance-idempotency-${tenantId}-${idempotencyKey}`, tenantId, idempotencyKey, requestHash: record.requestHash, response: record.response }, update: { requestHash: record.requestHash, response: record.response } })
+    await this.client.idempotenciaFinanciera.upsert({ where: { tenantId_claveIdempotencia: { tenantId, claveIdempotencia: idempotencyKey } }, create: { id: `finance-idempotency-${tenantId}-${idempotencyKey}`, tenantId, claveIdempotencia: idempotencyKey, hashSolicitud: record.requestHash, respuesta: record.response }, update: { hashSolicitud: record.requestHash, respuesta: record.response } })
   }
 
   async getReconciliation(tenantId: string, commitmentId: string): Promise<ResultadoConciliacion | null> {
@@ -177,13 +203,13 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
 }
 
 function convertirIntencionPagoEnFila(value: IntencionPago): Row {
-  return { ...value, id: value.paymentId, releaseAt: new Date(value.releaseAt), providerEventAt: value.providerEventAt === null ? null : new Date(value.providerEventAt), createdAt: new Date(value.createdAt), updatedAt: new Date(value.updatedAt) }
+  return { id: value.paymentId, versionContrato: value.contractVersion, pagoId: value.paymentId, tenantId: value.tenantId, compromisoId: value.commitmentId, proveedor: value.provider, referenciaProveedor: value.providerReference, estadoProveedor: value.providerStatus, estadoComercial: value.commercialStatus, monto: value.amount, moneda: value.currency, claveIdempotencia: value.idempotencyKey, correlacionId: value.correlationId, credencialesRecolectadas: value.credentialsCollected, origen: value.source, ordenId: value.orderId, operacionPosId: value.posOperationId, comercianteRegistro: value.merchantOfRecord, modeloCobro: value.collectionModel, politicaDistribucion: value.splitPolicy, fechaLiberacion: new Date(value.releaseAt), fechaEventoProveedor: value.providerEventAt === null ? null : new Date(value.providerEventAt), errorProveedor: value.providerError, fechaCreacion: new Date(value.createdAt), fechaActualizacion: new Date(value.updatedAt) }
 }
 
 function convertirFilaEnIntencionPago(row: Row): IntencionPago {
-  const createdAt = fechaEnMilisegundos(row.createdAt)
-  const splitPolicy: IntencionPago['splitPolicy'] = row['splitPolicy'] && typeof row['splitPolicy'] === 'object' ? row['splitPolicy'] as IntencionPago['splitPolicy'] : { name: 'five-day-intermediary', version: 'legacy', holdDays: 5, releaseRule: 'completion-confirmation-or-approved-policy', merchantOfRecord: 'tus-intermediary', providerEvidenceId: null, legalEvidenceId: null }
-  return { contractVersion: texto(row.contractVersion) as IntencionPago['contractVersion'], paymentId: texto(row.paymentId), tenantId: texto(row.tenantId), commitmentId: texto(row.commitmentId), provider: 'mercado-pago', providerReference: textoNullable(row.providerReference), providerStatus: texto(row.providerStatus) as IntencionPago['providerStatus'], commercialStatus: texto(row.commercialStatus) as IntencionPago['commercialStatus'], amount: numero(row.amount), currency: texto(row.currency), idempotencyKey: texto(row.idempotencyKey), correlationId: texto(row.correlationId), credentialsCollected: false, source: texto(row.source) as IntencionPago['source'], orderId: textoOpcional(row['orderId']) ?? texto(row.commitmentId), posOperationId: textoOpcional(row['posOperationId']) ?? null, merchantOfRecord: 'tus-intermediary', collectionModel: 'intermediary', splitPolicy, releaseAt: row['releaseAt'] ? fechaEnMilisegundos(row['releaseAt']) : createdAt, providerEventAt: row['providerEventAt'] ? fechaEnMilisegundos(row['providerEventAt']) : null, providerError: (textoOpcional(row['providerError']) as IntencionPago['providerError']) ?? null, createdAt, updatedAt: fechaEnMilisegundos(row.updatedAt) }
+  const createdAt = fechaEnMilisegundos(row.fechaCreacion)
+  const splitPolicy: IntencionPago['splitPolicy'] = row.politicaDistribucion && typeof row.politicaDistribucion === 'object' ? row.politicaDistribucion as IntencionPago['splitPolicy'] : { name: 'five-day-intermediary', version: 'legacy', holdDays: 5, releaseRule: 'completion-confirmation-or-approved-policy', merchantOfRecord: 'tus-intermediary', providerEvidenceId: null, legalEvidenceId: null }
+  return { contractVersion: texto(row.versionContrato) as IntencionPago['contractVersion'], paymentId: texto(row.pagoId), tenantId: texto(row.tenantId), commitmentId: texto(row.compromisoId), provider: texto(row.proveedor) as IntencionPago['provider'], providerReference: textoNullable(row.referenciaProveedor), providerStatus: texto(row.estadoProveedor) as IntencionPago['providerStatus'], commercialStatus: texto(row.estadoComercial) as IntencionPago['commercialStatus'], amount: numero(row.monto), currency: texto(row.moneda), idempotencyKey: texto(row.claveIdempotencia), correlationId: texto(row.correlacionId), credentialsCollected: false, source: texto(row.origen) as IntencionPago['source'], orderId: textoOpcional(row.ordenId) ?? texto(row.compromisoId), posOperationId: textoOpcional(row.operacionPosId) ?? null, merchantOfRecord: (textoOpcional(row.comercianteRegistro) as IntencionPago['merchantOfRecord']) ?? 'tus-intermediary', collectionModel: (textoOpcional(row.modeloCobro) as IntencionPago['collectionModel']) ?? 'intermediary', splitPolicy, releaseAt: row.fechaLiberacion ? fechaEnMilisegundos(row.fechaLiberacion) : createdAt, providerEventAt: row.fechaEventoProveedor ? fechaEnMilisegundos(row.fechaEventoProveedor) : null, providerError: (textoOpcional(row.errorProveedor) as IntencionPago['providerError']) ?? null, createdAt, updatedAt: fechaEnMilisegundos(row.fechaActualizacion) }
 }
 
 function convertirInstantaneaComisionEnFila(value: InstantaneaComision): Row {

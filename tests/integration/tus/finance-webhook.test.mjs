@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { join } from 'node:path'
 
@@ -178,18 +179,50 @@ test('rejects a webhook whose signed timestamp does not match the verified event
   assert.equal(result.reason, 'invalid_signature')
 })
 
-test('maps Phase 6 payment timestamps to Prisma Date values at the persistence boundary', () => {
+test('maps payment timestamps and provider values to the Spanish Prisma boundary', () => {
   const result = runTypeScriptScenario(`
     const { PrismaTusFinanceStore } = (await import('./apps/api/src/tus/finance/prisma.ts')).default
     let captured
-    const client = { tusPaymentIntent: { upsert: async (input) => { captured = input.create; return { ...input.create, createdAt: new Date(0), updatedAt: new Date(0) } } } }
+    const client = { intencionPago: { upsert: async (input) => { captured = input.create; return { ...input.create, fechaCreacion: new Date(0), fechaActualizacion: new Date(0) } } } }
     const store = new PrismaTusFinanceStore(client)
     await store.savePayment({ contractVersion: '1.0.0', paymentId: 'payment-prisma', tenantId: 'tenant-arg', commitmentId: 'order-prisma', provider: 'mercado-pago', providerReference: 'mp-prisma', providerStatus: 'pending', commercialStatus: 'held', amount: 2500, currency: 'ARS', idempotencyKey: 'pay-prisma', correlationId: 'corr-prisma', credentialsCollected: false, source: 'authorized', orderId: 'order-prisma', posOperationId: null, merchantOfRecord: 'tus-intermediary', collectionModel: 'intermediary', splitPolicy: { name: 'five-day-intermediary', version: 'argentina-five-day-v1', holdDays: 5, releaseRule: 'completion-confirmation-or-approved-policy', merchantOfRecord: 'tus-intermediary', providerEvidenceId: null, legalEvidenceId: null }, releaseAt: 1000, providerEventAt: 2000, providerError: null, createdAt: 0, updatedAt: 0 })
-    console.log(JSON.stringify({ releaseAtDate: captured.releaseAt instanceof Date, providerEventAtDate: captured.providerEventAt instanceof Date, releaseAt: captured.releaseAt.getTime(), providerEventAt: captured.providerEventAt.getTime() }))
+    console.log(JSON.stringify({ releaseAtDate: captured.fechaLiberacion instanceof Date, providerEventAtDate: captured.fechaEventoProveedor instanceof Date, releaseAt: captured.fechaLiberacion.getTime(), providerEventAt: captured.fechaEventoProveedor.getTime(), hasEnglishKeys: ['paymentId', 'providerStatus', 'amount', 'createdAt'].some((key) => key in captured), provider: captured.proveedor, amount: captured.monto }))
   `)
 
   assert.equal(result.releaseAtDate, true)
   assert.equal(result.providerEventAtDate, true)
   assert.equal(result.releaseAt, 1000)
   assert.equal(result.providerEventAt, 2000)
+  assert.equal(result.hasEnglishKeys, false)
+  assert.equal(result.provider, 'mercado-pago')
+  assert.equal(result.amount, 2500)
+})
+
+test('uses Spanish Prisma delegates for idempotency without translating provider values', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaTusFinanceStore } = (await import('./apps/api/src/tus/finance/prisma.ts')).default
+    let captured
+    const client = { idempotenciaFinanciera: { findUnique: async () => ({ hashSolicitud: 'hash-idem', respuesta: { status: 'created', provider: 'mercado-pago' } }), upsert: async (input) => { captured = input; return input.create } } }
+    const store = new PrismaTusFinanceStore(client)
+    await store.saveIdempotency('tenant-arg', 'pay-idem', { requestHash: 'hash-idem', response: { status: 'created', provider: 'mercado-pago' } })
+    const found = await store.getIdempotency('tenant-arg', 'pay-idem')
+    console.log(JSON.stringify({ where: captured.where, create: captured.create, found }))
+  `)
+
+  assert.deepEqual(result.where, { tenantId_claveIdempotencia: { tenantId: 'tenant-arg', claveIdempotencia: 'pay-idem' } })
+  assert.equal(result.create.claveIdempotencia, 'pay-idem')
+  assert.equal(result.create.hashSolicitud, 'hash-idem')
+  assert.equal(result.create.respuesta.provider, 'mercado-pago')
+  assert.deepEqual(result.found, { requestHash: 'hash-idem', response: { status: 'created', provider: 'mercado-pago' } })
+})
+
+test('keeps the three payment models Spanish internally while preserving physical PostgreSQL names', () => {
+  const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
+
+  assert.match(schema, /model IntencionPago[\s\S]*?monto\s+BigInt\s+@map\("amount"\)/)
+  assert.match(schema, /model IntencionPago[\s\S]*?@@unique\(\[tenantId, compromisoId\], map: "TusPaymentIntent_tenantId_commitmentId_key"\)/)
+  assert.match(schema, /model IdempotenciaFinanciera[\s\S]*?claveIdempotencia\s+String\s+@map\("idempotencyKey"\)/)
+  assert.match(schema, /model EventoWebhookPago[\s\S]*?datosEvento\s+Json\s+@map\("payload"\)/)
+  assert.match(schema, /@@unique\(\[tenantId, proveedor, eventoProveedorId\], map: "TusPaymentWebhookEvent_tenant_provider_event_key"\)/)
+  assert.doesNotMatch(schema, /model (TusPaymentIntent|TusFinanceIdempotency|TusPaymentWebhookEvent)\b/)
 })

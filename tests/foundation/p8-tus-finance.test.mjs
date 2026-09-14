@@ -190,7 +190,7 @@ test('WU4 records compensating outcomes and quarantines unreconciled provider mi
 test('WU4 adds relational finance source-of-truth tables and provider-free migration evidence', () => {
   const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
   const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260826120000_tus_finance/migration.sql'), 'utf8')
-  assert.match(schema, /model TusPaymentIntent[\s\S]*?commitmentId\s+String/)
+  assert.match(schema, /model IntencionPago[\s\S]*?compromisoId\s+String/)
   assert.match(schema, /model TusCommissionSnapshot[\s\S]*?rateBps\s+Int/)
   assert.match(schema, /model TusLedgerEntry[\s\S]*?linkedEntryId\s+String\?/)
   assert.match(schema, /model TusFinancialEvidence[\s\S]*?kind\s+String/)
