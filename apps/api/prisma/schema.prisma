@@ -470,7 +470,7 @@ model RegistryAudit {
   @@index([correlationId])
 }
 
-model TusReadinessEvidence {
+model EvidenciaHabilitacion {
   id            String    @id
   contractVersion String  @default("1.0.0")
   tenantId      String
@@ -478,8 +478,8 @@ model TusReadinessEvidence {
   gate          String
   owner         String
   scope         String
-  evidenceType  String
-  evidenceRef   String
+  tipoEvidencia String    @map("evidenceType")
+  referenciaEvidencia String @map("evidenceRef")
   policyVersion String
   issuedAt      DateTime
   expiresAt     DateTime?
@@ -492,20 +492,21 @@ model TusReadinessEvidence {
   createdAt     DateTime
   updatedAt     DateTime
 
-  @@unique([tenantId, capability, gate, evidenceRef])
-  @@index([tenantId, capability, gate, revoked])
-  @@index([expiresAt])
+  @@unique([tenantId, capability, gate, referenciaEvidencia], map: "TusReadinessEvidence_tenantId_capability_gate_evidenceRef_key")
+  @@index([tenantId, capability, gate, revoked], map: "TusReadinessEvidence_tenantId_capability_gate_revoked_idx")
+  @@index([expiresAt], map: "TusReadinessEvidence_expiresAt_idx")
+  @@map("TusReadinessEvidence")
 }
 
-model TusReadinessDecision {
+model DecisionHabilitacion {
   id               String   @id
   tenantId         String
   capability       String
   evaluatedAt      DateTime
   enabled          Boolean
-  disposition      String
-  failedGates      Json
-  evidenceIds      String[]
+  resultadoHabilitacion String   @map("disposition")
+  requisitosFallidos Json     @map("failedGates")
+  idsEvidencia     String[] @map("evidenceIds")
   deterministic    Boolean
   conflicts        Json?
   reason           String?
@@ -519,8 +520,10 @@ model TusReadinessDecision {
   outcome          String   @default("blocked")
   createdAt        DateTime
 
-  @@index([tenantId, capability, evaluatedAt])
-  @@index([tenantId, capability, enabled])
+  @@index([tenantId, capability, evaluatedAt], map: "TusReadinessDecision_tenantId_capability_evaluatedAt_idx")
+  @@index([tenantId, capability, enabled], map: "TusReadinessDecision_tenantId_capability_enabled_idx")
+  @@index([tenantId, correlationId], map: "TusReadinessDecision_tenantId_correlationId_idx")
+  @@map("TusReadinessDecision")
 }
 
 // TUS commerce source-of-truth records. Every query and unique key is tenant

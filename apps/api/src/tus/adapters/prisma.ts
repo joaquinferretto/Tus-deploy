@@ -168,8 +168,8 @@ export interface TusPrismaClient {
   tusCalendarRule: PrismaCalendarRuleDelegate
   tusCalendarException: PrismaCalendarExceptionDelegate
   tusBooking: PrismaBookingDelegate
-  tusReadinessEvidence: DelegadoPrismaEvidenciaHabilitacion
-  tusReadinessDecision: DelegadoPrismaDecisionHabilitacion
+  evidenciaHabilitacion: DelegadoPrismaEvidenciaHabilitacion
+  decisionHabilitacion: DelegadoPrismaDecisionHabilitacion
   $transaction<TValue>(callback: (client: TusPrismaClient) => Promise<TValue>): Promise<TValue>
 }
 
@@ -181,7 +181,7 @@ export class AlmacenPrismaEvidenciaHabilitacion implements PuertoEvidenciaHabili
   }
 
   async listEvidence(tenantId: string, capability: CapacidadHabilitacionContrato): Promise<readonly EvidenciaHabilitacionContrato[]> {
-    const rows = await this.client.tusReadinessEvidence.findMany({ where: { tenantId, capability } })
+    const rows = await this.client.evidenciaHabilitacion.findMany({ where: { tenantId, capability } })
     return rows.map((row) => ({
       contractVersion: TUS_CONTRACT_VERSION,
       evidenceId: String(row['id']),
@@ -190,8 +190,8 @@ export class AlmacenPrismaEvidenciaHabilitacion implements PuertoEvidenciaHabili
       gate: row['gate'] as EvidenciaHabilitacionContrato['gate'],
       owner: String(row['owner']),
       scope: String(row['scope']),
-      evidenceType: String(row['evidenceType']),
-      evidenceRef: String(row['evidenceRef']),
+      evidenceType: String(row['tipoEvidencia']),
+      evidenceRef: String(row['referenciaEvidencia']),
       policyVersion: String(row['policyVersion']),
       issuedAt: toIsoString(row['issuedAt'] ?? row['createdAt']),
       expiresAt: row['expiresAt'] === null || row['expiresAt'] === undefined ? null : toIsoString(row['expiresAt']),
@@ -216,16 +216,16 @@ export class AlmacenPrismaEvidenciaHabilitacion implements PuertoEvidenciaHabili
   }
 
   async recordDecision(record: RegistroAuditoriaHabilitacion): Promise<void> {
-    await this.client.tusReadinessDecision.create({
+    await this.client.decisionHabilitacion.create({
       data: {
         id: `tus-readiness-${record.correlationId}-${Date.now()}`,
         tenantId: record.tenantId,
         capability: record.capability,
         evaluatedAt: new Date(record.decision.evaluatedAt),
         enabled: record.decision.enabled,
-        disposition: record.decision.disposition,
-        failedGates: record.decision.failedGates,
-        evidenceIds: record.decision.evidenceIds,
+        resultadoHabilitacion: record.decision.disposition,
+        requisitosFallidos: record.decision.failedGates,
+        idsEvidencia: record.decision.evidenceIds,
         deterministic: record.decision.deterministic,
         conflicts: record.decision.conflicts ?? null,
         reason: record.decision.reason ?? null,
