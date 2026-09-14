@@ -5,9 +5,9 @@ import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 
 export const MARKETPLACE_COHORTS = ['beauty-personal-care', 'repairs-trades'] as const
-export type MarketplaceCohort = (typeof MARKETPLACE_COHORTS)[number]
+export type Cohorte = (typeof MARKETPLACE_COHORTS)[number]
 export const MARKETPLACE_LISTING_KINDS = { PRODUCT: 'product', SERVICE: 'service' } as const
-export type MarketplaceListingKind = (typeof MARKETPLACE_LISTING_KINDS)[keyof typeof MARKETPLACE_LISTING_KINDS]
+export type TipoPublicacion = (typeof MARKETPLACE_LISTING_KINDS)[keyof typeof MARKETPLACE_LISTING_KINDS]
 export const MARKETPLACE_MERCHANT_STATUSES = { APPROVED: 'approved' } as const
 export type MarketplaceMerchantStatus = (typeof MARKETPLACE_MERCHANT_STATUSES)[keyof typeof MARKETPLACE_MERCHANT_STATUSES]
 export const MARKETPLACE_OUTBOX_EVENT_TYPES = {
@@ -21,7 +21,7 @@ export type MarketplaceOutboxEventType = (typeof MARKETPLACE_OUTBOX_EVENT_TYPES)
 export interface PerfilPrestador {
   tenantId: string
   merchantId: string
-  cohort: MarketplaceCohort
+  cohort: Cohorte
   locationId: string
   timezone: string
   staffRoles: string[]
@@ -32,7 +32,7 @@ export interface PerfilPrestador {
 }
 
 export interface MarketplacePolicy {
-  allowedCohorts?: readonly MarketplaceCohort[]
+  allowedCohorts?: readonly Cohorte[]
   evaluadorHabilitacion?: EvaluadorHabilitacion
   perfilHabilitacion?: PerfilHabilitacion
   alcanceHabilitacion?: string
@@ -44,15 +44,15 @@ export interface MarketplaceWorkingHours {
   end: string
 }
 
-export interface MarketplaceListing {
+export interface Publicacion {
   contractVersion: typeof TUS_CONTRACT_VERSION
   listingId: string
   tenantId: string
   merchantId: string
-  kind: MarketplaceListingKind
+  kind: TipoPublicacion
   name: string
   description: string
-  cohort: MarketplaceCohort
+  cohort: Cohorte
   locationId: string
   currency: string
   price: number
@@ -69,15 +69,15 @@ export interface MarketplaceListing {
   updatedAt: string
 }
 
-export interface MarketplaceDiscoveryItem {
+export interface ItemDescubrimiento {
   contractVersion: typeof TUS_CONTRACT_VERSION
   listingId: string
   tenantId: string
   merchantId: string
-  kind: MarketplaceListingKind
+  kind: TipoPublicacion
   name: string
   description: string
-  cohort: MarketplaceCohort
+  cohort: Cohorte
   locationId: string
   currency: string
   price: number
@@ -91,12 +91,12 @@ export interface MarketplaceDiscoveryItem {
   timezone: string
 }
 
-export interface MarketplaceListingInput {
+export interface EntradaPublicacion {
   merchantId: string
-  kind: MarketplaceListingKind
+  kind: TipoPublicacion
   name: string
   description: string
-  cohort: MarketplaceCohort
+  cohort: Cohorte
   locationId: string
   currency: string
   price: number
@@ -110,7 +110,7 @@ export interface MarketplaceListingInput {
 export interface MarketplaceCheckoutLine {
   lineId: string
   listingId: string
-  context: MarketplaceListingKind
+  context: TipoPublicacion
   quantity: number
   availabilityVersion: number
   price?: number
@@ -184,10 +184,10 @@ export interface MarketplaceStorePort {
     find(tenantId: string): Promise<PerfilPrestador | null>
   }
   listings: {
-    save(listing: MarketplaceListing): Promise<void>
-    find(listingId: string): Promise<MarketplaceListing | null>
-    published(): Promise<MarketplaceListing[]>
-    forTenant(tenantId: string): Promise<MarketplaceListing[]>
+    save(listing: Publicacion): Promise<void>
+    find(listingId: string): Promise<Publicacion | null>
+    published(): Promise<Publicacion[]>
+    forTenant(tenantId: string): Promise<Publicacion[]>
     reserveProduct(input: { tenantId: string; listingId: string; availabilityVersion: number; quantity: number; updatedAt: string }): Promise<boolean>
   }
   commitments: {
@@ -228,7 +228,7 @@ export class MarketplaceError extends Error {
 
 export class InMemoryMarketplaceStore implements MarketplaceStorePort {
   private readonly merchantRecords = new Map<string, PerfilPrestador>()
-  private readonly listingRecords = new Map<string, MarketplaceListing>()
+  private readonly listingRecords = new Map<string, Publicacion>()
   private readonly commitmentRecords = new Map<string, MarketplaceCommitment>()
   private readonly audits = new Map<string, RegistroAuditoriaMercadoServicios>()
   private readonly outboxRecords = new Map<string, MarketplaceOutboxRecord>()
@@ -241,7 +241,7 @@ export class InMemoryMarketplaceStore implements MarketplaceStorePort {
   }
 
   readonly listings = {
-    save: async (listing: MarketplaceListing) => { this.listingRecords.set(listing.listingId, structuredClone(listing)) },
+    save: async (listing: Publicacion) => { this.listingRecords.set(listing.listingId, structuredClone(listing)) },
     find: async (listingId: string) => this.listingRecords.has(listingId) ? structuredClone(this.listingRecords.get(listingId)!) : null,
     published: async () => [...this.listingRecords.values()].filter((listing) => listing.published).map((listing) => structuredClone(listing)),
     forTenant: async (tenantId: string) => [...this.listingRecords.values()].filter((listing) => listing.tenantId === tenantId).map((listing) => structuredClone(listing)),
@@ -340,7 +340,7 @@ export class TusMarketplaceService {
   readonly store: MarketplaceStorePort
   readonly audit: MarketplaceStorePort['audit']
 
-  private readonly allowedCohorts: readonly MarketplaceCohort[]
+  private readonly allowedCohorts: readonly Cohorte[]
   private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
   private readonly perfilHabilitacion: PerfilHabilitacion
   private readonly alcanceHabilitacion: string
@@ -360,7 +360,7 @@ export class TusMarketplaceService {
     await this.requerirHabilitacion(context, 'publication')
     if (input.tenantId !== undefined && input.tenantId !== context.tenantId) throw new MarketplaceError(403, 'FORBIDDEN', 'merchant tenant does not match authenticated session')
     const cohort = input.cohort
-    if (!isMarketplaceCohort(cohort) || !this.allowedCohorts.includes(cohort)) throw new MarketplaceError(400, 'COHORT_NOT_SUPPORTED', 'merchant cohort is outside Stage 1')
+    if (!esCohorteMercado(cohort) || !this.allowedCohorts.includes(cohort)) throw new MarketplaceError(400, 'COHORT_NOT_SUPPORTED', 'merchant cohort is outside Stage 1')
     const required = [input.merchantId, input.locationId, input.timezone, input.operatingPolicyVersion]
     if (required.some((value) => typeof value !== 'string' || !value.trim()) || !Array.isArray(input.staffRoles) || input.staffRoles.length === 0) {
       throw new MarketplaceError(400, 'INCOMPLETE_MERCHANT', 'location, timezone, staff roles, and operating policy are required')
@@ -387,7 +387,7 @@ export class TusMarketplaceService {
     })
   }
 
-  async createListing(context: TusAuthenticatedTenantContext, input: MarketplaceListingInput): Promise<MarketplaceListing> {
+  async createListing(context: TusAuthenticatedTenantContext, input: EntradaPublicacion): Promise<Publicacion> {
     assertPermission(context, 'tus:marketplace:write')
     assertMerchantRole(context)
     await this.requerirHabilitacion(context, 'publication')
@@ -396,7 +396,7 @@ export class TusMarketplaceService {
     if (input.merchantId !== merchant.merchantId) throw new MarketplaceError(403, 'FORBIDDEN', 'listing merchant is outside the authenticated tenant')
     validateListingInput(input, merchant)
     const now = new Date().toISOString()
-    const listing: MarketplaceListing = {
+    const listing: Publicacion = {
       contractVersion: TUS_CONTRACT_VERSION,
       listingId: randomUUID(),
       tenantId: context.tenantId,
@@ -429,7 +429,7 @@ export class TusMarketplaceService {
     })
   }
 
-  async publishListing(context: TusAuthenticatedTenantContext, listingId: string): Promise<MarketplaceListing> {
+  async publishListing(context: TusAuthenticatedTenantContext, listingId: string): Promise<Publicacion> {
     assertPermission(context, 'tus:marketplace:write')
     assertMerchantRole(context)
     await this.requerirHabilitacion(context, 'publication')
@@ -449,7 +449,7 @@ export class TusMarketplaceService {
     })
   }
 
-  async discover(filters: { locationId?: string; cohort?: MarketplaceCohort } = {}): Promise<{ contractVersion: typeof TUS_CONTRACT_VERSION; items: MarketplaceDiscoveryItem[]; evidence: 'local-deterministic' }> {
+  async discover(filters: { locationId?: string; cohort?: Cohorte } = {}): Promise<{ contractVersion: typeof TUS_CONTRACT_VERSION; items: ItemDescubrimiento[]; evidence: 'local-deterministic' }> {
     const listings = await this.store.listings.published()
     const items = await Promise.all(listings.map(async (listing) => {
       const merchant = await this.store.merchant.find(listing.tenantId)
@@ -478,10 +478,10 @@ export class TusMarketplaceService {
         timezone: merchant.timezone,
       }
     }))
-    return { contractVersion: TUS_CONTRACT_VERSION, items: items.filter((item): item is MarketplaceDiscoveryItem => item !== null), evidence: 'local-deterministic' }
+    return { contractVersion: TUS_CONTRACT_VERSION, items: items.filter((item): item is ItemDescubrimiento => item !== null), evidence: 'local-deterministic' }
   }
 
-  async merchantOperations(context: TusAuthenticatedTenantContext): Promise<{ merchant: PerfilPrestador | null; listings: MarketplaceListing[] }> {
+  async merchantOperations(context: TusAuthenticatedTenantContext): Promise<{ merchant: PerfilPrestador | null; listings: Publicacion[] }> {
     assertPermission(context, 'tus:marketplace:read')
     assertMerchantRole(context)
     const merchant = await this.store.merchant.find(context.tenantId)
@@ -628,11 +628,11 @@ function assertMerchantRole(context: TusAuthenticatedTenantContext): void {
   if (!context.roles.some((role) => ['merchant', 'merchant-admin', 'owner', 'admin', 'operator'].includes(role))) throw new MarketplaceError(403, 'FORBIDDEN', 'merchant or operator role is required')
 }
 
-function isMarketplaceCohort(value: unknown): value is MarketplaceCohort {
-  return MARKETPLACE_COHORTS.includes(value as MarketplaceCohort)
+function esCohorteMercado(value: unknown): value is Cohorte {
+  return MARKETPLACE_COHORTS.includes(value as Cohorte)
 }
 
-function validateListingInput(input: MarketplaceListingInput, merchant: PerfilPrestador): void {
+function validateListingInput(input: EntradaPublicacion, merchant: PerfilPrestador): void {
   if (!input.name.trim() || !input.description.trim() || input.locationId !== merchant.locationId || input.cohort !== merchant.cohort || !/^[A-Z]{3}$/u.test(input.currency.trim().toUpperCase()) || !Number.isFinite(input.price) || input.price <= 0) throw new MarketplaceError(400, 'INVALID_LISTING', 'listing commercial and location facts are invalid')
   normalizeMoney(input.currency, input.price, input.priceMinor)
   if (input.kind === 'product' && (!Number.isInteger(input.stock) || input.stock! < 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'product stock is required')
@@ -648,7 +648,7 @@ function normalizeMoney(currency: string, price: number, priceMinor?: bigint): M
   return { currency: normalizedCurrency, minor: priceMinor ?? derivedMinor }
 }
 
-function validateCheckoutLine(line: MarketplaceCheckoutLine, listing: MarketplaceListing): void {
+function validateCheckoutLine(line: MarketplaceCheckoutLine, listing: Publicacion): void {
   if (line.context !== listing.kind || !Number.isInteger(line.quantity) || line.quantity <= 0) throw new MarketplaceError(400, 'INVALID', 'checkout context and quantity do not match the listing')
   if (line.context === 'service' && (line.quantity !== 1 || !line.slotStart || !line.slotEnd || !validInterval(line.slotStart, line.slotEnd) || Date.parse(line.slotEnd) - Date.parse(line.slotStart) !== (listing.durationMinutes ?? 0) * 60 * 1000)) throw new MarketplaceError(400, 'INVALID', 'service checkout requires a valid slot matching the service duration')
 }

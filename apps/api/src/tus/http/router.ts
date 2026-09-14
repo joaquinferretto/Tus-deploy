@@ -8,9 +8,9 @@ import type {
 import {
   MarketplaceError,
   type MarketplaceCheckoutLine,
-  type MarketplaceDiscoveryItem,
-  type MarketplaceListing,
-  type MarketplaceListingInput,
+  type ItemDescubrimiento,
+  type Publicacion,
+  type EntradaPublicacion,
 } from '../catalog/index.ts'
 import { TusCommitmentError } from '../commitments/index.ts'
 import { FinanceError } from '../finance/index.ts'
@@ -261,8 +261,8 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      const listing = await requireMarketplace(application).createListing(context, body as unknown as MarketplaceListingInput)
-      response.status(201).json(toPublicMarketplaceListing(listing))
+      const listing = await requireMarketplace(application).createListing(context, body as unknown as EntradaPublicacion)
+      response.status(201).json(proyectarPublicacionMercado(listing))
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -284,7 +284,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
     try {
       const listing = await requireMarketplace(application).publishListing(context, listingId)
-      response.status(200).json(toPublicMarketplaceListing(listing))
+      response.status(200).json(proyectarPublicacionMercado(listing))
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -296,7 +296,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
         ...(readQueryString(request.query['locationId']) ? { locationId: readQueryString(request.query['locationId']) } : {}),
         ...(readQueryString(request.query['cohort']) ? { cohort: readQueryString(request.query['cohort']) as 'beauty-personal-care' | 'repairs-trades' } : {}),
       })
-      response.status(200).json({ ...discovery, items: discovery.items.map(toPublicMarketplaceListing) })
+      response.status(200).json({ ...discovery, items: discovery.items.map(proyectarPublicacionMercado) })
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -315,7 +315,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
     try {
       const operations = await requireMarketplace(application).merchantOperations(context)
-      response.status(200).json({ ...operations, listings: operations.listings.map(toPublicMarketplaceListing) })
+      response.status(200).json({ ...operations, listings: operations.listings.map(proyectarPublicacionMercado) })
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -1070,7 +1070,7 @@ function requireMarketplace(application: TusApplicationService) {
   return application.marketplace
 }
 
-function toPublicMarketplaceListing(listing: MarketplaceListing | MarketplaceDiscoveryItem) {
+function proyectarPublicacionMercado(listing: Publicacion | ItemDescubrimiento) {
   const { priceMinor: _priceMinor, priceSnapshot: _priceSnapshot, ...publicListing } = listing
   return publicListing
 }

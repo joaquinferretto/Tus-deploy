@@ -1,4 +1,4 @@
-import type { RegistroAuditoriaMercadoServicios, MarketplaceCheckoutResponse, MarketplaceCommitment, MarketplaceListing, PerfilPrestador, MarketplaceOutboxRecord, MarketplaceStorePort } from '../catalog/index.ts'
+import type { RegistroAuditoriaMercadoServicios, MarketplaceCheckoutResponse, MarketplaceCommitment, Publicacion, PerfilPrestador, MarketplaceOutboxRecord, MarketplaceStorePort } from '../catalog/index.ts'
 import type { TusPrismaClient } from './prisma.ts'
 
 export class PrismaMarketplaceStore implements MarketplaceStorePort {
@@ -23,7 +23,7 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
   }
 
   readonly listings = {
-    save: async (listing: MarketplaceListing) => {
+    save: async (listing: Publicacion) => {
       await this.client.tusListing.upsert({ where: { id: listing.listingId }, create: listingRow(listing), update: listingRow(listing) })
     },
     find: async (listingId: string) => {
@@ -115,7 +115,7 @@ function merchantRow(profile: PerfilPrestador): Record<string, unknown> {
   return { id: profile.merchantId, tenantId: profile.tenantId, merchantId: profile.merchantId, cohort: profile.cohort, locationId: profile.locationId, timezone: profile.timezone, staffRoles: profile.staffRoles, operatingPolicyVersion: profile.operatingPolicyVersion, status: profile.status, createdAt: new Date(profile.createdAt), updatedAt: new Date(profile.updatedAt) }
 }
 
-function listingRow(listing: MarketplaceListing): Record<string, unknown> {
+function listingRow(listing: Publicacion): Record<string, unknown> {
   return { id: listing.listingId, contractVersion: listing.contractVersion, tenantId: listing.tenantId, merchantId: listing.merchantId, kind: listing.kind, name: listing.name, description: listing.description, cohort: listing.cohort, locationId: listing.locationId, currency: listing.currency, price: BigInt(listing.priceMinor), availabilityVersion: listing.availabilityVersion, published: listing.published, policyVersion: listing.policyVersion, stock: listing.stock, durationMinutes: listing.durationMinutes, capacity: listing.capacity, workingHours: listing.workingHours, createdAt: new Date(listing.createdAt), updatedAt: new Date(listing.updatedAt) }
 }
 
@@ -127,9 +127,9 @@ function toMerchant(row: Record<string, unknown>): PerfilPrestador {
   return { tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), cohort: row['cohort'] as PerfilPrestador['cohort'], locationId: String(row['locationId']), timezone: String(row['timezone']), staffRoles: Array.isArray(row['staffRoles']) ? row['staffRoles'].map(String) : [], operatingPolicyVersion: String(row['operatingPolicyVersion']), status: 'approved', createdAt: new Date(String(row['createdAt'])).toISOString(), updatedAt: new Date(String(row['updatedAt'])).toISOString() }
 }
 
-function toListing(row: Record<string, unknown>): MarketplaceListing {
+function toListing(row: Record<string, unknown>): Publicacion {
   const priceMinor = toBigInt(row['price'])
-  return { listingId: String(row['id']), contractVersion: String(row['contractVersion']) as MarketplaceListing['contractVersion'], tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), kind: row['kind'] as MarketplaceListing['kind'], name: String(row['name']), description: String(row['description']), cohort: row['cohort'] as MarketplaceListing['cohort'], locationId: String(row['locationId']), currency: String(row['currency']).toUpperCase(), price: Number(priceMinor) / 100, priceMinor, priceSnapshot: { currency: String(row['currency']).toUpperCase(), minor: priceMinor }, availabilityVersion: Number(row['availabilityVersion']), published: Boolean(row['published']), policyVersion: String(row['policyVersion']), stock: row['stock'] === null ? null : Number(row['stock']), durationMinutes: row['durationMinutes'] === null ? null : Number(row['durationMinutes']), capacity: row['capacity'] === null ? null : Number(row['capacity']), workingHours: row['workingHours'] as MarketplaceListing['workingHours'], createdAt: new Date(String(row['createdAt'])).toISOString(), updatedAt: new Date(String(row['updatedAt'])).toISOString() }
+  return { listingId: String(row['id']), contractVersion: String(row['contractVersion']) as Publicacion['contractVersion'], tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), kind: row['kind'] as Publicacion['kind'], name: String(row['name']), description: String(row['description']), cohort: row['cohort'] as Publicacion['cohort'], locationId: String(row['locationId']), currency: String(row['currency']).toUpperCase(), price: Number(priceMinor) / 100, priceMinor, priceSnapshot: { currency: String(row['currency']).toUpperCase(), minor: priceMinor }, availabilityVersion: Number(row['availabilityVersion']), published: Boolean(row['published']), policyVersion: String(row['policyVersion']), stock: row['stock'] === null ? null : Number(row['stock']), durationMinutes: row['durationMinutes'] === null ? null : Number(row['durationMinutes']), capacity: row['capacity'] === null ? null : Number(row['capacity']), workingHours: row['workingHours'] as Publicacion['workingHours'], createdAt: new Date(String(row['createdAt'])).toISOString(), updatedAt: new Date(String(row['updatedAt'])).toISOString() }
 }
 
 function toCommitment(row: Record<string, unknown>): MarketplaceCommitment {
