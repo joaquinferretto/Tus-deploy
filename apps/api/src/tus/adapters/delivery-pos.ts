@@ -1,14 +1,14 @@
 import type {
   RegistroAuditoriaEntrega,
-  DeliveryIncident,
-  DeliveryProof,
+  IncidenteEntrega,
+  ComprobanteEntrega,
   DeliveryShift,
   DeliveryStorePort,
-  DeliveryTask,
-  DeliveryZone,
+  TareaEntrega,
+  ZonaEntrega,
   DeliveryOutboxRecord,
 } from '../delivery/index.ts'
-import { PosError, type RegistroAuditoriaPOS, type PosCommandResult, type PosConflict, type PosDevice, type PosManualOperation, type PosOutboxRecord, type PosReceipt, type PosSession, type PosStorePort } from '../pos/index.ts'
+import { PosError, type RegistroAuditoriaPOS, type PosCommandResult, type ConflictoPuntoVenta, type PosDevice, type OperacionManualPuntoVenta, type PosOutboxRecord, type ComprobantePuntoVenta, type SesionPuntoVenta, type PosStorePort } from '../pos/index.ts'
 
 type Row = any
 
@@ -47,7 +47,7 @@ export class PrismaDeliveryStore implements DeliveryStorePort {
   }
 
   readonly zones = {
-    save: async (zone: DeliveryZone) => {
+    save: async (zone: ZonaEntrega) => {
       await this.client.tusDeliveryZone.create({ data: { id: zone.zoneId, tenantId: zone.tenantId, zoneId: zone.zoneId, name: zone.name, postalCodes: zone.postalCodes, active: zone.active, createdAt: new Date(), updatedAt: new Date() } })
     },
     find: async (tenantId: string, zoneId: string) => {
@@ -67,7 +67,7 @@ export class PrismaDeliveryStore implements DeliveryStorePort {
   }
 
   readonly tasks = {
-    save: async (task: DeliveryTask) => {
+    save: async (task: TareaEntrega) => {
       const data = { id: task.taskId, tenantId: task.tenantId, taskId: task.taskId, commitmentId: task.commitmentId, merchantId: task.merchantId, context: task.context, zoneId: task.zoneId, shiftId: task.shiftId, operatorId: task.operatorId, status: task.status, version: task.version, proof: task.proof, incident: task.incident, sla: task.sla, pickup: task.pickup, dropoff: task.dropoff, cancelledAt: task.cancelledAt ? new Date(task.cancelledAt) : null, failureReason: task.failureReason, settlementClaim: task.settlementClaim, createdAt: new Date(task.createdAt), updatedAt: new Date(task.updatedAt) }
       const existing = await this.client.tusDeliveryTask.findUnique({ where: { tenantId_taskId: { tenantId: task.tenantId, taskId: task.taskId } } })
       if (existing) await this.client.tusDeliveryTask.update({ where: { tenantId_taskId: { tenantId: task.tenantId, taskId: task.taskId } }, data })
@@ -81,12 +81,12 @@ export class PrismaDeliveryStore implements DeliveryStorePort {
   }
 
   readonly proofs = {
-    save: async (proof: DeliveryProof) => { await this.client.tusDeliveryProof.create({ data: { id: proof.proofId, tenantId: proof.tenantId, proofId: proof.proofId, taskId: proof.taskId, commitmentId: proof.commitmentId, recipientName: proof.recipientName, capturedAt: new Date(proof.capturedAt), evidenceSource: proof.evidenceSource, createdAt: new Date() } }) },
+    save: async (proof: ComprobanteEntrega) => { await this.client.tusDeliveryProof.create({ data: { id: proof.proofId, tenantId: proof.tenantId, proofId: proof.proofId, taskId: proof.taskId, commitmentId: proof.commitmentId, recipientName: proof.recipientName, capturedAt: new Date(proof.capturedAt), evidenceSource: proof.evidenceSource, createdAt: new Date() } }) },
     find: async (tenantId: string, proofId: string) => { const row = await this.client.tusDeliveryProof.findUnique({ where: { tenantId_proofId: { tenantId, proofId } } }); return row ? mapProof(row) : null },
   }
 
   readonly incidents = {
-    save: async (incident: DeliveryIncident) => { await this.client.tusDeliveryIncident.create({ data: { id: incident.incidentId, tenantId: incident.tenantId, incidentId: incident.incidentId, taskId: incident.taskId, reason: incident.reason, status: incident.status, createdAt: new Date(incident.createdAt) } }) },
+    save: async (incident: IncidenteEntrega) => { await this.client.tusDeliveryIncident.create({ data: { id: incident.incidentId, tenantId: incident.tenantId, incidentId: incident.incidentId, taskId: incident.taskId, reason: incident.reason, status: incident.status, createdAt: new Date(incident.createdAt) } }) },
     find: async (tenantId: string, incidentId: string) => { const row = await this.client.tusDeliveryIncident.findUnique({ where: { tenantId_incidentId: { tenantId, incidentId } } }); return row ? mapIncident(row) : null },
   }
 
@@ -148,22 +148,22 @@ export class PrismaPosStore implements PosStorePort {
     return expected + 1
   }
 
-  async saveOperation(operation: PosManualOperation): Promise<void> {
+  async saveOperation(operation: OperacionManualPuntoVenta): Promise<void> {
     await this.client.tusPosOperation.create({ data: { id: operation.operationId, tenantId: operation.tenantId, operationId: operation.operationId, idempotencyKey: operation.idempotencyKey, schemaVersion: operation.schemaVersion, actorId: operation.actorId, deviceId: operation.deviceId, shiftId: operation.shiftId, createdAt: new Date(operation.createdAt), expectedVersion: operation.expectedVersion, kind: operation.kind, context: operation.context, amount: operation.amount, currency: operation.currency, response: null } })
   }
 
-  async saveReceipt(receipt: PosReceipt): Promise<void> { await this.client.tusPosReceipt.create({ data: { id: receipt.receiptId, tenantId: receipt.tenantId, receiptId: receipt.receiptId, operationId: receipt.operationId, kind: receipt.kind, context: receipt.context, amount: receipt.amount, currency: receipt.currency, status: receipt.status, source: receipt.source, providerCapture: receipt.providerCapture, settlement: receipt.settlement, integrityHash: receipt.integrityHash, createdAt: new Date(receipt.createdAt) } }) }
-  async listOperations(tenantId: string): Promise<PosManualOperation[]> { return (await this.client.tusPosOperation.findMany({ where: { tenantId } })).map(mapOperation) }
-  async listReceipts(tenantId: string): Promise<PosReceipt[]> { return (await this.client.tusPosReceipt.findMany({ where: { tenantId } })).map(mapReceipt) }
+  async saveReceipt(receipt: ComprobantePuntoVenta): Promise<void> { await this.client.tusPosReceipt.create({ data: { id: receipt.receiptId, tenantId: receipt.tenantId, receiptId: receipt.receiptId, operationId: receipt.operationId, kind: receipt.kind, context: receipt.context, amount: receipt.amount, currency: receipt.currency, status: receipt.status, source: receipt.source, providerCapture: receipt.providerCapture, settlement: receipt.settlement, integrityHash: receipt.integrityHash, createdAt: new Date(receipt.createdAt) } }) }
+  async listOperations(tenantId: string): Promise<OperacionManualPuntoVenta[]> { return (await this.client.tusPosOperation.findMany({ where: { tenantId } })).map(mapOperation) }
+  async listReceipts(tenantId: string): Promise<ComprobantePuntoVenta[]> { return (await this.client.tusPosReceipt.findMany({ where: { tenantId } })).map(mapReceipt) }
   async saveAudit(record: RegistroAuditoriaPOS): Promise<void> { await this.client.tusPosAudit.create({ data: { id: record.auditId, ...record, createdAt: new Date(record.createdAt) } }) }
   async listAudit(tenantId: string): Promise<RegistroAuditoriaPOS[]> { return this.listAuditRecords(tenantId) }
   async getDevice(tenantId: string, deviceId: string): Promise<PosDevice | null> { const row = await this.client.tusPosDevice.findUnique({ where: { tenantId_deviceId: { tenantId, deviceId } } }); return row ? mapDevice(row) : null }
   async saveDevice(device: PosDevice): Promise<void> { const data = { id: device.deviceId, tenantId: device.tenantId, deviceId: device.deviceId, label: device.label, fingerprint: device.fingerprint, status: device.status, createdAt: new Date(device.createdAt), updatedAt: new Date(device.updatedAt) }; const existing = await this.client.tusPosDevice.findUnique({ where: { tenantId_deviceId: { tenantId: device.tenantId, deviceId: device.deviceId } } }); if (existing) await this.client.tusPosDevice.update({ where: { tenantId_deviceId: { tenantId: device.tenantId, deviceId: device.deviceId } }, data }); else await this.client.tusPosDevice.create({ data }) }
-  async getSession(tenantId: string, sessionId: string): Promise<PosSession | null> { const row = await this.client.tusPosSession.findUnique({ where: { tenantId_sessionId: { tenantId, sessionId } } }); return row ? mapSession(row) : null }
-  async findOpenSession(tenantId: string, deviceId: string, shiftId: string, actorId: string): Promise<PosSession | null> { const rows = await this.client.tusPosSession.findMany({ where: { tenantId, deviceId, shiftId, actorId, status: 'open' } }); return rows[0] ? mapSession(rows[0]) : null }
-  async saveSession(session: PosSession): Promise<void> { const data = { id: session.sessionId, tenantId: session.tenantId, sessionId: session.sessionId, deviceId: session.deviceId, actorId: session.actorId, shiftId: session.shiftId, status: session.status, openedAt: new Date(session.openedAt), ...(session.closedAt ? { closedAt: new Date(session.closedAt) } : {}) }; const existing = await this.client.tusPosSession.findUnique({ where: { tenantId_sessionId: { tenantId: session.tenantId, sessionId: session.sessionId } } }); if (existing) await this.client.tusPosSession.update({ where: { tenantId_sessionId: { tenantId: session.tenantId, sessionId: session.sessionId } }, data }); else await this.client.tusPosSession.create({ data }) }
-  async saveConflict(conflict: PosConflict): Promise<void> { const data = { id: conflict.conflictId, tenantId: conflict.tenantId, conflictId: conflict.conflictId, operationId: conflict.operationId, reason: conflict.reason, expectedVersion: conflict.expectedVersion, actualVersion: conflict.actualVersion, status: conflict.status, createdAt: new Date(conflict.createdAt) }; const existing = await this.client.tusPosConflict.findUnique({ where: { tenantId_conflictId: { tenantId: conflict.tenantId, conflictId: conflict.conflictId } } }); if (existing) await this.client.tusPosConflict.update({ where: { tenantId_conflictId: { tenantId: conflict.tenantId, conflictId: conflict.conflictId } }, data }); else await this.client.tusPosConflict.create({ data }) }
-  async listConflicts(tenantId: string): Promise<PosConflict[]> { return (await this.client.tusPosConflict.findMany({ where: { tenantId } })).map(mapConflict) }
+  async getSession(tenantId: string, sessionId: string): Promise<SesionPuntoVenta | null> { const row = await this.client.tusPosSession.findUnique({ where: { tenantId_sessionId: { tenantId, sessionId } } }); return row ? mapSession(row) : null }
+  async findOpenSession(tenantId: string, deviceId: string, shiftId: string, actorId: string): Promise<SesionPuntoVenta | null> { const rows = await this.client.tusPosSession.findMany({ where: { tenantId, deviceId, shiftId, actorId, status: 'open' } }); return rows[0] ? mapSession(rows[0]) : null }
+  async saveSession(session: SesionPuntoVenta): Promise<void> { const data = { id: session.sessionId, tenantId: session.tenantId, sessionId: session.sessionId, deviceId: session.deviceId, actorId: session.actorId, shiftId: session.shiftId, status: session.status, openedAt: new Date(session.openedAt), ...(session.closedAt ? { closedAt: new Date(session.closedAt) } : {}) }; const existing = await this.client.tusPosSession.findUnique({ where: { tenantId_sessionId: { tenantId: session.tenantId, sessionId: session.sessionId } } }); if (existing) await this.client.tusPosSession.update({ where: { tenantId_sessionId: { tenantId: session.tenantId, sessionId: session.sessionId } }, data }); else await this.client.tusPosSession.create({ data }) }
+  async saveConflict(conflict: ConflictoPuntoVenta): Promise<void> { const data = { id: conflict.conflictId, tenantId: conflict.tenantId, conflictId: conflict.conflictId, operationId: conflict.operationId, reason: conflict.reason, expectedVersion: conflict.expectedVersion, actualVersion: conflict.actualVersion, status: conflict.status, createdAt: new Date(conflict.createdAt) }; const existing = await this.client.tusPosConflict.findUnique({ where: { tenantId_conflictId: { tenantId: conflict.tenantId, conflictId: conflict.conflictId } } }); if (existing) await this.client.tusPosConflict.update({ where: { tenantId_conflictId: { tenantId: conflict.tenantId, conflictId: conflict.conflictId } }, data }); else await this.client.tusPosConflict.create({ data }) }
+  async listConflicts(tenantId: string): Promise<ConflictoPuntoVenta[]> { return (await this.client.tusPosConflict.findMany({ where: { tenantId } })).map(mapConflict) }
   readonly outbox = {
     append: async (record: PosOutboxRecord) => {
       await this.client.tusPosOutbox.create({ data: {
@@ -213,16 +213,16 @@ export class PrismaPosStore implements PosStorePort {
   }
 }
 
-function mapZone(row: Row): DeliveryZone { return { zoneId: row.zoneId, tenantId: row.tenantId, name: row.name, postalCodes: [...row.postalCodes], active: row.active } }
+function mapZone(row: Row): ZonaEntrega { return { zoneId: row.zoneId, tenantId: row.tenantId, name: row.name, postalCodes: [...row.postalCodes], active: row.active } }
 function mapShift(row: Row): DeliveryShift { return { shiftId: row.shiftId, tenantId: row.tenantId, zoneId: row.zoneId, startsAt: row.startsAt.toISOString(), endsAt: row.endsAt.toISOString(), operatorIds: [...row.operatorIds], status: row.status } }
-function mapTask(row: Row): DeliveryTask { return { contractVersion: '1.0.0', taskId: row.taskId, tenantId: row.tenantId, commitmentId: row.commitmentId, merchantId: row.merchantId, context: 'product', zoneId: row.zoneId, shiftId: row.shiftId, operatorId: row.operatorId, status: row.status, version: row.version, proof: row.proof, incident: row.incident, sla: row.sla ?? { pickupDueAt: row.createdAt.toISOString(), dropoffDueAt: row.updatedAt.toISOString(), status: 'on-time', breachedAt: null }, pickup: row.pickup ?? { pickedUpAt: null, inTransitAt: null }, dropoff: row.dropoff ?? { handedOffAt: null }, cancelledAt: row.cancelledAt ? row.cancelledAt.toISOString() : null, failureReason: row.failureReason ?? null, settlementClaim: 'not-claimed', createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } }
-function mapProof(row: Row): DeliveryProof { return { contractVersion: '1.0.0', proofId: row.proofId, tenantId: row.tenantId, taskId: row.taskId, commitmentId: row.commitmentId, recipientName: row.recipientName, capturedAt: row.capturedAt.toISOString(), evidenceSource: row.evidenceSource } }
-function mapIncident(row: Row): DeliveryIncident { return { contractVersion: '1.0.0', incidentId: row.incidentId, tenantId: row.tenantId, taskId: row.taskId, reason: row.reason, status: row.status, createdAt: row.createdAt.toISOString() } }
-function mapOperation(row: Row): PosManualOperation { const operation = { ...row }; delete operation.response; return { contractVersion: '1.0.0', ...operation, createdAt: row.createdAt.toISOString() } as PosManualOperation }
-function mapReceipt(row: Row): PosReceipt { return { contractVersion: '1.0.0', ...row, createdAt: row.createdAt.toISOString() } as PosReceipt }
+function mapTask(row: Row): TareaEntrega { return { contractVersion: '1.0.0', taskId: row.taskId, tenantId: row.tenantId, commitmentId: row.commitmentId, merchantId: row.merchantId, context: 'product', zoneId: row.zoneId, shiftId: row.shiftId, operatorId: row.operatorId, status: row.status, version: row.version, proof: row.proof, incident: row.incident, sla: row.sla ?? { pickupDueAt: row.createdAt.toISOString(), dropoffDueAt: row.updatedAt.toISOString(), status: 'on-time', breachedAt: null }, pickup: row.pickup ?? { pickedUpAt: null, inTransitAt: null }, dropoff: row.dropoff ?? { handedOffAt: null }, cancelledAt: row.cancelledAt ? row.cancelledAt.toISOString() : null, failureReason: row.failureReason ?? null, settlementClaim: 'not-claimed', createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } }
+function mapProof(row: Row): ComprobanteEntrega { return { contractVersion: '1.0.0', proofId: row.proofId, tenantId: row.tenantId, taskId: row.taskId, commitmentId: row.commitmentId, recipientName: row.recipientName, capturedAt: row.capturedAt.toISOString(), evidenceSource: row.evidenceSource } }
+function mapIncident(row: Row): IncidenteEntrega { return { contractVersion: '1.0.0', incidentId: row.incidentId, tenantId: row.tenantId, taskId: row.taskId, reason: row.reason, status: row.status, createdAt: row.createdAt.toISOString() } }
+function mapOperation(row: Row): OperacionManualPuntoVenta { const operation = { ...row }; delete operation.response; return { contractVersion: '1.0.0', ...operation, createdAt: row.createdAt.toISOString() } as OperacionManualPuntoVenta }
+function mapReceipt(row: Row): ComprobantePuntoVenta { return { contractVersion: '1.0.0', ...row, createdAt: row.createdAt.toISOString() } as ComprobantePuntoVenta }
 function mapDevice(row: Row): PosDevice { return { contractVersion: '1.0.0', deviceId: row.deviceId, tenantId: row.tenantId, label: row.label, fingerprint: row.fingerprint, status: row.status, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } }
-function mapSession(row: Row): PosSession { return { contractVersion: '1.0.0', sessionId: row.sessionId, tenantId: row.tenantId, deviceId: row.deviceId, actorId: row.actorId, shiftId: row.shiftId, status: row.status, openedAt: row.openedAt.toISOString(), ...(row.closedAt ? { closedAt: row.closedAt.toISOString() } : {}) } }
-function mapConflict(row: Row): PosConflict { return { contractVersion: '1.0.0', conflictId: row.conflictId, tenantId: row.tenantId, operationId: row.operationId, reason: row.reason, ...(row.expectedVersion === null ? {} : { expectedVersion: row.expectedVersion }), ...(row.actualVersion === null ? {} : { actualVersion: row.actualVersion }), status: row.status, createdAt: row.createdAt.toISOString() } }
+function mapSession(row: Row): SesionPuntoVenta { return { contractVersion: '1.0.0', sessionId: row.sessionId, tenantId: row.tenantId, deviceId: row.deviceId, actorId: row.actorId, shiftId: row.shiftId, status: row.status, openedAt: row.openedAt.toISOString(), ...(row.closedAt ? { closedAt: row.closedAt.toISOString() } : {}) } }
+function mapConflict(row: Row): ConflictoPuntoVenta { return { contractVersion: '1.0.0', conflictId: row.conflictId, tenantId: row.tenantId, operationId: row.operationId, reason: row.reason, ...(row.expectedVersion === null ? {} : { expectedVersion: row.expectedVersion }), ...(row.actualVersion === null ? {} : { actualVersion: row.actualVersion }), status: row.status, createdAt: row.createdAt.toISOString() } }
 function mapearAuditoriaPOS(row: Row): RegistroAuditoriaPOS { return { auditId: row.auditId, tenantId: row.tenantId, actorId: row.actorId, correlationId: row.correlationId, action: row.action, operationId: row.operationId, outcome: row.outcome, createdAt: row.createdAt.toISOString() } }
 function mapOutbox(row: Row): PosOutboxRecord { return fromPrismaPosOutbox(row) }
 

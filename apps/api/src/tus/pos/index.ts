@@ -64,7 +64,7 @@ export interface PosShift {
   closedAt?: string
 }
 
-export interface PosCompensation {
+export interface CompensacionPuntoVenta {
   compensationId: string
   tenantId: string
   actorId: string
@@ -87,7 +87,7 @@ export interface PosPrinterFailure {
   createdAt: string
 }
 
-export interface PosManualOperation {
+export interface OperacionManualPuntoVenta {
   contractVersion?: '1.0.0'
   operationId: string
   idempotencyKey: string
@@ -106,7 +106,7 @@ export interface PosManualOperation {
   lines?: PosLineSnapshot[]
 }
 
-export interface PosReceipt {
+export interface ComprobantePuntoVenta {
   contractVersion?: '1.0.0'
   receiptId: string
   tenantId: string
@@ -140,7 +140,7 @@ export interface PosDevice {
   updatedAt: string
 }
 
-export interface PosSession {
+export interface SesionPuntoVenta {
   contractVersion?: '1.0.0'
   sessionId: string
   tenantId: string
@@ -152,7 +152,7 @@ export interface PosSession {
   closedAt?: string
 }
 
-export interface PosConflict {
+export interface ConflictoPuntoVenta {
   contractVersion?: '1.0.0'
   conflictId: string
   tenantId: string
@@ -191,7 +191,7 @@ export interface RegistroAuditoriaPOS {
   createdAt: string
 }
 
-export type PosCommandResult = { status: 'accepted'; operation: PosManualOperation; receipt: PosReceipt } | { status: 'conflict'; operationId: string; reason: 'idempotency_conflict' | 'version_conflict' }
+export type PosCommandResult = { status: 'accepted'; operation: OperacionManualPuntoVenta; receipt: ComprobantePuntoVenta } | { status: 'conflict'; operationId: string; reason: 'idempotency_conflict' | 'version_conflict' }
 
 export interface PosStorePort {
   readonly requiresProvisionedDevice?: boolean
@@ -200,23 +200,23 @@ export interface PosStorePort {
   saveIdempotency(tenantId: string, key: string, value: { fingerprint: string; response: PosCommandResult }): MaybePromise<void>
   getVersion(tenantId: string, shiftId: string): MaybePromise<number>
   incrementVersion(tenantId: string, shiftId: string, expectedVersion?: number): MaybePromise<number>
-  saveOperation(operation: PosManualOperation): MaybePromise<void>
-  saveReceipt(receipt: PosReceipt): MaybePromise<void>
-  listOperations(tenantId: string): MaybePromise<PosManualOperation[]>
-  listReceipts(tenantId: string): MaybePromise<PosReceipt[]>
+  saveOperation(operation: OperacionManualPuntoVenta): MaybePromise<void>
+  saveReceipt(receipt: ComprobantePuntoVenta): MaybePromise<void>
+  listOperations(tenantId: string): MaybePromise<OperacionManualPuntoVenta[]>
+  listReceipts(tenantId: string): MaybePromise<ComprobantePuntoVenta[]>
   saveAudit(record: RegistroAuditoriaPOS): MaybePromise<void>
   listAudit(tenantId: string): MaybePromise<RegistroAuditoriaPOS[]>
   getDevice(tenantId: string, deviceId: string): MaybePromise<PosDevice | null>
   saveDevice(device: PosDevice): MaybePromise<void>
-  getSession(tenantId: string, sessionId: string): MaybePromise<PosSession | null>
-  findOpenSession(tenantId: string, deviceId: string, shiftId: string, actorId: string): MaybePromise<PosSession | null>
-  saveSession(session: PosSession): MaybePromise<void>
-  saveConflict(conflict: PosConflict): MaybePromise<void>
-  listConflicts(tenantId: string): MaybePromise<PosConflict[]>
+  getSession(tenantId: string, sessionId: string): MaybePromise<SesionPuntoVenta | null>
+  findOpenSession(tenantId: string, deviceId: string, shiftId: string, actorId: string): MaybePromise<SesionPuntoVenta | null>
+  saveSession(session: SesionPuntoVenta): MaybePromise<void>
+  saveConflict(conflict: ConflictoPuntoVenta): MaybePromise<void>
+  listConflicts(tenantId: string): MaybePromise<ConflictoPuntoVenta[]>
   getShift?(tenantId: string, shiftId: string): MaybePromise<PosShift | null>
   saveShift?(shift: PosShift): MaybePromise<void>
-  saveCompensation?(compensation: PosCompensation): MaybePromise<void>
-  listCompensations?(tenantId: string): MaybePromise<PosCompensation[]>
+  saveCompensation?(compensation: CompensacionPuntoVenta): MaybePromise<void>
+  listCompensations?(tenantId: string): MaybePromise<CompensacionPuntoVenta[]>
   savePrinterFailure?(failure: PosPrinterFailure): MaybePromise<void>
   listPrinterFailures?(tenantId: string): MaybePromise<PosPrinterFailure[]>
   outbox: {
@@ -244,14 +244,14 @@ export class PosError extends Error {
 export class InMemoryPosStore implements PosStorePort {
   private readonly idempotency = new Map<string, { fingerprint: string; response: PosCommandResult }>()
   private readonly versions = new Map<string, number>()
-  private readonly operations = new Map<string, PosManualOperation>()
-  private readonly receipts = new Map<string, PosReceipt>()
+  private readonly operations = new Map<string, OperacionManualPuntoVenta>()
+  private readonly receipts = new Map<string, ComprobantePuntoVenta>()
   private readonly audits = new Map<string, RegistroAuditoriaPOS>()
   private readonly devices = new Map<string, PosDevice>()
-  private readonly sessions = new Map<string, PosSession>()
-  private readonly conflicts = new Map<string, PosConflict>()
+  private readonly sessions = new Map<string, SesionPuntoVenta>()
+  private readonly conflicts = new Map<string, ConflictoPuntoVenta>()
   private readonly shifts = new Map<string, PosShift>()
-  private readonly compensations = new Map<string, PosCompensation>()
+  private readonly compensations = new Map<string, CompensacionPuntoVenta>()
   private readonly printerFailures = new Map<string, PosPrinterFailure>()
   private readonly outboxRecords = new Map<string, PosOutboxRecord>()
   private transactionTail: Promise<void> = Promise.resolve()
@@ -282,8 +282,8 @@ export class InMemoryPosStore implements PosStorePort {
     this.versions.set(key(tenantId, shiftId), version)
     return version
   }
-  saveOperation(operation: PosManualOperation) { this.operations.set(key(operation.tenantId, operation.operationId), clone(operation)) }
-  saveReceipt(receipt: PosReceipt) { this.receipts.set(key(receipt.tenantId, receipt.receiptId), clone(receipt)) }
+  saveOperation(operation: OperacionManualPuntoVenta) { this.operations.set(key(operation.tenantId, operation.operationId), clone(operation)) }
+  saveReceipt(receipt: ComprobantePuntoVenta) { this.receipts.set(key(receipt.tenantId, receipt.receiptId), clone(receipt)) }
   listOperations(tenantId: string) { return [...this.operations.values()].filter((operation) => operation.tenantId === tenantId).map(clone) }
   listReceipts(tenantId: string) { return [...this.receipts.values()].filter((receipt) => receipt.tenantId === tenantId).map(clone) }
   saveAudit(record: RegistroAuditoriaPOS) { this.audits.set(record.auditId, clone(record)) }
@@ -292,12 +292,12 @@ export class InMemoryPosStore implements PosStorePort {
   saveDevice(device: PosDevice) { this.devices.set(key(device.tenantId, device.deviceId), clone(device)) }
   getSession(tenantId: string, sessionId: string) { return clone(this.sessions.get(key(tenantId, sessionId)) ?? null) }
   findOpenSession(tenantId: string, deviceId: string, shiftId: string, actorId: string) { return clone([...this.sessions.values()].find((session) => session.tenantId === tenantId && session.deviceId === deviceId && session.shiftId === shiftId && session.actorId === actorId && session.status === 'open') ?? null) }
-  saveSession(session: PosSession) { this.sessions.set(key(session.tenantId, session.sessionId), clone(session)) }
-  saveConflict(conflict: PosConflict) { this.conflicts.set(key(conflict.tenantId, conflict.conflictId), clone(conflict)) }
+  saveSession(session: SesionPuntoVenta) { this.sessions.set(key(session.tenantId, session.sessionId), clone(session)) }
+  saveConflict(conflict: ConflictoPuntoVenta) { this.conflicts.set(key(conflict.tenantId, conflict.conflictId), clone(conflict)) }
   listConflicts(tenantId: string) { return [...this.conflicts.values()].filter((conflict) => conflict.tenantId === tenantId).map(clone) }
   getShift(tenantId: string, shiftId: string) { return clone(this.shifts.get(key(tenantId, shiftId)) ?? null) }
   saveShift(shift: PosShift) { this.shifts.set(key(shift.tenantId, shift.shiftId), clone(shift)) }
-  saveCompensation(compensation: PosCompensation) { this.compensations.set(key(compensation.tenantId, compensation.compensationId), clone(compensation)) }
+  saveCompensation(compensation: CompensacionPuntoVenta) { this.compensations.set(key(compensation.tenantId, compensation.compensationId), clone(compensation)) }
   listCompensations(tenantId: string) { return [...this.compensations.values()].filter((compensation) => compensation.tenantId === tenantId).map(clone) }
   savePrinterFailure(failure: PosPrinterFailure) { this.printerFailures.set(key(failure.tenantId, failure.failureId), clone(failure)) }
   listPrinterFailures(tenantId: string) { return [...this.printerFailures.values()].filter((failure) => failure.tenantId === tenantId).map(clone) }
@@ -428,7 +428,7 @@ export class TusPosService {
     })
   }
 
-  async openSession(context: TusAuthenticatedTenantContext, input: { sessionId: string; deviceId: string; shiftId: string; openingFloat?: number }): Promise<PosSession> {
+  async openSession(context: TusAuthenticatedTenantContext, input: { sessionId: string; deviceId: string; shiftId: string; openingFloat?: number }): Promise<SesionPuntoVenta> {
     this.authorize(context)
     await this.requerirHabilitacion(context)
     if (!input.sessionId.trim() || !input.deviceId.trim() || !input.shiftId.trim()) throw new PosError(400, 'INVALID_SESSION', 'session, device, and shift are required')
@@ -438,7 +438,7 @@ export class TusPosService {
     validateNonNegativeMoney(openingFloat, 'openingFloat')
     const existingShift = await this.store.getShift?.(context.tenantId, input.shiftId)
     if (existingShift?.status === 'open') throw new PosError(409, 'SHIFT_OPEN', 'POS shift is already open')
-    const session: PosSession = { contractVersion: '1.0.0', sessionId: input.sessionId, tenantId: context.tenantId, deviceId: input.deviceId, actorId: context.subjectId, shiftId: input.shiftId, status: 'open', openedAt: new Date(this.now()).toISOString() }
+    const session: SesionPuntoVenta = { contractVersion: '1.0.0', sessionId: input.sessionId, tenantId: context.tenantId, deviceId: input.deviceId, actorId: context.subjectId, shiftId: input.shiftId, status: 'open', openedAt: new Date(this.now()).toISOString() }
     const shift: PosShift = { shiftId: input.shiftId, tenantId: context.tenantId, status: 'open', version: 0, totals: { openingFloat, sales: 0, refunds: 0, cashIn: 0, cashOut: 0, expectedCash: openingFloat }, openedAt: session.openedAt }
     return this.store.transaction(async (store) => {
       await store.saveSession(session)
@@ -449,7 +449,7 @@ export class TusPosService {
     })
   }
 
-  async closeSession(context: TusAuthenticatedTenantContext, sessionId: string, input: { countedCash?: number } = {}): Promise<PosSession & { reconciliation?: PosShift['reconciliation'] }> {
+  async closeSession(context: TusAuthenticatedTenantContext, sessionId: string, input: { countedCash?: number } = {}): Promise<SesionPuntoVenta & { reconciliation?: PosShift['reconciliation'] }> {
     this.authorize(context)
     await this.requerirHabilitacion(context)
     const session = await this.store.getSession(context.tenantId, sessionId)
@@ -471,14 +471,14 @@ export class TusPosService {
     })
   }
 
-  async recordManualOperation(context: TusAuthenticatedTenantContext, input: Omit<PosManualOperation, 'tenantId' | 'actorId'> & Partial<Pick<PosManualOperation, 'tenantId' | 'actorId'>>): Promise<PosCommandResult> {
+  async recordManualOperation(context: TusAuthenticatedTenantContext, input: Omit<OperacionManualPuntoVenta, 'tenantId' | 'actorId'> & Partial<Pick<OperacionManualPuntoVenta, 'tenantId' | 'actorId'>>): Promise<PosCommandResult> {
     this.authorize(context)
     await this.requerirHabilitacion(context)
     if ((input.tenantId !== undefined && input.tenantId !== context.tenantId) || (input.actorId !== undefined && input.actorId !== context.subjectId)) {
       await this.registrarAuditoriaPOS(context, 'pos.operation.denied', input.operationId, 'denied')
       throw new PosError(403, 'FORBIDDEN', 'POS authority fields do not match the authenticated session')
     }
-    const operation: PosManualOperation = { contractVersion: '1.0.0', ...input, tenantId: context.tenantId, actorId: context.subjectId }
+    const operation: OperacionManualPuntoVenta = { contractVersion: '1.0.0', ...input, tenantId: context.tenantId, actorId: context.subjectId }
     validateOperation(operation)
     const device = await this.store.getDevice(context.tenantId, operation.deviceId)
     if (!device && this.store.requiresProvisionedDevice) {
@@ -509,7 +509,7 @@ export class TusPosService {
         return { status: 'conflict', operationId: operation.operationId, reason: 'version_conflict' }
       }
       const snapshot = { operationId: operation.operationId, amount: operation.amount, currency: operation.currency, lines: clone(operation.lines ?? []) }
-      const receipt: PosReceipt = { contractVersion: '1.0.0', receiptId: `receipt-${operation.operationId}`, tenantId: context.tenantId, operationId: operation.operationId, kind: operation.kind, context: operation.context, amount: operation.amount, currency: operation.currency, status: 'accepted', source: 'deterministic-test-only', providerCapture: 'not-claimed', settlement: 'not-claimed', integrityHash: '', createdAt: new Date(this.now()).toISOString(), snapshot }
+      const receipt: ComprobantePuntoVenta = { contractVersion: '1.0.0', receiptId: `receipt-${operation.operationId}`, tenantId: context.tenantId, operationId: operation.operationId, kind: operation.kind, context: operation.context, amount: operation.amount, currency: operation.currency, status: 'accepted', source: 'deterministic-test-only', providerCapture: 'not-claimed', settlement: 'not-claimed', integrityHash: '', createdAt: new Date(this.now()).toISOString(), snapshot }
       receipt.integrityHash = receiptIntegrityHash(receipt)
       const response: PosCommandResult = { status: 'accepted', operation, receipt }
       await transactionStore.saveOperation(operation)
@@ -533,7 +533,7 @@ export class TusPosService {
     return shift ? clone(shift) : null
   }
 
-  async getOperationStatus(context: TusAuthenticatedTenantContext, operationId: string): Promise<{ status: PosOperationStatus; operationId: string; receipt?: PosReceipt; reason?: string }> {
+  async getOperationStatus(context: TusAuthenticatedTenantContext, operationId: string): Promise<{ status: PosOperationStatus; operationId: string; receipt?: ComprobantePuntoVenta; reason?: string }> {
     this.authorize(context)
     const operation = (await this.store.listOperations(context.tenantId)).find((item) => item.operationId === operationId)
     if (!operation) return { status: POS_OPERATION_STATUS.NOT_FOUND, operationId }
@@ -542,7 +542,7 @@ export class TusPosService {
     return { status: POS_OPERATION_STATUS.PENDING, operationId, reason: 'receipt_pending' }
   }
 
-  async refund(context: TusAuthenticatedTenantContext, input: { refundId: string; originalOperationId: string; idempotencyKey: string; amount: number; reason: string; expectedVersion: number }): Promise<{ status: 'accepted'; compensation: PosCompensation }> {
+  async refund(context: TusAuthenticatedTenantContext, input: { refundId: string; originalOperationId: string; idempotencyKey: string; amount: number; reason: string; expectedVersion: number }): Promise<{ status: 'accepted'; compensation: CompensacionPuntoVenta }> {
     this.authorizeCompensation(context)
     validateMoney(input.amount, 'refund amount')
     const original = (await this.store.listOperations(context.tenantId)).find((operation) => operation.operationId === input.originalOperationId)
@@ -551,14 +551,14 @@ export class TusPosService {
     return this.createCompensation(context, { compensationId: input.refundId, originalOperationId: input.originalOperationId, idempotencyKey: input.idempotencyKey, amount: input.amount, currency: original.currency, reason: input.reason, expectedVersion: input.expectedVersion, kind: POS_COMPENSATION_KIND.REFUND })
   }
 
-  async cancelOperation(context: TusAuthenticatedTenantContext, input: { cancellationId: string; originalOperationId: string; idempotencyKey: string; reason: string; expectedVersion: number }): Promise<{ status: 'accepted'; compensation: PosCompensation }> {
+  async cancelOperation(context: TusAuthenticatedTenantContext, input: { cancellationId: string; originalOperationId: string; idempotencyKey: string; reason: string; expectedVersion: number }): Promise<{ status: 'accepted'; compensation: CompensacionPuntoVenta }> {
     this.authorizeCompensation(context)
     const original = (await this.store.listOperations(context.tenantId)).find((operation) => operation.operationId === input.originalOperationId)
     if (!original) throw new PosError(404, 'NOT_FOUND', 'original POS operation was not found')
     return this.createCompensation(context, { compensationId: input.cancellationId, originalOperationId: input.originalOperationId, idempotencyKey: input.idempotencyKey, amount: original.amount, currency: original.currency, reason: input.reason, expectedVersion: input.expectedVersion, kind: POS_COMPENSATION_KIND.CANCELLATION })
   }
 
-  async listCompensations(context: TusAuthenticatedTenantContext): Promise<PosCompensation[]> {
+  async listCompensations(context: TusAuthenticatedTenantContext): Promise<CompensacionPuntoVenta[]> {
     this.authorize(context)
     return (await this.store.listCompensations?.(context.tenantId)) ?? []
   }
@@ -576,10 +576,10 @@ export class TusPosService {
     })
   }
 
-  private async createCompensation(context: TusAuthenticatedTenantContext, input: { compensationId: string; originalOperationId: string; idempotencyKey: string; amount: number; currency: string; reason: string; expectedVersion: number; kind: PosCompensationKind }): Promise<{ status: 'accepted'; compensation: PosCompensation }> {
+  private async createCompensation(context: TusAuthenticatedTenantContext, input: { compensationId: string; originalOperationId: string; idempotencyKey: string; amount: number; currency: string; reason: string; expectedVersion: number; kind: PosCompensationKind }): Promise<{ status: 'accepted'; compensation: CompensacionPuntoVenta }> {
     const existing = (await this.store.listCompensations?.(context.tenantId))?.find((item) => item.idempotencyKey === input.idempotencyKey)
     if (existing) return { status: 'accepted', compensation: clone(existing) }
-    const compensation: PosCompensation = { compensationId: input.compensationId, tenantId: context.tenantId, actorId: context.subjectId, originalOperationId: input.originalOperationId, idempotencyKey: input.idempotencyKey, kind: input.kind, amount: input.amount, currency: input.currency, reason: input.reason.trim(), status: 'accepted', createdAt: new Date(this.now()).toISOString() }
+    const compensation: CompensacionPuntoVenta = { compensationId: input.compensationId, tenantId: context.tenantId, actorId: context.subjectId, originalOperationId: input.originalOperationId, idempotencyKey: input.idempotencyKey, kind: input.kind, amount: input.amount, currency: input.currency, reason: input.reason.trim(), status: 'accepted', createdAt: new Date(this.now()).toISOString() }
     return this.store.transaction(async (store) => {
       const currentVersion = await store.getVersion(context.tenantId, (await store.listOperations(context.tenantId)).find((operation) => operation.operationId === input.originalOperationId)?.shiftId ?? '')
       if (currentVersion !== input.expectedVersion) {
@@ -602,7 +602,7 @@ export class TusPosService {
     })
   }
 
-  async resolveConflict(context: TusAuthenticatedTenantContext, conflictId: string, resolution: 'discard' | 'retry'): Promise<PosConflict> {
+  async resolveConflict(context: TusAuthenticatedTenantContext, conflictId: string, resolution: 'discard' | 'retry'): Promise<ConflictoPuntoVenta> {
     this.authorize(context)
     await this.requerirHabilitacion(context)
     return this.store.transaction(async (transactionStore) => {
@@ -624,8 +624,8 @@ export class TusPosService {
     return this.evaluadorHabilitacion?.require({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, capability: 'fleet', profile: this.perfilHabilitacion, scope: this.alcanceHabilitacion }) ?? Promise.resolve()
   }
 
-  private async recordConflict(context: TusAuthenticatedTenantContext, operation: PosManualOperation, reason: PosConflict['reason'], actualVersion?: number, store = this.store): Promise<void> {
-    const conflict: PosConflict = { contractVersion: '1.0.0', conflictId: `conflict-${operation.operationId}-${this.now()}`, tenantId: context.tenantId, operationId: operation.operationId, reason, ...(operation.expectedVersion !== undefined ? { expectedVersion: operation.expectedVersion } : {}), ...(actualVersion !== undefined ? { actualVersion } : {}), status: 'open', createdAt: new Date(this.now()).toISOString() }
+  private async recordConflict(context: TusAuthenticatedTenantContext, operation: OperacionManualPuntoVenta, reason: ConflictoPuntoVenta['reason'], actualVersion?: number, store = this.store): Promise<void> {
+    const conflict: ConflictoPuntoVenta = { contractVersion: '1.0.0', conflictId: `conflict-${operation.operationId}-${this.now()}`, tenantId: context.tenantId, operationId: operation.operationId, reason, ...(operation.expectedVersion !== undefined ? { expectedVersion: operation.expectedVersion } : {}), ...(actualVersion !== undefined ? { actualVersion } : {}), status: 'open', createdAt: new Date(this.now()).toISOString() }
     await store.saveConflict(conflict)
     await this.recordOutbox(context, 'pos.conflict.opened', operation.operationId, conflict, store)
   }
@@ -645,7 +645,7 @@ export class TusPosService {
   }
 }
 
-function validateOperation(operation: PosManualOperation): void {
+function validateOperation(operation: OperacionManualPuntoVenta): void {
   if (!operation.operationId.trim() || !operation.idempotencyKey.trim() || !operation.schemaVersion.trim() || !operation.deviceId.trim() || !operation.shiftId.trim() || !operation.currency.trim() || !Number.isFinite(Date.parse(operation.createdAt))) throw new PosError(400, 'INVALID', 'POS operation metadata and amount are required')
   validateMoney(operation.amount, 'amount')
   if ((operation.kind === 'manual-sale' && operation.context !== 'product') || (operation.kind === 'manual-service' && operation.context !== 'service')) throw new PosError(400, 'CONTEXT_MISMATCH', 'product sales and service captures use separate POS lifecycles')
@@ -671,15 +671,15 @@ function validateLineSnapshots(lines: PosLineSnapshot[], context: PosOperationCo
   if (!Number.isSafeInteger(total) || total !== amount) throw new PosError(400, 'INVALID', 'POS line snapshot total differs from amount')
 }
 
-function fingerprintFor(operation: PosManualOperation): string {
+function fingerprintFor(operation: OperacionManualPuntoVenta): string {
   return createHash('sha256').update(JSON.stringify(operation)).digest('hex')
 }
 
-export function verifyPosReceipt(receipt: PosReceipt): boolean {
+export function verifyPosReceipt(receipt: ComprobantePuntoVenta): boolean {
   return receipt.providerCapture === 'not-claimed' && receipt.settlement === 'not-claimed' && receipt.integrityHash === receiptIntegrityHash(receipt)
 }
 
-function receiptIntegrityHash(receipt: PosReceipt): string {
+function receiptIntegrityHash(receipt: ComprobantePuntoVenta): string {
   const { integrityHash, ...unsigned } = receipt
   void integrityHash
   return createHash('sha256').update(JSON.stringify(unsigned)).digest('hex')

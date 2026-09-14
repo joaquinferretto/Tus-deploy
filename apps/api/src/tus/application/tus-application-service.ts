@@ -14,7 +14,7 @@ import {
   type ResultadoMutacionCompromiso,
 } from '../commitments/index.ts'
 import type { TusFinanceService } from '../finance/index.ts'
-import type { DeliveryProof, DeliveryTask, TusDeliveryService } from '../delivery/index.ts'
+import type { ComprobanteEntrega, TareaEntrega, TusDeliveryService } from '../delivery/index.ts'
 import type { TusPosService } from '../pos/index.ts'
 import type { TusSupportService } from '../support/index.ts'
 import type { TusWhatsAppService } from '../whatsapp/index.ts'
@@ -170,9 +170,9 @@ export class TusApplicationService {
 
   async recordDeliveryProof(
     context: TusAuthenticatedTenantContext,
-    input: Omit<DeliveryProof, 'tenantId' | 'commitmentId'>,
+    input: Omit<ComprobanteEntrega, 'tenantId' | 'commitmentId'>,
     expectedVersion: number,
-  ): Promise<DeliveryTask> {
+  ): Promise<TareaEntrega> {
     if (!this.delivery) throw new Error('TUS delivery composition is unavailable')
     const task = await this.delivery.recordProof(context, input, expectedVersion)
     if (this.finance && task.proof && await this.lookupCommitment(task.commitmentId)) {
@@ -189,7 +189,7 @@ export class TusApplicationService {
     return task
   }
 
-  async handoffDelivery(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<DeliveryTask> {
+  async handoffDelivery(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<TareaEntrega> {
     if (!this.delivery) throw new Error('TUS delivery composition is unavailable')
     return this.delivery.transitionTask(context, taskId, 'handed-off', expectedVersion)
   }

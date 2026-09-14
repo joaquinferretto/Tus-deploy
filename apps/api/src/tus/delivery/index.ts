@@ -32,7 +32,7 @@ export interface DeliveryDropoffEvidence {
   handedOffAt: string | null
 }
 
-export interface DeliveryZone {
+export interface ZonaEntrega {
   zoneId: string
   tenantId: string
   name: string
@@ -59,7 +59,7 @@ export interface DeliveryCommitmentReference {
   currency: string
 }
 
-export interface DeliveryProof {
+export interface ComprobanteEntrega {
   contractVersion?: '1.0.0'
   proofId: string
   tenantId: string
@@ -70,7 +70,7 @@ export interface DeliveryProof {
   evidenceSource: DeliveryEvidenceSource
 }
 
-export interface DeliveryIncident {
+export interface IncidenteEntrega {
   contractVersion?: '1.0.0'
   incidentId: string
   tenantId: string
@@ -80,7 +80,7 @@ export interface DeliveryIncident {
   createdAt: string
 }
 
-export interface DeliveryTask {
+export interface TareaEntrega {
   contractVersion?: '1.0.0'
   taskId: string
   tenantId: string
@@ -92,8 +92,8 @@ export interface DeliveryTask {
   operatorId: string | null
   status: DeliveryTaskStatus
   version: number
-  proof: DeliveryProof | null
-  incident: DeliveryIncident | null
+  proof: ComprobanteEntrega | null
+  incident: IncidenteEntrega | null
   sla: DeliverySla
   pickup: DeliveryPickupEvidence
   dropoff: DeliveryDropoffEvidence
@@ -129,11 +129,11 @@ export interface DeliveryOutboxRecord {
 }
 
 export interface DeliveryStorePort {
-  zones: { save(zone: DeliveryZone): Promise<void>; find(tenantId: string, zoneId: string): Promise<DeliveryZone | null> }
+  zones: { save(zone: ZonaEntrega): Promise<void>; find(tenantId: string, zoneId: string): Promise<ZonaEntrega | null> }
   shifts: { save(shift: DeliveryShift): Promise<void>; find(tenantId: string, shiftId: string): Promise<DeliveryShift | null> }
-  tasks: { save(task: DeliveryTask): Promise<void>; find(tenantId: string, taskId: string): Promise<DeliveryTask | null>; forTenant(tenantId: string): Promise<DeliveryTask[]> }
-  proofs: { save(proof: DeliveryProof): Promise<void>; find(tenantId: string, proofId: string): Promise<DeliveryProof | null> }
-  incidents: { save(incident: DeliveryIncident): Promise<void>; find(tenantId: string, incidentId: string): Promise<DeliveryIncident | null> }
+  tasks: { save(task: TareaEntrega): Promise<void>; find(tenantId: string, taskId: string): Promise<TareaEntrega | null>; forTenant(tenantId: string): Promise<TareaEntrega[]> }
+  proofs: { save(proof: ComprobanteEntrega): Promise<void>; find(tenantId: string, proofId: string): Promise<ComprobanteEntrega | null> }
+  incidents: { save(incident: IncidenteEntrega): Promise<void>; find(tenantId: string, incidentId: string): Promise<IncidenteEntrega | null> }
   audit: { append(record: RegistroAuditoriaEntrega): Promise<void>; list(tenantId: string): RegistroAuditoriaEntrega[] }
   outbox: { append(record: DeliveryOutboxRecord): Promise<void>; list(tenantId: string): DeliveryOutboxRecord[] }
   listOutbox(tenantId: string): DeliveryOutboxRecord[]
@@ -152,16 +152,16 @@ export class DeliveryError extends Error {
 }
 
 export class InMemoryDeliveryStore implements DeliveryStorePort {
-  private readonly zoneRecords = new Map<string, DeliveryZone>()
+  private readonly zoneRecords = new Map<string, ZonaEntrega>()
   private readonly shiftRecords = new Map<string, DeliveryShift>()
-  private readonly taskRecords = new Map<string, DeliveryTask>()
-  private readonly proofRecords = new Map<string, DeliveryProof>()
-  private readonly incidentRecords = new Map<string, DeliveryIncident>()
+  private readonly taskRecords = new Map<string, TareaEntrega>()
+  private readonly proofRecords = new Map<string, ComprobanteEntrega>()
+  private readonly incidentRecords = new Map<string, IncidenteEntrega>()
   private readonly auditRecords = new Map<string, RegistroAuditoriaEntrega>()
   private readonly outboxRecords = new Map<string, DeliveryOutboxRecord>()
 
   readonly zones = {
-    save: async (zone: DeliveryZone) => { this.zoneRecords.set(key(zone.tenantId, zone.zoneId), clone(zone)) },
+    save: async (zone: ZonaEntrega) => { this.zoneRecords.set(key(zone.tenantId, zone.zoneId), clone(zone)) },
     find: async (tenantId: string, zoneId: string) => clone(this.zoneRecords.get(key(tenantId, zoneId)) ?? null),
   }
 
@@ -171,18 +171,18 @@ export class InMemoryDeliveryStore implements DeliveryStorePort {
   }
 
   readonly tasks = {
-    save: async (task: DeliveryTask) => { this.taskRecords.set(key(task.tenantId, task.taskId), clone(task)) },
+    save: async (task: TareaEntrega) => { this.taskRecords.set(key(task.tenantId, task.taskId), clone(task)) },
     find: async (tenantId: string, taskId: string) => clone(this.taskRecords.get(key(tenantId, taskId)) ?? null),
     forTenant: async (tenantId: string) => [...this.taskRecords.values()].filter((task) => task.tenantId === tenantId).map(clone),
   }
 
   readonly proofs = {
-    save: async (proof: DeliveryProof) => { this.proofRecords.set(key(proof.tenantId, proof.proofId), clone(proof)) },
+    save: async (proof: ComprobanteEntrega) => { this.proofRecords.set(key(proof.tenantId, proof.proofId), clone(proof)) },
     find: async (tenantId: string, proofId: string) => clone(this.proofRecords.get(key(tenantId, proofId)) ?? null),
   }
 
   readonly incidents = {
-    save: async (incident: DeliveryIncident) => { this.incidentRecords.set(key(incident.tenantId, incident.incidentId), clone(incident)) },
+    save: async (incident: IncidenteEntrega) => { this.incidentRecords.set(key(incident.tenantId, incident.incidentId), clone(incident)) },
     find: async (tenantId: string, incidentId: string) => clone(this.incidentRecords.get(key(tenantId, incidentId)) ?? null),
   }
 
@@ -226,7 +226,7 @@ export class TusDeliveryService {
     this.alcanceHabilitacion = options.alcanceHabilitacion ?? 'argentina-stage-1'
   }
 
-  async createZone(context: TusAuthenticatedTenantContext, input: { zoneId: string; name: string; postalCodes: string[] }): Promise<DeliveryZone> {
+  async createZone(context: TusAuthenticatedTenantContext, input: { zoneId: string; name: string; postalCodes: string[] }): Promise<ZonaEntrega> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     if (!input.zoneId.trim() || !input.name.trim() || !Array.isArray(input.postalCodes)) throw new DeliveryError(400, 'INVALID', 'zone id, name, and postal codes are required')
@@ -249,7 +249,7 @@ export class TusDeliveryService {
     return shift
   }
 
-  async createTask(context: TusAuthenticatedTenantContext, input: CreateDeliveryTaskInput): Promise<DeliveryTask> {
+  async createTask(context: TusAuthenticatedTenantContext, input: CreateDeliveryTaskInput): Promise<TareaEntrega> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     if (input.commitment.tenantId !== context.tenantId) throw new DeliveryError(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
@@ -261,21 +261,21 @@ export class TusDeliveryService {
     const now = new Date(this.now()).toISOString()
     const sla = input.sla ?? { pickupDueAt: shift.startsAt, dropoffDueAt: shift.endsAt }
     if (!validInterval(sla.pickupDueAt, sla.dropoffDueAt)) throw new DeliveryError(400, 'INVALID_SLA', 'pickup and dropoff SLA deadlines are required')
-    const task: DeliveryTask = { contractVersion: '1.0.0', taskId: input.taskId, tenantId: context.tenantId, commitmentId: input.commitment.commitmentId, merchantId: input.commitment.merchantId, context: 'product', zoneId: zone.zoneId, shiftId: shift.shiftId, operatorId: input.operatorId ?? (shift.operatorIds.length === 1 ? shift.operatorIds[0]! : null), status: DELIVERY_TASK_STATUS.QUEUED, version: 0, proof: null, incident: null, sla: { ...sla, status: 'on-time', breachedAt: null }, pickup: { pickedUpAt: null, inTransitAt: null }, dropoff: { handedOffAt: null }, cancelledAt: null, failureReason: null, settlementClaim: 'not-claimed', createdAt: now, updatedAt: now }
+    const task: TareaEntrega = { contractVersion: '1.0.0', taskId: input.taskId, tenantId: context.tenantId, commitmentId: input.commitment.commitmentId, merchantId: input.commitment.merchantId, context: 'product', zoneId: zone.zoneId, shiftId: shift.shiftId, operatorId: input.operatorId ?? (shift.operatorIds.length === 1 ? shift.operatorIds[0]! : null), status: DELIVERY_TASK_STATUS.QUEUED, version: 0, proof: null, incident: null, sla: { ...sla, status: 'on-time', breachedAt: null }, pickup: { pickedUpAt: null, inTransitAt: null }, dropoff: { handedOffAt: null }, cancelledAt: null, failureReason: null, settlementClaim: 'not-claimed', createdAt: now, updatedAt: now }
     await this.store.tasks.save(task)
     await this.registrarAuditoriaEntrega(context, 'delivery.task.created', 'task', task.taskId, 'allowed')
     await this.recordOutbox(context, 'delivery.task.created', task.taskId, task)
     return task
   }
 
-  async createTaskFromCommitment(context: TusAuthenticatedTenantContext, input: Omit<CreateDeliveryTaskInput, 'commitment'> & { commitmentId: string }): Promise<DeliveryTask> {
+  async createTaskFromCommitment(context: TusAuthenticatedTenantContext, input: Omit<CreateDeliveryTaskInput, 'commitment'> & { commitmentId: string }): Promise<TareaEntrega> {
     if (!this.commitmentLookup) throw new DeliveryError(503, 'UNAVAILABLE', 'commitment lookup is unavailable')
     const commitment = await this.commitmentLookup(input.commitmentId)
     if (!commitment) throw new DeliveryError(404, 'NOT_FOUND', 'commitment was not found')
     return this.createTask(context, { ...input, commitment })
   }
 
-  async assignTask(context: TusAuthenticatedTenantContext, taskId: string, operatorId: string, expectedVersion: number): Promise<DeliveryTask> {
+  async assignTask(context: TusAuthenticatedTenantContext, taskId: string, operatorId: string, expectedVersion: number): Promise<TareaEntrega> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
@@ -289,7 +289,7 @@ export class TusDeliveryService {
     return updated
   }
 
-  async acceptTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<DeliveryTask> {
+  async acceptTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<TareaEntrega> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
@@ -297,7 +297,7 @@ export class TusDeliveryService {
     return this.transitionTask(context, taskId, 'accepted', expectedVersion)
   }
 
-  async transitionTask(context: TusAuthenticatedTenantContext, taskId: string, status: Extract<DeliveryTaskStatus, 'accepted' | 'picked-up' | 'in-transit' | 'handed-off' | 'delivered'>, expectedVersion: number): Promise<DeliveryTask> {
+  async transitionTask(context: TusAuthenticatedTenantContext, taskId: string, status: Extract<DeliveryTaskStatus, 'accepted' | 'picked-up' | 'in-transit' | 'handed-off' | 'delivered'>, expectedVersion: number): Promise<TareaEntrega> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
@@ -305,7 +305,7 @@ export class TusDeliveryService {
     if (status !== DELIVERY_TASK_STATUS.ACCEPTED && task.operatorId !== context.subjectId) throw new DeliveryError(403, 'FORBIDDEN', 'only the assigned internal operator may update this delivery')
     if (!isAllowedTransition(task.status, status) || (['handed-off', 'delivered'].includes(status) && task.proof === null)) throw new DeliveryError(409, 'INVALID_TRANSITION', 'delivery task transition is not supported by its current evidence')
     const timestamp = new Date(this.now()).toISOString()
-    const updated: DeliveryTask = {
+    const updated: TareaEntrega = {
       ...task,
       status,
       pickup: status === DELIVERY_TASK_STATUS.PICKED_UP ? { ...task.pickup, pickedUpAt: timestamp } : status === DELIVERY_TASK_STATUS.IN_TRANSIT ? { ...task.pickup, inTransitAt: timestamp } : task.pickup,
@@ -328,7 +328,7 @@ export class TusDeliveryService {
     return { status: breached || task.sla.status === 'breached' ? 'breached' : 'on-time', pickupDueAt: task.sla.pickupDueAt, dropoffDueAt: task.sla.dropoffDueAt, breachedAt: breached ? task.sla.breachedAt ?? new Date(at).toISOString() : task.sla.breachedAt }
   }
 
-  async cancelTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number, reason: string): Promise<DeliveryTask> {
+  async cancelTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number, reason: string): Promise<TareaEntrega> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
@@ -339,7 +339,7 @@ export class TusDeliveryService {
     return this.saveTask(context, { ...task, status: DELIVERY_TASK_STATUS.CANCELLED, cancelledAt: timestamp, failureReason: reason.trim(), version: task.version + 1, updatedAt: timestamp }, 'delivery.task.cancelled')
   }
 
-  async recordProof(context: TusAuthenticatedTenantContext, input: Omit<DeliveryProof, 'tenantId' | 'commitmentId'>, expectedVersion: number): Promise<DeliveryTask> {
+  async recordProof(context: TusAuthenticatedTenantContext, input: Omit<ComprobanteEntrega, 'tenantId' | 'commitmentId'>, expectedVersion: number): Promise<TareaEntrega> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, input.taskId)
@@ -347,7 +347,7 @@ export class TusDeliveryService {
     this.assertOperator(task, context)
     if (task.status !== 'in-transit') throw new DeliveryError(409, 'INVALID_PROOF_STATE', 'delivery proof requires an in-transit task')
     if (!input.recipientName.trim() || !Number.isFinite(Date.parse(input.capturedAt)) || !['authorized', 'deterministic-test-only'].includes(input.evidenceSource)) throw new DeliveryError(400, 'INVALID_PROOF', 'recipient, timestamp, and evidence source are required')
-    const proof: DeliveryProof = { contractVersion: '1.0.0', ...input, tenantId: context.tenantId, commitmentId: task.commitmentId }
+    const proof: ComprobanteEntrega = { contractVersion: '1.0.0', ...input, tenantId: context.tenantId, commitmentId: task.commitmentId }
     await this.store.proofs.save(proof)
     const updated = { ...task, proof, version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }
     await this.store.tasks.save(updated)
@@ -356,7 +356,7 @@ export class TusDeliveryService {
     return updated
   }
 
-  async failTask(context: TusAuthenticatedTenantContext, taskId: string, input: { incidentId: string; reason: string }, expectedVersion: number): Promise<{ status: 'incident-review'; task: DeliveryTask; incident: DeliveryIncident }> {
+  async failTask(context: TusAuthenticatedTenantContext, taskId: string, input: { incidentId: string; reason: string }, expectedVersion: number): Promise<{ status: 'incident-review'; task: TareaEntrega; incident: IncidenteEntrega }> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
@@ -364,7 +364,7 @@ export class TusDeliveryService {
     this.assertOperator(task, context)
     if (([DELIVERY_TASK_STATUS.CANCELLED, DELIVERY_TASK_STATUS.RETURNED, DELIVERY_TASK_STATUS.DELIVERED, DELIVERY_TASK_STATUS.INCIDENT_REVIEW] as DeliveryTaskStatus[]).includes(task.status)) throw new DeliveryError(409, 'INVALID_TRANSITION', 'terminal or incident delivery tasks cannot fail again')
     if (!input.incidentId.trim() || !input.reason.trim()) throw new DeliveryError(400, 'INVALID_INCIDENT', 'incident id and reason are required')
-    const incident: DeliveryIncident = { contractVersion: '1.0.0', incidentId: input.incidentId, tenantId: context.tenantId, taskId, reason: input.reason.trim(), status: 'open', createdAt: new Date(this.now()).toISOString() }
+    const incident: IncidenteEntrega = { contractVersion: '1.0.0', incidentId: input.incidentId, tenantId: context.tenantId, taskId, reason: input.reason.trim(), status: 'open', createdAt: new Date(this.now()).toISOString() }
     await this.store.incidents.save(incident)
     const updated = { ...task, status: DELIVERY_TASK_STATUS.INCIDENT_REVIEW, incident, failureReason: input.reason.trim(), version: task.version + 1, updatedAt: new Date(this.now()).toISOString() }
     await this.store.tasks.save(updated)
@@ -373,7 +373,7 @@ export class TusDeliveryService {
     return { status: 'incident-review', task: updated, incident }
   }
 
-  async resolveIncident(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<DeliveryTask> {
+  async resolveIncident(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<TareaEntrega> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
@@ -389,7 +389,7 @@ export class TusDeliveryService {
     return updated
   }
 
-  async returnTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<DeliveryTask> {
+  async returnTask(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<TareaEntrega> {
     this.authorize(context, 'tus:delivery:write')
     await this.requerirHabilitacion(context)
     const task = await this.requireTask(context, taskId)
@@ -411,12 +411,12 @@ export class TusDeliveryService {
     return closed
   }
 
-  async getTask(context: TusAuthenticatedTenantContext, taskId: string): Promise<DeliveryTask> {
+  async getTask(context: TusAuthenticatedTenantContext, taskId: string): Promise<TareaEntrega> {
     this.authorize(context, 'tus:delivery:read')
     return this.requireTask(context, taskId)
   }
 
-  async listTasks(context: TusAuthenticatedTenantContext): Promise<DeliveryTask[]> {
+  async listTasks(context: TusAuthenticatedTenantContext): Promise<TareaEntrega[]> {
     this.authorize(context, 'tus:delivery:read')
     return this.store.tasks.forTenant(context.tenantId)
   }
@@ -428,7 +428,7 @@ export class TusDeliveryService {
     throw new DeliveryError(400, 'OUT_OF_SCOPE', 'public courier bidding is outside Stage 1 delivery')
   }
 
-  private async requireZone(context: TusAuthenticatedTenantContext, zoneId: string): Promise<DeliveryZone> {
+  private async requireZone(context: TusAuthenticatedTenantContext, zoneId: string): Promise<ZonaEntrega> {
     const zone = await this.store.zones.find(context.tenantId, zoneId)
     if (!zone || !zone.active) throw new DeliveryError(404, 'NOT_FOUND', 'delivery zone was not found')
     return zone
@@ -444,24 +444,24 @@ export class TusDeliveryService {
     return shift
   }
 
-  private async requireTask(context: TusAuthenticatedTenantContext, taskId: string): Promise<DeliveryTask> {
+  private async requireTask(context: TusAuthenticatedTenantContext, taskId: string): Promise<TareaEntrega> {
     const task = await this.store.tasks.find(context.tenantId, taskId)
     if (!task) throw new DeliveryError(403, 'FORBIDDEN', 'delivery task is outside the authenticated tenant')
     return task
   }
 
-  private async saveTask(context: TusAuthenticatedTenantContext, task: DeliveryTask, action: string): Promise<DeliveryTask> {
+  private async saveTask(context: TusAuthenticatedTenantContext, task: TareaEntrega, action: string): Promise<TareaEntrega> {
     await this.store.tasks.save(task)
     await this.registrarAuditoriaEntrega(context, action, 'task', task.taskId, 'allowed')
     await this.recordOutbox(context, action, task.taskId, task)
     return task
   }
 
-  private assertVersion(task: DeliveryTask, expectedVersion: number): void {
+  private assertVersion(task: TareaEntrega, expectedVersion: number): void {
     if (!Number.isInteger(expectedVersion) || task.version !== expectedVersion) throw new DeliveryError(409, 'VERSION_CONFLICT', 'delivery task version differs from the offline expectation')
   }
 
-  private assertOperator(task: DeliveryTask, context: TusAuthenticatedTenantContext): void {
+  private assertOperator(task: TareaEntrega, context: TusAuthenticatedTenantContext): void {
     if (task.operatorId !== context.subjectId) throw new DeliveryError(403, 'FORBIDDEN', 'only the assigned internal operator may update this delivery')
   }
 
