@@ -19,7 +19,7 @@ function runTypeScriptScenario(source) {
 test('PR4 publishes durable marketplace facts and emits tenant-scoped audit/outbox records', () => {
   const result = runTypeScriptScenario(`
     const { InMemoryMarketplaceStore, TusMarketplaceService } = (await import('./apps/api/src/tus/catalog/index.ts')).default
-    const { TUS_CONTRACT_VERSION, validateTusMarketplaceListing } = await import('./packages/contracts/src/tus.ts')
+    const { TUS_CONTRACT_VERSION, validarPublicacionMercadoServicios } = await import('./packages/contracts/src/tus.ts')
     const store = new InMemoryMarketplaceStore()
     const marketplace = new TusMarketplaceService(store)
     const merchantContext = { subjectId: 'owner-a', sessionId: 'session-a', tenantId: 'merchant-a', roles: ['merchant-admin'], permissions: ['tus:marketplace:write', 'tus:marketplace:read'], correlationId: 'corr-a' }
@@ -27,7 +27,7 @@ test('PR4 publishes durable marketplace facts and emits tenant-scoped audit/outb
     const listing = await marketplace.createListing(merchantContext, { merchantId: 'merchant-a', kind: 'product', name: '  Botanical balm  ', description: 'A local care product', cohort: 'beauty-personal-care', locationId: 'location-a', currency: 'ARS', price: 1200, stock: 3 })
     const published = await marketplace.publishListing(merchantContext, listing.listingId)
     const discovery = await marketplace.discover({ locationId: 'location-a', cohort: 'beauty-personal-care' })
-    console.log(JSON.stringify({ published, discovery, audits: store.audit.list('merchant-a'), outbox: store.outbox.list('merchant-a'), contract: validateTusMarketplaceListing(published), version: TUS_CONTRACT_VERSION }))
+    console.log(JSON.stringify({ published, discovery, audits: store.audit.list('merchant-a'), outbox: store.outbox.list('merchant-a'), contract: validarPublicacionMercadoServicios(published), version: TUS_CONTRACT_VERSION }))
   `)
 
   assert.equal(result.published.contractVersion, result.version)
@@ -279,9 +279,9 @@ test('PR1 completes one server-derived actor, tenant, and session flow for marke
     const session = await request(merchant, 'POST', '/tus/v1/pos/sessions', { sessionId: 'closure-pos-session', deviceId: device.body.deviceId, shiftId: 'closure-shift' })
     const posProduct = await request(merchant, 'POST', '/tus/v1/pos/manual-operations', { operationId: 'closure-pos-product', idempotencyKey: 'closure-pos-product-key', schemaVersion: '1.0.0', deviceId: device.body.deviceId, shiftId: session.body.shiftId, createdAt: '2026-08-29T12:00:00.000Z', expectedVersion: 0, kind: 'manual-sale', context: 'product', amount: 1400, currency: 'ARS' })
     const posService = await request(merchant, 'POST', '/tus/v1/pos/manual-operations', { operationId: 'closure-pos-service', idempotencyKey: 'closure-pos-service-key', schemaVersion: '1.0.0', deviceId: device.body.deviceId, shiftId: session.body.shiftId, createdAt: '2026-08-29T12:01:00.000Z', expectedVersion: 1, kind: 'manual-service', context: 'service', amount: 2600, currency: 'ARS' })
-    contracts.validateTusMarketplaceListing(product.body)
-    contracts.validateTusMarketplaceListing(service.body)
-    contracts.validateTusMarketplaceCheckoutRequest(checkoutBody)
+    contracts.validarPublicacionMercadoServicios(product.body)
+    contracts.validarPublicacionMercadoServicios(service.body)
+    contracts.validarSolicitudConfirmacionCompraMercadoServicios(checkoutBody)
     if (discovery.body.contractVersion !== contracts.TUS_CONTRACT_VERSION || discovery.body.evidence !== 'local-deterministic' || checkout.body.contractVersion !== contracts.TUS_CONTRACT_VERSION || checkout.body.commitments.length !== 2) throw new Error('unsafe marketplace response contract')
     contracts.validateTusPosDevice(device.body)
     contracts.validateTusPosSession(session.body)

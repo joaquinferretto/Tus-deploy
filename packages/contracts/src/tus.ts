@@ -10,19 +10,19 @@ export interface TusErrorEnvelope {
   details?: Record<string, unknown>
 }
 
-export const MARKETPLACE_COHORTS = {
+export const COHORTES_MERCADO_SERVICIOS = {
   BEAUTY_PERSONAL_CARE: 'beauty-personal-care',
   REPAIRS_TRADES: 'repairs-trades',
 } as const
 
-export type Stage1Cohort = (typeof MARKETPLACE_COHORTS)[keyof typeof MARKETPLACE_COHORTS]
+export type CohorteMercadoServicios = (typeof COHORTES_MERCADO_SERVICIOS)[keyof typeof COHORTES_MERCADO_SERVICIOS]
 
-export const MARKETPLACE_LISTING_KINDS = {
+export const TIPOS_PUBLICACION_MERCADO_SERVICIOS = {
   PRODUCT: 'product',
   SERVICE: 'service',
 } as const
 
-export type CommitmentContext = (typeof MARKETPLACE_LISTING_KINDS)[keyof typeof MARKETPLACE_LISTING_KINDS]
+export type CommitmentContext = (typeof TIPOS_PUBLICACION_MERCADO_SERVICIOS)[keyof typeof TIPOS_PUBLICACION_MERCADO_SERVICIOS]
 
 export const TUS_COMMITMENT_STATUSES = {
   PENDING: 'pending',
@@ -66,7 +66,7 @@ export interface TusCommitment {
   createdAt: string
 }
 
-export interface TusMarketplaceListing {
+export interface PublicacionMercadoServicios {
   contractVersion: TusContractVersion
   listingId: string
   tenantId: string
@@ -74,7 +74,7 @@ export interface TusMarketplaceListing {
   kind: CommitmentContext
   name: string
   description: string
-  cohort: Stage1Cohort
+  cohort: CohorteMercadoServicios
   locationId: string
   currency: string
   price: number
@@ -84,27 +84,27 @@ export interface TusMarketplaceListing {
   stock?: number | null
   durationMinutes?: number | null
   capacity?: number | null
-  workingHours?: TusMarketplaceWorkingHours[]
+  workingHours?: HorarioMercadoServicios[]
 }
 
-export interface TusMarketplaceWorkingHours {
+export interface HorarioMercadoServicios {
   day: number
   start: string
   end: string
 }
 
-export interface TusMarketplaceDiscoveryItem extends TusMarketplaceListing {
+export interface ItemDescubrimientoMercadoServicios extends PublicacionMercadoServicios {
   timezone: string
   availableQuantity?: number
 }
 
-export interface TusMarketplaceDiscoveryResponse {
+export interface RespuestaDescubrimientoMercadoServicios {
   contractVersion: TusContractVersion
   evidence: 'local-deterministic' | 'local-postgresql-http' | 'authorized-external' | 'deferred'
-  items: TusMarketplaceDiscoveryItem[]
+  items: ItemDescubrimientoMercadoServicios[]
 }
 
-export interface TusMarketplaceCheckoutLine {
+export interface LineaConfirmacionCompraMercadoServicios {
   lineId: string
   listingId: string
   context: CommitmentContext
@@ -115,7 +115,7 @@ export interface TusMarketplaceCheckoutLine {
   slotEnd?: string
 }
 
-export interface TusMarketplaceCommitment extends TusCommitment {
+export interface CompromisoMercadoServicios extends TusCommitment {
   listingId: string
   quantity: number
   availabilityVersion: number
@@ -124,22 +124,22 @@ export interface TusMarketplaceCommitment extends TusCommitment {
   slotEnd?: string
 }
 
-export interface TusMarketplaceCheckoutRequest {
+export interface SolicitudConfirmacionCompraMercadoServicios {
   contractVersion: TusContractVersion
   cartId: string
   requestHash: string
   idempotencyKey: string
-  lines: TusMarketplaceCheckoutLine[]
+  lines: LineaConfirmacionCompraMercadoServicios[]
 }
 
-export interface TusMarketplaceCheckoutResponse {
+export interface RespuestaConfirmacionCompraMercadoServicios {
   contractVersion: TusContractVersion
   status: 'executed' | 'replay'
-  commitments: TusMarketplaceCommitment[]
-  audits: TusMarketplaceAudit[]
+  commitments: CompromisoMercadoServicios[]
+  audits: AuditoriaMercadoServicios[]
 }
 
-export function validateTusMarketplaceCheckoutRequest(value: unknown): TusMarketplaceCheckoutRequest {
+export function validarSolicitudConfirmacionCompraMercadoServicios(value: unknown): SolicitudConfirmacionCompraMercadoServicios {
   if (!isRecord(value)) {
     throw new ContractValidationError('tus-marketplace-checkout', undefined, 'payload must be an object')
   }
@@ -179,10 +179,10 @@ export function validateTusMarketplaceCheckoutRequest(value: unknown): TusMarket
       }
     }
   }
-  return value as unknown as TusMarketplaceCheckoutRequest
+  return value as unknown as SolicitudConfirmacionCompraMercadoServicios
 }
 
-export interface TusMarketplaceAudit {
+export interface AuditoriaMercadoServicios {
   auditId: string
   tenantId: string
   actorId: string
@@ -412,7 +412,7 @@ export interface TusPosOperation {
   currency: string
 }
 
-export function validateTusMarketplaceListing(value: unknown): TusMarketplaceListing {
+export function validarPublicacionMercadoServicios(value: unknown): PublicacionMercadoServicios {
   if (!isRecord(value)) {
     throw new ContractValidationError('tus-marketplace-listing', undefined, 'payload must be an object')
   }
@@ -437,7 +437,7 @@ export function validateTusMarketplaceListing(value: unknown): TusMarketplaceLis
   if (value['kind'] === 'service' && (typeof value['durationMinutes'] !== 'number' || !Number.isInteger(value['durationMinutes']) || value['durationMinutes'] <= 0 || typeof value['capacity'] !== 'number' || !Number.isInteger(value['capacity']) || value['capacity'] <= 0 || !Array.isArray(value['workingHours']) || value['workingHours'].length === 0)) {
     throw new ContractValidationError('tus-marketplace-listing', TUS_CONTRACT_VERSION, 'service availability is required')
   }
-  return value as unknown as TusMarketplaceListing
+  return value as unknown as PublicacionMercadoServicios
 }
 
 export const READINESS_GATE_KEYS = [

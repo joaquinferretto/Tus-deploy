@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import { join } from 'node:path'
 import {
   TUS_CONTRACT_VERSION,
-  validateTusMarketplaceCheckoutRequest,
+  validarSolicitudConfirmacionCompraMercadoServicios,
 } from '../../packages/contracts/src/index.ts'
 
 const root = join(import.meta.dirname, '..', '..')
@@ -54,9 +54,9 @@ test('marketplace checkout contract accepts the canonical version and rejects mi
     }],
   }
 
-  assert.deepEqual(validateTusMarketplaceCheckoutRequest(request), request)
+  assert.deepEqual(validarSolicitudConfirmacionCompraMercadoServicios(request), request)
   assert.throws(
-    () => validateTusMarketplaceCheckoutRequest({ ...request, contractVersion: '9.0.0' }),
+    () => validarSolicitudConfirmacionCompraMercadoServicios({ ...request, contractVersion: '9.0.0' }),
     /unsupported contract version/i,
   )
 })
