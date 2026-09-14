@@ -13,12 +13,12 @@ import { PosError, type RegistroAuditoriaPOS, type PosCommandResult, type Confli
 type Row = any
 
 interface DeliveryPrismaClient {
-  tusDeliveryZone: Delegate
-  tusDeliveryShift: Delegate
-  tusDeliveryTask: Delegate
-  tusDeliveryProof: Delegate
-  tusDeliveryIncident: Delegate
-  tusDeliveryAudit: Delegate
+  zonaEntrega: Delegate
+  turnoEntrega: Delegate
+  tareaEntrega: Delegate
+  evidenciaEntrega: Delegate
+  incidenteEntrega: Delegate
+  auditoriaEntrega: Delegate
   tusDeliveryOutbox: Delegate
   tusPosOperation: Delegate
   tusPosReceipt: Delegate
@@ -48,50 +48,50 @@ export class PrismaDeliveryStore implements DeliveryStorePort {
 
   readonly zones = {
     save: async (zone: ZonaEntrega) => {
-      await this.client.tusDeliveryZone.create({ data: { id: zone.zoneId, tenantId: zone.tenantId, zoneId: zone.zoneId, name: zone.name, postalCodes: zone.postalCodes, active: zone.active, createdAt: new Date(), updatedAt: new Date() } })
+      await this.client.zonaEntrega.create({ data: { id: zone.zoneId, tenantId: zone.tenantId, zonaId: zone.zoneId, nombre: zone.name, codigosPostales: zone.postalCodes, activo: zone.active, fechaCreacion: new Date(), fechaActualizacion: new Date() } })
     },
     find: async (tenantId: string, zoneId: string) => {
-      const row = await this.client.tusDeliveryZone.findUnique({ where: { tenantId_zoneId: { tenantId, zoneId } } })
+      const row = await this.client.zonaEntrega.findUnique({ where: { tenantId_zonaId: { tenantId, zonaId: zoneId } } })
       return row ? mapZone(row) : null
     },
   }
 
   readonly shifts = {
     save: async (shift: DeliveryShift) => {
-      await this.client.tusDeliveryShift.create({ data: { id: shift.shiftId, tenantId: shift.tenantId, shiftId: shift.shiftId, zoneId: shift.zoneId, startsAt: new Date(shift.startsAt), endsAt: new Date(shift.endsAt), operatorIds: shift.operatorIds, status: shift.status, createdAt: new Date(), updatedAt: new Date() } })
+      await this.client.turnoEntrega.create({ data: { id: shift.shiftId, tenantId: shift.tenantId, turnoId: shift.shiftId, zonaId: shift.zoneId, fechaInicio: new Date(shift.startsAt), fechaFin: new Date(shift.endsAt), idsOperadores: shift.operatorIds, estado: shift.status, fechaCreacion: new Date(), fechaActualizacion: new Date() } })
     },
     find: async (tenantId: string, shiftId: string) => {
-      const row = await this.client.tusDeliveryShift.findUnique({ where: { tenantId_shiftId: { tenantId, shiftId } } })
+      const row = await this.client.turnoEntrega.findUnique({ where: { tenantId_turnoId: { tenantId, turnoId: shiftId } } })
       return row ? mapShift(row) : null
     },
   }
 
   readonly tasks = {
     save: async (task: TareaEntrega) => {
-      const data = { id: task.taskId, tenantId: task.tenantId, taskId: task.taskId, commitmentId: task.commitmentId, merchantId: task.merchantId, context: task.context, zoneId: task.zoneId, shiftId: task.shiftId, operatorId: task.operatorId, status: task.status, version: task.version, proof: task.proof, incident: task.incident, sla: task.sla, pickup: task.pickup, dropoff: task.dropoff, cancelledAt: task.cancelledAt ? new Date(task.cancelledAt) : null, failureReason: task.failureReason, settlementClaim: task.settlementClaim, createdAt: new Date(task.createdAt), updatedAt: new Date(task.updatedAt) }
-      const existing = await this.client.tusDeliveryTask.findUnique({ where: { tenantId_taskId: { tenantId: task.tenantId, taskId: task.taskId } } })
-      if (existing) await this.client.tusDeliveryTask.update({ where: { tenantId_taskId: { tenantId: task.tenantId, taskId: task.taskId } }, data })
-      else await this.client.tusDeliveryTask.create({ data })
+      const data = { id: task.taskId, tenantId: task.tenantId, tareaId: task.taskId, compromisoId: task.commitmentId, prestadorId: task.merchantId, contexto: task.context, zonaId: task.zoneId, turnoId: task.shiftId, operadorId: task.operatorId, estado: task.status, version: task.version, evidencia: task.proof, incidente: task.incident, sla: task.sla, retiro: task.pickup, entrega: task.dropoff, fechaCancelacion: task.cancelledAt ? new Date(task.cancelledAt) : null, motivoFallo: task.failureReason, reclamoLiquidacion: task.settlementClaim, fechaCreacion: new Date(task.createdAt), fechaActualizacion: new Date(task.updatedAt) }
+      const existing = await this.client.tareaEntrega.findUnique({ where: { tenantId_tareaId: { tenantId: task.tenantId, tareaId: task.taskId } } })
+      if (existing) await this.client.tareaEntrega.update({ where: { tenantId_tareaId: { tenantId: task.tenantId, tareaId: task.taskId } }, data })
+      else await this.client.tareaEntrega.create({ data })
     },
     find: async (tenantId: string, taskId: string) => {
-      const row = await this.client.tusDeliveryTask.findUnique({ where: { tenantId_taskId: { tenantId, taskId } } })
+      const row = await this.client.tareaEntrega.findUnique({ where: { tenantId_tareaId: { tenantId, tareaId: taskId } } })
       return row ? mapTask(row) : null
     },
-    forTenant: async (tenantId: string) => (await this.client.tusDeliveryTask.findMany({ where: { tenantId } })).map(mapTask),
+    forTenant: async (tenantId: string) => (await this.client.tareaEntrega.findMany({ where: { tenantId } })).map(mapTask),
   }
 
   readonly proofs = {
-    save: async (proof: ComprobanteEntrega) => { await this.client.tusDeliveryProof.create({ data: { id: proof.proofId, tenantId: proof.tenantId, proofId: proof.proofId, taskId: proof.taskId, commitmentId: proof.commitmentId, recipientName: proof.recipientName, capturedAt: new Date(proof.capturedAt), evidenceSource: proof.evidenceSource, createdAt: new Date() } }) },
-    find: async (tenantId: string, proofId: string) => { const row = await this.client.tusDeliveryProof.findUnique({ where: { tenantId_proofId: { tenantId, proofId } } }); return row ? mapProof(row) : null },
+    save: async (proof: ComprobanteEntrega) => { await this.client.evidenciaEntrega.create({ data: { id: proof.proofId, tenantId: proof.tenantId, evidenciaId: proof.proofId, tareaId: proof.taskId, compromisoId: proof.commitmentId, nombreDestinatario: proof.recipientName, fechaCaptura: new Date(proof.capturedAt), origenEvidencia: proof.evidenceSource, fechaCreacion: new Date() } }) },
+    find: async (tenantId: string, proofId: string) => { const row = await this.client.evidenciaEntrega.findUnique({ where: { tenantId_evidenciaId: { tenantId, evidenciaId: proofId } } }); return row ? mapProof(row) : null },
   }
 
   readonly incidents = {
-    save: async (incident: IncidenteEntrega) => { await this.client.tusDeliveryIncident.create({ data: { id: incident.incidentId, tenantId: incident.tenantId, incidentId: incident.incidentId, taskId: incident.taskId, reason: incident.reason, status: incident.status, createdAt: new Date(incident.createdAt) } }) },
-    find: async (tenantId: string, incidentId: string) => { const row = await this.client.tusDeliveryIncident.findUnique({ where: { tenantId_incidentId: { tenantId, incidentId } } }); return row ? mapIncident(row) : null },
+    save: async (incident: IncidenteEntrega) => { await this.client.incidenteEntrega.create({ data: { id: incident.incidentId, tenantId: incident.tenantId, incidenteId: incident.incidentId, tareaId: incident.taskId, motivo: incident.reason, estado: incident.status, fechaCreacion: new Date(incident.createdAt) } }) },
+    find: async (tenantId: string, incidentId: string) => { const row = await this.client.incidenteEntrega.findUnique({ where: { tenantId_incidenteId: { tenantId, incidenteId: incidentId } } }); return row ? mapIncident(row) : null },
   }
 
   readonly audit = {
-    append: async (record: RegistroAuditoriaEntrega) => { await this.client.tusDeliveryAudit.create({ data: { id: record.auditId, ...record, createdAt: new Date(record.createdAt) } }) },
+    append: async (record: RegistroAuditoriaEntrega) => { await this.client.auditoriaEntrega.create({ data: { id: record.auditId, tenantId: record.tenantId, auditoriaId: record.auditId, actorId: record.actorId, correlacionId: record.correlationId, accion: record.action, tipoRecurso: record.resourceType, recursoId: record.resourceId, resultado: record.outcome, fechaCreacion: new Date(record.createdAt) } }) },
     list: (_tenantId: string): RegistroAuditoriaEntrega[] => { throw new Error('Tenant-scoped audit listing is exposed through reporting adapters') },
   }
 
@@ -213,11 +213,11 @@ export class PrismaPosStore implements PosStorePort {
   }
 }
 
-function mapZone(row: Row): ZonaEntrega { return { zoneId: row.zoneId, tenantId: row.tenantId, name: row.name, postalCodes: [...row.postalCodes], active: row.active } }
-function mapShift(row: Row): DeliveryShift { return { shiftId: row.shiftId, tenantId: row.tenantId, zoneId: row.zoneId, startsAt: row.startsAt.toISOString(), endsAt: row.endsAt.toISOString(), operatorIds: [...row.operatorIds], status: row.status } }
-function mapTask(row: Row): TareaEntrega { return { contractVersion: '1.0.0', taskId: row.taskId, tenantId: row.tenantId, commitmentId: row.commitmentId, merchantId: row.merchantId, context: 'product', zoneId: row.zoneId, shiftId: row.shiftId, operatorId: row.operatorId, status: row.status, version: row.version, proof: row.proof, incident: row.incident, sla: row.sla ?? { pickupDueAt: row.createdAt.toISOString(), dropoffDueAt: row.updatedAt.toISOString(), status: 'on-time', breachedAt: null }, pickup: row.pickup ?? { pickedUpAt: null, inTransitAt: null }, dropoff: row.dropoff ?? { handedOffAt: null }, cancelledAt: row.cancelledAt ? row.cancelledAt.toISOString() : null, failureReason: row.failureReason ?? null, settlementClaim: 'not-claimed', createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } }
-function mapProof(row: Row): ComprobanteEntrega { return { contractVersion: '1.0.0', proofId: row.proofId, tenantId: row.tenantId, taskId: row.taskId, commitmentId: row.commitmentId, recipientName: row.recipientName, capturedAt: row.capturedAt.toISOString(), evidenceSource: row.evidenceSource } }
-function mapIncident(row: Row): IncidenteEntrega { return { contractVersion: '1.0.0', incidentId: row.incidentId, tenantId: row.tenantId, taskId: row.taskId, reason: row.reason, status: row.status, createdAt: row.createdAt.toISOString() } }
+function mapZone(row: Row): ZonaEntrega { return { zoneId: row.zonaId, tenantId: row.tenantId, name: row.nombre, postalCodes: [...row.codigosPostales], active: row.activo } }
+function mapShift(row: Row): DeliveryShift { return { shiftId: row.turnoId, tenantId: row.tenantId, zoneId: row.zonaId, startsAt: row.fechaInicio.toISOString(), endsAt: row.fechaFin.toISOString(), operatorIds: [...row.idsOperadores], status: row.estado } }
+function mapTask(row: Row): TareaEntrega { return { contractVersion: '1.0.0', taskId: row.tareaId, tenantId: row.tenantId, commitmentId: row.compromisoId, merchantId: row.prestadorId, context: row.contexto, zoneId: row.zonaId, shiftId: row.turnoId, operatorId: row.operadorId, status: row.estado, version: row.version, proof: row.evidencia, incident: row.incidente, sla: row.sla ?? { pickupDueAt: row.fechaCreacion.toISOString(), dropoffDueAt: row.fechaActualizacion.toISOString(), status: 'on-time', breachedAt: null }, pickup: row.retiro ?? { pickedUpAt: null, inTransitAt: null }, dropoff: row.entrega ?? { handedOffAt: null }, cancelledAt: row.fechaCancelacion ? row.fechaCancelacion.toISOString() : null, failureReason: row.motivoFallo ?? null, settlementClaim: row.reclamoLiquidacion, createdAt: row.fechaCreacion.toISOString(), updatedAt: row.fechaActualizacion.toISOString() } }
+function mapProof(row: Row): ComprobanteEntrega { return { contractVersion: '1.0.0', proofId: row.evidenciaId, tenantId: row.tenantId, taskId: row.tareaId, commitmentId: row.compromisoId, recipientName: row.nombreDestinatario, capturedAt: row.fechaCaptura.toISOString(), evidenceSource: row.origenEvidencia } }
+function mapIncident(row: Row): IncidenteEntrega { return { contractVersion: '1.0.0', incidentId: row.incidenteId, tenantId: row.tenantId, taskId: row.tareaId, reason: row.motivo, status: row.estado, createdAt: row.fechaCreacion.toISOString() } }
 function mapOperation(row: Row): OperacionManualPuntoVenta { const operation = { ...row }; delete operation.response; return { contractVersion: '1.0.0', ...operation, createdAt: row.createdAt.toISOString() } as OperacionManualPuntoVenta }
 function mapReceipt(row: Row): ComprobantePuntoVenta { return { contractVersion: '1.0.0', ...row, createdAt: row.createdAt.toISOString() } as ComprobantePuntoVenta }
 function mapDevice(row: Row): PosDevice { return { contractVersion: '1.0.0', deviceId: row.deviceId, tenantId: row.tenantId, label: row.label, fingerprint: row.fingerprint, status: row.status, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() } }

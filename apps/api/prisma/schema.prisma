@@ -855,107 +855,113 @@ model TusReconciliationRecord {
 
 // Delivery and POS are operational source-of-truth aggregates. They never
 // mutate product/service commitments or claim payment settlement locally.
-model TusDeliveryZone {
-  id          String   @id
-  tenantId    String
-  zoneId      String
-  name        String
-  postalCodes String[]
-  active      Boolean
-  createdAt   DateTime
-  updatedAt   DateTime
+model ZonaEntrega {
+  id              String   @id(map: "TusDeliveryZone_pkey")
+  tenantId        String   @map("tenantId")
+  zonaId          String   @map("zoneId")
+  nombre          String   @map("name")
+  codigosPostales String[] @map("postalCodes")
+  activo          Boolean  @map("active")
+  fechaCreacion   DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, zoneId])
-  @@index([tenantId, active])
+  @@unique([tenantId, zonaId], map: "TusDeliveryZone_tenantId_zoneId_key")
+  @@index([tenantId, activo], map: "TusDeliveryZone_tenantId_active_idx")
+  @@map("TusDeliveryZone")
 }
 
-model TusDeliveryShift {
-  id         String   @id
-  tenantId   String
-  shiftId    String
-  zoneId     String
-  startsAt   DateTime
-  endsAt     DateTime
-  operatorIds String[]
-  status     String
-  createdAt  DateTime
-  updatedAt  DateTime
+model TurnoEntrega {
+  id              String   @id(map: "TusDeliveryShift_pkey")
+  tenantId        String   @map("tenantId")
+  turnoId         String   @map("shiftId")
+  zonaId          String   @map("zoneId")
+  fechaInicio     DateTime @map("startsAt")
+  fechaFin        DateTime @map("endsAt")
+  idsOperadores   String[] @map("operatorIds")
+  estado          String   @map("status")
+  fechaCreacion   DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, shiftId])
-  @@index([tenantId, zoneId, status])
+  @@unique([tenantId, turnoId], map: "TusDeliveryShift_tenantId_shiftId_key")
+  @@index([tenantId, zonaId, estado], map: "TusDeliveryShift_tenantId_zoneId_status_idx")
+  @@map("TusDeliveryShift")
 }
 
-model TusDeliveryTask {
-  id              String   @id
-  tenantId        String
-  taskId          String
-  commitmentId    String
-  merchantId      String
-  context         String
-  zoneId           String
-  shiftId          String
-  operatorId      String?
-  status          String
+model TareaEntrega {
+  id                String    @id(map: "TusDeliveryTask_pkey")
+  tenantId          String    @map("tenantId")
+  tareaId           String    @map("taskId")
+  compromisoId      String    @map("commitmentId")
+  prestadorId       String    @map("merchantId")
+  contexto          String    @map("context")
+  zonaId            String    @map("zoneId")
+  turnoId           String    @map("shiftId")
+  operadorId        String?   @map("operatorId")
+  estado            String    @map("status")
   version         Int
-  proof           Json?
-  incident        Json?
+  evidencia         Json?     @map("proof")
+  incidente         Json?     @map("incident")
   sla             Json?
-  pickup          Json?
-  dropoff         Json?
-  cancelledAt     DateTime?
-  failureReason   String?
-  settlementClaim String
-  createdAt       DateTime
-  updatedAt       DateTime
+  retiro            Json?     @map("pickup")
+  entrega           Json?     @map("dropoff")
+  fechaCancelacion  DateTime? @map("cancelledAt")
+  motivoFallo       String?   @map("failureReason")
+  reclamoLiquidacion String   @map("settlementClaim")
+  fechaCreacion     DateTime  @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, taskId])
-  @@index([tenantId, commitmentId])
-  @@index([tenantId, shiftId, status])
-  @@index([tenantId, commitmentId, status])
+  @@unique([tenantId, tareaId], map: "TusDeliveryTask_tenantId_taskId_key")
+  @@index([tenantId, compromisoId], map: "TusDeliveryTask_tenantId_commitmentId_idx")
+  @@index([tenantId, turnoId, estado], map: "TusDeliveryTask_tenantId_shiftId_status_idx")
+  @@index([tenantId, compromisoId, estado], map: "TusDeliveryTask_tenantId_commitmentId_status_idx")
+  @@map("TusDeliveryTask")
 }
 
-model TusDeliveryProof {
-  id             String   @id
-  tenantId       String
-  proofId        String
-  taskId         String
-  commitmentId   String
-  recipientName  String
-  capturedAt     DateTime
-  evidenceSource String
-  createdAt      DateTime
+model EvidenciaEntrega {
+  id                String   @id(map: "TusDeliveryProof_pkey")
+  tenantId          String   @map("tenantId")
+  evidenciaId       String   @map("proofId")
+  tareaId           String   @map("taskId")
+  compromisoId      String   @map("commitmentId")
+  nombreDestinatario String  @map("recipientName")
+  fechaCaptura      DateTime @map("capturedAt")
+  origenEvidencia   String   @map("evidenceSource")
+  fechaCreacion     DateTime @map("createdAt")
 
-  @@unique([tenantId, proofId])
-  @@index([tenantId, taskId])
+  @@unique([tenantId, evidenciaId], map: "TusDeliveryProof_tenantId_proofId_key")
+  @@index([tenantId, tareaId], map: "TusDeliveryProof_tenantId_taskId_idx")
+  @@map("TusDeliveryProof")
 }
 
-model TusDeliveryIncident {
-  id         String   @id
-  tenantId   String
-  incidentId String
-  taskId     String
-  reason     String
-  status     String
-  createdAt  DateTime
+model IncidenteEntrega {
+  id            String   @id(map: "TusDeliveryIncident_pkey")
+  tenantId      String   @map("tenantId")
+  incidenteId   String   @map("incidentId")
+  tareaId       String   @map("taskId")
+  motivo        String   @map("reason")
+  estado        String   @map("status")
+  fechaCreacion DateTime @map("createdAt")
 
-  @@unique([tenantId, incidentId])
-  @@index([tenantId, taskId, status])
+  @@unique([tenantId, incidenteId], map: "TusDeliveryIncident_tenantId_incidentId_key")
+  @@index([tenantId, tareaId, estado], map: "TusDeliveryIncident_tenantId_taskId_status_idx")
+  @@map("TusDeliveryIncident")
 }
 
-model TusDeliveryAudit {
-  id           String   @id
-  tenantId     String
-  auditId      String
-  actorId      String
-  correlationId String
-  action       String
-  resourceType String
-  resourceId   String
-  outcome      String
-  createdAt    DateTime
+model AuditoriaEntrega {
+  id            String   @id(map: "TusDeliveryAudit_pkey")
+  tenantId      String   @map("tenantId")
+  auditoriaId   String   @map("auditId")
+  actorId       String   @map("actorId")
+  correlacionId String   @map("correlationId")
+  accion        String   @map("action")
+  tipoRecurso   String   @map("resourceType")
+  recursoId     String   @map("resourceId")
+  resultado     String   @map("outcome")
+  fechaCreacion DateTime @map("createdAt")
 
-  @@unique([tenantId, auditId])
-  @@index([tenantId, createdAt])
+  @@unique([tenantId, auditoriaId], map: "TusDeliveryAudit_tenantId_auditId_key")
+  @@index([tenantId, fechaCreacion], map: "TusDeliveryAudit_tenantId_createdAt_idx")
+  @@map("TusDeliveryAudit")
 }
 
 model TusPosOperation {

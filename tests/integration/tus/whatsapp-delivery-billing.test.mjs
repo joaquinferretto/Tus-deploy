@@ -187,7 +187,7 @@ test('phase 7 and 8 persistence contracts are additive, tenant-keyed, and retent
   const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260909150000_tus_comms_delivery_controls/migration.sql'), 'utf8')
   const router = readFileSync(join(root, 'apps/api/src/tus/http/router.ts'), 'utf8')
   assert.match(schema, /model TusWhatsAppOutbox[\s\S]*?tenantId\s+String[\s\S]*?retentionUntil\s+DateTime/)
-  assert.match(schema, /model TusDeliveryTask[\s\S]*?sla\s+Json\?[\s\S]*?cancelledAt\s+DateTime\?/) 
+  assert.match(schema, /model TareaEntrega[\s\S]*?sla\s+Json\?[\s\S]*?fechaCancelacion\s+DateTime\?/)
   assert.match(migration, /ALTER TABLE "TusWhatsAppMessage" ADD COLUMN IF NOT EXISTS "variables" JSONB/)
   assert.match(migration, /CREATE TABLE IF NOT EXISTS "TusWhatsAppOutbox"/)
   assert.match(migration, /ALTER TABLE "TusDeliveryTask" ADD COLUMN IF NOT EXISTS "sla" JSONB/)
