@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
-import { generateServiceSlots, type ServiceSlot } from './slots.ts'
-import { validateCalendarInput, type MoneySnapshot, type ServiceCalendar, type ServiceCalendarInput } from './rules.ts'
+import { generateServiceSlots, type Franja } from './slots.ts'
+import { validateCalendarInput, type MoneySnapshot, type Calendario, type EntradaCalendario } from './rules.ts'
 
 const BOOKING_STATUS = {
   CONFIRMED: 'confirmed',
@@ -13,7 +13,7 @@ const BOOKING_STATUS = {
 
 type BookingStatus = (typeof BOOKING_STATUS)[keyof typeof BOOKING_STATUS]
 
-export interface ServiceBooking {
+export interface Reserva {
   contractVersion: typeof TUS_CONTRACT_VERSION
   bookingId: string
   tenantId: string
@@ -31,9 +31,9 @@ export interface ServiceBooking {
   updatedAt: string
 }
 
-export type BookingResult =
-  | ServiceBooking
-  | { status: 'replay'; booking: ServiceBooking }
+export type ResultadoReserva =
+  | Reserva
+  | { status: 'replay'; booking: Reserva }
   | { status: 'rejected'; reason: 'capacity' }
 
 export interface CalendarAuditRecord {
@@ -58,10 +58,10 @@ export interface CalendarOutboxRecord {
 
 interface IdempotencyRecord {
   requestHash: string
-  response?: BookingResult
+  response?: ResultadoReserva
 }
 
-export class ServiceCalendarError extends Error {
+export class ErrorCalendario extends Error {
   readonly status: number
   readonly code: string
 
@@ -75,17 +75,17 @@ export class ServiceCalendarError extends Error {
 
 export interface ServiceCalendarStorePort {
   calendars: {
-    save(calendar: ServiceCalendar): Promise<void>
-    find(calendarId: string): Promise<ServiceCalendar | null>
+    save(calendar: Calendario): Promise<void>
+    find(calendarId: string): Promise<Calendario | null>
   }
   bookings: {
-    save(booking: ServiceBooking): Promise<void>
-    find(bookingId: string): Promise<ServiceBooking | null>
-    forCalendar(calendarId: string): Promise<ServiceBooking[]>
+    save(booking: Reserva): Promise<void>
+    find(bookingId: string): Promise<Reserva | null>
+    forCalendar(calendarId: string): Promise<Reserva[]>
   }
   idempotency: {
-    claim(input: { tenantId: string; key: string; requestHash: string }): Promise<{ status: 'claimed' | 'replay' | 'conflict' | 'in_progress'; response?: BookingResult }>
-    complete(input: { tenantId: string; key: string; response: BookingResult }): Promise<void>
+    claim(input: { tenantId: string; key: string; requestHash: string }): Promise<{ status: 'claimed' | 'replay' | 'conflict' | 'in_progress'; response?: ResultadoReserva }>
+    complete(input: { tenantId: string; key: string; response: ResultadoReserva }): Promise<void>
   }
   audit: { append(record: CalendarAuditRecord): Promise<void>; list(tenantId: string): CalendarAuditRecord[] }
   outbox: { append(record: CalendarOutboxRecord): Promise<void>; list(tenantId: string): CalendarOutboxRecord[] }
@@ -93,20 +93,20 @@ export interface ServiceCalendarStorePort {
 }
 
 export class InMemoryServiceCalendarStore implements ServiceCalendarStorePort {
-  private readonly calendarRecords = new Map<string, ServiceCalendar>()
-  private readonly bookingRecords = new Map<string, ServiceBooking>()
+  private readonly calendarRecords = new Map<string, Calendario>()
+  private readonly bookingRecords = new Map<string, Reserva>()
   private readonly idempotencyRecords = new Map<string, IdempotencyRecord>()
   private readonly auditRecords: CalendarAuditRecord[] = []
   private readonly outboxRecords: CalendarOutboxRecord[] = []
   private transactionTail: Promise<void> = Promise.resolve()
 
   readonly calendars = {
-    save: async (calendar: ServiceCalendar) => { this.calendarRecords.set(calendar.calendarId, structuredClone(calendar)) },
+    save: async (calendar: Calendario) => { this.calendarRecords.set(calendar.calendarId, structuredClone(calendar)) },
     find: async (calendarId: string) => this.calendarRecords.has(calendarId) ? structuredClone(this.calendarRecords.get(calendarId)!) : null,
   }
 
   readonly bookings = {
-    save: async (booking: ServiceBooking) => { this.bookingRecords.set(booking.bookingId, structuredClone(booking)) },
+    save: async (booking: Reserva) => { this.bookingRecords.set(booking.bookingId, structuredClone(booking)) },
     find: async (bookingId: string) => this.bookingRecords.has(bookingId) ? structuredClone(this.bookingRecords.get(bookingId)!) : null,
     forCalendar: async (calendarId: string) => [...this.bookingRecords.values()].filter((booking) => booking.calendarId === calendarId).map((booking) => structuredClone(booking)),
   }
@@ -119,9 +119,9 @@ export class InMemoryServiceCalendarStore implements ServiceCalendarStorePort {
       if (current.requestHash !== requestHash) return { status: 'conflict' as const }
       return current.response ? { status: 'replay' as const, response: structuredClone(current.response) } : { status: 'in_progress' as const }
     },
-    complete: async ({ tenantId, key, response }: { tenantId: string; key: string; response: BookingResult }) => {
+    complete: async ({ tenantId, key, response }: { tenantId: string; key: string; response: ResultadoReserva }) => {
       const current = this.idempotencyRecords.get(`${tenantId}:${key}`)
-      if (!current) throw new ServiceCalendarError(500, 'IDEMPOTENCY_MISSING', 'idempotency claim is missing')
+      if (!current) throw new ErrorCalendario(500, 'IDEMPOTENCY_MISSING', 'idempotency claim is missing')
       current.response = structuredClone(response)
     },
   }
@@ -173,71 +173,71 @@ export class ServiceCalendarService {
     this.now = now
   }
 
-  async createCalendar(context: TusAuthenticatedTenantContext, input: ServiceCalendarInput): Promise<ServiceCalendar> {
+  async createCalendar(context: TusAuthenticatedTenantContext, input: EntradaCalendario): Promise<Calendario> {
     assertOperator(context)
-    if (input.tenantId !== undefined && input.tenantId !== context.tenantId) throw new ServiceCalendarError(403, 'FORBIDDEN', 'calendar tenant does not match authenticated session')
-    try { validateCalendarInput(input) } catch (error) { throw new ServiceCalendarError(400, 'INVALID_CALENDAR', error instanceof Error ? error.message : 'calendar is invalid') }
+    if (input.tenantId !== undefined && input.tenantId !== context.tenantId) throw new ErrorCalendario(403, 'FORBIDDEN', 'calendar tenant does not match authenticated session')
+    try { validateCalendarInput(input) } catch (error) { throw new ErrorCalendario(400, 'INVALID_CALENDAR', error instanceof Error ? error.message : 'calendar is invalid') }
     const now = new Date(this.now()).toISOString()
-    const calendar: ServiceCalendar = { ...input, tenantId: context.tenantId, status: 'active', bufferMinutes: input.bufferMinutes ?? 0, bookingCutoffMinutes: input.bookingCutoffMinutes ?? 0, cancellationWindowMinutes: input.cancellationWindowMinutes ?? 0, noShowAfterMinutes: input.noShowAfterMinutes ?? 0, workingHours: input.workingHours.map((rule) => ({ ...rule })), blackoutDates: [...(input.blackoutDates ?? [])], policyVersion: input.policyVersion ?? 'calendar-policy-1', version: 1, createdAt: now, updatedAt: now }
+    const calendar: Calendario = { ...input, tenantId: context.tenantId, status: 'active', bufferMinutes: input.bufferMinutes ?? 0, bookingCutoffMinutes: input.bookingCutoffMinutes ?? 0, cancellationWindowMinutes: input.cancellationWindowMinutes ?? 0, noShowAfterMinutes: input.noShowAfterMinutes ?? 0, workingHours: input.workingHours.map((rule) => ({ ...rule })), blackoutDates: [...(input.blackoutDates ?? [])], policyVersion: input.policyVersion ?? 'calendar-policy-1', version: 1, createdAt: now, updatedAt: now }
     await this.store.transaction(async (store) => { await store.calendars.save(calendar); await this.record(store, context, 'calendar.created', calendar.calendarId, now, 'calendar.created') })
     return calendar
   }
 
-  async slots(context: TusAuthenticatedTenantContext, calendarId: string, date: string, now?: string): Promise<ServiceSlot[]> {
+  async slots(context: TusAuthenticatedTenantContext, calendarId: string, date: string, now?: string): Promise<Franja[]> {
     assertRead(context)
     const calendar = await this.store.calendars.find(calendarId)
-    if (!calendar) throw new ServiceCalendarError(404, 'NOT_FOUND', 'calendar was not found')
+    if (!calendar) throw new ErrorCalendario(404, 'NOT_FOUND', 'calendar was not found')
     return generateSlotsOrThrow(calendar, date, now)
   }
 
-  async book(context: TusAuthenticatedTenantContext, input: { calendarId: string; serviceId: string; customerId: string; slotId: string; idempotencyKey: string; requestHash: string; now: string }): Promise<BookingResult> {
+  async book(context: TusAuthenticatedTenantContext, input: { calendarId: string; serviceId: string; customerId: string; slotId: string; idempotencyKey: string; requestHash: string; now: string }): Promise<ResultadoReserva> {
     assertCustomer(context)
-    if (input.customerId !== context.subjectId) throw new ServiceCalendarError(403, 'FORBIDDEN', 'customer does not match authenticated session')
-    if (!input.idempotencyKey.trim() || !input.requestHash.trim()) throw new ServiceCalendarError(400, 'INVALID', 'idempotencyKey and requestHash are required')
+    if (input.customerId !== context.subjectId) throw new ErrorCalendario(403, 'FORBIDDEN', 'customer does not match authenticated session')
+    if (!input.idempotencyKey.trim() || !input.requestHash.trim()) throw new ErrorCalendario(400, 'INVALID', 'idempotencyKey and requestHash are required')
     return this.store.transaction(async (store) => {
       const claim = await store.idempotency.claim({ tenantId: context.tenantId, key: input.idempotencyKey, requestHash: input.requestHash })
       if (claim.status === 'replay') {
         const response = claim.response
         if (response && 'status' in response && response.status === 'rejected') return response
         const booking = response && 'bookingId' in response ? response : response && 'booking' in response ? response.booking : null
-        if (!booking) throw new ServiceCalendarError(500, 'IDEMPOTENCY_CORRUPT', 'replay response is invalid')
+        if (!booking) throw new ErrorCalendario(500, 'IDEMPOTENCY_CORRUPT', 'replay response is invalid')
         return { status: 'replay' as const, booking }
       }
-      if (claim.status === 'conflict') throw new ServiceCalendarError(409, 'CONFLICT', 'idempotency key was already used for another request')
-      if (claim.status === 'in_progress') throw new ServiceCalendarError(409, 'IN_PROGRESS', 'the idempotent request is already in progress')
+      if (claim.status === 'conflict') throw new ErrorCalendario(409, 'CONFLICT', 'idempotency key was already used for another request')
+      if (claim.status === 'in_progress') throw new ErrorCalendario(409, 'IN_PROGRESS', 'the idempotent request is already in progress')
       const calendar = await store.calendars.find(input.calendarId)
-      if (!calendar || calendar.serviceId !== input.serviceId || calendar.status !== 'active') throw new ServiceCalendarError(404, 'NOT_FOUND', 'calendar was not found')
+      if (!calendar || calendar.serviceId !== input.serviceId || calendar.status !== 'active') throw new ErrorCalendario(404, 'NOT_FOUND', 'calendar was not found')
       const slotDate = input.slotId.slice(input.slotId.indexOf(':') + 1, input.slotId.indexOf(':') + 11)
       const slot = generateSlotsOrThrow(calendar, slotDate).find((candidate) => candidate.slotId === input.slotId)
-      if (!slot) throw new ServiceCalendarError(409, 'STALE_SLOT', 'requested slot is no longer available')
+      if (!slot) throw new ErrorCalendario(409, 'STALE_SLOT', 'requested slot is no longer available')
       const now = Date.parse(input.now)
-      if (!Number.isFinite(now)) throw new ServiceCalendarError(400, 'INVALID', 'now must be a valid timestamp')
-      if (now > Date.parse(slot.start) - calendar.bookingCutoffMinutes * 60_000) throw new ServiceCalendarError(409, 'BOOKING_CUTOFF', 'booking cutoff has passed')
+      if (!Number.isFinite(now)) throw new ErrorCalendario(400, 'INVALID', 'now must be a valid timestamp')
+      if (now > Date.parse(slot.start) - calendar.bookingCutoffMinutes * 60_000) throw new ErrorCalendario(409, 'BOOKING_CUTOFF', 'booking cutoff has passed')
       const active = (await store.bookings.forCalendar(calendar.calendarId)).filter((booking) => booking.status === BOOKING_STATUS.CONFIRMED && overlaps(slot.start, slot.end, booking.startsAt, booking.endsAt))
       if (active.length >= calendar.capacity) {
         const response = { status: 'rejected' as const, reason: 'capacity' as const }
         await store.idempotency.complete({ tenantId: context.tenantId, key: input.idempotencyKey, response })
         return response
       }
-      const booking: ServiceBooking = { contractVersion: TUS_CONTRACT_VERSION, bookingId: `booking-${context.tenantId}-${input.idempotencyKey}`, tenantId: context.tenantId, ownerTenantId: calendar.tenantId, serviceId: calendar.serviceId, calendarId: calendar.calendarId, customerId: input.customerId, startsAt: slot.start, endsAt: slot.end, status: BOOKING_STATUS.CONFIRMED, version: 1, ...(calendar.priceSnapshot === undefined ? {} : { priceSnapshot: structuredClone(calendar.priceSnapshot) }), policyVersion: calendar.policyVersion, createdAt: input.now, updatedAt: input.now }
+      const booking: Reserva = { contractVersion: TUS_CONTRACT_VERSION, bookingId: `booking-${context.tenantId}-${input.idempotencyKey}`, tenantId: context.tenantId, ownerTenantId: calendar.tenantId, serviceId: calendar.serviceId, calendarId: calendar.calendarId, customerId: input.customerId, startsAt: slot.start, endsAt: slot.end, status: BOOKING_STATUS.CONFIRMED, version: 1, ...(calendar.priceSnapshot === undefined ? {} : { priceSnapshot: structuredClone(calendar.priceSnapshot) }), policyVersion: calendar.policyVersion, createdAt: input.now, updatedAt: input.now }
       await store.bookings.save(booking)
       await this.record(store, context, 'booking.created', booking.bookingId, input.now, 'booking.created', booking.bookingId)
-      const response: BookingResult = booking
+      const response: ResultadoReserva = booking
       await store.idempotency.complete({ tenantId: context.tenantId, key: input.idempotencyKey, response })
       return response
     })
   }
 
-  async cancel(context: TusAuthenticatedTenantContext, input: { bookingId: string; now: string; reason: string; expectedVersion?: number }): Promise<ServiceBooking> {
+  async cancel(context: TusAuthenticatedTenantContext, input: { bookingId: string; now: string; reason: string; expectedVersion?: number }): Promise<Reserva> {
     assertRead(context)
     return this.store.transaction(async (store) => {
       const booking = await store.bookings.find(input.bookingId)
-      if (!booking || booking.tenantId !== context.tenantId && booking.ownerTenantId !== context.tenantId) throw new ServiceCalendarError(403, 'FORBIDDEN', 'booking is outside the authenticated scope')
-      if (booking.tenantId === context.tenantId && booking.customerId !== context.subjectId && !isOperator(context)) throw new ServiceCalendarError(403, 'FORBIDDEN', 'booking is not owned by the authenticated customer')
-      if (input.expectedVersion !== undefined && input.expectedVersion !== booking.version) throw new ServiceCalendarError(409, 'STALE_VERSION', 'booking version is stale')
+      if (!booking || booking.tenantId !== context.tenantId && booking.ownerTenantId !== context.tenantId) throw new ErrorCalendario(403, 'FORBIDDEN', 'booking is outside the authenticated scope')
+      if (booking.tenantId === context.tenantId && booking.customerId !== context.subjectId && !isOperator(context)) throw new ErrorCalendario(403, 'FORBIDDEN', 'booking is not owned by the authenticated customer')
+      if (input.expectedVersion !== undefined && input.expectedVersion !== booking.version) throw new ErrorCalendario(409, 'STALE_VERSION', 'booking version is stale')
       if (booking.status !== BOOKING_STATUS.CONFIRMED) return booking
       const calendar = await store.calendars.find(booking.calendarId)
-      if (!calendar) throw new ServiceCalendarError(409, 'STALE_BOOKING', 'booking calendar is unavailable')
+      if (!calendar) throw new ErrorCalendario(409, 'STALE_BOOKING', 'booking calendar is unavailable')
       const late = Date.parse(input.now) > Date.parse(booking.startsAt) - calendar.cancellationWindowMinutes * 60_000
       const updated = { ...booking, status: late ? BOOKING_STATUS.CANCELLED_LATE : BOOKING_STATUS.CANCELLED, version: booking.version + 1, updatedAt: input.now }
       await store.bookings.save(updated)
@@ -246,13 +246,13 @@ export class ServiceCalendarService {
     })
   }
 
-  async markNoShow(context: TusAuthenticatedTenantContext, input: { bookingId: string; now: string }): Promise<ServiceBooking> {
+  async markNoShow(context: TusAuthenticatedTenantContext, input: { bookingId: string; now: string }): Promise<Reserva> {
     assertOperator(context)
     return this.store.transaction(async (store) => {
       const booking = await store.bookings.find(input.bookingId)
-      if (!booking || booking.ownerTenantId !== context.tenantId) throw new ServiceCalendarError(403, 'FORBIDDEN', 'booking is outside the operator tenant')
+      if (!booking || booking.ownerTenantId !== context.tenantId) throw new ErrorCalendario(403, 'FORBIDDEN', 'booking is outside the operator tenant')
       const calendar = await store.calendars.find(booking.calendarId)
-      if (!calendar || Date.parse(input.now) < Date.parse(booking.endsAt) + calendar.noShowAfterMinutes * 60_000) throw new ServiceCalendarError(409, 'NO_SHOW_TOO_EARLY', 'no-show evidence window has not opened')
+      if (!calendar || Date.parse(input.now) < Date.parse(booking.endsAt) + calendar.noShowAfterMinutes * 60_000) throw new ErrorCalendario(409, 'NO_SHOW_TOO_EARLY', 'no-show evidence window has not opened')
       if (booking.status !== BOOKING_STATUS.CONFIRMED) return booking
       const updated = { ...booking, status: BOOKING_STATUS.NO_SHOW, version: booking.version + 1, updatedAt: input.now }
       await store.bookings.save(updated)
@@ -268,15 +268,17 @@ export class ServiceCalendarService {
   }
 }
 
-function assertRead(context: TusAuthenticatedTenantContext): void { if (!hasPermission(context, 'tus:marketplace:read') && !hasPermission(context, 'tus:calendar:read')) throw new ServiceCalendarError(403, 'FORBIDDEN', 'calendar read is not authorized') }
-function assertCustomer(context: TusAuthenticatedTenantContext): void { assertRead(context); if (!context.roles.includes('customer')) throw new ServiceCalendarError(403, 'FORBIDDEN', 'customer role is required') }
-function assertOperator(context: TusAuthenticatedTenantContext): void { if (!isOperator(context)) throw new ServiceCalendarError(403, 'FORBIDDEN', 'merchant or operator role is required') }
+function assertRead(context: TusAuthenticatedTenantContext): void { if (!hasPermission(context, 'tus:marketplace:read') && !hasPermission(context, 'tus:calendar:read')) throw new ErrorCalendario(403, 'FORBIDDEN', 'calendar read is not authorized') }
+function assertCustomer(context: TusAuthenticatedTenantContext): void { assertRead(context); if (!context.roles.includes('customer')) throw new ErrorCalendario(403, 'FORBIDDEN', 'customer role is required') }
+function assertOperator(context: TusAuthenticatedTenantContext): void { if (!isOperator(context)) throw new ErrorCalendario(403, 'FORBIDDEN', 'merchant or operator role is required') }
 function isOperator(context: TusAuthenticatedTenantContext): boolean { return context.roles.some((role) => ['merchant', 'operator', 'owner', 'admin'].includes(role)) && (hasPermission(context, 'tus:calendar:write') || hasPermission(context, 'tus:marketplace:write')) }
 function hasPermission(context: TusAuthenticatedTenantContext, permission: string): boolean { return context.permissions.includes(permission) || context.permissions.includes('tus:*') }
 function overlaps(start: string, end: string, otherStart: string, otherEnd: string): boolean { return Date.parse(start) < Date.parse(otherEnd) && Date.parse(end) > Date.parse(otherStart) }
 
-function generateSlotsOrThrow(calendar: ServiceCalendar, date: string, now?: string): ServiceSlot[] {
-  try { return generateServiceSlots(calendar, { date, ...(now === undefined ? {} : { now }) }) } catch (error) { throw new ServiceCalendarError(400, 'INVALID_DATE', error instanceof Error ? error.message : 'slot date is invalid') }
+function generateSlotsOrThrow(calendar: Calendario, date: string, now?: string): Franja[] {
+  try { return generateServiceSlots(calendar, { date, ...(now === undefined ? {} : { now }) }) } catch (error) { throw new ErrorCalendario(400, 'INVALID_DATE', error instanceof Error ? error.message : 'slot date is invalid') }
 }
 
 export { BOOKING_STATUS }
+
+export const ServiceCalendarError = ErrorCalendario

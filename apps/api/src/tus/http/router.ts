@@ -19,7 +19,7 @@ import { PosError } from '../pos/index.ts'
 import { ReportingError, createDiscoverySeoModel, createRobots, createSitemap } from '../reporting/index.ts'
 import { SupportError } from '../support/index.ts'
 import { WhatsAppActionError } from '../whatsapp/index.ts'
-import { ServiceCalendarError } from '../calendar/index.ts'
+import { ErrorCalendario } from '../calendar/index.ts'
 import { HabilitacionBloqueadaError, type EvaluadorHabilitacion, type PerfilHabilitacion } from '../readiness/index.ts'
 
 const TUS_API_VERSION = 'v1'
@@ -1076,7 +1076,7 @@ function proyectarPublicacionMercado(listing: Publicacion | ItemDescubrimiento) 
 }
 
 function requireCalendar(application: TusApplicationService) {
-  if (!application.calendar) throw new ServiceCalendarError(503, 'UNAVAILABLE', 'TUS calendar composition is unavailable')
+  if (!application.calendar) throw new ErrorCalendario(503, 'UNAVAILABLE', 'TUS calendar composition is unavailable')
   return application.calendar
 }
 
@@ -1097,7 +1097,7 @@ function sendMarketplaceError(response: Response, error: unknown): void {
 }
 
 function sendCalendarError(response: Response, error: unknown): void {
-  if (error instanceof ServiceCalendarError) {
+  if (error instanceof ErrorCalendario) {
     response.status(error.status).json({ code: error.code, error: error.message })
     return
   }

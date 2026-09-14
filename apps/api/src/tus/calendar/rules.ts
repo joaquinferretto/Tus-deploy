@@ -5,7 +5,7 @@ const CALENDAR_STATUS = {
 
 export type CalendarStatus = (typeof CALENDAR_STATUS)[keyof typeof CALENDAR_STATUS]
 
-export interface CalendarWorkingHours {
+export interface HorarioTrabajoCalendario {
   weekday: number
   start: string
   end: string
@@ -16,7 +16,7 @@ export interface MoneySnapshot {
   minor: bigint
 }
 
-export interface ServiceCalendar {
+export interface Calendario {
   calendarId: string
   tenantId: string
   serviceId: string
@@ -28,7 +28,7 @@ export interface ServiceCalendar {
   bookingCutoffMinutes: number
   cancellationWindowMinutes: number
   noShowAfterMinutes: number
-  workingHours: CalendarWorkingHours[]
+  workingHours: HorarioTrabajoCalendario[]
   blackoutDates: string[]
   priceSnapshot?: MoneySnapshot
   policyVersion: string
@@ -37,7 +37,7 @@ export interface ServiceCalendar {
   updatedAt: string
 }
 
-export interface ServiceCalendarInput {
+export interface EntradaCalendario {
   tenantId?: string
   calendarId: string
   serviceId: string
@@ -48,13 +48,13 @@ export interface ServiceCalendarInput {
   bookingCutoffMinutes?: number
   cancellationWindowMinutes?: number
   noShowAfterMinutes?: number
-  workingHours: CalendarWorkingHours[]
+  workingHours: HorarioTrabajoCalendario[]
   blackoutDates?: string[]
   priceSnapshot?: MoneySnapshot
   policyVersion?: string
 }
 
-export function validateCalendarInput(input: ServiceCalendarInput): void {
+export function validateCalendarInput(input: EntradaCalendario): void {
   if (!input.calendarId.trim() || !input.serviceId.trim()) throw new Error('calendarId and serviceId are required')
   if (!isValidTimezone(input.timezone)) throw new Error('timezone must be a valid IANA timezone')
   for (const [name, value] of [

@@ -1,6 +1,6 @@
-import { dateWeekday, type ServiceCalendar, toMinutes } from './rules.ts'
+import { dateWeekday, type Calendario, toMinutes } from './rules.ts'
 
-export interface ServiceSlot {
+export interface Franja {
   slotId: string
   calendarId: string
   serviceId: string
@@ -15,12 +15,12 @@ export interface SlotQuery {
   now?: string
 }
 
-export function generateServiceSlots(calendar: ServiceCalendar, query: SlotQuery): ServiceSlot[] {
+export function generateServiceSlots(calendar: Calendario, query: SlotQuery): Franja[] {
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(query.date) || !Number.isFinite(Date.parse(`${query.date}T00:00:00.000Z`))) throw new Error('slot date must be an ISO calendar date')
   if (calendar.status !== 'active' || calendar.blackoutDates.includes(query.date)) return []
   const weekday = dateWeekday(query.date)
   const rules = calendar.workingHours.filter((rule) => rule.weekday === weekday)
-  const slots: ServiceSlot[] = []
+  const slots: Franja[] = []
   for (const rule of rules) {
     const firstMinute = toMinutes(rule.start)
     const lastMinute = toMinutes(rule.end)
