@@ -24,11 +24,11 @@ const DISPUTE_OUTCOMES = {
   FULL_REFUND: 'full-refund',
 } as const
 
-type CaseStatus = (typeof CASE_STATUS)[keyof typeof CASE_STATUS]
-type DisputeOutcome = (typeof DISPUTE_OUTCOMES)[keyof typeof DISPUTE_OUTCOMES]
-type EvidenceParty = 'customer' | 'merchant'
+type EstadoCaso = (typeof CASE_STATUS)[keyof typeof CASE_STATUS]
+type ResultadoDisputa = (typeof DISPUTE_OUTCOMES)[keyof typeof DISPUTE_OUTCOMES]
+type ParteEvidencia = 'customer' | 'merchant'
 
-export interface SupportCase {
+export interface CasoSoporte {
   caseId: string
   disputeId: string
   tenantId: string
@@ -36,24 +36,24 @@ export interface SupportCase {
   commitmentId: string
   openedBy: string
   category: string
-  status: CaseStatus
-  outcome: DisputeOutcome | null
+  status: EstadoCaso
+  outcome: ResultadoDisputa | null
   createdAt: string
   resolvedAt: string | null
 }
 
-export interface SupportEvidence {
+export interface EvidenciaSoporte {
   evidenceId: string
   caseId: string
   tenantId: string
   correlationId: string
-  party: EvidenceParty
+  party: ParteEvidencia
   summary: string
   submittedBy: string
   createdAt: string
 }
 
-export interface SupportTimelineEntry {
+export interface EntradaLineaTiempoSoporte {
   entryId: string
   caseId: string
   tenantId: string
@@ -63,7 +63,7 @@ export interface SupportTimelineEntry {
   createdAt: string
 }
 
-export interface SupportCompensatingEntry {
+export interface EntradaCompensacionSoporte {
   entryId: string
   caseId: string
   tenantId: string
@@ -75,7 +75,7 @@ export interface SupportCompensatingEntry {
   settlement: 'not-released'
 }
 
-export interface SupportOutboxRecord {
+export interface RegistroBandejaSalidaSoporte {
   eventId: string
   tenantId: string
   correlationId: string
@@ -86,32 +86,32 @@ export interface SupportOutboxRecord {
   createdAt: string
 }
 
-export interface ResolvedSupportCase extends SupportCase {
-  evidence: SupportEvidence[]
-  compensatingEntry: SupportCompensatingEntry | null
+export interface CasoSoporteResuelto extends CasoSoporte {
+  evidence: EvidenciaSoporte[]
+  compensatingEntry: EntradaCompensacionSoporte | null
 }
 
-export interface SupportStorePort {
+export interface PuertoAlmacenSoporte {
   cases: {
-    save(value: SupportCase): Promise<void>
-    find(tenantId: string, caseId: string): Promise<SupportCase | null>
-    list(tenantId: string): Promise<SupportCase[]>
+    save(value: CasoSoporte): Promise<void>
+    find(tenantId: string, caseId: string): Promise<CasoSoporte | null>
+    list(tenantId: string): Promise<CasoSoporte[]>
   }
   evidence: {
-    save(value: SupportEvidence): Promise<void>
-    list(tenantId: string, caseId: string): Promise<SupportEvidence[]>
+    save(value: EvidenciaSoporte): Promise<void>
+    list(tenantId: string, caseId: string): Promise<EvidenciaSoporte[]>
   }
   timeline: {
-    append(value: SupportTimelineEntry): Promise<void>
-    list(tenantId: string, caseId: string): SupportTimelineEntry[]
+    append(value: EntradaLineaTiempoSoporte): Promise<void>
+    list(tenantId: string, caseId: string): EntradaLineaTiempoSoporte[]
   }
   compensations: {
-    save(value: SupportCompensatingEntry): Promise<void>
-    find(tenantId: string, caseId: string): Promise<SupportCompensatingEntry | null>
+    save(value: EntradaCompensacionSoporte): Promise<void>
+    find(tenantId: string, caseId: string): Promise<EntradaCompensacionSoporte | null>
   }
   outbox: {
-    append(value: SupportOutboxRecord): Promise<void>
-    list(tenantId: string): SupportOutboxRecord[] | Promise<SupportOutboxRecord[]>
+    append(value: RegistroBandejaSalidaSoporte): Promise<void>
+    list(tenantId: string): RegistroBandejaSalidaSoporte[] | Promise<RegistroBandejaSalidaSoporte[]>
   }
 }
 
@@ -127,42 +127,42 @@ export class SupportError extends Error {
   }
 }
 
-export class InMemorySupportStore implements SupportStorePort {
-  private readonly caseRecords = new Map<string, SupportCase>()
-  private readonly evidenceRecords = new Map<string, SupportEvidence>()
-  private readonly timelineRecords = new Map<string, SupportTimelineEntry>()
-  private readonly compensationRecords = new Map<string, SupportCompensatingEntry>()
-  private readonly outboxRecords = new Map<string, SupportOutboxRecord>()
+export class InMemorySupportStore implements PuertoAlmacenSoporte {
+  private readonly caseRecords = new Map<string, CasoSoporte>()
+  private readonly evidenceRecords = new Map<string, EvidenciaSoporte>()
+  private readonly timelineRecords = new Map<string, EntradaLineaTiempoSoporte>()
+  private readonly compensationRecords = new Map<string, EntradaCompensacionSoporte>()
+  private readonly outboxRecords = new Map<string, RegistroBandejaSalidaSoporte>()
 
   readonly cases = {
-    save: async (value: SupportCase): Promise<void> => { this.caseRecords.set(key(value.tenantId, value.caseId), clone(value)) },
+    save: async (value: CasoSoporte): Promise<void> => { this.caseRecords.set(key(value.tenantId, value.caseId), clone(value)) },
     find: async (tenantId: string, caseId: string) => clone(this.caseRecords.get(key(tenantId, caseId)) ?? null),
     list: async (tenantId: string) => [...this.caseRecords.values()].filter((value) => value.tenantId === tenantId).map(clone),
   }
 
   readonly evidence = {
-    save: async (value: SupportEvidence): Promise<void> => { this.evidenceRecords.set(key(value.tenantId, value.evidenceId), clone(value)) },
+    save: async (value: EvidenciaSoporte): Promise<void> => { this.evidenceRecords.set(key(value.tenantId, value.evidenceId), clone(value)) },
     list: async (tenantId: string, caseId: string) => [...this.evidenceRecords.values()].filter((value) => value.tenantId === tenantId && value.caseId === caseId).map(clone),
   }
 
   readonly timeline = {
-    append: async (value: SupportTimelineEntry): Promise<void> => { this.timelineRecords.set(value.entryId, clone(value)) },
+    append: async (value: EntradaLineaTiempoSoporte): Promise<void> => { this.timelineRecords.set(value.entryId, clone(value)) },
     list: (tenantId: string, caseId: string) => [...this.timelineRecords.values()].filter((value) => value.tenantId === tenantId && value.caseId === caseId).map(clone),
   }
 
   readonly compensations = {
-    save: async (value: SupportCompensatingEntry): Promise<void> => { this.compensationRecords.set(key(value.tenantId, value.caseId), clone(value)) },
+    save: async (value: EntradaCompensacionSoporte): Promise<void> => { this.compensationRecords.set(key(value.tenantId, value.caseId), clone(value)) },
     find: async (tenantId: string, caseId: string) => clone(this.compensationRecords.get(key(tenantId, caseId)) ?? null),
   }
 
   readonly outbox = {
-    append: async (value: SupportOutboxRecord): Promise<void> => { if (!this.outboxRecords.has(key(value.tenantId, value.eventId))) this.outboxRecords.set(key(value.tenantId, value.eventId), clone(value)) },
-    list: (tenantId: string): SupportOutboxRecord[] => [...this.outboxRecords.values()].filter((value) => value.tenantId === tenantId).map(clone),
+    append: async (value: RegistroBandejaSalidaSoporte): Promise<void> => { if (!this.outboxRecords.has(key(value.tenantId, value.eventId))) this.outboxRecords.set(key(value.tenantId, value.eventId), clone(value)) },
+    list: (tenantId: string): RegistroBandejaSalidaSoporte[] => [...this.outboxRecords.values()].filter((value) => value.tenantId === tenantId).map(clone),
   }
-  listOutbox(tenantId: string): SupportOutboxRecord[] { return this.outbox.list(tenantId) }
+  listOutbox(tenantId: string): RegistroBandejaSalidaSoporte[] { return this.outbox.list(tenantId) }
 }
 
-interface PrismaSupportClient {
+interface ClientePrismaSoporte {
   tusSupportCase: {
     upsert(input: { where: { tenantId_caseId: { tenantId: string; caseId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
     findUnique(input: { where: { tenantId_caseId: { tenantId: string; caseId: string } } }): Promise<Record<string, unknown> | null>
@@ -186,63 +186,63 @@ interface PrismaSupportClient {
   }
 }
 
-export class PrismaSupportStore implements SupportStorePort {
-  private readonly client: PrismaSupportClient
-  private readonly timelineCache = new Map<string, SupportTimelineEntry>()
+export class PrismaSupportStore implements PuertoAlmacenSoporte {
+  private readonly client: ClientePrismaSoporte
+  private readonly timelineCache = new Map<string, EntradaLineaTiempoSoporte>()
 
-  constructor(client: PrismaSupportClient) {
+  constructor(client: ClientePrismaSoporte) {
     this.client = client
   }
 
   readonly cases = {
-    save: async (value: SupportCase): Promise<void> => {
+    save: async (value: CasoSoporte): Promise<void> => {
       await this.client.tusSupportCase.upsert({ where: { tenantId_caseId: { tenantId: value.tenantId, caseId: value.caseId } }, create: { id: `${value.tenantId}:${value.caseId}`, ...value, createdAt: new Date(value.createdAt), resolvedAt: value.resolvedAt ? new Date(value.resolvedAt) : null }, update: { ...value, resolvedAt: value.resolvedAt ? new Date(value.resolvedAt) : null } })
     },
-    find: async (tenantId: string, caseId: string): Promise<SupportCase | null> => {
+    find: async (tenantId: string, caseId: string): Promise<CasoSoporte | null> => {
       const row = await this.client.tusSupportCase.findUnique({ where: { tenantId_caseId: { tenantId, caseId } } })
-      return row ? toSupportCase(row) : null
+      return row ? convertirCasoSoporte(row) : null
     },
-    list: async (tenantId: string): Promise<SupportCase[]> => (await this.client.tusSupportCase.findMany({ where: { tenantId } })).map(toSupportCase),
+    list: async (tenantId: string): Promise<CasoSoporte[]> => (await this.client.tusSupportCase.findMany({ where: { tenantId } })).map(convertirCasoSoporte),
   }
 
   readonly evidence = {
-    save: async (value: SupportEvidence): Promise<void> => {
+    save: async (value: EvidenciaSoporte): Promise<void> => {
       await this.client.tusSupportEvidence.create({ data: { id: `${value.tenantId}:${value.evidenceId}`, ...value, createdAt: new Date(value.createdAt) } })
     },
-    list: async (tenantId: string, caseId: string): Promise<SupportEvidence[]> => (await this.client.tusSupportEvidence.findMany({ where: { tenantId, caseId } })).map(toSupportEvidence),
+    list: async (tenantId: string, caseId: string): Promise<EvidenciaSoporte[]> => (await this.client.tusSupportEvidence.findMany({ where: { tenantId, caseId } })).map(convertirEvidenciaSoporte),
   }
 
   readonly timeline = {
-    append: async (value: SupportTimelineEntry): Promise<void> => {
+    append: async (value: EntradaLineaTiempoSoporte): Promise<void> => {
       this.timelineCache.set(`${value.tenantId}:${value.entryId}`, clone(value))
       await this.client.tusSupportTimeline.create({ data: { id: `${value.tenantId}:${value.entryId}`, ...value, createdAt: new Date(value.createdAt) } })
     },
-    list: (tenantId: string, caseId: string): SupportTimelineEntry[] => [...this.timelineCache.values()].filter((value) => value.tenantId === tenantId && value.caseId === caseId).map(clone),
+    list: (tenantId: string, caseId: string): EntradaLineaTiempoSoporte[] => [...this.timelineCache.values()].filter((value) => value.tenantId === tenantId && value.caseId === caseId).map(clone),
   }
 
   readonly compensations = {
-    save: async (value: SupportCompensatingEntry): Promise<void> => {
+    save: async (value: EntradaCompensacionSoporte): Promise<void> => {
       await this.client.tusSupportCompensation.upsert({
         where: { tenantId_caseId: { tenantId: value.tenantId, caseId: value.caseId } },
         create: { id: `${value.tenantId}:${value.entryId}`, ...value, createdAt: new Date() },
         update: {},
       })
     },
-    find: async (tenantId: string, caseId: string): Promise<SupportCompensatingEntry | null> => {
+    find: async (tenantId: string, caseId: string): Promise<EntradaCompensacionSoporte | null> => {
       const row = await this.client.tusSupportCompensation.findUnique({ where: { tenantId_caseId: { tenantId, caseId } } })
-      return row ? toSupportCompensation(row) : null
+      return row ? convertirCompensacionSoporte(row) : null
     },
   }
 
   readonly outbox = {
-    append: async (value: SupportOutboxRecord): Promise<void> => { await this.client.tusSupportOutbox.create({ data: { id: `${value.tenantId}:${value.eventId}`, ...value, createdAt: new Date(value.createdAt) } }) },
-    list: async (tenantId: string): Promise<SupportOutboxRecord[]> => (await this.client.tusSupportOutbox.findMany({ where: { tenantId } })).map(toSupportOutbox),
+    append: async (value: RegistroBandejaSalidaSoporte): Promise<void> => { await this.client.tusSupportOutbox.create({ data: { id: `${value.tenantId}:${value.eventId}`, ...value, createdAt: new Date(value.createdAt) } }) },
+    list: async (tenantId: string): Promise<RegistroBandejaSalidaSoporte[]> => (await this.client.tusSupportOutbox.findMany({ where: { tenantId } })).map(convertirRegistroBandejaSalidaSoporte),
   }
-  listOutbox(tenantId: string): Promise<SupportOutboxRecord[]> { return this.outbox.list(tenantId) as Promise<SupportOutboxRecord[]> }
+  listOutbox(tenantId: string): Promise<RegistroBandejaSalidaSoporte[]> { return this.outbox.list(tenantId) as Promise<RegistroBandejaSalidaSoporte[]> }
 }
 
-export interface TusSupportServiceOptions {
-  store: SupportStorePort
+export interface OpcionesServicioSoporte {
+  store: PuertoAlmacenSoporte
   commitmentLookup?: (commitmentId: string) => Promise<{ tenantId: string } | null>
   now?: () => number
   telemetry?: TusOperationsTelemetry
@@ -252,18 +252,18 @@ export interface TusSupportServiceOptions {
 }
 
 export class TusSupportService {
-  readonly store: SupportStorePort
-  readonly audit: { list(tenantId: string): SupportTimelineEntry[] }
+  readonly store: PuertoAlmacenSoporte
+  readonly audit: { list(tenantId: string): EntradaLineaTiempoSoporte[] }
   private readonly now: () => number
   private readonly telemetry?: TusOperationsTelemetry
-  private readonly auditRecords: SupportTimelineEntry[] = []
+  private readonly auditRecords: EntradaLineaTiempoSoporte[] = []
   private readonly sessions = new Map<string, string>()
   private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
   private readonly perfilHabilitacion: PerfilHabilitacion
   private readonly alcanceHabilitacion: string
-  private readonly commitmentLookup?: TusSupportServiceOptions['commitmentLookup']
+  private readonly commitmentLookup?: OpcionesServicioSoporte['commitmentLookup']
 
-  constructor(options: TusSupportServiceOptions) {
+  constructor(options: OpcionesServicioSoporte) {
     this.store = options.store
     this.now = options.now ?? (() => Date.now())
     this.telemetry = options.telemetry
@@ -277,7 +277,7 @@ export class TusSupportService {
   async openCase(
     context: TusAuthenticatedTenantContext,
     input: { caseId: string; commitmentId: string; category: string; disputeId?: string },
-  ): Promise<SupportCase> {
+  ): Promise<CasoSoporte> {
     this.authorize(context, SUPPORT_PERMISSIONS.WRITE)
     await this.requerirHabilitacion(context)
     if (!input.caseId.trim() || !input.commitmentId.trim() || !input.category.trim()) {
@@ -285,7 +285,7 @@ export class TusSupportService {
     }
     await this.requireCommitment(context, input.commitmentId)
     const now = this.timestamp()
-    const supportCase: SupportCase = {
+    const supportCase: CasoSoporte = {
       caseId: input.caseId,
       disputeId: input.disputeId?.trim() || `dispute-${input.caseId}`,
       tenantId: context.tenantId,
@@ -305,8 +305,8 @@ export class TusSupportService {
 
   async submitEvidence(
     context: TusAuthenticatedTenantContext,
-    input: { caseId: string; evidenceId: string; party: EvidenceParty; summary: string },
-  ): Promise<SupportEvidence> {
+    input: { caseId: string; evidenceId: string; party: ParteEvidencia; summary: string },
+  ): Promise<EvidenciaSoporte> {
     this.authorize(context, SUPPORT_PERMISSIONS.WRITE)
     await this.requerirHabilitacion(context)
     const supportCase = await this.requireCase(context, input.caseId)
@@ -314,7 +314,7 @@ export class TusSupportService {
     if (!input.evidenceId.trim() || !input.summary.trim() || !['customer', 'merchant'].includes(input.party)) {
       throw new SupportError(400, 'INVALID_EVIDENCE', 'evidence identity, party, and summary are required')
     }
-    const evidence: SupportEvidence = {
+    const evidence: EvidenciaSoporte = {
       evidenceId: input.evidenceId,
       caseId: supportCase.caseId,
       tenantId: context.tenantId,
@@ -331,8 +331,8 @@ export class TusSupportService {
 
   async resolveCase(
     context: TusAuthenticatedTenantContext,
-    input: { caseId: string; outcome: DisputeOutcome; amount?: number; reason: string },
-  ): Promise<ResolvedSupportCase> {
+    input: { caseId: string; outcome: ResultadoDisputa; amount?: number; reason: string },
+  ): Promise<CasoSoporteResuelto> {
     this.authorize(context, SUPPORT_PERMISSIONS.DECIDE)
     await this.requerirHabilitacion(context)
     const supportCase = await this.requireCase(context, input.caseId)
@@ -344,7 +344,7 @@ export class TusSupportService {
     const amount = input.amount ?? 0
     if (!Number.isFinite(amount) || amount < 0 || (input.outcome === DISPUTE_OUTCOMES.NO_REFUND && amount !== 0)) throw new SupportError(400, 'INVALID_COMPENSATION', 'compensation amount is invalid')
     const resolvedAt = this.timestamp()
-    const updated: SupportCase = { ...supportCase, status: CASE_STATUS.RESOLVED, outcome: input.outcome, resolvedAt }
+    const updated: CasoSoporte = { ...supportCase, status: CASE_STATUS.RESOLVED, outcome: input.outcome, resolvedAt }
     const compensatingEntry = input.outcome === DISPUTE_OUTCOMES.NO_REFUND ? null : {
       entryId: `support-compensation-${supportCase.caseId}`,
       caseId: supportCase.caseId,
@@ -362,7 +362,7 @@ export class TusSupportService {
     return { ...clone(updated), evidence: evidence.map(clone), compensatingEntry: compensatingEntry ? clone(compensatingEntry) : null }
   }
 
-  async getCase(context: TusAuthenticatedTenantContext, caseId: string): Promise<ResolvedSupportCase> {
+  async getCase(context: TusAuthenticatedTenantContext, caseId: string): Promise<CasoSoporteResuelto> {
     this.authorize(context, SUPPORT_PERMISSIONS.WRITE)
     const supportCase = await this.requireCase(context, caseId)
     return {
@@ -372,16 +372,16 @@ export class TusSupportService {
     }
   }
 
-  async listCases(context: TusAuthenticatedTenantContext): Promise<SupportCase[]> {
+  async listCases(context: TusAuthenticatedTenantContext): Promise<CasoSoporte[]> {
     this.authorize(context, SUPPORT_PERMISSIONS.WRITE)
     return this.store.cases.list(context.tenantId)
   }
 
-  timeline(tenantId: string, caseId: string): SupportTimelineEntry[] {
+  timeline(tenantId: string, caseId: string): EntradaLineaTiempoSoporte[] {
     return this.store.timeline.list(tenantId, caseId)
   }
 
-  private async requireCase(context: TusAuthenticatedTenantContext, caseId: string): Promise<SupportCase> {
+  private async requireCase(context: TusAuthenticatedTenantContext, caseId: string): Promise<CasoSoporte> {
     const supportCase = await this.store.cases.find(context.tenantId, caseId)
     if (!supportCase) throw new SupportError(403, 'FORBIDDEN', 'support case is outside the authenticated tenant')
     return supportCase
@@ -407,7 +407,7 @@ export class TusSupportService {
     this.sessions.set(context.sessionId, context.tenantId)
   }
 
-  private async record(context: TusAuthenticatedTenantContext, caseId: string, action: string, payload: Record<string, unknown>, eventType: SupportOutboxRecord['eventType'] = action as SupportOutboxRecord['eventType']): Promise<void> {
+  private async record(context: TusAuthenticatedTenantContext, caseId: string, action: string, payload: Record<string, unknown>, eventType: RegistroBandejaSalidaSoporte['eventType'] = action as RegistroBandejaSalidaSoporte['eventType']): Promise<void> {
     const entry = { entryId: `${action}-${caseId}-${this.now()}`, caseId, tenantId: context.tenantId, correlationId: context.correlationId, action, actorId: context.subjectId, createdAt: this.timestamp() }
     this.auditRecords.push(clone(entry))
     await this.store.timeline.append(entry)
@@ -444,20 +444,20 @@ function clone<T>(value: T): T {
 
 export default { InMemorySupportStore, PrismaSupportStore, SupportError, TusSupportService }
 
-function toSupportCase(row: Record<string, unknown>): SupportCase {
+function convertirCasoSoporte(row: Record<string, unknown>): CasoSoporte {
   return {
-    caseId: String(row['caseId']), disputeId: String(row['disputeId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId'] ?? 'legacy'), commitmentId: String(row['commitmentId']), openedBy: String(row['openedBy']), category: String(row['category']), status: row['status'] as CaseStatus, outcome: row['outcome'] ? row['outcome'] as DisputeOutcome : null, createdAt: new Date(String(row['createdAt'])).toISOString(), resolvedAt: row['resolvedAt'] ? new Date(String(row['resolvedAt'])).toISOString() : null,
+    caseId: String(row['caseId']), disputeId: String(row['disputeId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId'] ?? 'legacy'), commitmentId: String(row['commitmentId']), openedBy: String(row['openedBy']), category: String(row['category']), status: row['status'] as EstadoCaso, outcome: row['outcome'] ? row['outcome'] as ResultadoDisputa : null, createdAt: new Date(String(row['createdAt'])).toISOString(), resolvedAt: row['resolvedAt'] ? new Date(String(row['resolvedAt'])).toISOString() : null,
   }
 }
 
-function toSupportEvidence(row: Record<string, unknown>): SupportEvidence {
-  return { evidenceId: String(row['evidenceId']), caseId: String(row['caseId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId'] ?? 'legacy'), party: row['party'] as EvidenceParty, summary: redactText(String(row['summary'])), submittedBy: String(row['submittedBy']), createdAt: new Date(String(row['createdAt'])).toISOString() }
+function convertirEvidenciaSoporte(row: Record<string, unknown>): EvidenciaSoporte {
+  return { evidenceId: String(row['evidenceId']), caseId: String(row['caseId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId'] ?? 'legacy'), party: row['party'] as ParteEvidencia, summary: redactText(String(row['summary'])), submittedBy: String(row['submittedBy']), createdAt: new Date(String(row['createdAt'])).toISOString() }
 }
 
-function toSupportCompensation(row: Record<string, unknown>): SupportCompensatingEntry {
+function convertirCompensacionSoporte(row: Record<string, unknown>): EntradaCompensacionSoporte {
   return { entryId: String(row['entryId']), caseId: String(row['caseId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId'] ?? 'legacy'), amount: Number(row['amount']), currency: 'ARS', reason: redactText(String(row['reason'])), status: 'recorded', settlement: 'not-released' }
 }
 
-function toSupportOutbox(row: Record<string, unknown>): SupportOutboxRecord {
-  return { eventId: String(row['eventId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId']), eventType: row['eventType'] as SupportOutboxRecord['eventType'], aggregateId: String(row['aggregateId']), payload: row['payload'] as Record<string, unknown>, status: 'pending', createdAt: new Date(String(row['createdAt'])).toISOString() }
+function convertirRegistroBandejaSalidaSoporte(row: Record<string, unknown>): RegistroBandejaSalidaSoporte {
+  return { eventId: String(row['eventId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId']), eventType: row['eventType'] as RegistroBandejaSalidaSoporte['eventType'], aggregateId: String(row['aggregateId']), payload: row['payload'] as Record<string, unknown>, status: 'pending', createdAt: new Date(String(row['createdAt'])).toISOString() }
 }
