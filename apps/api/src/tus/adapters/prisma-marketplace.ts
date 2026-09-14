@@ -1,4 +1,4 @@
-import type { RegistroAuditoriaMercadoServicios, MarketplaceCheckoutResponse, MarketplaceCommitment, MarketplaceListing, MarketplaceMerchantProfile, MarketplaceOutboxRecord, MarketplaceStorePort } from '../catalog/index.ts'
+import type { RegistroAuditoriaMercadoServicios, MarketplaceCheckoutResponse, MarketplaceCommitment, MarketplaceListing, PerfilPrestador, MarketplaceOutboxRecord, MarketplaceStorePort } from '../catalog/index.ts'
 import type { TusPrismaClient } from './prisma.ts'
 
 export class PrismaMarketplaceStore implements MarketplaceStorePort {
@@ -9,7 +9,7 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
   }
 
   readonly merchant = {
-    save: async (profile: MarketplaceMerchantProfile) => {
+    save: async (profile: PerfilPrestador) => {
       await this.client.tusMerchant.upsert({
         where: { tenantId: profile.tenantId },
         create: merchantRow(profile),
@@ -111,7 +111,7 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
   }
 }
 
-function merchantRow(profile: MarketplaceMerchantProfile): Record<string, unknown> {
+function merchantRow(profile: PerfilPrestador): Record<string, unknown> {
   return { id: profile.merchantId, tenantId: profile.tenantId, merchantId: profile.merchantId, cohort: profile.cohort, locationId: profile.locationId, timezone: profile.timezone, staffRoles: profile.staffRoles, operatingPolicyVersion: profile.operatingPolicyVersion, status: profile.status, createdAt: new Date(profile.createdAt), updatedAt: new Date(profile.updatedAt) }
 }
 
@@ -123,8 +123,8 @@ function commitmentRow(commitment: MarketplaceCommitment): Record<string, unknow
   return { id: commitment.commitmentId, contractVersion: commitment.contractVersion, commitmentId: commitment.commitmentId, cartId: commitment.cartId, tenantId: commitment.tenantId, merchantId: commitment.merchantId, listingId: commitment.listingId, context: commitment.context, lineIds: commitment.lineIds, quantity: commitment.quantity, amount: BigInt(commitment.priceSnapshot.minor) * BigInt(commitment.quantity), currency: commitment.priceSnapshot.currency, status: commitment.status, availabilityVersion: commitment.availabilityVersion, policyVersion: commitment.policyVersion, slotStart: commitment.slotStart ? new Date(commitment.slotStart) : null, slotEnd: commitment.slotEnd ? new Date(commitment.slotEnd) : null, createdAt: new Date(commitment.createdAt), updatedAt: new Date(commitment.createdAt) }
 }
 
-function toMerchant(row: Record<string, unknown>): MarketplaceMerchantProfile {
-  return { tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), cohort: row['cohort'] as MarketplaceMerchantProfile['cohort'], locationId: String(row['locationId']), timezone: String(row['timezone']), staffRoles: Array.isArray(row['staffRoles']) ? row['staffRoles'].map(String) : [], operatingPolicyVersion: String(row['operatingPolicyVersion']), status: 'approved', createdAt: new Date(String(row['createdAt'])).toISOString(), updatedAt: new Date(String(row['updatedAt'])).toISOString() }
+function toMerchant(row: Record<string, unknown>): PerfilPrestador {
+  return { tenantId: String(row['tenantId']), merchantId: String(row['merchantId']), cohort: row['cohort'] as PerfilPrestador['cohort'], locationId: String(row['locationId']), timezone: String(row['timezone']), staffRoles: Array.isArray(row['staffRoles']) ? row['staffRoles'].map(String) : [], operatingPolicyVersion: String(row['operatingPolicyVersion']), status: 'approved', createdAt: new Date(String(row['createdAt'])).toISOString(), updatedAt: new Date(String(row['updatedAt'])).toISOString() }
 }
 
 function toListing(row: Record<string, unknown>): MarketplaceListing {

@@ -18,7 +18,7 @@ export const MARKETPLACE_OUTBOX_EVENT_TYPES = {
 } as const
 export type MarketplaceOutboxEventType = (typeof MARKETPLACE_OUTBOX_EVENT_TYPES)[keyof typeof MARKETPLACE_OUTBOX_EVENT_TYPES]
 
-export interface MarketplaceMerchantProfile {
+export interface PerfilPrestador {
   tenantId: string
   merchantId: string
   cohort: MarketplaceCohort
@@ -180,8 +180,8 @@ export interface MarketplaceOutboxRecord {
 
 export interface MarketplaceStorePort {
   merchant: {
-    save(profile: MarketplaceMerchantProfile): Promise<void>
-    find(tenantId: string): Promise<MarketplaceMerchantProfile | null>
+    save(profile: PerfilPrestador): Promise<void>
+    find(tenantId: string): Promise<PerfilPrestador | null>
   }
   listings: {
     save(listing: MarketplaceListing): Promise<void>
@@ -227,7 +227,7 @@ export class MarketplaceError extends Error {
 }
 
 export class InMemoryMarketplaceStore implements MarketplaceStorePort {
-  private readonly merchantRecords = new Map<string, MarketplaceMerchantProfile>()
+  private readonly merchantRecords = new Map<string, PerfilPrestador>()
   private readonly listingRecords = new Map<string, MarketplaceListing>()
   private readonly commitmentRecords = new Map<string, MarketplaceCommitment>()
   private readonly audits = new Map<string, RegistroAuditoriaMercadoServicios>()
@@ -236,7 +236,7 @@ export class InMemoryMarketplaceStore implements MarketplaceStorePort {
   private transactionTail: Promise<void> = Promise.resolve()
 
   readonly merchant = {
-    save: async (profile: MarketplaceMerchantProfile) => { this.merchantRecords.set(profile.tenantId, structuredClone(profile)) },
+    save: async (profile: PerfilPrestador) => { this.merchantRecords.set(profile.tenantId, structuredClone(profile)) },
     find: async (tenantId: string) => this.merchantRecords.has(tenantId) ? structuredClone(this.merchantRecords.get(tenantId)!) : null,
   }
 
@@ -354,7 +354,7 @@ export class TusMarketplaceService {
     this.alcanceHabilitacion = policy.alcanceHabilitacion ?? 'argentina-stage-1'
   }
 
-  async onboard(context: TusAuthenticatedTenantContext, input: Partial<MarketplaceMerchantProfile>): Promise<MarketplaceMerchantProfile> {
+  async onboard(context: TusAuthenticatedTenantContext, input: Partial<PerfilPrestador>): Promise<PerfilPrestador> {
     assertPermission(context, 'tus:marketplace:write')
     assertMerchantRole(context)
     await this.requerirHabilitacion(context, 'publication')
@@ -366,7 +366,7 @@ export class TusMarketplaceService {
       throw new MarketplaceError(400, 'INCOMPLETE_MERCHANT', 'location, timezone, staff roles, and operating policy are required')
     }
     const now = new Date().toISOString()
-    const profile: MarketplaceMerchantProfile = {
+    const profile: PerfilPrestador = {
       tenantId: context.tenantId,
       merchantId: input.merchantId!,
       cohort,
@@ -481,7 +481,7 @@ export class TusMarketplaceService {
     return { contractVersion: TUS_CONTRACT_VERSION, items: items.filter((item): item is MarketplaceDiscoveryItem => item !== null), evidence: 'local-deterministic' }
   }
 
-  async merchantOperations(context: TusAuthenticatedTenantContext): Promise<{ merchant: MarketplaceMerchantProfile | null; listings: MarketplaceListing[] }> {
+  async merchantOperations(context: TusAuthenticatedTenantContext): Promise<{ merchant: PerfilPrestador | null; listings: MarketplaceListing[] }> {
     assertPermission(context, 'tus:marketplace:read')
     assertMerchantRole(context)
     const merchant = await this.store.merchant.find(context.tenantId)
@@ -632,7 +632,7 @@ function isMarketplaceCohort(value: unknown): value is MarketplaceCohort {
   return MARKETPLACE_COHORTS.includes(value as MarketplaceCohort)
 }
 
-function validateListingInput(input: MarketplaceListingInput, merchant: MarketplaceMerchantProfile): void {
+function validateListingInput(input: MarketplaceListingInput, merchant: PerfilPrestador): void {
   if (!input.name.trim() || !input.description.trim() || input.locationId !== merchant.locationId || input.cohort !== merchant.cohort || !/^[A-Z]{3}$/u.test(input.currency.trim().toUpperCase()) || !Number.isFinite(input.price) || input.price <= 0) throw new MarketplaceError(400, 'INVALID_LISTING', 'listing commercial and location facts are invalid')
   normalizeMoney(input.currency, input.price, input.priceMinor)
   if (input.kind === 'product' && (!Number.isInteger(input.stock) || input.stock! < 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'product stock is required')
