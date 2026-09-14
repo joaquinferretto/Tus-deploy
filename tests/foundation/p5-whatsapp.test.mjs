@@ -47,7 +47,7 @@ test('BUILD 12E2 normaliza WhatsApp en Prisma y conserva tablas, columnas, indic
     '20260909090000_tus_argentina_market_launch/migration.sql',
     '20260909150000_tus_comms_delivery_controls/migration.sql',
   ].map((file) => readFileSync(join(root, 'apps/api/prisma/migrations', file), 'utf8')).join('\n')
-  const whatsappModels = schema.slice(schema.indexOf('model AccionWhatsApp {'), schema.indexOf('model TusWhatsAppOutbox {'))
+  const whatsappModels = schema.slice(schema.indexOf('model AccionWhatsApp {'), schema.indexOf('model OutboxWhatsApp {'))
   const models = [
     ['AccionWhatsApp', 'TusWhatsAppAction'],
     ['ConfirmacionWhatsApp', 'TusWhatsAppConfirmation'],
@@ -91,7 +91,7 @@ test('BUILD 12E2 adapta el adapter Prisma WhatsApp sin traducir valores externos
       auditoriaWhatsApp: { create: async (input) => { calls.push({ model: 'auditoriaWhatsApp', method: 'create', input }); return input.data } },
       consentimientoWhatsApp: { upsert: async (input) => { calls.push({ model: 'consentimientoWhatsApp', method: 'upsert', input }); consentRow = { ...input.create }; return consentRow }, findUnique: async () => consentRow },
       mensajeWhatsApp: { upsert: async (input) => { calls.push({ model: 'mensajeWhatsApp', method: 'upsert', input }); messageRow = { ...input.create }; return messageRow }, findUnique: async () => messageRow },
-      tusWhatsAppOutbox: { create: async () => { throw new Error('outbox must not be touched by this scenario') }, findMany: async () => [] },
+      outboxWhatsApp: { create: async () => { throw new Error('outbox must not be touched by this scenario') }, findMany: async () => [] },
     }
     const store = new PrismaWhatsAppActionStore(client)
     const response = { status: 'completed', tenantId: 'tenant-a', credentialsCollected: false, mutated: false }

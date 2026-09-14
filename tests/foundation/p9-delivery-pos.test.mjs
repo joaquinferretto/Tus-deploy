@@ -325,12 +325,12 @@ test('PR1 exposes tenant-scoped POS audit and outbox readback from the Prisma ad
       { auditoriaId: 'audit-pos-b', tenantId: 'tenant-b', actorId: 'actor-b', correlacionId: 'corr-b', accion: 'pos.operation.accepted', operacionId: 'operation-b', resultado: 'allowed', fechaCreacion: new Date('2026-08-27T12:00:00.000Z') },
     ]
     const outbox = [
-      { eventId: 'event-pos-a', tenantId: 'tenant-a', eventType: 'pos.operation.accepted', aggregateId: 'operation-a', payload: { status: 'accepted' }, status: 'pending', attempts: 0, createdAt: new Date('2026-08-27T12:00:00.000Z') },
-      { eventId: 'event-pos-b', tenantId: 'tenant-b', eventType: 'pos.operation.accepted', aggregateId: 'operation-b', payload: { status: 'accepted' }, status: 'pending', attempts: 0, createdAt: new Date('2026-08-27T12:00:00.000Z') },
+      { eventoId: 'event-pos-a', tenantId: 'tenant-a', tipoEvento: 'pos.operation.accepted', agregadoId: 'operation-a', datosEvento: { status: 'accepted' }, estado: 'pending', intentos: 0, disponibleDesde: new Date('2026-08-27T12:00:00.000Z'), fechaCreacion: new Date('2026-08-27T12:00:00.000Z') },
+      { eventoId: 'event-pos-b', tenantId: 'tenant-b', tipoEvento: 'pos.operation.accepted', agregadoId: 'operation-b', datosEvento: { status: 'accepted' }, estado: 'pending', intentos: 0, disponibleDesde: new Date('2026-08-27T12:00:00.000Z'), fechaCreacion: new Date('2026-08-27T12:00:00.000Z') },
     ]
     const client = {
       auditoriaPOS: { findMany: async ({ where }) => audits.filter((row) => row.tenantId === where.tenantId) },
-      tusPosOutbox: { findMany: async ({ where }) => outbox.filter((row) => row.tenantId === where.tenantId) },
+      outboxPOS: { findMany: async ({ where }) => outbox.filter((row) => row.tenantId === where.tenantId) },
     }
     const store = new PrismaPosStore(client)
     const tenantAudits = await store.listAudit('tenant-a')

@@ -299,7 +299,7 @@ interface ClientePrismaWhatsApp {
     upsert(input: { where: { tenantId_mensajeId: { tenantId: string; mensajeId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
     findUnique(input: { where: { tenantId_mensajeId: { tenantId: string; mensajeId: string } } }): Promise<Record<string, unknown> | null>
   }
-  tusWhatsAppOutbox?: {
+  outboxWhatsApp?: {
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
     findMany(input: { where: { tenantId: string } }): Promise<Record<string, unknown>[]>
   }
@@ -401,7 +401,7 @@ export class PrismaWhatsAppActionStore implements PuertoAlmacenAccionWhatsApp {
 
   async saveOutbox(value: RegistroBandejaSalidaPlantillaWhatsApp): Promise<void> {
     this.outboxRecords.push(clone(value))
-    await this.client.tusWhatsAppOutbox?.create({ data: { id: `${value.tenantId}:${value.eventId}`, ...value, createdAt: new Date(value.createdAt), retentionUntil: new Date(value.retentionUntil) } })
+    await this.client.outboxWhatsApp?.create({ data: { id: `${value.tenantId}:${value.eventId}`, tenantId: value.tenantId, eventoId: value.eventId, correlacionId: value.correlationId, tipoEvento: value.eventType, agregadoId: value.aggregateId, datosEvento: value.payload, estado: value.status, fechaCreacion: new Date(value.createdAt), retencionHasta: new Date(value.retentionUntil) } })
   }
 
   listOutbox(tenantId: string): RegistroBandejaSalidaPlantillaWhatsApp[] {

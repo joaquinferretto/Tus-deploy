@@ -28,22 +28,42 @@ function context(overrides = {}) {
   }
 }
 
-test('BUILD 12E1 normaliza Soporte en Prisma y conserva la superficie fisica actual sin FK nuevas', () => {
+test('BUILD 12E1 y 12H normalizan Soporte en Prisma y conservan la superficie fisica actual sin FK nuevas', () => {
   const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
   const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260827090700_tus_support_reporting/migration.sql'), 'utf8')
-  const supportModels = schema.slice(schema.indexOf('model CasoSoporte {'), schema.indexOf('model TusSupportOutbox {'))
+  const supportModels = schema.slice(schema.indexOf('model CasoSoporte {'), schema.indexOf('model OutboxSoporte {'))
 
   assert.match(schema, /model CasoSoporte[\s\S]*?casoId\s+String\s+@map\("caseId"\)/)
   assert.match(schema, /model EvidenciaSoporte[\s\S]*?evidenciaId\s+String\s+@map\("evidenceId"\)/)
   assert.match(schema, /model LineaTiempoSoporte[\s\S]*?entradaId\s+String\s+@map\("entryId"\)/)
   assert.match(schema, /model CompensacionSoporte[\s\S]*?monto\s+BigInt\s+@map\("amount"\)/)
-  assert.match(schema, /model TusSupportOutbox\s+\{[\s\S]*?eventType\s+String/)
+  assert.match(schema, /model OutboxSoporte\s+\{[\s\S]*?tipoEvento\s+String\s+@map\("eventType"\)/)
   assert.doesNotMatch(schema, /model TusSupport(Case|Evidence|Timeline|Compensation)\s+\{/)
   assert.doesNotMatch(supportModels, /@relation\(/)
   for (const table of ['TusSupportCase', 'TusSupportEvidence', 'TusSupportTimeline', 'TusSupportCompensation']) assert.match(schema, new RegExp(`@@map\\("${table}"\\)`))
   for (const index of ['TusSupportCase_tenantId_caseId_key', 'TusSupportEvidence_tenantId_evidenceId_key', 'TusSupportTimeline_tenantId_entryId_key', 'TusSupportCompensation_tenantId_caseId_key']) assert.match(schema, new RegExp(`map: "${index}"`))
   for (const table of ['TusSupportCase', 'TusSupportEvidence', 'TusSupportTimeline', 'TusSupportCompensation']) assert.match(migration, new RegExp(`CREATE TABLE "${table}"`))
 })
+
+test('BUILD 12H adapta OutboxSoporte y RegistroOperaciones con campos Prisma españoles', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaSupportStore } = (await import('./apps/api/src/tus/support/index.ts')).default
+    const { PrismaReportingStore } = (await import('./apps/api/src/tus/reporting/index.ts')).default
+    const calls = []
+    const client = {
+      outboxSoporte: { create: async (input) => { calls.push(input); return input.data }, findMany: async () => [{ eventoId: 'event-support', tenantId: 'tenant-a', correlacionId: 'corr-a', tipoEvento: 'support.case.opened', agregadoId: 'case-a', datosEvento: { caseId: 'case-a' }, estado: 'pending', fechaCreacion: new Date('2026-08-27T12:00:00.000Z') }] },
+      registroOperaciones: { findMany: async () => [{ tenantId: 'tenant-a', contexto: 'service', canal: 'web', geografia: 'ar', resultado: 'fulfilled', monto: 2500n, moneda: 'ARS', estadoContable: 'posted', accionesWhatsApp: 1, disputas: 0, posFueraLinea: 0, fechaCreacion: new Date('2026-08-27T12:00:00.000Z') }] },
+    }
+    const support = new PrismaSupportStore(client)
+    const reporting = new PrismaReportingStore(client)
+    await support.outbox.append({ eventId: 'event-support', tenantId: 'tenant-a', correlationId: 'corr-a', eventType: 'support.case.opened', aggregateId: 'case-a', payload: { caseId: 'case-a' }, status: 'pending', createdAt: '2026-08-27T12:00:00.000Z' })
+    console.log(JSON.stringify({ outbox: await support.outbox.list('tenant-a'), report: await reporting.list('tenant-a'), create: calls[0] }))
+  `)
+  assert.equal(result.outbox[0].eventId, 'event-support')
+  assert.equal(result.report[0].context, 'service')
+  assert.equal(result.report[0].amount, 2500)
+  assert.deepEqual(result.create.data, { id: 'tenant-a:event-support', tenantId: 'tenant-a', eventoId: 'event-support', correlacionId: 'corr-a', tipoEvento: 'support.case.opened', agregadoId: 'case-a', datosEvento: { caseId: 'case-a' }, estado: 'pending', fechaCreacion: '2026-08-27T12:00:00.000Z' })
+ })
 
 test('BUILD 12E1 adapta la persistencia Prisma de Soporte a nombres internos españoles', () => {
   const result = runTypeScriptScenario(`
@@ -57,7 +77,7 @@ test('BUILD 12E1 adapta la persistencia Prisma de Soporte a nombres internos esp
       casoSoporte: { upsert: async (input) => calls.push({ model: 'casoSoporte', input }), findUnique: async () => caseRow, findMany: async () => [caseRow] },
       evidenciaSoporte: { create: async (input) => calls.push({ model: 'evidenciaSoporte', input }), findMany: async () => [evidenceRow] },
       lineaTiempoSoporte: { create: async (input) => calls.push({ model: 'lineaTiempoSoporte', input }), findMany: async () => [timelineRow] },
-      tusSupportOutbox: { create: async (input) => calls.push({ model: 'tusSupportOutbox', input }), findMany: async () => [] },
+      outboxSoporte: { create: async (input) => calls.push({ model: 'outboxSoporte', input }), findMany: async () => [] },
       compensacionSoporte: { upsert: async (input) => calls.push({ model: 'compensacionSoporte', input }), findUnique: async () => compensationRow },
     }
     const store = new PrismaSupportStore(client)

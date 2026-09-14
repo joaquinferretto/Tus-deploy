@@ -1071,41 +1071,43 @@ model ConflictoPOS {
   @@map("TusPosConflict")
 }
 
-model TusDeliveryOutbox {
-  id          String   @id
-  tenantId    String
-  eventId     String
-  correlationId String  @default("legacy")
-  eventType   String
-  aggregateId String
-  payload     Json
-  status      String
-  attempts    Int
-  createdAt   DateTime
+model OutboxEntrega {
+  id             String   @id(map: "TusDeliveryOutbox_pkey")
+  tenantId       String   @map("tenantId")
+  eventoId       String   @map("eventId")
+  correlacionId  String   @default("legacy") @map("correlationId")
+  tipoEvento     String   @map("eventType")
+  agregadoId     String   @map("aggregateId")
+  datosEvento    Json     @map("payload")
+  estado         String   @map("status")
+  intentos       Int      @map("attempts")
+  fechaCreacion  DateTime @map("createdAt")
 
-  @@unique([tenantId, eventId])
-  @@index([tenantId, status, createdAt])
+  @@unique([tenantId, eventoId], map: "TusDeliveryOutbox_tenantId_eventId_key")
+  @@index([tenantId, estado, fechaCreacion], map: "TusDeliveryOutbox_tenantId_status_createdAt_idx")
+  @@map("TusDeliveryOutbox")
 }
 
-model TusPosOutbox {
-  id          String   @id
-  tenantId    String
-  eventId     String
-  eventType   String
-  aggregateId String
-  payload     Json
-  status      String
-  attempts    Int
-  availableAt DateTime @default(now())
-  lastError   String?
-  claimId     String?
-  claimUntil  DateTime?
-  publishedAt DateTime?
-  createdAt   DateTime
+model OutboxPOS {
+  id                    String   @id(map: "TusPosOutbox_pkey")
+  tenantId              String   @map("tenantId")
+  eventoId              String   @map("eventId")
+  tipoEvento            String   @map("eventType")
+  agregadoId            String   @map("aggregateId")
+  datosEvento           Json     @map("payload")
+  estado                String   @map("status")
+  intentos              Int      @map("attempts")
+  disponibleDesde       DateTime @default(now()) @map("availableAt")
+  ultimoError           String?  @map("lastError")
+  reclamoProcesamientoId String?  @map("claimId")
+  reclamadoHasta        DateTime? @map("claimUntil")
+  fechaPublicacion      DateTime? @map("publishedAt")
+  fechaCreacion         DateTime @map("createdAt")
 
-  @@unique([tenantId, eventId])
-  @@index([tenantId, status, createdAt])
-  @@index([tenantId, aggregateId, status])
+  @@unique([tenantId, eventoId], map: "TusPosOutbox_tenantId_eventId_key")
+  @@index([tenantId, estado, fechaCreacion], map: "TusPosOutbox_tenantId_status_createdAt_idx")
+  @@index([tenantId, agregadoId, estado], map: "TusPosOutbox_tenantId_aggregateId_status_idx")
+  @@map("TusPosOutbox")
 }
 
 model AuditoriaPOS {
@@ -1214,20 +1216,21 @@ model CompensacionSoporte {
   @@map("TusSupportCompensation")
 }
 
-model TusSupportOutbox {
-  id            String   @id
-  tenantId      String
-  eventId       String
-  correlationId String
-  eventType     String
-  aggregateId   String
-  payload       Json
-  status        String
-  createdAt     DateTime
+model OutboxSoporte {
+  id             String   @id(map: "TusSupportOutbox_pkey")
+  tenantId       String   @map("tenantId")
+  eventoId       String   @map("eventId")
+  correlacionId  String   @map("correlationId")
+  tipoEvento     String   @map("eventType")
+  agregadoId     String   @map("aggregateId")
+  datosEvento    Json     @map("payload")
+  estado         String   @map("status")
+  fechaCreacion  DateTime @map("createdAt")
 
-  @@unique([tenantId, eventId])
-  @@index([tenantId, status, createdAt])
-  @@index([tenantId, correlationId])
+  @@unique([tenantId, eventoId], map: "TusSupportOutbox_tenantId_eventId_key")
+  @@index([tenantId, estado, fechaCreacion], map: "TusSupportOutbox_tenantId_status_createdAt_idx")
+  @@index([tenantId, correlacionId], map: "TusSupportOutbox_tenantId_correlationId_idx")
+  @@map("TusSupportOutbox")
 }
 
 model AccionWhatsApp {
@@ -1276,23 +1279,24 @@ model AuditoriaWhatsApp {
   @@map("TusWhatsAppAudit")
 }
 
-model TusOperationsRecord {
-  id              String   @id
-  tenantId        String
-  context         String
-  channel         String
-  geography       String
-  outcome         String
-  amount          BigInt
-  currency        String
-  ledgerStatus    String
-  whatsappActions Int
-  disputes        Int
-  posOffline      Int
-  createdAt       DateTime
+model RegistroOperaciones {
+  id                String   @id(map: "TusOperationsRecord_pkey")
+  tenantId          String   @map("tenantId")
+  contexto          String   @map("context")
+  canal             String   @map("channel")
+  geografia         String   @map("geography")
+  resultado         String   @map("outcome")
+  monto             BigInt   @map("amount")
+  moneda            String   @map("currency")
+  estadoContable    String   @map("ledgerStatus")
+  accionesWhatsApp Int      @map("whatsappActions")
+  disputas          Int      @map("disputes")
+  posFueraLinea     Int      @map("posOffline")
+  fechaCreacion     DateTime @map("createdAt")
 
-  @@index([tenantId, createdAt])
-  @@index([tenantId, context, channel, geography])
+  @@index([tenantId, fechaCreacion], map: "TusOperationsRecord_tenantId_createdAt_idx")
+  @@index([tenantId, contexto, canal, geografia], map: "TusOperationsRecord_tenantId_context_channel_geography_idx")
+  @@map("TusOperationsRecord")
 }
 
 // Argentina launch baseline. These records are PostgreSQL-owned and every
@@ -1487,21 +1491,22 @@ model EventoWebhookWhatsApp {
   @@map("TusWhatsAppWebhookEvent")
 }
 
-model TusWhatsAppOutbox {
-  id             String   @id
-  tenantId       String
-  eventId        String
-  correlationId  String
-  eventType      String
-  aggregateId    String
-  payload        Json
-  status         String
-  createdAt      DateTime
-  retentionUntil DateTime
+model OutboxWhatsApp {
+  id             String   @id(map: "TusWhatsAppOutbox_pkey")
+  tenantId       String   @map("tenantId")
+  eventoId       String   @map("eventId")
+  correlacionId  String   @map("correlationId")
+  tipoEvento     String   @map("eventType")
+  agregadoId     String   @map("aggregateId")
+  datosEvento    Json     @map("payload")
+  estado         String   @map("status")
+  fechaCreacion  DateTime @map("createdAt")
+  retencionHasta DateTime @map("retentionUntil")
 
-  @@unique([tenantId, eventId])
-  @@index([tenantId, status, createdAt])
-  @@index([tenantId, correlationId])
+  @@unique([tenantId, eventoId], map: "TusWhatsAppOutbox_tenantId_eventId_key")
+  @@index([tenantId, estado, fechaCreacion], map: "TusWhatsAppOutbox_tenantId_status_createdAt_idx")
+  @@index([tenantId, correlacionId], map: "TusWhatsAppOutbox_tenantId_correlationId_idx")
+  @@map("TusWhatsAppOutbox")
 }
 
 model TusInvoice {
@@ -1711,21 +1716,22 @@ model TusBillingAudit {
   @@index([tenantId, correlationId, createdAt])
 }
 
-model TusBillingOutbox {
-  id            String   @id
-  tenantId      String
-  eventId       String
-  correlationId String
-  eventType     String
-  aggregateId   String
-  payload       Json
-  status        String
-  attempts      Int
-  availableAt   DateTime
-  createdAt     DateTime
+model OutboxFacturacion {
+  id             String   @id(map: "TusBillingOutbox_pkey")
+  tenantId       String   @map("tenantId")
+  eventoId       String   @map("eventId")
+  correlacionId  String   @map("correlationId")
+  tipoEvento     String   @map("eventType")
+  agregadoId     String   @map("aggregateId")
+  datosEvento    Json     @map("payload")
+  estado         String   @map("status")
+  intentos       Int      @map("attempts")
+  disponibleDesde DateTime @map("availableAt")
+  fechaCreacion  DateTime @map("createdAt")
 
-  @@unique([tenantId, eventId])
-  @@index([tenantId, status, availableAt])
+  @@unique([tenantId, eventoId], map: "TusBillingOutbox_tenantId_eventId_key")
+  @@index([tenantId, estado, disponibleDesde], map: "TusBillingOutbox_tenantId_status_availableAt_idx")
+  @@map("TusBillingOutbox")
 }
 
 model TusBillingDunning {

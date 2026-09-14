@@ -19,14 +19,14 @@ interface DeliveryPrismaClient {
   evidenciaEntrega: Delegate
   incidenteEntrega: Delegate
   auditoriaEntrega: Delegate
-  tusDeliveryOutbox: Delegate
+  outboxEntrega: Delegate
   operacionPOS: Delegate
   comprobantePOS: Delegate
   auditoriaPOS: Delegate
   dispositivoPOS: Delegate
   sesionPOS: Delegate
   conflictoPOS: Delegate
-  tusPosOutbox: Delegate
+  outboxPOS: Delegate
   versionPOS: Delegate
   $transaction<TValue>(callback: (client: DeliveryPrismaClient) => Promise<TValue>): Promise<TValue>
 }
@@ -96,7 +96,7 @@ export class PrismaDeliveryStore implements DeliveryStorePort {
   }
 
   readonly outbox = {
-    append: async (record: DeliveryOutboxRecord) => { await this.client.tusDeliveryOutbox.create({ data: { id: record.eventId, ...record, createdAt: new Date(record.createdAt) } }) },
+    append: async (record: DeliveryOutboxRecord) => { await this.client.outboxEntrega.create({ data: { id: record.eventId, tenantId: record.tenantId, eventoId: record.eventId, correlacionId: record.correlationId, tipoEvento: record.eventType, agregadoId: record.aggregateId, datosEvento: record.payload, estado: record.status, intentos: record.attempts, fechaCreacion: new Date(record.createdAt) } }) },
     list: (_tenantId: string): DeliveryOutboxRecord[] => { throw new Error('Tenant-scoped delivery outbox listing is exposed through reporting adapters') },
   }
   listOutbox(_tenantId: string): DeliveryOutboxRecord[] { throw new Error('Tenant-scoped delivery outbox listing is exposed through reporting adapters') }
@@ -166,39 +166,39 @@ export class PrismaPosStore implements PosStorePort {
   async listConflicts(tenantId: string): Promise<ConflictoPuntoVenta[]> { return (await this.client.conflictoPOS.findMany({ where: { tenantId } })).map(mapConflict) }
   readonly outbox = {
     append: async (record: PosOutboxRecord) => {
-      await this.client.tusPosOutbox.create({ data: {
+      await this.client.outboxPOS.create({ data: {
         id: record.eventId,
         tenantId: record.tenantId,
-        eventId: record.eventId,
-        eventType: record.eventType,
-        aggregateId: record.aggregateId,
-        payload: record.payload,
-        status: record.status,
-        attempts: record.attempts,
-        availableAt: new Date(record.availableAt ?? record.createdAt),
-        lastError: record.lastError ?? null,
-        claimId: record.claimId ?? null,
-        claimUntil: record.claimUntil ? new Date(record.claimUntil) : null,
-        publishedAt: record.publishedAt ? new Date(record.publishedAt) : null,
-        createdAt: new Date(record.createdAt),
+        eventoId: record.eventId,
+        tipoEvento: record.eventType,
+        agregadoId: record.aggregateId,
+        datosEvento: record.payload,
+        estado: record.status,
+        intentos: record.attempts,
+        disponibleDesde: new Date(record.availableAt ?? record.createdAt),
+        ultimoError: record.lastError ?? null,
+        reclamoProcesamientoId: record.claimId ?? null,
+        reclamadoHasta: record.claimUntil ? new Date(record.claimUntil) : null,
+        fechaPublicacion: record.publishedAt ? new Date(record.publishedAt) : null,
+        fechaCreacion: new Date(record.createdAt),
       } })
     },
     list: async (tenantId: string): Promise<PosOutboxRecord[]> => this.listOutboxRecords(tenantId),
     claim: async (tenantId: string, workerId: string, now: number, leaseMs: number): Promise<PosOutboxRecord | null> => {
-      const rows = await this.client.tusPosOutbox.findMany({ where: { tenantId, status: 'pending', availableAt: { lte: new Date(now) } } })
-      const row = rows.find((candidate) => candidate['claimUntil'] === null || candidate['claimUntil'] === undefined || new Date(String(candidate['claimUntil'])).getTime() <= now)
+      const rows = await this.client.outboxPOS.findMany({ where: { tenantId, estado: 'pending', disponibleDesde: { lte: new Date(now) } } })
+      const row = rows.find((candidate) => candidate['reclamadoHasta'] === null || candidate['reclamadoHasta'] === undefined || new Date(String(candidate['reclamadoHasta'])).getTime() <= now)
       if (!row) return null
-      const attempts = Number(row['attempts'] ?? 0) + 1
-      const claimId = `${workerId}:${String(row['eventId'] ?? row['id'])}:${attempts}`
-      const result = await this.client.tusPosOutbox.updateMany({ where: { id: String(row['id']), tenantId, status: 'pending' }, data: { attempts, claimId, claimUntil: new Date(now + leaseMs) } })
+      const attempts = Number(row['intentos'] ?? 0) + 1
+      const claimId = `${workerId}:${String(row['eventoId'] ?? row['id'])}:${attempts}`
+      const result = await this.client.outboxPOS.updateMany({ where: { id: String(row['id']), tenantId, estado: 'pending' }, data: { intentos: attempts, reclamoProcesamientoId: claimId, reclamadoHasta: new Date(now + leaseMs) } })
       return result.count === 1 ? fromPrismaPosOutbox(row, { attempts, claimId, claimUntil: new Date(now + leaseMs).toISOString() }) : null
     },
     acknowledge: async ({ tenantId, eventId, claimId, publishedAt }: { tenantId: string; eventId: string; claimId: string; publishedAt: number }): Promise<boolean> => {
-      const result = await this.client.tusPosOutbox.updateMany({ where: { id: eventId, tenantId, status: 'pending', claimId }, data: { status: 'published', claimId: null, claimUntil: null, publishedAt: new Date(publishedAt) } })
+      const result = await this.client.outboxPOS.updateMany({ where: { id: eventId, tenantId, estado: 'pending', reclamoProcesamientoId: claimId }, data: { estado: 'published', reclamoProcesamientoId: null, reclamadoHasta: null, fechaPublicacion: new Date(publishedAt) } })
       return result.count === 1
     },
     recover: async (now: number): Promise<number> => {
-      const result = await this.client.tusPosOutbox.updateMany({ where: { status: 'pending', claimUntil: { lte: new Date(now) } }, data: { claimId: null, claimUntil: null, availableAt: new Date(now) } })
+      const result = await this.client.outboxPOS.updateMany({ where: { estado: 'pending', reclamadoHasta: { lte: new Date(now) } }, data: { reclamoProcesamientoId: null, reclamadoHasta: null, disponibleDesde: new Date(now) } })
       return result.count
     },
   }
@@ -209,7 +209,7 @@ export class PrismaPosStore implements PosStorePort {
   }
 
   async listOutboxRecords(tenantId: string): Promise<PosOutboxRecord[]> {
-    return (await this.client.tusPosOutbox.findMany({ where: { tenantId } })).map(mapOutbox)
+    return (await this.client.outboxPOS.findMany({ where: { tenantId } })).map(mapOutbox)
   }
 }
 
@@ -228,19 +228,19 @@ function mapOutbox(row: Row): PosOutboxRecord { return fromPrismaPosOutbox(row) 
 
 function fromPrismaPosOutbox(row: Row, overrides: Partial<PosOutboxRecord> = {}): PosOutboxRecord {
   return {
-    eventId: String(row.eventId ?? row.id),
+    eventId: String(row.eventoId ?? row.id),
     tenantId: String(row.tenantId),
-    eventType: String(row.eventType),
-    aggregateId: String(row.aggregateId),
-    payload: row.payload as Record<string, unknown>,
-    status: row.status as PosOutboxRecord['status'],
-    attempts: Number(row.attempts ?? 0),
-    availableAt: new Date(String(row.availableAt ?? row.createdAt)).toISOString(),
-    lastError: row.lastError === null || row.lastError === undefined ? null : String(row.lastError),
-    claimId: row.claimId === null || row.claimId === undefined ? null : String(row.claimId),
-    claimUntil: row.claimUntil ? new Date(String(row.claimUntil)).toISOString() : null,
-    publishedAt: row.publishedAt ? new Date(String(row.publishedAt)).toISOString() : null,
-    createdAt: new Date(String(row.createdAt)).toISOString(),
+    eventType: String(row.tipoEvento),
+    aggregateId: String(row.agregadoId),
+    payload: row.datosEvento as Record<string, unknown>,
+    status: row.estado as PosOutboxRecord['status'],
+    attempts: Number(row.intentos ?? 0),
+    availableAt: new Date(String(row.disponibleDesde ?? row.fechaCreacion)).toISOString(),
+    lastError: row.ultimoError === null || row.ultimoError === undefined ? null : String(row.ultimoError),
+    claimId: row.reclamoProcesamientoId === null || row.reclamoProcesamientoId === undefined ? null : String(row.reclamoProcesamientoId),
+    claimUntil: row.reclamadoHasta ? new Date(String(row.reclamadoHasta)).toISOString() : null,
+    publishedAt: row.fechaPublicacion ? new Date(String(row.fechaPublicacion)).toISOString() : null,
+    createdAt: new Date(String(row.fechaCreacion)).toISOString(),
     ...overrides,
   }
 }

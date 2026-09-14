@@ -37,7 +37,7 @@ export type ClientePrismaFacturacion = {
   tusBillingLedger: Delegate
   tusBillingIdempotency: Delegate
   tusBillingAudit: Delegate
-  tusBillingOutbox: Delegate
+  outboxFacturacion: Delegate
   tusBillingDunning: Delegate
   tusBillingNumberSequence: Delegate
   tusAccountingExport: Delegate
@@ -125,8 +125,8 @@ export class PrismaBillingStore implements PuertoAlmacenFacturacion {
   }
   async appendAudit(value: RegistroAuditoriaFacturacion): Promise<void> { await this.client.tusBillingAudit.create({ data: auditoriaAFila(value) }) }
   async listAudit(tenantId: string): Promise<RegistroAuditoriaFacturacion[]> { return (await this.client.tusBillingAudit.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })).map(auditoriaDesdeFila) }
-  async appendOutbox(value: RegistroBandejaSalidaFacturacion): Promise<void> { await this.client.tusBillingOutbox.create({ data: convertirRegistroBandejaSalidaFacturacionEnFila(value) }) }
-  async listOutbox(tenantId: string): Promise<RegistroBandejaSalidaFacturacion[]> { return (await this.client.tusBillingOutbox.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })).map(convertirFilaEnRegistroBandejaSalidaFacturacion) }
+  async appendOutbox(value: RegistroBandejaSalidaFacturacion): Promise<void> { await this.client.outboxFacturacion.create({ data: convertirRegistroBandejaSalidaFacturacionEnFila(value) }) }
+  async listOutbox(tenantId: string): Promise<RegistroBandejaSalidaFacturacion[]> { return (await this.client.outboxFacturacion.findMany({ where: { tenantId }, orderBy: { fechaCreacion: 'asc' } })).map(convertirFilaEnRegistroBandejaSalidaFacturacion) }
   async saveAccountingExport(value: ExportacionContableFacturacion): Promise<ExportacionContableFacturacion> { return convertirFilaEnExportacionContableFacturacion(await this.client.tusAccountingExport.create({ data: convertirExportacionContableFacturacionEnFila(value) })) }
 }
 
@@ -150,8 +150,8 @@ function convertirRegistroGestionMoraEnFila(value: RegistroGestionMora): Row { r
 function convertirFilaEnRegistroGestionMora(row: Row): RegistroGestionMora { const retryAt = field<unknown>(row, 'retryAt'); return { dunningId: text(row, 'dunningId'), tenantId: text(row, 'tenantId'), subscriptionId: text(row, 'subscriptionId'), attempt: Number(field(row, 'attempt')), reason: text(row, 'reason'), status: field(row, 'status'), retryAt: retryAt ? date(retryAt) : null, createdAt: date(field(row, 'createdAt')) } }
 function auditoriaAFila(value: RegistroAuditoriaFacturacion): Row { return { id: value.auditId, ...value, createdAt: new Date(value.createdAt) } }
 function auditoriaDesdeFila(row: Row): RegistroAuditoriaFacturacion { return { auditId: text(row, 'auditId'), tenantId: text(row, 'tenantId'), actorId: text(row, 'actorId'), correlationId: text(row, 'correlationId'), action: text(row, 'action'), resourceId: text(row, 'resourceId'), outcome: field(row, 'outcome'), reason: nullableText(row, 'reason'), createdAt: date(field(row, 'createdAt')) } }
-function convertirRegistroBandejaSalidaFacturacionEnFila(value: RegistroBandejaSalidaFacturacion): Row { return { id: value.eventId, ...value, availableAt: new Date(value.availableAt), createdAt: new Date(value.createdAt) } }
-function convertirFilaEnRegistroBandejaSalidaFacturacion(row: Row): RegistroBandejaSalidaFacturacion { return { eventId: text(row, 'eventId'), tenantId: text(row, 'tenantId'), correlationId: text(row, 'correlationId'), eventType: text(row, 'eventType'), aggregateId: text(row, 'aggregateId'), payload: campoRegistro(row, 'payload'), status: field(row, 'status'), attempts: Number(field(row, 'attempts')), availableAt: date(field(row, 'availableAt')), createdAt: date(field(row, 'createdAt')) } }
+function convertirRegistroBandejaSalidaFacturacionEnFila(value: RegistroBandejaSalidaFacturacion): Row { return { id: value.eventId, tenantId: value.tenantId, eventoId: value.eventId, correlacionId: value.correlationId, tipoEvento: value.eventType, agregadoId: value.aggregateId, datosEvento: value.payload, estado: value.status, intentos: value.attempts, disponibleDesde: new Date(value.availableAt), fechaCreacion: new Date(value.createdAt) } }
+function convertirFilaEnRegistroBandejaSalidaFacturacion(row: Row): RegistroBandejaSalidaFacturacion { return { eventId: text(row, 'eventoId'), tenantId: text(row, 'tenantId'), correlationId: text(row, 'correlacionId'), eventType: text(row, 'tipoEvento'), aggregateId: text(row, 'agregadoId'), payload: campoRegistro(row, 'datosEvento'), status: field(row, 'estado'), attempts: Number(field(row, 'intentos')), availableAt: date(field(row, 'disponibleDesde')), createdAt: date(field(row, 'fechaCreacion')) } }
 function convertirExportacionContableFacturacionEnFila(value: ExportacionContableFacturacion): Row { return { id: value.exportId, ...value, createdAt: new Date(value.createdAt) } }
 function convertirFilaEnExportacionContableFacturacion(row: Row): ExportacionContableFacturacion { return { exportId: text(row, 'exportId'), tenantId: text(row, 'tenantId'), invoiceIds: campoArrayCadenas(row, 'invoiceIds'), ledgerEntryIds: campoArrayCadenas(row, 'ledgerEntryIds'), externalApprovalReference: text(row, 'externalApprovalReference'), status: 'prepared', postedExternally: false, createdAt: date(field(row, 'createdAt')) } }
 function bigint(value: unknown): bigint { if (typeof value === 'bigint') return value; if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value); if (typeof value === 'string' && /^\d+$/u.test(value)) return BigInt(value); throw new Error('billing persistence minor unit is invalid') }

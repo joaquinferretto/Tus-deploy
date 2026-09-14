@@ -78,7 +78,7 @@ export interface ReportingStorePort {
 }
 
 interface PrismaReportingClient {
-  tusOperationsRecord: {
+  registroOperaciones: {
     findMany(input: { where: { tenantId: string } }): Promise<Record<string, unknown>[]>
   }
 }
@@ -91,9 +91,9 @@ export class PrismaReportingStore implements ReportingStorePort {
   }
 
   async list(tenantId: string): Promise<OperationsRecord[]> {
-    const rows = await this.client.tusOperationsRecord.findMany({ where: { tenantId } })
+    const rows = await this.client.registroOperaciones.findMany({ where: { tenantId } })
     return rows.map((row) => ({
-      tenantId: String(row['tenantId']), context: row['context'] as OperationsRecord['context'], channel: String(row['channel']), geography: String(row['geography']), outcome: String(row['outcome']), amount: Number(row['amount']), currency: String(row['currency']), ledgerStatus: String(row['ledgerStatus']), whatsappActions: Number(row['whatsappActions']), disputes: Number(row['disputes']), posOffline: Number(row['posOffline']), createdAt: new Date(String(row['createdAt'])).toISOString(),
+      tenantId: String(row['tenantId']), context: row['contexto'] as OperationsRecord['context'], channel: String(row['canal']), geography: String(row['geografia']), outcome: String(row['resultado']), amount: Number(row['monto']), currency: String(row['moneda']), ledgerStatus: String(row['estadoContable']), whatsappActions: Number(row['accionesWhatsApp']), disputes: Number(row['disputas']), posOffline: Number(row['posFueraLinea']), createdAt: new Date(String(row['fechaCreacion'])).toISOString(),
     }))
   }
 }

@@ -176,7 +176,7 @@ interface ClientePrismaSoporte {
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
     findMany(input: { where: { tenantId: string; casoId: string } }): Promise<Record<string, unknown>[]>
   }
-  tusSupportOutbox: {
+  outboxSoporte: {
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
     findMany(input: { where: { tenantId: string } }): Promise<Record<string, unknown>[]>
   }
@@ -236,8 +236,8 @@ export class PrismaSupportStore implements PuertoAlmacenSoporte {
   }
 
   readonly outbox = {
-    append: async (value: RegistroBandejaSalidaSoporte): Promise<void> => { await this.client.tusSupportOutbox.create({ data: { id: `${value.tenantId}:${value.eventId}`, ...value, createdAt: new Date(value.createdAt) } }) },
-    list: async (tenantId: string): Promise<RegistroBandejaSalidaSoporte[]> => (await this.client.tusSupportOutbox.findMany({ where: { tenantId } })).map(convertirRegistroBandejaSalidaSoporte),
+    append: async (value: RegistroBandejaSalidaSoporte): Promise<void> => { await this.client.outboxSoporte.create({ data: { id: `${value.tenantId}:${value.eventId}`, tenantId: value.tenantId, eventoId: value.eventId, correlacionId: value.correlationId, tipoEvento: value.eventType, agregadoId: value.aggregateId, datosEvento: value.payload, estado: value.status, fechaCreacion: new Date(value.createdAt) } }) },
+    list: async (tenantId: string): Promise<RegistroBandejaSalidaSoporte[]> => (await this.client.outboxSoporte.findMany({ where: { tenantId } })).map(convertirRegistroBandejaSalidaSoporte),
   }
   listOutbox(tenantId: string): Promise<RegistroBandejaSalidaSoporte[]> { return this.outbox.list(tenantId) as Promise<RegistroBandejaSalidaSoporte[]> }
 }
@@ -460,5 +460,5 @@ function convertirCompensacionSoporte(row: Record<string, unknown>): EntradaComp
 }
 
 function convertirRegistroBandejaSalidaSoporte(row: Record<string, unknown>): RegistroBandejaSalidaSoporte {
-  return { eventId: String(row['eventId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId']), eventType: row['eventType'] as RegistroBandejaSalidaSoporte['eventType'], aggregateId: String(row['aggregateId']), payload: row['payload'] as Record<string, unknown>, status: 'pending', createdAt: new Date(String(row['createdAt'])).toISOString() }
+  return { eventId: String(row['eventoId']), tenantId: String(row['tenantId']), correlationId: String(row['correlacionId']), eventType: row['tipoEvento'] as RegistroBandejaSalidaSoporte['eventType'], aggregateId: String(row['agregadoId']), payload: row['datosEvento'] as Record<string, unknown>, status: 'pending', createdAt: new Date(String(row['fechaCreacion'])).toISOString() }
 }
