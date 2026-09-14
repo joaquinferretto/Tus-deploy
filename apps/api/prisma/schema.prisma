@@ -528,74 +528,78 @@ model DecisionHabilitacion {
 
 // TUS commerce source-of-truth records. Every query and unique key is tenant
 // scoped; projections and provider adapters must not own these aggregates.
-model TusCommitment {
-  id              String   @id
-  contractVersion String
-  commitmentId    String
-  cartId          String
-  tenantId        String
-  merchantId      String
-  context         String
-  amount          BigInt
-  currency        String
-  status          String
-  lineIds         String[]
+model Compromiso {
+  id              String   @id(map: "TusCommitment_pkey")
+  versionContrato String   @map("contractVersion")
+  compromisoId    String   @map("commitmentId")
+  carritoId       String   @map("cartId")
+  tenantId        String   @map("tenantId")
+  prestadorId     String   @map("merchantId")
+  contexto        String   @map("context")
+  monto           BigInt   @map("amount")
+  moneda          String   @map("currency")
+  estado          String   @map("status")
+  idsLineas       String[] @map("lineIds")
   version         Int      @default(1)
-  createdAt       DateTime
-  updatedAt       DateTime
+  fechaCreacion   DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, commitmentId])
-  @@index([tenantId, createdAt])
-  @@index([tenantId, cartId])
+  @@unique([tenantId, compromisoId], map: "TusCommitment_tenantId_commitmentId_key")
+  @@index([tenantId, fechaCreacion], map: "TusCommitment_tenantId_createdAt_idx")
+  @@index([tenantId, carritoId], map: "TusCommitment_tenantId_cartId_idx")
+  @@map("TusCommitment")
 }
 
-model TusCommitmentTransition {
-  id            String   @id
-  tenantId      String
-  commitmentId  String
-  fromStatus    String
-  toStatus      String
-  version       Int
-  actorId       String
-  correlationId String
-  reason        String
-  createdAt     DateTime
+model TransicionCompromiso {
+  id              String   @id(map: "TusCommitmentTransition_pkey")
+  tenantId        String   @map("tenantId")
+  compromisoId    String   @map("commitmentId")
+  estadoAnterior  String   @map("fromStatus")
+  estadoNuevo     String   @map("toStatus")
+  version         Int
+  actorId         String   @map("actorId")
+  correlacionId   String   @map("correlationId")
+  motivo          String   @map("reason")
+  fechaCreacion   DateTime @map("createdAt")
 
-  @@unique([tenantId, commitmentId, version])
-  @@index([tenantId, commitmentId, createdAt])
+  @@unique([tenantId, compromisoId, version], map: "TusCommitmentTransition_tenantId_commitmentId_version_key")
+  @@index([tenantId, compromisoId, fechaCreacion], map: "TusCommitmentTransition_tenantId_commitmentId_createdAt_idx")
+  @@map("TusCommitmentTransition")
 }
 
-model TusCommitmentCompensation {
-  id             String   @id
-  compensationId String
-  tenantId       String
-  commitmentId   String
-  actorId        String
-  correlationId  String
-  amount         BigInt
-  currency       String
-  reason         String
-  createdAt      DateTime
+model CompensacionCompromiso {
+  id              String   @id(map: "TusCommitmentCompensation_pkey")
+  compensacionId  String   @map("compensationId")
+  tenantId        String   @map("tenantId")
+  compromisoId    String   @map("commitmentId")
+  actorId         String   @map("actorId")
+  correlacionId   String   @map("correlationId")
+  monto           BigInt   @map("amount")
+  moneda          String   @map("currency")
+  motivo          String   @map("reason")
+  fechaCreacion   DateTime @map("createdAt")
 
-  @@unique([tenantId, compensationId])
-  @@unique([tenantId, commitmentId])
-  @@index([tenantId, commitmentId, createdAt])
+  @@unique([tenantId, compensacionId], map: "TusCommitmentCompensation_tenantId_compensationId_key")
+  @@unique([tenantId, compromisoId], map: "TusCommitmentCompensation_tenantId_commitmentId_key")
+  @@index([tenantId, compromisoId, fechaCreacion], map: "TusCommitmentCompensation_tenantId_commitmentId_createdAt_idx")
+  @@map("TusCommitmentCompensation")
 }
 
-model TusAuditReference {
-  id             String   @id
-  referenceId    String
-  tenantId       String
-  actorId        String
-  correlationId  String
-  commitmentId   String
-  referenceType  String
-  metadata       Json?
-  createdAt      DateTime
+model ReferenciaAuditoria {
+  id              String   @id(map: "TusAuditReference_pkey")
+  referenciaId    String   @map("referenceId")
+  tenantId        String   @map("tenantId")
+  actorId         String   @map("actorId")
+  correlacionId   String   @map("correlationId")
+  compromisoId    String   @map("commitmentId")
+  tipoReferencia  String   @map("referenceType")
+  metadatos       Json?    @map("metadata")
+  fechaCreacion   DateTime @map("createdAt")
 
-  @@unique([tenantId, referenceId])
-  @@index([tenantId, commitmentId, createdAt])
-  @@index([tenantId, correlationId])
+  @@unique([tenantId, referenciaId], map: "TusAuditReference_tenantId_referenceId_key")
+  @@index([tenantId, compromisoId, fechaCreacion], map: "TusAuditReference_tenantId_commitmentId_createdAt_idx")
+  @@index([tenantId, correlacionId], map: "TusAuditReference_tenantId_correlationId_idx")
+  @@map("TusAuditReference")
 }
 
 model Prestador {
@@ -1330,66 +1334,70 @@ model TusInventory {
   @@index([tenantId, quantity])
 }
 
-model TusCalendar {
-  id        String   @id
-  tenantId  String
-  serviceId String
-  name      String
-  timezone  String
-  status    String
-  createdAt DateTime
-  updatedAt DateTime
+model Calendario {
+  id          String   @id(map: "TusCalendar_pkey")
+  tenantId    String   @map("tenantId")
+  servicioId  String   @map("serviceId")
+  nombre      String   @map("name")
+  zonaHoraria String   @map("timezone")
+  estado      String   @map("status")
+  fechaCreacion DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, id])
-  @@index([tenantId, serviceId, status])
+  @@unique([tenantId, id], map: "TusCalendar_tenantId_id_key")
+  @@index([tenantId, servicioId, estado], map: "TusCalendar_tenantId_serviceId_status_idx")
+  @@map("TusCalendar")
 }
 
-model TusCalendarRule {
-  id         String   @id
-  tenantId   String
-  calendarId String
-  weekday    Int
-  startsAt   String
-  endsAt     String
-  capacity   Int
-  createdAt  DateTime
-  updatedAt  DateTime
+model ReglaCalendario {
+  id            String   @id(map: "TusCalendarRule_pkey")
+  tenantId      String   @map("tenantId")
+  calendarioId  String   @map("calendarId")
+  diaSemana     Int      @map("weekday")
+  horaInicio    String   @map("startsAt")
+  horaFin       String   @map("endsAt")
+  capacidad     Int      @map("capacity")
+  fechaCreacion DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, calendarId, weekday, startsAt, endsAt])
-  @@index([tenantId, calendarId])
+  @@unique([tenantId, calendarioId, diaSemana, horaInicio, horaFin], map: "TusCalendarRule_tenantId_calendarId_weekday_startsAt_endsAt_key")
+  @@index([tenantId, calendarioId], map: "TusCalendarRule_tenantId_calendarId_idx")
+  @@map("TusCalendarRule")
 }
 
-model TusCalendarException {
-  id         String   @id
-  tenantId   String
-  calendarId String
-  startsAt   DateTime
-  endsAt     DateTime
-  reason     String
-  status     String
-  createdAt  DateTime
+model ExcepcionCalendario {
+  id            String   @id(map: "TusCalendarException_pkey")
+  tenantId      String   @map("tenantId")
+  calendarioId  String   @map("calendarId")
+  fechaInicio   DateTime @map("startsAt")
+  fechaFin      DateTime @map("endsAt")
+  motivo        String   @map("reason")
+  estado        String   @map("status")
+  fechaCreacion DateTime @map("createdAt")
 
-  @@unique([tenantId, id])
-  @@index([tenantId, calendarId, startsAt, endsAt])
+  @@unique([tenantId, id], map: "TusCalendarException_tenantId_id_key")
+  @@index([tenantId, calendarioId, fechaInicio, fechaFin], map: "TusCalendarException_tenantId_calendarId_startsAt_endsAt_idx")
+  @@map("TusCalendarException")
 }
 
-model TusBooking {
-  id         String   @id
-  tenantId   String
-  bookingId  String
-  serviceId  String
-  calendarId String
-  customerId String
-  startsAt   DateTime
-  endsAt     DateTime
-  status     String
-  version    Int
-  createdAt  DateTime
-  updatedAt  DateTime
+model Reserva {
+  id            String   @id(map: "TusBooking_pkey")
+  tenantId      String   @map("tenantId")
+  reservaId     String   @map("bookingId")
+  servicioId    String   @map("serviceId")
+  calendarioId  String   @map("calendarId")
+  clienteId     String   @map("customerId")
+  fechaInicio   DateTime @map("startsAt")
+  fechaFin      DateTime @map("endsAt")
+  estado        String   @map("status")
+  version       Int
+  fechaCreacion DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, bookingId])
-  @@index([tenantId, calendarId, startsAt, endsAt])
-  @@index([tenantId, customerId, status])
+  @@unique([tenantId, reservaId], map: "TusBooking_tenantId_bookingId_key")
+  @@index([tenantId, calendarioId, fechaInicio, fechaFin], map: "TusBooking_tenantId_calendarId_startsAt_endsAt_idx")
+  @@index([tenantId, clienteId, estado], map: "TusBooking_tenantId_customerId_status_idx")
+  @@map("TusBooking")
 }
 
 model TusPaymentWebhookEvent {

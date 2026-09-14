@@ -37,10 +37,21 @@ import { evaluarHabilitacion, type RegistroAuditoriaHabilitacion, type PuertoEvi
   TusOutboxStatus,
 */
 
-interface PrismaCommitmentRow extends Omit<Compromiso, 'createdAt'> {
+interface PrismaCommitmentRow {
   id: string
-  createdAt: Date
-  updatedAt: Date
+  versionContrato: string
+  compromisoId: string
+  carritoId: string
+  tenantId: string
+  prestadorId: string
+  contexto: string
+  monto: number | bigint
+  moneda: string
+  estado: string
+  idsLineas: string[]
+  version: number
+  fechaCreacion: Date
+  fechaActualizacion: Date
 }
 
 interface PrismaSessionRow {
@@ -66,7 +77,7 @@ interface PrismaIdempotencyRow {
 
 interface PrismaCommitmentDelegate {
   createMany(input: { data: Record<string, unknown>[] }): Promise<{ count: number }>
-  findFirst(input: { where: { commitmentId: string } }): Promise<PrismaCommitmentRow | null>
+  findFirst(input: { where: { compromisoId: string } }): Promise<PrismaCommitmentRow | null>
   updateMany(input: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>
 }
 
@@ -154,9 +165,9 @@ interface DelegadoPrismaDecisionHabilitacion {
 }
 
 export interface TusPrismaClient {
-  tusCommitment: PrismaCommitmentDelegate
-  tusCommitmentCompensation: PrismaCompensationDelegate
-  tusAuditReference: DelegadoPrismaReferenciasAuditoria
+  compromiso: PrismaCommitmentDelegate
+  compensacionCompromiso: PrismaCompensationDelegate
+  referenciaAuditoria: DelegadoPrismaReferenciasAuditoria
   session: PrismaSessionDelegate
   idempotencyRecord: PrismaIdempotencyDelegate
   outboxEvent: PrismaOutboxDelegate
@@ -164,10 +175,10 @@ export interface TusPrismaClient {
   publicacion: PrismaMarketplaceListingDelegate
   compromisoMercadoServicios: PrismaMarketplaceCommitmentDelegate
   auditoriaMercadoServicios: DelegadoPrismaAuditoriaMercadoServicios
-  tusCalendar: PrismaCalendarDelegate
-  tusCalendarRule: PrismaCalendarRuleDelegate
-  tusCalendarException: PrismaCalendarExceptionDelegate
-  tusBooking: PrismaBookingDelegate
+  calendario: PrismaCalendarDelegate
+  reglaCalendario: PrismaCalendarRuleDelegate
+  excepcionCalendario: PrismaCalendarExceptionDelegate
+  reserva: PrismaBookingDelegate
   evidenciaHabilitacion: DelegadoPrismaEvidenciaHabilitacion
   decisionHabilitacion: DelegadoPrismaDecisionHabilitacion
   $transaction<TValue>(callback: (client: TusPrismaClient) => Promise<TValue>): Promise<TValue>
@@ -267,47 +278,47 @@ export class PrismaTusCommitmentStore implements TusCommitmentStorePort {
   }
 
   async saveMany(commitments: readonly Compromiso[]): Promise<void> {
-    await this.client.tusCommitment.createMany({ data: commitments.map((commitment) => ({
+    await this.client.compromiso.createMany({ data: commitments.map((commitment) => ({
       id: commitment.commitmentId,
-      contractVersion: commitment.contractVersion,
-      commitmentId: commitment.commitmentId,
-      cartId: commitment.cartId,
+      versionContrato: commitment.contractVersion,
+      compromisoId: commitment.commitmentId,
+      carritoId: commitment.cartId,
       tenantId: commitment.tenantId,
-      merchantId: commitment.merchantId,
-      context: commitment.context,
-      amount: commitment.amount,
-      currency: commitment.currency,
-      status: commitment.status,
-      lineIds: commitment.lineIds,
+      prestadorId: commitment.merchantId,
+      contexto: commitment.context,
+      monto: commitment.amount,
+      moneda: commitment.currency,
+      estado: commitment.status,
+      idsLineas: commitment.lineIds,
       version: commitment.version,
-      createdAt: new Date(commitment.createdAt),
-      updatedAt: new Date(commitment.createdAt),
+      fechaCreacion: new Date(commitment.createdAt),
+      fechaActualizacion: new Date(commitment.createdAt),
     })) })
   }
 
   async find(commitmentId: string): Promise<Compromiso | null> {
-    const row = await this.client.tusCommitment.findFirst({ where: { commitmentId } })
+    const row = await this.client.compromiso.findFirst({ where: { compromisoId: commitmentId } })
     if (!row) return null
     return {
-      contractVersion: row.contractVersion as Compromiso['contractVersion'],
-      commitmentId: row.commitmentId,
-      cartId: row.cartId,
+      contractVersion: row.versionContrato as Compromiso['contractVersion'],
+      commitmentId: row.compromisoId,
+      cartId: row.carritoId,
       tenantId: row.tenantId,
-      merchantId: row.merchantId,
-      context: row.context as Compromiso['context'],
-      amount: row.amount,
-      currency: row.currency,
-      status: row.status as Compromiso['status'],
-      lineIds: [...row.lineIds],
+      merchantId: row.prestadorId,
+      context: row.contexto as Compromiso['context'],
+      amount: Number(row.monto),
+      currency: row.moneda,
+      status: row.estado as Compromiso['status'],
+      lineIds: [...row.idsLineas],
       version: row.version,
-      createdAt: row.createdAt.toISOString(),
+      createdAt: row.fechaCreacion.toISOString(),
     }
   }
 
   async update(input: { tenantId: string; commitmentId: string; expectedVersion: number; commitment: Compromiso }): Promise<Compromiso | null> {
-    const result = await this.client.tusCommitment.updateMany({
-      where: { tenantId: input.tenantId, commitmentId: input.commitmentId, version: input.expectedVersion },
-      data: { status: input.commitment.status, version: input.commitment.version, updatedAt: new Date(input.commitment.createdAt) },
+    const result = await this.client.compromiso.updateMany({
+      where: { tenantId: input.tenantId, compromisoId: input.commitmentId, version: input.expectedVersion },
+      data: { estado: input.commitment.status, version: input.commitment.version, fechaActualizacion: new Date(input.commitment.createdAt) },
     })
     return result.count === 0 ? null : input.commitment
   }
@@ -321,13 +332,13 @@ export class PrismaTusCompensationStore implements TusCommitmentCompensationStor
   }
 
   async save(compensation: TusCommitmentCompensation): Promise<void> {
-    await this.client.tusCommitmentCompensation.create({ data: { id: compensation.compensationId, ...compensation, createdAt: new Date(compensation.createdAt) } })
+    await this.client.compensacionCompromiso.create({ data: { id: compensation.compensationId, compensacionId: compensation.compensationId, tenantId: compensation.tenantId, compromisoId: compensation.commitmentId, actorId: compensation.actorId, correlacionId: compensation.correlationId, monto: compensation.amount, moneda: compensation.currency, motivo: compensation.reason, fechaCreacion: new Date(compensation.createdAt) } })
   }
 
   async find(tenantId: string, commitmentId: string): Promise<TusCommitmentCompensation | null> {
-    const row = await this.client.tusCommitmentCompensation.findFirst({ where: { tenantId, commitmentId } })
+    const row = await this.client.compensacionCompromiso.findFirst({ where: { tenantId, compromisoId: commitmentId } })
     if (!row) return null
-    return { compensationId: String(row['compensationId']), tenantId: String(row['tenantId']), commitmentId: String(row['commitmentId']), actorId: String(row['actorId']), correlationId: String(row['correlationId']), amount: Number(row['amount']), currency: String(row['currency']), reason: String(row['reason']), createdAt: new Date(String(row['createdAt'])).toISOString() }
+    return { compensationId: String(row['compensacionId']), tenantId: String(row['tenantId']), commitmentId: String(row['compromisoId']), actorId: String(row['actorId']), correlationId: String(row['correlacionId']), amount: Number(row['monto']), currency: String(row['moneda']), reason: String(row['motivo']), createdAt: new Date(String(row['fechaCreacion'])).toISOString() }
   }
 }
 
@@ -339,16 +350,16 @@ export class AlmacenPrismaReferenciasAuditoria implements PuertoReferenciasAudit
   }
 
   async append(references: readonly ReferenciaAuditoria[]): Promise<void> {
-    await this.client.tusAuditReference.createMany({ data: references.map((reference) => ({
+    await this.client.referenciaAuditoria.createMany({ data: references.map((reference) => ({
       id: reference.referenceId,
-      referenceId: reference.referenceId,
+      referenciaId: reference.referenceId,
       tenantId: reference.tenantId,
       actorId: reference.actorId,
-      correlationId: reference.correlationId,
-      commitmentId: reference.commitmentId,
-      referenceType: reference.referenceType,
-      metadata: { ...(reference.status ? { status: reference.status } : {}), ...(reference.previousStatus ? { previousStatus: reference.previousStatus } : {}), ...(reference.reason ? { reason: reference.reason } : {}), ...(reference.metadata ?? {}) },
-      createdAt: new Date(reference.createdAt),
+      correlacionId: reference.correlationId,
+      compromisoId: reference.commitmentId,
+      tipoReferencia: reference.referenceType,
+      metadatos: { ...(reference.status ? { status: reference.status } : {}), ...(reference.previousStatus ? { previousStatus: reference.previousStatus } : {}), ...(reference.reason ? { reason: reference.reason } : {}), ...(reference.metadata ?? {}) },
+      fechaCreacion: new Date(reference.createdAt),
     })) })
   }
 

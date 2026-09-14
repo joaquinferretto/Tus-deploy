@@ -10,25 +10,25 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
 
   readonly calendars = {
     save: async (calendar: Calendario) => {
-      await this.client.tusCalendar.upsert({ where: { id: calendar.calendarId }, create: calendarRow(calendar), update: calendarRow(calendar) })
-      await this.client.tusCalendarRule.deleteMany({ where: { tenantId: calendar.tenantId, calendarId: calendar.calendarId } })
-      if (calendar.workingHours.length > 0) await this.client.tusCalendarRule.createMany({ data: calendar.workingHours.map((rule) => ({ id: `${calendar.calendarId}-${rule.weekday}-${rule.start}`, tenantId: calendar.tenantId, calendarId: calendar.calendarId, weekday: rule.weekday, startsAt: rule.start, endsAt: rule.end, capacity: calendar.capacity, createdAt: new Date(calendar.createdAt), updatedAt: new Date(calendar.updatedAt) })) })
-      await this.client.tusCalendarException.deleteMany({ where: { tenantId: calendar.tenantId, calendarId: calendar.calendarId } })
-      if (calendar.blackoutDates.length > 0) await this.client.tusCalendarException.createMany({ data: calendar.blackoutDates.map((date) => ({ id: `${calendar.calendarId}-${date}`, tenantId: calendar.tenantId, calendarId: calendar.calendarId, startsAt: new Date(`${date}T00:00:00.000Z`), endsAt: new Date(`${date}T23:59:59.999Z`), reason: 'configured blackout', status: 'active', createdAt: new Date(calendar.createdAt) })) })
+      await this.client.calendario.upsert({ where: { id: calendar.calendarId }, create: calendarRow(calendar), update: calendarRow(calendar) })
+      await this.client.reglaCalendario.deleteMany({ where: { tenantId: calendar.tenantId, calendarioId: calendar.calendarId } })
+      if (calendar.workingHours.length > 0) await this.client.reglaCalendario.createMany({ data: calendar.workingHours.map((rule) => ({ id: `${calendar.calendarId}-${rule.weekday}-${rule.start}`, tenantId: calendar.tenantId, calendarioId: calendar.calendarId, diaSemana: rule.weekday, horaInicio: rule.start, horaFin: rule.end, capacidad: calendar.capacity, fechaCreacion: new Date(calendar.createdAt), fechaActualizacion: new Date(calendar.updatedAt) })) })
+      await this.client.excepcionCalendario.deleteMany({ where: { tenantId: calendar.tenantId, calendarioId: calendar.calendarId } })
+      if (calendar.blackoutDates.length > 0) await this.client.excepcionCalendario.createMany({ data: calendar.blackoutDates.map((date) => ({ id: `${calendar.calendarId}-${date}`, tenantId: calendar.tenantId, calendarioId: calendar.calendarId, fechaInicio: new Date(`${date}T00:00:00.000Z`), fechaFin: new Date(`${date}T23:59:59.999Z`), motivo: 'configured blackout', estado: 'active', fechaCreacion: new Date(calendar.createdAt) })) })
     },
     find: async (calendarId: string) => {
-      const row = await this.client.tusCalendar.findUnique({ where: { id: calendarId } })
+      const row = await this.client.calendario.findUnique({ where: { id: calendarId } })
       if (!row) return null
-      const rules = await this.client.tusCalendarRule.findMany({ where: { calendarId, tenantId: String(row['tenantId']) } })
-      const exceptions = await this.client.tusCalendarException.findMany({ where: { calendarId, tenantId: String(row['tenantId']), status: 'active' } })
+      const rules = await this.client.reglaCalendario.findMany({ where: { calendarioId: calendarId, tenantId: String(row['tenantId']) } })
+      const exceptions = await this.client.excepcionCalendario.findMany({ where: { calendarioId: calendarId, tenantId: String(row['tenantId']), estado: 'active' } })
       return toCalendar(row, rules, exceptions)
     },
   }
 
   readonly bookings = {
-    save: async (booking: Reserva) => { await this.client.tusBooking.upsert({ where: { id: booking.bookingId }, create: bookingRow(booking), update: bookingRow(booking) }) },
-    find: async (bookingId: string) => { const row = await this.client.tusBooking.findUnique({ where: { id: bookingId } }); return row ? toBooking(row) : null },
-    forCalendar: async (calendarId: string) => (await this.client.tusBooking.findMany({ where: { calendarId } })).map(toBooking),
+    save: async (booking: Reserva) => { await this.client.reserva.upsert({ where: { id: booking.bookingId }, create: bookingRow(booking), update: bookingRow(booking) }) },
+    find: async (bookingId: string) => { const row = await this.client.reserva.findUnique({ where: { id: bookingId } }); return row ? toBooking(row) : null },
+    forCalendar: async (calendarId: string) => (await this.client.reserva.findMany({ where: { calendarioId: calendarId } })).map(toBooking),
   }
 
   readonly idempotency = {
@@ -57,15 +57,15 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
   transaction<T>(operation: (store: ServiceCalendarStorePort) => Promise<T>): Promise<T> { return this.client.$transaction(async (client) => operation(new PrismaServiceCalendarStore(client))) }
 }
 
-function calendarRow(calendar: Calendario): Record<string, unknown> { return { id: calendar.calendarId, tenantId: calendar.tenantId, serviceId: calendar.serviceId, name: calendar.serviceId, timezone: calendar.timezone, status: calendar.status, createdAt: new Date(calendar.createdAt), updatedAt: new Date(calendar.updatedAt) } }
-function bookingRow(booking: Reserva): Record<string, unknown> { return { id: booking.bookingId, tenantId: booking.ownerTenantId, bookingId: booking.bookingId, serviceId: booking.serviceId, calendarId: booking.calendarId, customerId: booking.customerId, startsAt: new Date(booking.startsAt), endsAt: new Date(booking.endsAt), status: booking.status, version: booking.version, createdAt: new Date(booking.createdAt), updatedAt: new Date(booking.updatedAt) } }
+function calendarRow(calendar: Calendario): Record<string, unknown> { return { id: calendar.calendarId, tenantId: calendar.tenantId, servicioId: calendar.serviceId, nombre: calendar.serviceId, zonaHoraria: calendar.timezone, estado: calendar.status, fechaCreacion: new Date(calendar.createdAt), fechaActualizacion: new Date(calendar.updatedAt) } }
+function bookingRow(booking: Reserva): Record<string, unknown> { return { id: booking.bookingId, tenantId: booking.ownerTenantId, reservaId: booking.bookingId, servicioId: booking.serviceId, calendarioId: booking.calendarId, clienteId: booking.customerId, fechaInicio: new Date(booking.startsAt), fechaFin: new Date(booking.endsAt), estado: booking.status, version: booking.version, fechaCreacion: new Date(booking.createdAt), fechaActualizacion: new Date(booking.updatedAt) } }
 function toCalendar(row: Record<string, unknown>, rules: Record<string, unknown>[], exceptions: Record<string, unknown>[]): Calendario {
   const tenantId = String(row['tenantId'])
-  const ruleCapacity = Number(rules[0]?.['capacity'] ?? 1)
-  const input: EntradaCalendario = { calendarId: String(row['id']), serviceId: String(row['serviceId']), timezone: String(row['timezone']), durationMinutes: 60, capacity: ruleCapacity, workingHours: rules.map((rule) => ({ weekday: Number(rule['weekday']), start: String(rule['startsAt']), end: String(rule['endsAt']) })), blackoutDates: exceptions.map((exception) => new Date(String(exception['startsAt'])).toISOString().slice(0, 10)) }
-  return { ...input, tenantId, status: String(row['status']) as Calendario['status'], bufferMinutes: 0, bookingCutoffMinutes: 0, cancellationWindowMinutes: 0, noShowAfterMinutes: 0, workingHours: input.workingHours, blackoutDates: input.blackoutDates ?? [], policyVersion: 'calendar-policy-1', version: 1, createdAt: new Date(String(row['createdAt'])).toISOString(), updatedAt: new Date(String(row['updatedAt'])).toISOString() }
+  const ruleCapacity = Number(rules[0]?.['capacidad'] ?? 1)
+  const input: EntradaCalendario = { calendarId: String(row['id']), serviceId: String(row['servicioId']), timezone: String(row['zonaHoraria']), durationMinutes: 60, capacity: ruleCapacity, workingHours: rules.map((rule) => ({ weekday: Number(rule['diaSemana']), start: String(rule['horaInicio']), end: String(rule['horaFin']) })), blackoutDates: exceptions.map((exception) => new Date(String(exception['fechaInicio'])).toISOString().slice(0, 10)) }
+  return { ...input, tenantId, status: String(row['estado']) as Calendario['status'], bufferMinutes: 0, bookingCutoffMinutes: 0, cancellationWindowMinutes: 0, noShowAfterMinutes: 0, workingHours: input.workingHours, blackoutDates: input.blackoutDates ?? [], policyVersion: 'calendar-policy-1', version: 1, createdAt: new Date(String(row['fechaCreacion'])).toISOString(), updatedAt: new Date(String(row['fechaActualizacion'])).toISOString() }
 }
-function toBooking(row: Record<string, unknown>): Reserva { return { contractVersion: TUS_CONTRACT_VERSION, bookingId: String(row['bookingId']), tenantId: String(row['tenantId']), ownerTenantId: String(row['tenantId']), serviceId: String(row['serviceId']), calendarId: String(row['calendarId']), customerId: String(row['customerId']), startsAt: new Date(String(row['startsAt'])).toISOString(), endsAt: new Date(String(row['endsAt'])).toISOString(), status: row['status'] as Reserva['status'], version: Number(row['version']), policyVersion: 'calendar-policy-1', createdAt: new Date(String(row['createdAt'])).toISOString(), updatedAt: new Date(String(row['updatedAt'])).toISOString() } }
+function toBooking(row: Record<string, unknown>): Reserva { return { contractVersion: TUS_CONTRACT_VERSION, bookingId: String(row['reservaId']), tenantId: String(row['tenantId']), ownerTenantId: String(row['tenantId']), serviceId: String(row['servicioId']), calendarId: String(row['calendarioId']), customerId: String(row['clienteId']), startsAt: new Date(String(row['fechaInicio'])).toISOString(), endsAt: new Date(String(row['fechaFin'])).toISOString(), status: row['estado'] as Reserva['status'], version: Number(row['version']), policyVersion: 'calendar-policy-1', createdAt: new Date(String(row['fechaCreacion'])).toISOString(), updatedAt: new Date(String(row['fechaActualizacion'])).toISOString() } }
 function encodeResult(value: unknown): unknown { return JSON.parse(JSON.stringify(value, (_key, item: unknown) => typeof item === 'bigint' ? `${item}n` : item)) }
 function decodeResult(value: unknown): Reserva | { status: 'replay'; booking: Reserva } | { status: 'rejected'; reason: 'capacity' } { return JSON.parse(JSON.stringify(value), (key, item) => key === 'minor' && typeof item === 'string' && /^\d+n$/u.test(item) ? BigInt(item.slice(0, -1)) : item) as Reserva | { status: 'replay'; booking: Reserva } | { status: 'rejected'; reason: 'capacity' } }
 

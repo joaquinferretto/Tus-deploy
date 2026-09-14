@@ -173,9 +173,9 @@ test('WU2 keeps durable TUS records in PostgreSQL source-of-truth schema with te
   const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
   const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260826100000_tus_commerce_api/migration.sql'), 'utf8')
 
-  assert.match(schema, /model TusCommitment[\s\S]*?tenantId\s+String/)
-  assert.match(schema, /model TusCommitment[\s\S]*?@@index\(\[tenantId, createdAt\]\)/)
-  assert.match(schema, /model TusAuditReference[\s\S]*?tenantId\s+String/)
+  assert.match(schema, /model Compromiso[\s\S]*?tenantId\s+String/)
+  assert.match(schema, /model Compromiso[\s\S]*?fechaCreacion\s+DateTime/)
+  assert.match(schema, /model ReferenciaAuditoria[\s\S]*?tenantId\s+String/)
   assert.match(migration, /CREATE TABLE "TusCommitment"/)
   assert.match(migration, /CREATE INDEX "TusCommitment_tenantId_createdAt_idx"/)
   assert.match(migration, /CREATE TABLE "TusAuditReference"/)

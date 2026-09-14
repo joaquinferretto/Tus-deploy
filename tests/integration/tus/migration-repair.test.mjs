@@ -187,7 +187,7 @@ test('launch baseline covers the full marketplace database with exact money and 
 test('Prisma launch money fields use BigInt rather than Float', async () => {
   const schema = await readFile(join(REPO_ROOT, 'apps', 'api', 'prisma', 'schema.prisma'), 'utf8')
   assert.doesNotMatch(schema, /(?:amount|price|grossAmount|deductions|commissionableBase|commissionAmount|netAmount|providerAmount)\s+Float/u)
-  assert.match(schema, /model TusCommitment[\s\S]*?amount\s+BigInt/u)
+  assert.match(schema, /model Compromiso[\s\S]*?monto\s+BigInt/u)
   assert.match(schema, /model TusLedgerEntry[\s\S]*?amount\s+BigInt/u)
 })
 
