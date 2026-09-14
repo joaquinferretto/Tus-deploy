@@ -440,7 +440,7 @@ export function validarPublicacionMercadoServicios(value: unknown): PublicacionM
   return value as unknown as PublicacionMercadoServicios
 }
 
-export const READINESS_GATE_KEYS = [
+export const CLAVES_REQUISITOS_HABILITACION = [
   'legal',
   'kyc',
   'kyb',
@@ -452,16 +452,16 @@ export const READINESS_GATE_KEYS = [
   'runtimeProvider',
 ] as const
 
-export type ReadinessGateKey = (typeof READINESS_GATE_KEYS)[number]
+export type ClaveRequisitoHabilitacion = (typeof CLAVES_REQUISITOS_HABILITACION)[number]
 
-export type ReadinessCapability =
+export type CapacidadHabilitacion =
   | 'publication'
   | 'provider-actions'
   | 'settlement'
   | 'fleet'
   | 'release-jobs'
 
-export type ReadinessEvidenceSource =
+export type FuenteEvidenciaHabilitacion =
   | 'authorized-external'
   | 'local-deterministic'
   | 'local-postgresql-http'
@@ -469,12 +469,12 @@ export type ReadinessEvidenceSource =
   | 'authorized'
   | 'deterministic-test-only'
 
-export interface TusReadinessEvidence {
+export interface EvidenciaHabilitacion {
   contractVersion: TusContractVersion
   evidenceId: string
   tenantId: string
-  capability: ReadinessCapability
-  gate: ReadinessGateKey
+  capability: CapacidadHabilitacion
+  gate: ClaveRequisitoHabilitacion
   owner: string
   scope: string
   evidenceType: string
@@ -483,14 +483,14 @@ export interface TusReadinessEvidence {
   issuedAt: string
   expiresAt: string | null
   revoked: boolean
-  source: ReadinessEvidenceSource
+  source: FuenteEvidenciaHabilitacion
   profile?: 'native-local' | 'render-native' | 'aws-terraform' | 'local-postgresql-http'
   execution?: 'local-verification' | 'live'
   evidenceClass?: 'authorized-external' | 'local-deterministic' | 'local-postgresql-http' | 'deferred'
   liveConformance?: boolean
 }
 
-export type ReadinessFailureReason =
+export type MotivoFallaHabilitacion =
   | 'evidence_missing'
   | 'evidence_out_of_scope'
   | 'evidence_expired'
@@ -502,28 +502,28 @@ export type ReadinessFailureReason =
   | 'deterministic_test_only'
   | 'legacy_conflict'
 
-export interface ReadinessGateFailure {
-  gate: ReadinessGateKey
-  reason: ReadinessFailureReason
+export interface FallaRequisitoHabilitacion {
+  gate: ClaveRequisitoHabilitacion
+  reason: MotivoFallaHabilitacion
 }
 
-export interface ReadinessConflict {
-  gate: ReadinessGateKey
+export interface ConflictoHabilitacion {
+  gate: ClaveRequisitoHabilitacion
   evidenceIds: string[]
   source?: 'evidence' | 'legacy-boolean'
 }
 
-export interface TusReadinessDecision {
+export interface DecisionHabilitacion {
   contractVersion: TusContractVersion
   tenantId: string
-  capability: ReadinessCapability
+  capability: CapacidadHabilitacion
   evaluatedAt: string
   enabled: boolean
   disposition: 'authorized' | 'disabled' | 'unavailable-deferred'
-  failedGates: ReadinessGateFailure[]
+  failedGates: FallaRequisitoHabilitacion[]
   evidenceIds: string[]
   deterministic: boolean
-  conflicts?: ReadinessConflict[]
+  conflicts?: ConflictoHabilitacion[]
   reason?: string
   evidencePreserved?: true
   auditPreserved?: true
@@ -586,7 +586,7 @@ export function validateTusSettlementSnapshot(value: unknown): SettlementSnapsho
   return value as unknown as SettlementSnapshot
 }
 
-export function validateTusReadinessEvidence(value: unknown): TusReadinessEvidence {
+export function validarEvidenciaHabilitacion(value: unknown): EvidenciaHabilitacion {
   if (!isRecord(value)) {
     throw new ContractValidationError('tus-readiness-evidence', undefined, 'payload must be an object')
   }
@@ -611,10 +611,10 @@ export function validateTusReadinessEvidence(value: unknown): TusReadinessEviden
       'issuedAt must be a valid ISO timestamp',
     )
   }
-  if (!isReadinessCapability(value['capability'])) {
+  if (!esCapacidadHabilitacion(value['capability'])) {
     throw new ContractValidationError('tus-readiness-evidence', TUS_CONTRACT_VERSION, 'capability is unsupported')
   }
-  if (!isReadinessGateKey(value['gate'])) {
+  if (!esClaveRequisitoHabilitacion(value['gate'])) {
     throw new ContractValidationError('tus-readiness-evidence', TUS_CONTRACT_VERSION, 'gate is unsupported')
   }
   if (value['expiresAt'] !== null && (typeof value['expiresAt'] !== 'string' || !isIsoTimestamp(value['expiresAt']))) {
@@ -639,11 +639,11 @@ export function validateTusReadinessEvidence(value: unknown): TusReadinessEviden
   ) {
     throw new ContractValidationError('tus-readiness-evidence', TUS_CONTRACT_VERSION, 'source is unsupported')
   }
-  validateReadinessMetadata(value, 'tus-readiness-evidence')
-  return value as unknown as TusReadinessEvidence
+  validarMetadatosHabilitacion(value, 'tus-readiness-evidence')
+  return value as unknown as EvidenciaHabilitacion
 }
 
-export function validateTusReadinessDecision(value: unknown): TusReadinessDecision {
+export function validarDecisionHabilitacion(value: unknown): DecisionHabilitacion {
   if (!isRecord(value)) {
     throw new ContractValidationError('tus-readiness-decision', undefined, 'payload must be an object')
   }
@@ -660,7 +660,7 @@ export function validateTusReadinessDecision(value: unknown): TusReadinessDecisi
       'evaluatedAt must be a valid ISO timestamp',
     )
   }
-  if (!isReadinessCapability(value['capability'])) {
+  if (!esCapacidadHabilitacion(value['capability'])) {
     throw new ContractValidationError('tus-readiness-decision', TUS_CONTRACT_VERSION, 'capability is unsupported')
   }
   if (typeof value['enabled'] !== 'boolean' || typeof value['deterministic'] !== 'boolean') {
@@ -681,7 +681,7 @@ export function validateTusReadinessDecision(value: unknown): TusReadinessDecisi
       value['conflicts'].some(
         (conflict) =>
           !isRecord(conflict) ||
-          !isReadinessGateKey(conflict['gate']) ||
+          !esClaveRequisitoHabilitacion(conflict['gate']) ||
           !Array.isArray(conflict['evidenceIds']) ||
           conflict['evidenceIds'].some((id) => typeof id !== 'string') ||
           (conflict['source'] !== undefined && !['evidence', 'legacy-boolean'].includes(String(conflict['source']))),
@@ -690,12 +690,12 @@ export function validateTusReadinessDecision(value: unknown): TusReadinessDecisi
     throw new ContractValidationError('tus-readiness-decision', TUS_CONTRACT_VERSION, 'conflicts are unsupported')
   }
   for (const failure of value['failedGates']) {
-    if (!isRecord(failure) || !isReadinessGateKey(failure['gate']) || !isReadinessFailureReason(failure['reason'])) {
+    if (!isRecord(failure) || !esClaveRequisitoHabilitacion(failure['gate']) || !esMotivoFallaHabilitacion(failure['reason'])) {
       throw new ContractValidationError('tus-readiness-decision', TUS_CONTRACT_VERSION, 'failedGates contain an unsupported entry')
     }
   }
   if (
-    !isReadinessDecisionConsistent(
+    !esDecisionHabilitacionConsistente(
       value['enabled'] === true,
       value['deterministic'] === true,
       String(value['disposition']),
@@ -716,11 +716,11 @@ export function validateTusReadinessDecision(value: unknown): TusReadinessDecisi
       'enabled readiness cannot contain conflicts',
     )
   }
-  validateReadinessMetadata(value, 'tus-readiness-decision')
-  return value as unknown as TusReadinessDecision
+  validarMetadatosHabilitacion(value, 'tus-readiness-decision')
+  return value as unknown as DecisionHabilitacion
 }
 
-function validateReadinessMetadata(value: Record<string, unknown>, contract: string): void {
+function validarMetadatosHabilitacion(value: Record<string, unknown>, contract: string): void {
   if (value['profile'] !== undefined && !['native-local', 'render-native', 'aws-terraform', 'local-postgresql-http'].includes(String(value['profile']))) {
     throw new ContractValidationError(contract, TUS_CONTRACT_VERSION, 'profile is unsupported')
   }
@@ -817,15 +817,15 @@ function isCommitmentStatus(value: unknown): value is EstadoCompromiso {
   return Object.values(ESTADOS_COMPROMISO).includes(value as EstadoCompromiso)
 }
 
-function isReadinessGateKey(value: unknown): value is ReadinessGateKey {
-  return READINESS_GATE_KEYS.includes(value as ReadinessGateKey)
+function esClaveRequisitoHabilitacion(value: unknown): value is ClaveRequisitoHabilitacion {
+  return CLAVES_REQUISITOS_HABILITACION.includes(value as ClaveRequisitoHabilitacion)
 }
 
-function isReadinessCapability(value: unknown): value is ReadinessCapability {
+function esCapacidadHabilitacion(value: unknown): value is CapacidadHabilitacion {
   return ['publication', 'provider-actions', 'settlement', 'fleet', 'release-jobs'].includes(String(value))
 }
 
-function isReadinessFailureReason(value: unknown): value is ReadinessFailureReason {
+function esMotivoFallaHabilitacion(value: unknown): value is MotivoFallaHabilitacion {
   return [
     'evidence_missing',
     'evidence_out_of_scope',
@@ -848,7 +848,7 @@ function isIsoTimestamp(value: unknown): value is string {
   )
 }
 
-function isReadinessDecisionConsistent(
+function esDecisionHabilitacionConsistente(
   enabled: boolean,
   deterministic: boolean,
   disposition: string,

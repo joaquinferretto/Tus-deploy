@@ -3,8 +3,8 @@ import { test } from 'node:test'
 
 import {
   TUS_CONTRACT_VERSION,
-  validateTusReadinessDecision,
-  validateTusReadinessEvidence,
+  validarDecisionHabilitacion,
+  validarEvidenciaHabilitacion,
 } from '../../packages/contracts/src/index.ts'
 import {
   REQUISITOS_HABILITACION_REQUERIDOS,
@@ -96,7 +96,7 @@ test('complete authorized evidence enables a scoped readiness capability', () =>
   assert.deepEqual(decision.failedGates, [])
   assert.deepEqual(decision.evidenceIds, evidence.map(({ evidenceId }) => evidenceId))
   assert.equal(decision.deterministic, false)
-  assert.deepEqual(validateTusReadinessDecision(decision), decision)
+  assert.deepEqual(validarDecisionHabilitacion(decision), decision)
 })
 
 test('missing, expired, or revoked evidence fails closed with exact gate reasons', () => {
@@ -189,9 +189,9 @@ test('readiness evidence carries versioned ownership, scope, policy, expiry, and
     evidenceRef: 'legal/argentina/approval-1',
   })
 
-  assert.deepEqual(validateTusReadinessEvidence(evidence), evidence)
+  assert.deepEqual(validarEvidenciaHabilitacion(evidence), evidence)
   assert.throws(
-    () => validateTusReadinessEvidence({ ...evidence, contractVersion: '0.0.0' }),
+    () => validarEvidenciaHabilitacion({ ...evidence, contractVersion: '0.0.0' }),
     /unsupported contract version/i,
   )
 })
@@ -248,7 +248,7 @@ test('readiness contracts reject malformed timestamps and contradictory disposit
   })
 
   assert.throws(
-    () => validateTusReadinessDecision({ ...decision, enabled: true, disposition: 'disabled' }),
+    () => validarDecisionHabilitacion({ ...decision, enabled: true, disposition: 'disabled' }),
     /disposition must match readiness state/i,
   )
 })
@@ -274,5 +274,5 @@ test('readiness contracts accept RFC3339 offsets and preserve deferred determini
   })
 
   assert.equal(decision.disposition, 'unavailable-deferred')
-  assert.equal(validateTusReadinessDecision(decision).deterministic, true)
+  assert.equal(validarDecisionHabilitacion(decision).deterministic, true)
 })

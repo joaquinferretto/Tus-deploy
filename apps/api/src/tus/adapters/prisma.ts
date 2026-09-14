@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { TUS_CONTRACT_VERSION, type Compromiso, type TusReadinessEvidence as EvidenciaHabilitacionContrato, type ReadinessCapability as CapacidadHabilitacionContrato } from '@factory/contracts'
+import { TUS_CONTRACT_VERSION, type Compromiso, type EvidenciaHabilitacion as EvidenciaHabilitacionContrato, type CapacidadHabilitacion as CapacidadHabilitacionContrato } from '@factory/contracts'
 import {
   TUS_OUTBOX_STATUSES,
   type ReferenciaAuditoria,

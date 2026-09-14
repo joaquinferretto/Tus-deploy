@@ -1,13 +1,13 @@
 import {
-  READINESS_GATE_KEYS as CLAVES_REQUISITOS_HABILITACION_CONTRATO,
+  CLAVES_REQUISITOS_HABILITACION as CLAVES_REQUISITOS_HABILITACION_CONTRATO,
   TUS_CONTRACT_VERSION,
-  type ReadinessCapability as CapacidadHabilitacionContrato,
-  type ReadinessConflict as ConflictoHabilitacionContrato,
-  type ReadinessGateFailure as FallaRequisitoHabilitacionContrato,
-  type ReadinessGateKey as ClaveRequisitoHabilitacionContrato,
-  type TusReadinessDecision as DecisionHabilitacionContrato,
-  type TusReadinessEvidence as EvidenciaHabilitacionContrato,
-  validateTusReadinessEvidence as validarEvidenciaHabilitacionContrato,
+  type CapacidadHabilitacion as CapacidadHabilitacionContrato,
+  type ConflictoHabilitacion as ConflictoHabilitacionContrato,
+  type FallaRequisitoHabilitacion as FallaRequisitoHabilitacionContrato,
+  type ClaveRequisitoHabilitacion as ClaveRequisitoHabilitacionContrato,
+  type DecisionHabilitacion as DecisionHabilitacionContrato,
+  type EvidenciaHabilitacion as EvidenciaHabilitacionContrato,
+  validarEvidenciaHabilitacion as validarEvidenciaHabilitacionContrato,
 } from '@factory/contracts'
 
 export const REQUISITOS_HABILITACION_REQUERIDOS = CLAVES_REQUISITOS_HABILITACION_CONTRATO

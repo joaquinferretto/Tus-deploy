@@ -1,5 +1,5 @@
 import { evaluarRequisitosHabilitacionLegacy, type EstadoHabilitacionLegacy } from '../readiness/index.ts'
-import type { ReadinessGateKey as ClaveRequisitoHabilitacionContrato } from '@factory/contracts'
+import type { ClaveRequisitoHabilitacion as ClaveRequisitoHabilitacionContrato } from '@factory/contracts'
 
 export type RequisitosHabilitacion = Partial<Record<ClaveRequisitoHabilitacionContrato, boolean>>
 

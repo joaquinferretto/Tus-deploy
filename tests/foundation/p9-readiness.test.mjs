@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url'
 
 import {
   TUS_CONTRACT_VERSION,
-  validateTusReadinessDecision,
-  validateTusReadinessEvidence,
+  validarDecisionHabilitacion,
+  validarEvidenciaHabilitacion,
 } from '../../packages/contracts/src/index.ts'
 import {
   REQUISITOS_HABILITACION_REQUERIDOS,
@@ -52,9 +52,9 @@ test('canonical readiness contracts require issued evidence and preserve truthfu
   assert.equal(record.contractVersion, TUS_CONTRACT_VERSION)
   assert.equal(record.issuedAt, '2026-08-01T00:00:00.000Z')
   assert.equal(record.source, 'authorized-external')
-  assert.deepEqual(validateTusReadinessEvidence(record), record)
+  assert.deepEqual(validarEvidenciaHabilitacion(record), record)
   assert.throws(
-    () => validateTusReadinessEvidence({ ...record, issuedAt: 'not-a-date' }),
+    () => validarEvidenciaHabilitacion({ ...record, issuedAt: 'not-a-date' }),
     /issuedAt must be a valid ISO timestamp/i,
   )
 })
@@ -79,7 +79,7 @@ test('duplicate current evidence for one gate fails closed and records a conflic
   assert.deepEqual(decision.conflicts, [
     { gate: 'legal', evidenceIds: ['evidence-legal-one', 'two'] },
   ])
-  assert.deepEqual(validateTusReadinessDecision(decision), decision)
+  assert.deepEqual(validarDecisionHabilitacion(decision), decision)
 })
 
 test('legacy boolean readiness is a compatibility adapter and cannot override a stricter canonical decision', () => {
@@ -146,7 +146,7 @@ test('provider-free evidence remains deferred without being mislabeled as determ
   assert.equal(decision.deterministic, false)
   assert.equal(decision.reason, 'evidence_deferred')
   assert.ok(decision.failedGates.every(({ reason }) => reason === 'evidence_deferred'))
-  assert.deepEqual(validateTusReadinessDecision(decision), decision)
+  assert.deepEqual(validarDecisionHabilitacion(decision), decision)
 })
 
 test('readiness migration adds canonical validity and conflict persistence without deleting evidence', () => {
