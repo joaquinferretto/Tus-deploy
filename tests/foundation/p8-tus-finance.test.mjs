@@ -215,7 +215,7 @@ test('WU4 mounts authenticated finance routes and returns a held response when p
     const app = createApp({ tusRouter: createTusHttpRouter({ application, sessions }) })
     const server = app.listen(0)
     const address = server.address()
-    const response = await fetch('http://127.0.0.1:' + address.port + '/tus/v1/finance/payment-intents', { method: 'POST', headers: { authorization: 'Bearer finance-token', 'content-type': 'application/json', 'x-correlation-id': 'corr-http', 'idempotency-key': 'http-pay-key' }, body: JSON.stringify({ commitmentId: 'commitment-finance-1', requestHash: 'http-hash' }) })
+    const response = await fetch('http://127.0.0.1:' + address.port + '/tus/v1/finanzas/payment-intents', { method: 'POST', headers: { authorization: 'Bearer finance-token', 'content-type': 'application/json', 'x-correlation-id': 'corr-http', 'idempotency-key': 'http-pay-key' }, body: JSON.stringify({ commitmentId: 'commitment-finance-1', requestHash: 'http-hash' }) })
     const body = await response.json()
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
     console.log(JSON.stringify({ status: response.status, body }))

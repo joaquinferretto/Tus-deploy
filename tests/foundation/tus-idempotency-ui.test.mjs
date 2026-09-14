@@ -113,14 +113,14 @@ test('PR4 joins API URLs once and preserves contract transport headers and idemp
         tenantId: 'tenant-a', actorId: 'actor-a', correlationId: 'corr-a', accessToken: 'token-a',
         idempotencyKey: createStableIdempotencyKey('checkout', 'intent-a'), cartId: 'cart-a', requestHash: 'hash-a', lines: [],
       })
-      console.log(JSON.stringify({ url: calls[0].url, joined: joinTusApiUrl('https://api.example///', '//tus/v1/marketplace'), headers: calls[0].options.headers, body: JSON.parse(calls[0].options.body) }))
+      console.log(JSON.stringify({ url: calls[0].url, joined: joinTusApiUrl('https://api.example///', '//tus/v1/mercado-servicios'), headers: calls[0].options.headers, body: JSON.parse(calls[0].options.body) }))
     } finally {
       globalThis.fetch = originalFetch
     }
   `)
 
-  assert.equal(result.url, 'http://localhost:3101/tus/v1/marketplace/checkout')
-  assert.equal(result.joined, 'https://api.example/tus/v1/marketplace')
+  assert.equal(result.url, 'http://localhost:3101/tus/v1/mercado-servicios/checkout')
+  assert.equal(result.joined, 'https://api.example/tus/v1/mercado-servicios')
   assert.equal(result.headers['X-Tenant-Id'], 'tenant-a')
   assert.equal(result.headers['X-Actor-Id'], 'actor-a')
   assert.equal(result.headers['X-Correlation-Id'], 'corr-a')

@@ -189,8 +189,8 @@ test('WU5 mounts authenticated delivery and POS routes while denying spoofed ten
     const base = 'http://127.0.0.1:' + address.port
     const headers = { authorization: 'Bearer pos-token', 'content-type': 'application/json', 'x-correlation-id': 'corr-http-pos' }
     const post = async (path, body) => { const response = await fetch(base + path, { method: 'POST', headers, body: JSON.stringify(body) }); return { status: response.status, body: await response.json() } }
-    const zone = await post('/tus/v1/delivery/zones', { zoneId: 'zone-http', name: 'Centro', postalCodes: [] })
-    const shift = await post('/tus/v1/delivery/shifts', { shiftId: 'shift-http', zoneId: 'zone-http', startsAt: '2026-08-26T09:00:00.000Z', endsAt: '2026-08-26T18:00:00.000Z', operatorIds: ['staff-a'] })
+    const zone = await post('/tus/v1/entrega/zones', { zoneId: 'zone-http', name: 'Centro', postalCodes: [] })
+    const shift = await post('/tus/v1/entrega/shifts', { shiftId: 'shift-http', zoneId: 'zone-http', startsAt: '2026-08-26T09:00:00.000Z', endsAt: '2026-08-26T18:00:00.000Z', operatorIds: ['staff-a'] })
     const pos = await post('/tus/v1/pos/manual-operations', { operationId: 'operation-http', idempotencyKey: 'pos-http-key', schemaVersion: '1.0.0', deviceId: 'browser-a', shiftId: shift.body.shiftId, createdAt: '2026-08-26T12:00:00.000Z', expectedVersion: 0, kind: 'manual-service', context: 'service', amount: 900, currency: 'ARS' })
     const spoof = await post('/tus/v1/pos/manual-operations', { tenantId: 'tenant-b', operationId: 'operation-spoof', idempotencyKey: 'pos-spoof-key', schemaVersion: '1.0.0', deviceId: 'browser-a', shiftId: shift.body.shiftId, createdAt: '2026-08-26T12:00:00.000Z', expectedVersion: 1, kind: 'manual-service', context: 'service', amount: 900, currency: 'ARS' })
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))

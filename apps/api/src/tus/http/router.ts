@@ -226,7 +226,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post('/tus/v1/marketplace/onboarding', async (request: Request, response: Response) => {
+  router.post(['/tus/v1/mercado-servicios/onboarding', '/tus/v1/marketplace/onboarding'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:write')) {
       await recordMarketplaceDenied(application, context, 'merchant.onboard', readString(asRecord(request.body), 'merchantId'))
@@ -247,7 +247,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post('/tus/v1/marketplace/listings', async (request: Request, response: Response) => {
+  router.post(['/tus/v1/mercado-servicios/listings', '/tus/v1/marketplace/listings'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:write')) {
       await recordMarketplaceDenied(application, context, 'listing.create', '')
@@ -268,7 +268,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post('/tus/v1/marketplace/listings/:listingId/publish', async (request: Request, response: Response) => {
+  router.post(['/tus/v1/mercado-servicios/listings/:listingId/publish', '/tus/v1/marketplace/listings/:listingId/publish'], async (request: Request, response: Response) => {
     const pathListingId = request.path.split('/').at(-2) ?? ''
     const listingId = request.params['listingId'] && request.params['listingId'] !== 'undefined' ? request.params['listingId'] : pathListingId
     const context = await authenticate(request, sessions)
@@ -290,7 +290,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.get('/tus/v1/marketplace/discovery', async (request: Request, response: Response) => {
+  router.get(['/tus/v1/mercado-servicios/discovery', '/tus/v1/marketplace/discovery'], async (request: Request, response: Response) => {
     try {
       const discovery = await requireMarketplace(application).discover({
         ...(readQueryString(request.query['locationId']) ? { locationId: readQueryString(request.query['locationId']) } : {}),
@@ -302,7 +302,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.get('/tus/v1/marketplace/merchant/operations', async (request: Request, response: Response) => {
+  router.get(['/tus/v1/mercado-servicios/merchant/operations', '/tus/v1/marketplace/merchant/operations'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:read')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS merchant operations are not authorized')
@@ -321,7 +321,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post('/tus/v1/marketplace/checkout', async (request: Request, response: Response) => {
+  router.post(['/tus/v1/mercado-servicios/checkout', '/tus/v1/marketplace/checkout'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:checkout')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS marketplace checkout is not authorized')
@@ -368,7 +368,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.get('/tus/v1/marketplace/customer/commitments', async (request: Request, response: Response) => {
+  router.get(['/tus/v1/mercado-servicios/customer/commitments', '/tus/v1/marketplace/customer/commitments'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:read')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS customer commitments are not authorized')
@@ -386,7 +386,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.get('/tus/v1/marketplace/customer/commitments/:commitmentId', async (request: Request, response: Response) => {
+  router.get(['/tus/v1/mercado-servicios/customer/commitments/:commitmentId', '/tus/v1/marketplace/customer/commitments/:commitmentId'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:read')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS customer commitments are not authorized')
@@ -472,7 +472,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     } catch (error) { sendCalendarError(response, error) }
   })
 
-  router.post(['/tus/finance/payment-intents', '/tus/v1/finance/payment-intents'], async (request: Request, response: Response) => {
+  router.post(['/tus/finance/payment-intents', '/tus/v1/finanzas/payment-intents', '/tus/v1/finance/payment-intents'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasAnyPermission(context, ['tus:finance:write', 'tus:checkout'])) {
       sendError(response, 403, 'FORBIDDEN', 'TUS finance access is not authorized')
@@ -498,7 +498,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/finance/evidence', '/tus/v1/finance/evidence'], async (request: Request, response: Response) => {
+  router.post(['/tus/finance/evidence', '/tus/v1/finanzas/evidence', '/tus/v1/finance/evidence'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasAnyPermission(context, ['tus:finance:write', 'tus:checkout'])) {
       sendError(response, 403, 'FORBIDDEN', 'TUS finance access is not authorized')
@@ -523,7 +523,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/finance/confirmations', '/tus/v1/finance/confirmations'], async (request: Request, response: Response) => {
+  router.post(['/tus/finance/confirmations', '/tus/v1/finanzas/confirmations', '/tus/v1/finance/confirmations'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasAnyPermission(context, ['tus:finance:confirm', 'tus:checkout'])) {
       sendError(response, 403, 'FORBIDDEN', 'TUS finance confirmation is not authorized')
@@ -547,7 +547,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/finance/release', '/tus/v1/finance/release'], async (request: Request, response: Response) => {
+  router.post(['/tus/finance/release', '/tus/v1/finanzas/release', '/tus/v1/finance/release'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:finance:write')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS settlement release is not authorized')
@@ -566,7 +566,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/finance/release-jobs', '/tus/v1/finance/release-jobs'], async (request: Request, response: Response) => {
+  router.post(['/tus/finance/release-jobs', '/tus/v1/finanzas/release-jobs', '/tus/v1/finance/release-jobs'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
     if (!context || !hasPermission(context, 'tus:finance:write') || hasSpoofedAuthority(body, request, context)) {
@@ -581,7 +581,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/finance/disputes', '/tus/v1/finance/disputes'], async (request: Request, response: Response) => {
+  router.post(['/tus/finance/disputes', '/tus/v1/finanzas/disputes', '/tus/v1/finance/disputes'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
     if (!context || !hasPermission(context, 'tus:finance:write')) {
@@ -600,7 +600,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/finance/refunds', '/tus/v1/finance/refunds'], async (request: Request, response: Response) => {
+  router.post(['/tus/finance/refunds', '/tus/v1/finanzas/refunds', '/tus/v1/finance/refunds'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:finance:write')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS refund access is not authorized')
@@ -619,7 +619,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/finance/chargebacks', '/tus/v1/finance/chargebacks'], async (request: Request, response: Response) => {
+  router.post(['/tus/finance/chargebacks', '/tus/v1/finanzas/chargebacks', '/tus/v1/finance/chargebacks'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
     if (!context || !hasPermission(context, 'tus:finance:write')) {
@@ -638,7 +638,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/finance/reconciliation', '/tus/v1/finance/reconciliation'], async (request: Request, response: Response) => {
+  router.post(['/tus/finance/reconciliation', '/tus/v1/finanzas/reconciliation', '/tus/v1/finance/reconciliation'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:finance:write')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS reconciliation access is not authorized')
@@ -657,7 +657,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/delivery/zones', '/tus/v1/delivery/zones'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/zones', '/tus/v1/entrega/zones', '/tus/v1/delivery/zones'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
     if (!context || !hasPermission(context, 'tus:delivery:write') || hasSpoofedAuthority(body, request, context)) {
@@ -669,7 +669,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     } catch (error) { sendDeliveryError(response, error) }
   })
 
-  router.post(['/tus/delivery/shifts', '/tus/v1/delivery/shifts'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/shifts', '/tus/v1/entrega/shifts', '/tus/v1/delivery/shifts'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
     if (!context || !hasPermission(context, 'tus:delivery:write') || hasSpoofedAuthority(body, request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS delivery access is not authorized'); return }
@@ -678,13 +678,13 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     } catch (error) { sendDeliveryError(response, error) }
   })
 
-  router.post(['/tus/delivery/shifts/:shiftId/close', '/tus/v1/delivery/shifts/:shiftId/close'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/shifts/:shiftId/close', '/tus/v1/entrega/shifts/:shiftId/close', '/tus/v1/delivery/shifts/:shiftId/close'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:delivery:write') || hasSpoofedAuthority({}, request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS delivery access is not authorized'); return }
     try { response.status(200).json(await requireDelivery(application).closeShift(context, request.params['shiftId'] ?? '')) } catch (error) { sendDeliveryError(response, error) }
   })
 
-  router.post(['/tus/delivery/tasks', '/tus/v1/delivery/tasks'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks', '/tus/v1/entrega/tasks', '/tus/v1/delivery/tasks'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
     if (!context || !hasPermission(context, 'tus:delivery:write') || hasSpoofedAuthority(body, request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS delivery access is not authorized'); return }
@@ -693,53 +693,53 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     } catch (error) { sendDeliveryError(response, error) }
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/accept', '/tus/v1/delivery/tasks/:taskId/accept'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/accept', '/tus/v1/entrega/tasks/:taskId/accept', '/tus/v1/delivery/tasks/:taskId/accept'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.acceptTask(context, request.params['taskId'] ?? '', readVersion(body)))
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/assign', '/tus/v1/delivery/tasks/:taskId/assign'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/assign', '/tus/v1/entrega/tasks/:taskId/assign', '/tus/v1/delivery/tasks/:taskId/assign'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.assignTask(context, request.params['taskId'] ?? '', readString(body, 'operatorId'), readVersion(body)))
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/pick-up', '/tus/v1/delivery/tasks/:taskId/pick-up'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/pick-up', '/tus/v1/entrega/tasks/:taskId/pick-up', '/tus/v1/delivery/tasks/:taskId/pick-up'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.transitionTask(context, request.params['taskId'] ?? '', 'picked-up', readVersion(body)))
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/transit', '/tus/v1/delivery/tasks/:taskId/transit'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/transit', '/tus/v1/entrega/tasks/:taskId/transit', '/tus/v1/delivery/tasks/:taskId/transit'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.transitionTask(context, request.params['taskId'] ?? '', 'in-transit', readVersion(body)))
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/handoff', '/tus/v1/delivery/tasks/:taskId/handoff'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/handoff', '/tus/v1/entrega/tasks/:taskId/handoff', '/tus/v1/delivery/tasks/:taskId/handoff'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body) => application.handoffDelivery(context, request.params['taskId'] ?? '', readVersion(body)))
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/proof', '/tus/v1/delivery/tasks/:taskId/proof'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/proof', '/tus/v1/entrega/tasks/:taskId/proof', '/tus/v1/delivery/tasks/:taskId/proof'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body) => application.recordDeliveryProof(context, { taskId: request.params['taskId'] ?? '', proofId: readString(body, 'proofId'), recipientName: readString(body, 'recipientName'), capturedAt: readString(body, 'capturedAt'), evidenceSource: readString(body, 'evidenceSource') as 'authorized' | 'deterministic-test-only' }, readVersion(body)))
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/fail', '/tus/v1/delivery/tasks/:taskId/fail'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/fail', '/tus/v1/entrega/tasks/:taskId/fail', '/tus/v1/delivery/tasks/:taskId/fail'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.failTask(context, request.params['taskId'] ?? '', { incidentId: readString(body, 'incidentId'), reason: readString(body, 'reason') }, readVersion(body)))
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/resolve-incident', '/tus/v1/delivery/tasks/:taskId/resolve-incident'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/resolve-incident', '/tus/v1/entrega/tasks/:taskId/resolve-incident', '/tus/v1/delivery/tasks/:taskId/resolve-incident'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.resolveIncident(context, request.params['taskId'] ?? '', readVersion(body)))
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/return', '/tus/v1/delivery/tasks/:taskId/return'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/return', '/tus/v1/entrega/tasks/:taskId/return', '/tus/v1/delivery/tasks/:taskId/return'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.returnTask(context, request.params['taskId'] ?? '', readVersion(body)))
   })
 
-  router.post(['/tus/delivery/tasks/:taskId/cancel', '/tus/v1/delivery/tasks/:taskId/cancel'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/tasks/:taskId/cancel', '/tus/v1/entrega/tasks/:taskId/cancel', '/tus/v1/delivery/tasks/:taskId/cancel'], async (request: Request, response: Response) => {
     await deliveryMutation(request, response, sessions, application, (context, body, delivery) => delivery.cancelTask(context, request.params['taskId'] ?? '', readVersion(body), readString(body, 'reason')))
   })
 
-  router.get(['/tus/delivery/tasks', '/tus/v1/delivery/tasks'], async (request: Request, response: Response) => {
+  router.get(['/tus/delivery/tasks', '/tus/v1/entrega/tasks', '/tus/v1/delivery/tasks'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:delivery:read') || hasSpoofedAuthority({}, request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS delivery access is not authorized'); return }
     try { response.status(200).json({ tasks: await requireDelivery(application).listTasks(context) }) } catch (error) { sendDeliveryError(response, error) }
   })
 
-  router.post(['/tus/delivery/public-bidding', '/tus/v1/delivery/public-bidding'], async (request: Request, response: Response) => {
+  router.post(['/tus/delivery/public-bidding', '/tus/v1/entrega/public-bidding', '/tus/v1/delivery/public-bidding'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:delivery:write') || hasSpoofedAuthority(asRecord(request.body), request, context)) { sendError(response, 403, 'FORBIDDEN', 'TUS delivery access is not authorized'); return }
     try { await requireDelivery(application).openPublicBidding(context, { taskId: readString(asRecord(request.body), 'taskId') }); } catch (error) { sendDeliveryError(response, error) }
@@ -885,7 +885,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/support/cases', '/tus/v1/support/cases'], async (request: Request, response: Response) => {
+  router.post(['/tus/support/cases', '/tus/v1/soporte/cases', '/tus/v1/support/cases'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
     if (!context || !hasPermission(context, 'tus:support:write') || hasSpoofedAuthority(body, request, context)) {
@@ -904,7 +904,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/support/cases/:caseId/evidence', '/tus/v1/support/cases/:caseId/evidence'], async (request: Request, response: Response) => {
+  router.post(['/tus/support/cases/:caseId/evidence', '/tus/v1/soporte/cases/:caseId/evidence', '/tus/v1/support/cases/:caseId/evidence'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
     if (!context || !hasPermission(context, 'tus:support:write') || hasSpoofedAuthority(body, request, context)) {
@@ -923,7 +923,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/support/cases/:caseId/resolve', '/tus/v1/support/cases/:caseId/resolve'], async (request: Request, response: Response) => {
+  router.post(['/tus/support/cases/:caseId/resolve', '/tus/v1/soporte/cases/:caseId/resolve', '/tus/v1/support/cases/:caseId/resolve'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
     if (!context || !hasPermission(context, 'tus:disputes:decide') || hasSpoofedAuthority(body, request, context)) {
@@ -942,7 +942,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.get(['/tus/support/cases', '/tus/v1/support/cases'], async (request: Request, response: Response) => {
+  router.get(['/tus/support/cases', '/tus/v1/soporte/cases', '/tus/v1/support/cases'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:support:write')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS support access is not authorized')
@@ -1252,18 +1252,18 @@ function enviarErrorHabilitacion(response: Response, error: unknown): void {
 }
 
 function capacidadHabilitacionPorRuta(path: string): 'publication' | 'provider-actions' | 'settlement' | 'fleet' | null {
-  if (path.includes('/marketplace/checkout') || path.includes('/finance/release') || path.includes('/finance/disputes') || path.includes('/finance/refunds') || path.includes('/finance/chargebacks') || path.includes('/finance/reconciliation') || path.includes('/support/')) return 'settlement'
-  if (path.includes('/marketplace/') || path.includes('/seo/')) return 'publication'
-  if (path.includes('/finance/')) return path.includes('/payment-intents') || path.includes('/evidence') || path.includes('/confirmations') ? 'provider-actions' : 'settlement'
+  if (path.includes('/marketplace/checkout') || path.includes('/mercado-servicios/checkout') || path.includes('/finance/release') || path.includes('/finanzas/release') || path.includes('/finance/disputes') || path.includes('/finanzas/disputes') || path.includes('/finance/refunds') || path.includes('/finanzas/refunds') || path.includes('/finance/chargebacks') || path.includes('/finanzas/chargebacks') || path.includes('/finance/reconciliation') || path.includes('/finanzas/reconciliation') || path.includes('/support/') || path.includes('/soporte/')) return 'settlement'
+  if (path.includes('/marketplace/') || path.includes('/mercado-servicios/') || path.includes('/seo/')) return 'publication'
+  if (path.includes('/finance/') || path.includes('/finanzas/')) return path.includes('/payment-intents') || path.includes('/evidence') || path.includes('/confirmations') ? 'provider-actions' : 'settlement'
   if (path.includes('/whatsapp/')) return 'provider-actions'
-  if (path.includes('/delivery/') || path.includes('/pos/')) return 'fleet'
+  if (path.includes('/delivery/') || path.includes('/entrega/') || path.includes('/pos/')) return 'fleet'
   if (path.includes('/commitments/')) return 'settlement'
   return null
 }
 
 function routeIsGuardedByApplication(path: string, application: TusApplicationService): boolean {
   if (!application.evaluadorHabilitacion) return false
-  return path.includes('/checkout') || path.includes('/marketplace/onboarding') || path.includes('/marketplace/listings')
+  return path.includes('/checkout') || path.includes('/marketplace/onboarding') || path.includes('/marketplace/listings') || path.includes('/mercado-servicios/onboarding') || path.includes('/mercado-servicios/listings')
 }
 
 function tienePermisoHabilitacion(context: TusAuthenticatedTenantContext, capability: ReturnType<typeof capacidadHabilitacionPorRuta>): boolean {

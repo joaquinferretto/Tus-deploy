@@ -83,10 +83,10 @@ export interface TusWhatsAppHandoffResponse {
 }
 
 const MARKETPLACE_PATHS = {
-  DISCOVERY: '/tus/v1/marketplace/discovery',
-  MERCHANT_OPERATIONS: '/tus/v1/marketplace/merchant/operations',
-  CUSTOMER_COMMITMENTS: '/tus/v1/marketplace/customer/commitments',
-  CHECKOUT: '/tus/v1/marketplace/checkout',
+  DISCOVERY: '/tus/v1/mercado-servicios/discovery',
+  MERCHANT_OPERATIONS: '/tus/v1/mercado-servicios/merchant/operations',
+  CUSTOMER_COMMITMENTS: '/tus/v1/mercado-servicios/customer/commitments',
+  CHECKOUT: '/tus/v1/mercado-servicios/checkout',
 } as const
 
 export const TUS_INTENT_ACTION = {

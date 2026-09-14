@@ -79,12 +79,12 @@ test('PR9 web client sends authenticated tenant-safe requests and uses real mark
   `)
 
   assert.deepEqual(result.map(({ method, path, tenantId, accessToken }) => ({ method, path, tenantId, accessToken })), [
-    { method: 'GET', path: '/tus/v1/marketplace/discovery', tenantId: 'tenant-a', accessToken: 'token-a' },
-    { method: 'GET', path: '/tus/v1/marketplace/customer/commitments', tenantId: 'tenant-a', accessToken: 'token-a' },
-    { method: 'GET', path: '/tus/v1/marketplace/merchant/operations', tenantId: 'tenant-a', accessToken: 'token-a' },
-    { method: 'GET', path: '/tus/v1/marketplace/discovery', tenantId: 'tenant-a', accessToken: 'token-a' },
-    { method: 'GET', path: '/tus/v1/marketplace/customer/commitments', tenantId: 'tenant-a', accessToken: 'token-a' },
-    { method: 'GET', path: '/tus/v1/marketplace/merchant/operations', tenantId: 'tenant-a', accessToken: 'token-a' },
+    { method: 'GET', path: '/tus/v1/mercado-servicios/discovery', tenantId: 'tenant-a', accessToken: 'token-a' },
+    { method: 'GET', path: '/tus/v1/mercado-servicios/customer/commitments', tenantId: 'tenant-a', accessToken: 'token-a' },
+    { method: 'GET', path: '/tus/v1/mercado-servicios/merchant/operations', tenantId: 'tenant-a', accessToken: 'token-a' },
+    { method: 'GET', path: '/tus/v1/mercado-servicios/discovery', tenantId: 'tenant-a', accessToken: 'token-a' },
+    { method: 'GET', path: '/tus/v1/mercado-servicios/customer/commitments', tenantId: 'tenant-a', accessToken: 'token-a' },
+    { method: 'GET', path: '/tus/v1/mercado-servicios/merchant/operations', tenantId: 'tenant-a', accessToken: 'token-a' },
   ])
 })
 

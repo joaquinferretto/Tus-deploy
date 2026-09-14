@@ -171,7 +171,7 @@ test('PR8 authenticated local HTTP smoke keeps support, reporting, and WhatsApp 
     try {
       const port = server.address().port
       const headers = { authorization: 'Bearer pr8-token', 'x-correlation-id': 'corr-http-pr8', 'content-type': 'application/json' }
-      const supportResponse = await fetch('http://127.0.0.1:' + port + '/tus/v1/support/cases', { method: 'POST', headers, body: JSON.stringify({ caseId: 'case-http-pr8', commitmentId: 'commitment-http-pr8', category: 'delivery_incident' }) })
+      const supportResponse = await fetch('http://127.0.0.1:' + port + '/tus/v1/soporte/cases', { method: 'POST', headers, body: JSON.stringify({ caseId: 'case-http-pr8', commitmentId: 'commitment-http-pr8', category: 'delivery_incident' }) })
       const reportResponse = await fetch('http://127.0.0.1:' + port + '/tus/v1/reports/operations', { headers })
       const whatsappResponse = await fetch('http://127.0.0.1:' + port + '/tus/v1/whatsapp/actions', { method: 'POST', headers: { ...headers, 'idempotency-key': 'wa-http-pr8' }, body: JSON.stringify({ action: { type: 'search', tenantId: 'tenant-a' }, senderId: '+549111', consent: true, requestHash: 'http-pr8-v1' }) })
       console.log(JSON.stringify({ supportStatus: supportResponse.status, support: await supportResponse.json(), reportStatus: reportResponse.status, report: await reportResponse.json(), whatsappStatus: whatsappResponse.status, whatsapp: await whatsappResponse.json() }))

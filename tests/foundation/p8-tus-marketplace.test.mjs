@@ -74,7 +74,7 @@ test('canonical and legacy marketplace paths share the error envelope while unkn
     const address = server.address()
     const base = 'http://127.0.0.1:' + address.port
     const read = async (path) => { const response = await fetch(base + path); return { status: response.status, body: await response.json() } }
-    const canonical = await read('/tus/v1/marketplace/discovery')
+    const canonical = await read('/tus/v1/mercado-servicios/discovery')
     const legacy = await read('/tus/marketplace/discovery')
     const unknown = await read('/tus/v2/marketplace/discovery')
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
@@ -283,8 +283,8 @@ test('WU3 web client exposes marketplace discovery and separate checkout operati
      console.log(JSON.stringify({ calls, mismatchedVersion }))
   `)
 
-  assert.equal(result.calls[0].path, '/tus/v1/marketplace/discovery')
-  assert.equal(result.calls[1].path, '/tus/v1/marketplace/checkout')
+  assert.equal(result.calls[0].path, '/tus/v1/mercado-servicios/discovery')
+  assert.equal(result.calls[1].path, '/tus/v1/mercado-servicios/checkout')
   assert.equal(result.calls[1].method, 'POST')
   assert.equal(result.calls[1].body.contractVersion, TUS_CONTRACT_VERSION)
   assert.equal(result.calls[1].body.idempotencyKey, 'web-key')
