@@ -1,10 +1,12 @@
 # TUS — Estado de normalización
 
-Última actualización: 2026-09-13
+Última actualización: 2026-09-14
 
 Rama: `normalizacion-espanol-tus`
 
 ## COMPLETADO
+
+### Semántica interna
 
 - Habilitación ✅
 - Auditorías ✅
@@ -20,22 +22,39 @@ Rama: `normalizacion-espanol-tus`
 - Finanzas internas ✅
 - Facturación interna ✅
 
-Los checks indican que los bloques de normalización interna están aplicados en Git. No significan que todas las integraciones externas o rutas de cada dominio estén activas.
+### Contracts/API ✅ COMPLETADA
+
+- 11A Catálogo/Mercado ✅
+- 11B Compromisos/Carrito ✅
+- 11C POS/Entrega ✅
+- 11D Soporte/WhatsApp ✅
+- 11R Habilitación ✅
+- 11E Finanzas/Facturación ✅
+- 11F Rutas HTTP ✅
+- 11G estrategia JSON ✅ mantener/diferir
+- 11H estrategia eventos ✅ mantener
+- 11G1 freeze compatibilidad ✅
+
+## DECISIONES CONTRACTS/API
+
+- JSON keys actuales se mantienen estables hasta la fase Prisma/PostgreSQL o hasta decisión explícita.
+- Event types permanecen como identificadores técnicos estables. No doble emisión, no renombre, no backfill.
+- `contractVersion` permanece en `1.0.0`; no se crea v2.
+- `$id` inconsistentes de schemas quedan como cleanup opcional/no urgente (11G2 diferido).
+- Lectura tolerante de eventos (11H1) queda diferida/opcional.
 
 ## FASE ACTUAL
 
-**Contracts/API** es la siguiente fase de normalización.
-
-Los contratos actuales siguen siendo la frontera compartida y no se modificaron durante los Builds A–I. La normalización de tipos internos no equivale a cambiar schemas, payloads, estados o rutas.
+**Prisma** es la siguiente fase de normalización.
 
 ## SIGUIENTES FASES
 
 ```text
 Semántica interna ✅
         ↓
-Contracts/API ← ACTUAL / SIGUIENTE
+Contracts/API ✅
         ↓
-Prisma
+Prisma ← ACTUAL / SIGUIENTE
         ↓
 PostgreSQL físico
         ↓
@@ -52,7 +71,7 @@ Nuevas features
 
 ## DIFERIDO / SENSIBLE
 
-**Auth/Tenancy** requiere revisión y ejecución con especial cuidado por identidad, seguridad, sesiones, SQL raw, `Membership` y `Tenant`.
+**Auth/Tenancy** permanece sensible y diferido por identidad, seguridad, sesiones, SQL raw, `Membership` y `Tenant`.
 
 ## DEUDA CONOCIDA
 
@@ -76,6 +95,7 @@ Nuevas features
 - Build G: WhatsApp funcional interno, `fd28e67`.
 - Build H: finanzas internas, `27401c5`.
 - Build I: facturación interna, `b0417da`.
+- 11A–11F y 11R: normalización Contracts/API (`0ede5b4`, `19e0847`, `6dbf165`, `39f2eb1`, `6440008`, `380c19a`, `8ff4038`).
 
 ## REGLA DE ACTUALIZACIÓN
 
