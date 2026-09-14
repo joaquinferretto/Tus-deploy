@@ -129,7 +129,7 @@ test('PR7 publishes delivery/POS contracts and additive durable conflict/session
     const contracts = await import('./packages/contracts/src/tus.ts')
     const operation = { contractVersion: '1.0.0', operationId: 'operation-contract-9', tenantId: 'tenant-pos', actorId: 'staff-pos', deviceId: 'device-9', shiftId: 'shift-9', idempotencyKey: 'contract-key-9', schemaVersion: '1.0.0', createdAt: '2026-08-27T12:00:00.000Z', kind: 'manual-service', context: 'service', amount: 900, currency: 'ARS' }
     const receipt = { contractVersion: '1.0.0', receiptId: 'receipt-contract-9', tenantId: 'tenant-pos', operationId: operation.operationId, kind: operation.kind, context: operation.context, amount: operation.amount, currency: operation.currency, status: 'pending', source: 'deterministic-test-only', providerCapture: 'not-claimed', settlement: 'not-claimed', integrityHash: 'a'.repeat(64), createdAt: operation.createdAt }
-    console.log(JSON.stringify({ operation: contracts.validateTusPosOperation(operation).operationId, receipt: contracts.validateTusPosReceipt(receipt).receiptId }))
+    console.log(JSON.stringify({ operation: contracts.validarOperacionPOS(operation).operationId, receipt: contracts.validarComprobantePOS(receipt).receiptId }))
   `)
 
   assert.equal(result.operation, 'operation-contract-9')
@@ -150,8 +150,8 @@ test('PR7 contract validators reject settlement claims and malformed provisioned
     const device = { contractVersion: '1.0.0', deviceId: 'device-validator', tenantId: 'tenant-pos', label: 'Validator', fingerprint: 'fp', status: 'active', createdAt: '2026-08-27T12:00:00.000Z', updatedAt: '2026-08-27T12:00:00.000Z' }
     const session = { contractVersion: '1.0.0', sessionId: 'session-validator', tenantId: 'tenant-pos', deviceId: 'device-validator', actorId: 'staff-pos', shiftId: 'shift-9', status: 'open', openedAt: '2026-08-27T12:00:00.000Z' }
     let receiptError = ''
-    try { contracts.validateTusPosReceipt({ contractVersion: '1.0.0', receiptId: 'r', tenantId: 'tenant-pos', operationId: 'o', kind: 'manual-sale', context: 'product', amount: 1, currency: 'ARS', status: 'accepted', source: 'authorized', providerCapture: 'captured', settlement: 'released', integrityHash: 'a'.repeat(64), createdAt: '2026-08-27T12:00:00.000Z' }) } catch (error) { receiptError = error.message }
-    console.log(JSON.stringify({ device: contracts.validateTusPosDevice(device).deviceId, session: contracts.validateTusPosSession(session).sessionId, receiptError }))
+    try { contracts.validarComprobantePOS({ contractVersion: '1.0.0', receiptId: 'r', tenantId: 'tenant-pos', operationId: 'o', kind: 'manual-sale', context: 'product', amount: 1, currency: 'ARS', status: 'accepted', source: 'authorized', providerCapture: 'captured', settlement: 'released', integrityHash: 'a'.repeat(64), createdAt: '2026-08-27T12:00:00.000Z' }) } catch (error) { receiptError = error.message }
+    console.log(JSON.stringify({ device: contracts.validarDispositivoPOS(device).deviceId, session: contracts.validarSesionPOS(session).sessionId, receiptError }))
   `)
 
   assert.equal(result.device, 'device-validator')

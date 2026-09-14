@@ -301,9 +301,9 @@ export interface MercadoPagoHandoff {
   credentialsCollected: false
 }
 
-export type TusDeliveryTaskStatus = 'queued' | 'accepted' | 'picked-up' | 'in-transit' | 'handed-off' | 'returned' | 'incident-review'
+export type EstadoTareaEntrega = 'queued' | 'accepted' | 'picked-up' | 'in-transit' | 'handed-off' | 'returned' | 'incident-review'
 
-export interface TusDeliveryTask {
+export interface TareaEntrega {
   contractVersion: TusContractVersion
   taskId: string
   tenantId: string
@@ -313,14 +313,14 @@ export interface TusDeliveryTask {
   zoneId: string
   shiftId: string
   operatorId: string | null
-  status: TusDeliveryTaskStatus
+  status: EstadoTareaEntrega
   version: number
-  proof?: TusDeliveryProof | null
-  incident?: TusDeliveryIncident | null
+  proof?: ComprobanteEntrega | null
+  incident?: IncidenteEntrega | null
   settlementClaim: 'not-claimed'
 }
 
-export interface TusDeliveryProof {
+export interface ComprobanteEntrega {
   contractVersion: TusContractVersion
   proofId: string
   tenantId: string
@@ -331,7 +331,7 @@ export interface TusDeliveryProof {
   evidenceSource: 'authorized' | 'deterministic-test-only'
 }
 
-export interface TusDeliveryIncident {
+export interface IncidenteEntrega {
   contractVersion: TusContractVersion
   incidentId: string
   tenantId: string
@@ -341,7 +341,7 @@ export interface TusDeliveryIncident {
   createdAt: string
 }
 
-export interface TusPosDevice {
+export interface DispositivoPOS {
   contractVersion: TusContractVersion
   deviceId: string
   tenantId: string
@@ -352,7 +352,7 @@ export interface TusPosDevice {
   updatedAt: string
 }
 
-export interface TusPosSession {
+export interface SesionPOS {
   contractVersion: TusContractVersion
   sessionId: string
   tenantId: string
@@ -364,12 +364,12 @@ export interface TusPosSession {
   closedAt?: string
 }
 
-export interface TusPosReceipt {
+export interface ComprobantePOS {
   contractVersion: TusContractVersion
   receiptId: string
   tenantId: string
   operationId: string
-  kind: TusPosOperationKind
+  kind: TipoOperacionPOS
   context: ContextoCompromiso
   amount: number
   currency: string
@@ -381,7 +381,7 @@ export interface TusPosReceipt {
   createdAt: string
 }
 
-export interface TusPosConflict {
+export interface ConflictoPOS {
   contractVersion: TusContractVersion
   conflictId: string
   tenantId: string
@@ -393,9 +393,9 @@ export interface TusPosConflict {
   createdAt: string
 }
 
-export type TusPosOperationKind = 'manual-sale' | 'manual-service'
+export type TipoOperacionPOS = 'manual-sale' | 'manual-service'
 
-export interface TusPosOperation {
+export interface OperacionPOS {
   contractVersion: TusContractVersion
   operationId: string
   tenantId: string
@@ -406,7 +406,7 @@ export interface TusPosOperation {
   schemaVersion: string
   createdAt: string
   expectedVersion?: number
-  kind: TusPosOperationKind
+  kind: TipoOperacionPOS
   context: ContextoCompromiso
   amount: number
   currency: string
@@ -740,7 +740,7 @@ function validateReadinessMetadata(value: Record<string, unknown>, contract: str
   }
 }
 
-export function validateTusDeliveryTask(value: unknown): TusDeliveryTask {
+export function validarTareaEntrega(value: unknown): TareaEntrega {
   if (!isRecord(value)) throw new ContractValidationError('tus-delivery-task', undefined, 'payload must be an object')
   assertTusVersion('tus-delivery-task', value['contractVersion'])
   for (const field of ['taskId', 'tenantId', 'commitmentId', 'merchantId', 'zoneId', 'shiftId', 'settlementClaim']) {
@@ -751,10 +751,10 @@ export function validateTusDeliveryTask(value: unknown): TusDeliveryTask {
   if (typeof value['version'] !== 'number' || !Number.isInteger(value['version']) || value['version'] < 0) throw new ContractValidationError('tus-delivery-task', TUS_CONTRACT_VERSION, 'version must be a non-negative integer')
   if (value['proof'] !== undefined && value['proof'] !== null && !isRecord(value['proof'])) throw new ContractValidationError('tus-delivery-task', TUS_CONTRACT_VERSION, 'proof must be an object or null')
   if (value['incident'] !== undefined && value['incident'] !== null && !isRecord(value['incident'])) throw new ContractValidationError('tus-delivery-task', TUS_CONTRACT_VERSION, 'incident must be an object or null')
-  return value as unknown as TusDeliveryTask
+  return value as unknown as TareaEntrega
 }
 
-export function validateTusPosOperation(value: unknown): TusPosOperation {
+export function validarOperacionPOS(value: unknown): OperacionPOS {
   if (!isRecord(value)) throw new ContractValidationError('tus-pos-operation', undefined, 'payload must be an object')
   assertTusVersion('tus-pos-operation', value['contractVersion'])
   for (const field of ['operationId', 'tenantId', 'actorId', 'deviceId', 'shiftId', 'idempotencyKey', 'schemaVersion', 'createdAt', 'currency']) {
@@ -763,10 +763,10 @@ export function validateTusPosOperation(value: unknown): TusPosOperation {
   if (!['manual-sale', 'manual-service'].includes(String(value['kind'])) || !['product', 'service'].includes(String(value['context'])) || (value['kind'] === 'manual-sale' && value['context'] !== 'product') || (value['kind'] === 'manual-service' && value['context'] !== 'service')) throw new ContractValidationError('tus-pos-operation', TUS_CONTRACT_VERSION, 'POS lifecycle context is unsupported')
   if (typeof value['amount'] !== 'number' || !Number.isFinite(value['amount']) || value['amount'] < 0 || !isIsoTimestamp(value['createdAt'])) throw new ContractValidationError('tus-pos-operation', TUS_CONTRACT_VERSION, 'POS amount or timestamp is invalid')
   if (value['expectedVersion'] !== undefined && (typeof value['expectedVersion'] !== 'number' || !Number.isInteger(value['expectedVersion']) || value['expectedVersion'] < 0)) throw new ContractValidationError('tus-pos-operation', TUS_CONTRACT_VERSION, 'expectedVersion is invalid')
-  return value as unknown as TusPosOperation
+  return value as unknown as OperacionPOS
 }
 
-export function validateTusPosReceipt(value: unknown): TusPosReceipt {
+export function validarComprobantePOS(value: unknown): ComprobantePOS {
   if (!isRecord(value)) throw new ContractValidationError('tus-pos-receipt', undefined, 'payload must be an object')
   assertTusVersion('tus-pos-receipt', value['contractVersion'])
   for (const field of ['receiptId', 'tenantId', 'operationId', 'currency', 'source', 'providerCapture', 'settlement', 'integrityHash', 'createdAt']) {
@@ -774,37 +774,37 @@ export function validateTusPosReceipt(value: unknown): TusPosReceipt {
   }
   if (!['manual-sale', 'manual-service'].includes(String(value['kind'])) || !['product', 'service'].includes(String(value['context'])) || (value['kind'] === 'manual-sale' && value['context'] !== 'product') || (value['kind'] === 'manual-service' && value['context'] !== 'service')) throw new ContractValidationError('tus-pos-receipt', TUS_CONTRACT_VERSION, 'receipt lifecycle context is unsupported')
   if (!['pending', 'accepted'].includes(String(value['status'])) || value['source'] !== 'authorized' && value['source'] !== 'deterministic-test-only' || value['providerCapture'] !== 'not-claimed' || value['settlement'] !== 'not-claimed' || typeof value['amount'] !== 'number' || !Number.isFinite(value['amount']) || value['amount'] < 0 || !/^[a-f0-9]{64}$/.test(String(value['integrityHash'])) || !isIsoTimestamp(value['createdAt'])) throw new ContractValidationError('tus-pos-receipt', TUS_CONTRACT_VERSION, 'receipt integrity or settlement state is invalid')
-  return value as unknown as TusPosReceipt
+  return value as unknown as ComprobantePOS
 }
 
-export function validateTusPosDevice(value: unknown): TusPosDevice {
+export function validarDispositivoPOS(value: unknown): DispositivoPOS {
   if (!isRecord(value)) throw new ContractValidationError('tus-pos-device', undefined, 'payload must be an object')
   assertTusVersion('tus-pos-device', value['contractVersion'])
   for (const field of ['deviceId', 'tenantId', 'label', 'fingerprint', 'createdAt', 'updatedAt']) {
     if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-pos-device', TUS_CONTRACT_VERSION, `${field} is required`)
   }
   if (!['active', 'revoked'].includes(String(value['status'])) || !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])) throw new ContractValidationError('tus-pos-device', TUS_CONTRACT_VERSION, 'device status or timestamps are invalid')
-  return value as unknown as TusPosDevice
+  return value as unknown as DispositivoPOS
 }
 
-export function validateTusPosSession(value: unknown): TusPosSession {
+export function validarSesionPOS(value: unknown): SesionPOS {
   if (!isRecord(value)) throw new ContractValidationError('tus-pos-session', undefined, 'payload must be an object')
   assertTusVersion('tus-pos-session', value['contractVersion'])
   for (const field of ['sessionId', 'tenantId', 'deviceId', 'actorId', 'shiftId', 'openedAt']) {
     if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-pos-session', TUS_CONTRACT_VERSION, `${field} is required`)
   }
   if (!['open', 'closed'].includes(String(value['status'])) || !isIsoTimestamp(value['openedAt']) || (value['closedAt'] !== undefined && (typeof value['closedAt'] !== 'string' || !isIsoTimestamp(value['closedAt'])))) throw new ContractValidationError('tus-pos-session', TUS_CONTRACT_VERSION, 'session status or timestamps are invalid')
-  return value as unknown as TusPosSession
+  return value as unknown as SesionPOS
 }
 
-export function validateTusPosConflict(value: unknown): TusPosConflict {
+export function validarConflictoPOS(value: unknown): ConflictoPOS {
   if (!isRecord(value)) throw new ContractValidationError('tus-pos-conflict', undefined, 'payload must be an object')
   assertTusVersion('tus-pos-conflict', value['contractVersion'])
   for (const field of ['conflictId', 'tenantId', 'operationId', 'createdAt']) {
     if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-pos-conflict', TUS_CONTRACT_VERSION, `${field} is required`)
   }
   if (!['idempotency_conflict', 'version_conflict', 'uncertain_sync'].includes(String(value['reason'])) || !['open', 'resolved', 'discarded'].includes(String(value['status'])) || !isIsoTimestamp(value['createdAt'])) throw new ContractValidationError('tus-pos-conflict', TUS_CONTRACT_VERSION, 'conflict state is invalid')
-  return value as unknown as TusPosConflict
+  return value as unknown as ConflictoPOS
 }
 
 function assertTusVersion(contract: string, version: unknown): asserts version is TusContractVersion {
