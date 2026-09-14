@@ -1,4 +1,4 @@
-import { TUS_COMMITMENT_STATUSES, TUS_CONTRACT_VERSION, type CommitmentStatus, type TusCommitment } from '@factory/contracts'
+import { ESTADOS_COMPROMISO, TUS_CONTRACT_VERSION, type EstadoCompromiso, type Compromiso } from '@factory/contracts'
 import type { MarketplaceCommitment } from '../catalog/index.ts'
 import {
   TIPOS_REFERENCIA_AUDITORIA,
@@ -30,7 +30,7 @@ export function isIndependentMarketplaceCommitment(commitment: MarketplaceCommit
 
 export interface ComandoCicloVidaCompromiso extends TusCommandContext {
   commitmentId: string
-  toStatus: CommitmentStatus
+  toStatus: EstadoCompromiso
   expectedVersion: number
   idempotencyKey: string
   requestHash: string
@@ -50,7 +50,7 @@ export interface ComandoCompensacion extends TusCommandContext {
 
 export type ResultadoMutacionCompromiso = {
   status: 'executed' | 'replay'
-  commitment: TusCommitment
+  commitment: Compromiso
   auditReferences: ReferenciaAuditoria[]
   compensation?: TusCommitmentCompensation
 }
@@ -85,7 +85,7 @@ export class ServicioCicloVidaCompromiso {
   async transition(input: ComandoCicloVidaCompromiso): Promise<ResultadoMutacionCompromiso> {
     requireCommandText(input)
     await this.requerirHabilitacion(input)
-    if (input.toStatus === TUS_COMMITMENT_STATUSES.COMPENSATED) {
+    if (input.toStatus === ESTADOS_COMPROMISO.COMPENSATED) {
       throw new ErrorCompromiso(400, 'INVALID_TRANSITION', 'use compensation for compensated commitments')
     }
     return this.transaction.run(async (repositories) => {
@@ -126,10 +126,10 @@ export class ServicioCicloVidaCompromiso {
       if (!current) throw new ErrorCompromiso(404, 'NOT_FOUND', 'commitment was not found')
       if (current.tenantId !== input.tenantId) throw new ErrorCompromiso(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
       if (current.version !== input.expectedVersion) throw new ErrorCompromiso(409, 'VERSION_CONFLICT', 'commitment version is stale')
-      if (current.status === TUS_COMMITMENT_STATUSES.COMPENSATED) throw new ErrorCompromiso(409, 'ALREADY_COMPENSATED', 'commitment has already been compensated')
+      if (current.status === ESTADOS_COMPROMISO.COMPENSATED) throw new ErrorCompromiso(409, 'ALREADY_COMPENSATED', 'commitment has already been compensated')
       if (input.amount > current.amount) throw new ErrorCompromiso(400, 'INVALID_COMPENSATION', 'compensation exceeds commitment amount')
 
-      const updated = { ...current, status: TUS_COMMITMENT_STATUSES.COMPENSATED, version: current.version + 1 }
+      const updated = { ...current, status: ESTADOS_COMPROMISO.COMPENSATED, version: current.version + 1 }
       const persisted = await repositories.commitments.update({ tenantId: input.tenantId, commitmentId: input.commitmentId, expectedVersion: input.expectedVersion, commitment: updated })
       if (!persisted) throw new ErrorCompromiso(409, 'VERSION_CONFLICT', 'commitment version is stale')
       const compensation: TusCommitmentCompensation = { compensationId: `compensation-${input.tenantId}-${input.commitmentId}-${persisted.version}`, tenantId: input.tenantId, commitmentId: input.commitmentId, actorId: input.actorId, correlationId: input.correlationId, amount: input.amount, currency: current.currency, reason: input.reason, createdAt: input.createdAt }
@@ -156,8 +156,8 @@ function requireCommandText(input: TusCommandContext & { commitmentId: string; i
   }
 }
 
-function isValidTransition(from: CommitmentStatus, to: CommitmentStatus): boolean {
-  const transitions: Record<CommitmentStatus, readonly CommitmentStatus[]> = {
+function isValidTransition(from: EstadoCompromiso, to: EstadoCompromiso): boolean {
+  const transitions: Record<EstadoCompromiso, readonly EstadoCompromiso[]> = {
     pending: ['confirmed', 'cancelled', 'frozen'],
     confirmed: ['fulfilled', 'cancelled', 'frozen'],
     fulfilled: ['released', 'frozen'],
@@ -169,15 +169,15 @@ function isValidTransition(from: CommitmentStatus, to: CommitmentStatus): boolea
   return transitions[from].includes(to)
 }
 
-function auditoriaCicloVida(input: TusCommandContext & { createdAt: string; reason: string }, previous: TusCommitment, updated: TusCommitment, referenceType: ReferenciaAuditoria['referenceType']): ReferenciaAuditoria {
+function auditoriaCicloVida(input: TusCommandContext & { createdAt: string; reason: string }, previous: Compromiso, updated: Compromiso, referenceType: ReferenciaAuditoria['referenceType']): ReferenciaAuditoria {
   return { referenceId: `audit-${updated.commitmentId}-${updated.version}`, tenantId: input.tenantId, actorId: input.actorId, correlationId: input.correlationId, commitmentId: updated.commitmentId, referenceType, previousStatus: previous.status, status: updated.status, reason: input.reason, createdAt: input.createdAt }
 }
 
-function lifecycleOutbox(input: TusCommandContext & { createdAt: string; idempotencyKey: string; requestHash: string }, previous: TusCommitment, updated: TusCommitment, audits: readonly ReferenciaAuditoria[], eventType: TusOutboxRecord['eventType'], compensation?: TusCommitmentCompensation): TusOutboxRecord {
+function lifecycleOutbox(input: TusCommandContext & { createdAt: string; idempotencyKey: string; requestHash: string }, previous: Compromiso, updated: Compromiso, audits: readonly ReferenciaAuditoria[], eventType: TusOutboxRecord['eventType'], compensation?: TusCommitmentCompensation): TusOutboxRecord {
   return { eventId: `outbox-${updated.commitmentId}-${updated.version}`, tenantId: input.tenantId, eventType, aggregateId: updated.commitmentId, payload: { commitmentIds: [updated.commitmentId], auditReferenceIds: audits.map((audit) => audit.referenceId), commitmentContext: updated.context, idempotencyKey: input.idempotencyKey, requestHash: input.requestHash, workflowRunId: `tus-commitment-${updated.context}-${updated.commitmentId}`, ...(compensation ? { compensationId: compensation.compensationId } : {}) } as TusOutboxRecord['payload'], createdAt: Date.parse(input.createdAt), status: 'pending', attempts: 0, availableAt: Date.parse(input.createdAt), lastError: null, claimId: null, claimUntil: null }
 }
 
-function mutationResponse(commitment: TusCommitment, auditReferences: ReferenciaAuditoria[], operation: TusCheckoutResponse['operation'], compensation?: TusCommitmentCompensation): TusCheckoutResponse {
+function mutationResponse(commitment: Compromiso, auditReferences: ReferenciaAuditoria[], operation: TusCheckoutResponse['operation'], compensation?: TusCommitmentCompensation): TusCheckoutResponse {
   return { commitments: [commitment], auditReferences, operation, commitment, ...(compensation ? { compensation } : {}) }
 }
 

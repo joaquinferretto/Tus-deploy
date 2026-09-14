@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { TusCommitment, TusContractVersion } from '@factory/contracts'
+import type { Compromiso, TusContractVersion } from '@factory/contracts'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
@@ -129,7 +129,7 @@ export interface MarketplaceCheckoutCommand {
   lines: MarketplaceCheckoutLine[]
 }
 
-export type MarketplaceCommitment = TusCommitment & {
+export type MarketplaceCommitment = Compromiso & {
   contractVersion: TusContractVersion
   listingId: string
   quantity: number

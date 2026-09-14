@@ -1,4 +1,4 @@
-import type { TusCommitment } from '@factory/contracts'
+import type { Compromiso } from '@factory/contracts'
 import type { TusMarketplaceService } from '../catalog/index.ts'
 import type { ServiceCalendarService } from '../calendar/index.ts'
 import type {
@@ -43,7 +43,7 @@ export type TusCheckoutResult =
   | ({ status: 'executed' | 'replay' } & TusCheckoutResponse)
   | { status: 'in_progress' | 'conflict' | 'forbidden' }
 export type TusCommitmentReadResult =
-  | { status: 'found'; commitment: TusCommitment }
+  | { status: 'found'; commitment: Compromiso }
   | { status: 'not_found' }
   | { status: 'forbidden' }
 
@@ -162,7 +162,7 @@ export class TusApplicationService {
     return { status: 'found', commitment }
   }
 
-  async lookupCommitment(commitmentId: string): Promise<TusCommitment | null> {
+  async lookupCommitment(commitmentId: string): Promise<Compromiso | null> {
     const commitment = await this.dependencies.commitments.find(commitmentId)
     if (commitment) return commitment
     return this.marketplace?.store.commitments.find(commitmentId) ?? null
@@ -208,7 +208,7 @@ export class TusApplicationService {
 
 function crearReferenciasAuditoria(
   input: TusCheckoutCommand,
-  commitments: readonly TusCommitment[],
+  commitments: readonly Compromiso[],
 ): ReferenciaAuditoria[] {
   return commitments.map((commitment) => ({
     referenceId: `audit-${commitment.commitmentId}`,
@@ -223,7 +223,7 @@ function crearReferenciasAuditoria(
 
 function createCheckoutEvent(
   input: TusCheckoutCommand,
-  commitments: readonly TusCommitment[],
+  commitments: readonly Compromiso[],
   auditReferences: readonly ReferenciaAuditoria[],
   createdAt: number,
 ): TusOutboxRecord {

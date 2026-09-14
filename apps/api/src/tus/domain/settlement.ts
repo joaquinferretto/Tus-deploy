@@ -1,5 +1,5 @@
 import type {
-  CommitmentContext,
+  ContextoCompromiso,
   CompletionEvidence,
   SettlementSnapshot,
   TusDispute,
@@ -13,7 +13,7 @@ const ONLINE_DELIVERY_RELEASE_WINDOW_MS = 24 * 60 * 60 * 1000
 
 export interface SettlementSnapshotInput {
   commitmentId: string
-  context: CommitmentContext
+  context: ContextoCompromiso
   ruleVersion: string
   commissionableBase: number
   evidenceId: string
@@ -42,7 +42,7 @@ export function createSettlementSnapshot(input: SettlementSnapshotInput): Settle
 }
 
 export interface ReleaseEligibilityInput {
-  commitmentContext: CommitmentContext
+  commitmentContext: ContextoCompromiso
   completionEvidence?: CompletionEvidence
   customerConfirmedAt?: string
   dispute?: Pick<TusDispute, 'status'>

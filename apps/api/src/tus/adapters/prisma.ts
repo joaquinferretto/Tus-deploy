@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { TUS_CONTRACT_VERSION, type TusCommitment, type TusReadinessEvidence as EvidenciaHabilitacionContrato, type ReadinessCapability as CapacidadHabilitacionContrato } from '@factory/contracts'
+import { TUS_CONTRACT_VERSION, type Compromiso, type TusReadinessEvidence as EvidenciaHabilitacionContrato, type ReadinessCapability as CapacidadHabilitacionContrato } from '@factory/contracts'
 import {
   TUS_OUTBOX_STATUSES,
   type ReferenciaAuditoria,
@@ -37,7 +37,7 @@ import { evaluarHabilitacion, type RegistroAuditoriaHabilitacion, type PuertoEvi
   TusOutboxStatus,
 */
 
-interface PrismaCommitmentRow extends Omit<TusCommitment, 'createdAt'> {
+interface PrismaCommitmentRow extends Omit<Compromiso, 'createdAt'> {
   id: string
   createdAt: Date
   updatedAt: Date
@@ -266,7 +266,7 @@ export class PrismaTusCommitmentStore implements TusCommitmentStorePort {
     this.client = client
   }
 
-  async saveMany(commitments: readonly TusCommitment[]): Promise<void> {
+  async saveMany(commitments: readonly Compromiso[]): Promise<void> {
     await this.client.tusCommitment.createMany({ data: commitments.map((commitment) => ({
       id: commitment.commitmentId,
       contractVersion: commitment.contractVersion,
@@ -285,26 +285,26 @@ export class PrismaTusCommitmentStore implements TusCommitmentStorePort {
     })) })
   }
 
-  async find(commitmentId: string): Promise<TusCommitment | null> {
+  async find(commitmentId: string): Promise<Compromiso | null> {
     const row = await this.client.tusCommitment.findFirst({ where: { commitmentId } })
     if (!row) return null
     return {
-      contractVersion: row.contractVersion as TusCommitment['contractVersion'],
+      contractVersion: row.contractVersion as Compromiso['contractVersion'],
       commitmentId: row.commitmentId,
       cartId: row.cartId,
       tenantId: row.tenantId,
       merchantId: row.merchantId,
-      context: row.context as TusCommitment['context'],
+      context: row.context as Compromiso['context'],
       amount: row.amount,
       currency: row.currency,
-      status: row.status as TusCommitment['status'],
+      status: row.status as Compromiso['status'],
       lineIds: [...row.lineIds],
       version: row.version,
       createdAt: row.createdAt.toISOString(),
     }
   }
 
-  async update(input: { tenantId: string; commitmentId: string; expectedVersion: number; commitment: TusCommitment }): Promise<TusCommitment | null> {
+  async update(input: { tenantId: string; commitmentId: string; expectedVersion: number; commitment: Compromiso }): Promise<Compromiso | null> {
     const result = await this.client.tusCommitment.updateMany({
       where: { tenantId: input.tenantId, commitmentId: input.commitmentId, version: input.expectedVersion },
       data: { status: input.commitment.status, version: input.commitment.version, updatedAt: new Date(input.commitment.createdAt) },

@@ -1,5 +1,5 @@
 import express, { type Request, type Response, type Router } from 'express'
-import { TUS_CONTRACT_VERSION, type TusCartLine } from '@factory/contracts'
+import { TUS_CONTRACT_VERSION, type LineaCarrito } from '@factory/contracts'
 import type { TusApplicationService, TusCheckoutResult } from '../application/tus-application-service.ts'
 import type {
   TusAuthenticatedTenantContext,
@@ -1041,7 +1041,7 @@ async function recordAuthorizationDenied(
   }
 }
 
-function readLines(value: unknown): TusCartLine[] | null {
+function readLines(value: unknown): LineaCarrito[] | null {
   if (!Array.isArray(value)) return null
   if (value.some((line) => {
     if (!isRecord(line)) return true
@@ -1050,7 +1050,7 @@ function readLines(value: unknown): TusCartLine[] | null {
       || !Number.isFinite(line['amount'])
       || line['amount'] < 0
   })) return null
-  return value as TusCartLine[]
+  return value as LineaCarrito[]
 }
 
 function readMarketplaceLines(value: unknown): MarketplaceCheckoutLine[] | null {

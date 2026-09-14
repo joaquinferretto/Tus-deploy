@@ -1,13 +1,13 @@
-import { TUS_CONTRACT_VERSION, type TusCartLine, type TusCommitment, type TusTenantContext } from '@factory/contracts'
+import { TUS_CONTRACT_VERSION, type LineaCarrito, type Compromiso, type TusTenantContext } from '@factory/contracts'
 
 export interface SplitCartInput extends TusTenantContext {
   cartId: string
-  lines: TusCartLine[]
+  lines: LineaCarrito[]
   createdAt: string
 }
 
-export function splitCartIntoCommitments(input: SplitCartInput): TusCommitment[] {
-  const commitments: TusCommitment[] = []
+export function splitCartIntoCommitments(input: SplitCartInput): Compromiso[] {
+  const commitments: Compromiso[] = []
   for (const context of ['product', 'service'] as const) {
     const lines = input.lines.filter((line) => line.context === context)
     if (lines.length === 0) continue
@@ -39,7 +39,7 @@ export function splitCartIntoCommitments(input: SplitCartInput): TusCommitment[]
 
 export function authorizeCommitmentAccess(
   context: Pick<TusTenantContext, 'tenantId'>,
-  commitment: Pick<TusCommitment, 'tenantId'>,
+  commitment: Pick<Compromiso, 'tenantId'>,
 ): { allowed: true } | { allowed: false; reason: 'tenant_mismatch' } {
   return context.tenantId === commitment.tenantId
     ? { allowed: true }

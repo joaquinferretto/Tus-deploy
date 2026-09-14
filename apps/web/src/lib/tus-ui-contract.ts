@@ -1,4 +1,4 @@
-import type { TusCommitment, TusTenantContext } from '@factory/contracts/tus'
+import type { Compromiso, TusTenantContext } from '@factory/contracts/tus'
 
 export { TUS_LOCALE, formatTusCurrency, formatTusDate, formatTusNumber } from './tus-journeys'
 
@@ -84,7 +84,7 @@ export interface TusWebSessionInput {
 }
 
 export interface CommitmentPresentation {
-  context: TusCommitment['context']
+  context: Compromiso['context']
   label: string
   status: string
   statusTone: 'neutral' | 'warning' | 'danger' | 'success'
@@ -191,7 +191,7 @@ export function sessionRequestContext(session: TusWebSession): TusWebSession {
 }
 
 export function commitmentPresentation(
-  commitment: Pick<TusCommitment, 'context' | 'status'>
+  commitment: Pick<Compromiso, 'context' | 'status'>
 ): CommitmentPresentation {
   const statusTone =
     commitment.status === 'frozen'

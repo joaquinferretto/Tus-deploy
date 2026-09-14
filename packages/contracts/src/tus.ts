@@ -22,9 +22,9 @@ export const TIPOS_PUBLICACION_MERCADO_SERVICIOS = {
   SERVICE: 'service',
 } as const
 
-export type CommitmentContext = (typeof TIPOS_PUBLICACION_MERCADO_SERVICIOS)[keyof typeof TIPOS_PUBLICACION_MERCADO_SERVICIOS]
+export type ContextoCompromiso = (typeof TIPOS_PUBLICACION_MERCADO_SERVICIOS)[keyof typeof TIPOS_PUBLICACION_MERCADO_SERVICIOS]
 
-export const TUS_COMMITMENT_STATUSES = {
+export const ESTADOS_COMPROMISO = {
   PENDING: 'pending',
   CONFIRMED: 'confirmed',
   CANCELLED: 'cancelled',
@@ -34,7 +34,7 @@ export const TUS_COMMITMENT_STATUSES = {
   COMPENSATED: 'compensated',
 } as const
 
-export type CommitmentStatus = (typeof TUS_COMMITMENT_STATUSES)[keyof typeof TUS_COMMITMENT_STATUSES]
+export type EstadoCompromiso = (typeof ESTADOS_COMPROMISO)[keyof typeof ESTADOS_COMPROMISO]
 
 export interface TusTenantContext {
   tenantId: string
@@ -43,24 +43,24 @@ export interface TusTenantContext {
   idempotencyKey?: string
 }
 
-export interface TusCartLine {
+export interface LineaCarrito {
   lineId: string
-  context: CommitmentContext
+  context: ContextoCompromiso
   merchantId: string
   amount: number
   currency: string
 }
 
-export interface TusCommitment {
+export interface Compromiso {
   contractVersion: TusContractVersion
   commitmentId: string
   cartId: string
   tenantId: string
   merchantId: string
-  context: CommitmentContext
+  context: ContextoCompromiso
   amount: number
   currency: string
-  status: CommitmentStatus
+  status: EstadoCompromiso
   lineIds: string[]
   version: number
   createdAt: string
@@ -71,7 +71,7 @@ export interface PublicacionMercadoServicios {
   listingId: string
   tenantId: string
   merchantId: string
-  kind: CommitmentContext
+  kind: ContextoCompromiso
   name: string
   description: string
   cohort: CohorteMercadoServicios
@@ -107,7 +107,7 @@ export interface RespuestaDescubrimientoMercadoServicios {
 export interface LineaConfirmacionCompraMercadoServicios {
   lineId: string
   listingId: string
-  context: CommitmentContext
+  context: ContextoCompromiso
   quantity: number
   availabilityVersion: number
   price?: number
@@ -115,7 +115,7 @@ export interface LineaConfirmacionCompraMercadoServicios {
   slotEnd?: string
 }
 
-export interface CompromisoMercadoServicios extends TusCommitment {
+export interface CompromisoMercadoServicios extends Compromiso {
   listingId: string
   quantity: number
   availabilityVersion: number
@@ -210,7 +210,7 @@ export interface CompletionEvidence {
 export interface SettlementSnapshot {
   contractVersion: TusContractVersion
   commitmentId: string
-  context: CommitmentContext
+  context: ContextoCompromiso
   ruleVersion: string
   commissionableBase: number
   rateBps: number
@@ -370,7 +370,7 @@ export interface TusPosReceipt {
   tenantId: string
   operationId: string
   kind: TusPosOperationKind
-  context: CommitmentContext
+  context: ContextoCompromiso
   amount: number
   currency: string
   status: 'pending' | 'accepted'
@@ -407,7 +407,7 @@ export interface TusPosOperation {
   createdAt: string
   expectedVersion?: number
   kind: TusPosOperationKind
-  context: CommitmentContext
+  context: ContextoCompromiso
   amount: number
   currency: string
 }
@@ -537,7 +537,7 @@ export interface TusReadinessDecision {
   correlationId?: string
 }
 
-export function validateTusCommitment(value: unknown): TusCommitment {
+export function validateTusCommitment(value: unknown): Compromiso {
   if (!isRecord(value)) {
     throw new ContractValidationError('tus-commitment', undefined, 'payload must be an object')
   }
@@ -562,7 +562,7 @@ export function validateTusCommitment(value: unknown): TusCommitment {
   if (typeof value['version'] !== 'number' || !Number.isInteger(value['version']) || value['version'] < 1) {
     throw new ContractValidationError('tus-commitment', TUS_CONTRACT_VERSION, 'version must be a positive integer')
   }
-  return value as unknown as TusCommitment
+  return value as unknown as Compromiso
 }
 
 export function validateTusSettlementSnapshot(value: unknown): SettlementSnapshot {
@@ -813,8 +813,8 @@ function assertTusVersion(contract: string, version: unknown): asserts version i
   }
 }
 
-function isCommitmentStatus(value: unknown): value is CommitmentStatus {
-  return Object.values(TUS_COMMITMENT_STATUSES).includes(value as CommitmentStatus)
+function isCommitmentStatus(value: unknown): value is EstadoCompromiso {
+  return Object.values(ESTADOS_COMPROMISO).includes(value as EstadoCompromiso)
 }
 
 function isReadinessGateKey(value: unknown): value is ReadinessGateKey {

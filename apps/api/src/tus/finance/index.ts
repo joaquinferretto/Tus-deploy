@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import type { CommitmentContext, TusCommitment } from '@factory/contracts'
+import type { ContextoCompromiso, Compromiso } from '@factory/contracts'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import { createCompletionEvidence, type CompletionEvidenceInput } from '../domain/evidence.ts'
 import { isReleaseEligible, type ReleaseEligibility } from '../domain/settlement.ts'
@@ -97,7 +97,7 @@ export interface InstantaneaComision {
   snapshotId: string
   tenantId: string
   commitmentId: string
-  context: CommitmentContext
+  context: ContextoCompromiso
   grossAmount: number
   deductions: number
   commissionableBase: number
@@ -355,7 +355,7 @@ export interface OpcionesServicioFinanzas {
   store: PuertoAlmacenFinanzas
   provider: ProveedorPagoFinanzas
   readiness?: Partial<HabilitacionFinanciera>
-  commitmentLookup: (commitmentId: string) => Promise<TusCommitment | null>
+  commitmentLookup: (commitmentId: string) => Promise<Compromiso | null>
   now?: () => number
   commissionRateBps?: number
   ruleVersion?: string
@@ -657,7 +657,7 @@ export class TusFinanceService {
     return result
   }
 
-  private async requerirCompromiso(tenantId: string, commitmentId: string): Promise<TusCommitment> {
+  private async requerirCompromiso(tenantId: string, commitmentId: string): Promise<Compromiso> {
     const commitment = await this.commitmentLookup(commitmentId)
     if (!commitment) throw new FinanceError(404, 'NOT_FOUND', 'commitment was not found')
     if (commitment.tenantId !== tenantId) throw new FinanceError(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
@@ -684,7 +684,7 @@ export class TusFinanceService {
     return payment
   }
 
-  private async registrarInstantaneaComisionAutoritativa(input: ContextoComandoFinanzas & { commitmentId: string }, commitment: TusCommitment, payment: IntencionPago, now: number): Promise<InstantaneaComision> {
+  private async registrarInstantaneaComisionAutoritativa(input: ContextoComandoFinanzas & { commitmentId: string }, commitment: Compromiso, payment: IntencionPago, now: number): Promise<InstantaneaComision> {
     const commissionAmount = calcularImporteComision(commitment.amount, this.commissionRateBps)
     const snapshot = createCommissionSnapshot({ snapshotId: `snapshot-${commitment.commitmentId}`, tenantId: input.tenantId, commitmentId: commitment.commitmentId, context: commitment.context, grossAmount: commitment.amount, deductions: 0, commissionableBase: commitment.amount, rateBps: this.commissionRateBps, ruleVersion: this.ruleVersion, currency: commitment.currency, providerReference: payment.providerReference!, evidenceId: `payment-authorized:${payment.paymentId}`, commissionAmount, netAmount: commitment.amount - commissionAmount, ledgerStatus: 'held', createdAt: now })
     await this.store.saveSnapshot(snapshot)
@@ -726,7 +726,7 @@ function motivoLiberacion(reason: string | undefined): Exclude<ReleaseEligibilit
   return 'customer_confirmed'
 }
 
-function crearIntencionPago(input: ContextoComandoFinanzas & { commitmentId: string; orderId?: string; posOperationId?: string | null; idempotencyKey: string }, commitment: TusCommitment, providerReference: string | null, providerStatus: EstadoPagoProveedorFinanzas, commercialStatus: EstadoComercialFinanzas, source: IntencionPago['source'], now: number, splitPolicy: PoliticaDistribucionPago): IntencionPago {
+function crearIntencionPago(input: ContextoComandoFinanzas & { commitmentId: string; orderId?: string; posOperationId?: string | null; idempotencyKey: string }, commitment: Compromiso, providerReference: string | null, providerStatus: EstadoPagoProveedorFinanzas, commercialStatus: EstadoComercialFinanzas, source: IntencionPago['source'], now: number, splitPolicy: PoliticaDistribucionPago): IntencionPago {
   validarDineroExacto(commitment.currency, commitment.amount)
   return { contractVersion: TUS_CONTRACT_VERSION, paymentId: `payment-${commitment.commitmentId}`, tenantId: input.tenantId, commitmentId: commitment.commitmentId, provider: 'mercado-pago', providerReference, providerStatus, commercialStatus, amount: commitment.amount, currency: commitment.currency, idempotencyKey: input.idempotencyKey, correlationId: input.correlationId, credentialsCollected: false, source, orderId: input.orderId?.trim() || commitment.cartId, posOperationId: input.posOperationId?.trim() || null, merchantOfRecord: 'tus-intermediary', collectionModel: 'intermediary', splitPolicy: Object.freeze({ ...splitPolicy }), releaseAt: now + 5 * 24 * 60 * 60 * 1000, providerEventAt: null, providerError: null, createdAt: now, updatedAt: now }
 }

@@ -1,4 +1,4 @@
-import type { TusCommitment } from '@factory/contracts'
+import type { Compromiso } from '@factory/contracts'
 import {
   TUS_OUTBOX_STATUSES,
   type ReferenciaAuditoria,
@@ -45,20 +45,20 @@ interface TusIdempotencyRecord {
 }
 
 export class InMemoryTusCommitmentStore implements TusCommitmentStorePort {
-  private readonly commitments = new Map<string, TusCommitment>()
+  private readonly commitments = new Map<string, Compromiso>()
 
-  async saveMany(commitments: readonly TusCommitment[]): Promise<void> {
+  async saveMany(commitments: readonly Compromiso[]): Promise<void> {
     for (const commitment of commitments) {
       this.commitments.set(commitmentKey(commitment.tenantId, commitment.commitmentId), structuredClone(commitment))
     }
   }
 
-  async find(commitmentId: string): Promise<TusCommitment | null> {
+  async find(commitmentId: string): Promise<Compromiso | null> {
     const commitment = [...this.commitments.values()].find((candidate) => candidate.commitmentId === commitmentId)
     return commitment ? structuredClone(commitment) : null
   }
 
-  async update(input: { tenantId: string; commitmentId: string; expectedVersion: number; commitment: TusCommitment }): Promise<TusCommitment | null> {
+  async update(input: { tenantId: string; commitmentId: string; expectedVersion: number; commitment: Compromiso }): Promise<Compromiso | null> {
     const key = commitmentKey(input.tenantId, input.commitmentId)
     const current = this.commitments.get(key)
     if (!current || current.version !== input.expectedVersion) return null
@@ -67,11 +67,11 @@ export class InMemoryTusCommitmentStore implements TusCommitmentStorePort {
     return structuredClone(updated)
   }
 
-  snapshot(): Map<string, TusCommitment> {
+  snapshot(): Map<string, Compromiso> {
     return new Map([...this.commitments].map(([key, value]) => [key, structuredClone(value)]))
   }
 
-  restore(snapshot: Map<string, TusCommitment>): void {
+  restore(snapshot: Map<string, Compromiso>): void {
     this.commitments.clear()
     for (const [key, value] of snapshot) this.commitments.set(key, structuredClone(value))
   }

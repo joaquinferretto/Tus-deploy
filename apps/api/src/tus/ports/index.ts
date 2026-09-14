@@ -1,4 +1,4 @@
-import type { CommitmentStatus, TusCartLine, TusCommitment, TusTenantContext } from '@factory/contracts'
+import type { EstadoCompromiso, LineaCarrito, Compromiso, TusTenantContext } from '@factory/contracts'
 
 export const TIPOS_REFERENCIA_AUDITORIA = {
   CREATED: 'commitment.created',
@@ -61,17 +61,17 @@ export interface ReferenciaAuditoria {
   correlationId: string
   commitmentId: string
   referenceType: TipoReferenciaAuditoria
-  status?: CommitmentStatus
-  previousStatus?: CommitmentStatus
+  status?: EstadoCompromiso
+  previousStatus?: EstadoCompromiso
   reason?: string
   metadata?: Record<string, unknown>
   createdAt: string
 }
 
 export interface TusCommitmentStorePort {
-  saveMany(commitments: readonly TusCommitment[]): Promise<void>
-  find(commitmentId: string): Promise<TusCommitment | null>
-  update(input: { tenantId: string; commitmentId: string; expectedVersion: number; commitment: TusCommitment }): Promise<TusCommitment | null>
+  saveMany(commitments: readonly Compromiso[]): Promise<void>
+  find(commitmentId: string): Promise<Compromiso | null>
+  update(input: { tenantId: string; commitmentId: string; expectedVersion: number; commitment: Compromiso }): Promise<Compromiso | null>
 }
 
 export interface TusCommitmentCompensation {
@@ -102,7 +102,7 @@ export interface TusCheckoutCommand extends TusTenantContext {
   requestHash: string
   recordId: string
   expiresAt: number
-  lines: TusCartLine[]
+  lines: LineaCarrito[]
 }
 
 export interface TusOutboxRecord {
@@ -169,10 +169,10 @@ export interface TusIdempotencyStorePort {
 }
 
 export interface TusCheckoutResponse {
-  commitments: TusCommitment[]
+  commitments: Compromiso[]
   auditReferences: ReferenciaAuditoria[]
   operation?: 'checkout' | 'transition' | 'compensation'
-  commitment?: TusCommitment
+  commitment?: Compromiso
   compensation?: TusCommitmentCompensation
 }
 
