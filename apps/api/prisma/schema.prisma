@@ -771,22 +771,23 @@ model InstantaneaComision {
   @@map("TusCommissionSnapshot")
 }
 
-model TusLedgerEntry {
-  id            String   @id
-  entryId       String
-  tenantId      String
-  commitmentId  String
-  entryType     String
-  amount        BigInt
-  currency      String
-  linkedEntryId String?
-  reason        String
-  immutable     Boolean  @default(true)
-  createdAt     DateTime
+model MovimientoContable {
+  id                 String   @id(map: "TusLedgerEntry_pkey")
+  entradaId          String   @map("entryId")
+  tenantId           String   @map("tenantId")
+  compromisoId       String   @map("commitmentId")
+  tipoEntrada        String   @map("entryType")
+  monto              BigInt   @map("amount")
+  moneda             String   @map("currency")
+  entradaVinculadaId String?  @map("linkedEntryId")
+  motivo             String   @map("reason")
+  inmutable          Boolean  @default(true) @map("immutable")
+  fechaCreacion      DateTime @map("createdAt")
 
-  @@unique([tenantId, entryId])
-  @@index([tenantId, commitmentId, createdAt])
-  @@index([tenantId, linkedEntryId])
+  @@unique([tenantId, entradaId], map: "TusLedgerEntry_tenantId_entryId_key")
+  @@index([tenantId, compromisoId, fechaCreacion], map: "TusLedgerEntry_tenantId_commitmentId_createdAt_idx")
+  @@index([tenantId, entradaVinculadaId], map: "TusLedgerEntry_tenantId_linkedEntryId_idx")
+  @@map("TusLedgerEntry")
 }
 
 model EvidenciaFinanciera {
@@ -822,40 +823,42 @@ model ConfirmacionFinanciera {
   @@map("TusFinancialConfirmation")
 }
 
-model TusFinancialFreeze {
-  id            String   @id
-  freezeId      String
-  tenantId      String
-  commitmentId  String
-  reason        String
-  actorId       String
-  correlationId String
-  active        Boolean  @default(true)
-  createdAt     DateTime
+model BloqueoFinanciero {
+  id            String   @id(map: "TusFinancialFreeze_pkey")
+  bloqueoId     String   @map("freezeId")
+  tenantId      String   @map("tenantId")
+  compromisoId  String   @map("commitmentId")
+  motivo        String   @map("reason")
+  actorId       String   @map("actorId")
+  correlacionId String   @map("correlationId")
+  activo        Boolean  @default(true) @map("active")
+  fechaCreacion DateTime @map("createdAt")
 
-  @@unique([tenantId, freezeId])
-  @@unique([tenantId, commitmentId])
-  @@index([tenantId, reason, active])
+  @@unique([tenantId, bloqueoId], map: "TusFinancialFreeze_tenantId_freezeId_key")
+  @@unique([tenantId, compromisoId], map: "TusFinancialFreeze_tenantId_commitmentId_key")
+  @@index([tenantId, motivo, activo], map: "TusFinancialFreeze_tenantId_reason_active_idx")
+  @@map("TusFinancialFreeze")
 }
 
-model TusReconciliationRecord {
-  id               String   @id
-  reconciliationId String
-  tenantId         String
-  commitmentId     String
-  providerReference String
-  providerAmount   BigInt
-  evidenceId       String
-  actorId          String
-  correlationId    String
-  status           String
-  reason           String
-  deterministic    Boolean
-  createdAt        DateTime
+model RegistroConciliacion {
+  id                  String   @id(map: "TusReconciliationRecord_pkey")
+  conciliacionId      String   @map("reconciliationId")
+  tenantId            String   @map("tenantId")
+  compromisoId        String   @map("commitmentId")
+  referenciaProveedor String   @map("providerReference")
+  montoProveedor      BigInt   @map("providerAmount")
+  evidenciaId         String   @map("evidenceId")
+  actorId             String   @map("actorId")
+  correlacionId       String   @map("correlationId")
+  estado              String   @map("status")
+  motivo              String   @map("reason")
+  determinista        Boolean  @map("deterministic")
+  fechaCreacion       DateTime @map("createdAt")
 
-  @@unique([tenantId, reconciliationId])
-  @@unique([tenantId, commitmentId])
-  @@index([tenantId, status, createdAt])
+  @@unique([tenantId, conciliacionId], map: "TusReconciliationRecord_tenantId_reconciliationId_key")
+  @@unique([tenantId, compromisoId], map: "TusReconciliationRecord_tenantId_commitmentId_key")
+  @@index([tenantId, estado, fechaCreacion], map: "TusReconciliationRecord_tenantId_status_createdAt_idx")
+  @@map("TusReconciliationRecord")
 }
 
 // Delivery and POS are operational source-of-truth aggregates. They never

@@ -169,8 +169,8 @@ test('WU2.2 freezes reserve risk, preserves reconciliation evidence, and replays
 test('WU2.2 adds the additive finance migration and append-only ledger guard', () => {
   const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
   const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260827090500_tus_finance/migration.sql'), 'utf8')
-  assert.match(schema, /model TusFinancialFreeze[\s\S]*?reason\s+String/)
-  assert.match(schema, /model TusReconciliationRecord[\s\S]*?deterministic\s+Boolean/)
+  assert.match(schema, /model BloqueoFinanciero[\s\S]*?motivo\s+String/)
+  assert.match(schema, /model RegistroConciliacion[\s\S]*?determinista\s+Boolean/)
   assert.match(migration, /CREATE OR REPLACE FUNCTION[\s\S]*TusLedgerEntry/i)
   assert.match(migration, /append-only/i)
   assert.match(migration, /preserve.*ledger/i)
@@ -296,5 +296,91 @@ test('BUILD 12F2 maps commission, evidence, and confirmation delegates without c
   assert.match(schema, /versionRegla\s+String\s+@map\("ruleVersion"\)/)
   assert.match(schema, /evidenciaId\s+String\s+@map\("evidenceId"\)/)
   assert.match(schema, /@@unique\(\[tenantId, compromisoId\], map: "TusFinancialConfirmation_tenantId_commitmentId_key"\)/)
-  assert.doesNotMatch(schema.match(/model InstantaneaComision[\s\S]*?\n}\n\nmodel TusLedgerEntry/)?.[0] ?? '', /@relation/)
+  assert.doesNotMatch(schema.match(/model InstantaneaComision[\s\S]*?\n}\n\nmodel MovimientoContable/)?.[0] ?? '', /@relation/)
+})
+
+test('BUILD 12F3 maps ledger, freeze, and reconciliation delegates without changing financial values', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaTusFinanceStore } = (await import('./apps/api/src/tus/finance/prisma.ts')).default
+    const captured = {}
+    let ledgerAttempts = 0
+    const client = {
+      movimientoContable: {
+        create: async (input) => { ledgerAttempts += 1; if (ledgerAttempts > 1) { captured.ledgerRewrite = input; throw new Error('duplicate ledger entry') }; captured.ledgerCreate = input; return input.data },
+        findUnique: async (input) => { captured.ledgerFind = input; return captured.ledgerCreate.data },
+        findMany: async (input) => { captured.ledgerList = input; return [captured.ledgerCreate.data] },
+      },
+      bloqueoFinanciero: {
+        upsert: async (input) => { captured.freezeUpsert = input; return input.create },
+        findUnique: async (input) => { captured.freezeFind = input; return captured.freezeUpsert.create },
+      },
+      registroConciliacion: {
+        upsert: async (input) => { captured.reconciliationUpsert = input; return input.create },
+        findUnique: async (input) => { captured.reconciliationFind = input; return captured.reconciliationUpsert.create },
+      },
+    }
+    const store = new PrismaTusFinanceStore(client)
+    const ledger = await store.appendLedger({ entryId: 'entry-12f3', tenantId: 'tenant-a', commitmentId: 'commitment-12f3', entryType: 'gross_authorized', amount: 2500, currency: 'ARS', linkedEntryId: null, reason: 'authorized', immutable: true, createdAt: 1724673600000 })
+    let rewriteCode = ''
+    try { await store.appendLedger({ entryId: 'entry-12f3', tenantId: 'tenant-a', commitmentId: 'commitment-12f3', entryType: 'gross_authorized', amount: 1, currency: 'ARS', linkedEntryId: null, reason: 'rewrite', immutable: true, createdAt: 1724673600000 }) } catch (error) { rewriteCode = error.code }
+    const ledgerList = await store.listLedger('tenant-a', 'commitment-12f3')
+    const freeze = await store.saveFreeze({ freezeId: 'freeze-12f3', tenantId: 'tenant-a', commitmentId: 'commitment-12f3', reason: 'reserve', actorId: 'risk-a', correlationId: 'corr-12f3', active: true, createdAt: 1724673600000 })
+    const loadedFreeze = await store.getFreeze('tenant-a', 'commitment-12f3')
+    const reconciliation = await store.saveReconciliation({ reconciliationId: 'reconciliation-12f3', tenantId: 'tenant-a', commitmentId: 'commitment-12f3', providerReference: 'mp-12f3', providerAmount: 2500, evidenceId: 'evidence-12f3', actorId: 'finance-a', correlationId: 'corr-12f3', status: 'clean', reason: 'matched', deterministic: true, createdAt: 1724673600000 })
+    const loadedReconciliation = await store.getReconciliation('tenant-a', 'commitment-12f3')
+    console.log(JSON.stringify({ ledger, rewriteCode, ledgerFind: captured.ledgerFind, ledgerList, ledgerCreate: captured.ledgerCreate, ledgerListQuery: captured.ledgerList, freeze, loadedFreeze, freezeUpsert: captured.freezeUpsert, freezeFind: captured.freezeFind, reconciliation, loadedReconciliation, reconciliationUpsert: captured.reconciliationUpsert, reconciliationFind: captured.reconciliationFind }))
+  `)
+  const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
+
+  assert.deepEqual(result.ledgerCreate.data, {
+    id: 'entry-12f3',
+    entradaId: 'entry-12f3',
+    tenantId: 'tenant-a',
+    compromisoId: 'commitment-12f3',
+    tipoEntrada: 'gross_authorized',
+    monto: 2500,
+    moneda: 'ARS',
+    entradaVinculadaId: null,
+    motivo: 'authorized',
+    inmutable: true,
+    fechaCreacion: new Date(1724673600000).toISOString(),
+  })
+  assert.equal(result.rewriteCode, 'LEDGER_IMMUTABLE')
+  assert.deepEqual(result.ledgerFind, { where: { tenantId_entradaId: { tenantId: 'tenant-a', entradaId: 'entry-12f3' } } })
+  assert.deepEqual(result.ledgerListQuery, { where: { tenantId: 'tenant-a', compromisoId: 'commitment-12f3' }, orderBy: { fechaCreacion: 'asc' } })
+  assert.deepEqual(result.freezeUpsert.where, { tenantId_compromisoId: { tenantId: 'tenant-a', compromisoId: 'commitment-12f3' } })
+  assert.deepEqual(result.freezeUpsert.create, {
+    id: 'freeze-12f3',
+    bloqueoId: 'freeze-12f3',
+    tenantId: 'tenant-a',
+    compromisoId: 'commitment-12f3',
+    motivo: 'reserve',
+    actorId: 'risk-a',
+    correlacionId: 'corr-12f3',
+    activo: true,
+    fechaCreacion: new Date(1724673600000).toISOString(),
+  })
+  assert.deepEqual(result.reconciliationUpsert.create, {
+    id: 'reconciliation-12f3',
+    conciliacionId: 'reconciliation-12f3',
+    tenantId: 'tenant-a',
+    compromisoId: 'commitment-12f3',
+    referenciaProveedor: 'mp-12f3',
+    montoProveedor: 2500,
+    evidenciaId: 'evidence-12f3',
+    actorId: 'finance-a',
+    correlacionId: 'corr-12f3',
+    estado: 'clean',
+    motivo: 'matched',
+    determinista: true,
+    fechaCreacion: new Date(1724673600000).toISOString(),
+  })
+  assert.match(schema, /model MovimientoContable[\s\S]*?entradaId\s+String\s+@map\("entryId"\)/)
+  assert.match(schema, /model MovimientoContable[\s\S]*?monto\s+BigInt\s+@map\("amount"\)/)
+  assert.match(schema, /model MovimientoContable[\s\S]*?@@map\("TusLedgerEntry"\)/)
+  assert.match(schema, /model BloqueoFinanciero[\s\S]*?motivo\s+String\s+@map\("reason"\)/)
+  assert.match(schema, /model BloqueoFinanciero[\s\S]*?@@map\("TusFinancialFreeze"\)/)
+  assert.match(schema, /model RegistroConciliacion[\s\S]*?montoProveedor\s+BigInt\s+@map\("providerAmount"\)/)
+  assert.match(schema, /model RegistroConciliacion[\s\S]*?@@map\("TusReconciliationRecord"\)/)
+  assert.doesNotMatch(schema, /model (TusLedgerEntry|TusFinancialFreeze|TusReconciliationRecord)\b/)
 })

@@ -26,6 +26,24 @@ type Row = {
   currency?: any
   idempotencyKey?: any
   correlationId?: any
+  entradaId?: any
+  compromisoId?: any
+  tipoEntrada?: any
+  monto?: any
+  moneda?: any
+  entradaVinculadaId?: any
+  motivo?: any
+  inmutable?: any
+  fechaCreacion?: any
+  bloqueoId?: any
+  activo?: any
+  conciliacionId?: any
+  referenciaProveedor?: any
+  montoProveedor?: any
+  evidenciaId?: any
+  correlacionId?: any
+  estado?: any
+  determinista?: any
   source?: any
   createdAt?: any
   updatedAt?: any
@@ -58,15 +76,10 @@ type Row = {
   requestHash?: any
   versionContrato?: any
   pagoId?: any
-  compromisoId?: any
   proveedor?: any
-  referenciaProveedor?: any
   estadoProveedor?: any
   estadoComercial?: any
-  monto?: any
-  moneda?: any
   claveIdempotencia?: any
-  correlacionId?: any
   credencialesRecolectadas?: any
   origen?: any
   ordenId?: any
@@ -77,7 +90,6 @@ type Row = {
   fechaLiberacion?: any
   fechaEventoProveedor?: any
   errorProveedor?: any
-  fechaCreacion?: any
   fechaActualizacion?: any
   hashSolicitud?: any
   respuesta?: any
@@ -90,7 +102,6 @@ type Row = {
   versionRegla?: any
   montoComision?: any
   montoNeto?: any
-  evidenciaId?: any
   estadoContable?: any
   tipo?: any
   fechaOcurrencia?: any
@@ -108,11 +119,11 @@ type Delegate = {
 export type ClientePrismaFinanzas = {
   intencionPago: Delegate
   instantaneaComision: Delegate
-  tusLedgerEntry: Delegate
+  movimientoContable: Delegate
   evidenciaFinanciera: Delegate
   confirmacionFinanciera: Delegate
-  tusFinancialFreeze: Delegate
-  tusReconciliationRecord: Delegate
+  bloqueoFinanciero: Delegate
+  registroConciliacion: Delegate
   idempotenciaFinanciera: Delegate
   eventoWebhookPago: Delegate
 }
@@ -150,10 +161,10 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
 
   async appendLedger(entry: MovimientoContable): Promise<MovimientoContable> {
     try {
-      const row = await this.client.tusLedgerEntry.create({ data: convertirMovimientoContableEnFila(entry) })
+      const row = await this.client.movimientoContable.create({ data: convertirMovimientoContableEnFila(entry) })
       return convertirFilaEnMovimientoContable(row)
     } catch {
-      const existing = await this.client.tusLedgerEntry.findUnique({ where: { tenantId_entryId: { tenantId: entry.tenantId, entryId: entry.entryId } } })
+      const existing = await this.client.movimientoContable.findUnique({ where: { tenantId_entradaId: { tenantId: entry.tenantId, entradaId: entry.entryId } } })
       if (!existing) throw new Error('ledger entry append failed')
       const persisted = convertirFilaEnMovimientoContable(existing)
       if (JSON.stringify(persisted) !== JSON.stringify(entry)) throw new FinanceError(409, 'LEDGER_IMMUTABLE', 'ledger entries are append-only')
@@ -162,7 +173,7 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
   }
 
   async listLedger(tenantId: string, commitmentId: string): Promise<MovimientoContable[]> {
-    const rows = await this.client.tusLedgerEntry.findMany({ where: { tenantId, commitmentId }, orderBy: { createdAt: 'asc' } })
+    const rows = await this.client.movimientoContable.findMany({ where: { tenantId, compromisoId: commitmentId }, orderBy: { fechaCreacion: 'asc' } })
     return rows.map(convertirFilaEnMovimientoContable)
   }
 
@@ -188,12 +199,12 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
   }
 
   async saveFreeze(freeze: CongelamientoFinanciero): Promise<CongelamientoFinanciero> {
-    const row = await this.client.tusFinancialFreeze.upsert({ where: { tenantId_commitmentId: { tenantId: freeze.tenantId, commitmentId: freeze.commitmentId } }, create: convertirCongelamientoFinancieroEnFila(freeze), update: convertirCongelamientoFinancieroEnFila(freeze) })
+    const row = await this.client.bloqueoFinanciero.upsert({ where: { tenantId_compromisoId: { tenantId: freeze.tenantId, compromisoId: freeze.commitmentId } }, create: convertirCongelamientoFinancieroEnFila(freeze), update: convertirCongelamientoFinancieroEnFila(freeze) })
     return convertirFilaEnCongelamientoFinanciero(row)
   }
 
   async getFreeze(tenantId: string, commitmentId: string): Promise<CongelamientoFinanciero | null> {
-    const row = await this.client.tusFinancialFreeze.findUnique({ where: { tenantId_commitmentId: { tenantId, commitmentId } } })
+    const row = await this.client.bloqueoFinanciero.findUnique({ where: { tenantId_compromisoId: { tenantId, compromisoId: commitmentId } } })
     return row ? convertirFilaEnCongelamientoFinanciero(row) : null
   }
 
@@ -207,12 +218,12 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
   }
 
   async getReconciliation(tenantId: string, commitmentId: string): Promise<ResultadoConciliacion | null> {
-    const row = await this.client.tusReconciliationRecord.findUnique({ where: { tenantId_commitmentId: { tenantId, commitmentId } } })
+    const row = await this.client.registroConciliacion.findUnique({ where: { tenantId_compromisoId: { tenantId, compromisoId: commitmentId } } })
     return row ? convertirFilaEnResultadoConciliacion(row) : null
   }
 
   async saveReconciliation(result: ResultadoConciliacion): Promise<ResultadoConciliacion> {
-    const row = await this.client.tusReconciliationRecord.upsert({ where: { tenantId_commitmentId: { tenantId: result.tenantId, commitmentId: result.commitmentId } }, create: convertirResultadoConciliacionEnFila(result), update: convertirResultadoConciliacionEnFila(result) })
+    const row = await this.client.registroConciliacion.upsert({ where: { tenantId_compromisoId: { tenantId: result.tenantId, compromisoId: result.commitmentId } }, create: convertirResultadoConciliacionEnFila(result), update: convertirResultadoConciliacionEnFila(result) })
     return convertirFilaEnResultadoConciliacion(row)
   }
 }
@@ -236,11 +247,11 @@ function convertirFilaEnInstantaneaComision(row: Row): InstantaneaComision {
 }
 
 function convertirMovimientoContableEnFila(value: MovimientoContable): Row {
-  return { ...value, id: value.entryId, createdAt: new Date(value.createdAt) }
+  return { id: value.entryId, entradaId: value.entryId, tenantId: value.tenantId, compromisoId: value.commitmentId, tipoEntrada: value.entryType, monto: value.amount, moneda: value.currency, entradaVinculadaId: value.linkedEntryId, motivo: value.reason, inmutable: value.immutable, fechaCreacion: new Date(value.createdAt) }
 }
 
 function convertirFilaEnMovimientoContable(row: Row): MovimientoContable {
-  return { entryId: texto(row.entryId), tenantId: texto(row.tenantId), commitmentId: texto(row.commitmentId), entryType: texto(row.entryType) as MovimientoContable['entryType'], amount: numero(row.amount), currency: texto(row.currency), linkedEntryId: textoNullable(row.linkedEntryId), reason: texto(row.reason), immutable: true, createdAt: fechaEnMilisegundos(row.createdAt) }
+  return { entryId: texto(row.entradaId), tenantId: texto(row.tenantId), commitmentId: texto(row.compromisoId), entryType: texto(row.tipoEntrada) as MovimientoContable['entryType'], amount: numero(row.monto), currency: texto(row.moneda), linkedEntryId: textoNullable(row.entradaVinculadaId), reason: texto(row.motivo), immutable: true, createdAt: fechaEnMilisegundos(row.fechaCreacion) }
 }
 
 function convertirEvidenciaFinancieraEnFila(value: EvidenciaFinanciera): Row {
@@ -260,21 +271,21 @@ function convertirFilaEnConfirmacionCumplimiento(row: Row): ConfirmacionCumplimi
 }
 
 function convertirCongelamientoFinancieroEnFila(value: CongelamientoFinanciero): Row {
-  return { ...value, id: value.freezeId, createdAt: new Date(value.createdAt) }
+  return { id: value.freezeId, bloqueoId: value.freezeId, tenantId: value.tenantId, compromisoId: value.commitmentId, motivo: value.reason, actorId: value.actorId, correlacionId: value.correlationId, activo: value.active, fechaCreacion: new Date(value.createdAt) }
 }
 
 function convertirFilaEnCongelamientoFinanciero(row: Row): CongelamientoFinanciero {
-  return { freezeId: texto(row.freezeId), tenantId: texto(row.tenantId), commitmentId: texto(row.commitmentId), reason: texto(row.reason) as CongelamientoFinanciero['reason'], actorId: texto(row.actorId), correlationId: texto(row.correlationId), active: true, createdAt: fechaEnMilisegundos(row.createdAt) }
+  return { freezeId: texto(row.bloqueoId), tenantId: texto(row.tenantId), commitmentId: texto(row.compromisoId), reason: texto(row.motivo) as CongelamientoFinanciero['reason'], actorId: texto(row.actorId), correlationId: texto(row.correlacionId), active: true, createdAt: fechaEnMilisegundos(row.fechaCreacion) }
 }
 
 function convertirResultadoConciliacionEnFila(value: ResultadoConciliacion): Row {
-  return { ...value, id: value.reconciliationId, createdAt: new Date(value.createdAt) }
+  return { id: value.reconciliationId, conciliacionId: value.reconciliationId, tenantId: value.tenantId, compromisoId: value.commitmentId, referenciaProveedor: value.providerReference, montoProveedor: value.providerAmount, evidenciaId: value.evidenceId, actorId: value.actorId, correlacionId: value.correlationId, estado: value.status, motivo: value.reason, determinista: value.deterministic, fechaCreacion: new Date(value.createdAt) }
 }
 
 function convertirFilaEnResultadoConciliacion(row: Row): ResultadoConciliacion {
-  const reconciliationId = texto(row.reconciliationId)
-  const commitmentId = texto(row.commitmentId)
-  return { reconciliationId, tenantId: texto(row.tenantId), commitmentId, providerReference: texto(row.providerReference), providerAmount: numero(row.providerAmount), evidenceId: textoOpcional(row.evidenceId) ?? `reconciliation-evidence-${commitmentId}`, actorId: textoOpcional(row.actorId) ?? 'finance-reconciliation', correlationId: textoOpcional(row.correlationId) ?? `reconciliation-${reconciliationId}`, status: texto(row.status) as ResultadoConciliacion['status'], reason: texto(row.reason) as ResultadoConciliacion['reason'], deterministic: row.deterministic === true, createdAt: fechaEnMilisegundos(row.createdAt) }
+  const reconciliationId = texto(row.conciliacionId)
+  const commitmentId = texto(row.compromisoId)
+  return { reconciliationId, tenantId: texto(row.tenantId), commitmentId, providerReference: texto(row.referenciaProveedor), providerAmount: numero(row.montoProveedor), evidenceId: textoOpcional(row.evidenciaId) ?? `reconciliation-evidence-${commitmentId}`, actorId: textoOpcional(row.actorId) ?? 'finance-reconciliation', correlationId: textoOpcional(row.correlacionId) ?? `reconciliation-${reconciliationId}`, status: texto(row.estado) as ResultadoConciliacion['status'], reason: texto(row.motivo) as ResultadoConciliacion['reason'], deterministic: row.determinista === true, createdAt: fechaEnMilisegundos(row.fechaCreacion) }
 }
 
 function texto(value: unknown): string {
