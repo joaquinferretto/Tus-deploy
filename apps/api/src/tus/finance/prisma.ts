@@ -81,6 +81,21 @@ type Row = {
   fechaActualizacion?: any
   hashSolicitud?: any
   respuesta?: any
+  instantaneaId?: any
+  contexto?: any
+  montoBruto?: any
+  deducciones?: any
+  baseComisionable?: any
+  tasaPuntosBase?: any
+  versionRegla?: any
+  montoComision?: any
+  montoNeto?: any
+  evidenciaId?: any
+  estadoContable?: any
+  tipo?: any
+  fechaOcurrencia?: any
+  confirmacionId?: any
+  fechaConfirmacion?: any
 }
 
 type Delegate = {
@@ -92,10 +107,10 @@ type Delegate = {
 
 export type ClientePrismaFinanzas = {
   intencionPago: Delegate
-  tusCommissionSnapshot: Delegate
+  instantaneaComision: Delegate
   tusLedgerEntry: Delegate
-  tusFinancialEvidence: Delegate
-  tusFinancialConfirmation: Delegate
+  evidenciaFinanciera: Delegate
+  confirmacionFinanciera: Delegate
   tusFinancialFreeze: Delegate
   tusReconciliationRecord: Delegate
   idempotenciaFinanciera: Delegate
@@ -124,12 +139,12 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
   }
 
   async getSnapshot(tenantId: string, commitmentId: string): Promise<InstantaneaComision | null> {
-    const row = await this.client.tusCommissionSnapshot.findUnique({ where: { tenantId_commitmentId: { tenantId, commitmentId } } })
+    const row = await this.client.instantaneaComision.findUnique({ where: { tenantId_compromisoId: { tenantId, compromisoId: commitmentId } } })
     return row ? convertirFilaEnInstantaneaComision(row) : null
   }
 
   async saveSnapshot(snapshot: InstantaneaComision): Promise<InstantaneaComision> {
-    const row = await this.client.tusCommissionSnapshot.create({ data: convertirInstantaneaComisionEnFila(snapshot) })
+    const row = await this.client.instantaneaComision.create({ data: convertirInstantaneaComisionEnFila(snapshot) })
     return convertirFilaEnInstantaneaComision(row)
   }
 
@@ -152,23 +167,23 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
   }
 
   async saveEvidence(evidence: EvidenciaFinanciera): Promise<EvidenciaFinanciera> {
-    const row = await this.client.tusFinancialEvidence.upsert({ where: { tenantId_evidenceId: { tenantId: evidence.tenantId, evidenceId: evidence.evidenceId } }, create: convertirEvidenciaFinancieraEnFila(evidence), update: convertirEvidenciaFinancieraEnFila(evidence) })
+    const row = await this.client.evidenciaFinanciera.upsert({ where: { tenantId_evidenciaId: { tenantId: evidence.tenantId, evidenciaId: evidence.evidenceId } }, create: convertirEvidenciaFinancieraEnFila(evidence), update: convertirEvidenciaFinancieraEnFila(evidence) })
     return convertirFilaEnEvidenciaFinanciera(row)
   }
 
   async listEvidence(tenantId: string, commitmentId: string): Promise<EvidenciaFinanciera[]> {
-    const rows = await this.client.tusFinancialEvidence.findMany({ where: { tenantId, commitmentId }, orderBy: { occurredAt: 'asc' } })
+    const rows = await this.client.evidenciaFinanciera.findMany({ where: { tenantId, compromisoId: commitmentId }, orderBy: { fechaOcurrencia: 'asc' } })
     return rows.map(convertirFilaEnEvidenciaFinanciera)
   }
 
   async saveConfirmation(confirmation: ConfirmacionCumplimiento): Promise<ConfirmacionCumplimiento> {
     const values = convertirConfirmacionCumplimientoEnFila(confirmation)
-    const row = await this.client.tusFinancialConfirmation.upsert({ where: { tenantId_commitmentId: { tenantId: confirmation.tenantId, commitmentId: confirmation.commitmentId } }, create: values, update: values })
+    const row = await this.client.confirmacionFinanciera.upsert({ where: { tenantId_compromisoId: { tenantId: confirmation.tenantId, compromisoId: confirmation.commitmentId } }, create: values, update: values })
     return convertirFilaEnConfirmacionCumplimiento(row)
   }
 
   async getConfirmation(tenantId: string, commitmentId: string): Promise<ConfirmacionCumplimiento | null> {
-    const row = await this.client.tusFinancialConfirmation.findUnique({ where: { tenantId_commitmentId: { tenantId, commitmentId } } })
+    const row = await this.client.confirmacionFinanciera.findUnique({ where: { tenantId_compromisoId: { tenantId, compromisoId: commitmentId } } })
     return row ? convertirFilaEnConfirmacionCumplimiento(row) : null
   }
 
@@ -213,11 +228,11 @@ function convertirFilaEnIntencionPago(row: Row): IntencionPago {
 }
 
 function convertirInstantaneaComisionEnFila(value: InstantaneaComision): Row {
-  return { ...value, id: value.snapshotId, createdAt: new Date(value.createdAt) }
+  return { id: value.snapshotId, versionContrato: value.contractVersion, instantaneaId: value.snapshotId, tenantId: value.tenantId, compromisoId: value.commitmentId, contexto: value.context, montoBruto: value.grossAmount, deducciones: value.deductions, baseComisionable: value.commissionableBase, tasaPuntosBase: value.rateBps, versionRegla: value.ruleVersion, montoComision: value.commissionAmount, montoNeto: value.netAmount, moneda: value.currency, referenciaProveedor: value.providerReference, evidenciaId: value.evidenceId, estadoContable: value.ledgerStatus, fechaCreacion: new Date(value.createdAt) }
 }
 
 function convertirFilaEnInstantaneaComision(row: Row): InstantaneaComision {
-  return { contractVersion: texto(row.contractVersion) as InstantaneaComision['contractVersion'], snapshotId: texto(row.snapshotId), tenantId: texto(row.tenantId), commitmentId: texto(row.commitmentId), context: texto(row.context) as InstantaneaComision['context'], grossAmount: numero(row.grossAmount), deductions: numero(row.deductions), commissionableBase: numero(row.commissionableBase), rateBps: numero(row.rateBps), ruleVersion: texto(row.ruleVersion), commissionAmount: numero(row.commissionAmount), netAmount: numero(row.netAmount), currency: texto(row.currency), providerReference: texto(row.providerReference), evidenceId: texto(row.evidenceId), ledgerStatus: texto(row.ledgerStatus) as InstantaneaComision['ledgerStatus'], createdAt: fechaEnMilisegundos(row.createdAt) }
+  return { contractVersion: texto(row.versionContrato) as InstantaneaComision['contractVersion'], snapshotId: texto(row.instantaneaId), tenantId: texto(row.tenantId), commitmentId: texto(row.compromisoId), context: texto(row.contexto) as InstantaneaComision['context'], grossAmount: numero(row.montoBruto), deductions: numero(row.deducciones), commissionableBase: numero(row.baseComisionable), rateBps: numero(row.tasaPuntosBase), ruleVersion: texto(row.versionRegla), commissionAmount: numero(row.montoComision), netAmount: numero(row.montoNeto), currency: texto(row.moneda), providerReference: texto(row.referenciaProveedor), evidenceId: texto(row.evidenciaId), ledgerStatus: texto(row.estadoContable) as InstantaneaComision['ledgerStatus'], createdAt: fechaEnMilisegundos(row.fechaCreacion) }
 }
 
 function convertirMovimientoContableEnFila(value: MovimientoContable): Row {
@@ -229,19 +244,19 @@ function convertirFilaEnMovimientoContable(row: Row): MovimientoContable {
 }
 
 function convertirEvidenciaFinancieraEnFila(value: EvidenciaFinanciera): Row {
-  return { ...value, id: value.evidenceId, occurredAt: new Date(value.occurredAt), createdAt: new Date() }
+  return { id: value.evidenceId, versionContrato: value.contractVersion, evidenciaId: value.evidenceId, tenantId: value.tenantId, compromisoId: value.commitmentId, actorId: value.actorId, correlacionId: value.correlationId, tipo: value.kind, fechaOcurrencia: new Date(value.occurredAt), fechaCreacion: new Date() }
 }
 
 function convertirFilaEnEvidenciaFinanciera(row: Row): EvidenciaFinanciera {
-  return { contractVersion: texto(row.contractVersion) as EvidenciaFinanciera['contractVersion'], evidenceId: texto(row.evidenceId), tenantId: texto(row.tenantId), commitmentId: texto(row.commitmentId), actorId: texto(row.actorId), correlationId: texto(row.correlationId), kind: texto(row.kind) as EvidenciaFinanciera['kind'], occurredAt: new Date(fechaEnMilisegundos(row.occurredAt)).toISOString() }
+  return { contractVersion: texto(row.versionContrato) as EvidenciaFinanciera['contractVersion'], evidenceId: texto(row.evidenciaId), tenantId: texto(row.tenantId), commitmentId: texto(row.compromisoId), actorId: texto(row.actorId), correlationId: texto(row.correlacionId), kind: texto(row.tipo) as EvidenciaFinanciera['kind'], occurredAt: new Date(fechaEnMilisegundos(row.fechaOcurrencia)).toISOString() }
 }
 
 function convertirConfirmacionCumplimientoEnFila(value: ConfirmacionCumplimiento): Row {
-  return { ...value, id: value.confirmationId, confirmedAt: new Date(value.confirmedAt), createdAt: new Date() }
+  return { id: value.confirmationId, confirmacionId: value.confirmationId, tenantId: value.tenantId, compromisoId: value.commitmentId, actorId: value.actorId, correlacionId: value.correlationId, fechaConfirmacion: new Date(value.confirmedAt), fechaCreacion: new Date() }
 }
 
 function convertirFilaEnConfirmacionCumplimiento(row: Row): ConfirmacionCumplimiento {
-  return { confirmationId: texto(row.confirmationId), tenantId: texto(row.tenantId), commitmentId: texto(row.commitmentId), actorId: texto(row.actorId), correlationId: texto(row.correlationId), confirmedAt: new Date(fechaEnMilisegundos(row.confirmedAt)).toISOString() }
+  return { confirmationId: texto(row.confirmacionId), tenantId: texto(row.tenantId), commitmentId: texto(row.compromisoId), actorId: texto(row.actorId), correlationId: texto(row.correlacionId), confirmedAt: new Date(fechaEnMilisegundos(row.fechaConfirmacion)).toISOString() }
 }
 
 function convertirCongelamientoFinancieroEnFila(value: CongelamientoFinanciero): Row {

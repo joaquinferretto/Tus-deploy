@@ -745,29 +745,30 @@ model IdempotenciaFinanciera {
   @@map("TusFinanceIdempotency")
 }
 
-model TusCommissionSnapshot {
-  id                 String   @id
-  contractVersion    String
-  snapshotId         String
-  tenantId           String
-  commitmentId       String
-  context            String
-  grossAmount        BigInt
-  deductions         BigInt
-  commissionableBase BigInt
-  rateBps            Int
-  ruleVersion        String
-  commissionAmount   BigInt
-  netAmount          BigInt
-  currency           String
-  providerReference  String
-  evidenceId         String
-  ledgerStatus       String
-  createdAt          DateTime
+model InstantaneaComision {
+  id                  String   @id(map: "TusCommissionSnapshot_pkey")
+  versionContrato     String   @map("contractVersion")
+  instantaneaId       String   @map("snapshotId")
+  tenantId            String   @map("tenantId")
+  compromisoId        String   @map("commitmentId")
+  contexto            String   @map("context")
+  montoBruto          BigInt   @map("grossAmount")
+  deducciones         BigInt   @map("deductions")
+  baseComisionable    BigInt   @map("commissionableBase")
+  tasaPuntosBase      Int      @map("rateBps")
+  versionRegla        String   @map("ruleVersion")
+  montoComision       BigInt   @map("commissionAmount")
+  montoNeto           BigInt   @map("netAmount")
+  moneda              String   @map("currency")
+  referenciaProveedor String   @map("providerReference")
+  evidenciaId         String   @map("evidenceId")
+  estadoContable      String   @map("ledgerStatus")
+  fechaCreacion       DateTime @map("createdAt")
 
-  @@unique([tenantId, snapshotId])
-  @@unique([tenantId, commitmentId])
-  @@index([tenantId, ruleVersion])
+  @@unique([tenantId, instantaneaId], map: "TusCommissionSnapshot_tenantId_snapshotId_key")
+  @@unique([tenantId, compromisoId], map: "TusCommissionSnapshot_tenantId_commitmentId_key")
+  @@index([tenantId, versionRegla], map: "TusCommissionSnapshot_tenantId_ruleVersion_idx")
+  @@map("TusCommissionSnapshot")
 }
 
 model TusLedgerEntry {
@@ -788,35 +789,37 @@ model TusLedgerEntry {
   @@index([tenantId, linkedEntryId])
 }
 
-model TusFinancialEvidence {
-  id            String   @id
-  contractVersion String
-  evidenceId    String
-  tenantId      String
-  commitmentId  String
-  actorId       String
-  correlationId String
-  kind          String
-  occurredAt    DateTime
-  createdAt     DateTime
+model EvidenciaFinanciera {
+  id                String   @id(map: "TusFinancialEvidence_pkey")
+  versionContrato   String   @map("contractVersion")
+  evidenciaId       String   @map("evidenceId")
+  tenantId          String   @map("tenantId")
+  compromisoId      String   @map("commitmentId")
+  actorId           String   @map("actorId")
+  correlacionId     String   @map("correlationId")
+  tipo              String   @map("kind")
+  fechaOcurrencia   DateTime @map("occurredAt")
+  fechaCreacion     DateTime @map("createdAt")
 
-  @@unique([tenantId, evidenceId])
-  @@index([tenantId, commitmentId, kind])
+  @@unique([tenantId, evidenciaId], map: "TusFinancialEvidence_tenantId_evidenceId_key")
+  @@index([tenantId, compromisoId, tipo], map: "TusFinancialEvidence_tenantId_commitmentId_kind_idx")
+  @@map("TusFinancialEvidence")
 }
 
-model TusFinancialConfirmation {
-  id             String   @id
-  confirmationId String
-  tenantId       String
-  commitmentId   String
-  actorId        String
-  correlationId  String
-  confirmedAt    DateTime
-  createdAt      DateTime
+model ConfirmacionFinanciera {
+  id                String   @id(map: "TusFinancialConfirmation_pkey")
+  confirmacionId    String   @map("confirmationId")
+  tenantId          String   @map("tenantId")
+  compromisoId      String   @map("commitmentId")
+  actorId           String   @map("actorId")
+  correlacionId     String   @map("correlationId")
+  fechaConfirmacion DateTime @map("confirmedAt")
+  fechaCreacion     DateTime @map("createdAt")
 
-  @@unique([tenantId, confirmationId])
-  @@unique([tenantId, commitmentId])
-  @@index([tenantId, commitmentId, confirmedAt])
+  @@unique([tenantId, confirmacionId], map: "TusFinancialConfirmation_tenantId_confirmationId_key")
+  @@unique([tenantId, compromisoId], map: "TusFinancialConfirmation_tenantId_commitmentId_key")
+  @@index([tenantId, compromisoId, fechaConfirmacion], map: "TusFinancialConfirmation_tenantId_commitmentId_confirmedAt_idx")
+  @@map("TusFinancialConfirmation")
 }
 
 model TusFinancialFreeze {

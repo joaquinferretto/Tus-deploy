@@ -212,3 +212,89 @@ test('PR4 requires explicit completion confirmation after the release window and
   assert.equal(result.providerCalls, 1)
   assert.equal(result.ledger.filter(({ entryType }) => entryType === 'merchant_release').length, 1)
 })
+
+test('BUILD 12F2 maps commission, evidence, and confirmation delegates without changing financial values', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaTusFinanceStore } = (await import('./apps/api/src/tus/finance/prisma.ts')).default
+    const captured = {}
+    const client = {
+      instantaneaComision: {
+        findUnique: async (input) => { captured.snapshotGet = input; return captured.snapshotCreate.data },
+        create: async (input) => { captured.snapshotCreate = input; return input.data },
+      },
+      evidenciaFinanciera: {
+        findMany: async (input) => { captured.evidenceList = input; return [captured.evidenceCreate.create] },
+        upsert: async (input) => { captured.evidenceCreate = input; return input.create },
+      },
+      confirmacionFinanciera: {
+        findUnique: async (input) => { captured.confirmationGet = input; return captured.confirmationCreate.create },
+        upsert: async (input) => { captured.confirmationCreate = input; return input.create },
+      },
+    }
+    const store = new PrismaTusFinanceStore(client)
+    const snapshot = await store.saveSnapshot({ contractVersion: '1.0.0', snapshotId: 'snapshot-12f2', tenantId: 'tenant-a', commitmentId: 'commitment-12f2', context: 'product', grossAmount: 3333, deductions: 111, commissionableBase: 3222, rateBps: 1250, ruleVersion: 'argentina-mvp-v2', commissionAmount: 403, netAmount: 2819, currency: 'ARS', providerReference: 'mp-12f2', evidenceId: 'payment-authorized:payment-12f2', ledgerStatus: 'held', createdAt: 1724673600000 })
+    const loadedSnapshot = await store.getSnapshot('tenant-a', 'commitment-12f2')
+    const evidence = await store.saveEvidence({ contractVersion: '1.0.0', evidenceId: 'evidence-12f2', tenantId: 'tenant-a', commitmentId: 'commitment-12f2', actorId: 'merchant-a', correlationId: 'corr-12f2', kind: 'completion', occurredAt: '2026-08-26T12:00:00.000Z' })
+    const evidenceList = await store.listEvidence('tenant-a', 'commitment-12f2')
+    const confirmation = await store.saveConfirmation({ confirmationId: 'confirmation-12f2', tenantId: 'tenant-a', commitmentId: 'commitment-12f2', actorId: 'customer-a', correlationId: 'corr-12f2', confirmedAt: '2026-08-26T12:01:00.000Z' })
+    const loadedConfirmation = await store.getConfirmation('tenant-a', 'commitment-12f2')
+    console.log(JSON.stringify({ snapshot, loadedSnapshot, snapshotCreate: captured.snapshotCreate, snapshotGet: captured.snapshotGet, evidence, evidenceList, evidenceCreate: captured.evidenceCreate, evidenceListQuery: captured.evidenceList, confirmation, loadedConfirmation, confirmationCreate: captured.confirmationCreate, confirmationGet: captured.confirmationGet }))
+  `)
+  const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
+
+  assert.deepEqual(result.snapshotCreate.data, {
+    id: 'snapshot-12f2',
+    versionContrato: '1.0.0',
+    instantaneaId: 'snapshot-12f2',
+    tenantId: 'tenant-a',
+    compromisoId: 'commitment-12f2',
+    contexto: 'product',
+    montoBruto: 3333,
+    deducciones: 111,
+    baseComisionable: 3222,
+    tasaPuntosBase: 1250,
+    versionRegla: 'argentina-mvp-v2',
+    montoComision: 403,
+    montoNeto: 2819,
+    moneda: 'ARS',
+    referenciaProveedor: 'mp-12f2',
+    evidenciaId: 'payment-authorized:payment-12f2',
+    estadoContable: 'held',
+    fechaCreacion: new Date(1724673600000).toISOString(),
+  })
+  assert.deepEqual(result.snapshotGet, { where: { tenantId_compromisoId: { tenantId: 'tenant-a', compromisoId: 'commitment-12f2' } } })
+  assert.deepEqual(result.evidenceCreate.create, {
+    id: 'evidence-12f2',
+    versionContrato: '1.0.0',
+    evidenciaId: 'evidence-12f2',
+    tenantId: 'tenant-a',
+    compromisoId: 'commitment-12f2',
+    actorId: 'merchant-a',
+    correlacionId: 'corr-12f2',
+    tipo: 'completion',
+    fechaOcurrencia: new Date('2026-08-26T12:00:00.000Z').toISOString(),
+    fechaCreacion: result.evidenceCreate.create.fechaCreacion,
+  })
+  assert.deepEqual(result.evidenceListQuery, { where: { tenantId: 'tenant-a', compromisoId: 'commitment-12f2' }, orderBy: { fechaOcurrencia: 'asc' } })
+  assert.equal(result.evidence.kind, 'completion')
+  assert.deepEqual(result.confirmationCreate.create, {
+    id: 'confirmation-12f2',
+    confirmacionId: 'confirmation-12f2',
+    tenantId: 'tenant-a',
+    compromisoId: 'commitment-12f2',
+    actorId: 'customer-a',
+    correlacionId: 'corr-12f2',
+    fechaConfirmacion: new Date('2026-08-26T12:01:00.000Z').toISOString(),
+    fechaCreacion: result.confirmationCreate.create.fechaCreacion,
+  })
+  assert.deepEqual(result.confirmationGet, { where: { tenantId_compromisoId: { tenantId: 'tenant-a', compromisoId: 'commitment-12f2' } } })
+
+  for (const field of ['montoBruto', 'deducciones', 'baseComisionable', 'montoComision', 'montoNeto']) {
+    assert.match(schema, new RegExp(`${field}\\s+BigInt\\s+@map\\("${{ montoBruto: 'grossAmount', deducciones: 'deductions', baseComisionable: 'commissionableBase', montoComision: 'commissionAmount', montoNeto: 'netAmount' }[field]}"\\)`))
+  }
+  assert.match(schema, /tasaPuntosBase\s+Int\s+@map\("rateBps"\)/)
+  assert.match(schema, /versionRegla\s+String\s+@map\("ruleVersion"\)/)
+  assert.match(schema, /evidenciaId\s+String\s+@map\("evidenceId"\)/)
+  assert.match(schema, /@@unique\(\[tenantId, compromisoId\], map: "TusFinancialConfirmation_tenantId_commitmentId_key"\)/)
+  assert.doesNotMatch(schema.match(/model InstantaneaComision[\s\S]*?\n}\n\nmodel TusLedgerEntry/)?.[0] ?? '', /@relation/)
+})
