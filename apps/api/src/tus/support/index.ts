@@ -163,26 +163,26 @@ export class InMemorySupportStore implements PuertoAlmacenSoporte {
 }
 
 interface ClientePrismaSoporte {
-  tusSupportCase: {
-    upsert(input: { where: { tenantId_caseId: { tenantId: string; caseId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
-    findUnique(input: { where: { tenantId_caseId: { tenantId: string; caseId: string } } }): Promise<Record<string, unknown> | null>
+  casoSoporte: {
+    upsert(input: { where: { tenantId_casoId: { tenantId: string; casoId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
+    findUnique(input: { where: { tenantId_casoId: { tenantId: string; casoId: string } } }): Promise<Record<string, unknown> | null>
     findMany(input: { where: { tenantId: string } }): Promise<Record<string, unknown>[]>
   }
-  tusSupportEvidence: {
+  evidenciaSoporte: {
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
-    findMany(input: { where: { tenantId: string; caseId: string } }): Promise<Record<string, unknown>[]>
+    findMany(input: { where: { tenantId: string; casoId: string } }): Promise<Record<string, unknown>[]>
   }
-  tusSupportTimeline: {
+  lineaTiempoSoporte: {
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
-    findMany(input: { where: { tenantId: string; caseId: string } }): Promise<Record<string, unknown>[]>
+    findMany(input: { where: { tenantId: string; casoId: string } }): Promise<Record<string, unknown>[]>
   }
   tusSupportOutbox: {
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
     findMany(input: { where: { tenantId: string } }): Promise<Record<string, unknown>[]>
   }
-  tusSupportCompensation: {
-    upsert(input: { where: { tenantId_caseId: { tenantId: string; caseId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
-    findUnique(input: { where: { tenantId_caseId: { tenantId: string; caseId: string } } }): Promise<Record<string, unknown> | null>
+  compensacionSoporte: {
+    upsert(input: { where: { tenantId_casoId: { tenantId: string; casoId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
+    findUnique(input: { where: { tenantId_casoId: { tenantId: string; casoId: string } } }): Promise<Record<string, unknown> | null>
   }
 }
 
@@ -196,40 +196,41 @@ export class PrismaSupportStore implements PuertoAlmacenSoporte {
 
   readonly cases = {
     save: async (value: CasoSoporte): Promise<void> => {
-      await this.client.tusSupportCase.upsert({ where: { tenantId_caseId: { tenantId: value.tenantId, caseId: value.caseId } }, create: { id: `${value.tenantId}:${value.caseId}`, ...value, createdAt: new Date(value.createdAt), resolvedAt: value.resolvedAt ? new Date(value.resolvedAt) : null }, update: { ...value, resolvedAt: value.resolvedAt ? new Date(value.resolvedAt) : null } })
+      const data = { casoId: value.caseId, disputaId: value.disputeId, tenantId: value.tenantId, correlacionId: value.correlationId, compromisoId: value.commitmentId, abiertoPor: value.openedBy, categoria: value.category, estado: value.status, resultado: value.outcome, fechaCreacion: new Date(value.createdAt), fechaResolucion: value.resolvedAt ? new Date(value.resolvedAt) : null }
+      await this.client.casoSoporte.upsert({ where: { tenantId_casoId: { tenantId: value.tenantId, casoId: value.caseId } }, create: { id: `${value.tenantId}:${value.caseId}`, ...data }, update: data })
     },
     find: async (tenantId: string, caseId: string): Promise<CasoSoporte | null> => {
-      const row = await this.client.tusSupportCase.findUnique({ where: { tenantId_caseId: { tenantId, caseId } } })
+      const row = await this.client.casoSoporte.findUnique({ where: { tenantId_casoId: { tenantId, casoId: caseId } } })
       return row ? convertirCasoSoporte(row) : null
     },
-    list: async (tenantId: string): Promise<CasoSoporte[]> => (await this.client.tusSupportCase.findMany({ where: { tenantId } })).map(convertirCasoSoporte),
+    list: async (tenantId: string): Promise<CasoSoporte[]> => (await this.client.casoSoporte.findMany({ where: { tenantId } })).map(convertirCasoSoporte),
   }
 
   readonly evidence = {
     save: async (value: EvidenciaSoporte): Promise<void> => {
-      await this.client.tusSupportEvidence.create({ data: { id: `${value.tenantId}:${value.evidenceId}`, ...value, createdAt: new Date(value.createdAt) } })
+      await this.client.evidenciaSoporte.create({ data: { id: `${value.tenantId}:${value.evidenceId}`, evidenciaId: value.evidenceId, casoId: value.caseId, tenantId: value.tenantId, correlacionId: value.correlationId, parte: value.party, resumen: value.summary, presentadaPor: value.submittedBy, fechaCreacion: new Date(value.createdAt) } })
     },
-    list: async (tenantId: string, caseId: string): Promise<EvidenciaSoporte[]> => (await this.client.tusSupportEvidence.findMany({ where: { tenantId, caseId } })).map(convertirEvidenciaSoporte),
+    list: async (tenantId: string, caseId: string): Promise<EvidenciaSoporte[]> => (await this.client.evidenciaSoporte.findMany({ where: { tenantId, casoId: caseId } })).map(convertirEvidenciaSoporte),
   }
 
   readonly timeline = {
     append: async (value: EntradaLineaTiempoSoporte): Promise<void> => {
       this.timelineCache.set(`${value.tenantId}:${value.entryId}`, clone(value))
-      await this.client.tusSupportTimeline.create({ data: { id: `${value.tenantId}:${value.entryId}`, ...value, createdAt: new Date(value.createdAt) } })
+      await this.client.lineaTiempoSoporte.create({ data: { id: `${value.tenantId}:${value.entryId}`, entradaId: value.entryId, casoId: value.caseId, tenantId: value.tenantId, correlacionId: value.correlationId, accion: value.action, actorId: value.actorId, fechaCreacion: new Date(value.createdAt) } })
     },
     list: (tenantId: string, caseId: string): EntradaLineaTiempoSoporte[] => [...this.timelineCache.values()].filter((value) => value.tenantId === tenantId && value.caseId === caseId).map(clone),
   }
 
   readonly compensations = {
     save: async (value: EntradaCompensacionSoporte): Promise<void> => {
-      await this.client.tusSupportCompensation.upsert({
-        where: { tenantId_caseId: { tenantId: value.tenantId, caseId: value.caseId } },
-        create: { id: `${value.tenantId}:${value.entryId}`, ...value, createdAt: new Date() },
+      await this.client.compensacionSoporte.upsert({
+        where: { tenantId_casoId: { tenantId: value.tenantId, casoId: value.caseId } },
+        create: { id: `${value.tenantId}:${value.entryId}`, entradaId: value.entryId, casoId: value.caseId, tenantId: value.tenantId, correlacionId: value.correlationId, monto: value.amount, moneda: value.currency, motivo: value.reason, estado: value.status, liquidacion: value.settlement, fechaCreacion: new Date() },
         update: {},
       })
     },
     find: async (tenantId: string, caseId: string): Promise<EntradaCompensacionSoporte | null> => {
-      const row = await this.client.tusSupportCompensation.findUnique({ where: { tenantId_caseId: { tenantId, caseId } } })
+      const row = await this.client.compensacionSoporte.findUnique({ where: { tenantId_casoId: { tenantId, casoId: caseId } } })
       return row ? convertirCompensacionSoporte(row) : null
     },
   }
@@ -446,16 +447,16 @@ export default { InMemorySupportStore, PrismaSupportStore, SupportError, TusSupp
 
 function convertirCasoSoporte(row: Record<string, unknown>): CasoSoporte {
   return {
-    caseId: String(row['caseId']), disputeId: String(row['disputeId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId'] ?? 'legacy'), commitmentId: String(row['commitmentId']), openedBy: String(row['openedBy']), category: String(row['category']), status: row['status'] as EstadoCaso, outcome: row['outcome'] ? row['outcome'] as ResultadoDisputa : null, createdAt: new Date(String(row['createdAt'])).toISOString(), resolvedAt: row['resolvedAt'] ? new Date(String(row['resolvedAt'])).toISOString() : null,
+    caseId: String(row['casoId']), disputeId: String(row['disputaId']), tenantId: String(row['tenantId']), correlationId: String(row['correlacionId'] ?? 'legacy'), commitmentId: String(row['compromisoId']), openedBy: String(row['abiertoPor']), category: String(row['categoria']), status: row['estado'] as EstadoCaso, outcome: row['resultado'] ? row['resultado'] as ResultadoDisputa : null, createdAt: new Date(String(row['fechaCreacion'])).toISOString(), resolvedAt: row['fechaResolucion'] ? new Date(String(row['fechaResolucion'])).toISOString() : null,
   }
 }
 
 function convertirEvidenciaSoporte(row: Record<string, unknown>): EvidenciaSoporte {
-  return { evidenceId: String(row['evidenceId']), caseId: String(row['caseId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId'] ?? 'legacy'), party: row['party'] as ParteEvidencia, summary: redactText(String(row['summary'])), submittedBy: String(row['submittedBy']), createdAt: new Date(String(row['createdAt'])).toISOString() }
+  return { evidenceId: String(row['evidenciaId']), caseId: String(row['casoId']), tenantId: String(row['tenantId']), correlationId: String(row['correlacionId'] ?? 'legacy'), party: row['parte'] as ParteEvidencia, summary: redactText(String(row['resumen'])), submittedBy: String(row['presentadaPor']), createdAt: new Date(String(row['fechaCreacion'])).toISOString() }
 }
 
 function convertirCompensacionSoporte(row: Record<string, unknown>): EntradaCompensacionSoporte {
-  return { entryId: String(row['entryId']), caseId: String(row['caseId']), tenantId: String(row['tenantId']), correlationId: String(row['correlationId'] ?? 'legacy'), amount: Number(row['amount']), currency: 'ARS', reason: redactText(String(row['reason'])), status: 'recorded', settlement: 'not-released' }
+  return { entryId: String(row['entradaId']), caseId: String(row['casoId']), tenantId: String(row['tenantId']), correlationId: String(row['correlacionId'] ?? 'legacy'), amount: Number(row['monto']), currency: row['moneda'] as 'ARS', reason: redactText(String(row['motivo'])), status: row['estado'] as 'recorded', settlement: row['liquidacion'] as 'not-released' }
 }
 
 function convertirRegistroBandejaSalidaSoporte(row: Record<string, unknown>): RegistroBandejaSalidaSoporte {

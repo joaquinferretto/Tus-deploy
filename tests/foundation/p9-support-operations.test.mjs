@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { join } from 'node:path'
 
@@ -26,6 +27,58 @@ function context(overrides = {}) {
     ...overrides,
   }
 }
+
+test('BUILD 12E1 normaliza Soporte en Prisma y conserva la superficie fisica actual sin FK nuevas', () => {
+  const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
+  const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260827090700_tus_support_reporting/migration.sql'), 'utf8')
+  const supportModels = schema.slice(schema.indexOf('model CasoSoporte {'), schema.indexOf('model TusSupportOutbox {'))
+
+  assert.match(schema, /model CasoSoporte[\s\S]*?casoId\s+String\s+@map\("caseId"\)/)
+  assert.match(schema, /model EvidenciaSoporte[\s\S]*?evidenciaId\s+String\s+@map\("evidenceId"\)/)
+  assert.match(schema, /model LineaTiempoSoporte[\s\S]*?entradaId\s+String\s+@map\("entryId"\)/)
+  assert.match(schema, /model CompensacionSoporte[\s\S]*?monto\s+BigInt\s+@map\("amount"\)/)
+  assert.match(schema, /model TusSupportOutbox\s+\{[\s\S]*?eventType\s+String/)
+  assert.doesNotMatch(schema, /model TusSupport(Case|Evidence|Timeline|Compensation)\s+\{/)
+  assert.doesNotMatch(supportModels, /@relation\(/)
+  for (const table of ['TusSupportCase', 'TusSupportEvidence', 'TusSupportTimeline', 'TusSupportCompensation']) assert.match(schema, new RegExp(`@@map\\("${table}"\\)`))
+  for (const index of ['TusSupportCase_tenantId_caseId_key', 'TusSupportEvidence_tenantId_evidenceId_key', 'TusSupportTimeline_tenantId_entryId_key', 'TusSupportCompensation_tenantId_caseId_key']) assert.match(schema, new RegExp(`map: "${index}"`))
+  for (const table of ['TusSupportCase', 'TusSupportEvidence', 'TusSupportTimeline', 'TusSupportCompensation']) assert.match(migration, new RegExp(`CREATE TABLE "${table}"`))
+})
+
+test('BUILD 12E1 adapta la persistencia Prisma de Soporte a nombres internos españoles', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaSupportStore } = (await import('./apps/api/src/tus/support/index.ts')).default
+    const calls = []
+    const caseRow = { casoId: 'case-a', disputaId: 'dispute-a', tenantId: 'tenant-a', correlacionId: 'corr-a', compromisoId: 'commitment-a', abiertoPor: 'actor-a', categoria: 'delivery', estado: 'open', resultado: null, fechaCreacion: new Date('2026-08-27T12:00:00.000Z'), fechaResolucion: null }
+    const evidenceRow = { evidenciaId: 'evidence-a', casoId: 'case-a', tenantId: 'tenant-a', correlacionId: 'corr-a', parte: 'customer', resumen: 'Evidence', presentadaPor: 'actor-a', fechaCreacion: new Date('2026-08-27T12:01:00.000Z') }
+    const timelineRow = { entradaId: 'entry-a', casoId: 'case-a', tenantId: 'tenant-a', correlacionId: 'corr-a', accion: 'support.case.opened', actorId: 'actor-a', fechaCreacion: new Date('2026-08-27T12:00:00.000Z') }
+    const compensationRow = { entradaId: 'comp-a', casoId: 'case-a', tenantId: 'tenant-a', correlacionId: 'corr-a', monto: 500n, moneda: 'ARS', motivo: 'remedy', estado: 'recorded', liquidacion: 'not-released', fechaCreacion: new Date('2026-08-27T12:02:00.000Z') }
+    const client = {
+      casoSoporte: { upsert: async (input) => calls.push({ model: 'casoSoporte', input }), findUnique: async () => caseRow, findMany: async () => [caseRow] },
+      evidenciaSoporte: { create: async (input) => calls.push({ model: 'evidenciaSoporte', input }), findMany: async () => [evidenceRow] },
+      lineaTiempoSoporte: { create: async (input) => calls.push({ model: 'lineaTiempoSoporte', input }), findMany: async () => [timelineRow] },
+      tusSupportOutbox: { create: async (input) => calls.push({ model: 'tusSupportOutbox', input }), findMany: async () => [] },
+      compensacionSoporte: { upsert: async (input) => calls.push({ model: 'compensacionSoporte', input }), findUnique: async () => compensationRow },
+    }
+    const store = new PrismaSupportStore(client)
+    await store.cases.save({ caseId: 'case-a', disputeId: 'dispute-a', tenantId: 'tenant-a', correlationId: 'corr-a', commitmentId: 'commitment-a', openedBy: 'actor-a', category: 'delivery', status: 'open', outcome: null, createdAt: '2026-08-27T12:00:00.000Z', resolvedAt: null })
+    await store.evidence.save({ evidenceId: 'evidence-a', caseId: 'case-a', tenantId: 'tenant-a', correlationId: 'corr-a', party: 'customer', summary: 'Evidence', submittedBy: 'actor-a', createdAt: '2026-08-27T12:01:00.000Z' })
+    await store.timeline.append({ entryId: 'entry-a', caseId: 'case-a', tenantId: 'tenant-a', correlationId: 'corr-a', action: 'support.case.opened', actorId: 'actor-a', createdAt: '2026-08-27T12:00:00.000Z' })
+    await store.compensations.save({ entryId: 'comp-a', caseId: 'case-a', tenantId: 'tenant-a', correlationId: 'corr-a', amount: 500, currency: 'ARS', reason: 'remedy', status: 'recorded', settlement: 'not-released' })
+    console.log(JSON.stringify({ found: await store.cases.find('tenant-a', 'case-a'), evidence: await store.evidence.list('tenant-a', 'case-a'), timeline: store.timeline.list('tenant-a', 'case-a'), compensation: await store.compensations.find('tenant-a', 'case-a'), calls }))
+  `)
+
+  assert.equal(result.found.caseId, 'case-a')
+  assert.equal(result.evidence[0].evidenceId, 'evidence-a')
+  assert.equal(result.timeline[0].entryId, 'entry-a')
+  assert.equal(result.compensation.amount, 500)
+  assert.deepEqual(result.calls.map(({ model }) => model), ['casoSoporte', 'evidenciaSoporte', 'lineaTiempoSoporte', 'compensacionSoporte'])
+  assert.equal(Object.hasOwn(result.calls[0].input.create, 'caseId'), false)
+  assert.equal(result.calls[0].input.create.casoId, 'case-a')
+  assert.equal(result.calls[1].input.data.evidenciaId, 'evidence-a')
+  assert.equal(result.calls[2].input.data.entradaId, 'entry-a')
+  assert.equal(result.calls[3].input.create.monto, 500)
+})
 
 test('PR8 validates typed WhatsApp actions, sender authorization, quote freshness, confirmation expiry, and exactly-once commitment handoff', () => {
   const result = runTypeScriptScenario(`

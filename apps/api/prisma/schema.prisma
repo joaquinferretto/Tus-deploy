@@ -1144,70 +1144,74 @@ model TusHardeningFixture {
 // Support and discovery projections remain tenant-scoped. They preserve the
 // evidence and audit trail when support actions or publication gates are
 // disabled; no model here authorizes settlement or provider activity.
-model TusSupportCase {
-  id           String    @id
-  caseId       String
-  disputeId    String
-  tenantId     String
-  correlationId String   @default("legacy")
-  commitmentId String
-  openedBy     String
-  category     String
-  status       String
-  outcome      String?
-  createdAt    DateTime
-  resolvedAt   DateTime?
+model CasoSoporte {
+  id              String    @id(map: "TusSupportCase_pkey")
+  casoId          String    @map("caseId")
+  disputaId       String    @map("disputeId")
+  tenantId        String    @map("tenantId")
+  correlacionId   String    @default("legacy") @map("correlationId")
+  compromisoId    String    @map("commitmentId")
+  abiertoPor      String    @map("openedBy")
+  categoria       String    @map("category")
+  estado          String    @map("status")
+  resultado       String?   @map("outcome")
+  fechaCreacion   DateTime  @map("createdAt")
+  fechaResolucion DateTime? @map("resolvedAt")
 
-  @@unique([tenantId, caseId])
-  @@index([tenantId, status, createdAt])
-  @@index([tenantId, commitmentId])
+  @@unique([tenantId, casoId], map: "TusSupportCase_tenantId_caseId_key")
+  @@index([tenantId, estado, fechaCreacion], map: "TusSupportCase_tenantId_status_createdAt_idx")
+  @@index([tenantId, compromisoId], map: "TusSupportCase_tenantId_commitmentId_idx")
+  @@map("TusSupportCase")
 }
 
-model TusSupportEvidence {
-  id          String   @id
-  evidenceId  String
-  caseId      String
-  tenantId    String
-  correlationId String @default("legacy")
-  party       String
-  summary     String
-  submittedBy String
-  createdAt   DateTime
+model EvidenciaSoporte {
+  id            String   @id(map: "TusSupportEvidence_pkey")
+  evidenciaId   String   @map("evidenceId")
+  casoId        String   @map("caseId")
+  tenantId      String   @map("tenantId")
+  correlacionId String   @default("legacy") @map("correlationId")
+  parte         String   @map("party")
+  resumen       String   @map("summary")
+  presentadaPor String   @map("submittedBy")
+  fechaCreacion DateTime @map("createdAt")
 
-  @@unique([tenantId, evidenceId])
-  @@index([tenantId, caseId, party])
+  @@unique([tenantId, evidenciaId], map: "TusSupportEvidence_tenantId_evidenceId_key")
+  @@index([tenantId, casoId, parte], map: "TusSupportEvidence_tenantId_caseId_party_idx")
+  @@map("TusSupportEvidence")
 }
 
-model TusSupportTimeline {
-  id        String   @id
-  entryId   String
-  caseId    String
-  tenantId  String
-  correlationId String @default("legacy")
-  action    String
-  actorId   String
-  createdAt DateTime
+model LineaTiempoSoporte {
+  id            String   @id(map: "TusSupportTimeline_pkey")
+  entradaId     String   @map("entryId")
+  casoId        String   @map("caseId")
+  tenantId      String   @map("tenantId")
+  correlacionId String   @default("legacy") @map("correlationId")
+  accion        String   @map("action")
+  actorId       String   @map("actorId")
+  fechaCreacion DateTime @map("createdAt")
 
-  @@unique([tenantId, entryId])
-  @@index([tenantId, caseId, createdAt])
+  @@unique([tenantId, entradaId], map: "TusSupportTimeline_tenantId_entryId_key")
+  @@index([tenantId, casoId, fechaCreacion], map: "TusSupportTimeline_tenantId_caseId_createdAt_idx")
+  @@map("TusSupportTimeline")
 }
 
-model TusSupportCompensation {
-  id          String   @id
-  entryId     String
-  caseId      String
-  tenantId    String
-  correlationId String @default("legacy")
-  amount      BigInt
-  currency    String
-  reason      String
-  status      String
-  settlement  String
-  createdAt   DateTime @default(now())
+model CompensacionSoporte {
+  id            String   @id(map: "TusSupportCompensation_pkey")
+  entradaId     String   @map("entryId")
+  casoId        String   @map("caseId")
+  tenantId      String   @map("tenantId")
+  correlacionId String   @default("legacy") @map("correlationId")
+  monto         BigInt   @map("amount")
+  moneda        String   @map("currency")
+  motivo        String   @map("reason")
+  estado        String   @map("status")
+  liquidacion   String   @map("settlement")
+  fechaCreacion DateTime @default(now()) @map("createdAt")
 
-  @@unique([tenantId, entryId])
-  @@unique([tenantId, caseId])
-  @@index([tenantId, caseId, createdAt])
+  @@unique([tenantId, entradaId], map: "TusSupportCompensation_tenantId_entryId_key")
+  @@unique([tenantId, casoId], map: "TusSupportCompensation_tenantId_caseId_key")
+  @@index([tenantId, casoId, fechaCreacion], map: "TusSupportCompensation_tenantId_caseId_createdAt_idx")
+  @@map("TusSupportCompensation")
 }
 
 model TusSupportOutbox {
