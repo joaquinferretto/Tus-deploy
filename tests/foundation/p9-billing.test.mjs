@@ -144,12 +144,76 @@ test('the Prisma boundary maps billing minor units to BIGINT-compatible values a
   const result = runScenario(`
     const { PrismaBillingStore } = (await import('./apps/api/src/tus/billing/prisma.ts')).default
     let invoiceData
-    const client = { tusInvoice: { create: async (input) => { invoiceData = input.data; return input.data }, findUnique: async () => null }, tusInvoiceLine: { createMany: async () => ({ count: 1 }), findMany: async () => [] }, tusBillingAccount: { upsert: async (input) => input.create, findUnique: async () => null }, tusSubscriptionPlan: { upsert: async (input) => input.create, findUnique: async () => null }, tusSubscription: { upsert: async (input) => input.create, findUnique: async () => null }, tusCreditNote: { create: async (input) => input.data, findMany: async () => [] }, tusBillingIdempotency: { upsert: async (input) => input.create, findUnique: async () => null }, tusBillingAudit: { create: async (input) => input.data, findMany: async () => [] }, outboxFacturacion: { create: async (input) => input.data, findMany: async () => [] }, tusBillingLedger: { create: async (input) => input.data, findMany: async () => [] } }
+    const client = { factura: { create: async (input) => { invoiceData = input.data; return input.data }, findUnique: async () => null }, lineaFactura: { createMany: async () => ({ count: 1 }), findMany: async () => [] }, cuentaFacturacion: { upsert: async (input) => input.create, findUnique: async () => null }, planSuscripcion: { upsert: async (input) => input.create, findUnique: async () => null }, suscripcion: { upsert: async (input) => input.create, findUnique: async () => null }, notaCredito: { create: async (input) => input.data, findMany: async () => [] }, idempotenciaFacturacion: { upsert: async (input) => input.create, findUnique: async () => null }, auditoriaFacturacion: { create: async (input) => input.data, findMany: async () => [] }, outboxFacturacion: { create: async (input) => input.data, findMany: async () => [] }, movimientoContableFacturacion: { create: async (input) => input.data, findMany: async () => [] } }
     const store = new PrismaBillingStore(client)
     await store.saveInvoice({ invoiceId: 'invoice-prisma', tenantId: 'tenant-a', accountId: 'account-a', commitmentId: 'order-a', paymentId: 'payment-a', orderId: 'order-a', posOperationId: 'pos-a', currency: 'ARS', subtotalMinor: 100n, taxMinor: 0n, feeMinor: 0n, totalMinor: 100n, status: 'draft', number: null, invoiceType: 'commercial', snapshotVersion: 1, taxSnapshot: { authority: 'ARCA/AFIP-external', taxCategory: 'unverified', taxIdentity: 'opaque', ivaTreatment: null, withholdingTreatment: null, externalApprovalReference: null }, lines: [], createdAt: 1700000000000, updatedAt: 1700000000000 })
-     console.log(JSON.stringify({ subtotalBigInt: typeof invoiceData.subtotalMinor === 'bigint', legacySubtotalBigInt: typeof invoiceData.subtotal === 'bigint', legacyTaxBigInt: typeof invoiceData.taxAmount === 'bigint', legacyFeeBigInt: typeof invoiceData.feeAmount === 'bigint', legacyTotalBigInt: typeof invoiceData.total === 'bigint', createdDate: invoiceData.createdAt instanceof Date }))
+     console.log(JSON.stringify({ subtotalBigInt: typeof invoiceData.subtotalMenor === 'bigint', taxBigInt: typeof invoiceData.montoImpuestos === 'bigint', feeBigInt: typeof invoiceData.montoTarifas === 'bigint', totalBigInt: typeof invoiceData.totalMenor === 'bigint', createdDate: invoiceData.fechaCreacion instanceof Date, hasEnglishKeys: ['invoiceId', 'accountId', 'commitmentId', 'paymentId', 'subtotalMinor', 'taxAmount'].some((key) => key in invoiceData) }))
+   `)
+  assert.deepEqual(result, { subtotalBigInt: true, taxBigInt: true, feeBigInt: true, totalBigInt: true, createdDate: true, hasEnglishKeys: false })
+})
+
+test('BUILD 12G maps every billing delegate to Spanish Prisma fields and preserves append-only boundaries', () => {
+  const result = runScenario(`
+    const { PrismaBillingStore } = (await import('./apps/api/src/tus/billing/prisma.ts')).default
+    const captured = {}
+    const client = {
+      cuentaFacturacion: { upsert: async (input) => { captured.account = input; return input.create } },
+      planSuscripcion: { upsert: async (input) => { captured.plan = input; return input.create } },
+      suscripcion: { upsert: async (input) => { captured.subscription = input; return input.create } },
+      factura: { findUnique: async () => null, create: async (input) => { captured.invoice = input; return input.data } },
+      lineaFactura: { createMany: async (input) => { captured.line = input; return { count: input.data.length } } },
+      notaCredito: { create: async (input) => { captured.credit = input; return input.data } },
+      reintegroFacturacion: { create: async (input) => { captured.refund = input; return input.data } },
+      movimientoContableFacturacion: { create: async (input) => { captured.ledger = input; return input.data } },
+      idempotenciaFacturacion: { findUnique: async () => null, create: async (input) => { captured.idempotency = input; return input.data } },
+      auditoriaFacturacion: { create: async (input) => { captured.audit = input; return input.data } },
+      outboxFacturacion: { create: async () => ({}) },
+      gestionMora: { upsert: async (input) => { captured.dunning = input; return input.create } },
+      secuenciaNumeracion: { upsert: async (input) => { captured.sequence = input; return { siguienteNumero: 2 } } },
+      exportacionContable: { create: async (input) => { captured.export = input; return input.data } },
+    }
+    const store = new PrismaBillingStore(client)
+    const plan = { contractVersion: '1.0.0', planId: 'plan-12g', tenantId: 'tenant-a', name: 'Base', amountMinor: 2500n, currency: 'ARS', interval: 'monthly', status: 'active', createdAt: 1700000000000, updatedAt: 1700000000000 }
+    const invoice = { contractVersion: '1.0.0', invoiceId: 'invoice-12g', tenantId: 'tenant-a', accountId: 'account-12g', commitmentId: 'commitment-12g', paymentId: 'payment-12g', orderId: 'order-12g', posOperationId: 'pos-12g', currency: 'ARS', subtotalMinor: 2500n, taxMinor: 0n, feeMinor: 0n, totalMinor: 2500n, status: 'draft', number: null, invoiceType: 'commercial', taxSnapshot: { authority: 'ARCA/AFIP-external', taxIdentity: 'tax-12g', taxCategory: 'unverified', ivaTreatment: null, withholdingTreatment: null, evidenceReference: null, externalApprovalReference: null }, lines: [{ lineId: 'line-12g', description: 'Servicio', quantity: 1, unitMinor: 2500n, taxMinor: 0n, totalMinor: 2500n, currency: 'ARS' }], snapshotVersion: 1, issuedAt: null, createdAt: 1700000000000, updatedAt: 1700000000000 }
+    await store.saveAccount({ contractVersion: '1.0.0', billingAccountId: 'account-12g', tenantId: 'tenant-a', partyId: 'party-12g', role: 'merchant', status: 'active', createdAt: 1700000000000, updatedAt: 1700000000000 })
+    await store.savePlan(plan)
+    await store.saveSubscription({ contractVersion: '1.0.0', subscriptionId: 'subscription-12g', tenantId: 'tenant-a', customerId: 'customer-12g', planId: plan.planId, planSnapshot: plan, currency: 'ARS', amountMinor: 2500n, interval: 'monthly', status: 'active', dunningAttempt: 0, cancelledAt: null, cancelReason: null, createdAt: 1700000000000, updatedAt: 1700000000000 })
+    await store.saveInvoice(invoice)
+    await store.saveCreditNote({ creditNoteId: 'credit-12g', tenantId: 'tenant-a', invoiceId: invoice.invoiceId, paymentId: invoice.paymentId, orderId: invoice.orderId, posOperationId: invoice.posOperationId, currency: 'ARS', amountMinor: 100n, reason: 'adjustment', status: 'accepted', createdAt: 1700000000000 })
+    await store.saveRefund({ refundId: 'refund-12g', tenantId: 'tenant-a', invoiceId: invoice.invoiceId, paymentId: invoice.paymentId, orderId: invoice.orderId, posOperationId: invoice.posOperationId, currency: 'ARS', amountMinor: 100n, reason: 'refund', status: 'accepted', createdAt: 1700000000000 })
+    await store.appendLedger({ entryId: 'entry-12g', tenantId: 'tenant-a', invoiceId: invoice.invoiceId, entryType: 'invoice_issued', amountMinor: 2500n, currency: 'ARS', linkedEntryId: null, creditNoteId: null, refundId: null, paymentId: invoice.paymentId, orderId: invoice.orderId, posOperationId: invoice.posOperationId, immutable: true, createdAt: 1700000000000 })
+    await store.saveDunning({ dunningId: 'dunning-12g', tenantId: 'tenant-a', subscriptionId: 'subscription-12g', attempt: 1, reason: 'provider_unavailable', status: 'retryable', retryAt: 1700003600000, createdAt: 1700000000000 })
+    await store.nextInvoiceNumber('tenant-a')
+    await store.saveIdempotency('tenant-a', 'key-12g', { requestHash: 'hash-12g', response: { invoiceId: invoice.invoiceId } })
+    await store.appendAudit({ auditId: 'audit-12g', tenantId: 'tenant-a', actorId: 'actor-12g', correlationId: 'corr-12g', action: 'created', resourceId: invoice.invoiceId, outcome: 'allowed', reason: null, createdAt: 1700000000000 })
+    await store.saveAccountingExport({ exportId: 'export-12g', tenantId: 'tenant-a', invoiceIds: [invoice.invoiceId], ledgerEntryIds: ['entry-12g'], externalApprovalReference: 'approval-12g', status: 'prepared', postedExternally: false, createdAt: 1700000000000 })
+    const keys = (value) => Object.keys(value).sort()
+    console.log(JSON.stringify({ accountWhere: captured.account.where, accountKeys: keys(captured.account.create), planKeys: keys(captured.plan.create), subscriptionKeys: keys(captured.subscription.create), invoiceKeys: keys(captured.invoice.data), lineKeys: keys(captured.line.data[0]), creditKeys: keys(captured.credit.data), refundKeys: keys(captured.refund.data), ledgerKeys: keys(captured.ledger.data), dunningKeys: keys(captured.dunning.create), sequenceKeys: keys(captured.sequence.create), sequenceUpdate: captured.sequence.update, idempotencyKeys: keys(captured.idempotency.data), auditKeys: keys(captured.audit.data), exportKeys: keys(captured.export.data), moneyTypes: { invoice: typeof captured.invoice.data.totalMenor, line: typeof captured.line.data[0].unitarioMenor, ledger: typeof captured.ledger.data.montoMenor } }))
   `)
-  assert.deepEqual(result, { subtotalBigInt: true, legacySubtotalBigInt: true, legacyTaxBigInt: true, legacyFeeBigInt: true, legacyTotalBigInt: true, createdDate: true })
+  const schema = readFileSync(join(import.meta.dirname, '..', '..', 'apps/api/prisma/schema.prisma'), 'utf8')
+  const models = {
+    Factura: 'TusInvoice',
+    LineaFactura: 'TusInvoiceLine',
+    NotaCredito: 'TusCreditNote',
+    Suscripcion: 'TusSubscription',
+    PerfilFiscal: 'TusTaxProfile',
+    CuentaFacturacion: 'TusBillingAccount',
+    PlanSuscripcion: 'TusSubscriptionPlan',
+    ReintegroFacturacion: 'TusBillingRefund',
+    MovimientoContableFacturacion: 'TusBillingLedger',
+    IdempotenciaFacturacion: 'TusBillingIdempotency',
+    AuditoriaFacturacion: 'TusBillingAudit',
+    GestionMora: 'TusBillingDunning',
+    SecuenciaNumeracion: 'TusBillingNumberSequence',
+    ExportacionContable: 'TusAccountingExport',
+  }
+
+  assert.deepEqual(result.accountWhere, { tenantId_cuentaFacturacionId: { tenantId: 'tenant-a', cuentaFacturacionId: 'account-12g' } })
+  for (const [model, table] of Object.entries(models)) assert.match(schema, new RegExp(`model ${model}[\\s\\S]*?@@map\\("${table}"\\)`))
+  assert.match(schema, /model LineaFactura[\s\S]*?factura\s+Factura\s+@relation\(fields: \[tenantId, facturaId\], references: \[tenantId, facturaId\], map: "TusInvoiceLine_tenant_invoice_fk"\)/)
+  assert.deepEqual(result.moneyTypes, { invoice: 'bigint', line: 'bigint', ledger: 'bigint' })
+  assert.equal(result.sequenceUpdate.siguienteNumero.increment, 1)
+  assert.doesNotMatch(schema, /model Tus(?:Invoice|InvoiceLine|CreditNote|Subscription|TaxProfile|BillingAccount|SubscriptionPlan|BillingRefund|BillingLedger|BillingIdempotency|BillingAudit|BillingDunning|BillingNumberSequence|AccountingExport)\b/)
 })
 
 test('refunds use the same immutable linkage boundary and non-ARS or non-BigInt money fails closed', () => {
@@ -229,7 +293,7 @@ test('Prisma billing issuance uses the controlled draft-to-issued update boundar
     const { PrismaBillingStore } = (await import('./apps/api/src/tus/billing/prisma.ts')).default
     let updated = false
     const draft = { invoiceId: 'invoice-prisma-update', tenantId: 'tenant-a', accountId: 'account-a', commitmentId: 'commitment-a', paymentId: 'payment-a', orderId: 'order-a', posOperationId: null, currency: 'ARS', subtotalMinor: 100n, taxMinor: 0n, feeMinor: 0n, totalMinor: 100n, status: 'draft', number: null, invoiceType: 'commercial', taxSnapshot: { authority: 'ARCA/AFIP-external', taxCategory: 'unverified', taxIdentity: 'opaque', ivaTreatment: null, withholdingTreatment: null, externalApprovalReference: null }, snapshotVersion: 1, issuedAt: null, createdAt: new Date(1700000000000), updatedAt: new Date(1700000000000), lines: [] }
-    const store = new PrismaBillingStore({ tusInvoice: { findUnique: async () => draft, update: async (input) => { updated = true; return { ...draft, ...input.data } }, create: async () => { throw new Error('create must not be used for issuance') } } })
+    const store = new PrismaBillingStore({ factura: { findUnique: async () => draft, update: async (input) => { updated = true; return { ...draft, ...input.data } }, create: async () => { throw new Error('create must not be used for issuance') } } })
     await store.saveInvoice({ ...draft, contractVersion: '1.0.0', status: 'issued', number: 'A-000001', issuedAt: 1700000000000 })
     console.log(JSON.stringify({ updated }))
   `)

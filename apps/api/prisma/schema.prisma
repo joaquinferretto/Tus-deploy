@@ -1518,211 +1518,222 @@ model OutboxWhatsApp {
   @@map("TusWhatsAppOutbox")
 }
 
-model TusInvoice {
-  id            String   @id
-  tenantId      String
-  invoiceId     String
-  accountId     String   @default("")
-  commitmentId  String
-  paymentId     String   @default("")
-  orderId       String   @default("")
-  posOperationId String?
-  currency      String
-  subtotal      BigInt
-  taxAmount     BigInt
-  feeAmount     BigInt
-  total         BigInt
-  subtotalMinor BigInt   @default(0)
-  taxMinor      BigInt   @default(0)
-  feeMinor      BigInt   @default(0)
-  totalMinor    BigInt   @default(0)
-  status        String
-  number        String?
-  invoiceType   String   @default("commercial")
-  taxReference  String?
-  taxSnapshot   Json?
-  snapshotVersion Int    @default(1)
-  issuedAt      DateTime?
-  createdAt     DateTime
-  updatedAt     DateTime
-  lines         TusInvoiceLine[]
+model Factura {
+  id                 String         @id(map: "TusInvoice_pkey")
+  tenantId           String         @map("tenantId")
+  facturaId          String         @map("invoiceId")
+  cuentaId           String         @default("") @map("accountId")
+  compromisoId       String         @map("commitmentId")
+  pagoId             String         @default("") @map("paymentId")
+  ordenId            String         @default("") @map("orderId")
+  operacionPosId     String?        @map("posOperationId")
+  moneda             String         @map("currency")
+  subtotal           BigInt         @map("subtotal")
+  montoImpuestos     BigInt         @map("taxAmount")
+  montoTarifas       BigInt         @map("feeAmount")
+  total              BigInt         @map("total")
+  subtotalMenor      BigInt         @default(0) @map("subtotalMinor")
+  impuestosMenor     BigInt         @default(0) @map("taxMinor")
+  tarifasMenor       BigInt         @default(0) @map("feeMinor")
+  totalMenor         BigInt         @default(0) @map("totalMinor")
+  estado             String         @map("status")
+  numero             String?        @map("number")
+  tipoFactura        String         @default("commercial") @map("invoiceType")
+  referenciaFiscal   String?        @map("taxReference")
+  instantaneaFiscal  Json?          @map("taxSnapshot")
+  versionInstantanea Int            @default(1) @map("snapshotVersion")
+  fechaEmision       DateTime?      @map("issuedAt")
+  fechaCreacion      DateTime       @map("createdAt")
+  fechaActualizacion DateTime       @map("updatedAt")
+  lineas             LineaFactura[]
 
-  @@unique([tenantId, invoiceId])
-  @@index([tenantId, commitmentId, status])
+  @@unique([tenantId, facturaId], map: "TusInvoice_tenantId_invoiceId_key")
+  @@index([tenantId, compromisoId, estado], map: "TusInvoice_tenantId_commitmentId_status_idx")
+  @@map("TusInvoice")
 }
 
-model TusInvoiceLine {
-  id          String   @id
-  tenantId    String
-  invoiceId   String
-  lineId      String   @default("")
-  description String
-  quantity    Int
-  unitMinor   BigInt
-  taxMinor    BigInt
-  totalMinor  BigInt
-  currency    String   @default("ARS")
-  snapshot    Json?
-  createdAt   DateTime
-  invoice     TusInvoice @relation(fields: [tenantId, invoiceId], references: [tenantId, invoiceId])
+model LineaFactura {
+  id             String   @id(map: "TusInvoiceLine_pkey")
+  tenantId       String   @map("tenantId")
+  facturaId      String   @map("invoiceId")
+  lineaId        String   @default("") @map("lineId")
+  descripcion    String   @map("description")
+  cantidad       Int      @map("quantity")
+  unitarioMenor  BigInt   @map("unitMinor")
+  impuestosMenor BigInt   @map("taxMinor")
+  totalMenor     BigInt   @map("totalMinor")
+  moneda         String   @default("ARS") @map("currency")
+  instantanea    Json?    @map("snapshot")
+  fechaCreacion  DateTime @map("createdAt")
+  factura        Factura  @relation(fields: [tenantId, facturaId], references: [tenantId, facturaId], map: "TusInvoiceLine_tenant_invoice_fk")
 
-  @@unique([tenantId, id])
-  @@index([tenantId, invoiceId])
+  @@unique([tenantId, id], map: "TusInvoiceLine_tenantId_id_key")
+  @@index([tenantId, facturaId], map: "TusInvoiceLine_tenantId_invoiceId_idx")
+  @@map("TusInvoiceLine")
 }
 
-model TusCreditNote {
-  id           String   @id
-  tenantId     String
-  creditNoteId String
-  invoiceId    String
-  paymentId    String   @default("")
-  orderId      String   @default("")
-  posOperationId String?
-  currency     String
-  amountMinor  BigInt
-  reason       String
-  status       String
-  createdAt    DateTime
+model NotaCredito {
+  id             String   @id(map: "TusCreditNote_pkey")
+  tenantId       String   @map("tenantId")
+  notaCreditoId  String   @map("creditNoteId")
+  facturaId      String   @map("invoiceId")
+  pagoId         String   @default("") @map("paymentId")
+  ordenId        String   @default("") @map("orderId")
+  operacionPosId String?  @map("posOperationId")
+  moneda         String   @map("currency")
+  montoMenor     BigInt   @map("amountMinor")
+  motivo         String   @map("reason")
+  estado         String   @map("status")
+  fechaCreacion  DateTime @map("createdAt")
 
-  @@unique([tenantId, creditNoteId])
-  @@index([tenantId, invoiceId, status])
+  @@unique([tenantId, notaCreditoId], map: "TusCreditNote_tenantId_creditNoteId_key")
+  @@index([tenantId, facturaId, estado], map: "TusCreditNote_tenantId_invoiceId_status_idx")
+  @@map("TusCreditNote")
 }
 
-model TusSubscription {
-  id             String   @id
-  tenantId       String
-  subscriptionId String
-  customerId     String
-  planId         String   @default("")
-  planSnapshot   Json?
-  currency       String
-  amountMinor    BigInt
-  interval       String
-  status         String
-  dunningAttempt Int      @default(0)
-  cancelReason   String?
-  cancelledAt    DateTime?
-  createdAt      DateTime
-  updatedAt      DateTime
+model Suscripcion {
+  id                 String    @id(map: "TusSubscription_pkey")
+  tenantId           String    @map("tenantId")
+  suscripcionId      String    @map("subscriptionId")
+  clienteId          String    @map("customerId")
+  planId             String    @default("") @map("planId")
+  instantaneaPlan    Json?     @map("planSnapshot")
+  moneda             String    @map("currency")
+  montoMenor         BigInt    @map("amountMinor")
+  intervalo          String    @map("interval")
+  estado             String    @map("status")
+  intentoMora        Int       @default(0) @map("dunningAttempt")
+  motivoCancelacion  String?   @map("cancelReason")
+  fechaCancelacion   DateTime? @map("cancelledAt")
+  fechaCreacion      DateTime  @map("createdAt")
+  fechaActualizacion DateTime  @map("updatedAt")
 
-  @@unique([tenantId, subscriptionId])
-  @@index([tenantId, customerId, status])
+  @@unique([tenantId, suscripcionId], map: "TusSubscription_tenantId_subscriptionId_key")
+  @@index([tenantId, clienteId, estado], map: "TusSubscription_tenantId_customerId_status_idx")
+  @@map("TusSubscription")
 }
 
-model TusTaxProfile {
-  id            String   @id
-  tenantId      String
-  partyId       String
-  taxIdentity   String
-  taxCategory   String
-  status        String
-  evidenceRef   String
-  authority     String   @default("ARCA/AFIP-external")
-  ivaTreatment  String?
-  withholdingTreatment String?
-  externalApprovalReference String?
-  createdAt     DateTime
-  updatedAt     DateTime
+model PerfilFiscal {
+  id                          String   @id(map: "TusTaxProfile_pkey")
+  tenantId                    String   @map("tenantId")
+  parteId                     String   @map("partyId")
+  identidadFiscal             String   @map("taxIdentity")
+  categoriaFiscal             String   @map("taxCategory")
+  estado                      String   @map("status")
+  referenciaEvidencia         String   @map("evidenceRef")
+  autoridad                   String   @default("ARCA/AFIP-external") @map("authority")
+  tratamientoIva              String?  @map("ivaTreatment")
+  tratamientoRetencion        String?  @map("withholdingTreatment")
+  referenciaAprobacionExterna String?  @map("externalApprovalReference")
+  fechaCreacion               DateTime @map("createdAt")
+  fechaActualizacion          DateTime @map("updatedAt")
 
-  @@unique([tenantId, partyId])
-  @@index([tenantId, status])
+  @@unique([tenantId, parteId], map: "TusTaxProfile_tenantId_partyId_key")
+  @@index([tenantId, estado], map: "TusTaxProfile_tenantId_status_idx")
+  @@map("TusTaxProfile")
 }
 
-model TusBillingAccount {
-  id               String   @id
-  tenantId         String
-  billingAccountId String
-  partyId          String
-  role             String
-  status           String
-  createdAt        DateTime
-  updatedAt        DateTime
+model CuentaFacturacion {
+  id                  String   @id(map: "TusBillingAccount_pkey")
+  tenantId            String   @map("tenantId")
+  cuentaFacturacionId String   @map("billingAccountId")
+  parteId             String   @map("partyId")
+  rol                 String   @map("role")
+  estado              String   @map("status")
+  fechaCreacion       DateTime @map("createdAt")
+  fechaActualizacion  DateTime @map("updatedAt")
 
-  @@unique([tenantId, billingAccountId])
-  @@index([tenantId, partyId, status])
+  @@unique([tenantId, cuentaFacturacionId], map: "TusBillingAccount_tenantId_billingAccountId_key")
+  @@index([tenantId, parteId, estado], map: "TusBillingAccount_tenantId_partyId_status_idx")
+  @@map("TusBillingAccount")
 }
 
-model TusSubscriptionPlan {
-  id         String   @id
-  tenantId   String
-  planId     String
-  name       String
-  amountMinor BigInt
-  currency   String
-  interval   String
-  status     String
-  createdAt  DateTime
-  updatedAt  DateTime
+model PlanSuscripcion {
+  id                 String   @id(map: "TusSubscriptionPlan_pkey")
+  tenantId           String   @map("tenantId")
+  planId             String   @map("planId")
+  nombre             String   @map("name")
+  montoMenor         BigInt   @map("amountMinor")
+  moneda             String   @map("currency")
+  intervalo          String   @map("interval")
+  estado             String   @map("status")
+  fechaCreacion      DateTime @map("createdAt")
+  fechaActualizacion DateTime @map("updatedAt")
 
-  @@unique([tenantId, planId])
-  @@index([tenantId, status])
+  @@unique([tenantId, planId], map: "TusSubscriptionPlan_tenantId_planId_key")
+  @@index([tenantId, estado], map: "TusSubscriptionPlan_tenantId_status_idx")
+  @@map("TusSubscriptionPlan")
 }
 
-model TusBillingRefund {
-  id            String   @id
-  tenantId      String
-  refundId      String
-  invoiceId     String
-  paymentId     String
-  orderId       String
-  posOperationId String?
-  currency      String
-  amountMinor   BigInt
-  reason        String
-  status        String
-  createdAt     DateTime
+model ReintegroFacturacion {
+  id             String   @id(map: "TusBillingRefund_pkey")
+  tenantId       String   @map("tenantId")
+  reintegroId    String   @map("refundId")
+  facturaId      String   @map("invoiceId")
+  pagoId         String   @map("paymentId")
+  ordenId        String   @map("orderId")
+  operacionPosId String?  @map("posOperationId")
+  moneda         String   @map("currency")
+  montoMenor     BigInt   @map("amountMinor")
+  motivo         String   @map("reason")
+  estado         String   @map("status")
+  fechaCreacion  DateTime @map("createdAt")
 
-  @@unique([tenantId, refundId])
-  @@index([tenantId, invoiceId])
+  @@unique([tenantId, reintegroId], map: "TusBillingRefund_tenantId_refundId_key")
+  @@index([tenantId, facturaId], map: "TusBillingRefund_tenantId_invoiceId_idx")
+  @@map("TusBillingRefund")
 }
 
-model TusBillingLedger {
-  id            String   @id
-  tenantId      String
-  entryId       String
-  invoiceId     String
-  entryType     String
-  amountMinor   BigInt
-  currency      String
-  linkedEntryId String?
-  creditNoteId  String?
-  refundId      String?
-  paymentId     String
-  orderId       String
-  posOperationId String?
-  immutable     Boolean  @default(true)
-  createdAt     DateTime
+model MovimientoContableFacturacion {
+  id                 String   @id(map: "TusBillingLedger_pkey")
+  tenantId           String   @map("tenantId")
+  entradaId          String   @map("entryId")
+  facturaId          String   @map("invoiceId")
+  tipoEntrada        String   @map("entryType")
+  montoMenor         BigInt   @map("amountMinor")
+  moneda             String   @map("currency")
+  entradaVinculadaId String?  @map("linkedEntryId")
+  notaCreditoId      String?  @map("creditNoteId")
+  reintegroId        String?  @map("refundId")
+  pagoId             String   @map("paymentId")
+  ordenId            String   @map("orderId")
+  operacionPosId     String?  @map("posOperationId")
+  inmutable          Boolean  @default(true) @map("immutable")
+  fechaCreacion      DateTime @map("createdAt")
 
-  @@unique([tenantId, entryId])
-  @@index([tenantId, invoiceId, createdAt])
+  @@unique([tenantId, entradaId], map: "TusBillingLedger_tenantId_entryId_key")
+  @@index([tenantId, facturaId, fechaCreacion], map: "TusBillingLedger_tenantId_invoiceId_createdAt_idx")
+  @@map("TusBillingLedger")
 }
 
-model TusBillingIdempotency {
-  id          String   @id
-  tenantId    String
-  key         String
-  requestHash String
-  response    Json
-  createdAt   DateTime @default(now())
+model IdempotenciaFacturacion {
+  id            String   @id(map: "TusBillingIdempotency_pkey")
+  tenantId      String   @map("tenantId")
+  clave         String   @map("key")
+  hashSolicitud String   @map("requestHash")
+  respuesta     Json     @map("response")
+  fechaCreacion DateTime @default(now()) @map("createdAt")
 
-  @@unique([tenantId, key])
-  @@index([tenantId, createdAt])
+  @@unique([tenantId, clave], map: "TusBillingIdempotency_tenantId_key_key")
+  @@index([tenantId, fechaCreacion], map: "TusBillingIdempotency_tenantId_createdAt_idx")
+  @@map("TusBillingIdempotency")
 }
 
-model TusBillingAudit {
-  id            String   @id
-  tenantId      String
-  auditId       String
-  actorId       String
-  correlationId String
-  action        String
-  resourceId    String
-  outcome       String
-  reason        String?
-  createdAt     DateTime
+model AuditoriaFacturacion {
+  id            String   @id(map: "TusBillingAudit_pkey")
+  tenantId      String   @map("tenantId")
+  auditoriaId   String   @map("auditId")
+  actorId       String   @map("actorId")
+  correlacionId String   @map("correlationId")
+  accion        String   @map("action")
+  recursoId     String   @map("resourceId")
+  resultado     String   @map("outcome")
+  motivo        String?  @map("reason")
+  fechaCreacion DateTime @map("createdAt")
 
-  @@unique([tenantId, auditId])
-  @@index([tenantId, correlationId, createdAt])
+  @@unique([tenantId, auditoriaId], map: "TusBillingAudit_tenantId_auditId_key")
+  @@index([tenantId, correlacionId, fechaCreacion], map: "TusBillingAudit_tenantId_correlationId_createdAt_idx")
+  @@map("TusBillingAudit")
 }
 
 model OutboxFacturacion {
@@ -1743,40 +1754,44 @@ model OutboxFacturacion {
   @@map("TusBillingOutbox")
 }
 
-model TusBillingDunning {
-  id             String   @id
-  tenantId       String
-  dunningId      String
-  subscriptionId String
-  attempt        Int
-  reason         String
-  status         String
-  retryAt        DateTime?
-  createdAt      DateTime
+model GestionMora {
+  id             String    @id(map: "TusBillingDunning_pkey")
+  tenantId       String    @map("tenantId")
+  moraId         String    @map("dunningId")
+  suscripcionId  String    @map("subscriptionId")
+  intento        Int       @map("attempt")
+  motivo         String    @map("reason")
+  estado         String    @map("status")
+  fechaReintento DateTime? @map("retryAt")
+  fechaCreacion  DateTime  @map("createdAt")
 
-  @@unique([tenantId, dunningId])
-  @@index([tenantId, subscriptionId, createdAt])
+  @@unique([tenantId, moraId], map: "TusBillingDunning_tenantId_dunningId_key")
+  @@index([tenantId, suscripcionId, fechaCreacion], map: "TusBillingDunning_tenantId_subscriptionId_createdAt_idx")
+  @@map("TusBillingDunning")
 }
 
-model TusBillingNumberSequence {
-  id         String   @id
-  tenantId   String   @unique
-  nextNumber Int
+model SecuenciaNumeracion {
+  id              String @id(map: "TusBillingNumberSequence_pkey")
+  tenantId        String @unique(map: "TusBillingNumberSequence_tenantId_key") @map("tenantId")
+  siguienteNumero Int    @map("nextNumber")
+
+  @@map("TusBillingNumberSequence")
 }
 
-model TusAccountingExport {
-  id                       String   @id
-  tenantId                 String
-  exportId                 String
-  invoiceIds               String[]
-  ledgerEntryIds           String[]
-  externalApprovalReference String
-  status                   String
-  postedExternally         Boolean  @default(false)
-  createdAt                DateTime
+model ExportacionContable {
+  id                          String   @id(map: "TusAccountingExport_pkey")
+  tenantId                    String   @map("tenantId")
+  exportacionId               String   @map("exportId")
+  idsFacturas                 String[] @map("invoiceIds")
+  idsEntradasContables        String[] @map("ledgerEntryIds")
+  referenciaAprobacionExterna String   @map("externalApprovalReference")
+  estado                      String   @map("status")
+  publicadaExternamente       Boolean  @default(false) @map("postedExternally")
+  fechaCreacion               DateTime @map("createdAt")
 
-  @@unique([tenantId, exportId])
-  @@index([tenantId, createdAt])
+  @@unique([tenantId, exportacionId], map: "TusAccountingExport_tenantId_exportId_key")
+  @@index([tenantId, fechaCreacion], map: "TusAccountingExport_tenantId_createdAt_idx")
+  @@map("TusAccountingExport")
 }
 
 model TusJob {
