@@ -68,6 +68,7 @@ Table publicaciones {
   fecha_actualizacion timestamp [note: 'ex updatedAt']
 
   indexes {
+    (tenant_id, id) [unique, name: 'uq_publicaciones_tenant_id', note: 'OBJETIVO_FUTURO: redundante con PK id, necesario para FK compuesta tenant-scoped']
     (tenant_id, publicada) [name: 'idx_publicaciones_tenant_publicada']
     (tenant_id, version_disponibilidad) [name: 'idx_publicaciones_tenant_version_disponibilidad']
     (prestador_id, tipo) [name: 'idx_publicaciones_prestador_tipo']
@@ -83,7 +84,7 @@ Table compromisos_mercado_servicios {
   carrito_id varchar [note: 'ex cartId']
   tenant_id varchar
   prestador_id varchar [note: 'referencia lógica a prestador (ex merchantId)']
-  publicacion_id varchar [note: 'FK objetivo -> publicaciones (ex listingId)']
+  publicacion_id varchar [note: 'FK objetivo compuesta (tenant_id, publicacion_id) -> publicaciones (ex listingId)']
   contexto varchar [note: 'ex context']
   ids_lineas varchar[] [note: 'ex lineIds']
   cantidad int [note: 'ex quantity']
@@ -231,6 +232,7 @@ Table calendarios {
   fecha_actualizacion timestamp [note: 'ex updatedAt']
 
   indexes {
+    (tenant_id, id) [unique, name: 'uq_calendarios_tenant_id', note: 'ya existe físicamente; necesario para FK compuesta tenant-scoped']
     (tenant_id, servicio_id, estado) [name: 'idx_calendarios_tenant_servicio_estado']
   }
 
@@ -240,7 +242,7 @@ Table calendarios {
 Table reglas_calendario {
   id varchar [pk]
   tenant_id varchar
-  calendario_id varchar [note: 'FK objetivo -> calendarios']
+  calendario_id varchar [note: 'FK objetivo compuesta (tenant_id, calendario_id) -> calendarios']
   dia_semana int [note: 'ex weekday']
   hora_inicio varchar [note: 'ex startsAt (time string)']
   hora_fin varchar [note: 'ex endsAt (time string)']
@@ -259,7 +261,7 @@ Table reglas_calendario {
 Table excepciones_calendario {
   id varchar [pk]
   tenant_id varchar
-  calendario_id varchar [note: 'FK objetivo -> calendarios']
+  calendario_id varchar [note: 'FK objetivo compuesta (tenant_id, calendario_id) -> calendarios']
   fecha_inicio timestamp [note: 'ex startsAt']
   fecha_fin timestamp [note: 'ex endsAt']
   motivo varchar [note: 'ex reason']
@@ -278,7 +280,7 @@ Table reservas {
   tenant_id varchar
   reserva_id varchar [note: 'ex bookingId']
   servicio_id varchar [note: '[LEGACY] -> TusService']
-  calendario_id varchar [note: 'FK objetivo -> calendarios']
+  calendario_id varchar [note: 'FK objetivo compuesta (tenant_id, calendario_id) -> calendarios']
   cliente_id varchar [note: '[EXTERNA/LOGICA] identidad de cliente']
   fecha_inicio timestamp [note: 'ex startsAt']
   fecha_fin timestamp [note: 'ex endsAt']
@@ -1510,7 +1512,7 @@ Ref: lineas_factura.(tenant_id, factura_id) > facturas.(tenant_id, factura_id)
 
 // MERCADO
 Ref: publicaciones.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)         // Prestador 1:N Publicacion (OBJETIVO_FUTURO, corrige FK por tenant_id)
-Ref: compromisos_mercado_servicios.publicacion_id > publicaciones.id                          // OBJETIVO_FUTURO (referencia PK; tenant validado en aplicación)
+Ref: compromisos_mercado_servicios.(tenant_id, publicacion_id) > publicaciones.(tenant_id, id) // OBJETIVO_FUTURO (FK compuesta tenant-scoped)
 
 // COMPROMISOS
 Ref: compromisos.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)           // OBJETIVO_FUTURO
@@ -1518,9 +1520,9 @@ Ref: transiciones_compromiso.(tenant_id, compromiso_id) > compromisos.(tenant_id
 Ref: compensaciones_compromiso.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id) // OBJETIVO_FUTURO
 
 // CALENDARIO
-Ref: reglas_calendario.calendario_id > calendarios.id              // OBJETIVO_FUTURO (referencia PK; tenant validado en aplicación)
-Ref: excepciones_calendario.calendario_id > calendarios.id         // OBJETIVO_FUTURO (referencia PK; tenant validado en aplicación)
-Ref: reservas.calendario_id > calendarios.id                       // OBJETIVO_FUTURO (referencia PK; tenant validado en aplicación)
+Ref: reglas_calendario.(tenant_id, calendario_id) > calendarios.(tenant_id, id)      // OBJETIVO_FUTURO (FK compuesta tenant-scoped)
+Ref: excepciones_calendario.(tenant_id, calendario_id) > calendarios.(tenant_id, id) // OBJETIVO_FUTURO (FK compuesta tenant-scoped)
+Ref: reservas.(tenant_id, calendario_id) > calendarios.(tenant_id, id)               // OBJETIVO_FUTURO (FK compuesta tenant-scoped)
 
 // ENTREGA
 Ref: turnos_entrega.(tenant_id, zona_id) > zonas_entrega.(tenant_id, zona_id)                // OBJETIVO_FUTURO

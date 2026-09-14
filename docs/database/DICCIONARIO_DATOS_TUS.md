@@ -27,6 +27,17 @@
 - **ON UPDATE** — `NO ACTION` por defecto: PK y business IDs son inmutables.
 - **ON DELETE** — `RESTRICT` por defecto (preservar información comercial/fiscal/auditoría); `CASCADE` solo en hijos estrictamente dependientes sin valor autónomo.
 
+### Regla de aislamiento por tenant (FK físicas)
+
+> **Toda FK física entre dos entidades tenant-scoped debe garantizar mismo tenant a nivel PostgreSQL.**
+>
+> Forma canónica: `hijo.(tenant_id, referencia_id) → padre.(tenant_id, identificador_referenciado)`.
+> No se confía solo en validación de aplicación para relaciones que son FK físicas.
+>
+> - Si el padre tiene **business ID** estable con `UNIQUE (tenant_id, business_id)` aprobado → usar `(tenant_id, business_id)`.
+> - Si el padre **no tiene** business ID apropiado → usar `(tenant_id, id)` y declarar un `UNIQUE (tenant_id, id)` redundante (necesario para que PostgreSQL admita la FK compuesta).
+> - No aplica a referencias EXTERNAS, LOGICAS, POLIMORFICAS ni a entidades globales no tenant-scoped.
+
 ---
 
 ## 2. Mapa de nombres de columna (actual PostgreSQL → objetivo)
@@ -325,10 +336,10 @@ Facilita la futura generación de `ALTER TABLE ... RENAME COLUMN`. Muestra solo 
 | `compromisos` | `(tenant_id, prestador_id)` | `prestadores` | OBJETIVO_FUTURO | Obligación comercial con prestador | N:1 | NO | RESTRICT | NO ACTION | Sí |
 | `transiciones_compromiso` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Histórico de un compromiso | N:1 | NO | RESTRICT | NO ACTION | Sí (huérfanos) |
 | `compensaciones_compromiso` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Compensación de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | Sí |
-| `compromisos_mercado_servicios` | `publicacion_id` | `publicaciones` | OBJETIVO_FUTURO_REQUIERE_VALIDACION | Línea de checkout referencia listing | N:1 | NO | RESTRICT | NO ACTION | Sí (listing sin unique por tenant) |
-| `reglas_calendario` | `calendario_id` | `calendarios` | OBJETIVO_FUTURO | Regla depende del calendario | N:1 | NO | CASCADE | NO ACTION | Sí |
-| `excepciones_calendario` | `calendario_id` | `calendarios` | OBJETIVO_FUTURO | Excepción depende del calendario | N:1 | NO | CASCADE | NO ACTION | Sí |
-| `reservas` | `calendario_id` | `calendarios` | OBJETIVO_FUTURO | Reserva ocupa franja de un calendario | N:1 | NO | RESTRICT | NO ACTION | Sí |
+| `compromisos_mercado_servicios` | `(tenant_id, publicacion_id)` | `publicaciones` | OBJETIVO_FUTURO_REQUIERE_VALIDACION | Línea de checkout referencia listing (mismo tenant) | N:1 | NO | RESTRICT | NO ACTION | Sí (unique `(tenant_id, id)` no existe aún) |
+| `reglas_calendario` | `(tenant_id, calendario_id)` | `calendarios` | OBJETIVO_FUTURO | Regla depende del calendario (mismo tenant) | N:1 | NO | CASCADE | NO ACTION | Sí |
+| `excepciones_calendario` | `(tenant_id, calendario_id)` | `calendarios` | OBJETIVO_FUTURO | Excepción depende del calendario (mismo tenant) | N:1 | NO | CASCADE | NO ACTION | Sí |
+| `reservas` | `(tenant_id, calendario_id)` | `calendarios` | OBJETIVO_FUTURO | Reserva ocupa franja de un calendario (mismo tenant) | N:1 | NO | RESTRICT | NO ACTION | Sí |
 | `turnos_entrega` | `(tenant_id, zona_id)` | `zonas_entrega` | OBJETIVO_FUTURO | Turno en una zona | N:1 | NO | RESTRICT | NO ACTION | Sí |
 | `evidencias_entrega` | `(tenant_id, tarea_id)` | `tareas_entrega` | OBJETIVO_FUTURO | Comprobante de una tarea | N:1 | NO | RESTRICT | NO ACTION | Sí |
 | `incidentes_entrega` | `(tenant_id, tarea_id)` | `tareas_entrega` | OBJETIVO_FUTURO | Incidente de una tarea | N:1 | NO | RESTRICT | NO ACTION | Sí |
@@ -523,7 +534,7 @@ Todas referencian `compromiso_id` (FK objetivo RESTRICT, mayormente 1:1). Refere
 
 - `calendarios.servicio_id` y `reservas.servicio_id` → todavía acopladas a `TusService` (legacy). **Pendiente migración** a `prestador_id`/`publicacion_id`.
 - `TusProduct`, `TusService`, `TusInventory`, `TusTenant` — legacy, excluidos del DER Core; `TusInventory.product_id → TusProduct` es deuda a resolver antes de eliminar esos modelos.
-- Uniques redundantes `(tenant_id, id)` en calendario/excepción/dead-letter — eliminar en fase física.
+- Uniques `(tenant_id, id)`: `calendarios` ya es NECESARIO para la FK compuesta tenant-scoped (no redundante); `excepciones_calendario` y `TusDeadLetter` siguen siendo redundantes con la PK (sin FK entrante que las requiera).
 - Relación Prisma actual `TusListing → TusMerchant` por `tenantId` — reemplazar por `prestador_id` (documentada en `publicaciones`).
 
 ---
