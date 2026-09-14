@@ -3,7 +3,7 @@ import type {
   MercadoPagoHandoff,
   Compromiso,
   TusTenantContext,
-  WhatsAppAction,
+  AccionWhatsApp,
 } from '@factory/contracts/tus'
 
 import { resolveWebApiBaseUrl } from './api-url'
@@ -404,7 +404,7 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
     whatsappPaymentHandoff: ({ commitmentId, confirmationId, senderId, consent, idempotencyKey, requestHash, accessToken, ...context }) => {
       const stableKey = idempotencyKey ?? createStableIdempotencyKey('whatsapp', context.correlationId)
       const stableHash = requestHash ?? `handoff:${commitmentId ?? 'support'}:${confirmationId ?? 'none'}`
-      const handoffAction: WhatsAppAction = {
+      const handoffAction: AccionWhatsApp = {
         contractVersion: TUS_CONTRACT_VERSION,
         type: 'handoff',
         tenantId: context.tenantId,

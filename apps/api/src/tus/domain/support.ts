@@ -1,4 +1,4 @@
-import { TUS_CONTRACT_VERSION, type TusSupportCase, type TusTenantContext } from '@factory/contracts'
+import { TUS_CONTRACT_VERSION, type CasoSoporte, type TusTenantContext } from '@factory/contracts'
 
 export interface CreateSupportCaseInput extends TusTenantContext {
   caseId: string
@@ -6,7 +6,7 @@ export interface CreateSupportCaseInput extends TusTenantContext {
   category: string
 }
 
-export function createSupportCase(input: CreateSupportCaseInput): TusSupportCase {
+export function createSupportCase(input: CreateSupportCaseInput): CasoSoporte {
   if (!input.caseId.trim() || !input.commitmentId.trim() || !input.category.trim()) {
     throw new Error('support case identity and category are required')
   }

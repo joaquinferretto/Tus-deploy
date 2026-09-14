@@ -141,11 +141,11 @@ test('PR8 reports freshness and tenant-safe dimensions, excludes revoked discove
 
 test('PR8 exports versioned support and WhatsApp contract validators', () => {
   const result = runTypeScriptScenario(`
-    const { TUS_CONTRACT_VERSION, validateTusSupportCase, validateTusWhatsAppAction } = await import('./packages/contracts/src/index.ts')
-    const support = validateTusSupportCase({ contractVersion: TUS_CONTRACT_VERSION, caseId: 'case-pr8', commitmentId: 'commitment-pr8', tenantId: 'tenant-a', actorId: 'support-a', correlationId: 'corr-pr8', category: 'delivery_incident', status: 'open' })
-    const action = validateTusWhatsAppAction({ contractVersion: TUS_CONTRACT_VERSION, type: 'quote', tenantId: 'tenant-a' })
+    const { TUS_CONTRACT_VERSION, validarCasoSoporte, validarAccionWhatsApp } = await import('./packages/contracts/src/index.ts')
+    const support = validarCasoSoporte({ contractVersion: TUS_CONTRACT_VERSION, caseId: 'case-pr8', commitmentId: 'commitment-pr8', tenantId: 'tenant-a', actorId: 'support-a', correlationId: 'corr-pr8', category: 'delivery_incident', status: 'open' })
+    const action = validarAccionWhatsApp({ contractVersion: TUS_CONTRACT_VERSION, type: 'quote', tenantId: 'tenant-a' })
     let invalid = ''
-    try { validateTusWhatsAppAction({ contractVersion: TUS_CONTRACT_VERSION, type: 'refund', tenantId: 'tenant-a' }) } catch (error) { invalid = error.message }
+    try { validarAccionWhatsApp({ contractVersion: TUS_CONTRACT_VERSION, type: 'refund', tenantId: 'tenant-a' }) } catch (error) { invalid = error.message }
     console.log(JSON.stringify({ support, action, invalid }))
   `)
 

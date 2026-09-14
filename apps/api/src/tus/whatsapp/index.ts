@@ -1,4 +1,4 @@
-import type { WhatsAppAction } from '@factory/contracts'
+import type { AccionWhatsApp } from '@factory/contracts'
 import type { TusOperationsTelemetry } from '@factory/observability'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
@@ -10,7 +10,7 @@ const ACTION_STATUS = {
   REPLAY: 'replay',
 } as const
 
-const SUPPORTED_ACTIONS = new Set<WhatsAppAction['type']>([
+const SUPPORTED_ACTIONS = new Set<AccionWhatsApp['type']>([
   'search',
   'quote',
   'cart',
@@ -577,7 +577,7 @@ export class TusWhatsAppService {
     const storedConsent = await this.store.getConsent?.(input.tenantId, WHATSAPP_RECIPIENT_TYPES.CUSTOMER, input.senderId)
     if (!input.consent || storedConsent?.status === WHATSAPP_CONSENT_STATUS.REVOKED) return this.handoff(input, 'messaging_consent_required')
     if (!(await this.isSenderAuthorized(input.tenantId, input.senderId))) return this.handoff(input, 'sender_not_authorized')
-    if (!SUPPORTED_ACTIONS.has(input.action.type as WhatsAppAction['type'])) {
+    if (!SUPPORTED_ACTIONS.has(input.action.type as AccionWhatsApp['type'])) {
       return this.handoff(input, 'sensitive_action_requires_authenticated_handoff')
     }
     return this.executeAction(input)

@@ -232,7 +232,7 @@ export interface TusDispute {
   status: DisputeStatus
 }
 
-export interface TusSupportCase {
+export interface CasoSoporte {
   contractVersion: TusContractVersion
   caseId: string
   commitmentId: string
@@ -243,7 +243,7 @@ export interface TusSupportCase {
   status: 'open' | 'resolved'
 }
 
-export function validateTusSupportCase(value: unknown): TusSupportCase {
+export function validarCasoSoporte(value: unknown): CasoSoporte {
   if (!isRecord(value)) throw new ContractValidationError('tus-support-case', undefined, 'payload must be an object')
   assertTusVersion('tus-support-case', value['contractVersion'])
   for (const field of ['caseId', 'commitmentId', 'tenantId', 'actorId', 'correlationId', 'category']) {
@@ -254,10 +254,10 @@ export function validateTusSupportCase(value: unknown): TusSupportCase {
   if (value['status'] !== 'open' && value['status'] !== 'resolved') {
     throw new ContractValidationError('tus-support-case', TUS_CONTRACT_VERSION, 'status is unsupported')
   }
-  return value as unknown as TusSupportCase
+  return value as unknown as CasoSoporte
 }
 
-export const WHATSAPP_ACTION_TYPES = [
+export const TIPOS_ACCION_WHATSAPP = [
   'search',
   'quote',
   'cart',
@@ -266,23 +266,23 @@ export const WHATSAPP_ACTION_TYPES = [
   'confirm',
 ] as const
 
-export type WhatsAppActionType = (typeof WHATSAPP_ACTION_TYPES)[number]
+export type TipoAccionWhatsApp = (typeof TIPOS_ACCION_WHATSAPP)[number]
 
-export interface WhatsAppAction {
+export interface AccionWhatsApp {
   contractVersion: TusContractVersion
-  type: WhatsAppActionType
+  type: TipoAccionWhatsApp
   tenantId: string
   commitmentId?: string
   confirmationId?: string
 }
 
-export function validateTusWhatsAppAction(value: unknown): WhatsAppAction {
+export function validarAccionWhatsApp(value: unknown): AccionWhatsApp {
   if (!isRecord(value)) throw new ContractValidationError('tus-whatsapp-action', undefined, 'payload must be an object')
   assertTusVersion('tus-whatsapp-action', value['contractVersion'])
   if (typeof value['tenantId'] !== 'string' || value['tenantId'].trim().length === 0) {
     throw new ContractValidationError('tus-whatsapp-action', TUS_CONTRACT_VERSION, 'tenantId is required')
   }
-  if (!WHATSAPP_ACTION_TYPES.includes(value['type'] as WhatsAppActionType)) {
+  if (!TIPOS_ACCION_WHATSAPP.includes(value['type'] as TipoAccionWhatsApp)) {
     throw new ContractValidationError('tus-whatsapp-action', TUS_CONTRACT_VERSION, 'action type is unsupported')
   }
   for (const field of ['commitmentId', 'confirmationId']) {
@@ -290,7 +290,7 @@ export function validateTusWhatsAppAction(value: unknown): WhatsAppAction {
       throw new ContractValidationError('tus-whatsapp-action', TUS_CONTRACT_VERSION, `${field} is invalid`)
     }
   }
-  return value as unknown as WhatsAppAction
+  return value as unknown as AccionWhatsApp
 }
 
 export interface MercadoPagoHandoff {

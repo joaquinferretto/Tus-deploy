@@ -1,6 +1,6 @@
-import { TUS_CONTRACT_VERSION, type MercadoPagoHandoff, type WhatsAppAction, type WhatsAppActionType } from '@factory/contracts'
+import { TUS_CONTRACT_VERSION, type MercadoPagoHandoff, type AccionWhatsApp, type TipoAccionWhatsApp } from '@factory/contracts'
 
-const SUPPORTED_ACTIONS: ReadonlySet<WhatsAppActionType> = new Set([
+const SUPPORTED_ACTIONS: ReadonlySet<TipoAccionWhatsApp> = new Set([
   'search',
   'quote',
   'cart',
@@ -9,7 +9,7 @@ const SUPPORTED_ACTIONS: ReadonlySet<WhatsAppActionType> = new Set([
   'confirm',
 ])
 
-export function isSupportedWhatsAppAction(action: Pick<WhatsAppAction, 'type'>): boolean {
+export function isSupportedWhatsAppAction(action: Pick<AccionWhatsApp, 'type'>): boolean {
   return SUPPORTED_ACTIONS.has(action.type)
 }
 
