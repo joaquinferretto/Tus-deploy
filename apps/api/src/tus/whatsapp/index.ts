@@ -34,19 +34,19 @@ const WHATSAPP_OUTBOX_STATUS = {
   PENDING: 'pending',
 } as const
 
-type WhatsAppRecipientType = (typeof WHATSAPP_RECIPIENT_TYPES)[keyof typeof WHATSAPP_RECIPIENT_TYPES]
-type WhatsAppConsentStatus = (typeof WHATSAPP_CONSENT_STATUS)[keyof typeof WHATSAPP_CONSENT_STATUS]
+type TipoDestinatarioWhatsApp = (typeof WHATSAPP_RECIPIENT_TYPES)[keyof typeof WHATSAPP_RECIPIENT_TYPES]
+type EstadoConsentimientoWhatsApp = (typeof WHATSAPP_CONSENT_STATUS)[keyof typeof WHATSAPP_CONSENT_STATUS]
 
-type ActionStatus = (typeof ACTION_STATUS)[keyof typeof ACTION_STATUS]
+type EstadoAccionWhatsApp = (typeof ACTION_STATUS)[keyof typeof ACTION_STATUS]
 
-export interface WhatsAppActionInput {
+export interface EntradaAccionWhatsApp {
   type: string
   tenantId: string
   commitmentId?: string
   confirmationId?: string
 }
 
-export interface WhatsAppDiscoveryItem {
+export interface ItemDescubrimientoWhatsApp {
   listingId: string
   tenantId: string
   name: string
@@ -56,32 +56,32 @@ export interface WhatsAppDiscoveryItem {
   available?: boolean
 }
 
-export interface WhatsAppActionRequest extends TusAuthenticatedTenantContext {
+export interface SolicitudAccionWhatsApp extends TusAuthenticatedTenantContext {
   senderId: string
-  action: WhatsAppActionInput
+  action: EntradaAccionWhatsApp
   consent: boolean
   idempotencyKey: string
   requestHash: string
   confirmationId?: string
 }
 
-export interface WhatsAppActionResult {
-  status: ActionStatus
+export interface ResultadoAccionWhatsApp {
+  status: EstadoAccionWhatsApp
   reason?: string
   tenantId: string
   credentialsCollected: false
   mutated: boolean
-  items?: readonly WhatsAppDiscoveryItem[]
+  items?: readonly ItemDescubrimientoWhatsApp[]
   confirmationId?: string
   expiresAt?: string
   commitment?: Record<string, unknown> | null
 }
 
-export interface WhatsAppCommitInput {
+export interface EntradaCompromisoWhatsApp {
   tenantId: string
   senderId: string
   confirmationId: string
-  items: readonly WhatsAppDiscoveryItem[]
+  items: readonly ItemDescubrimientoWhatsApp[]
 }
 
 export interface RegistroAuditoriaAccionWhatsApp {
@@ -95,12 +95,12 @@ export interface RegistroAuditoriaAccionWhatsApp {
   retentionUntil?: string
 }
 
-export interface WhatsAppConsent {
+export interface ConsentimientoWhatsApp {
   consentId: string
   tenantId: string
-  recipientType: WhatsAppRecipientType
+  recipientType: TipoDestinatarioWhatsApp
   recipientId: string
-  status: WhatsAppConsentStatus
+  status: EstadoConsentimientoWhatsApp
   source: string
   grantedAt: string
   revokedAt: string | null
@@ -108,16 +108,16 @@ export interface WhatsAppConsent {
   retentionUntil: string
 }
 
-export interface WhatsAppTemplateAllowlistEntry {
+export interface EntradaListaPermitidaPlantillaWhatsApp {
   name: string
   version: string
   variables: readonly string[]
 }
 
-export interface WhatsAppTemplateMessage {
+export interface MensajePlantillaWhatsApp {
   messageId: string
   tenantId: string
-  recipientType: WhatsAppRecipientType
+  recipientType: TipoDestinatarioWhatsApp
   recipientId: string
   template: string
   templateVersion: string
@@ -130,7 +130,7 @@ export interface WhatsAppTemplateMessage {
   retentionUntil: string
 }
 
-export interface WhatsAppTemplateOutboxRecord {
+export interface RegistroBandejaSalidaPlantillaWhatsApp {
   eventId: string
   tenantId: string
   correlationId: string
@@ -142,7 +142,7 @@ export interface WhatsAppTemplateOutboxRecord {
   retentionUntil: string
 }
 
-export interface WhatsAppSupportHandoff {
+export interface DerivacionSoporteWhatsApp {
   handoffId: string
   tenantId: string
   senderId: string
@@ -151,37 +151,37 @@ export interface WhatsAppSupportHandoff {
   createdAt: string
 }
 
-interface StoredAction {
+interface AccionAlmacenada {
   requestHash: string
-  response: WhatsAppActionResult | null
+  response: ResultadoAccionWhatsApp | null
 }
 
 type MaybePromise<TValue> = TValue | Promise<TValue>
 
-export interface WhatsAppConfirmation {
+export interface ConfirmacionWhatsApp {
   confirmationId: string
   tenantId: string
   senderId: string
   expiresAt: number
   consumed: boolean
-  items: readonly WhatsAppDiscoveryItem[]
+  items: readonly ItemDescubrimientoWhatsApp[]
 }
 
-export interface WhatsAppActionStorePort {
+export interface PuertoAlmacenAccionWhatsApp {
   claim(tenantId: string, key: string, requestHash: string): MaybePromise<'claimed' | 'replay' | 'in_progress' | 'conflict'>
-  response(tenantId: string, key: string): MaybePromise<WhatsAppActionResult | null>
-  complete(tenantId: string, key: string, response: WhatsAppActionResult): MaybePromise<void>
-  saveConfirmation(value: WhatsAppConfirmation): MaybePromise<void>
-  getConfirmation(tenantId: string, confirmationId: string): MaybePromise<WhatsAppConfirmation | null>
+  response(tenantId: string, key: string): MaybePromise<ResultadoAccionWhatsApp | null>
+  complete(tenantId: string, key: string, response: ResultadoAccionWhatsApp): MaybePromise<void>
+  saveConfirmation(value: ConfirmacionWhatsApp): MaybePromise<void>
+  getConfirmation(tenantId: string, confirmationId: string): MaybePromise<ConfirmacionWhatsApp | null>
   consumeConfirmation(tenantId: string, confirmationId: string, senderId: string, now: number): MaybePromise<boolean>
   registrarAuditoriaWhatsApp(value: RegistroAuditoriaAccionWhatsApp): MaybePromise<void>
   listAudits(tenantId: string): RegistroAuditoriaAccionWhatsApp[]
-  saveConsent?(value: WhatsAppConsent): MaybePromise<void>
-  getConsent?(tenantId: string, recipientType: WhatsAppRecipientType, recipientId: string): MaybePromise<WhatsAppConsent | null>
-  saveTemplateMessage?(value: WhatsAppTemplateMessage): MaybePromise<void>
-  getTemplateMessage?(tenantId: string, idempotencyKey: string): MaybePromise<WhatsAppTemplateMessage | null>
-  saveOutbox?(value: WhatsAppTemplateOutboxRecord): MaybePromise<void>
-  listOutbox?(tenantId: string): WhatsAppTemplateOutboxRecord[]
+  saveConsent?(value: ConsentimientoWhatsApp): MaybePromise<void>
+  getConsent?(tenantId: string, recipientType: TipoDestinatarioWhatsApp, recipientId: string): MaybePromise<ConsentimientoWhatsApp | null>
+  saveTemplateMessage?(value: MensajePlantillaWhatsApp): MaybePromise<void>
+  getTemplateMessage?(tenantId: string, idempotencyKey: string): MaybePromise<MensajePlantillaWhatsApp | null>
+  saveOutbox?(value: RegistroBandejaSalidaPlantillaWhatsApp): MaybePromise<void>
+  listOutbox?(tenantId: string): RegistroBandejaSalidaPlantillaWhatsApp[]
 }
 
 export class WhatsAppActionError extends Error {
@@ -196,13 +196,13 @@ export class WhatsAppActionError extends Error {
   }
 }
 
-export class InMemoryWhatsAppActionStore implements WhatsAppActionStorePort {
-  private readonly actions = new Map<string, StoredAction>()
-  private readonly confirmations = new Map<string, WhatsAppConfirmation>()
+export class InMemoryWhatsAppActionStore implements PuertoAlmacenAccionWhatsApp {
+  private readonly actions = new Map<string, AccionAlmacenada>()
+  private readonly confirmations = new Map<string, ConfirmacionWhatsApp>()
   private readonly audits: RegistroAuditoriaAccionWhatsApp[] = []
-  private readonly consents = new Map<string, WhatsAppConsent>()
-  private readonly templateMessages = new Map<string, WhatsAppTemplateMessage>()
-  private readonly outboxRecords = new Map<string, WhatsAppTemplateOutboxRecord>()
+  private readonly consents = new Map<string, ConsentimientoWhatsApp>()
+  private readonly templateMessages = new Map<string, MensajePlantillaWhatsApp>()
+  private readonly outboxRecords = new Map<string, RegistroBandejaSalidaPlantillaWhatsApp>()
 
   claim(tenantId: string, key: string, requestHash: string): 'claimed' | 'replay' | 'in_progress' | 'conflict' {
     const mapKey = `${tenantId}:${key}`
@@ -215,22 +215,22 @@ export class InMemoryWhatsAppActionStore implements WhatsAppActionStorePort {
     return existing.response ? 'replay' : 'in_progress'
   }
 
-  complete(tenantId: string, key: string, response: WhatsAppActionResult): void {
+  complete(tenantId: string, key: string, response: ResultadoAccionWhatsApp): void {
     const existing = this.actions.get(`${tenantId}:${key}`)
     if (!existing) throw new Error('WhatsApp action idempotency record not found')
     existing.response = clone(response)
   }
 
-  response(tenantId: string, key: string): WhatsAppActionResult | null {
+  response(tenantId: string, key: string): ResultadoAccionWhatsApp | null {
     const stored = this.actions.get(`${tenantId}:${key}`)?.response
     return stored ? clone(stored) : null
   }
 
-  saveConfirmation(value: WhatsAppConfirmation): void {
+  saveConfirmation(value: ConfirmacionWhatsApp): void {
     this.confirmations.set(`${value.tenantId}:${value.confirmationId}`, clone(value))
   }
 
-  getConfirmation(tenantId: string, confirmationId: string): WhatsAppConfirmation | null {
+  getConfirmation(tenantId: string, confirmationId: string): ConfirmacionWhatsApp | null {
     const value = this.confirmations.get(`${tenantId}:${confirmationId}`)
     return value ? clone(value) : null
   }
@@ -251,32 +251,32 @@ export class InMemoryWhatsAppActionStore implements WhatsAppActionStorePort {
     return this.audits.filter((audit) => audit.tenantId === tenantId).map(clone)
   }
 
-  saveConsent(value: WhatsAppConsent): void {
+  saveConsent(value: ConsentimientoWhatsApp): void {
     this.consents.set(`${value.tenantId}:${value.recipientType}:${value.recipientId}`, clone(value))
   }
 
-  getConsent(tenantId: string, recipientType: WhatsAppRecipientType, recipientId: string): WhatsAppConsent | null {
+  getConsent(tenantId: string, recipientType: TipoDestinatarioWhatsApp, recipientId: string): ConsentimientoWhatsApp | null {
     return clone(this.consents.get(`${tenantId}:${recipientType}:${recipientId}`) ?? null)
   }
 
-  saveTemplateMessage(value: WhatsAppTemplateMessage): void {
+  saveTemplateMessage(value: MensajePlantillaWhatsApp): void {
     this.templateMessages.set(`${value.tenantId}:${value.messageId}`, clone(value))
   }
 
-  getTemplateMessage(tenantId: string, idempotencyKey: string): WhatsAppTemplateMessage | null {
+  getTemplateMessage(tenantId: string, idempotencyKey: string): MensajePlantillaWhatsApp | null {
     return clone(this.templateMessages.get(`${tenantId}:${idempotencyKey}`) ?? null)
   }
 
-  saveOutbox(value: WhatsAppTemplateOutboxRecord): void {
+  saveOutbox(value: RegistroBandejaSalidaPlantillaWhatsApp): void {
     this.outboxRecords.set(`${value.tenantId}:${value.eventId}`, clone(value))
   }
 
-  listOutbox(tenantId: string): WhatsAppTemplateOutboxRecord[] {
+  listOutbox(tenantId: string): RegistroBandejaSalidaPlantillaWhatsApp[] {
     return [...this.outboxRecords.values()].filter((record) => record.tenantId === tenantId).map(clone)
   }
 }
 
-interface PrismaWhatsAppClient {
+interface ClientePrismaWhatsApp {
   tusWhatsAppAction: {
     findUnique(input: { where: { tenantId_idempotencyKey: { tenantId: string; idempotencyKey: string } } }): Promise<Record<string, unknown> | null>
     findFirst(input: { where: { idempotencyKey: string } }): Promise<Record<string, unknown> | null>
@@ -305,12 +305,12 @@ interface PrismaWhatsAppClient {
   }
 }
 
-export class PrismaWhatsAppActionStore implements WhatsAppActionStorePort {
+export class PrismaWhatsAppActionStore implements PuertoAlmacenAccionWhatsApp {
   private readonly audits: RegistroAuditoriaAccionWhatsApp[] = []
-  private readonly outboxRecords: WhatsAppTemplateOutboxRecord[] = []
-  private readonly client: PrismaWhatsAppClient
+  private readonly outboxRecords: RegistroBandejaSalidaPlantillaWhatsApp[] = []
+  private readonly client: ClientePrismaWhatsApp
 
-  constructor(client: PrismaWhatsAppClient) {
+  constructor(client: ClientePrismaWhatsApp) {
     this.client = client
   }
 
@@ -330,16 +330,16 @@ export class PrismaWhatsAppActionStore implements WhatsAppActionStorePort {
     return existing['status'] === 'completed' && existing['response'] ? 'replay' : 'in_progress'
   }
 
-  async response(tenantId: string, key: string): Promise<WhatsAppActionResult | null> {
+  async response(tenantId: string, key: string): Promise<ResultadoAccionWhatsApp | null> {
     const row = await this.client.tusWhatsAppAction.findUnique({ where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: key } } })
-    return row?.['response'] ? row['response'] as WhatsAppActionResult : null
+    return row?.['response'] ? row['response'] as ResultadoAccionWhatsApp : null
   }
 
-  async complete(tenantId: string, key: string, response: WhatsAppActionResult): Promise<void> {
+  async complete(tenantId: string, key: string, response: ResultadoAccionWhatsApp): Promise<void> {
     await this.client.tusWhatsAppAction.update({ where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: key } }, data: { status: 'completed', response, updatedAt: new Date() } })
   }
 
-  async saveConfirmation(value: WhatsAppConfirmation): Promise<void> {
+  async saveConfirmation(value: ConfirmacionWhatsApp): Promise<void> {
     await this.client.tusWhatsAppConfirmation.upsert({
       where: { tenantId_confirmationId: { tenantId: value.tenantId, confirmationId: value.confirmationId } },
       create: { id: `${value.tenantId}:${value.confirmationId}`, confirmationId: value.confirmationId, tenantId: value.tenantId, senderId: value.senderId, expiresAt: new Date(value.expiresAt), consumedAt: null, items: value.items, createdAt: new Date() },
@@ -347,10 +347,10 @@ export class PrismaWhatsAppActionStore implements WhatsAppActionStorePort {
     })
   }
 
-  async getConfirmation(tenantId: string, confirmationId: string): Promise<WhatsAppConfirmation | null> {
+  async getConfirmation(tenantId: string, confirmationId: string): Promise<ConfirmacionWhatsApp | null> {
     const row = await this.client.tusWhatsAppConfirmation.findUnique({ where: { tenantId_confirmationId: { tenantId, confirmationId } } })
     if (!row) return null
-    return { confirmationId: String(row['confirmationId']), tenantId: String(row['tenantId']), senderId: String(row['senderId']), expiresAt: new Date(String(row['expiresAt'])).getTime(), consumed: row['consumedAt'] !== null, items: row['items'] as WhatsAppDiscoveryItem[] }
+    return { confirmationId: String(row['confirmationId']), tenantId: String(row['tenantId']), senderId: String(row['senderId']), expiresAt: new Date(String(row['expiresAt'])).getTime(), consumed: row['consumedAt'] !== null, items: row['items'] as ItemDescubrimientoWhatsApp[] }
   }
 
   async consumeConfirmation(tenantId: string, confirmationId: string, senderId: string, now: number): Promise<boolean> {
@@ -367,7 +367,7 @@ export class PrismaWhatsAppActionStore implements WhatsAppActionStorePort {
     return this.audits.filter((audit) => audit.tenantId === tenantId).map(clone)
   }
 
-  async saveConsent(value: WhatsAppConsent): Promise<void> {
+  async saveConsent(value: ConsentimientoWhatsApp): Promise<void> {
     if (!this.client.tusWhatsAppConsent) return
     await this.client.tusWhatsAppConsent.upsert({
       where: { tenantId_recipientId: { tenantId: value.tenantId, recipientId: value.recipientId } },
@@ -376,14 +376,14 @@ export class PrismaWhatsAppActionStore implements WhatsAppActionStorePort {
     })
   }
 
-  async getConsent(tenantId: string, _recipientType: WhatsAppRecipientType, recipientId: string): Promise<WhatsAppConsent | null> {
+  async getConsent(tenantId: string, _recipientType: TipoDestinatarioWhatsApp, recipientId: string): Promise<ConsentimientoWhatsApp | null> {
     if (!this.client.tusWhatsAppConsent) return null
     const row = await this.client.tusWhatsAppConsent.findUnique({ where: { tenantId_recipientId: { tenantId, recipientId } } })
     if (!row) return null
-    return { consentId: String(row['id']), tenantId: String(row['tenantId']), recipientType: String(row['recipientType']) as WhatsAppRecipientType, recipientId: String(row['recipientId']), status: String(row['status']) as WhatsAppConsentStatus, source: String(row['source']), grantedAt: new Date(String(row['grantedAt'])).toISOString(), revokedAt: row['revokedAt'] ? new Date(String(row['revokedAt'])).toISOString() : null, updatedAt: new Date(String(row['updatedAt'])).toISOString(), retentionUntil: new Date(String(row['retentionUntil'])).toISOString() }
+    return { consentId: String(row['id']), tenantId: String(row['tenantId']), recipientType: String(row['recipientType']) as TipoDestinatarioWhatsApp, recipientId: String(row['recipientId']), status: String(row['status']) as EstadoConsentimientoWhatsApp, source: String(row['source']), grantedAt: new Date(String(row['grantedAt'])).toISOString(), revokedAt: row['revokedAt'] ? new Date(String(row['revokedAt'])).toISOString() : null, updatedAt: new Date(String(row['updatedAt'])).toISOString(), retentionUntil: new Date(String(row['retentionUntil'])).toISOString() }
   }
 
-  async saveTemplateMessage(value: WhatsAppTemplateMessage): Promise<void> {
+  async saveTemplateMessage(value: MensajePlantillaWhatsApp): Promise<void> {
     if (!this.client.tusWhatsAppMessage) return
     await this.client.tusWhatsAppMessage.upsert({
       where: { tenantId_messageId: { tenantId: value.tenantId, messageId: value.messageId } },
@@ -392,28 +392,28 @@ export class PrismaWhatsAppActionStore implements WhatsAppActionStorePort {
     })
   }
 
-  async getTemplateMessage(tenantId: string, idempotencyKey: string): Promise<WhatsAppTemplateMessage | null> {
+  async getTemplateMessage(tenantId: string, idempotencyKey: string): Promise<MensajePlantillaWhatsApp | null> {
     if (!this.client.tusWhatsAppMessage) return null
     const row = await this.client.tusWhatsAppMessage.findUnique({ where: { tenantId_messageId: { tenantId, messageId: idempotencyKey } } })
     if (!row) return null
     return { messageId: String(row['messageId']), tenantId: String(row['tenantId']), recipientType: 'customer', recipientId: String(row['recipientId']), template: String(row['template']), templateVersion: String(row['templateVersion']), consentId: String(row['consentId']), requestHash: String(row['requestHash'] ?? ''), variables: row['variables'] as Record<string, string>, correlationId: String(row['correlationId']), status: 'queued', createdAt: new Date(String(row['createdAt'])).toISOString(), retentionUntil: new Date(String(row['retentionUntil'])).toISOString() }
   }
 
-  async saveOutbox(value: WhatsAppTemplateOutboxRecord): Promise<void> {
+  async saveOutbox(value: RegistroBandejaSalidaPlantillaWhatsApp): Promise<void> {
     this.outboxRecords.push(clone(value))
     await this.client.tusWhatsAppOutbox?.create({ data: { id: `${value.tenantId}:${value.eventId}`, ...value, createdAt: new Date(value.createdAt), retentionUntil: new Date(value.retentionUntil) } })
   }
 
-  listOutbox(tenantId: string): WhatsAppTemplateOutboxRecord[] {
+  listOutbox(tenantId: string): RegistroBandejaSalidaPlantillaWhatsApp[] {
     return this.outboxRecords.filter((record) => record.tenantId === tenantId).map(clone)
   }
 }
 
-export interface TusWhatsAppServiceOptions {
-  store: WhatsAppActionStorePort
-  discover?: (tenantId: string) => Promise<readonly WhatsAppDiscoveryItem[]>
+export interface OpcionesServicioWhatsApp {
+  store: PuertoAlmacenAccionWhatsApp
+  discover?: (tenantId: string) => Promise<readonly ItemDescubrimientoWhatsApp[]>
   commitments?: (tenantId: string, commitmentId: string) => Promise<Record<string, unknown> | null>
-  commit?: (input: WhatsAppCommitInput) => Promise<Record<string, unknown>>
+  commit?: (input: EntradaCompromisoWhatsApp) => Promise<Record<string, unknown>>
   authorizedSenders?: Readonly<Record<string, readonly string[]>>
   authorizeSender?: (tenantId: string, senderId: string) => boolean | Promise<boolean>
   telemetry?: TusOperationsTelemetry
@@ -423,17 +423,17 @@ export interface TusWhatsAppServiceOptions {
   perfilHabilitacion?: PerfilHabilitacion
   alcanceHabilitacion?: string
   providerEnabled?: boolean
-  templateAllowlist?: readonly WhatsAppTemplateAllowlistEntry[]
+  templateAllowlist?: readonly EntradaListaPermitidaPlantillaWhatsApp[]
   supportHandoff?: (input: { tenantId: string; senderId: string; reason: string; correlationId: string }) => Promise<{ handoffId: string }>
   retentionMs?: number
 }
 
 export class TusWhatsAppService {
-  readonly store: WhatsAppActionStorePort
+  readonly store: PuertoAlmacenAccionWhatsApp
   readonly audit: { list(tenantId: string): RegistroAuditoriaAccionWhatsApp[] }
-  private readonly discover: (tenantId: string) => Promise<readonly WhatsAppDiscoveryItem[]>
+  private readonly discover: (tenantId: string) => Promise<readonly ItemDescubrimientoWhatsApp[]>
   private readonly commitments: (tenantId: string, commitmentId: string) => Promise<Record<string, unknown> | null>
-  private readonly commit?: (input: WhatsAppCommitInput) => Promise<Record<string, unknown>>
+  private readonly commit?: (input: EntradaCompromisoWhatsApp) => Promise<Record<string, unknown>>
   private readonly authorizedSenders?: Readonly<Record<string, readonly string[]>>
   private readonly authorizeSender?: (tenantId: string, senderId: string) => boolean | Promise<boolean>
   private readonly telemetry?: TusOperationsTelemetry
@@ -444,11 +444,11 @@ export class TusWhatsAppService {
   private readonly perfilHabilitacion: PerfilHabilitacion
   private readonly alcanceHabilitacion: string
   private readonly providerEnabled: boolean
-  private readonly templateAllowlist: ReadonlyMap<string, WhatsAppTemplateAllowlistEntry>
-  private readonly supportHandoff?: TusWhatsAppServiceOptions['supportHandoff']
+  private readonly templateAllowlist: ReadonlyMap<string, EntradaListaPermitidaPlantillaWhatsApp>
+  private readonly supportHandoff?: OpcionesServicioWhatsApp['supportHandoff']
   private readonly retentionMs: number
 
-  constructor(options: TusWhatsAppServiceOptions) {
+  constructor(options: OpcionesServicioWhatsApp) {
     this.store = options.store
     this.discover = options.discover ?? (async () => [])
     this.commitments = options.commitments ?? (async () => null)
@@ -470,15 +470,15 @@ export class TusWhatsAppService {
 
   async recordConsent(
     context: TusAuthenticatedTenantContext,
-    input: { recipientType: WhatsAppRecipientType; recipientId: string; source: string; granted: boolean },
-  ): Promise<WhatsAppConsent> {
+    input: { recipientType: TipoDestinatarioWhatsApp; recipientId: string; source: string; granted: boolean },
+  ): Promise<ConsentimientoWhatsApp> {
     this.authorizeMessaging(context)
-    if (!isRecipientType(input.recipientType) || !input.recipientId.trim() || !input.source.trim()) {
+    if (!esTipoDestinatario(input.recipientType) || !input.recipientId.trim() || !input.source.trim()) {
       throw new WhatsAppActionError(400, 'INVALID_CONSENT', 'recipient type, recipient, and consent source are required')
     }
     const now = this.now()
     const previous = await this.store.getConsent?.(context.tenantId, input.recipientType, input.recipientId)
-    const consent: WhatsAppConsent = {
+    const consent: ConsentimientoWhatsApp = {
       consentId: previous?.consentId ?? `whatsapp-consent-${context.tenantId}-${input.recipientType}-${input.recipientId}`,
       tenantId: context.tenantId,
       recipientType: input.recipientType,
@@ -497,15 +497,15 @@ export class TusWhatsAppService {
 
   async optOut(
     context: TusAuthenticatedTenantContext,
-    input: { recipientType: WhatsAppRecipientType; recipientId: string; source?: string },
-  ): Promise<WhatsAppConsent> {
+    input: { recipientType: TipoDestinatarioWhatsApp; recipientId: string; source?: string },
+  ): Promise<ConsentimientoWhatsApp> {
     return this.recordConsent(context, { ...input, source: input.source ?? 'whatsapp-opt-out', granted: false })
   }
 
   async sendTemplate(
     context: TusAuthenticatedTenantContext,
-    input: { recipientType: WhatsAppRecipientType; recipientId: string; template: string; templateVersion: string; variables: Record<string, unknown>; idempotencyKey: string; requestHash: string },
-  ): Promise<WhatsAppTemplateMessage> {
+    input: { recipientType: TipoDestinatarioWhatsApp; recipientId: string; template: string; templateVersion: string; variables: Record<string, unknown>; idempotencyKey: string; requestHash: string },
+  ): Promise<MensajePlantillaWhatsApp> {
     this.authorizeMessaging(context)
     if (!this.providerEnabled) throw new WhatsAppActionError(503, 'PROVIDER_DISABLED', 'WhatsApp provider actions are disabled')
     const consent = await this.store.getConsent?.(context.tenantId, input.recipientType, input.recipientId)
@@ -518,9 +518,9 @@ export class TusWhatsAppService {
       if (prior.requestHash !== input.requestHash) throw new WhatsAppActionError(409, 'IDEMPOTENCY_CONFLICT', 'WhatsApp template idempotency key was reused with a different request')
       return clone(prior)
     }
-    const variables = redactTemplateVariables(template.variables, input.variables)
+    const variables = redactarVariablesPlantilla(template.variables, input.variables)
     const now = this.now()
-    const message: WhatsAppTemplateMessage = {
+    const message: MensajePlantillaWhatsApp = {
       messageId: input.idempotencyKey,
       tenantId: context.tenantId,
       recipientType: input.recipientType,
@@ -541,17 +541,17 @@ export class TusWhatsAppService {
     return clone(message)
   }
 
-  async handoffToSupport(context: TusAuthenticatedTenantContext, input: { senderId: string; reason: string }): Promise<WhatsAppSupportHandoff> {
+  async handoffToSupport(context: TusAuthenticatedTenantContext, input: { senderId: string; reason: string }): Promise<DerivacionSoporteWhatsApp> {
     this.authorizeMessaging(context)
     if (!input.senderId.trim() || !input.reason.trim()) throw new WhatsAppActionError(400, 'INVALID_HANDOFF', 'sender and handoff reason are required')
     const handoff = await this.supportHandoff?.({ tenantId: context.tenantId, senderId: input.senderId, reason: redactText(input.reason), correlationId: context.correlationId })
-    const value: WhatsAppSupportHandoff = { handoffId: handoff?.handoffId ?? `support-handoff-${context.tenantId}-${this.now()}`, tenantId: context.tenantId, senderId: input.senderId, reason: redactText(input.reason), status: 'handoff', createdAt: new Date(this.now()).toISOString() }
+    const value: DerivacionSoporteWhatsApp = { handoffId: handoff?.handoffId ?? `support-handoff-${context.tenantId}-${this.now()}`, tenantId: context.tenantId, senderId: input.senderId, reason: redactText(input.reason), status: 'handoff', createdAt: new Date(this.now()).toISOString() }
     await this.auditRecord(context, 'whatsapp.support.handoff', 'handoff', input.senderId)
     await this.store.saveOutbox?.({ eventId: `whatsapp-handoff-${value.handoffId}`, tenantId: context.tenantId, correlationId: context.correlationId, eventType: 'whatsapp.support.handoff', aggregateId: value.handoffId, payload: { handoffId: value.handoffId, senderId: value.senderId, reason: value.reason }, status: WHATSAPP_OUTBOX_STATUS.PENDING, createdAt: value.createdAt, retentionUntil: new Date(this.now() + this.retentionMs).toISOString() })
     return value
   }
 
-  async execute(input: WhatsAppActionRequest): Promise<WhatsAppActionResult> {
+  async execute(input: SolicitudAccionWhatsApp): Promise<ResultadoAccionWhatsApp> {
     const startedAt = this.now()
     this.validateRequest(input)
     await this.evaluadorHabilitacion?.require({ tenantId: input.tenantId, actorId: input.subjectId, correlationId: input.correlationId, capability: 'provider-actions', profile: this.perfilHabilitacion, scope: this.alcanceHabilitacion })
@@ -568,7 +568,7 @@ export class TusWhatsAppService {
     return this.finish(input, result, startedAt)
   }
 
-  private async executeClaimed(input: WhatsAppActionRequest): Promise<WhatsAppActionResult> {
+  private async executeClaimed(input: SolicitudAccionWhatsApp): Promise<ResultadoAccionWhatsApp> {
     if (!input.permissions.includes('tus:whatsapp:write') && !input.permissions.includes('tus:*')) return this.handoff(input, 'authorization_required')
     const knownTenant = this.sessions.get(input.sessionId)
     if (knownTenant && knownTenant !== input.tenantId) return this.handoff(input, 'tenant_boundary_denied')
@@ -583,7 +583,7 @@ export class TusWhatsAppService {
     return this.executeAction(input)
   }
 
-  private async executeAction(input: WhatsAppActionRequest): Promise<WhatsAppActionResult> {
+  private async executeAction(input: SolicitudAccionWhatsApp): Promise<ResultadoAccionWhatsApp> {
     const type = input.action.type
     if (type === 'handoff') return this.handoff(input, 'customer_requested_handoff')
     if (type === 'search') {
@@ -594,7 +594,7 @@ export class TusWhatsAppService {
       const items = await this.discover(input.tenantId)
       const expiresAt = this.now() + this.confirmationTtlMs
       const confirmationId = `wa-confirmation-${input.tenantId}-${input.idempotencyKey}`
-      await this.store.saveConfirmation({ confirmationId, tenantId: input.tenantId, senderId: input.senderId, expiresAt, consumed: false, items: snapshotItems(items) })
+      await this.store.saveConfirmation({ confirmationId, tenantId: input.tenantId, senderId: input.senderId, expiresAt, consumed: false, items: crearInstantaneaItems(items) })
       return this.completed(input, { items, confirmationId, expiresAt: new Date(expiresAt).toISOString() })
     }
     if (type === 'confirm') {
@@ -602,7 +602,7 @@ export class TusWhatsAppService {
       const confirmation = await this.store.getConfirmation(input.tenantId, confirmationId)
       if (!confirmation || confirmation.consumed || confirmation.senderId !== input.senderId || confirmation.expiresAt <= this.now()) return this.handoff(input, 'confirmation_expired_or_consumed')
       const currentItems = await this.discover(input.tenantId)
-      if (!sameAvailability(confirmation.items, currentItems)) return this.handoff(input, 'quote_stale_or_unavailable')
+      if (!mismaDisponibilidad(confirmation.items, currentItems)) return this.handoff(input, 'quote_stale_or_unavailable')
       if (!(await this.store.consumeConfirmation(input.tenantId, confirmationId, input.senderId, this.now()))) return this.handoff(input, 'confirmation_expired_or_consumed')
       const commitment = this.commit ? await this.commit({ tenantId: input.tenantId, senderId: input.senderId, confirmationId, items: confirmation.items }) : null
       return this.completed(input, { confirmationId, status: ACTION_STATUS.CONFIRMED, mutated: this.commitmentMutated(commitment), commitment })
@@ -615,8 +615,8 @@ export class TusWhatsAppService {
     return this.completed(input)
   }
 
-  private async completed(input: WhatsAppActionRequest, extra: Partial<WhatsAppActionResult> = {}): Promise<WhatsAppActionResult> {
-    const result: WhatsAppActionResult = {
+  private async completed(input: SolicitudAccionWhatsApp, extra: Partial<ResultadoAccionWhatsApp> = {}): Promise<ResultadoAccionWhatsApp> {
+    const result: ResultadoAccionWhatsApp = {
       status: ACTION_STATUS.COMPLETED,
       tenantId: input.tenantId,
       credentialsCollected: false,
@@ -627,8 +627,8 @@ export class TusWhatsAppService {
     return result
   }
 
-  private async handoff(input: WhatsAppActionRequest, reason: string): Promise<WhatsAppActionResult> {
-    const result: WhatsAppActionResult = {
+  private async handoff(input: SolicitudAccionWhatsApp, reason: string): Promise<ResultadoAccionWhatsApp> {
+    const result: ResultadoAccionWhatsApp = {
       status: ACTION_STATUS.HANDOFF,
       reason,
       tenantId: input.tenantId,
@@ -658,7 +658,7 @@ export class TusWhatsAppService {
     }
   }
 
-  private validateRequest(input: WhatsAppActionRequest): void {
+  private validateRequest(input: SolicitudAccionWhatsApp): void {
     if (!input.sessionId.trim() || !input.tenantId.trim() || !input.subjectId.trim() || !input.correlationId.trim() || !input.senderId.trim()) throw new WhatsAppActionError(400, 'INVALID_CONTEXT', 'WhatsApp session, tenant, and sender context are required')
     if (!input.idempotencyKey.trim() || !input.requestHash.trim()) throw new WhatsAppActionError(400, 'INVALID_IDEMPOTENCY', 'WhatsApp idempotency key and request hash are required')
   }
@@ -673,7 +673,7 @@ export class TusWhatsAppService {
     return commitment !== null
   }
 
-  private finish(input: WhatsAppActionRequest, result: WhatsAppActionResult, startedAt: number): WhatsAppActionResult {
+  private finish(input: SolicitudAccionWhatsApp, result: ResultadoAccionWhatsApp, startedAt: number): ResultadoAccionWhatsApp {
     this.telemetry?.record({
       name: 'tus.whatsapp.action',
       outcome: result.status === ACTION_STATUS.HANDOFF ? 'denied' : 'success',
@@ -687,15 +687,15 @@ export class TusWhatsAppService {
   }
 }
 
-function snapshotItems(items: readonly WhatsAppDiscoveryItem[]): WhatsAppDiscoveryItem[] {
+function crearInstantaneaItems(items: readonly ItemDescubrimientoWhatsApp[]): ItemDescubrimientoWhatsApp[] {
   return items.filter((item) => item.available !== false).map((item) => ({ ...item }))
 }
 
-function isRecipientType(value: string): value is WhatsAppRecipientType {
-  return Object.values(WHATSAPP_RECIPIENT_TYPES).includes(value as WhatsAppRecipientType)
+function esTipoDestinatario(value: string): value is TipoDestinatarioWhatsApp {
+  return Object.values(WHATSAPP_RECIPIENT_TYPES).includes(value as TipoDestinatarioWhatsApp)
 }
 
-function redactTemplateVariables(allowed: readonly string[], input: Record<string, unknown>): Record<string, string> {
+function redactarVariablesPlantilla(allowed: readonly string[], input: Record<string, unknown>): Record<string, string> {
   return Object.fromEntries(allowed.flatMap((key) => {
     const value = input[key]
     if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return []
@@ -709,8 +709,8 @@ function redactText(value: string): string {
     .replace(/(?:password|secret|token|credential|api[_-]?key)\s*[:=]\s*\S+/gi, '[REDACTED]')
 }
 
-function sameAvailability(snapshot: readonly WhatsAppDiscoveryItem[], current: readonly WhatsAppDiscoveryItem[]): boolean {
-  const currentById = new Map(snapshotItems(current).map((item) => [item.listingId, item]))
+function mismaDisponibilidad(snapshot: readonly ItemDescubrimientoWhatsApp[], current: readonly ItemDescubrimientoWhatsApp[]): boolean {
+  const currentById = new Map(crearInstantaneaItems(current).map((item) => [item.listingId, item]))
   return snapshot.length > 0 && snapshot.every((item) => {
     const fresh = currentById.get(item.listingId)
     return fresh !== undefined && fresh.price === item.price && fresh.currency === item.currency && (fresh.availabilityVersion ?? 0) === (item.availabilityVersion ?? 0)
