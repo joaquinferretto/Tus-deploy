@@ -12,7 +12,7 @@ import {
   type Publicacion,
   type EntradaPublicacion,
 } from '../catalog/index.ts'
-import { TusCommitmentError } from '../commitments/index.ts'
+import { ErrorCompromiso } from '../commitments/index.ts'
 import { FinanceError } from '../finance/index.ts'
 import { DeliveryError } from '../delivery/index.ts'
 import { PosError } from '../pos/index.ts'
@@ -1109,7 +1109,7 @@ function sendCommitmentError(response: Response, error: unknown): void {
     enviarErrorHabilitacion(response, error)
     return
   }
-  if (error instanceof TusCommitmentError) {
+  if (error instanceof ErrorCompromiso) {
     response.status(error.status).json({ code: error.code, error: error.message })
     return
   }

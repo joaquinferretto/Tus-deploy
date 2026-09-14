@@ -8,10 +8,10 @@ import type {
 import { isReleaseEligible } from '../domain/settlement.ts'
 import { splitCartIntoCommitments } from '../domain/commitments.ts'
 import {
-  TusCommitmentLifecycleService,
-  type TusCommitmentCompensationCommand,
-  type TusCommitmentLifecycleCommand,
-  type TusCommitmentMutationResult,
+  ServicioCicloVidaCompromiso,
+  type ComandoCompensacion,
+  type ComandoCicloVidaCompromiso,
+  type ResultadoMutacionCompromiso,
 } from '../commitments/index.ts'
 import type { TusFinanceService } from '../finance/index.ts'
 import type { DeliveryProof, DeliveryTask, TusDeliveryService } from '../delivery/index.ts'
@@ -86,7 +86,7 @@ export class TusApplicationService {
   readonly reporting?: TusReportingService
   readonly contexts = TUS_BOUNDED_CONTEXTS
   private readonly dependencies: TusApplicationDependencies
-  private readonly lifecycle: TusCommitmentLifecycleService
+  private readonly lifecycle: ServicioCicloVidaCompromiso
   readonly evaluadorHabilitacion?: EvaluadorHabilitacion
 
   constructor(dependencies: TusApplicationDependencies) {
@@ -102,7 +102,7 @@ export class TusApplicationService {
     this.reporting = dependencies.reporting
     this.evaluadorHabilitacion = dependencies.evaluadorHabilitacion
     if (!dependencies.transaction) throw new Error('TUS transaction boundary is required')
-    this.lifecycle = new TusCommitmentLifecycleService(dependencies.transaction, dependencies.now, {
+    this.lifecycle = new ServicioCicloVidaCompromiso(dependencies.transaction, dependencies.now, {
       evaluadorHabilitacion: dependencies.evaluadorHabilitacion,
       perfilHabilitacion: dependencies.perfilHabilitacion,
       alcanceHabilitacion: dependencies.alcanceHabilitacion,
@@ -146,11 +146,11 @@ export class TusApplicationService {
     }
   }
 
-  transitionCommitment(input: TusCommitmentLifecycleCommand): Promise<TusCommitmentMutationResult> {
+  transitionCommitment(input: ComandoCicloVidaCompromiso): Promise<ResultadoMutacionCompromiso> {
     return this.lifecycle.transition(input)
   }
 
-  compensateCommitment(input: TusCommitmentCompensationCommand): Promise<TusCommitmentMutationResult> {
+  compensateCommitment(input: ComandoCompensacion): Promise<ResultadoMutacionCompromiso> {
     return this.lifecycle.compensate(input)
   }
 

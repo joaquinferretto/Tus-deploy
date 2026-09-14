@@ -28,7 +28,7 @@ export function isIndependentMarketplaceCommitment(commitment: MarketplaceCommit
   return commitment.commitmentId.length > 0 && commitment.listingId.length > 0 && ['product', 'service'].includes(commitment.context)
 }
 
-export interface TusCommitmentLifecycleCommand extends TusCommandContext {
+export interface ComandoCicloVidaCompromiso extends TusCommandContext {
   commitmentId: string
   toStatus: CommitmentStatus
   expectedVersion: number
@@ -38,7 +38,7 @@ export interface TusCommitmentLifecycleCommand extends TusCommandContext {
   createdAt: string
 }
 
-export interface TusCommitmentCompensationCommand extends TusCommandContext {
+export interface ComandoCompensacion extends TusCommandContext {
   commitmentId: string
   expectedVersion: number
   idempotencyKey: string
@@ -48,14 +48,14 @@ export interface TusCommitmentCompensationCommand extends TusCommandContext {
   createdAt: string
 }
 
-export type TusCommitmentMutationResult = {
+export type ResultadoMutacionCompromiso = {
   status: 'executed' | 'replay'
   commitment: TusCommitment
   auditReferences: ReferenciaAuditoria[]
   compensation?: TusCommitmentCompensation
 }
 
-export class TusCommitmentError extends Error {
+export class ErrorCompromiso extends Error {
   readonly status: number
   readonly code: string
 
@@ -67,7 +67,7 @@ export class TusCommitmentError extends Error {
   }
 }
 
-export class TusCommitmentLifecycleService {
+export class ServicioCicloVidaCompromiso {
   private readonly transaction: TusTransactionPort
   private readonly now: () => number
   private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
@@ -82,27 +82,27 @@ export class TusCommitmentLifecycleService {
     this.alcanceHabilitacion = options.alcanceHabilitacion ?? 'argentina-stage-1'
   }
 
-  async transition(input: TusCommitmentLifecycleCommand): Promise<TusCommitmentMutationResult> {
+  async transition(input: ComandoCicloVidaCompromiso): Promise<ResultadoMutacionCompromiso> {
     requireCommandText(input)
     await this.requerirHabilitacion(input)
     if (input.toStatus === TUS_COMMITMENT_STATUSES.COMPENSATED) {
-      throw new TusCommitmentError(400, 'INVALID_TRANSITION', 'use compensation for compensated commitments')
+      throw new ErrorCompromiso(400, 'INVALID_TRANSITION', 'use compensation for compensated commitments')
     }
     return this.transaction.run(async (repositories) => {
       const claim = await repositories.idempotency.claim({ tenantId: input.tenantId, key: input.idempotencyKey, requestHash: input.requestHash, now: this.now(), expiresAt: this.now() + 15 * 60 * 1000 })
       if (claim.status === 'replay') return mutationFromResponse(claim.response)
-      if (claim.status === 'conflict') throw new TusCommitmentError(409, 'CONFLICT', 'idempotency key was already used for another request')
-      if (claim.status === 'in_progress') throw new TusCommitmentError(409, 'IN_PROGRESS', 'the idempotent request is already in progress')
+      if (claim.status === 'conflict') throw new ErrorCompromiso(409, 'CONFLICT', 'idempotency key was already used for another request')
+      if (claim.status === 'in_progress') throw new ErrorCompromiso(409, 'IN_PROGRESS', 'the idempotent request is already in progress')
 
       const current = await repositories.commitments.find(input.commitmentId)
-      if (!current) throw new TusCommitmentError(404, 'NOT_FOUND', 'commitment was not found')
-      if (current.tenantId !== input.tenantId) throw new TusCommitmentError(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
-      if (current.version !== input.expectedVersion) throw new TusCommitmentError(409, 'VERSION_CONFLICT', 'commitment version is stale')
-      if (!isValidTransition(current.status, input.toStatus)) throw new TusCommitmentError(409, 'INVALID_TRANSITION', `cannot transition ${current.status} to ${input.toStatus}`)
+      if (!current) throw new ErrorCompromiso(404, 'NOT_FOUND', 'commitment was not found')
+      if (current.tenantId !== input.tenantId) throw new ErrorCompromiso(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
+      if (current.version !== input.expectedVersion) throw new ErrorCompromiso(409, 'VERSION_CONFLICT', 'commitment version is stale')
+      if (!isValidTransition(current.status, input.toStatus)) throw new ErrorCompromiso(409, 'INVALID_TRANSITION', `cannot transition ${current.status} to ${input.toStatus}`)
 
       const updated = { ...current, status: input.toStatus, version: current.version + 1 }
       const persisted = await repositories.commitments.update({ tenantId: input.tenantId, commitmentId: input.commitmentId, expectedVersion: input.expectedVersion, commitment: updated })
-      if (!persisted) throw new TusCommitmentError(409, 'VERSION_CONFLICT', 'commitment version is stale')
+      if (!persisted) throw new ErrorCompromiso(409, 'VERSION_CONFLICT', 'commitment version is stale')
       const audit = auditoriaCicloVida(input, current, persisted, TIPOS_REFERENCIA_AUDITORIA.STATUS_CHANGED)
       const response = mutationResponse(persisted, [audit], 'transition')
       await repositories.audits.append([audit])
@@ -112,26 +112,26 @@ export class TusCommitmentLifecycleService {
     })
   }
 
-  async compensate(input: TusCommitmentCompensationCommand): Promise<TusCommitmentMutationResult> {
+  async compensate(input: ComandoCompensacion): Promise<ResultadoMutacionCompromiso> {
     requireCommandText(input)
     await this.requerirHabilitacion(input)
-    if (!Number.isFinite(input.amount) || input.amount < 0) throw new TusCommitmentError(400, 'INVALID_COMPENSATION', 'compensation amount must be non-negative')
+    if (!Number.isFinite(input.amount) || input.amount < 0) throw new ErrorCompromiso(400, 'INVALID_COMPENSATION', 'compensation amount must be non-negative')
     return this.transaction.run(async (repositories) => {
       const claim = await repositories.idempotency.claim({ tenantId: input.tenantId, key: input.idempotencyKey, requestHash: input.requestHash, now: this.now(), expiresAt: this.now() + 15 * 60 * 1000 })
       if (claim.status === 'replay') return mutationFromResponse(claim.response)
-      if (claim.status === 'conflict') throw new TusCommitmentError(409, 'CONFLICT', 'idempotency key was already used for another request')
-      if (claim.status === 'in_progress') throw new TusCommitmentError(409, 'IN_PROGRESS', 'the idempotent request is already in progress')
+      if (claim.status === 'conflict') throw new ErrorCompromiso(409, 'CONFLICT', 'idempotency key was already used for another request')
+      if (claim.status === 'in_progress') throw new ErrorCompromiso(409, 'IN_PROGRESS', 'the idempotent request is already in progress')
 
       const current = await repositories.commitments.find(input.commitmentId)
-      if (!current) throw new TusCommitmentError(404, 'NOT_FOUND', 'commitment was not found')
-      if (current.tenantId !== input.tenantId) throw new TusCommitmentError(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
-      if (current.version !== input.expectedVersion) throw new TusCommitmentError(409, 'VERSION_CONFLICT', 'commitment version is stale')
-      if (current.status === TUS_COMMITMENT_STATUSES.COMPENSATED) throw new TusCommitmentError(409, 'ALREADY_COMPENSATED', 'commitment has already been compensated')
-      if (input.amount > current.amount) throw new TusCommitmentError(400, 'INVALID_COMPENSATION', 'compensation exceeds commitment amount')
+      if (!current) throw new ErrorCompromiso(404, 'NOT_FOUND', 'commitment was not found')
+      if (current.tenantId !== input.tenantId) throw new ErrorCompromiso(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
+      if (current.version !== input.expectedVersion) throw new ErrorCompromiso(409, 'VERSION_CONFLICT', 'commitment version is stale')
+      if (current.status === TUS_COMMITMENT_STATUSES.COMPENSATED) throw new ErrorCompromiso(409, 'ALREADY_COMPENSATED', 'commitment has already been compensated')
+      if (input.amount > current.amount) throw new ErrorCompromiso(400, 'INVALID_COMPENSATION', 'compensation exceeds commitment amount')
 
       const updated = { ...current, status: TUS_COMMITMENT_STATUSES.COMPENSATED, version: current.version + 1 }
       const persisted = await repositories.commitments.update({ tenantId: input.tenantId, commitmentId: input.commitmentId, expectedVersion: input.expectedVersion, commitment: updated })
-      if (!persisted) throw new TusCommitmentError(409, 'VERSION_CONFLICT', 'commitment version is stale')
+      if (!persisted) throw new ErrorCompromiso(409, 'VERSION_CONFLICT', 'commitment version is stale')
       const compensation: TusCommitmentCompensation = { compensationId: `compensation-${input.tenantId}-${input.commitmentId}-${persisted.version}`, tenantId: input.tenantId, commitmentId: input.commitmentId, actorId: input.actorId, correlationId: input.correlationId, amount: input.amount, currency: current.currency, reason: input.reason, createdAt: input.createdAt }
       await repositories.compensations.save(compensation)
       const audit = auditoriaCicloVida(input, current, persisted, TIPOS_REFERENCIA_AUDITORIA.COMPENSATED)
@@ -151,7 +151,7 @@ export class TusCommitmentLifecycleService {
 function requireCommandText(input: TusCommandContext & { commitmentId: string; idempotencyKey: string; requestHash: string; reason: string }): void {
   for (const [field, value] of Object.entries(input)) {
     if (['tenantId', 'actorId', 'correlationId', 'commitmentId', 'idempotencyKey', 'requestHash', 'reason'].includes(field) && typeof value === 'string' && !value.trim()) {
-      throw new TusCommitmentError(400, 'INVALID', `${field} is required`)
+      throw new ErrorCompromiso(400, 'INVALID', `${field} is required`)
     }
   }
 }
@@ -181,15 +181,15 @@ function mutationResponse(commitment: TusCommitment, auditReferences: Referencia
   return { commitments: [commitment], auditReferences, operation, commitment, ...(compensation ? { compensation } : {}) }
 }
 
-function mutationFromResponse(response: TusCheckoutResponse): TusCommitmentMutationResult {
+function mutationFromResponse(response: TusCheckoutResponse): ResultadoMutacionCompromiso {
   const commitment = response.commitment ?? response.commitments[0]
-  if (!commitment) throw new TusCommitmentError(500, 'INVALID_REPLAY', 'idempotency replay has no commitment result')
+  if (!commitment) throw new ErrorCompromiso(500, 'INVALID_REPLAY', 'idempotency replay has no commitment result')
   return { status: 'replay', commitment, auditReferences: response.auditReferences, ...(response.compensation ? { compensation: response.compensation } : {}) }
 }
 
-function executedMutation(response: TusCheckoutResponse): TusCommitmentMutationResult {
+function executedMutation(response: TusCheckoutResponse): ResultadoMutacionCompromiso {
   const commitment = response.commitment ?? response.commitments[0]
-  if (!commitment) throw new TusCommitmentError(500, 'INVALID_RESULT', 'commitment mutation produced no commitment')
+  if (!commitment) throw new ErrorCompromiso(500, 'INVALID_RESULT', 'commitment mutation produced no commitment')
   return { status: 'executed', commitment, auditReferences: response.auditReferences, ...(response.compensation ? { compensation: response.compensation } : {}) }
 }
 
