@@ -2,10 +2,10 @@ import type { Compromiso } from '@factory/contracts'
 import type { TusMarketplaceService } from '../catalog/index.ts'
 import type { ServiceCalendarService } from '../calendar/index.ts'
 import type {
-  ReleaseEligibility,
-  ReleaseEligibilityInput,
+  ElegibilidadLiberacion,
+  EntradaElegibilidadLiberacion,
 } from '../domain/settlement.ts'
-import { isReleaseEligible } from '../domain/settlement.ts'
+import { esElegibleParaLiberacion } from '../domain/settlement.ts'
 import { splitCartIntoCommitments } from '../domain/commitments.ts'
 import {
   ServicioCicloVidaCompromiso,
@@ -194,8 +194,8 @@ export class TusApplicationService {
     return this.delivery.transitionTask(context, taskId, 'handed-off', expectedVersion)
   }
 
-  evaluateRelease(input: ReleaseEligibilityInput): ReleaseEligibility {
-    return isReleaseEligible({
+  evaluateRelease(input: EntradaElegibilidadLiberacion): ElegibilidadLiberacion {
+    return esElegibleParaLiberacion({
       ...input,
       localReleaseAfterMs: input.localReleaseAfterMs ?? this.dependencies.releasePolicy?.localReleaseAfterMs,
     })

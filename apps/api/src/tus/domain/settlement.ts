@@ -1,17 +1,17 @@
 import type {
   ContextoCompromiso,
-  CompletionEvidence,
-  SettlementSnapshot,
-  TusDispute,
+  Disputa,
+  EvidenciaCumplimiento,
+  InstantaneaLiquidacion,
 } from '@factory/contracts'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
-import { isCompletionEvidence } from './evidence.ts'
+import { esEvidenciaCumplimiento } from './evidence.ts'
 
 const MVP_RATE_BPS = 1000
 const SERVICE_RELEASE_WINDOW_MS = 12 * 60 * 60 * 1000
 const ONLINE_DELIVERY_RELEASE_WINDOW_MS = 24 * 60 * 60 * 1000
 
-export interface SettlementSnapshotInput {
+export interface EntradaInstantaneaLiquidacion {
   commitmentId: string
   context: ContextoCompromiso
   ruleVersion: string
@@ -21,7 +21,7 @@ export interface SettlementSnapshotInput {
   rateBps?: number
 }
 
-export function createSettlementSnapshot(input: SettlementSnapshotInput): SettlementSnapshot {
+export function crearInstantaneaLiquidacion(input: EntradaInstantaneaLiquidacion): InstantaneaLiquidacion {
   const rateBps = input.rateBps ?? MVP_RATE_BPS
   if (!Number.isInteger(rateBps) || rateBps < 0) throw new Error('rateBps must be a non-negative integer')
   if (!Number.isFinite(input.commissionableBase) || input.commissionableBase < 0) {
@@ -41,11 +41,11 @@ export function createSettlementSnapshot(input: SettlementSnapshotInput): Settle
   })
 }
 
-export interface ReleaseEligibilityInput {
+export interface EntradaElegibilidadLiberacion {
   commitmentContext: ContextoCompromiso
-  completionEvidence?: CompletionEvidence
+  completionEvidence?: EvidenciaCumplimiento
   customerConfirmedAt?: string
-  dispute?: Pick<TusDispute, 'status'>
+  dispute?: Pick<Disputa, 'status'>
   riskHold?: boolean
   chargeback?: boolean
   fraudRisk?: boolean
@@ -55,11 +55,11 @@ export interface ReleaseEligibilityInput {
   now: string
 }
 
-export type ReleaseEligibility =
+export type ElegibilidadLiberacion =
   | { eligible: true; reason: 'customer_confirmed' | 'service_release_window_elapsed' | 'delivery_release_window_elapsed' | 'local_policy_elapsed' }
   | { eligible: false; reason: 'absolute_freeze' | 'completion_evidence_required' | 'service_release_window_pending' | 'delivery_release_window_pending' | 'local_policy_required' }
 
-export function isReleaseEligible(input: ReleaseEligibilityInput): ReleaseEligibility {
+export function esElegibleParaLiberacion(input: EntradaElegibilidadLiberacion): ElegibilidadLiberacion {
   if (
     input.riskHold === true ||
     input.chargeback === true ||
@@ -70,7 +70,7 @@ export function isReleaseEligible(input: ReleaseEligibilityInput): ReleaseEligib
     return { eligible: false, reason: 'absolute_freeze' }
   }
   const completionEvidence = input.completionEvidence
-  if (!isCompletionEvidence(completionEvidence)) {
+  if (!esEvidenciaCumplimiento(completionEvidence)) {
     return { eligible: false, reason: 'completion_evidence_required' }
   }
   if (input.customerConfirmedAt !== undefined) return { eligible: true, reason: 'customer_confirmed' }

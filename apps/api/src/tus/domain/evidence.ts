@@ -1,13 +1,13 @@
-import { TUS_CONTRACT_VERSION, type CompletionEvidence, type EvidenceKind, type TusTenantContext } from '@factory/contracts'
+import { TUS_CONTRACT_VERSION, type EvidenciaCumplimiento, type TipoEvidencia, type TusTenantContext } from '@factory/contracts'
 
-export interface CompletionEvidenceInput extends TusTenantContext {
+export interface EntradaEvidenciaCumplimiento extends TusTenantContext {
   commitmentId: string
   evidenceId: string
   occurredAt: string
-  kind: EvidenceKind
+  kind: TipoEvidencia
 }
 
-export function createCompletionEvidence(input: CompletionEvidenceInput): CompletionEvidence {
+export function crearEvidenciaCumplimiento(input: EntradaEvidenciaCumplimiento): EvidenciaCumplimiento {
   if (input.kind === 'check-in' && input.commitmentId.length === 0) {
     throw new Error('check-in evidence requires a commitment')
   }
@@ -23,8 +23,8 @@ export function createCompletionEvidence(input: CompletionEvidenceInput): Comple
   }
 }
 
-export function isCompletionEvidence(
-  evidence: Pick<CompletionEvidence, 'kind'> | undefined,
-): evidence is CompletionEvidence {
+export function esEvidenciaCumplimiento(
+  evidence: Pick<EvidenciaCumplimiento, 'kind'> | undefined,
+): evidence is EvidenciaCumplimiento {
   return evidence?.kind === 'completion' || evidence?.kind === 'delivery-accepted'
 }

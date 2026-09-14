@@ -194,20 +194,20 @@ export interface AuditoriaMercadoServicios {
   createdAt: string
 }
 
-export type EvidenceKind = 'completion' | 'check-in' | 'delivery-accepted'
+export type TipoEvidencia = 'completion' | 'check-in' | 'delivery-accepted'
 
-export interface CompletionEvidence {
+export interface EvidenciaCumplimiento {
   contractVersion: TusContractVersion
   evidenceId: string
   commitmentId: string
   tenantId: string
   actorId: string
   correlationId: string
-  kind: EvidenceKind
+  kind: TipoEvidencia
   occurredAt: string
 }
 
-export interface SettlementSnapshot {
+export interface InstantaneaLiquidacion {
   contractVersion: TusContractVersion
   commitmentId: string
   context: ContextoCompromiso
@@ -219,9 +219,9 @@ export interface SettlementSnapshot {
   evidenceId: string
 }
 
-export type DisputeStatus = 'open' | 'resolved' | 'rejected'
+export type EstadoDisputa = 'open' | 'resolved' | 'rejected'
 
-export interface TusDispute {
+export interface Disputa {
   contractVersion: TusContractVersion
   disputeId: string
   commitmentId: string
@@ -229,7 +229,7 @@ export interface TusDispute {
   actorId: string
   correlationId: string
   reason: string
-  status: DisputeStatus
+  status: EstadoDisputa
 }
 
 export interface CasoSoporte {
@@ -565,7 +565,7 @@ export function validateTusCommitment(value: unknown): Compromiso {
   return value as unknown as Compromiso
 }
 
-export function validateTusSettlementSnapshot(value: unknown): SettlementSnapshot {
+export function validarInstantaneaLiquidacion(value: unknown): InstantaneaLiquidacion {
   if (!isRecord(value)) {
     throw new ContractValidationError('tus-settlement-snapshot', undefined, 'payload must be an object')
   }
@@ -583,7 +583,7 @@ export function validateTusSettlementSnapshot(value: unknown): SettlementSnapsho
       throw new ContractValidationError('tus-settlement-snapshot', TUS_CONTRACT_VERSION, `${field} must be non-negative`)
     }
   }
-  return value as unknown as SettlementSnapshot
+  return value as unknown as InstantaneaLiquidacion
 }
 
 export function validarEvidenciaHabilitacion(value: unknown): EvidenciaHabilitacion {

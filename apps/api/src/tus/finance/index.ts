@@ -1,8 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { ContextoCompromiso, Compromiso } from '@factory/contracts'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
-import { createCompletionEvidence, type CompletionEvidenceInput } from '../domain/evidence.ts'
-import { isReleaseEligible, type ReleaseEligibility } from '../domain/settlement.ts'
+import { crearEvidenciaCumplimiento, type EntradaEvidenciaCumplimiento } from '../domain/evidence.ts'
+import { esElegibleParaLiberacion, type ElegibilidadLiberacion } from '../domain/settlement.ts'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 
 export const FINANCIAL_GATE_KEYS = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'reconciliation'] as const
@@ -529,14 +529,14 @@ export class TusFinanceService {
     throw new FinanceError(503, reason === 'timeout' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE', `Mercado Pago provider ${reason}`)
   }
 
-  async recordEvidence(input: CompletionEvidenceInput): Promise<EvidenciaFinanciera> {
+  async recordEvidence(input: EntradaEvidenciaCumplimiento): Promise<EvidenciaFinanciera> {
     validarContextoFinanzas(input)
     await this.requerirHabilitacion(input, 'provider-actions')
     const commitment = await this.requerirCompromiso(input.tenantId, input.commitmentId)
     if (!['completion', 'check-in', 'delivery-accepted'].includes(input.kind)) throw new FinanceError(400, 'INVALID_EVIDENCE', 'unsupported financial evidence kind')
     if (!Number.isFinite(Date.parse(input.occurredAt))) throw new FinanceError(400, 'INVALID_EVIDENCE', 'evidence timestamp is invalid')
     void commitment
-    return this.store.saveEvidence(createCompletionEvidence(input))
+    return this.store.saveEvidence(crearEvidenciaCumplimiento(input))
   }
 
   async confirmCompletion(input: ContextoComandoFinanzas & { commitmentId: string; confirmationId: string; confirmedAt: string }): Promise<ResultadoLiberacion> {
@@ -563,7 +563,7 @@ export class TusFinanceService {
     if (freeze) return { status: 'frozen', reason: 'absolute_freeze', freeze }
     const evidence = (await this.store.listEvidence(input.tenantId, input.commitmentId)).find((item) => item.kind === 'completion' || item.kind === 'delivery-accepted')
     const commitment = await this.requerirCompromiso(input.tenantId, input.commitmentId)
-    const evidenceEligibility = isReleaseEligible({
+    const evidenceEligibility = esElegibleParaLiberacion({
       commitmentContext: commitment.context,
       completionEvidence: evidence,
       now: input.now,
@@ -573,7 +573,7 @@ export class TusFinanceService {
     }
     const confirmation = await this.store.getConfirmation(input.tenantId, input.commitmentId)
     if (!confirmation) return { status: 'held', reason: 'completion_confirmation_required' }
-    const eligibility = isReleaseEligible({
+    const eligibility = esElegibleParaLiberacion({
       commitmentContext: commitment.context,
       completionEvidence: evidence,
       customerConfirmedAt: confirmation.confirmedAt,
@@ -707,8 +707,8 @@ export type ResultadoIntencionPago =
   | { status: 'frozen'; reason: 'provider_timeout' | 'provider_unavailable'; payment: IntencionPago }
   | { status: 'replay'; payment: IntencionPago }
 export type ResultadoLiberacion =
-  | { status: 'released'; reason: Exclude<ReleaseEligibility, { eligible: false }>['reason'] }
-  | { status: 'held'; reason: Exclude<ReleaseEligibility, { eligible: true }>['reason'] | 'provider_confirmation_pending' | 'completion_confirmation_required' | 'five_day_hold_pending' }
+  | { status: 'released'; reason: Exclude<ElegibilidadLiberacion, { eligible: false }>['reason'] }
+  | { status: 'held'; reason: Exclude<ElegibilidadLiberacion, { eligible: true }>['reason'] | 'provider_confirmation_pending' | 'completion_confirmation_required' | 'five_day_hold_pending' }
   | { status: 'frozen'; reason: 'absolute_freeze'; freeze: CongelamientoFinanciero }
 export type ResultadoReintegro = { status: 'compensated'; refundId: string; commitmentId: string; amount: number; reason: string; deterministic: boolean }
 
@@ -721,7 +721,7 @@ export function createCommissionSnapshot(input: Omit<InstantaneaComision, 'contr
   return Object.freeze({ contractVersion: TUS_CONTRACT_VERSION, ...input })
 }
 
-function motivoLiberacion(reason: string | undefined): Exclude<ReleaseEligibility, { eligible: false }>['reason'] {
+function motivoLiberacion(reason: string | undefined): Exclude<ElegibilidadLiberacion, { eligible: false }>['reason'] {
   if (reason === 'service_release_window_elapsed' || reason === 'delivery_release_window_elapsed' || reason === 'local_policy_elapsed') return reason
   return 'customer_confirmed'
 }

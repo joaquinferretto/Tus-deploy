@@ -5,18 +5,18 @@ import {
   CONTRACT_VERSION,
   TUS_CONTRACT_VERSION,
   validateTusCommitment,
-  validateTusSettlementSnapshot,
+  validarInstantaneaLiquidacion,
 } from '../../packages/contracts/src/index.ts'
 import {
   authorizeCommitmentAccess,
-  createCompletionEvidence,
-  createDispute,
+  crearDisputa,
+  crearEvidenciaCumplimiento,
   createMercadoPagoHandoff,
-  createSettlementSnapshot,
+  crearInstantaneaLiquidacion,
   createSupportCase,
   evaluarRequisitosHabilitacion,
   evaluateStage1Publication,
-  isReleaseEligible,
+  esElegibleParaLiberacion,
   isSupportedWhatsAppAction,
   splitCartIntoCommitments,
 } from '../../apps/api/src/tus/domain/index.ts'
@@ -103,7 +103,7 @@ test('tenant authorization denies foreign commitments without exposing them', ()
 })
 
 test('release requires completion evidence, supports confirmation, and rejects check-in alone', () => {
-  const evidence = createCompletionEvidence({
+  const evidence = crearEvidenciaCumplimiento({
     ...tenantContext,
     commitmentId: 'commitment-service',
     evidenceId: 'evidence-service',
@@ -112,7 +112,7 @@ test('release requires completion evidence, supports confirmation, and rejects c
   })
 
   assert.deepEqual(
-    isReleaseEligible({
+    esElegibleParaLiberacion({
       commitmentContext: 'service',
       completionEvidence: evidence,
       now: '2026-01-01T11:59:59.000Z',
@@ -120,7 +120,7 @@ test('release requires completion evidence, supports confirmation, and rejects c
     { eligible: false, reason: 'service_release_window_pending' },
   )
   assert.deepEqual(
-    isReleaseEligible({
+    esElegibleParaLiberacion({
       commitmentContext: 'service',
       completionEvidence: evidence,
       now: '2026-01-01T12:00:00.000Z',
@@ -128,7 +128,7 @@ test('release requires completion evidence, supports confirmation, and rejects c
     { eligible: true, reason: 'service_release_window_elapsed' },
   )
   assert.deepEqual(
-    isReleaseEligible({
+    esElegibleParaLiberacion({
       commitmentContext: 'service',
       completionEvidence: { ...evidence, kind: 'check-in' },
       now: '2026-01-02T00:00:00.000Z',
@@ -136,7 +136,7 @@ test('release requires completion evidence, supports confirmation, and rejects c
     { eligible: false, reason: 'completion_evidence_required' },
   )
   assert.deepEqual(
-    isReleaseEligible({
+    esElegibleParaLiberacion({
       commitmentContext: 'service',
       completionEvidence: evidence,
       customerConfirmedAt: '2026-01-01T01:00:00.000Z',
@@ -147,14 +147,14 @@ test('release requires completion evidence, supports confirmation, and rejects c
 })
 
 test('disputes and risk holds freeze release regardless of elapsed time', () => {
-  const evidence = createCompletionEvidence({
+  const evidence = crearEvidenciaCumplimiento({
     ...tenantContext,
     commitmentId: 'commitment-product',
     evidenceId: 'evidence-product',
     occurredAt: '2026-01-01T00:00:00.000Z',
     kind: 'delivery-accepted',
   })
-  const dispute = createDispute({
+  const dispute = crearDisputa({
     ...tenantContext,
     disputeId: 'dispute-1',
     commitmentId: evidence.commitmentId,
@@ -164,7 +164,7 @@ test('disputes and risk holds freeze release regardless of elapsed time', () => 
   assert.equal(dispute.status, 'open')
   assert.equal(dispute.commitmentId, evidence.commitmentId)
   assert.deepEqual(
-    isReleaseEligible({
+    esElegibleParaLiberacion({
       commitmentContext: 'product',
       deliveryMode: 'online',
       completionEvidence: evidence,
@@ -174,7 +174,7 @@ test('disputes and risk holds freeze release regardless of elapsed time', () => 
     { eligible: false, reason: 'absolute_freeze' },
   )
   assert.deepEqual(
-    isReleaseEligible({
+    esElegibleParaLiberacion({
       commitmentContext: 'product',
       deliveryMode: 'online',
       completionEvidence: evidence,
@@ -212,7 +212,7 @@ test('support cases retain the affected commitment linkage and open incident sta
 })
 
 test('settlement snapshots preserve immutable commission inputs', () => {
-  const snapshot = createSettlementSnapshot({
+  const snapshot = crearInstantaneaLiquidacion({
     commitmentId: 'commitment-service',
     context: 'service',
     commissionableBase: 2500,
@@ -224,7 +224,7 @@ test('settlement snapshots preserve immutable commission inputs', () => {
   assert.equal(snapshot.rateBps, 1000)
   assert.equal(snapshot.commissionAmount, 250)
   assert.equal(Object.isFrozen(snapshot), true)
-  assert.deepEqual(validateTusSettlementSnapshot(snapshot), snapshot)
+  assert.deepEqual(validarInstantaneaLiquidacion(snapshot), snapshot)
 })
 
 test('WhatsApp allows discovery and secure payment handoff but rejects unsupported actions', () => {
@@ -519,7 +519,7 @@ test('TUS application enforces tenant isolation for commitment reads and configu
     application.evaluateRelease({
       commitmentContext: 'product',
       deliveryMode: 'local',
-      completionEvidence: createCompletionEvidence({
+      completionEvidence: crearEvidenciaCumplimiento({
         ...tenantContext,
         commitmentId,
         evidenceId: 'evidence-local',
@@ -534,7 +534,7 @@ test('TUS application enforces tenant isolation for commitment reads and configu
     application.evaluateRelease({
       commitmentContext: 'product',
       deliveryMode: 'local',
-      completionEvidence: createCompletionEvidence({
+      completionEvidence: crearEvidenciaCumplimiento({
         ...tenantContext,
         commitmentId,
         evidenceId: 'evidence-local',
