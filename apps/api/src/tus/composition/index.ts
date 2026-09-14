@@ -28,7 +28,7 @@ import {
   TusFinanceService,
   UnavailableMercadoPagoFinanceProvider,
 } from '../finance/index.ts'
-import { PrismaTusFinanceStore, type PrismaFinanceClient } from '../finance/prisma.ts'
+import { PrismaTusFinanceStore, type ClientePrismaFinanzas } from '../finance/prisma.ts'
 import { InMemoryDeliveryStore, TusDeliveryService } from '../delivery/index.ts'
 import { InMemoryPosStore, TusPosService } from '../pos/index.ts'
 import { PrismaDeliveryStore, PrismaPosStore } from '../adapters/delivery-pos.ts'
@@ -114,7 +114,7 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
     marketplace,
     calendar,
     finance: new TusFinanceService({
-      store: new PrismaTusFinanceStore(client as unknown as PrismaFinanceClient),
+      store: new PrismaTusFinanceStore(client as unknown as ClientePrismaFinanzas),
       provider: new UnavailableMercadoPagoFinanceProvider(),
       commitmentLookup,
        evaluadorHabilitacion,
