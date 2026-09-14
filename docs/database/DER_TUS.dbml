@@ -1,0 +1,1557 @@
+// ============================================================
+// DER CANÓNICO TUS — MODELO RELACIONAL OBJETIVO (español, snake_case)
+// ============================================================
+// ADVERTENCIA: este diagrama describe el modelo canónico OBJETIVO de TUS Core.
+// NO es una copia exacta del estado físico actual de PostgreSQL.
+// Las relaciones marcadas [OBJETIVO_FUTURO] todavía NO existen como FK física
+// y se implementarán mediante migraciones forward-only posteriores.
+// Las relaciones [FISICA_ACTUAL] ya existen físicamente.
+// [LOGICA], [EXTERNA], [POLIMORFICA], [HISTORICA] y [TECNICA] NO son FK SQL.
+//
+// Convenciones:
+//   id          -> PK surrogate estable e inmutable (varchar, generada por aplicación)
+//   tenant_id   -> excepción técnica de aislamiento (permanece en inglés)
+//   *_id de negocio -> identidad tenant-scoped, protegida por UNIQUE (tenant_id, <id>)
+//   bigint      -> dinero/montos en unidades menores (NO int)
+//   json        -> valores serializados congelados
+//
+// Utilizable directamente en dbdiagram.io
+
+// ============================================================
+// MERCADO
+// ============================================================
+
+Table prestadores {
+  id varchar [pk, note: 'PK surrogate estable e inmutable']
+  tenant_id varchar [note: 'excepción técnica de aislamiento']
+  prestador_id varchar [note: 'id de negocio del prestador (merchantId)']
+  cohort varchar
+  location_id varchar
+  timezone varchar
+  staff_roles varchar[]
+  operating_policy_version varchar
+  status varchar
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, prestador_id) [unique, name: 'uq_prestadores_tenant_prestador', note: 'OBJETIVO_FUTURO: hoy solo tenant_id es @unique']
+    (tenant_id, status) [name: 'idx_prestadores_tenant_status']
+  }
+
+  Note: 'Prestador = actor que ofrece y ejecuta servicios. PK surrogate; identidad tenant-scoped por (tenant_id, prestador_id).'
+}
+
+Table publicaciones {
+  id varchar [pk, note: 'PK surrogate estable e inmutable']
+  contract_version varchar
+  tenant_id varchar
+  prestador_id varchar [note: 'FK objetivo -> prestadores (merchantId)']
+  kind varchar
+  name varchar
+  description varchar
+  cohort varchar
+  location_id varchar
+  currency varchar
+  price bigint [note: 'unidades menores']
+  availability_version int
+  published boolean
+  policy_version varchar
+  stock int [null]
+  duration_minutes int [null]
+  capacity int [null]
+  working_hours json
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, published) [name: 'idx_publicaciones_tenant_published']
+    (tenant_id, availability_version) [name: 'idx_publicaciones_tenant_avail']
+    (prestador_id, kind) [name: 'idx_publicaciones_prestador_kind']
+  }
+
+  Note: 'Publicacion = oferta visible. Prestador 1:N Publicacion. FK objetivo (tenant_id, prestador_id) -> prestadores, onDelete RESTRICT.'
+}
+
+Table compromisos_mercado_servicios {
+  id varchar [pk]
+  contract_version varchar
+  compromiso_id varchar
+  cart_id varchar
+  tenant_id varchar
+  prestador_id varchar [note: 'referencia lógica a prestador (merchantId)']
+  publicacion_id varchar [note: 'FK objetivo -> publicaciones (listingId)']
+  context varchar
+  line_ids varchar[]
+  quantity int
+  amount bigint
+  currency varchar
+  status varchar
+  availability_version int
+  policy_version varchar
+  slot_start timestamp [null]
+  slot_end timestamp [null]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, compromiso_id) [unique, name: 'uq_compromisos_ms_tenant_compromiso']
+    (tenant_id, created_at) [name: 'idx_compromisos_ms_tenant_created']
+    (publicacion_id, slot_start, slot_end) [name: 'idx_compromisos_ms_listing_slot']
+    (prestador_id, context, status) [name: 'idx_compromisos_ms_merchant_context_status']
+  }
+
+  Note: 'CompromisoMercadoServicios = línea de checkout del mercado. FK objetivo publicacion_id -> publicaciones.'
+}
+
+Table auditoria_mercado_servicios {
+  id varchar [pk]
+  tenant_id varchar
+  actor_id varchar
+  correlation_id varchar
+  action varchar
+  resource_type varchar [note: '[POLIMORFICA]']
+  resource_id varchar [note: '[POLIMORFICA]']
+  outcome varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, created_at) [name: 'idx_auditoria_ms_tenant_created']
+    (tenant_id, resource_type, resource_id) [name: 'idx_auditoria_ms_tenant_resource']
+  }
+
+  Note: 'AuditoriaMercadoServicios = traza de acciones. resource_type/resource_id son [POLIMORFICA], sin FK.'
+}
+
+// ============================================================
+// COMPROMISOS
+// ============================================================
+
+Table compromisos {
+  id varchar [pk]
+  contract_version varchar
+  compromiso_id varchar
+  cart_id varchar
+  tenant_id varchar
+  prestador_id varchar [note: 'FK objetivo -> prestadores (merchantId)']
+  context varchar
+  amount bigint
+  currency varchar
+  status varchar
+  line_ids varchar[]
+  version int
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, compromiso_id) [unique, name: 'uq_compromisos_tenant_compromiso']
+    (tenant_id, created_at) [name: 'idx_compromisos_tenant_created']
+    (tenant_id, cart_id) [name: 'idx_compromisos_tenant_cart']
+  }
+
+  Note: 'Compromiso = obligación comercial canónica. FK objetivo prestador_id -> prestadores, onDelete RESTRICT.'
+}
+
+Table transiciones_compromiso {
+  id varchar [pk]
+  tenant_id varchar
+  compromiso_id varchar [note: 'FK objetivo -> compromisos']
+  from_status varchar
+  to_status varchar
+  version int
+  actor_id varchar
+  correlation_id varchar
+  reason varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, compromiso_id, version) [unique, name: 'uq_transiciones_tenant_compromiso_version']
+    (tenant_id, compromiso_id, created_at) [name: 'idx_transiciones_tenant_compromiso_created']
+  }
+
+  Note: '[HISTORICA] append-only. FK objetivo (tenant_id, compromiso_id) -> compromisos, onDelete RESTRICT.'
+}
+
+Table compensaciones_compromiso {
+  id varchar [pk]
+  compensacion_id varchar
+  tenant_id varchar
+  compromiso_id varchar [note: 'FK objetivo -> compromisos']
+  actor_id varchar
+  correlation_id varchar
+  amount bigint
+  currency varchar
+  reason varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, compensacion_id) [unique, name: 'uq_compensaciones_tenant_compensacion']
+    (tenant_id, compromiso_id) [unique, name: 'uq_compensaciones_tenant_compromiso', note: '1:1 compensación por compromiso']
+    (tenant_id, compromiso_id, created_at) [name: 'idx_compensaciones_tenant_compromiso_created']
+  }
+
+  Note: 'CompensacionCompromiso = compensación de un compromiso. FK objetivo compromiso_id -> compromisos, RESTRICT.'
+}
+
+Table referencias_auditoria {
+  id varchar [pk]
+  referencia_id varchar
+  tenant_id varchar
+  actor_id varchar
+  correlation_id varchar
+  compromiso_id varchar [note: '[LOGICA] referencia a compromiso']
+  reference_type varchar
+  metadata json [null]
+  created_at timestamp
+
+  indexes {
+    (tenant_id, referencia_id) [unique, name: 'uq_referencias_tenant_referencia']
+    (tenant_id, compromiso_id, created_at) [name: 'idx_referencias_tenant_compromiso_created']
+    (tenant_id, correlation_id) [name: 'idx_referencias_tenant_correlation']
+  }
+
+  Note: 'ReferenciaAuditoria = traza de referencias. compromiso_id es [LOGICA] (puede sobrevivir al agregado).'
+}
+
+// ============================================================
+// CALENDARIO
+// ============================================================
+
+Table calendarios {
+  id varchar [pk]
+  tenant_id varchar
+  service_id varchar [note: '[LEGACY] -> TusService. PENDIENTE migración a prestador/publicacion']
+  name varchar
+  timezone varchar
+  status varchar
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, service_id, status) [name: 'idx_calendarios_tenant_service_status']
+  }
+
+  Note: 'Calendario = calendario de disponibilidad. Propietario canónico: prestador. service_id es [LEGACY].'
+}
+
+Table reglas_calendario {
+  id varchar [pk]
+  tenant_id varchar
+  calendario_id varchar [note: 'FK objetivo -> calendarios']
+  weekday int
+  starts_at varchar
+  ends_at varchar
+  capacity int
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, calendario_id, weekday, starts_at, ends_at) [unique, name: 'uq_reglas_tenant_calendario_slot']
+    (tenant_id, calendario_id) [name: 'idx_reglas_tenant_calendario']
+  }
+
+  Note: 'ReglaCalendario = regla de franja. FK objetivo (tenant_id, calendario_id) -> calendarios, onDelete CASCADE.'
+}
+
+Table excepciones_calendario {
+  id varchar [pk]
+  tenant_id varchar
+  calendario_id varchar [note: 'FK objetivo -> calendarios']
+  starts_at timestamp
+  ends_at timestamp
+  reason varchar
+  status varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, calendario_id, starts_at, ends_at) [name: 'idx_excepciones_tenant_calendario_slot']
+  }
+
+  Note: 'ExcepcionCalendario = excepción de franja. FK objetivo (tenant_id, calendario_id) -> calendarios, CASCADE.'
+}
+
+Table reservas {
+  id varchar [pk]
+  tenant_id varchar
+  reserva_id varchar
+  service_id varchar [note: '[LEGACY] -> TusService']
+  calendario_id varchar [note: 'FK objetivo -> calendarios']
+  cliente_id varchar [note: '[EXTERNA/LOGICA] identidad de cliente']
+  starts_at timestamp
+  ends_at timestamp
+  status varchar
+  version int
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, reserva_id) [unique, name: 'uq_reservas_tenant_reserva']
+    (tenant_id, calendario_id, starts_at, ends_at) [name: 'idx_reservas_tenant_calendario_slot']
+    (tenant_id, cliente_id, status) [name: 'idx_reservas_tenant_cliente_status']
+  }
+
+  Note: 'Reserva = ocupación de franja/capacidad. FK objetivo calendario_id -> calendarios, RESTRICT. service_id/cliente_id [LEGACY/EXTERNA].'
+}
+
+// ============================================================
+// ENTREGA
+// ============================================================
+
+Table zonas_entrega {
+  id varchar [pk]
+  tenant_id varchar
+  zona_id varchar
+  name varchar
+  postal_codes varchar[]
+  active boolean
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, zona_id) [unique, name: 'uq_zonas_tenant_zona']
+    (tenant_id, active) [name: 'idx_zonas_tenant_active']
+  }
+
+  Note: 'ZonaEntrega = zona geográfica de entrega.'
+}
+
+Table turnos_entrega {
+  id varchar [pk]
+  tenant_id varchar
+  turno_id varchar
+  zona_id varchar [note: 'FK objetivo -> zonas_entrega']
+  starts_at timestamp
+  ends_at timestamp
+  operador_ids varchar[]
+  status varchar
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, turno_id) [unique, name: 'uq_turnos_tenant_turno']
+    (tenant_id, zona_id, status) [name: 'idx_turnos_tenant_zona_status']
+  }
+
+  Note: 'TurnoEntrega = turno operativo. FK objetivo (tenant_id, zona_id) -> zonas_entrega, RESTRICT.'
+}
+
+Table tareas_entrega {
+  id varchar [pk]
+  tenant_id varchar
+  tarea_id varchar
+  compromiso_id varchar [note: '[LOGICA] referencia a compromiso']
+  prestador_id varchar [note: 'referencia lógica a prestador (merchantId)']
+  context varchar
+  zona_id varchar [note: '[LOGICA] referencia a zona']
+  turno_id varchar [note: '[LOGICA] referencia a turno']
+  operador_id varchar [null, note: '[EXTERNA] hasta asignación']
+  status varchar
+  version int
+  proof json [null]
+  incident json [null]
+  sla json [null]
+  pickup json [null]
+  dropoff json [null]
+  cancelled_at timestamp [null]
+  failure_reason varchar [null]
+  settlement_claim varchar
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, tarea_id) [unique, name: 'uq_tareas_tenant_tarea']
+    (tenant_id, compromiso_id) [name: 'idx_tareas_tenant_compromiso']
+    (tenant_id, turno_id, status) [name: 'idx_tareas_tenant_turno_status']
+    (tenant_id, compromiso_id, status) [name: 'idx_tareas_tenant_compromiso_status']
+  }
+
+  Note: 'TareaEntrega = tarea de entrega. compromiso_id es [LOGICA] (entrega puede vivir más que el compromiso). operador_id nullable.'
+}
+
+Table evidencias_entrega {
+  id varchar [pk]
+  tenant_id varchar
+  evidencia_id varchar
+  tarea_id varchar [note: 'FK objetivo -> tareas_entrega']
+  compromiso_id varchar [note: '[LOGICA]']
+  recipient_name varchar
+  captured_at timestamp
+  evidence_source varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, evidencia_id) [unique, name: 'uq_evidencias_tenant_evidencia']
+    (tenant_id, tarea_id) [name: 'idx_evidencias_tenant_tarea']
+  }
+
+  Note: 'EvidenciaEntrega = comprobante de entrega. FK objetivo (tenant_id, tarea_id) -> tareas_entrega, RESTRICT.'
+}
+
+Table incidentes_entrega {
+  id varchar [pk]
+  tenant_id varchar
+  incidente_id varchar
+  tarea_id varchar [note: 'FK objetivo -> tareas_entrega']
+  reason varchar
+  status varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, incidente_id) [unique, name: 'uq_incidentes_tenant_incidente']
+    (tenant_id, tarea_id, status) [name: 'idx_incidentes_tenant_tarea_status']
+  }
+
+  Note: 'IncidenteEntrega = incidente logístico. FK objetivo (tenant_id, tarea_id) -> tareas_entrega, RESTRICT.'
+}
+
+Table auditoria_entrega {
+  id varchar [pk]
+  tenant_id varchar
+  auditoria_id varchar
+  actor_id varchar
+  correlation_id varchar
+  action varchar
+  resource_type varchar [note: '[POLIMORFICA]']
+  resource_id varchar [note: '[POLIMORFICA]']
+  outcome varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, auditoria_id) [unique, name: 'uq_auditoria_entrega_tenant_auditoria']
+    (tenant_id, created_at) [name: 'idx_auditoria_entrega_tenant_created']
+  }
+
+  Note: 'AuditoriaEntrega = traza de entrega. resource_type/resource_id [POLIMORFICA].'
+}
+
+// ============================================================
+// POS
+// ============================================================
+
+Table operaciones_pos {
+  id varchar [pk]
+  tenant_id varchar
+  operacion_id varchar
+  idempotency_key varchar
+  schema_version varchar
+  actor_id varchar
+  device_id varchar [note: '[LOGICA] referencia a dispositivo']
+  shift_id varchar [note: '[LOGICA] referencia a turno/sesión']
+  created_at timestamp
+  expected_version int [null]
+  kind varchar
+  context varchar
+  amount bigint
+  currency varchar
+  response json [null]
+
+  indexes {
+    (tenant_id, operacion_id) [unique, name: 'uq_operaciones_pos_tenant_operacion']
+    (tenant_id, idempotency_key) [unique, name: 'uq_operaciones_pos_tenant_idem']
+    (tenant_id, shift_id, created_at) [name: 'idx_operaciones_pos_tenant_shift_created']
+    (tenant_id, context, kind) [name: 'idx_operaciones_pos_tenant_context_kind']
+  }
+
+  Note: 'OperacionPOS = operación manual. device_id/shift_id [LOGICA]. Idempotencia por (tenant_id, idempotency_key).'
+}
+
+Table versiones_pos {
+  id varchar [pk]
+  tenant_id varchar
+  shift_id varchar [note: '[LOGICA]']
+  version int
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, shift_id) [unique, name: 'uq_versiones_pos_tenant_shift']
+    (tenant_id, shift_id, version) [name: 'idx_versiones_pos_tenant_shift_version']
+  }
+
+  Note: 'VersionPOS = control de versión por turno (shift_id lógico).'
+}
+
+Table comprobantes_pos {
+  id varchar [pk]
+  tenant_id varchar
+  comprobante_id varchar
+  operacion_id varchar [note: 'FK objetivo -> operaciones_pos']
+  kind varchar
+  context varchar
+  amount bigint
+  currency varchar
+  status varchar
+  source varchar
+  provider_capture varchar
+  settlement varchar
+  integrity_hash varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, comprobante_id) [unique, name: 'uq_comprobantes_pos_tenant_comprobante']
+    (tenant_id, operacion_id) [name: 'idx_comprobantes_pos_tenant_operacion']
+    (tenant_id, operacion_id, created_at) [name: 'idx_comprobantes_pos_tenant_operacion_created']
+  }
+
+  Note: 'ComprobantePOS = comprobante. FK objetivo (tenant_id, operacion_id) -> operaciones_pos, RESTRICT.'
+}
+
+Table dispositivos_pos {
+  id varchar [pk]
+  tenant_id varchar
+  dispositivo_id varchar
+  label varchar
+  fingerprint varchar
+  status varchar
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, dispositivo_id) [unique, name: 'uq_dispositivos_pos_tenant_dispositivo']
+    (tenant_id, status) [name: 'idx_dispositivos_pos_tenant_status']
+  }
+
+  Note: 'DispositivoPOS = dispositivo físico.'
+}
+
+Table sesiones_pos {
+  id varchar [pk]
+  tenant_id varchar
+  sesion_id varchar
+  dispositivo_id varchar [note: '[LOGICA] referencia a dispositivo']
+  actor_id varchar
+  shift_id varchar [note: '[LOGICA]']
+  status varchar
+  opened_at timestamp
+  closed_at timestamp [null]
+
+  indexes {
+    (tenant_id, sesion_id) [unique, name: 'uq_sesiones_pos_tenant_sesion']
+    (tenant_id, dispositivo_id, shift_id, status) [name: 'idx_sesiones_pos_tenant_device_shift_status']
+  }
+
+  Note: 'SesionPOS = sesión de turno. dispositivo_id/shift_id [LOGICA].'
+}
+
+Table conflictos_pos {
+  id varchar [pk]
+  tenant_id varchar
+  conflicto_id varchar
+  operacion_id varchar [note: 'FK objetivo -> operaciones_pos']
+  reason varchar
+  expected_version int [null]
+  actual_version int [null]
+  status varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, conflicto_id) [unique, name: 'uq_conflictos_pos_tenant_conflicto']
+    (tenant_id, operacion_id, status) [name: 'idx_conflictos_pos_tenant_operacion_status']
+    (tenant_id, status, created_at) [name: 'idx_conflictos_pos_tenant_status_created']
+  }
+
+  Note: 'ConflictoPOS = conflicto de versión. FK objetivo (tenant_id, operacion_id) -> operaciones_pos, RESTRICT.'
+}
+
+Table auditoria_pos {
+  id varchar [pk]
+  tenant_id varchar
+  auditoria_id varchar
+  actor_id varchar
+  correlation_id varchar
+  action varchar
+  operacion_id varchar [note: '[LOGICA] referencia a operación']
+  outcome varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, auditoria_id) [unique, name: 'uq_auditoria_pos_tenant_auditoria']
+    (tenant_id, operacion_id, created_at) [name: 'idx_auditoria_pos_tenant_operacion_created']
+  }
+
+  Note: 'AuditoriaPOS = traza de operaciones. operacion_id [LOGICA].'
+}
+
+// ============================================================
+// SOPORTE
+// ============================================================
+
+Table casos_soporte {
+  id varchar [pk]
+  caso_id varchar
+  disputa_id varchar [note: '[LOGICA] referencia a disputa']
+  tenant_id varchar
+  correlation_id varchar
+  compromiso_id varchar [note: '[LOGICA] referencia a compromiso']
+  opened_by varchar
+  category varchar
+  status varchar
+  outcome varchar [null]
+  created_at timestamp
+  resolved_at timestamp [null]
+
+  indexes {
+    (tenant_id, caso_id) [unique, name: 'uq_casos_soporte_tenant_caso']
+    (tenant_id, status, created_at) [name: 'idx_casos_soporte_tenant_status_created']
+    (tenant_id, compromiso_id) [name: 'idx_casos_soporte_tenant_compromiso']
+  }
+
+  Note: 'CasoSoporte = caso de asistencia. compromiso_id/disputa_id [LOGICA].'
+}
+
+Table evidencias_soporte {
+  id varchar [pk]
+  evidencia_id varchar
+  caso_id varchar [note: 'FK objetivo -> casos_soporte']
+  tenant_id varchar
+  correlation_id varchar
+  party varchar
+  summary varchar
+  submitted_by varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, evidencia_id) [unique, name: 'uq_evidencias_soporte_tenant_evidencia']
+    (tenant_id, caso_id, party) [name: 'idx_evidencias_soporte_tenant_caso_party']
+  }
+
+  Note: 'EvidenciaSoporte = evidencia de un caso. FK objetivo (tenant_id, caso_id) -> casos_soporte, RESTRICT.'
+}
+
+Table lineas_tiempo_soporte {
+  id varchar [pk]
+  entrada_id varchar
+  caso_id varchar [note: 'FK objetivo -> casos_soporte']
+  tenant_id varchar
+  correlation_id varchar
+  action varchar
+  actor_id varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, entrada_id) [unique, name: 'uq_lineas_tiempo_tenant_entrada']
+    (tenant_id, caso_id, created_at) [name: 'idx_lineas_tiempo_tenant_caso_created']
+  }
+
+  Note: 'LineaTiempoSoporte = timeline de un caso. FK objetivo (tenant_id, caso_id) -> casos_soporte, RESTRICT.'
+}
+
+Table compensaciones_soporte {
+  id varchar [pk]
+  entrada_id varchar
+  caso_id varchar [note: 'FK objetivo -> casos_soporte']
+  tenant_id varchar
+  correlation_id varchar
+  amount bigint
+  currency varchar
+  reason varchar
+  status varchar
+  settlement varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, entrada_id) [unique, name: 'uq_compensaciones_soporte_tenant_entrada']
+    (tenant_id, caso_id) [unique, name: 'uq_compensaciones_soporte_tenant_caso', note: '1:1 compensación por caso']
+    (tenant_id, caso_id, created_at) [name: 'idx_compensaciones_soporte_tenant_caso_created']
+  }
+
+  Note: 'CompensacionSoporte = compensación de un caso. FK objetivo (tenant_id, caso_id) -> casos_soporte, RESTRICT.'
+}
+
+// ============================================================
+// WHATSAPP
+// ============================================================
+
+Table acciones_whatsapp {
+  id varchar [pk]
+  tenant_id varchar
+  idempotency_key varchar
+  request_hash varchar
+  status varchar
+  response json [null]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, idempotency_key) [unique, name: 'uq_acciones_whatsapp_tenant_idem']
+    (tenant_id, created_at) [name: 'idx_acciones_whatsapp_tenant_created']
+  }
+
+  Note: 'AccionWhatsApp = acción gobernada idempotente.'
+}
+
+Table confirmaciones_whatsapp {
+  id varchar [pk]
+  tenant_id varchar
+  confirmacion_id varchar
+  sender_id varchar [note: '[EXTERNA] número Meta/WhatsApp']
+  expires_at timestamp
+  consumed_at timestamp [null]
+  items json
+  created_at timestamp
+
+  indexes {
+    (tenant_id, confirmacion_id) [unique, name: 'uq_confirmaciones_whatsapp_tenant_confirmacion']
+    (tenant_id, sender_id, expires_at) [name: 'idx_confirmaciones_whatsapp_tenant_sender_expiry']
+  }
+
+  Note: 'ConfirmacionWhatsApp = confirmación de consentimiento. sender_id [EXTERNA].'
+}
+
+Table auditoria_whatsapp {
+  id varchar [pk]
+  tenant_id varchar
+  action varchar
+  outcome varchar
+  actor_id varchar
+  sender_id varchar [note: '[EXTERNA]']
+  correlation_id varchar
+  created_at timestamp
+  retention_until timestamp [null]
+
+  indexes {
+    (tenant_id, created_at) [name: 'idx_auditoria_whatsapp_tenant_created']
+    (tenant_id, correlation_id) [name: 'idx_auditoria_whatsapp_tenant_correlation']
+  }
+
+  Note: 'AuditoriaWhatsApp = traza del canal. sender_id [EXTERNA].'
+}
+
+Table consentimientos_whatsapp {
+  id varchar [pk]
+  tenant_id varchar
+  recipient_id varchar [note: '[EXTERNA] identidad externa']
+  recipient_type varchar
+  status varchar
+  source varchar
+  granted_at timestamp
+  revoked_at timestamp [null]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, recipient_id) [unique, name: 'uq_consentimientos_whatsapp_tenant_recipient']
+    (tenant_id, status) [name: 'idx_consentimientos_whatsapp_tenant_status']
+  }
+
+  Note: 'ConsentimientoWhatsApp = consentimiento. recipient_id [EXTERNA].'
+}
+
+Table mensajes_whatsapp {
+  id varchar [pk]
+  tenant_id varchar
+  mensaje_id varchar
+  recipient_id varchar [note: '[EXTERNA]']
+  template varchar [note: '[EXTERNA] plantilla Meta']
+  template_version varchar
+  consentimiento_id varchar [note: '[LOGICA] referencia a consentimiento']
+  request_hash varchar
+  variables json [null]
+  status varchar
+  correlation_id varchar
+  retention_until timestamp [null]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, mensaje_id) [unique, name: 'uq_mensajes_whatsapp_tenant_mensaje']
+    (tenant_id, recipient_id, status) [name: 'idx_mensajes_whatsapp_tenant_recipient_status']
+  }
+
+  Note: 'MensajeWhatsApp = mensaje/plantilla. recipient_id/template [EXTERNA]; consentimiento_id [LOGICA].'
+}
+
+Table eventos_webhook_whatsapp {
+  id varchar [pk]
+  tenant_id varchar
+  provider_event_id varchar [note: '[EXTERNA] id de Meta']
+  signature varchar [note: '[EXTERNA]']
+  occurred_at timestamp
+  status varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, provider_event_id) [unique, name: 'uq_eventos_webhook_whatsapp_tenant_event']
+    (tenant_id, status, occurred_at) [name: 'idx_eventos_webhook_whatsapp_tenant_status_occurred']
+  }
+
+  Note: 'EventoWebhookWhatsApp = evento de proveedor. provider_event_id/signature [EXTERNA].'
+}
+
+// ============================================================
+// HABILITACIÓN
+// ============================================================
+
+Table evidencias_habilitacion {
+  id varchar [pk]
+  contract_version varchar
+  tenant_id varchar
+  capability varchar [note: '[POLIMORFICA] capacidad evaluada']
+  gate varchar [note: '[POLIMORFICA] gate/requisito']
+  owner varchar [note: '[POLIMORFICA] propietario']
+  scope varchar [note: '[POLIMORFICA] alcance']
+  tipo_evidencia varchar [note: '@map evidenceType']
+  referencia_evidencia varchar [note: '@map evidenceRef; [EXTERNA] referencia a evidencia externa']
+  policy_version varchar
+  issued_at timestamp
+  expires_at timestamp [null]
+  revoked boolean
+  source varchar
+  profile varchar
+  execution varchar
+  evidence_class varchar
+  live_conformance boolean
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, capability, gate, referencia_evidencia) [unique, name: 'uq_evidencias_hab_tenant_gate_ref']
+    (tenant_id, capability, gate, revoked) [name: 'idx_evidencias_hab_tenant_gate_revoked']
+    (expires_at) [name: 'idx_evidencias_hab_expires']
+  }
+
+  Note: '[HISTORICA] EvidenciaHabilitacion = evidencia de gate. capability/gate/owner/scope [POLIMORFICA], sin FK.'
+}
+
+Table decisiones_habilitacion {
+  id varchar [pk]
+  tenant_id varchar
+  capability varchar [note: '[POLIMORFICA]']
+  evaluated_at timestamp
+  enabled boolean
+  resultado_habilitacion varchar [note: '@map disposition; valor congelado']
+  requisitos_fallidos json [note: '@map failedGates; valor congelado']
+  ids_evidencia varchar[] [note: '@map evidenceIds']
+  deterministic boolean
+  conflicts json [null]
+  reason varchar [null]
+  evidence_preserved boolean [null]
+  audit_preserved boolean [null]
+  actor_id varchar
+  job_id varchar [null]
+  correlation_id varchar
+  profile varchar
+  scope varchar
+  outcome varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, capability, evaluated_at) [name: 'idx_decisiones_hab_tenant_cap_evaluated']
+    (tenant_id, capability, enabled) [name: 'idx_decisiones_hab_tenant_cap_enabled']
+    (tenant_id, correlation_id) [name: 'idx_decisiones_hab_tenant_correlation']
+  }
+
+  Note: '[HISTORICA] append-only. capability/profile/scope [POLIMORFICA]. Valores resultado/requisitos congelados.'
+}
+
+// ============================================================
+// FINANZAS
+// ============================================================
+
+Table intenciones_pago {
+  id varchar [pk]
+  contract_version varchar
+  pago_id varchar
+  tenant_id varchar
+  compromiso_id varchar [note: 'FK objetivo -> compromisos (1:1)']
+  provider varchar [note: '[EXTERNA]']
+  provider_reference varchar [null, note: '[EXTERNA]']
+  provider_status varchar [note: '[EXTERNA]']
+  commercial_status varchar
+  amount bigint
+  currency varchar
+  idempotency_key varchar
+  correlation_id varchar
+  credentials_collected boolean
+  source varchar
+  order_id varchar
+  pos_operation_id varchar [null, note: '[LOGICA]']
+  merchant_of_record varchar
+  collection_model varchar
+  split_policy json [null]
+  release_at timestamp
+  provider_event_at timestamp [null]
+  provider_error varchar [null]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, pago_id) [unique, name: 'uq_intenciones_pago_tenant_pago']
+    (tenant_id, compromiso_id) [unique, name: 'uq_intenciones_pago_tenant_compromiso', note: '1:1 pago por compromiso']
+    (tenant_id, idempotency_key) [unique, name: 'uq_intenciones_pago_tenant_idem']
+    (tenant_id, provider_status) [name: 'idx_intenciones_pago_tenant_provider_status']
+    (tenant_id, commercial_status) [name: 'idx_intenciones_pago_tenant_commercial_status']
+  }
+
+  Note: 'IntencionPago = intención/pago. provider/provider_reference/provider_status [EXTERNA]. FK objetivo compromiso_id -> compromisos, RESTRICT.'
+}
+
+Table idempotencia_financiera {
+  id varchar [pk]
+  tenant_id varchar
+  idempotency_key varchar
+  request_hash varchar
+  response json
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, idempotency_key) [unique, name: 'uq_idempotencia_fin_tenant_idem']
+    (tenant_id, updated_at) [name: 'idx_idempotencia_fin_tenant_updated']
+  }
+
+  Note: 'IdempotenciaFinanciera = idempotencia de finanzas.'
+}
+
+Table instantaneas_comision {
+  id varchar [pk]
+  contract_version varchar
+  instantanea_id varchar
+  tenant_id varchar
+  compromiso_id varchar [note: 'FK objetivo -> compromisos (RESTRICT)']
+  context varchar
+  gross_amount bigint
+  deductions bigint
+  commissionable_base bigint
+  rate_bps int
+  rule_version varchar
+  commission_amount bigint
+  net_amount bigint
+  currency varchar
+  provider_reference varchar [note: '[EXTERNA]']
+  evidencia_id varchar [note: '[LOGICA] referencia a evidencia financiera']
+  ledger_status varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, instantanea_id) [unique, name: 'uq_instantaneas_comision_tenant_instantanea']
+    (tenant_id, compromiso_id) [unique, name: 'uq_instantaneas_comision_tenant_compromiso']
+    (tenant_id, rule_version) [name: 'idx_instantaneas_comision_tenant_rule']
+  }
+
+  Note: '[HISTORICA] InstantaneaComision = snapshot inmutable de comisión. provider_reference [EXTERNA]. FK RESTRICT.'
+}
+
+Table movimientos_contables {
+  id varchar [pk]
+  entrada_id varchar
+  tenant_id varchar
+  compromiso_id varchar [note: 'FK objetivo -> compromisos (RESTRICT)']
+  entry_type varchar
+  amount bigint
+  currency varchar
+  linked_entry_id varchar [null, note: '[LOGICA] auto-referencia append-only']
+  reason varchar
+  immutable boolean
+  created_at timestamp
+
+  indexes {
+    (tenant_id, entrada_id) [unique, name: 'uq_movimientos_tenant_entrada']
+    (tenant_id, compromiso_id, created_at) [name: 'idx_movimientos_tenant_compromiso_created']
+    (tenant_id, linked_entry_id) [name: 'idx_movimientos_tenant_linked']
+  }
+
+  Note: '[HISTORICA] append-only (trigger). linked_entry_id auto-referencia [LOGICA]. FK compromiso_id RESTRICT.'
+}
+
+Table evidencias_financieras {
+  id varchar [pk]
+  contract_version varchar
+  evidencia_id varchar
+  tenant_id varchar
+  compromiso_id varchar [note: 'FK objetivo -> compromisos (RESTRICT)']
+  actor_id varchar
+  correlation_id varchar
+  kind varchar
+  occurred_at timestamp
+  created_at timestamp
+
+  indexes {
+    (tenant_id, evidencia_id) [unique, name: 'uq_evidencias_fin_tenant_evidencia']
+    (tenant_id, compromiso_id, kind) [name: 'idx_evidencias_fin_tenant_compromiso_kind']
+  }
+
+  Note: 'EvidenciaFinanciera = evidencia financiera. FK compromiso_id RESTRICT.'
+}
+
+Table confirmaciones_financieras {
+  id varchar [pk]
+  confirmacion_id varchar
+  tenant_id varchar
+  compromiso_id varchar [note: 'FK objetivo -> compromisos (RESTRICT)']
+  actor_id varchar
+  correlation_id varchar
+  confirmed_at timestamp
+  created_at timestamp
+
+  indexes {
+    (tenant_id, confirmacion_id) [unique, name: 'uq_confirmaciones_fin_tenant_confirmacion']
+    (tenant_id, compromiso_id) [unique, name: 'uq_confirmaciones_fin_tenant_compromiso']
+    (tenant_id, compromiso_id, confirmed_at) [name: 'idx_confirmaciones_fin_tenant_compromiso_confirmed']
+  }
+
+  Note: 'ConfirmacionFinanciera = confirmación de cumplimiento. FK compromiso_id RESTRICT.'
+}
+
+Table bloqueos_financieros {
+  id varchar [pk]
+  bloqueo_id varchar
+  tenant_id varchar
+  compromiso_id varchar [note: 'FK objetivo -> compromisos (RESTRICT)']
+  reason varchar
+  actor_id varchar
+  correlation_id varchar
+  active boolean
+  created_at timestamp
+
+  indexes {
+    (tenant_id, bloqueo_id) [unique, name: 'uq_bloqueos_fin_tenant_bloqueo']
+    (tenant_id, compromiso_id) [unique, name: 'uq_bloqueos_fin_tenant_compromiso']
+    (tenant_id, reason, active) [name: 'idx_bloqueos_fin_tenant_reason_active']
+  }
+
+  Note: 'BloqueoFinanciero = congelamiento. FK compromiso_id RESTRICT.'
+}
+
+Table registros_conciliacion {
+  id varchar [pk]
+  conciliacion_id varchar
+  tenant_id varchar
+  compromiso_id varchar [note: 'FK objetivo -> compromisos (RESTRICT)']
+  provider_reference varchar [note: '[EXTERNA]']
+  provider_amount bigint [note: '[EXTERNA]']
+  evidencia_id varchar [note: '[LOGICA] referencia a evidencia financiera']
+  actor_id varchar
+  correlation_id varchar
+  status varchar
+  reason varchar
+  deterministic boolean
+  created_at timestamp
+
+  indexes {
+    (tenant_id, conciliacion_id) [unique, name: 'uq_conciliacion_tenant_conciliacion']
+    (tenant_id, compromiso_id) [unique, name: 'uq_conciliacion_tenant_compromiso']
+    (tenant_id, status, created_at) [name: 'idx_conciliacion_tenant_status_created']
+  }
+
+  Note: 'RegistroConciliacion = conciliación. provider_reference/provider_amount [EXTERNA]. FK compromiso_id RESTRICT.'
+}
+
+Table eventos_webhook_pago {
+  id varchar [pk]
+  tenant_id varchar
+  provider varchar [note: '[EXTERNA]']
+  provider_event_id varchar [note: '[EXTERNA]']
+  signature varchar [note: '[EXTERNA]']
+  occurred_at timestamp
+  payload json
+  status varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, provider, provider_event_id) [unique, name: 'uq_eventos_webhook_pago_tenant_event']
+    (tenant_id, status, occurred_at) [name: 'idx_eventos_webhook_pago_tenant_status_occurred']
+  }
+
+  Note: 'EventoWebhookPago = evento de proveedor. provider/provider_event_id/signature/payload [EXTERNA].'
+}
+
+// ============================================================
+// FACTURACIÓN
+// ============================================================
+
+Table facturas {
+  id varchar [pk]
+  tenant_id varchar
+  factura_id varchar
+  account_id varchar [note: '@default ""; [LOGICA] referencia a cuenta de facturación']
+  compromiso_id varchar [note: 'FK objetivo -> compromisos (RESTRICT); hoy permite ""']
+  pago_id varchar [note: '@default ""; [LOGICA]']
+  order_id varchar [note: '@default ""; [LOGICA]']
+  pos_operation_id varchar [null, note: '[LOGICA]']
+  currency varchar
+  subtotal bigint
+  tax_amount bigint
+  fee_amount bigint
+  total bigint
+  subtotal_minor bigint
+  tax_minor bigint
+  fee_minor bigint
+  total_minor bigint
+  status varchar
+  number varchar [null]
+  invoice_type varchar
+  tax_reference varchar [null]
+  tax_snapshot json [null, note: '[HISTORICA] snapshot fiscal']
+  snapshot_version int
+  issued_at timestamp [null]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, factura_id) [unique, name: 'uq_facturas_tenant_factura']
+    (tenant_id, compromiso_id, status) [name: 'idx_facturas_tenant_compromiso_status']
+  }
+
+  Note: '[HISTORICA] append-only (trigger). Documento fiscal. FK objetivo compromiso_id -> compromisos, RESTRICT.'
+}
+
+Table lineas_factura {
+  id varchar [pk]
+  tenant_id varchar
+  factura_id varchar [note: 'FK FISICA_ACTUAL compuesta -> facturas']
+  linea_id varchar [note: '@default ""']
+  description varchar
+  quantity int
+  unit_minor bigint
+  tax_minor bigint
+  total_minor bigint
+  currency varchar
+  snapshot json [null]
+  created_at timestamp
+
+  indexes {
+    (tenant_id, id) [unique, name: 'uq_lineas_factura_tenant_id']
+    (tenant_id, factura_id) [name: 'idx_lineas_factura_tenant_factura']
+  }
+
+  Note: 'LineaFactura = línea de factura. FK FISICA_ACTUAL (tenant_id, factura_id) -> facturas.'
+}
+
+Table notas_credito {
+  id varchar [pk]
+  tenant_id varchar
+  nota_credito_id varchar
+  factura_id varchar [note: 'FK objetivo -> facturas']
+  pago_id varchar [note: '@default ""; [LOGICA]']
+  order_id varchar [note: '@default ""; [LOGICA]']
+  pos_operation_id varchar [null, note: '[LOGICA]']
+  currency varchar
+  amount_minor bigint
+  reason varchar
+  status varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, nota_credito_id) [unique, name: 'uq_notas_credito_tenant_nota']
+    (tenant_id, factura_id, status) [name: 'idx_notas_credito_tenant_factura_status']
+  }
+
+  Note: '[HISTORICA] append-only. FK objetivo factura_id -> facturas, RESTRICT.'
+}
+
+Table suscripciones {
+  id varchar [pk]
+  tenant_id varchar
+  suscripcion_id varchar
+  cliente_id varchar [note: '[EXTERNA/LOGICA] identidad de cliente']
+  plan_id varchar [note: '@default ""; FK objetivo -> planes_suscripcion']
+  plan_snapshot json [null, note: '[HISTORICA]']
+  currency varchar
+  amount_minor bigint
+  interval varchar
+  status varchar
+  dunning_attempt int
+  cancel_reason varchar [null]
+  cancelled_at timestamp [null]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, suscripcion_id) [unique, name: 'uq_suscripciones_tenant_suscripcion']
+    (tenant_id, cliente_id, status) [name: 'idx_suscripciones_tenant_cliente_status']
+  }
+
+  Note: 'Suscripcion = suscripción periódica. cliente_id [EXTERNA/LOGICA]; plan_id FK objetivo (requiere limpiar "").'
+}
+
+Table perfiles_fiscales {
+  id varchar [pk]
+  tenant_id varchar
+  party_id varchar [note: '[POLIMORFICA] parte fiscal']
+  tax_identity varchar
+  tax_category varchar
+  status varchar
+  evidence_ref varchar [note: '[EXTERNA] referencia a evidencia fiscal']
+  authority varchar [note: '[EXTERNA] AFIP/ARCA']
+  iva_treatment varchar [null]
+  withholding_treatment varchar [null]
+  external_approval_reference varchar [null, note: '[EXTERNA]']
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, party_id) [unique, name: 'uq_perfiles_fiscales_tenant_party']
+    (tenant_id, status) [name: 'idx_perfiles_fiscales_tenant_status']
+  }
+
+  Note: 'PerfilFiscal = datos fiscales. party_id [POLIMORFICA]; authority/evidence_ref [EXTERNA].'
+}
+
+Table cuentas_facturacion {
+  id varchar [pk]
+  tenant_id varchar
+  cuenta_facturacion_id varchar
+  party_id varchar [note: '[POLIMORFICA]']
+  role varchar
+  status varchar
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, cuenta_facturacion_id) [unique, name: 'uq_cuentas_facturacion_tenant_cuenta']
+    (tenant_id, party_id, status) [name: 'idx_cuentas_facturacion_tenant_party_status']
+  }
+
+  Note: 'CuentaFacturacion = cuenta de facturación. party_id [POLIMORFICA].'
+}
+
+Table planes_suscripcion {
+  id varchar [pk]
+  tenant_id varchar
+  plan_id varchar
+  name varchar
+  amount_minor bigint
+  currency varchar
+  interval varchar
+  status varchar
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tenant_id, plan_id) [unique, name: 'uq_planes_suscripcion_tenant_plan']
+    (tenant_id, status) [name: 'idx_planes_suscripcion_tenant_status']
+  }
+
+  Note: 'PlanSuscripcion = plan de suscripción.'
+}
+
+Table reintegros_facturacion {
+  id varchar [pk]
+  tenant_id varchar
+  reintegro_id varchar
+  factura_id varchar [note: 'FK objetivo -> facturas']
+  pago_id varchar [note: '[LOGICA]']
+  order_id varchar [note: '[LOGICA]']
+  pos_operation_id varchar [null, note: '[LOGICA]']
+  currency varchar
+  amount_minor bigint
+  reason varchar
+  status varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, reintegro_id) [unique, name: 'uq_reintegros_fact_tenant_reintegro']
+    (tenant_id, factura_id) [name: 'idx_reintegros_fact_tenant_factura']
+  }
+
+  Note: '[HISTORICA] append-only. FK objetivo factura_id -> facturas, RESTRICT.'
+}
+
+Table movimientos_contables_facturacion {
+  id varchar [pk]
+  tenant_id varchar
+  entrada_id varchar
+  factura_id varchar [note: 'FK objetivo -> facturas']
+  entry_type varchar
+  amount_minor bigint
+  currency varchar
+  linked_entry_id varchar [null, note: '[LOGICA] auto-referencia']
+  credit_note_id varchar [null, note: '[LOGICA]']
+  refund_id varchar [null, note: '[LOGICA]']
+  pago_id varchar [note: '[LOGICA]']
+  order_id varchar [note: '[LOGICA]']
+  pos_operation_id varchar [null, note: '[LOGICA]']
+  immutable boolean
+  created_at timestamp
+
+  indexes {
+    (tenant_id, entrada_id) [unique, name: 'uq_movimientos_fact_tenant_entrada']
+    (tenant_id, factura_id, created_at) [name: 'idx_movimientos_fact_tenant_factura_created']
+  }
+
+  Note: '[HISTORICA] append-only (trigger). FK objetivo factura_id -> facturas, RESTRICT.'
+}
+
+Table idempotencia_facturacion {
+  id varchar [pk]
+  tenant_id varchar
+  key varchar
+  request_hash varchar
+  response json
+  created_at timestamp
+
+  indexes {
+    (tenant_id, key) [unique, name: 'uq_idempotencia_fact_tenant_key']
+    (tenant_id, created_at) [name: 'idx_idempotencia_fact_tenant_created']
+  }
+
+  Note: 'IdempotenciaFacturacion = idempotencia de facturación.'
+}
+
+Table auditoria_facturacion {
+  id varchar [pk]
+  tenant_id varchar
+  auditoria_id varchar
+  actor_id varchar
+  correlation_id varchar
+  action varchar
+  resource_id varchar [note: '[POLIMORFICA]']
+  outcome varchar
+  reason varchar [null]
+  created_at timestamp
+
+  indexes {
+    (tenant_id, auditoria_id) [unique, name: 'uq_auditoria_fact_tenant_auditoria']
+    (tenant_id, correlation_id, created_at) [name: 'idx_auditoria_fact_tenant_correlation_created']
+  }
+
+  Note: '[HISTORICA] append-only (trigger). resource_id [POLIMORFICA].'
+}
+
+Table gestion_mora {
+  id varchar [pk]
+  tenant_id varchar
+  mora_id varchar
+  suscripcion_id varchar [note: 'FK objetivo -> suscripciones']
+  attempt int
+  reason varchar
+  status varchar
+  retry_at timestamp [null]
+  created_at timestamp
+
+  indexes {
+    (tenant_id, mora_id) [unique, name: 'uq_gestion_mora_tenant_mora']
+    (tenant_id, suscripcion_id, created_at) [name: 'idx_gestion_mora_tenant_suscripcion_created']
+  }
+
+  Note: 'GestionMora = seguimiento de mora. FK objetivo suscripcion_id -> suscripciones, RESTRICT.'
+}
+
+Table secuencias_numeracion {
+  id varchar [pk]
+  tenant_id varchar [unique, note: '1:1 una secuencia por tenant']
+  next_number int
+
+  Note: 'SecuenciaNumeracion = numeración de facturas. tenant_id @unique (1:1).'
+}
+
+Table exportaciones_contables {
+  id varchar [pk]
+  tenant_id varchar
+  exportacion_id varchar
+  invoice_ids varchar[] [note: '[LOGICA] lista de facturas']
+  ledger_entry_ids varchar[] [note: '[LOGICA] lista de movimientos']
+  external_approval_reference varchar [note: '[EXTERNA]']
+  status varchar
+  posted_externally boolean
+  created_at timestamp
+
+  indexes {
+    (tenant_id, exportacion_id) [unique, name: 'uq_exportaciones_tenant_exportacion']
+    (tenant_id, created_at) [name: 'idx_exportaciones_tenant_created']
+  }
+
+  Note: '[HISTORICA] append-only (trigger). invoice_ids/ledger_entry_ids [LOGICA]. external_approval_reference [EXTERNA].'
+}
+
+// ============================================================
+// OUTBOX TUS
+// ============================================================
+
+Table outbox_entrega {
+  id varchar [pk]
+  tenant_id varchar
+  event_id varchar
+  correlation_id varchar
+  event_type varchar [note: '[TECNICA] congelado']
+  aggregate_id varchar [note: '[POLIMORFICA]']
+  payload json
+  status varchar
+  attempts int
+  created_at timestamp
+
+  indexes {
+    (tenant_id, event_id) [unique, name: 'uq_outbox_entrega_tenant_event']
+    (tenant_id, status, created_at) [name: 'idx_outbox_entrega_tenant_status_created']
+  }
+
+  Note: 'OutboxEntrega. event_type [TECNICA]; aggregate_id [POLIMORFICA]; sin FK.'
+}
+
+Table outbox_pos {
+  id varchar [pk]
+  tenant_id varchar
+  event_id varchar
+  event_type varchar [note: '[TECNICA]']
+  aggregate_id varchar [note: '[POLIMORFICA]']
+  payload json
+  status varchar
+  attempts int
+  available_at timestamp
+  last_error varchar [null]
+  claim_id varchar [null]
+  claim_until timestamp [null]
+  published_at timestamp [null]
+  created_at timestamp
+
+  indexes {
+    (tenant_id, event_id) [unique, name: 'uq_outbox_pos_tenant_event']
+    (tenant_id, status, created_at) [name: 'idx_outbox_pos_tenant_status_created']
+    (tenant_id, aggregate_id, status) [name: 'idx_outbox_pos_tenant_aggregate_status']
+  }
+
+  Note: 'OutboxPOS. event_type [TECNICA]; aggregate_id [POLIMORFICA]; sin FK.'
+}
+
+Table outbox_soporte {
+  id varchar [pk]
+  tenant_id varchar
+  event_id varchar
+  correlation_id varchar
+  event_type varchar [note: '[TECNICA]']
+  aggregate_id varchar [note: '[POLIMORFICA]']
+  payload json
+  status varchar
+  created_at timestamp
+
+  indexes {
+    (tenant_id, event_id) [unique, name: 'uq_outbox_soporte_tenant_event']
+    (tenant_id, status, created_at) [name: 'idx_outbox_soporte_tenant_status_created']
+    (tenant_id, correlation_id) [name: 'idx_outbox_soporte_tenant_correlation']
+  }
+
+  Note: 'OutboxSoporte. event_type [TECNICA]; aggregate_id [POLIMORFICA]; sin FK.'
+}
+
+Table outbox_whatsapp {
+  id varchar [pk]
+  tenant_id varchar
+  event_id varchar
+  correlation_id varchar
+  event_type varchar [note: '[TECNICA]']
+  aggregate_id varchar [note: '[POLIMORFICA]']
+  payload json
+  status varchar
+  created_at timestamp
+  retention_until timestamp
+
+  indexes {
+    (tenant_id, event_id) [unique, name: 'uq_outbox_whatsapp_tenant_event']
+    (tenant_id, status, created_at) [name: 'idx_outbox_whatsapp_tenant_status_created']
+    (tenant_id, correlation_id) [name: 'idx_outbox_whatsapp_tenant_correlation']
+  }
+
+  Note: 'OutboxWhatsApp. event_type [TECNICA]; aggregate_id [POLIMORFICA]; sin FK.'
+}
+
+Table outbox_facturacion {
+  id varchar [pk]
+  tenant_id varchar
+  event_id varchar
+  correlation_id varchar
+  event_type varchar [note: '[TECNICA]']
+  aggregate_id varchar [note: '[POLIMORFICA]']
+  payload json
+  status varchar
+  attempts int
+  available_at timestamp
+  created_at timestamp
+
+  indexes {
+    (tenant_id, event_id) [unique, name: 'uq_outbox_facturacion_tenant_event']
+    (tenant_id, status, available_at) [name: 'idx_outbox_facturacion_tenant_status_available']
+  }
+
+  Note: 'OutboxFacturacion. event_type [TECNICA]; aggregate_id [POLIMORFICA]; sin FK.'
+}
+
+// ============================================================
+// REPORTING
+// ============================================================
+
+Table registros_operaciones {
+  id varchar [pk]
+  tenant_id varchar
+  context varchar
+  channel varchar
+  geography varchar
+  outcome varchar
+  amount bigint
+  currency varchar
+  ledger_status varchar
+  whatsapp_actions int
+  disputes int
+  pos_offline int
+  created_at timestamp
+
+  indexes {
+    (tenant_id, created_at) [name: 'idx_registros_operaciones_tenant_created']
+    (tenant_id, context, channel, geography) [name: 'idx_registros_operaciones_tenant_ctx_channel_geo']
+  }
+
+  Note: 'RegistroOperaciones = métrica operativa (reporting). Sin FK.'
+}
+
+// ============================================================
+// RELACIONES FISICAS ACTUALES
+// ============================================================
+
+// LineaFactura -> Factura (FK compuesta tenant_id + factura_id) — FISICA_ACTUAL
+Ref: lineas_factura.(tenant_id, factura_id) > facturas.(tenant_id, factura_id)
+
+// ============================================================
+// RELACIONES OBJETIVO FUTURO
+// ============================================================
+// FK aprobadas por el análisis relacional; aún NO existen físicamente.
+
+// MERCADO
+Ref: publicaciones.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)         // Prestador 1:N Publicacion (OBJETIVO_FUTURO, corrige FK por tenant_id)
+Ref: compromisos_mercado_servicios.publicacion_id > publicaciones.id                          // OBJETIVO_FUTURO (referencia PK; tenant validado en aplicación)
+
+// COMPROMISOS
+Ref: compromisos.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)           // OBJETIVO_FUTURO
+Ref: transiciones_compromiso.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id) // OBJETIVO_FUTURO
+Ref: compensaciones_compromiso.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id) // OBJETIVO_FUTURO
+
+// CALENDARIO
+Ref: reglas_calendario.calendario_id > calendarios.id              // OBJETIVO_FUTURO (referencia PK; tenant validado en aplicación)
+Ref: excepciones_calendario.calendario_id > calendarios.id         // OBJETIVO_FUTURO (referencia PK; tenant validado en aplicación)
+Ref: reservas.calendario_id > calendarios.id                       // OBJETIVO_FUTURO (referencia PK; tenant validado en aplicación)
+
+// ENTREGA
+Ref: turnos_entrega.(tenant_id, zona_id) > zonas_entrega.(tenant_id, zona_id)                // OBJETIVO_FUTURO
+Ref: evidencias_entrega.(tenant_id, tarea_id) > tareas_entrega.(tenant_id, tarea_id)         // OBJETIVO_FUTURO
+Ref: incidentes_entrega.(tenant_id, tarea_id) > tareas_entrega.(tenant_id, tarea_id)         // OBJETIVO_FUTURO
+
+// POS
+Ref: comprobantes_pos.(tenant_id, operacion_id) > operaciones_pos.(tenant_id, operacion_id)  // OBJETIVO_FUTURO
+Ref: conflictos_pos.(tenant_id, operacion_id) > operaciones_pos.(tenant_id, operacion_id)    // OBJETIVO_FUTURO
+
+// SOPORTE
+Ref: evidencias_soporte.(tenant_id, caso_id) > casos_soporte.(tenant_id, caso_id)            // OBJETIVO_FUTURO
+Ref: lineas_tiempo_soporte.(tenant_id, caso_id) > casos_soporte.(tenant_id, caso_id)         // OBJETIVO_FUTURO
+Ref: compensaciones_soporte.(tenant_id, caso_id) > casos_soporte.(tenant_id, caso_id)        // OBJETIVO_FUTURO
+
+// FINANZAS
+Ref: intenciones_pago.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id)    // OBJETIVO_FUTURO
+Ref: instantaneas_comision.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id) // OBJETIVO_FUTURO
+Ref: movimientos_contables.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id) // OBJETIVO_FUTURO
+Ref: evidencias_financieras.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id) // OBJETIVO_FUTURO
+Ref: confirmaciones_financieras.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id) // OBJETIVO_FUTURO
+Ref: bloqueos_financieros.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id) // OBJETIVO_FUTURO
+Ref: registros_conciliacion.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id) // OBJETIVO_FUTURO
+
+// FACTURACIÓN
+Ref: facturas.(tenant_id, compromiso_id) > compromisos.(tenant_id, compromiso_id)            // OBJETIVO_FUTURO (REQUIERE VALIDACION: "" permitido)
+Ref: notas_credito.(tenant_id, factura_id) > facturas.(tenant_id, factura_id)                // OBJETIVO_FUTURO
+Ref: reintegros_facturacion.(tenant_id, factura_id) > facturas.(tenant_id, factura_id)       // OBJETIVO_FUTURO
+Ref: movimientos_contables_facturacion.(tenant_id, factura_id) > facturas.(tenant_id, factura_id) // OBJETIVO_FUTURO
+Ref: gestion_mora.(tenant_id, suscripcion_id) > suscripciones.(tenant_id, suscripcion_id)    // OBJETIVO_FUTURO
+Ref: suscripciones.(tenant_id, plan_id) > planes_suscripcion.(tenant_id, plan_id)            // OBJETIVO_FUTURO (REQUIERE VALIDACION: "" permitido)
+
+// ============================================================
+// RELACIONES NO-FK (LOGICA / EXTERNA / POLIMORFICA / LEGACY)
+// ============================================================
+// Documentadas en DICCIONARIO_DATOS_TUS.md (matriz de relaciones no-FK).
+// No se modelan como Ref porque no son FK SQL.
