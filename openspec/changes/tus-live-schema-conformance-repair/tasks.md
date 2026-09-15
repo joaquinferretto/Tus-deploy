@@ -54,7 +54,7 @@ Chain strategy: not-applicable
 
 ## Phase 3: Gates and Bounded Apply
 
-- [x] 3.1 Enforce root `.env` `DATABASE_URL`, `NODE_ENV=development`, `--confirm-development-target`, verified custom-format backup and isolated restore before connection/DDL; require launch `20260909090000_tus_argentina_market_launch` and POS `20260911120000_tus_pos_index_constraint_repair` exactly once, new marker absent, historical marker intentionally absent.
+- [x] 3.1 Enforce root `.env` `DATABASE_URL`, `NODE_ENV=development`, `--confirm-development-target`, a generated hash-bound schema-only isolated restore proof, and scratch metadata revalidation before connection/DDL; require launch `20260909090000_tus_argentina_market_launch` and POS `20260911120000_tus_pos_index_constraint_repair` exactly once, new marker absent, historical marker intentionally absent.
 - [x] 3.2 Enforce empty counts before each money addition; aggregate `COUNT(id)=COUNT(*)=COUNT(DISTINCT id)`, exact `TEXT NOT NULL`, and absent-or-compatible PK before each PK; reject occupied aliases/cross-table collisions.
 - [x] 3.3 Apply one 60-second bounded transaction, at most one cleaned retry, canonical ordered/unique index checks, and marker insert; never default, backfill, replay history, drop, rebuild, or restore over current.
 

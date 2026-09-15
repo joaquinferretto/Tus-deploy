@@ -25,11 +25,18 @@ deploy`; `migrate reset`, `db push`, destructive SQL, and historical replay are
 not rollback tools.
 
 The live schema conformance correction is a separately authorized development
-operation, not a production pre-deploy shortcut. Run it only with
-`NODE_ENV=development`, `--confirm-development-target`, the root `.env`
-`DATABASE_URL`, and a verified custom-format backup. Do not start seed, POS,
-providers, browsers, devices, or hosted deployment until its metadata-only
-receipt proves the exact catalog counts and marker lineage.
+operation, not a production pre-deploy shortcut. First run
+`create-restore-proof --confirm-development-target --backup-id <backup-file>
+--restore-proof <proof-file>`; then run
+`apply --confirm-development-target --backup-id <backup-file> --restore-proof
+<proof-file>`. Both commands use only the repository-root `.env`
+`DATABASE_URL`. The generator creates a unique scratch database and runs the
+official PostgreSQL 16.2 schema-only restore with explicit `--dbname=<scratch>`
+and safe ownership/ACL/error flags. The apply gate revalidates the bound
+archive hash/size and scratch metadata before connecting to the current target.
+Archive listing alone is not a restore proof. Do not start seed, POS, providers,
+browsers, devices, or hosted deployment until its metadata-only receipt proves
+the exact catalog counts and marker lineage.
 
 Next uses `output: 'standalone'` and the web package starts the generated
 `.next/standalone/server.js` directly. `next start` is not compatible with this

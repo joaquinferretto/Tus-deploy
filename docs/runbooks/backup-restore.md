@@ -43,11 +43,31 @@ restore another tenant.
 
 ## Live schema conformance repair
 
-Before `tus-live-schema-conformance-repair`, verify a non-empty custom-format
-archive with `pg_restore --format=custom --list`. The archive is a gate only;
-do not print its path, contents, URL, or credentials. If a post-commit metadata
-receipt is incomplete, restore only into an isolated target under owner approval.
-Never restore over the current development target as an undo mechanism.
+The repair requires a generated proof, not archive listing alone. With
+`NODE_ENV=development` and the exact confirmation flag, run the explicit proof
+command and then pass the same archive and proof to the repair command:
+
+```text
+node scripts/tus-migration-repair.mjs create-restore-proof --confirm-development-target --backup-id <backup-file> --restore-proof <proof-file>
+node scripts/tus-migration-repair.mjs apply --confirm-development-target --backup-id <backup-file> --restore-proof <proof-file>
+```
+
+The proof command reads only the repository-root `.env` `DATABASE_URL`, creates
+a unique isolated scratch database, validates the custom archive, and runs the
+official PostgreSQL 16.2 `pg_restore` in `schema-only` mode with explicit
+`--dbname=<scratch>`, `--no-owner`, `--no-acl`, and `--exit-on-error`. It records
+the archive SHA-256/size, restore mode, scratch identifier, exit status, and a
+read-only metadata check with `rowValuesRead=0`. The apply gate rechecks the
+fingerprint and scratch metadata; missing, stale, mismatched, data-only, or
+hand-written/list-only proof is rejected before the current target connection.
+
+Do not print the archive/proof path when it contains sensitive context, archive
+contents, URLs, credentials, or scratch connection details. Do not use
+`--clean`, `--if-exists`, `DROP`, `TRUNCATE`, or `CASCADE`. A full-data restore is
+not implied by this schema-only proof; any full-data timeout or schema conflict
+remains an explicit limitation. If a post-commit metadata receipt is incomplete,
+restore only into an isolated target under owner approval. Never restore over the
+current development target as an undo mechanism.
 
 ## Rollback boundary
 

@@ -42,3 +42,23 @@ assertions. The pinned NVM runner executed it successfully: exit 0, 18 passed,
 Revert only the exact-money contract helpers/exports, migration SQL constraint
 and type changes, migration repair safety-gate changes, and the focused
 migration-repair assertions. Preserve unrelated working-tree changes.
+
+## Conformance Repair Static Gate: 2026-09-14
+
+```yaml
+status: passed
+selected_migration: 20260911130000_tus_live_schema_conformance_repair
+exact_money_sql: passed
+amount_minor_bigint_not_null_no_default: 3
+historical_replay: false
+destructive_sql: false
+untagged_update: false
+live_acceptance: not-run_after_isolated_restore_gate
+row_values_read: 0
+liveConformance: false
+noGo: true
+```
+
+The static repair gate passed, but the current target was not changed because
+isolated restore verification failed before preflight. No billing money column,
+default, backfill, or money value was added, inferred, read, or emitted.

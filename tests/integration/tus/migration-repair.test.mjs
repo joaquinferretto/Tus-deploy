@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +17,7 @@ import {
 import {
   CONNECTION_TIMEOUT_MS,
   createDefaultBackupOperations,
+  generateIsolatedRestoreProof,
   LAUNCH_MIGRATION_NAME,
   LIVE_SCHEMA_CONFORMANCE_REPAIR_NAME,
   POS_INDEX_CONSTRAINT_REPAIR_NAME,
@@ -151,14 +153,16 @@ test('production, shared targets, and missing backup fail closed before connecti
   })
 })
 
-test('CLI accepts only apply, exact confirmation, and a backup handle', () => {
-  assert.deepEqual(parseRepairArguments(['apply', '--confirm-development-target', '--backup-id', 'backup-1']), {
+test('CLI accepts only apply, exact confirmation, backup handle, and explicit restore proof path', () => {
+  assert.deepEqual(parseRepairArguments(['apply', '--confirm-development-target', '--backup-id', 'backup-1', '--restore-proof', 'proof.json']), {
     intent: 'apply',
     confirmed: true,
     backupId: 'backup-1',
+    restoreProofPath: 'proof.json',
     invalidArguments: [],
   })
   assert.equal(parseRepairArguments(['apply', '--backup-id', 'backup-1']).confirmed, false)
+  assert.equal(parseRepairArguments(['create-restore-proof', '--backup-id', 'backup-1', '--restore-proof', 'proof.json']).restoreProofPath, 'proof.json')
   assert.equal(parseRepairArguments(['inspect']).intent, 'inspect')
   assert.equal(parseRepairArguments(['apply', '--database-url', 'secret']).invalidArguments.includes('--database-url'), true)
   assert.doesNotMatch(redactText('password=secret postgres://user:secret@host/db'), /secret|postgres:\/\//u)
@@ -374,11 +378,167 @@ test('default backup gate requires isolated restore verification after pg_restor
 
     await assert.rejects(
       () => verifyRestorableBackup({ backupId: backupPath, operations }),
-      /backup-restore-verification-required/u,
+      /backup-restore-proof-required/u,
     )
     assert.equal(calls.length, 1)
     assert.deepEqual(calls[0].argumentsList, ['--format=custom', '--list', backupPath])
     assert.equal(calls[0].options.stdio, 'ignore')
+  } finally {
+    await rm(rootDirectory, { recursive: true, force: true })
+  }
+})
+
+test('default backup gate accepts only a fresh hash-bound schema-only isolated restore proof', async () => {
+  const rootDirectory = await mkdtemp(join(tmpdir(), 'tus-backup-proof-'))
+  const backupPath = join(rootDirectory, 'backup.dump')
+  const proofPath = join(rootDirectory, 'restore-proof.json')
+  const contents = 'custom-format-placeholder'
+  const calls = []
+  try {
+    await writeFile(backupPath, contents, 'utf8')
+    await writeFile(proofPath, JSON.stringify(validRestoreProof(contents)), 'utf8')
+    const operations = createDefaultBackupOperations({
+      pgRestorePath: 'pg_restore.exe',
+      restoreProofPath: proofPath,
+      scratchRootUrl: 'postgresql://user:secret@db.example.test/tus',
+      inspectScratch: async () => ({ status: 'passed', tableCount: 59, migrationTablePresent: true, rowValuesRead: 0 }),
+      spawn: (executable, argumentsList, options) => {
+        calls.push({ executable, argumentsList, options })
+        return { status: 0 }
+      },
+    })
+
+    const result = await verifyRestorableBackup({ backupId: backupPath, operations })
+
+    assert.deepEqual(result, { status: 'passed', handle: '<redacted>', restoreVerified: true })
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].argumentsList.includes('--list'), true)
+  } finally {
+    await rm(rootDirectory, { recursive: true, force: true })
+  }
+})
+
+test('restore proof rejects missing, stale, mismatched, and metadata-reading evidence', async () => {
+  const rootDirectory = await mkdtemp(join(tmpdir(), 'tus-backup-proof-gates-'))
+  const backupPath = join(rootDirectory, 'backup.dump')
+  const proofPath = join(rootDirectory, 'restore-proof.json')
+  const contents = 'custom-format-placeholder'
+  try {
+    await writeFile(backupPath, contents, 'utf8')
+    const cases = [
+      ['missing proof', null, /backup-restore-proof-required/u],
+      ['wrong backup hash', validRestoreProof(contents, { backup: { ...backupFingerprint('different'), format: 'custom', archiveListExitCode: 0 } }), /backup-restore-proof-backup-mismatch/u],
+      ['wrong restore mode', validRestoreProof(contents, { restore: { ...validRestoreProof(contents).restore, mode: 'data-only' } }), /backup-restore-proof-mode-mismatch/u],
+      ['failed restore exit', validRestoreProof(contents, { restore: { ...validRestoreProof(contents).restore, exitStatus: 'failed', exitCode: 1 } }), /backup-restore-proof-incomplete/u],
+      ['row-value metadata check', validRestoreProof(contents, { restore: { ...validRestoreProof(contents).restore, metadataOnlyVerification: { ...validRestoreProof(contents).restore.metadataOnlyVerification, rowValuesRead: 1 } } }), /backup-restore-proof-incomplete/u],
+    ]
+
+    for (const [label, proof, expectedError] of cases) {
+      if (proof) await writeFile(proofPath, JSON.stringify(proof), 'utf8')
+      const operations = createDefaultBackupOperations({
+        pgRestorePath: 'pg_restore.exe',
+        restoreProofPath: proof ? proofPath : null,
+        spawn: () => ({ status: 0 }),
+      })
+      await assert.rejects(() => verifyRestorableBackup({ backupId: backupPath, operations }), expectedError, label)
+    }
+
+    await writeFile(proofPath, JSON.stringify(validRestoreProof(contents)), 'utf8')
+    await writeFile(backupPath, 'changed-custom-format-placeholder', 'utf8')
+    const staleOperations = createDefaultBackupOperations({
+      pgRestorePath: 'pg_restore.exe',
+      restoreProofPath: proofPath,
+      spawn: () => ({ status: 0 }),
+    })
+    await assert.rejects(() => verifyRestorableBackup({ backupId: backupPath, operations: staleOperations }), /backup-restore-proof-backup-mismatch/u)
+  } finally {
+    await rm(rootDirectory, { recursive: true, force: true })
+  }
+})
+
+test('archive-list-only evidence cannot reach the repair connection and never leaks proof failure details', async () => {
+  await withTempRoot('DATABASE_URL=postgresql://user:secret@db.example.test/tus\n', async (rootDirectory) => {
+    const calls = []
+    const result = await runRepair({
+      repairUnit: 'live-schema-conformance',
+      rootDirectory,
+      environment: { NODE_ENV: 'development' },
+      confirmed: true,
+      backupId: 'backup-operator-handle',
+      restoreProofPath: join(rootDirectory, 'missing-proof.json'),
+      operations: {
+        backup: {
+          assertRestorable: async () => calls.push('archive-list'),
+          verifyRestore: async () => { throw new Error('backup-restore-proof-required postgres://user:secret@db.example.test/tus') },
+        },
+        connect: async () => calls.push('connect'),
+      },
+    })
+
+    assert.equal(result.status, 'blocked')
+    assert.equal(result.safetyGate, 'backup-gate')
+    assert.equal(result.sideEffects.connections, 0)
+    assert.equal(result.sideEffects.writes, 0)
+    assert.deepEqual(calls, ['archive-list'])
+    assert.doesNotMatch(JSON.stringify(result), /user:secret@db\.example\.test|postgres:\/\/user:secret@db\.example\.test/u)
+  })
+})
+
+test('restore-proof generator records the official schema-only pg_restore invocation and metadata-only result', async () => {
+  const rootDirectory = await mkdtemp(join(tmpdir(), 'tus-backup-proof-generator-'))
+  const backupPath = join(rootDirectory, 'backup.dump')
+  const proofPath = join(rootDirectory, 'restore-proof.json')
+  const contents = 'custom-format-placeholder'
+  const calls = []
+  try {
+    await writeFile(join(rootDirectory, '.env'), 'DATABASE_URL=postgresql://user:secret@db.example.test/tus\n', 'utf8')
+    await writeFile(backupPath, contents, 'utf8')
+    const result = await generateIsolatedRestoreProof({
+      rootDirectory,
+      environment: { NODE_ENV: 'development' },
+      confirmed: true,
+      backupId: backupPath,
+      proofPath,
+      operations: {
+        pgRestorePath: 'pg_restore.exe',
+        toolVersion: async () => '16.2',
+        archiveList: () => ({ status: 0 }),
+        createScratch: async () => ({ identifier: 'lscr-abcdef012345', url: 'postgresql://scratch-secret@localhost/scratch' }),
+        restore: ({ executable, scratchTarget, backupPath }) => {
+          calls.push({
+            executable,
+            argumentsList: [
+              '--format=custom',
+              `--dbname=${scratchTarget.url}`,
+              '--schema-only',
+              '--no-owner',
+              '--no-acl',
+              '--exit-on-error',
+              '--single-transaction',
+              backupPath,
+            ],
+          })
+          return { status: 0, stderr: '' }
+        },
+        inspectScratch: async () => ({ status: 'passed', tableCount: 59, migrationTablePresent: true, rowValuesRead: 0 }),
+      },
+    })
+
+    assert.equal(result.status, 'passed')
+    assert.equal(result.proof.restore.mode, 'schema-only')
+    assert.equal(result.proof.restore.exitCode, 0)
+    assert.equal(result.proof.restore.metadataOnlyVerification.rowValuesRead, 0)
+    assert.deepEqual(calls[0].argumentsList.slice(0, 7), [
+      '--format=custom',
+      '--dbname=postgresql://scratch-secret@localhost/scratch',
+      '--schema-only',
+      '--no-owner',
+      '--no-acl',
+      '--exit-on-error',
+      '--single-transaction',
+    ])
+    assert.equal(calls[0].argumentsList.at(-1), backupPath)
+    assert.doesNotMatch(JSON.stringify(result), /scratch-secret/u)
   } finally {
     await rm(rootDirectory, { recursive: true, force: true })
   }
@@ -618,6 +778,55 @@ function completeConformanceSnapshot(overrides = {}) {
       historicalAdditiveRepairMarkerCount: 0,
     },
     rowValuesRead: 0,
+    ...overrides,
+  }
+}
+
+function backupFingerprint(contents) {
+  return {
+    sha256: createHash('sha256').update(contents).digest('hex'),
+    sizeBytes: Buffer.byteLength(contents),
+  }
+}
+
+function validRestoreProof(contents, overrides = {}) {
+  return {
+    proofVersion: 1,
+    proofType: 'tus-isolated-restore-proof',
+    generatedBy: 'tus-migration-repair',
+    operationId: 'restore-proof-test-operation-01',
+    createdAt: '2026-09-14T12:00:00.000Z',
+    backup: {
+      ...backupFingerprint(contents),
+      format: 'custom',
+      archiveListExitCode: 0,
+    },
+    restore: {
+      mode: 'schema-only',
+      scratchTarget: { type: 'postgresql-database', identifier: 'lscr-0123456789ab' },
+      tool: { name: 'pg_restore', version: '16.2' },
+      invocation: {
+        executable: 'pg_restore',
+        arguments: [
+          '--format=custom',
+          '--dbname=<isolated-scratch>',
+          '--schema-only',
+          '--no-owner',
+          '--no-acl',
+          '--exit-on-error',
+          '--single-transaction',
+          '<backup-file>',
+        ],
+      },
+      exitStatus: 'success',
+      exitCode: 0,
+      metadataOnlyVerification: {
+        status: 'passed',
+        tableCount: 59,
+        migrationTablePresent: true,
+        rowValuesRead: 0,
+      },
+    },
     ...overrides,
   }
 }

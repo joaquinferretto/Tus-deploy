@@ -197,3 +197,117 @@ This was a backup-only operation. No migration, seed, DDL, INSERT, UPDATE, DELET
 | Focused test command and exact result | N/A — external backup-only work unit with no source-code task; exact PostgreSQL client versions were verified as 16.2 and the backup archive was structurally verified. |
 | Runtime harness command/scenario and exact result | One bounded `pg_dump` attempt using the supplied exact executable path; exit 0, nonzero custom-format file created; `pg_restore --format=custom --list` exit 0. |
 | Rollback boundary | Remove only the appended successful-backup evidence sections from this file and `apply-progress.md`; preserve the dump handle/output and all prior implementation/evidence artifacts. |
+
+## Current Conformance Completion Session: 2026-09-14
+
+```yaml
+status: blocked
+source_used: repository-root .env DATABASE_URL only
+node_env: development
+confirmation: --confirm-development-target
+backup: {status: passed, tool: PostgreSQL 16.2, format: custom, nonzero_size: true, pg_restore_list_exit: 0, contents_read: false, location: unique user-temp archive outside repository}
+isolated_restore: {status: blocked, scratch_identifier: lscr-ba813eed404b, first_restore: no successful exit within bounded window, diagnostic_retry: exit_1_against_partial_scratch, metadata_only_table_count: 59, owner_cleanup_required: true}
+current_target_writes: 0
+repair_started: false
+seed_started: false
+provider_calls: 0
+cleanup_state: probe clients closed; scratch intentionally retained
+liveConformance: false
+launch_verdict: NO-GO
+```
+
+This session supersedes the prior archive-only limitation by proving the custom
+archive list, but it does not claim isolated restore success. The scratch name,
+target URL, host, credentials, archive contents, and row values remain redacted.
+
+## Fresh Isolated Restore Proof: 2026-09-14
+
+This append-only receipt preserves the prior failed restore attempt and records
+the separately authorized fresh proof using the already preserved archive.
+
+```yaml
+status: passed
+source_used: repository-root .env DATABASE_URL only
+backup_path: C:\Users\mmmau\AppData\Local\Temp\opencode\tus-live-schema-conformance-repair-current.dump
+tool_versions:
+  pg_dump: PostgreSQL 16.2
+  pg_restore: PostgreSQL 16.2
+  node: v22.23.2
+  pg: 8.16.3
+archive_inventory:
+  format: custom
+  validation_exit_code: 0
+  toc_entries: 265
+  physical_table_entries: 59
+  unique_table_names: 59
+  table_data_entries: 59
+  constraint_entries: 59
+  index_entries: 67
+  foreign_key_constraint_entries: 21
+  expected_physical_tables: 59
+  expected_unique_source_tables: 58
+  expected_migration_table: public._prisma_migrations
+  discrepancy: none; 58 unique source tables plus _prisma_migrations equals 59 physical tables; the 62-entry source array has four duplicate POS entries
+scratch:
+  database_handle: opencode_restore_20260914_a0480be71c32
+  create_status: created
+  create_outside_transaction: true
+  target_schema_or_data_changed: false
+restore:
+  command_shape: pg_restore --dbname=<redacted-scratch-URL> --format=custom --no-owner --no-acl --exit-on-error --single-transaction <backup_path>
+  attempts: 1
+  exit_code: 0
+  error_category: null
+  sqlstate: null
+  stderr: captured; empty
+  retry_performed: false
+scratch_metadata:
+  read_only: true
+  physical_table_count: 59
+  prisma_migrations_exists: true
+  archive_and_scratch_table_names_match: true
+  row_values_read: 0
+database_effects:
+  current_target_touched: authorized control connection only for CREATE DATABASE; no target schema or data operation
+  current_target_writes: 0
+  scratch_database_creation: 1
+  scratch_retained: true
+  provider_calls: 0
+cleanup_state:
+  clients_closed: true
+  child_processes_closed: true
+  temporary_proof_files_removed: true
+  destructive_drop_used: false
+```
+
+The full restore gate passed exactly once. The scratch remains intentionally
+retained because destructive `DROP` cleanup was prohibited. No current-target
+schema/data operation, migration, seed, provider, deployment, browser/device,
+Docker, or review lifecycle command was run; no URLs, hosts, credentials,
+current-target database identifier, archive contents, row values, or PII were
+emitted. This receipt does not itself authorize the next current-target phase.
+
+## Fresh Corrected Isolated Restore Attempt: 2026-09-14
+
+```yaml
+status: blocked
+source_used: repository-root .env DATABASE_URL only
+backup: {status: passed, format: custom, nonzero_size: true, pg_restore_list_exit_code: 0, contents_read: false}
+scratch: {database_created: true, create_outside_transaction: true, identifier: <redacted>, retained_for_owner_cleanup: true}
+restore:
+  attempts: 1
+  command_shape: pg_restore --dbname=<redacted-scratch-URL> --no-owner --no-acl --exit-on-error --single-transaction <backup_path>
+  outcome: timeout_after_60_seconds
+  stderr: empty
+  retry_performed: false
+current_target_repair_reached: false
+current_target_schema_writes: 0
+current_target_data_writes: 0
+cleanup_state: {clients_closed: true, restore_processes_remaining: 0, temporary_stderr_files_remaining: 0, scratch_retained: true}
+liveConformance: false
+launch_verdict: NO-GO
+```
+
+This is the authoritative correction to the prior invocation error. The
+destination was supplied explicitly, the backup path was positional and final,
+and the one allowed attempt timed out; no current-target operation followed.

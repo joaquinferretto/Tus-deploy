@@ -587,3 +587,46 @@ skill_resolution: {shared: loaded, typescript: loaded, codegraph: fallback-after
 This supersedes neither prior evidence nor the earlier blocked local-scope
 attempt. It is the complete current point-in-time receipt; its conformance
 verdict is non-conformant and no production-readiness claim is made.
+
+## Conformance Completion Session: Restore Gate Blocked
+
+```yaml
+status: blocked
+runtime_path: C:\Users\mmmau\Tools\node-v22.23.2-win-x64\node.exe
+source: repository-root .env DATABASE_URL only
+node_env: development
+explicit_confirmation: --confirm-development-target
+static_repair_gate: {status: passed, destructive: 0, ambiguous: 0, exact_money: passed, amount_minor_columns: 3, id_pk_contracts: 10, aliases: 14}
+backup_gate: {status: passed, custom_format: true, nonzero_size: true, pg_restore_list_exit: 0, contents_read: false}
+isolated_restore_gate: {status: blocked, scratch_identifier: lscr-ba813eed404b, metadata_only_table_count: 59, first_restore: bounded_failure, diagnostic_retry: exit_1_on_partial_scratch}
+preflight: not-run
+migration: {status: not-started, current_target_writes: 0, historical_replays: 0}
+schema_acceptance: {status: not-run, row_values_read: 0, liveConformance: false, noGo: true}
+seed: not-run
+pos_runtime: not-run
+cleanup_state: {probe_clients_closed: true, scratch_retained_for_owner_cleanup: true}
+```
+
+The current target was not mutated by repair. The approved isolated scratch
+creation and restore proof did not complete successfully, so no claim is made for
+the 62/26/68/22/3 live acceptance counts. No URL, host, credential, database
+name, row value, provider call, or production result is recorded.
+
+## Fresh Corrected Conformance Restore Gate: 2026-09-14
+
+```yaml
+status: external-blocked
+source: repository-root .env DATABASE_URL only
+backup: {status: passed, custom_format: true, nonzero_size: true, pg_restore_list_exit: 0, contents_read: false}
+isolated_restore: {status: blocked, scratch_created: 1, attempts: 1, outcome: timeout_after_60_seconds, stderr: empty, retry_performed: false, scratch_retained: true}
+current_target_repair_reached: false
+preflight: not-run
+migration: {status: not-started, current_target_writes: 0, historical_migrations_invoked: 0}
+schema_acceptance: {status: not-run, expected_counts: [62, 26, 68, 22, 3], rowValuesRead: 0, liveConformance: false, noGo: true}
+seed: not-run
+pos_runtime: not-run
+cleanup_state: {clients_closed: true, restore_processes_remaining: 0, scratch_retained_for_owner_cleanup: true}
+```
+
+The single corrected restore attempt used an explicit scratch destination and
+stopped at the 60-second bound. No current-target schema/data operation followed.

@@ -1147,6 +1147,25 @@ remediation `R1`.
 - `sql_gate`: passed, 125 statements, additive-only, exact-money passed.
 - `backup_gate`: passed, preserved custom archive and `pg_restore --list` exit 0.
 - `preflight`: passed after the verifier correction; one connection, zero retry, development confirmation.
+
+## Conformance Completion Session: 2026-09-14
+
+- Static conformance gate passed with zero destructive or ambiguous SQL, exact
+  three `BIGINT NOT NULL` amount additions, ten source-derived id PK contracts,
+  and fourteen guarded aliases.
+- A fresh custom-format backup from the root `.env` target passed nonzero-size
+  and `pg_restore --format=custom --list` exit `0`; the archive was not read.
+- One isolated scratch database was created for restore proof. The restore did
+  not return a successful exit within the bounded window; a diagnostic retry on
+  that same partial scratch returned exit `1`, with metadata-only table count
+  `59`. The scratch remains intact for owner cleanup.
+- The repair runner therefore did not enter current-target preflight, the new
+  migration transaction, metadata acceptance, seed, or POS runtime. Current
+  target mutation count is `0`; scratch database creation is recorded separately
+  as the approved isolated-proof side effect.
+- `liveConformance: false` and launch `NO-GO` remain authoritative. No database
+  name, URL, host, credential, row value, provider result, browser/device,
+  Docker, deployment, or production evidence was recorded.
 - `migration`: blocked during the selected additive transaction; persistent DDL 0; historical migrations 0.
 - `schema_verification`: deferred after the transaction failure; metadata-only post-failure check found no launch schema.
 - `seed`: deferred; no seed invocation.

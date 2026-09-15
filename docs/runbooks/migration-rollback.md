@@ -53,12 +53,15 @@ and separate from the new attempt. A retry failure remains
 ## Live schema conformance correction
 
 The conformance correction is forward-only and runs once in a bounded
-transaction after the root `.env` development target, backup, aggregate
-preflight, and marker-lineage gates pass. There is no down migration. A
-statement failure must roll back the transaction; an uncertain commit or
-post-commit metadata mismatch requires an owner-approved isolated restore.
-Do not replay the historical additive marker, baseline, POS repair, or any
-pending migration backlog.
+transaction after the root `.env` development target, generated hash-bound
+schema-only isolated-restore proof, aggregate preflight, and marker-lineage
+gates pass. There is no down migration. A statement failure must roll back the
+transaction; an uncertain commit or post-commit metadata mismatch requires an
+owner-approved isolated restore. Do not replay the historical additive marker,
+baseline, POS repair, or any pending migration backlog. The proof must show an
+actual PostgreSQL 16.2 `pg_restore` invocation with explicit scratch
+`--dbname`, `--schema-only`, `--no-owner`, `--no-acl`, and `--exit-on-error`; an
+archive list or hand-written receipt is not sufficient.
 
 ## Evidence
 

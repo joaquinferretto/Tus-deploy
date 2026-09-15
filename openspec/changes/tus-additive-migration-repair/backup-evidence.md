@@ -48,3 +48,30 @@ skill_resolution:
 - `pg_restore --format=custom --list` exited `0`; backup contents were not read.
 - The exact backup artifact used by the repair is kept as an external redacted
   handle. No URL, credential, row value, PII, or backup content is recorded.
+
+## Follow-up Conformance Session: 2026-09-14
+
+The follow-up `tus-live-schema-conformance-repair` session created a fresh
+custom-format archive with official PostgreSQL 16.2 tooling. Nonzero-size and
+`pg_restore --format=custom --list` exit `0` passed without reading archive
+contents. The isolated restore gate then failed: one scratch was created, the
+first restore did not complete within the bounded process window, and a
+diagnostic retry against the partial scratch returned exit `1`. The scratch is
+retained for owner cleanup. No current target restore, repair, migration, seed,
+provider, or runtime operation followed; `liveConformance: false` remains.
+
+## Fresh Bounded Schema-Only Restore Diagnostic: 2026-09-14
+
+The same external custom-format archive passed `pg_restore --format=custom
+--list` with exit `0` and 265 TOC entries. One new scratch database was created
+from the root `.env` `DATABASE_URL` server credentials, and exactly one official
+`pg_restore` invocation ran with explicit `--dbname`, `--schema-only`,
+`--no-owner`, `--no-acl`, `--exit-on-error`, and `--verbose` flags under a
+60-second bound. The restore completed without a categorized error.
+
+Read-only scratch metadata verification returned 59 tables, 608 columns, 59
+primary keys, 126 indexes, and 95 constraints. No row values were read. The
+root target received no restore, DDL, or DML; the scratch remains intentionally
+retained. Diagnostic logs and client processes were cleaned up. This evidence
+does not authorize current-target repair, seed, providers, deployment,
+browser/device, Docker, or review lifecycle work.

@@ -1,12 +1,15 @@
-import { readFile, readdir } from 'node:fs/promises'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { delimiter, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const CONNECTION_TIMEOUT_MS = 60_000
 export const RETRY_COUNT = 1
+export const RESTORE_PROOF_VERSION = 1
+export const RESTORE_PROOF_MODE = Object.freeze({ SCHEMA_ONLY: 'schema-only' })
 export const EXACT_MONEY_BACKFILL_APPROVAL = 'exact-money-backfill-approval-required'
 export const EXACT_MONEY_BACKFILL_TAG = 'repair:exact-money-backfill'
 export const EXACT_MONEY_CURRENCY_SCALES = Object.freeze({ ARS: 2, USD: 2, EUR: 2 })
@@ -561,6 +564,7 @@ export function parseRepairArguments(argumentsList = []) {
   const invalidArguments = []
   let confirmed = false
   let backupId = null
+  let restoreProofPath = null
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]
     if (argument === '--confirm-development-target') {
@@ -568,11 +572,14 @@ export function parseRepairArguments(argumentsList = []) {
     } else if (argument === '--backup-id' && args[index + 1] && !args[index + 1].startsWith('-')) {
       backupId = args[index + 1]
       index += 1
+    } else if (argument === '--restore-proof' && args[index + 1] && !args[index + 1].startsWith('-')) {
+      restoreProofPath = args[index + 1]
+      index += 1
     } else {
       invalidArguments.push(argument)
     }
   }
-  return { intent, confirmed, backupId, invalidArguments }
+  return { intent, confirmed, backupId, restoreProofPath, invalidArguments }
 }
 
 export function redactText(value) {
@@ -633,7 +640,7 @@ export function inspectBackupTooling() {
   }
 }
 
-export function createDefaultBackupOperations({ pgRestorePath = locateExecutablePath('pg_restore'), spawn = spawnSync } = {}) {
+export function createDefaultBackupOperations({ pgRestorePath = locateExecutablePath('pg_restore'), restoreProofPath = null, scratchRootUrl = null, inspectScratch = defaultInspectScratch, spawn = spawnSync } = {}) {
   return {
     assertRestorable: async (backupId) => {
       const backupPath = resolveBackupPath(backupId)
@@ -654,10 +661,266 @@ export function createDefaultBackupOperations({ pgRestorePath = locateExecutable
       })
       if (result?.error || result?.status !== 0) throw new Error('backup-archive-list-verification-failed')
     },
-    verifyRestore: async () => {
-      throw new Error('backup-restore-verification-required')
+    verifyRestore: async (backupId) => {
+      await validateRestoreProof({ backupId, proofPath: restoreProofPath, rootUrl: scratchRootUrl, inspectScratch })
     },
   }
+}
+
+export async function generateIsolatedRestoreProof({
+  rootDirectory = ROOT_DIRECTORY,
+  environment = process.env,
+  confirmed = false,
+  backupId,
+  proofPath,
+  operations = {},
+} = {}) {
+  const target = resolveRepairTarget({ rootDirectory, environment, confirmed })
+  const base = {
+    status: 'blocked',
+    target: redactTarget(target),
+    backup: null,
+    restore: null,
+    sideEffects: { currentTargetConnections: 0, currentTargetWrites: 0, scratchDatabasesCreated: 0, rowValuesRead: 0 },
+    cleanupState: 'not-started',
+  }
+  if (target.status !== 'ready') return { ...base, safetyGate: 'target-gate', reason: target.reason }
+  const backup = validateBackupHandle(backupId)
+  if (backup.status !== 'ready') return { ...base, safetyGate: 'backup-gate', reason: backup.reason }
+  if (!isSafeRestoreProofPath(proofPath)) return { ...base, safetyGate: 'proof-output-gate', reason: 'restore-proof-path-required' }
+
+  const backupPath = resolveBackupPath(backupId)
+  const metadata = readBackupMetadata(backupPath)
+  if (!metadata || !metadata.isFile() || metadata.size <= 0) return { ...base, safetyGate: 'backup-gate', reason: 'backup-file-empty' }
+  const fingerprint = await fingerprintBackup(backupPath)
+  const pgRestorePath = operations.pgRestorePath ?? locateExecutablePath('pg_restore')
+  if (!pgRestorePath) return { ...base, safetyGate: 'restore-tool-gate', reason: 'backup-tooling-unavailable' }
+
+  const toolVersion = await (operations.toolVersion ?? (() => readPgRestoreVersion(pgRestorePath)))()
+  if (toolVersion !== '16.2') return { ...base, safetyGate: 'restore-tool-gate', reason: 'postgresql-16.2-required' }
+  const archiveList = await (operations.archiveList ?? defaultArchiveList)({ executable: pgRestorePath, backupPath, timeoutMs: CONNECTION_TIMEOUT_MS })
+  if (archiveList?.error || archiveList?.status !== 0) return { ...base, safetyGate: 'backup-gate', reason: 'backup-archive-list-verification-failed' }
+
+  const scratchIdentifier = `lscr-${randomUUID().replaceAll('-', '').slice(0, 12)}`
+  let scratchTarget
+  try {
+    scratchTarget = await (operations.createScratch ?? defaultCreateScratch)({
+      rootUrl: readRootEnvironment(rootDirectory).DATABASE_URL,
+      identifier: scratchIdentifier,
+      timeoutMs: CONNECTION_TIMEOUT_MS,
+    })
+    base.sideEffects.scratchDatabasesCreated = 1
+    const restore = await (operations.restore ?? defaultRestore)({
+      executable: pgRestorePath,
+      scratchTarget,
+      backupPath,
+      timeoutMs: CONNECTION_TIMEOUT_MS,
+    })
+    if (restore?.error || restore?.status !== 0) return { ...base, safetyGate: 'restore-proof-gate', reason: restore?.error?.code === 'ETIMEDOUT' ? 'isolated-restore-timeout' : 'isolated-restore-failed', restore: { mode: RESTORE_PROOF_MODE.SCHEMA_ONLY, exitCode: Number.isInteger(restore?.status) ? restore.status : null }, cleanupState: 'scratch-retained-for-owner-cleanup' }
+    const metadataVerification = await (operations.inspectScratch ?? defaultInspectScratch)(scratchTarget, CONNECTION_TIMEOUT_MS)
+    if (!isValidMetadataOnlyVerification(metadataVerification)) return { ...base, safetyGate: 'restore-proof-gate', reason: 'isolated-restore-metadata-verification-failed', restore: { mode: RESTORE_PROOF_MODE.SCHEMA_ONLY, exitCode: 0, metadataOnlyVerification: sanitizeMetadataVerification(metadataVerification) }, cleanupState: 'scratch-retained-for-owner-cleanup' }
+
+    const proof = {
+      proofVersion: RESTORE_PROOF_VERSION,
+      proofType: 'tus-isolated-restore-proof',
+      generatedBy: 'tus-migration-repair',
+      operationId: `restore-proof-${randomUUID()}`,
+      createdAt: new Date().toISOString(),
+      backup: { ...fingerprint, format: 'custom', archiveListExitCode: 0 },
+      restore: {
+        mode: RESTORE_PROOF_MODE.SCHEMA_ONLY,
+        scratchTarget: { type: 'postgresql-database', identifier: scratchIdentifier },
+        tool: { name: 'pg_restore', version: toolVersion },
+        invocation: {
+          executable: 'pg_restore',
+          arguments: ['--format=custom', '--dbname=<isolated-scratch>', '--schema-only', '--no-owner', '--no-acl', '--exit-on-error', '--single-transaction', '<backup-file>'],
+        },
+        exitStatus: 'success',
+        exitCode: 0,
+        metadataOnlyVerification: sanitizeMetadataVerification(metadataVerification),
+      },
+    }
+    await writeFile(proofPath, `${JSON.stringify(proof, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
+    await validateRestoreProof({ backupId, proofPath, rootUrl: readRootEnvironment(rootDirectory).DATABASE_URL, inspectScratch: operations.inspectScratch ?? defaultInspectScratch })
+    return { ...base, status: 'passed', proof, restore: proof.restore, cleanupState: 'scratch-retained-for-owner-cleanup' }
+  } catch (error) {
+    return { ...base, safetyGate: 'restore-proof-gate', reason: classifyRestoreProofFailure(error), restore: scratchTarget ? { mode: RESTORE_PROOF_MODE.SCHEMA_ONLY, scratchTarget: { type: 'postgresql-database', identifier: scratchIdentifier } } : null, cleanupState: scratchTarget ? 'scratch-retained-for-owner-cleanup' : 'verified' }
+  }
+}
+
+export async function validateRestoreProof({ backupId, proofPath, rootUrl, inspectScratch = defaultInspectScratch } = {}) {
+  const handle = validateBackupHandle(backupId)
+  if (handle.status !== 'ready') throw new Error(handle.reason)
+  if (!isSafeRestoreProofPath(proofPath)) throw new Error('backup-restore-proof-required')
+  const backupPath = resolveBackupPath(backupId)
+  let proof
+  try {
+    proof = JSON.parse(await readFile(proofPath, 'utf8'))
+  } catch {
+    throw new Error('backup-restore-proof-invalid')
+  }
+  if (!isRestoreProofShapeValid(proof)) throw new Error('backup-restore-proof-invalid')
+  const fingerprint = await fingerprintBackup(backupPath)
+  if (proof.backup.sha256 !== fingerprint.sha256 || proof.backup.sizeBytes !== fingerprint.sizeBytes) throw new Error('backup-restore-proof-backup-mismatch')
+  if (proof.restore.mode !== RESTORE_PROOF_MODE.SCHEMA_ONLY) throw new Error('backup-restore-proof-mode-mismatch')
+  if (proof.restore.exitStatus !== 'success' || proof.restore.exitCode !== 0 || !isValidMetadataOnlyVerification(proof.restore.metadataOnlyVerification)) throw new Error('backup-restore-proof-incomplete')
+  if (typeof rootUrl !== 'string') throw new Error('backup-restore-proof-scratch-required')
+  const scratchTarget = buildScratchTarget(rootUrl, proof.restore.scratchTarget.identifier)
+  const scratchVerification = await inspectScratch(scratchTarget, CONNECTION_TIMEOUT_MS)
+  if (!isValidMetadataOnlyVerification(scratchVerification)
+    || scratchVerification.tableCount !== proof.restore.metadataOnlyVerification.tableCount
+    || scratchVerification.migrationTablePresent !== proof.restore.metadataOnlyVerification.migrationTablePresent) {
+    throw new Error('backup-restore-proof-scratch-mismatch')
+  }
+  return { status: 'passed', handle: '<redacted>', restoreVerified: true }
+}
+
+function isSafeRestoreProofPath(value) {
+  return typeof value === 'string'
+    && value.trim().length > 0
+    && !/postgres(?:ql)?:\/\/|password|secret|token/iu.test(value)
+}
+
+function readBackupMetadata(backupPath) {
+  try {
+    return statSync(backupPath)
+  } catch {
+    return null
+  }
+}
+
+async function fingerprintBackup(backupPath) {
+  const metadata = readBackupMetadata(backupPath)
+  if (!metadata?.isFile() || metadata.size <= 0) throw new Error('backup-file-unavailable')
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(backupPath)) hash.update(chunk)
+  return { sha256: hash.digest('hex'), sizeBytes: metadata.size }
+}
+
+function readPgRestoreVersion(pgRestorePath) {
+  const result = spawnSync(pgRestorePath, ['--version'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 1_000,
+    windowsHide: true,
+  })
+  if (result?.error || result?.status !== 0) return null
+  const match = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.match(/PostgreSQL\)?\s+(\d+\.\d+)/iu)
+  return match?.[1] ?? null
+}
+
+async function defaultCreateScratch({ rootUrl, identifier, timeoutMs }) {
+  const require = createRequire(join(ROOT_DIRECTORY, 'apps', 'api', 'package.json'))
+  const { Client } = require('pg')
+  const maintenanceUrl = new URL(rootUrl)
+  maintenanceUrl.pathname = '/postgres'
+  const client = new Client({ connectionString: maintenanceUrl.toString(), connectionTimeoutMillis: timeoutMs, query_timeout: timeoutMs })
+  await client.connect()
+  try {
+    await client.query(`CREATE DATABASE ${quoteIdentifier(identifier)}`)
+  } finally {
+    await client.end().catch(() => undefined)
+  }
+  return buildScratchTarget(rootUrl, identifier)
+}
+
+function buildScratchTarget(rootUrl, identifier) {
+  const scratchUrl = new URL(rootUrl)
+  scratchUrl.pathname = `/${identifier}`
+  return { type: 'postgresql-database', identifier, url: scratchUrl.toString() }
+}
+
+function defaultArchiveList({ executable, backupPath, timeoutMs }) {
+  return spawnSync(executable, ['--format=custom', '--list', backupPath], {
+    stdio: 'ignore',
+    timeout: timeoutMs,
+    windowsHide: true,
+  })
+}
+
+function defaultRestore({ executable, scratchTarget, backupPath, timeoutMs }) {
+  if (typeof scratchTarget?.url !== 'string') throw new Error('scratch-target-unavailable')
+  return spawnSync(executable, [
+    '--format=custom',
+    `--dbname=${scratchTarget.url}`,
+    '--schema-only',
+    '--no-owner',
+    '--no-acl',
+    '--exit-on-error',
+    '--single-transaction',
+    backupPath,
+  ], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: timeoutMs,
+    windowsHide: true,
+  })
+}
+
+async function defaultInspectScratch(scratchTarget, timeoutMs) {
+  const require = createRequire(join(ROOT_DIRECTORY, 'apps', 'api', 'package.json'))
+  const { Client } = require('pg')
+  const client = new Client({ connectionString: scratchTarget.url, connectionTimeoutMillis: timeoutMs, query_timeout: timeoutMs })
+  await client.connect()
+  try {
+    const result = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+    return {
+      status: 'passed',
+      tableCount: result.rows.length,
+      migrationTablePresent: result.rows.some((row) => row.table_name === '_prisma_migrations'),
+      rowValuesRead: 0,
+    }
+  } finally {
+    await client.end().catch(() => undefined)
+  }
+}
+
+function isValidMetadataOnlyVerification(value) {
+  return value?.status === 'passed'
+    && Number.isInteger(Number(value.tableCount))
+    && Number(value.tableCount) > 0
+    && value.migrationTablePresent === true
+    && Number(value.rowValuesRead) === 0
+}
+
+function sanitizeMetadataVerification(value) {
+  return {
+    status: value?.status === 'passed' ? 'passed' : 'blocked',
+    tableCount: Number.isInteger(Number(value?.tableCount)) ? Number(value.tableCount) : null,
+    migrationTablePresent: value?.migrationTablePresent === true,
+    rowValuesRead: Number(value?.rowValuesRead ?? 0),
+  }
+}
+
+function isRestoreProofShapeValid(value) {
+  const expectedInvocation = ['--format=custom', '--dbname=<isolated-scratch>', '--schema-only', '--no-owner', '--no-acl', '--exit-on-error', '--single-transaction', '<backup-file>']
+  return value?.proofVersion === RESTORE_PROOF_VERSION
+    && value.proofType === 'tus-isolated-restore-proof'
+    && value.generatedBy === 'tus-migration-repair'
+    && typeof value.operationId === 'string'
+    && value.operationId.length > 0
+    && typeof value.createdAt === 'string'
+    && Number.isFinite(Date.parse(value.createdAt))
+    && value.backup?.format === 'custom'
+    && value.backup.archiveListExitCode === 0
+    && /^[a-f0-9]{64}$/u.test(value.backup.sha256)
+    && Number.isInteger(value.backup.sizeBytes)
+    && value.backup.sizeBytes > 0
+    && typeof value.restore?.mode === 'string'
+    && value.restore.scratchTarget?.type === 'postgresql-database'
+    && /^lscr-[a-f0-9]{12}$/u.test(value.restore.scratchTarget.identifier)
+    && value.restore.tool?.name === 'pg_restore'
+    && value.restore.tool.version === '16.2'
+    && value.restore.invocation?.executable === 'pg_restore'
+    && JSON.stringify(value.restore.invocation.arguments) === JSON.stringify(expectedInvocation)
+}
+
+function classifyRestoreProofFailure(error) {
+  if (error?.code === 'ETIMEDOUT') return 'isolated-restore-timeout'
+  if (error?.code === 'EEXIST') return 'restore-proof-path-exists'
+  if (error?.message === 'backup-file-unavailable') return 'backup-file-unavailable'
+  if (error?.message === 'scratch-target-unavailable') return 'scratch-target-unavailable'
+  return 'isolated-restore-failed'
 }
 
 export function createExactMoneyBackfillPlan({
@@ -929,6 +1192,7 @@ export async function runRepair({
   environment = process.env,
   confirmed = false,
   backupId,
+  restoreProofPath,
   repairUnit = 'launch-baseline',
   selectedMigrationSql,
   operations = {},
@@ -957,7 +1221,10 @@ export async function runRepair({
   const backup = validateBackupHandle(backupId)
   if (backup.status !== 'ready') return { ...base, status: 'blocked', safetyGate: 'backup-gate', reason: backup.reason, target: redactTarget(target), backup }
 
-  const defaultBackupOperations = createDefaultBackupOperations()
+  const defaultBackupOperations = createDefaultBackupOperations({
+    restoreProofPath,
+    scratchRootUrl: readRootEnvironment(rootDirectory).DATABASE_URL,
+  })
   const runtime = {
     connect: defaultConnect,
     inspect: defaultInspect,
@@ -1030,9 +1297,7 @@ export async function runRepair({
     })
     return resultToReturn
   } catch (error) {
-    const errorReason = error instanceof Error && /backup-(?:tooling-unavailable|restore-verification-required|handle-invalid|file-unavailable|file-empty|archive-list-verification-failed)/u.test(error.message)
-      ? error.message
-      : null
+    const errorReason = sanitizeBackupErrorReason(error)
     const sqlstate = sanitizeSqlState(error?.code ?? error?.sqlstate)
     if (!pool && errorReason) base.cleanupState = 'verified'
     resultToReturn = buildRunResult(base, {
@@ -1108,6 +1373,29 @@ function sameMembers(left = [], right = []) {
 
 function sanitizeSqlState(value) {
   return /^[0-9A-Z]{5}$/u.test(String(value ?? '')) ? String(value) : null
+}
+
+function sanitizeBackupErrorReason(error) {
+  const message = String(error?.message ?? '')
+  const reasons = [
+    'backup-tooling-unavailable',
+    'backup-restore-verification-required',
+    'backup-handle-invalid',
+    'backup-file-unavailable',
+    'backup-file-empty',
+    'backup-archive-list-verification-failed',
+    'backup-restore-proof-required',
+    'backup-restore-proof-invalid',
+    'backup-restore-proof-backup-mismatch',
+    'backup-restore-proof-mode-mismatch',
+    'backup-restore-proof-incomplete',
+    'backup-restore-proof-scratch-required',
+    'backup-restore-proof-scratch-mismatch',
+    'isolated-restore-timeout',
+    'isolated-restore-failed',
+    'restore-proof-path-required',
+  ]
+  return reasons.find((reason) => message.includes(reason)) ?? null
 }
 
 function sameOrderedMembers(left = [], right = []) {

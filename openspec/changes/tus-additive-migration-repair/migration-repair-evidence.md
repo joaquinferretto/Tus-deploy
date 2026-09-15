@@ -709,3 +709,35 @@ verifier; a list-only archive is no longer treated as restorable. No target
 connection, DDL, DML, seed, provider, POS, or deployment activity was performed
 for this unit. Its live state remains `liveConformance: false` and NO-GO until a
 fresh accepted metadata receipt exists.
+
+## Follow-up Live Session: Restore Gate Blocked
+
+The current follow-up passed the static gate and produced a preserved nonzero
+custom archive whose `pg_restore --format=custom --list` exited `0`. One isolated
+scratch database was created, but the restore did not complete successfully: the
+first bounded attempt did not return a successful exit and a diagnostic retry on
+the same partial scratch returned exit `1`. The scratch remains for owner cleanup.
+No current-target preflight, repair DDL/DML, marker, seed, POS, provider, or
+deployment operation ran. The specific receipt is in
+`openspec/changes/tus-live-schema-conformance-repair/apply-progress.md`.
+
+## Fresh Corrected Conformance Restore Gate: 2026-09-14
+
+```yaml
+status: external-blocked
+source: repository-root .env DATABASE_URL only
+backup: {status: passed, custom_format: true, nonzero_size: true, pg_restore_list_exit: 0, contents_read: false}
+isolated_restore: {status: blocked, scratch_created: 1, attempts: 1, outcome: timeout_after_60_seconds, stderr: empty, retry_performed: false, scratch_retained: true}
+current_target_repair_reached: false
+current_target_writes: 0
+preflight: not-run
+migration: {status: not-started, historical_migrations_invoked: 0}
+schema_acceptance: {status: not-run, rowValuesRead: 0, liveConformance: false, noGo: true}
+seed: not-run
+pos_evidence: not-run
+provider_calls: 0
+```
+
+The corrected `pg_restore` invocation supplied an explicit destination and used
+the backup path as its final positional argument. Its single 60-second attempt
+did not complete; the current target was not repaired and no retry was made.

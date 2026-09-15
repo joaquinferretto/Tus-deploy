@@ -20,7 +20,7 @@ Create an explicit forward-only repair unit from the Prisma catalog. Never repla
 
 ## Data Flow
 
-`root .env DATABASE_URL` → target gate → inventory/exact-money gate → backup list + isolated restore → connection → catalog preflight → guarded transaction → DDL/PK/index work + marker → commit → normalized receipt → redacted evidence.
+`root .env DATABASE_URL` → target gate → custom archive list → isolated schema-only restore → hash/size-bound proof → proof/scratch revalidation → repair connection → catalog preflight → guarded transaction → DDL/PK/index work + marker → commit → normalized receipt → redacted evidence.
 
 ## Interfaces / SQL Shapes
 
@@ -66,7 +66,7 @@ Target/backup/marker failures, non-empty money, bad aggregates, incompatible obj
 | Push state | N/A — no push automation | None |
 | PR commands | N/A — no PR automation | None |
 
-`pg_restore` is argv-only (`--format=custom --list`), timeout-bounded, stdio-suppressed, and redaction-tested; it receives no URL or shell command.
+`pg_restore` is argv-only (`--format=custom --dbname=<scratch> --schema-only --no-owner --no-acl --exit-on-error --single-transaction <backup>`), timeout-bounded, stdio-suppressed, and redaction-tested. The proof stores only a redacted invocation shape and opaque scratch identifier; no URL or shell command is emitted.
 
 ## Migration / Rollout
 
@@ -78,5 +78,5 @@ No historical-marker reconstruction, data conversion/backfill, rebuild, drop/tru
 
 ## Open Questions
 
-- [ ] Verified custom-format backup and isolated restore capability must be supplied.
+- [ ] Verified custom-format backup and isolated restore capability must be supplied through `create-restore-proof`; archive listing alone is insufficient.
 - [ ] Fresh preflight must confirm the three billing tables are empty; otherwise a separate approved exact-money change is required.

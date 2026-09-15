@@ -8,7 +8,7 @@ Define one bounded, forward-only correction that makes the confirmed development
 
 ### Requirement: Authorized target and recoverability
 
-The repair MUST use only the repository-root `.env` `DATABASE_URL` as its development test target, require `NODE_ENV=development` and explicit `--confirm-development-target`, and pass a verified restorable custom-format backup plus an isolated restore verification before any DDL. URLs, credentials, and restore handles MUST be redacted.
+The repair MUST use only the repository-root `.env` `DATABASE_URL` as its development test target, require `NODE_ENV=development` and explicit `--confirm-development-target`, and pass a generated restore proof from an actual isolated PostgreSQL 16.2 `pg_restore --format=custom --dbname=<scratch> --schema-only --no-owner --no-acl --exit-on-error --single-transaction <backup>` operation before any DDL. The proof MUST bind the exact archive SHA-256 and byte size, record `schema-only` mode, an opaque scratch identifier, exit status, and a read-only metadata verification with `rowValuesRead=0`; the apply runner MUST revalidate the archive fingerprint and scratch metadata. URLs, credentials, and restore handles MUST be redacted.
 
 #### Scenario: Unsafe target or missing restore proof
 - GIVEN an alternate URL, missing development confirmation, or unverified/non-isolated restore
