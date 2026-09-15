@@ -1,0 +1,15 @@
+CREATE INDEX "idx_calendarios_tenant_servicio_estado" ON public."calendarios" ("tenant_id", "servicio_id", "estado");
+CREATE INDEX "idx_reglas_tenant_calendario" ON public."reglas_calendario" ("tenant_id", "calendario_id");
+CREATE INDEX "idx_excepciones_tenant_calendario_franja" ON public."excepciones_calendario" ("tenant_id", "calendario_id", "fecha_inicio", "fecha_fin");
+CREATE INDEX "idx_reservas_tenant_calendario_franja" ON public."reservas" ("tenant_id", "calendario_id", "fecha_inicio", "fecha_fin");
+CREATE INDEX "idx_reservas_tenant_cliente_estado" ON public."reservas" ("tenant_id", "cliente_id", "estado");
+CREATE INDEX "idx_compensaciones_soporte_tenant_caso_fecha_creacion" ON public."compensaciones_soporte" ("tenant_id", "caso_id", "fecha_creacion");
+CREATE INDEX "idx_consentimientos_whatsapp_tenant_estado" ON public."consentimientos_whatsapp" ("tenant_id", "estado");
+CREATE INDEX "idx_mensajes_whatsapp_tenant_destinatario_estado" ON public."mensajes_whatsapp" ("tenant_id", "destinatario_id", "estado");
+CREATE INDEX "idx_eventos_webhook_whatsapp_tenant_estado_ocurrencia" ON public."eventos_webhook_whatsapp" ("tenant_id", "estado", "fecha_ocurrencia");
+CREATE INDEX "idx_eventos_webhook_pago_tenant_estado_ocurrencia" ON public."eventos_webhook_pago" ("tenant_id", "estado", "fecha_ocurrencia");
+CREATE INDEX "idx_facturas_tenant_compromiso_estado" ON public."facturas" ("tenant_id", "compromiso_id", "estado");
+CREATE INDEX "idx_lineas_factura_tenant_factura" ON public."lineas_factura" ("tenant_id", "factura_id");
+CREATE INDEX "idx_notas_credito_tenant_factura_estado" ON public."notas_credito" ("tenant_id", "factura_id", "estado");
+CREATE INDEX "idx_suscripciones_tenant_cliente_estado" ON public."suscripciones" ("tenant_id", "cliente_id", "estado");
+CREATE INDEX "idx_perfiles_fiscales_tenant_estado" ON public."perfiles_fiscales" ("tenant_id", "estado");

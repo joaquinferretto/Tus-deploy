@@ -290,13 +290,13 @@ test('BUILD 12F2 maps commission, evidence, and confirmation delegates without c
   assert.deepEqual(result.confirmationGet, { where: { tenantId_compromisoId: { tenantId: 'tenant-a', compromisoId: 'commitment-12f2' } } })
 
   for (const field of ['montoBruto', 'deducciones', 'baseComisionable', 'montoComision', 'montoNeto']) {
-    assert.match(schema, new RegExp(`${field}\\s+BigInt\\s+@map\\("${{ montoBruto: 'grossAmount', deducciones: 'deductions', baseComisionable: 'commissionableBase', montoComision: 'commissionAmount', montoNeto: 'netAmount' }[field]}"\\)`))
+    assert.match(schema, new RegExp(`${field}\\s+BigInt\\s+@map\\("${{ montoBruto: 'monto_bruto', deducciones: 'deducciones', baseComisionable: 'base_comisionable', montoComision: 'monto_comision', montoNeto: 'monto_neto' }[field]}"\\)`))
   }
-  assert.match(schema, /tasaPuntosBase\s+Int\s+@map\("rateBps"\)/)
-  assert.match(schema, /versionRegla\s+String\s+@map\("ruleVersion"\)/)
-  assert.match(schema, /evidenciaId\s+String\s+@map\("evidenceId"\)/)
-  assert.match(schema, /@@unique\(\[tenantId, compromisoId\], map: "TusFinancialConfirmation_tenantId_commitmentId_key"\)/)
-  assert.doesNotMatch(schema.match(/model InstantaneaComision[\s\S]*?\n}\n\nmodel MovimientoContable/)?.[0] ?? '', /@relation/)
+  assert.match(schema, /tasaPuntosBase\s+Int\s+@map\("tasa_puntos_base"\)/)
+  assert.match(schema, /versionRegla\s+String\s+@map\("version_regla"\)/)
+  assert.match(schema, /evidenciaId\s+String\s+@map\("evidencia_id"\)/)
+  assert.match(schema, /@@unique\(\[tenantId, compromisoId\], map: "uq_confirmaciones_fin_tenant_compromiso"\)/)
+  assert.match(schema, /model InstantaneaComision[\s\S]*?compromiso\s+Compromiso\s+@relation\(fields: \[tenantId, compromisoId\], references: \[tenantId, compromisoId\], onDelete: Restrict, onUpdate: NoAction, map: "fk_instantaneas_comision_compromisos"\)/)
 })
 
 test('BUILD 12F3 maps ledger, freeze, and reconciliation delegates without changing financial values', () => {
@@ -375,12 +375,12 @@ test('BUILD 12F3 maps ledger, freeze, and reconciliation delegates without chang
     determinista: true,
     fechaCreacion: new Date(1724673600000).toISOString(),
   })
-  assert.match(schema, /model MovimientoContable[\s\S]*?entradaId\s+String\s+@map\("entryId"\)/)
-  assert.match(schema, /model MovimientoContable[\s\S]*?monto\s+BigInt\s+@map\("amount"\)/)
-  assert.match(schema, /model MovimientoContable[\s\S]*?@@map\("TusLedgerEntry"\)/)
-  assert.match(schema, /model BloqueoFinanciero[\s\S]*?motivo\s+String\s+@map\("reason"\)/)
-  assert.match(schema, /model BloqueoFinanciero[\s\S]*?@@map\("TusFinancialFreeze"\)/)
-  assert.match(schema, /model RegistroConciliacion[\s\S]*?montoProveedor\s+BigInt\s+@map\("providerAmount"\)/)
-  assert.match(schema, /model RegistroConciliacion[\s\S]*?@@map\("TusReconciliationRecord"\)/)
+  assert.match(schema, /model MovimientoContable[\s\S]*?entradaId\s+String\s+@map\("entrada_id"\)/)
+  assert.match(schema, /model MovimientoContable[\s\S]*?monto\s+BigInt\s+@map\("monto"\)/)
+  assert.match(schema, /model MovimientoContable[\s\S]*?@@map\("movimientos_contables"\)/)
+  assert.match(schema, /model BloqueoFinanciero[\s\S]*?motivo\s+String\s+@map\("motivo"\)/)
+  assert.match(schema, /model BloqueoFinanciero[\s\S]*?@@map\("bloqueos_financieros"\)/)
+  assert.match(schema, /model RegistroConciliacion[\s\S]*?montoProveedor\s+BigInt\s+@map\("monto_proveedor"\)/)
+  assert.match(schema, /model RegistroConciliacion[\s\S]*?@@map\("registros_conciliacion"\)/)
   assert.doesNotMatch(schema, /model (TusLedgerEntry|TusFinancialFreeze|TusReconciliationRecord)\b/)
 })

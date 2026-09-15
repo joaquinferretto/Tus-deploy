@@ -180,7 +180,7 @@ test('child process receives only the canonical DATABASE_URL and safe runtime va
       DATABASE_URL: 'stale-url',
       TUS_POSTGRES_URL: 'must-not-pass',
     },
-    extra: { API_PORT: '4310', AWS_SECRET_ACCESS_KEY: 'must-not-pass' },
+    extra: { API_PORT: '4310', TUS_ROUTES_ENABLED: 'true', TUS_PROVIDER_ACTIONS_ENABLED: 'false', AWS_SECRET_ACCESS_KEY: 'must-not-pass' },
   })
 
   assert.equal(environment.DATABASE_URL, 'postgresql://user:secret@db.example.test/tus?sslmode=require')
@@ -188,6 +188,8 @@ test('child process receives only the canonical DATABASE_URL and safe runtime va
   assert.equal('AWS_SECRET_ACCESS_KEY' in environment, false)
   assert.equal('TUS_POSTGRES_URL' in environment, false)
   assert.equal(environment.API_PORT, '4310')
+  assert.equal(environment.TUS_ROUTES_ENABLED, 'true')
+  assert.equal(environment.TUS_PROVIDER_ACTIONS_ENABLED, 'false')
 })
 
 test('PostgreSQL HTTP evidence is deferred without a root target and never claims production conformance', async () => {
@@ -214,7 +216,7 @@ test('deferred PostgreSQL orchestration records zero database side effects', asy
   })
 })
 
-test('the real database migration remains additive and excludes destructive cleanup', async () => {
+test('the real database migration remains forward-only and excludes destructive data cleanup', async () => {
   const { readFile } = await import('node:fs/promises')
   const migration = await readFile(new URL('../../../apps/api/prisma/migrations/20260831170000_tus_real_db_runtime_audit/migration.sql', import.meta.url), 'utf8')
   const schema = await readFile(new URL('../../../apps/api/prisma/schema.prisma', import.meta.url), 'utf8')
@@ -226,12 +228,12 @@ test('the real database migration remains additive and excludes destructive clea
 })
 
 test('schema gate covers durable tenant-scoped POS and delivery structures', () => {
-  assert.deepEqual(REQUIRED_SCHEMA_COLUMNS.TusPosOperation, ['tenantId', 'operationId', 'idempotencyKey', 'shiftId', 'response'])
-  assert.deepEqual(REQUIRED_SCHEMA_COLUMNS.TusDeliveryTask, ['tenantId', 'taskId', 'commitmentId', 'version', 'settlementClaim'])
-  assert.equal(Object.hasOwn(REQUIRED_SCHEMA_COLUMNS, 'TusPosVersion'), true)
-  assert.equal(Object.hasOwn(REQUIRED_SCHEMA_COLUMNS, 'TusPosReceipt'), true)
-  assert.equal(Object.hasOwn(REQUIRED_SCHEMA_COLUMNS, 'TusPosAudit'), true)
-  assert.equal(Object.hasOwn(REQUIRED_SCHEMA_COLUMNS, 'TusPosOutbox'), true)
+  assert.deepEqual(REQUIRED_SCHEMA_COLUMNS.operaciones_pos, ['tenant_id', 'operacion_id', 'clave_idempotencia', 'turno_id', 'respuesta'])
+  assert.deepEqual(REQUIRED_SCHEMA_COLUMNS.tareas_entrega, ['tenant_id', 'tarea_id', 'compromiso_id', 'version', 'reclamo_liquidacion'])
+  assert.equal(Object.hasOwn(REQUIRED_SCHEMA_COLUMNS, 'versiones_pos'), true)
+  assert.equal(Object.hasOwn(REQUIRED_SCHEMA_COLUMNS, 'comprobantes_pos'), true)
+  assert.equal(Object.hasOwn(REQUIRED_SCHEMA_COLUMNS, 'auditoria_pos'), true)
+  assert.equal(Object.hasOwn(REQUIRED_SCHEMA_COLUMNS, 'outbox_pos'), true)
 })
 
 test('generated smoke fixtures are unique and namespaced', () => {
@@ -259,8 +261,8 @@ test('cleanup allows only generated tagged resources and preserves durable evide
   assert.equal(sql.includes('DELETE FROM "TusPosReceipt"'), false)
   assert.equal(sql.includes('DELETE FROM "TusPosOperation"'), false)
   assert.equal(sql.includes('DELETE FROM "OutboxEvent"'), false)
-  assert.equal(sql.includes('DELETE FROM "TusMerchant" WHERE "id" IN'), true)
-  assert.equal(sql.includes('DELETE FROM "TusListing" WHERE "id" IN'), true)
+  assert.equal(sql.includes('DELETE FROM "prestadores" WHERE "id" IN'), true)
+  assert.equal(sql.includes('DELETE FROM "publicaciones" WHERE "id" IN'), true)
   assert.equal(statements.some(({ parameters = [] }) => parameters.includes(fixture.tenantA)), false)
 })
 

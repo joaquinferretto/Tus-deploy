@@ -16,6 +16,10 @@ function runTypeScriptScenario(source) {
   return JSON.parse(output.trim())
 }
 
+function modelDefinition(schema, model) {
+  return schema.match(new RegExp(`^model ${model}\\s+\\{[\\s\\S]*?^\\}`, 'mu'))?.[0] ?? ''
+}
+
 function fixture(overrides = {}) {
   return {
     secret: 'fixture-whatsapp-secret-only',
@@ -40,40 +44,41 @@ function fixture(overrides = {}) {
   }
 }
 
-test('BUILD 12E2 normaliza WhatsApp en Prisma y conserva tablas, columnas, indices y relaciones logicas', () => {
+test('BUILD 12E2 normaliza WhatsApp en Prisma y conserva relaciones logicas con tablas fisicas canonicas', () => {
   const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
   const migrations = [
     '20260827090700_tus_support_reporting/migration.sql',
     '20260909090000_tus_argentina_market_launch/migration.sql',
     '20260909150000_tus_comms_delivery_controls/migration.sql',
   ].map((file) => readFileSync(join(root, 'apps/api/prisma/migrations', file), 'utf8')).join('\n')
-  const whatsappModels = schema.slice(schema.indexOf('model AccionWhatsApp {'), schema.indexOf('model OutboxWhatsApp {'))
   const models = [
-    ['AccionWhatsApp', 'TusWhatsAppAction'],
-    ['ConfirmacionWhatsApp', 'TusWhatsAppConfirmation'],
-    ['AuditoriaWhatsApp', 'TusWhatsAppAudit'],
-    ['ConsentimientoWhatsApp', 'TusWhatsAppConsent'],
-    ['MensajeWhatsApp', 'TusWhatsAppMessage'],
-    ['EventoWebhookWhatsApp', 'TusWhatsAppWebhookEvent'],
+    ['AccionWhatsApp', 'acciones_whatsapp', 'TusWhatsAppAction'],
+    ['ConfirmacionWhatsApp', 'confirmaciones_whatsapp', 'TusWhatsAppConfirmation'],
+    ['AuditoriaWhatsApp', 'auditoria_whatsapp', 'TusWhatsAppAudit'],
+    ['ConsentimientoWhatsApp', 'consentimientos_whatsapp', 'TusWhatsAppConsent'],
+    ['MensajeWhatsApp', 'mensajes_whatsapp', 'TusWhatsAppMessage'],
+    ['EventoWebhookWhatsApp', 'eventos_webhook_whatsapp', 'TusWhatsAppWebhookEvent'],
   ]
 
-  for (const [model, table] of models) {
+  for (const [model, table, historicalTable] of models) {
     assert.match(schema, new RegExp(`model ${model}\\s+\\{`))
     assert.match(schema, new RegExp(`@@map\\("${table}"\\)`))
-    assert.doesNotMatch(schema, new RegExp(`model ${table}\\s+\\{`))
-    assert.match(migrations, new RegExp(`"${table}"`))
+    assert.doesNotMatch(modelDefinition(schema, model), /@relation\(/)
+    assert.doesNotMatch(schema, new RegExp(`model TusWhatsApp`))
+    assert.match(migrations, new RegExp(`"${historicalTable}"`))
   }
-  assert.match(whatsappModels, /claveIdempotencia\s+String\s+@map\("idempotencyKey"\)/)
-  assert.match(whatsappModels, /remitenteId\s+String\s+@map\("senderId"\)/)
-  assert.match(whatsappModels, /destinatarioId\s+String\s+@map\("recipientId"\)/)
-  assert.match(whatsappModels, /consentimientoId\s+String\s+@map\("consentId"\)/)
+  const whatsappModels = models.map(([model]) => modelDefinition(schema, model)).join('\n')
+  assert.match(whatsappModels, /claveIdempotencia\s+String\s+@map\("clave_idempotencia"\)/)
+  assert.match(whatsappModels, /remitenteId\s+String\s+@map\("remitente_id"\)/)
+  assert.match(whatsappModels, /destinatarioId\s+String\s+@map\("destinatario_id"\)/)
+  assert.match(whatsappModels, /consentimientoId\s+String\s+@map\("consentimiento_id"\)/)
   assert.doesNotMatch(whatsappModels, /@relation\(/)
   for (const index of [
-    'TusWhatsAppAction_tenantId_idempotencyKey_key',
-    'TusWhatsAppConfirmation_tenantId_confirmationId_key',
-    'TusWhatsAppConsent_tenantId_recipientId_key',
-    'TusWhatsAppMessage_tenantId_messageId_key',
-    'TusWhatsAppWebhookEvent_tenantId_providerEventId_key',
+    'uq_acciones_whatsapp_tenant_clave_idempotencia',
+    'uq_confirmaciones_whatsapp_tenant_confirmacion',
+    'uq_consentimientos_whatsapp_tenant_destinatario',
+    'uq_mensajes_whatsapp_tenant_mensaje',
+    'uq_eventos_webhook_whatsapp_tenant_evento',
   ]) assert.match(schema, new RegExp(`map: "${index}"`))
 })
 

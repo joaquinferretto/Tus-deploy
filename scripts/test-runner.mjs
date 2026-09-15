@@ -35,6 +35,7 @@ function run() {
       process.execPath,
       [
         '--experimental-strip-types',
+        '--experimental-transform-types',
         '--experimental-loader',
         './scripts/node-strip-types-loader.mjs',
         '--test',

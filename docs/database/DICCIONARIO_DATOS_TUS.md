@@ -1,9 +1,12 @@
 # Diccionario de datos TUS
 
-> **ADVERTENCIA.** Este documento describe el modelo relacional **canónico objetivo** de TUS Core.
-> No es una copia exacta del estado físico actual de PostgreSQL. Las FK marcadas `OBJETIVO_FUTURO`
-> todavía no existen como constraint físico y se implementarán mediante migraciones forward-only posteriores.
+> **ESTADO FÍSICO.** Este documento describe el modelo relacional canónico de TUS Core y el estado
+> físico posterior a la migración `20260914180000_tus_physical_spanish`: el núcleo TUS ya usa
+> tablas, columnas, índices, uniques y FKs en español `snake_case`. Las FK marcadas `OBJETIVO_FUTURO`
+> siguen siendo conceptuales y se implementarán mediante migraciones forward-only posteriores.
 > Las relaciones `[LOGICA]`, `[EXTERNA]`, `[POLIMORFICA]`, `[HISTORICA]`, `[TECNICA]` y `[LEGACY]` **no son FK SQL**.
+> La validación de esta fase demuestra paridad entre el target descartable y `factory_local`, incluyendo el
+> inventario de índices canónicos definido en el DER.
 >
 > **Nomenclatura:** todo nombre de tabla, columna, índice, unique y FK controlado por TUS está en
 > español `snake_case`. Se conservan únicamente excepciones técnicas justificadas: `id`, `tenant_id`,
@@ -40,11 +43,11 @@
 
 ---
 
-## 2. Mapa de nombres de columna (actual PostgreSQL → objetivo)
+## 2. Trazabilidad de nombres de columna (pre-migración → físico actual)
 
-Facilita la futura generación de `ALTER TABLE ... RENAME COLUMN`. Muestra solo campos relevantes.
+Deja trazabilidad de los renombres físicos aplicados por la migración. Muestra solo campos relevantes.
 
-| Nombre físico actual | Nombre objetivo | Tabla |
+| Nombre físico pre-migración | Nombre físico actual | Tabla |
 |---|---|---|
 | `merchantId` | `prestador_id` | prestadores, publicaciones, compromisos, compromisos_mercado_servicios, tareas_entrega |
 | `listingId` | `publicacion_id` | compromisos_mercado_servicios |
@@ -218,7 +221,7 @@ Facilita la futura generación de `ALTER TABLE ... RENAME COLUMN`. Muestra solo 
 
 **Marcas temporales** (aplican a todas las tablas):
 
-| Nombre físico actual | Nombre objetivo |
+| Nombre físico pre-migración | Nombre físico actual |
 |---|---|
 | `createdAt` | `fecha_creacion` |
 | `updatedAt` | `fecha_actualizacion` |
@@ -240,7 +243,7 @@ Facilita la futura generación de `ALTER TABLE ... RENAME COLUMN`. Muestra solo 
 
 **Versiones** (aplican a todas las tablas):
 
-| Nombre físico actual | Nombre objetivo |
+| Nombre físico pre-migración | Nombre físico actual |
 |---|---|
 | `contractVersion` | `version_contrato` |
 | `policyVersion` | `version_politica` |
@@ -256,8 +259,8 @@ Facilita la futura generación de `ALTER TABLE ... RENAME COLUMN`. Muestra solo 
 
 | TABLA | PK | TIPO | RAZÓN | BUSINESS ID | UNIQUE TENANT-SCOPED |
 |---|---|---|---|---|---|
-| `prestadores` | `id` | varchar | Surrogate estable e inmutable | `prestador_id` | `(tenant_id, prestador_id)` [objetivo] |
-| `publicaciones` | `id` | varchar | Surrogate; cambia versión/disponibilidad | — | — |
+| `prestadores` | `id` | varchar | Surrogate estable e inmutable | `prestador_id` | `(tenant_id, prestador_id)` [FISICA_ACTUAL] |
+| `publicaciones` | `id` | varchar | Surrogate; cambia versión/disponibilidad | — | `(tenant_id, id)` [FISICA_ACTUAL] |
 | `compromisos_mercado_servicios` | `id` | varchar | Surrogate | `compromiso_id` | `(tenant_id, compromiso_id)` |
 | `auditoria_mercado_servicios` | `id` | varchar | Surrogate | — | — |
 | `compromisos` | `id` | varchar | Surrogate del agregado | `compromiso_id` | `(tenant_id, compromiso_id)` |
@@ -332,35 +335,35 @@ Facilita la futura generación de `ALTER TABLE ... RENAME COLUMN`. Muestra solo 
 | ORIGEN | COLUMNAS | DESTINO | ESTADO | RAZÓN | CARDINALIDAD | NULLABLE | ON DELETE | ON UPDATE | REQUIERE AUDITAR DATOS |
 |---|---|---|---|---|---|---|---|---|---|
 | `lineas_factura` | `(tenant_id, factura_id)` | `facturas` | FISICA_ACTUAL | Línea depende de su factura | N:1 | NO | NO ACTION | NO ACTION | No |
-| `publicaciones` | `(tenant_id, prestador_id)` | `prestadores` | OBJETIVO_FUTURO | Publicación pertenece a un prestador | N:1 | NO | RESTRICT | NO ACTION | Sí (cross-tenant, huérfanos) |
-| `compromisos` | `(tenant_id, prestador_id)` | `prestadores` | OBJETIVO_FUTURO | Obligación comercial con prestador | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `transiciones_compromiso` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Histórico de un compromiso | N:1 | NO | RESTRICT | NO ACTION | Sí (huérfanos) |
-| `compensaciones_compromiso` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Compensación de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | Sí |
-| `compromisos_mercado_servicios` | `(tenant_id, publicacion_id)` | `publicaciones` | OBJETIVO_FUTURO_REQUIERE_VALIDACION | Línea de checkout referencia listing (mismo tenant) | N:1 | NO | RESTRICT | NO ACTION | Sí (unique `(tenant_id, id)` no existe aún) |
-| `reglas_calendario` | `(tenant_id, calendario_id)` | `calendarios` | OBJETIVO_FUTURO | Regla depende del calendario (mismo tenant) | N:1 | NO | CASCADE | NO ACTION | Sí |
-| `excepciones_calendario` | `(tenant_id, calendario_id)` | `calendarios` | OBJETIVO_FUTURO | Excepción depende del calendario (mismo tenant) | N:1 | NO | CASCADE | NO ACTION | Sí |
-| `reservas` | `(tenant_id, calendario_id)` | `calendarios` | OBJETIVO_FUTURO | Reserva ocupa franja de un calendario (mismo tenant) | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `turnos_entrega` | `(tenant_id, zona_id)` | `zonas_entrega` | OBJETIVO_FUTURO | Turno en una zona | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `evidencias_entrega` | `(tenant_id, tarea_id)` | `tareas_entrega` | OBJETIVO_FUTURO | Comprobante de una tarea | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `incidentes_entrega` | `(tenant_id, tarea_id)` | `tareas_entrega` | OBJETIVO_FUTURO | Incidente de una tarea | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `comprobantes_pos` | `(tenant_id, operacion_id)` | `operaciones_pos` | OBJETIVO_FUTURO | Comprobante de una operación | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `conflictos_pos` | `(tenant_id, operacion_id)` | `operaciones_pos` | OBJETIVO_FUTURO | Conflicto de una operación | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `evidencias_soporte` | `(tenant_id, caso_id)` | `casos_soporte` | OBJETIVO_FUTURO | Evidencia de un caso | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `lineas_tiempo_soporte` | `(tenant_id, caso_id)` | `casos_soporte` | OBJETIVO_FUTURO | Timeline de un caso | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `compensaciones_soporte` | `(tenant_id, caso_id)` | `casos_soporte` | OBJETIVO_FUTURO | Compensación de un caso | 1:1 | NO | RESTRICT | NO ACTION | Sí |
-| `intenciones_pago` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Pago de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | Sí |
-| `instantaneas_comision` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Snapshot de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | Sí |
-| `movimientos_contables` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Movimiento de un compromiso | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `evidencias_financieras` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Evidencia de un compromiso | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `confirmaciones_financieras` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Confirmación de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | Sí |
-| `bloqueos_financieros` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Congelamiento de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | Sí |
-| `registros_conciliacion` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO | Conciliación de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | Sí |
-| `facturas` | `(tenant_id, compromiso_id)` | `compromisos` | OBJETIVO_FUTURO_REQUIERE_VALIDACION | Documento sobre un compromiso | N:1 | NO | RESTRICT | NO ACTION | Sí (`""` permitido) |
-| `notas_credito` | `(tenant_id, factura_id)` | `facturas` | OBJETIVO_FUTURO | NC reduce una factura | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `reintegros_facturacion` | `(tenant_id, factura_id)` | `facturas` | OBJETIVO_FUTURO | Reintegro de una factura | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `movimientos_contables_facturacion` | `(tenant_id, factura_id)` | `facturas` | OBJETIVO_FUTURO | Ledger de una factura | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `gestion_mora` | `(tenant_id, suscripcion_id)` | `suscripciones` | OBJETIVO_FUTURO | Mora de una suscripción | N:1 | NO | RESTRICT | NO ACTION | Sí |
-| `suscripciones` | `(tenant_id, plan_id)` | `planes_suscripcion` | OBJETIVO_FUTURO_REQUIERE_VALIDACION | Suscripción a un plan | N:1 | NO | RESTRICT | NO ACTION | Sí (`""` permitido) |
+| `publicaciones` | `(tenant_id, prestador_id)` | `prestadores` | FISICA_ACTUAL | Publicación pertenece a un prestador | N:1 | NO | RESTRICT | NO ACTION | No |
+| `compromisos` | `(tenant_id, prestador_id)` | `prestadores` | FISICA_ACTUAL | Obligación comercial con prestador | N:1 | NO | RESTRICT | NO ACTION | No |
+| `transiciones_compromiso` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Histórico de un compromiso | N:1 | NO | RESTRICT | NO ACTION | No |
+| `compensaciones_compromiso` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Compensación de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | No |
+| `compromisos_mercado_servicios` | `(tenant_id, publicacion_id)` | `publicaciones` | FISICA_ACTUAL | Línea de checkout referencia listing (mismo tenant) | N:1 | NO | RESTRICT | NO ACTION | No |
+| `reglas_calendario` | `(tenant_id, calendario_id)` | `calendarios` | FISICA_ACTUAL | Regla depende del calendario (mismo tenant) | N:1 | NO | CASCADE | NO ACTION | No |
+| `excepciones_calendario` | `(tenant_id, calendario_id)` | `calendarios` | FISICA_ACTUAL | Excepción depende del calendario (mismo tenant) | N:1 | NO | CASCADE | NO ACTION | No |
+| `reservas` | `(tenant_id, calendario_id)` | `calendarios` | FISICA_ACTUAL | Reserva ocupa franja de un calendario (mismo tenant) | N:1 | NO | RESTRICT | NO ACTION | No |
+| `turnos_entrega` | `(tenant_id, zona_id)` | `zonas_entrega` | FISICA_ACTUAL | Turno en una zona | N:1 | NO | RESTRICT | NO ACTION | No |
+| `evidencias_entrega` | `(tenant_id, tarea_id)` | `tareas_entrega` | FISICA_ACTUAL | Comprobante de una tarea | N:1 | NO | RESTRICT | NO ACTION | No |
+| `incidentes_entrega` | `(tenant_id, tarea_id)` | `tareas_entrega` | FISICA_ACTUAL | Incidente de una tarea | N:1 | NO | RESTRICT | NO ACTION | No |
+| `comprobantes_pos` | `(tenant_id, operacion_id)` | `operaciones_pos` | FISICA_ACTUAL | Comprobante de una operación | N:1 | NO | RESTRICT | NO ACTION | No |
+| `conflictos_pos` | `(tenant_id, operacion_id)` | `operaciones_pos` | FISICA_ACTUAL | Conflicto de una operación | N:1 | NO | RESTRICT | NO ACTION | No |
+| `evidencias_soporte` | `(tenant_id, caso_id)` | `casos_soporte` | FISICA_ACTUAL | Evidencia de un caso | N:1 | NO | RESTRICT | NO ACTION | No |
+| `lineas_tiempo_soporte` | `(tenant_id, caso_id)` | `casos_soporte` | FISICA_ACTUAL | Timeline de un caso | N:1 | NO | RESTRICT | NO ACTION | No |
+| `compensaciones_soporte` | `(tenant_id, caso_id)` | `casos_soporte` | FISICA_ACTUAL | Compensación de un caso | 1:1 | NO | RESTRICT | NO ACTION | No |
+| `intenciones_pago` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Pago de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | No |
+| `instantaneas_comision` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Snapshot de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | No |
+| `movimientos_contables` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Movimiento de un compromiso | N:1 | NO | RESTRICT | NO ACTION | No |
+| `evidencias_financieras` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Evidencia de un compromiso | N:1 | NO | RESTRICT | NO ACTION | No |
+| `confirmaciones_financieras` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Confirmación de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | No |
+| `bloqueos_financieros` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Congelamiento de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | No |
+| `registros_conciliacion` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Conciliación de un compromiso | N:1 | NO | RESTRICT | NO ACTION | No |
+| `facturas` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Documento sobre un compromiso; la aplicación debe rechazar `""` | N:1 | NO | RESTRICT | NO ACTION | No |
+| `notas_credito` | `(tenant_id, factura_id)` | `facturas` | FISICA_ACTUAL | NC reduce una factura | N:1 | NO | RESTRICT | NO ACTION | No |
+| `reintegros_facturacion` | `(tenant_id, factura_id)` | `facturas` | FISICA_ACTUAL | Reintegro de una factura | N:1 | NO | RESTRICT | NO ACTION | No |
+| `movimientos_contables_facturacion` | `(tenant_id, factura_id)` | `facturas` | FISICA_ACTUAL | Ledger de una factura | N:1 | NO | RESTRICT | NO ACTION | No |
+| `gestion_mora` | `(tenant_id, suscripcion_id)` | `suscripciones` | FISICA_ACTUAL | Mora de una suscripción | N:1 | NO | RESTRICT | NO ACTION | No |
+| `suscripciones` | `(tenant_id, plan_id)` | `planes_suscripcion` | FISICA_ACTUAL | Suscripción a un plan; la aplicación debe rechazar `""` | N:1 | NO | RESTRICT | NO ACTION | No |
 
 ---
 
@@ -407,8 +410,9 @@ Facilita la futura generación de `ALTER TABLE ... RENAME COLUMN`. Muestra solo 
 
 ## 6. Datos a auditar antes de crear FKs (solo lectura)
 
-Nunca ejecutar `DELETE`/`UPDATE`/`TRUNCATE`. Estas consultas detectan huérfanos y bloqueos antes de `ADD CONSTRAINT`.
-Los nombres de columna son los físicos actuales (pre-migración).
+Nunca ejecutar `DELETE`/`UPDATE`/`TRUNCATE`. Estas consultas son el inventario histórico
+pre-migración para detectar huérfanos y bloqueos antes de `ADD CONSTRAINT`; sus nombres físicos
+antiguos no deben ejecutarse contra el esquema actual sin adaptar la consulta.
 
 ```sql
 -- Publicaciones cuyo prestador no existe en el mismo tenant
@@ -466,16 +470,16 @@ WHERE l.id IS NULL;
 
 **`prestadores`** — Perfil operativo/comercial del prestador (ex `TusMerchant`).
 - PK `id`; business ID `prestador_id` (ex `merchantId`).
-- UNIQUE objetivo `(tenant_id, prestador_id)`; hoy solo `tenant_id` es `@unique`.
-- FK entrantes objetivo: `publicaciones`, `compromisos`.
+- UNIQUE físico actual `(tenant_id, prestador_id)`.
+- FK físicas actuales entrantes: `publicaciones`, `compromisos`.
 - Invariante: `prestador_id` inmutable; `version_politica_operativa` gobierna la política operativa.
 
 **`publicaciones`** — Oferta visible (ex `TusListing`).
-- PK `id`; FK objetivo `(tenant_id, prestador_id) → prestadores`, `onDelete RESTRICT`.
-- La relación Prisma actual usa `tenantId` (incorrecta) con `onDelete Cascade`; el modelo objetivo la corrige a `prestador_id`.
+- PK `id`; FK física actual `(tenant_id, prestador_id) → prestadores`, `onDelete RESTRICT`.
+- La relación anterior por `tenantId` fue reemplazada por el mapping Prisma `Publicacion.prestador`.
 
 **`compromisos_mercado_servicios`** — Línea/compromiso de checkout (ex `TusMarketplaceCommitment`).
-- FK objetivo `publicacion_id → publicaciones`; `prestador_id` referencia lógica.
+- FK física actual `(tenant_id, publicacion_id) → publicaciones`; `prestador_id` referencia lógica adicional.
 
 **`auditoria_mercado_servicios`** — Traza; `tipo_recurso`/`recurso_id` polimórficos.
 
@@ -488,9 +492,9 @@ WHERE l.id IS NULL;
 
 ### 7.3 Calendario
 
-**`calendarios`** — Calendario; propietario canónico = prestador (hoy `servicio_id` legacy).
-**`reglas_calendario`** / **`excepciones_calendario`** — Hijos; FK objetivo CASCADE.
-**`reservas`** — FK objetivo `calendario_id → calendarios` RESTRICT; `cliente_id` externa/lógica; `servicio_id` legacy.
+**`calendarios`** — Calendario; propietario canónico = prestador; `servicio_id` sigue legacy.
+**`reglas_calendario`** / **`excepciones_calendario`** — Hijos; FK físicas actuales CASCADE.
+**`reservas`** — FK física actual `calendario_id → calendarios` RESTRICT; `cliente_id` externa/lógica; `servicio_id` legacy.
 
 ### 7.4 Entrega
 
@@ -514,11 +518,11 @@ Canal gobernado; referencias externas a Meta (`remitente_id`, `destinatario_id`,
 
 ### 7.9 Finanzas
 
-Todas referencian `compromiso_id` (FK objetivo RESTRICT, mayormente 1:1). Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
+Todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación
 
-`facturas` (append-only) ← `lineas_factura` (FK FISICA_ACTUAL compuesta) ← `notas_credito` / `reintegros_facturacion` / `movimientos_contables_facturacion` (FK objetivo RESTRICT). `suscripciones` (`plan_id` FK objetivo, `cliente_id` externa). `perfiles_fiscales`/`cuentas_facturacion` (`parte_id` polimórfica). `gestion_mora` FK a `suscripciones`. `secuencias_numeracion` 1:1 por tenant.
+`facturas` (append-only) ← `lineas_factura` (FK física actual compuesta) ← `notas_credito` / `reintegros_facturacion` / `movimientos_contables_facturacion` (FKs físicas actuales RESTRICT). `suscripciones` (`plan_id` FK física actual, `cliente_id` externa). `perfiles_fiscales`/`cuentas_facturacion` (`parte_id` polimórfica). `gestion_mora` FK física actual a `suscripciones`. `secuencias_numeracion` 1:1 por tenant.
 
 ### 7.11 Outbox TUS
 
@@ -535,7 +539,23 @@ Todas referencian `compromiso_id` (FK objetivo RESTRICT, mayormente 1:1). Refere
 - `calendarios.servicio_id` y `reservas.servicio_id` → todavía acopladas a `TusService` (legacy). **Pendiente migración** a `prestador_id`/`publicacion_id`.
 - `TusProduct`, `TusService`, `TusInventory`, `TusTenant` — legacy, excluidos del DER Core; `TusInventory.product_id → TusProduct` es deuda a resolver antes de eliminar esos modelos.
 - Uniques `(tenant_id, id)`: `calendarios` ya es NECESARIO para la FK compuesta tenant-scoped (no redundante); `excepciones_calendario` y `TusDeadLetter` siguen siendo redundantes con la PK (sin FK entrante que las requiera).
-- Relación Prisma actual `TusListing → TusMerchant` por `tenantId` — reemplazar por `prestador_id` (documentada en `publicaciones`).
+- Relación anterior `TusListing → TusMerchant` por `tenantId` — reemplazada por la FK física `(tenant_id, prestador_id)` y el mapping Prisma `Publicacion.prestador`.
+
+### Drift físico preexistente resuelto
+
+Los siguientes índices estaban definidos en `DER_TUS.dbml` y `schema.prisma`, pero no existían en el snapshot PRE ni después de la migración física inicial:
+
+`idx_calendarios_tenant_servicio_estado`, `idx_reglas_tenant_calendario`, `idx_excepciones_tenant_calendario_franja`,
+`idx_reservas_tenant_calendario_franja`, `idx_reservas_tenant_cliente_estado`,
+`idx_compensaciones_soporte_tenant_caso_fecha_creacion`, `idx_consentimientos_whatsapp_tenant_estado`,
+`idx_mensajes_whatsapp_tenant_destinatario_estado`, `idx_eventos_webhook_whatsapp_tenant_estado_ocurrencia`,
+`idx_eventos_webhook_pago_tenant_estado_ocurrencia`, `idx_facturas_tenant_compromiso_estado`,
+`idx_lineas_factura_tenant_factura`, `idx_notas_credito_tenant_factura_estado`,
+`idx_suscripciones_tenant_cliente_estado`, `idx_perfiles_fiscales_tenant_estado`.
+
+La migración `20260914180000_tus_physical_spanish` renombró y preservó objetos existentes; la migración
+`20260915140000_tus_physical_spanish_indexes` agregó exclusivamente estos 15 índices. El inventario físico posterior
+queda alineado con el DER: faltantes antes `15`, faltantes después `0`.
 
 ---
 

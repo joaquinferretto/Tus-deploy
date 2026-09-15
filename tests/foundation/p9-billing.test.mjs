@@ -192,25 +192,25 @@ test('BUILD 12G maps every billing delegate to Spanish Prisma fields and preserv
   `)
   const schema = readFileSync(join(import.meta.dirname, '..', '..', 'apps/api/prisma/schema.prisma'), 'utf8')
   const models = {
-    Factura: 'TusInvoice',
-    LineaFactura: 'TusInvoiceLine',
-    NotaCredito: 'TusCreditNote',
-    Suscripcion: 'TusSubscription',
-    PerfilFiscal: 'TusTaxProfile',
-    CuentaFacturacion: 'TusBillingAccount',
-    PlanSuscripcion: 'TusSubscriptionPlan',
-    ReintegroFacturacion: 'TusBillingRefund',
-    MovimientoContableFacturacion: 'TusBillingLedger',
-    IdempotenciaFacturacion: 'TusBillingIdempotency',
-    AuditoriaFacturacion: 'TusBillingAudit',
-    GestionMora: 'TusBillingDunning',
-    SecuenciaNumeracion: 'TusBillingNumberSequence',
-    ExportacionContable: 'TusAccountingExport',
+    Factura: 'facturas',
+    LineaFactura: 'lineas_factura',
+    NotaCredito: 'notas_credito',
+    Suscripcion: 'suscripciones',
+    PerfilFiscal: 'perfiles_fiscales',
+    CuentaFacturacion: 'cuentas_facturacion',
+    PlanSuscripcion: 'planes_suscripcion',
+    ReintegroFacturacion: 'reintegros_facturacion',
+    MovimientoContableFacturacion: 'movimientos_contables_facturacion',
+    IdempotenciaFacturacion: 'idempotencia_facturacion',
+    AuditoriaFacturacion: 'auditoria_facturacion',
+    GestionMora: 'gestion_mora',
+    SecuenciaNumeracion: 'secuencias_numeracion',
+    ExportacionContable: 'exportaciones_contables',
   }
 
   assert.deepEqual(result.accountWhere, { tenantId_cuentaFacturacionId: { tenantId: 'tenant-a', cuentaFacturacionId: 'account-12g' } })
   for (const [model, table] of Object.entries(models)) assert.match(schema, new RegExp(`model ${model}[\\s\\S]*?@@map\\("${table}"\\)`))
-  assert.match(schema, /model LineaFactura[\s\S]*?factura\s+Factura\s+@relation\(fields: \[tenantId, facturaId\], references: \[tenantId, facturaId\], map: "TusInvoiceLine_tenant_invoice_fk"\)/)
+  assert.match(schema, /model LineaFactura[\s\S]*?factura\s+Factura\s+@relation\(fields: \[tenantId, facturaId\], references: \[tenantId, facturaId\], onDelete: NoAction, onUpdate: NoAction, map: "fk_lineas_factura_facturas"\)/)
   assert.deepEqual(result.moneyTypes, { invoice: 'bigint', line: 'bigint', ledger: 'bigint' })
   assert.equal(result.sequenceUpdate.siguienteNumero.increment, 1)
   assert.doesNotMatch(schema, /model Tus(?:Invoice|InvoiceLine|CreditNote|Subscription|TaxProfile|BillingAccount|SubscriptionPlan|BillingRefund|BillingLedger|BillingIdempotency|BillingAudit|BillingDunning|BillingNumberSequence|AccountingExport)\b/)

@@ -41,7 +41,7 @@ const SAFE_CHILD_ENV_VARS = Object.freeze([
   'APPDATA',
   'LOCALAPPDATA',
 ])
-const SAFE_CHILD_EXTRA_ENV_VARS = Object.freeze(['API_PORT', 'NODE_ENV', 'NATIVE_PROFILE'])
+const SAFE_CHILD_EXTRA_ENV_VARS = Object.freeze(['API_PORT', 'NODE_ENV', 'NATIVE_PROFILE', 'TUS_ROUTES_ENABLED', 'TUS_PROVIDER_ACTIONS_ENABLED'])
 const SETTLEMENT_GATES = Object.freeze([
   'legal',
   'kyc',
@@ -54,28 +54,28 @@ const SETTLEMENT_GATES = Object.freeze([
   'runtimeProvider',
 ])
 export const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
-  TusReadinessEvidence: ['profile', 'execution', 'evidenceClass', 'liveConformance'],
-  TusReadinessDecision: ['actorId', 'jobId', 'correlationId', 'profile', 'scope', 'outcome'],
-  TusMerchant: ['tenantId', 'status'],
-  TusListing: ['tenantId', 'kind', 'published', 'stock', 'availabilityVersion'],
-  TusMarketplaceCommitment: ['tenantId', 'commitmentId', 'context', 'quantity'],
-  TusMarketplaceAudit: ['tenantId', 'actorId', 'correlationId'],
+  evidencias_habilitacion: ['perfil', 'ejecucion', 'clase_evidencia', 'conformidad_produccion'],
+  decisiones_habilitacion: ['actor_id', 'trabajo_id', 'correlacion_id', 'perfil', 'alcance', 'resultado'],
+  prestadores: ['tenant_id', 'estado'],
+  publicaciones: ['tenant_id', 'tipo', 'publicada', 'existencias', 'version_disponibilidad'],
+  compromisos_mercado_servicios: ['tenant_id', 'compromiso_id', 'contexto', 'cantidad'],
+  auditoria_mercado_servicios: ['tenant_id', 'actor_id', 'correlacion_id'],
   IdempotencyRecord: ['tenantId', 'key', 'requestHash', 'status', 'response'],
   OutboxEvent: ['tenantId', 'aggregateType', 'aggregateId', 'status'],
-  TusDeliveryZone: ['tenantId', 'zoneId', 'active'],
-  TusDeliveryShift: ['tenantId', 'shiftId', 'zoneId', 'status'],
-  TusDeliveryTask: ['tenantId', 'taskId', 'commitmentId', 'version', 'settlementClaim'],
-  TusDeliveryProof: ['tenantId', 'proofId', 'taskId', 'evidenceSource'],
-  TusDeliveryAudit: ['tenantId', 'auditId', 'correlationId'],
-  TusDeliveryOutbox: ['tenantId', 'eventId', 'aggregateId', 'status'],
-  TusPosOperation: ['tenantId', 'operationId', 'idempotencyKey', 'shiftId', 'response'],
-  TusPosReceipt: ['tenantId', 'receiptId', 'operationId', 'integrityHash', 'settlement'],
-  TusPosDevice: ['tenantId', 'deviceId', 'status'],
-  TusPosSession: ['tenantId', 'sessionId', 'deviceId', 'shiftId', 'status'],
-  TusPosConflict: ['tenantId', 'conflictId', 'operationId', 'reason', 'status'],
-  TusPosOutbox: ['tenantId', 'eventId', 'aggregateId', 'status'],
-  TusPosAudit: ['tenantId', 'auditId', 'operationId', 'correlationId'],
-  TusPosVersion: ['tenantId', 'shiftId', 'version'],
+  zonas_entrega: ['tenant_id', 'zona_id', 'activo'],
+  turnos_entrega: ['tenant_id', 'turno_id', 'zona_id', 'estado'],
+  tareas_entrega: ['tenant_id', 'tarea_id', 'compromiso_id', 'version', 'reclamo_liquidacion'],
+  evidencias_entrega: ['tenant_id', 'evidencia_id', 'tarea_id', 'origen_evidencia'],
+  auditoria_entrega: ['tenant_id', 'auditoria_id', 'correlacion_id'],
+  outbox_entrega: ['tenant_id', 'evento_id', 'agregado_id', 'estado'],
+  operaciones_pos: ['tenant_id', 'operacion_id', 'clave_idempotencia', 'turno_id', 'respuesta'],
+  comprobantes_pos: ['tenant_id', 'comprobante_id', 'operacion_id', 'hash_integridad', 'liquidacion'],
+  dispositivos_pos: ['tenant_id', 'dispositivo_id', 'estado'],
+  sesiones_pos: ['tenant_id', 'sesion_id', 'dispositivo_id', 'turno_id', 'estado'],
+  conflictos_pos: ['tenant_id', 'conflicto_id', 'operacion_id', 'motivo', 'estado'],
+  outbox_pos: ['tenant_id', 'evento_id', 'agregado_id', 'estado'],
+  auditoria_pos: ['tenant_id', 'auditoria_id', 'operacion_id', 'correlacion_id'],
+  versiones_pos: ['tenant_id', 'turno_id', 'version'],
 })
 
 /**
@@ -195,7 +195,7 @@ export function parseTapSummary(output = '') {
 }
 
 function rerunCommand(file) {
-  return `pnpm exec node --experimental-strip-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test --test-concurrency=1 ${file}`
+  return `pnpm exec node --experimental-strip-types --experimental-transform-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test --test-concurrency=1 ${file}`
 }
 
 export function classifyFailure({ file, output = '', exitCode = 1, timedOut = false }) {
@@ -881,8 +881,13 @@ export async function runTusPostgresHttpSmoke({
       throw new SmokeInfrastructureError(error instanceof Error ? error.message : 'API runtime startup failed', 'API runtime startup')
     }
 
+    fixture.cleanupTenantIds = []
     const tenantA = await registerAndSignIn(api.baseUrl, pool, fixture, 'a')
+    fixture.cleanupTenantIds.push(tenantA.tenantId)
     const tenantB = await registerAndSignIn(api.baseUrl, pool, fixture, 'b')
+    fixture.cleanupTenantIds.push(tenantB.tenantId)
+    fixture.tenantA = tenantA.tenantId
+    fixture.tenantB = tenantB.tenantId
     fixture.actorId = tenantA.actorId
     await seedMarketplaceFixture(pool, fixture)
 
@@ -902,7 +907,7 @@ export async function runTusPostgresHttpSmoke({
       return finalEvidence = deferredPostgresSmoke(
         'No authorized fleet readiness evidence is available for the disposable smoke tenant; the runtime guard denied the POS and delivery mutations and no durable journey was claimed',
         'authorized fleet readiness evidence',
-        { authenticatedHttp: 'passed', discovery: 'passed', deviceSession: 'denied', productPos: 'denied', servicePos: 'denied', deliveryHandoff: 'denied', providerNonInteraction: { status: 'passed', providerCalls: 0, settlementClaims: 0 } },
+        { actions, authenticatedHttp: 'passed', discovery: 'passed', deviceSession: 'denied', productPos: 'denied', servicePos: 'denied', deliveryHandoff: 'denied', providerNonInteraction: { status: 'passed', providerCalls: 0, settlementClaims: 0 } },
         target,
       )
     }
@@ -1123,11 +1128,11 @@ async function deployRootAdditiveSeedMigration(pool, timeoutMs) {
 
 async function validateMigrationPreconditions(pool) {
   const checks = [
-    ['POS operation duplicate identity', 'SELECT "tenantId", "operationId" FROM "TusPosOperation" GROUP BY "tenantId", "operationId" HAVING COUNT(*) > 1 LIMIT 1'],
-    ['POS idempotency duplicate identity', 'SELECT "tenantId", "idempotencyKey" FROM "TusPosOperation" GROUP BY "tenantId", "idempotencyKey" HAVING COUNT(*) > 1 LIMIT 1'],
-    ['POS receipt orphan', 'SELECT 1 FROM "TusPosReceipt" receipt WHERE NOT EXISTS (SELECT 1 FROM "TusPosOperation" operation WHERE operation."tenantId" = receipt."tenantId" AND operation."operationId" = receipt."operationId") LIMIT 1'],
-    ['POS session device orphan', 'SELECT 1 FROM "TusPosSession" session WHERE NOT EXISTS (SELECT 1 FROM "TusPosDevice" device WHERE device."tenantId" = session."tenantId" AND device."deviceId" = session."deviceId") LIMIT 1'],
-    ['POS conflict operation orphan', 'SELECT 1 FROM "TusPosConflict" conflict WHERE NOT EXISTS (SELECT 1 FROM "TusPosOperation" operation WHERE operation."tenantId" = conflict."tenantId" AND operation."operationId" = conflict."operationId") LIMIT 1'],
+    ['POS operation duplicate identity', 'SELECT "tenant_id", "operacion_id" FROM "operaciones_pos" GROUP BY "tenant_id", "operacion_id" HAVING COUNT(*) > 1 LIMIT 1'],
+    ['POS idempotency duplicate identity', 'SELECT "tenant_id", "clave_idempotencia" FROM "operaciones_pos" GROUP BY "tenant_id", "clave_idempotencia" HAVING COUNT(*) > 1 LIMIT 1'],
+    ['POS receipt orphan', 'SELECT 1 FROM "comprobantes_pos" receipt WHERE NOT EXISTS (SELECT 1 FROM "operaciones_pos" operation WHERE operation."tenant_id" = receipt."tenant_id" AND operation."operacion_id" = receipt."operacion_id") LIMIT 1'],
+    ['POS session device orphan', 'SELECT 1 FROM "sesiones_pos" session WHERE NOT EXISTS (SELECT 1 FROM "dispositivos_pos" device WHERE device."tenant_id" = session."tenant_id" AND device."dispositivo_id" = session."dispositivo_id") LIMIT 1'],
+    ['POS conflict operation orphan', 'SELECT 1 FROM "conflictos_pos" conflict WHERE NOT EXISTS (SELECT 1 FROM "operaciones_pos" operation WHERE operation."tenant_id" = conflict."tenant_id" AND operation."operacion_id" = conflict."operacion_id") LIMIT 1'],
   ]
   for (const [boundary, sql] of checks) {
     const result = await pool.query(sql)
@@ -1242,25 +1247,30 @@ function nonBlank(value) {
 }
 
 async function registerAndSignIn(baseUrl, pool, fixture, suffix) {
-  const tenantId = suffix === 'a' ? fixture.tenantA : fixture.tenantB
   const email = suffix === 'a' ? fixture.emailA : fixture.emailB
-  const register = await requestJson(baseUrl, '/auth/register', { method: 'POST', body: { email, password: fixture.password, displayName: `TUS smoke ${suffix}`, tenantId } })
+  const register = await requestJson(baseUrl, '/auth/register', { method: 'POST', body: { email, password: fixture.password, displayName: `TUS smoke ${suffix}` } })
   if (register.status !== 201) throw new SmokeInfrastructureError('Disposable identity registration did not start safely', 'authenticated identity fixture')
-  await pool.query('UPDATE "Account" SET "emailVerifiedAt" = NOW() WHERE "tenantId" = $1', [tenantId])
+  const registeredTenantId = register.body.account.tenantId
+  await pool.query('UPDATE "Account" SET "emailVerifiedAt" = NOW() WHERE "tenantId" = $1', [registeredTenantId])
   const signIn = await requestJson(baseUrl, '/auth/sign-in', { method: 'POST', body: { email, password: fixture.password, deviceId: `tus-smoke-device-${suffix}` } })
   if (signIn.status !== 200 || typeof signIn.body.session?.accessToken !== 'string') throw new SmokeInfrastructureError('Disposable authenticated session could not be established', 'authenticated identity fixture')
-   return { token: signIn.body.session.accessToken, tenantId, actorId: signIn.body.session.accountId }
+  const sessionId = signIn.body.session.id
+  if (typeof sessionId !== 'string' || !sessionId) throw new SmokeInfrastructureError('Disposable authenticated session did not expose a durable session id', 'authenticated identity fixture')
+  // The registration API intentionally creates a marketplace owner; grant only the
+  // operational permissions needed by this disposable HTTP fixture.
+  await pool.query('UPDATE "Session" SET "permissions" = $1::text[] WHERE "id" = $2', [['tus:checkout', 'tus:marketplace:read', 'tus:marketplace:write', 'tus:read', 'tus:pos:write', 'tus:delivery:write'], sessionId])
+  return { token: signIn.body.session.accessToken, tenantId: registeredTenantId, actorId: signIn.body.session.accountId }
 }
 
 async function seedMarketplaceFixture(pool, fixture) {
   const now = new Date()
   await pool.query('BEGIN')
   try {
-    await pool.query('INSERT INTO "TusMerchant" ("id", "tenantId", "merchantId", "cohort", "locationId", "timezone", "staffRoles", "operatingPolicyVersion", "status", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)', [fixture.productMerchantId, fixture.tenantA, fixture.productMerchantId, 'beauty-personal-care', 'tus-smoke-location-a', 'America/Argentina/Buenos_Aires', ['owner'], 'stage-1-v1', 'approved', now])
-    await pool.query('INSERT INTO "TusMerchant" ("id", "tenantId", "merchantId", "cohort", "locationId", "timezone", "staffRoles", "operatingPolicyVersion", "status", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)', [fixture.serviceMerchantId, fixture.tenantB, fixture.serviceMerchantId, 'repairs-trades', 'tus-smoke-location-b', 'America/Argentina/Buenos_Aires', ['owner'], 'stage-1-v1', 'approved', now])
-    await pool.query('INSERT INTO "TusListing" ("id", "contractVersion", "tenantId", "merchantId", "kind", "name", "description", "cohort", "locationId", "currency", "price", "availabilityVersion", "published", "policyVersion", "stock", "durationMinutes", "capacity", "workingHours", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)', [fixture.productListingId, '1.0.0', fixture.tenantA, fixture.productMerchantId, 'product', 'TUS smoke product', 'Disposable product fixture', 'beauty-personal-care', 'tus-smoke-location-a', 'ARS', 100, 1, true, 'stage-1-v1', 2, null, null, JSON.stringify([]), now])
-    await pool.query('INSERT INTO "TusListing" ("id", "contractVersion", "tenantId", "merchantId", "kind", "name", "description", "cohort", "locationId", "currency", "price", "availabilityVersion", "published", "policyVersion", "stock", "durationMinutes", "capacity", "workingHours", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)', [fixture.serviceListingId, '1.0.0', fixture.tenantB, fixture.serviceMerchantId, 'service', 'TUS smoke service', 'Disposable service fixture', 'repairs-trades', 'tus-smoke-location-b', 'ARS', 250, 1, true, 'stage-1-v1', null, 60, 1, JSON.stringify([{ day: 1, start: '09:00', end: '18:00' }]), now])
-    await pool.query('INSERT INTO "TusMarketplaceCommitment" ("id", "contractVersion", "commitmentId", "cartId", "tenantId", "merchantId", "listingId", "context", "lineIds", "quantity", "amount", "currency", "status", "availabilityVersion", "policyVersion", "slotStart", "slotEnd", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)', [fixture.deliveryCommitmentId, '1.0.0', fixture.deliveryCommitmentId, `tus-smoke-delivery-cart-${fixture.runId}`, fixture.tenantA, fixture.productMerchantId, fixture.productListingId, 'product', [`tus-smoke-delivery-line-${fixture.runId}`], 1, 100, 'ARS', 'confirmed', 1, 'stage-1-v1', null, null, now])
+    await pool.query('INSERT INTO "prestadores" ("id", "tenant_id", "prestador_id", "cohorte", "ubicacion_id", "zona_horaria", "roles_personal", "version_politica_operativa", "estado", "fecha_creacion", "fecha_actualizacion") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)', [fixture.productMerchantId, fixture.tenantA, fixture.productMerchantId, 'beauty-personal-care', 'tus-smoke-location-a', 'America/Argentina/Buenos_Aires', ['owner'], 'stage-1-v1', 'approved', now])
+    await pool.query('INSERT INTO "prestadores" ("id", "tenant_id", "prestador_id", "cohorte", "ubicacion_id", "zona_horaria", "roles_personal", "version_politica_operativa", "estado", "fecha_creacion", "fecha_actualizacion") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)', [fixture.serviceMerchantId, fixture.tenantB, fixture.serviceMerchantId, 'repairs-trades', 'tus-smoke-location-b', 'America/Argentina/Buenos_Aires', ['owner'], 'stage-1-v1', 'approved', now])
+    await pool.query('INSERT INTO "publicaciones" ("id", "version_contrato", "tenant_id", "prestador_id", "tipo", "nombre", "descripcion", "cohorte", "ubicacion_id", "moneda", "precio", "version_disponibilidad", "publicada", "version_politica", "existencias", "duracion_minutos", "capacidad", "horario_trabajo", "fecha_creacion", "fecha_actualizacion") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)', [fixture.productListingId, '1.0.0', fixture.tenantA, fixture.productMerchantId, 'product', 'TUS smoke product', 'Disposable product fixture', 'beauty-personal-care', 'tus-smoke-location-a', 'ARS', 100, 1, true, 'stage-1-v1', 2, null, null, JSON.stringify([]), now])
+    await pool.query('INSERT INTO "publicaciones" ("id", "version_contrato", "tenant_id", "prestador_id", "tipo", "nombre", "descripcion", "cohorte", "ubicacion_id", "moneda", "precio", "version_disponibilidad", "publicada", "version_politica", "existencias", "duracion_minutos", "capacidad", "horario_trabajo", "fecha_creacion", "fecha_actualizacion") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19)', [fixture.serviceListingId, '1.0.0', fixture.tenantB, fixture.serviceMerchantId, 'service', 'TUS smoke service', 'Disposable service fixture', 'repairs-trades', 'tus-smoke-location-b', 'ARS', 250, 1, true, 'stage-1-v1', null, 60, 1, JSON.stringify([{ day: 1, start: '09:00', end: '18:00' }]), now])
+    await pool.query('INSERT INTO "compromisos_mercado_servicios" ("id", "version_contrato", "compromiso_id", "carrito_id", "tenant_id", "prestador_id", "publicacion_id", "contexto", "ids_lineas", "cantidad", "monto", "moneda", "estado", "version_disponibilidad", "version_politica", "franja_inicio", "franja_fin", "fecha_creacion", "fecha_actualizacion") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)', [fixture.deliveryCommitmentId, '1.0.0', fixture.deliveryCommitmentId, `tus-smoke-delivery-cart-${fixture.runId}`, fixture.tenantA, fixture.productMerchantId, fixture.productListingId, 'product', [`tus-smoke-delivery-line-${fixture.runId}`], 1, 100, 'ARS', 'confirmed', 1, 'stage-1-v1', null, null, now])
     await pool.query('COMMIT')
   } catch (error) {
     await pool.query('ROLLBACK')
@@ -1269,13 +1279,13 @@ async function seedMarketplaceFixture(pool, fixture) {
 }
 
 async function hasAuthorizedSettlementReadiness(pool, tenantId) {
-  const result = await pool.query('SELECT COUNT(DISTINCT "gate")::int AS count FROM "TusReadinessEvidence" WHERE "tenantId" = $1 AND "capability" = $2 AND "scope" = $3 AND "profile" = $4 AND "source" = $5 AND "revoked" = FALSE AND "issuedAt" <= NOW() AND ("expiresAt" IS NULL OR "expiresAt" > NOW())', [tenantId, 'settlement', 'argentina-stage-1', 'native-local', 'authorized-external'])
+  const result = await pool.query('SELECT COUNT(DISTINCT "requisito")::int AS count FROM "evidencias_habilitacion" WHERE "tenant_id" = $1 AND "capacidad" = $2 AND "alcance" = $3 AND "perfil" = $4 AND "origen" = $5 AND "revocada" = FALSE AND "fecha_emision" <= NOW() AND ("fecha_expiracion" IS NULL OR "fecha_expiracion" > NOW())', [tenantId, 'settlement', 'argentina-stage-1', 'native-local', 'authorized-external'])
   return Number(result.rows[0]?.count ?? 0) === SETTLEMENT_GATES.length
 }
 
 async function hasAuthorizedFleetReadiness(pool, tenantId) {
   const requiredGates = ['legal', 'kyc', 'kyb', 'tax', 'posPilot', 'runtimeProvider']
-  const result = await pool.query('SELECT COUNT(DISTINCT "gate")::int AS count FROM "TusReadinessEvidence" WHERE "tenantId" = $1 AND "capability" = $2 AND "scope" = $3 AND "profile" = $4 AND "source" = $5 AND "revoked" = FALSE AND "issuedAt" <= NOW() AND ("expiresAt" IS NULL OR "expiresAt" > NOW())', [tenantId, 'fleet', 'argentina-stage-1', 'native-local', 'authorized-external'])
+  const result = await pool.query('SELECT COUNT(DISTINCT "requisito")::int AS count FROM "evidencias_habilitacion" WHERE "tenant_id" = $1 AND "capacidad" = $2 AND "alcance" = $3 AND "perfil" = $4 AND "origen" = $5 AND "revocada" = FALSE AND "fecha_emision" <= NOW() AND ("fecha_expiracion" IS NULL OR "fecha_expiracion" > NOW())', [tenantId, 'fleet', 'argentina-stage-1', 'native-local', 'authorized-external'])
   return Number(result.rows[0]?.count ?? 0) === requiredGates.length
 }
 
@@ -1343,7 +1353,7 @@ async function postMarketplaceCheckout(baseUrl, token, body) {
 }
 
 async function durableCounts(pool, _fixture, tenantId) {
-  const result = await pool.query('SELECT (SELECT COUNT(*) FROM "TusPosOperation" WHERE "tenantId" = $1) AS "posOperations", (SELECT COUNT(*) FROM "TusPosReceipt" WHERE "tenantId" = $1) AS "posReceipts", (SELECT COUNT(*) FROM "TusPosVersion" WHERE "tenantId" = $1) AS "posVersions", (SELECT COUNT(*) FROM "TusPosConflict" WHERE "tenantId" = $1) AS "posConflicts", (SELECT COUNT(*) FROM "TusPosAudit" WHERE "tenantId" = $1) AS "posAudit", (SELECT COUNT(*) FROM "TusPosOutbox" WHERE "tenantId" = $1) AS "posOutbox", (SELECT COUNT(*) FROM "TusDeliveryTask" WHERE "tenantId" = $1) AS "deliveryTasks", (SELECT COUNT(*) FROM "TusDeliveryProof" WHERE "tenantId" = $1) AS "deliveryProofs", (SELECT COUNT(*) FROM "TusDeliveryAudit" WHERE "tenantId" = $1) AS "deliveryAudit", (SELECT COUNT(*) FROM "TusDeliveryOutbox" WHERE "tenantId" = $1) AS "deliveryOutbox"', [tenantId])
+  const result = await pool.query('SELECT (SELECT COUNT(*) FROM "operaciones_pos" WHERE "tenant_id" = $1) AS "posOperations", (SELECT COUNT(*) FROM "comprobantes_pos" WHERE "tenant_id" = $1) AS "posReceipts", (SELECT COUNT(*) FROM "versiones_pos" WHERE "tenant_id" = $1) AS "posVersions", (SELECT COUNT(*) FROM "conflictos_pos" WHERE "tenant_id" = $1) AS "posConflicts", (SELECT COUNT(*) FROM "auditoria_pos" WHERE "tenant_id" = $1) AS "posAudit", (SELECT COUNT(*) FROM "outbox_pos" WHERE "tenant_id" = $1) AS "posOutbox", (SELECT COUNT(*) FROM "tareas_entrega" WHERE "tenant_id" = $1) AS "deliveryTasks", (SELECT COUNT(*) FROM "evidencias_entrega" WHERE "tenant_id" = $1) AS "deliveryProofs", (SELECT COUNT(*) FROM "auditoria_entrega" WHERE "tenant_id" = $1) AS "deliveryAudit", (SELECT COUNT(*) FROM "outbox_entrega" WHERE "tenant_id" = $1) AS "deliveryOutbox"', [tenantId])
   return Object.fromEntries(Object.entries(result.rows[0]).map(([key, value]) => [key, Number(value)]))
 }
 
@@ -1351,17 +1361,30 @@ export async function cleanupSmokeFixture(pool, fixture, target) {
   if (!approvedCleanupTarget(target)) throw new SmokeInfrastructureError('Cleanup requires an approved non-production target', 'PostgreSQL fixture cleanup')
   try {
     await pool.query('BEGIN')
-    await pool.query('DELETE FROM "TusMarketplaceCommitment" WHERE "id" = $1', [fixture.deliveryCommitmentId])
-    await pool.query('DELETE FROM "TusDeliveryProof" WHERE "id" = $1', [fixture.deliveryProofId])
-    await pool.query('DELETE FROM "TusDeliveryTask" WHERE "id" = $1', [fixture.deliveryTaskId])
-    await pool.query('DELETE FROM "TusDeliveryShift" WHERE "id" = $1', [fixture.deliveryShiftId])
-    await pool.query('DELETE FROM "TusDeliveryZone" WHERE "id" = $1', [fixture.deliveryZoneId])
-    await pool.query('DELETE FROM "TusPosSession" WHERE "id" = $1', [fixture.posSessionId])
-    await pool.query('DELETE FROM "TusPosDevice" WHERE "id" = $1', [fixture.posDeviceId])
-    await pool.query('DELETE FROM "TusPosVersion" WHERE "id" = $1', [fixture.posShiftId])
-    await pool.query('DELETE FROM "TusListing" WHERE "id" IN ($1,$2)', [fixture.productListingId, fixture.serviceListingId])
-    await pool.query('DELETE FROM "TusMerchant" WHERE "id" IN ($1,$2)', [fixture.productMerchantId, fixture.serviceMerchantId])
+    const tenantIds = Array.isArray(fixture.cleanupTenantIds) ? fixture.cleanupTenantIds.filter((value) => typeof value === 'string' && value.length > 0) : []
+    if (tenantIds.length > 0) {
+      const placeholders = tenantIds.map((_, index) => `$${index + 1}`).join(',')
+      await pool.query(`DELETE FROM "AuditEvent" WHERE "tenantId" IN (${placeholders})`, tenantIds)
+      await pool.query(`DELETE FROM "decisiones_habilitacion" WHERE "tenant_id" IN (${placeholders})`, tenantIds)
+    }
+    await pool.query('DELETE FROM "compromisos_mercado_servicios" WHERE "id" = $1', [fixture.deliveryCommitmentId])
+    await pool.query('DELETE FROM "evidencias_entrega" WHERE "id" = $1', [fixture.deliveryProofId])
+    await pool.query('DELETE FROM "tareas_entrega" WHERE "id" = $1', [fixture.deliveryTaskId])
+    await pool.query('DELETE FROM "turnos_entrega" WHERE "id" = $1', [fixture.deliveryShiftId])
+    await pool.query('DELETE FROM "zonas_entrega" WHERE "id" = $1', [fixture.deliveryZoneId])
+    await pool.query('DELETE FROM "sesiones_pos" WHERE "id" = $1', [fixture.posSessionId])
+    await pool.query('DELETE FROM "dispositivos_pos" WHERE "id" = $1', [fixture.posDeviceId])
+    await pool.query('DELETE FROM "versiones_pos" WHERE "id" = $1', [fixture.posShiftId])
+    await pool.query('DELETE FROM "publicaciones" WHERE "id" IN ($1,$2)', [fixture.productListingId, fixture.serviceListingId])
+    await pool.query('DELETE FROM "prestadores" WHERE "id" IN ($1,$2)', [fixture.productMerchantId, fixture.serviceMerchantId])
     await pool.query('DELETE FROM "User" WHERE "normalizedEmail" IN ($1,$2)', [fixture.emailA, fixture.emailB])
+    if (tenantIds.length > 0) {
+      const placeholders = tenantIds.map((_, index) => `$${index + 1}`).join(',')
+      await pool.query(`DELETE FROM "TenantRole" WHERE "tenantId" IN (${placeholders})`, tenantIds)
+      await pool.query(`DELETE FROM "Workspace" WHERE "organizationId" IN (${placeholders})`, tenantIds)
+      await pool.query(`DELETE FROM "Organization" WHERE "id" IN (${placeholders})`, tenantIds)
+      await pool.query(`DELETE FROM "TusTenant" WHERE "id" IN (${placeholders})`, tenantIds)
+    }
     await pool.query('COMMIT')
   } catch {
     await pool.query('ROLLBACK').catch(() => undefined)
@@ -1378,6 +1401,9 @@ async function startSmokeApi(postgresUrl, timeoutMs) {
   if (!existsSync(API_TSX_CLI)) throw new SmokeInfrastructureError('API TypeScript runtime is unavailable; authenticated PostgreSQL smoke was not run', 'API runtime startup')
   const port = await reservePort()
   const source = [
+    'void (async () => {',
+    "const { getPrismaClient } = await import('./src/infrastructure/database/prisma/client.ts')",
+    'getPrismaClient(process.env.DATABASE_URL)',
     "const { createApp } = await import('./src/server.ts')",
     "const { disconnectPrisma } = await import('./src/infrastructure/database/prisma/client.ts')",
     "const server = createApp().listen(Number(process.env.API_PORT), '127.0.0.1', () => console.log('TUS_SMOKE_READY'))",
@@ -1385,13 +1411,14 @@ async function startSmokeApi(postgresUrl, timeoutMs) {
     "const stop = async () => { if (stopping) return; stopping = true; server.close(async () => { await disconnectPrisma(); process.exit(0) }) }",
     "process.on('SIGTERM', stop)",
     "process.on('SIGINT', stop)",
+    '})().catch((error) => { console.error(error); process.exitCode = 1 })',
   ].join(';')
   const args = [API_TSX_CLI, '--eval', source]
   const child = spawn(process.execPath, args, {
     cwd: API_ROOT,
     env: buildPostgresChildEnvironment({
       postgresUrl,
-      extra: { API_PORT: String(port), NODE_ENV: 'development', NATIVE_PROFILE: '1' },
+      extra: { API_PORT: String(port), NODE_ENV: 'development', NATIVE_PROFILE: '1', TUS_ROUTES_ENABLED: 'true', TUS_PROVIDER_ACTIONS_ENABLED: 'false' },
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

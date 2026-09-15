@@ -8,6 +8,7 @@ export const CONNECTION_TIMEOUT_MS = 60_000
 export const RETRY_COUNT = 1
 export const REPAIR_MIGRATION_NAME = '20260831180000_tus_additive_migration_repair'
 export const LAUNCH_MIGRATION_NAME = '20260909090000_tus_argentina_market_launch'
+export const PHYSICAL_SPANISH_MIGRATION_NAME = '20260914180000_tus_physical_spanish'
 export const REPAIR_MIGRATION_PATH = join(
   'apps',
   'api',
@@ -22,6 +23,14 @@ export const LAUNCH_MIGRATION_PATH = join(
   'prisma',
   'migrations',
   LAUNCH_MIGRATION_NAME,
+  'migration.sql',
+)
+export const PHYSICAL_SPANISH_MIGRATION_PATH = join(
+  'apps',
+  'api',
+  'prisma',
+  'migrations',
+  PHYSICAL_SPANISH_MIGRATION_NAME,
   'migration.sql',
 )
 
@@ -384,7 +393,7 @@ export async function inventoryMigrations({ migrationsDirectory, repairMigration
   const directory = migrationsDirectory ?? join(ROOT_DIRECTORY, 'apps', 'api', 'prisma', 'migrations')
   const entries = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))
   const migrations = []
-  const nonHistoricalNames = new Set(repairMigrationNames ?? [repairMigrationName, LAUNCH_MIGRATION_NAME])
+  const nonHistoricalNames = new Set(repairMigrationNames ?? [repairMigrationName, LAUNCH_MIGRATION_NAME, PHYSICAL_SPANISH_MIGRATION_NAME])
   let destructiveStatementCount = 0
   let ambiguousStatementCount = 0
   let commentOnlyTokenCount = 0
@@ -527,6 +536,18 @@ export function validatePreflight(snapshot = {}) {
 }
 
 export function verifySchemaSnapshot(snapshot = {}) {
+  if (isPhysicalSpanishSnapshot(snapshot)) {
+    return {
+      status: 'blocked',
+      reason: 'physical-spanish-schema-not-supported-by-additive-repair',
+      requiredTableCount: 0,
+      presentTableCount: 0,
+      missingTables: [],
+      mismatchedTables: [],
+      fixtureReady: false,
+      repairMarkerCount: Number(snapshot.ledger?.repairMarkerCount ?? 0),
+    }
+  }
   const launchSnapshot = Object.keys(snapshot.tables ?? {}).some((table) => table !== 'TusHardeningFixture' && !REQUIRED_POS_TABLES.includes(table))
   const requiredTables = launchSnapshot ? REQUIRED_LAUNCH_TABLES : REQUIRED_POS_TABLES
   const missingTables = requiredTables.filter((table) => snapshot.tables?.[table]?.present !== true)
@@ -641,7 +662,19 @@ export async function runRepair({
     )
     pool = connection.value
     base.connectionAttempts = connection.diagnostics
-    preflight = validatePreflight(await runtime.inspect(pool))
+    const inspected = await runtime.inspect(pool)
+    if (isPhysicalSpanishSnapshot(inspected)) {
+      resultToReturn = buildRunResult(base, {
+        status: 'blocked',
+        safetyGate: 'phase-gate',
+        reason: 'physical-spanish-schema-not-supported-by-additive-repair',
+        target: redactTarget(target),
+        backup,
+        rollback: { status: 'not-started', metadataOnly: true },
+      })
+      return resultToReturn
+    }
+    preflight = validatePreflight(inspected)
     if (preflight.status !== 'ready') {
       resultToReturn = buildRunResult(base, { status: 'blocked', safetyGate: 'preflight-gate', reason: preflight.reason, target: redactTarget(target), backup, preflight })
       return resultToReturn
@@ -798,6 +831,7 @@ async function defaultInspect(pool) {
   const constraintRows = await pool.query("SELECT c.relname AS table_name, con.conname AS constraint_name FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1", ['public'])
   const ledgerRows = await pool.query('SELECT migration_name FROM "_prisma_migrations" WHERE migration_name IN ($1, $2)', [REPAIR_MIGRATION_NAME, LAUNCH_MIGRATION_NAME]).catch(() => ({ rows: [] }))
   const schemaColumns = { ...REQUIRED_LAUNCH_SCHEMA_COLUMNS, ...REQUIRED_SCHEMA_COLUMNS }
+  const physicalSpanish = tableRows.rows.some((row) => row.table_name === 'prestadores')
   const allTables = [...new Set([...REQUIRED_LAUNCH_TABLES, 'TusHardeningFixture'])]
   const tables = Object.fromEntries(allTables.map((table) => [table, {
     present: tableRows.rows.some((row) => row.table_name === table),
@@ -808,7 +842,13 @@ async function defaultInspect(pool) {
     requiredConstraints: (REQUIRED_CONSTRAINTS[table] ?? []).every((constraint) => constraintRows.rows.some((row) => row.table_name === table && row.constraint_name === constraint)),
     expectedColumns: schemaColumns[table] ?? [],
   }]))
-  return { tables, rowCounts: await readRowCounts(pool, allTables), orphans: await readOrphanCount(pool), ledger: { present: tableRows.rows.some((row) => row.table_name === '_prisma_migrations'), repairMarkerCount: ledgerRows.rows.length } }
+  return { physicalSpanish, tables, rowCounts: await readRowCounts(pool, allTables), orphans: await readOrphanCount(pool), ledger: { present: tableRows.rows.some((row) => row.table_name === '_prisma_migrations'), repairMarkerCount: ledgerRows.rows.length } }
+}
+
+function isPhysicalSpanishSnapshot(snapshot = {}) {
+  if (snapshot.physicalSpanish === true) return true
+  const tables = snapshot.tables ?? {}
+  return tables.prestadores?.present === true && tables.TusMerchant?.present !== true
 }
 
 async function readRowCounts(pool, tables) {

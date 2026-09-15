@@ -5,20 +5,22 @@ let prisma: PrismaClient | undefined
 let configuredDatabaseUrl: string | undefined
 
 export function getPrismaClient(databaseUrl?: string): PrismaClient {
-  const canonicalDatabaseUrl = databaseUrl ?? readRootDatabaseUrl()
+  if (prisma) {
+    if (databaseUrl && configuredDatabaseUrl !== databaseUrl) {
+      throw new Error('Prisma database configuration cannot change during process lifetime')
+    }
+    return prisma
+  }
+
+  // Bounded child runtimes may provide an explicit database URL; root .env is the fallback.
+  const canonicalDatabaseUrl = databaseUrl ?? process.env['DATABASE_URL']?.trim() ?? readRootDatabaseUrl()
   if (!canonicalDatabaseUrl) throw new Error('Missing canonical PostgreSQL configuration')
 
-  if (configuredDatabaseUrl && configuredDatabaseUrl !== canonicalDatabaseUrl) {
-    throw new Error('Prisma database configuration cannot change during process lifetime')
-  }
-
-  if (!prisma) {
-    configuredDatabaseUrl = canonicalDatabaseUrl
-    prisma = new PrismaClient({
-      datasourceUrl: canonicalDatabaseUrl,
-      log: ['error'],
-    })
-  }
+  configuredDatabaseUrl = canonicalDatabaseUrl
+  prisma = new PrismaClient({
+    datasourceUrl: canonicalDatabaseUrl,
+    log: ['error'],
+  })
   return prisma
 }
 

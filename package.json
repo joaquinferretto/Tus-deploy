@@ -7,7 +7,7 @@
     "dev": "turbo run dev --parallel",
     "build": "turbo run build --concurrency=1",
     "test": "node scripts/test-runner.mjs",
-    "test:foundation": "node --experimental-strip-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test tests/foundation/*.test.mjs",
+    "test:foundation": "node --experimental-strip-types --experimental-transform-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test tests/foundation/*.test.mjs",
     "lint": "turbo run lint --concurrency=1",
     "lint:security": "node scripts/security/scan-secrets.mjs --tracked",
     "security:scan": "node scripts/security/scan-secrets.mjs --tracked",

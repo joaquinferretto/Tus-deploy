@@ -95,7 +95,7 @@ test('readiness is false when the schema is incompatible even if dependencies ar
     pythonWorker: { mode: 'disabled', status: 'ready', blocksApiReadiness: false },
     mobileSupport: { mode: 'fake', status: 'ready', blocksApiReadiness: false },
     externalProviders: { mode: 'disabled', status: 'ready', blocksApiReadiness: false },
-    schema: { compatible: false, activation: 'incompatible', missing: ['TusReadinessEvidence'], migration: 'unverified' },
+    schema: { compatible: false, activation: 'incompatible', missing: ['evidencias_habilitacion'], migration: 'unverified' },
   }
   const router = createHealthRouter({ getReadiness: async () => body })
   const result = await new Promise((resolve, reject) => {

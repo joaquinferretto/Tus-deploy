@@ -9,6 +9,7 @@ import { addMoney, createMoney } from '../../../packages/contracts/src/money.ts'
 import {
   CONNECTION_TIMEOUT_MS,
   LAUNCH_MIGRATION_NAME,
+  PHYSICAL_SPANISH_MIGRATION_NAME,
   REPAIR_MIGRATION_NAME,
   REQUIRED_LAUNCH_TABLES,
   REQUIRED_MONEY_COLUMNS,
@@ -45,13 +46,15 @@ async function withTempRoot(contents, callback) {
 test('inventory classifies the complete backlog and excludes comment-only destructive words', async () => {
   const inventory = await inventoryMigrations({ migrationsDirectory: MIGRATIONS_ROOT })
 
-  assert.equal(inventory.pendingMigrations.length, 28)
-  assert.equal(inventory.migrations.length, 30)
-  assert.equal(inventory.destructiveStatementCount, 19)
+  assert.equal(inventory.pendingMigrations.length, 29)
+  assert.equal(inventory.migrations.length, 32)
+  assert.equal(inventory.destructiveStatementCount, 30)
   assert.deepEqual(inventory.destructiveTokens, ['CASCADE', 'DROP'])
   assert.equal(inventory.commentOnlyTokenCount > 0, true)
   assert.equal(inventory.migrations.some((migration) => migration.name === REPAIR_MIGRATION_NAME), true)
   assert.equal(inventory.migrations.some((migration) => migration.name === LAUNCH_MIGRATION_NAME), true)
+  assert.equal(inventory.migrations.some((migration) => migration.name === PHYSICAL_SPANISH_MIGRATION_NAME), true)
+  assert.equal(inventory.pendingMigrations.some((migration) => migration.name === PHYSICAL_SPANISH_MIGRATION_NAME), false)
   assert.equal(inventory.pendingMigrations.every((migration) => migration.historical === true), true)
   assert.equal(classifySqlStatement('-- DROP TABLE ignored\n'), 'comment-only')
 })
@@ -75,6 +78,30 @@ test('static gate rejects unsafe inventory before any database operation', async
   assert.equal(result.sideEffects.connections, 0)
   assert.equal(result.sideEffects.writes, 0)
   assert.deepEqual(calls, [])
+})
+
+test('additive repair refuses a post-BUILD13 schema before writing legacy tables', async () => {
+  await withTempRoot('DATABASE_URL=postgresql://user:secret@db.example.test/tus\n', async (rootDirectory) => {
+    const calls = []
+    const result = await runRepair({
+      rootDirectory,
+      environment: { NODE_ENV: 'development' },
+      confirmed: true,
+      backupId: 'backup-operator-handle',
+      operations: {
+        backup: { assertRestorable: async () => calls.push('backup'), verifyRestore: async () => calls.push('verify-backup') },
+        connect: async () => { calls.push('connect'); return {} },
+        inspect: async () => ({ physicalSpanish: true, tables: {}, ledger: { repairMarkerCount: 0 } }),
+        applyBaseline: async () => calls.push('apply'),
+        close: async () => calls.push('close'),
+      },
+    })
+
+    assert.equal(result.status, 'blocked')
+    assert.equal(result.safetyGate, 'phase-gate')
+    assert.equal(result.sideEffects.writes, 0)
+    assert.deepEqual(calls, ['backup', 'verify-backup', 'connect', 'close'])
+  })
 })
 
 test('SQL gate rejects untagged deletes and ambiguous ledger mutations while allowing comment-safe additive SQL', () => {

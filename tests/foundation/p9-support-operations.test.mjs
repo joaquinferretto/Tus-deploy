@@ -28,20 +28,21 @@ function context(overrides = {}) {
   }
 }
 
-test('BUILD 12E1 y 12H normalizan Soporte en Prisma y conservan la superficie fisica actual sin FK nuevas', () => {
+test('BUILD 12E1 y 12H normalizan Soporte en Prisma y conservan las FKs tenant-scoped canonicas', () => {
   const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
   const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260827090700_tus_support_reporting/migration.sql'), 'utf8')
-  const supportModels = schema.slice(schema.indexOf('model CasoSoporte {'), schema.indexOf('model OutboxSoporte {'))
 
-  assert.match(schema, /model CasoSoporte[\s\S]*?casoId\s+String\s+@map\("caseId"\)/)
-  assert.match(schema, /model EvidenciaSoporte[\s\S]*?evidenciaId\s+String\s+@map\("evidenceId"\)/)
-  assert.match(schema, /model LineaTiempoSoporte[\s\S]*?entradaId\s+String\s+@map\("entryId"\)/)
-  assert.match(schema, /model CompensacionSoporte[\s\S]*?monto\s+BigInt\s+@map\("amount"\)/)
-  assert.match(schema, /model OutboxSoporte\s+\{[\s\S]*?tipoEvento\s+String\s+@map\("eventType"\)/)
+  assert.match(schema, /model CasoSoporte[\s\S]*?casoId\s+String\s+@map\("caso_id"\)/)
+  assert.match(schema, /model EvidenciaSoporte[\s\S]*?evidenciaId\s+String\s+@map\("evidencia_id"\)/)
+  assert.match(schema, /model LineaTiempoSoporte[\s\S]*?entradaId\s+String\s+@map\("entrada_id"\)/)
+  assert.match(schema, /model CompensacionSoporte[\s\S]*?monto\s+BigInt\s+@map\("monto"\)/)
+  assert.match(schema, /model OutboxSoporte\s+\{[\s\S]*?tipoEvento\s+String\s+@map\("tipo_evento"\)/)
   assert.doesNotMatch(schema, /model TusSupport(Case|Evidence|Timeline|Compensation)\s+\{/)
-  assert.doesNotMatch(supportModels, /@relation\(/)
-  for (const table of ['TusSupportCase', 'TusSupportEvidence', 'TusSupportTimeline', 'TusSupportCompensation']) assert.match(schema, new RegExp(`@@map\\("${table}"\\)`))
-  for (const index of ['TusSupportCase_tenantId_caseId_key', 'TusSupportEvidence_tenantId_evidenceId_key', 'TusSupportTimeline_tenantId_entryId_key', 'TusSupportCompensation_tenantId_caseId_key']) assert.match(schema, new RegExp(`map: "${index}"`))
+  assert.match(schema, /model EvidenciaSoporte[\s\S]*?caso\s+CasoSoporte\s+@relation\(fields: \[tenantId, casoId\], references: \[tenantId, casoId\], onDelete: Restrict, onUpdate: NoAction, map: "fk_evidencias_soporte_casos_soporte"\)/)
+  assert.match(schema, /model LineaTiempoSoporte[\s\S]*?caso\s+CasoSoporte\s+@relation\(fields: \[tenantId, casoId\], references: \[tenantId, casoId\], onDelete: Restrict, onUpdate: NoAction, map: "fk_lineas_tiempo_soporte_casos_soporte"\)/)
+  assert.match(schema, /model CompensacionSoporte[\s\S]*?caso\s+CasoSoporte\s+@relation\(fields: \[tenantId, casoId\], references: \[tenantId, casoId\], onDelete: Restrict, onUpdate: NoAction, map: "fk_compensaciones_soporte_casos_soporte"\)/)
+  for (const table of ['casos_soporte', 'evidencias_soporte', 'lineas_tiempo_soporte', 'compensaciones_soporte']) assert.match(schema, new RegExp(`@@map\\("${table}"\\)`))
+  for (const index of ['uq_casos_soporte_tenant_caso', 'uq_evidencias_soporte_tenant_evidencia', 'uq_lineas_tiempo_tenant_entrada', 'uq_compensaciones_soporte_tenant_caso']) assert.match(schema, new RegExp(`map: "${index}"`))
   for (const table of ['TusSupportCase', 'TusSupportEvidence', 'TusSupportTimeline', 'TusSupportCompensation']) assert.match(migration, new RegExp(`CREATE TABLE "${table}"`))
 })
 

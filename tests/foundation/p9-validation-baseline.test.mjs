@@ -77,7 +77,7 @@ test('known validation failures receive an owner, disposition, cause, and isolat
     owner: 'contracts validation',
     cause: 'stale schema-count assertion',
     rerunCommand:
-      'pnpm exec node --experimental-strip-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test --test-concurrency=1 tests/foundation/p1-auth-lifecycle.test.mjs',
+      'pnpm exec node --experimental-strip-types --experimental-transform-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test --test-concurrency=1 tests/foundation/p1-auth-lifecycle.test.mjs',
     blocksCompletion: false,
   })
 })
@@ -96,7 +96,7 @@ test('runner failure records preserve unexplained failures and rerun guidance', 
     owner: 'validation owner',
     cause: 'unclassified test failure (exit 1)',
     rerunCommand:
-      'pnpm exec node --experimental-strip-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test --test-concurrency=1 tests/foundation/new-regression.test.mjs',
+      'pnpm exec node --experimental-strip-types --experimental-transform-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test --test-concurrency=1 tests/foundation/new-regression.test.mjs',
     blocksCompletion: true,
   })
 })
@@ -159,14 +159,15 @@ test('Node 22 strip-only execution loads the TUS reporting dependency used by ma
   assert.deepEqual(JSON.parse(output.trim()), { store: true })
 })
 
-test('Node 22 strip-only execution resolves emitted JavaScript specifiers to TypeScript sources', () => {
+test('Node 22 TypeScript execution resolves emitted JavaScript specifiers to TypeScript sources', () => {
   const modulePath = pathToFileURL(join(root, 'apps/api/src/auth-security/composition.ts')).href
   const loaderPath = pathToFileURL(join(root, 'scripts/node-strip-types-loader.mjs')).href
   const output = execFileSync(
-    process.execPath,
-    [
-      '--experimental-strip-types',
-      '--experimental-loader',
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--experimental-transform-types',
+        '--experimental-loader',
       loaderPath,
       '--input-type=module',
       '--eval',
@@ -187,7 +188,7 @@ test('root validation gates declare serial, task-complete commands', () => {
   assert.equal(packageJson.scripts.build, 'turbo run build --concurrency=1')
   assert.equal(
     packageJson.scripts['test:foundation'],
-    'node --experimental-strip-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test tests/foundation/*.test.mjs',
+    'node --experimental-strip-types --experimental-transform-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test tests/foundation/*.test.mjs',
   )
   assert.equal(packageJson.scripts.lint, 'turbo run lint --concurrency=1')
   assert.equal(packageJson.scripts.typecheck, 'turbo run typecheck --concurrency=1')

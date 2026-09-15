@@ -216,13 +216,13 @@ test('uses Spanish Prisma delegates for idempotency without translating provider
   assert.deepEqual(result.found, { requestHash: 'hash-idem', response: { status: 'created', provider: 'mercado-pago' } })
 })
 
-test('keeps the three payment models Spanish internally while preserving physical PostgreSQL names', () => {
+test('keeps the three payment models Spanish internally with canonical physical PostgreSQL names', () => {
   const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
 
-  assert.match(schema, /model IntencionPago[\s\S]*?monto\s+BigInt\s+@map\("amount"\)/)
-  assert.match(schema, /model IntencionPago[\s\S]*?@@unique\(\[tenantId, compromisoId\], map: "TusPaymentIntent_tenantId_commitmentId_key"\)/)
-  assert.match(schema, /model IdempotenciaFinanciera[\s\S]*?claveIdempotencia\s+String\s+@map\("idempotencyKey"\)/)
-  assert.match(schema, /model EventoWebhookPago[\s\S]*?datosEvento\s+Json\s+@map\("payload"\)/)
-  assert.match(schema, /@@unique\(\[tenantId, proveedor, eventoProveedorId\], map: "TusPaymentWebhookEvent_tenant_provider_event_key"\)/)
+  assert.match(schema, /model IntencionPago[\s\S]*?monto\s+BigInt\s+@map\("monto"\)/)
+  assert.match(schema, /model IntencionPago[\s\S]*?@@unique\(\[tenantId, compromisoId\], map: "uq_intenciones_pago_tenant_compromiso"\)/)
+  assert.match(schema, /model IdempotenciaFinanciera[\s\S]*?claveIdempotencia\s+String\s+@map\("clave_idempotencia"\)/)
+  assert.match(schema, /model EventoWebhookPago[\s\S]*?datosEvento\s+Json\s+@map\("datos_evento"\)/)
+  assert.match(schema, /@@unique\(\[tenantId, proveedor, eventoProveedorId\], map: "uq_eventos_webhook_pago_tenant_evento"\)/)
   assert.doesNotMatch(schema, /model (TusPaymentIntent|TusFinanceIdempotency|TusPaymentWebhookEvent)\b/)
 })

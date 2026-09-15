@@ -100,10 +100,10 @@ test('Render uses PORT and public binding while local development remains loopba
 })
 
 test('incomplete schema is explicit and safe for readiness consumers', () => {
-  assert.deepEqual(incompleteSchema(['TusReadinessEvidence']), {
+  assert.deepEqual(incompleteSchema(['evidencias_habilitacion']), {
     compatible: false,
     activation: 'incomplete-schema',
-    missing: ['TusReadinessEvidence'],
+    missing: ['evidencias_habilitacion'],
     migration: 'unverified',
   })
 })
