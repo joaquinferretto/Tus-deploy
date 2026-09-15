@@ -483,7 +483,7 @@ export function joinTusApiUrl(baseUrl: string, path: string): string {
   return `${normalizedBase}${normalizedPath}`
 }
 
-export default {
+const tusClientModule = {
   TUS_API_VERSION,
   classifyTusRequestError,
   createStableIdempotencyKey,
@@ -495,6 +495,8 @@ export default {
   parseTusPosResponse,
   tusIntentFeedback,
 }
+
+export default tusClientModule
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}

@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 
 import {
@@ -33,7 +32,7 @@ import {
   type TusIntentFeedback,
   tusIntentFeedback,
 } from '@/lib/tus-client'
-import { TusActionButton, TusIntentFeedbackView, TusSkipLink, TusStateMessage } from './tus-ui'
+import { TusActionButton, TusIntentFeedbackView, TusStateMessage } from './tus-ui'
 
 type Surface = 'discovery' | 'commitments' | 'operations'
 type DiscoveryFilter = 'all' | 'products' | 'services'
@@ -66,10 +65,7 @@ export function TusDashboard(): React.ReactNode {
   if (session === undefined) {
     return (
       <>
-        <TusSkipLink />
-        <main className="tus-shell tus-dashboard" id="tus-main-content">
-          <TusStateMessage state={{ status: 'loading', message: 'Restoring your secure session…' }} />
-        </main>
+        <TusStateMessage state={{ status: 'loading', message: 'Restoring your secure session…' }} />
       </>
     )
   }
@@ -169,98 +165,86 @@ function AuthenticatedDashboard({
 
   return (
     <>
-      <TusSkipLink />
-      <main className="tus-shell tus-dashboard" id="tus-main-content">
-        <nav className="tus-nav" aria-label="TUS workspace navigation">
-          <Link className="tus-mark" href="/tus">
-            TUS / workspace
-          </Link>
-          <div className="tus-nav-links">
-            <span className="tus-session-chip">Tenant scope: {session.tenantId}</span>
-            <span className="tus-session-chip">{resolveTusRoleLabel(session.roles)}</span>
-            <button
-              className="tus-text-button"
-              onClick={() => setRefreshKey((value) => value + 1)}
-              type="button"
-            >
-              Refresh truth
-            </button>
-            <button
-              aria-busy={signingOut}
-              className="tus-text-button"
-              disabled={signingOut}
-              onClick={() => void signOut()}
-              type="button"
-            >
-              {signingOut ? 'Signing out…' : 'Sign out'}
-            </button>
-            <Link href="/tus/pos">Staff POS</Link>
-          </div>
-        </nav>
+      <div className="tus-nav-links tus-session-actions">
+        <span className="tus-session-chip">Tenant scope: {session.tenantId}</span>
+        <span className="tus-session-chip">{resolveTusRoleLabel(session.roles)}</span>
+        <button
+          className="tus-text-button"
+          onClick={() => setRefreshKey((value) => value + 1)}
+          type="button"
+        >
+          Refresh truth
+        </button>
+        <button
+          aria-busy={signingOut}
+          className="tus-text-button"
+          disabled={signingOut}
+          onClick={() => void signOut()}
+          type="button"
+        >
+          {signingOut ? 'Signing out…' : 'Sign out'}
+        </button>
+      </div>
 
-        <header className="tus-workspace-header">
-          <div>
-            <p className="tus-kicker">
-              Authenticated surface / contract{' '}
-              {resources?.discovery.data?.contractVersion ?? 'pending'}
-            </p>
-            <h1>
-              Run the day
-              <br />
-              <em>without guessing.</em>
-            </h1>
-          </div>
-          <p className="tus-intro">
-            <strong>Server truth only</strong>Every status below is either returned by TUS or
-            explicitly marked pending, disabled, conflicted, or unavailable.
+      <header className="tus-workspace-header">
+        <div>
+          <p className="tus-kicker">
+            Authenticated surface / contract{' '}
+            {resources?.discovery.data?.contractVersion ?? 'pending'}
           </p>
-        </header>
+          <h1>
+            Run the day
+            <br />
+            <em>without guessing.</em>
+          </h1>
+        </div>
+        <p className="tus-intro">
+          <strong>Server truth only</strong>Every status below is either returned by TUS or
+          explicitly marked pending, disabled, conflicted, or unavailable.
+        </p>
+      </header>
 
-        <nav className="tus-surface-tabs" aria-label="Workspace surfaces">
-          {buildTusJourneyLinks(session).map((journey) =>
-            renderJourneyLink(journey, activeSurface, selectSurface)
-          )}
-          <Link className="tus-nav-pos" href="/tus/pos">
-            Staff POS <span>↗</span>
-          </Link>
-        </nav>
-
-        {resources === null ? (
-          <TusStateMessage state={loadingState} />
-        ) : (
-          <SurfaceContent
-            surface={activeSurface}
-            resources={resources}
-            session={session}
-            discoveryFilter={discoveryFilter}
-            onDiscoveryFilter={selectDiscoveryFilter}
-            checkoutFeedback={checkoutFeedback}
-            checkoutLoading={checkoutLoading}
-            onCheckout={async (item) => {
-              const intent = createCheckoutIntent(item)
-              setCheckoutIntent(intent)
-              await submitCheckout(intent, session, setCheckoutLoading, setCheckoutFeedback)
-            }}
-            onRetry={async () => {
-              if (checkoutIntent === null) return
-              await submitCheckout(checkoutIntent, session, setCheckoutLoading, setCheckoutFeedback)
-            }}
-            onRefresh={() => setRefreshKey((value) => value + 1)}
-            onResolve={() =>
-              setCheckoutFeedback((current) =>
-                current === null
-                  ? null
-                  : {
-                      ...current,
-                      message:
-                        'The original intent remains preserved for review. Refresh before taking another action.',
-                      action: 'refresh',
-                    }
-              )
-            }
-          />
+      <nav className="tus-surface-tabs" aria-label="Workspace surfaces">
+        {buildTusJourneyLinks(session).map((journey) =>
+          renderJourneyLink(journey, activeSurface, selectSurface)
         )}
-      </main>
+      </nav>
+
+      {resources === null ? (
+        <TusStateMessage state={loadingState} />
+      ) : (
+        <SurfaceContent
+          surface={activeSurface}
+          resources={resources}
+          session={session}
+          discoveryFilter={discoveryFilter}
+          onDiscoveryFilter={selectDiscoveryFilter}
+          checkoutFeedback={checkoutFeedback}
+          checkoutLoading={checkoutLoading}
+          onCheckout={async (item) => {
+            const intent = createCheckoutIntent(item)
+            setCheckoutIntent(intent)
+            await submitCheckout(intent, session, setCheckoutLoading, setCheckoutFeedback)
+          }}
+          onRetry={async () => {
+            if (checkoutIntent === null) return
+            await submitCheckout(checkoutIntent, session, setCheckoutLoading, setCheckoutFeedback)
+          }}
+          onRefresh={() => setRefreshKey((value) => value + 1)}
+          onResolve={() =>
+            setCheckoutFeedback((current) =>
+              current === null
+                ? null
+                : {
+                    ...current,
+                    message:
+                      'The original intent remains preserved for review. Refresh before taking another action.',
+                    action: 'refresh',
+                  }
+            )
+          }
+        />
+      )}
     </>
   )
 }
@@ -310,26 +294,18 @@ function SessionRequired({
     status === 'unavailable' ? 'error' : status === 'expired' ? 'disabled' : 'disabled'
   return (
     <>
-      <TusSkipLink />
-      <main className="tus-shell tus-auth-required" id="tus-main-content">
-        <nav className="tus-nav" aria-label="TUS primary navigation">
-          <Link className="tus-mark" href="/tus">
-            TUS / platform
-          </Link>
-        </nav>
-        <TusStateMessage state={{ status: presentation, message }}>
-          <p>
-            An authenticated tenant session is required before marketplace, reporting, or support
-            data can be shown. Tenant and actor scope are never entered here.
-          </p>
-          <a
-            className="tus-action-button tus-action-link"
-            href={`/sign-in?returnTo=${encodeURIComponent('/tus')}`}
-          >
-            Sign in through TUS
-          </a>
-        </TusStateMessage>
-      </main>
+      <TusStateMessage state={{ status: presentation, message }}>
+        <p>
+          An authenticated tenant session is required before marketplace, reporting, or support
+          data can be shown. Tenant and actor scope are never entered here.
+        </p>
+        <a
+          className="tus-action-button tus-action-link"
+          href={`/sign-in?returnTo=${encodeURIComponent('/tus')}`}
+        >
+          Sign in through TUS
+        </a>
+      </TusStateMessage>
     </>
   )
 }

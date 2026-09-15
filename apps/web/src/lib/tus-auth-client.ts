@@ -7,10 +7,13 @@ import {
   type TusSessionState,
 } from '@factory/contracts'
 
-import { createTusWebSession, type TusWebSession } from './tus-ui-contract'
+import {
+  createTusWebSession,
+  TUS_SESSION_STORAGE_KEY,
+  type TusWebSession,
+} from './tus-ui-contract'
 import { resolveWebApiBaseUrl } from './api-url'
 
-export const TUS_WEB_SESSION_STORAGE_KEY = 'tus.session.v1'
 const DEFAULT_RETURN_TO = '/tus'
 
 export interface TusWebAuthRequest {
@@ -215,11 +218,18 @@ function clearStorage(storage: TusWebAuthStorage): void {
 }
 
 function createBrowserSessionStorage(): TusWebAuthStorage {
-  return { read: () => window.sessionStorage.getItem(TUS_WEB_SESSION_STORAGE_KEY), write: (value) => window.sessionStorage.setItem(TUS_WEB_SESSION_STORAGE_KEY, value), clear: () => window.sessionStorage.removeItem(TUS_WEB_SESSION_STORAGE_KEY) }
+  return { read: () => window.sessionStorage.getItem(TUS_SESSION_STORAGE_KEY), write: (value) => window.sessionStorage.setItem(TUS_SESSION_STORAGE_KEY, value), clear: () => window.sessionStorage.removeItem(TUS_SESSION_STORAGE_KEY) }
 }
 
 function createDefaultCorrelationId(): string {
   return `web-auth-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-export default { createTusWebAuthClient, createTusWebAuthFetchTransport, sanitizeTusReturnTo, toTusWebSession }
+const tusAuthClientModule = {
+  createTusWebAuthClient,
+  createTusWebAuthFetchTransport,
+  sanitizeTusReturnTo,
+  toTusWebSession,
+}
+
+export default tusAuthClientModule

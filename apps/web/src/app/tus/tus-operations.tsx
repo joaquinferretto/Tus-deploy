@@ -18,7 +18,7 @@ import {
 } from '../../lib/tus-journeys'
 import { createTusWebAuthClient, toTusWebSession } from '@/lib/tus-auth-client'
 import { createTusWebClient, createTusWebFetchTransport } from '@/lib/tus-client'
-import { TusActionButton, TusSkipLink, TusStateMessage } from './tus-ui'
+import { TusActionButton, TusStateMessage } from './tus-ui'
 
 export function TusOperationsSurface(): React.ReactNode {
   const [session, setSession] = useState<TusWebSession | null | undefined>(undefined)
@@ -67,54 +67,45 @@ export function TusOperationsSurface(): React.ReactNode {
 
   return (
     <>
-      <TusSkipLink />
-      <main className="tus-shell tus-dashboard" id="tus-main-content">
-        <nav className="tus-nav" aria-label="TUS operations navigation">
-          <Link className="tus-mark" href="/tus">
-            TUS / operations
-          </Link>
-          <div className="tus-nav-links">
-            <Link href="/tus?surface=discovery">Discovery</Link>
-            <Link href="/tus/pos">Staff POS</Link>
-            <Link href="/tus">Back to workspace</Link>
-          </div>
-        </nav>
-        <header className="tus-workspace-header">
-          <div>
-            <p className="tus-kicker">{resolveTusRoleLabel(session?.roles)} / operations</p>
-            <h1>
-              See the work
-              <br />
-              <em>behind the sale.</em>
-            </h1>
-          </div>
-          <p className="tus-intro">
-            <strong>One tenant at a time</strong>Current report facts, discovery inventory, support,
-            and WhatsApp handoff stay scoped to the authenticated session.
-          </p>
-        </header>
-        {session === null ? (
-          <TusStateMessage
-            state={{
-              status: authStatus === 'unavailable' ? 'error' : 'disabled',
-              message: authMessage,
-            }}
+      <div className="tus-nav-links tus-session-actions">
+        <Link href="/tus?surface=discovery">Market</Link>
+        <Link href="/tus?surface=commitments">Commitments</Link>
+      </div>
+      <header className="tus-workspace-header">
+        <div>
+          <p className="tus-kicker">{resolveTusRoleLabel(session?.roles)} / operations</p>
+          <h1>
+            See the work
+            <br />
+            <em>behind the sale.</em>
+          </h1>
+        </div>
+        <p className="tus-intro">
+          <strong>One tenant at a time</strong>Current report facts, discovery inventory, support,
+          and WhatsApp handoff stay scoped to the authenticated session.
+        </p>
+      </header>
+      {session === null ? (
+        <TusStateMessage
+          state={{
+            status: authStatus === 'unavailable' ? 'error' : 'disabled',
+            message: authMessage,
+          }}
+        >
+          <a
+            className="tus-action-button tus-action-link"
+            href={`/sign-in?returnTo=${encodeURIComponent('/tus/operations')}`}
           >
-            <a
-              className="tus-action-button tus-action-link"
-              href={`/sign-in?returnTo=${encodeURIComponent('/tus/operations')}`}
-            >
-              Sign in through TUS
-            </a>
-          </TusStateMessage>
-        ) : resources === null ? (
-          <TusStateMessage
-            state={{ status: 'loading', message: 'Loading authoritative operations data…' }}
-          />
-        ) : (
-          <ReportContent data={resources} />
-        )}
-      </main>
+            Sign in through TUS
+          </a>
+        </TusStateMessage>
+      ) : resources === null ? (
+        <TusStateMessage
+          state={{ status: 'loading', message: 'Loading authoritative operations data…' }}
+        />
+      ) : (
+        <ReportContent data={resources} />
+      )}
     </>
   )
 }
@@ -240,4 +231,6 @@ function Metric({ label, value }: { label: string; value: string }): React.React
   )
 }
 
-export default { TusOperationsSurface }
+const tusOperationsModule = { TusOperationsSurface }
+
+export default tusOperationsModule

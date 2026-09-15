@@ -13,7 +13,7 @@ import {
   type TusPosOperation,
 } from '@/lib/tus-client'
 import { resolveTusRoleLabel } from '../../lib/tus-journeys'
-import { TusActionButton, TusFieldError, TusSkipLink, TusStateMessage } from './tus-ui'
+import { TusActionButton, TusFieldError, TusStateMessage } from './tus-ui'
 
 const POS_CONTEXT = {
   PRODUCT: 'product',
@@ -128,51 +128,43 @@ export function TusPosSurface(): React.ReactNode {
 
   return (
     <>
-      <TusSkipLink />
-      <main className="tus-shell tus-dashboard" id="tus-main-content">
-        <nav className="tus-nav" aria-label="TUS POS navigation">
-          <Link className="tus-mark" href="/tus">
-            TUS / POS
-          </Link>
-          <div className="tus-nav-links">
-            <Link href="/tus?surface=discovery">Discovery</Link>
-            <Link href="/tus/operations">Operations</Link>
-            <Link href="/tus">Back to workspace</Link>
-          </div>
-        </nav>
-        <header className="tus-workspace-header">
-          <div>
-            <p className="tus-kicker">{resolveTusRoleLabel(session?.roles)} / bounded capture</p>
-            <h1>
-              Keep the counter
-              <br />
-              <em>moving honestly.</em>
-            </h1>
-          </div>
-          <p className="tus-intro">
-            <strong>Local operations only</strong>Every receipt needs server acknowledgement.
-            Provider capture, settlement, and payout remain unclaimed.
-          </p>
-        </header>
-        {session === undefined ? (
-          <TusStateMessage
-            state={{ status: 'loading', message: 'Restoring your secure session…' }}
-          />
-        ) : session === null ? (
-          <TusStateMessage
-            state={{
-              status: authStatus === 'unavailable' ? 'error' : 'disabled',
-              message: authMessage,
-            }}
+      <div className="tus-nav-links tus-session-actions">
+        <Link href="/tus?surface=discovery">Market</Link>
+        <Link href="/tus/operations">Operations</Link>
+      </div>
+      <header className="tus-workspace-header">
+        <div>
+          <p className="tus-kicker">{resolveTusRoleLabel(session?.roles)} / bounded capture</p>
+          <h1>
+            Keep the counter
+            <br />
+            <em>moving honestly.</em>
+          </h1>
+        </div>
+        <p className="tus-intro">
+          <strong>Local operations only</strong>Every receipt needs server acknowledgement.
+          Provider capture, settlement, and payout remain unclaimed.
+        </p>
+      </header>
+      {session === undefined ? (
+        <TusStateMessage
+          state={{ status: 'loading', message: 'Restoring your secure session…' }}
+        />
+      ) : session === null ? (
+        <TusStateMessage
+          state={{
+            status: authStatus === 'unavailable' ? 'error' : 'disabled',
+            message: authMessage,
+          }}
+        >
+          <a
+            className="tus-action-button tus-action-link"
+            href={`/sign-in?returnTo=${encodeURIComponent('/tus/pos')}`}
           >
-            <a
-              className="tus-action-button tus-action-link"
-              href={`/sign-in?returnTo=${encodeURIComponent('/tus/pos')}`}
-            >
-              Sign in through TUS
-            </a>
-          </TusStateMessage>
-        ) : (
+            Sign in through TUS
+          </a>
+        </TusStateMessage>
+      ) : (
           <form
             className="tus-pos-panel"
             aria-labelledby="pos-panel-title"
@@ -276,7 +268,6 @@ export function TusPosSurface(): React.ReactNode {
             )}
           </form>
         )}
-      </main>
     </>
   )
 }
@@ -313,4 +304,6 @@ function errorStatus(error: unknown): number | undefined {
   return undefined
 }
 
-export default { TusPosSurface }
+const tusPosModule = { TusPosSurface }
+
+export default tusPosModule

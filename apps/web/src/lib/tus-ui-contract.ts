@@ -375,7 +375,7 @@ function defaultIsEmpty<TData>(data: TData): boolean {
   return Array.isArray(data) && data.length === 0
 }
 
-export default {
+const tusUiContractModule = {
   commitmentPresentation,
   createTusWebSession,
   operationalSurfacePresentation,
@@ -384,3 +384,5 @@ export default {
   sessionRequestContext,
   statePresentation,
 }
+
+export default tusUiContractModule

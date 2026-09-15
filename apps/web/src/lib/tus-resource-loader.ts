@@ -266,4 +266,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {}
 }
 
-export default { canLoadTusResource, createTusResourceLoader }
+const tusResourceLoaderModule = { canLoadTusResource, createTusResourceLoader }
+
+export default tusResourceLoaderModule

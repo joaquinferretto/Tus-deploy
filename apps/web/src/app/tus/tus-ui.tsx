@@ -159,7 +159,7 @@ export function TusIntentFeedbackView({
   )
 }
 
-export default {
+const tusUiModule = {
   TusActionButton,
   TusFieldError,
   TusIntentFeedbackView,
@@ -167,3 +167,5 @@ export default {
   TusSkipLink,
   TusStateMessage,
 }
+
+export default tusUiModule

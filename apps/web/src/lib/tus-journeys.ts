@@ -200,7 +200,7 @@ function sanitizeInternalPath(value: string | undefined): string | undefined {
   }
 }
 
-export default {
+const tusJourneysModule = {
   TUS_LOCALE,
   TUS_PUBLIC_ORIGIN,
   TUS_TIME_ZONE,
@@ -215,3 +215,5 @@ export default {
   resolveTusRoleLabel,
   resolveTusPublicOrigin,
 }
+
+export default tusJourneysModule
