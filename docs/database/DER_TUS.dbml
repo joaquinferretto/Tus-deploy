@@ -62,8 +62,11 @@ Table publicaciones {
   version_politica varchar [note: 'ex policyVersion']
   existencias int [null, note: 'ex stock']
   duracion_minutos int [null, note: 'ex durationMinutes']
+  duracion_estimada_minutos int [null, note: 'duración estimada; no reemplaza diagnóstico']
   capacidad int [null, note: 'ex capacity']
-  horario_trabajo json [note: 'ex workingHours']
+  modalidad_reserva varchar [null, note: 'turno_fijo | visita_diagnostico | duracion_estimada | requiere_presupuesto']
+  modalidad_precio varchar [null, note: 'precio_fijo | precio_desde | por_hora | presupuesto']
+  horario_trabajo json [note: 'ex workingHours; LEGACY']
   fecha_creacion timestamp [note: 'ex createdAt']
   fecha_actualizacion timestamp [note: 'ex updatedAt']
 
@@ -74,7 +77,7 @@ Table publicaciones {
     (prestador_id, tipo) [name: 'idx_publicaciones_prestador_tipo']
   }
 
-  Note: 'Publicacion = oferta visible. Prestador 1:N Publicacion. FK objetivo (tenant_id, prestador_id) -> prestadores, onDelete RESTRICT.'
+  Note: 'Publicacion = oferta visible y, para tipo service, identidad comercial canónica del servicio MVP. Prestador 1:N Publicacion. horario_trabajo es LEGACY; la disponibilidad nueva vive en calendarios.'
 }
 
 Table compromisos_mercado_servicios {
@@ -224,19 +227,24 @@ Table referencias_auditoria {
 Table calendarios {
   id varchar [pk]
   tenant_id varchar
-  servicio_id varchar [note: '[LEGACY] -> TusService. PENDIENTE migración a prestador/publicacion']
+  prestador_id varchar [null, note: 'FK compuesta a prestadores; agenda principal nueva']
+  servicio_id varchar [null, note: '[LEGACY] -> TusService; no usar en flujos nuevos']
   nombre varchar [note: 'ex name']
   zona_horaria varchar [note: 'ex timezone']
   estado varchar [note: 'ex status']
+  granularidad_minutos int [default: 15, note: 'paso de posibles inicios']
+  buffer_minutos int [default: 0, note: 'separación entre reservas']
   fecha_creacion timestamp [note: 'ex createdAt']
   fecha_actualizacion timestamp [note: 'ex updatedAt']
 
   indexes {
     (tenant_id, id) [unique, name: 'uq_calendarios_tenant_id', note: 'ya existe físicamente; necesario para FK compuesta tenant-scoped']
+    (tenant_id, prestador_id) [unique, name: 'uq_calendarios_tenant_prestador', note: 'agenda principal nueva; NULL permitido para legacy']
+    (tenant_id, prestador_id, estado) [name: 'idx_calendarios_tenant_prestador_estado']
     (tenant_id, servicio_id, estado) [name: 'idx_calendarios_tenant_servicio_estado']
   }
 
-  Note: 'Calendario = calendario de disponibilidad. Propietario canónico: prestador. servicio_id es [LEGACY].'
+  Note: 'Calendario = agenda principal de disponibilidad del Prestador. Prestador 1:0..1 para nuevos datos; servicio_id es LEGACY y puede quedar NULL.'
 }
 
 Table reglas_calendario {
@@ -279,8 +287,9 @@ Table reservas {
   id varchar [pk]
   tenant_id varchar
   reserva_id varchar [note: 'ex bookingId']
-  servicio_id varchar [note: '[LEGACY] -> TusService']
+  servicio_id varchar [null, note: '[LEGACY] -> TusService; no usar en reservas nuevas']
   calendario_id varchar [note: 'FK objetivo compuesta (tenant_id, calendario_id) -> calendarios']
+  publicacion_id varchar [null, note: 'FK compuesta a publicaciones; identidad canónica nueva']
   cliente_id varchar [note: '[EXTERNA/LOGICA] identidad de cliente']
   fecha_inicio timestamp [note: 'ex startsAt']
   fecha_fin timestamp [note: 'ex endsAt']
@@ -292,10 +301,11 @@ Table reservas {
   indexes {
     (tenant_id, reserva_id) [unique, name: 'uq_reservas_tenant_reserva']
     (tenant_id, calendario_id, fecha_inicio, fecha_fin) [name: 'idx_reservas_tenant_calendario_franja']
+    (tenant_id, publicacion_id, fecha_inicio, fecha_fin) [name: 'idx_reservas_tenant_publicacion_franja']
     (tenant_id, cliente_id, estado) [name: 'idx_reservas_tenant_cliente_estado']
   }
 
-  Note: 'Reserva = ocupación de franja/capacidad. FK objetivo calendario_id -> calendarios, RESTRICT. servicio_id/cliente_id [LEGACY/EXTERNA].'
+  Note: 'Reserva = ocupación de franja/capacidad para una Publicacion. publicacion_id es la identidad nueva; servicio_id/cliente_id son LEGACY/EXTERNA.'
 }
 
 // ============================================================
@@ -1513,6 +1523,7 @@ Ref: lineas_factura.(tenant_id, factura_id) > facturas.(tenant_id, factura_id)
 // MERCADO
 Ref: publicaciones.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)         // Prestador 1:N Publicacion (OBJETIVO_FUTURO, corrige FK por tenant_id)
 Ref: compromisos_mercado_servicios.(tenant_id, publicacion_id) > publicaciones.(tenant_id, id) // OBJETIVO_FUTURO (FK compuesta tenant-scoped)
+Ref: calendarios.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)             // agenda principal nueva; NULL legacy
 
 // COMPROMISOS
 Ref: compromisos.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)           // OBJETIVO_FUTURO
@@ -1523,6 +1534,7 @@ Ref: compensaciones_compromiso.(tenant_id, compromiso_id) > compromisos.(tenant_
 Ref: reglas_calendario.(tenant_id, calendario_id) > calendarios.(tenant_id, id)      // OBJETIVO_FUTURO (FK compuesta tenant-scoped)
 Ref: excepciones_calendario.(tenant_id, calendario_id) > calendarios.(tenant_id, id) // OBJETIVO_FUTURO (FK compuesta tenant-scoped)
 Ref: reservas.(tenant_id, calendario_id) > calendarios.(tenant_id, id)               // OBJETIVO_FUTURO (FK compuesta tenant-scoped)
+Ref: reservas.(tenant_id, publicacion_id) > publicaciones.(tenant_id, id)           // agenda/publicacion nueva; NULL legacy
 
 // ENTREGA
 Ref: turnos_entrega.(tenant_id, zona_id) > zonas_entrega.(tenant_id, zona_id)                // OBJETIVO_FUTURO

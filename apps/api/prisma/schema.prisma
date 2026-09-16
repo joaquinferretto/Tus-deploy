@@ -631,6 +631,7 @@ model Prestador {
   fechaCreacion          DateTime @map("fecha_creacion")
   fechaActualizacion     DateTime @map("fecha_actualizacion")
   publicaciones          Publicacion[]
+  calendarios            Calendario[]
 
 
   compromisos Compromiso[]
@@ -658,6 +659,9 @@ model Publicacion {
   existencias          Int?         @map("existencias")
   duracionMinutos      Int?         @map("duracion_minutos")
   capacidad            Int?         @map("capacidad")
+  modalidadReserva     String?      @map("modalidad_reserva")
+  duracionEstimadaMinutos Int?      @map("duracion_estimada_minutos")
+  modalidadPrecio       String?     @map("modalidad_precio")
   horarioTrabajo       Json         @map("horario_trabajo")
   fechaCreacion        DateTime     @map("fecha_creacion")
   fechaActualizacion    DateTime     @map("fecha_actualizacion")
@@ -665,6 +669,7 @@ model Publicacion {
 
 
   compromisosMercadoServicios CompromisoMercadoServicios[]
+  reservas                 Reserva[]
   prestador Prestador @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_publicaciones_prestadores")
   @@unique([tenantId, id], map: "uq_publicaciones_tenant_id")
 
@@ -1438,10 +1443,13 @@ model TusInventory {
 model Calendario {
   id          String   @id(map: "calendarios_pkey")
   tenantId    String   @map("tenant_id")
-  servicioId  String   @map("servicio_id")
+  prestadorId String?  @map("prestador_id")
+  servicioId  String?  @map("servicio_id")
   nombre      String   @map("nombre")
   zonaHoraria String   @map("zona_horaria")
   estado      String   @map("estado")
+  granularidadMinutos Int @default(15) @map("granularidad_minutos")
+  bufferMinutos Int @default(0) @map("buffer_minutos")
   fechaCreacion DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
@@ -1449,7 +1457,10 @@ model Calendario {
   reglas ReglaCalendario[]
   excepciones ExcepcionCalendario[]
   reservas Reserva[]
+  prestador Prestador? @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_calendarios_prestadores")
   @@unique([tenantId, id], map: "uq_calendarios_tenant_id")
+  @@unique([tenantId, prestadorId], map: "uq_calendarios_tenant_prestador")
+  @@index([tenantId, prestadorId, estado], map: "idx_calendarios_tenant_prestador_estado")
   @@index([tenantId, servicioId, estado], map: "idx_calendarios_tenant_servicio_estado")
   @@map("calendarios")
 }
@@ -1492,8 +1503,9 @@ model Reserva {
   id            String   @id(map: "reservas_pkey")
   tenantId      String   @map("tenant_id")
   reservaId     String   @map("reserva_id")
-  servicioId    String   @map("servicio_id")
+  servicioId    String?  @map("servicio_id")
   calendarioId  String   @map("calendario_id")
+  publicacionId String?  @map("publicacion_id")
   clienteId     String   @map("cliente_id")
   fechaInicio   DateTime @map("fecha_inicio")
   fechaFin      DateTime @map("fecha_fin")
@@ -1504,8 +1516,10 @@ model Reserva {
 
 
   calendario Calendario @relation(fields: [tenantId, calendarioId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_calendarios")
+  publicacion Publicacion? @relation(fields: [tenantId, publicacionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_publicaciones")
   @@unique([tenantId, reservaId], map: "uq_reservas_tenant_reserva")
   @@index([tenantId, calendarioId, fechaInicio, fechaFin], map: "idx_reservas_tenant_calendario_franja")
+  @@index([tenantId, publicacionId, fechaInicio, fechaFin], map: "idx_reservas_tenant_publicacion_franja")
   @@index([tenantId, clienteId, estado], map: "idx_reservas_tenant_cliente_estado")
   @@map("reservas")
 }

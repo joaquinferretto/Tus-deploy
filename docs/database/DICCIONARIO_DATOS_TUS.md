@@ -121,6 +121,14 @@ Deja trazabilidad de los renombres físicos aplicados por la migración. Muestra
 | `stock` | `existencias` | publicaciones |
 | `capacity` | `capacidad` | publicaciones, reglas_calendario |
 | `durationMinutes` | `duracion_minutos` | publicaciones |
+| `estimatedDurationMinutes` | `duracion_estimada_minutos` | publicaciones |
+| `bookingMode` | `modalidad_reserva` | publicaciones |
+| `priceMode` | `modalidad_precio` | publicaciones |
+| `calendarId` | `calendario_id` | reservas (futuro/contrato) |
+| `providerId` | `prestador_id` | calendarios |
+| `granularityMinutes` | `granularidad_minutos` | calendarios |
+| `bufferMinutes` | `buffer_minutos` | calendarios |
+| `listingId` | `publicacion_id` | reservas (futuro/contrato) |
 | `workingHours` | `horario_trabajo` | publicaciones |
 | `quantity` | `cantidad` | compromisos_mercado_servicios, lineas_factura |
 | `slotStart` / `slotEnd` | `franja_inicio` / `franja_fin` | compromisos_mercado_servicios |
@@ -267,7 +275,7 @@ Deja trazabilidad de los renombres físicos aplicados por la migración. Muestra
 | `transiciones_compromiso` | `id` | varchar | Surrogate histórico | — | `(tenant_id, compromiso_id, version)` |
 | `compensaciones_compromiso` | `id` | varchar | Surrogate | `compensacion_id` | `(tenant_id, compensacion_id)` |
 | `referencias_auditoria` | `id` | varchar | Surrogate | `referencia_id` | `(tenant_id, referencia_id)` |
-| `calendarios` | `id` | varchar | Surrogate | — | — |
+| `calendarios` | `id` | varchar | Surrogate | — | `(tenant_id, prestador_id)` [FISICA_NUEVA; NULL legacy] |
 | `reglas_calendario` | `id` | varchar | Surrogate | — | `(tenant_id, calendario_id, dia_semana, hora_inicio, hora_fin)` |
 | `excepciones_calendario` | `id` | varchar | Surrogate | — | — |
 | `reservas` | `id` | varchar | Surrogate | `reserva_id` | `(tenant_id, reserva_id)` |
@@ -336,6 +344,7 @@ Deja trazabilidad de los renombres físicos aplicados por la migración. Muestra
 |---|---|---|---|---|---|---|---|---|---|
 | `lineas_factura` | `(tenant_id, factura_id)` | `facturas` | FISICA_ACTUAL | Línea depende de su factura | N:1 | NO | NO ACTION | NO ACTION | No |
 | `publicaciones` | `(tenant_id, prestador_id)` | `prestadores` | FISICA_ACTUAL | Publicación pertenece a un prestador | N:1 | NO | RESTRICT | NO ACTION | No |
+| `calendarios` | `(tenant_id, prestador_id)` | `prestadores` | FISICA_NUEVA | Agenda principal del prestador; NULL para legacy | N:1 | SÍ | RESTRICT | NO ACTION | No |
 | `compromisos` | `(tenant_id, prestador_id)` | `prestadores` | FISICA_ACTUAL | Obligación comercial con prestador | N:1 | NO | RESTRICT | NO ACTION | No |
 | `transiciones_compromiso` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Histórico de un compromiso | N:1 | NO | RESTRICT | NO ACTION | No |
 | `compensaciones_compromiso` | `(tenant_id, compromiso_id)` | `compromisos` | FISICA_ACTUAL | Compensación de un compromiso | 1:1 | NO | RESTRICT | NO ACTION | No |
@@ -343,6 +352,7 @@ Deja trazabilidad de los renombres físicos aplicados por la migración. Muestra
 | `reglas_calendario` | `(tenant_id, calendario_id)` | `calendarios` | FISICA_ACTUAL | Regla depende del calendario (mismo tenant) | N:1 | NO | CASCADE | NO ACTION | No |
 | `excepciones_calendario` | `(tenant_id, calendario_id)` | `calendarios` | FISICA_ACTUAL | Excepción depende del calendario (mismo tenant) | N:1 | NO | CASCADE | NO ACTION | No |
 | `reservas` | `(tenant_id, calendario_id)` | `calendarios` | FISICA_ACTUAL | Reserva ocupa franja de un calendario (mismo tenant) | N:1 | NO | RESTRICT | NO ACTION | No |
+| `reservas` | `(tenant_id, publicacion_id)` | `publicaciones` | FISICA_NUEVA | Reserva consume una publicación; NULL para legacy | N:1 | SÍ | RESTRICT | NO ACTION | No |
 | `turnos_entrega` | `(tenant_id, zona_id)` | `zonas_entrega` | FISICA_ACTUAL | Turno en una zona | N:1 | NO | RESTRICT | NO ACTION | No |
 | `evidencias_entrega` | `(tenant_id, tarea_id)` | `tareas_entrega` | FISICA_ACTUAL | Comprobante de una tarea | N:1 | NO | RESTRICT | NO ACTION | No |
 | `incidentes_entrega` | `(tenant_id, tarea_id)` | `tareas_entrega` | FISICA_ACTUAL | Incidente de una tarea | N:1 | NO | RESTRICT | NO ACTION | No |
@@ -477,6 +487,8 @@ WHERE l.id IS NULL;
 **`publicaciones`** — Oferta visible (ex `TusListing`).
 - PK `id`; FK física actual `(tenant_id, prestador_id) → prestadores`, `onDelete RESTRICT`.
 - La relación anterior por `tenantId` fue reemplazada por el mapping Prisma `Publicacion.prestador`.
+- Para publicaciones de servicio, `modalidad_reserva` y `modalidad_precio` son configuraciones comerciales nullable durante la transición; `duracion_estimada_minutos` solo aplica a modalidades estimadas.
+- `horario_trabajo` permanece legacy y no es la fuente canónica de disponibilidad nueva.
 
 **`compromisos_mercado_servicios`** — Línea/compromiso de checkout (ex `TusMarketplaceCommitment`).
 - FK física actual `(tenant_id, publicacion_id) → publicaciones`; `prestador_id` referencia lógica adicional.
@@ -492,9 +504,11 @@ WHERE l.id IS NULL;
 
 ### 7.3 Calendario
 
-**`calendarios`** — Calendario; propietario canónico = prestador; `servicio_id` sigue legacy.
+**`calendarios`** — Agenda principal de disponibilidad del prestador; `(tenant_id, prestador_id)` es UNIQUE para nuevas filas y `prestador_id` nullable permite conservar legacy.
+- `granularidad_minutos` default 15 y `buffer_minutos` default 0 controlan la generación futura de inicios; la duración pertenece a la publicación.
+- `servicio_id` permanece nullable y legacy, sin FK canónica a `TusService`.
 **`reglas_calendario`** / **`excepciones_calendario`** — Hijos; FK físicas actuales CASCADE.
-**`reservas`** — FK física actual `calendario_id → calendarios` RESTRICT; `cliente_id` externa/lógica; `servicio_id` legacy.
+**`reservas`** — FK física actual `calendario_id → calendarios` RESTRICT y nueva FK nullable `(tenant_id, publicacion_id) → publicaciones` RESTRICT; `cliente_id` externa/lógica; `servicio_id` legacy.
 
 ### 7.4 Entrega
 
