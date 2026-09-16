@@ -8,12 +8,12 @@ const root = join(import.meta.dirname, '..', '..')
 const tsxCli = join(root, 'apps/api/node_modules/tsx/dist/cli.mjs')
 
 function runTypeScriptScenario(source) {
-  const wrapped = `(async () => {\n${source}\n})()`
+  const wrapped = ['(async () => {', 'BigInt.prototype.toJSON = function () { return this.toString() + "n" }', source, '})()'].join('\n')
   const output = execFileSync(process.execPath, [tsxCli, '--eval', wrapped], {
     cwd: root,
     encoding: 'utf8',
   })
-  return JSON.parse(output.trim())
+  return JSON.parse(output.trim(), (key, value) => (key === 'minor' || key === 'priceMinor') && typeof value === 'string' && /^\d+n$/u.test(value) ? BigInt(value.slice(0, -1)) : value)
 }
 
 test('PR4 publishes durable marketplace facts and emits tenant-scoped audit/outbox records', () => {

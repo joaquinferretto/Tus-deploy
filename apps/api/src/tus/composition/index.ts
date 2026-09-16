@@ -45,12 +45,14 @@ export function createTusApplication(
   const audits = new AlmacenReferenciasAuditoriaEnMemoria()
   const idempotency = new InMemoryTusIdempotencyStore()
   const outbox = new InMemoryTusOutboxStore()
-  const marketplace = new TusMarketplaceService(new InMemoryMarketplaceStore(), {
+  const marketplaceStore = new InMemoryMarketplaceStore()
+  const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore(), options.now)
+  const marketplace = new TusMarketplaceService(marketplaceStore, {
     evaluadorHabilitacion: options.evaluadorHabilitacion,
     perfilHabilitacion: options.perfilHabilitacion,
     alcanceHabilitacion: options.alcanceHabilitacion,
+    calendarResolver: calendar,
   })
-  const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore(), options.now)
   const commitmentLookup = async (commitmentId: string) => (await commitments.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
   const finance = new TusFinanceService({
     store: new InMemoryFinanceStore(),
@@ -91,8 +93,9 @@ export function createTusApplication(
 
 export function createPrismaTusApplication(client: TusPrismaClient): TusApplicationService {
   const evaluadorHabilitacion = new EvaluadorHabilitacion(new AlmacenPrismaEvidenciaHabilitacion(client))
-  const marketplace = createPrismaMarketplaceService(client, evaluadorHabilitacion)
+  const marketplaceStore = new PrismaMarketplaceStore(client)
   const calendar = new ServiceCalendarService(new PrismaServiceCalendarStore(client))
+  const marketplace = new TusMarketplaceService(marketplaceStore, { evaluadorHabilitacion, calendarResolver: calendar })
   const commitmentStore = new PrismaTusCommitmentStore(client)
   const commitmentLookup = async (commitmentId: string) => (await commitmentStore.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
   const delivery = new TusDeliveryService({
@@ -128,10 +131,6 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
     perfilHabilitacion: 'native-local',
     alcanceHabilitacion: 'argentina-stage-1',
   })
-}
-
-function createPrismaMarketplaceService(client: TusPrismaClient, evaluadorHabilitacion?: EvaluadorHabilitacion): TusMarketplaceService {
-  return new TusMarketplaceService(new PrismaMarketplaceStore(client), { evaluadorHabilitacion })
 }
 
 export * from '../application/index.ts'

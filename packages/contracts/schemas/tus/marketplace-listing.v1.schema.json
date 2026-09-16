@@ -38,6 +38,11 @@
     "stock": { "type": ["integer", "null"], "minimum": 0 },
     "durationMinutes": { "type": ["integer", "null"], "minimum": 1 },
     "capacity": { "type": ["integer", "null"], "minimum": 1 },
+    "calendarId": { "type": "string", "minLength": 1 },
+    "bookingMode": { "enum": ["fixed_shift", "variable_duration", null] },
+    "estimatedDurationMinutes": { "type": ["integer", "null"], "minimum": 1 },
+    "priceMode": { "enum": ["fixed", "requires_budget"] },
+    "availabilityStatus": { "enum": ["configured", "not_configured"] },
     "workingHours": {
       "type": "array",
       "items": {
@@ -61,7 +66,22 @@
     },
     {
       "if": { "properties": { "kind": { "const": "service" } } },
-      "then": { "required": ["durationMinutes", "capacity", "workingHours"], "properties": { "stock": { "const": null }, "durationMinutes": { "type": "integer", "minimum": 1 }, "capacity": { "type": "integer", "minimum": 1 }, "workingHours": { "minItems": 1 } } }
+      "then": {
+        "required": ["capacity", "workingHours"],
+        "properties": { "stock": { "const": null }, "capacity": { "type": "integer", "minimum": 1 }, "workingHours": { "minItems": 1 } },
+        "anyOf": [
+          { "required": ["durationMinutes"], "properties": { "bookingMode": { "enum": ["fixed_shift"] }, "durationMinutes": { "type": "integer", "minimum": 1 } } },
+          { "required": ["bookingMode", "estimatedDurationMinutes"], "properties": { "bookingMode": { "const": "variable_duration" }, "durationMinutes": { "const": null }, "estimatedDurationMinutes": { "type": "integer", "minimum": 1 } } }
+        ]
+      }
+    },
+    {
+      "if": { "required": ["kind", "availabilityStatus"], "properties": { "kind": { "const": "service" }, "availabilityStatus": { "const": "configured" } } },
+      "then": { "required": ["calendarId"] }
+    },
+    {
+      "if": { "required": ["kind", "availabilityStatus"], "properties": { "kind": { "const": "service" }, "availabilityStatus": { "const": "not_configured" } } },
+      "then": { "not": { "required": ["calendarId"] } }
     }
   ]
 }

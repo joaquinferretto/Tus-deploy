@@ -116,7 +116,7 @@ function merchantRow(profile: PerfilPrestador): Record<string, unknown> {
 }
 
 function listingRow(listing: Publicacion): Record<string, unknown> {
-  return { id: listing.listingId, versionContrato: listing.contractVersion, tenantId: listing.tenantId, prestadorId: listing.merchantId, tipo: listing.kind, nombre: listing.name, descripcion: listing.description, cohorte: listing.cohort, ubicacionId: listing.locationId, moneda: listing.currency, precio: BigInt(listing.priceMinor), versionDisponibilidad: listing.availabilityVersion, publicada: listing.published, versionPolitica: listing.policyVersion, existencias: listing.stock, duracionMinutos: listing.durationMinutes, capacidad: listing.capacity, horarioTrabajo: listing.workingHours, fechaCreacion: new Date(listing.createdAt), fechaActualizacion: new Date(listing.updatedAt) }
+  return { id: listing.listingId, versionContrato: listing.contractVersion, tenantId: listing.tenantId, prestadorId: listing.merchantId, tipo: listing.kind, nombre: listing.name, descripcion: listing.description, cohorte: listing.cohort, ubicacionId: listing.locationId, moneda: listing.currency, precio: BigInt(listing.priceMinor), versionDisponibilidad: listing.availabilityVersion, publicada: listing.published, versionPolitica: listing.policyVersion, existencias: listing.stock, duracionMinutos: listing.durationMinutes, capacidad: listing.capacity, modalidadReserva: toStoredBookingMode(listing.bookingMode), duracionEstimadaMinutos: listing.estimatedDurationMinutes ?? null, modalidadPrecio: toStoredPriceMode(listing.priceMode), horarioTrabajo: listing.workingHours, fechaCreacion: new Date(listing.createdAt), fechaActualizacion: new Date(listing.updatedAt) }
 }
 
 function commitmentRow(commitment: MarketplaceCommitment): Record<string, unknown> {
@@ -129,7 +129,36 @@ function toMerchant(row: Record<string, unknown>): PerfilPrestador {
 
 function toListing(row: Record<string, unknown>): Publicacion {
   const priceMinor = toBigInt(row['precio'])
-  return { listingId: String(row['id']), contractVersion: String(row['versionContrato']) as Publicacion['contractVersion'], tenantId: String(row['tenantId']), merchantId: String(row['prestadorId']), kind: row['tipo'] as Publicacion['kind'], name: String(row['nombre']), description: String(row['descripcion']), cohort: row['cohorte'] as Publicacion['cohort'], locationId: String(row['ubicacionId']), currency: String(row['moneda']).toUpperCase(), price: Number(priceMinor) / 100, priceMinor, priceSnapshot: { currency: String(row['moneda']).toUpperCase(), minor: priceMinor }, availabilityVersion: Number(row['versionDisponibilidad']), published: Boolean(row['publicada']), policyVersion: String(row['versionPolitica']), stock: row['existencias'] === null ? null : Number(row['existencias']), durationMinutes: row['duracionMinutos'] === null ? null : Number(row['duracionMinutos']), capacity: row['capacidad'] === null ? null : Number(row['capacidad']), workingHours: row['horarioTrabajo'] as Publicacion['workingHours'], createdAt: new Date(String(row['fechaCreacion'])).toISOString(), updatedAt: new Date(String(row['fechaActualizacion'])).toISOString() }
+  const durationMinutes = row['duracionMinutos'] === null ? null : Number(row['duracionMinutos'])
+  const storedBookingMode = row['modalidadReserva'] === null || row['modalidadReserva'] === undefined ? undefined : String(row['modalidadReserva'])
+  const storedPriceMode = row['modalidadPrecio'] === null || row['modalidadPrecio'] === undefined ? undefined : String(row['modalidadPrecio'])
+  const bookingMode = toBookingMode(storedBookingMode, durationMinutes)
+  const priceMode = toPriceMode(storedPriceMode ?? (storedBookingMode === 'requiere_presupuesto' ? 'presupuesto' : undefined))
+  return { listingId: String(row['id']), contractVersion: String(row['versionContrato']) as Publicacion['contractVersion'], tenantId: String(row['tenantId']), merchantId: String(row['prestadorId']), kind: row['tipo'] as Publicacion['kind'], name: String(row['nombre']), description: String(row['descripcion']), cohort: row['cohorte'] as Publicacion['cohort'], locationId: String(row['ubicacionId']), currency: String(row['moneda']).toUpperCase(), price: Number(priceMinor) / 100, priceMinor, priceSnapshot: { currency: String(row['moneda']).toUpperCase(), minor: priceMinor }, availabilityVersion: Number(row['versionDisponibilidad']), published: Boolean(row['publicada']), policyVersion: String(row['versionPolitica']), stock: row['existencias'] === null ? null : Number(row['existencias']), durationMinutes, capacity: row['capacidad'] === null ? null : Number(row['capacidad']), ...(bookingMode === undefined ? {} : { bookingMode }), ...(row['duracionEstimadaMinutos'] === null || row['duracionEstimadaMinutos'] === undefined ? {} : { estimatedDurationMinutes: Number(row['duracionEstimadaMinutos']) }), ...(priceMode === undefined ? {} : { priceMode }), workingHours: row['horarioTrabajo'] as Publicacion['workingHours'], createdAt: new Date(String(row['fechaCreacion'])).toISOString(), updatedAt: new Date(String(row['fechaActualizacion'])).toISOString() }
+}
+
+function toStoredBookingMode(mode: Publicacion['bookingMode']): string | null {
+  if (mode === 'fixed_shift') return 'turno_fijo'
+  if (mode === 'variable_duration') return 'duracion_estimada'
+  return null
+}
+
+function toStoredPriceMode(mode: Publicacion['priceMode']): string | null {
+  if (mode === 'fixed') return 'precio_fijo'
+  if (mode === 'requires_budget') return 'presupuesto'
+  return null
+}
+
+function toBookingMode(value: string | undefined, durationMinutes: number | null): Publicacion['bookingMode'] {
+  if (value === 'turno_fijo' || value === 'fixed_shift') return 'fixed_shift'
+  if (value === 'duracion_estimada' || value === 'variable_duration') return 'variable_duration'
+  return durationMinutes === null ? undefined : 'fixed_shift'
+}
+
+function toPriceMode(value: string | undefined): Publicacion['priceMode'] {
+  if (value === 'presupuesto' || value === 'requires_budget') return 'requires_budget'
+  if (value === 'precio_fijo' || value === 'fixed') return 'fixed'
+  return undefined
 }
 
 function toCommitment(row: Record<string, unknown>): MarketplaceCommitment {

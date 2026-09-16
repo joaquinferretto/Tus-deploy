@@ -24,6 +24,22 @@ export const TIPOS_PUBLICACION_MERCADO_SERVICIOS = {
 
 export type ContextoCompromiso = (typeof TIPOS_PUBLICACION_MERCADO_SERVICIOS)[keyof typeof TIPOS_PUBLICACION_MERCADO_SERVICIOS]
 
+export const MODALIDADES_RESERVA_MERCADO_SERVICIOS = {
+  FIXED_SHIFT: 'fixed_shift',
+  VARIABLE_DURATION: 'variable_duration',
+} as const
+
+export type ModalidadReservaMercadoServicios = (typeof MODALIDADES_RESERVA_MERCADO_SERVICIOS)[keyof typeof MODALIDADES_RESERVA_MERCADO_SERVICIOS]
+
+export const MODALIDADES_PRECIO_MERCADO_SERVICIOS = {
+  FIXED: 'fixed',
+  REQUIRES_BUDGET: 'requires_budget',
+} as const
+
+export type ModalidadPrecioMercadoServicios = (typeof MODALIDADES_PRECIO_MERCADO_SERVICIOS)[keyof typeof MODALIDADES_PRECIO_MERCADO_SERVICIOS]
+
+export type EstadoDisponibilidadMercadoServicios = 'configured' | 'not_configured'
+
 export const ESTADOS_COMPROMISO = {
   PENDING: 'pending',
   CONFIRMED: 'confirmed',
@@ -85,6 +101,11 @@ export interface PublicacionMercadoServicios {
   durationMinutes?: number | null
   capacity?: number | null
   workingHours?: HorarioMercadoServicios[]
+  calendarId?: string
+  bookingMode?: ModalidadReservaMercadoServicios | null
+  estimatedDurationMinutes?: number | null
+  priceMode?: ModalidadPrecioMercadoServicios
+  availabilityStatus?: EstadoDisponibilidadMercadoServicios
 }
 
 export interface HorarioMercadoServicios {
@@ -431,13 +452,58 @@ export function validarPublicacionMercadoServicios(value: unknown): PublicacionM
   if (typeof value['availabilityVersion'] !== 'number' || !Number.isInteger(value['availabilityVersion']) || value['availabilityVersion'] < 1 || typeof value['published'] !== 'boolean') {
     throw new ContractValidationError('tus-marketplace-listing', TUS_CONTRACT_VERSION, 'availabilityVersion or published is invalid')
   }
+  if (value['calendarId'] !== undefined && (typeof value['calendarId'] !== 'string' || value['calendarId'].trim().length === 0)) {
+    throw new ContractValidationError('tus-marketplace-listing', TUS_CONTRACT_VERSION, 'calendarId is invalid')
+  }
+  if (value['bookingMode'] !== undefined && value['bookingMode'] !== null && !['fixed_shift', 'variable_duration'].includes(String(value['bookingMode']))) {
+    throw new ContractValidationError('tus-marketplace-listing', TUS_CONTRACT_VERSION, 'bookingMode is unsupported')
+  }
+  if (value['estimatedDurationMinutes'] !== undefined && value['estimatedDurationMinutes'] !== null && (!Number.isInteger(value['estimatedDurationMinutes']) || Number(value['estimatedDurationMinutes']) < 1)) {
+    throw new ContractValidationError('tus-marketplace-listing', TUS_CONTRACT_VERSION, 'estimatedDurationMinutes is invalid')
+  }
+  if (value['priceMode'] !== undefined && !['fixed', 'requires_budget'].includes(String(value['priceMode']))) {
+    throw new ContractValidationError('tus-marketplace-listing', TUS_CONTRACT_VERSION, 'priceMode is unsupported')
+  }
+  if (value['availabilityStatus'] !== undefined && !['configured', 'not_configured'].includes(String(value['availabilityStatus']))) {
+    throw new ContractValidationError('tus-marketplace-listing', TUS_CONTRACT_VERSION, 'availabilityStatus is unsupported')
+  }
   if (value['kind'] === 'product' && (typeof value['stock'] !== 'number' || !Number.isInteger(value['stock']) || value['stock'] < 0)) {
     throw new ContractValidationError('tus-marketplace-listing', TUS_CONTRACT_VERSION, 'product stock is required')
   }
-  if (value['kind'] === 'service' && (typeof value['durationMinutes'] !== 'number' || !Number.isInteger(value['durationMinutes']) || value['durationMinutes'] <= 0 || typeof value['capacity'] !== 'number' || !Number.isInteger(value['capacity']) || value['capacity'] <= 0 || !Array.isArray(value['workingHours']) || value['workingHours'].length === 0)) {
+  const bookingMode = value['bookingMode'] === undefined || value['bookingMode'] === null
+    ? (value['durationMinutes'] === null ? 'variable_duration' : 'fixed_shift')
+    : value['bookingMode']
+  const hasFixedDuration = typeof value['durationMinutes'] === 'number' && Number.isInteger(value['durationMinutes']) && value['durationMinutes'] > 0
+  const hasEstimatedDuration = typeof value['estimatedDurationMinutes'] === 'number' && Number.isInteger(value['estimatedDurationMinutes']) && value['estimatedDurationMinutes'] > 0
+  if (value['kind'] === 'service' && (typeof value['capacity'] !== 'number' || !Number.isInteger(value['capacity']) || value['capacity'] <= 0 || !Array.isArray(value['workingHours']) || value['workingHours'].length === 0 || bookingMode === 'fixed_shift' && !hasFixedDuration || bookingMode === 'variable_duration' && !hasEstimatedDuration)) {
     throw new ContractValidationError('tus-marketplace-listing', TUS_CONTRACT_VERSION, 'service availability is required')
   }
   return value as unknown as PublicacionMercadoServicios
+}
+
+export function validarRespuestaDescubrimientoMercadoServicios(value: unknown): RespuestaDescubrimientoMercadoServicios {
+  if (!isRecord(value)) throw new ContractValidationError('tus-marketplace-discovery', undefined, 'payload must be an object')
+  assertTusVersion('tus-marketplace-discovery', value['contractVersion'])
+  if (!['local-deterministic', 'local-postgresql-http', 'authorized-external', 'deferred'].includes(String(value['evidence']))) {
+    throw new ContractValidationError('tus-marketplace-discovery', TUS_CONTRACT_VERSION, 'evidence is unsupported')
+  }
+  if (!Array.isArray(value['items'])) throw new ContractValidationError('tus-marketplace-discovery', TUS_CONTRACT_VERSION, 'items are required')
+  for (const item of value['items']) {
+    validarPublicacionMercadoServicios(item)
+    if (!isRecord(item) || typeof item['timezone'] !== 'string' || item['timezone'].trim().length === 0) {
+      throw new ContractValidationError('tus-marketplace-discovery', TUS_CONTRACT_VERSION, 'item timezone is required')
+    }
+    if (item['availableQuantity'] !== undefined && (!Number.isInteger(item['availableQuantity']) || Number(item['availableQuantity']) < 0)) {
+      throw new ContractValidationError('tus-marketplace-discovery', TUS_CONTRACT_VERSION, 'availableQuantity is invalid')
+    }
+    if (item['kind'] === 'service' && item['availabilityStatus'] === 'configured' && (typeof item['calendarId'] !== 'string' || item['calendarId'].trim().length === 0)) {
+      throw new ContractValidationError('tus-marketplace-discovery', TUS_CONTRACT_VERSION, 'configured service calendarId is required')
+    }
+    if (item['kind'] === 'service' && item['availabilityStatus'] === 'not_configured' && item['calendarId'] !== undefined) {
+      throw new ContractValidationError('tus-marketplace-discovery', TUS_CONTRACT_VERSION, 'not_configured service cannot expose calendarId')
+    }
+  }
+  return value as unknown as RespuestaDescubrimientoMercadoServicios
 }
 
 export const CLAVES_REQUISITOS_HABILITACION = [

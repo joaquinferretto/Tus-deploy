@@ -19,10 +19,12 @@ export interface MoneySnapshot {
 export interface Calendario {
   calendarId: string
   tenantId: string
-  serviceId: string
+  prestadorId?: string
+  serviceId?: string
   timezone: string
   status: CalendarStatus
   durationMinutes: number
+  granularityMinutes: number
   bufferMinutes: number
   capacity: number
   bookingCutoffMinutes: number
@@ -40,9 +42,11 @@ export interface Calendario {
 export interface EntradaCalendario {
   tenantId?: string
   calendarId: string
-  serviceId: string
+  prestadorId?: string
+  serviceId?: string
   timezone: string
-  durationMinutes: number
+  durationMinutes?: number
+  granularityMinutes?: number
   bufferMinutes?: number
   capacity: number
   bookingCutoffMinutes?: number
@@ -55,17 +59,19 @@ export interface EntradaCalendario {
 }
 
 export function validateCalendarInput(input: EntradaCalendario): void {
-  if (!input.calendarId.trim() || !input.serviceId.trim()) throw new Error('calendarId and serviceId are required')
+  if (!input.calendarId.trim() || !input.prestadorId?.trim() && !input.serviceId?.trim()) throw new Error('calendarId and prestadorId or serviceId are required')
+  if (input.prestadorId !== undefined && !input.prestadorId.trim() || input.serviceId !== undefined && !input.serviceId.trim()) throw new Error('calendar owner identifiers are invalid')
   if (!isValidTimezone(input.timezone)) throw new Error('timezone must be a valid IANA timezone')
   for (const [name, value] of [
-    ['durationMinutes', input.durationMinutes],
+    ['durationMinutes', input.durationMinutes ?? 60],
+    ['granularityMinutes', input.granularityMinutes ?? 15],
     ['capacity', input.capacity],
     ['bufferMinutes', input.bufferMinutes ?? 0],
     ['bookingCutoffMinutes', input.bookingCutoffMinutes ?? 0],
     ['cancellationWindowMinutes', input.cancellationWindowMinutes ?? 0],
     ['noShowAfterMinutes', input.noShowAfterMinutes ?? 0],
   ] as const) {
-    if (!Number.isInteger(value) || value < 0 || (name === 'durationMinutes' || name === 'capacity') && value < 1) {
+    if (!Number.isInteger(value) || value < 0 || (name === 'durationMinutes' || name === 'capacity' || name === 'granularityMinutes') && value < 1) {
       throw new Error(`${name} must be a valid positive integer`)
     }
   }

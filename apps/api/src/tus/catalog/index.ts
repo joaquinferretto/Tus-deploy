@@ -8,6 +8,11 @@ export const MARKETPLACE_COHORTS = ['beauty-personal-care', 'repairs-trades'] as
 export type Cohorte = (typeof MARKETPLACE_COHORTS)[number]
 export const MARKETPLACE_LISTING_KINDS = { PRODUCT: 'product', SERVICE: 'service' } as const
 export type TipoPublicacion = (typeof MARKETPLACE_LISTING_KINDS)[keyof typeof MARKETPLACE_LISTING_KINDS]
+export const MARKETPLACE_BOOKING_MODES = { FIXED_SHIFT: 'fixed_shift', VARIABLE_DURATION: 'variable_duration' } as const
+export type MarketplaceBookingMode = (typeof MARKETPLACE_BOOKING_MODES)[keyof typeof MARKETPLACE_BOOKING_MODES]
+export const MARKETPLACE_PRICE_MODES = { FIXED: 'fixed', REQUIRES_BUDGET: 'requires_budget' } as const
+export type MarketplacePriceMode = (typeof MARKETPLACE_PRICE_MODES)[keyof typeof MARKETPLACE_PRICE_MODES]
+export type MarketplaceAvailabilityStatus = 'configured' | 'not_configured'
 export const MARKETPLACE_MERCHANT_STATUSES = { APPROVED: 'approved' } as const
 export type MarketplaceMerchantStatus = (typeof MARKETPLACE_MERCHANT_STATUSES)[keyof typeof MARKETPLACE_MERCHANT_STATUSES]
 export const MARKETPLACE_OUTBOX_EVENT_TYPES = {
@@ -36,6 +41,11 @@ export interface MarketplacePolicy {
   evaluadorHabilitacion?: EvaluadorHabilitacion
   perfilHabilitacion?: PerfilHabilitacion
   alcanceHabilitacion?: string
+  calendarResolver?: MarketplaceCalendarResolver
+}
+
+export interface MarketplaceCalendarResolver {
+  findPrimaryCalendar(tenantId: string, prestadorId: string): Promise<{ calendarId: string; status: 'active' | 'inactive' } | null>
 }
 
 export interface MarketplaceWorkingHours {
@@ -65,6 +75,9 @@ export interface Publicacion {
   durationMinutes: number | null
   capacity: number | null
   workingHours: MarketplaceWorkingHours[]
+  bookingMode?: MarketplaceBookingMode
+  estimatedDurationMinutes?: number | null
+  priceMode?: MarketplacePriceMode
   createdAt: string
   updatedAt: string
 }
@@ -85,10 +98,17 @@ export interface ItemDescubrimiento {
   priceSnapshot: MarketplaceMoneySnapshot
   availabilityVersion: number
   policyVersion: string
+  published: boolean
   availableQuantity?: number
   durationMinutes?: number
   capacity?: number
+  workingHours?: MarketplaceWorkingHours[]
   timezone: string
+  calendarId?: string
+  bookingMode?: MarketplaceBookingMode
+  estimatedDurationMinutes?: number
+  priceMode?: MarketplacePriceMode
+  availabilityStatus?: MarketplaceAvailabilityStatus
 }
 
 export interface EntradaPublicacion {
@@ -105,6 +125,9 @@ export interface EntradaPublicacion {
   durationMinutes?: number
   capacity?: number
   workingHours?: MarketplaceWorkingHours[]
+  bookingMode?: MarketplaceBookingMode
+  estimatedDurationMinutes?: number
+  priceMode?: MarketplacePriceMode
 }
 
 export interface MarketplaceCheckoutLine {
@@ -344,6 +367,7 @@ export class TusMarketplaceService {
   private readonly evaluadorHabilitacion?: EvaluadorHabilitacion
   private readonly perfilHabilitacion: PerfilHabilitacion
   private readonly alcanceHabilitacion: string
+  private readonly calendarResolver?: MarketplaceCalendarResolver
 
   constructor(store: MarketplaceStorePort, policy: MarketplacePolicy = {}) {
     this.store = store
@@ -352,6 +376,7 @@ export class TusMarketplaceService {
     this.evaluadorHabilitacion = policy.evaluadorHabilitacion
     this.perfilHabilitacion = policy.perfilHabilitacion ?? 'native-local'
     this.alcanceHabilitacion = policy.alcanceHabilitacion ?? 'argentina-stage-1'
+    this.calendarResolver = policy.calendarResolver
   }
 
   async onboard(context: TusAuthenticatedTenantContext, input: Partial<PerfilPrestador>): Promise<PerfilPrestador> {
@@ -395,6 +420,7 @@ export class TusMarketplaceService {
     if (!merchant || merchant.status !== 'approved') throw new MarketplaceError(409, 'MERCHANT_NOT_READY', 'merchant onboarding is incomplete')
     if (input.merchantId !== merchant.merchantId) throw new MarketplaceError(403, 'FORBIDDEN', 'listing merchant is outside the authenticated tenant')
     validateListingInput(input, merchant)
+    const bookingMode = input.kind === 'service' ? resolveBookingMode(input) : undefined
     const now = new Date().toISOString()
     const listing: Publicacion = {
       contractVersion: TUS_CONTRACT_VERSION,
@@ -414,9 +440,11 @@ export class TusMarketplaceService {
       published: false,
       policyVersion: merchant.operatingPolicyVersion,
       stock: input.kind === 'product' ? input.stock! : null,
-      durationMinutes: input.kind === 'service' ? input.durationMinutes! : null,
+      durationMinutes: input.kind === 'service' && bookingMode === MARKETPLACE_BOOKING_MODES.FIXED_SHIFT ? input.durationMinutes! : null,
       capacity: input.kind === 'service' ? input.capacity! : null,
       workingHours: input.kind === 'service' ? [...(input.workingHours ?? [])] : [],
+      ...(bookingMode === undefined ? {} : { bookingMode }),
+      ...(input.kind === 'service' ? { estimatedDurationMinutes: bookingMode === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION ? input.estimatedDurationMinutes! : null, priceMode: input.priceMode ?? MARKETPLACE_PRICE_MODES.FIXED } : {}),
       createdAt: now,
       updatedAt: now,
     }
@@ -438,7 +466,7 @@ export class TusMarketplaceService {
     const merchant = await this.store.merchant.find(context.tenantId)
     if (!merchant || merchant.status !== 'approved' || merchant.locationId !== listing.locationId || merchant.cohort !== listing.cohort) throw new MarketplaceError(409, 'PUBLICATION_INELIGIBLE', 'merchant and listing facts are not publication eligible')
     if (listing.kind === 'product' && (listing.stock ?? 0) < 0) throw new MarketplaceError(400, 'INVALID_LISTING', 'product stock cannot be negative')
-    if (listing.kind === 'service' && (!listing.durationMinutes || !listing.capacity || listing.workingHours.length === 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service duration, capacity, and working hours are required')
+    if (listing.kind === 'service') validatePublishedService(listing)
     const published = { ...listing, contractVersion: TUS_CONTRACT_VERSION, published: true, updatedAt: new Date().toISOString() }
     return this.store.transaction(async (store) => {
       await store.listings.save(published)
@@ -454,9 +482,13 @@ export class TusMarketplaceService {
     const items = await Promise.all(listings.map(async (listing) => {
       const merchant = await this.store.merchant.find(listing.tenantId)
       if (!merchant || merchant.status !== MARKETPLACE_MERCHANT_STATUSES.APPROVED || merchant.cohort !== listing.cohort || merchant.operatingPolicyVersion !== listing.policyVersion) return null
+      if (merchant.merchantId !== listing.merchantId) return null
       if (listing.kind === 'product' && (listing.stock ?? 0) <= 0) return null
       if (filters.locationId !== undefined && filters.locationId !== listing.locationId) return null
       if (filters.cohort !== undefined && filters.cohort !== listing.cohort) return null
+      if (listing.kind === 'service') validatePublishedService(listing)
+      const calendar = listing.kind === 'service' ? await this.calendarResolver?.findPrimaryCalendar(listing.tenantId, listing.merchantId) : null
+      const availabilityStatus: MarketplaceAvailabilityStatus = calendar?.status === 'active' ? 'configured' : 'not_configured'
       return {
         contractVersion: TUS_CONTRACT_VERSION,
         listingId: listing.listingId,
@@ -473,12 +505,27 @@ export class TusMarketplaceService {
         priceSnapshot: structuredClone(listing.priceSnapshot),
         availabilityVersion: listing.availabilityVersion,
         policyVersion: listing.policyVersion,
+        published: listing.published,
         ...(listing.kind === 'product' ? { availableQuantity: Math.max(0, listing.stock ?? 0) } : {}),
-        ...(listing.kind === 'service' ? { durationMinutes: listing.durationMinutes!, capacity: listing.capacity! } : {}),
+        ...(listing.kind === 'service' ? {
+          ...(listing.durationMinutes === null ? {} : { durationMinutes: listing.durationMinutes }),
+          capacity: listing.capacity!,
+          workingHours: [...listing.workingHours],
+          bookingMode: resolvedListingBookingMode(listing),
+          ...(listing.estimatedDurationMinutes === null || listing.estimatedDurationMinutes === undefined ? {} : { estimatedDurationMinutes: listing.estimatedDurationMinutes }),
+          priceMode: listing.priceMode ?? MARKETPLACE_PRICE_MODES.FIXED,
+          availabilityStatus,
+          ...(availabilityStatus === 'configured' && calendar ? { calendarId: calendar.calendarId } : {}),
+        } : {}),
         timezone: merchant.timezone,
       }
     }))
     return { contractVersion: TUS_CONTRACT_VERSION, items: items.filter((item): item is ItemDescubrimiento => item !== null), evidence: 'local-deterministic' }
+  }
+
+  async findPublishedService(listingId: string): Promise<Publicacion | null> {
+    const listing = await this.store.listings.find(listingId)
+    return listing && listing.published && listing.kind === MARKETPLACE_LISTING_KINDS.SERVICE ? listing : null
   }
 
   async merchantOperations(context: TusAuthenticatedTenantContext): Promise<{ merchant: PerfilPrestador | null; listings: Publicacion[] }> {
@@ -526,6 +573,7 @@ export class TusMarketplaceService {
             productQuantities.set(listing.listingId, nextQuantity)
             expectedVersions.set(listing.listingId, listing.availabilityVersion)
           } else {
+            if ((listing.priceMode ?? MARKETPLACE_PRICE_MODES.FIXED) === MARKETPLACE_PRICE_MODES.REQUIRES_BUDGET) throw new MarketplaceError(409, 'BUDGET_REQUIRED', 'service requires a budget before booking', { listingId: listing.listingId })
             const bookings = await store.commitments.forListing(listing.listingId)
             const overlapping = bookings.filter((booking) => booking.slotStart && booking.slotEnd && overlaps(line.slotStart!, line.slotEnd!, booking.slotStart, booking.slotEnd)).length
             const overlappingInCheckout = commitments.filter((booking) => booking.listingId === listing.listingId && booking.slotStart && booking.slotEnd && overlaps(line.slotStart!, line.slotEnd!, booking.slotStart, booking.slotEnd)).length
@@ -564,7 +612,7 @@ export class TusMarketplaceService {
         await store.commitments.saveMany(commitments)
         await store.audit.append(audits)
         await store.outbox.append(createOutbox(input, MARKETPLACE_OUTBOX_EVENT_TYPES.COMMITMENTS_CREATED, 'commitment', input.cartId, audits.map((audit) => audit.auditId), commitments.map((commitment) => commitment.commitmentId)))
-         const response = { contractVersion: TUS_CONTRACT_VERSION, commitments, audits }
+        const response = { contractVersion: TUS_CONTRACT_VERSION, commitments, audits }
         await store.idempotency.complete({ tenantId: input.tenantId, key: input.idempotencyKey, response })
         return { status: 'executed' as const, ...response }
       }
@@ -636,7 +684,28 @@ function validateListingInput(input: EntradaPublicacion, merchant: PerfilPrestad
   if (!input.name.trim() || !input.description.trim() || input.locationId !== merchant.locationId || input.cohort !== merchant.cohort || !/^[A-Z]{3}$/u.test(input.currency.trim().toUpperCase()) || !Number.isFinite(input.price) || input.price <= 0) throw new MarketplaceError(400, 'INVALID_LISTING', 'listing commercial and location facts are invalid')
   normalizeMoney(input.currency, input.price, input.priceMinor)
   if (input.kind === 'product' && (!Number.isInteger(input.stock) || input.stock! < 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'product stock is required')
-  if (input.kind === 'service' && (!Number.isInteger(input.durationMinutes) || input.durationMinutes! <= 0 || !Number.isInteger(input.capacity) || input.capacity! <= 0 || !Array.isArray(input.workingHours) || input.workingHours.length === 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service duration, capacity, and working hours are required')
+  if (input.kind === 'service') {
+    resolveBookingMode(input)
+    if (!Number.isInteger(input.capacity) || input.capacity! <= 0 || !Array.isArray(input.workingHours) || input.workingHours.length === 0) throw new MarketplaceError(400, 'INVALID_LISTING', 'service capacity and working hours are required')
+    if (input.priceMode !== undefined && !Object.values(MARKETPLACE_PRICE_MODES).includes(input.priceMode)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service price mode is invalid')
+  }
+}
+
+function resolveBookingMode(input: Pick<EntradaPublicacion, 'bookingMode' | 'durationMinutes' | 'estimatedDurationMinutes'>): MarketplaceBookingMode {
+  const mode = input.bookingMode ?? (input.durationMinutes === undefined ? MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION : MARKETPLACE_BOOKING_MODES.FIXED_SHIFT)
+  if (!Object.values(MARKETPLACE_BOOKING_MODES).includes(mode)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service booking mode is invalid')
+  if (mode === MARKETPLACE_BOOKING_MODES.FIXED_SHIFT && (!Number.isInteger(input.durationMinutes) || input.durationMinutes! <= 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'fixed_shift services require durationMinutes')
+  if (mode === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION && (!Number.isInteger(input.estimatedDurationMinutes) || input.estimatedDurationMinutes! <= 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'variable_duration services require estimatedDurationMinutes')
+  return mode
+}
+
+function validatePublishedService(listing: Publicacion): void {
+  const mode = listing.bookingMode ?? (listing.durationMinutes === null ? MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION : MARKETPLACE_BOOKING_MODES.FIXED_SHIFT)
+  if (!Object.values(MARKETPLACE_BOOKING_MODES).includes(mode)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service booking mode is invalid')
+  if (!listing.capacity || listing.workingHours.length === 0) throw new MarketplaceError(400, 'INVALID_LISTING', 'service capacity and working hours are required')
+  if (mode === MARKETPLACE_BOOKING_MODES.FIXED_SHIFT && (!listing.durationMinutes || listing.estimatedDurationMinutes !== null && listing.estimatedDurationMinutes !== undefined)) throw new MarketplaceError(400, 'INVALID_LISTING', 'fixed_shift service duration is invalid')
+  if (mode === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION && (!listing.estimatedDurationMinutes || listing.durationMinutes !== null)) throw new MarketplaceError(400, 'INVALID_LISTING', 'variable_duration service duration is invalid')
+  if (listing.priceMode !== undefined && !Object.values(MARKETPLACE_PRICE_MODES).includes(listing.priceMode)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service price mode is invalid')
 }
 
 function normalizeMoney(currency: string, price: number, priceMinor?: bigint): MarketplaceMoneySnapshot {
@@ -650,7 +719,16 @@ function normalizeMoney(currency: string, price: number, priceMinor?: bigint): M
 
 function validateCheckoutLine(line: MarketplaceCheckoutLine, listing: Publicacion): void {
   if (line.context !== listing.kind || !Number.isInteger(line.quantity) || line.quantity <= 0) throw new MarketplaceError(400, 'INVALID', 'checkout context and quantity do not match the listing')
-  if (line.context === 'service' && (line.quantity !== 1 || !line.slotStart || !line.slotEnd || !validInterval(line.slotStart, line.slotEnd) || Date.parse(line.slotEnd) - Date.parse(line.slotStart) !== (listing.durationMinutes ?? 0) * 60 * 1000)) throw new MarketplaceError(400, 'INVALID', 'service checkout requires a valid slot matching the service duration')
+  if (line.context === 'service' && (line.quantity !== 1 || !line.slotStart || !line.slotEnd || !validInterval(line.slotStart, line.slotEnd) || Date.parse(line.slotEnd) - Date.parse(line.slotStart) !== effectiveListingDuration(listing) * 60 * 1000)) throw new MarketplaceError(400, 'INVALID', 'service checkout requires a valid slot matching the service duration')
+}
+
+function effectiveListingDuration(listing: Publicacion): number {
+  const duration = resolvedListingBookingMode(listing) === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION ? listing.estimatedDurationMinutes : listing.durationMinutes
+  return duration ?? 0
+}
+
+function resolvedListingBookingMode(listing: Publicacion): MarketplaceBookingMode {
+  return listing.bookingMode ?? (listing.durationMinutes === null ? MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION : MARKETPLACE_BOOKING_MODES.FIXED_SHIFT)
 }
 
 function hasLocationAccess(context: TusAuthenticatedTenantContext, locationId: string): boolean {

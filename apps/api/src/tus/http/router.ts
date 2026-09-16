@@ -362,7 +362,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
         createdAt: readString(body, 'createdAt') || new Date().toISOString(),
         lines,
       })
-      response.status(result.status === 'replay' ? 200 : 201).json(result)
+      response.status(result.status === 'replay' ? 200 : 201).json(proyectarCheckoutMercado(result))
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -380,7 +380,8 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      response.status(200).json(await requireMarketplace(application).customerCommitments(context))
+      const result = await requireMarketplace(application).customerCommitments(context)
+      response.status(200).json({ ...result, commitments: result.commitments.map((commitment) => isRecord(commitment) ? proyectarCompromiso(commitment) : commitment) })
     } catch (error) {
       sendMarketplaceError(response, error)
     }
@@ -398,7 +399,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      response.status(200).json(await requireMarketplace(application).customerCommitment(context, request.params['commitmentId'] ?? ''))
+      response.status(200).json(proyectarCompromiso(await requireMarketplace(application).customerCommitment(context, request.params['commitmentId'] ?? '')))
     } catch (error) {
       if (error instanceof MarketplaceError && error.code === 'FORBIDDEN') {
         await recordMarketplaceDenied(application, context, 'customer.commitment.read', request.params['commitmentId'] ?? '')
@@ -419,7 +420,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     } catch (error) { sendCalendarError(response, error) }
   })
 
-  router.get('/tus/v1/calendar/:calendarId/slots', async (request: Request, response: Response) => {
+  router.get(['/tus/v1/calendar/:calendarId/slots', '/tus/v1/mercado-servicios/listings/:listingId/slots', '/tus/v1/marketplace/listings/:listingId/slots'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasAnyPermission(context, ['tus:calendar:read', 'tus:marketplace:read']) || hasSpoofedAuthority({}, request, context)) {
       sendError(response, 403, 'FORBIDDEN', 'TUS calendar access is not authorized')
@@ -428,7 +429,15 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     const date = readQueryString(request.query['date'])
     if (!date) { sendError(response, 400, 'INVALID', 'date is required'); return }
     try {
-      response.status(200).json({ slots: await requireCalendar(application).slots(context, request.params['calendarId'] ?? '', date, readQueryString(request.query['now'])) })
+      const calendarId = request.params['calendarId'] ?? ''
+      const listingId = request.params['listingId'] ?? readQueryString(request.query['listingId'])
+      if (listingId) {
+        const listing = await requireMarketplace(application).findPublishedService(listingId)
+        if (!listing) throw new ErrorCalendario(404, 'NOT_FOUND', 'service publication was not found')
+        response.status(200).json({ slots: await requireCalendar(application).slotsForPublication(context, listing, calendarId || undefined, date, readQueryString(request.query['now'])) })
+        return
+      }
+      response.status(200).json({ slots: await requireCalendar(application).slots(context, calendarId, date, readQueryString(request.query['now'])) })
     } catch (error) { sendCalendarError(response, error) }
   })
 
@@ -443,8 +452,14 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     const requestHash = readString(body, 'requestHash')
     if (!idempotencyKey || !requestHash) { sendError(response, 400, 'INVALID', 'requestHash and idempotency-key are required'); return }
     try {
-      const result = await requireCalendar(application).book(context, { calendarId: readString(body, 'calendarId'), serviceId: readString(body, 'serviceId'), customerId: readString(body, 'customerId'), slotId: readString(body, 'slotId'), idempotencyKey, requestHash, now: readString(body, 'now') || new Date(now()).toISOString() })
-      response.status(result.status === 'replay' ? 200 : result.status === 'rejected' ? 409 : 201).json(result)
+      const listingId = readString(body, 'listingId')
+      const customerId = readString(body, 'customerId')
+      const slotId = readString(body, 'slotId')
+      const bookingInput = { customerId, slotId, idempotencyKey, requestHash, now: readString(body, 'now') || new Date(now()).toISOString() }
+      const result = listingId
+        ? await requireCalendar(application).bookPublication(context, await findPublishedService(application, listingId), { ...bookingInput, ...(readString(body, 'calendarId') ? { calendarId: readString(body, 'calendarId') } : {}) })
+        : await requireCalendar(application).book(context, { ...bookingInput, calendarId: readString(body, 'calendarId'), serviceId: readString(body, 'serviceId') })
+      response.status(result.status === 'replay' ? 200 : result.status === 'rejected' ? 409 : 201).json(proyectarResultadoReserva(result))
     } catch (error) { sendCalendarError(response, error) }
   })
 
@@ -1075,6 +1090,30 @@ function proyectarPublicacionMercado(listing: Publicacion | ItemDescubrimiento) 
   return publicListing
 }
 
+function proyectarResultadoReserva(result: unknown) {
+  if (!isRecord(result)) return result
+  if (result['status'] === 'replay' && isRecord(result['booking'])) return { ...result, booking: proyectarReserva(result['booking']) }
+  if (typeof result['bookingId'] === 'string') return proyectarReserva(result)
+  return result
+}
+
+function proyectarReserva(booking: Record<string, unknown>) {
+  const { priceSnapshot: _priceSnapshot, ...publicBooking } = booking
+  return publicBooking
+}
+
+function proyectarCheckoutMercado(result: { status: 'executed' | 'replay'; contractVersion: string; commitments: unknown[]; audits: unknown[] }) {
+  return {
+    ...result,
+    commitments: result.commitments.map((commitment) => isRecord(commitment) ? proyectarCompromiso(commitment) : commitment),
+  }
+}
+
+function proyectarCompromiso(commitment: object) {
+  const { priceSnapshot: _priceSnapshot, ...publicCommitment } = commitment as Record<string, unknown>
+  return publicCommitment
+}
+
 function requireCalendar(application: TusApplicationService) {
   if (!application.calendar) throw new ErrorCalendario(503, 'UNAVAILABLE', 'TUS calendar composition is unavailable')
   return application.calendar
@@ -1264,6 +1303,12 @@ function capacidadHabilitacionPorRuta(path: string): 'publication' | 'provider-a
 function routeIsGuardedByApplication(path: string, application: TusApplicationService): boolean {
   if (!application.evaluadorHabilitacion) return false
   return path.includes('/checkout') || path.includes('/marketplace/onboarding') || path.includes('/marketplace/listings') || path.includes('/mercado-servicios/onboarding') || path.includes('/mercado-servicios/listings')
+}
+
+async function findPublishedService(application: TusApplicationService, listingId: string): Promise<Publicacion> {
+  const listing = await requireMarketplace(application).findPublishedService(listingId)
+  if (!listing) throw new ErrorCalendario(404, 'NOT_FOUND', 'service publication was not found')
+  return listing
 }
 
 function tienePermisoHabilitacion(context: TusAuthenticatedTenantContext, capability: ReturnType<typeof capacidadHabilitacionPorRuta>): boolean {

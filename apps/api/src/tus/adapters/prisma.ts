@@ -135,7 +135,7 @@ interface DelegadoPrismaAuditoriaMercadoServicios {
 
 interface PrismaCalendarDelegate {
   upsert(input: { where: { id: string }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
-  findUnique(input: { where: { id: string } }): Promise<Record<string, unknown> | null>
+  findUnique(input: { where: { id: string } | { tenantId_prestadorId: { tenantId: string; prestadorId: string } } }): Promise<Record<string, unknown> | null>
 }
 
 interface PrismaCalendarRuleDelegate {
