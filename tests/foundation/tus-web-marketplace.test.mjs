@@ -54,7 +54,13 @@ test('WEB-02 preserves product checkout idempotency and service synthetic slot',
     const base = Date.parse('2026-09-16T12:00:00.000Z')
     const product = construirIntencionCheckout({ listingId: 'product-1', kind: 'product', availabilityVersion: 4 }, 'intent-product', base)
     const service = construirIntencionCheckout({ listingId: 'service-1', kind: 'service', availabilityVersion: 7, durationMinutes: 90 }, 'intent-service', base)
-    console.log(JSON.stringify({ product, service }))
+    const realSlot = construirIntencionCheckout(
+      { listingId: 'service-1', kind: 'service', availabilityVersion: 7, durationMinutes: 90 },
+      'intent-real-slot',
+      base,
+      { start: '2026-09-20T14:00:00.000Z', end: '2026-09-20T15:30:00.000Z' },
+    )
+    console.log(JSON.stringify({ product, service, realSlot }))
   `)
   assert.equal(result.product.idempotencyKey, 'tus:checkout:intent-product')
   assert.equal(result.product.cartId, 'cart-intent-product')
@@ -68,4 +74,8 @@ test('WEB-02 preserves product checkout idempotency and service synthetic slot',
   assert.equal(result.service.requestHash, 'discovery:service-1:7:2026-09-17T12:00:00.000Z')
   assert.equal(result.service.lines[0].slotStart, '2026-09-17T12:00:00.000Z')
   assert.equal(result.service.lines[0].slotEnd, '2026-09-17T13:30:00.000Z')
+
+  assert.equal(result.realSlot.requestHash, 'discovery:service-1:7:2026-09-20T14:00:00.000Z')
+  assert.equal(result.realSlot.lines[0].slotStart, '2026-09-20T14:00:00.000Z')
+  assert.equal(result.realSlot.lines[0].slotEnd, '2026-09-20T15:30:00.000Z')
 })

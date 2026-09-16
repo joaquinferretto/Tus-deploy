@@ -527,6 +527,67 @@ a {
   margin: 0;
 }
 
+.tus-calendar-panel {
+  display: grid;
+  gap: 18px;
+  grid-column: 1 / -1;
+}
+
+.tus-calendar-controls {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.tus-calendar-controls label {
+  display: grid;
+  font-size: 0.72rem;
+  font-weight: 800;
+  gap: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tus-calendar-controls input {
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.tus-calendar-slots {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.tus-calendar-slot {
+  align-items: center;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  min-height: 62px;
+  padding: 12px;
+}
+
+.tus-calendar-slot[data-selected='true'] {
+  background: var(--moss);
+  color: var(--paper);
+}
+
+.tus-calendar-slot span {
+  display: grid;
+  gap: 4px;
+}
+
+.tus-calendar-slot small {
+  font-size: 0.72rem;
+}
+
 .tus-action-button {
   background: var(--clay);
   border: 1px solid var(--clay);

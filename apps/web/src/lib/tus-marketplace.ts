@@ -3,6 +3,7 @@ import {
   type TusMarketplaceCheckoutInput,
   type TusMarketplaceDiscoveryItem,
   type TusMarketplaceLine,
+  type TusCalendarSlot,
 } from './tus-client'
 
 export type MercadoServiciosFilter = 'all' | 'products' | 'services'
@@ -44,17 +45,18 @@ export function crearEnlaceCompromiso(commitmentId: string): string {
 export function construirIntencionCheckout(
   publicacion: TusMarketplaceDiscoveryItem,
   intentId: string,
-  now = Date.now()
+  now = Date.now(),
+  franja?: Pick<TusCalendarSlot, 'start' | 'end'>
 ): TusMarketplaceCheckoutIntent {
   const normalizedIntentId = intentId.trim()
   if (normalizedIntentId.length === 0) throw new Error('checkout intent id is required')
   const slotStart =
-    publicacion.kind === 'service'
-      ? new Date(now + 24 * 60 * 60 * 1000).toISOString()
-      : undefined
+    publicacion.kind !== 'service'
+      ? undefined
+      : franja?.start ?? new Date(now + 24 * 60 * 60 * 1000).toISOString()
   const slotEnd =
     publicacion.kind === 'service' && slotStart !== undefined
-      ? new Date(Date.parse(slotStart) + (publicacion.durationMinutes ?? 0) * 60 * 1000).toISOString()
+      ? franja?.end ?? new Date(Date.parse(slotStart) + (publicacion.durationMinutes ?? 0) * 60 * 1000).toISOString()
       : undefined
   const lines: TusMarketplaceLine[] = [
     {

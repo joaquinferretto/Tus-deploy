@@ -56,6 +56,8 @@ export type TusMarketplaceDiscoveryItem = {
   durationMinutes?: number
   capacity?: number
   timezone: string
+  calendarId?: string
+  serviceId?: string
 }
 
 export type TusMarketplaceCheckoutInput = TusWebContext & {
@@ -192,6 +194,52 @@ export interface TusCustomerCommitmentsResponse {
   commitments: readonly CompromisoMercadoServicios[]
 }
 
+export interface TusCalendarSlot {
+  slotId: string
+  calendarId: string
+  serviceId: string
+  timezone: string
+  start: string
+  end: string
+  capacity: number
+}
+
+export interface TusCalendarSlotsResponse {
+  slots: readonly TusCalendarSlot[]
+}
+
+export interface TusCalendarBooking {
+  contractVersion: typeof TUS_CONTRACT_VERSION
+  bookingId: string
+  tenantId: string
+  ownerTenantId: string
+  serviceId: string
+  calendarId: string
+  customerId: string
+  startsAt: string
+  endsAt: string
+  status: 'confirmed' | 'cancelled' | 'cancelled-late' | 'no-show'
+  version: number
+  policyVersion: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type TusCalendarBookingResponse =
+  | TusCalendarBooking
+  | { status: 'replay'; booking: TusCalendarBooking }
+  | { status: 'rejected'; reason: 'capacity' }
+
+export type TusCalendarBookingInput = TusWebContext & {
+  calendarId: string
+  serviceId: string
+  customerId: string
+  slotId: string
+  idempotencyKey: string
+  requestHash: string
+  now: string
+}
+
 export type TusPosResponse = {
   status: 'accepted' | 'replayed' | 'pending' | 'conflict' | 'error' | 'queued-offline'
   operationId: string
@@ -205,6 +253,8 @@ export interface TusWebClient {
   merchantMarketplaceOperations(context: TusWebContext): Promise<TusMerchantOperationsResponse>
   customerCommitments(context: TusWebContext): Promise<TusCustomerCommitmentsResponse>
   marketplaceCustomerCommitments(context: TusWebContext): Promise<TusCustomerCommitmentsResponse>
+  calendarSlots(context: TusWebContext, calendarId: string, date: string, now?: string): Promise<TusCalendarSlotsResponse>
+  calendarBooking(input: TusCalendarBookingInput): Promise<TusCalendarBookingResponse>
   operationsReport(context: TusWebContext): Promise<TusOperationsReportResponse>
   discoverMarketplace(context: TusWebContext): Promise<TusDiscoveryResponse>
   checkoutMarketplace(input: TusMarketplaceCheckoutInput): Promise<TusCheckoutResult>
@@ -373,6 +423,20 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         ...context,
         method: 'GET',
         path: MARKETPLACE_PATHS.CUSTOMER_COMMITMENTS,
+      }),
+    calendarSlots: (context, calendarId, date, now) =>
+      transport.request<TusCalendarSlotsResponse>({
+        ...context,
+        method: 'GET',
+        path: `/tus/v1/calendar/${encodeURIComponent(calendarId)}/slots?date=${encodeURIComponent(date)}${now === undefined ? '' : `&now=${encodeURIComponent(now)}`}`,
+      }),
+    calendarBooking: async ({ calendarId, serviceId, customerId, slotId, idempotencyKey, requestHash, now, ...context }) =>
+      transport.request<TusCalendarBookingResponse>({
+        ...context,
+        idempotencyKey,
+        method: 'POST',
+        path: '/tus/v1/calendar/bookings',
+        body: { calendarId, serviceId, customerId, slotId, idempotencyKey, requestHash, now },
       }),
     operationsReport: (context) =>
       transport.request<TusOperationsReportResponse>({

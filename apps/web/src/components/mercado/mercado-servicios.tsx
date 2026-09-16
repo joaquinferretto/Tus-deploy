@@ -11,6 +11,7 @@ import {
   createTusWebFetchTransport,
   tusIntentFeedback,
   type TusCheckoutResult,
+  type TusCalendarSlot,
   type TusDiscoveryResponse,
   type TusIntentFeedback,
 } from '@/lib/tus-client'
@@ -24,6 +25,7 @@ import {
   type TusMarketplaceCheckoutIntent,
 } from '@/lib/tus-marketplace'
 import { sessionRequestContext, type TusWebSession } from '@/lib/tus-ui-contract'
+import { CalendarioCliente } from '../calendario/calendario-cliente'
 import { PublicacionCard, type PublicacionCardCopy } from './publicacion-card'
 import { TusIntentFeedbackView, TusStateMessage } from '../../app/tus/tus-ui'
 
@@ -145,7 +147,7 @@ export function MercadoServicios({ listingId }: { listingId?: string }): React.R
           items={visibleItems}
           onFilter={setFilter}
           onReload={retry}
-          onCheckout={(item) => void iniciarCheckout(item, session, setCheckoutLoading, setCheckoutFeedback, setCheckoutIntent, setCompromisoId)}
+          onCheckout={(item, slot) => void iniciarCheckout(item, session, setCheckoutLoading, setCheckoutFeedback, setCheckoutIntent, setCompromisoId, slot)}
           checkoutLoading={checkoutLoading}
           checkoutFeedback={checkoutFeedback}
           checkoutIntent={checkoutIntent}
@@ -163,7 +165,7 @@ export function MercadoServicios({ listingId }: { listingId?: string }): React.R
           checkoutFeedback={checkoutFeedback}
           checkoutIntent={checkoutIntent}
           compromisoId={compromisoId}
-          onCheckout={(item) => void iniciarCheckout(item, session, setCheckoutLoading, setCheckoutFeedback, setCheckoutIntent, setCompromisoId)}
+          onCheckout={(item, slot) => void iniciarCheckout(item, session, setCheckoutLoading, setCheckoutFeedback, setCheckoutIntent, setCompromisoId, slot)}
           onRetry={() => void reintentarCheckout(checkoutIntent, session, setCheckoutLoading, setCheckoutFeedback, setCompromisoId)}
           onRefresh={retry}
           onResolve={() => resolverFeedback(setCheckoutFeedback)}
@@ -200,7 +202,7 @@ function ListadoPublicaciones({
   items: TusDiscoveryResponse['items']
   onFilter: (filter: MercadoServiciosFilter) => void
   onReload: () => void
-  onCheckout: (item: TusDiscoveryResponse['items'][number]) => void
+  onCheckout: (item: TusDiscoveryResponse['items'][number], slot?: Pick<TusCalendarSlot, 'start' | 'end'>) => void
   checkoutLoading: boolean
   checkoutFeedback: TusIntentFeedback | null
   checkoutIntent: TusMarketplaceCheckoutIntent | null
@@ -289,7 +291,7 @@ function DetallePublicacion({
   checkoutFeedback: TusIntentFeedback | null
   checkoutIntent: TusMarketplaceCheckoutIntent | null
   compromisoId?: string
-  onCheckout: (item: TusDiscoveryResponse['items'][number]) => void
+  onCheckout: (item: TusDiscoveryResponse['items'][number], slot?: Pick<TusCalendarSlot, 'start' | 'end'>) => void
   onRetry: () => void
   onRefresh: () => void
   onResolve: () => void
@@ -319,6 +321,12 @@ function DetallePublicacion({
       </section>
     )
   }
+  const calendario =
+    publicacion.kind === 'service' &&
+    publicacion.calendarId !== undefined &&
+    publicacion.serviceId !== undefined
+      ? { calendarId: publicacion.calendarId, serviceId: publicacion.serviceId }
+      : null
   return (
     <section aria-labelledby="publicacion-title">
       <SectionHeading title="Publicación" />
@@ -337,9 +345,25 @@ function DetallePublicacion({
           copy={copyForPublicacion(publicacion)}
           detailHref={crearEnlacePublicacion(publicacion.listingId)}
           publicacion={publicacion}
-          onCheckout={() => onCheckout(publicacion)}
+          onCheckout={calendario === null ? () => onCheckout(publicacion) : undefined}
           checkoutLoading={checkoutLoading}
         />
+        {calendario === null ? null : (
+          <CalendarioCliente
+            calendarId={calendario.calendarId}
+            serviceId={calendario.serviceId}
+            onReservaConfirmada={(slot) => onCheckout(publicacion, slot)}
+          />
+        )}
+        {calendario === null && publicacion.kind === 'service' ? (
+          <aside className="tus-state-box" aria-labelledby="calendar-dependency-title">
+            <h2 id="calendar-dependency-title">Disponibilidad</h2>
+            <p>Esta publicación todavía no está vinculada a un calendario consultable desde discovery.</p>
+            <small className="tus-boundary-note">
+              DEPENDENCIA BACKEND: discovery debe entregar calendarId y serviceId para reemplazar la franja +24 h.
+            </small>
+          </aside>
+        ) : null}
         <aside className="tus-state-box" aria-labelledby="prestador-title">
           <h2 id="prestador-title">Prestador</h2>
           <p>Identificador disponible en la publicación:</p>
@@ -432,9 +456,10 @@ async function iniciarCheckout(
   setLoading: (loading: boolean) => void,
   setFeedback: (feedback: TusIntentFeedback) => void,
   setIntent: (intent: TusMarketplaceCheckoutIntent) => void,
-  setCompromisoId: (commitmentId: string | undefined) => void
+  setCompromisoId: (commitmentId: string | undefined) => void,
+  franja?: Pick<TusCalendarSlot, 'start' | 'end'>
 ): Promise<void> {
-  const intent = construirIntencionCheckout(publicacion, window.crypto.randomUUID())
+  const intent = construirIntencionCheckout(publicacion, window.crypto.randomUUID(), Date.now(), franja)
   setIntent(intent)
   setCompromisoId(undefined)
   await enviarCheckout(intent, session, setLoading, setFeedback, setCompromisoId)
