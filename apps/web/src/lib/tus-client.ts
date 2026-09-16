@@ -1,7 +1,7 @@
 import { TUS_CONTRACT_VERSION } from '@factory/contracts/tus'
 import type {
   MercadoPagoHandoff,
-  Compromiso,
+  CompromisoMercadoServicios,
   TusTenantContext,
   AccionWhatsApp,
 } from '@factory/contracts/tus'
@@ -111,7 +111,7 @@ export type TusIntentStatus = (typeof TUS_INTENT_STATUS)[keyof typeof TUS_INTENT
 export interface TusCheckoutAcknowledgement {
   status: 'accepted' | 'replayed'
   intentId: string
-  commitments: readonly Compromiso[]
+  commitments: readonly CompromisoMercadoServicios[]
 }
 
 export type TusCheckoutResult = TusCheckoutAcknowledgement | {
@@ -189,7 +189,7 @@ export interface TusOperationsReportResponse {
 }
 
 export interface TusCustomerCommitmentsResponse {
-  commitments: readonly Compromiso[]
+  commitments: readonly CompromisoMercadoServicios[]
 }
 
 export type TusPosResponse = {
@@ -231,7 +231,7 @@ export function parseTusCheckoutResponse(payload: unknown, fallbackIntentId: str
     return {
       status: status === 'executed' ? TUS_INTENT_STATUS.ACCEPTED : TUS_INTENT_STATUS.REPLAYED,
       intentId,
-      commitments: commitments as Compromiso[],
+      commitments: commitments as CompromisoMercadoServicios[],
     }
   }
   return { status: TUS_INTENT_STATUS.ERROR, intentId, reason: 'invalid_server_response' }
