@@ -33,6 +33,7 @@ import {
   tusIntentFeedback,
 } from '@/lib/tus-client'
 import { TusActionButton, TusIntentFeedbackView, TusStateMessage } from './tus-ui'
+import { PublicacionCard } from '../../components/mercado/publicacion-card'
 
 type Surface = 'discovery' | 'commitments' | 'operations'
 type DiscoveryFilter = 'all' | 'products' | 'services'
@@ -445,27 +446,20 @@ function DiscoverySurface({
           {items.map((item) => {
             const facts = resolveTusCatalogFacts(item)
             return (
-              <article className="tus-offer-card" data-kind={item.kind} key={item.listingId}>
-                <div className="tus-card-kicker">
-                  {facts.context} · {item.cohort}
-                </div>
-                <h3>{item.name}</h3>
-                <p>{item.description}</p>
-                <div className="tus-offer-meta">
-                  <strong>{facts.price}</strong>
-                  <span>{facts.availability}</span>
-                </div>
-                <TusActionButton
-                  disabled={checkoutLoading}
-                  loading={checkoutLoading}
-                  loadingLabel="Sending to TUS…"
-                  onClick={() => void onCheckout(item)}
-                  type="button"
-                >
-                  {item.kind === 'service' ? 'Request service slot' : 'Start product commitment'}
-                </TusActionButton>
-                <small className="tus-boundary-note">{facts.policy}</small>
-              </article>
+              <PublicacionCard
+                copy={{
+                  typeLabel: facts.context,
+                  availability: facts.availability,
+                  policy: facts.policy,
+                  actionLabel: item.kind === 'service' ? 'Request service slot' : 'Start product commitment',
+                }}
+                facts={facts}
+                kicker={`${facts.context} · ${item.cohort}`}
+                publicacion={item}
+                onCheckout={() => void onCheckout(item)}
+                checkoutLoading={checkoutLoading}
+                key={item.listingId}
+              />
             )
           })}
         </div>

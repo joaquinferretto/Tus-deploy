@@ -12,8 +12,8 @@ export function TusAppShell({ children }: { children: React.ReactNode }): React.
         </Link>
         <div className="tus-nav-links">
           <Link href="/tus">Workspace</Link>
-          <Link href="/tus?surface=discovery">Market</Link>
-          <Link href="/tus?surface=commitments">Commitments</Link>
+          <a href="/tus/mercado">Mercado</a>
+          <a href="/tus/compromisos">Compromisos</a>
           <Link href="/tus/operations">Operations</Link>
           <Link href="/tus/pos">POS</Link>
         </div>

@@ -494,6 +494,39 @@ a {
   font-size: 1.8rem;
 }
 
+.tus-publicacion-card h3 a {
+  color: inherit;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+}
+
+.tus-publicacion-facts {
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  gap: 8px 18px;
+  letter-spacing: 0.08em;
+  margin: 0 0 18px;
+  text-transform: uppercase;
+}
+
+.tus-publicacion-detail-link {
+  margin: 0 8px 10px 0;
+}
+
+.tus-detail-layout {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 7fr) minmax(240px, 5fr);
+  margin-bottom: 70px;
+}
+
+.tus-detail-layout .tus-offer-card,
+.tus-detail-layout .tus-state-box {
+  margin: 0;
+}
+
 .tus-action-button {
   background: var(--clay);
   border: 1px solid var(--clay);
@@ -843,6 +876,10 @@ a {
   .tus-offer-grid,
   .tus-commitment-list {
     margin-bottom: 58px;
+  }
+
+  .tus-detail-layout {
+    grid-template-columns: 1fr;
   }
 
   .tus-boundary-grid {
