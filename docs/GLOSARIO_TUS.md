@@ -16,6 +16,10 @@ El documento define el objetivo de normalización. No modifica por sí mismo có
 - Antes de traducir un término se debe confirmar su responsabilidad real en TUS; no se traducen palabras por similitud superficial.
 - La presencia de un término en este glosario no autoriza a crear una entidad, tabla, endpoint, clase o funcionalidad. El glosario únicamente normaliza nombres de conceptos existentes o respaldados explícitamente por la documentación funcional de TUS. La existencia real de cada concepto debe comprobarse durante el inventario previo a la implementación.
 
+La auditoría WEB-08 distingue los términos normativos de las capacidades implementadas. `Trabajo`, `Diagnóstico`,
+`Presupuesto` y `PresupuestoAceptado` permanecen como conceptos planificados hasta que existan contratos, persistencia y
+rutas verificables. No se deben presentar `TusJob`, `TareaEntrega` ni una confirmación WhatsApp como equivalentes.
+
 ## Convenciones de nombres
 
 ### TypeScript
@@ -215,6 +219,9 @@ aislada para consumidores existentes.
 | Cumplimiento | `Cumplimiento` | `Fulfillment` | Resultado de completar una obligación, entrega o servicio. | Finalización genérica |
 | Resultado de trabajo | `ResultadoTrabajo` | `Job Outcome` | Resultado documentado de la ejecución de un trabajo. | Salida, output |
 
+En WEB-08 no existe todavía un agregado `Trabajo` ni un `ResultadoTrabajo` persistido. `TusJob` identifica trabajo técnico
+de cola y `TareaEntrega` identifica fulfillment de delivery; ambos conservan sus responsabilidades actuales.
+
 ## Presupuestos
 
 | Concepto canónico | Identificador recomendado | Anterior | Definición simple | No usar como equivalente general |
@@ -222,6 +229,10 @@ aislada para consumidores existentes.
 | Presupuesto | `Presupuesto` | `Quote` | Propuesta de precio y condiciones para un producto o servicio. | Cotización, quote |
 | Línea de presupuesto | `LineaPresupuesto` | `Quote Line` | Concepto individual incluido en un presupuesto. | Ítem cotizado |
 | Presupuesto aceptado | `PresupuestoAceptado` | `Accepted Quote` | Presupuesto que el cliente aceptó y puede originar una operación. | Venta confirmada |
+
+La acción WhatsApp `quote`/`confirm` es una confirmación de canal con snapshot y expiración, no un `Presupuesto` canónico de
+servicio. El término `Presupuesto` requiere una futura relación explícita con publicación, compromiso, trabajo, importe,
+vigencia y versión aceptada.
 
 ## Evidencias
 
@@ -232,6 +243,9 @@ aislada para consumidores existentes.
 | Prueba | `Prueba` | `Proof` | Elemento usado para verificar algo cuando ese es su sentido específico. | Comprobante |
 | Evidencia de cumplimiento | `EvidenciaCumplimiento` | `Completion Evidence` | Evidencia de que una obligación o servicio fue completado. | Prueba de finalización |
 | Evidencia de habilitación | `EvidenciaHabilitacion` | `Readiness Evidence` | Evidencia utilizada para decidir si una capacidad puede operar. | Evidencia de preparación |
+
+La evidencia de cumplimiento vigente se enlaza a `Compromiso`; WEB-08 aún no define evidencia inicial/final enlazada a
+`Trabajo`.
 
 `Proof` no tiene una traducción automática. Se usa `Evidencia` cuando demuestra un hecho, `Comprobante` cuando es un documento o registro entregable y `Prueba` sólo cuando ese sea el sentido funcional real.
 

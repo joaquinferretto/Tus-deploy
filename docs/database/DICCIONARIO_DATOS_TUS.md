@@ -16,6 +16,11 @@
 > migración. D2 activa en la aplicación el uso canónico de campos existentes desde WEB-04D1; D3 conecta la superficie Web
 > con discovery, slots y bookings canónicos por `listingId`. El adapter Prisma traduce los valores físicos en español a
 > los valores contractuales vigentes.
+>
+> **Auditoría WEB-08 (2026-09-17, base `de0f5cb`).** Esta Build no agrega tablas, columnas, índices, constraints ni
+> migraciones. No existen en el modelo físico canónico `trabajos`, `diagnosticos`, `presupuestos` ni sus líneas/aceptaciones.
+> `TusJob` es una tabla técnica de cola; `confirmaciones_whatsapp` conserva snapshots expirable del canal y no es un
+> presupuesto comercial de servicio.
 
 ---
 
@@ -522,6 +527,10 @@ bookings canónicos; las reservas legacy pueden continuar con `servicio_id`.
 
 WEB-04D3 no agrega tablas, columnas, índices, constraints, relaciones físicas ni providers. La ausencia de agenda y el
 presupuesto requerido son estados de aplicación (`not_configured` y `BUDGET_REQUIRED`), no nuevos estados persistidos.
+
+WEB-08 mantiene esta frontera física: `BUDGET_REQUIRED` no implica una tabla de presupuesto. `compromisos_mercado_servicios`
+relaciona la publicación con el compromiso de checkout, pero no tiene identidad de `Trabajo`, diagnóstico, líneas de
+presupuesto, vigencia, versión aceptada ni evidencia de ejecución del servicio.
 
 ### 7.4 Entrega
 

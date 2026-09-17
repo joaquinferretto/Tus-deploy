@@ -1,8 +1,8 @@
 # Decisiones de producto TUS
 
 > **Fuente canonica de decisiones.** Una Build no puede introducir una decision de arquitectura, producto o
-> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-07`. Commit de referencia:
-> `e4869bf`; commit objetivo de esta Build: `feat(web): integrar flujo web del prestador`.
+> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-08` (auditoria/plan, sin implementacion).
+> Commit de referencia: `de0f5cb`; commit objetivo: `docs(tus): planificar ciclo de trabajo y presupuesto`.
 
 ## WEB-04D2: disponibilidad y reservas por Publicacion
 
@@ -224,6 +224,50 @@ Solo agrega el consumidor Web y sus pruebas focales sobre capacidades ya entrega
 WEB-07 agrega tipos de cliente, superficie Web, estilos y pruebas sobre rutas ya existentes. No modifica API, contracts
 públicos, schemas, migraciones, Prisma, adapters, providers ni flags de activación.
 
+## WEB-08: gate de capacidad y plan de trabajo/presupuesto
+
+**Estado:** auditada; no implementada porque las capacidades backend requeridas no son suficientes para exponer una Web
+honesta de Trabajo + Presupuesto + Aceptación.
+
+### W08-01: Trabajo no equivale a job técnico ni tarea de delivery
+
+- No existe un bounded context, contrato o modelo persistente canónico `Trabajo` para servicios.
+- `TusJob` es una cola técnica con intentos, leases y payload; no es una ejecución comercial.
+- `TareaEntrega` tiene relación con `Compromiso` y evidencia de delivery, pero no representa ejecución de un servicio.
+- No se crearán aliases ni pantallas que presenten cualquiera de esos modelos como `Trabajo`.
+
+### W08-02: Presupuesto requerido es un bloqueo, no un presupuesto
+
+- `requiere_presupuesto`, `presupuesto` y `requires_budget` bloquean slots y booking automático con `BUDGET_REQUIRED`.
+- WhatsApp ofrece `quote` y `confirm` con snapshot de listings, expiración y consumo en `ConfirmacionWhatsApp`; esa
+  capacidad está limitada al canal y no define el agregado comercial de presupuesto.
+- El presupuesto canónico futuro debe enlazar tenant, publicación, solicitud/compromiso, líneas, importe, moneda,
+  vigencia, versión, estado y actor de aceptación.
+
+### W08-03: Aceptación existente no cubre el presupuesto de servicio
+
+- Checkout confirma compromisos y WhatsApp confirma una instantánea del canal.
+- No existe una operación canónica para aceptar una versión de presupuesto de servicio, crear o enlazar el `Trabajo` y
+  rechazar versiones obsoletas con control de concurrencia.
+- La aceptación futura deberá ser explícita, tenant-scoped, idempotente y auditable.
+
+### W08-04: Evidencia y cierre permanecen ligados al compromiso
+
+- `POST /tus/finance/evidence` persiste evidencia financiera por `commitmentId` y admite `check-in`, `completion` y
+  `delivery-accepted`.
+- `POST /tus/finance/confirmations` confirma completion para reglas financieras; no cierra un trabajo de servicio.
+- `fulfilled`, `released` y `compensated` son estados de `Compromiso`, no estados de `Trabajo`.
+- WEB-08 no reutilizará evidencia financiera o delivery sin una relación de dominio explícita.
+
+### W08-05: Implementación diferida y unidades aprobadas para planificación
+
+- **WEB-08A:** modelo de dominio y contracts de Trabajo, Diagnóstico, Presupuesto, aceptación, evidencia y cierre.
+- **WEB-08B:** API, persistencia, ownership, idempotencia, versionado optimista y migraciones forward-only.
+- **WEB-08C:** Web prestador para solicitud, diagnóstico, presupuesto y ejecución.
+- **WEB-08D:** Web cliente para lectura/aceptación, agenda, evidencia y cierre.
+- No se implementan rutas, modelos, migraciones ni pantallas en esta auditoría.
+- Pagos, settlement, Mercado Pago y providers continúan fuera de alcance.
+
 ## Alcance de la Build
 
 Incluido:
@@ -242,6 +286,7 @@ No incluido:
 - D1 o reset de base de datos;
 - activación de producción, proveedores o jobs;
 - traducción breaking de `listingId`, `calendarId` o `serviceId` en payloads existentes.
+- implementación funcional de WEB-08A–D; esta Build solo registra el plan y el bloqueo backend.
 
 ## Evidencia de implementación
 

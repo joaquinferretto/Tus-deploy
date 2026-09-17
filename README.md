@@ -321,6 +321,11 @@ productos y servicios, pero no crea calendarios: aunque existe la mutación de c
 confirmar una agenda sin riesgo de duplicarla. Un servicio sin agenda activa permanece `not_configured` y no ofrece slots
 sintéticos.
 
+La auditoría WEB-08 confirmó que todavía no existe un flujo Web canónico de solicitud, diagnóstico, presupuesto, aceptación
+o trabajo. WhatsApp dispone de una confirmación de cotización limitada al canal, pero no reemplaza un presupuesto de servicio
+versionado y enlazado a publicación/compromiso. La Web no agrega botones ni endpoints para cubrir ese vacío; el plan WEB-08A–D
+queda documentado en `docs/ROADMAP_TUS.md`.
+
 ## API HTTP
 
 ### Entrada del servidor
