@@ -11,6 +11,11 @@
 > **Nomenclatura:** todo nombre de tabla, columna, índice, unique y FK controlado por TUS está en
 > español `snake_case`. Se conservan únicamente excepciones técnicas justificadas: `id`, `tenant_id`,
 > `actor_id`, `POS`, `WhatsApp` y `sla`. Los **valores** externos/técnicos congelados NO se traducen.
+>
+> **Alcance WEB-04D2 (2026-09-16, commit `65df852`).** Esta Build no modifica el modelo físico ni crea una
+> migración. Activa el uso canónico en aplicación de campos existentes desde WEB-04D1: modalidades de
+> `publicaciones`, agenda por `calendarios.prestador_id` y asociación `reservas.publicacion_id`. El adapter Prisma
+> traduce los valores físicos en español a los valores contractuales vigentes.
 
 ---
 
@@ -124,11 +129,11 @@ Deja trazabilidad de los renombres físicos aplicados por la migración. Muestra
 | `estimatedDurationMinutes` | `duracion_estimada_minutos` | publicaciones |
 | `bookingMode` | `modalidad_reserva` | publicaciones |
 | `priceMode` | `modalidad_precio` | publicaciones |
-| `calendarId` | `calendario_id` | reservas (futuro/contrato) |
+| `calendarId` | `calendario_id` | reservas (contrato canónico) |
 | `providerId` | `prestador_id` | calendarios |
 | `granularityMinutes` | `granularidad_minutos` | calendarios |
 | `bufferMinutes` | `buffer_minutos` | calendarios |
-| `listingId` | `publicacion_id` | reservas (futuro/contrato) |
+| `listingId` | `publicacion_id` | reservas (contrato canónico) |
 | `workingHours` | `horario_trabajo` | publicaciones |
 | `quantity` | `cantidad` | compromisos_mercado_servicios, lineas_factura |
 | `slotStart` / `slotEnd` | `franja_inicio` / `franja_fin` | compromisos_mercado_servicios |
@@ -487,7 +492,8 @@ WHERE l.id IS NULL;
 **`publicaciones`** — Oferta visible (ex `TusListing`).
 - PK `id`; FK física actual `(tenant_id, prestador_id) → prestadores`, `onDelete RESTRICT`.
 - La relación anterior por `tenantId` fue reemplazada por el mapping Prisma `Publicacion.prestador`.
-- Para publicaciones de servicio, `modalidad_reserva` y `modalidad_precio` son configuraciones comerciales nullable durante la transición; `duracion_estimada_minutos` solo aplica a modalidades estimadas.
+- Para publicaciones de servicio, `modalidad_reserva` y `modalidad_precio` son configuraciones comerciales nullable durante la transición. Los valores físicos canónicos son `turno_fijo`/`duracion_estimada` y `precio_fijo`/`presupuesto`; el adapter los expone como `fixed_shift`/`variable_duration` y `fixed`/`requires_budget`.
+- `duracion_minutos` solo aplica a `turno_fijo`; `duracion_estimada_minutos` solo aplica a `duracion_estimada`.
 - `horario_trabajo` permanece legacy y no es la fuente canónica de disponibilidad nueva.
 
 **`compromisos_mercado_servicios`** — Línea/compromiso de checkout (ex `TusMarketplaceCommitment`).
@@ -509,6 +515,10 @@ WHERE l.id IS NULL;
 - `servicio_id` permanece nullable y legacy, sin FK canónica a `TusService`.
 **`reglas_calendario`** / **`excepciones_calendario`** — Hijos; FK físicas actuales CASCADE.
 **`reservas`** — FK física actual `calendario_id → calendarios` RESTRICT y nueva FK nullable `(tenant_id, publicacion_id) → publicaciones` RESTRICT; `cliente_id` externa/lógica; `servicio_id` legacy.
+
+En WEB-04D2 la agenda se resuelve por `(tenant_id, prestador_id)`. El `calendarId` externo es una comprobación opcional de
+la agenda encontrada, no una autoridad para cambiar de prestador. `publicacion_id` ya existente se escribe para
+bookings canónicos; las reservas legacy pueden continuar con `servicio_id`.
 
 ### 7.4 Entrega
 

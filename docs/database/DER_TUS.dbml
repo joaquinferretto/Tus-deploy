@@ -19,6 +19,10 @@
 // Los VALORES externos/técnicos congelados NO se traducen (solo el nombre de columna).
 //
 // Utilizable directamente en dbdiagram.io
+//
+// WEB-04D2 (2026-09-16, commit 65df852) no agrega tablas, columnas, índices,
+// constraints ni migraciones. Formaliza el uso de campos ya existentes desde
+// WEB-04D1 para Publicacion, agenda principal y Reserva.
 
 // ============================================================
 // MERCADO
@@ -64,8 +68,8 @@ Table publicaciones {
   duracion_minutos int [null, note: 'ex durationMinutes']
   duracion_estimada_minutos int [null, note: 'duración estimada; no reemplaza diagnóstico']
   capacidad int [null, note: 'ex capacity']
-  modalidad_reserva varchar [null, note: 'turno_fijo | visita_diagnostico | duracion_estimada | requiere_presupuesto']
-  modalidad_precio varchar [null, note: 'precio_fijo | precio_desde | por_hora | presupuesto']
+  modalidad_reserva varchar [null, note: 'fisico canonico: turno_fijo | duracion_estimada; adapter -> fixed_shift | variable_duration']
+  modalidad_precio varchar [null, note: 'fisico canonico: precio_fijo | presupuesto; adapter -> fixed | requires_budget']
   horario_trabajo json [note: 'ex workingHours; LEGACY']
   fecha_creacion timestamp [note: 'ex createdAt']
   fecha_actualizacion timestamp [note: 'ex updatedAt']

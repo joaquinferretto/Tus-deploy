@@ -662,7 +662,12 @@ pnpm run security:scan
 
 ## Documentacion relacionada
 
-- `ARCHITECTURE.md`: principios generales y contexto historico de arquitectura.
+- `ARCHITECTURE.md`: arquitectura implementada, decisiones D2 y límites conocidos.
+- `docs/DECISIONES_PRODUCTO_TUS.md`: decisiones canónicas de producto y dominio por Build.
+- `docs/ROADMAP_TUS.md`: estado de fases, pendientes y bloqueos.
+- `docs/GLOSARIO_TUS.md`: terminología normativa de TUS.
+- `docs/database/DER_TUS.dbml`: modelo relacional objetivo y estado físico etiquetado.
+- `docs/database/DICCIONARIO_DATOS_TUS.md`: semántica de datos, FKs y deuda legacy.
 - `AGENTS.md`: reglas de ejecucion para agentes y procesos persistentes.
 - `.env.example`: variables locales y limites de configuracion.
 - `packages/contracts/`: contratos TypeScript y JSON Schema.

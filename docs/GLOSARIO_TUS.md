@@ -147,6 +147,24 @@ Conservar también `OAuth`, `OIDC`, `PKCE`, `MFA`, `RAG`, `POS`, `SDK`, `API`, `
 | Disponibilidad | `Disponibilidad` | `Availability` | Indicación de cuándo o bajo qué condiciones puede prestarse o venderse algo. | Existencia |
 | Zona de servicio | `ZonaServicio` | `Service Area` | Área geográfica donde un prestador puede prestar un servicio. | Área del proveedor |
 
+### Agenda, disponibilidad y reserva de publicaciones
+
+| Concepto canónico | Identificador recomendado | Anterior o contrato | Definición simple | Regla |
+| --- | --- | --- | --- | --- |
+| Calendario | `Calendario` | `Calendar` | Agenda que contiene reglas, excepciones y reservas de disponibilidad. | Es una entidad de persistencia; no equivale por sí sola a una publicación. |
+| Agenda principal | `AgendaPrincipal` | `Primary Calendar` | Única agenda activa resuelta para un prestador dentro de un tenant. | Se obtiene por `(tenantId, prestadorId)`; no se elige arbitrariamente por `calendarId`. |
+| Franja | `Franja` | `Slot` | Intervalo posible de inicio y fin generado por una agenda y una publicación. | Su identidad vigente es `calendarId:listingId:start`. |
+| Modalidad de reserva | `ModalidadReserva` | `bookingMode` | Regla que determina la duración efectiva de una reserva de servicio. | Los valores públicos vigentes son `fixed_shift` y `variable_duration`. |
+| Turno fijo | `TurnoFijo` | `fixed_shift` | Modalidad que exige `durationMinutes` positivo. | Se conserva el valor del contrato externo. |
+| Duración variable | `DuracionVariable` | `variable_duration` | Modalidad que exige `estimatedDurationMinutes` positivo. | Se conserva el valor del contrato externo. |
+| Modalidad de precio | `ModalidadPrecio` | `priceMode` | Regla que determina si una publicación puede reservarse automáticamente. | Los valores públicos vigentes son `fixed` y `requires_budget`. |
+| Presupuesto requerido | `PresupuestoRequerido` | `requires_budget` | Estado comercial que impide slots y reserva automática hasta contar con presupuesto. | El backend responde `BUDGET_REQUIRED`. |
+| Estado de disponibilidad | `EstadoDisponibilidad` | `availabilityStatus` | Indica si una publicación de servicio tiene agenda activa. | `configured` debe incluir `calendarId`; `not_configured` no debe incluirlo. |
+| Identificador de publicación | `listingId` | `listingId` | Identificador de contrato de una `Publicacion`. | Se mantiene por compatibilidad contractual; no reemplazarlo por `serviceId`. |
+
+`serviceId` es un identificador legacy del calendario. No es la identidad canónica de una publicación de servicio y
+no debe usarse para crear nuevas relaciones o reservas.
+
 ## Mercado de servicios
 
 **Identificador recomendado:** `MercadoServicios`
