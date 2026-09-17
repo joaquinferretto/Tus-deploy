@@ -1,10 +1,13 @@
 import { TUS_CONTRACT_VERSION } from '@factory/contracts/tus'
 import type {
+  ComprobantePOS,
+  DispositivoPOS,
   MercadoPagoHandoff,
   CompromisoMercadoServicios,
   ItemDescubrimientoMercadoServicios,
   LineaConfirmacionCompraMercadoServicios,
   RespuestaDescubrimientoMercadoServicios,
+  SesionPOS,
   TusTenantContext,
   AccionWhatsApp,
 } from '@factory/contracts/tus'
@@ -248,6 +251,16 @@ export type TusPosResponse = {
   receipt?: Record<string, unknown>
 }
 
+export type TusPosOperationStatus = {
+  status: 'accepted' | 'pending' | 'conflict' | 'not_found' | 'error'
+  operationId: string
+  reason?: string
+  receipt?: ComprobantePOS
+}
+
+export type TusPosDevice = DispositivoPOS
+export type TusPosSession = SesionPOS
+
 export interface TusWebClient {
   discover(context: TusWebContext): Promise<TusDiscoveryResponse>
   merchantOperations(context: TusWebContext): Promise<TusMerchantOperationsResponse>
@@ -261,7 +274,11 @@ export interface TusWebClient {
   discoverMarketplace(context: TusWebContext): Promise<TusDiscoveryResponse>
   checkoutMarketplace(input: TusMarketplaceCheckoutInput): Promise<TusCheckoutResult>
   whatsappPaymentHandoff(input: TusWhatsAppHandoffInput): Promise<TusWhatsAppHandoffResponse | MercadoPagoHandoff>
+  registerPosDevice(input: TusWebContext & { deviceId: string; label: string; fingerprint: string }): Promise<TusPosDevice>
+  openPosSession(input: TusWebContext & { sessionId: string; deviceId: string; shiftId: string }): Promise<TusPosSession>
+  closePosSession(context: TusWebContext, sessionId: string): Promise<TusPosSession>
   recordManualOperation(operation: TusPosOperation): Promise<TusPosResponse>
+  posOperationStatus(context: TusWebContext, operationId: string): Promise<TusPosOperationStatus>
 }
 
 export function createStableIdempotencyKey(scope: string, intentId: string): string {
@@ -301,6 +318,27 @@ export function parseTusPosResponse(payload: unknown, fallbackOperationId: strin
   }
   if ((status === 'pending' || status === 'conflict' || status === 'error') && typeof record['reason'] === 'string') return { status, operationId, reason: record['reason'] }
   return { status: 'error', operationId, reason: 'invalid_server_response' }
+}
+
+export function parseTusPosOperationStatus(payload: unknown, fallbackOperationId: string): TusPosOperationStatus {
+  const record = asRecord(payload)
+  const operationId = typeof record['operationId'] === 'string' && record['operationId'].trim().length > 0
+    ? record['operationId'].trim()
+    : fallbackOperationId
+  const status = record['status']
+  const reason = typeof record['reason'] === 'string' ? record['reason'] : undefined
+  if (status === 'accepted') {
+    const receipt = asRecord(record['receipt'])
+    return {
+      status,
+      operationId,
+      ...(Object.keys(receipt).length === 0 ? {} : { receipt: receipt as unknown as ComprobantePOS }),
+    }
+  }
+  if (status === 'pending' || status === 'conflict' || status === 'not_found') {
+    return { status, operationId, ...(reason === undefined ? {} : { reason }) }
+  }
+  return { status: 'error', operationId, reason: reason ?? 'invalid_server_response' }
 }
 
 export function classifyTusRequestError(error: unknown, intentId: string): TusIntentFeedback {
@@ -401,6 +439,34 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         ...(accessToken === undefined ? {} : { accessToken }),
       })
       return parseTusPosResponse(response, operation.operationId)
+    },
+    registerPosDevice: ({ deviceId, label, fingerprint, ...context }) =>
+      transport.request<TusPosDevice>({
+        ...context,
+        method: 'POST',
+        path: '/tus/v1/pos/devices',
+        body: { deviceId, label, fingerprint },
+      }),
+    openPosSession: ({ sessionId, deviceId, shiftId, ...context }) =>
+      transport.request<TusPosSession>({
+        ...context,
+        method: 'POST',
+        path: '/tus/v1/pos/sessions',
+        body: { sessionId, deviceId, shiftId },
+      }),
+    closePosSession: (context, sessionId) =>
+      transport.request<TusPosSession>({
+        ...context,
+        method: 'POST',
+        path: `/tus/v1/pos/sessions/${encodeURIComponent(sessionId)}/close`,
+      }),
+    posOperationStatus: async (context, operationId) => {
+      const response = await transport.request<unknown>({
+        ...context,
+        method: 'GET',
+        path: `/tus/v1/pos/operations/${encodeURIComponent(operationId)}/status`,
+      })
+      return parseTusPosOperationStatus(response, operationId)
     },
     merchantOperations: (context) =>
       transport.request<TusMerchantOperationsResponse>({
@@ -585,6 +651,7 @@ const tusClientModule = {
   joinTusApiUrl,
   normalizeTusApiBaseUrl,
   parseTusCheckoutResponse,
+  parseTusPosOperationStatus,
   parseTusPosResponse,
   tusIntentFeedback,
 }

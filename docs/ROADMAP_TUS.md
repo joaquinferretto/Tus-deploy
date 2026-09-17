@@ -1,7 +1,7 @@
 # Roadmap de TUS
 
-> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Build actual: `WEB-04D3`. Commit base:
-> `5f56c84`; commit objetivo: `feat(web): usar agenda del prestador en servicios`.
+> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Build actual: `WEB-05`. Commit base:
+> `7b71ebd`; commit objetivo: `feat(web): refinar flujo operativo del pos`.
 
 ## Estado de fases
 
@@ -14,6 +14,7 @@
 | WEB-04D1 | Schema/migración preparada | Modelo Prisma/DB y migración en `29e8977`; aplicación física al target pendiente. |
 | WEB-04D2 | Ajuste backend entregado | Disponibilidad y reserva canónicas por `listingId`; base `5f56c84`, modalidades físicas y concurrencia alineadas. |
 | WEB-04D3 | Completada | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico. |
+| WEB-05 | Completada | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider. |
 
 ## WEB-04D2 entregado
 
@@ -43,6 +44,23 @@ Evidencia de cierre:
 - smoke Web HTTP 200 en `/`, `/tus/mercado` y `/tus/mercado/listing-smoke`;
 - commit objetivo `feat(web): usar agenda del prestador en servicios`, sin push.
 
+## WEB-05: POS refinado
+
+- `/tus/pos` abre y cierra una sesión real mediante las rutas existentes de dispositivo y sesión;
+- las operaciones nuevas usan el `deviceId` y `shiftId` devueltos por la sesión, no identificadores de turno sintéticos;
+- la lista visible se limita a operaciones de la visita actual porque el backend no expone un listado HTTP de operaciones del día;
+- el estado de una operación se refresca con `GET /tus/v1/pos/operations/:operationId/status` sin reenviar el `POST`;
+- un retry conserva `operationId` e `idempotencyKey`, y los conflictos permanecen como revisión requerida;
+- no se agregan endpoints, contratos, migraciones, datos persistentes locales ni providers.
+
+Evidencia de cierre WEB-05:
+
+- tests focales Web POS: 6/6 pass;
+- tests POS/delivery/durabilidad: 28/31 pass; tres 404 HTTP históricos de Delivery/POS permanecen como baseline documentada;
+- typecheck Web, ESLint focal y build Web de 17 rutas pass;
+- smoke HTTP `/tus/pos` devuelve 200 con Next ya iniciado en `localhost:3100`;
+- el servidor Web no representa evidencia de producción ni de provider habilitado.
+
 ### Validación operativa posterior
 
 Pendiente cuando exista un target autorizado:
@@ -67,6 +85,13 @@ Cada Build que cambie arquitectura, producto o dominio debe actualizar este arch
 `docs/DECISIONES_PRODUCTO_TUS.md`, además de `ARCHITECTURE.md`, `docs/GLOSARIO_TUS.md` y la documentación DB si
 corresponde. La fecha, la fase, el commit y los documentos modificados deben quedar indicados antes del commit
 final.
+
+## Documentos modificados en WEB-05
+
+- `README.md` — capacidades y límites de la superficie POS Web.
+- `ARCHITECTURE.md` — sesión, operaciones y estado POS Web.
+- `docs/DECISIONES_PRODUCTO_TUS.md` — decisiones y límites de WEB-05.
+- `docs/ROADMAP_TUS.md` — estado y evidencia de WEB-05.
 
 ## Documentos modificados en WEB-04D3
 

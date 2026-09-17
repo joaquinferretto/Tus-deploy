@@ -282,7 +282,7 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 | `/tus/compromisos`                | Lista de compromisos del cliente.                                                     |
 | `/tus/compromisos/{commitmentId}` | Detalle de un compromiso.                                                             |
 | `/tus/operations`                 | Reporte operativo.                                                                    |
-| `/tus/pos`                        | Superficie POS.                                                                       |
+| `/tus/pos`                        | POS Web: sesión real, operaciones idempotentes y estado verificable.                   |
 
 ### Como trabaja el cliente
 
@@ -294,6 +294,10 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 6. Las intenciones de checkout y reserva conservan la misma clave para retry y replay.
 7. Los servicios consultan slots reales por `listingId`, reservan antes de generar checkout y conservan su intervalo.
 8. `tus-ui.tsx` representa estados, errores, live regions, skip link y acciones accesibles.
+
+En `/tus/pos`, la Web abre/cierra la sesión POS real antes de permitir operaciones, conserva la identidad idempotente al
+reintentar y consulta el estado individual sin reenviar la operación. El listado visible se limita a la visita actual porque
+el backend no expone todavía una lectura HTTP tenant-scoped del historial diario; no se inventa ese endpoint.
 
 ### Limites conocidos de la web
 

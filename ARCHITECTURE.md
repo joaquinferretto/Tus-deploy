@@ -1,7 +1,7 @@
 # Arquitectura de TUS
 
 > **Fuente canonica.** Este documento describe la arquitectura implementada de TUS y sus limites conocidos.
-> Ultima actualizacion: 2026-09-17. Build: `WEB-04D3`. Commit base: `5f56c84`.
+> Ultima actualizacion: 2026-09-17. Build: `WEB-05`. Commit base: `7b71ebd`.
 
 ## Proposito y limites
 
@@ -236,6 +236,20 @@ constituyen una segunda fuente de verdad.
 WEB-04D3 no cambia persistencia, migraciones, adapters ni providers; adapta consumidores Web a los contratos y rutas entregados
 en D2.
 
+## WEB-05: POS Web refinado
+
+La superficie `/tus/pos` consume únicamente capacidades POS ya expuestas por la API:
+
+1. Registra o actualiza el dispositivo Web con `POST /tus/v1/pos/devices`.
+2. Abre y cierra la sesión con `POST /tus/v1/pos/sessions` y `POST /tus/v1/pos/sessions/:sessionId/close`.
+3. Construye cada operación con el `deviceId` y `shiftId` de la sesión confirmada.
+4. Consulta el estado individual con `GET /tus/v1/pos/operations/:operationId/status`.
+
+La lista de operaciones del Web se limita al ciclo actual porque el router no ofrece un `GET` tenant-scoped para listar
+operaciones, recibos o sesiones. La UI no fabrica un historial del día ni intenta leer Prisma desde el cliente.
+Los retries conservan la identidad idempotente original; `conflict`, `pending`, `not_found` y error de red se mantienen
+visibles sin afirmar éxito. No se agregan rutas API, contratos, migraciones, providers ni hardware.
+
 La política de migración TUS es forward-only y no permite editar migraciones históricas ni replayar indiscriminadamente
 con `prisma migrate deploy` sobre una base con historial divergente. `render.yaml` todavía declara ese comando como
 pre-deploy y permanece como deuda operativa documentada.
@@ -255,7 +269,7 @@ pre-deploy y permanece como deuda operativa documentada.
 
 La Web ya conecta el journey nuevo con discovery, slots, booking y checkout por `listingId`. La ruta de calendario legacy
 `calendarId + serviceId` sigue disponible para consumidores existentes y queda aislada del flujo canónico. La activación HTTP
-de TUS y el guard de readiness siguen dependiendo de sus flags y evidencias; D3 no cambia esa política.
+de TUS y el guard de readiness siguen dependiendo de sus flags y evidencias; D3 y WEB-05 no cambian esa política.
 
 ## Validacion y evidencia
 
@@ -273,6 +287,10 @@ typechecks Contracts/API/Web; builds Contracts/API; 98 JSON Schemas; ESLint foca
 deshabilitado por la limitación de symlinks `EPERM` de Windows; y smoke HTTP 200 en tres rutas Web. La cobertura incluye
 checkout directo de productos, slot real de servicios, invalidación de intenciones al cambiar de franja, intervalo confirmado
 por booking, estados `not_configured`/`BUDGET_REQUIRED`, payload canónico sin `serviceId` y ausencia de fechas sintéticas.
+
+WEB-05 fue validada con 6/6 tests Web POS, typecheck Web, ESLint focal, build Web de 17 rutas con standalone deshabilitado
+por la limitación de symlinks `EPERM` de Windows y smoke HTTP 200 en `/tus/pos`. Las pruebas POS/delivery/durabilidad
+mantienen tres 404 HTTP históricos documentados como baseline; el dominio POS y sus pruebas restantes pasan.
 
 La suite global no se considera verde: su runner excede el timeout configurado y contiene gates separados por
 seguridad, imports TS sin extensión, disponibilidad de `pnpm` y smoke PostgreSQL. Esos resultados no se mezclan

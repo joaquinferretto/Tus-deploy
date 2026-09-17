@@ -872,6 +872,59 @@ a {
   margin: 24px 0;
 }
 
+.tus-pos-workspace {
+  display: grid;
+  gap: 54px;
+}
+
+.tus-pos-session,
+.tus-pos-recent {
+  min-width: 0;
+}
+
+.tus-pos-session-state {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  padding: 24px 0;
+}
+
+.tus-pos-session-state > div {
+  display: grid;
+  gap: 6px;
+}
+
+.tus-pos-session-state strong,
+.tus-pos-operation-list strong {
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  font-size: 1.4rem;
+  font-weight: 400;
+}
+
+.tus-pos-session-state span,
+.tus-pos-session-state small,
+.tus-pos-operation-list time,
+.tus-pos-operation-list span {
+  line-height: 1.45;
+}
+
+.tus-pos-session-state[data-status='open'] {
+  border-bottom-color: var(--moss);
+}
+
+.tus-pos-panel fieldset {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.tus-pos-panel fieldset:disabled {
+  opacity: 0.58;
+}
+
 .tus-pos-controls label {
   display: grid;
   font-size: 0.72rem;
@@ -904,6 +957,38 @@ a {
   min-width: 0;
   overflow-wrap: anywhere;
   line-height: 1.5;
+}
+
+.tus-pos-operation-list {
+  list-style: none;
+  margin: 24px 0 0;
+  padding: 0;
+}
+
+.tus-pos-operation-list li {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 18px 0;
+}
+
+.tus-pos-operation-list li > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.tus-pos-operation-list [data-status='accepted'],
+.tus-pos-operation-list [data-status='replayed'] {
+  color: var(--moss);
+}
+
+.tus-pos-operation-list [data-status='conflict'],
+.tus-pos-operation-list [data-status='error'] {
+  color: #7c2d26;
 }
 
 .tus-feedback-conflict,
@@ -949,6 +1034,17 @@ a {
 
   .tus-workspace-header h1 {
     margin-bottom: 44px;
+  }
+
+  .tus-pos-session-state,
+  .tus-pos-operation-list li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tus-pos-session-state .tus-action-button,
+  .tus-pos-operation-list .tus-action-button {
+    width: 100%;
   }
 
   .tus-offer-card:nth-child(n),

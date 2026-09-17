@@ -1,8 +1,8 @@
 # Decisiones de producto TUS
 
 > **Fuente canonica de decisiones.** Una Build no puede introducir una decision de arquitectura, producto o
-> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-04D3`. Commit de referencia:
-> `5f56c84`; commit objetivo de esta Build: `feat(web): usar agenda del prestador en servicios`.
+> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-05`. Commit de referencia:
+> `7b71ebd`; commit objetivo de esta Build: `feat(web): refinar flujo operativo del pos`.
 
 ## WEB-04D2: disponibilidad y reservas por Publicacion
 
@@ -126,6 +126,36 @@ físico.
 
 WEB-04D3 no agrega migraciones, tablas, columnas, índices, constraints, adapters de persistencia ni providers. Reutiliza las rutas,
 contratos y adapters entregados en D2; solo adapta el consumo Web y las pruebas del journey.
+
+## WEB-05: POS refinado
+
+**Estado:** implementada y validada en la superficie Web, sin cambios API, contracts o persistencia.
+
+### POS-01: La sesión Web es explícita
+
+- La Web inicia el dispositivo `web-pos` mediante `POST /tus/v1/pos/devices` y abre una sesión mediante
+  `POST /tus/v1/pos/sessions`.
+- El cierre usa `POST /tus/v1/pos/sessions/:sessionId/close` y muestra estado, dispositivo y fecha devueltos por TUS.
+- La Web no considera abierta una sesión localmente antes de recibir la respuesta del servidor.
+
+### POS-02: Las operaciones usan la sesión confirmada
+
+- `deviceId` y `shiftId` se toman de la sesión abierta; no se fabrica un turno para enviar una operación.
+- El importe se valida como entero positivo porque el servicio POS actual exige unidades menores seguras.
+- El comprobante conserva `providerCapture: not-claimed` y `settlement: not-claimed`; no se habilitan pagos ni hardware.
+
+### POS-03: Estado, historial y retry honesto
+
+- La Web refresca el estado con `GET /tus/v1/pos/operations/:operationId/status`.
+- El retry de una respuesta incierta reenvía la misma operación y la misma clave idempotente; un conflicto no se convierte en éxito.
+- El backend actual no expone un listado HTTP de operaciones ni una lectura de sesión abierta. Por eso la lista Web se
+  limita a operaciones confirmadas durante la visita actual y no simula operaciones del día.
+
+### POS-04: Fuera de alcance
+
+- No se agregó endpoint de listado, refund, cancelación, impresora, resolución de conflictos ni hardware porque la
+  superficie solicitada no puede inventar una lectura o workflow Web que el contrato actual no entrega.
+- No se modificaron contratos, schemas, migraciones, Prisma, flags de providers ni datos existentes.
 
 ## Alcance de la Build
 
