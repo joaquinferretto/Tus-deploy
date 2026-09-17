@@ -1,8 +1,8 @@
 # Decisiones de producto TUS
 
 > **Fuente canonica de decisiones.** Una Build no puede introducir una decision de arquitectura, producto o
-> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-08` (auditoria/plan, sin implementacion).
-> Commit de referencia: `de0f5cb`; commit objetivo: `docs(tus): planificar ciclo de trabajo y presupuesto`.
+> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Builds `WEB-08A` y `WEB-08B` implementadas; no se agrega Web.
+> Commit de referencia documental: `ba8db98`.
 
 ## WEB-04D2: disponibilidad y reservas por Publicacion
 
@@ -32,16 +32,16 @@
 
 La frontera pública acepta los aliases legacy y los valores físicos históricos de D1, sin inventar una modalidad nueva:
 
-| Campo         | Valor               | Regla                                                           |
-| ------------- | ------------------- | --------------------------------------------------------------- |
-| `bookingMode` | `turno_fijo` / `fixed_shift` | Requiere `durationMinutes` entero positivo.              |
-| `bookingMode` | `visita_diagnostico`        | Requiere `durationMinutes` entero positivo.              |
-| `bookingMode` | `duracion_estimada` / `variable_duration` | Requiere `estimatedDurationMinutes` entero positivo. |
-| `bookingMode` | `requiere_presupuesto`      | Impide slots y booking automático.                       |
-| `priceMode`   | `precio_fijo` / `fixed`     | Permite disponibilidad y booking automático.             |
-| `priceMode`   | `precio_desde`              | Conserva el precio publicado y permite disponibilidad.   |
-| `priceMode`   | `por_hora`                  | Conserva el precio publicado y permite disponibilidad.   |
-| `priceMode`   | `presupuesto` / `requires_budget` | Impide slots y booking automático.                  |
+| Campo         | Valor                                     | Regla                                                  |
+| ------------- | ----------------------------------------- | ------------------------------------------------------ |
+| `bookingMode` | `turno_fijo` / `fixed_shift`              | Requiere `durationMinutes` entero positivo.            |
+| `bookingMode` | `visita_diagnostico`                      | Requiere `durationMinutes` entero positivo.            |
+| `bookingMode` | `duracion_estimada` / `variable_duration` | Requiere `estimatedDurationMinutes` entero positivo.   |
+| `bookingMode` | `requiere_presupuesto`                    | Impide slots y booking automático.                     |
+| `priceMode`   | `precio_fijo` / `fixed`                   | Permite disponibilidad y booking automático.           |
+| `priceMode`   | `precio_desde`                            | Conserva el precio publicado y permite disponibilidad. |
+| `priceMode`   | `por_hora`                                | Conserva el precio publicado y permite disponibilidad. |
+| `priceMode`   | `presupuesto` / `requires_budget`         | Impide slots y booking automático.                     |
 
 Los aliases se mantienen para no romper consumidores existentes; los adapters Prisma preservan los valores físicos en
 español al leer y escribir. La duración efectiva solo se obtiene para las modalidades automáticas.
@@ -224,32 +224,39 @@ Solo agrega el consumidor Web y sus pruebas focales sobre capacidades ya entrega
 WEB-07 agrega tipos de cliente, superficie Web, estilos y pruebas sobre rutas ya existentes. No modifica API, contracts
 públicos, schemas, migraciones, Prisma, adapters, providers ni flags de activación.
 
-## WEB-08: gate de capacidad y plan de trabajo/presupuesto
+## WEB-08: modelo y plan de trabajo/presupuesto
 
-**Estado:** auditada; no implementada porque las capacidades backend requeridas no son suficientes para exponer una Web
-honesta de Trabajo + Presupuesto + Aceptación.
+**Estado:** WEB-08A implementa el modelo y los contracts; WEB-08B implementa los casos de uso/API. No se agrega Web.
 
 ### W08-01: Trabajo no equivale a job técnico ni tarea de delivery
 
-- No existe un bounded context, contrato o modelo persistente canónico `Trabajo` para servicios.
+- `Trabajo` tiene contrato, modelo persistente y el caso de uso de aceptación del prestador.
 - `TusJob` es una cola técnica con intentos, leases y payload; no es una ejecución comercial.
 - `TareaEntrega` tiene relación con `Compromiso` y evidencia de delivery, pero no representa ejecución de un servicio.
-- No se crearán aliases ni pantallas que presenten cualquiera de esos modelos como `Trabajo`.
+- No se presentarán `TusJob` ni `TareaEntrega` como `Trabajo` ni se agregan pantallas en WEB-08A/B.
+- `reservas.tenant_id` continúa identificando al prestador propietario de la agenda; WEB-08 agrega `cliente_tenant_id`
+  nullable para conservar el tenant cliente en reservas nuevas. No se infiere ni backfillea desde `cliente_id`, por lo
+  que reservas históricas sin ese dato no pueden vincularse a `Trabajo`.
 
 ### W08-02: Presupuesto requerido es un bloqueo, no un presupuesto
 
 - `requiere_presupuesto`, `presupuesto` y `requires_budget` bloquean slots y booking automático con `BUDGET_REQUIRED`.
+- Un checkout sin franja puede crear el compromiso de servicio que después acepta el prestador; no crea reserva provisional ni
+  ocupa capacidad antes de aceptar un presupuesto.
 - WhatsApp ofrece `quote` y `confirm` con snapshot de listings, expiración y consumo en `ConfirmacionWhatsApp`; esa
   capacidad está limitada al canal y no define el agregado comercial de presupuesto.
-- El presupuesto canónico futuro debe enlazar tenant, publicación, solicitud/compromiso, líneas, importe, moneda,
-  vigencia, versión, estado y actor de aceptación.
+- El presupuesto canónico enlaza tenant de cliente, tenant de prestador, trabajo, líneas, importe minor-unit, moneda,
+  vigencia, versión y estado; la aceptación queda en una tabla append-only por versión. Solo la última versión emitida y
+  vigente según el reloj del servidor puede decidirse.
 
 ### W08-03: Aceptación existente no cubre el presupuesto de servicio
 
 - Checkout confirma compromisos y WhatsApp confirma una instantánea del canal.
-- No existe una operación canónica para aceptar una versión de presupuesto de servicio, crear o enlazar el `Trabajo` y
-  rechazar versiones obsoletas con control de concurrencia.
-- La aceptación futura deberá ser explícita, tenant-scoped, idempotente y auditable.
+- WEB-08B expone aceptación de compromiso, diagnóstico, presupuesto versionado, decisión del cliente, evidencia y
+  transiciones de trabajo por `/tus/v1/work/*` y `/tus/v1/trabajos/*`.
+- La decisión es explícita, tenant-scoped, idempotente y auditable; la persistencia impone una decisión por versión y el
+  servicio aplica locking optimista antes de cambiar el trabajo. Una reserva opcional se enlaza solo cuando coincide con el
+  cliente, prestador, publicación y estado confirmado del compromiso.
 
 ### W08-04: Evidencia y cierre permanecen ligados al compromiso
 
@@ -257,15 +264,17 @@ honesta de Trabajo + Presupuesto + Aceptación.
   `delivery-accepted`.
 - `POST /tus/finance/confirmations` confirma completion para reglas financieras; no cierra un trabajo de servicio.
 - `fulfilled`, `released` y `compensated` son estados de `Compromiso`, no estados de `Trabajo`.
-- WEB-08 no reutilizará evidencia financiera o delivery sin una relación de dominio explícita.
+- WEB-08 no reutiliza evidencia financiera o delivery sin una relación de dominio explícita; `evidencias_trabajo` conserva
+  fase, referencia y metadata durable.
 
 ### W08-05: Implementación diferida y unidades aprobadas para planificación
 
-- **WEB-08A:** modelo de dominio y contracts de Trabajo, Diagnóstico, Presupuesto, aceptación, evidencia y cierre.
-- **WEB-08B:** API, persistencia, ownership, idempotencia, versionado optimista y migraciones forward-only.
+- **WEB-08A:** completada: modelo Prisma/DB, contracts, JSON Schemas, estados, transiciones y documentación DB.
+- **WEB-08B:** completada: API, persistencia in-memory/Prisma, ownership, idempotencia, versionado optimista, auditoría,
+  outbox y rutas HTTP.
 - **WEB-08C:** Web prestador para solicitud, diagnóstico, presupuesto y ejecución.
 - **WEB-08D:** Web cliente para lectura/aceptación, agenda, evidencia y cierre.
-- No se implementan rutas, modelos, migraciones ni pantallas en esta auditoría.
+- WEB-08C/D y las pantallas siguen fuera de esta Build.
 - Pagos, settlement, Mercado Pago y providers continúan fuera de alcance.
 
 ## Alcance de la Build
@@ -281,16 +290,16 @@ Incluido:
 
 No incluido:
 
-- migración física nueva;
+- migraciones de WEB-08A son aditivas y forward-only; no se hacen resets ni backfills ambiguos;
 - migración de rutas y cuerpos legacy del backend; D3 agrega el journey canónico sin retirarlos;
 - D1 o reset de base de datos;
 - activación de producción, proveedores o jobs;
 - traducción breaking de `listingId`, `calendarId` o `serviceId` en payloads existentes.
-- implementación funcional de WEB-08A–D; esta Build solo registra el plan y el bloqueo backend.
+- implementación de WEB-08C/D y cualquier UI de Trabajo/Presupuesto.
 
 ## Evidencia de implementación
 
-- Commit base D2: `5f56c84`; D3 prepara el commit `feat(web): usar agenda del prestador en servicios`.
+- Commit base documental WEB-08: `ba8db98`; WEB-08A agrega el modelo sin modificar providers ni UI.
 - Tests Web D3/UX: 34/34 pass; tests D2/marketplace: 20/20 pass; integración catálogo/calendario/UI: 22/22 pass.
 - Typechecks contracts/API/Web: pass.
 - JSON Schemas: 98 pass, con warnings AJV no bloqueantes.

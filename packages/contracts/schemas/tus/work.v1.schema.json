@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tus/work.v1",
+  "title": "TUS service work",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "trabajoId", "tenantId", "prestadorTenantId", "commitmentId", "prestadorId", "publicacionId", "status", "version", "budgetRequired", "createdAt", "updatedAt"],
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "trabajoId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "prestadorTenantId": { "type": "string", "minLength": 1 },
+    "commitmentId": { "type": "string", "minLength": 1 },
+    "prestadorId": { "type": "string", "minLength": 1 },
+    "publicacionId": { "type": "string", "minLength": 1 },
+    "reservaId": { "type": ["string", "null"], "minLength": 1 },
+    "clienteId": { "type": ["string", "null"], "minLength": 1 },
+    "status": { "enum": ["requested", "in_diagnosis", "budget_pending", "accepted", "in_progress", "completed", "cancelled"] },
+    "version": { "type": "integer", "minimum": 1 },
+    "budgetRequired": { "type": "boolean" },
+    "acceptedBudgetId": { "type": ["string", "null"], "minLength": 1 },
+    "acceptedBudgetVersion": { "type": ["integer", "null"], "minimum": 1 },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  }
+}

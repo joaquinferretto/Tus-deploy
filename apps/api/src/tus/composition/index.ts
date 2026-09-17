@@ -7,6 +7,7 @@ import {
   InMemoryTusSessionResolver,
   InMemoryTusTransaction,
 } from '../adapters/in-memory.ts'
+import { InMemoryTrabajoIdempotencyStore, InMemoryTrabajoOutboxStore, InMemoryTrabajoStore, InMemoryTrabajoTransaction, ServicioTrabajo } from '../work/index.ts'
 import { TusApplicationService, type TusApplicationDependencies } from '../application/tus-application-service.ts'
 import { InMemoryMarketplaceStore, TusMarketplaceService } from '../catalog/index.ts'
 import { InMemoryServiceCalendarStore, ServiceCalendarService } from '../calendar/index.ts'
@@ -20,6 +21,7 @@ import {
   type TusPrismaClient,
   AlmacenPrismaEvidenciaHabilitacion,
 } from '../adapters/prisma.ts'
+import { PrismaTrabajoIdempotencyStore, PrismaTrabajoOutboxStore, PrismaTrabajoStore, PrismaTrabajoTransaction } from '../adapters/prisma-work.ts'
 import { PrismaMarketplaceStore } from '../adapters/prisma-marketplace.ts'
 import { PrismaServiceCalendarStore } from '../adapters/prisma-calendar.ts'
 import {
@@ -72,6 +74,10 @@ export function createTusApplication(
   const support = new TusSupportService({ store: new InMemorySupportStore(), commitmentLookup, now: options.now, telemetry: options.operationsTelemetry, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
   const whatsapp = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), now: options.now, telemetry: options.operationsTelemetry, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
   const reporting = new TusReportingService({ store: new InMemoryReportingStore(), now: options.now, telemetry: options.operationsTelemetry })
+  const workStore = new InMemoryTrabajoStore()
+  const workIdempotency = new InMemoryTrabajoIdempotencyStore()
+  const workOutbox = new InMemoryTrabajoOutboxStore()
+  const work = new ServicioTrabajo(new InMemoryTrabajoTransaction({ work: workStore, idempotency: workIdempotency, outbox: workOutbox }), options.now)
   return new TusApplicationService({
     commitments,
     audits,
@@ -87,6 +93,7 @@ export function createTusApplication(
     support,
     whatsapp,
     reporting,
+    work,
     ...options,
   })
 }
@@ -107,6 +114,7 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
   const support = new TusSupportService({ store: new PrismaSupportStore(client as never), commitmentLookup, evaluadorHabilitacion })
   const whatsapp = new TusWhatsAppService({ store: new PrismaWhatsAppActionStore(client as never), evaluadorHabilitacion })
   const reporting = new TusReportingService({ store: new PrismaReportingStore(client as never) })
+  const work = new ServicioTrabajo(new PrismaTrabajoTransaction(client), () => Date.now())
   return new TusApplicationService({
     commitments: commitmentStore,
     compensations: new PrismaTusCompensationStore(client),
@@ -127,6 +135,7 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
     support,
     whatsapp,
     reporting,
+    work,
     evaluadorHabilitacion,
     perfilHabilitacion: 'native-local',
     alcanceHabilitacion: 'argentina-stage-1',
@@ -138,5 +147,6 @@ export * from '../ports/index.ts'
 export * from '../adapters/index.ts'
 export { InMemoryTusSessionResolver } from '../adapters/in-memory.ts'
 export * from '../adapters/prisma.ts'
+export * from '../work/index.ts'
 
 export default { createPrismaTusApplication, createTusApplication }

@@ -278,13 +278,13 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 | `/tus`                            | Workspace autenticado con discovery, compromisos, operaciones y recursos autorizados. |
 | `/tus/mercado`                    | Listado de publicaciones, filtros y checkout.                                         |
 | `/tus/mercado/{listingId}`        | Detalle de una publicacion.                                                           |
-| `/tus/calendario/{calendarId}`    | Ruta legacy explícita; el journey nuevo parte de una publicación y usa `listingId`.    |
+| `/tus/calendario/{calendarId}`    | Ruta legacy explícita; el journey nuevo parte de una publicación y usa `listingId`.   |
 | `/tus/compromisos`                | Lista de compromisos del cliente.                                                     |
 | `/tus/compromisos/{commitmentId}` | Detalle de un compromiso.                                                             |
 | `/tus/operations`                 | Reporte operativo.                                                                    |
-| `/tus/pos`                        | POS Web: sesión real, operaciones idempotentes y estado verificable.                   |
+| `/tus/pos`                        | POS Web: sesión real, operaciones idempotentes y estado verificable.                  |
 | `/tus/soporte`                    | Casos, evidencia y handoff gobernado sin prometer timeline o entrega WhatsApp.        |
-| `/tus/prestador`                  | Onboarding, listings y publicación del prestador con hechos del servidor.              |
+| `/tus/prestador`                  | Onboarding, listings y publicación del prestador con hechos del servidor.             |
 
 ### Como trabaja el cliente
 
@@ -321,10 +321,10 @@ productos y servicios, pero no crea calendarios: aunque existe la mutación de c
 confirmar una agenda sin riesgo de duplicarla. Un servicio sin agenda activa permanece `not_configured` y no ofrece slots
 sintéticos.
 
-La auditoría WEB-08 confirmó que todavía no existe un flujo Web canónico de solicitud, diagnóstico, presupuesto, aceptación
-o trabajo. WhatsApp dispone de una confirmación de cotización limitada al canal, pero no reemplaza un presupuesto de servicio
-versionado y enlazado a publicación/compromiso. La Web no agrega botones ni endpoints para cubrir ese vacío; el plan WEB-08A–D
-queda documentado en `docs/ROADMAP_TUS.md`.
+WEB-08B expone en la API el ciclo verificable de trabajo, diagnóstico, presupuesto versionado, aceptación explícita de la
+última versión vigente, evidencia y cierre. WhatsApp dispone de una confirmación de cotización limitada al canal, pero no reemplaza un presupuesto de servicio
+enlazado a publicación/compromiso. La Web aún no consume esas rutas ni agrega botones; WEB-08C/D queda documentado en
+`docs/ROADMAP_TUS.md`.
 
 ## API HTTP
 

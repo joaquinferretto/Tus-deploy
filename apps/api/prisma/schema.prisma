@@ -105,14 +105,14 @@ model Session {
 // object storage may receive projections or delivery state, but never own
 // these records.
 model Organization {
-  id          String       @id
-  name        String
-  slug        String       @default("")
-  defaultWorkspaceId String @default("")
-  createdAt   DateTime
-  updatedAt   DateTime
-  workspaces  Workspace[]
-  memberships Membership[]
+  id                 String       @id
+  name               String
+  slug               String       @default("")
+  defaultWorkspaceId String       @default("")
+  createdAt          DateTime
+  updatedAt          DateTime
+  workspaces         Workspace[]
+  memberships        Membership[]
 
   @@index([createdAt])
 }
@@ -137,7 +137,7 @@ model Membership {
   workspaceId    String
   userId         String
   role           String
-  roleIds        String[]  @default([])
+  roleIds        String[]     @default([])
   status         String
   createdAt      DateTime
   updatedAt      DateTime
@@ -327,24 +327,24 @@ model OwnershipRecord {
 // PostgreSQL/PGVector owns retrieval metadata and vectors. B2 lineage remains
 // the rebuild source; this table is never a durable source-document store.
 model RagEmbedding {
-  id                String   @id
-  tenantId          String
-  workspaceId       String
-  sourceId          String
-  chunkId           String
-  chunkIndex        Int
-  embeddingModel    String
-  embeddingVersion  String
-  indexVersion      String
-  vector            Unsupported("vector")
-  sourceChecksum    String
-  sourceUri         String
-  parserVersion     String
-  chunkerVersion    String
-  retentionUntil    DateTime?
-  metadata          Json
-  createdAt         DateTime
-  updatedAt         DateTime
+  id               String                @id
+  tenantId         String
+  workspaceId      String
+  sourceId         String
+  chunkId          String
+  chunkIndex       Int
+  embeddingModel   String
+  embeddingVersion String
+  indexVersion     String
+  vector           Unsupported("vector")
+  sourceChecksum   String
+  sourceUri        String
+  parserVersion    String
+  chunkerVersion   String
+  retentionUntil   DateTime?
+  metadata         Json
+  createdAt        DateTime
+  updatedAt        DateTime
 
   @@unique([tenantId, sourceId, chunkIndex, embeddingVersion, indexVersion])
   @@index([tenantId, indexVersion])
@@ -381,7 +381,8 @@ model PromptVersion {
   deprecatedReason String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
-  prompt            PromptDefinition @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  prompt           PromptDefinition @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
   @@unique([tenantId, promptId, version])
   @@index([tenantId, promptId, status])
 }
@@ -417,28 +418,28 @@ model ModelAvailability {
 }
 
 model Rollout {
-  id              String           @id
-  tenantId        String
-  promptId        String
-  promptVersion   Int
-  modelId         String
-  percentage      Int
-  state           String
-  createdBy       String
-  rolloutVersion  Int
+  id                String           @id
+  tenantId          String
+  promptId          String
+  promptVersion     Int
+  modelId           String
+  percentage        Int
+  state             String
+  createdBy         String
+  rolloutVersion    Int
   previousRolloutId String?
-  failureReason   String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  prompt          PromptDefinition @relation(fields: [promptId], references: [id], onDelete: Cascade)
-  model           ModelDefinition  @relation(fields: [modelId], references: [id], onDelete: Restrict)
+  failureReason     String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  prompt            PromptDefinition @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  model             ModelDefinition  @relation(fields: [modelId], references: [id], onDelete: Restrict)
 
   @@index([tenantId, promptId, state])
   @@index([tenantId, modelId, state])
 }
 
 model Approval {
-  id           String   @id
+  id           String    @id
   tenantId     String
   resourceType String
   resourceId   String
@@ -446,24 +447,24 @@ model Approval {
   status       String
   approverId   String?
   reason       String
-  createdAt    DateTime @default(now())
+  createdAt    DateTime  @default(now())
   decidedAt    DateTime?
 
   @@index([tenantId, resourceType, resourceId, status])
 }
 
 model RegistryAudit {
-  id           String   @id
-  tenantId     String
-  actorId      String
+  id            String   @id
+  tenantId      String
+  actorId       String
   correlationId String
-  action       String
-  resourceType String
-  resourceId   String
-  version      Int?
-  outcome      String
-  metadata     Json
-  occurredAt   DateTime @default(now())
+  action        String
+  resourceType  String
+  resourceId    String
+  version       Int?
+  outcome       String
+  metadata      Json
+  occurredAt    DateTime @default(now())
 
   @@index([tenantId, occurredAt])
   @@index([tenantId, resourceType, resourceId, occurredAt])
@@ -471,26 +472,26 @@ model RegistryAudit {
 }
 
 model EvidenciaHabilitacion {
-  id            String    @id
-  contractVersion String  @default("1.0.0") @map("version_contrato")
-  tenantId      String @map("tenant_id")
-  capability    String @map("capacidad")
-  gate          String @map("requisito")
-  owner         String @map("propietario")
-  scope         String @map("alcance")
-  tipoEvidencia String    @map("tipo_evidencia")
-  referenciaEvidencia String @map("referencia_evidencia")
-  policyVersion String @map("version_politica")
-  issuedAt      DateTime @map("fecha_emision")
-  expiresAt     DateTime? @map("fecha_expiracion")
-  revoked       Boolean   @default(false) @map("revocada")
-  source        String @map("origen")
-  profile       String    @default("legacy-unscoped") @map("perfil")
-  execution     String    @default("live") @map("ejecucion")
-  evidenceClass String    @default("deferred") @map("clase_evidencia")
-  liveConformance Boolean  @default(false) @map("conformidad_produccion")
-  createdAt     DateTime @map("fecha_creacion")
-  updatedAt     DateTime @map("fecha_actualizacion")
+  id                  String    @id
+  contractVersion     String    @default("1.0.0") @map("version_contrato")
+  tenantId            String    @map("tenant_id")
+  capability          String    @map("capacidad")
+  gate                String    @map("requisito")
+  owner               String    @map("propietario")
+  scope               String    @map("alcance")
+  tipoEvidencia       String    @map("tipo_evidencia")
+  referenciaEvidencia String    @map("referencia_evidencia")
+  policyVersion       String    @map("version_politica")
+  issuedAt            DateTime  @map("fecha_emision")
+  expiresAt           DateTime? @map("fecha_expiracion")
+  revoked             Boolean   @default(false) @map("revocada")
+  source              String    @map("origen")
+  profile             String    @default("legacy-unscoped") @map("perfil")
+  execution           String    @default("live") @map("ejecucion")
+  evidenceClass       String    @default("deferred") @map("clase_evidencia")
+  liveConformance     Boolean   @default(false) @map("conformidad_produccion")
+  createdAt           DateTime  @map("fecha_creacion")
+  updatedAt           DateTime  @map("fecha_actualizacion")
 
   @@unique([tenantId, capability, gate, referenciaEvidencia], map: "uq_evidencias_hab_tenant_requisito_ref")
   @@index([tenantId, capability, gate, revoked], map: "idx_evidencias_hab_tenant_requisito_revocada")
@@ -499,26 +500,26 @@ model EvidenciaHabilitacion {
 }
 
 model DecisionHabilitacion {
-  id               String   @id
-  tenantId         String @map("tenant_id")
-  capability       String @map("capacidad")
-  evaluatedAt      DateTime @map("fecha_evaluacion")
-  enabled          Boolean @map("habilitada")
+  id                    String   @id
+  tenantId              String   @map("tenant_id")
+  capability            String   @map("capacidad")
+  evaluatedAt           DateTime @map("fecha_evaluacion")
+  enabled               Boolean  @map("habilitada")
   resultadoHabilitacion String   @map("resultado_habilitacion")
-  requisitosFallidos Json     @map("requisitos_fallidos")
-  idsEvidencia     String[] @map("ids_evidencia")
-  deterministic    Boolean @map("determinista")
-  conflicts        Json? @map("conflictos")
-  reason           String? @map("motivo")
-  evidencePreserved Boolean? @map("evidencia_preservada")
-  auditPreserved   Boolean? @map("auditoria_preservada")
-  actorId          String   @default("legacy") @map("actor_id")
-  jobId            String? @map("trabajo_id")
-  correlationId    String   @default("legacy") @map("correlacion_id")
-  profile          String   @default("legacy-unscoped") @map("perfil")
-  scope            String   @default("legacy") @map("alcance")
-  outcome          String   @default("blocked") @map("resultado")
-  createdAt        DateTime @map("fecha_creacion")
+  requisitosFallidos    Json     @map("requisitos_fallidos")
+  idsEvidencia          String[] @map("ids_evidencia")
+  deterministic         Boolean  @map("determinista")
+  conflicts             Json?    @map("conflictos")
+  reason                String?  @map("motivo")
+  evidencePreserved     Boolean? @map("evidencia_preservada")
+  auditPreserved        Boolean? @map("auditoria_preservada")
+  actorId               String   @default("legacy") @map("actor_id")
+  jobId                 String?  @map("trabajo_id")
+  correlationId         String   @default("legacy") @map("correlacion_id")
+  profile               String   @default("legacy-unscoped") @map("perfil")
+  scope                 String   @default("legacy") @map("alcance")
+  outcome               String   @default("blocked") @map("resultado")
+  createdAt             DateTime @map("fecha_creacion")
 
   @@index([tenantId, capability, evaluatedAt], map: "idx_decisiones_hab_tenant_capacidad_evaluacion")
   @@index([tenantId, capability, enabled], map: "idx_decisiones_hab_tenant_capacidad_habilitada")
@@ -529,33 +530,33 @@ model DecisionHabilitacion {
 // TUS commerce source-of-truth records. Every query and unique key is tenant
 // scoped; projections and provider adapters must not own these aggregates.
 model Compromiso {
-  id              String   @id(map: "compromisos_pkey")
-  versionContrato String   @map("version_contrato")
-  compromisoId    String   @map("compromiso_id")
-  carritoId       String   @map("carrito_id")
-  tenantId        String   @map("tenant_id")
-  prestadorId     String   @map("prestador_id")
-  contexto        String   @map("contexto")
-  monto           BigInt   @map("monto")
-  moneda          String   @map("moneda")
-  estado          String   @map("estado")
-  idsLineas       String[] @map("ids_lineas")
-  version         Int      @default(1)
-  fechaCreacion   DateTime @map("fecha_creacion")
+  id                 String   @id(map: "compromisos_pkey")
+  versionContrato    String   @map("version_contrato")
+  compromisoId       String   @map("compromiso_id")
+  carritoId          String   @map("carrito_id")
+  tenantId           String   @map("tenant_id")
+  prestadorId        String   @map("prestador_id")
+  contexto           String   @map("contexto")
+  monto              BigInt   @map("monto")
+  moneda             String   @map("moneda")
+  estado             String   @map("estado")
+  idsLineas          String[] @map("ids_lineas")
+  version            Int      @default(1)
+  fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-
-  prestador Prestador @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_compromisos_prestadores")
-  transiciones TransicionCompromiso[]
-  compensaciones CompensacionCompromiso[]
-  intencionesPago IntencionPago[]
-  instantaneasComision InstantaneaComision[]
-  movimientosContables MovimientoContable[]
-  evidenciasFinancieras EvidenciaFinanciera[]
+  prestador                 Prestador                @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_compromisos_prestadores")
+  transiciones              TransicionCompromiso[]
+  compensaciones            CompensacionCompromiso[]
+  intencionesPago           IntencionPago[]
+  instantaneasComision      InstantaneaComision[]
+  movimientosContables      MovimientoContable[]
+  evidenciasFinancieras     EvidenciaFinanciera[]
   confirmacionesFinancieras ConfirmacionFinanciera[]
-  bloqueosFinancieros BloqueoFinanciero[]
-  registrosConciliacion RegistroConciliacion[]
-  facturas Factura[]
+  bloqueosFinancieros       BloqueoFinanciero[]
+  registrosConciliacion     RegistroConciliacion[]
+  facturas                  Factura[]
+
   @@unique([tenantId, compromisoId], map: "uq_compromisos_tenant_compromiso")
   @@index([tenantId, fechaCreacion], map: "idx_compromisos_tenant_fecha_creacion")
   @@index([tenantId, carritoId], map: "idx_compromisos_tenant_carrito")
@@ -563,38 +564,38 @@ model Compromiso {
 }
 
 model TransicionCompromiso {
-  id              String   @id(map: "transiciones_compromiso_pkey")
-  tenantId        String   @map("tenant_id")
-  compromisoId    String   @map("compromiso_id")
-  estadoAnterior  String   @map("estado_anterior")
-  estadoNuevo     String   @map("estado_nuevo")
-  version         Int
-  actorId         String   @map("actor_id")
-  correlacionId   String   @map("correlacion_id")
-  motivo          String   @map("motivo")
-  fechaCreacion   DateTime @map("fecha_creacion")
-
+  id             String   @id(map: "transiciones_compromiso_pkey")
+  tenantId       String   @map("tenant_id")
+  compromisoId   String   @map("compromiso_id")
+  estadoAnterior String   @map("estado_anterior")
+  estadoNuevo    String   @map("estado_nuevo")
+  version        Int
+  actorId        String   @map("actor_id")
+  correlacionId  String   @map("correlacion_id")
+  motivo         String   @map("motivo")
+  fechaCreacion  DateTime @map("fecha_creacion")
 
   compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_transiciones_compromiso_compromisos")
+
   @@unique([tenantId, compromisoId, version], map: "uq_transiciones_tenant_compromiso_version")
   @@index([tenantId, compromisoId, fechaCreacion], map: "idx_transiciones_tenant_compromiso_fecha_creacion")
   @@map("transiciones_compromiso")
 }
 
 model CompensacionCompromiso {
-  id              String   @id(map: "compensaciones_compromiso_pkey")
-  compensacionId  String   @map("compensacion_id")
-  tenantId        String   @map("tenant_id")
-  compromisoId    String   @map("compromiso_id")
-  actorId         String   @map("actor_id")
-  correlacionId   String   @map("correlacion_id")
-  monto           BigInt   @map("monto")
-  moneda          String   @map("moneda")
-  motivo          String   @map("motivo")
-  fechaCreacion   DateTime @map("fecha_creacion")
-
+  id             String   @id(map: "compensaciones_compromiso_pkey")
+  compensacionId String   @map("compensacion_id")
+  tenantId       String   @map("tenant_id")
+  compromisoId   String   @map("compromiso_id")
+  actorId        String   @map("actor_id")
+  correlacionId  String   @map("correlacion_id")
+  monto          BigInt   @map("monto")
+  moneda         String   @map("moneda")
+  motivo         String   @map("motivo")
+  fechaCreacion  DateTime @map("fecha_creacion")
 
   compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_compensaciones_compromiso_compromisos")
+
   @@unique([tenantId, compensacionId], map: "uq_compensaciones_tenant_compensacion")
   @@unique([tenantId, compromisoId], map: "uq_compensaciones_tenant_compromiso")
   @@index([tenantId, compromisoId, fechaCreacion], map: "idx_compensaciones_tenant_compromiso_fecha_creacion")
@@ -602,15 +603,15 @@ model CompensacionCompromiso {
 }
 
 model ReferenciaAuditoria {
-  id              String   @id(map: "referencias_auditoria_pkey")
-  referenciaId    String   @map("referencia_id")
-  tenantId        String   @map("tenant_id")
-  actorId         String   @map("actor_id")
-  correlacionId   String   @map("correlacion_id")
-  compromisoId    String   @map("compromiso_id")
-  tipoReferencia  String   @map("tipo_referencia")
-  metadatos       Json?    @map("metadatos")
-  fechaCreacion   DateTime @map("fecha_creacion")
+  id             String   @id(map: "referencias_auditoria_pkey")
+  referenciaId   String   @map("referencia_id")
+  tenantId       String   @map("tenant_id")
+  actorId        String   @map("actor_id")
+  correlacionId  String   @map("correlacion_id")
+  compromisoId   String   @map("compromiso_id")
+  tipoReferencia String   @map("tipo_referencia")
+  metadatos      Json?    @map("metadatos")
+  fechaCreacion  DateTime @map("fecha_creacion")
 
   @@unique([tenantId, referenciaId], map: "uq_referencias_tenant_referencia")
   @@index([tenantId, compromisoId, fechaCreacion], map: "idx_referencias_tenant_compromiso_fecha_creacion")
@@ -619,60 +620,59 @@ model ReferenciaAuditoria {
 }
 
 model Prestador {
-  id                     String   @id(map: "prestadores_pkey")
-  tenantId               String @map("tenant_id")
-  prestadorId            String   @map("prestador_id")
-  cohorte                String   @map("cohorte")
-  ubicacionId            String   @map("ubicacion_id")
-  zonaHoraria            String   @map("zona_horaria")
-  rolesPersonal          String[] @map("roles_personal")
-  versionPoliticaOperativa String @map("version_politica_operativa")
-  estado                 String   @map("estado")
-  fechaCreacion          DateTime @map("fecha_creacion")
-  fechaActualizacion     DateTime @map("fecha_actualizacion")
-  publicaciones          Publicacion[]
-  calendarios            Calendario[]
-
+  id                       String        @id(map: "prestadores_pkey")
+  tenantId                 String        @map("tenant_id")
+  prestadorId              String        @map("prestador_id")
+  cohorte                  String        @map("cohorte")
+  ubicacionId              String        @map("ubicacion_id")
+  zonaHoraria              String        @map("zona_horaria")
+  rolesPersonal            String[]      @map("roles_personal")
+  versionPoliticaOperativa String        @map("version_politica_operativa")
+  estado                   String        @map("estado")
+  fechaCreacion            DateTime      @map("fecha_creacion")
+  fechaActualizacion       DateTime      @map("fecha_actualizacion")
+  publicaciones            Publicacion[]
+  calendarios              Calendario[]
 
   compromisos Compromiso[]
-  @@unique([tenantId, prestadorId], map: "uq_prestadores_tenant_prestador")
+  trabajos    Trabajo[]
 
+  @@unique([tenantId, prestadorId], map: "uq_prestadores_tenant_prestador")
   @@index([tenantId, estado], map: "idx_prestadores_tenant_estado")
   @@map("prestadores")
 }
 
 model Publicacion {
-  id                   String       @id(map: "publicaciones_pkey")
-  versionContrato      String       @map("version_contrato")
-  tenantId             String       @map("tenant_id")
-  prestadorId          String       @map("prestador_id")
-  tipo                 String       @map("tipo")
-  nombre               String       @map("nombre")
-  descripcion          String       @map("descripcion")
-  cohorte              String       @map("cohorte")
-  ubicacionId          String       @map("ubicacion_id")
-  moneda               String       @map("moneda")
-  precio               BigInt       @map("precio")
-  versionDisponibilidad Int         @map("version_disponibilidad")
-  publicada             Boolean     @map("publicada")
-  versionPolitica     String       @map("version_politica")
-  existencias          Int?         @map("existencias")
-  duracionMinutos      Int?         @map("duracion_minutos")
-  capacidad            Int?         @map("capacidad")
-  modalidadReserva     String?      @map("modalidad_reserva")
-  duracionEstimadaMinutos Int?      @map("duracion_estimada_minutos")
-  modalidadPrecio       String?     @map("modalidad_precio")
-  horarioTrabajo       Json         @map("horario_trabajo")
-  fechaCreacion        DateTime     @map("fecha_creacion")
-  fechaActualizacion    DateTime     @map("fecha_actualizacion")
-
-
+  id                      String   @id(map: "publicaciones_pkey")
+  versionContrato         String   @map("version_contrato")
+  tenantId                String   @map("tenant_id")
+  prestadorId             String   @map("prestador_id")
+  tipo                    String   @map("tipo")
+  nombre                  String   @map("nombre")
+  descripcion             String   @map("descripcion")
+  cohorte                 String   @map("cohorte")
+  ubicacionId             String   @map("ubicacion_id")
+  moneda                  String   @map("moneda")
+  precio                  BigInt   @map("precio")
+  versionDisponibilidad   Int      @map("version_disponibilidad")
+  publicada               Boolean  @map("publicada")
+  versionPolitica         String   @map("version_politica")
+  existencias             Int?     @map("existencias")
+  duracionMinutos         Int?     @map("duracion_minutos")
+  capacidad               Int?     @map("capacidad")
+  modalidadReserva        String?  @map("modalidad_reserva")
+  duracionEstimadaMinutos Int?     @map("duracion_estimada_minutos")
+  modalidadPrecio         String?  @map("modalidad_precio")
+  horarioTrabajo          Json     @map("horario_trabajo")
+  fechaCreacion           DateTime @map("fecha_creacion")
+  fechaActualizacion      DateTime @map("fecha_actualizacion")
 
   compromisosMercadoServicios CompromisoMercadoServicios[]
-  reservas                 Reserva[]
-  prestador Prestador @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_publicaciones_prestadores")
-  @@unique([tenantId, id], map: "uq_publicaciones_tenant_id")
+  trabajos                    Trabajo[]
+  reservas                    Reserva[]
+  prestador                   Prestador                    @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_publicaciones_prestadores")
 
+  @@unique([tenantId, id], map: "uq_publicaciones_tenant_id")
   @@index([tenantId, publicada], map: "idx_publicaciones_tenant_publicada")
   @@index([tenantId, versionDisponibilidad], map: "idx_publicaciones_tenant_version_disponibilidad")
   @@index([prestadorId, tipo], map: "idx_publicaciones_prestador_tipo")
@@ -680,45 +680,240 @@ model Publicacion {
 }
 
 model CompromisoMercadoServicios {
-  id                   String   @id(map: "compromisos_mercado_servicios_pkey")
-  versionContrato      String   @map("version_contrato")
-  compromisoId         String   @map("compromiso_id")
-  carritoId            String   @map("carrito_id")
-  tenantId             String   @map("tenant_id")
-  prestadorId          String   @map("prestador_id")
-  publicacionId        String   @map("publicacion_id")
-  contexto             String   @map("contexto")
-  idsLineas            String[] @map("ids_lineas")
-  cantidad             Int      @map("cantidad")
-  monto                BigInt   @map("monto")
-  moneda               String   @map("moneda")
-  estado               String   @map("estado")
-  versionDisponibilidad Int     @map("version_disponibilidad")
-  versionPolitica      String   @map("version_politica")
-  franjaInicio         DateTime? @map("franja_inicio")
-  franjaFin            DateTime? @map("franja_fin")
-  fechaCreacion        DateTime @map("fecha_creacion")
-  fechaActualizacion   DateTime @map("fecha_actualizacion")
+  id                    String    @id(map: "compromisos_mercado_servicios_pkey")
+  versionContrato       String    @map("version_contrato")
+  compromisoId          String    @map("compromiso_id")
+  carritoId             String    @map("carrito_id")
+  tenantId              String    @map("tenant_id")
+  prestadorTenantId     String    @map("prestador_tenant_id")
+  prestadorId           String    @map("prestador_id")
+  publicacionId         String    @map("publicacion_id")
+  contexto              String    @map("contexto")
+  idsLineas             String[]  @map("ids_lineas")
+  cantidad              Int       @map("cantidad")
+  monto                 BigInt    @map("monto")
+  moneda                String    @map("moneda")
+  estado                String    @map("estado")
+  versionDisponibilidad Int       @map("version_disponibilidad")
+  versionPolitica       String    @map("version_politica")
+  franjaInicio          DateTime? @map("franja_inicio")
+  franjaFin             DateTime? @map("franja_fin")
+  fechaCreacion         DateTime  @map("fecha_creacion")
+  fechaActualizacion    DateTime  @map("fecha_actualizacion")
 
+  publicacion Publicacion @relation(fields: [prestadorTenantId, publicacionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_compromisos_mercado_servicios_publicaciones")
+  trabajos    Trabajo[]
 
-  publicacion Publicacion @relation(fields: [tenantId, publicacionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_compromisos_mercado_servicios_publicaciones")
   @@unique([tenantId, compromisoId], map: "uq_compromisos_ms_tenant_compromiso")
+  @@unique([tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], map: "uq_compromisos_ms_tenant_proveedor_publicacion")
   @@index([tenantId, fechaCreacion], map: "idx_compromisos_ms_tenant_fecha_creacion")
   @@index([publicacionId, franjaInicio, franjaFin], map: "idx_compromisos_ms_publicacion_franja")
   @@index([prestadorId, contexto, estado], map: "idx_compromisos_ms_prestador_contexto_estado")
   @@map("compromisos_mercado_servicios")
 }
 
-model AuditoriaMercadoServicios {
-  id             String   @id(map: "auditoria_mercado_servicios_pkey")
+model Trabajo {
+  id                         String   @id(map: "trabajos_pkey")
+  versionContrato            String   @map("version_contrato")
+  trabajoId                  String   @map("trabajo_id")
+  tenantId                   String   @map("tenant_id")
+  prestadorTenantId          String   @map("prestador_tenant_id")
+  compromisoId               String   @map("compromiso_id")
+  prestadorId                String   @map("prestador_id")
+  publicacionId              String   @map("publicacion_id")
+  reservaTenantId            String?  @map("reserva_tenant_id")
+  reservaId                  String?  @map("reserva_id")
+  clienteId                  String?  @map("cliente_id")
+  estado                     String   @map("estado")
+  version                    Int      @default(1) @map("version")
+  requierePresupuesto        Boolean  @map("requiere_presupuesto")
+  presupuestoAceptadoId      String?  @map("presupuesto_aceptado_id")
+  presupuestoAceptadoVersion Int?     @map("presupuesto_aceptado_version")
+  fechaCreacion              DateTime @map("fecha_creacion")
+  fechaActualizacion         DateTime @map("fecha_actualizacion")
+
+  compromiso          CompromisoMercadoServicios @relation(fields: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_compromisos_ms")
+  prestador           Prestador                  @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_prestadores")
+  publicacion         Publicacion                @relation(fields: [prestadorTenantId, publicacionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_publicaciones")
+  reserva             Reserva?                   @relation(fields: [reservaTenantId, reservaId], references: [tenantId, reservaId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_reservas")
+  presupuestoAceptado Presupuesto?               @relation("PresupuestoAceptadoTrabajo", fields: [tenantId, presupuestoAceptadoId, presupuestoAceptadoVersion], references: [tenantId, presupuestoId, version], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_presupuesto_aceptado")
+  diagnosticos        Diagnostico[]
+  presupuestos        Presupuesto[]              @relation("TrabajoPresupuestos")
+  transiciones        TransicionTrabajo[]
+  evidencias          EvidenciaTrabajo[]
+  auditorias          AuditoriaTrabajo[]
+
+  @@unique([tenantId, trabajoId], map: "uq_trabajos_tenant_trabajo")
+  @@unique([tenantId, compromisoId], map: "uq_trabajos_tenant_compromiso")
+  @@unique([tenantId, presupuestoAceptadoId, presupuestoAceptadoVersion], map: "uq_trabajos_tenant_presupuesto_aceptado")
+  @@index([tenantId, estado], map: "idx_trabajos_tenant_estado")
+  @@index([prestadorTenantId, prestadorId, estado], map: "idx_trabajos_prestador_estado")
+  @@map("trabajos")
+}
+
+model Diagnostico {
+  id                  String    @id(map: "diagnosticos_pkey")
+  versionContrato     String    @map("version_contrato")
+  diagnosticoId       String    @map("diagnostico_id")
+  tenantId            String    @map("tenant_id")
+  trabajoId           String    @map("trabajo_id")
+  version             Int       @default(1) @map("version")
+  estado              String    @map("estado")
+  descripcionOriginal String    @map("descripcion_original")
+  datosEstructurados  Json?     @map("datos_estructurados")
+  actorId             String    @map("actor_id")
+  correlacionId       String    @map("correlacion_id")
+  fechaConfirmacion   DateTime? @map("fecha_confirmacion")
+  fechaCreacion       DateTime  @map("fecha_creacion")
+  fechaActualizacion  DateTime  @map("fecha_actualizacion")
+
+  trabajo Trabajo @relation(fields: [tenantId, trabajoId], references: [tenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_diagnosticos_trabajos")
+
+  @@unique([tenantId, diagnosticoId], map: "uq_diagnosticos_tenant_diagnostico")
+  @@unique([tenantId, trabajoId, version], map: "uq_diagnosticos_tenant_trabajo_version")
+  @@index([tenantId, trabajoId, estado], map: "idx_diagnosticos_tenant_trabajo_estado")
+  @@map("diagnosticos")
+}
+
+model Presupuesto {
+  id                 String    @id(map: "presupuestos_pkey")
+  versionContrato    String    @map("version_contrato")
+  presupuestoId      String    @map("presupuesto_id")
+  tenantId           String    @map("tenant_id")
+  prestadorTenantId  String    @map("prestador_tenant_id")
+  trabajoId          String    @map("trabajo_id")
+  version            Int       @map("version")
+  estado             String    @map("estado")
+  moneda             String    @map("moneda")
+  montoTotal         BigInt    @map("monto_total")
+  alcance            String    @map("alcance")
+  fechaValidez       DateTime? @map("fecha_validez")
+  creadoPor          String    @map("creado_por")
+  correlacionId      String    @map("correlacion_id")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
+
+  trabajo         Trabajo                 @relation("TrabajoPresupuestos", fields: [tenantId, trabajoId], references: [tenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_presupuestos_trabajos")
+  trabajoAceptado Trabajo?                @relation("PresupuestoAceptadoTrabajo")
+  lineas          LineaPresupuesto[]
+  aceptaciones    AceptacionPresupuesto[]
+
+  @@unique([tenantId, presupuestoId, version], map: "uq_presupuestos_tenant_presupuesto_version")
+  @@index([tenantId, trabajoId, version], map: "idx_presupuestos_tenant_trabajo_version")
+  @@map("presupuestos")
+}
+
+model LineaPresupuesto {
+  id                    String   @id(map: "lineas_presupuesto_pkey")
+  lineaId               String   @map("linea_id")
+  presupuestoRegistroId String   @map("presupuesto_registro_id")
+  descripcion           String   @map("descripcion")
+  cantidad              Int      @map("cantidad")
+  montoUnitario         BigInt   @map("monto_unitario")
+  montoTotal            BigInt   @map("monto_total")
+  orden                 Int      @map("orden")
+  fechaCreacion         DateTime @map("fecha_creacion")
+
+  presupuesto Presupuesto @relation(fields: [presupuestoRegistroId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_lineas_presupuesto_presupuestos")
+
+  @@unique([presupuestoRegistroId, lineaId], map: "uq_lineas_presupuesto_registro_linea")
+  @@index([presupuestoRegistroId, orden], map: "idx_lineas_presupuesto_registro_orden")
+  @@map("lineas_presupuesto")
+}
+
+model AceptacionPresupuesto {
+  id                    String   @id(map: "aceptaciones_presupuesto_pkey")
+  aceptacionId          String   @map("aceptacion_id")
+  tenantId              String   @map("tenant_id")
+  presupuestoRegistroId String   @map("presupuesto_registro_id")
+  decision              String   @map("decision")
+  actorId               String   @map("actor_id")
+  correlacionId         String   @map("correlacion_id")
+  motivo                String?  @map("motivo")
+  fechaCreacion         DateTime @map("fecha_creacion")
+
+  presupuesto Presupuesto @relation(fields: [presupuestoRegistroId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_aceptaciones_presupuesto_presupuestos")
+
+  @@unique([tenantId, aceptacionId], map: "uq_aceptaciones_presupuesto_tenant_aceptacion")
+  @@unique([tenantId, presupuestoRegistroId], map: "uq_aceptaciones_presupuesto_tenant_version")
+  @@index([tenantId, fechaCreacion], map: "idx_aceptaciones_presupuesto_tenant_fecha_creacion")
+  @@map("aceptaciones_presupuesto")
+}
+
+model TransicionTrabajo {
+  id             String   @id(map: "transiciones_trabajo_pkey")
   tenantId       String   @map("tenant_id")
+  trabajoId      String   @map("trabajo_id")
+  estadoAnterior String?  @map("estado_anterior")
+  estadoNuevo    String   @map("estado_nuevo")
+  version        Int      @map("version")
   actorId        String   @map("actor_id")
   correlacionId  String   @map("correlacion_id")
-  accion         String   @map("accion")
-  tipoRecurso    String   @map("tipo_recurso")
-  recursoId      String   @map("recurso_id")
-  resultado      String   @map("resultado")
+  motivo         String   @map("motivo")
   fechaCreacion  DateTime @map("fecha_creacion")
+
+  trabajo Trabajo @relation(fields: [tenantId, trabajoId], references: [tenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_transiciones_trabajo_trabajos")
+
+  @@unique([tenantId, trabajoId, version], map: "uq_transiciones_trabajo_tenant_trabajo_version")
+  @@index([tenantId, trabajoId, fechaCreacion], map: "idx_transiciones_trabajo_tenant_trabajo_fecha_creacion")
+  @@map("transiciones_trabajo")
+}
+
+model EvidenciaTrabajo {
+  id                String   @id(map: "evidencias_trabajo_pkey")
+  evidenciaId       String   @map("evidencia_id")
+  tenantId          String   @map("tenant_id")
+  prestadorTenantId String   @map("prestador_tenant_id")
+  trabajoId         String   @map("trabajo_id")
+  fase              String   @map("fase")
+  actorId           String   @map("actor_id")
+  correlacionId     String   @map("correlacion_id")
+  referencia        String   @map("referencia")
+  metadatos         Json     @map("metadatos")
+  fechaOcurrencia   DateTime @map("fecha_ocurrencia")
+  fechaCreacion     DateTime @map("fecha_creacion")
+
+  trabajo Trabajo @relation(fields: [tenantId, trabajoId], references: [tenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_evidencias_trabajo_trabajos")
+
+  @@unique([tenantId, evidenciaId], map: "uq_evidencias_trabajo_tenant_evidencia")
+  @@index([tenantId, trabajoId, fase, fechaOcurrencia], map: "idx_evidencias_trabajo_tenant_trabajo_fase")
+  @@index([prestadorTenantId, trabajoId, fechaOcurrencia], map: "idx_evidencias_trabajo_prestador_trabajo_fecha")
+  @@map("evidencias_trabajo")
+}
+
+model AuditoriaTrabajo {
+  id                String   @id(map: "auditoria_trabajo_pkey")
+  tenantId          String   @map("tenant_id")
+  trabajoTenantId   String   @map("trabajo_tenant_id")
+  prestadorTenantId String   @map("prestador_tenant_id")
+  trabajoId         String   @map("trabajo_id")
+  actorId           String   @map("actor_id")
+  correlacionId     String   @map("correlacion_id")
+  accion            String   @map("accion")
+  tipoRecurso       String   @map("tipo_recurso")
+  recursoId         String   @map("recurso_id")
+  resultado         String   @map("resultado")
+  metadatos         Json     @map("metadatos")
+  fechaCreacion     DateTime @map("fecha_creacion")
+
+  trabajo Trabajo @relation(fields: [trabajoTenantId, trabajoId], references: [tenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_auditoria_trabajo_trabajos")
+
+  @@index([tenantId, fechaCreacion], map: "idx_auditoria_trabajo_tenant_fecha_creacion")
+  @@index([trabajoTenantId, trabajoId, fechaCreacion], map: "idx_auditoria_trabajo_trabajo_fecha_creacion")
+  @@index([prestadorTenantId, trabajoId, fechaCreacion], map: "idx_auditoria_trabajo_prestador_trabajo_fecha")
+  @@map("auditoria_trabajo")
+}
+
+model AuditoriaMercadoServicios {
+  id            String   @id(map: "auditoria_mercado_servicios_pkey")
+  tenantId      String   @map("tenant_id")
+  actorId       String   @map("actor_id")
+  correlacionId String   @map("correlacion_id")
+  accion        String   @map("accion")
+  tipoRecurso   String   @map("tipo_recurso")
+  recursoId     String   @map("recurso_id")
+  resultado     String   @map("resultado")
+  fechaCreacion DateTime @map("fecha_creacion")
 
   @@index([tenantId, fechaCreacion], map: "idx_auditoria_ms_tenant_fecha_creacion")
   @@index([tenantId, tipoRecurso, recursoId], map: "idx_auditoria_ms_tenant_recurso")
@@ -729,34 +924,34 @@ model AuditoriaMercadoServicios {
 // from commercial state; ledger entries are append-only and corrections link to
 // their originating entry instead of rewriting history.
 model IntencionPago {
-  id                      String   @id(map: "intenciones_pago_pkey")
-  versionContrato         String   @map("version_contrato")
-  pagoId                  String   @map("pago_id")
-  tenantId                String   @map("tenant_id")
-  compromisoId            String   @map("compromiso_id")
-  proveedor               String   @map("proveedor")
-  referenciaProveedor     String?  @map("referencia_proveedor")
-  estadoProveedor         String   @map("estado_proveedor")
-  estadoComercial         String   @map("estado_comercial")
-  monto                   BigInt   @map("monto")
-  moneda                  String   @map("moneda")
-  claveIdempotencia       String   @map("clave_idempotencia")
-  correlacionId           String   @map("correlacion_id")
-  credencialesRecolectadas Boolean @map("credenciales_recolectadas")
-  origen                  String   @map("origen")
-  ordenId                 String   @default("") @map("orden_id")
-  operacionPosId          String?  @map("operacion_pos_id")
-  comercianteRegistro     String   @default("tus-intermediary") @map("comerciante_registro")
-  modeloCobro             String   @default("intermediary") @map("modelo_cobro")
-  politicaDistribucion    Json?    @map("politica_distribucion")
-  fechaLiberacion         DateTime @default(now()) @map("fecha_liberacion")
-  fechaEventoProveedor    DateTime? @map("fecha_evento_proveedor")
-  errorProveedor          String?  @map("error_proveedor")
-  fechaCreacion           DateTime @map("fecha_creacion")
-  fechaActualizacion      DateTime @map("fecha_actualizacion")
-
+  id                       String    @id(map: "intenciones_pago_pkey")
+  versionContrato          String    @map("version_contrato")
+  pagoId                   String    @map("pago_id")
+  tenantId                 String    @map("tenant_id")
+  compromisoId             String    @map("compromiso_id")
+  proveedor                String    @map("proveedor")
+  referenciaProveedor      String?   @map("referencia_proveedor")
+  estadoProveedor          String    @map("estado_proveedor")
+  estadoComercial          String    @map("estado_comercial")
+  monto                    BigInt    @map("monto")
+  moneda                   String    @map("moneda")
+  claveIdempotencia        String    @map("clave_idempotencia")
+  correlacionId            String    @map("correlacion_id")
+  credencialesRecolectadas Boolean   @map("credenciales_recolectadas")
+  origen                   String    @map("origen")
+  ordenId                  String    @default("") @map("orden_id")
+  operacionPosId           String?   @map("operacion_pos_id")
+  comercianteRegistro      String    @default("tus-intermediary") @map("comerciante_registro")
+  modeloCobro              String    @default("intermediary") @map("modelo_cobro")
+  politicaDistribucion     Json?     @map("politica_distribucion")
+  fechaLiberacion          DateTime  @default(now()) @map("fecha_liberacion")
+  fechaEventoProveedor     DateTime? @map("fecha_evento_proveedor")
+  errorProveedor           String?   @map("error_proveedor")
+  fechaCreacion            DateTime  @map("fecha_creacion")
+  fechaActualizacion       DateTime  @map("fecha_actualizacion")
 
   compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_compromisos")
+
   @@unique([tenantId, pagoId], map: "uq_intenciones_pago_tenant_pago")
   @@unique([tenantId, compromisoId], map: "uq_intenciones_pago_tenant_compromiso")
   @@unique([tenantId, claveIdempotencia], map: "uq_intenciones_pago_tenant_clave_idempotencia")
@@ -766,12 +961,12 @@ model IntencionPago {
 }
 
 model IdempotenciaFinanciera {
-  id                String   @id(map: "idempotencia_financiera_pkey")
-  tenantId          String   @map("tenant_id")
-  claveIdempotencia String   @map("clave_idempotencia")
-  hashSolicitud     String   @map("hash_solicitud")
-  respuesta         Json     @map("respuesta")
-  fechaCreacion     DateTime @default(now()) @map("fecha_creacion")
+  id                 String   @id(map: "idempotencia_financiera_pkey")
+  tenantId           String   @map("tenant_id")
+  claveIdempotencia  String   @map("clave_idempotencia")
+  hashSolicitud      String   @map("hash_solicitud")
+  respuesta          Json     @map("respuesta")
+  fechaCreacion      DateTime @default(now()) @map("fecha_creacion")
   fechaActualizacion DateTime @updatedAt @map("fecha_actualizacion")
 
   @@unique([tenantId, claveIdempotencia], map: "uq_idempotencia_fin_tenant_clave_idempotencia")
@@ -799,8 +994,8 @@ model InstantaneaComision {
   estadoContable      String   @map("estado_contable")
   fechaCreacion       DateTime @map("fecha_creacion")
 
-
   compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_instantaneas_comision_compromisos")
+
   @@unique([tenantId, instantaneaId], map: "uq_instantaneas_comision_tenant_instantanea")
   @@unique([tenantId, compromisoId], map: "uq_instantaneas_comision_tenant_compromiso")
   @@index([tenantId, versionRegla], map: "idx_instantaneas_comision_tenant_version_regla")
@@ -820,8 +1015,8 @@ model MovimientoContable {
   inmutable          Boolean  @default(true) @map("inmutable")
   fechaCreacion      DateTime @map("fecha_creacion")
 
-
   compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_movimientos_contables_compromisos")
+
   @@unique([tenantId, entradaId], map: "uq_movimientos_tenant_entrada")
   @@index([tenantId, compromisoId, fechaCreacion], map: "idx_movimientos_tenant_compromiso_fecha_creacion")
   @@index([tenantId, entradaVinculadaId], map: "idx_movimientos_tenant_entrada_vinculada")
@@ -829,19 +1024,19 @@ model MovimientoContable {
 }
 
 model EvidenciaFinanciera {
-  id                String   @id(map: "evidencias_financieras_pkey")
-  versionContrato   String   @map("version_contrato")
-  evidenciaId       String   @map("evidencia_id")
-  tenantId          String   @map("tenant_id")
-  compromisoId      String   @map("compromiso_id")
-  actorId           String   @map("actor_id")
-  correlacionId     String   @map("correlacion_id")
-  tipo              String   @map("tipo")
-  fechaOcurrencia   DateTime @map("fecha_ocurrencia")
-  fechaCreacion     DateTime @map("fecha_creacion")
-
+  id              String   @id(map: "evidencias_financieras_pkey")
+  versionContrato String   @map("version_contrato")
+  evidenciaId     String   @map("evidencia_id")
+  tenantId        String   @map("tenant_id")
+  compromisoId    String   @map("compromiso_id")
+  actorId         String   @map("actor_id")
+  correlacionId   String   @map("correlacion_id")
+  tipo            String   @map("tipo")
+  fechaOcurrencia DateTime @map("fecha_ocurrencia")
+  fechaCreacion   DateTime @map("fecha_creacion")
 
   compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_evidencias_financieras_compromisos")
+
   @@unique([tenantId, evidenciaId], map: "uq_evidencias_fin_tenant_evidencia")
   @@index([tenantId, compromisoId, tipo], map: "idx_evidencias_fin_tenant_compromiso_tipo")
   @@map("evidencias_financieras")
@@ -857,8 +1052,8 @@ model ConfirmacionFinanciera {
   fechaConfirmacion DateTime @map("fecha_confirmacion")
   fechaCreacion     DateTime @map("fecha_creacion")
 
-
   compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_confirmaciones_financieras_compromisos")
+
   @@unique([tenantId, confirmacionId], map: "uq_confirmaciones_fin_tenant_confirmacion")
   @@unique([tenantId, compromisoId], map: "uq_confirmaciones_fin_tenant_compromiso")
   @@index([tenantId, compromisoId, fechaConfirmacion], map: "idx_confirmaciones_fin_tenant_compromiso_confirmacion")
@@ -876,8 +1071,8 @@ model BloqueoFinanciero {
   activo        Boolean  @default(true) @map("activo")
   fechaCreacion DateTime @map("fecha_creacion")
 
-
   compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_bloqueos_financieros_compromisos")
+
   @@unique([tenantId, bloqueoId], map: "uq_bloqueos_fin_tenant_bloqueo")
   @@unique([tenantId, compromisoId], map: "uq_bloqueos_fin_tenant_compromiso")
   @@index([tenantId, motivo, activo], map: "idx_bloqueos_fin_tenant_motivo_activo")
@@ -899,8 +1094,8 @@ model RegistroConciliacion {
   determinista        Boolean  @map("determinista")
   fechaCreacion       DateTime @map("fecha_creacion")
 
-
   compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_registros_conciliacion_compromisos")
+
   @@unique([tenantId, conciliacionId], map: "uq_conciliacion_tenant_conciliacion")
   @@unique([tenantId, compromisoId], map: "uq_conciliacion_tenant_compromiso")
   @@index([tenantId, estado, fechaCreacion], map: "idx_conciliacion_tenant_estado_fecha_creacion")
@@ -910,67 +1105,67 @@ model RegistroConciliacion {
 // Delivery and POS are operational source-of-truth aggregates. They never
 // mutate product/service commitments or claim payment settlement locally.
 model ZonaEntrega {
-  id              String   @id(map: "zonas_entrega_pkey")
-  tenantId        String   @map("tenant_id")
-  zonaId          String   @map("zona_id")
-  nombre          String   @map("nombre")
-  codigosPostales String[] @map("codigos_postales")
-  activo          Boolean  @map("activo")
-  fechaCreacion   DateTime @map("fecha_creacion")
+  id                 String   @id(map: "zonas_entrega_pkey")
+  tenantId           String   @map("tenant_id")
+  zonaId             String   @map("zona_id")
+  nombre             String   @map("nombre")
+  codigosPostales    String[] @map("codigos_postales")
+  activo             Boolean  @map("activo")
+  fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-
   turnos TurnoEntrega[]
+
   @@unique([tenantId, zonaId], map: "uq_zonas_tenant_zona")
   @@index([tenantId, activo], map: "idx_zonas_tenant_activo")
   @@map("zonas_entrega")
 }
 
 model TurnoEntrega {
-  id              String   @id(map: "turnos_entrega_pkey")
-  tenantId        String   @map("tenant_id")
-  turnoId         String   @map("turno_id")
-  zonaId          String   @map("zona_id")
-  fechaInicio     DateTime @map("fecha_inicio")
-  fechaFin        DateTime @map("fecha_fin")
-  idsOperadores   String[] @map("ids_operadores")
-  estado          String   @map("estado")
-  fechaCreacion   DateTime @map("fecha_creacion")
+  id                 String   @id(map: "turnos_entrega_pkey")
+  tenantId           String   @map("tenant_id")
+  turnoId            String   @map("turno_id")
+  zonaId             String   @map("zona_id")
+  fechaInicio        DateTime @map("fecha_inicio")
+  fechaFin           DateTime @map("fecha_fin")
+  idsOperadores      String[] @map("ids_operadores")
+  estado             String   @map("estado")
+  fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-
   zona ZonaEntrega @relation(fields: [tenantId, zonaId], references: [tenantId, zonaId], onDelete: Restrict, onUpdate: NoAction, map: "fk_turnos_entrega_zonas_entrega")
+
   @@unique([tenantId, turnoId], map: "uq_turnos_tenant_turno")
   @@index([tenantId, zonaId, estado], map: "idx_turnos_tenant_zona_estado")
   @@map("turnos_entrega")
 }
 
 model TareaEntrega {
-  id                String    @id(map: "tareas_entrega_pkey")
-  tenantId          String    @map("tenant_id")
-  tareaId           String    @map("tarea_id")
-  compromisoId      String    @map("compromiso_id")
-  prestadorId       String    @map("prestador_id")
-  contexto          String    @map("contexto")
-  zonaId            String    @map("zona_id")
-  turnoId           String    @map("turno_id")
-  operadorId        String?   @map("operador_id")
-  estado            String    @map("estado")
-  version         Int
-  evidencia         Json?     @map("evidencia")
-  incidente         Json?     @map("incidente")
-  sla             Json?
-  retiro            Json?     @map("retiro")
-  entrega           Json?     @map("entrega")
-  fechaCancelacion  DateTime? @map("fecha_cancelacion")
-  motivoFallo       String?   @map("motivo_fallo")
-  reclamoLiquidacion String   @map("reclamo_liquidacion")
-  fechaCreacion     DateTime  @map("fecha_creacion")
-  fechaActualizacion DateTime @map("fecha_actualizacion")
-
+  id                 String    @id(map: "tareas_entrega_pkey")
+  tenantId           String    @map("tenant_id")
+  tareaId            String    @map("tarea_id")
+  compromisoId       String    @map("compromiso_id")
+  prestadorId        String    @map("prestador_id")
+  contexto           String    @map("contexto")
+  zonaId             String    @map("zona_id")
+  turnoId            String    @map("turno_id")
+  operadorId         String?   @map("operador_id")
+  estado             String    @map("estado")
+  version            Int
+  evidencia          Json?     @map("evidencia")
+  incidente          Json?     @map("incidente")
+  sla                Json?
+  retiro             Json?     @map("retiro")
+  entrega            Json?     @map("entrega")
+  fechaCancelacion   DateTime? @map("fecha_cancelacion")
+  motivoFallo        String?   @map("motivo_fallo")
+  reclamoLiquidacion String    @map("reclamo_liquidacion")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
 
   evidencias EvidenciaEntrega[]
   incidentes IncidenteEntrega[]
+
   @@unique([tenantId, tareaId], map: "uq_tareas_tenant_tarea")
   @@index([tenantId, compromisoId], map: "idx_tareas_tenant_compromiso")
   @@index([tenantId, turnoId, estado], map: "idx_tareas_tenant_turno_estado")
@@ -979,18 +1174,18 @@ model TareaEntrega {
 }
 
 model EvidenciaEntrega {
-  id                String   @id(map: "evidencias_entrega_pkey")
-  tenantId          String   @map("tenant_id")
-  evidenciaId       String   @map("evidencia_id")
-  tareaId           String   @map("tarea_id")
-  compromisoId      String   @map("compromiso_id")
-  nombreDestinatario String  @map("nombre_destinatario")
-  fechaCaptura      DateTime @map("fecha_captura")
-  origenEvidencia   String   @map("origen_evidencia")
-  fechaCreacion     DateTime @map("fecha_creacion")
-
+  id                 String   @id(map: "evidencias_entrega_pkey")
+  tenantId           String   @map("tenant_id")
+  evidenciaId        String   @map("evidencia_id")
+  tareaId            String   @map("tarea_id")
+  compromisoId       String   @map("compromiso_id")
+  nombreDestinatario String   @map("nombre_destinatario")
+  fechaCaptura       DateTime @map("fecha_captura")
+  origenEvidencia    String   @map("origen_evidencia")
+  fechaCreacion      DateTime @map("fecha_creacion")
 
   tarea TareaEntrega @relation(fields: [tenantId, tareaId], references: [tenantId, tareaId], onDelete: Restrict, onUpdate: NoAction, map: "fk_evidencias_entrega_tareas_entrega")
+
   @@unique([tenantId, evidenciaId], map: "uq_evidencias_tenant_evidencia")
   @@index([tenantId, tareaId], map: "idx_evidencias_tenant_tarea")
   @@map("evidencias_entrega")
@@ -1005,8 +1200,8 @@ model IncidenteEntrega {
   estado        String   @map("estado")
   fechaCreacion DateTime @map("fecha_creacion")
 
-
   tarea TareaEntrega @relation(fields: [tenantId, tareaId], references: [tenantId, tareaId], onDelete: Restrict, onUpdate: NoAction, map: "fk_incidentes_entrega_tareas_entrega")
+
   @@unique([tenantId, incidenteId], map: "uq_incidentes_tenant_incidente")
   @@index([tenantId, tareaId, estado], map: "idx_incidentes_tenant_tarea_estado")
   @@map("incidentes_entrega")
@@ -1046,9 +1241,9 @@ model OperacionPOS {
   moneda            String   @map("moneda")
   respuesta         Json?    @map("respuesta")
 
-
   comprobantes ComprobantePOS[]
-  conflictos ConflictoPOS[]
+  conflictos   ConflictoPOS[]
+
   @@unique([tenantId, operacionId], map: "uq_operaciones_pos_tenant_operacion")
   @@unique([tenantId, claveIdempotencia], map: "uq_operaciones_pos_tenant_clave_idempotencia")
   @@index([tenantId, turnoId, fechaCreacion], map: "idx_operaciones_pos_tenant_turno_fecha_creacion")
@@ -1057,11 +1252,11 @@ model OperacionPOS {
 }
 
 model VersionPOS {
-  id                String   @id(map: "versiones_pos_pkey")
-  tenantId          String   @map("tenant_id")
-  turnoId           String   @map("turno_id")
-  version           Int      @default(0)
-  fechaCreacion     DateTime @map("fecha_creacion")
+  id                 String   @id(map: "versiones_pos_pkey")
+  tenantId           String   @map("tenant_id")
+  turnoId            String   @map("turno_id")
+  version            Int      @default(0)
+  fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
   @@unique([tenantId, turnoId], map: "uq_versiones_pos_tenant_turno")
@@ -1085,8 +1280,8 @@ model ComprobantePOS {
   hashIntegridad   String   @map("hash_integridad")
   fechaCreacion    DateTime @map("fecha_creacion")
 
-
   operacion OperacionPOS @relation(fields: [tenantId, operacionId], references: [tenantId, operacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_comprobantes_pos_operaciones_pos")
+
   @@unique([tenantId, comprobanteId], map: "uq_comprobantes_pos_tenant_comprobante")
   @@index([tenantId, operacionId], map: "idx_comprobantes_pos_tenant_operacion")
   @@index([tenantId, operacionId, fechaCreacion], map: "idx_comprobantes_pos_tenant_operacion_fecha_creacion")
@@ -1094,13 +1289,13 @@ model ComprobantePOS {
 }
 
 model DispositivoPOS {
-  id                String   @id(map: "dispositivos_pos_pkey")
-  tenantId          String   @map("tenant_id")
-  dispositivoId     String   @map("dispositivo_id")
-  etiqueta          String   @map("etiqueta")
-  huella            String   @map("huella")
-  estado            String   @map("estado")
-  fechaCreacion     DateTime @map("fecha_creacion")
+  id                 String   @id(map: "dispositivos_pos_pkey")
+  tenantId           String   @map("tenant_id")
+  dispositivoId      String   @map("dispositivo_id")
+  etiqueta           String   @map("etiqueta")
+  huella             String   @map("huella")
+  estado             String   @map("estado")
+  fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
   @@unique([tenantId, dispositivoId], map: "uq_dispositivos_pos_tenant_dispositivo")
@@ -1109,14 +1304,14 @@ model DispositivoPOS {
 }
 
 model SesionPOS {
-  id            String   @id(map: "sesiones_pos_pkey")
-  tenantId      String   @map("tenant_id")
-  sesionId      String   @map("sesion_id")
-  dispositivoId String   @map("dispositivo_id")
-  actorId       String   @map("actor_id")
-  turnoId       String   @map("turno_id")
-  estado        String   @map("estado")
-  fechaApertura DateTime @map("fecha_apertura")
+  id            String    @id(map: "sesiones_pos_pkey")
+  tenantId      String    @map("tenant_id")
+  sesionId      String    @map("sesion_id")
+  dispositivoId String    @map("dispositivo_id")
+  actorId       String    @map("actor_id")
+  turnoId       String    @map("turno_id")
+  estado        String    @map("estado")
+  fechaApertura DateTime  @map("fecha_apertura")
   fechaCierre   DateTime? @map("fecha_cierre")
 
   @@unique([tenantId, sesionId], map: "uq_sesiones_pos_tenant_sesion")
@@ -1135,8 +1330,8 @@ model ConflictoPOS {
   estado          String   @map("estado")
   fechaCreacion   DateTime @map("fecha_creacion")
 
-
   operacion OperacionPOS @relation(fields: [tenantId, operacionId], references: [tenantId, operacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_conflictos_pos_operaciones_pos")
+
   @@unique([tenantId, conflictoId], map: "uq_conflictos_pos_tenant_conflicto")
   @@index([tenantId, operacionId, estado], map: "idx_conflictos_pos_tenant_operacion_estado")
   @@index([tenantId, estado, fechaCreacion], map: "idx_conflictos_pos_tenant_estado_fecha_creacion")
@@ -1144,16 +1339,16 @@ model ConflictoPOS {
 }
 
 model OutboxEntrega {
-  id             String   @id(map: "outbox_entrega_pkey")
-  tenantId       String   @map("tenant_id")
-  eventoId       String   @map("evento_id")
-  correlacionId  String   @default("legacy") @map("correlacion_id")
-  tipoEvento     String   @map("tipo_evento")
-  agregadoId     String   @map("agregado_id")
-  datosEvento    Json     @map("datos_evento")
-  estado         String   @map("estado")
-  intentos       Int      @map("intentos")
-  fechaCreacion  DateTime @map("fecha_creacion")
+  id            String   @id(map: "outbox_entrega_pkey")
+  tenantId      String   @map("tenant_id")
+  eventoId      String   @map("evento_id")
+  correlacionId String   @default("legacy") @map("correlacion_id")
+  tipoEvento    String   @map("tipo_evento")
+  agregadoId    String   @map("agregado_id")
+  datosEvento   Json     @map("datos_evento")
+  estado        String   @map("estado")
+  intentos      Int      @map("intentos")
+  fechaCreacion DateTime @map("fecha_creacion")
 
   @@unique([tenantId, eventoId], map: "uq_outbox_entrega_tenant_evento")
   @@index([tenantId, estado, fechaCreacion], map: "idx_outbox_entrega_tenant_estado_fecha_creacion")
@@ -1161,20 +1356,20 @@ model OutboxEntrega {
 }
 
 model OutboxPOS {
-  id                    String   @id(map: "outbox_pos_pkey")
-  tenantId              String   @map("tenant_id")
-  eventoId              String   @map("evento_id")
-  tipoEvento            String   @map("tipo_evento")
-  agregadoId            String   @map("agregado_id")
-  datosEvento           Json     @map("datos_evento")
-  estado                String   @map("estado")
-  intentos              Int      @map("intentos")
-  disponibleDesde       DateTime @default(now()) @map("disponible_desde")
-  ultimoError           String?  @map("ultimo_error")
-  reclamoProcesamientoId String?  @map("reclamo_procesamiento_id")
-  reclamadoHasta        DateTime? @map("reclamado_hasta")
-  fechaPublicacion      DateTime? @map("fecha_publicacion")
-  fechaCreacion         DateTime @map("fecha_creacion")
+  id                     String    @id(map: "outbox_pos_pkey")
+  tenantId               String    @map("tenant_id")
+  eventoId               String    @map("evento_id")
+  tipoEvento             String    @map("tipo_evento")
+  agregadoId             String    @map("agregado_id")
+  datosEvento            Json      @map("datos_evento")
+  estado                 String    @map("estado")
+  intentos               Int       @map("intentos")
+  disponibleDesde        DateTime  @default(now()) @map("disponible_desde")
+  ultimoError            String?   @map("ultimo_error")
+  reclamoProcesamientoId String?   @map("reclamo_procesamiento_id")
+  reclamadoHasta         DateTime? @map("reclamado_hasta")
+  fechaPublicacion       DateTime? @map("fecha_publicacion")
+  fechaCreacion          DateTime  @map("fecha_creacion")
 
   @@unique([tenantId, eventoId], map: "uq_outbox_pos_tenant_evento")
   @@index([tenantId, estado, fechaCreacion], map: "idx_outbox_pos_tenant_estado_fecha_creacion")
@@ -1185,7 +1380,7 @@ model OutboxPOS {
 model AuditoriaPOS {
   id            String   @id(map: "auditoria_pos_pkey")
   tenantId      String   @map("tenant_id")
-  auditoriaId  String   @map("auditoria_id")
+  auditoriaId   String   @map("auditoria_id")
   actorId       String   @map("actor_id")
   correlacionId String   @map("correlacion_id")
   accion        String   @map("accion")
@@ -1232,10 +1427,10 @@ model CasoSoporte {
   fechaCreacion   DateTime  @map("fecha_creacion")
   fechaResolucion DateTime? @map("fecha_resolucion")
 
-
-  evidencias EvidenciaSoporte[]
-  lineaTiempo LineaTiempoSoporte[]
+  evidencias     EvidenciaSoporte[]
+  lineaTiempo    LineaTiempoSoporte[]
   compensaciones CompensacionSoporte[]
+
   @@unique([tenantId, casoId], map: "uq_casos_soporte_tenant_caso")
   @@index([tenantId, estado, fechaCreacion], map: "idx_casos_soporte_tenant_estado_fecha_creacion")
   @@index([tenantId, compromisoId], map: "idx_casos_soporte_tenant_compromiso")
@@ -1253,8 +1448,8 @@ model EvidenciaSoporte {
   presentadaPor String   @map("presentada_por")
   fechaCreacion DateTime @map("fecha_creacion")
 
-
   caso CasoSoporte @relation(fields: [tenantId, casoId], references: [tenantId, casoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_evidencias_soporte_casos_soporte")
+
   @@unique([tenantId, evidenciaId], map: "uq_evidencias_soporte_tenant_evidencia")
   @@index([tenantId, casoId, parte], map: "idx_evidencias_soporte_tenant_caso_parte")
   @@map("evidencias_soporte")
@@ -1270,8 +1465,8 @@ model LineaTiempoSoporte {
   actorId       String   @map("actor_id")
   fechaCreacion DateTime @map("fecha_creacion")
 
-
   caso CasoSoporte @relation(fields: [tenantId, casoId], references: [tenantId, casoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_lineas_tiempo_soporte_casos_soporte")
+
   @@unique([tenantId, entradaId], map: "uq_lineas_tiempo_tenant_entrada")
   @@index([tenantId, casoId, fechaCreacion], map: "idx_lineas_tiempo_tenant_caso_fecha_creacion")
   @@map("lineas_tiempo_soporte")
@@ -1290,8 +1485,8 @@ model CompensacionSoporte {
   liquidacion   String   @map("liquidacion")
   fechaCreacion DateTime @default(now()) @map("fecha_creacion")
 
-
   caso CasoSoporte @relation(fields: [tenantId, casoId], references: [tenantId, casoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_compensaciones_soporte_casos_soporte")
+
   @@unique([tenantId, entradaId], map: "uq_compensaciones_soporte_tenant_entrada")
   @@unique([tenantId, casoId], map: "uq_compensaciones_soporte_tenant_caso")
   @@index([tenantId, casoId, fechaCreacion], map: "idx_compensaciones_soporte_tenant_caso_fecha_creacion")
@@ -1299,15 +1494,15 @@ model CompensacionSoporte {
 }
 
 model OutboxSoporte {
-  id             String   @id(map: "outbox_soporte_pkey")
-  tenantId       String   @map("tenant_id")
-  eventoId       String   @map("evento_id")
-  correlacionId  String   @map("correlacion_id")
-  tipoEvento     String   @map("tipo_evento")
-  agregadoId     String   @map("agregado_id")
-  datosEvento    Json     @map("datos_evento")
-  estado         String   @map("estado")
-  fechaCreacion  DateTime @map("fecha_creacion")
+  id            String   @id(map: "outbox_soporte_pkey")
+  tenantId      String   @map("tenant_id")
+  eventoId      String   @map("evento_id")
+  correlacionId String   @map("correlacion_id")
+  tipoEvento    String   @map("tipo_evento")
+  agregadoId    String   @map("agregado_id")
+  datosEvento   Json     @map("datos_evento")
+  estado        String   @map("estado")
+  fechaCreacion DateTime @map("fecha_creacion")
 
   @@unique([tenantId, eventoId], map: "uq_outbox_soporte_tenant_evento")
   @@index([tenantId, estado, fechaCreacion], map: "idx_outbox_soporte_tenant_estado_fecha_creacion")
@@ -1331,14 +1526,14 @@ model AccionWhatsApp {
 }
 
 model ConfirmacionWhatsApp {
-  id              String   @id(map: "confirmaciones_whatsapp_pkey")
-  confirmacionId  String   @map("confirmacion_id")
-  tenantId        String   @map("tenant_id")
-  remitenteId     String   @map("remitente_id")
-  fechaExpiracion DateTime @map("fecha_expiracion")
+  id              String    @id(map: "confirmaciones_whatsapp_pkey")
+  confirmacionId  String    @map("confirmacion_id")
+  tenantId        String    @map("tenant_id")
+  remitenteId     String    @map("remitente_id")
+  fechaExpiracion DateTime  @map("fecha_expiracion")
   fechaConsumo    DateTime? @map("fecha_consumo")
-  elementos       Json     @map("elementos")
-  fechaCreacion   DateTime @default(now()) @map("fecha_creacion")
+  elementos       Json      @map("elementos")
+  fechaCreacion   DateTime  @default(now()) @map("fecha_creacion")
 
   @@unique([tenantId, confirmacionId], map: "uq_confirmaciones_whatsapp_tenant_confirmacion")
   @@index([tenantId, remitenteId, fechaExpiracion], map: "idx_confirmaciones_whatsapp_tenant_remitente_expiracion")
@@ -1346,14 +1541,14 @@ model ConfirmacionWhatsApp {
 }
 
 model AuditoriaWhatsApp {
-  id            String   @id(map: "auditoria_whatsapp_pkey")
-  tenantId      String   @map("tenant_id")
-  accion        String   @map("accion")
-  resultado     String   @map("resultado")
-  actorId       String   @map("actor_id")
-  remitenteId   String   @map("remitente_id")
-  correlacionId String   @map("correlacion_id")
-  fechaCreacion DateTime @map("fecha_creacion")
+  id             String    @id(map: "auditoria_whatsapp_pkey")
+  tenantId       String    @map("tenant_id")
+  accion         String    @map("accion")
+  resultado      String    @map("resultado")
+  actorId        String    @map("actor_id")
+  remitenteId    String    @map("remitente_id")
+  correlacionId  String    @map("correlacion_id")
+  fechaCreacion  DateTime  @map("fecha_creacion")
   retencionHasta DateTime? @map("retencion_hasta")
 
   @@index([tenantId, fechaCreacion], map: "idx_auditoria_whatsapp_tenant_fecha_creacion")
@@ -1362,19 +1557,19 @@ model AuditoriaWhatsApp {
 }
 
 model RegistroOperaciones {
-  id                String   @id(map: "registros_operaciones_pkey")
-  tenantId          String   @map("tenant_id")
-  contexto          String   @map("contexto")
-  canal             String   @map("canal")
-  geografia         String   @map("geografia")
-  resultado         String   @map("resultado")
-  monto             BigInt   @map("monto")
-  moneda            String   @map("moneda")
-  estadoContable    String   @map("estado_contable")
+  id               String   @id(map: "registros_operaciones_pkey")
+  tenantId         String   @map("tenant_id")
+  contexto         String   @map("contexto")
+  canal            String   @map("canal")
+  geografia        String   @map("geografia")
+  resultado        String   @map("resultado")
+  monto            BigInt   @map("monto")
+  moneda           String   @map("moneda")
+  estadoContable   String   @map("estado_contable")
   accionesWhatsApp Int      @map("acciones_whatsapp")
-  disputas          Int      @map("disputas")
-  posFueraLinea     Int      @map("pos_fuera_linea")
-  fechaCreacion     DateTime @map("fecha_creacion")
+  disputas         Int      @map("disputas")
+  posFueraLinea    Int      @map("pos_fuera_linea")
+  fechaCreacion    DateTime @map("fecha_creacion")
 
   @@index([tenantId, fechaCreacion], map: "idx_registros_operaciones_tenant_fecha_creacion")
   @@index([tenantId, contexto, canal, geografia], map: "idx_registros_operaciones_tenant_contexto_canal_geografia")
@@ -1441,23 +1636,23 @@ model TusInventory {
 }
 
 model Calendario {
-  id          String   @id(map: "calendarios_pkey")
-  tenantId    String   @map("tenant_id")
-  prestadorId String?  @map("prestador_id")
-  servicioId  String?  @map("servicio_id")
-  nombre      String   @map("nombre")
-  zonaHoraria String   @map("zona_horaria")
-  estado      String   @map("estado")
-  granularidadMinutos Int @default(15) @map("granularidad_minutos")
-  bufferMinutos Int @default(0) @map("buffer_minutos")
-  fechaCreacion DateTime @map("fecha_creacion")
-  fechaActualizacion DateTime @map("fecha_actualizacion")
+  id                  String   @id(map: "calendarios_pkey")
+  tenantId            String   @map("tenant_id")
+  prestadorId         String?  @map("prestador_id")
+  servicioId          String?  @map("servicio_id")
+  nombre              String   @map("nombre")
+  zonaHoraria         String   @map("zona_horaria")
+  estado              String   @map("estado")
+  granularidadMinutos Int      @default(15) @map("granularidad_minutos")
+  bufferMinutos       Int      @default(0) @map("buffer_minutos")
+  fechaCreacion       DateTime @map("fecha_creacion")
+  fechaActualizacion  DateTime @map("fecha_actualizacion")
 
-
-  reglas ReglaCalendario[]
+  reglas      ReglaCalendario[]
   excepciones ExcepcionCalendario[]
-  reservas Reserva[]
-  prestador Prestador? @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_calendarios_prestadores")
+  reservas    Reserva[]
+  prestador   Prestador?            @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_calendarios_prestadores")
+
   @@unique([tenantId, id], map: "uq_calendarios_tenant_id")
   @@unique([tenantId, prestadorId], map: "uq_calendarios_tenant_prestador")
   @@index([tenantId, prestadorId, estado], map: "idx_calendarios_tenant_prestador_estado")
@@ -1466,18 +1661,18 @@ model Calendario {
 }
 
 model ReglaCalendario {
-  id            String   @id(map: "reglas_calendario_pkey")
-  tenantId      String   @map("tenant_id")
-  calendarioId  String   @map("calendario_id")
-  diaSemana     Int      @map("dia_semana")
-  horaInicio    String   @map("hora_inicio")
-  horaFin       String   @map("hora_fin")
-  capacidad     Int      @map("capacidad")
-  fechaCreacion DateTime @map("fecha_creacion")
+  id                 String   @id(map: "reglas_calendario_pkey")
+  tenantId           String   @map("tenant_id")
+  calendarioId       String   @map("calendario_id")
+  diaSemana          Int      @map("dia_semana")
+  horaInicio         String   @map("hora_inicio")
+  horaFin            String   @map("hora_fin")
+  capacidad          Int      @map("capacidad")
+  fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-
   calendario Calendario @relation(fields: [tenantId, calendarioId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reglas_calendario_calendarios")
+
   @@unique([tenantId, calendarioId, diaSemana, horaInicio, horaFin], map: "uq_reglas_tenant_calendario_franja")
   @@index([tenantId, calendarioId], map: "idx_reglas_tenant_calendario")
   @@map("reglas_calendario")
@@ -1493,30 +1688,32 @@ model ExcepcionCalendario {
   estado        String   @map("estado")
   fechaCreacion DateTime @map("fecha_creacion")
 
-
   calendario Calendario @relation(fields: [tenantId, calendarioId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction, map: "fk_excepciones_calendario_calendarios")
+
   @@index([tenantId, calendarioId, fechaInicio, fechaFin], map: "idx_excepciones_tenant_calendario_franja")
   @@map("excepciones_calendario")
 }
 
 model Reserva {
-  id            String   @id(map: "reservas_pkey")
-  tenantId      String   @map("tenant_id")
-  reservaId     String   @map("reserva_id")
-  servicioId    String?  @map("servicio_id")
-  calendarioId  String   @map("calendario_id")
-  publicacionId String?  @map("publicacion_id")
-  clienteId     String   @map("cliente_id")
-  fechaInicio   DateTime @map("fecha_inicio")
-  fechaFin      DateTime @map("fecha_fin")
-  estado        String   @map("estado")
-  version       Int
-  fechaCreacion DateTime @map("fecha_creacion")
+  id                 String   @id(map: "reservas_pkey")
+  tenantId           String   @map("tenant_id")
+  clienteTenantId    String?  @map("cliente_tenant_id")
+  reservaId          String   @map("reserva_id")
+  servicioId         String?  @map("servicio_id")
+  calendarioId       String   @map("calendario_id")
+  publicacionId      String?  @map("publicacion_id")
+  clienteId          String   @map("cliente_id")
+  fechaInicio        DateTime @map("fecha_inicio")
+  fechaFin           DateTime @map("fecha_fin")
+  estado             String   @map("estado")
+  version            Int
+  fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-
-  calendario Calendario @relation(fields: [tenantId, calendarioId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_calendarios")
+  calendario  Calendario   @relation(fields: [tenantId, calendarioId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_calendarios")
   publicacion Publicacion? @relation(fields: [tenantId, publicacionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_publicaciones")
+  trabajos    Trabajo[]
+
   @@unique([tenantId, reservaId], map: "uq_reservas_tenant_reserva")
   @@index([tenantId, calendarioId, fechaInicio, fechaFin], map: "idx_reservas_tenant_calendario_franja")
   @@index([tenantId, publicacionId, fechaInicio, fechaFin], map: "idx_reservas_tenant_publicacion_franja")
@@ -1541,16 +1738,16 @@ model EventoWebhookPago {
 }
 
 model ConsentimientoWhatsApp {
-  id                 String   @id(map: "consentimientos_whatsapp_pkey")
-  tenantId           String   @map("tenant_id")
-  destinatarioId     String   @map("destinatario_id")
-  tipoDestinatario   String   @map("tipo_destinatario")
-  estado             String   @map("estado")
-  origen             String   @map("origen")
-  fechaOtorgamiento  DateTime @map("fecha_otorgamiento")
+  id                 String    @id(map: "consentimientos_whatsapp_pkey")
+  tenantId           String    @map("tenant_id")
+  destinatarioId     String    @map("destinatario_id")
+  tipoDestinatario   String    @map("tipo_destinatario")
+  estado             String    @map("estado")
+  origen             String    @map("origen")
+  fechaOtorgamiento  DateTime  @map("fecha_otorgamiento")
   fechaRevocacion    DateTime? @map("fecha_revocacion")
-  fechaCreacion      DateTime @map("fecha_creacion")
-  fechaActualizacion DateTime @map("fecha_actualizacion")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
 
   @@unique([tenantId, destinatarioId], map: "uq_consentimientos_whatsapp_tenant_destinatario")
   @@index([tenantId, estado], map: "idx_consentimientos_whatsapp_tenant_estado")
@@ -1558,20 +1755,20 @@ model ConsentimientoWhatsApp {
 }
 
 model MensajeWhatsApp {
-  id                 String   @id(map: "mensajes_whatsapp_pkey")
-  tenantId           String   @map("tenant_id")
-  mensajeId          String   @map("mensaje_id")
-  destinatarioId     String   @map("destinatario_id")
-  plantilla          String   @map("plantilla")
-  versionPlantilla   String   @map("version_plantilla")
-  consentimientoId  String   @map("consentimiento_id")
-  hashSolicitud      String   @map("hash_solicitud")
-  variables          Json?    @map("variables")
-  estado             String   @map("estado")
-  correlacionId      String   @map("correlacion_id")
+  id                 String    @id(map: "mensajes_whatsapp_pkey")
+  tenantId           String    @map("tenant_id")
+  mensajeId          String    @map("mensaje_id")
+  destinatarioId     String    @map("destinatario_id")
+  plantilla          String    @map("plantilla")
+  versionPlantilla   String    @map("version_plantilla")
+  consentimientoId   String    @map("consentimiento_id")
+  hashSolicitud      String    @map("hash_solicitud")
+  variables          Json?     @map("variables")
+  estado             String    @map("estado")
+  correlacionId      String    @map("correlacion_id")
   retencionHasta     DateTime? @map("retencion_hasta")
-  fechaCreacion      DateTime @map("fecha_creacion")
-  fechaActualizacion DateTime @map("fecha_actualizacion")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
 
   @@unique([tenantId, mensajeId], map: "uq_mensajes_whatsapp_tenant_mensaje")
   @@index([tenantId, destinatarioId, estado], map: "idx_mensajes_whatsapp_tenant_destinatario_estado")
@@ -1579,13 +1776,13 @@ model MensajeWhatsApp {
 }
 
 model EventoWebhookWhatsApp {
-  id               String   @id(map: "eventos_webhook_whatsapp_pkey")
-  tenantId         String   @map("tenant_id")
-  eventoProveedorId String  @map("evento_proveedor_id")
-  firma            String   @map("firma")
-  fechaOcurrencia  DateTime @map("fecha_ocurrencia")
-  estado           String   @map("estado")
-  fechaCreacion    DateTime @map("fecha_creacion")
+  id                String   @id(map: "eventos_webhook_whatsapp_pkey")
+  tenantId          String   @map("tenant_id")
+  eventoProveedorId String   @map("evento_proveedor_id")
+  firma             String   @map("firma")
+  fechaOcurrencia   DateTime @map("fecha_ocurrencia")
+  estado            String   @map("estado")
+  fechaCreacion     DateTime @map("fecha_creacion")
 
   @@unique([tenantId, eventoProveedorId], map: "uq_eventos_webhook_whatsapp_tenant_evento")
   @@index([tenantId, estado, fechaOcurrencia], map: "idx_eventos_webhook_whatsapp_tenant_estado_ocurrencia")
@@ -1639,11 +1836,11 @@ model Factura {
   fechaActualizacion DateTime       @map("fecha_actualizacion")
   lineas             LineaFactura[]
 
-
-  compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_facturas_compromisos")
-  notasCredito NotaCredito[]
-  reintegros ReintegroFacturacion[]
+  compromiso           Compromiso                      @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_facturas_compromisos")
+  notasCredito         NotaCredito[]
+  reintegros           ReintegroFacturacion[]
   movimientosContables MovimientoContableFacturacion[]
+
   @@unique([tenantId, facturaId], map: "uq_facturas_tenant_factura")
   @@index([tenantId, compromisoId, estado], map: "idx_facturas_tenant_compromiso_estado")
   @@map("facturas")
@@ -1663,9 +1860,8 @@ model LineaFactura {
   instantanea    Json?    @map("instantanea")
   fechaCreacion  DateTime @map("fecha_creacion")
 
-
-
   factura Factura @relation(fields: [tenantId, facturaId], references: [tenantId, facturaId], onDelete: NoAction, onUpdate: NoAction, map: "fk_lineas_factura_facturas")
+
   @@unique([tenantId, id], map: "uq_lineas_factura_tenant_id")
   @@index([tenantId, facturaId], map: "idx_lineas_factura_tenant_factura")
   @@map("lineas_factura")
@@ -1685,8 +1881,8 @@ model NotaCredito {
   estado         String   @map("estado")
   fechaCreacion  DateTime @map("fecha_creacion")
 
-
   factura Factura @relation(fields: [tenantId, facturaId], references: [tenantId, facturaId], onDelete: Restrict, onUpdate: NoAction, map: "fk_notas_credito_facturas")
+
   @@unique([tenantId, notaCreditoId], map: "uq_notas_credito_tenant_nota")
   @@index([tenantId, facturaId, estado], map: "idx_notas_credito_tenant_factura_estado")
   @@map("notas_credito")
@@ -1709,9 +1905,9 @@ model Suscripcion {
   fechaCreacion      DateTime  @map("fecha_creacion")
   fechaActualizacion DateTime  @map("fecha_actualizacion")
 
-
-  plan PlanSuscripcion @relation(fields: [tenantId, planId], references: [tenantId, planId], onDelete: Restrict, onUpdate: NoAction, map: "fk_suscripciones_planes_suscripcion")
+  plan        PlanSuscripcion @relation(fields: [tenantId, planId], references: [tenantId, planId], onDelete: Restrict, onUpdate: NoAction, map: "fk_suscripciones_planes_suscripcion")
   gestionMora GestionMora[]
+
   @@unique([tenantId, suscripcionId], map: "uq_suscripciones_tenant_suscripcion")
   @@index([tenantId, clienteId, estado], map: "idx_suscripciones_tenant_cliente_estado")
   @@map("suscripciones")
@@ -1764,8 +1960,8 @@ model PlanSuscripcion {
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-
   suscripciones Suscripcion[]
+
   @@unique([tenantId, planId], map: "uq_planes_suscripcion_tenant_plan")
   @@index([tenantId, estado], map: "idx_planes_suscripcion_tenant_estado")
   @@map("planes_suscripcion")
@@ -1785,8 +1981,8 @@ model ReintegroFacturacion {
   estado         String   @map("estado")
   fechaCreacion  DateTime @map("fecha_creacion")
 
-
   factura Factura @relation(fields: [tenantId, facturaId], references: [tenantId, facturaId], onDelete: Restrict, onUpdate: NoAction, map: "fk_reintegros_facturacion_facturas")
+
   @@unique([tenantId, reintegroId], map: "uq_reintegros_fact_tenant_reintegro")
   @@index([tenantId, facturaId], map: "idx_reintegros_fact_tenant_factura")
   @@map("reintegros_facturacion")
@@ -1809,8 +2005,8 @@ model MovimientoContableFacturacion {
   inmutable          Boolean  @default(true) @map("inmutable")
   fechaCreacion      DateTime @map("fecha_creacion")
 
-
   factura Factura @relation(fields: [tenantId, facturaId], references: [tenantId, facturaId], onDelete: Restrict, onUpdate: NoAction, map: "fk_movimientos_contables_facturacion_facturas")
+
   @@unique([tenantId, entradaId], map: "uq_movimientos_fact_tenant_entrada")
   @@index([tenantId, facturaId, fechaCreacion], map: "idx_movimientos_fact_tenant_factura_fecha_creacion")
   @@map("movimientos_contables_facturacion")
@@ -1847,17 +2043,17 @@ model AuditoriaFacturacion {
 }
 
 model OutboxFacturacion {
-  id             String   @id(map: "outbox_facturacion_pkey")
-  tenantId       String   @map("tenant_id")
-  eventoId       String   @map("evento_id")
-  correlacionId  String   @map("correlacion_id")
-  tipoEvento     String   @map("tipo_evento")
-  agregadoId     String   @map("agregado_id")
-  datosEvento    Json     @map("datos_evento")
-  estado         String   @map("estado")
-  intentos       Int      @map("intentos")
+  id              String   @id(map: "outbox_facturacion_pkey")
+  tenantId        String   @map("tenant_id")
+  eventoId        String   @map("evento_id")
+  correlacionId   String   @map("correlacion_id")
+  tipoEvento      String   @map("tipo_evento")
+  agregadoId      String   @map("agregado_id")
+  datosEvento     Json     @map("datos_evento")
+  estado          String   @map("estado")
+  intentos        Int      @map("intentos")
   disponibleDesde DateTime @map("disponible_desde")
-  fechaCreacion  DateTime @map("fecha_creacion")
+  fechaCreacion   DateTime @map("fecha_creacion")
 
   @@unique([tenantId, eventoId], map: "uq_outbox_facturacion_tenant_evento")
   @@index([tenantId, estado, disponibleDesde], map: "idx_outbox_facturacion_tenant_estado_disponible")
@@ -1875,8 +2071,8 @@ model GestionMora {
   fechaReintento DateTime? @map("fecha_reintento")
   fechaCreacion  DateTime  @map("fecha_creacion")
 
-
   suscripcion Suscripcion @relation(fields: [tenantId, suscripcionId], references: [tenantId, suscripcionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_gestion_mora_suscripciones")
+
   @@unique([tenantId, moraId], map: "uq_gestion_mora_tenant_mora")
   @@index([tenantId, suscripcionId, fechaCreacion], map: "idx_gestion_mora_tenant_suscripcion_fecha_creacion")
   @@map("gestion_mora")
@@ -1907,32 +2103,32 @@ model ExportacionContable {
 }
 
 model TusJob {
-  id            String   @id
-  tenantId      String
-  jobId         String
-  jobType       String
-  status        String
-  attempts      Int
-  availableAt   DateTime
-  claimId       String?
-  claimUntil    DateTime?
-  payload       Json
-  lastError     String?
-  createdAt     DateTime
-  updatedAt     DateTime
+  id          String    @id
+  tenantId    String
+  jobId       String
+  jobType     String
+  status      String
+  attempts    Int
+  availableAt DateTime
+  claimId     String?
+  claimUntil  DateTime?
+  payload     Json
+  lastError   String?
+  createdAt   DateTime
+  updatedAt   DateTime
 
   @@unique([tenantId, jobId])
   @@index([tenantId, status, availableAt, claimUntil])
 }
 
 model TusDeadLetter {
-  id          String   @id
-  tenantId    String
-  jobId       String
-  reason      String
-  payload     Json
+  id            String   @id
+  tenantId      String
+  jobId         String
+  reason        String
+  payload       Json
   correlationId String
-  createdAt   DateTime
+  createdAt     DateTime
 
   @@unique([tenantId, id])
   @@index([tenantId, jobId, createdAt])

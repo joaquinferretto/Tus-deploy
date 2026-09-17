@@ -1,5 +1,5 @@
 import express, { type Request, type Response, type Router } from 'express'
-import { TUS_CONTRACT_VERSION, type LineaCarrito } from '@factory/contracts'
+import { TUS_CONTRACT_VERSION, type LineaCarrito, type LineaPresupuesto } from '@factory/contracts'
 import type { TusApplicationService, TusCheckoutResult } from '../application/tus-application-service.ts'
 import type {
   TusAuthenticatedTenantContext,
@@ -21,6 +21,7 @@ import { SupportError } from '../support/index.ts'
 import { WhatsAppActionError } from '../whatsapp/index.ts'
 import { ErrorCalendario } from '../calendar/index.ts'
 import { HabilitacionBloqueadaError, type EvaluadorHabilitacion, type PerfilHabilitacion } from '../readiness/index.ts'
+import { TrabajoError } from '../work/index.ts'
 
 const TUS_API_VERSION = 'v1'
 
@@ -224,6 +225,109 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     } catch (error) {
       sendCommitmentError(response, error)
     }
+  })
+
+  router.post(['/tus/work/commitments/:commitmentId/accept', '/tus/v1/trabajos/compromisos/:commitmentId/aceptar', '/tus/v1/work/commitments/:commitmentId/accept'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:work:write', 'tus:marketplace:write']) || hasSpoofedAuthority(body, request, context)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS work acceptance is not authorized')
+      return
+    }
+    const mutation = readWorkMutation(request, body, now)
+    if (!mutation) { sendError(response, 400, 'INVALID', 'requestHash and idempotency-key are required'); return }
+    try {
+      const result = await application.acceptServiceCommitment(context, { commitmentId: request.params['commitmentId'] ?? '', ...mutation, ...(readString(body, 'reservationId') ? { reservationId: readString(body, 'reservationId') } : {}) })
+      response.status(result.status === 'replay' ? 200 : 201).json(result)
+    } catch (error) { sendWorkError(response, error) }
+  })
+
+  router.get(['/tus/work', '/tus/v1/trabajos', '/tus/v1/work'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasAnyPermission(context, ['tus:work:read', 'tus:marketplace:read']) || hasSpoofedAuthority({}, request, context) || !application.work) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS work access is not authorized')
+      return
+    }
+    try { response.status(200).json({ works: await application.work.listWorks({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId }) }) } catch (error) { sendWorkError(response, error) }
+  })
+
+  router.get(['/tus/work/:workId', '/tus/v1/trabajos/:workId', '/tus/v1/work/:workId'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasAnyPermission(context, ['tus:work:read', 'tus:marketplace:read']) || hasSpoofedAuthority({}, request, context) || !application.work) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS work access is not authorized')
+      return
+    }
+    try { response.status(200).json(await application.work.getWork({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId }, request.params['workId'] ?? '')) } catch (error) { sendWorkError(response, error) }
+  })
+
+  router.post(['/tus/work/:workId/diagnosis', '/tus/v1/trabajos/:workId/diagnostico', '/tus/v1/work/:workId/diagnosis'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:work:write', 'tus:marketplace:write']) || hasSpoofedAuthority(body, request, context) || !application.work) { sendError(response, 403, 'FORBIDDEN', 'TUS work diagnosis is not authorized'); return }
+    const mutation = readWorkMutation(request, body, now)
+    if (!mutation || !readString(body, 'description')) { sendError(response, 400, 'INVALID', 'description, requestHash, and idempotency-key are required'); return }
+    try {
+      const result = await application.work.createDiagnosis({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '', descripcionOriginal: readString(body, 'description'), ...(isRecord(body['structuredData']) ? { datosEstructurados: body['structuredData'] } : {}), ...mutation })
+      response.status(result.status === 'replay' ? 200 : 201).json(result)
+    } catch (error) { sendWorkError(response, error) }
+  })
+
+  router.post(['/tus/work/:workId/diagnosis/:diagnosisId/confirm', '/tus/v1/trabajos/:workId/diagnostico/:diagnosisId/confirmar', '/tus/v1/work/:workId/diagnosis/:diagnosisId/confirm'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:work:write', 'tus:marketplace:write']) || hasSpoofedAuthority(body, request, context) || !application.work) { sendError(response, 403, 'FORBIDDEN', 'TUS work diagnosis is not authorized'); return }
+    const mutation = readWorkMutation(request, body, now)
+    if (!mutation) { sendError(response, 400, 'INVALID', 'expectedVersion, requestHash, and idempotency-key are required'); return }
+    try {
+      const result = await application.work.confirmDiagnosis({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '', diagnosticoId: request.params['diagnosisId'] ?? '', expectedVersion: readFiniteNumber(body, 'expectedVersion') ?? NaN, ...mutation })
+      response.status(200).json(result)
+    } catch (error) { sendWorkError(response, error) }
+  })
+
+  router.post(['/tus/work/:workId/budgets', '/tus/v1/trabajos/:workId/presupuestos', '/tus/v1/work/:workId/budgets'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:work:write', 'tus:marketplace:write']) || hasSpoofedAuthority(body, request, context) || !application.work) { sendError(response, 403, 'FORBIDDEN', 'TUS work budget is not authorized'); return }
+    const mutation = readWorkMutation(request, body, now)
+    const lines = readBudgetLines(body['lines'])
+    if (!mutation || !lines || !readString(body, 'currency') || !readString(body, 'scope') || !readString(body, 'totalMinor')) { sendError(response, 400, 'INVALID', 'currency, scope, totalMinor, lines, requestHash, and idempotency-key are required'); return }
+    try {
+      const result = await application.work.createBudget({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '', currency: readString(body, 'currency'), scope: readString(body, 'scope'), totalMinor: readString(body, 'totalMinor'), lines, ...(readString(body, 'validUntil') ? { validUntil: readString(body, 'validUntil') } : {}), ...mutation })
+      response.status(result.status === 'replay' ? 200 : 201).json(result)
+    } catch (error) { sendWorkError(response, error) }
+  })
+
+  router.post(['/tus/work/:workId/budgets/:version/accept', '/tus/v1/trabajos/:workId/presupuestos/:version/aceptar', '/tus/v1/work/:workId/budgets/:version/accept'], async (request: Request, response: Response) => {
+    await workBudgetDecision(request, response, sessions, application, 'accepted')
+  })
+
+  router.post(['/tus/work/:workId/budgets/:version/reject', '/tus/v1/trabajos/:workId/presupuestos/:version/rechazar', '/tus/v1/work/:workId/budgets/:version/reject'], async (request: Request, response: Response) => {
+    await workBudgetDecision(request, response, sessions, application, 'rejected')
+  })
+
+  router.post(['/tus/work/:workId/evidence', '/tus/v1/trabajos/:workId/evidencia', '/tus/v1/work/:workId/evidence'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:work:write', 'tus:marketplace:write']) || hasSpoofedAuthority(body, request, context) || !application.work) { sendError(response, 403, 'FORBIDDEN', 'TUS work evidence is not authorized'); return }
+    const mutation = readWorkMutation(request, body, now)
+    const metadata = isRecord(body['metadata']) ? body['metadata'] : null
+    if (!mutation || !metadata || !readString(body, 'evidenceId') || !readString(body, 'phase') || !readString(body, 'reference') || !readString(body, 'occurredAt')) { sendError(response, 400, 'INVALID', 'evidenceId, phase, reference, occurredAt, metadata, requestHash, and idempotency-key are required'); return }
+    try {
+      const result = await application.work.recordEvidence({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '', evidenceId: readString(body, 'evidenceId'), phase: readString(body, 'phase') as never, reference: readString(body, 'reference'), metadata, occurredAt: readString(body, 'occurredAt'), ...mutation })
+      response.status(result.status === 'replay' ? 200 : 201).json(result)
+    } catch (error) { sendWorkError(response, error) }
+  })
+
+  router.post(['/tus/work/:workId/start', '/tus/v1/trabajos/:workId/iniciar', '/tus/v1/work/:workId/start'], async (request: Request, response: Response) => {
+    await workTransition(request, response, sessions, application, 'start')
+  })
+
+  router.post(['/tus/work/:workId/complete', '/tus/v1/trabajos/:workId/completar', '/tus/v1/work/:workId/complete'], async (request: Request, response: Response) => {
+    await workTransition(request, response, sessions, application, 'complete')
+  })
+
+  router.post(['/tus/work/:workId/cancel', '/tus/v1/trabajos/:workId/cancelar', '/tus/v1/work/:workId/cancel'], async (request: Request, response: Response) => {
+    await workTransition(request, response, sessions, application, 'cancel')
   })
 
   router.post(['/tus/marketplace/onboarding', '/tus/v1/mercado-servicios/onboarding', '/tus/v1/marketplace/onboarding'], async (request: Request, response: Response) => {
@@ -1187,6 +1291,59 @@ function requireReporting(application: TusApplicationService) {
   return application.reporting
 }
 
+async function workBudgetDecision(
+  request: Request,
+  response: Response,
+  sessions: TusSessionResolverPort,
+  application: TusApplicationService,
+  decision: 'accepted' | 'rejected',
+): Promise<void> {
+  const context = await authenticate(request, sessions)
+  const body = asRecord(request.body)
+  if (!context || !hasAnyPermission(context, ['tus:work:accept', 'tus:work:write', 'tus:checkout']) || hasSpoofedAuthority(body, request, context) || !application.work) { sendError(response, 403, 'FORBIDDEN', 'TUS budget decision is not authorized'); return }
+  const mutation = readWorkMutation(request, body, () => Date.now())
+  if (!mutation) { sendError(response, 400, 'INVALID', 'requestHash and idempotency-key are required'); return }
+  try {
+    const result = await application.work.decideBudget({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '', presupuestoId: readString(body, 'budgetId') || `presupuesto-${request.params['workId'] ?? ''}`, presupuestoVersion: Number(request.params['version']), decision, ...(readString(body, 'reason') ? { reason: readString(body, 'reason') } : {}), ...(readString(body, 'acceptanceId') ? { acceptanceId: readString(body, 'acceptanceId') } : {}), ...mutation })
+    response.status(result.status === 'replay' ? 200 : 201).json(result)
+  } catch (error) { sendWorkError(response, error) }
+}
+
+async function workTransition(
+  request: Request,
+  response: Response,
+  sessions: TusSessionResolverPort,
+  application: TusApplicationService,
+  action: 'start' | 'complete' | 'cancel',
+): Promise<void> {
+  const context = await authenticate(request, sessions)
+  const body = asRecord(request.body)
+  if (!context || !hasAnyPermission(context, ['tus:work:write', 'tus:marketplace:write']) || hasSpoofedAuthority(body, request, context) || !application.work) { sendError(response, 403, 'FORBIDDEN', 'TUS work transition is not authorized'); return }
+  const mutation = readWorkMutation(request, body, () => Date.now())
+  if (!mutation) { sendError(response, 400, 'INVALID', 'expectedVersion, requestHash, and idempotency-key are required'); return }
+  try {
+    const input = { tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '', expectedVersion: readFiniteNumber(body, 'expectedVersion') ?? NaN, ...mutation }
+    const result = action === 'start' ? await application.work.startWork(input) : action === 'complete' ? await application.work.completeWork(input) : await application.work.cancelWork(input)
+    response.status(200).json(result)
+  } catch (error) { sendWorkError(response, error) }
+}
+
+function readWorkMutation(request: Request, body: Record<string, unknown>, now: () => number): { idempotencyKey: string; requestHash: string; createdAt: string } | null {
+  const headerKey = readHeader(request, 'idempotency-key')
+  const bodyKey = readOptionalString(body, 'idempotencyKey')
+  if (headerKey && bodyKey && headerKey !== bodyKey) return null
+  const idempotencyKey = headerKey || bodyKey || ''
+  const requestHash = readString(body, 'requestHash')
+  if (!idempotencyKey || !requestHash) return null
+  return { idempotencyKey, requestHash, createdAt: readString(body, 'createdAt') || new Date(now()).toISOString() }
+}
+
+function readBudgetLines(value: unknown): LineaPresupuesto[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null
+  if (value.some((entry) => !isRecord(entry) || !readString(entry, 'lineId') || !readString(entry, 'description') || typeof entry['quantity'] !== 'number' || !Number.isInteger(entry['quantity']) || Number(entry['quantity']) < 1 || !/^(0|[1-9]\d*)$/.test(readString(entry, 'unitAmountMinor')) || !/^(0|[1-9]\d*)$/.test(readString(entry, 'totalAmountMinor')))) return null
+  return value as LineaPresupuesto[]
+}
+
 async function deliveryMutation(
   request: Request,
   response: Response,
@@ -1258,6 +1415,14 @@ function sendReportingError(response: Response, error: unknown): void {
   }
   if (error instanceof ReportingError) { response.status(error.status).json({ code: error.code, error: error.message }); return }
   sendError(response, 500, 'UNAVAILABLE', 'TUS report was not generated')
+}
+
+function sendWorkError(response: Response, error: unknown): void {
+  if (error instanceof TrabajoError) {
+    response.status(error.status).json({ code: error.code, error: error.message })
+    return
+  }
+  sendError(response, 500, 'UNAVAILABLE', 'TUS work operation was not committed')
 }
 
 function sendCheckoutResult(response: Response, result: TusCheckoutResult): void {

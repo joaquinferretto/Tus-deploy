@@ -1,23 +1,22 @@
 # Roadmap de TUS
 
-> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Build actual: `WEB-08` (auditoria/plan, sin
-> implementacion). Commit base: `de0f5cb`; commit objetivo: `docs(tus): planificar ciclo de trabajo y presupuesto`.
+> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Builds `WEB-08A` y `WEB-08B` implementadas; no se agrega UI.
 
 ## Estado de fases
 
-| Fase     | Estado                | Evidencia                                                                        |
-| -------- | --------------------- | -------------------------------------------------------------------------------- |
-| WEB-01   | Completada            | Workspace Web preparado en `e263a39`.                                            |
-| WEB-02   | Completada            | Mercado de servicios en `e9e72b2`.                                               |
-| WEB-03   | Completada            | Compromisos de cliente en `a75497f`.                                             |
-| WEB-04   | Completada            | Calendario y reservas Web en `d659e85`; mantiene flujo legacy.                   |
-| WEB-04D1 | Schema/migración preparada | Modelo Prisma/DB y migración en `29e8977`; aplicación física al target pendiente. |
-| WEB-04D2 | Ajuste backend entregado | Disponibilidad y reserva canónicas por `listingId`; base `5f56c84`, modalidades físicas y concurrencia alineadas. |
-| WEB-04D3 | Completada | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico. |
-| WEB-05 | Completada | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider. |
-| WEB-06 | Completada | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider. |
-| WEB-07 | Completada | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda. |
-| WEB-08 | Auditada/planificada | No existe backend suficiente para Trabajo + Presupuesto + Aceptación; se documentan WEB-08A–D sin crear UI ni endpoints. |
+| Fase     | Estado                     | Evidencia                                                                                                                                 |
+| -------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| WEB-01   | Completada                 | Workspace Web preparado en `e263a39`.                                                                                                     |
+| WEB-02   | Completada                 | Mercado de servicios en `e9e72b2`.                                                                                                        |
+| WEB-03   | Completada                 | Compromisos de cliente en `a75497f`.                                                                                                      |
+| WEB-04   | Completada                 | Calendario y reservas Web en `d659e85`; mantiene flujo legacy.                                                                            |
+| WEB-04D1 | Schema/migración preparada | Modelo Prisma/DB y migración en `29e8977`; aplicación física al target pendiente.                                                         |
+| WEB-04D2 | Ajuste backend entregado   | Disponibilidad y reserva canónicas por `listingId`; base `5f56c84`, modalidades físicas y concurrencia alineadas.                         |
+| WEB-04D3 | Completada                 | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico.                                        |
+| WEB-05   | Completada                 | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider.                    |
+| WEB-06   | Completada                 | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider.                          |
+| WEB-07   | Completada                 | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda.            |
+| WEB-08   | WEB-08A/B completadas      | Modelo Prisma/DB, contracts, schemas, dominio, persistencia y rutas de Trabajo, Diagnostico, Presupuesto, aceptación y evidencia; sin UI. |
 
 ## WEB-04D2 entregado
 
@@ -108,48 +107,48 @@ Evidencia de cierre WEB-07:
 
 ## WEB-08: auditoría y plan del ciclo de trabajo/presupuesto
 
-**Estado:** auditada; implementación bloqueada por falta de agregados y contratos backend suficientes.
+**Estado:** WEB-08A/B implementadas. No se agrega UI ni se habilitan pagos/providers.
 
 ### Gate de capacidad A/B/C
 
-- **Trabajo: C.** No existe un agregado de trabajo de servicio. `TusJob` (`model TusJob`) es infraestructura de cola y
-  `TareaEntrega` representa fulfillment de delivery; ninguno se reutiliza como trabajo de servicio.
-- **Diagnóstico: C.** `visita_diagnostico` solo valida duración y genera una reserva; no persiste diagnóstico, hallazgos,
-  resultado ni ciclo operativo.
-- **Presupuesto: B parcial.** WhatsApp tiene `quote` + confirmación expirable y persistida en `ConfirmacionWhatsApp`,
-  pero es una instantánea de listings/precios del canal. No es un presupuesto canónico enlazado a `Publicacion` y
-  `CompromisoMercadoServicios` con alcance, líneas, importe versionado y estado de aceptación.
-- **Aceptación: B parcial.** WhatsApp `confirm` y checkout confirman acciones existentes, pero no existe aceptación HTTP
-  canónica de un presupuesto de servicio con versión esperada y vínculo explícito al ciclo de trabajo.
-- **Evidencia inicial/final: B parcial.** Finanzas persiste evidencia `check-in`, `completion` y `delivery-accepted` por
-  compromiso; delivery tiene evidencia propia. No existe evidencia enlazada a un `Trabajo`.
-- **Cierre: B parcial.** `Compromiso` soporta `fulfilled`, `released` y `compensated`, pero no existe cierre de trabajo,
-  resultado operativo ni checklist del servicio.
+- **Trabajo: A/B implementadas.** `trabajos` tiene identidad, versión, estado, compromiso de marketplace, publicación,
+  reserva opcional validada contra cliente/prestador/publicación y ownership separado. `TusJob` y `TareaEntrega` conservan
+  sus responsabilidades técnicas.
+- **Diagnóstico: A/B implementadas.** `diagnosticos` conserva descripción original, datos estructurados, estado y versiones;
+  el prestador crea y confirma versiones con control optimista.
+- **Presupuesto: A/B implementadas.** `presupuestos` y `lineas_presupuesto` conservan alcance, importe minor-unit, moneda,
+  vigencia y versiones inmutables; el prestador emite y el cliente decide solo la última versión vigente con reloj de servidor.
+- **Aceptación: A/B implementadas.** `aceptaciones_presupuesto` permite una decisión tenant-scoped por versión, registra
+  auditoría/outbox y actualiza atómicamente la referencia aceptada del trabajo.
+- **Evidencia inicial/final: A/B implementadas.** `evidencias_trabajo` referencia metadata durable por fase y trabajo; no
+  almacena binarios.
+- **Cierre: A/B implementadas.** `transiciones_trabajo` y estados congelan el historial; inicio, cierre y cancelación son
+  operaciones idempotentes y verificadas.
 
 ### Relación canónica existente
 
 ```text
-Publicacion -> Reserva (publicacionId opcional) -> CompromisoMercadoServicios -> Compromiso
-                                                                        \-> sin Trabajo
+Publicacion -> CompromisoMercadoServicios -> Trabajo
+             -> Reserva (publicacionId opcional) -> Trabajo
 ```
 
-`BUDGET_REQUIRED` continúa siendo un bloqueo de aplicación: no genera slots ni reservas automáticas. No autoriza a la Web
-a fabricar un presupuesto ni a tratar una confirmación WhatsApp como el nuevo agregado comercial.
+`BUDGET_REQUIRED` continúa bloqueando slots y reservas automáticas. Un checkout sin franja puede crear el compromiso de
+servicio para que el prestador inicie el flujo de Trabajo, sin fabricar una reserva ni ocupar capacidad. La Web no consume
+estas rutas hasta WEB-08C/D.
 
 ### Plan por unidades
 
-- **WEB-08A — modelo y contracts:** definir `Trabajo`, `Diagnostico`, `Presupuesto`, líneas, estados, versión,
-  aceptación, evidencia y cierre; fijar sus identidades y la relación con publicación, reserva y compromiso.
-- **WEB-08B — API y persistencia:** agregar puertos, stores tenant-scoped, migración forward-only, idempotencia,
-  optimistic locking, autorización de cliente/prestador y rutas para solicitud, diagnóstico, presupuesto, aceptación,
-  evidencia y cierre.
+- **WEB-08A — modelo y contracts:** completada con `Trabajo`, `Diagnostico`, `Presupuesto`, líneas, estados, versión,
+  aceptación, evidencia, transiciones y relaciones tenant-scoped.
+- **WEB-08B — API y persistencia:** completada con puertos, stores in-memory/Prisma, transacciones serializables,
+  idempotencia, optimistic locking, autorización cliente/prestador y rutas para solicitud, diagnóstico, presupuesto,
+  aceptación, evidencia y cierre.
 - **WEB-08C — Web prestador:** implementar solicitudes recibidas, diagnóstico, creación/envío de presupuesto y ciclo de
   trabajo únicamente después de que WEB-08B entregue contratos verificables.
 - **WEB-08D — Web cliente/integración:** mostrar presupuesto versionado, aceptación explícita, agenda/trabajo y evidencia
   únicamente con respuestas reales del API.
 
-No se implementa ninguna de estas unidades en esta Build. Pagos, settlement, Mercado Pago y providers permanecen fuera de
-alcance.
+WEB-08C y WEB-08D permanecen fuera de alcance. Pagos, settlement, Mercado Pago y providers permanecen fuera de alcance.
 
 ### Validación operativa posterior
 
@@ -208,11 +207,14 @@ final.
 - `docs/GLOSARIO_TUS.md` — términos de agenda y disponibilidad.
 - `docs/database/DICCIONARIO_DATOS_TUS.md` — ausencia de delta físico D3.
 
-## Documentos modificados en WEB-08 (auditoría/plan)
+## Documentos modificados en WEB-08A/B
 
-- `README.md` — límite explícito: no existe todavía un flujo Web de presupuesto/trabajo.
-- `ARCHITECTURE.md` — frontera entre compromisos, WhatsApp, delivery y el agregado futuro de trabajo.
-- `docs/DECISIONES_PRODUCTO_TUS.md` — gate A/B/C y decisiones de no reutilización de agregados técnicos.
-- `docs/ROADMAP_TUS.md` — estado WEB-08, evidencia y plan WEB-08A–D.
-- `docs/GLOSARIO_TUS.md` — términos de Trabajo y Presupuesto sin afirmar implementación.
-- `docs/database/DICCIONARIO_DATOS_TUS.md` — ausencia de tablas físicas WEB-08 y capacidades parciales existentes.
+- `README.md` — límites de Web y disponibilidad API de WEB-08B.
+- `ARCHITECTURE.md` — bounded context `work`, ownership y rutas implementadas.
+- `docs/DECISIONES_PRODUCTO_TUS.md` — decisiones de modelo, compromiso sin franja y aceptación API.
+- `docs/ROADMAP_TUS.md` — estado WEB-08A/B y plan C/D.
+- `docs/GLOSARIO_TUS.md` — entidades WEB-08 respaldadas por contracts, persistencia y API.
+- `docs/database/DER_TUS.dbml` — tablas, índices y relaciones físicas WEB-08A.
+- `docs/database/DICCIONARIO_DATOS_TUS.md` — modelo físico y límites operativos WEB-08A/B.
+- `packages/contracts/src/tus.ts` — estados, entidades y validadores WEB-08A.
+- `packages/contracts/schemas/tus/` — schemas JSON de Trabajo, Diagnóstico, Presupuesto, aceptación y evidencia.

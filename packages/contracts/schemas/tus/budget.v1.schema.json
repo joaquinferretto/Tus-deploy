@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tus/budget.v1",
+  "title": "TUS service budget",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "presupuestoId", "trabajoId", "tenantId", "prestadorTenantId", "version", "status", "currency", "totalMinor", "scope", "createdBy", "createdAt", "updatedAt", "lines"],
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "presupuestoId": { "type": "string", "minLength": 1 },
+    "trabajoId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "prestadorTenantId": { "type": "string", "minLength": 1 },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["draft", "issued", "accepted", "rejected", "expired", "cancelled"] },
+    "currency": { "type": "string", "minLength": 1 },
+    "totalMinor": { "type": "string", "pattern": "^(0|[1-9]\\d*)$" },
+    "scope": { "type": "string", "minLength": 1 },
+    "validUntil": { "type": ["string", "null"], "minLength": 1 },
+    "createdBy": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 },
+    "lines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["lineId", "description", "quantity", "unitAmountMinor", "totalAmountMinor"],
+        "properties": {
+          "lineId": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "quantity": { "type": "integer", "minimum": 1 },
+          "unitAmountMinor": { "type": "string", "pattern": "^(0|[1-9]\\d*)$" },
+          "totalAmountMinor": { "type": "string", "pattern": "^(0|[1-9]\\d*)$" }
+        }
+      }
+    }
+  }
+}

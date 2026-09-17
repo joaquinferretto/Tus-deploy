@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tus/budget-acceptance.v1",
+  "title": "TUS budget acceptance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "acceptanceId", "presupuestoId", "presupuestoVersion", "trabajoId", "tenantId", "actorId", "decision", "createdAt"],
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "acceptanceId": { "type": "string", "minLength": 1 },
+    "presupuestoId": { "type": "string", "minLength": 1 },
+    "presupuestoVersion": { "type": "integer", "minimum": 1 },
+    "trabajoId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "actorId": { "type": "string", "minLength": 1 },
+    "decision": { "enum": ["accepted", "rejected"] },
+    "reason": { "type": "string" },
+    "createdAt": { "type": "string", "minLength": 1 }
+  }
+}

@@ -1,7 +1,7 @@
 # Arquitectura de TUS
 
 > **Fuente canonica.** Este documento describe la arquitectura implementada de TUS y sus limites conocidos.
-> Ultima actualizacion: 2026-09-17. Build: `WEB-08` (auditoria/plan, sin implementacion). Commit base: `de0f5cb`.
+> Ultima actualizacion: 2026-09-17. Builds `WEB-08A` y `WEB-08B` implementadas; las superficies Web permanecen fuera de alcance.
 
 ## Proposito y limites
 
@@ -100,7 +100,7 @@ La carpeta `apps/api/src/tus` separa las siguientes responsabilidades:
 | `catalog`     | Prestadores, publicaciones, discovery, precio, stock y checkout de marketplace.              |
 | `calendar`    | Calendarios, reglas, excepciones, slots, capacidad y reservas.                               |
 | `commitments` | Transiciones y compensaciones de compromisos.                                                |
-| `work`        | No implementado; el agregado Trabajo de servicios queda planificado en WEB-08.                |
+| `work`        | Ciclo de Trabajo, Diagnostico, Presupuesto, evidencia, transiciones y sus rutas WEB-08B.     |
 | `domain`      | Reglas transversales de compromisos y settlement.                                            |
 | `finance`     | Payment intents, evidencias, confirmaciones, release, refunds, chargebacks y reconciliacion. |
 | `delivery`    | Zonas, turnos, tareas, fulfillment y evidencia de entrega.                                   |
@@ -237,19 +237,37 @@ constituyen una segunda fuente de verdad.
 WEB-04D3 no cambia persistencia, migraciones, adapters ni providers; adapta consumidores Web a los contratos y rutas entregados
 en D2.
 
-## WEB-08: frontera no implementada de trabajo y presupuesto
+## WEB-08: modelo y API implementados
 
-La arquitectura actual no contiene un agregado `Trabajo` para servicios. La relación verificable termina en:
+WEB-08A agrega el agregado `Trabajo` para servicios y conserva la relación verificable:
 
 ```text
-Publicacion -> Reserva (publicacionId) -> CompromisoMercadoServicios -> Compromiso
+Publicacion -> CompromisoMercadoServicios -> Trabajo
+             -> Reserva (opcional) -------> Trabajo
 ```
 
 `TusJob` es una fila técnica de cola (`jobType`, `status`, `attempts`, leases y `payload`) y no debe usarse como ejecución
 comercial. `TareaEntrega` es el agregado de fulfillment de delivery y sus evidencias; tampoco es un trabajo de servicio.
 
-La modalidad `visita_diagnostico` solo modifica la duración de la reserva. Las modalidades `requiere_presupuesto` y
-`presupuesto` solo producen el guard `BUDGET_REQUIRED`; no existe un agregado de presupuesto ni un ciclo de diagnóstico.
+`Trabajo.tenantId` identifica el tenant cliente del compromiso. `Trabajo.prestadorTenantId` identifica el tenant del prestador,
+publicación y reserva. `CompromisoMercadoServicios` conserva el mismo split mediante `tenantId` y `prestadorTenantId`.
+Las relaciones SQL nuevas usan claves compuestas para que compromiso, prestador y publicación no formen cadenas inconsistentes.
+Una reserva opcional debe coincidir con el cliente, prestador, publicación y estado confirmado del compromiso.
+`reservas.cliente_tenant_id` conserva ese ownership cliente en reservas nuevas; no se realiza un backfill ambiguo de filas
+históricas que solo contienen `cliente_id`.
+
+La modalidad `visita_diagnostico` sigue modificando la duración de la reserva. Las modalidades `requiere_presupuesto` y
+`presupuesto` siguen produciendo el guard `BUDGET_REQUIRED` para slots/booking. El checkout de marketplace puede crear un
+compromiso de servicio sin franja para iniciar el flujo de Trabajo; no crea una reserva provisional ni ocupa capacidad.
+
+`ServicioTrabajo` opera el ciclo `requested -> in_diagnosis -> budget_pending -> accepted -> in_progress -> completed`
+y la cancelación. El prestador acepta el compromiso, registra diagnóstico, emite presupuestos versionados y ejecuta el trabajo;
+el cliente decide la última versión vigente con reloj de servidor. Las mutaciones verifican ownership, hash/idempotencia, locking optimista y registran transición,
+auditoría y outbox dentro de la misma transacción.
+
+Las rutas canónicas son `/tus/v1/work/*`, con aliases españoles `/tus/v1/trabajos/*`, para aceptación del compromiso,
+lectura, diagnóstico, presupuesto, decisión, evidencia e inicio/cierre/cancelación. No existe todavía una superficie Web para
+esas rutas.
 
 WhatsApp sí tiene una acción `quote`/`confirm` respaldada por `ConfirmacionWhatsApp`, con snapshot de elementos, expiración y
 consumo. Es una capacidad parcial del canal, no un contrato comercial reutilizable para Web: no define un presupuesto
@@ -261,15 +279,14 @@ tarea. Esas evidencias no representan automáticamente evidencia de un trabajo d
 
 ### Plan de evolución WEB-08
 
-1. **WEB-08A:** definir identidad, contratos, estados y relaciones de Trabajo, Diagnóstico, Presupuesto, aceptación,
-   evidencia y cierre.
-2. **WEB-08B:** implementar puertos, persistencia, migración forward-only, ownership tenant-scoped, idempotencia,
-   versionado optimista y rutas HTTP.
+1. **WEB-08A:** completada: identidad, contracts, estados, relaciones, transiciones y migración física aditiva.
+2. **WEB-08B:** completada: puertos in-memory/Prisma, transacciones serializables, ownership cliente/prestador,
+   idempotencia, versionado optimista, auditoría/outbox y rutas HTTP.
 3. **WEB-08C:** conectar la superficie del prestador solo contra esas rutas verificables.
 4. **WEB-08D:** conectar cliente, aceptación, agenda, evidencia y cierre sin inferir estados desde transporte.
 
-Hasta completar WEB-08A y WEB-08B no se agregan rutas Web, modelos Prisma, migraciones ni pantallas de presupuesto o
-trabajo. Pagos, settlement y providers siguen fuera de esta frontera.
+WEB-08C/D son las únicas unidades que pueden consumir estas rutas desde Web. Pagos, settlement y providers siguen fuera de
+esta frontera.
 
 ## WEB-05: POS Web refinado
 

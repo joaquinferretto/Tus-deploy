@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tus/diagnosis.v1",
+  "title": "TUS work diagnosis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "diagnosticoId", "trabajoId", "tenantId", "version", "status", "originalDescription", "actorId", "correlationId", "createdAt", "updatedAt"],
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "diagnosticoId": { "type": "string", "minLength": 1 },
+    "trabajoId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["draft", "confirmed", "cancelled"] },
+    "originalDescription": { "type": "string", "minLength": 1 },
+    "structuredData": { "type": ["object", "null"] },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 },
+    "confirmedAt": { "type": ["string", "null"], "minLength": 1 }
+  }
+}

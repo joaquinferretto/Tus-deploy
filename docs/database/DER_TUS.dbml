@@ -89,9 +89,10 @@ Table compromisos_mercado_servicios {
   version_contrato varchar [note: 'ex contractVersion']
   compromiso_id varchar [note: 'ex commitmentId']
   carrito_id varchar [note: 'ex cartId']
-  tenant_id varchar
+  tenant_id varchar [note: 'tenant cliente del checkout']
+  prestador_tenant_id varchar [note: 'tenant propietario de la publicacion']
   prestador_id varchar [note: 'referencia lógica a prestador (ex merchantId)']
-  publicacion_id varchar [note: 'FK objetivo compuesta (tenant_id, publicacion_id) -> publicaciones (ex listingId)']
+  publicacion_id varchar [note: 'FK compuesta (prestador_tenant_id, publicacion_id) -> publicaciones (ex listingId)']
   contexto varchar [note: 'ex context']
   ids_lineas varchar[] [note: 'ex lineIds']
   cantidad int [note: 'ex quantity']
@@ -112,7 +113,7 @@ Table compromisos_mercado_servicios {
     (prestador_id, contexto, estado) [name: 'idx_compromisos_ms_prestador_contexto_estado']
   }
 
-  Note: 'CompromisoMercadoServicios = línea de checkout del mercado. FK objetivo publicacion_id -> publicaciones.'
+  Note: 'CompromisoMercadoServicios = línea de checkout del mercado. tenant_id es cliente; prestador_tenant_id conserva ownership de la publicación.'
 }
 
 Table auditoria_mercado_servicios {
@@ -290,6 +291,7 @@ Table excepciones_calendario {
 Table reservas {
   id varchar [pk]
   tenant_id varchar
+  cliente_tenant_id varchar [null, note: '[LOGICA] tenant cliente; NULL en reservas históricas sin backfill determinista']
   reserva_id varchar [note: 'ex bookingId']
   servicio_id varchar [null, note: '[LEGACY] -> TusService; no usar en reservas nuevas']
   calendario_id varchar [note: 'FK objetivo compuesta (tenant_id, calendario_id) -> calendarios']
@@ -309,7 +311,7 @@ Table reservas {
     (tenant_id, cliente_id, estado) [name: 'idx_reservas_tenant_cliente_estado']
   }
 
-  Note: 'Reserva = ocupación de franja/capacidad para una Publicacion. publicacion_id es la identidad nueva; servicio_id/cliente_id son LEGACY/EXTERNA.'
+  Note: 'Reserva = ocupación de franja/capacidad para una Publicacion. cliente_tenant_id preserva ownership cliente nuevo; publicacion_id es la identidad nueva; servicio_id/cliente_id son LEGACY/EXTERNA.'
 }
 
 // ============================================================
@@ -1513,11 +1515,202 @@ Table registros_operaciones {
 }
 
 // ============================================================
+// TRABAJO Y PRESUPUESTO WEB-08A/B
+// ============================================================
+
+Table trabajos {
+  id varchar [pk]
+  version_contrato varchar
+  trabajo_id varchar
+  tenant_id varchar [note: 'tenant cliente/compromiso']
+  prestador_tenant_id varchar [note: 'tenant del prestador/publicacion/reserva']
+  compromiso_id varchar
+  prestador_id varchar
+  publicacion_id varchar
+  reserva_tenant_id varchar [null]
+  reserva_id varchar [null]
+  cliente_id varchar [null, note: 'EXTERNA/LOGICA']
+  estado varchar [note: 'requested | in_diagnosis | budget_pending | accepted | in_progress | completed | cancelled']
+  version int
+  requiere_presupuesto boolean
+  presupuesto_aceptado_id varchar [null]
+  presupuesto_aceptado_version int [null]
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+
+  indexes {
+    (tenant_id, trabajo_id) [unique, name: 'uq_trabajos_tenant_trabajo']
+    (tenant_id, compromiso_id) [unique, name: 'uq_trabajos_tenant_compromiso']
+    (tenant_id, presupuesto_aceptado_id, presupuesto_aceptado_version) [unique, name: 'uq_trabajos_tenant_presupuesto_aceptado']
+    (tenant_id, estado) [name: 'idx_trabajos_tenant_estado']
+    (prestador_tenant_id, prestador_id, estado) [name: 'idx_trabajos_prestador_estado']
+  }
+
+  Note: 'Trabajo = agregado de ejecucion de servicio. tenant_id y prestador_tenant_id pueden ser distintos.'
+}
+
+Table diagnosticos {
+  id varchar [pk]
+  version_contrato varchar
+  diagnostico_id varchar
+  tenant_id varchar
+  trabajo_id varchar
+  version int
+  estado varchar [note: 'draft | confirmed | cancelled']
+  descripcion_original text
+  datos_estructurados json [null]
+  actor_id varchar
+  correlacion_id varchar
+  fecha_confirmacion timestamp [null]
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+
+  indexes {
+    (tenant_id, diagnostico_id) [unique, name: 'uq_diagnosticos_tenant_diagnostico']
+    (tenant_id, trabajo_id, version) [unique, name: 'uq_diagnosticos_tenant_trabajo_version']
+    (tenant_id, trabajo_id, estado) [name: 'idx_diagnosticos_tenant_trabajo_estado']
+  }
+}
+
+Table presupuestos {
+  id varchar [pk]
+  version_contrato varchar
+  presupuesto_id varchar
+  tenant_id varchar
+  prestador_tenant_id varchar
+  trabajo_id varchar
+  version int
+  estado varchar [note: 'draft | issued | accepted | rejected | expired | cancelled']
+  moneda varchar
+  monto_total bigint
+  alcance text
+  fecha_validez timestamp [null]
+  creado_por varchar
+  correlacion_id varchar
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+
+  indexes {
+    (tenant_id, presupuesto_id, version) [unique, name: 'uq_presupuestos_tenant_presupuesto_version']
+    (tenant_id, trabajo_id, version) [name: 'idx_presupuestos_tenant_trabajo_version']
+  }
+}
+
+Table lineas_presupuesto {
+  id varchar [pk]
+  linea_id varchar
+  presupuesto_registro_id varchar
+  descripcion text
+  cantidad int
+  monto_unitario bigint
+  monto_total bigint
+  orden int
+  fecha_creacion timestamp
+
+  indexes {
+    (presupuesto_registro_id, linea_id) [unique, name: 'uq_lineas_presupuesto_registro_linea']
+    (presupuesto_registro_id, orden) [name: 'idx_lineas_presupuesto_registro_orden']
+  }
+}
+
+Table aceptaciones_presupuesto {
+  id varchar [pk]
+  aceptacion_id varchar
+  tenant_id varchar
+  presupuesto_registro_id varchar
+  decision varchar [note: 'accepted | rejected']
+  actor_id varchar
+  correlacion_id varchar
+  motivo text [null]
+  fecha_creacion timestamp
+
+  indexes {
+    (tenant_id, aceptacion_id) [unique, name: 'uq_aceptaciones_presupuesto_tenant_aceptacion']
+    (tenant_id, presupuesto_registro_id) [unique, name: 'uq_aceptaciones_presupuesto_tenant_version']
+    (tenant_id, fecha_creacion) [name: 'idx_aceptaciones_presupuesto_tenant_fecha_creacion']
+  }
+}
+
+Table transiciones_trabajo {
+  id varchar [pk]
+  tenant_id varchar
+  trabajo_id varchar
+  estado_anterior varchar [null]
+  estado_nuevo varchar
+  version int
+  actor_id varchar
+  correlacion_id varchar
+  motivo text
+  fecha_creacion timestamp
+
+  indexes {
+    (tenant_id, trabajo_id, version) [unique, name: 'uq_transiciones_trabajo_tenant_trabajo_version']
+    (tenant_id, trabajo_id, fecha_creacion) [name: 'idx_transiciones_trabajo_tenant_trabajo_fecha_creacion']
+  }
+}
+
+Table evidencias_trabajo {
+  id varchar [pk]
+  evidencia_id varchar
+  tenant_id varchar
+  prestador_tenant_id varchar
+  trabajo_id varchar
+  fase varchar [note: 'request | diagnosis | budget | execution | completion']
+  actor_id varchar
+  correlacion_id varchar
+  referencia varchar
+  metadatos json
+  fecha_ocurrencia timestamp
+  fecha_creacion timestamp
+
+  indexes {
+    (tenant_id, evidencia_id) [unique, name: 'uq_evidencias_trabajo_tenant_evidencia']
+    (tenant_id, trabajo_id, fase, fecha_ocurrencia) [name: 'idx_evidencias_trabajo_tenant_trabajo_fase']
+    (prestador_tenant_id, trabajo_id, fecha_ocurrencia) [name: 'idx_evidencias_trabajo_prestador_trabajo_fecha']
+  }
+}
+
+Table auditoria_trabajo {
+  id varchar [pk]
+  tenant_id varchar
+  trabajo_tenant_id varchar
+  prestador_tenant_id varchar
+  trabajo_id varchar
+  actor_id varchar
+  correlacion_id varchar
+  accion varchar
+  tipo_recurso varchar
+  recurso_id varchar
+  resultado varchar
+  metadatos json
+  fecha_creacion timestamp
+
+  indexes {
+    (tenant_id, fecha_creacion) [name: 'idx_auditoria_trabajo_tenant_fecha_creacion']
+    (trabajo_tenant_id, trabajo_id, fecha_creacion) [name: 'idx_auditoria_trabajo_trabajo_fecha_creacion']
+    (prestador_tenant_id, trabajo_id, fecha_creacion) [name: 'idx_auditoria_trabajo_prestador_trabajo_fecha']
+  }
+}
+
+// ============================================================
 // RELACIONES FISICAS ACTUALES
 // ============================================================
 
 // LineaFactura -> Factura (FK compuesta tenant_id + factura_id) — FISICA_ACTUAL
 Ref: lineas_factura.(tenant_id, factura_id) > facturas.(tenant_id, factura_id)
+Ref: compromisos_mercado_servicios.(prestador_tenant_id, publicacion_id) > publicaciones.(tenant_id, id)
+Ref: trabajos.(tenant_id, compromiso_id) > compromisos_mercado_servicios.(tenant_id, compromiso_id)
+Ref: trabajos.(prestador_tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)
+Ref: trabajos.(prestador_tenant_id, publicacion_id) > publicaciones.(tenant_id, id)
+Ref: trabajos.(reserva_tenant_id, reserva_id) > reservas.(tenant_id, reserva_id)
+Ref: trabajos.(tenant_id, presupuesto_aceptado_id, presupuesto_aceptado_version) > presupuestos.(tenant_id, presupuesto_id, version)
+Ref: diagnosticos.(tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
+Ref: presupuestos.(tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
+Ref: lineas_presupuesto.presupuesto_registro_id > presupuestos.id
+Ref: aceptaciones_presupuesto.presupuesto_registro_id > presupuestos.id
+Ref: transiciones_trabajo.(tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
+Ref: evidencias_trabajo.(tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
+Ref: auditoria_trabajo.(trabajo_tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
 
 // ============================================================
 // RELACIONES OBJETIVO FUTURO
@@ -1526,7 +1719,6 @@ Ref: lineas_factura.(tenant_id, factura_id) > facturas.(tenant_id, factura_id)
 
 // MERCADO
 Ref: publicaciones.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)         // Prestador 1:N Publicacion (OBJETIVO_FUTURO, corrige FK por tenant_id)
-Ref: compromisos_mercado_servicios.(tenant_id, publicacion_id) > publicaciones.(tenant_id, id) // OBJETIVO_FUTURO (FK compuesta tenant-scoped)
 Ref: calendarios.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id)             // agenda principal nueva; NULL legacy
 
 // COMPROMISOS

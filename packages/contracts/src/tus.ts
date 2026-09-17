@@ -89,6 +89,210 @@ export interface Compromiso {
   createdAt: string
 }
 
+export const ESTADOS_TRABAJO = {
+  SOLICITADO: 'requested',
+  EN_DIAGNOSTICO: 'in_diagnosis',
+  PRESUPUESTO_PENDIENTE: 'budget_pending',
+  ACEPTADO: 'accepted',
+  EN_PROGRESO: 'in_progress',
+  COMPLETADO: 'completed',
+  CANCELADO: 'cancelled',
+} as const
+
+export type EstadoTrabajo = (typeof ESTADOS_TRABAJO)[keyof typeof ESTADOS_TRABAJO]
+
+export const ESTADOS_DIAGNOSTICO = {
+  BORRADOR: 'draft',
+  CONFIRMADO: 'confirmed',
+  CANCELADO: 'cancelled',
+} as const
+
+export type EstadoDiagnostico = (typeof ESTADOS_DIAGNOSTICO)[keyof typeof ESTADOS_DIAGNOSTICO]
+
+export const ESTADOS_PRESUPUESTO = {
+  BORRADOR: 'draft',
+  EMITIDO: 'issued',
+  ACEPTADO: 'accepted',
+  RECHAZADO: 'rejected',
+  VENCIDO: 'expired',
+  CANCELADO: 'cancelled',
+} as const
+
+export type EstadoPresupuesto = (typeof ESTADOS_PRESUPUESTO)[keyof typeof ESTADOS_PRESUPUESTO]
+
+export const FASES_EVIDENCIA_TRABAJO = {
+  SOLICITUD: 'request',
+  DIAGNOSTICO: 'diagnosis',
+  PRESUPUESTO: 'budget',
+  EJECUCION: 'execution',
+  CIERRE: 'completion',
+} as const
+
+export type FaseEvidenciaTrabajo = (typeof FASES_EVIDENCIA_TRABAJO)[keyof typeof FASES_EVIDENCIA_TRABAJO]
+
+export type DecisionPresupuesto = 'accepted' | 'rejected'
+
+export interface Trabajo {
+  contractVersion: TusContractVersion
+  trabajoId: string
+  tenantId: string
+  prestadorTenantId: string
+  commitmentId: string
+  prestadorId: string
+  publicacionId: string
+  reservaId?: string | null
+  clienteId?: string | null
+  status: EstadoTrabajo
+  version: number
+  budgetRequired: boolean
+  acceptedBudgetId?: string | null
+  acceptedBudgetVersion?: number | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Diagnostico {
+  contractVersion: TusContractVersion
+  diagnosticoId: string
+  trabajoId: string
+  tenantId: string
+  version: number
+  status: EstadoDiagnostico
+  originalDescription: string
+  structuredData?: Record<string, unknown> | null
+  actorId: string
+  correlationId: string
+  createdAt: string
+  updatedAt: string
+  confirmedAt?: string | null
+}
+
+export interface LineaPresupuesto {
+  lineId: string
+  description: string
+  quantity: number
+  unitAmountMinor: string
+  totalAmountMinor: string
+}
+
+export interface Presupuesto {
+  contractVersion: TusContractVersion
+  presupuestoId: string
+  trabajoId: string
+  tenantId: string
+  prestadorTenantId: string
+  version: number
+  status: EstadoPresupuesto
+  currency: string
+  totalMinor: string
+  scope: string
+  validUntil?: string | null
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+  lines: LineaPresupuesto[]
+}
+
+export interface AceptacionPresupuesto {
+  contractVersion: TusContractVersion
+  acceptanceId: string
+  presupuestoId: string
+  presupuestoVersion: number
+  trabajoId: string
+  tenantId: string
+  actorId: string
+  decision: DecisionPresupuesto
+  reason?: string
+  createdAt: string
+}
+
+export interface EvidenciaTrabajo {
+  contractVersion: TusContractVersion
+  evidenceId: string
+  trabajoId: string
+  tenantId: string
+  prestadorTenantId: string
+  phase: FaseEvidenciaTrabajo
+  actorId: string
+  correlationId: string
+  reference: string
+  metadata: Record<string, unknown>
+  occurredAt: string
+  createdAt: string
+}
+
+export function validarTrabajo(value: unknown): Trabajo {
+  if (!isRecord(value)) throw new ContractValidationError('tus-work', undefined, 'payload must be an object')
+  assertTusVersion('tus-work', value['contractVersion'])
+  for (const field of ['trabajoId', 'tenantId', 'prestadorTenantId', 'commitmentId', 'prestadorId', 'publicacionId', 'createdAt', 'updatedAt']) {
+    if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-work', TUS_CONTRACT_VERSION, `${field} is required`)
+  }
+  if (!Object.values(ESTADOS_TRABAJO).includes(value['status'] as EstadoTrabajo) || !Number.isInteger(value['version']) || Number(value['version']) < 1 || typeof value['budgetRequired'] !== 'boolean' || !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])) {
+    throw new ContractValidationError('tus-work', TUS_CONTRACT_VERSION, 'work state is invalid')
+  }
+  return value as unknown as Trabajo
+}
+
+export function validarDiagnostico(value: unknown): Diagnostico {
+  if (!isRecord(value)) throw new ContractValidationError('tus-diagnosis', undefined, 'payload must be an object')
+  assertTusVersion('tus-diagnosis', value['contractVersion'])
+  for (const field of ['diagnosticoId', 'trabajoId', 'tenantId', 'actorId', 'correlationId', 'originalDescription', 'createdAt', 'updatedAt']) {
+    if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-diagnosis', TUS_CONTRACT_VERSION, `${field} is required`)
+  }
+  if (!Object.values(ESTADOS_DIAGNOSTICO).includes(value['status'] as EstadoDiagnostico) || !Number.isInteger(value['version']) || Number(value['version']) < 1 || !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])) {
+    throw new ContractValidationError('tus-diagnosis', TUS_CONTRACT_VERSION, 'diagnosis state is invalid')
+  }
+  return value as unknown as Diagnostico
+}
+
+export function validarPresupuesto(value: unknown): Presupuesto {
+  if (!isRecord(value)) throw new ContractValidationError('tus-budget', undefined, 'payload must be an object')
+  assertTusVersion('tus-budget', value['contractVersion'])
+  for (const field of ['presupuestoId', 'trabajoId', 'tenantId', 'prestadorTenantId', 'currency', 'totalMinor', 'scope', 'createdBy', 'createdAt', 'updatedAt']) {
+    if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-budget', TUS_CONTRACT_VERSION, `${field} is required`)
+  }
+  if (!Object.values(ESTADOS_PRESUPUESTO).includes(value['status'] as EstadoPresupuesto) || !Number.isInteger(value['version']) || Number(value['version']) < 1 || !isMinorAmount(value['totalMinor']) || !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])) {
+    throw new ContractValidationError('tus-budget', TUS_CONTRACT_VERSION, 'budget state is invalid')
+  }
+  if (value['validUntil'] !== undefined && value['validUntil'] !== null && !isIsoTimestamp(value['validUntil'])) throw new ContractValidationError('tus-budget', TUS_CONTRACT_VERSION, 'validUntil must be a valid timestamp')
+  if (!Array.isArray(value['lines']) || value['lines'].length === 0 || value['lines'].some((line) => !isValidBudgetLine(line))) throw new ContractValidationError('tus-budget', TUS_CONTRACT_VERSION, 'budget lines are invalid')
+  return value as unknown as Presupuesto
+}
+
+export function validarAceptacionPresupuesto(value: unknown): AceptacionPresupuesto {
+  if (!isRecord(value)) throw new ContractValidationError('tus-budget-acceptance', undefined, 'payload must be an object')
+  assertTusVersion('tus-budget-acceptance', value['contractVersion'])
+  for (const field of ['acceptanceId', 'presupuestoId', 'trabajoId', 'tenantId', 'actorId', 'createdAt']) {
+    if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-budget-acceptance', TUS_CONTRACT_VERSION, `${field} is required`)
+  }
+  if (!Number.isInteger(value['presupuestoVersion']) || Number(value['presupuestoVersion']) < 1 || !['accepted', 'rejected'].includes(String(value['decision'])) || !isIsoTimestamp(value['createdAt'])) throw new ContractValidationError('tus-budget-acceptance', TUS_CONTRACT_VERSION, 'budget decision is invalid')
+  return value as unknown as AceptacionPresupuesto
+}
+
+export function validarEvidenciaTrabajo(value: unknown): EvidenciaTrabajo {
+  if (!isRecord(value)) throw new ContractValidationError('tus-work-evidence', undefined, 'payload must be an object')
+  assertTusVersion('tus-work-evidence', value['contractVersion'])
+  for (const field of ['evidenceId', 'trabajoId', 'tenantId', 'prestadorTenantId', 'actorId', 'correlationId', 'reference', 'occurredAt', 'createdAt']) {
+    if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-work-evidence', TUS_CONTRACT_VERSION, `${field} is required`)
+  }
+  if (!Object.values(FASES_EVIDENCIA_TRABAJO).includes(value['phase'] as FaseEvidenciaTrabajo) || !isRecord(value['metadata']) || !isIsoTimestamp(value['occurredAt']) || !isIsoTimestamp(value['createdAt'])) throw new ContractValidationError('tus-work-evidence', TUS_CONTRACT_VERSION, 'work evidence is invalid')
+  return value as unknown as EvidenciaTrabajo
+}
+
+function isMinorAmount(value: unknown): value is string {
+  return typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
+}
+
+function isValidBudgetLine(value: unknown): value is LineaPresupuesto {
+  return isRecord(value)
+    && typeof value['lineId'] === 'string'
+    && typeof value['description'] === 'string'
+    && Number.isInteger(value['quantity'])
+    && Number(value['quantity']) > 0
+    && isMinorAmount(value['unitAmountMinor'])
+    && isMinorAmount(value['totalAmountMinor'])
+}
+
 export interface PublicacionMercadoServicios {
   contractVersion: TusContractVersion
   listingId: string

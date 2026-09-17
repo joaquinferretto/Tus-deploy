@@ -164,6 +164,52 @@ interface DelegadoPrismaDecisionHabilitacion {
   create(input: { data: Record<string, unknown> }): Promise<unknown>
 }
 
+export interface PrismaTrabajoDelegate {
+  create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
+  findFirst(input: { where: Record<string, unknown>; orderBy?: Record<string, unknown> }): Promise<Record<string, unknown> | null>
+  findMany(input: { where: Record<string, unknown>; orderBy?: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+  updateMany(input: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>
+}
+
+export interface PrismaDiagnosticoDelegate {
+  create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
+  findFirst(input: { where: Record<string, unknown> }): Promise<Record<string, unknown> | null>
+  findMany(input: { where: Record<string, unknown>; orderBy?: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+  updateMany(input: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>
+}
+
+export interface PrismaPresupuestoDelegate {
+  create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
+  findFirst(input: { where: Record<string, unknown> }): Promise<Record<string, unknown> | null>
+  findMany(input: { where: Record<string, unknown>; orderBy?: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+  updateMany(input: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>
+}
+
+export interface PrismaLineaPresupuestoDelegate {
+  createMany(input: { data: Record<string, unknown>[] }): Promise<{ count: number }>
+  findMany(input: { where: Record<string, unknown>; orderBy?: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+}
+
+export interface PrismaAceptacionPresupuestoDelegate {
+  create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
+  findFirst(input: { where: Record<string, unknown> }): Promise<Record<string, unknown> | null>
+}
+
+export interface PrismaTransicionTrabajoDelegate {
+  create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
+  findMany(input: { where: Record<string, unknown>; orderBy?: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+}
+
+export interface PrismaEvidenciaTrabajoDelegate {
+  create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
+  findFirst(input: { where: Record<string, unknown> }): Promise<Record<string, unknown> | null>
+  findMany(input: { where: Record<string, unknown>; orderBy?: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+}
+
+export interface PrismaAuditoriaTrabajoDelegate {
+  create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
+}
+
 export interface TusPrismaClient {
   compromiso: PrismaCommitmentDelegate
   compensacionCompromiso: PrismaCompensationDelegate
@@ -181,6 +227,14 @@ export interface TusPrismaClient {
   reserva: PrismaBookingDelegate
   evidenciaHabilitacion: DelegadoPrismaEvidenciaHabilitacion
   decisionHabilitacion: DelegadoPrismaDecisionHabilitacion
+  trabajo: PrismaTrabajoDelegate
+  diagnostico: PrismaDiagnosticoDelegate
+  presupuesto: PrismaPresupuestoDelegate
+  lineaPresupuesto: PrismaLineaPresupuestoDelegate
+  aceptacionPresupuesto: PrismaAceptacionPresupuestoDelegate
+  transicionTrabajo: PrismaTransicionTrabajoDelegate
+  evidenciaTrabajo: PrismaEvidenciaTrabajoDelegate
+  auditoriaTrabajo: PrismaAuditoriaTrabajoDelegate
   $transaction<TValue>(callback: (client: TusPrismaClient) => Promise<TValue>, options?: { isolationLevel?: 'Serializable' }): Promise<TValue>
 }
 

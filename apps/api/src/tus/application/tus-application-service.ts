@@ -1,10 +1,7 @@
 import type { Compromiso } from '@factory/contracts'
 import type { TusMarketplaceService } from '../catalog/index.ts'
 import type { ServiceCalendarService } from '../calendar/index.ts'
-import type {
-  ElegibilidadLiberacion,
-  EntradaElegibilidadLiberacion,
-} from '../domain/settlement.ts'
+import type { ElegibilidadLiberacion, EntradaElegibilidadLiberacion } from '../domain/settlement.ts'
 import { esElegibleParaLiberacion } from '../domain/settlement.ts'
 import { splitCartIntoCommitments } from '../domain/commitments.ts'
 import {
@@ -19,6 +16,7 @@ import type { TusPosService } from '../pos/index.ts'
 import type { TusSupportService } from '../support/index.ts'
 import type { TusWhatsAppService } from '../whatsapp/index.ts'
 import type { TusReportingService } from '../reporting/index.ts'
+import { TrabajoError, type ServicioTrabajo } from '../work/index.ts'
 import type { TusOperationsTelemetry } from '@factory/observability'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 import { TUS_BOUNDED_CONTEXTS } from '../ports/index.ts'
@@ -43,9 +41,7 @@ export type TusCheckoutResult =
   | ({ status: 'executed' | 'replay' } & TusCheckoutResponse)
   | { status: 'in_progress' | 'conflict' | 'forbidden' }
 export type TusCommitmentReadResult =
-  | { status: 'found'; commitment: Compromiso }
-  | { status: 'not_found' }
-  | { status: 'forbidden' }
+  { status: 'found'; commitment: Compromiso } | { status: 'not_found' } | { status: 'forbidden' }
 
 export interface TusReleasePolicy {
   localReleaseAfterMs?: number
@@ -68,6 +64,7 @@ export interface TusApplicationDependencies {
   support?: TusSupportService
   whatsapp?: TusWhatsAppService
   reporting?: TusReportingService
+  work?: ServicioTrabajo
   operationsTelemetry?: TusOperationsTelemetry
   evaluadorHabilitacion?: EvaluadorHabilitacion
   perfilHabilitacion?: PerfilHabilitacion
@@ -84,6 +81,7 @@ export class TusApplicationService {
   readonly support?: TusSupportService
   readonly whatsapp?: TusWhatsAppService
   readonly reporting?: TusReportingService
+  readonly work?: ServicioTrabajo
   readonly contexts = TUS_BOUNDED_CONTEXTS
   private readonly dependencies: TusApplicationDependencies
   private readonly lifecycle: ServicioCicloVidaCompromiso
@@ -100,6 +98,7 @@ export class TusApplicationService {
     this.support = dependencies.support
     this.whatsapp = dependencies.whatsapp
     this.reporting = dependencies.reporting
+    this.work = dependencies.work
     this.evaluadorHabilitacion = dependencies.evaluadorHabilitacion
     if (!dependencies.transaction) throw new Error('TUS transaction boundary is required')
     this.lifecycle = new ServicioCicloVidaCompromiso(dependencies.transaction, dependencies.now, {
@@ -120,28 +119,41 @@ export class TusApplicationService {
       scope: this.dependencies.alcanceHabilitacion ?? 'argentina-stage-1',
       now: input.createdAt,
     })
-    if (!input.idempotencyKey?.trim() || !input.requestHash.trim()) throw new Error('idempotency key and request fingerprint are required')
+    if (!input.idempotencyKey?.trim() || !input.requestHash.trim())
+      throw new Error('idempotency key and request fingerprint are required')
     const key = input.idempotencyKey
     const now = this.dependencies.now?.() ?? Date.parse(input.createdAt)
     try {
-      const execute = async (repositories: TusTransactionRepositories): Promise<TusCheckoutResult> => {
-        const claim = await repositories.idempotency.claim({ tenantId: input.tenantId, key, requestHash: input.requestHash, now, expiresAt: input.expiresAt })
+      const execute = async (
+        repositories: TusTransactionRepositories
+      ): Promise<TusCheckoutResult> => {
+        const claim = await repositories.idempotency.claim({
+          tenantId: input.tenantId,
+          key,
+          requestHash: input.requestHash,
+          now,
+          expiresAt: input.expiresAt,
+        })
         if (claim.status === 'replay') return { status: 'replay', ...claim.response }
         if (claim.status !== 'claimed') return claim
         const commitments = splitCartIntoCommitments(input)
-        if (commitments.length === 0) throw new Error('checkout requires at least one commitment line')
+        if (commitments.length === 0)
+          throw new Error('checkout requires at least one commitment line')
         const auditReferences = crearReferenciasAuditoria(input, commitments)
         const response: TusCheckoutResponse = { commitments, auditReferences }
         await repositories.commitments.saveMany(commitments)
         await repositories.audits.append(auditReferences)
-        await repositories.outbox.append(createCheckoutEvent(input, commitments, auditReferences, now))
+        await repositories.outbox.append(
+          createCheckoutEvent(input, commitments, auditReferences, now)
+        )
         await repositories.idempotency.complete({ tenantId: input.tenantId, key, response })
         return { status: 'executed', ...response }
       }
 
       return await this.dependencies.transaction!.run(execute)
     } catch (error) {
-      if (!this.dependencies.transaction) await this.dependencies.idempotency.release({ tenantId: input.tenantId, key })
+      if (!this.dependencies.transaction)
+        await this.dependencies.idempotency.release({ tenantId: input.tenantId, key })
       throw error
     }
   }
@@ -154,12 +166,64 @@ export class TusApplicationService {
     return this.lifecycle.compensate(input)
   }
 
-  async getCommitment(context: TusCommandContext, commitmentId: string): Promise<TusCommitmentReadResult> {
+  async getCommitment(
+    context: TusCommandContext,
+    commitmentId: string
+  ): Promise<TusCommitmentReadResult> {
     assertCommandContext(context)
     const commitment = await this.lookupCommitment(commitmentId)
     if (!commitment) return { status: 'not_found' }
     if (commitment.tenantId !== context.tenantId) return { status: 'forbidden' }
     return { status: 'found', commitment }
+  }
+
+  async acceptServiceCommitment(
+    context: TusAuthenticatedTenantContext,
+    input: {
+      commitmentId: string
+      reservationId?: string
+      idempotencyKey: string
+      requestHash: string
+      createdAt: string
+    }
+  ) {
+    if (!this.work || !this.marketplace)
+      throw new TrabajoError(503, 'UNAVAILABLE', 'TUS work composition is unavailable')
+    const commitment = await this.marketplace.store.commitments.find(input.commitmentId)
+    if (!commitment) throw new TrabajoError(404, 'NOT_FOUND', 'service commitment was not found')
+    const publication = await this.marketplace.store.listings.find(commitment.listingId)
+    if (!publication)
+      throw new TrabajoError(404, 'NOT_FOUND', 'commitment publication was not found')
+    if (input.reservationId) {
+      if (!this.calendar)
+        throw new TrabajoError(503, 'UNAVAILABLE', 'TUS calendar composition is unavailable')
+      const reservation = await this.calendar.findBookingForProvider(
+        context.tenantId,
+        input.reservationId
+      )
+      if (
+        !reservation ||
+        reservation.tenantId !== commitment.tenantId ||
+        reservation.listingId !== publication.listingId ||
+        reservation.status !== 'confirmed'
+      )
+        throw new TrabajoError(
+          409,
+          'INVALID_RESERVATION_LINK',
+          'reservation does not belong to the accepted service commitment'
+        )
+    }
+    return this.work.acceptCommitment({
+      tenantId: context.tenantId,
+      actorId: context.subjectId,
+      correlationId: context.correlationId,
+      commitment,
+      publication,
+      ...(input.reservationId ? { reservationId: input.reservationId } : {}),
+      idempotencyKey: input.idempotencyKey,
+      requestHash: input.requestHash,
+      createdAt: input.createdAt,
+    })
   }
 
   async lookupCommitment(commitmentId: string): Promise<Compromiso | null> {
@@ -171,11 +235,11 @@ export class TusApplicationService {
   async recordDeliveryProof(
     context: TusAuthenticatedTenantContext,
     input: Omit<ComprobanteEntrega, 'tenantId' | 'commitmentId'>,
-    expectedVersion: number,
+    expectedVersion: number
   ): Promise<TareaEntrega> {
     if (!this.delivery) throw new Error('TUS delivery composition is unavailable')
     const task = await this.delivery.recordProof(context, input, expectedVersion)
-    if (this.finance && task.proof && await this.lookupCommitment(task.commitmentId)) {
+    if (this.finance && task.proof && (await this.lookupCommitment(task.commitmentId))) {
       await this.finance.recordEvidence({
         tenantId: context.tenantId,
         actorId: context.subjectId,
@@ -189,7 +253,11 @@ export class TusApplicationService {
     return task
   }
 
-  async handoffDelivery(context: TusAuthenticatedTenantContext, taskId: string, expectedVersion: number): Promise<TareaEntrega> {
+  async handoffDelivery(
+    context: TusAuthenticatedTenantContext,
+    taskId: string,
+    expectedVersion: number
+  ): Promise<TareaEntrega> {
     if (!this.delivery) throw new Error('TUS delivery composition is unavailable')
     return this.delivery.transitionTask(context, taskId, 'handed-off', expectedVersion)
   }
@@ -197,7 +265,8 @@ export class TusApplicationService {
   evaluateRelease(input: EntradaElegibilidadLiberacion): ElegibilidadLiberacion {
     return esElegibleParaLiberacion({
       ...input,
-      localReleaseAfterMs: input.localReleaseAfterMs ?? this.dependencies.releasePolicy?.localReleaseAfterMs,
+      localReleaseAfterMs:
+        input.localReleaseAfterMs ?? this.dependencies.releasePolicy?.localReleaseAfterMs,
     })
   }
 
@@ -208,7 +277,7 @@ export class TusApplicationService {
 
 function crearReferenciasAuditoria(
   input: TusCheckoutCommand,
-  commitments: readonly Compromiso[],
+  commitments: readonly Compromiso[]
 ): ReferenciaAuditoria[] {
   return commitments.map((commitment) => ({
     referenceId: `audit-${commitment.commitmentId}`,
@@ -225,7 +294,7 @@ function createCheckoutEvent(
   input: TusCheckoutCommand,
   commitments: readonly Compromiso[],
   auditReferences: readonly ReferenciaAuditoria[],
-  createdAt: number,
+  createdAt: number
 ): TusOutboxRecord {
   return {
     eventId: `outbox-${input.cartId}`,
@@ -235,10 +304,16 @@ function createCheckoutEvent(
     payload: {
       commitmentIds: commitments.map((commitment) => commitment.commitmentId),
       auditReferenceIds: auditReferences.map((reference) => reference.referenceId),
-      ...(commitments.length === 1 && commitments[0] ? { commitmentContext: commitments[0].context } : {}),
+      ...(commitments.length === 1 && commitments[0]
+        ? { commitmentContext: commitments[0].context }
+        : {}),
       idempotencyKey: input.idempotencyKey,
       requestHash: input.requestHash,
-      ...(commitments.length === 1 && commitments[0] ? { workflowRunId: `tus-commitment-${commitments[0].context}-${commitments[0].commitmentId}` } : {}),
+      ...(commitments.length === 1 && commitments[0]
+        ? {
+            workflowRunId: `tus-commitment-${commitments[0].context}-${commitments[0].commitmentId}`,
+          }
+        : {}),
     },
     createdAt,
     status: 'pending',
@@ -250,7 +325,9 @@ function createCheckoutEvent(
   }
 }
 
-function assertCommandContext(input: Pick<TusCommandContext, 'tenantId' | 'actorId' | 'correlationId'>): void {
+function assertCommandContext(
+  input: Pick<TusCommandContext, 'tenantId' | 'actorId' | 'correlationId'>
+): void {
   if (!input.tenantId.trim() || !input.actorId.trim() || !input.correlationId.trim()) {
     throw new Error('tenant authorization context is required')
   }
