@@ -492,8 +492,8 @@ WHERE l.id IS NULL;
 **`publicaciones`** — Oferta visible (ex `TusListing`).
 - PK `id`; FK física actual `(tenant_id, prestador_id) → prestadores`, `onDelete RESTRICT`.
 - La relación anterior por `tenantId` fue reemplazada por el mapping Prisma `Publicacion.prestador`.
-- Para publicaciones de servicio, `modalidad_reserva` y `modalidad_precio` son configuraciones comerciales nullable durante la transición. Los valores físicos canónicos son `turno_fijo`/`duracion_estimada` y `precio_fijo`/`presupuesto`; el adapter los expone como `fixed_shift`/`variable_duration` y `fixed`/`requires_budget`.
-- `duracion_minutos` solo aplica a `turno_fijo`; `duracion_estimada_minutos` solo aplica a `duracion_estimada`.
+- Para publicaciones de servicio, `modalidad_reserva` y `modalidad_precio` son configuraciones comerciales nullable durante la transición. `modalidad_reserva` acepta `turno_fijo`, `visita_diagnostico`, `duracion_estimada` y `requiere_presupuesto`; `modalidad_precio` acepta `precio_fijo`, `precio_desde`, `por_hora` y `presupuesto`. La API también acepta aliases legacy.
+- `duracion_minutos` aplica a `turno_fijo` y `visita_diagnostico`; `duracion_estimada_minutos` aplica a `duracion_estimada`. `requiere_presupuesto` no tiene duración automática.
 - `horario_trabajo` permanece legacy y no es la fuente canónica de disponibilidad nueva.
 
 **`compromisos_mercado_servicios`** — Línea/compromiso de checkout (ex `TusMarketplaceCommitment`).

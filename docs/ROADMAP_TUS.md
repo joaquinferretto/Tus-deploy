@@ -1,7 +1,7 @@
 # Roadmap de TUS
 
 > **Fuente canonica de estado.** Ultima actualizacion: 2026-09-16. Build actual: `WEB-04D2`. Commit:
-> `65df852`.
+> `65df852` más el ajuste actual de modalidades y concurrencia.
 
 ## Estado de fases
 
@@ -11,18 +11,18 @@
 | WEB-02   | Completada            | Mercado de servicios en `e9e72b2`.                                               |
 | WEB-03   | Completada            | Compromisos de cliente en `a75497f`.                                             |
 | WEB-04   | Completada            | Calendario y reservas Web en `d659e85`; mantiene flujo legacy.                   |
-| WEB-04D1 | Completada            | Modelo Prisma/DB y contratos base de agenda, publicación y reserva en `29e8977`. |
-| WEB-04D2 | Completada en backend | Disponibilidad y reserva canónicas por `listingId`; commit `65df852`.            |
+| WEB-04D1 | Schema/migración preparada | Modelo Prisma/DB y migración en `29e8977`; aplicación física al target pendiente. |
+| WEB-04D2 | Ajuste backend entregado | Disponibilidad y reserva canónicas por `listingId`; base `65df852`, modalidades físicas y concurrencia alineadas. |
 
 ## WEB-04D2 entregado
 
 - `Publicacion` es la identidad canónica de un servicio.
 - Discovery expone `calendarId`, modalidad y `availabilityStatus` solo según la agenda principal real.
 - Agenda principal se resuelve por `(tenantId, prestadorId)`.
-- `fixed_shift`, `variable_duration`, `fixed` y `requires_budget` tienen reglas explícitas.
+- `turno_fijo`, `visita_diagnostico`, `duracion_estimada`, `requiere_presupuesto` y modalidades de precio físicas tienen reglas explícitas, con aliases legacy.
 - `NOT_CONFIGURED`, `BUDGET_REQUIRED` y `CALENDAR_MISMATCH` bloquean acciones no verificables.
 - Booking persiste `publicacion_id` usando el campo existente y conserva aliases legacy.
-- Contratos, schemas, adapters, auditoría, outbox e idempotencia quedaron alineados.
+- Contratos, schemas, adapters, auditoría, outbox e idempotencia quedaron alineados; el adapter Prisma usa transacciones serializables con reintento.
 
 ## Siguiente fase
 

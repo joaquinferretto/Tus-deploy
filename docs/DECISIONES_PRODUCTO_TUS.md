@@ -2,7 +2,7 @@
 
 > **Fuente canonica de decisiones.** Una Build no puede introducir una decision de arquitectura, producto o
 > dominio sin registrarla aqui. Ultima actualizacion: 2026-09-16. Build: `WEB-04D2`. Commit de referencia:
-> `65df852`.
+> `65df852` más el ajuste de modalidades y concurrencia de esta build.
 
 ## WEB-04D2: disponibilidad y reservas por Publicacion
 
@@ -30,17 +30,21 @@
 
 ### D2-03: Modalidades de reserva y precio son explícitas
 
-La frontera pública soporta únicamente:
+La frontera pública acepta los aliases legacy y los valores físicos históricos de D1, sin inventar una modalidad nueva:
 
 | Campo         | Valor               | Regla                                                           |
 | ------------- | ------------------- | --------------------------------------------------------------- |
-| `bookingMode` | `fixed_shift`       | Requiere `durationMinutes` entero positivo.                     |
-| `bookingMode` | `variable_duration` | Requiere `estimatedDurationMinutes` entero positivo.            |
-| `priceMode`   | `fixed`             | Permite disponibilidad y booking automático.                    |
-| `priceMode`   | `requires_budget`   | Impide slots y booking automático hasta contar con presupuesto. |
+| `bookingMode` | `turno_fijo` / `fixed_shift` | Requiere `durationMinutes` entero positivo.              |
+| `bookingMode` | `visita_diagnostico`        | Requiere `durationMinutes` entero positivo.              |
+| `bookingMode` | `duracion_estimada` / `variable_duration` | Requiere `estimatedDurationMinutes` entero positivo. |
+| `bookingMode` | `requiere_presupuesto`      | Impide slots y booking automático.                       |
+| `priceMode`   | `precio_fijo` / `fixed`     | Permite disponibilidad y booking automático.             |
+| `priceMode`   | `precio_desde`              | Conserva el precio publicado y permite disponibilidad.   |
+| `priceMode`   | `por_hora`                  | Conserva el precio publicado y permite disponibilidad.   |
+| `priceMode`   | `presupuesto` / `requires_budget` | Impide slots y booking automático.                  |
 
-Los adapters traducen estos valores a los valores físicos históricos en español y aceptan las formas legacy
-equivalentes en lectura. No se amplía el contrato con modalidades no implementadas.
+Los aliases se mantienen para no romper consumidores existentes; los adapters Prisma preservan los valores físicos en
+español al leer y escribir. La duración efectiva solo se obtiene para las modalidades automáticas.
 
 ### D2-04: Disponibilidad no configurada es un estado verificable
 
@@ -53,13 +57,16 @@ equivalentes en lectura. No se amplía el contrato con modalidades no implementa
 
 ### D2-05: Presupuesto requerido bloquea antes de generar o reservar
 
-Cuando `priceMode` es `requires_budget`, tanto slots como booking responden `BUDGET_REQUIRED`. No se genera una
-reserva provisional ni se ocupa capacidad antes de crear/aceptar un presupuesto.
+Cuando `bookingMode` es `requiere_presupuesto` o `priceMode` es `presupuesto`/`requires_budget`, tanto slots como
+booking responden `BUDGET_REQUIRED`. No se genera una reserva provisional ni se ocupa capacidad antes de
+crear/aceptar un presupuesto.
 
 ### D2-06: Slot y capacidad pertenecen al calendario, duración a la Publicacion
 
 - El slot canónico se identifica como `calendarId:listingId:start`.
-- La duración efectiva se toma de la modalidad de la publicación.
+- La duración efectiva se toma de la modalidad de la publicación: `turno_fijo`/`visita_diagnostico` usan
+  `durationMinutes`; `duracion_estimada` usa `estimatedDurationMinutes`; `requiere_presupuesto` no tiene duración
+  automática.
 - La generación considera zona horaria, horarios, excepciones, granularidad, buffer, cutoff y capacidad.
 - Las reservas confirmadas ocupan capacidad solo cuando sus intervalos se superponen.
 
@@ -72,6 +79,9 @@ del modelo WEB-04D1:
 - `Calendario.prestadorId` y su unique tenant-scoped;
 - `Calendario.granularidadMinutos` y `Calendario.bufferMinutos`;
 - `Reserva.publicacionId`, nullable para conservar reservas legacy.
+
+La migración `20260916140000_tus_provider_agenda_publication_modes` existe en el repositorio, pero su aplicación física
+al target no está verificada y permanece fuera del alcance de D2.
 
 El DER y el diccionario deben registrar esta distinción: D2 cambia el uso canónico en la aplicación, no el modelo
 físico.
@@ -103,7 +113,7 @@ No incluido:
 
 ## Evidencia de implementación
 
-- Commit: `65df852`.
+- Commit base: `65df852`; este delta completa el ajuste de modalidades y concurrencia de WEB-04D2.
 - Tests focales: 25/25 pass.
 - Typechecks contracts/API/Web: pass.
 - JSON Schemas: 98 pass, con warnings AJV no bloqueantes.

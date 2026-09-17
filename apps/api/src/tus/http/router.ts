@@ -226,7 +226,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/v1/mercado-servicios/onboarding', '/tus/v1/marketplace/onboarding'], async (request: Request, response: Response) => {
+  router.post(['/tus/marketplace/onboarding', '/tus/v1/mercado-servicios/onboarding', '/tus/v1/marketplace/onboarding'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:write')) {
       await recordMarketplaceDenied(application, context, 'merchant.onboard', readString(asRecord(request.body), 'merchantId'))
@@ -247,7 +247,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/v1/mercado-servicios/listings', '/tus/v1/marketplace/listings'], async (request: Request, response: Response) => {
+  router.post(['/tus/marketplace/listings', '/tus/v1/mercado-servicios/listings', '/tus/v1/marketplace/listings'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:write')) {
       await recordMarketplaceDenied(application, context, 'listing.create', '')
@@ -268,7 +268,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/v1/mercado-servicios/listings/:listingId/publish', '/tus/v1/marketplace/listings/:listingId/publish'], async (request: Request, response: Response) => {
+  router.post(['/tus/marketplace/listings/:listingId/publish', '/tus/v1/mercado-servicios/listings/:listingId/publish', '/tus/v1/marketplace/listings/:listingId/publish'], async (request: Request, response: Response) => {
     const pathListingId = request.path.split('/').at(-2) ?? ''
     const listingId = request.params['listingId'] && request.params['listingId'] !== 'undefined' ? request.params['listingId'] : pathListingId
     const context = await authenticate(request, sessions)
@@ -290,7 +290,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.get(['/tus/v1/mercado-servicios/discovery', '/tus/v1/marketplace/discovery'], async (request: Request, response: Response) => {
+  router.get(['/tus/marketplace/discovery', '/tus/v1/mercado-servicios/discovery', '/tus/v1/marketplace/discovery'], async (request: Request, response: Response) => {
     try {
       const discovery = await requireMarketplace(application).discover({
         ...(readQueryString(request.query['locationId']) ? { locationId: readQueryString(request.query['locationId']) } : {}),
@@ -321,7 +321,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.post(['/tus/v1/mercado-servicios/checkout', '/tus/v1/marketplace/checkout'], async (request: Request, response: Response) => {
+  router.post(['/tus/marketplace/checkout', '/tus/v1/mercado-servicios/checkout', '/tus/v1/marketplace/checkout'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:checkout')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS marketplace checkout is not authorized')
@@ -368,7 +368,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.get(['/tus/v1/mercado-servicios/customer/commitments', '/tus/v1/marketplace/customer/commitments'], async (request: Request, response: Response) => {
+  router.get(['/tus/marketplace/customer/commitments', '/tus/v1/mercado-servicios/customer/commitments', '/tus/v1/marketplace/customer/commitments'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:read')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS customer commitments are not authorized')
@@ -387,7 +387,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     }
   })
 
-  router.get(['/tus/v1/mercado-servicios/customer/commitments/:commitmentId', '/tus/v1/marketplace/customer/commitments/:commitmentId'], async (request: Request, response: Response) => {
+  router.get(['/tus/marketplace/customer/commitments/:commitmentId', '/tus/v1/mercado-servicios/customer/commitments/:commitmentId', '/tus/v1/marketplace/customer/commitments/:commitmentId'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:read')) {
       sendError(response, 403, 'FORBIDDEN', 'TUS customer commitments are not authorized')
@@ -1076,6 +1076,8 @@ function readMarketplaceLines(value: unknown): MarketplaceCheckoutLine[] | null 
       || typeof line['quantity'] !== 'number' || !Number.isInteger(line['quantity']) || line['quantity'] <= 0
       || typeof line['availabilityVersion'] !== 'number' || !Number.isInteger(line['availabilityVersion']) || line['availabilityVersion'] < 0
       || (line['price'] !== undefined && (typeof line['price'] !== 'number' || !Number.isFinite(line['price']) || line['price'] <= 0))
+      || (line['slotStart'] !== undefined && !isIsoTimestamp(line['slotStart']))
+      || (line['slotEnd'] !== undefined && !isIsoTimestamp(line['slotEnd']))
   })) return null
   return value as MarketplaceCheckoutLine[]
 }
@@ -1361,6 +1363,12 @@ function readHeader(request: Request, key: string): string {
 function readOptionalHeader(request: Request, key: string): string | undefined {
   const value = request.header(key)
   return value?.trim() || undefined
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(value)
+    && Number.isFinite(Date.parse(value))
 }
 
 export default { createTusHttpRouter }

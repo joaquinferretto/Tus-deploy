@@ -154,11 +154,12 @@ Conservar también `OAuth`, `OIDC`, `PKCE`, `MFA`, `RAG`, `POS`, `SDK`, `API`, `
 | Calendario | `Calendario` | `Calendar` | Agenda que contiene reglas, excepciones y reservas de disponibilidad. | Es una entidad de persistencia; no equivale por sí sola a una publicación. |
 | Agenda principal | `AgendaPrincipal` | `Primary Calendar` | Única agenda activa resuelta para un prestador dentro de un tenant. | Se obtiene por `(tenantId, prestadorId)`; no se elige arbitrariamente por `calendarId`. |
 | Franja | `Franja` | `Slot` | Intervalo posible de inicio y fin generado por una agenda y una publicación. | Su identidad vigente es `calendarId:listingId:start`. |
-| Modalidad de reserva | `ModalidadReserva` | `bookingMode` | Regla que determina la duración efectiva de una reserva de servicio. | Los valores públicos vigentes son `fixed_shift` y `variable_duration`. |
-| Turno fijo | `TurnoFijo` | `fixed_shift` | Modalidad que exige `durationMinutes` positivo. | Se conserva el valor del contrato externo. |
-| Duración variable | `DuracionVariable` | `variable_duration` | Modalidad que exige `estimatedDurationMinutes` positivo. | Se conserva el valor del contrato externo. |
-| Modalidad de precio | `ModalidadPrecio` | `priceMode` | Regla que determina si una publicación puede reservarse automáticamente. | Los valores públicos vigentes son `fixed` y `requires_budget`. |
-| Presupuesto requerido | `PresupuestoRequerido` | `requires_budget` | Estado comercial que impide slots y reserva automática hasta contar con presupuesto. | El backend responde `BUDGET_REQUIRED`. |
+| Modalidad de reserva | `ModalidadReserva` | `bookingMode` | Regla que determina la duración efectiva de una reserva de servicio. | Acepta valores físicos D1 y aliases legacy. |
+| Turno fijo | `TurnoFijo` | `turno_fijo` / `fixed_shift` | Modalidad que exige `durationMinutes` positivo. | `visita_diagnostico` comparte esta regla. |
+| Visita de diagnóstico | `VisitaDiagnostico` | `visita_diagnostico` | Modalidad que exige `durationMinutes` positivo. | No usa `serviceId` como identidad. |
+| Duración estimada | `DuracionEstimada` | `duracion_estimada` / `variable_duration` | Modalidad que exige `estimatedDurationMinutes` positivo. | La duración efectiva proviene de `duracion_estimada_minutos`. |
+| Presupuesto requerido | `PresupuestoRequerido` | `requiere_presupuesto` | Modalidad que impide slots y reserva automática. | El backend responde `BUDGET_REQUIRED`. |
+| Modalidad de precio | `ModalidadPrecio` | `priceMode` | Regla que determina si una publicación puede reservarse automáticamente. | Acepta `precio_fijo`, `precio_desde`, `por_hora`, `presupuesto` y aliases legacy. |
 | Estado de disponibilidad | `EstadoDisponibilidad` | `availabilityStatus` | Indica si una publicación de servicio tiene agenda activa. | `configured` debe incluir `calendarId`; `not_configured` no debe incluirlo. |
 | Identificador de publicación | `listingId` | `listingId` | Identificador de contrato de una `Publicacion`. | Se mantiene por compatibilidad contractual; no reemplazarlo por `serviceId`. |
 

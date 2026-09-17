@@ -181,7 +181,7 @@ export interface TusPrismaClient {
   reserva: PrismaBookingDelegate
   evidenciaHabilitacion: DelegadoPrismaEvidenciaHabilitacion
   decisionHabilitacion: DelegadoPrismaDecisionHabilitacion
-  $transaction<TValue>(callback: (client: TusPrismaClient) => Promise<TValue>): Promise<TValue>
+  $transaction<TValue>(callback: (client: TusPrismaClient) => Promise<TValue>, options?: { isolationLevel?: 'Serializable' }): Promise<TValue>
 }
 
 export class AlmacenPrismaEvidenciaHabilitacion implements PuertoEvidenciaHabilitacion {

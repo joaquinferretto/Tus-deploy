@@ -42,11 +42,16 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
     claim: async ({ tenantId, key, requestHash }: { tenantId: string; key: string; requestHash: string }): Promise<{ status: 'claimed' | 'replay' | 'conflict' | 'in_progress'; response?: Reserva | { status: 'replay'; booking: Reserva } | { status: 'rejected'; reason: 'capacity' } }> => {
       const existing = await this.client.idempotencyRecord.findUnique({ where: { tenantId_key: { tenantId, key } } })
       if (!existing) {
-        try { await this.client.idempotencyRecord.create({ data: { id: `calendar-idempotency-${tenantId}-${key}`, tenantId, key, requestHash, status: 'pending', response: null, createdAt: new Date(), expiresAt: new Date(Date.now() + 15 * 60_000) } }); return { status: 'claimed' as const } } catch { return this.idempotency.claim({ tenantId, key, requestHash }) }
+        try {
+          await this.client.idempotencyRecord.create({ data: { id: `calendar-idempotency-${tenantId}-${key}`, tenantId, key, requestHash, status: 'pending', response: null, createdAt: new Date(), expiresAt: new Date(Date.now() + 15 * 60_000) } })
+          return { status: 'claimed' as const }
+        } catch (error) {
+          const raced = await this.client.idempotencyRecord.findUnique({ where: { tenantId_key: { tenantId, key } } })
+          if (!raced) throw error
+          return claimExistingCalendarIdempotency(raced, requestHash)
+        }
       }
-      if (existing.requestHash !== requestHash) return { status: 'conflict' as const }
-      if (existing.status === 'completed' && existing.response) return { status: 'replay' as const, response: decodeResult(existing.response) }
-      return { status: 'in_progress' as const }
+      return claimExistingCalendarIdempotency(existing, requestHash)
     },
     complete: async ({ tenantId, key, response }: { tenantId: string; key: string; response: Reserva | { status: 'replay'; booking: Reserva } | { status: 'rejected'; reason: 'capacity' } }) => { await this.client.idempotencyRecord.update({ where: { tenantId_key: { tenantId, key } }, data: { status: 'completed', response: encodeResult(response) } }) },
   }
@@ -61,7 +66,26 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
     list: (_tenantId: string) => [] as CalendarOutboxRecord[],
   }
 
-  transaction<T>(operation: (store: ServiceCalendarStorePort) => Promise<T>): Promise<T> { return this.client.$transaction(async (client) => operation(new PrismaServiceCalendarStore(client))) }
+  async transaction<T>(operation: (store: ServiceCalendarStorePort) => Promise<T>): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.client.$transaction(async (client) => operation(new PrismaServiceCalendarStore(client)), { isolationLevel: 'Serializable' })
+      } catch (error) {
+        if (!isSerializationFailure(error) || attempt === 2) throw error
+      }
+    }
+    throw new Error('calendar transaction retry limit exceeded')
+  }
+}
+
+function claimExistingCalendarIdempotency(existing: { requestHash: string; status: string; response: unknown }, requestHash: string) {
+  if (existing.requestHash !== requestHash) return { status: 'conflict' as const }
+  if (existing.status === 'completed' && existing.response) return { status: 'replay' as const, response: decodeResult(existing.response) }
+  return { status: 'in_progress' as const }
+}
+
+function isSerializationFailure(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2034'
 }
 
 function calendarRow(calendar: Calendario): Record<string, unknown> { return { id: calendar.calendarId, tenantId: calendar.tenantId, prestadorId: calendar.prestadorId ?? null, servicioId: calendar.serviceId ?? null, nombre: calendar.prestadorId ?? calendar.serviceId ?? calendar.calendarId, zonaHoraria: calendar.timezone, estado: calendar.status, granularidadMinutos: calendar.granularityMinutes, bufferMinutos: calendar.bufferMinutes, fechaCreacion: new Date(calendar.createdAt), fechaActualizacion: new Date(calendar.updatedAt) } }

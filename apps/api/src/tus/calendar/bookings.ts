@@ -4,7 +4,7 @@ import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { generateServiceSlots, type Franja, type SlotGenerationOptions } from './slots.ts'
 import { validateCalendarInput, type MoneySnapshot, type Calendario, type EntradaCalendario } from './rules.ts'
 import type { Publicacion } from '../catalog/index.ts'
-import { MARKETPLACE_BOOKING_MODES, MARKETPLACE_PRICE_MODES } from '../catalog/index.ts'
+import { effectiveListingDuration, publicationRequiresBudget } from '../catalog/index.ts'
 
 const BOOKING_STATUS = {
   CONFIRMED: 'confirmed',
@@ -206,8 +206,8 @@ export class ServiceCalendarService {
   async slotsForPublication(context: TusAuthenticatedTenantContext, publication: Publicacion, calendarId: string | undefined, date: string, now?: string): Promise<Franja[]> {
     assertRead(context)
     const calendar = await this.calendarForPublication(publication, calendarId)
-    if ((publication.priceMode ?? MARKETPLACE_PRICE_MODES.FIXED) === MARKETPLACE_PRICE_MODES.REQUIRES_BUDGET) throw new ErrorCalendario(409, 'BUDGET_REQUIRED', 'service requires a budget before booking')
-    const durationMinutes = effectivePublicationDuration(publication)
+    if (publicationRequiresBudget(publication)) throw new ErrorCalendario(409, 'BUDGET_REQUIRED', 'service requires a budget before booking')
+    const durationMinutes = effectiveListingDuration(publication)
     if (durationMinutes === null) throw new ErrorCalendario(409, 'INCONSISTENT_CONFIGURATION', 'service duration configuration is invalid')
     const slots = generateSlotsOrThrow(calendar, date, now, { listingId: publication.listingId, durationMinutes })
     const bookings = await this.store.bookings.forCalendar(calendar.calendarId)
@@ -248,8 +248,8 @@ export class ServiceCalendarService {
       }
       if (input.publication && input.calendarId !== undefined && input.calendarId !== calendar.calendarId) throw new ErrorCalendario(409, 'CALENDAR_MISMATCH', 'calendar does not belong to the service publication')
       if (!input.publication && calendar.serviceId !== input.serviceId) throw new ErrorCalendario(404, 'NOT_FOUND', 'calendar was not found')
-      if (input.publication && (input.publication.priceMode ?? MARKETPLACE_PRICE_MODES.FIXED) === MARKETPLACE_PRICE_MODES.REQUIRES_BUDGET) throw new ErrorCalendario(409, 'BUDGET_REQUIRED', 'service requires a budget before booking')
-      const durationMinutes = input.publication ? effectivePublicationDuration(input.publication) : calendar.durationMinutes
+      if (input.publication && publicationRequiresBudget(input.publication)) throw new ErrorCalendario(409, 'BUDGET_REQUIRED', 'service requires a budget before booking')
+      const durationMinutes = input.publication ? effectiveListingDuration(input.publication) : calendar.durationMinutes
       if (durationMinutes === null) throw new ErrorCalendario(409, 'INCONSISTENT_CONFIGURATION', 'service duration configuration is invalid')
       const slotDate = extractSlotDate(input.slotId)
       const slotOptions: SlotGenerationOptions = { durationMinutes, ...(input.publication ? { listingId: input.publication.listingId } : {}) }
@@ -257,7 +257,7 @@ export class ServiceCalendarService {
       if (!slot) throw new ErrorCalendario(409, 'STALE_SLOT', 'requested slot is no longer available')
       const now = Date.parse(input.now)
       if (!Number.isFinite(now)) throw new ErrorCalendario(400, 'INVALID', 'now must be a valid timestamp')
-      if (now > Date.parse(slot.start) - calendar.bookingCutoffMinutes * 60_000) throw new ErrorCalendario(409, 'BOOKING_CUTOFF', 'booking cutoff has passed')
+      if (now >= Date.parse(slot.start) - calendar.bookingCutoffMinutes * 60_000) throw new ErrorCalendario(409, 'BOOKING_CUTOFF', 'booking cutoff has passed')
       const bookings = await store.bookings.forCalendar(calendar.calendarId)
       if (availableCapacity(slot, bookings, calendar) === 0) {
         const response = { status: 'rejected' as const, reason: 'capacity' as const }
@@ -330,13 +330,6 @@ function overlaps(start: string, end: string, otherStart: string, otherEnd: stri
 
 function generateSlotsOrThrow(calendar: Calendario, date: string, now?: string, options?: SlotGenerationOptions): Franja[] {
   try { return generateServiceSlots(calendar, { date, ...(now === undefined ? {} : { now }) }, options) } catch (error) { throw new ErrorCalendario(400, 'INVALID_DATE', error instanceof Error ? error.message : 'slot date is invalid') }
-}
-
-function effectivePublicationDuration(publication: Publicacion): number | null {
-  const duration = publication.bookingMode === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION
-    ? publication.estimatedDurationMinutes
-    : publication.durationMinutes
-  return Number.isInteger(duration) && duration! > 0 ? duration! : null
 }
 
 function extractSlotDate(slotId: string): string {

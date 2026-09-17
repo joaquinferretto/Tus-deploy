@@ -43,7 +43,7 @@ export function generateServiceSlots(calendar: Calendario, query: SlotQuery, opt
       slots.push({
         slotId: options.listingId === undefined ? `${calendar.calendarId}:${start.toISOString()}` : `${calendar.calendarId}:${options.listingId}:${start.toISOString()}`,
         calendarId: calendar.calendarId,
-        ...(calendar.serviceId === undefined ? {} : { serviceId: calendar.serviceId }),
+        ...(options.listingId !== undefined || calendar.serviceId === undefined ? {} : { serviceId: calendar.serviceId }),
         ...(options.listingId === undefined ? {} : { listingId: options.listingId }),
         timezone: calendar.timezone,
         start: start.toISOString(),

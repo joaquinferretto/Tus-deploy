@@ -74,12 +74,16 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
     claim: async ({ tenantId, key, requestHash }: { tenantId: string; key: string; requestHash: string }) => {
       const existing = await this.client.idempotencyRecord.findUnique({ where: { tenantId_key: { tenantId, key } } })
       if (!existing) {
-        await this.client.idempotencyRecord.create({ data: { id: `marketplace-idempotency-${tenantId}-${key}`, tenantId, key, requestHash, status: 'pending', response: null, createdAt: new Date(), expiresAt: new Date(Date.now() + 15 * 60 * 1000) } })
-        return { status: 'claimed' as const }
+        try {
+          await this.client.idempotencyRecord.create({ data: { id: `marketplace-idempotency-${tenantId}-${key}`, tenantId, key, requestHash, status: 'pending', response: null, createdAt: new Date(), expiresAt: new Date(Date.now() + 15 * 60 * 1000) } })
+          return { status: 'claimed' as const }
+        } catch (error) {
+          const raced = await this.client.idempotencyRecord.findUnique({ where: { tenantId_key: { tenantId, key } } })
+          if (!raced) throw error
+          return claimExistingMarketplaceIdempotency(raced, requestHash)
+        }
       }
-      if (existing.requestHash !== requestHash) return { status: 'conflict' as const }
-      if (existing.status === 'completed' && existing.response) return { status: 'replay' as const, response: decodeMarketplaceResponse(existing.response) }
-      return { status: 'in_progress' as const }
+      return claimExistingMarketplaceIdempotency(existing, requestHash)
     },
     complete: async ({ tenantId, key, response }: { tenantId: string; key: string; response: MarketplaceCheckoutResponse }) => {
       await this.client.idempotencyRecord.update({ where: { tenantId_key: { tenantId, key } }, data: { status: 'completed', response: encodeMarketplaceResponse(response) } })
@@ -106,9 +110,26 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
     list: async (tenantId: string): Promise<MarketplaceOutboxRecord[]> => (await this.client.outboxEvent.findMany({ where: { tenantId, eventType: { startsWith: 'tus.marketplace.' } } })).map(toOutbox),
   }
 
-  transaction<T>(operation: (store: MarketplaceStorePort) => Promise<T>): Promise<T> {
-    return this.client.$transaction(async (client) => operation(new PrismaMarketplaceStore(client)))
+  async transaction<T>(operation: (store: MarketplaceStorePort) => Promise<T>): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.client.$transaction(async (client) => operation(new PrismaMarketplaceStore(client)), { isolationLevel: 'Serializable' })
+      } catch (error) {
+        if (!isSerializationFailure(error) || attempt === 2) throw error
+      }
+    }
+    throw new Error('marketplace transaction retry limit exceeded')
   }
+}
+
+function claimExistingMarketplaceIdempotency(existing: { requestHash: string; status: string; response: unknown }, requestHash: string) {
+  if (existing.requestHash !== requestHash) return { status: 'conflict' as const }
+  if (existing.status === 'completed' && existing.response) return { status: 'replay' as const, response: decodeMarketplaceResponse(existing.response) }
+  return { status: 'in_progress' as const }
+}
+
+function isSerializationFailure(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2034'
 }
 
 function merchantRow(profile: PerfilPrestador): Record<string, unknown> {
@@ -140,24 +161,27 @@ function toListing(row: Record<string, unknown>): Publicacion {
 function toStoredBookingMode(mode: Publicacion['bookingMode']): string | null {
   if (mode === 'fixed_shift') return 'turno_fijo'
   if (mode === 'variable_duration') return 'duracion_estimada'
+  if (mode === 'visita_diagnostico' || mode === 'duracion_estimada' || mode === 'requiere_presupuesto') return mode
   return null
 }
 
 function toStoredPriceMode(mode: Publicacion['priceMode']): string | null {
   if (mode === 'fixed') return 'precio_fijo'
   if (mode === 'requires_budget') return 'presupuesto'
+  if (mode === 'precio_fijo' || mode === 'precio_desde' || mode === 'por_hora' || mode === 'presupuesto') return mode
   return null
 }
 
 function toBookingMode(value: string | undefined, durationMinutes: number | null): Publicacion['bookingMode'] {
-  if (value === 'turno_fijo' || value === 'fixed_shift') return 'fixed_shift'
-  if (value === 'duracion_estimada' || value === 'variable_duration') return 'variable_duration'
+  if (value === 'turno_fijo' || value === 'visita_diagnostico' || value === 'duracion_estimada' || value === 'requiere_presupuesto') return value as Publicacion['bookingMode']
+  if (value === 'fixed_shift') return 'fixed_shift'
+  if (value === 'variable_duration') return 'variable_duration'
   return durationMinutes === null ? undefined : 'fixed_shift'
 }
 
 function toPriceMode(value: string | undefined): Publicacion['priceMode'] {
-  if (value === 'presupuesto' || value === 'requires_budget') return 'requires_budget'
-  if (value === 'precio_fijo' || value === 'fixed') return 'fixed'
+  if (value === 'precio_fijo' || value === 'precio_desde' || value === 'por_hora' || value === 'presupuesto') return value
+  if (value === 'fixed' || value === 'requires_budget') return value
   return undefined
 }
 

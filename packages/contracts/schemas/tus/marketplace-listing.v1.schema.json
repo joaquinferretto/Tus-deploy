@@ -39,9 +39,9 @@
     "durationMinutes": { "type": ["integer", "null"], "minimum": 1 },
     "capacity": { "type": ["integer", "null"], "minimum": 1 },
     "calendarId": { "type": "string", "minLength": 1 },
-    "bookingMode": { "enum": ["fixed_shift", "variable_duration", null] },
+    "bookingMode": { "enum": ["fixed_shift", "visita_diagnostico", "variable_duration", "duracion_estimada", "requiere_presupuesto", null] },
     "estimatedDurationMinutes": { "type": ["integer", "null"], "minimum": 1 },
-    "priceMode": { "enum": ["fixed", "requires_budget"] },
+    "priceMode": { "enum": ["fixed", "requires_budget", "precio_fijo", "precio_desde", "por_hora", "presupuesto"] },
     "availabilityStatus": { "enum": ["configured", "not_configured"] },
     "workingHours": {
       "type": "array",
@@ -70,8 +70,9 @@
         "required": ["capacity", "workingHours"],
         "properties": { "stock": { "const": null }, "capacity": { "type": "integer", "minimum": 1 }, "workingHours": { "minItems": 1 } },
         "anyOf": [
-          { "required": ["durationMinutes"], "properties": { "bookingMode": { "enum": ["fixed_shift"] }, "durationMinutes": { "type": "integer", "minimum": 1 } } },
-          { "required": ["bookingMode", "estimatedDurationMinutes"], "properties": { "bookingMode": { "const": "variable_duration" }, "durationMinutes": { "const": null }, "estimatedDurationMinutes": { "type": "integer", "minimum": 1 } } }
+          { "required": ["durationMinutes"], "properties": { "bookingMode": { "enum": ["fixed_shift", "visita_diagnostico"] }, "durationMinutes": { "type": "integer", "minimum": 1 } } },
+          { "required": ["bookingMode", "estimatedDurationMinutes"], "properties": { "bookingMode": { "enum": ["variable_duration", "duracion_estimada"] }, "durationMinutes": { "const": null }, "estimatedDurationMinutes": { "type": "integer", "minimum": 1 } } },
+          { "required": ["bookingMode"], "properties": { "bookingMode": { "const": "requiere_presupuesto" }, "durationMinutes": { "const": null }, "estimatedDurationMinutes": { "const": null } } }
         ]
       }
     },

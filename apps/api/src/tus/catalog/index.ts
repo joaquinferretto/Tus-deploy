@@ -8,9 +8,22 @@ export const MARKETPLACE_COHORTS = ['beauty-personal-care', 'repairs-trades'] as
 export type Cohorte = (typeof MARKETPLACE_COHORTS)[number]
 export const MARKETPLACE_LISTING_KINDS = { PRODUCT: 'product', SERVICE: 'service' } as const
 export type TipoPublicacion = (typeof MARKETPLACE_LISTING_KINDS)[keyof typeof MARKETPLACE_LISTING_KINDS]
-export const MARKETPLACE_BOOKING_MODES = { FIXED_SHIFT: 'fixed_shift', VARIABLE_DURATION: 'variable_duration' } as const
+export const MARKETPLACE_BOOKING_MODES = {
+  FIXED_SHIFT: 'fixed_shift',
+  VISIT_DIAGNOSTIC: 'visita_diagnostico',
+  VARIABLE_DURATION: 'variable_duration',
+  ESTIMATED_DURATION: 'duracion_estimada',
+  REQUIRES_BUDGET: 'requiere_presupuesto',
+} as const
 export type MarketplaceBookingMode = (typeof MARKETPLACE_BOOKING_MODES)[keyof typeof MARKETPLACE_BOOKING_MODES]
-export const MARKETPLACE_PRICE_MODES = { FIXED: 'fixed', REQUIRES_BUDGET: 'requires_budget' } as const
+export const MARKETPLACE_PRICE_MODES = {
+  FIXED: 'fixed',
+  REQUIRES_BUDGET: 'requires_budget',
+  FIXED_PHYSICAL: 'precio_fijo',
+  FROM_PRICE: 'precio_desde',
+  HOURLY: 'por_hora',
+  BUDGET: 'presupuesto',
+} as const
 export type MarketplacePriceMode = (typeof MARKETPLACE_PRICE_MODES)[keyof typeof MARKETPLACE_PRICE_MODES]
 export type MarketplaceAvailabilityStatus = 'configured' | 'not_configured'
 export const MARKETPLACE_MERCHANT_STATUSES = { APPROVED: 'approved' } as const
@@ -440,11 +453,11 @@ export class TusMarketplaceService {
       published: false,
       policyVersion: merchant.operatingPolicyVersion,
       stock: input.kind === 'product' ? input.stock! : null,
-      durationMinutes: input.kind === 'service' && bookingMode === MARKETPLACE_BOOKING_MODES.FIXED_SHIFT ? input.durationMinutes! : null,
+      durationMinutes: input.kind === 'service' && bookingMode !== undefined && isFixedBookingMode(bookingMode) ? input.durationMinutes! : null,
       capacity: input.kind === 'service' ? input.capacity! : null,
       workingHours: input.kind === 'service' ? [...(input.workingHours ?? [])] : [],
       ...(bookingMode === undefined ? {} : { bookingMode }),
-      ...(input.kind === 'service' ? { estimatedDurationMinutes: bookingMode === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION ? input.estimatedDurationMinutes! : null, priceMode: input.priceMode ?? MARKETPLACE_PRICE_MODES.FIXED } : {}),
+      ...(input.kind === 'service' ? { estimatedDurationMinutes: bookingMode !== undefined && isEstimatedBookingMode(bookingMode) ? input.estimatedDurationMinutes! : null, priceMode: input.priceMode ?? MARKETPLACE_PRICE_MODES.FIXED } : {}),
       createdAt: now,
       updatedAt: now,
     }
@@ -564,6 +577,7 @@ export class TusMarketplaceService {
           const merchant = await store.merchant.find(listing.tenantId)
           if (!merchant || merchant.status !== MARKETPLACE_MERCHANT_STATUSES.APPROVED) throw new MarketplaceError(409, 'UNAVAILABLE', 'merchant is not currently available')
           if (merchant.operatingPolicyVersion !== listing.policyVersion) throw new MarketplaceError(409, 'STALE_FACTS', 'merchant policy facts are stale', { listingId: listing.listingId, currentPolicyVersion: merchant.operatingPolicyVersion })
+          if (line.context === 'service' && publicationRequiresBudget(listing)) throw new MarketplaceError(409, 'BUDGET_REQUIRED', 'service requires a budget before booking', { listingId: listing.listingId })
           validateCheckoutLine(line, listing)
           const expectedVersion = expectedVersions.get(listing.listingId) ?? listing.availabilityVersion
           if (line.availabilityVersion !== expectedVersion || (line.price !== undefined && line.price !== listing.price)) throw new MarketplaceError(409, 'STALE_FACTS', 'price or availability facts are stale', { listingId: listing.listingId, currentAvailabilityVersion: listing.availabilityVersion, currentPrice: listing.price })
@@ -573,7 +587,6 @@ export class TusMarketplaceService {
             productQuantities.set(listing.listingId, nextQuantity)
             expectedVersions.set(listing.listingId, listing.availabilityVersion)
           } else {
-            if ((listing.priceMode ?? MARKETPLACE_PRICE_MODES.FIXED) === MARKETPLACE_PRICE_MODES.REQUIRES_BUDGET) throw new MarketplaceError(409, 'BUDGET_REQUIRED', 'service requires a budget before booking', { listingId: listing.listingId })
             const bookings = await store.commitments.forListing(listing.listingId)
             const overlapping = bookings.filter((booking) => booking.slotStart && booking.slotEnd && overlaps(line.slotStart!, line.slotEnd!, booking.slotStart, booking.slotEnd)).length
             const overlappingInCheckout = commitments.filter((booking) => booking.listingId === listing.listingId && booking.slotStart && booking.slotEnd && overlaps(line.slotStart!, line.slotEnd!, booking.slotStart, booking.slotEnd)).length
@@ -694,8 +707,8 @@ function validateListingInput(input: EntradaPublicacion, merchant: PerfilPrestad
 function resolveBookingMode(input: Pick<EntradaPublicacion, 'bookingMode' | 'durationMinutes' | 'estimatedDurationMinutes'>): MarketplaceBookingMode {
   const mode = input.bookingMode ?? (input.durationMinutes === undefined ? MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION : MARKETPLACE_BOOKING_MODES.FIXED_SHIFT)
   if (!Object.values(MARKETPLACE_BOOKING_MODES).includes(mode)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service booking mode is invalid')
-  if (mode === MARKETPLACE_BOOKING_MODES.FIXED_SHIFT && (!Number.isInteger(input.durationMinutes) || input.durationMinutes! <= 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'fixed_shift services require durationMinutes')
-  if (mode === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION && (!Number.isInteger(input.estimatedDurationMinutes) || input.estimatedDurationMinutes! <= 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'variable_duration services require estimatedDurationMinutes')
+  if (isFixedBookingMode(mode) && (!Number.isInteger(input.durationMinutes) || input.durationMinutes! <= 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'fixed booking services require durationMinutes')
+  if (isEstimatedBookingMode(mode) && (!Number.isInteger(input.estimatedDurationMinutes) || input.estimatedDurationMinutes! <= 0)) throw new MarketplaceError(400, 'INVALID_LISTING', 'estimated duration services require estimatedDurationMinutes')
   return mode
 }
 
@@ -703,8 +716,9 @@ function validatePublishedService(listing: Publicacion): void {
   const mode = listing.bookingMode ?? (listing.durationMinutes === null ? MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION : MARKETPLACE_BOOKING_MODES.FIXED_SHIFT)
   if (!Object.values(MARKETPLACE_BOOKING_MODES).includes(mode)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service booking mode is invalid')
   if (!listing.capacity || listing.workingHours.length === 0) throw new MarketplaceError(400, 'INVALID_LISTING', 'service capacity and working hours are required')
-  if (mode === MARKETPLACE_BOOKING_MODES.FIXED_SHIFT && (!listing.durationMinutes || listing.estimatedDurationMinutes !== null && listing.estimatedDurationMinutes !== undefined)) throw new MarketplaceError(400, 'INVALID_LISTING', 'fixed_shift service duration is invalid')
-  if (mode === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION && (!listing.estimatedDurationMinutes || listing.durationMinutes !== null)) throw new MarketplaceError(400, 'INVALID_LISTING', 'variable_duration service duration is invalid')
+  if (isFixedBookingMode(mode) && (!listing.durationMinutes || listing.estimatedDurationMinutes !== null && listing.estimatedDurationMinutes !== undefined)) throw new MarketplaceError(400, 'INVALID_LISTING', 'fixed booking service duration is invalid')
+  if (isEstimatedBookingMode(mode) && (!listing.estimatedDurationMinutes || listing.durationMinutes !== null)) throw new MarketplaceError(400, 'INVALID_LISTING', 'estimated duration service configuration is invalid')
+  if (isBudgetBookingMode(mode) && (listing.durationMinutes !== null || listing.estimatedDurationMinutes !== null && listing.estimatedDurationMinutes !== undefined)) throw new MarketplaceError(400, 'INVALID_LISTING', 'budget services cannot expose an automatic duration')
   if (listing.priceMode !== undefined && !Object.values(MARKETPLACE_PRICE_MODES).includes(listing.priceMode)) throw new MarketplaceError(400, 'INVALID_LISTING', 'service price mode is invalid')
 }
 
@@ -719,16 +733,38 @@ function normalizeMoney(currency: string, price: number, priceMinor?: bigint): M
 
 function validateCheckoutLine(line: MarketplaceCheckoutLine, listing: Publicacion): void {
   if (line.context !== listing.kind || !Number.isInteger(line.quantity) || line.quantity <= 0) throw new MarketplaceError(400, 'INVALID', 'checkout context and quantity do not match the listing')
-  if (line.context === 'service' && (line.quantity !== 1 || !line.slotStart || !line.slotEnd || !validInterval(line.slotStart, line.slotEnd) || Date.parse(line.slotEnd) - Date.parse(line.slotStart) !== effectiveListingDuration(listing) * 60 * 1000)) throw new MarketplaceError(400, 'INVALID', 'service checkout requires a valid slot matching the service duration')
+  const duration = effectiveListingDuration(listing)
+  if (line.context === 'service' && (duration === null || line.quantity !== 1 || !line.slotStart || !line.slotEnd || !validInterval(line.slotStart, line.slotEnd) || Date.parse(line.slotEnd) - Date.parse(line.slotStart) !== duration * 60 * 1000)) throw new MarketplaceError(400, 'INVALID', 'service checkout requires a valid slot matching the service duration')
 }
 
-function effectiveListingDuration(listing: Publicacion): number {
-  const duration = resolvedListingBookingMode(listing) === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION ? listing.estimatedDurationMinutes : listing.durationMinutes
-  return duration ?? 0
+export function effectiveListingDuration(listing: Publicacion): number | null {
+  const mode = resolvedListingBookingMode(listing)
+  const duration = isEstimatedBookingMode(mode) ? listing.estimatedDurationMinutes : isFixedBookingMode(mode) ? listing.durationMinutes : null
+  return Number.isInteger(duration) && duration! > 0 ? duration! : null
 }
 
-function resolvedListingBookingMode(listing: Publicacion): MarketplaceBookingMode {
-  return listing.bookingMode ?? (listing.durationMinutes === null ? MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION : MARKETPLACE_BOOKING_MODES.FIXED_SHIFT)
+export function resolvedListingBookingMode(listing: Publicacion): MarketplaceBookingMode {
+  const mode = listing.bookingMode ?? (listing.durationMinutes === null ? MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION : MARKETPLACE_BOOKING_MODES.FIXED_SHIFT)
+  if (!Object.values(MARKETPLACE_BOOKING_MODES).includes(mode)) throw new MarketplaceError(409, 'INCONSISTENT_CONFIGURATION', 'service booking mode is invalid')
+  return mode
+}
+
+export function publicationRequiresBudget(listing: Publicacion): boolean {
+  return isBudgetBookingMode(resolvedListingBookingMode(listing))
+    || listing.priceMode === MARKETPLACE_PRICE_MODES.REQUIRES_BUDGET
+    || listing.priceMode === MARKETPLACE_PRICE_MODES.BUDGET
+}
+
+function isFixedBookingMode(mode: MarketplaceBookingMode): boolean {
+  return mode === MARKETPLACE_BOOKING_MODES.FIXED_SHIFT || mode === MARKETPLACE_BOOKING_MODES.VISIT_DIAGNOSTIC
+}
+
+function isEstimatedBookingMode(mode: MarketplaceBookingMode): boolean {
+  return mode === MARKETPLACE_BOOKING_MODES.VARIABLE_DURATION || mode === MARKETPLACE_BOOKING_MODES.ESTIMATED_DURATION
+}
+
+function isBudgetBookingMode(mode: MarketplaceBookingMode): boolean {
+  return mode === MARKETPLACE_BOOKING_MODES.REQUIRES_BUDGET
 }
 
 function hasLocationAccess(context: TusAuthenticatedTenantContext, locationId: string): boolean {

@@ -127,15 +127,19 @@ resuelta o se devuelve `CALENDAR_MISMATCH`.
 
 ### Modalidades
 
-Las modalidades externas son deliberadamente pequeñas:
+La frontera acepta los aliases legacy y los valores físicos históricos de D1:
 
-- `bookingMode: fixed_shift` requiere `durationMinutes` entero positivo.
-- `bookingMode: variable_duration` requiere `estimatedDurationMinutes` entero positivo.
-- `priceMode: fixed` permite disponibilidad y reserva automática.
-- `priceMode: requires_budget` bloquea slots y reserva con `BUDGET_REQUIRED`.
+- `bookingMode: turno_fijo` o `fixed_shift` requiere `durationMinutes` entero positivo.
+- `bookingMode: visita_diagnostico` requiere `durationMinutes` entero positivo.
+- `bookingMode: duracion_estimada` o `variable_duration` requiere `estimatedDurationMinutes` entero positivo.
+- `bookingMode: requiere_presupuesto` bloquea slots y reserva automática con `BUDGET_REQUIRED`.
+- `priceMode: precio_fijo` o `fixed` permite disponibilidad y reserva automática.
+- `priceMode: precio_desde` y `por_hora` conservan la disponibilidad con el precio publicado.
+- `priceMode: presupuesto` o `requires_budget` bloquea slots y reserva automática con `BUDGET_REQUIRED`.
 
-En PostgreSQL los valores físicos históricos se mantienen en español (`turno_fijo`, `duracion_estimada`,
-`precio_fijo`, `presupuesto`) y el adapter Prisma los traduce en la frontera. No se cambió el modelo físico en D2.
+En PostgreSQL los valores físicos históricos se mantienen en español y el adapter Prisma los conserva al leer y
+escribir. No se cambió el modelo físico en D2; la migración D1 existe en el repositorio, pero aún no se verificó su
+aplicación al target.
 
 ### Discovery y disponibilidad
 

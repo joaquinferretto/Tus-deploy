@@ -81,6 +81,34 @@ test('D2 exposes not_configured and blocks automatic booking for requires_budget
   assert.equal(result.bookingCode, 'BUDGET_REQUIRED')
 })
 
+test('D2 applies the physical publication modes to effective duration and automatic booking', async () => {
+  const result = await runTypeScriptScenario(`
+    const { InMemoryMarketplaceStore, TusMarketplaceService } = await import('./apps/api/src/tus/catalog/index.ts')
+    const { InMemoryServiceCalendarStore, ServiceCalendarService } = await import('./apps/api/src/tus/calendar/bookings.ts')
+    const merchant = { subjectId: 'merchant-user', sessionId: 'merchant-session', tenantId: 'merchant-tenant', roles: ['merchant'], permissions: ['tus:marketplace:write', 'tus:marketplace:read'], correlationId: 'corr-merchant' }
+    const customer = { subjectId: 'customer-user', sessionId: 'customer-session', tenantId: 'customer-tenant', roles: ['customer'], permissions: ['tus:marketplace:read'], correlationId: 'corr-customer' }
+    const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore())
+    const marketplace = new TusMarketplaceService(new InMemoryMarketplaceStore(), { calendarResolver: calendar })
+    await marketplace.onboard(merchant, { merchantId: 'provider-1', cohort: 'repairs-trades', locationId: 'location-1', timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'], operatingPolicyVersion: 'policy-1' })
+    const diagnostic = await marketplace.createListing(merchant, { merchantId: 'provider-1', kind: 'service', name: 'Diagnostic', description: 'Diagnostic visit', cohort: 'repairs-trades', locationId: 'location-1', currency: 'ARS', price: 1000, bookingMode: 'visita_diagnostico', durationMinutes: 35, capacity: 1, workingHours: [{ day: 1, start: '09:00', end: '12:00' }] })
+    const estimated = await marketplace.createListing(merchant, { merchantId: 'provider-1', kind: 'service', name: 'Estimated', description: 'Estimated visit', cohort: 'repairs-trades', locationId: 'location-1', currency: 'ARS', price: 1000, bookingMode: 'duracion_estimada', estimatedDurationMinutes: 20, capacity: 1, workingHours: [{ day: 1, start: '09:00', end: '12:00' }] })
+    const budget = await marketplace.createListing(merchant, { merchantId: 'provider-1', kind: 'service', name: 'Budget', description: 'Budget visit', cohort: 'repairs-trades', locationId: 'location-1', currency: 'ARS', price: 1000, bookingMode: 'requiere_presupuesto', capacity: 1, workingHours: [{ day: 1, start: '09:00', end: '12:00' }] })
+    const publishedDiagnostic = await marketplace.publishListing(merchant, diagnostic.listingId)
+    const publishedEstimated = await marketplace.publishListing(merchant, estimated.listingId)
+    const publishedBudget = await marketplace.publishListing(merchant, budget.listingId)
+    await calendar.createCalendar({ ...merchant, permissions: ['tus:calendar:write'] }, { calendarId: 'calendar-primary', prestadorId: 'provider-1', timezone: 'America/Argentina/Buenos_Aires', capacity: 1, granularityMinutes: 15, bufferMinutes: 0, workingHours: [{ weekday: 1, start: '09:00', end: '12:00' }] })
+    const diagnosticSlots = await calendar.slotsForPublication(customer, publishedDiagnostic, undefined, '2026-09-14')
+    const estimatedSlots = await calendar.slotsForPublication(customer, publishedEstimated, undefined, '2026-09-14')
+    let budgetCode = ''
+    try { await calendar.slotsForPublication(customer, publishedBudget, undefined, '2026-09-14') } catch (error) { budgetCode = error.code }
+    console.log(JSON.stringify({ diagnostic: { mode: publishedDiagnostic.bookingMode, duration: Date.parse(diagnosticSlots[0].end) - Date.parse(diagnosticSlots[0].start) }, estimated: { mode: publishedEstimated.bookingMode, duration: Date.parse(estimatedSlots[0].end) - Date.parse(estimatedSlots[0].start) }, budget: { mode: publishedBudget.bookingMode, duration: publishedBudget.durationMinutes, estimated: publishedBudget.estimatedDurationMinutes, budgetCode } }))
+  `)
+
+  assert.deepEqual(result.diagnostic, { mode: 'visita_diagnostico', duration: 35 * 60 * 1000 })
+  assert.deepEqual(result.estimated, { mode: 'duracion_estimada', duration: 20 * 60 * 1000 })
+  assert.deepEqual(result.budget, { mode: 'requiere_presupuesto', duration: null, estimated: null, budgetCode: 'BUDGET_REQUIRED' })
+})
+
 test('D2 exposes canonical listing slots and idempotent booking over HTTP without serviceId', async () => {
   const result = await runTypeScriptScenario(`
     const { createTusApplication } = (await import('./apps/api/src/tus/composition/index.ts')).default

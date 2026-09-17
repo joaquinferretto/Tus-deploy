@@ -70,12 +70,15 @@ El modelo canonico de servicios es `Publicacion`, no `serviceId`. `serviceId` si
 
 ### Modalidades de servicio
 
-Las publicaciones de servicio soportan:
+Las publicaciones de servicio soportan los valores físicos de D1 y sus aliases legacy:
 
-- `bookingMode: fixed_shift`: requiere `durationMinutes` positivo.
-- `bookingMode: variable_duration`: requiere `estimatedDurationMinutes` positivo.
-- `priceMode: fixed`: permite reserva automatica con el precio publicado.
-- `priceMode: requires_budget`: bloquea slots y booking automatico hasta que exista un presupuesto.
+- `bookingMode: turno_fijo` o `fixed_shift`: requiere `durationMinutes` positivo.
+- `bookingMode: visita_diagnostico`: requiere `durationMinutes` positivo.
+- `bookingMode: duracion_estimada` o `variable_duration`: requiere `estimatedDurationMinutes` positivo.
+- `bookingMode: requiere_presupuesto`: no genera slots ni booking automático.
+- `priceMode: precio_fijo` o `fixed`: permite reserva automática con el precio publicado.
+- `priceMode: precio_desde` y `por_hora`: conservan disponibilidad con el precio publicado.
+- `priceMode: presupuesto` o `requires_budget`: bloquea slots y booking automático hasta que exista un presupuesto.
 
 Discovery devuelve, cuando corresponde, `calendarId`, `bookingMode`, `estimatedDurationMinutes`, `priceMode` y `availabilityStatus`.
 
@@ -100,7 +103,7 @@ La identidad de un slot canonico es:
 calendarId:listingId:start
 ```
 
-El booking canonico persiste `publicacionId` en PostgreSQL y retorna `listingId`. Las rutas y cuerpos legacy que usan `serviceId` siguen disponibles para no romper la superficie existente.
+El booking canonico persiste `publicacionId` en PostgreSQL y retorna `listingId`. Las rutas y cuerpos legacy que usan `serviceId` siguen disponibles para no romper la superficie existente. La migración D1 correspondiente existe en el repositorio, pero no se aplica durante tests deterministas ni se ejecuta sobre un target no autorizado.
 
 ### Ejemplo de booking canonico
 
