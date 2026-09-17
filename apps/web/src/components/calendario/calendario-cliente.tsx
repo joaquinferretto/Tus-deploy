@@ -8,9 +8,11 @@ import {
   createTusWebFetchTransport,
   type TusCalendarBooking,
   type TusCalendarSlot,
+  type TusLegacyCalendarSlot,
 } from '@/lib/tus-client'
 import {
   construirIntencionReserva,
+  construirIntencionReservaLegacy,
   mensajeErrorCalendario,
   parseTusCalendarBookingResponse,
   type TusReservaIntent,
@@ -18,15 +20,24 @@ import {
 import { sessionRequestContext, type TusWebSession } from '@/lib/tus-ui-contract'
 import { TusActionButton, TusStateMessage } from '../../app/tus/tus-ui'
 
-export function CalendarioCliente({
-  calendarId,
-  serviceId,
-  onReservaConfirmada,
-}: {
-  calendarId: string
-  serviceId: string
-  onReservaConfirmada?: (slot: TusCalendarSlot, reserva: TusCalendarBooking) => void
-}): React.ReactNode {
+type CalendarioClienteProps =
+  | {
+      listingId: string
+      serviceId?: never
+      calendarId: string
+      onReservaConfirmada?: (slot: TusCalendarSlot, reserva: TusCalendarBooking) => void
+    }
+  | {
+      listingId?: never
+      serviceId: string
+      calendarId: string
+      onReservaConfirmada?: never
+    }
+
+type CalendarDisplaySlot = TusCalendarSlot | TusLegacyCalendarSlot
+
+export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNode {
+  const { calendarId } = props
   const [session, setSession] = useState<TusWebSession | null | undefined>(undefined)
   const [authMessage, setAuthMessage] = useState('Restaurando tu sesión segura.')
   const [authStatus, setAuthStatus] = useState('restoring')
@@ -74,17 +85,18 @@ export function CalendarioCliente({
   const selectedSlot = slotState.slots.find((slot) => slot.slotId === selectedSlotId)
 
   async function consultarDisponibilidad(): Promise<void> {
-    if (date.length === 0) return
+    if (date.length === 0 || bookingState.status === 'loading' || bookingState.status === 'confirmed') return
     setSelectedSlotId(undefined)
+    setBookingIntent(null)
     setBookingState({ status: 'idle' })
     setSlotState({ status: 'loading', slots: [] })
     try {
-      const response = await createTusWebClient(createTusWebFetchTransport()).calendarSlots(
-        sessionRequestContext(sessionActual),
-        calendarId,
-        date,
-        new Date().toISOString()
-      )
+      const client = createTusWebClient(createTusWebFetchTransport())
+      const context = sessionRequestContext(sessionActual)
+      const now = new Date().toISOString()
+      const response = props.listingId === undefined
+        ? await client.calendarSlots(context, calendarId, date, now)
+        : await client.calendarSlotsForPublication(context, props.listingId, date, now)
       setSlotState({
         status: response.slots.length === 0 ? 'empty' : 'ready',
         slots: [...response.slots],
@@ -95,27 +107,46 @@ export function CalendarioCliente({
   }
 
   async function reservarHorario(): Promise<void> {
-    if (selectedSlot === undefined) return
+    if (selectedSlot === undefined || bookingState.status === 'loading' || bookingState.status === 'confirmed') return
     const intent =
       bookingIntent ??
-      construirIntencionReserva(
-        calendarId,
-        serviceId,
-        selectedSlot,
-        window.crypto.randomUUID(),
-        new Date().toISOString()
-      )
+      (props.listingId === undefined
+        ? construirIntencionReservaLegacy(
+            calendarId,
+            props.serviceId,
+            selectedSlot,
+            window.crypto.randomUUID(),
+            new Date().toISOString()
+          )
+        : construirIntencionReserva(
+            props.listingId,
+            selectedSlot,
+            window.crypto.randomUUID(),
+            new Date().toISOString(),
+            calendarId
+          ))
     setBookingIntent(intent)
     setBookingState({ status: 'loading' })
     try {
-      const response = await createTusWebClient(createTusWebFetchTransport()).calendarBooking({
-        ...sessionRequestContext(sessionActual),
-        calendarId,
-        serviceId,
-        customerId: sessionActual.actorId,
-        slotId: selectedSlot.slotId,
-        ...intent,
-      })
+      const context = sessionRequestContext(sessionActual)
+      const booking = props.listingId === undefined
+        ? {
+            ...context,
+            calendarId,
+            serviceId: props.serviceId,
+            customerId: sessionActual.actorId,
+            slotId: selectedSlot.slotId,
+            ...intent,
+          }
+        : {
+            ...context,
+            listingId: props.listingId,
+            calendarId,
+            customerId: sessionActual.actorId,
+            slotId: selectedSlot.slotId,
+            ...intent,
+          }
+      const response = await createTusWebClient(createTusWebFetchTransport()).calendarBooking(booking)
       const result = parseTusCalendarBookingResponse(response)
       if (result.status === 'rejected') {
         setBookingState({ status: 'conflict', message: 'La capacidad de esta franja ya fue ocupada.' })
@@ -124,7 +155,17 @@ export function CalendarioCliente({
       } else {
         const reserva = result.status === 'replay' ? result.booking : result
         setBookingState({ status: 'confirmed', reserva })
-        onReservaConfirmada?.(selectedSlot, reserva)
+        if (props.listingId !== undefined) {
+          props.onReservaConfirmada?.(
+            {
+              ...selectedSlot,
+              listingId: props.listingId,
+              start: reserva.startsAt,
+              end: reserva.endsAt,
+            },
+            reserva
+          )
+        }
       }
     } catch (error: unknown) {
       const code = codeOf(error)
@@ -151,6 +192,11 @@ export function CalendarioCliente({
           <input
             id="calendar-date"
             name="calendarDate"
+            disabled={
+              slotState.status === 'loading'
+              || bookingState.status === 'loading'
+              || bookingState.status === 'confirmed'
+            }
             type="date"
             value={date}
             onChange={(event) => {
@@ -162,7 +208,12 @@ export function CalendarioCliente({
             }}
           />
         </label>
-        <TusActionButton disabled={date.length === 0} loading={slotState.status === 'loading'} onClick={() => void consultarDisponibilidad()} type="button">
+        <TusActionButton
+          disabled={date.length === 0 || bookingState.status === 'loading' || bookingState.status === 'confirmed'}
+          loading={slotState.status === 'loading'}
+          onClick={() => void consultarDisponibilidad()}
+          type="button"
+        >
           Consultar horarios
         </TusActionButton>
       </div>
@@ -187,8 +238,13 @@ export function CalendarioCliente({
             <label className="tus-calendar-slot" data-selected={slot.slotId === selectedSlotId} key={slot.slotId}>
               <input
                 checked={slot.slotId === selectedSlotId}
+                disabled={bookingState.status === 'loading' || bookingState.status === 'confirmed'}
                 name="calendarSlot"
-                onChange={() => setSelectedSlotId(slot.slotId)}
+                onChange={() => {
+                  setSelectedSlotId(slot.slotId)
+                  setBookingIntent(null)
+                  setBookingState({ status: 'idle' })
+                }}
                 type="radio"
                 value={slot.slotId}
               />
@@ -218,7 +274,7 @@ export function CalendarioCliente({
 
 interface SlotState {
   status: 'idle' | 'loading' | 'ready' | 'empty' | 'error'
-  slots: TusCalendarSlot[]
+  slots: CalendarDisplaySlot[]
   code?: string
 }
 
@@ -227,7 +283,7 @@ type BookingState =
   | { status: 'confirmed'; reserva: TusCalendarBooking }
   | { status: 'conflict' | 'error'; message?: string }
 
-function formatearFranja(slot: TusCalendarSlot): string {
+function formatearFranja(slot: CalendarDisplaySlot): string {
   try {
     const formatter = new Intl.DateTimeFormat('es-AR', {
       dateStyle: 'medium',

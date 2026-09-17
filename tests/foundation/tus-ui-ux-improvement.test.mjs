@@ -153,14 +153,17 @@ test('PR3 keeps web actions keyboard-safe, stateful, and honestly recoverable', 
 
 test('PR3 gives the unresolved /tus session state its skip target and sole main landmark', () => {
   const dashboard = readFileSync(join(root, 'apps/web/src/app/tus/tus-dashboard.tsx'), 'utf8')
+  const layout = readFileSync(join(root, 'apps/web/src/app/tus/layout.tsx'), 'utf8')
+  const shell = readFileSync(join(root, 'apps/web/src/components/layout/tus-app-shell.tsx'), 'utf8')
   const loadingBranch = dashboard.slice(
     dashboard.indexOf('if (session === undefined)'),
     dashboard.indexOf('if (session === null)')
   )
 
-  assert.match(loadingBranch, /<TusSkipLink\s*\/>/)
-  assert.match(loadingBranch, /<main[^>]+id="tus-main-content"/)
-  assert.equal((loadingBranch.match(/id="tus-main-content"/g) ?? []).length, 1)
+  assert.match(layout, /<TusAppShell>\{children\}<\/TusAppShell>/)
+  assert.match(shell, /<a className="tus-skip-link" href="#tus-main-content">/)
+  assert.match(shell, /<main[^>]+id="tus-main-content"/)
+  assert.equal((shell.match(/id="tus-main-content"/g) ?? []).length, 1)
   assert.match(loadingBranch, /status: 'loading'/)
   assert.match(loadingBranch, /Restoring your secure session/)
   assert.doesNotMatch(loadingBranch, /Tenant scope:|Operational truth|tenant-owned/i)

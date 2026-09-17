@@ -12,10 +12,10 @@
 > español `snake_case`. Se conservan únicamente excepciones técnicas justificadas: `id`, `tenant_id`,
 > `actor_id`, `POS`, `WhatsApp` y `sla`. Los **valores** externos/técnicos congelados NO se traducen.
 >
-> **Alcance WEB-04D2 (2026-09-16, commit `65df852`).** Esta Build no modifica el modelo físico ni crea una
-> migración. Activa el uso canónico en aplicación de campos existentes desde WEB-04D1: modalidades de
-> `publicaciones`, agenda por `calendarios.prestador_id` y asociación `reservas.publicacion_id`. El adapter Prisma
-> traduce los valores físicos en español a los valores contractuales vigentes.
+> **Alcance WEB-04D2/WEB-04D3 (2026-09-17, base `5f56c84`).** Estas Builds no modifican el modelo físico ni crean una
+> migración. D2 activa en la aplicación el uso canónico de campos existentes desde WEB-04D1; D3 conecta la superficie Web
+> con discovery, slots y bookings canónicos por `listingId`. El adapter Prisma traduce los valores físicos en español a
+> los valores contractuales vigentes.
 
 ---
 
@@ -516,9 +516,12 @@ WHERE l.id IS NULL;
 **`reglas_calendario`** / **`excepciones_calendario`** — Hijos; FK físicas actuales CASCADE.
 **`reservas`** — FK física actual `calendario_id → calendarios` RESTRICT y nueva FK nullable `(tenant_id, publicacion_id) → publicaciones` RESTRICT; `cliente_id` externa/lógica; `servicio_id` legacy.
 
-En WEB-04D2 la agenda se resuelve por `(tenant_id, prestador_id)`. El `calendarId` externo es una comprobación opcional de
+En WEB-04D2/WEB-04D3 la agenda se resuelve por `(tenant_id, prestador_id)`. El `calendarId` externo es una comprobación opcional de
 la agenda encontrada, no una autoridad para cambiar de prestador. `publicacion_id` ya existente se escribe para
 bookings canónicos; las reservas legacy pueden continuar con `servicio_id`.
+
+WEB-04D3 no agrega tablas, columnas, índices, constraints, relaciones físicas ni providers. La ausencia de agenda y el
+presupuesto requerido son estados de aplicación (`not_configured` y `BUDGET_REQUIRED`), no nuevos estados persistidos.
 
 ### 7.4 Entrega
 

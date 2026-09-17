@@ -220,7 +220,9 @@ Clientes y contratos principales:
 - `apps/web/src/lib/tus-ui-contract.ts`: estados y presentación UI.
 - `apps/web/src/lib/api-client.ts`: cliente API general.
 
-La Web consume `@factory/contracts` y actualmente usa rutas como `/tus/v1/marketplace/discovery`, `/tus/v1/marketplace/merchant/operations` y `/tus/v1/marketplace/customer/commitments`. **La normalización semántica de Web sigue pendiente**; no renombrar allí por reflejo de una Build interna.
+La Web consume `@factory/contracts` y usa rutas como `/tus/v1/marketplace/discovery`, `/tus/v1/marketplace/merchant/operations` y
+`/tus/v1/marketplace/customer/commitments`. Desde WEB-04D3, el journey de servicios consulta slots y reserva por `listingId`;
+`calendarId + serviceId` queda aislado como compatibilidad legacy. No renombrar allí por reflejo de una Build interna.
 
 ## 13. Mobile
 

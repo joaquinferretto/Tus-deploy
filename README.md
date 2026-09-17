@@ -278,7 +278,7 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 | `/tus`                            | Workspace autenticado con discovery, compromisos, operaciones y recursos autorizados. |
 | `/tus/mercado`                    | Listado de publicaciones, filtros y checkout.                                         |
 | `/tus/mercado/{listingId}`        | Detalle de una publicacion.                                                           |
-| `/tus/calendario/{calendarId}`    | Consulta y reserva de slots legacy con `serviceId`.                                   |
+| `/tus/calendario/{calendarId}`    | Ruta legacy explícita; el journey nuevo parte de una publicación y usa `listingId`.    |
 | `/tus/compromisos`                | Lista de compromisos del cliente.                                                     |
 | `/tus/compromisos/{commitmentId}` | Detalle de un compromiso.                                                             |
 | `/tus/operations`                 | Reporte operativo.                                                                    |
@@ -292,11 +292,15 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 4. Las generaciones de carga cancelan respuestas viejas y evitan escribir sobre un componente desmontado.
 5. `tus-client.ts` construye headers, rutas, idempotency keys y parsea respuestas.
 6. Las intenciones de checkout y reserva conservan la misma clave para retry y replay.
-7. `tus-ui.tsx` representa estados, errores, live regions, skip link y acciones accesibles.
+7. Los servicios consultan slots reales por `listingId`, reservan antes de generar checkout y conservan su intervalo.
+8. `tus-ui.tsx` representa estados, errores, live regions, skip link y acciones accesibles.
 
-### Limite conocido de la web
+### Limites conocidos de la web
 
-El backend ya expone el flujo canonico de disponibilidad por `listingId`, pero la pantalla web de calendario conserva el flujo legacy `calendarId + serviceId` y muestra una dependencia cuando no recibe `serviceId`. Actualizar esa vinculacion web es una tarea posterior; no se debe ocultar esta diferencia en la UI.
+El journey nuevo de marketplace ya usa discovery, slots, booking y checkout por `listingId`. La ruta de calendario
+`/tus/calendario/{calendarId}` conserva el flujo legacy `calendarId + serviceId` para consumidores explícitos, sin ser una
+dependencia del journey nuevo. Servicios sin agenda (`not_configured`) o que requieren presupuesto (`BUDGET_REQUIRED`) no
+ofrecen una acción automática; la Web tampoco fabrica `calendarId`, slots ni fechas.
 
 ## API HTTP
 
@@ -633,7 +637,7 @@ Estos limites son intencionales y deben permanecer visibles:
 - El worker Python es un scaffold bloqueado para deployment externo.
 - `apps/workflow-runtime-python/README.md` conserva comandos legacy (`make worker-install` y `make worker-run`) que no existen en el Makefile raiz; usar los comandos directos documentados arriba.
 - `render.yaml` aun declara `prisma migrate deploy`, pero la reparacion aditiva exige un baseline forward-only target-specific y no replay historico.
-- La web de calendario aun consume `serviceId`; falta conectar la pagina con `listingId` y discovery canonicos.
+- El método Web legacy de calendario aún acepta `serviceId`; el journey canónico de marketplace ya usa `listingId` y discovery.
 - La validacion fisica contra PostgreSQL necesita un target local o descartable disponible.
 - Los datos publicos HTTP no exponen `bigint`; los datos internos si pueden usarlo.
 - Los aliases legacy existen para compatibilidad, no para crear una segunda semantica.

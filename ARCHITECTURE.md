@@ -1,7 +1,7 @@
 # Arquitectura de TUS
 
 > **Fuente canonica.** Este documento describe la arquitectura implementada de TUS y sus limites conocidos.
-> Ultima actualizacion: 2026-09-16. Build: `WEB-04D2`. Commit de referencia: `65df852`.
+> Ultima actualizacion: 2026-09-17. Build: `WEB-04D3`. Commit base: `5f56c84`.
 
 ## Proposito y limites
 
@@ -84,7 +84,7 @@ Las familias canónicas relevantes son:
 
 - marketplace: `/tus/v1/marketplace/*` y alias `/tus/v1/mercado-servicios/*`;
 - calendario: `/tus/v1/calendar/*`;
-- disponibilidad canónica: `/tus/v1/marketplace/listings/:listingId/slots`;
+- disponibilidad canónica: `/tus/v1/marketplace/listings/:listingId/slots` y alias `/tus/v1/mercado-servicios/listings/:listingId/slots`;
 - reserva canónica: `/tus/v1/calendar/bookings` con `listingId`;
 - compromisos: `/tus/commitments/*` y sus rutas versionadas;
 - finanzas, entrega, POS, soporte, WhatsApp y reporting bajo sus límites propios.
@@ -216,6 +216,26 @@ WEB-04D2 no añade tablas, columnas, índices, constraints ni migraciones. Solo 
 contratos el uso canónico de campos que ya existen desde D1. El DER y el diccionario deben seguir distinguiendo
 estado físico actual, objetivo futuro y referencias legacy.
 
+## WEB-04D3: journey Web canónico
+
+La Web consume la misma identidad y autoridad que el backend:
+
+1. `apps/web` carga discovery de publicaciones desde la ruta marketplace canónica.
+2. Un servicio con `availabilityStatus: configured` consulta slots reales por `listingId`.
+3. La reserva envía `listingId`, `slotId` y `calendarId` solo como comprobación opcional.
+4. El checkout del servicio se construye únicamente después de la confirmación del booking y conserva el intervalo real.
+5. Los productos mantienen el checkout directo y no pasan por calendario.
+
+`not_configured`, `BUDGET_REQUIRED`, slots vacíos, errores de disponibilidad, cutoff, capacidad, `STALE_SLOT` y conflictos
+HTTP 409 se muestran como estados verificables. La Web no genera `calendarId`, slots ni fechas de servicio sintéticas.
+
+El método `calendarSlots(calendarId, date, ...)`, el booking `calendarId + serviceId` y la ruta
+`/tus/calendario/{calendarId}` permanecen como compatibilidad legacy explícita. No son dependencias del journey canónico y no
+constituyen una segunda fuente de verdad.
+
+WEB-04D3 no cambia persistencia, migraciones, adapters ni providers; adapta consumidores Web a los contratos y rutas entregados
+en D2.
+
 La política de migración TUS es forward-only y no permite editar migraciones históricas ni replayar indiscriminadamente
 con `prisma migrate deploy` sobre una base con historial divergente. `render.yaml` todavía declara ese comando como
 pre-deploy y permanece como deuda operativa documentada.
@@ -231,11 +251,11 @@ pre-deploy y permanece como deuda operativa documentada.
 - Readiness y activation gates bloquean operaciones cuando falta evidencia o la evidencia es solo determinista/local.
 - El runtime Python permanece bloqueado hasta contar con ownership, leases, deployment y dependencias verificables.
 
-## Web y limite conocido
+## Web y limites conocidos
 
-La web mantiene intacto el flujo de calendario legacy `calendarId + serviceId`. El backend ya expone disponibilidad
-y reserva canónicas por `listingId`, pero la pantalla web todavía debe conectarse a discovery y a esas rutas para
-cerrar la transición. La UI debe mostrar la dependencia explícitamente y no inventar una agenda ni una reserva.
+La Web ya conecta el journey nuevo con discovery, slots, booking y checkout por `listingId`. La ruta de calendario legacy
+`calendarId + serviceId` sigue disponible para consumidores existentes y queda aislada del flujo canónico. La activación HTTP
+de TUS y el guard de readiness siguen dependiendo de sus flags y evidencias; D3 no cambia esa política.
 
 ## Validacion y evidencia
 
@@ -247,6 +267,12 @@ La Build D2 fue validada con:
 - build directo de API: pass;
 - test D2 con cobertura de `NOT_CONFIGURED`, `BUDGET_REQUIRED`, agenda principal, mismatch, duración, buffer,
   capacidad, idempotencia y persistencia Prisma.
+
+WEB-04D3 fue validada con tests Web D3/UX 34/34, D2/marketplace 20/20 e integración catálogo/calendario/UI 22/22;
+typechecks Contracts/API/Web; builds Contracts/API; 98 JSON Schemas; ESLint focal; build Web de 16 rutas con standalone
+deshabilitado por la limitación de symlinks `EPERM` de Windows; y smoke HTTP 200 en tres rutas Web. La cobertura incluye
+checkout directo de productos, slot real de servicios, invalidación de intenciones al cambiar de franja, intervalo confirmado
+por booking, estados `not_configured`/`BUDGET_REQUIRED`, payload canónico sin `serviceId` y ausencia de fechas sintéticas.
 
 La suite global no se considera verde: su runner excede el timeout configurado y contiene gates separados por
 seguridad, imports TS sin extensión, disponibilidad de `pnpm` y smoke PostgreSQL. Esos resultados no se mezclan

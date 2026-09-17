@@ -1,7 +1,7 @@
 # Roadmap de TUS
 
-> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-16. Build actual: `WEB-04D2`. Commit:
-> `65df852` más el ajuste actual de modalidades y concurrencia.
+> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Build actual: `WEB-04D3`. Commit base:
+> `5f56c84`; commit objetivo: `feat(web): usar agenda del prestador en servicios`.
 
 ## Estado de fases
 
@@ -12,7 +12,8 @@
 | WEB-03   | Completada            | Compromisos de cliente en `a75497f`.                                             |
 | WEB-04   | Completada            | Calendario y reservas Web en `d659e85`; mantiene flujo legacy.                   |
 | WEB-04D1 | Schema/migración preparada | Modelo Prisma/DB y migración en `29e8977`; aplicación física al target pendiente. |
-| WEB-04D2 | Ajuste backend entregado | Disponibilidad y reserva canónicas por `listingId`; base `65df852`, modalidades físicas y concurrencia alineadas. |
+| WEB-04D2 | Ajuste backend entregado | Disponibilidad y reserva canónicas por `listingId`; base `5f56c84`, modalidades físicas y concurrencia alineadas. |
+| WEB-04D3 | Completada | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico. |
 
 ## WEB-04D2 entregado
 
@@ -24,17 +25,23 @@
 - Booking persiste `publicacion_id` usando el campo existente y conserva aliases legacy.
 - Contratos, schemas, adapters, auditoría, outbox e idempotencia quedaron alineados; el adapter Prisma usa transacciones serializables con reintento.
 
-## Siguiente fase
+## WEB-04D3 completada
 
-### WEB-04D3: conectar Web con el contrato canónico
+- El detalle de una publicación usa discovery para decidir si la agenda está `configured`, `not_configured` o bloqueada
+  por `BUDGET_REQUIRED`.
+- La agenda consulta slots por `listingId` y el booking canónico conserva `calendarId` solo como comprobación opcional.
+- El journey de servicio ejecuta slot real → booking → checkout con `slotStart`/`slotEnd` del servidor.
+- Los productos mantienen checkout directo; el journey nuevo no usa `serviceId` ni fechas sintéticas.
+- El calendario legacy continúa disponible solo para consumidores explícitos.
+- Cambiar o refrescar una franja invalida la intención anterior; checkout conserva el intervalo confirmado por booking.
 
-Pendiente:
+Evidencia de cierre:
 
-- cambiar la pantalla Web de calendario para consumir discovery y slots por `listingId`;
-- eliminar la dependencia de `serviceId` en el journey nuevo sin retirar el alias legacy;
-- mostrar `configured`, `not_configured`, `BUDGET_REQUIRED`, `CALENDAR_MISMATCH` y errores de capacidad de forma
-  verificable y accesible;
-- agregar smoke Web contra la ruta canónica sin inventar `calendarId`.
+- tests Web D3/UX 34/34, D2/marketplace 20/20 e integración catálogo/calendario/UI 22/22;
+- typechecks Contracts, API y Web, builds Contracts/API y 98 JSON Schemas correctos;
+- build Web completo con standalone deshabilitado por la limitación de symlinks `EPERM` de Windows;
+- smoke Web HTTP 200 en `/`, `/tus/mercado` y `/tus/mercado/listing-smoke`;
+- commit objetivo `feat(web): usar agenda del prestador en servicios`, sin push.
 
 ### Validación operativa posterior
 
@@ -61,12 +68,11 @@ Cada Build que cambie arquitectura, producto o dominio debe actualizar este arch
 corresponde. La fecha, la fase, el commit y los documentos modificados deben quedar indicados antes del commit
 final.
 
-## Documentos modificados en WEB-04D2
+## Documentos modificados en WEB-04D3
 
-- `README.md` — operación y descripción de marketplace/agenda.
-- `ARCHITECTURE.md` — arquitectura implementada y límites D2.
-- `docs/DECISIONES_PRODUCTO_TUS.md` — decisiones D2.
-- `docs/ROADMAP_TUS.md` — estado y próximos pasos.
+- `README.md` — journey Web canónico y límites legacy.
+- `ARCHITECTURE.md` — arquitectura Web implementada y límites D3.
+- `docs/DECISIONES_PRODUCTO_TUS.md` — decisiones D2 y D3.
+- `docs/ROADMAP_TUS.md` — estado y evidencia de D3.
 - `docs/GLOSARIO_TUS.md` — términos de agenda y disponibilidad.
-- `docs/database/DER_TUS.dbml` — valores físicos/canónicos de modalidad y nota de alcance.
-- `docs/database/DICCIONARIO_DATOS_TUS.md` — semántica D2 y ausencia de delta físico.
+- `docs/database/DICCIONARIO_DATOS_TUS.md` — ausencia de delta físico D3.

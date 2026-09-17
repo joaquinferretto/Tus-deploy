@@ -24,28 +24,24 @@ import { createTusWebAuthClient, toTusWebSession } from '@/lib/tus-auth-client'
 import {
   createTusWebClient,
   createTusWebFetchTransport,
-  createStableIdempotencyKey,
   type TusCheckoutResult,
   type TusDiscoveryResponse,
   type TusCustomerCommitmentsResponse,
-  type TusMarketplaceLine,
   type TusIntentFeedback,
   tusIntentFeedback,
 } from '@/lib/tus-client'
+import {
+  construirIntencionCheckout,
+  crearEnlacePublicacion,
+  type TusMarketplaceCheckoutIntent,
+} from '@/lib/tus-marketplace'
 import { TusActionButton, TusIntentFeedbackView, TusStateMessage } from './tus-ui'
 import { PublicacionCard } from '../../components/mercado/publicacion-card'
 
 type Surface = 'discovery' | 'commitments' | 'operations'
 type DiscoveryFilter = 'all' | 'products' | 'services'
 
-interface CheckoutIntent {
-  intentId: string
-  idempotencyKey: string
-  cartId: string
-  requestHash: string
-  lines: TusMarketplaceLine[]
-  listingId: string
-}
+type CheckoutIntent = TusMarketplaceCheckoutIntent
 
 export function TusDashboard(): React.ReactNode {
   const [session, setSession] = useState<TusWebSession | null | undefined>(undefined)
@@ -223,6 +219,7 @@ function AuthenticatedDashboard({
           checkoutFeedback={checkoutFeedback}
           checkoutLoading={checkoutLoading}
           onCheckout={async (item) => {
+            if (item.kind === 'service') return
             const intent = createCheckoutIntent(item)
             setCheckoutIntent(intent)
             await submitCheckout(intent, session, setCheckoutLoading, setCheckoutFeedback)
@@ -456,7 +453,8 @@ function DiscoverySurface({
                 facts={facts}
                 kicker={`${facts.context} · ${item.cohort}`}
                 publicacion={item}
-                onCheckout={() => void onCheckout(item)}
+                detailHref={crearEnlacePublicacion(item.listingId)}
+                onCheckout={item.kind === 'product' ? () => void onCheckout(item) : undefined}
                 checkoutLoading={checkoutLoading}
                 key={item.listingId}
               />
@@ -669,31 +667,9 @@ function Metric({ label, value }: { label: string; value: string }): React.React
 }
 
 function createCheckoutIntent(item: TusDiscoveryResponse['items'][number]): CheckoutIntent {
+  if (item.kind !== 'product') throw new Error('service checkout requires a real calendar slot')
   const intentId = window.crypto.randomUUID()
-  const slotStart =
-    item.kind === 'service' ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : undefined
-  const slotEnd =
-    item.kind === 'service' && slotStart !== undefined
-      ? new Date(Date.parse(slotStart) + (item.durationMinutes ?? 0) * 60 * 1000).toISOString()
-      : undefined
-  const lines: TusMarketplaceLine[] = [
-    {
-      lineId: `line-${intentId}`,
-      listingId: item.listingId,
-      context: item.kind,
-      quantity: 1,
-      availabilityVersion: item.availabilityVersion,
-      ...(slotStart === undefined ? {} : { slotStart, slotEnd }),
-    },
-  ]
-  return {
-    intentId,
-    idempotencyKey: createStableIdempotencyKey('checkout', intentId),
-    cartId: `cart-${intentId}`,
-    requestHash: `discovery:${item.listingId}:${item.availabilityVersion}:${slotStart ?? 'product'}`,
-    lines,
-    listingId: item.listingId,
-  }
+  return construirIntencionCheckout(item, intentId)
 }
 
 async function submitCheckout(

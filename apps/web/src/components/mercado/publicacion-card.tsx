@@ -52,6 +52,7 @@ export function PublicacionCard({
           </span>
         )}
       </div>
+      {publicacion.kind === 'service' ? <ServicioFacts publicacion={publicacion} /> : null}
       {detailHref === undefined || copy.detailLabel === undefined ? null : (
         <a className="tus-action-button tus-action-link tus-publicacion-detail-link" href={detailHref}>
           {copy.detailLabel}
@@ -70,6 +71,38 @@ export function PublicacionCard({
       )}
       <small className="tus-boundary-note">{facts?.policy ?? copy.policy}</small>
     </article>
+  )
+}
+
+function ServicioFacts({
+  publicacion,
+}: {
+  publicacion: TusMarketplaceDiscoveryItem
+}): React.ReactNode {
+  const durationMinutes = publicacion.durationMinutes ?? publicacion.estimatedDurationMinutes
+  return (
+    <dl className="tus-publicacion-service-facts">
+      <div>
+        <dt>Modalidad de reserva</dt>
+        <dd>{publicacion.bookingMode ?? 'No informada por servidor'}</dd>
+      </div>
+      <div>
+        <dt>Duración estimada</dt>
+        <dd>
+          {durationMinutes === undefined || durationMinutes === null
+            ? 'No informada por servidor'
+            : `${durationMinutes} min`}
+        </dd>
+      </div>
+      <div>
+        <dt>Modalidad de precio</dt>
+        <dd>{publicacion.priceMode ?? 'No informada por servidor'}</dd>
+      </div>
+      <div>
+        <dt>Disponibilidad</dt>
+        <dd>{publicacion.availabilityStatus ?? 'No informada por servidor'}</dd>
+      </div>
+    </dl>
   )
 }
 

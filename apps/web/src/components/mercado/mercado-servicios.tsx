@@ -21,6 +21,7 @@ import {
   crearEnlacePublicacion,
   encontrarPublicacion,
   filtrarPublicaciones,
+  publicacionRequierePresupuesto,
   type MercadoServiciosFilter,
   type TusMarketplaceCheckoutIntent,
 } from '@/lib/tus-marketplace'
@@ -202,7 +203,7 @@ function ListadoPublicaciones({
   items: TusDiscoveryResponse['items']
   onFilter: (filter: MercadoServiciosFilter) => void
   onReload: () => void
-  onCheckout: (item: TusDiscoveryResponse['items'][number], slot?: Pick<TusCalendarSlot, 'start' | 'end'>) => void
+  onCheckout: (item: TusDiscoveryResponse['items'][number], slot?: TusCalendarSlot) => void
   checkoutLoading: boolean
   checkoutFeedback: TusIntentFeedback | null
   checkoutIntent: TusMarketplaceCheckoutIntent | null
@@ -260,7 +261,7 @@ function ListadoPublicaciones({
               copy={copyForPublicacion(item)}
               detailHref={crearEnlacePublicacion(item.listingId)}
               publicacion={item}
-              onCheckout={() => onCheckout(item)}
+              onCheckout={item.kind === 'product' ? () => onCheckout(item) : undefined}
               checkoutLoading={checkoutLoading}
               key={item.listingId}
             />
@@ -291,7 +292,7 @@ function DetallePublicacion({
   checkoutFeedback: TusIntentFeedback | null
   checkoutIntent: TusMarketplaceCheckoutIntent | null
   compromisoId?: string
-  onCheckout: (item: TusDiscoveryResponse['items'][number], slot?: Pick<TusCalendarSlot, 'start' | 'end'>) => void
+  onCheckout: (item: TusDiscoveryResponse['items'][number], slot?: TusCalendarSlot) => void
   onRetry: () => void
   onRefresh: () => void
   onResolve: () => void
@@ -321,12 +322,11 @@ function DetallePublicacion({
       </section>
     )
   }
-  const calendario =
-    publicacion.kind === 'service' &&
-    publicacion.calendarId !== undefined &&
-    publicacion.serviceId !== undefined
-      ? { calendarId: publicacion.calendarId, serviceId: publicacion.serviceId }
-      : null
+  const calendarId = publicacion.calendarId
+  const service = publicacion.kind === 'service'
+  const budgetRequired = publicacionRequierePresupuesto(publicacion)
+  const calendarConfigured = service && publicacion.availabilityStatus === 'configured' && calendarId !== undefined
+  const canBook = calendarConfigured && !budgetRequired
   return (
     <section aria-labelledby="publicacion-title">
       <SectionHeading title="Publicación" />
@@ -345,23 +345,37 @@ function DetallePublicacion({
           copy={copyForPublicacion(publicacion)}
           detailHref={crearEnlacePublicacion(publicacion.listingId)}
           publicacion={publicacion}
-          onCheckout={calendario === null ? () => onCheckout(publicacion) : undefined}
+          onCheckout={publicacion.kind === 'product' ? () => onCheckout(publicacion) : undefined}
           checkoutLoading={checkoutLoading}
         />
-        {calendario === null ? null : (
+        {canBook && calendarId !== undefined ? (
           <CalendarioCliente
-            calendarId={calendario.calendarId}
-            serviceId={calendario.serviceId}
+            calendarId={calendarId}
+            listingId={publicacion.listingId}
             onReservaConfirmada={(slot) => onCheckout(publicacion, slot)}
           />
-        )}
-        {calendario === null && publicacion.kind === 'service' ? (
+        ) : null}
+        {service && budgetRequired ? (
           <aside className="tus-state-box" aria-labelledby="calendar-dependency-title">
             <h2 id="calendar-dependency-title">Disponibilidad</h2>
-            <p>Esta publicación todavía no está vinculada a un calendario consultable desde discovery.</p>
-            <small className="tus-boundary-note">
-              DEPENDENCIA BACKEND: discovery debe entregar calendarId y serviceId para reemplazar la franja +24 h.
-            </small>
+            <TusStateMessage
+              state={{
+                status: 'disabled',
+                code: 'BUDGET_REQUIRED',
+                message: 'Este servicio requiere un presupuesto antes de generar o reservar horarios.',
+              }}
+            />
+          </aside>
+        ) : service && !calendarConfigured ? (
+          <aside className="tus-state-box" aria-labelledby="calendar-dependency-title">
+            <h2 id="calendar-dependency-title">Disponibilidad</h2>
+            <TusStateMessage
+              state={{
+                status: 'disabled',
+                code: 'NOT_CONFIGURED',
+                message: 'Esta publicación todavía no tiene una agenda activa devuelta por discovery.',
+              }}
+            />
           </aside>
         ) : null}
         <aside className="tus-state-box" aria-labelledby="prestador-title">
@@ -439,11 +453,17 @@ function copyForPublicacion(publicacion: TusDiscoveryResponse['items'][number]):
     availability:
       publicacion.kind === 'product'
         ? `${publicacion.availableQuantity ?? 0} unidades disponibles`
-        : `${publicacion.durationMinutes ?? 0} min · capacidad ${publicacion.capacity ?? 0}`,
+        : publicacionRequierePresupuesto(publicacion)
+          ? 'Presupuesto requerido antes de reservar'
+          : `${publicacion.durationMinutes ?? publicacion.estimatedDurationMinutes ?? 'Duración no informada'} min · capacidad ${publicacion.capacity ?? 'no informada'}`,
     policy:
       publicacion.kind === 'product'
         ? 'TUS vuelve a verificar el stock antes de iniciar el compromiso.'
-        : 'La franja inicial usa +24 h; el calendario y las reservas reales quedan para WEB-04.',
+        : publicacionRequierePresupuesto(publicacion)
+          ? 'TUS no genera slots ni reservas automáticas hasta contar con un presupuesto.'
+          : publicacion.availabilityStatus === 'configured'
+            ? 'La disponibilidad y la reserva se confirman contra la agenda activa del prestador.'
+            : 'La agenda del prestador no está configurada para esta publicación.',
     actionLabel: publicacion.kind === 'product' ? 'Iniciar compra' : 'Solicitar servicio',
     detailLabel: 'Ver publicación',
     prestadorLabel: 'Prestador',
@@ -457,9 +477,9 @@ async function iniciarCheckout(
   setFeedback: (feedback: TusIntentFeedback) => void,
   setIntent: (intent: TusMarketplaceCheckoutIntent) => void,
   setCompromisoId: (commitmentId: string | undefined) => void,
-  franja?: Pick<TusCalendarSlot, 'start' | 'end'>
+  franja?: TusCalendarSlot
 ): Promise<void> {
-  const intent = construirIntencionCheckout(publicacion, window.crypto.randomUUID(), Date.now(), franja)
+  const intent = construirIntencionCheckout(publicacion, window.crypto.randomUUID(), franja)
   setIntent(intent)
   setCompromisoId(undefined)
   await enviarCheckout(intent, session, setLoading, setFeedback, setCompromisoId)

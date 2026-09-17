@@ -1,12 +1,12 @@
 # Decisiones de producto TUS
 
 > **Fuente canonica de decisiones.** Una Build no puede introducir una decision de arquitectura, producto o
-> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-16. Build: `WEB-04D2`. Commit de referencia:
-> `65df852` más el ajuste de modalidades y concurrencia de esta build.
+> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-04D3`. Commit de referencia:
+> `5f56c84`; commit objetivo de esta Build: `feat(web): usar agenda del prestador en servicios`.
 
 ## WEB-04D2: disponibilidad y reservas por Publicacion
 
-**Estado:** implementada en API, contracts y adapters. La migracion de la superficie Web queda pendiente.
+**Estado:** implementada en API, contracts, adapters y superficie Web canónica.
 
 ### D2-01: Publicacion es la identidad de servicio
 
@@ -93,6 +93,40 @@ físico.
 - Replay devuelve el resultado original; una clave reutilizada con otro hash produce `CONFLICT`.
 - Reserva, auditoría y outbox se escriben dentro de la frontera transaccional del store.
 
+## WEB-04D3: journey Web canónico de servicios
+
+**Estado:** implementada y validada en consumidores Web.
+
+### D3-01: La publicación conduce disponibilidad, reserva y checkout
+
+- Web importa los tipos de discovery y checkout desde `packages/contracts`; no mantiene una copia reducida de la publicación.
+- El detalle de una publicación de servicio consulta slots reales en `/tus/v1/marketplace/listings/:listingId/slots`; el alias `/tus/v1/mercado-servicios/*` permanece compatible.
+- El booking canónico envía `listingId`, `slotId`, `calendarId` opcional, idempotencia y hash; nunca fabrica `serviceId`.
+- El checkout de un servicio solo se construye después de un booking confirmado y conserva `slotStart`/`slotEnd` del slot devuelto por el servidor.
+- Los productos mantienen checkout directo y no requieren calendario.
+
+**Razón:** la UI debe ejecutar la misma secuencia verificable que el dominio: discovery, slot real, booking real y compromiso.
+
+### D3-02: No hay horarios sintéticos en Web
+
+- La intención de checkout rechaza un servicio sin una franja real con `a real service slot is required before checkout`.
+- `configured` habilita la agenda únicamente cuando discovery entregó `calendarId`.
+- `not_configured` y `BUDGET_REQUIRED` bloquean acciones automáticas sin crear una reserva provisional.
+- El método Web legacy que acepta `calendarId + serviceId` permanece aislado para consumidores explícitos; el journey nuevo no lo usa.
+- Cambiar o refrescar la franja invalida la intención previa, y el checkout usa el intervalo confirmado por la reserva.
+
+### D3-03: Estados visibles y recuperables
+
+- La consulta de slots muestra `loading`, `empty` y `error`.
+- La publicación muestra `not_configured` y `BUDGET_REQUIRED` antes de mostrar acciones no disponibles.
+- `STALE_SLOT`, cutoff, capacidad, `NOT_FOUND` y conflictos HTTP 409 conservan el feedback y permiten actualizar o reintentar sin afirmar éxito.
+- Discovery expone en la tarjeta `bookingMode`, `estimatedDurationMinutes`, `priceMode` y `availabilityStatus` cuando el servidor los devuelve.
+
+### D3-04: Sin delta físico
+
+WEB-04D3 no agrega migraciones, tablas, columnas, índices, constraints, adapters de persistencia ni providers. Reutiliza las rutas,
+contratos y adapters entregados en D2; solo adapta el consumo Web y las pruebas del journey.
+
 ## Alcance de la Build
 
 Incluido:
@@ -100,22 +134,25 @@ Incluido:
 - API marketplace y calendario;
 - contratos TypeScript y JSON Schema;
 - adapters in-memory y Prisma;
-- tests focales D2;
+- tests focales D2 y D3;
+- consumidores Web de discovery, slots, booking y checkout;
 - documentación canónica y README.
 
 No incluido:
 
 - migración física nueva;
-- cambio de la pantalla Web legacy;
+- migración de rutas y cuerpos legacy del backend; D3 agrega el journey canónico sin retirarlos;
 - D1 o reset de base de datos;
 - activación de producción, proveedores o jobs;
 - traducción breaking de `listingId`, `calendarId` o `serviceId` en payloads existentes.
 
 ## Evidencia de implementación
 
-- Commit base: `65df852`; este delta completa el ajuste de modalidades y concurrencia de WEB-04D2.
-- Tests focales: 25/25 pass.
+- Commit base D2: `5f56c84`; D3 prepara el commit `feat(web): usar agenda del prestador en servicios`.
+- Tests Web D3/UX: 34/34 pass; tests D2/marketplace: 20/20 pass; integración catálogo/calendario/UI: 22/22 pass.
 - Typechecks contracts/API/Web: pass.
 - JSON Schemas: 98 pass, con warnings AJV no bloqueantes.
-- Build API directo: pass.
+- Builds Contracts y API: pass. Build Web: compilación, tipos y 16 rutas pass con standalone deshabilitado para evitar symlinks `EPERM` de Windows.
+- ESLint focal sobre los archivos TS/TSX modificados: pass.
+- Smoke Web: `/`, `/tus/mercado` y `/tus/mercado/listing-smoke` responden HTTP 200 en `localhost:3100`.
 - Suite global: no verde por timeout y gates independientes preexistentes; ver `docs/ROADMAP_TUS.md`.

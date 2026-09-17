@@ -166,6 +166,10 @@ Conservar también `OAuth`, `OIDC`, `PKCE`, `MFA`, `RAG`, `POS`, `SDK`, `API`, `
 `serviceId` es un identificador legacy del calendario. No es la identidad canónica de una publicación de servicio y
 no debe usarse para crear nuevas relaciones o reservas.
 
+En el journey Web canónico, una publicación de servicio se muestra con su estado de disponibilidad, consulta una franja
+real por `listingId`, confirma la reserva y recién después genera el checkout. La ruta legacy `calendarId + serviceId` queda
+aislada para consumidores existentes.
+
 ## Mercado de servicios
 
 **Identificador recomendado:** `MercadoServicios`

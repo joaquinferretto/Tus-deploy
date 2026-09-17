@@ -2,6 +2,9 @@ import { TUS_CONTRACT_VERSION } from '@factory/contracts/tus'
 import type {
   MercadoPagoHandoff,
   CompromisoMercadoServicios,
+  ItemDescubrimientoMercadoServicios,
+  LineaConfirmacionCompraMercadoServicios,
+  RespuestaDescubrimientoMercadoServicios,
   TusTenantContext,
   AccionWhatsApp,
 } from '@factory/contracts/tus'
@@ -30,35 +33,9 @@ export type TusPosOperation = TusTenantContext & {
   accessToken?: string
 }
 
-export type TusMarketplaceLine = {
-  lineId: string
-  listingId: string
-  context: 'product' | 'service'
-  quantity: number
-  availabilityVersion: number
-  slotStart?: string
-  slotEnd?: string
-}
+export type TusMarketplaceLine = LineaConfirmacionCompraMercadoServicios
 
-export type TusMarketplaceDiscoveryItem = {
-  listingId: string
-  tenantId: string
-  merchantId: string
-  kind: 'product' | 'service'
-  name: string
-  description: string
-  cohort: string
-  locationId: string
-  currency: string
-  price: number
-  availabilityVersion: number
-  availableQuantity?: number
-  durationMinutes?: number
-  capacity?: number
-  timezone: string
-  calendarId?: string
-  serviceId?: string
-}
+export type TusMarketplaceDiscoveryItem = ItemDescubrimientoMercadoServicios
 
 export type TusMarketplaceCheckoutInput = TusWebContext & {
   idempotencyKey: string
@@ -154,11 +131,7 @@ export interface TusWebTransport {
   request<TResponse>(input: TusWebRequest): Promise<TResponse>
 }
 
-export interface TusDiscoveryResponse {
-  contractVersion?: typeof TUS_CONTRACT_VERSION
-  evidence?: 'local-deterministic' | 'local-postgresql-http' | 'authorized-external' | 'deferred'
-  items: readonly TusMarketplaceDiscoveryItem[]
-}
+export type TusDiscoveryResponse = RespuestaDescubrimientoMercadoServicios
 
 export interface TusMerchantOperationsResponse {
   merchant?: unknown
@@ -197,7 +170,7 @@ export interface TusCustomerCommitmentsResponse {
 export interface TusCalendarSlot {
   slotId: string
   calendarId: string
-  serviceId: string
+  listingId: string
   timezone: string
   start: string
   end: string
@@ -208,13 +181,29 @@ export interface TusCalendarSlotsResponse {
   slots: readonly TusCalendarSlot[]
 }
 
+/** Legacy calendar slots remain available for the explicit legacy client method only. */
+export interface TusLegacyCalendarSlot {
+  slotId: string
+  calendarId: string
+  serviceId: string
+  timezone: string
+  start: string
+  end: string
+  capacity: number
+}
+
+export interface TusLegacyCalendarSlotsResponse {
+  slots: readonly TusLegacyCalendarSlot[]
+}
+
 export interface TusCalendarBooking {
   contractVersion: typeof TUS_CONTRACT_VERSION
   bookingId: string
   tenantId: string
   ownerTenantId: string
-  serviceId: string
+  serviceId?: string
   calendarId: string
+  listingId?: string
   customerId: string
   startsAt: string
   endsAt: string
@@ -230,7 +219,17 @@ export type TusCalendarBookingResponse =
   | { status: 'replay'; booking: TusCalendarBooking }
   | { status: 'rejected'; reason: 'capacity' }
 
-export type TusCalendarBookingInput = TusWebContext & {
+type TusCanonicalCalendarBookingInput = TusWebContext & {
+  listingId: string
+  calendarId?: string
+  customerId: string
+  slotId: string
+  idempotencyKey: string
+  requestHash: string
+  now: string
+}
+
+type TusLegacyCalendarBookingInput = TusWebContext & {
   calendarId: string
   serviceId: string
   customerId: string
@@ -239,6 +238,8 @@ export type TusCalendarBookingInput = TusWebContext & {
   requestHash: string
   now: string
 }
+
+export type TusCalendarBookingInput = TusCanonicalCalendarBookingInput | TusLegacyCalendarBookingInput
 
 export type TusPosResponse = {
   status: 'accepted' | 'replayed' | 'pending' | 'conflict' | 'error' | 'queued-offline'
@@ -253,7 +254,8 @@ export interface TusWebClient {
   merchantMarketplaceOperations(context: TusWebContext): Promise<TusMerchantOperationsResponse>
   customerCommitments(context: TusWebContext): Promise<TusCustomerCommitmentsResponse>
   marketplaceCustomerCommitments(context: TusWebContext): Promise<TusCustomerCommitmentsResponse>
-  calendarSlots(context: TusWebContext, calendarId: string, date: string, now?: string): Promise<TusCalendarSlotsResponse>
+  calendarSlots(context: TusWebContext, calendarId: string, date: string, now?: string): Promise<TusLegacyCalendarSlotsResponse>
+  calendarSlotsForPublication(context: TusWebContext, listingId: string, date: string, now?: string): Promise<TusCalendarSlotsResponse>
   calendarBooking(input: TusCalendarBookingInput): Promise<TusCalendarBookingResponse>
   operationsReport(context: TusWebContext): Promise<TusOperationsReportResponse>
   discoverMarketplace(context: TusWebContext): Promise<TusDiscoveryResponse>
@@ -425,19 +427,46 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         path: MARKETPLACE_PATHS.CUSTOMER_COMMITMENTS,
       }),
     calendarSlots: (context, calendarId, date, now) =>
-      transport.request<TusCalendarSlotsResponse>({
+      transport.request<TusLegacyCalendarSlotsResponse>({
         ...context,
         method: 'GET',
         path: `/tus/v1/calendar/${encodeURIComponent(calendarId)}/slots?date=${encodeURIComponent(date)}${now === undefined ? '' : `&now=${encodeURIComponent(now)}`}`,
       }),
-    calendarBooking: async ({ calendarId, serviceId, customerId, slotId, idempotencyKey, requestHash, now, ...context }) =>
-      transport.request<TusCalendarBookingResponse>({
+    calendarSlotsForPublication: (context, listingId, date, now) =>
+      transport.request<TusCalendarSlotsResponse>({
+        ...context,
+        method: 'GET',
+        path: `/tus/v1/marketplace/listings/${encodeURIComponent(listingId)}/slots?date=${encodeURIComponent(date)}${now === undefined ? '' : `&now=${encodeURIComponent(now)}`}`,
+      }),
+    calendarBooking: async (input) => {
+      const { customerId, slotId, idempotencyKey, requestHash, now, ...context } = input
+      const body = 'listingId' in input
+        ? {
+            listingId: input.listingId,
+            ...(input.calendarId === undefined ? {} : { calendarId: input.calendarId }),
+            customerId,
+            slotId,
+            idempotencyKey,
+            requestHash,
+            now,
+          }
+        : {
+            calendarId: input.calendarId,
+            serviceId: input.serviceId,
+            customerId,
+            slotId,
+            idempotencyKey,
+            requestHash,
+            now,
+          }
+      return transport.request<TusCalendarBookingResponse>({
         ...context,
         idempotencyKey,
         method: 'POST',
         path: '/tus/v1/calendar/bookings',
-        body: { calendarId, serviceId, customerId, slotId, idempotencyKey, requestHash, now },
-      }),
+        body,
+      })
+    },
     operationsReport: (context) =>
       transport.request<TusOperationsReportResponse>({
         ...context,

@@ -45,19 +45,15 @@ export function crearEnlaceCompromiso(commitmentId: string): string {
 export function construirIntencionCheckout(
   publicacion: TusMarketplaceDiscoveryItem,
   intentId: string,
-  now = Date.now(),
-  franja?: Pick<TusCalendarSlot, 'start' | 'end'>
+  franja?: Pick<TusCalendarSlot, 'slotId' | 'start' | 'end'>
 ): TusMarketplaceCheckoutIntent {
   const normalizedIntentId = intentId.trim()
   if (normalizedIntentId.length === 0) throw new Error('checkout intent id is required')
-  const slotStart =
-    publicacion.kind !== 'service'
-      ? undefined
-      : franja?.start ?? new Date(now + 24 * 60 * 60 * 1000).toISOString()
-  const slotEnd =
-    publicacion.kind === 'service' && slotStart !== undefined
-      ? franja?.end ?? new Date(Date.parse(slotStart) + (publicacion.durationMinutes ?? 0) * 60 * 1000).toISOString()
-      : undefined
+  if (publicacion.kind === 'service' && (franja === undefined || !validSlot(franja))) {
+    throw new Error('a real service slot is required before checkout')
+  }
+  const slotStart = publicacion.kind === 'service' ? franja?.start : undefined
+  const slotEnd = publicacion.kind === 'service' ? franja?.end : undefined
   const lines: TusMarketplaceLine[] = [
     {
       lineId: `line-${normalizedIntentId}`,
@@ -72,10 +68,24 @@ export function construirIntencionCheckout(
     intentId: normalizedIntentId,
     idempotencyKey: createStableIdempotencyKey('checkout', normalizedIntentId),
     cartId: `cart-${normalizedIntentId}`,
-    requestHash: `discovery:${publicacion.listingId}:${publicacion.availabilityVersion}:${slotStart ?? 'product'}`,
+    requestHash: `discovery:${publicacion.listingId}:${publicacion.availabilityVersion}:${franja?.slotId ?? slotStart ?? 'product'}`,
     lines,
     listingId: publicacion.listingId,
   }
+}
+
+function validSlot(franja: Pick<TusCalendarSlot, 'slotId' | 'start' | 'end'>): boolean {
+  const startMs = Date.parse(franja.start)
+  const endMs = Date.parse(franja.end)
+  if (franja.slotId.trim().length === 0) return false
+  return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
+}
+
+export function publicacionRequierePresupuesto(publicacion: TusMarketplaceDiscoveryItem): boolean {
+  return publicacion.kind === 'service'
+    && (publicacion.bookingMode === 'requiere_presupuesto'
+      || publicacion.priceMode === 'requires_budget'
+      || publicacion.priceMode === 'presupuesto')
 }
 
 const tusMarketplaceModule = {
@@ -84,6 +94,7 @@ const tusMarketplaceModule = {
   crearEnlacePublicacion,
   encontrarPublicacion,
   filtrarPublicaciones,
+  publicacionRequierePresupuesto,
 }
 
 export default tusMarketplaceModule

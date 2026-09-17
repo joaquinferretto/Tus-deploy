@@ -48,8 +48,9 @@ export interface TusCatalogFactsInput {
   price: number
   currency: string
   availableQuantity?: number
-  capacity?: number
-  durationMinutes?: number
+  capacity?: number | null
+  durationMinutes?: number | null
+  estimatedDurationMinutes?: number | null
 }
 
 export interface TusCatalogFacts {
@@ -157,7 +158,7 @@ export function resolveTusCatalogFacts(input: TusCatalogFactsInput): TusCatalogF
   return {
     context: 'Service',
     price,
-    availability: `${input.durationMinutes ?? 0} min · capacity ${input.capacity ?? 0}`,
+    availability: `${input.durationMinutes ?? input.estimatedDurationMinutes ?? 'Duration not provided'} min · capacity ${input.capacity ?? 'not provided'}`,
     policy: 'Slot capacity is rechecked by TUS before the service commitment is created.',
   }
 }

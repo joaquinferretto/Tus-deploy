@@ -510,6 +510,31 @@ a {
   text-transform: uppercase;
 }
 
+.tus-publicacion-service-facts {
+  border-top: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  display: grid;
+  gap: 8px 18px;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0 0 18px;
+  padding-top: 12px;
+}
+
+.tus-publicacion-service-facts div {
+  min-width: 0;
+}
+
+.tus-publicacion-service-facts dt {
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tus-publicacion-service-facts dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+
 .tus-publicacion-detail-link {
   margin: 0 8px 10px 0;
 }
@@ -1069,6 +1094,10 @@ a {
   .tus-offer-card:nth-child(even),
   .tus-commitment-card:nth-child(even) {
     margin-top: 34px;
+  }
+
+  .tus-publicacion-service-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .tus-card:nth-child(4) {
