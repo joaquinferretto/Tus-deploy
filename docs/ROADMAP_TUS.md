@@ -1,7 +1,7 @@
 # Roadmap de TUS
 
-> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Build actual: `WEB-05`. Commit base:
-> `7b71ebd`; commit objetivo: `feat(web): refinar flujo operativo del pos`.
+> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Build actual: `WEB-06`. Commit base:
+> `3d1521e`; commit objetivo: `feat(web): integrar soporte y handoff de tus`.
 
 ## Estado de fases
 
@@ -15,6 +15,7 @@
 | WEB-04D2 | Ajuste backend entregado | Disponibilidad y reserva canónicas por `listingId`; base `5f56c84`, modalidades físicas y concurrencia alineadas. |
 | WEB-04D3 | Completada | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico. |
 | WEB-05 | Completada | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider. |
+| WEB-06 | Completada | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider. |
 
 ## WEB-04D2 entregado
 
@@ -61,6 +62,27 @@ Evidencia de cierre WEB-05:
 - smoke HTTP `/tus/pos` devuelve 200 con Next ya iniciado en `localhost:3100`;
 - el servidor Web no representa evidencia de producción ni de provider habilitado.
 
+## WEB-06: soporte y handoff gobernado
+
+- `/tus/soporte` lista los casos del tenant mediante `GET /tus/v1/support/cases`;
+- la apertura usa `POST /tus/v1/support/cases` y la descripción se registra como evidencia mediante
+  `POST /tus/v1/support/cases/:caseId/evidence`;
+- el cliente muestra estados de restauración de sesión, vacío, error, permiso insuficiente y confirmación del servidor;
+- la superficie respeta `tus:support:write` para casos y `tus:whatsapp:write` para handoff;
+- el handoff usa `POST /tus/v1/whatsapp/support-handoff` y solo muestra `status: handoff` confirmado por TUS;
+- la timeline existe en el servicio de soporte, pero no tiene lectura HTTP: la Web no reconstruye eventos ni los simula;
+- no se agrega retry automático ni una clave idempotente para operaciones cuyos endpoints actuales no la exponen;
+- no se agregan rutas, contratos, migraciones, persistencia local ni providers.
+
+Evidencia de cierre WEB-06:
+
+- tests focales Web de soporte y handoff: 3/3 pass;
+- typecheck Web y ESLint focal: pass;
+- build Web: 17 rutas pass con standalone deshabilitado por la limitación de symlinks `EPERM` de Windows;
+- smoke HTTP de `/tus/soporte`: pendiente de un launcher controlado autorizado; no se reinició ningún servidor persistente;
+- la suite API existente de soporte/WhatsApp se mantiene como evidencia de dominio; el fallo Prisma de retención de la prueba
+  de integración permanece separado de esta Build.
+
 ### Validación operativa posterior
 
 Pendiente cuando exista un target autorizado:
@@ -92,6 +114,14 @@ final.
 - `ARCHITECTURE.md` — sesión, operaciones y estado POS Web.
 - `docs/DECISIONES_PRODUCTO_TUS.md` — decisiones y límites de WEB-05.
 - `docs/ROADMAP_TUS.md` — estado y evidencia de WEB-05.
+
+## Documentos modificados en WEB-06
+
+- `README.md` — ruta y límites de soporte Web.
+- `ARCHITECTURE.md` — superficie de casos, evidencia y handoff gobernado.
+- `docs/DECISIONES_PRODUCTO_TUS.md` — decisiones y límites de WEB-06.
+- `docs/ROADMAP_TUS.md` — estado y evidencia de WEB-06.
+- `tests/foundation/tus-web-support.test.mjs` — rutas, parser y estados honestos.
 
 ## Documentos modificados en WEB-04D3
 

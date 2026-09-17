@@ -991,6 +991,171 @@ a {
   color: #7c2d26;
 }
 
+.tus-support-workspace {
+  display: grid;
+  gap: 54px;
+}
+
+.tus-support-panel {
+  min-width: 0;
+}
+
+.tus-support-form {
+  display: grid;
+  gap: 18px;
+  margin-top: 26px;
+  max-width: 720px;
+}
+
+.tus-support-form label {
+  display: grid;
+  font-size: 0.72rem;
+  font-weight: 800;
+  gap: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tus-support-form input:not([type='checkbox']),
+.tus-support-form select,
+.tus-support-form textarea {
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  min-height: 48px;
+  padding: 12px;
+  resize: vertical;
+}
+
+.tus-support-case-list {
+  list-style: none;
+  margin: 24px 0 0;
+  padding: 0;
+}
+
+.tus-support-case-list li {
+  border-bottom: 1px solid var(--line);
+  padding: 18px 0;
+}
+
+.tus-support-case-list li > div {
+  display: grid;
+  gap: 6px;
+}
+
+.tus-support-case-list strong {
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  font-size: 1.5rem;
+  font-weight: 400;
+}
+
+.tus-support-case-list span {
+  color: var(--moss);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tus-support-case-list small {
+  line-height: 1.45;
+}
+
+.tus-support-timeline-note {
+  border-left: 3px solid var(--clay);
+  margin-top: 24px;
+  max-width: 720px;
+  padding: 4px 0 4px 16px;
+}
+
+.tus-support-timeline-note p,
+.tus-support-handoff p {
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+
+.tus-support-feedback {
+  border-left: 3px solid var(--moss);
+  line-height: 1.5;
+  margin: 0;
+  padding: 8px 0 8px 16px;
+}
+
+.tus-support-feedback.tus-feedback-error {
+  border-color: #9b3d31;
+  color: #7c2d26;
+}
+
+.tus-support-check {
+  align-items: flex-start;
+  display: flex !important;
+  font-size: 0.82rem !important;
+  font-weight: 400 !important;
+  gap: 10px !important;
+  letter-spacing: normal !important;
+  line-height: 1.45;
+  text-transform: none !important;
+}
+
+.tus-support-check input {
+  accent-color: var(--clay);
+  flex: 0 0 auto;
+  min-height: 20px;
+  min-width: 20px;
+}
+
+.tus-support-handoff {
+  background: var(--moss);
+  color: var(--paper);
+  display: grid;
+  gap: 28px;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  padding: 28px;
+}
+
+.tus-support-handoff .tus-card-kicker {
+  color: var(--sage);
+}
+
+.tus-support-handoff h2 {
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 400;
+  letter-spacing: -0.06em;
+  margin: 12px 0 0;
+}
+
+.tus-support-handoff .tus-support-form {
+  margin-top: 0;
+}
+
+.tus-support-handoff .tus-support-form input:not([type='checkbox']),
+.tus-support-handoff .tus-support-form textarea {
+  background: rgba(244, 240, 231, 0.12);
+  border-color: rgba(244, 240, 231, 0.4);
+  color: var(--paper);
+}
+
+.tus-support-handoff .tus-support-form input::placeholder,
+.tus-support-handoff .tus-support-form textarea::placeholder {
+  color: rgba(244, 240, 231, 0.7);
+}
+
+.tus-support-handoff .tus-action-button {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.tus-support-handoff .tus-support-feedback {
+  border-color: var(--sage);
+}
+
+.tus-support-handoff .tus-support-feedback.tus-feedback-error {
+  border-color: #f0a08b;
+  color: #ffd0c2;
+}
+
 .tus-feedback-conflict,
 .tus-feedback-error {
   border-color: #9b3d31;
@@ -1045,6 +1210,14 @@ a {
   .tus-pos-session-state .tus-action-button,
   .tus-pos-operation-list .tus-action-button {
     width: 100%;
+  }
+
+  .tus-support-handoff {
+    display: block;
+  }
+
+  .tus-support-handoff .tus-support-form {
+    margin-top: 28px;
   }
 
   .tus-offer-card:nth-child(n),

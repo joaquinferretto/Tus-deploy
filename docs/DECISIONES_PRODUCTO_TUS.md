@@ -1,8 +1,8 @@
 # Decisiones de producto TUS
 
 > **Fuente canonica de decisiones.** Una Build no puede introducir una decision de arquitectura, producto o
-> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-05`. Commit de referencia:
-> `7b71ebd`; commit objetivo de esta Build: `feat(web): refinar flujo operativo del pos`.
+> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-06`. Commit de referencia:
+> `3d1521e`; commit objetivo de esta Build: `feat(web): integrar soporte y handoff de tus`.
 
 ## WEB-04D2: disponibilidad y reservas por Publicacion
 
@@ -156,6 +156,42 @@ contratos y adapters entregados en D2; solo adapta el consumo Web y las pruebas 
 - No se agregó endpoint de listado, refund, cancelación, impresora, resolución de conflictos ni hardware porque la
   superficie solicitada no puede inventar una lectura o workflow Web que el contrato actual no entrega.
 - No se modificaron contratos, schemas, migraciones, Prisma, flags de providers ni datos existentes.
+
+## WEB-06: soporte y handoff gobernado
+
+**Estado:** implementada y validada en la superficie Web, sin cambios API, contracts o persistencia.
+
+### SUP-01: La Web consume casos y evidencia existentes
+
+- La lista usa `GET /tus/v1/support/cases`, que ya devuelve casos tenant-scoped.
+- Abrir un caso usa `POST /tus/v1/support/cases`; la descripción se envía como resumen de evidencia mediante
+  `POST /tus/v1/support/cases/:caseId/evidence`.
+- La UI exige una sesión autenticada y conserva los permisos derivados de esa sesión; no confía en tenant, actor o roles
+  enviados por el formulario.
+
+### SUP-02: El vacío de timeline es explícito
+
+- El servicio mantiene timeline y outbox, pero el router actual no expone una lectura HTTP de timeline.
+- La Web muestra la confirmación de caso/evidencia que recibió y explica que no puede mostrar eventos adicionales.
+- No se reconstruyen eventos desde respuestas parciales ni se agrega un endpoint Web no respaldado.
+
+### WHA-01: Handoff sin prometer entrega externa
+
+- El handoff usa `POST /tus/v1/whatsapp/support-handoff` con el permiso `tus:whatsapp:write`.
+- La pantalla exige motivo y confirmación explícita de que se registra un handoff TUS, no una entrega WhatsApp.
+- Un resultado solo se muestra como confirmado cuando TUS devuelve `status: handoff`; no se expone número, se solicitan
+  credenciales ni se afirma actividad del provider.
+
+### SUP-03: No retry automático sin contrato idempotente
+
+- Mientras una solicitud está en curso, la UI bloquea el botón para evitar duplicados accidentales.
+- Los endpoints actuales de casos, evidencia y handoff no exponen una clave idempotente en su contrato; la Web no inventa
+  retry automático ni reclama exactly-once.
+
+### WEB-06-04: Sin delta físico
+
+WEB-06 no agrega rutas backend, contratos públicos, schemas, migraciones, modelos Prisma, adapters, flags ni providers.
+Solo agrega el consumidor Web y sus pruebas focales sobre capacidades ya entregadas.
 
 ## Alcance de la Build
 

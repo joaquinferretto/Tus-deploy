@@ -283,6 +283,7 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 | `/tus/compromisos/{commitmentId}` | Detalle de un compromiso.                                                             |
 | `/tus/operations`                 | Reporte operativo.                                                                    |
 | `/tus/pos`                        | POS Web: sesión real, operaciones idempotentes y estado verificable.                   |
+| `/tus/soporte`                    | Casos, evidencia y handoff gobernado sin prometer timeline o entrega WhatsApp.        |
 
 ### Como trabaja el cliente
 
@@ -294,6 +295,7 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 6. Las intenciones de checkout y reserva conservan la misma clave para retry y replay.
 7. Los servicios consultan slots reales por `listingId`, reservan antes de generar checkout y conservan su intervalo.
 8. `tus-ui.tsx` representa estados, errores, live regions, skip link y acciones accesibles.
+9. `tus-support.tsx` consume casos y evidencia respaldados por TUS y bloquea acciones sin el permiso de la sesión.
 
 En `/tus/pos`, la Web abre/cierra la sesión POS real antes de permitir operaciones, conserva la identidad idempotente al
 reintentar y consulta el estado individual sin reenviar la operación. El listado visible se limita a la visita actual porque
@@ -305,6 +307,11 @@ El journey nuevo de marketplace ya usa discovery, slots, booking y checkout por 
 `/tus/calendario/{calendarId}` conserva el flujo legacy `calendarId + serviceId` para consumidores explícitos, sin ser una
 dependencia del journey nuevo. Servicios sin agenda (`not_configured`) o que requieren presupuesto (`BUDGET_REQUIRED`) no
 ofrecen una acción automática; la Web tampoco fabrica `calendarId`, slots ni fechas.
+
+La superficie `/tus/soporte` usa `GET /tus/v1/support/cases`, `POST /tus/v1/support/cases`, evidencia y
+`POST /tus/v1/whatsapp/support-handoff` existentes. La timeline interna no tiene lectura HTTP, por lo que no se simula en el
+navegador. El handoff registra una decisión TUS y no confirma entrega WhatsApp, envío del provider ni recopilación de
+credenciales. Los endpoints actuales no exponen idempotencia para estas mutaciones; la Web evita retry automático.
 
 ## API HTTP
 

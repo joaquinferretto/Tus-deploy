@@ -1,7 +1,7 @@
 # Arquitectura de TUS
 
 > **Fuente canonica.** Este documento describe la arquitectura implementada de TUS y sus limites conocidos.
-> Ultima actualizacion: 2026-09-17. Build: `WEB-05`. Commit base: `7b71ebd`.
+> Ultima actualizacion: 2026-09-17. Build: `WEB-06`. Commit base: `3d1521e`.
 
 ## Proposito y limites
 
@@ -291,6 +291,18 @@ por booking, estados `not_configured`/`BUDGET_REQUIRED`, payload canónico sin `
 WEB-05 fue validada con 6/6 tests Web POS, typecheck Web, ESLint focal, build Web de 17 rutas con standalone deshabilitado
 por la limitación de symlinks `EPERM` de Windows y smoke HTTP 200 en `/tus/pos`. Las pruebas POS/delivery/durabilidad
 mantienen tres 404 HTTP históricos documentados como baseline; el dominio POS y sus pruebas restantes pasan.
+
+WEB-06 agrega la superficie `/tus/soporte` sobre rutas TUS existentes:
+
+1. Lista casos con `GET /tus/v1/support/cases` y mantiene el alcance del tenant autenticado.
+2. Abre casos y registra evidencia con las rutas `POST /tus/v1/support/cases` y
+   `POST /tus/v1/support/cases/:caseId/evidence`.
+3. Muestra estados de sesión, permiso, carga, vacío, error y confirmación sin inferir timeline: el router no expone su lectura.
+4. Registra el handoff con `POST /tus/v1/whatsapp/support-handoff`, sin afirmar que un provider WhatsApp envió un mensaje.
+
+WEB-06 fue validada con 3/3 tests Web de soporte/handoff, typecheck Web, ESLint focal y build Web de 17 rutas con standalone
+deshabilitado. El smoke HTTP queda pendiente de un launcher controlado; no se dejó ningún servidor persistente ejecutándose.
+No hay delta de API, contratos, persistencia, migraciones, providers ni flags.
 
 La suite global no se considera verde: su runner excede el timeout configurado y contiene gates separados por
 seguridad, imports TS sin extensión, disponibilidad de `pnpm` y smoke PostgreSQL. Esos resultados no se mezclan

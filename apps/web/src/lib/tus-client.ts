@@ -1,6 +1,7 @@
 import { TUS_CONTRACT_VERSION } from '@factory/contracts/tus'
 import type {
   ComprobantePOS,
+  CasoSoporte,
   DispositivoPOS,
   MercadoPagoHandoff,
   CompromisoMercadoServicios,
@@ -261,6 +262,38 @@ export type TusPosOperationStatus = {
 export type TusPosDevice = DispositivoPOS
 export type TusPosSession = SesionPOS
 
+export type TusSupportCase = Pick<
+  CasoSoporte,
+  'caseId' | 'commitmentId' | 'tenantId' | 'correlationId' | 'category' | 'status'
+> & {
+  disputeId?: string
+  openedBy?: string
+  outcome?: 'no-refund' | 'partial-refund' | 'full-refund' | null
+  createdAt?: string
+  resolvedAt?: string | null
+}
+
+export interface TusSupportCasesResponse {
+  cases: readonly TusSupportCase[]
+}
+
+export interface TusSupportEvidenceResponse {
+  evidenceId: string
+  caseId: string
+  party: 'customer' | 'merchant'
+  summary: string
+  createdAt?: string
+}
+
+export interface TusWhatsAppSupportHandoffResponse {
+  handoffId?: string
+  tenantId?: string
+  senderId?: string
+  reason?: string
+  status?: 'handoff'
+  createdAt?: string
+}
+
 export interface TusWebClient {
   discover(context: TusWebContext): Promise<TusDiscoveryResponse>
   merchantOperations(context: TusWebContext): Promise<TusMerchantOperationsResponse>
@@ -279,6 +312,10 @@ export interface TusWebClient {
   closePosSession(context: TusWebContext, sessionId: string): Promise<TusPosSession>
   recordManualOperation(operation: TusPosOperation): Promise<TusPosResponse>
   posOperationStatus(context: TusWebContext, operationId: string): Promise<TusPosOperationStatus>
+  listSupportCases(context: TusWebContext): Promise<TusSupportCasesResponse>
+  openSupportCase(input: TusWebContext & { caseId: string; commitmentId: string; category: string; disputeId?: string }): Promise<TusSupportCase>
+  submitSupportEvidence(input: TusWebContext & { caseId: string; evidenceId: string; party: 'customer' | 'merchant'; summary: string }): Promise<TusSupportEvidenceResponse>
+  whatsappSupportHandoff(input: TusWebContext & { senderId: string; reason: string }): Promise<TusWhatsAppSupportHandoffResponse>
 }
 
 export function createStableIdempotencyKey(scope: string, intentId: string): string {
@@ -339,6 +376,39 @@ export function parseTusPosOperationStatus(payload: unknown, fallbackOperationId
     return { status, operationId, ...(reason === undefined ? {} : { reason }) }
   }
   return { status: 'error', operationId, reason: reason ?? 'invalid_server_response' }
+}
+
+export function parseTusSupportCases(payload: unknown): TusSupportCasesResponse {
+  const record = asRecord(payload)
+  const cases = Array.isArray(record['cases'])
+      ? record['cases'].flatMap((value) => {
+        const item = asRecord(value)
+        const status = item['status']
+        if (
+          typeof item['caseId'] !== 'string' ||
+          typeof item['commitmentId'] !== 'string' ||
+          typeof item['tenantId'] !== 'string' ||
+          typeof item['correlationId'] !== 'string' ||
+          typeof item['category'] !== 'string' ||
+          (status !== 'open' && status !== 'resolved')
+        ) return []
+        const normalizedStatus = status as TusSupportCase['status']
+        return [{
+          caseId: item['caseId'],
+          commitmentId: item['commitmentId'],
+          tenantId: item['tenantId'],
+          correlationId: item['correlationId'],
+          category: item['category'],
+          status: normalizedStatus,
+          ...(typeof item['disputeId'] === 'string' ? { disputeId: item['disputeId'] } : {}),
+          ...(typeof item['openedBy'] === 'string' ? { openedBy: item['openedBy'] } : {}),
+          ...(item['outcome'] === null || typeof item['outcome'] === 'string' ? { outcome: item['outcome'] as TusSupportCase['outcome'] } : {}),
+          ...(typeof item['createdAt'] === 'string' ? { createdAt: item['createdAt'] } : {}),
+          ...(item['resolvedAt'] === null || typeof item['resolvedAt'] === 'string' ? { resolvedAt: item['resolvedAt'] as string | null } : {}),
+        }]
+      })
+    : []
+  return { cases }
 }
 
 export function classifyTusRequestError(error: unknown, intentId: string): TusIntentFeedback {
@@ -468,6 +538,35 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
       })
       return parseTusPosOperationStatus(response, operationId)
     },
+    listSupportCases: async (context) => {
+      const response = await transport.request<unknown>({
+        ...context,
+        method: 'GET',
+        path: '/tus/v1/support/cases',
+      })
+      return parseTusSupportCases(response)
+    },
+    openSupportCase: async ({ caseId, commitmentId, category, disputeId, ...context }) =>
+      transport.request<TusSupportCase>({
+        ...context,
+        method: 'POST',
+        path: '/tus/v1/support/cases',
+        body: { caseId, commitmentId, category, ...(disputeId === undefined ? {} : { disputeId }) },
+      }),
+    submitSupportEvidence: async ({ caseId, evidenceId, party, summary, ...context }) =>
+      transport.request<TusSupportEvidenceResponse>({
+        ...context,
+        method: 'POST',
+        path: `/tus/v1/support/cases/${encodeURIComponent(caseId)}/evidence`,
+        body: { evidenceId, party, summary },
+      }),
+    whatsappSupportHandoff: async ({ senderId, reason, ...context }) =>
+      transport.request<TusWhatsAppSupportHandoffResponse>({
+        ...context,
+        method: 'POST',
+        path: '/tus/v1/whatsapp/support-handoff',
+        body: { senderId, reason },
+      }),
     merchantOperations: (context) =>
       transport.request<TusMerchantOperationsResponse>({
         ...context,
@@ -653,6 +752,7 @@ const tusClientModule = {
   parseTusCheckoutResponse,
   parseTusPosOperationStatus,
   parseTusPosResponse,
+  parseTusSupportCases,
   tusIntentFeedback,
 }
 
