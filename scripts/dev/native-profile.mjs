@@ -8,6 +8,7 @@ import { MAX_CHILD_DEADLINE_MS, OwnedChild, resolveSafeTarget } from '../test-ru
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 export const packageManagerCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 export const NATIVE_API_PORT = '3101'
+export const NATIVE_WEB_PORT = '3000'
 export const NATIVE_WEB_API_URL = 'http://localhost:3101'
 const SAFE_NATIVE_ENV_KEYS = Object.freeze([
   'PATH', 'Path', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP',

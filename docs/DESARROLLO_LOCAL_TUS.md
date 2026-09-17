@@ -104,7 +104,47 @@ El wrapper toma `DATABASE_URL` exclusivamente del `.env` raiz y transmite solo v
 | Soporte mobile | fake local |
 | Providers externos | deshabilitados |
 
-Para automatizacion o agentes, la API debe iniciarse detached, con stdout/stderr redirigidos, PID conservado y verificacion acotada de puerto. No dejar el wrapper en foreground dentro de una ejecucion automatizada. Consultar `AGENTS.md`.
+Para una sesion humana que use el wrapper, la API debe iniciarse detached, con stdout/stderr redirigidos, PID conservado y verificacion acotada de puerto. Para automatizacion o agentes usar `smoke-local.mjs`, que mantiene el proceso hijo bajo control y lo detiene antes de terminar. Consultar `AGENTS.md`.
+
+## Launcher detached para uso humano
+
+El launcher ejecuta los comandos reales de los paquetes (`tsx watch src/index.ts` y `next dev`) desde sus respectivos directorios, pero los inicia con `spawn` detached y sin shell persistente. Los PID, metadata y logs quedan fuera del repositorio, en el directorio temporal del sistema.
+
+Iniciar y comprobar la API:
+
+```powershell
+node scripts/dev/launch-detached.mjs api
+node scripts/dev/check-detached.mjs api
+```
+
+Iniciar y comprobar la Web:
+
+```powershell
+node scripts/dev/launch-detached.mjs web
+node scripts/dev/check-detached.mjs web
+```
+
+`launch-detached.mjs` devuelve el control sin esperar readiness. `check-detached.mjs` tiene timeout acotado y devuelve `READY`, `STARTING`, `NOT_RUNNING` o `UNHEALTHY`; para API comprueba `/health` y `/ready`, y para Web comprueba `/`.
+
+Detener al terminar una fase:
+
+```powershell
+node scripts/dev/stop-detached.mjs api
+node scripts/dev/stop-detached.mjs web
+```
+
+El stop es idempotente y solo actua sobre el PID registrado. No borrar metadata a mano ni detener listeners no registrados.
+
+## Smoke autocontenido para agentes y CI
+
+Los agentes no deben dejar API o Web persistentes entre comandos. El runner inicia un proceso hijo temporal, redirige stdout/stderr a un directorio temporal, espera el servicio, ejecuta el smoke y garantiza cleanup antes de terminar:
+
+```powershell
+node scripts/dev/smoke-local.mjs web
+node scripts/dev/smoke-local.mjs api
+```
+
+El smoke Web valida `/`, `/tus/mercado`, `/tus/pos`, `/tus/soporte` y `/tus/prestador`. El smoke API valida `/health` y `/ready`, y no considera exitoso un readiness que no devuelva HTTP `200` con `ready: true`. Si falla startup, HTTP o una asercion, el `finally` detiene el proceso y confirma que el puerto quede libre. No usar `launch-detached.mjs` desde agentes o CI.
 
 ## Health y readiness
 
@@ -291,11 +331,13 @@ No reinstalar dependencias, resetear PostgreSQL ni cambiar configuracion del sis
 
 ## Detencion
 
-Detener solo los PIDs registrados al iniciar API y Web:
+Durante una sesion humana interactiva se pueden detener solo los PIDs registrados:
 
 ```powershell
 Stop-Process -Id <pid-api>
 Stop-Process -Id <pid-web>
 ```
+
+Para una sesion humana que haya usado el launcher, usar `node scripts/dev/stop-detached.mjs api` y `node scripts/dev/stop-detached.mjs web`. Los agentes deben usar el cleanup automatico de `smoke-local.mjs`.
 
 Confirmar luego que los puertos `3101` y `3000` ya no tengan listeners. PostgreSQL puede permanecer activo si sigue siendo usado por otras tareas locales.
