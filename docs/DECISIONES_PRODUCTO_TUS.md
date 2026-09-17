@@ -1,8 +1,8 @@
 # Decisiones de producto TUS
 
 > **Fuente canonica de decisiones.** Una Build no puede introducir una decision de arquitectura, producto o
-> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-06`. Commit de referencia:
-> `3d1521e`; commit objetivo de esta Build: `feat(web): integrar soporte y handoff de tus`.
+> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Build: `WEB-07`. Commit de referencia:
+> `e4869bf`; commit objetivo de esta Build: `feat(web): integrar flujo web del prestador`.
 
 ## WEB-04D2: disponibilidad y reservas por Publicacion
 
@@ -192,6 +192,37 @@ contratos y adapters entregados en D2; solo adapta el consumo Web y las pruebas 
 
 WEB-06 no agrega rutas backend, contratos públicos, schemas, migraciones, modelos Prisma, adapters, flags ni providers.
 Solo agrega el consumidor Web y sus pruebas focales sobre capacidades ya entregadas.
+
+## WEB-07: flujo Web del prestador
+
+**Estado:** implementada y validada en la superficie Web sobre capacidades marketplace existentes.
+
+### PRE-01: El prestador usa la frontera marketplace existente
+
+- La superficie `/tus/prestador` lee el perfil y los listings del tenant con la ruta de operaciones merchant existente.
+- El onboarding usa `POST /tus/v1/marketplace/onboarding`; crear un listing usa `POST /tus/v1/marketplace/listings`;
+  publicar usa `POST /tus/v1/marketplace/listings/:listingId/publish`.
+- La UI solo habilita lectura con `tus:marketplace:read` y mutaciones con `tus:marketplace:write`; el backend sigue
+  derivando tenant, actor, roles y autorización desde la sesión.
+
+### PRE-02: Draft y publicación conservan los hechos del servidor
+
+- La pantalla permite ingresar los campos que el API ya valida para productos y servicios: cohort, ubicación, precio,
+  stock, capacidad, modalidad, duración y horario laboral.
+- Los listings nuevos se muestran como `draft` hasta que el usuario ejecuta publicar y TUS devuelve `published: true`.
+- El cliente no genera `listingId`, policy version, availability version ni status de publicación.
+
+### PRE-03: Calendario no se inventa ni se duplica
+
+- Aunque existe `POST /tus/v1/calendar`, el router no ofrece lectura tenant-scoped de calendarios para esta superficie.
+- WEB-07 no crea una agenda que no pueda confirmar ni intenta deducir una agenda primaria desde el navegador.
+- Un servicio puede estar publicado y continuar en `not_configured`; slots y booking siguen bloqueados por el estado real de
+  la agenda del prestador.
+
+### PRE-04: Sin delta físico ni provider
+
+WEB-07 agrega tipos de cliente, superficie Web, estilos y pruebas sobre rutas ya existentes. No modifica API, contracts
+públicos, schemas, migraciones, Prisma, adapters, providers ni flags de activación.
 
 ## Alcance de la Build
 

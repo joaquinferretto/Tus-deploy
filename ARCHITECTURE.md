@@ -1,7 +1,7 @@
 # Arquitectura de TUS
 
 > **Fuente canonica.** Este documento describe la arquitectura implementada de TUS y sus limites conocidos.
-> Ultima actualizacion: 2026-09-17. Build: `WEB-06`. Commit base: `3d1521e`.
+> Ultima actualizacion: 2026-09-17. Build: `WEB-07`. Commit base: `e4869bf`.
 
 ## Proposito y limites
 
@@ -303,6 +303,21 @@ WEB-06 agrega la superficie `/tus/soporte` sobre rutas TUS existentes:
 WEB-06 fue validada con 3/3 tests Web de soporte/handoff, typecheck Web, ESLint focal y build Web de 17 rutas con standalone
 deshabilitado. El smoke HTTP queda pendiente de un launcher controlado; no se dejó ningún servidor persistente ejecutándose.
 No hay delta de API, contratos, persistencia, migraciones, providers ni flags.
+
+WEB-07 agrega la superficie `/tus/prestador` sobre la frontera marketplace existente:
+
+1. Lee el perfil y los listings del tenant con la ruta merchant operations ya existente.
+2. Ejecuta onboarding, creación y publicación con `POST /tus/v1/marketplace/onboarding`,
+   `POST /tus/v1/marketplace/listings` y `POST /tus/v1/marketplace/listings/:listingId/publish`.
+3. Deriva `merchantId`, cohort y ubicación de los hechos del perfil para crear listings; no crea identidades de servidor en
+   el cliente.
+4. Expone productos y servicios con estados draft/published y bloquea mutaciones si falta `tus:marketplace:write`.
+5. No crea calendarios: el API tiene creación pero no lectura owner-scoped suficiente para evitar duplicados o confirmar una
+   agenda primaria. `not_configured` permanece visible cuando discovery no confirma un calendario activo.
+
+WEB-07 fue validada con 2/2 tests Web de prestador, typecheck Web, ESLint focal y build Web de 18 rutas con standalone
+deshabilitado. El smoke HTTP queda pendiente de un launcher controlado; no hay delta de API, contratos, persistencia,
+migraciones, providers ni flags.
 
 La suite global no se considera verde: su runner excede el timeout configurado y contiene gates separados por
 seguridad, imports TS sin extensión, disponibilidad de `pnpm` y smoke PostgreSQL. Esos resultados no se mezclan

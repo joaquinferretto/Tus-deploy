@@ -284,6 +284,7 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 | `/tus/operations`                 | Reporte operativo.                                                                    |
 | `/tus/pos`                        | POS Web: sesión real, operaciones idempotentes y estado verificable.                   |
 | `/tus/soporte`                    | Casos, evidencia y handoff gobernado sin prometer timeline o entrega WhatsApp.        |
+| `/tus/prestador`                  | Onboarding, listings y publicación del prestador con hechos del servidor.              |
 
 ### Como trabaja el cliente
 
@@ -296,6 +297,7 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 7. Los servicios consultan slots reales por `listingId`, reservan antes de generar checkout y conservan su intervalo.
 8. `tus-ui.tsx` representa estados, errores, live regions, skip link y acciones accesibles.
 9. `tus-support.tsx` consume casos y evidencia respaldados por TUS y bloquea acciones sin el permiso de la sesión.
+10. `tus-prestador.tsx` ejecuta onboarding, creación y publicación únicamente contra rutas marketplace existentes.
 
 En `/tus/pos`, la Web abre/cierra la sesión POS real antes de permitir operaciones, conserva la identidad idempotente al
 reintentar y consulta el estado individual sin reenviar la operación. El listado visible se limita a la visita actual porque
@@ -312,6 +314,12 @@ La superficie `/tus/soporte` usa `GET /tus/v1/support/cases`, `POST /tus/v1/supp
 `POST /tus/v1/whatsapp/support-handoff` existentes. La timeline interna no tiene lectura HTTP, por lo que no se simula en el
 navegador. El handoff registra una decisión TUS y no confirma entrega WhatsApp, envío del provider ni recopilación de
 credenciales. Los endpoints actuales no exponen idempotencia para estas mutaciones; la Web evita retry automático.
+
+La superficie `/tus/prestador` usa onboarding, operaciones merchant, listings y publicación respaldados por TUS. Los permisos
+`tus:marketplace:read` y `tus:marketplace:write` controlan la lectura y las mutaciones. La Web permite ingresar facts de
+productos y servicios, pero no crea calendarios: aunque existe la mutación de calendario, no hay lectura owner-scoped para
+confirmar una agenda sin riesgo de duplicarla. Un servicio sin agenda activa permanece `not_configured` y no ofrece slots
+sintéticos.
 
 ## API HTTP
 

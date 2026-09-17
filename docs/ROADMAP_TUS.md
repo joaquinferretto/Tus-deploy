@@ -1,7 +1,7 @@
 # Roadmap de TUS
 
-> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Build actual: `WEB-06`. Commit base:
-> `3d1521e`; commit objetivo: `feat(web): integrar soporte y handoff de tus`.
+> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Build actual: `WEB-07`. Commit base:
+> `e4869bf`; commit objetivo: `feat(web): integrar flujo web del prestador`.
 
 ## Estado de fases
 
@@ -16,6 +16,7 @@
 | WEB-04D3 | Completada | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico. |
 | WEB-05 | Completada | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider. |
 | WEB-06 | Completada | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider. |
+| WEB-07 | Completada | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda. |
 
 ## WEB-04D2 entregado
 
@@ -83,6 +84,27 @@ Evidencia de cierre WEB-06:
 - la suite API existente de soporte/WhatsApp se mantiene como evidencia de dominio; el fallo Prisma de retención de la prueba
   de integración permanece separado de esta Build.
 
+## WEB-07: flujo Web del prestador
+
+- `/tus/prestador` consume el perfil y los listings tenant-scoped mediante la ruta de operaciones de merchant existente;
+- el onboarding usa `POST /tus/v1/marketplace/onboarding` con `tus:marketplace:write` y rol de merchant/operator;
+- la creación y publicación usan `POST /tus/v1/marketplace/listings` y
+  `POST /tus/v1/marketplace/listings/:listingId/publish`;
+- la UI permite productos y servicios con las modalidades de precio, duración, capacidad y una franja laboral ingresadas por
+  el usuario, sin fabricar hechos comerciales;
+- drafts y publicaciones se muestran con estado del servidor; publicar requiere confirmación del botón y permiso de escritura;
+- la creación de calendario no se expone: aunque existe un `POST /tus/v1/calendar`, no hay lectura tenant-scoped de la agenda
+  para evitar crear duplicados o reclamar disponibilidad sin poder confirmarla;
+- servicios sin calendario activo permanecen visibles como `not configured`; no se presenta disponibilidad sintética;
+- no se agregan rutas backend, contratos públicos, migraciones, persistencia local, providers ni flags.
+
+Evidencia de cierre WEB-07:
+
+- tests focales Web de prestador: 2/2 pass;
+- typecheck Web y ESLint focal: pass;
+- build Web: 18 rutas pass con standalone deshabilitado por la limitación de symlinks `EPERM` de Windows;
+- smoke HTTP de `/tus/prestador`: pendiente de un launcher controlado autorizado; no se dejó ningún servidor persistente ejecutándose.
+
 ### Validación operativa posterior
 
 Pendiente cuando exista un target autorizado:
@@ -122,6 +144,14 @@ final.
 - `docs/DECISIONES_PRODUCTO_TUS.md` — decisiones y límites de WEB-06.
 - `docs/ROADMAP_TUS.md` — estado y evidencia de WEB-06.
 - `tests/foundation/tus-web-support.test.mjs` — rutas, parser y estados honestos.
+
+## Documentos modificados en WEB-07
+
+- `README.md` — ruta, capacidades y límites del prestador Web.
+- `ARCHITECTURE.md` — onboarding, listings, publicación y frontera de agenda.
+- `docs/DECISIONES_PRODUCTO_TUS.md` — decisiones y límites de WEB-07.
+- `docs/ROADMAP_TUS.md` — estado y evidencia de WEB-07.
+- `tests/foundation/tus-web-prestador.test.mjs` — rutas y límites honestos del prestador.
 
 ## Documentos modificados en WEB-04D3
 

@@ -138,9 +138,96 @@ export interface TusWebTransport {
 export type TusDiscoveryResponse = RespuestaDescubrimientoMercadoServicios
 
 export interface TusMerchantOperationsResponse {
-  merchant?: unknown
-  listings?: readonly unknown[]
-  items?: readonly unknown[]
+  merchant?: TusMerchantProfile | null
+  listings?: readonly TusMerchantListing[]
+  items?: readonly TusMerchantListing[]
+}
+
+export type TusMerchantCohort = 'beauty-personal-care' | 'repairs-trades'
+export type TusMerchantListingKind = 'product' | 'service'
+export type TusMerchantBookingMode =
+  | 'fixed_shift'
+  | 'visita_diagnostico'
+  | 'variable_duration'
+  | 'duracion_estimada'
+  | 'requiere_presupuesto'
+export type TusMerchantPriceMode =
+  | 'fixed'
+  | 'requires_budget'
+  | 'precio_fijo'
+  | 'precio_desde'
+  | 'por_hora'
+  | 'presupuesto'
+
+export interface TusMerchantWorkingHour {
+  day: number
+  start: string
+  end: string
+}
+
+export interface TusMerchantProfile {
+  tenantId: string
+  merchantId: string
+  cohort: TusMerchantCohort
+  locationId: string
+  timezone: string
+  staffRoles: readonly string[]
+  operatingPolicyVersion: string
+  status: 'approved'
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TusMerchantListing {
+  listingId: string
+  tenantId: string
+  merchantId: string
+  kind: TusMerchantListingKind
+  name: string
+  description: string
+  cohort: TusMerchantCohort
+  locationId: string
+  currency: string
+  price: number
+  availabilityVersion: number
+  published: boolean
+  policyVersion: string
+  stock: number | null
+  durationMinutes: number | null
+  capacity: number | null
+  workingHours: readonly TusMerchantWorkingHour[]
+  bookingMode?: TusMerchantBookingMode
+  estimatedDurationMinutes?: number | null
+  priceMode?: TusMerchantPriceMode
+  createdAt: string
+  updatedAt: string
+}
+
+export type TusMerchantOnboardInput = TusWebContext & {
+  merchantId: string
+  cohort: TusMerchantCohort
+  locationId: string
+  timezone: string
+  staffRoles: readonly string[]
+  operatingPolicyVersion: string
+}
+
+export type TusMerchantListingInput = TusWebContext & {
+  merchantId: string
+  kind: TusMerchantListingKind
+  name: string
+  description: string
+  cohort: TusMerchantCohort
+  locationId: string
+  currency: string
+  price: number
+  stock?: number
+  durationMinutes?: number
+  capacity?: number
+  workingHours?: readonly TusMerchantWorkingHour[]
+  bookingMode?: TusMerchantBookingMode
+  estimatedDurationMinutes?: number
+  priceMode?: TusMerchantPriceMode
 }
 
 export interface TusOperationsReportResponse {
@@ -307,6 +394,9 @@ export interface TusWebClient {
   discoverMarketplace(context: TusWebContext): Promise<TusDiscoveryResponse>
   checkoutMarketplace(input: TusMarketplaceCheckoutInput): Promise<TusCheckoutResult>
   whatsappPaymentHandoff(input: TusWhatsAppHandoffInput): Promise<TusWhatsAppHandoffResponse | MercadoPagoHandoff>
+  onboardMerchant(input: TusMerchantOnboardInput): Promise<TusMerchantProfile>
+  createMerchantListing(input: TusMerchantListingInput): Promise<TusMerchantListing>
+  publishMerchantListing(context: TusWebContext, listingId: string): Promise<TusMerchantListing>
   registerPosDevice(input: TusWebContext & { deviceId: string; label: string; fingerprint: string }): Promise<TusPosDevice>
   openPosSession(input: TusWebContext & { sessionId: string; deviceId: string; shiftId: string }): Promise<TusPosSession>
   closePosSession(context: TusWebContext, sessionId: string): Promise<TusPosSession>
@@ -578,6 +668,42 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         ...context,
         method: 'GET',
         path: MARKETPLACE_PATHS.MERCHANT_OPERATIONS,
+      }),
+    onboardMerchant: async ({ merchantId, cohort, locationId, timezone, staffRoles, operatingPolicyVersion, ...context }) =>
+      transport.request<TusMerchantProfile>({
+        ...context,
+        method: 'POST',
+        path: '/tus/v1/marketplace/onboarding',
+        body: { merchantId, cohort, locationId, timezone, staffRoles, operatingPolicyVersion },
+      }),
+    createMerchantListing: async ({ merchantId, kind, name, description, cohort, locationId, currency, price, stock, durationMinutes, capacity, workingHours, bookingMode, estimatedDurationMinutes, priceMode, ...context }) =>
+      transport.request<TusMerchantListing>({
+        ...context,
+        method: 'POST',
+        path: '/tus/v1/marketplace/listings',
+        body: {
+          merchantId,
+          kind,
+          name,
+          description,
+          cohort,
+          locationId,
+          currency,
+          price,
+          ...(stock === undefined ? {} : { stock }),
+          ...(durationMinutes === undefined ? {} : { durationMinutes }),
+          ...(capacity === undefined ? {} : { capacity }),
+          ...(workingHours === undefined ? {} : { workingHours }),
+          ...(bookingMode === undefined ? {} : { bookingMode }),
+          ...(estimatedDurationMinutes === undefined ? {} : { estimatedDurationMinutes }),
+          ...(priceMode === undefined ? {} : { priceMode }),
+        },
+      }),
+    publishMerchantListing: (context, listingId) =>
+      transport.request<TusMerchantListing>({
+        ...context,
+        method: 'POST',
+        path: `/tus/v1/marketplace/listings/${encodeURIComponent(listingId)}/publish`,
       }),
     customerCommitments: (context) =>
       transport.request<TusCustomerCommitmentsResponse>({

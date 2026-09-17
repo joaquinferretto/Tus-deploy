@@ -16,6 +16,7 @@ export function TusAppShell({ children }: { children: React.ReactNode }): React.
           <a href="/tus/compromisos">Compromisos</a>
           <Link href="/tus/operations">Operations</Link>
           <Link href="/tus/pos">POS</Link>
+          <a href="/tus/prestador">Provider</a>
           <a href="/tus/soporte">Support</a>
         </div>
       </nav>
