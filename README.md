@@ -325,7 +325,11 @@ WEB-08C conecta `/tus/prestador` al ciclo verificable de trabajo, diagnóstico, 
 El prestador solo ve trabajos ya aceptados y puede aceptar un compromiso por referencia autorizada: la API no expone una
 bandeja provider-scoped de compromisos pendientes. WhatsApp dispone de una confirmación de cotización limitada al canal,
 pero no reemplaza un presupuesto de servicio enlazado a publicación/compromiso. WEB-08D queda documentado en
-`docs/ROADMAP_TUS.md`.
+`docs/ROADMAP_TUS.md` junto con sus límites de cliente.
+
+WEB-08D agrega al cliente la lectura de Trabajo, diagnóstico, presupuesto versionado, evidencia e historial confirmados por
+TUS. Solo permite decidir la última versión vigente mediante las rutas idempotentes existentes; la agenda sigue siendo la
+franja mostrada por el compromiso relacionado, y no se afirma evidencia ni cierre de cliente sin endpoint del agregado.
 
 ## API HTTP
 

@@ -1,6 +1,7 @@
 # Roadmap de TUS
 
-> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-17. Builds `WEB-08A` y `WEB-08B` implementadas; no se agrega UI.
+> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-18. Builds `WEB-08A`, `WEB-08B`, `WEB-08C` y `WEB-08D`
+> implementadas dentro de sus límites de API; no se activan pagos ni providers.
 
 ## Estado de fases
 
@@ -16,7 +17,7 @@
 | WEB-05   | Completada                 | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider.         |
 | WEB-06   | Completada                 | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider.               |
 | WEB-07   | Completada                 | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda. |
-| WEB-08   | WEB-08A/B/C completadas    | Modelo/API de Trabajo y superficie de prestador para trabajos aceptados; WEB-08D cliente pendiente.                            |
+| WEB-08   | WEB-08A/B/C/D completadas  | Modelo/API de Trabajo, superficie prestador y cliente para lectura/decisión de presupuesto sin inventar agenda ni cierre.      |
 
 ## WEB-04D2 entregado
 
@@ -107,7 +108,7 @@ Evidencia de cierre WEB-07:
 
 ## WEB-08: auditoría y plan del ciclo de trabajo/presupuesto
 
-**Estado:** WEB-08A/B/C implementadas. No se habilitan pagos/providers.
+**Estado:** WEB-08A/B/C/D implementadas. No se habilitan pagos/providers.
 
 ### Gate de capacidad A/B/C
 
@@ -134,7 +135,7 @@ Publicacion -> CompromisoMercadoServicios -> Trabajo
 
 `BUDGET_REQUIRED` continúa bloqueando slots y reservas automáticas. Un checkout sin franja puede crear el compromiso de
 servicio para que el prestador inicie el flujo de Trabajo, sin fabricar una reserva ni ocupar capacidad. WEB-08C consume estas
-rutas desde la superficie de prestador; WEB-08D permanece pendiente.
+rutas desde la superficie de prestador; WEB-08D las consulta y decide presupuesto desde compromisos del cliente.
 
 ### Plan por unidades
 
@@ -146,10 +147,11 @@ rutas desde la superficie de prestador; WEB-08D permanece pendiente.
 - **WEB-08C — Web prestador:** completada con lista y detalle de trabajos aceptados, diagnóstico, presupuesto versionado,
   evidencia y cierre contra API. No existe lectura HTTP provider-scoped de compromisos pendientes, por lo que no inventa una
   bandeja de solicitudes y la aceptación requiere referencia autorizada.
-- **WEB-08D — Web cliente/integración:** mostrar presupuesto versionado, aceptación explícita, agenda/trabajo y evidencia
-  únicamente con respuestas reales del API.
+- **WEB-08D — Web cliente/integración:** completada contra `GET /tus/v1/work`, detalle y decisión idempotente de presupuesto.
+  La pantalla cliente muestra trabajo, diagnóstico, presupuestos/evidencia/historial y enlaza al compromiso existente para la
+  franja ya expuesta por API. No crea agenda, evidencia ni cierre cliente: esas mutaciones no existen en el agregado cliente.
 
-WEB-08D permanece fuera de alcance. Pagos, settlement, Mercado Pago y providers permanecen fuera de alcance.
+Pagos, settlement, Mercado Pago y providers permanecen fuera de alcance.
 
 ### Validación operativa posterior
 

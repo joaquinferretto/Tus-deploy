@@ -8,6 +8,7 @@ import {
   createTusWebFetchTransport,
   type TusCustomerCommitmentsResponse,
 } from '@/lib/tus-client'
+import { TrabajoCliente } from '@/components/compromisos/trabajo-cliente'
 import {
   crearEnlaceCompromiso,
   encontrarCompromiso,
@@ -79,7 +80,9 @@ export function CompromisosCliente({ commitmentId }: { commitmentId?: string }):
   }, [session])
 
   if (session === undefined) {
-    return <TusStateMessage state={{ status: 'loading', message: 'Restaurando tu sesión segura…' }} />
+    return (
+      <TusStateMessage state={{ status: 'loading', message: 'Restaurando tu sesión segura…' }} />
+    )
   }
   if (session === null) {
     return (
@@ -90,7 +93,10 @@ export function CompromisosCliente({ commitmentId }: { commitmentId?: string }):
         }}
       >
         <p>Necesitás una sesión autenticada para consultar tus compromisos.</p>
-        <a className="tus-action-button tus-action-link" href={`/sign-in?returnTo=${encodeURIComponent(commitmentId === undefined ? '/tus/compromisos' : `/tus/compromisos/${commitmentId}`)}`}>
+        <a
+          className="tus-action-button tus-action-link"
+          href={`/sign-in?returnTo=${encodeURIComponent(commitmentId === undefined ? '/tus/compromisos' : `/tus/compromisos/${commitmentId}`)}`}
+        >
           Ingresar a TUS
         </a>
       </TusStateMessage>
@@ -102,9 +108,7 @@ export function CompromisosCliente({ commitmentId }: { commitmentId?: string }):
       ? undefined
       : encontrarCompromiso(state.data.commitments, commitmentId)
   const reload = () => {
-    setSession((current) =>
-      current === undefined || current === null ? current : { ...current }
-    )
+    setSession((current) => (current === undefined || current === null ? current : { ...current }))
   }
 
   return (
@@ -130,7 +134,18 @@ export function CompromisosCliente({ commitmentId }: { commitmentId?: string }):
         </p>
       </header>
       {commitmentId === undefined ? (
-        <ListadoCompromisos state={state} />
+        <>
+          <ListadoCompromisos state={state} />
+          <TrabajoCliente
+            onUnauthorized={() => {
+              createTusWebAuthClient().clearLocalSession()
+              setAuthStatus('expired')
+              setAuthMessage('Tu sesión de TUS ya no es válida. Ingresá nuevamente.')
+              setSession(null)
+            }}
+            session={session}
+          />
+        </>
       ) : (
         <DetalleCompromiso state={state} compromiso={compromiso} commitmentId={commitmentId} />
       )}
@@ -212,7 +227,9 @@ function DetalleCompromiso({
   return (
     <section aria-labelledby="compromiso-title">
       <SectionHeading title="Compromiso" />
-      <p className="tus-evidence-line">Detalle construido a partir de la colección actual devuelta por TUS.</p>
+      <p className="tus-evidence-line">
+        Detalle construido a partir de la colección actual devuelta por TUS.
+      </p>
       <div className="tus-detail-layout">
         <CompromisoCard compromiso={compromiso} />
         <aside className="tus-state-box" aria-labelledby="compromiso-contexto-title">
@@ -238,7 +255,9 @@ function CompromisoCard({
   const presentation = presentarEstadoCompromiso(compromiso.status)
   return (
     <article className={`tus-commitment-card tus-tone-${presentation.tone}`}>
-      <div className="tus-card-kicker">{compromiso.context === 'product' ? 'Producto' : 'Servicio'}</div>
+      <div className="tus-card-kicker">
+        {compromiso.context === 'product' ? 'Producto' : 'Servicio'}
+      </div>
       <h3>{presentation.label}</h3>
       <p>{formatTusCurrency(compromiso.amount, compromiso.currency)}</p>
       <p>
@@ -259,9 +278,13 @@ function CompromisoCard({
         </p>
       )}
       <small className="tus-boundary-note">
-        Versión de disponibilidad: {compromiso.availabilityVersion} · Política: {compromiso.policyVersion}
+        Versión de disponibilidad: {compromiso.availabilityVersion} · Política:{' '}
+        {compromiso.policyVersion}
       </small>
-      <a className="tus-action-button tus-action-link" href={crearEnlaceCompromiso(compromiso.commitmentId)}>
+      <a
+        className="tus-action-button tus-action-link"
+        href={crearEnlaceCompromiso(compromiso.commitmentId)}
+      >
         Ver compromiso
       </a>
     </article>
@@ -278,13 +301,19 @@ function SectionHeading({ title }: { title: string }): React.ReactNode {
 }
 
 function statusOf(error: unknown): number | undefined {
-  return typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number'
+  return typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    typeof error.status === 'number'
     ? error.status
     : undefined
 }
 
 function codeOf(error: unknown): string | undefined {
-  return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+  return typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
     ? error.code
     : undefined
 }

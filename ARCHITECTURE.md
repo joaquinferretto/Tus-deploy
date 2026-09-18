@@ -285,7 +285,8 @@ tarea. Esas evidencias no representan automáticamente evidencia de un trabajo d
    idempotencia, versionado optimista, auditoría/outbox y rutas HTTP.
 3. **WEB-08C:** completada: `/tus/prestador` lista trabajos del prestador, muestra detalle, diagnóstico, presupuestos,
    evidencia y cierre contra rutas verificables; no inventa una bandeja de compromisos pendientes.
-4. **WEB-08D:** conectar cliente, aceptación, agenda, evidencia y cierre sin inferir estados desde transporte.
+4. **WEB-08D:** completada: cliente consulta trabajo y detalle, decide presupuesto de forma idempotente y enlaza el
+   compromiso para la agenda existente. No crea agenda, evidencia ni cierre cliente sin una ruta del agregado.
 
 WEB-08C/D son las únicas unidades que pueden consumir estas rutas desde Web. Pagos, settlement y providers siguen fuera de
 esta frontera.

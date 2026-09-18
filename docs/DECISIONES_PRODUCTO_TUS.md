@@ -227,7 +227,7 @@ públicos, schemas, migraciones, Prisma, adapters, providers ni flags de activac
 ## WEB-08: modelo y plan de trabajo/presupuesto
 
 **Estado:** WEB-08A implementa el modelo y los contracts; WEB-08B implementa los casos de uso/API; WEB-08C integra la
-superficie de prestador sin reconstruir reglas de negocio en React.
+superficie de prestador y WEB-08D expone lectura/decisión cliente sin reconstruir reglas de negocio en React.
 
 ### W08-01: Trabajo no equivale a job técnico ni tarea de delivery
 
@@ -276,8 +276,8 @@ superficie de prestador sin reconstruir reglas de negocio en React.
 - **WEB-08C:** completada: Web prestador lista trabajos aceptados, muestra detalle, registra diagnóstico, emite versiones de
   presupuesto, referencia evidencia y solicita inicio/cierre al backend. La API no ofrece inbox provider-scoped de compromisos
   pendientes; la Web no inventa esa lista y acepta solo una referencia obtenida por un flujo autorizado.
-- **WEB-08D:** Web cliente para lectura/aceptación, agenda, evidencia y cierre.
-- WEB-08D y su pantalla siguen fuera de esta Build.
+- **WEB-08D:** completada: Web cliente lee trabajo, diagnóstico, presupuestos/evidencia/historial y decide la última versión
+  vigente. Enlaza al compromiso existente para agenda; no inventa una agenda ni mutaciones cliente de evidencia/cierre.
 - Pagos, settlement, Mercado Pago y providers continúan fuera de alcance.
 
 ## Alcance de la Build
@@ -298,7 +298,7 @@ No incluido:
 - D1 o reset de base de datos;
 - activación de producción, proveedores o jobs;
 - traducción breaking de `listingId`, `calendarId` o `serviceId` en payloads existentes.
-- implementación de WEB-08D y su UI cliente de Trabajo/Presupuesto.
+- agenda, evidencia o cierre de cliente sin una ruta HTTP del agregado Trabajo.
 
 ## Evidencia de implementación
 
