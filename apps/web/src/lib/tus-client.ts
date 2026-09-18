@@ -11,6 +11,12 @@ import type {
   SesionPOS,
   TusTenantContext,
   AccionWhatsApp,
+  AceptacionPresupuesto,
+  Diagnostico,
+  EvidenciaTrabajo,
+  LineaPresupuesto,
+  Presupuesto,
+  Trabajo,
 } from '@factory/contracts/tus'
 
 import { resolveWebApiBaseUrl } from './api-url'
@@ -46,6 +52,91 @@ export type TusMarketplaceCheckoutInput = TusWebContext & {
   cartId: string
   requestHash: string
   lines: readonly TusMarketplaceLine[]
+}
+
+export type TusWork = Trabajo
+export type TusWorkDiagnosis = Diagnostico
+export type TusWorkBudget = Presupuesto
+export type TusWorkEvidence = EvidenciaTrabajo
+export type TusWorkBudgetDecision = AceptacionPresupuesto
+
+export interface TusWorkTransition {
+  transitionId: string
+  tenantId: string
+  trabajoId: string
+  previousStatus: TusWork['status'] | null
+  status: TusWork['status']
+  version: number
+  actorId: string
+  correlationId: string
+  reason: string
+  createdAt: string
+}
+
+export interface TusWorkDetail {
+  work: TusWork
+  diagnoses: readonly TusWorkDiagnosis[]
+  budgets: readonly TusWorkBudget[]
+  evidence: readonly TusWorkEvidence[]
+  transitions: readonly TusWorkTransition[]
+}
+
+export interface TusWorkListResponse {
+  works: readonly TusWork[]
+}
+
+export type TusWorkMutationResponse<T> = {
+  status: 'executed' | 'replay'
+} & T
+
+export type TusWorkMutationInput = TusWebContext & {
+  workId: string
+  idempotencyKey: string
+  requestHash: string
+}
+
+export type TusWorkAcceptCommitmentInput = TusWebContext & {
+  commitmentId: string
+  reservationId?: string
+  idempotencyKey: string
+  requestHash: string
+}
+
+export type TusWorkDiagnosisInput = TusWorkMutationInput & {
+  description: string
+  structuredData?: Record<string, unknown>
+}
+
+export type TusWorkConfirmDiagnosisInput = TusWorkMutationInput & {
+  diagnosisId: string
+  expectedVersion: number
+}
+
+export type TusWorkBudgetInput = TusWorkMutationInput & {
+  currency: string
+  scope: string
+  totalMinor: string
+  lines: readonly LineaPresupuesto[]
+  validUntil?: string
+}
+
+export type TusWorkBudgetDecisionInput = TusWorkMutationInput & {
+  budgetId: string
+  budgetVersion: number
+  acceptanceId?: string
+  reason?: string
+}
+
+export type TusWorkEvidenceInput = TusWorkMutationInput & {
+  evidenceId: string
+  phase: TusWorkEvidence['phase']
+  reference: string
+  metadata: Record<string, unknown>
+  occurredAt: string
+}
+
+export type TusWorkTransitionInput = TusWorkMutationInput & {
+  expectedVersion: number
 }
 
 export type TusWhatsAppHandoffInput = TusWebContext & {
@@ -97,11 +188,13 @@ export interface TusCheckoutAcknowledgement {
   commitments: readonly CompromisoMercadoServicios[]
 }
 
-export type TusCheckoutResult = TusCheckoutAcknowledgement | {
-  status: 'pending' | 'conflict' | 'error'
-  intentId: string
-  reason: string
-}
+export type TusCheckoutResult =
+  | TusCheckoutAcknowledgement
+  | {
+      status: 'pending' | 'conflict' | 'error'
+      intentId: string
+      reason: string
+    }
 
 export interface TusIntentFeedback {
   status: TusIntentStatus
@@ -152,12 +245,7 @@ export type TusMerchantBookingMode =
   | 'duracion_estimada'
   | 'requiere_presupuesto'
 export type TusMerchantPriceMode =
-  | 'fixed'
-  | 'requires_budget'
-  | 'precio_fijo'
-  | 'precio_desde'
-  | 'por_hora'
-  | 'presupuesto'
+  'fixed' | 'requires_budget' | 'precio_fijo' | 'precio_desde' | 'por_hora' | 'presupuesto'
 
 export interface TusMerchantWorkingHour {
   day: number
@@ -330,7 +418,8 @@ type TusLegacyCalendarBookingInput = TusWebContext & {
   now: string
 }
 
-export type TusCalendarBookingInput = TusCanonicalCalendarBookingInput | TusLegacyCalendarBookingInput
+export type TusCalendarBookingInput =
+  TusCanonicalCalendarBookingInput | TusLegacyCalendarBookingInput
 
 export type TusPosResponse = {
   status: 'accepted' | 'replayed' | 'pending' | 'conflict' | 'error' | 'queued-offline'
@@ -387,38 +476,111 @@ export interface TusWebClient {
   merchantMarketplaceOperations(context: TusWebContext): Promise<TusMerchantOperationsResponse>
   customerCommitments(context: TusWebContext): Promise<TusCustomerCommitmentsResponse>
   marketplaceCustomerCommitments(context: TusWebContext): Promise<TusCustomerCommitmentsResponse>
-  calendarSlots(context: TusWebContext, calendarId: string, date: string, now?: string): Promise<TusLegacyCalendarSlotsResponse>
-  calendarSlotsForPublication(context: TusWebContext, listingId: string, date: string, now?: string): Promise<TusCalendarSlotsResponse>
+  calendarSlots(
+    context: TusWebContext,
+    calendarId: string,
+    date: string,
+    now?: string
+  ): Promise<TusLegacyCalendarSlotsResponse>
+  calendarSlotsForPublication(
+    context: TusWebContext,
+    listingId: string,
+    date: string,
+    now?: string
+  ): Promise<TusCalendarSlotsResponse>
   calendarBooking(input: TusCalendarBookingInput): Promise<TusCalendarBookingResponse>
   operationsReport(context: TusWebContext): Promise<TusOperationsReportResponse>
   discoverMarketplace(context: TusWebContext): Promise<TusDiscoveryResponse>
   checkoutMarketplace(input: TusMarketplaceCheckoutInput): Promise<TusCheckoutResult>
-  whatsappPaymentHandoff(input: TusWhatsAppHandoffInput): Promise<TusWhatsAppHandoffResponse | MercadoPagoHandoff>
+  whatsappPaymentHandoff(
+    input: TusWhatsAppHandoffInput
+  ): Promise<TusWhatsAppHandoffResponse | MercadoPagoHandoff>
   onboardMerchant(input: TusMerchantOnboardInput): Promise<TusMerchantProfile>
   createMerchantListing(input: TusMerchantListingInput): Promise<TusMerchantListing>
   publishMerchantListing(context: TusWebContext, listingId: string): Promise<TusMerchantListing>
-  registerPosDevice(input: TusWebContext & { deviceId: string; label: string; fingerprint: string }): Promise<TusPosDevice>
-  openPosSession(input: TusWebContext & { sessionId: string; deviceId: string; shiftId: string }): Promise<TusPosSession>
+  registerPosDevice(
+    input: TusWebContext & { deviceId: string; label: string; fingerprint: string }
+  ): Promise<TusPosDevice>
+  openPosSession(
+    input: TusWebContext & { sessionId: string; deviceId: string; shiftId: string }
+  ): Promise<TusPosSession>
   closePosSession(context: TusWebContext, sessionId: string): Promise<TusPosSession>
   recordManualOperation(operation: TusPosOperation): Promise<TusPosResponse>
   posOperationStatus(context: TusWebContext, operationId: string): Promise<TusPosOperationStatus>
   listSupportCases(context: TusWebContext): Promise<TusSupportCasesResponse>
-  openSupportCase(input: TusWebContext & { caseId: string; commitmentId: string; category: string; disputeId?: string }): Promise<TusSupportCase>
-  submitSupportEvidence(input: TusWebContext & { caseId: string; evidenceId: string; party: 'customer' | 'merchant'; summary: string }): Promise<TusSupportEvidenceResponse>
-  whatsappSupportHandoff(input: TusWebContext & { senderId: string; reason: string }): Promise<TusWhatsAppSupportHandoffResponse>
+  openSupportCase(
+    input: TusWebContext & {
+      caseId: string
+      commitmentId: string
+      category: string
+      disputeId?: string
+    }
+  ): Promise<TusSupportCase>
+  submitSupportEvidence(
+    input: TusWebContext & {
+      caseId: string
+      evidenceId: string
+      party: 'customer' | 'merchant'
+      summary: string
+    }
+  ): Promise<TusSupportEvidenceResponse>
+  whatsappSupportHandoff(
+    input: TusWebContext & { senderId: string; reason: string }
+  ): Promise<TusWhatsAppSupportHandoffResponse>
+  listWork(context: TusWebContext): Promise<TusWorkListResponse>
+  workDetail(context: TusWebContext, workId: string): Promise<TusWorkDetail>
+  acceptWorkCommitment(
+    input: TusWorkAcceptCommitmentInput
+  ): Promise<TusWorkMutationResponse<{ work: TusWork }>>
+  createWorkDiagnosis(
+    input: TusWorkDiagnosisInput
+  ): Promise<TusWorkMutationResponse<{ diagnosis: TusWorkDiagnosis; work: TusWork }>>
+  confirmWorkDiagnosis(
+    input: TusWorkConfirmDiagnosisInput
+  ): Promise<TusWorkMutationResponse<{ diagnosis: TusWorkDiagnosis }>>
+  createWorkBudget(
+    input: TusWorkBudgetInput
+  ): Promise<TusWorkMutationResponse<{ budget: TusWorkBudget; work: TusWork }>>
+  acceptWorkBudget(input: TusWorkBudgetDecisionInput): Promise<
+    TusWorkMutationResponse<{
+      budget: TusWorkBudget
+      acceptance: TusWorkBudgetDecision
+      work: TusWork
+    }>
+  >
+  rejectWorkBudget(input: TusWorkBudgetDecisionInput): Promise<
+    TusWorkMutationResponse<{
+      budget: TusWorkBudget
+      acceptance: TusWorkBudgetDecision
+      work: TusWork
+    }>
+  >
+  recordWorkEvidence(
+    input: TusWorkEvidenceInput
+  ): Promise<TusWorkMutationResponse<{ evidence: TusWorkEvidence }>>
+  startWork(input: TusWorkTransitionInput): Promise<TusWorkMutationResponse<{ work: TusWork }>>
+  completeWork(input: TusWorkTransitionInput): Promise<TusWorkMutationResponse<{ work: TusWork }>>
+  cancelWork(input: TusWorkTransitionInput): Promise<TusWorkMutationResponse<{ work: TusWork }>>
 }
 
 export function createStableIdempotencyKey(scope: string, intentId: string): string {
   const normalizedScope = scope.trim()
   const normalizedIntent = intentId.trim()
-  if (normalizedScope.length === 0 || normalizedIntent.length === 0) throw new Error('intent scope and id are required')
+  if (normalizedScope.length === 0 || normalizedIntent.length === 0)
+    throw new Error('intent scope and id are required')
   return `tus:${normalizedScope}:${normalizedIntent}`
 }
 
-export function parseTusCheckoutResponse(payload: unknown, fallbackIntentId: string): TusCheckoutResult {
+export function parseTusCheckoutResponse(
+  payload: unknown,
+  fallbackIntentId: string
+): TusCheckoutResult {
   const record = asRecord(payload)
   const intentId = fallbackIntentId.trim()
-  if (record['contractVersion'] !== undefined && record['contractVersion'] !== TUS_CONTRACT_VERSION) {
+  if (
+    record['contractVersion'] !== undefined &&
+    record['contractVersion'] !== TUS_CONTRACT_VERSION
+  ) {
     return { status: TUS_INTENT_STATUS.ERROR, intentId, reason: 'invalid_server_response' }
   }
   const status = record['status']
@@ -435,23 +597,32 @@ export function parseTusCheckoutResponse(payload: unknown, fallbackIntentId: str
 
 export function parseTusPosResponse(payload: unknown, fallbackOperationId: string): TusPosResponse {
   const record = asRecord(payload)
-  const operationId = typeof record['operationId'] === 'string' && record['operationId'].trim().length > 0
-    ? record['operationId'].trim()
-    : fallbackOperationId
+  const operationId =
+    typeof record['operationId'] === 'string' && record['operationId'].trim().length > 0
+      ? record['operationId'].trim()
+      : fallbackOperationId
   const status = record['status']
   if (status === 'accepted' || status === 'replayed' || status === 'queued-offline') {
     const receipt = asRecord(record['receipt'])
     return { status, operationId, ...(Object.keys(receipt).length === 0 ? {} : { receipt }) }
   }
-  if ((status === 'pending' || status === 'conflict' || status === 'error') && typeof record['reason'] === 'string') return { status, operationId, reason: record['reason'] }
+  if (
+    (status === 'pending' || status === 'conflict' || status === 'error') &&
+    typeof record['reason'] === 'string'
+  )
+    return { status, operationId, reason: record['reason'] }
   return { status: 'error', operationId, reason: 'invalid_server_response' }
 }
 
-export function parseTusPosOperationStatus(payload: unknown, fallbackOperationId: string): TusPosOperationStatus {
+export function parseTusPosOperationStatus(
+  payload: unknown,
+  fallbackOperationId: string
+): TusPosOperationStatus {
   const record = asRecord(payload)
-  const operationId = typeof record['operationId'] === 'string' && record['operationId'].trim().length > 0
-    ? record['operationId'].trim()
-    : fallbackOperationId
+  const operationId =
+    typeof record['operationId'] === 'string' && record['operationId'].trim().length > 0
+      ? record['operationId'].trim()
+      : fallbackOperationId
   const status = record['status']
   const reason = typeof record['reason'] === 'string' ? record['reason'] : undefined
   if (status === 'accepted') {
@@ -459,7 +630,9 @@ export function parseTusPosOperationStatus(payload: unknown, fallbackOperationId
     return {
       status,
       operationId,
-      ...(Object.keys(receipt).length === 0 ? {} : { receipt: receipt as unknown as ComprobantePOS }),
+      ...(Object.keys(receipt).length === 0
+        ? {}
+        : { receipt: receipt as unknown as ComprobantePOS }),
     }
   }
   if (status === 'pending' || status === 'conflict' || status === 'not_found') {
@@ -471,7 +644,7 @@ export function parseTusPosOperationStatus(payload: unknown, fallbackOperationId
 export function parseTusSupportCases(payload: unknown): TusSupportCasesResponse {
   const record = asRecord(payload)
   const cases = Array.isArray(record['cases'])
-      ? record['cases'].flatMap((value) => {
+    ? record['cases'].flatMap((value) => {
         const item = asRecord(value)
         const status = item['status']
         if (
@@ -481,21 +654,28 @@ export function parseTusSupportCases(payload: unknown): TusSupportCasesResponse 
           typeof item['correlationId'] !== 'string' ||
           typeof item['category'] !== 'string' ||
           (status !== 'open' && status !== 'resolved')
-        ) return []
+        )
+          return []
         const normalizedStatus = status as TusSupportCase['status']
-        return [{
-          caseId: item['caseId'],
-          commitmentId: item['commitmentId'],
-          tenantId: item['tenantId'],
-          correlationId: item['correlationId'],
-          category: item['category'],
-          status: normalizedStatus,
-          ...(typeof item['disputeId'] === 'string' ? { disputeId: item['disputeId'] } : {}),
-          ...(typeof item['openedBy'] === 'string' ? { openedBy: item['openedBy'] } : {}),
-          ...(item['outcome'] === null || typeof item['outcome'] === 'string' ? { outcome: item['outcome'] as TusSupportCase['outcome'] } : {}),
-          ...(typeof item['createdAt'] === 'string' ? { createdAt: item['createdAt'] } : {}),
-          ...(item['resolvedAt'] === null || typeof item['resolvedAt'] === 'string' ? { resolvedAt: item['resolvedAt'] as string | null } : {}),
-        }]
+        return [
+          {
+            caseId: item['caseId'],
+            commitmentId: item['commitmentId'],
+            tenantId: item['tenantId'],
+            correlationId: item['correlationId'],
+            category: item['category'],
+            status: normalizedStatus,
+            ...(typeof item['disputeId'] === 'string' ? { disputeId: item['disputeId'] } : {}),
+            ...(typeof item['openedBy'] === 'string' ? { openedBy: item['openedBy'] } : {}),
+            ...(item['outcome'] === null || typeof item['outcome'] === 'string'
+              ? { outcome: item['outcome'] as TusSupportCase['outcome'] }
+              : {}),
+            ...(typeof item['createdAt'] === 'string' ? { createdAt: item['createdAt'] } : {}),
+            ...(item['resolvedAt'] === null || typeof item['resolvedAt'] === 'string'
+              ? { resolvedAt: item['resolvedAt'] as string | null }
+              : {}),
+          },
+        ]
       })
     : []
   return { cases }
@@ -505,78 +685,93 @@ export function classifyTusRequestError(error: unknown, intentId: string): TusIn
   const record = asRecord(error)
   const status = typeof record['status'] === 'number' ? record['status'] : undefined
   const code = typeof record['code'] === 'string' ? record['code'] : undefined
-  if (code === 'IN_PROGRESS') return {
-    status: TUS_INTENT_STATUS.PENDING,
-    intentId,
-    message: 'TUS is still processing this intent. Refresh before retrying.',
-    evidence: 'The server reported an in-flight request; no success is claimed.',
-    retryable: true,
-    action: TUS_INTENT_ACTION.REFRESH,
-  }
-  if (status === 409 || code === 'CONFLICT') return {
-    status: TUS_INTENT_STATUS.CONFLICT,
-    intentId,
-    message: 'This intent conflicts with an existing server request. Resolve or refresh before acting again.',
-    evidence: code ?? 'The server reported a duplicate or payload conflict.',
-    retryable: false,
-    action: TUS_INTENT_ACTION.RESOLVE,
-  }
-  if (status === undefined || status === 408 || status === 429 || status >= 500) return {
-    status: TUS_INTENT_STATUS.PENDING,
-    intentId,
-    message: 'TUS did not confirm the outcome. Retry the same intent or refresh its status.',
-    evidence: 'The response is uncertain; no success is claimed.',
-    retryable: true,
-    action: TUS_INTENT_ACTION.RETRY,
-  }
+  if (code === 'IN_PROGRESS')
+    return {
+      status: TUS_INTENT_STATUS.PENDING,
+      intentId,
+      message: 'TUS is still processing this intent. Refresh before retrying.',
+      evidence: 'The server reported an in-flight request; no success is claimed.',
+      retryable: true,
+      action: TUS_INTENT_ACTION.REFRESH,
+    }
+  if (status === 409 || code === 'CONFLICT')
+    return {
+      status: TUS_INTENT_STATUS.CONFLICT,
+      intentId,
+      message:
+        'This intent conflicts with an existing server request. Resolve or refresh before acting again.',
+      evidence: code ?? 'The server reported a duplicate or payload conflict.',
+      retryable: false,
+      action: TUS_INTENT_ACTION.RESOLVE,
+    }
+  if (status === undefined || status === 408 || status === 429 || status >= 500)
+    return {
+      status: TUS_INTENT_STATUS.PENDING,
+      intentId,
+      message: 'TUS did not confirm the outcome. Retry the same intent or refresh its status.',
+      evidence: 'The response is uncertain; no success is claimed.',
+      retryable: true,
+      action: TUS_INTENT_ACTION.RETRY,
+    }
   return {
     status: TUS_INTENT_STATUS.ERROR,
     intentId,
     message: 'TUS rejected this intent. Review the error before retrying.',
-    evidence: code ?? (error instanceof Error ? error.message : 'No server acknowledgement; no success is claimed.'),
+    evidence:
+      code ??
+      (error instanceof Error
+        ? error.message
+        : 'No server acknowledgement; no success is claimed.'),
     retryable: true,
     action: TUS_INTENT_ACTION.RETRY,
   }
 }
 
 export function tusIntentFeedback(result: TusCheckoutResult): TusIntentFeedback {
-  if (result.status === TUS_INTENT_STATUS.ACCEPTED) return {
-    status: result.status,
-    intentId: result.intentId,
-    message: 'TUS returned a server acknowledgement for the original intent.',
-    evidence: 'Server acknowledgement received; provider capture and settlement are not claimed.',
-    retryable: false,
-    action: TUS_INTENT_ACTION.REFRESH,
-  }
-  if (result.status === TUS_INTENT_STATUS.REPLAYED) return {
-    status: result.status,
-    intentId: result.intentId,
-    message: 'TUS replayed the original result for this intent.',
-    evidence: 'The server returned the existing commitment result; provider capture and settlement are not claimed.',
-    retryable: false,
-    action: TUS_INTENT_ACTION.REFRESH,
-  }
-  if (result.status === TUS_INTENT_STATUS.CONFLICT) return {
-    status: result.status,
-    intentId: result.intentId,
-    message: 'Review this intent before retrying.',
-    evidence: 'reason' in result ? result.reason : 'No server acknowledgement; no success is claimed.',
-    retryable: false,
-    action: TUS_INTENT_ACTION.RESOLVE,
-  }
-  if (result.status === TUS_INTENT_STATUS.PENDING) return {
-    status: result.status,
-    intentId: result.intentId,
-    message: 'This intent is pending server acknowledgement.',
-    evidence: result.reason,
-    retryable: true,
-    action: TUS_INTENT_ACTION.RETRY,
-  }
+  if (result.status === TUS_INTENT_STATUS.ACCEPTED)
+    return {
+      status: result.status,
+      intentId: result.intentId,
+      message: 'TUS returned a server acknowledgement for the original intent.',
+      evidence: 'Server acknowledgement received; provider capture and settlement are not claimed.',
+      retryable: false,
+      action: TUS_INTENT_ACTION.REFRESH,
+    }
+  if (result.status === TUS_INTENT_STATUS.REPLAYED)
+    return {
+      status: result.status,
+      intentId: result.intentId,
+      message: 'TUS replayed the original result for this intent.',
+      evidence:
+        'The server returned the existing commitment result; provider capture and settlement are not claimed.',
+      retryable: false,
+      action: TUS_INTENT_ACTION.REFRESH,
+    }
+  if (result.status === TUS_INTENT_STATUS.CONFLICT)
+    return {
+      status: result.status,
+      intentId: result.intentId,
+      message: 'Review this intent before retrying.',
+      evidence:
+        'reason' in result ? result.reason : 'No server acknowledgement; no success is claimed.',
+      retryable: false,
+      action: TUS_INTENT_ACTION.RESOLVE,
+    }
+  if (result.status === TUS_INTENT_STATUS.PENDING)
+    return {
+      status: result.status,
+      intentId: result.intentId,
+      message: 'This intent is pending server acknowledgement.',
+      evidence: result.reason,
+      retryable: true,
+      action: TUS_INTENT_ACTION.RETRY,
+    }
   return {
     status: TUS_INTENT_STATUS.ERROR,
     intentId: result.intentId,
     message: 'TUS did not acknowledge this intent.',
-    evidence: 'reason' in result ? result.reason : 'No server acknowledgement; no success is claimed.',
+    evidence:
+      'reason' in result ? result.reason : 'No server acknowledgement; no success is claimed.',
     retryable: true,
     action: TUS_INTENT_ACTION.RETRY,
   }
@@ -657,6 +852,114 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         path: '/tus/v1/whatsapp/support-handoff',
         body: { senderId, reason },
       }),
+    listWork: (context) =>
+      transport.request<TusWorkListResponse>({
+        ...context,
+        method: 'GET',
+        path: '/tus/v1/work',
+      }),
+    workDetail: (context, workId) =>
+      transport.request<TusWorkDetail>({
+        ...context,
+        method: 'GET',
+        path: `/tus/v1/work/${encodeURIComponent(workId)}`,
+      }),
+    acceptWorkCommitment: ({
+      commitmentId,
+      reservationId,
+      idempotencyKey,
+      requestHash,
+      ...context
+    }) =>
+      transport.request<TusWorkMutationResponse<{ work: TusWork }>>({
+        ...context,
+        idempotencyKey,
+        method: 'POST',
+        path: `/tus/v1/work/commitments/${encodeURIComponent(commitmentId)}/accept`,
+        body: { requestHash, ...(reservationId === undefined ? {} : { reservationId }) },
+      }),
+    createWorkDiagnosis: ({
+      workId,
+      description,
+      structuredData,
+      idempotencyKey,
+      requestHash,
+      ...context
+    }) =>
+      transport.request<TusWorkMutationResponse<{ diagnosis: TusWorkDiagnosis; work: TusWork }>>({
+        ...context,
+        idempotencyKey,
+        method: 'POST',
+        path: `/tus/v1/work/${encodeURIComponent(workId)}/diagnosis`,
+        body: {
+          requestHash,
+          description,
+          ...(structuredData === undefined ? {} : { structuredData }),
+        },
+      }),
+    confirmWorkDiagnosis: ({
+      workId,
+      diagnosisId,
+      expectedVersion,
+      idempotencyKey,
+      requestHash,
+      ...context
+    }) =>
+      transport.request<TusWorkMutationResponse<{ diagnosis: TusWorkDiagnosis }>>({
+        ...context,
+        idempotencyKey,
+        method: 'POST',
+        path: `/tus/v1/work/${encodeURIComponent(workId)}/diagnosis/${encodeURIComponent(diagnosisId)}/confirm`,
+        body: { requestHash, expectedVersion },
+      }),
+    createWorkBudget: ({
+      workId,
+      currency,
+      scope,
+      totalMinor,
+      lines,
+      validUntil,
+      idempotencyKey,
+      requestHash,
+      ...context
+    }) =>
+      transport.request<TusWorkMutationResponse<{ budget: TusWorkBudget; work: TusWork }>>({
+        ...context,
+        idempotencyKey,
+        method: 'POST',
+        path: `/tus/v1/work/${encodeURIComponent(workId)}/budgets`,
+        body: {
+          requestHash,
+          currency,
+          scope,
+          totalMinor,
+          lines,
+          ...(validUntil === undefined ? {} : { validUntil }),
+        },
+      }),
+    acceptWorkBudget: (input) => decideWorkBudget(transport, input, 'accept'),
+    rejectWorkBudget: (input) => decideWorkBudget(transport, input, 'reject'),
+    recordWorkEvidence: ({
+      workId,
+      evidenceId,
+      phase,
+      reference,
+      metadata,
+      occurredAt,
+      idempotencyKey,
+      requestHash,
+      ...context
+    }) =>
+      transport.request<TusWorkMutationResponse<{ evidence: TusWorkEvidence }>>({
+        ...context,
+        idempotencyKey,
+        method: 'POST',
+        path: `/tus/v1/work/${encodeURIComponent(workId)}/evidence`,
+        body: { requestHash, evidenceId, phase, reference, metadata, occurredAt },
+      }),
+    startWork: (input) => transitionWork(transport, input, 'start'),
+    completeWork: (input) => transitionWork(transport, input, 'complete'),
+    cancelWork: (input) => transitionWork(transport, input, 'cancel'),
     merchantOperations: (context) =>
       transport.request<TusMerchantOperationsResponse>({
         ...context,
@@ -669,14 +972,39 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         method: 'GET',
         path: MARKETPLACE_PATHS.MERCHANT_OPERATIONS,
       }),
-    onboardMerchant: async ({ merchantId, cohort, locationId, timezone, staffRoles, operatingPolicyVersion, ...context }) =>
+    onboardMerchant: async ({
+      merchantId,
+      cohort,
+      locationId,
+      timezone,
+      staffRoles,
+      operatingPolicyVersion,
+      ...context
+    }) =>
       transport.request<TusMerchantProfile>({
         ...context,
         method: 'POST',
         path: '/tus/v1/marketplace/onboarding',
         body: { merchantId, cohort, locationId, timezone, staffRoles, operatingPolicyVersion },
       }),
-    createMerchantListing: async ({ merchantId, kind, name, description, cohort, locationId, currency, price, stock, durationMinutes, capacity, workingHours, bookingMode, estimatedDurationMinutes, priceMode, ...context }) =>
+    createMerchantListing: async ({
+      merchantId,
+      kind,
+      name,
+      description,
+      cohort,
+      locationId,
+      currency,
+      price,
+      stock,
+      durationMinutes,
+      capacity,
+      workingHours,
+      bookingMode,
+      estimatedDurationMinutes,
+      priceMode,
+      ...context
+    }) =>
       transport.request<TusMerchantListing>({
         ...context,
         method: 'POST',
@@ -731,25 +1059,26 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
       }),
     calendarBooking: async (input) => {
       const { customerId, slotId, idempotencyKey, requestHash, now, ...context } = input
-      const body = 'listingId' in input
-        ? {
-            listingId: input.listingId,
-            ...(input.calendarId === undefined ? {} : { calendarId: input.calendarId }),
-            customerId,
-            slotId,
-            idempotencyKey,
-            requestHash,
-            now,
-          }
-        : {
-            calendarId: input.calendarId,
-            serviceId: input.serviceId,
-            customerId,
-            slotId,
-            idempotencyKey,
-            requestHash,
-            now,
-          }
+      const body =
+        'listingId' in input
+          ? {
+              listingId: input.listingId,
+              ...(input.calendarId === undefined ? {} : { calendarId: input.calendarId }),
+              customerId,
+              slotId,
+              idempotencyKey,
+              requestHash,
+              now,
+            }
+          : {
+              calendarId: input.calendarId,
+              serviceId: input.serviceId,
+              customerId,
+              slotId,
+              idempotencyKey,
+              requestHash,
+              now,
+            }
       return transport.request<TusCalendarBookingResponse>({
         ...context,
         idempotencyKey,
@@ -777,17 +1106,43 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
           idempotencyKey,
           method: 'POST',
           path: MARKETPLACE_PATHS.CHECKOUT,
-          body: { contractVersion: TUS_CONTRACT_VERSION, cartId, requestHash, idempotencyKey, lines },
+          body: {
+            contractVersion: TUS_CONTRACT_VERSION,
+            cartId,
+            requestHash,
+            idempotencyKey,
+            lines,
+          },
         })
         return parseTusCheckoutResponse(response, idempotencyKey)
       } catch (error) {
         const feedback = classifyTusRequestError(error, idempotencyKey)
-        return { status: feedback.status === TUS_INTENT_STATUS.CONFLICT ? 'conflict' : feedback.status === TUS_INTENT_STATUS.PENDING ? 'pending' : 'error', intentId: idempotencyKey, reason: feedback.evidence }
+        return {
+          status:
+            feedback.status === TUS_INTENT_STATUS.CONFLICT
+              ? 'conflict'
+              : feedback.status === TUS_INTENT_STATUS.PENDING
+                ? 'pending'
+                : 'error',
+          intentId: idempotencyKey,
+          reason: feedback.evidence,
+        }
       }
     },
-    whatsappPaymentHandoff: ({ commitmentId, confirmationId, senderId, consent, idempotencyKey, requestHash, accessToken, ...context }) => {
-      const stableKey = idempotencyKey ?? createStableIdempotencyKey('whatsapp', context.correlationId)
-      const stableHash = requestHash ?? `handoff:${commitmentId ?? 'support'}:${confirmationId ?? 'none'}`
+    whatsappPaymentHandoff: ({
+      commitmentId,
+      confirmationId,
+      senderId,
+      consent,
+      idempotencyKey,
+      requestHash,
+      accessToken,
+      ...context
+    }) => {
+      const stableKey =
+        idempotencyKey ?? createStableIdempotencyKey('whatsapp', context.correlationId)
+      const stableHash =
+        requestHash ?? `handoff:${commitmentId ?? 'support'}:${confirmationId ?? 'none'}`
       const handoffAction: AccionWhatsApp = {
         contractVersion: TUS_CONTRACT_VERSION,
         type: 'handoff',
@@ -818,6 +1173,54 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
   }
 }
 
+function decideWorkBudget(
+  transport: TusWebTransport,
+  {
+    workId,
+    budgetId,
+    budgetVersion,
+    acceptanceId,
+    reason,
+    idempotencyKey,
+    requestHash,
+    ...context
+  }: TusWorkBudgetDecisionInput,
+  decision: 'accept' | 'reject'
+): Promise<
+  TusWorkMutationResponse<{
+    budget: TusWorkBudget
+    acceptance: TusWorkBudgetDecision
+    work: TusWork
+  }>
+> {
+  return transport.request({
+    ...context,
+    idempotencyKey,
+    method: 'POST',
+    path: `/tus/v1/work/${encodeURIComponent(workId)}/budgets/${budgetVersion}/${decision}`,
+    body: {
+      requestHash,
+      budgetId,
+      ...(acceptanceId === undefined ? {} : { acceptanceId }),
+      ...(reason === undefined ? {} : { reason }),
+    },
+  })
+}
+
+function transitionWork(
+  transport: TusWebTransport,
+  { workId, expectedVersion, idempotencyKey, requestHash, ...context }: TusWorkTransitionInput,
+  action: 'start' | 'complete' | 'cancel'
+): Promise<TusWorkMutationResponse<{ work: TusWork }>> {
+  return transport.request({
+    ...context,
+    idempotencyKey,
+    method: 'POST',
+    path: `/tus/v1/work/${encodeURIComponent(workId)}/${action}`,
+    body: { requestHash, expectedVersion },
+  })
+}
+
 export function createTusWebFetchTransport(): TusWebTransport {
   const baseUrl = resolveWebApiBaseUrl({
     canonicalUrl: process.env['NEXT_PUBLIC_API_URL'],
@@ -835,7 +1238,12 @@ export function createTusWebFetchTransport(): TusWebTransport {
         'X-TUS-API-Version': TUS_API_VERSION,
         'X-TUS-Contract-Version': TUS_CONTRACT_VERSION,
       }
-      if ('accessToken' in input && typeof input.accessToken === 'string' && input.accessToken.length > 0) headers['Authorization'] = `Bearer ${input.accessToken}`
+      if (
+        'accessToken' in input &&
+        typeof input.accessToken === 'string' &&
+        input.accessToken.length > 0
+      )
+        headers['Authorization'] = `Bearer ${input.accessToken}`
       if (input.idempotencyKey !== undefined) headers['Idempotency-Key'] = input.idempotencyKey
 
       if (input.body !== undefined) headers['Content-Type'] = 'application/json'
@@ -845,11 +1253,13 @@ export function createTusWebFetchTransport(): TusWebTransport {
         ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
       })
       if (!response.ok) {
-        const body = await response.json().catch(() => null) as Record<string, unknown> | null
+        const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
         throw new TusRequestError(
-          typeof body?.['error'] === 'string' ? body['error'] : `TUS request failed with HTTP ${response.status}`,
+          typeof body?.['error'] === 'string'
+            ? body['error']
+            : `TUS request failed with HTTP ${response.status}`,
           response.status,
-          typeof body?.['code'] === 'string' ? body['code'] : undefined,
+          typeof body?.['code'] === 'string' ? body['code'] : undefined
         )
       }
       return (await response.json()) as TResponse
@@ -885,5 +1295,7 @@ const tusClientModule = {
 export default tusClientModule
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
 }

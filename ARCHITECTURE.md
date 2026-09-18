@@ -266,8 +266,9 @@ el cliente decide la última versión vigente con reloj de servidor. Las mutacio
 auditoría y outbox dentro de la misma transacción.
 
 Las rutas canónicas son `/tus/v1/work/*`, con aliases españoles `/tus/v1/trabajos/*`, para aceptación del compromiso,
-lectura, diagnóstico, presupuesto, decisión, evidencia e inicio/cierre/cancelación. No existe todavía una superficie Web para
-esas rutas.
+lectura, diagnóstico, presupuesto, decisión, evidencia e inicio/cierre/cancelación. WEB-08C usa las rutas canónicas desde
+`/tus/prestador` para trabajos ya aceptados; no existe una lectura HTTP provider-scoped de compromisos pendientes, por lo que
+la aceptación requiere una referencia obtenida desde un flujo autorizado.
 
 WhatsApp sí tiene una acción `quote`/`confirm` respaldada por `ConfirmacionWhatsApp`, con snapshot de elementos, expiración y
 consumo. Es una capacidad parcial del canal, no un contrato comercial reutilizable para Web: no define un presupuesto
@@ -282,7 +283,8 @@ tarea. Esas evidencias no representan automáticamente evidencia de un trabajo d
 1. **WEB-08A:** completada: identidad, contracts, estados, relaciones, transiciones y migración física aditiva.
 2. **WEB-08B:** completada: puertos in-memory/Prisma, transacciones serializables, ownership cliente/prestador,
    idempotencia, versionado optimista, auditoría/outbox y rutas HTTP.
-3. **WEB-08C:** conectar la superficie del prestador solo contra esas rutas verificables.
+3. **WEB-08C:** completada: `/tus/prestador` lista trabajos del prestador, muestra detalle, diagnóstico, presupuestos,
+   evidencia y cierre contra rutas verificables; no inventa una bandeja de compromisos pendientes.
 4. **WEB-08D:** conectar cliente, aceptación, agenda, evidencia y cierre sin inferir estados desde transporte.
 
 WEB-08C/D son las únicas unidades que pueden consumir estas rutas desde Web. Pagos, settlement y providers siguen fuera de

@@ -1,7 +1,7 @@
 # Decisiones de producto TUS
 
 > **Fuente canonica de decisiones.** Una Build no puede introducir una decision de arquitectura, producto o
-> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Builds `WEB-08A` y `WEB-08B` implementadas; no se agrega Web.
+> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Builds `WEB-08A`, `WEB-08B` y `WEB-08C` implementadas.
 > Commit de referencia documental: `ba8db98`.
 
 ## WEB-04D2: disponibilidad y reservas por Publicacion
@@ -226,7 +226,8 @@ públicos, schemas, migraciones, Prisma, adapters, providers ni flags de activac
 
 ## WEB-08: modelo y plan de trabajo/presupuesto
 
-**Estado:** WEB-08A implementa el modelo y los contracts; WEB-08B implementa los casos de uso/API. No se agrega Web.
+**Estado:** WEB-08A implementa el modelo y los contracts; WEB-08B implementa los casos de uso/API; WEB-08C integra la
+superficie de prestador sin reconstruir reglas de negocio en React.
 
 ### W08-01: Trabajo no equivale a job técnico ni tarea de delivery
 
@@ -267,14 +268,16 @@ públicos, schemas, migraciones, Prisma, adapters, providers ni flags de activac
 - WEB-08 no reutiliza evidencia financiera o delivery sin una relación de dominio explícita; `evidencias_trabajo` conserva
   fase, referencia y metadata durable.
 
-### W08-05: Implementación diferida y unidades aprobadas para planificación
+### W08-05: Superficie prestador y unidades pendientes
 
 - **WEB-08A:** completada: modelo Prisma/DB, contracts, JSON Schemas, estados, transiciones y documentación DB.
 - **WEB-08B:** completada: API, persistencia in-memory/Prisma, ownership, idempotencia, versionado optimista, auditoría,
   outbox y rutas HTTP.
-- **WEB-08C:** Web prestador para solicitud, diagnóstico, presupuesto y ejecución.
+- **WEB-08C:** completada: Web prestador lista trabajos aceptados, muestra detalle, registra diagnóstico, emite versiones de
+  presupuesto, referencia evidencia y solicita inicio/cierre al backend. La API no ofrece inbox provider-scoped de compromisos
+  pendientes; la Web no inventa esa lista y acepta solo una referencia obtenida por un flujo autorizado.
 - **WEB-08D:** Web cliente para lectura/aceptación, agenda, evidencia y cierre.
-- WEB-08C/D y las pantallas siguen fuera de esta Build.
+- WEB-08D y su pantalla siguen fuera de esta Build.
 - Pagos, settlement, Mercado Pago y providers continúan fuera de alcance.
 
 ## Alcance de la Build
@@ -295,7 +298,7 @@ No incluido:
 - D1 o reset de base de datos;
 - activación de producción, proveedores o jobs;
 - traducción breaking de `listingId`, `calendarId` o `serviceId` en payloads existentes.
-- implementación de WEB-08C/D y cualquier UI de Trabajo/Presupuesto.
+- implementación de WEB-08D y su UI cliente de Trabajo/Presupuesto.
 
 ## Evidencia de implementación
 

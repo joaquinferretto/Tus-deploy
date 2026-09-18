@@ -4,19 +4,19 @@
 
 ## Estado de fases
 
-| Fase     | Estado                     | Evidencia                                                                                                                                 |
-| -------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| WEB-01   | Completada                 | Workspace Web preparado en `e263a39`.                                                                                                     |
-| WEB-02   | Completada                 | Mercado de servicios en `e9e72b2`.                                                                                                        |
-| WEB-03   | Completada                 | Compromisos de cliente en `a75497f`.                                                                                                      |
-| WEB-04   | Completada                 | Calendario y reservas Web en `d659e85`; mantiene flujo legacy.                                                                            |
-| WEB-04D1 | Schema/migración preparada | Modelo Prisma/DB y migración en `29e8977`; aplicación física al target pendiente.                                                         |
-| WEB-04D2 | Ajuste backend entregado   | Disponibilidad y reserva canónicas por `listingId`; base `5f56c84`, modalidades físicas y concurrencia alineadas.                         |
-| WEB-04D3 | Completada                 | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico.                                        |
-| WEB-05   | Completada                 | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider.                    |
-| WEB-06   | Completada                 | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider.                          |
-| WEB-07   | Completada                 | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda.            |
-| WEB-08   | WEB-08A/B completadas      | Modelo Prisma/DB, contracts, schemas, dominio, persistencia y rutas de Trabajo, Diagnostico, Presupuesto, aceptación y evidencia; sin UI. |
+| Fase     | Estado                     | Evidencia                                                                                                                      |
+| -------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| WEB-01   | Completada                 | Workspace Web preparado en `e263a39`.                                                                                          |
+| WEB-02   | Completada                 | Mercado de servicios en `e9e72b2`.                                                                                             |
+| WEB-03   | Completada                 | Compromisos de cliente en `a75497f`.                                                                                           |
+| WEB-04   | Completada                 | Calendario y reservas Web en `d659e85`; mantiene flujo legacy.                                                                 |
+| WEB-04D1 | Schema/migración preparada | Modelo Prisma/DB y migración en `29e8977`; aplicación física al target pendiente.                                              |
+| WEB-04D2 | Ajuste backend entregado   | Disponibilidad y reserva canónicas por `listingId`; base `5f56c84`, modalidades físicas y concurrencia alineadas.              |
+| WEB-04D3 | Completada                 | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico.                             |
+| WEB-05   | Completada                 | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider.         |
+| WEB-06   | Completada                 | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider.               |
+| WEB-07   | Completada                 | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda. |
+| WEB-08   | WEB-08A/B/C completadas    | Modelo/API de Trabajo y superficie de prestador para trabajos aceptados; WEB-08D cliente pendiente.                            |
 
 ## WEB-04D2 entregado
 
@@ -107,7 +107,7 @@ Evidencia de cierre WEB-07:
 
 ## WEB-08: auditoría y plan del ciclo de trabajo/presupuesto
 
-**Estado:** WEB-08A/B implementadas. No se agrega UI ni se habilitan pagos/providers.
+**Estado:** WEB-08A/B/C implementadas. No se habilitan pagos/providers.
 
 ### Gate de capacidad A/B/C
 
@@ -133,8 +133,8 @@ Publicacion -> CompromisoMercadoServicios -> Trabajo
 ```
 
 `BUDGET_REQUIRED` continúa bloqueando slots y reservas automáticas. Un checkout sin franja puede crear el compromiso de
-servicio para que el prestador inicie el flujo de Trabajo, sin fabricar una reserva ni ocupar capacidad. La Web no consume
-estas rutas hasta WEB-08C/D.
+servicio para que el prestador inicie el flujo de Trabajo, sin fabricar una reserva ni ocupar capacidad. WEB-08C consume estas
+rutas desde la superficie de prestador; WEB-08D permanece pendiente.
 
 ### Plan por unidades
 
@@ -143,12 +143,13 @@ estas rutas hasta WEB-08C/D.
 - **WEB-08B — API y persistencia:** completada con puertos, stores in-memory/Prisma, transacciones serializables,
   idempotencia, optimistic locking, autorización cliente/prestador y rutas para solicitud, diagnóstico, presupuesto,
   aceptación, evidencia y cierre.
-- **WEB-08C — Web prestador:** implementar solicitudes recibidas, diagnóstico, creación/envío de presupuesto y ciclo de
-  trabajo únicamente después de que WEB-08B entregue contratos verificables.
+- **WEB-08C — Web prestador:** completada con lista y detalle de trabajos aceptados, diagnóstico, presupuesto versionado,
+  evidencia y cierre contra API. No existe lectura HTTP provider-scoped de compromisos pendientes, por lo que no inventa una
+  bandeja de solicitudes y la aceptación requiere referencia autorizada.
 - **WEB-08D — Web cliente/integración:** mostrar presupuesto versionado, aceptación explícita, agenda/trabajo y evidencia
   únicamente con respuestas reales del API.
 
-WEB-08C y WEB-08D permanecen fuera de alcance. Pagos, settlement, Mercado Pago y providers permanecen fuera de alcance.
+WEB-08D permanece fuera de alcance. Pagos, settlement, Mercado Pago y providers permanecen fuera de alcance.
 
 ### Validación operativa posterior
 

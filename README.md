@@ -284,7 +284,7 @@ Esto permite ejecutar el mismo dominio con stores in-memory para tests o adapter
 | `/tus/operations`                 | Reporte operativo.                                                                    |
 | `/tus/pos`                        | POS Web: sesión real, operaciones idempotentes y estado verificable.                  |
 | `/tus/soporte`                    | Casos, evidencia y handoff gobernado sin prometer timeline o entrega WhatsApp.        |
-| `/tus/prestador`                  | Onboarding, listings y publicación del prestador con hechos del servidor.             |
+| `/tus/prestador`                  | Onboarding, listings y trabajo aceptado del prestador con hechos del servidor.        |
 
 ### Como trabaja el cliente
 
@@ -316,14 +316,15 @@ navegador. El handoff registra una decisión TUS y no confirma entrega WhatsApp,
 credenciales. Los endpoints actuales no exponen idempotencia para estas mutaciones; la Web evita retry automático.
 
 La superficie `/tus/prestador` usa onboarding, operaciones merchant, listings y publicación respaldados por TUS. Los permisos
-`tus:marketplace:read` y `tus:marketplace:write` controlan la lectura y las mutaciones. La Web permite ingresar facts de
-productos y servicios, pero no crea calendarios: aunque existe la mutación de calendario, no hay lectura owner-scoped para
-confirmar una agenda sin riesgo de duplicarla. Un servicio sin agenda activa permanece `not_configured` y no ofrece slots
-sintéticos.
+`tus:marketplace:read` y `tus:marketplace:write` controlan esas capacidades; `tus:work:read` y `tus:work:write` controlan el
+ciclo de trabajo. La Web permite ingresar facts de productos y servicios, pero no crea calendarios: aunque existe la mutación
+de calendario, no hay lectura owner-scoped para confirmar una agenda sin riesgo de duplicarla. Un servicio sin agenda activa
+permanece `not_configured` y no ofrece slots sintéticos.
 
-WEB-08B expone en la API el ciclo verificable de trabajo, diagnóstico, presupuesto versionado, aceptación explícita de la
-última versión vigente, evidencia y cierre. WhatsApp dispone de una confirmación de cotización limitada al canal, pero no reemplaza un presupuesto de servicio
-enlazado a publicación/compromiso. La Web aún no consume esas rutas ni agrega botones; WEB-08C/D queda documentado en
+WEB-08C conecta `/tus/prestador` al ciclo verificable de trabajo, diagnóstico, presupuesto versionado, evidencia y cierre.
+El prestador solo ve trabajos ya aceptados y puede aceptar un compromiso por referencia autorizada: la API no expone una
+bandeja provider-scoped de compromisos pendientes. WhatsApp dispone de una confirmación de cotización limitada al canal,
+pero no reemplaza un presupuesto de servicio enlazado a publicación/compromiso. WEB-08D queda documentado en
 `docs/ROADMAP_TUS.md`.
 
 ## API HTTP
