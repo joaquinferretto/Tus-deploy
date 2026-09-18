@@ -39,11 +39,18 @@ test('WEB-08B records a tenant-scoped budget workflow with replay, locking, audi
     let staleCode = ''
     try { await work.startWork({ ...provider, trabajoId: accepted.work.trabajoId, expectedVersion: decision.work.version - 1, idempotencyKey: 'start-stale', requestHash: 'hash-start-stale', createdAt: '2026-09-17T10:05:00.000Z' }) } catch (error) { staleCode = error instanceof TrabajoError ? error.code : 'unknown' }
     const started = await work.startWork({ ...provider, trabajoId: accepted.work.trabajoId, expectedVersion: decision.work.version, idempotencyKey: 'start-1', requestHash: 'hash-start-1', createdAt: '2026-09-17T10:05:00.000Z' })
+    let customerCancelCode = ''
+    try { await work.cancelWork({ ...customer, trabajoId: accepted.work.trabajoId, expectedVersion: started.work.version, idempotencyKey: 'cancel-customer', requestHash: 'hash-cancel-customer', createdAt: '2026-09-17T10:05:30.000Z' }) } catch (error) { customerCancelCode = error instanceof TrabajoError ? error.code : 'unknown' }
+    const cancellable = await work.acceptCommitment({ ...provider, commitment: { ...commitment, commitmentId: 'commitment-cancel', cartId: 'cart-cancel' }, publication, idempotencyKey: 'accept-cancel', requestHash: 'hash-accept-cancel', createdAt: '2026-09-17T10:05:30.000Z' })
+    const cancelled = await work.cancelWork({ ...provider, trabajoId: cancellable.work.trabajoId, expectedVersion: cancellable.work.version, idempotencyKey: 'cancel-provider', requestHash: 'hash-cancel-provider', createdAt: '2026-09-17T10:05:31.000Z' })
+    const cancelledReplay = await work.cancelWork({ ...provider, trabajoId: cancellable.work.trabajoId, expectedVersion: cancellable.work.version, idempotencyKey: 'cancel-provider', requestHash: 'hash-cancel-provider', createdAt: '2026-09-17T10:05:31.000Z' })
+    let terminalCancelCode = ''
+    try { await work.cancelWork({ ...provider, trabajoId: cancellable.work.trabajoId, expectedVersion: cancelled.work.version, idempotencyKey: 'cancel-terminal', requestHash: 'hash-cancel-terminal', createdAt: '2026-09-17T10:05:32.000Z' }) } catch (error) { terminalCancelCode = error instanceof TrabajoError ? error.code : 'unknown' }
     const completed = await work.completeWork({ ...provider, trabajoId: accepted.work.trabajoId, expectedVersion: started.work.version, idempotencyKey: 'complete-1', requestHash: 'hash-complete-1', createdAt: '2026-09-17T10:06:00.000Z' })
     const evidence = await work.recordEvidence({ ...provider, trabajoId: accepted.work.trabajoId, evidenceId: 'evidence-1', phase: 'completion', reference: 'storage://proof-1', metadata: { signed: true }, occurredAt: '2026-09-17T10:06:00.000Z', idempotencyKey: 'evidence-1', requestHash: 'hash-evidence-1', createdAt: '2026-09-17T10:06:00.000Z' })
     const detail = await work.getWork(customer, accepted.work.trabajoId)
     const snapshot = store.snapshot()
-    console.log(JSON.stringify({ accepted, replay: replay.status, diagnosis: confirmedDiagnosis.diagnosis.status, budget: budget.budget, decision, decisionReplay: decisionReplay.status, staleCode, started: started.work, completed: completed.work, evidence, detail, auditActions: [...snapshot.audits.values()].map((audit) => audit.action), outbox: outbox.list(customer.tenantId).map((event) => event.eventType) }))
+    console.log(JSON.stringify({ accepted, replay: replay.status, diagnosis: confirmedDiagnosis.diagnosis.status, budget: budget.budget, decision, decisionReplay: decisionReplay.status, staleCode, customerCancelCode, cancelled, cancelledReplay: cancelledReplay.status, terminalCancelCode, started: started.work, completed: completed.work, evidence, detail, auditActions: [...snapshot.audits.values()].map((audit) => audit.action), outbox: outbox.list(customer.tenantId).map((event) => event.eventType) }))
   `)
 
   assert.equal(result.accepted.work.budgetRequired, true)
@@ -55,6 +62,10 @@ test('WEB-08B records a tenant-scoped budget workflow with replay, locking, audi
   assert.equal(result.decision.work.acceptedBudgetVersion, 1)
   assert.equal(result.decisionReplay, 'replay')
   assert.equal(result.staleCode, 'VERSION_CONFLICT')
+  assert.equal(result.customerCancelCode, 'FORBIDDEN')
+  assert.equal(result.cancelled.work.status, 'cancelled')
+  assert.equal(result.cancelledReplay, 'replay')
+  assert.equal(result.terminalCancelCode, 'INVALID_STATE')
   assert.equal(result.completed.status, 'completed')
   assert.deepEqual(
     result.detail.transitions.map(({ version, status }) => ({ version, status })),

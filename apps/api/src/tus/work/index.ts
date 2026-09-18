@@ -737,6 +737,7 @@ export class ServicioTrabajo {
     requirePositiveInteger(input.expectedVersion, 'expectedVersion')
     return this.execute(input, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
+      ensureProvider(work, input)
       if (work.version !== input.expectedVersion)
         throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
       if (hasWorkStatus(work.status, [ESTADOS_TRABAJO.COMPLETADO, ESTADOS_TRABAJO.CANCELADO]))

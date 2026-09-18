@@ -331,6 +331,9 @@ WEB-08D agrega al cliente la lectura de Trabajo, diagnóstico, presupuesto versi
 TUS. Solo permite decidir la última versión vigente mediante las rutas idempotentes existentes; la agenda sigue siendo la
 franja mostrada por el compromiso relacionado, y no se afirma evidencia ni cierre de cliente sin endpoint del agregado.
 
+WEB-08E expone la cancelación temprana solo al prestador y únicamente sobre la transición TUS existente. El dominio valida
+ownership del tenant prestador y la superficie solicita confirmación; no crea un motivo, una agenda ni una ruta nueva.
+
 ## API HTTP
 
 ### Entrada del servidor

@@ -319,11 +319,11 @@ export function TrabajoPrestador({
     )
   }
 
-  async function transition(action: 'start' | 'complete'): Promise<void> {
+  async function transition(action: 'start' | 'complete' | 'cancel'): Promise<void> {
     const detail = detailState.detail
     if (!detail) return
     await runMutation(
-      `${action === 'start' ? 'Starting' : 'Completing'} the work in TUS.`,
+      `${action === 'start' ? 'Starting' : action === 'complete' ? 'Completing' : 'Cancelling'} the work in TUS.`,
       () =>
         createWorkIntent(`work-${action}`, {
           workId: detail.work.trabajoId,
@@ -337,7 +337,8 @@ export function TrabajoPrestador({
           ...intent,
         }
         if (action === 'start') await client().startWork(input)
-        else await client().completeWork(input)
+        else if (action === 'complete') await client().completeWork(input)
+        else await client().cancelWork(input)
         await refreshCurrentWork(detail.work.trabajoId)
       }
     )
@@ -401,6 +402,7 @@ export function TrabajoPrestador({
     (detail.work.budgetRequired
       ? detail.work.status === 'accepted'
       : ['requested', 'in_diagnosis', 'accepted'].includes(detail.work.status))
+  const canCancel = detail !== null && !['completed', 'cancelled'].includes(detail.work.status)
   const canDiagnose =
     detail !== null && !['in_progress', 'completed', 'cancelled'].includes(detail.work.status)
   const canBudget =
@@ -800,6 +802,20 @@ export function TrabajoPrestador({
                 type="button"
               >
                 Complete work
+              </TusActionButton>
+              <TusActionButton
+                disabled={!canWrite || !canCancel || mutationInFlight}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      'Cancel this work in TUS? This cannot be undone from the provider workspace.'
+                    )
+                  )
+                    void transition('cancel')
+                }}
+                type="button"
+              >
+                Cancel work
               </TusActionButton>
             </div>
           </section>

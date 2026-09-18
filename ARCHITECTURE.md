@@ -287,9 +287,11 @@ tarea. Esas evidencias no representan automáticamente evidencia de un trabajo d
    evidencia y cierre contra rutas verificables; no inventa una bandeja de compromisos pendientes.
 4. **WEB-08D:** completada: cliente consulta trabajo y detalle, decide presupuesto de forma idempotente y enlaza el
    compromiso para la agenda existente. No crea agenda, evidencia ni cierre cliente sin una ruta del agregado.
+5. **WEB-08E:** completada: el prestador cancela temprano contra la transición idempotente existente, con ownership de
+   prestador en dominio y confirmación explícita en Web.
 
-WEB-08C/D son las únicas unidades que pueden consumir estas rutas desde Web. Pagos, settlement y providers siguen fuera de
-esta frontera.
+WEB-08C/D/E son las únicas unidades que pueden consumir estas rutas desde Web. Pagos, settlement y providers siguen fuera
+de esta frontera.
 
 ## WEB-05: POS Web refinado
 

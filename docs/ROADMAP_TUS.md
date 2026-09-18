@@ -150,6 +150,9 @@ rutas desde la superficie de prestador; WEB-08D las consulta y decide presupuest
 - **WEB-08D — Web cliente/integración:** completada contra `GET /tus/v1/work`, detalle y decisión idempotente de presupuesto.
   La pantalla cliente muestra trabajo, diagnóstico, presupuestos/evidencia/historial y enlaza al compromiso existente para la
   franja ya expuesta por API. No crea agenda, evidencia ni cierre cliente: esas mutaciones no existen en el agregado cliente.
+- **WEB-08E — Cierre temprano prestador:** completada contra la transición `cancel` existente. La auditoría agregó la
+  verificación de tenant prestador que faltaba en el dominio; la Web solicita confirmación antes de cancelar y no inventa
+  razón, endpoint ni contexto adicional.
 
 Pagos, settlement, Mercado Pago y providers permanecen fuera de alcance.
 

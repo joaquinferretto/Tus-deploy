@@ -47,6 +47,7 @@ test('WEB-08C uses the canonical work API without putting authority fields in mu
     await client.recordWorkEvidence({ ...context, workId: 'work/1', evidenceId: 'evidence-1', phase: 'execution', reference: 'record-1', metadata: { note: 'checked' }, occurredAt: '2026-09-17T10:00:00.000Z', ...intent })
     await client.startWork({ ...context, workId: 'work/1', expectedVersion: 3, ...intent })
     await client.completeWork({ ...context, workId: 'work/1', expectedVersion: 4, ...intent })
+    await client.cancelWork({ ...context, workId: 'work/1', expectedVersion: 5, ...intent })
     const opaqueIntent = await createWorkIntent('diagnosis', { workId: 'work/1', description: 'private diagnosis' })
     console.log(JSON.stringify({ calls, opaqueIntent }))
   `)
@@ -65,6 +66,7 @@ test('WEB-08C uses the canonical work API without putting authority fields in mu
       { method: 'POST', path: '/tus/v1/work/work%2F1/evidence' },
       { method: 'POST', path: '/tus/v1/work/work%2F1/start' },
       { method: 'POST', path: '/tus/v1/work/work%2F1/complete' },
+      { method: 'POST', path: '/tus/v1/work/work%2F1/cancel' },
     ]
   )
   for (const call of result.calls.filter((call) => call.method === 'POST')) {
@@ -109,6 +111,9 @@ test('WEB-08C renders server-owned work states, history, conflicts, and supporte
   assert.match(source, /showValidationError/)
   assert.match(source, /mutationInFlight/)
   assert.match(source, /const canStart/)
+  assert.match(source, /const canCancel/)
+  assert.match(source, /Cancel work/)
+  assert.match(source, /window\.confirm/)
   assert.match(source, /\['requested', 'in_diagnosis', 'accepted'\]/)
   assert.match(source, /TUS confirmed the work mutation/)
   assert.doesNotMatch(source, /acceptWorkBudget|rejectWorkBudget/)

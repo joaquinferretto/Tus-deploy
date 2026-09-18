@@ -278,6 +278,8 @@ superficie de prestador y WEB-08D expone lectura/decisión cliente sin reconstru
   pendientes; la Web no inventa esa lista y acepta solo una referencia obtenida por un flujo autorizado.
 - **WEB-08D:** completada: Web cliente lee trabajo, diagnóstico, presupuestos/evidencia/historial y decide la última versión
   vigente. Enlaza al compromiso existente para agenda; no inventa una agenda ni mutaciones cliente de evidencia/cierre.
+- **WEB-08E:** completada: el cierre temprano usa `POST /tus/v1/work/:workId/cancel`, idempotencia y versión existentes. La
+  transición exige ownership de prestador y la Web confirma la intención; no se inventa motivo ni una API nueva.
 - Pagos, settlement, Mercado Pago y providers continúan fuera de alcance.
 
 ## Alcance de la Build
