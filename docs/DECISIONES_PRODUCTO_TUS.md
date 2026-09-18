@@ -1,7 +1,8 @@
 # Decisiones de producto TUS
 
 > **Fuente canonica de decisiones.** Una Build no puede introducir una decision de arquitectura, producto o
-> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-17. Builds `WEB-08A`, `WEB-08B` y `WEB-08C` implementadas.
+> dominio sin registrarla aqui. Ultima actualizacion: 2026-09-18. Builds `WEB-08A`, `WEB-08B`, `WEB-08C`, `WEB-08D` y
+> `WEB-08E` implementadas. La auditoria WEB-09 esta en `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
 > Commit de referencia documental: `ba8db98`.
 
 ## WEB-04D2: disponibilidad y reservas por Publicacion
@@ -281,6 +282,22 @@ superficie de prestador y WEB-08D expone lectura/decisión cliente sin reconstru
 - **WEB-08E:** completada: el cierre temprano usa `POST /tus/v1/work/:workId/cancel`, idempotencia y versión existentes. La
   transición exige ownership de prestador y la Web confirma la intención; no se inventa motivo ni una API nueva.
 - Pagos, settlement, Mercado Pago y providers continúan fuera de alcance.
+
+## WEB-09: auditoria de capacidades sin activacion operativa
+
+**Estado:** auditada; no habilita nuevos providers, cobros, payouts ni integraciones de producto.
+
+- Marketplace solo aprueba los cohorts `beauty-personal-care` y `repairs-trades` para Stage 1.
+- Recomendaciones permanece como capacidad neutral P4.12; su ranking local es deterministicamente testeable y Bedrock sigue
+  gated por credenciales, region, cuota y evidencia de conformance.
+- Tenancy expone memberships. Billing tiene contratos, servicio y persistencia, pero no forma parte de la composicion HTTP de
+  `TusApplicationService` ni reclama un flujo Web de suscripcion.
+- Mercado Pago tiene adapter y contratos de webhook/payment intent, pero la composicion Prisma usa el provider no disponible y
+  las acciones de provider se habilitan solo con flag, adapter y gates.
+- Settlement conserva payment intents en estado `held` y bloquea release hasta pasar gates financieros y de custodia; no hay
+  transporte de jobs de payout productivo habilitado.
+
+La matriz de evidencia y los criterios para una futura activacion estan en `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
 
 ## Alcance de la Build
 

@@ -1,7 +1,8 @@
 # Roadmap de TUS
 
-> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-18. Builds `WEB-08A`, `WEB-08B`, `WEB-08C` y `WEB-08D`
-> implementadas dentro de sus límites de API; no se activan pagos ni providers.
+> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-18. Builds `WEB-08A`, `WEB-08B`, `WEB-08C`, `WEB-08D` y
+> `WEB-08E` implementadas dentro de sus limites de API; no se activan pagos ni providers. La auditoria WEB-09 queda documentada
+> en `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
 
 ## Estado de fases
 
@@ -17,7 +18,7 @@
 | WEB-05   | Completada                 | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider.         |
 | WEB-06   | Completada                 | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider.               |
 | WEB-07   | Completada                 | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda. |
-| WEB-08   | WEB-08A/B/C/D completadas  | Modelo/API de Trabajo, superficie prestador y cliente para lectura/decisión de presupuesto sin inventar agenda ni cierre.      |
+| WEB-08   | WEB-08A/B/C/D/E completadas | Modelo/API de Trabajo, superficies prestador y cliente para presupuesto y cancelacion temprana sin inventar agenda ni cierre. |
 
 ## WEB-04D2 entregado
 
@@ -154,7 +155,23 @@ rutas desde la superficie de prestador; WEB-08D las consulta y decide presupuest
   verificación de tenant prestador que faltaba en el dominio; la Web solicita confirmación antes de cancelar y no inventa
   razón, endpoint ni contexto adicional.
 
-Pagos, settlement, Mercado Pago y providers permanecen fuera de alcance.
+## WEB-09 — auditoria de capacidades de producto
+
+La auditoria de producto no habilita capacidades nuevas. El estado verificable es:
+
+- Marketplace: los cohorts de Stage 1 son `beauty-personal-care` y `repairs-trades`; el catalogo y el checkout canónicos
+  estan disponibles dentro de sus gates.
+- Recomendaciones: P4.12 es un contrato neutral con ranking local determinista y puerto Bedrock; no esta conectado al
+  marketplace ni reclama ejecucion AWS.
+- Tenancy y billing: memberships tienen rutas HTTP; billing contiene modelos, servicio y persistencia Prisma, pero no esta
+  expuesto por `TusApplicationService` ni por rutas HTTP de producto.
+- Pagos: existen contratos, payment intents, webhooks y settlement. La composicion Prisma inyecta
+  `UnavailableMercadoPagoFinanceProvider`; las rutas provider requieren `TUS_PROVIDER_ACTIONS_ENABLED=true` y un adapter.
+- Settlement: release permanece bloqueado por gates financieros/custodia y por la ausencia de un transporte de jobs activo.
+
+Evidencia, activacion requerida y limites estan registrados en `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
+
+Pagos, settlement, Mercado Pago y providers permanecen fuera de alcance operativo.
 
 ### Validación operativa posterior
 
