@@ -457,6 +457,97 @@ export interface ResumenFinancieroTrabajoServicio {
   commission?: { rateBps: number; ruleVersion: string } | null
 }
 
+// WEB-09D: a service is paid once the work is `completed`, and only for the accepted budget.
+// The preview is read-only and server-derived: the Web never sends an amount.
+export const MOTIVOS_NO_COBRABLE_SERVICIO = ['WORK_CANCELLED', 'WORK_NOT_COMPLETED', 'BUDGET_REQUIRED', 'BUDGET_INCONSISTENT', 'INCONSISTENT_COMMERCIAL_CHAIN', 'ALREADY_PAID', 'OBLIGATION_CLOSED'] as const
+export type MotivoNoCobrableServicio = (typeof MOTIVOS_NO_COBRABLE_SERVICIO)[number]
+export const MOTIVOS_PAGO_NO_DISPONIBLE = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PSP_FEE_POLICY_UNDECIDED', 'PROVIDER_ACCOUNT_NOT_CONNECTED'] as const
+export type MotivoPagoNoDisponible = (typeof MOTIVOS_PAGO_NO_DISPONIBLE)[number]
+export type EstadoPagoVistaPrevia = 'not_started' | EstadoProveedorPagoServicio
+
+export interface VistaPreviaPagoServicio {
+  contractVersion: TusContractVersion
+  workId: string
+  workStatus: EstadoTrabajo
+  publicacionId: string
+  serviceName: string | null
+  prestadorId: string
+  budget: { budgetId: string; version: number; totalMinor: string; currency: string } | null
+  amountMinor: string | null
+  currency: string | null
+  payable: boolean
+  notPayableReason: MotivoNoCobrableServicio | null
+  obligation: { obligacionId: string; status: EstadoObligacionPagoServicio } | null
+  paymentStatus: EstadoPagoVistaPrevia
+  latestPaymentId: string | null
+  provider: 'mercado-pago'
+  paymentAvailable: boolean
+  unavailableReason: MotivoNoCobrableServicio | MotivoPagoNoDisponible | null
+}
+
+export function validarVistaPreviaPagoServicio(value: unknown): VistaPreviaPagoServicio {
+  if (!isRecord(value)) throw new ContractValidationError('tus-service-payment-preview', undefined, 'payload must be an object')
+  assertTusVersion('tus-service-payment-preview', value['contractVersion'])
+  const amountOk = value['amountMinor'] === null ? value['currency'] === null : isMinorAmount(value['amountMinor']) && /^[A-Z]{3}$/.test(String(value['currency']))
+  const reasonOk = value['unavailableReason'] === null || [...MOTIVOS_NO_COBRABLE_SERVICIO, ...MOTIVOS_PAGO_NO_DISPONIBLE].includes(value['unavailableReason'] as MotivoPagoNoDisponible)
+  if (typeof value['workId'] !== 'string' || !amountOk || !reasonOk || typeof value['payable'] !== 'boolean' || typeof value['paymentAvailable'] !== 'boolean' || (value['paymentAvailable'] === true && (value['payable'] !== true || value['unavailableReason'] !== null)) || (value['payable'] === true && value['amountMinor'] === null)) {
+    throw new ContractValidationError('tus-service-payment-preview', TUS_CONTRACT_VERSION, 'payment preview is inconsistent')
+  }
+  return value as unknown as VistaPreviaPagoServicio
+}
+
+// Commission policy: basis points (1000 bp = 10%), versioned and append-only. 0 <= rate <= 3000
+// keeps the provider net positive before any PSP fee. `pspFeeBearer` stays `undetermined`
+// until the business decides who absorbs the payment provider fee; payments stay off meanwhile.
+export const COMISION_SERVICIO_MAXIMA_BPS = 3000
+export const ALCANCES_POLITICA_COMISION = ['global', 'categoria', 'prestador'] as const
+export type AlcancePoliticaComision = (typeof ALCANCES_POLITICA_COMISION)[number]
+export const RESPONSABLES_FEE_PSP = ['undetermined', 'provider', 'platform'] as const
+export type ResponsableFeePsp = (typeof RESPONSABLES_FEE_PSP)[number]
+
+export interface PoliticaComisionServicio {
+  contractVersion: TusContractVersion
+  politicaId: string
+  scope: AlcancePoliticaComision
+  scopeRef: string | null
+  version: number
+  rateBps: number
+  ruleVersion: string
+  pspFeeBearer: ResponsableFeePsp
+  reason: string
+  actorId: string
+  createdAt: string
+}
+
+export interface ConfiguracionPagosServicio {
+  contractVersion: TusContractVersion
+  configuracionId: string
+  version: number
+  paymentsEnabled: boolean
+  provider: 'mercado-pago'
+  currency: string
+  reason: string
+  actorId: string
+  createdAt: string
+}
+
+export const ESTADOS_CUENTA_COBRO = ['not_connected', 'connected', 'revoked', 'expired', 'error'] as const
+export type EstadoCuentaCobro = (typeof ESTADOS_CUENTA_COBRO)[number]
+
+// Provider (prestador) Mercado Pago link. Only safe references travel; tokens never do.
+export interface CuentaCobroPrestador {
+  contractVersion: TusContractVersion
+  prestadorTenantId: string
+  provider: 'mercado-pago'
+  status: EstadoCuentaCobro
+  externalAccountId: string | null
+  liveMode: boolean | null
+  scopes: string[]
+  connectedAt: string | null
+  expiresAt: string | null
+  updatedAt: string | null
+}
+
 function isMinorAmount(value: unknown): value is string {
   return typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
 }

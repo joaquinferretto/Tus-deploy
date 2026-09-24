@@ -56,4 +56,15 @@ export const SERVICE_SETUP = `
     const budget = await work.createBudget({ ...provider, trabajoId, currency, scope: 'scope', totalMinor, lines: [{ lineId: 'l1', description: 'labour', quantity: 1, unitAmountMinor: totalMinor, totalAmountMinor: totalMinor }], idempotencyKey: 'budget-' + trabajoId, requestHash: 'h-budget-' + trabajoId, createdAt: '2026-09-23T09:33:00.000Z' })
     return work.decideBudget({ ...customer, trabajoId, presupuestoId: budget.budget.presupuestoId, presupuestoVersion: budget.budget.version, decision: 'accepted', idempotencyKey: 'decide-' + trabajoId, requestHash: 'h-decide-' + trabajoId, createdAt: '2026-09-23T09:34:00.000Z' })
   }
+  async function finishWork(trabajoId) {
+    const current = (await work.getWork(provider, trabajoId)).work
+    const started = await work.startWork({ ...provider, trabajoId, expectedVersion: current.version, idempotencyKey: 'start-' + trabajoId, requestHash: 'h-start-' + trabajoId, createdAt: '2026-09-23T09:35:00.000Z' })
+    return (await work.completeWork({ ...provider, trabajoId, expectedVersion: started.work.version, idempotencyKey: 'complete-' + trabajoId, requestHash: 'h-complete-' + trabajoId, createdAt: '2026-09-23T09:36:00.000Z' })).work
+  }
+  // WEB-09D: a service is payable only when completed with an accepted budget.
+  async function payableWork(id, totalMinor = '150000', listingOverrides = {}) {
+    const service = await serviceWork(id, { priceMode: 'requires_budget', bookingMode: 'requiere_presupuesto', ...listingOverrides })
+    await acceptBudget(service.work.trabajoId, totalMinor)
+    return { ...service, work: await finishWork(service.work.trabajoId) }
+  }
 `

@@ -355,6 +355,75 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     try { response.status(200).json(await application.serviceFinance.consultarFinanzasTrabajo({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '' })) } catch (error) { sendServiceFinanceError(response, error) }
   })
 
+  // WEB-09D: read-only payment preview for the customer of a work. Never writes: no obligation,
+  // intent, audit or outbox is created by reading it. The provider receives 403, others 404.
+  router.get(['/tus/work/:workId/payment-preview', '/tus/v1/trabajos/:workId/pago/vista-previa', '/tus/v1/work/:workId/payment-preview'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasAnyPermission(context, ['tus:checkout', 'tus:work:accept', 'tus:work:read']) || hasSpoofedAuthority({}, request, context) || !application.serviceFinance) { sendError(response, 403, 'FORBIDDEN', 'TUS payment preview is not authorized'); return }
+    try { response.status(200).json(await application.serviceFinance.consultarVistaPreviaPago({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '' })) } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  // WEB-09D: provider (prestador) Mercado Pago account link. Tokens never leave the server.
+  router.get(['/tus/v1/provider/payment-account', '/tus/v1/prestador/cuenta-cobro'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasPermission(context, 'tus:marketplace:write') || hasSpoofedAuthority({}, request, context) || !application.servicePayments) { sendError(response, 403, 'FORBIDDEN', 'TUS payment account access is not authorized'); return }
+    try { response.status(200).json(await application.servicePayments.cuentas.estadoCuenta({ tenantId: context.tenantId })) } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  router.post(['/tus/v1/provider/payment-account/mercado-pago/connect', '/tus/v1/prestador/cuenta-cobro/mercado-pago/conectar'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasPermission(context, 'tus:marketplace:write') || hasSpoofedAuthority(asRecord(request.body), request, context) || !application.servicePayments) { sendError(response, 403, 'FORBIDDEN', 'TUS payment account linking is not authorized'); return }
+    try { response.status(201).json(await application.servicePayments.cuentas.iniciarConexion({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId })) } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  router.post(['/tus/v1/provider/payment-account/disconnect', '/tus/v1/prestador/cuenta-cobro/desconectar'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasPermission(context, 'tus:marketplace:write') || hasSpoofedAuthority(asRecord(request.body), request, context) || !application.servicePayments) { sendError(response, 403, 'FORBIDDEN', 'TUS payment account linking is not authorized'); return }
+    try { response.status(200).json(await application.servicePayments.cuentas.desconectar({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId })) } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  // Mercado Pago redirects the provider's browser here. No session: authority is the single-use
+  // state bound to the tenant that started the link. The response is always a redirect (or 503).
+  router.get(['/tus/v1/integrations/mercado-pago/oauth/callback'], async (request: Request, response: Response) => {
+    if (!application.servicePayments) { sendError(response, 503, 'PROVIDER_NOT_CONFIGURED', 'Mercado Pago account linking is not configured'); return }
+    const result = await application.servicePayments.cuentas.completarConexion({ code: readQueryString(request.query['code']), state: readQueryString(request.query['state']), correlationId: readHeader(request, 'x-correlation-id') || `oauth-callback-${Date.now()}` })
+    if (!result.redirectUrl) { sendError(response, 503, 'PROVIDER_NOT_CONFIGURED', 'Mercado Pago account linking is not configured'); return }
+    response.setHeader('cache-control', 'no-store')
+    response.redirect(303, result.redirectUrl)
+  })
+
+  // WEB-09D platform administration. Requires `tus:payments:admin` AND the platform tenant
+  // configured in TUS_PLATFORM_ADMIN_TENANT_ID; without that variable every call is 403.
+  router.get(['/tus/v1/admin/payments/status'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!isPlatformPaymentsAdmin(context, application)) { sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized'); return }
+    try { response.status(200).json(await application.servicePayments!.configuracion.estado()) } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  router.get(['/tus/v1/admin/payments/configuration'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!isPlatformPaymentsAdmin(context, application)) { sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized'); return }
+    try { response.status(200).json(await application.servicePayments!.configuracion.configuracionActual()) } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  router.post(['/tus/v1/admin/payments/configuration'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!isPlatformPaymentsAdmin(context, application) || hasSpoofedAuthority(asRecord(request.body), request, context!)) { sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized'); return }
+    try { response.status(201).json(await application.servicePayments!.configuracion.registrarConfiguracion({ actorId: context!.subjectId, correlationId: context!.correlationId }, asRecord(request.body))) } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  router.get(['/tus/v1/admin/payments/commission-policies'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!isPlatformPaymentsAdmin(context, application)) { sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized'); return }
+    try { response.status(200).json({ policies: await application.servicePayments!.configuracion.listarPoliticas() }) } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  router.post(['/tus/v1/admin/payments/commission-policies'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!isPlatformPaymentsAdmin(context, application) || hasSpoofedAuthority(asRecord(request.body), request, context!)) { sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized'); return }
+    try { response.status(201).json(await application.servicePayments!.configuracion.registrarPolitica({ actorId: context!.subjectId, correlationId: context!.correlationId }, asRecord(request.body))) } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
   router.post(['/tus/marketplace/onboarding', '/tus/v1/mercado-servicios/onboarding', '/tus/v1/marketplace/onboarding'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !hasPermission(context, 'tus:marketplace:write')) {
@@ -1443,6 +1512,11 @@ function sendReportingError(response: Response, error: unknown): void {
 }
 
 const SERVICE_PAYMENT_AUTHORITY_FIELDS = ['amount', 'amountMinor', 'currency', 'status', 'providerStatus', 'providerReference', 'approvedAt', 'commissionMinor', 'netMinor', 'obligacionId', 'clienteId', 'prestadorTenantId', 'createdAt'] as const
+
+function isPlatformPaymentsAdmin(context: TusAuthenticatedTenantContext | null, application: TusApplicationService): boolean {
+  const adminTenantId = application.servicePayments?.platformAdminTenantId
+  return Boolean(context && adminTenantId && context.tenantId === adminTenantId && hasPermission(context, 'tus:payments:admin'))
+}
 
 function sendServiceFinanceError(response: Response, error: unknown): void {
   if (error instanceof ErrorFinanzasServicio) {

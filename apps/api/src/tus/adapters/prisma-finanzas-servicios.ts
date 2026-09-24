@@ -125,6 +125,8 @@ export class IdentidadServicioPrisma implements PuertoIdentidadServicio {
       prestadorId: texto(row, 'prestadorId'),
       kind: texto(row, 'tipo'),
       priceMode: textoNullable(row, 'modalidadPrecio'),
+      nombre: textoNullable(row, 'nombre'),
+      categoria: textoNullable(row, 'cohorte'),
     }
   }
 
@@ -434,6 +436,12 @@ export class ComisionesServicioPrisma implements PuertoComisionesServicio {
       providerReference: texto(row, 'referenciaProveedor'),
       evidenceId: texto(row, 'evidenciaId'),
       createdAt: fecha(row, 'fechaCreacion'),
+      politicaId: textoNullable(row, 'politicaComisionId'),
+      pspFeeMinor:
+        row['comisionProveedorPago'] == null ? null : parseMinorUnits(row['comisionProveedorPago']),
+      pspFeeBearer: (textoNullable(row, 'feeProveedorACargo') ??
+        'undetermined') as InstantaneaComisionServicio['pspFeeBearer'],
+      providerNetMinor: row['netoPrestador'] == null ? null : parseMinorUnits(row['netoPrestador']),
     }
   }
 
@@ -459,6 +467,10 @@ export class ComisionesServicioPrisma implements PuertoComisionesServicio {
         evidenciaId: snapshot.evidenceId,
         estadoContable: 'held',
         fechaCreacion: new Date(snapshot.createdAt),
+        politicaComisionId: snapshot.politicaId,
+        comisionProveedorPago: snapshot.pspFeeMinor,
+        feeProveedorACargo: snapshot.pspFeeBearer,
+        netoPrestador: snapshot.providerNetMinor,
       }),
     })
   }

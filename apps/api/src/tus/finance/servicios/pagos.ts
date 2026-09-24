@@ -91,6 +91,8 @@ export interface EventoPagoNormalizado {
   amountMinor: bigint
   currency: string
   occurredAt: string
+  // WEB-09D: PSP fee reported by the provider for an approval (exact minor units), if any.
+  pspFeeMinor?: bigint | null
 }
 
 export interface EntradaEventoProveedor {
@@ -217,6 +219,10 @@ export class ProveedorPagosServicioDeterminista implements PuertoProveedorPagosS
       status: MAPA_ESTADOS_FAKE[rawStatus] ?? 'unknown',
       amountMinor: majorDecimalToMinorUnits(String(data['transaction_amount'] ?? ''), currency),
       currency,
+      pspFeeMinor:
+        data['fee_amount'] === undefined
+          ? null
+          : majorDecimalToMinorUnits(String(data['fee_amount']), currency),
       occurredAt: new Date(occurredAt).toISOString(),
     }
   }

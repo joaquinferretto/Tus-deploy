@@ -35,6 +35,10 @@ import { PrismaTusFinanceStore, type ClientePrismaFinanzas } from '../finance/pr
 import { ServicioFinanzasServicios } from '../finance/servicios/servicio.ts'
 import { AlmacenFinanzasServicioEnMemoria, IdentidadServicioEnMemoria, TransaccionFinanzasServicioEnMemoria } from '../finance/servicios/memoria.ts'
 import { TransaccionFinanzasServicioPrisma, type ClientePrismaFinanzasServicio } from '../adapters/prisma-finanzas-servicios.ts'
+import { AlmacenConfiguracionPagosEnMemoria } from '../finance/servicios/configuracion.ts'
+import { AlmacenCuentasCobroEnMemoria } from '../finance/servicios/cuentas-cobro.ts'
+import { crearModuloPagosServicio } from '../finance/servicios/composicion-pagos.ts'
+import { ConfiguracionPagosPrisma, CuentasCobroPrisma, type ClientePrismaConfiguracionPagos } from '../adapters/prisma-configuracion-pagos.ts'
 import { InMemoryDeliveryStore, TusDeliveryService } from '../delivery/index.ts'
 import { InMemoryPosStore, TusPosService } from '../pos/index.ts'
 import { PrismaDeliveryStore, PrismaPosStore } from '../adapters/delivery-pos.ts'
@@ -93,9 +97,15 @@ export function createTusApplication(
     await calendarStore.bookings.save({ ...booking, status: 'cancelled', version: booking.version + 1, updatedAt })
     return true
   }) }, reservationSerializer), options.now)
+  // In-memory composition never reads process.env: payments stay unavailable unless a test
+  // injects its own module. The preview still works.
+  const servicePayments = crearModuloPagosServicio({ env: {}, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: options.now })
   const serviceFinance = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore)),
-    options.now
+    options.now,
+    undefined,
+    undefined,
+    servicePayments.politica
   )
   return new TusApplicationService({
     commitments,
@@ -114,11 +124,12 @@ export function createTusApplication(
     reporting,
     work,
     serviceFinance,
+    servicePayments,
     ...options,
   })
 }
 
-export function createPrismaTusApplication(client: TusPrismaClient): TusApplicationService {
+export function createPrismaTusApplication(client: TusPrismaClient, env: Record<string, string | undefined> = process.env): TusApplicationService {
   const evaluadorHabilitacion = new EvaluadorHabilitacion(new AlmacenPrismaEvidenciaHabilitacion(client))
   const marketplaceStore = new PrismaMarketplaceStore(client)
   const calendar = new ServiceCalendarService(new PrismaServiceCalendarStore(client))
@@ -135,7 +146,10 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
   const whatsapp = new TusWhatsAppService({ store: new PrismaWhatsAppActionStore(client as never), evaluadorHabilitacion })
   const reporting = new TusReportingService({ store: new PrismaReportingStore(client as never) })
   const work = new ServicioTrabajo(new PrismaTrabajoTransaction(client), () => Date.now())
-  const serviceFinance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio))
+  const paymentsClient = client as unknown as ClientePrismaConfiguracionPagos
+  const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient) })
+  // The provider port stays `ProveedorPagosServicioNoDisponible` until WEB-09E exists.
+  const serviceFinance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio), () => Date.now(), undefined, undefined, servicePayments.politica)
   return new TusApplicationService({
     commitments: commitmentStore,
     compensations: new PrismaTusCompensationStore(client),
@@ -158,6 +172,7 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
     reporting,
     work,
     serviceFinance,
+    servicePayments,
     evaluadorHabilitacion,
     perfilHabilitacion: 'native-local',
     alcanceHabilitacion: 'argentina-stage-1',

@@ -1,4 +1,5 @@
 import {
+  COMISION_SERVICIO_MAXIMA_BPS,
   TUS_CONTRACT_VERSION,
   calculateBasisPointsAmount,
   formatMinorUnits,
@@ -7,6 +8,7 @@ import {
   type EstadoLiquidacionServicio,
   type HallazgoConciliacionServicio,
   type LiquidacionServicio,
+  type ResponsableFeePsp,
 } from '@factory/contracts'
 import { ErrorFinanzasServicio, type ObligacionServicio } from './modelo.ts'
 import type { IntencionPagoServicioDominio } from './pagos.ts'
@@ -17,6 +19,9 @@ import type { IntencionPagoServicioDominio } from './pagos.ts'
 export interface ReglaComisionServicio {
   rateBps: number
   ruleVersion: string
+  // WEB-09D: persisted policy id and who absorbs the PSP fee (absent on the legacy default).
+  politicaId?: string | null
+  pspFeeBearer?: ResponsableFeePsp
 }
 
 // Existing TUS rule (`TusFinanceService` default); no new commercial decision is introduced.
@@ -34,11 +39,17 @@ export interface InstantaneaComisionServicio {
   rateBps: number
   ruleVersion: string
   commissionMinor: bigint
+  // Gross minus TUS commission: what TUS owes the provider before any PSP fee.
   netMinor: bigint
   currency: string
   providerReference: string
   evidenceId: string
   createdAt: string
+  // WEB-09D snapshot of the policy and the PSP fee, never recalculated afterwards.
+  politicaId: string | null
+  pspFeeMinor: bigint | null
+  pspFeeBearer: ResponsableFeePsp
+  providerNetMinor: bigint | null
 }
 
 export type TipoMovimientoServicio =
@@ -83,6 +94,7 @@ export function calcularInstantaneaComision(input: {
   rule: ReglaComisionServicio
   evidenceId: string
   now: string
+  pspFeeMinor?: bigint | null
 }): InstantaneaComisionServicio {
   const { obligation, intent, rule } = input
   if (intent.amountMinor !== obligation.amountMinor || intent.currency !== obligation.currency)
@@ -97,10 +109,15 @@ export function calcularInstantaneaComision(input: {
       'PROVIDER_REFERENCE_REQUIRED',
       'commission requires a provider reference'
     )
-  const commissionMinor = calculateBasisPointsAmount(obligation.amountMinor, rule.rateBps)
+  const desglose = calcularDesgloseCobro({
+    grossMinor: obligation.amountMinor,
+    rateBps: rule.rateBps,
+    pspFeeBearer: rule.pspFeeBearer ?? 'undetermined',
+    pspFeeMinor: input.pspFeeMinor ?? null,
+  })
   const net = subtractMoney(
     { currency: obligation.currency, minor: obligation.amountMinor },
-    { currency: obligation.currency, minor: commissionMinor }
+    { currency: obligation.currency, minor: desglose.commissionMinor }
   )
   return {
     snapshotId: `comision-${obligation.obligacionId}`,
@@ -110,12 +127,76 @@ export function calcularInstantaneaComision(input: {
     commissionableBaseMinor: obligation.amountMinor,
     rateBps: rule.rateBps,
     ruleVersion: rule.ruleVersion,
-    commissionMinor,
+    commissionMinor: desglose.commissionMinor,
     netMinor: net.minor,
     currency: obligation.currency,
     providerReference: intent.providerReference,
     evidenceId: input.evidenceId,
     createdAt: input.now,
+    politicaId: rule.politicaId ?? null,
+    pspFeeMinor: desglose.pspFeeMinor,
+    pspFeeBearer: desglose.pspFeeBearer,
+    providerNetMinor: desglose.providerNetMinor,
+  }
+}
+
+export function validarTasaComision(rateBps: unknown): number {
+  if (
+    typeof rateBps !== 'number' ||
+    !Number.isSafeInteger(rateBps) ||
+    rateBps < 0 ||
+    rateBps > COMISION_SERVICIO_MAXIMA_BPS
+  )
+    throw new ErrorFinanzasServicio(
+      400,
+      'INVALID_COMMISSION',
+      `rateBps must be an integer between 0 and ${COMISION_SERVICIO_MAXIMA_BPS}`
+    )
+  return rateBps
+}
+
+// WEB-09D breakdown of one payment. The PSP fee is recorded separately and only reduces the
+// provider net when the policy says the provider bears it. Never negative, never a float.
+export interface DesgloseCobroServicio {
+  grossMinor: bigint
+  commissionMinor: bigint
+  pspFeeMinor: bigint | null
+  pspFeeBearer: ResponsableFeePsp
+  providerNetMinor: bigint | null
+}
+
+export function calcularDesgloseCobro(input: {
+  grossMinor: bigint
+  rateBps: number
+  pspFeeBearer: ResponsableFeePsp
+  pspFeeMinor: bigint | null
+}): DesgloseCobroServicio {
+  if (typeof input.grossMinor !== 'bigint' || input.grossMinor < 0n)
+    throw new ErrorFinanzasServicio(
+      409,
+      'INVALID_AMOUNT',
+      'gross amount must be a non-negative bigint'
+    )
+  const rateBps = validarTasaComision(input.rateBps)
+  if (
+    input.pspFeeMinor !== null &&
+    (typeof input.pspFeeMinor !== 'bigint' || input.pspFeeMinor < 0n)
+  )
+    throw new ErrorFinanzasServicio(409, 'INVALID_AMOUNT', 'PSP fee must be a non-negative bigint')
+  const commissionMinor = calculateBasisPointsAmount(input.grossMinor, rateBps)
+  const baseNet = input.grossMinor - commissionMinor
+  let providerNetMinor: bigint | null = baseNet
+  if (input.pspFeeBearer === 'provider')
+    providerNetMinor = input.pspFeeMinor === null ? null : baseNet - input.pspFeeMinor
+  if (input.pspFeeBearer === 'undetermined') providerNetMinor = null
+  if (providerNetMinor !== null && providerNetMinor < 0n)
+    throw new ErrorFinanzasServicio(409, 'NEGATIVE_NET', 'provider net would be negative')
+  return {
+    grossMinor: input.grossMinor,
+    commissionMinor,
+    pspFeeMinor: input.pspFeeMinor,
+    pspFeeBearer: input.pspFeeBearer,
+    providerNetMinor,
   }
 }
 

@@ -54,6 +54,9 @@ export interface PublicacionServicioFinanciera {
   prestadorId: string
   kind: string
   priceMode: string | null
+  // WEB-09D display name and category (commission policy scope); optional for legacy callers.
+  nombre?: string | null
+  categoria?: string | null
 }
 
 export interface PresupuestoFinanciero {

@@ -4,7 +4,8 @@ import { test } from 'node:test'
 import { join } from 'node:path'
 import { SERVICE_SETUP, root, runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
 
-// Builds a paid service: fixed price, intent, dispatch and a verified approval event.
+// Builds a paid service: completed work with an accepted budget, intent, dispatch and a
+// verified approval event (WEB-09D: services are paid only after completion).
 const PAID_SERVICE = `
   function providerEvent(id, payment, status, amount, date, overrides = {}) {
     const rawBody = JSON.stringify({ id, type: 'payment', data: { id: 'fake-mp-' + payment.paymentId, external_reference: payment.paymentId, status, transaction_amount: amount, currency_id: 'ARS', date_last_updated: date, ...overrides } })
@@ -12,7 +13,7 @@ const PAID_SERVICE = `
   }
   const plain = (value) => JSON.parse(JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? item.toString() : item))
   async function paidService(id, priceMinor = 123457n) {
-    const service = await serviceWork(id, { priceMode: 'fixed', priceMinor, price: Number(priceMinor) / 100, priceSnapshot: { currency: 'ARS', minor: priceMinor } })
+    const service = await payableWork(id, String(priceMinor))
     const created = await finance.crearIntencionPago({ ...customer, trabajoId: service.work.trabajoId, idempotencyKey: 'pay-' + id })
     const dispatched = await finance.despacharIntencionPago({ tenantId: customer.tenantId, paymentId: created.payment.paymentId, correlationId: 'dispatch-' + id })
     const major = (Number(priceMinor) / 100).toFixed(2)
@@ -74,20 +75,20 @@ test('WEB-09C books an exact commission, a single ledger set and a held internal
 
 test('WEB-09C settlement becomes eligible only after completed work and never claims a payout', () => {
   const result = runTypeScriptScenario(`${SERVICE_SETUP}${PAID_SERVICE}
+    // WEB-09D: payment requires a completed work, so the settlement is held at approval and the
+    // system evaluation is what moves it to eligible.
     const paid = await paidService('eligible')
-    const before = await finance.evaluarLiquidacion({ tenantId: customer.tenantId, obligacionId: paid.obligacionId, correlationId: 'eval-1' })
-    const started = await work.startWork({ ...provider, trabajoId: paid.service.work.trabajoId, expectedVersion: 1, idempotencyKey: 'start-e', requestHash: 'h-start-e', createdAt: '2026-09-23T10:20:00.000Z' })
-    await work.completeWork({ ...provider, trabajoId: paid.service.work.trabajoId, expectedVersion: started.work.version, idempotencyKey: 'complete-e', requestHash: 'h-complete-e', createdAt: '2026-09-23T10:40:00.000Z' })
+    const heldAtApproval = [...financeStore.state.liquidaciones.values()][0].status
     const after = await finance.evaluarLiquidacion({ tenantId: customer.tenantId, obligacionId: paid.obligacionId, correlationId: 'eval-2' })
     const repeat = await finance.evaluarLiquidacion({ tenantId: customer.tenantId, obligacionId: paid.obligacionId, correlationId: 'eval-3' })
     const crossTenant = await codeOf(() => finance.evaluarLiquidacion({ tenantId: provider.tenantId, obligacionId: paid.obligacionId, correlationId: 'eval-x' }))
-    const unpaid = await serviceWork('unpaid', { priceMode: 'fixed' })
+    const unpaid = await payableWork('unpaid')
     await finance.crearIntencionPago({ ...customer, trabajoId: unpaid.work.trabajoId, idempotencyKey: 'pay-unpaid' })
     const unpaidEval = await finance.evaluarLiquidacion({ tenantId: customer.tenantId, obligacionId: 'obligacion-' + unpaid.work.trabajoId, correlationId: 'eval-u' })
-    console.log(JSON.stringify({ before: [before.status, before.reason, before.settlement.status], after: [after.status, after.settlement.status, after.settlement.payoutStatus], repeat: [repeat.status, repeat.reason], crossTenant, unpaidEval: [unpaidEval.status, unpaidEval.reason], ledgerTypes: [...financeStore.state.ledger.values()].map((entry) => entry.entryType) }))
+    console.log(JSON.stringify({ heldAtApproval, after: [after.status, after.settlement.status, after.settlement.payoutStatus], repeat: [repeat.status, repeat.reason], crossTenant, unpaidEval: [unpaidEval.status, unpaidEval.reason], ledgerTypes: [...financeStore.state.ledger.values()].map((entry) => entry.entryType) }))
   `)
 
-  assert.deepEqual(result.before, ['unchanged', 'work_not_completed', 'held'])
+  assert.equal(result.heldAtApproval, 'held')
   assert.deepEqual(result.after, ['eligible', 'eligible', 'not_executed'])
   assert.deepEqual(result.repeat, ['unchanged', 'settlement_eligible'])
   assert.equal(result.crossTenant, 'NOT_FOUND')
@@ -100,10 +101,10 @@ test('WEB-09C reconciliation reports matched, duplicate, missing, amount, curren
     const system = { actorId: 'system:reconciliation', correlationId: 'recon' }
     const matchedPaid = await paidService('matched')
     const matched = await finance.conciliarObligacion({ tenantId: customer.tenantId, obligacionId: matchedPaid.obligacionId, ...system })
-    const pendingWork = await serviceWork('pending', { priceMode: 'fixed' })
+    const pendingWork = await payableWork('pending')
     const pendingIntent = await finance.crearIntencionPago({ ...customer, trabajoId: pendingWork.work.trabajoId, idempotencyKey: 'pay-pending' })
     const pending = await finance.conciliarObligacion({ tenantId: customer.tenantId, obligacionId: pendingIntent.obligation.obligacionId, ...system })
-    const mismatchWork = await serviceWork('mismatch', { priceMode: 'fixed' })
+    const mismatchWork = await payableWork('mismatch')
     const mismatchIntent = await finance.crearIntencionPago({ ...customer, trabajoId: mismatchWork.work.trabajoId, idempotencyKey: 'pay-mismatch' })
     await finance.ingerirEventoProveedor(providerEvent('evt-bad-amount', mismatchIntent.payment, 'approved', '1.00', '2026-09-23T10:10:00.000Z'))
     await finance.ingerirEventoProveedor(providerEvent('evt-bad-currency', mismatchIntent.payment, 'approved', '1500.00', '2026-09-23T10:11:00.000Z', { currency_id: 'USD' }))
@@ -178,7 +179,7 @@ test('WEB-09C refunds and chargebacks compensate the ledger and settlement witho
 
 test('WEB-09C rolls back commission, ledger and settlement when any internal write fails', () => {
   const result = runTypeScriptScenario(`${SERVICE_SETUP}${PAID_SERVICE}
-    const service = await serviceWork('atomic', { priceMode: 'fixed' })
+    const service = await payableWork('atomic')
     const created = await finance.crearIntencionPago({ ...customer, trabajoId: service.work.trabajoId, idempotencyKey: 'pay-atomic' })
     const dispatched = await finance.despacharIntencionPago({ tenantId: customer.tenantId, paymentId: created.payment.paymentId, correlationId: 'd' })
     financeStore.inyectarFalla('liquidaciones')
@@ -214,10 +215,10 @@ test('WEB-09C Prisma adapters use the shared snapshot and ledger tables with obl
       updateMany: async ({ where, data }) => { const found = rows.filter((row) => matches(row, where)); found.forEach((row) => Object.assign(row, data)); return { count: found.length } },
     })
     const tables = {
-      trabajo: [{ versionContrato: '1.0.0', trabajoId: 'trabajo-1', tenantId: 'customer', prestadorTenantId: 'provider', compromisoId: 'commitment-1', prestadorId: 'p-1', publicacionId: 'listing-1', reservaId: null, clienteId: 'customer', estado: 'completed', version: 3, requierePresupuesto: false, presupuestoAceptadoId: null, presupuestoAceptadoVersion: null, fechaCreacion: new Date('2026-09-23T09:00:00.000Z'), fechaActualizacion: new Date('2026-09-23T09:00:00.000Z') }],
+      trabajo: [{ versionContrato: '1.0.0', trabajoId: 'trabajo-1', tenantId: 'customer', prestadorTenantId: 'provider', compromisoId: 'commitment-1', prestadorId: 'p-1', publicacionId: 'listing-1', reservaId: null, clienteId: 'customer', estado: 'completed', version: 4, requierePresupuesto: true, presupuestoAceptadoId: 'budget-1', presupuestoAceptadoVersion: 1, fechaCreacion: new Date('2026-09-23T09:00:00.000Z'), fechaActualizacion: new Date('2026-09-23T09:00:00.000Z') }],
       compromisoMercadoServicios: [{ tenantId: 'customer', compromisoId: 'commitment-1', prestadorTenantId: 'provider', prestadorId: 'p-1', publicacionId: 'listing-1', contexto: 'service', estado: 'confirmed', monto: 250000n, moneda: 'ARS' }],
       publicacion: [{ tenantId: 'provider', id: 'listing-1', prestadorId: 'p-1', tipo: 'service', modalidadPrecio: 'fixed' }],
-      presupuesto: [], obligacionPagoServicio: [], idempotenciaFinanciera: [], intencionPago: [], eventoWebhookPago: [], outboxEvent: [], auditoriaFinanzasServicio: [], instantaneaComision: [], movimientoContable: [], liquidacionServicio: [], conciliacionServicio: [],
+      presupuesto: [{ tenantId: 'customer', prestadorTenantId: 'provider', trabajoId: 'trabajo-1', presupuestoId: 'budget-1', version: 1, estado: 'accepted', moneda: 'ARS', montoTotal: 250000n }], obligacionPagoServicio: [], idempotenciaFinanciera: [], intencionPago: [], eventoWebhookPago: [], outboxEvent: [], auditoriaFinanzasServicio: [], instantaneaComision: [], movimientoContable: [], liquidacionServicio: [], conciliacionServicio: [],
     }
     const client = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, delegate(rows)]))
     client.$transaction = async (callback) => callback(client)

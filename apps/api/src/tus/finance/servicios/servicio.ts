@@ -4,10 +4,18 @@ import type {
   EstadoProveedorPagoServicio,
   IntencionPagoServicio,
   LiquidacionServicio,
+  MotivoNoCobrableServicio,
   ObligacionPagoServicio,
   Trabajo,
+  VistaPreviaPagoServicio,
 } from '@factory/contracts'
-import { ESTADOS_TRABAJO, TUS_CONTRACT_VERSION, formatMinorUnits } from '@factory/contracts'
+import {
+  ESTADOS_PRESUPUESTO,
+  ESTADOS_TRABAJO,
+  TUS_CONTRACT_VERSION,
+  formatMinorUnits,
+} from '@factory/contracts'
+import { PoliticaCobroFija, type PuertoPoliticaCobro } from './configuracion.ts'
 import {
   REGLA_COMISION_SERVICIO_POR_DEFECTO,
   calcularInstantaneaComision,
@@ -283,17 +291,181 @@ export class ServicioFinanzasServicios {
   protected readonly now: () => number
   protected readonly proveedor: PuertoProveedorPagosServicio
   protected readonly reglaComision: ReglaComisionServicio
+  protected readonly politica: PuertoPoliticaCobro
 
   constructor(
     transaction: PuertoTransaccionFinanzasServicio,
     now: () => number = () => Date.now(),
     proveedor: PuertoProveedorPagosServicio = new ProveedorPagosServicioNoDisponible(),
-    reglaComision: ReglaComisionServicio = REGLA_COMISION_SERVICIO_POR_DEFECTO
+    reglaComision: ReglaComisionServicio = REGLA_COMISION_SERVICIO_POR_DEFECTO,
+    politica?: PuertoPoliticaCobro
   ) {
     this.transaction = transaction
     this.now = now
     this.proveedor = proveedor
     this.reglaComision = reglaComision
+    // Without a persisted policy, availability follows the injected provider: the runtime
+    // default (`held-no-provider`) is never available.
+    this.politica =
+      politica ??
+      new PoliticaCobroFija(
+        {
+          politicaId: reglaComision.politicaId ?? null,
+          rateBps: reglaComision.rateBps,
+          ruleVersion: reglaComision.ruleVersion,
+          pspFeeBearer: reglaComision.pspFeeBearer ?? 'undetermined',
+        },
+        proveedor.source !== 'held-no-provider'
+      )
+  }
+
+  // WEB-09D customer read: what this completed work would cost and whether it can be paid now.
+  // Read-only: it never creates an obligation, an intent or any audit/outbox record.
+  async consultarVistaPreviaPago(
+    input: ContextoFinanzasServicio & { trabajoId: string }
+  ): Promise<VistaPreviaPagoServicio> {
+    validarContextoFinanzasServicio(input)
+    return this.transaction.ejecutar(async (repositories) => {
+      const trabajo = await this.requerirTrabajo(repositories, input, input.trabajoId)
+      if (trabajo.tenantId !== input.tenantId)
+        throw new ErrorFinanzasServicio(
+          403,
+          'FORBIDDEN',
+          'only the customer can review the payment of this work'
+        )
+      const cobro = await this.evaluarCobro(repositories, trabajo)
+      const obligation = await repositories.obligaciones.buscarPorTrabajo({
+        tenantId: trabajo.tenantId,
+        trabajoId: trabajo.trabajoId,
+      })
+      const intents = obligation
+        ? await repositories.intenciones.listarPorObligacion({
+            tenantId: obligation.tenantId,
+            obligacionId: obligation.obligacionId,
+          })
+        : []
+      const latest = intents.reduce<IntencionPagoServicioDominio | null>(
+        (best, intent) => (!best || intent.attempt > best.attempt ? intent : best),
+        null
+      )
+      let notPayableReason = cobro.reason
+      if (!notPayableReason && obligation && obligation.status !== 'pending_payment')
+        notPayableReason = obligation.status === 'paid' ? 'ALREADY_PAID' : 'OBLIGATION_CLOSED'
+      if (!notPayableReason && intents.some((intent) => intent.providerStatus === 'approved'))
+        notPayableReason = 'ALREADY_PAID'
+      const availability = notPayableReason
+        ? null
+        : await this.politica.disponibilidad({
+            prestadorTenantId: trabajo.prestadorTenantId,
+            prestadorId: trabajo.prestadorId,
+            categoria: cobro.publicacion?.categoria ?? null,
+          })
+      const budget = cobro.presupuesto
+      return {
+        contractVersion: TUS_CONTRACT_VERSION,
+        workId: trabajo.trabajoId,
+        workStatus: trabajo.status,
+        publicacionId: trabajo.publicacionId,
+        serviceName: cobro.publicacion?.nombre ?? null,
+        prestadorId: trabajo.prestadorId,
+        budget: budget
+          ? {
+              budgetId: budget.presupuestoId,
+              version: budget.version,
+              totalMinor: formatMinorUnits(budget.totalMinor),
+              currency: budget.currency,
+            }
+          : null,
+        amountMinor: budget && !cobro.reason ? formatMinorUnits(budget.totalMinor) : null,
+        currency: budget && !cobro.reason ? budget.currency : null,
+        payable: notPayableReason === null,
+        notPayableReason,
+        obligation: obligation
+          ? { obligacionId: obligation.obligacionId, status: obligation.status }
+          : null,
+        paymentStatus: latest?.providerStatus ?? 'not_started',
+        latestPaymentId: latest?.paymentId ?? null,
+        provider: 'mercado-pago',
+        paymentAvailable: availability?.available === true,
+        unavailableReason: notPayableReason ?? availability?.reason ?? null,
+      }
+    })
+  }
+
+  // Product rule (WEB-09D): a service is paid only after the work is completed, and only for
+  // the accepted, versioned budget. Listing prices ("desde", "por hora", fixed) never set the
+  // amount. Returns the reason instead of throwing so the preview can explain it.
+  protected async evaluarCobro(
+    repositories: RepositoriosFinanzasServicio,
+    trabajo: Trabajo
+  ): Promise<{
+    reason: MotivoNoCobrableServicio | null
+    presupuesto: PresupuestoFinanciero | null
+    publicacion: PublicacionServicioFinanciera | null
+  }> {
+    const publicacion = await repositories.identidad.buscarPublicacion({
+      prestadorTenantId: trabajo.prestadorTenantId,
+      publicacionId: trabajo.publicacionId,
+    })
+    const presupuesto =
+      trabajo.acceptedBudgetId && trabajo.acceptedBudgetVersion
+        ? await repositories.identidad.buscarPresupuesto({
+            tenantId: trabajo.tenantId,
+            trabajoId: trabajo.trabajoId,
+            presupuestoId: trabajo.acceptedBudgetId,
+            version: trabajo.acceptedBudgetVersion,
+          })
+        : null
+    const result = (reason: MotivoNoCobrableServicio | null) => ({
+      reason,
+      presupuesto,
+      publicacion,
+    })
+    if (!publicacion || publicacion.prestadorId !== trabajo.prestadorId)
+      return result('INCONSISTENT_COMMERCIAL_CHAIN')
+    if (trabajo.status === ESTADOS_TRABAJO.CANCELADO) return result('WORK_CANCELLED')
+    if (!trabajo.acceptedBudgetId || !trabajo.acceptedBudgetVersion) {
+      return result(
+        trabajo.status === ESTADOS_TRABAJO.COMPLETADO ? 'BUDGET_REQUIRED' : 'WORK_NOT_COMPLETED'
+      )
+    }
+    if (
+      !presupuesto ||
+      presupuesto.status !== ESTADOS_PRESUPUESTO.ACEPTADO ||
+      presupuesto.prestadorTenantId !== trabajo.prestadorTenantId
+    )
+      return result('BUDGET_INCONSISTENT')
+    if (trabajo.status !== ESTADOS_TRABAJO.COMPLETADO) return result('WORK_NOT_COMPLETED')
+    return result(null)
+  }
+
+  // Throws when the work cannot be charged now; used before any financial write.
+  protected async exigirCobroDisponible(
+    repositories: RepositoriosFinanzasServicio,
+    context: ContextoFinanzasServicio,
+    trabajoId: string
+  ): Promise<void> {
+    const trabajo = await this.requerirTrabajo(repositories, context, trabajoId)
+    if (trabajo.tenantId !== context.tenantId)
+      throw new ErrorFinanzasServicio(
+        403,
+        'FORBIDDEN',
+        'only the customer tenant can prepare the payment obligation'
+      )
+    const cobro = await this.evaluarCobro(repositories, trabajo)
+    if (cobro.reason)
+      throw new ErrorFinanzasServicio(409, cobro.reason, `work is not payable: ${cobro.reason}`)
+    const availability = await this.politica.disponibilidad({
+      prestadorTenantId: trabajo.prestadorTenantId,
+      prestadorId: trabajo.prestadorId,
+      categoria: cobro.publicacion?.categoria ?? null,
+    })
+    if (!availability.available)
+      throw new ErrorFinanzasServicio(
+        503,
+        availability.reason ?? 'PAYMENTS_DISABLED',
+        'online payment is not available yet'
+      )
   }
 
   // Customer command: fixes the payable amount of a work from persisted commercial facts.
@@ -316,6 +488,7 @@ export class ServicioFinanzasServicios {
           status: 'replay',
           obligation: idempotency.response['obligation'] as ObligacionPagoServicio,
         }
+      await this.exigirCobroDisponible(repositories, input, input.trabajoId)
       const obligation = await this.asegurarObligacion(repositories, input, input.trabajoId, key)
       const response = { obligation: proyectarObligacion(obligation) }
       await repositories.idempotencia.registrar({
@@ -363,6 +536,7 @@ export class ServicioFinanzasServicios {
           status: 'replay',
           ...(idempotency.response as Omit<ResultadoIntencionPago, 'status'>),
         }
+      await this.exigirCobroDisponible(repositories, input, input.trabajoId)
       const obligation = await this.asegurarObligacion(repositories, input, input.trabajoId, key)
       if (obligation.status !== 'pending_payment')
         throw new ErrorFinanzasServicio(
@@ -869,12 +1043,24 @@ export class ServicioFinanzasServicios {
           'COMMISSION_ALREADY_BOOKED',
           'obligation already has a commission snapshot'
         )
+      // The rule in force when the approval is booked is frozen in the snapshot; later policy
+      // changes never touch it.
+      const publicacion = await repositories.identidad.buscarPublicacion({
+        prestadorTenantId: obligation.prestadorTenantId,
+        publicacionId: obligation.publicacionId,
+      })
+      const rule = await this.politica.reglaComision({
+        prestadorTenantId: obligation.prestadorTenantId,
+        prestadorId: obligation.prestadorId,
+        categoria: publicacion?.categoria ?? null,
+      })
       const snapshot = calcularInstantaneaComision({
         obligation,
         intent,
-        rule: this.reglaComision,
+        rule,
         evidenceId: `provider-event:${event.eventId}`,
         now,
+        pspFeeMinor: event.pspFeeMinor ?? null,
       })
       await repositories.comisiones.crear(snapshot)
       for (const entry of movimientosAprobacion(snapshot, now))

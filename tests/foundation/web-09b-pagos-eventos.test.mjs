@@ -14,7 +14,7 @@ const EVENT_HELPERS = `
 
 test('WEB-09B creates a tenant-scoped, idempotent payment intent with audit and outbox and no provider call', () => {
   const result = runTypeScriptScenario(`${SERVICE_SETUP}
-    const fixed = await serviceWork('fixed', { priceMode: 'fixed' }, 2)
+    const fixed = await payableWork('fixed', '300000')
     const created = await finance.crearIntencionPago({ ...customer, trabajoId: fixed.work.trabajoId, idempotencyKey: 'pay-1' })
     const replay = await finance.crearIntencionPago({ ...customer, trabajoId: fixed.work.trabajoId, idempotencyKey: 'pay-1' })
     const otherKey = await finance.crearIntencionPago({ ...customer, trabajoId: fixed.work.trabajoId, idempotencyKey: 'pay-2' })
@@ -59,7 +59,7 @@ test('WEB-09B creates a tenant-scoped, idempotent payment intent with audit and 
 
 test('WEB-09B dispatches outside the transaction with a stable provider key and safe retries', () => {
   const result = runTypeScriptScenario(`${SERVICE_SETUP}
-    const fixed = await serviceWork('dispatch', { priceMode: 'fixed' })
+    const fixed = await payableWork('dispatch')
     const created = await finance.crearIntencionPago({ ...customer, trabajoId: fixed.work.trabajoId, idempotencyKey: 'pay-d' })
     proveedorPagos.fallarProximas('PROVIDER_TIMEOUT')
     const failed = await finance.despacharIntencionPago({ tenantId: customer.tenantId, paymentId: created.payment.paymentId, correlationId: 'dispatch-1' })
@@ -69,10 +69,11 @@ test('WEB-09B dispatches outside the transaction with a stable provider key and 
     const { ServicioFinanzasServicios: Servicio } = await import('./apps/api/src/tus/finance/servicios/servicio.ts')
     const unavailableStore = new AlmacenFinanzasServicioEnMemoria()
     const unavailable = new Servicio(new TransaccionFinanzasServicioEnMemoria(unavailableStore, new IdentidadServicioEnMemoria(workStore, marketplace)), clock)
-    const other = await serviceWork('unavailable', { priceMode: 'fixed' })
-    const heldIntent = await unavailable.crearIntencionPago({ ...customer, trabajoId: other.work.trabajoId, idempotencyKey: 'pay-u' })
-    const heldDispatch = await unavailable.despacharIntencionPago({ tenantId: customer.tenantId, paymentId: heldIntent.payment.paymentId, correlationId: 'dispatch-u' })
-    console.log(JSON.stringify({ failed, retried, again: again.status, crossTenant, calls: proveedorPagos.llamadas, paymentId: created.payment.paymentId, heldIntent: heldIntent.payment, heldDispatch, outbox: financeStore.state.outbox.map((event) => event.eventType) }))
+    const other = await payableWork('unavailable')
+    // WEB-09D: without an enabled provider no obligation or intent is recorded ("no pending eterno").
+    const heldCode = await codeOf(() => unavailable.crearIntencionPago({ ...customer, trabajoId: other.work.trabajoId, idempotencyKey: 'pay-u' }))
+    const heldWrites = unavailableStore.state.intenciones.size + unavailableStore.state.obligaciones.size + unavailableStore.state.auditoria.length + unavailableStore.state.outbox.length
+    console.log(JSON.stringify({ failed, retried, again: again.status, crossTenant, calls: proveedorPagos.llamadas, paymentId: created.payment.paymentId, heldCode, heldWrites, outbox: financeStore.state.outbox.map((event) => event.eventType) }))
   `)
 
   assert.equal(result.failed.status, 'dispatch_failed')
@@ -83,16 +84,14 @@ test('WEB-09B dispatches outside the transaction with a stable provider key and 
   assert.equal(result.again, 'already_dispatched')
   assert.equal(result.crossTenant, 'NOT_FOUND')
   assert.deepEqual(result.calls, [result.paymentId, result.paymentId])
-  assert.equal(result.heldIntent.source, 'held-no-provider')
-  assert.equal(result.heldDispatch.status, 'dispatch_failed')
-  assert.equal(result.heldDispatch.reason, 'PROVIDER_UNAVAILABLE')
-  assert.equal(result.heldDispatch.payment.providerStatus, 'pending')
+  assert.equal(result.heldCode, 'PROVIDER_NOT_CONFIGURED')
+  assert.equal(result.heldWrites, 0)
   assert.deepEqual(result.outbox, ['tus.payment.intent_created', 'tus.payment.intent_dispatched'])
 })
 
 test('WEB-09B ingests verified provider events once, in order, with explicit mapping', () => {
   const result = runTypeScriptScenario(`${SERVICE_SETUP}${EVENT_HELPERS}
-    const fixed = await serviceWork('events', { priceMode: 'fixed' })
+    const fixed = await payableWork('events')
     const created = await finance.crearIntencionPago({ ...customer, trabajoId: fixed.work.trabajoId, idempotencyKey: 'pay-e' })
     const dispatched = await finance.despacharIntencionPago({ tenantId: customer.tenantId, paymentId: created.payment.paymentId, correlationId: 'd' })
     const payment = dispatched.payment
@@ -140,7 +139,7 @@ test('WEB-09B ingests verified provider events once, in order, with explicit map
 
 test('WEB-09B rolls back every effect when a write fails and recovers the provider crash window', () => {
   const result = runTypeScriptScenario(`${SERVICE_SETUP}${EVENT_HELPERS}
-    const fixed = await serviceWork('rollback', { priceMode: 'fixed' })
+    const fixed = await payableWork('rollback')
     const created = await finance.crearIntencionPago({ ...customer, trabajoId: fixed.work.trabajoId, idempotencyKey: 'pay-r' })
     const plain = (value) => JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? item.toString() : item)
     const before = plain([...financeStore.state.intenciones.values()])
@@ -152,7 +151,7 @@ test('WEB-09B rolls back every effect when a write fails and recovers the provid
     // Event arrives before the dispatch result was stored: the verified reference is adopted.
     const recovered = await finance.ingerirEventoProveedor(providerEvent('evt-r', created.payment, 'approved', '1500.00', '2026-09-23T10:10:00.000Z'))
     const dispatchAfterEvent = await finance.despacharIntencionPago({ tenantId: customer.tenantId, paymentId: created.payment.paymentId, correlationId: 'late-dispatch' })
-    const creationFailureWork = await serviceWork('rollback-create', { priceMode: 'fixed' })
+    const creationFailureWork = await payableWork('rollback-create')
     financeStore.inyectarFalla('auditoria')
     const creationFailure = await codeOf(() => finance.crearIntencionPago({ ...customer, trabajoId: creationFailureWork.work.trabajoId, idempotencyKey: 'pay-rc' }))
     const noPartialObligation = [...financeStore.state.obligaciones.values()].every((obligation) => obligation.trabajoId !== creationFailureWork.work.trabajoId)
@@ -175,7 +174,7 @@ test('WEB-09B rolls back every effect when a write fails and recovers the provid
 
 test('WEB-09B HTTP routes derive authority from the session and reject client-supplied money', () => {
   const result = runTypeScriptScenario(`${SERVICE_SETUP}
-    const fixed = await serviceWork('http', { priceMode: 'fixed' })
+    const fixed = await payableWork('http')
     const { TusApplicationService } = await import('./apps/api/src/tus/application/tus-application-service.ts')
     const { InMemoryTusCommitmentStore, InMemoryTusCompensationStore, AlmacenReferenciasAuditoriaEnMemoria, InMemoryTusIdempotencyStore, InMemoryTusOutboxStore, InMemoryTusTransaction, InMemoryTusSessionResolver } = await import('./apps/api/src/tus/adapters/in-memory.ts')
     const { createTusHttpRouter } = await import('./apps/api/src/tus/http/router.ts')
@@ -248,10 +247,10 @@ test('WEB-09B Prisma adapters persist service intents in the shared table, the i
       updateMany: async ({ where, data }) => { const found = rows.filter((row) => matches(row, where)); found.forEach((row) => Object.assign(row, data)); return { count: found.length } },
     })
     const tables = {
-      trabajo: [{ versionContrato: '1.0.0', trabajoId: 'trabajo-1', tenantId: 'customer', prestadorTenantId: 'provider', compromisoId: 'commitment-1', prestadorId: 'p-1', publicacionId: 'listing-1', reservaId: null, clienteId: 'customer', estado: 'requested', version: 1, requierePresupuesto: false, presupuestoAceptadoId: null, presupuestoAceptadoVersion: null, fechaCreacion: new Date('2026-09-23T09:00:00.000Z'), fechaActualizacion: new Date('2026-09-23T09:00:00.000Z') }],
+      trabajo: [{ versionContrato: '1.0.0', trabajoId: 'trabajo-1', tenantId: 'customer', prestadorTenantId: 'provider', compromisoId: 'commitment-1', prestadorId: 'p-1', publicacionId: 'listing-1', reservaId: null, clienteId: 'customer', estado: 'completed', version: 4, requierePresupuesto: true, presupuestoAceptadoId: 'budget-1', presupuestoAceptadoVersion: 1, fechaCreacion: new Date('2026-09-23T09:00:00.000Z'), fechaActualizacion: new Date('2026-09-23T09:00:00.000Z') }],
       compromisoMercadoServicios: [{ tenantId: 'customer', compromisoId: 'commitment-1', prestadorTenantId: 'provider', prestadorId: 'p-1', publicacionId: 'listing-1', contexto: 'service', estado: 'confirmed', monto: 250000n, moneda: 'ARS' }],
       publicacion: [{ tenantId: 'provider', id: 'listing-1', prestadorId: 'p-1', tipo: 'service', modalidadPrecio: 'fixed' }],
-      presupuesto: [], obligacionPagoServicio: [], idempotenciaFinanciera: [], intencionPago: [{ pagoId: 'legacy', tenantId: 'customer', compromisoId: 'legacy-commitment', obligacionId: null, referenciaProveedor: 'fake-mp-legacy', proveedor: 'mercado-pago' }], eventoWebhookPago: [], outboxEvent: [], auditoriaFinanzasServicio: [], instantaneaComision: [], movimientoContable: [], liquidacionServicio: [], conciliacionServicio: [],
+      presupuesto: [{ tenantId: 'customer', prestadorTenantId: 'provider', trabajoId: 'trabajo-1', presupuestoId: 'budget-1', version: 1, estado: 'accepted', moneda: 'ARS', montoTotal: 250000n }], obligacionPagoServicio: [], idempotenciaFinanciera: [], intencionPago: [{ pagoId: 'legacy', tenantId: 'customer', compromisoId: 'legacy-commitment', obligacionId: null, referenciaProveedor: 'fake-mp-legacy', proveedor: 'mercado-pago' }], eventoWebhookPago: [], outboxEvent: [], auditoriaFinanzasServicio: [], instantaneaComision: [], movimientoContable: [], liquidacionServicio: [], conciliacionServicio: [],
     }
     const client = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, delegate(rows)]))
     client.$transaction = async (callback) => callback(client)

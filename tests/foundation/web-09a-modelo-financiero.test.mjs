@@ -63,6 +63,9 @@ test('WEB-09A derives the obligation from the accepted budget and pins the WEB-0
     const budgetWork = await serviceWork('budget', { priceMode: 'requires_budget', bookingMode: 'requiere_presupuesto' })
     const beforeBudget = await codeOf(() => finance.prepararObligacion({ ...customer, trabajoId: budgetWork.work.trabajoId, idempotencyKey: 'prepare-early' }))
     const decided = await acceptBudget(budgetWork.work.trabajoId, '987654321012')
+    // WEB-09D: the accepted budget fixes the amount, but payment waits for completion.
+    const beforeCompletion = await codeOf(() => finance.prepararObligacion({ ...customer, trabajoId: budgetWork.work.trabajoId, idempotencyKey: 'prepare-before-completion' }))
+    await finishWork(budgetWork.work.trabajoId)
     const prepared = await finance.prepararObligacion({ ...customer, trabajoId: budgetWork.work.trabajoId, idempotencyKey: 'prepare-1' })
     const replay = await finance.prepararObligacion({ ...customer, trabajoId: budgetWork.work.trabajoId, idempotencyKey: 'prepare-1' })
     const secondKey = await finance.prepararObligacion({ ...customer, trabajoId: budgetWork.work.trabajoId, idempotencyKey: 'prepare-2' })
@@ -73,11 +76,12 @@ test('WEB-09A derives the obligation from the accepted budget and pins the WEB-0
     const conflict = await codeOf(() => finance.prepararObligacion({ ...customer, actorId: 'customer-user-2', trabajoId: budgetWork.work.trabajoId, idempotencyKey: 'prepare-1' }))
     const { validarObligacionPagoServicio } = await import('./packages/contracts/src/tus.ts')
     validarObligacionPagoServicio(prepared.obligation)
-    console.log(JSON.stringify({ beforeBudget, decidedWork: decided.work, prepared, replay: replay.status, sameAsReplay: JSON.stringify(replay.obligation) === JSON.stringify(prepared.obligation), secondKey, providerPrepare, strangerPrepare, strangerRead, providerRead, conflict, obligations: financeStore.state.obligaciones.size }))
+    console.log(JSON.stringify({ beforeBudget, beforeCompletion, decidedWork: decided.work, prepared, replay: replay.status, sameAsReplay: JSON.stringify(replay.obligation) === JSON.stringify(prepared.obligation), secondKey, providerPrepare, strangerPrepare, strangerRead, providerRead, conflict, obligations: financeStore.state.obligaciones.size }))
   `)
 
   const obligation = result.prepared.obligation
-  assert.equal(result.beforeBudget, 'BUDGET_NOT_ACCEPTED')
+  assert.equal(result.beforeBudget, 'WORK_NOT_COMPLETED')
+  assert.equal(result.beforeCompletion, 'WORK_NOT_COMPLETED')
   assert.equal(result.prepared.status, 'executed')
   assert.equal(obligation.amountSource, 'accepted_budget')
   assert.equal(obligation.amountMinor, '987654321012')
@@ -104,19 +108,21 @@ test('WEB-09A derives the obligation from the accepted budget and pins the WEB-0
   assert.equal(result.conflict, 'IDEMPOTENCY_CONFLICT')
 })
 
-test('WEB-09A uses exact commitment minor units for fixed prices and refuses non-final or inconsistent amounts', () => {
+test('WEB-09A/09D never charges listing prices and refuses non-final or inconsistent amounts', () => {
   const result = runTypeScriptScenario(`${SERVICE_SETUP}
     const fixed = await serviceWork('fixed', { priceMode: 'fixed', priceMinor: 123457n, price: 1234.57, priceSnapshot: { currency: 'ARS', minor: 123457n } }, 3)
-    const fixedObligation = await finance.prepararObligacion({ ...customer, trabajoId: fixed.work.trabajoId, idempotencyKey: 'fixed-1' })
+    // WEB-09D: a fixed listing price never becomes the payable amount; an accepted budget is required.
+    await finishWork(fixed.work.trabajoId)
+    const fixedCode = await codeOf(() => finance.prepararObligacion({ ...customer, trabajoId: fixed.work.trabajoId, idempotencyKey: 'fixed-1' }))
     const fromPrice = await serviceWork('from', { priceMode: 'precio_desde' })
     const fromPriceCode = await codeOf(() => finance.prepararObligacion({ ...customer, trabajoId: fromPrice.work.trabajoId, idempotencyKey: 'from-1' }))
     const cancelled = await serviceWork('cancelled', { priceMode: 'fixed' })
     await work.cancelWork({ ...provider, trabajoId: cancelled.work.trabajoId, expectedVersion: 1, idempotencyKey: 'cancel-c', requestHash: 'h-cancel-c', createdAt: '2026-09-23T09:40:00.000Z' })
     const cancelledCode = await codeOf(() => finance.prepararObligacion({ ...customer, trabajoId: cancelled.work.trabajoId, idempotencyKey: 'cancelled-1' }))
-    const tampered = await serviceWork('tampered', { priceMode: 'fixed' })
-    await marketplace.listings.save(listing('listing-tampered', { priceMode: 'fixed', merchantId: 'someone-else' }))
+    const tampered = await payableWork('tampered')
+    await marketplace.listings.save(listing('listing-tampered', { priceMode: 'requires_budget', merchantId: 'someone-else' }))
     const tamperedCode = await codeOf(() => finance.prepararObligacion({ ...customer, trabajoId: tampered.work.trabajoId, idempotencyKey: 'tampered-1' }))
-    const missing = await serviceWork('missing', { priceMode: 'fixed' })
+    const missing = await payableWork('missing')
     await marketplace.commitments.saveMany([{ ...missing.commitment, tenantId: 'other-tenant' }])
     const missingCode = await codeOf(() => finance.prepararObligacion({ ...customer, trabajoId: missing.work.trabajoId, idempotencyKey: 'missing-1' }))
     const unknownWork = await codeOf(() => finance.prepararObligacion({ ...customer, trabajoId: 'trabajo-does-not-exist', idempotencyKey: 'unknown-1' }))
@@ -128,13 +134,11 @@ test('WEB-09A uses exact commitment minor units for fixed prices and refuses non
     const productCommitment = await codeOf(async () => derivarObligacionServicio({ ...chain, compromiso: { ...chain.compromiso, context: 'product' } }))
     const cancelledCommitment = await codeOf(async () => derivarObligacionServicio({ ...chain, compromiso: { ...chain.compromiso, status: 'cancelled' } }))
     const budgetMismatch = await codeOf(async () => derivarObligacionServicio({ ...chain, trabajo: { ...fixed.work, status: 'accepted', acceptedBudgetId: 'b-1', acceptedBudgetVersion: 2 }, presupuesto: { tenantId: customer.tenantId, prestadorTenantId: provider.tenantId, trabajoId: fixed.work.trabajoId, presupuestoId: 'b-1', version: 1, status: 'accepted', currency: 'ARS', totalMinor: 10n } }))
-    console.log(JSON.stringify({ fixedObligation: fixedObligation.obligation, fromPriceCode, cancelledCode, tamperedCode, missingCode, unknownWork, crossTenant, wrongProvider, wrongCommitment, productCommitment, cancelledCommitment, budgetMismatch, obligations: financeStore.state.obligaciones.size }))
+    console.log(JSON.stringify({ fixedCode, fromPriceCode, cancelledCode, tamperedCode, missingCode, unknownWork, crossTenant, wrongProvider, wrongCommitment, productCommitment, cancelledCommitment, budgetMismatch, obligations: financeStore.state.obligaciones.size }))
   `)
 
-  assert.equal(result.fixedObligation.amountSource, 'fixed_price_commitment')
-  assert.equal(result.fixedObligation.amountMinor, '370371')
-  assert.equal(result.fixedObligation.budgetId, null)
-  assert.equal(result.fromPriceCode, 'AMOUNT_NOT_FINAL')
+  assert.equal(result.fixedCode, 'BUDGET_REQUIRED')
+  assert.equal(result.fromPriceCode, 'WORK_NOT_COMPLETED')
   assert.equal(result.cancelledCode, 'WORK_CANCELLED')
   assert.equal(result.tamperedCode, 'INCONSISTENT_COMMERCIAL_CHAIN')
   assert.equal(result.missingCode, 'INCONSISTENT_COMMERCIAL_CHAIN')
@@ -145,7 +149,7 @@ test('WEB-09A uses exact commitment minor units for fixed prices and refuses non
   assert.equal(result.productCommitment, 'INVALID_COMMITMENT')
   assert.equal(result.cancelledCommitment, 'INVALID_COMMITMENT_STATUS')
   assert.equal(result.budgetMismatch, 'INCONSISTENT_BUDGET')
-  assert.equal(result.obligations, 1)
+  assert.equal(result.obligations, 0)
 })
 
 test('WEB-09A obligation state machine only allows transitions backed by real capabilities', () => {
@@ -180,10 +184,10 @@ test('WEB-09A Prisma adapter round-trips bigint amounts, scopes lookups and retr
       }
     }
     const tables = {
-      trabajo: [{ versionContrato: '1.0.0', trabajoId: 'trabajo-1', tenantId: 'customer', prestadorTenantId: 'provider', compromisoId: 'commitment-1', prestadorId: 'p-1', publicacionId: 'listing-1', reservaId: null, clienteId: 'customer', estado: 'in_progress', version: 3, requierePresupuesto: false, presupuestoAceptadoId: null, presupuestoAceptadoVersion: null, fechaCreacion: new Date('2026-09-23T09:00:00.000Z'), fechaActualizacion: new Date('2026-09-23T09:00:00.000Z') }],
+      trabajo: [{ versionContrato: '1.0.0', trabajoId: 'trabajo-1', tenantId: 'customer', prestadorTenantId: 'provider', compromisoId: 'commitment-1', prestadorId: 'p-1', publicacionId: 'listing-1', reservaId: null, clienteId: 'customer', estado: 'completed', version: 4, requierePresupuesto: true, presupuestoAceptadoId: 'budget-1', presupuestoAceptadoVersion: 1, fechaCreacion: new Date('2026-09-23T09:00:00.000Z'), fechaActualizacion: new Date('2026-09-23T09:00:00.000Z') }],
       compromisoMercadoServicios: [{ tenantId: 'customer', compromisoId: 'commitment-1', prestadorTenantId: 'provider', prestadorId: 'p-1', publicacionId: 'listing-1', contexto: 'service', estado: 'confirmed', monto: 9007199254740993n, moneda: 'ARS' }],
       publicacion: [{ tenantId: 'provider', id: 'listing-1', prestadorId: 'p-1', tipo: 'service', modalidadPrecio: 'precio_fijo' }],
-      presupuesto: [],
+      presupuesto: [{ tenantId: 'customer', prestadorTenantId: 'provider', trabajoId: 'trabajo-1', presupuestoId: 'budget-1', version: 1, estado: 'accepted', moneda: 'ARS', montoTotal: 9007199254740993n }],
       obligacionPagoServicio: [],
       idempotenciaFinanciera: [],
       auditoria: [],
@@ -196,7 +200,8 @@ test('WEB-09A Prisma adapter round-trips bigint amounts, scopes lookups and retr
       transactions: 0,
       async $transaction(callback, options) { this.transactions += 1; this.isolation = options?.isolationLevel; return callback(this) },
     }
-    const finance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(client), () => Date.parse('2026-09-23T10:00:00.000Z'))
+    const { ProveedorPagosServicioDeterminista } = await import('./apps/api/src/tus/finance/servicios/pagos.ts')
+    const finance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(client), () => Date.parse('2026-09-23T10:00:00.000Z'), new ProveedorPagosServicioDeterminista('prisma-secret'))
     const prepared = await finance.prepararObligacion({ tenantId: 'customer', actorId: 'u', correlationId: 'c', trabajoId: 'trabajo-1', idempotencyKey: 'k-1' })
     const txAfterPrepare = client.transactions
     const persisted = tables.obligacionPagoServicio[0]

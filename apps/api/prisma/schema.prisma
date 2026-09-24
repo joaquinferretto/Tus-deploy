@@ -1136,6 +1136,11 @@ model InstantaneaComision {
   evidenciaId         String   @map("evidencia_id")
   estadoContable      String   @map("estado_contable")
   fechaCreacion       DateTime @map("fecha_creacion")
+  // WEB-09D: policy and PSP fee frozen at approval; NULL on historical rows.
+  politicaComisionId    String? @map("politica_comision_id")
+  comisionProveedorPago BigInt? @map("comision_proveedor_pago")
+  feeProveedorACargo    String? @map("fee_proveedor_a_cargo")
+  netoPrestador         BigInt? @map("neto_prestador")
 
   compromiso Compromiso?             @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_instantaneas_comision_compromisos")
   obligacion ObligacionPagoServicio? @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_instantaneas_comision_obligaciones")
@@ -1145,6 +1150,97 @@ model InstantaneaComision {
   @@unique([tenantId, obligacionId], map: "uq_instantaneas_comision_tenant_obligacion")
   @@index([tenantId, versionRegla], map: "idx_instantaneas_comision_tenant_version_regla")
   @@map("instantaneas_comision")
+}
+
+// WEB-09D: versioned, append-only commission policy (basis points). The most specific scope
+// (prestador > categoria > global) applies; the rate is frozen in each commission snapshot.
+model PoliticaComisionServicio {
+  id             String   @id(map: "politicas_comision_servicio_pkey")
+  politicaId     String   @map("politica_id")
+  alcance        String   @map("alcance")
+  alcanceRef     String?  @map("alcance_ref")
+  claveAlcance   String   @map("clave_alcance")
+  version        Int      @map("version")
+  tasaPuntosBase Int      @map("tasa_puntos_base")
+  versionRegla   String   @map("version_regla")
+  feePspACargo   String   @map("fee_psp_a_cargo")
+  motivo         String   @map("motivo")
+  actorId        String   @map("actor_id")
+  correlacionId  String   @map("correlacion_id")
+  fechaCreacion  DateTime @map("fecha_creacion")
+
+  @@unique([politicaId], map: "uq_politicas_comision_politica")
+  @@unique([claveAlcance, version], map: "uq_politicas_comision_clave_version")
+  @@map("politicas_comision_servicio")
+}
+
+// WEB-09D: product switch for service payments (append-only). Secrets are never stored here.
+model ConfiguracionPagosServicio {
+  id               String   @id(map: "configuraciones_pagos_servicio_pkey")
+  configuracionId  String   @map("configuracion_id")
+  version          Int      @map("version")
+  pagosHabilitados Boolean  @map("pagos_habilitados")
+  proveedor        String   @map("proveedor")
+  moneda           String   @map("moneda")
+  motivo           String   @map("motivo")
+  actorId          String   @map("actor_id")
+  correlacionId    String   @map("correlacion_id")
+  fechaCreacion    DateTime @map("fecha_creacion")
+
+  @@unique([configuracionId], map: "uq_configuraciones_pagos_configuracion")
+  @@unique([version], map: "uq_configuraciones_pagos_version")
+  @@map("configuraciones_pagos_servicio")
+}
+
+// WEB-09D: provider (prestador) payment account link. Safe references only.
+model CuentaCobroPrestador {
+  id                 String    @id(map: "cuentas_cobro_prestador_pkey")
+  prestadorTenantId  String    @map("prestador_tenant_id")
+  proveedor          String    @map("proveedor")
+  estado             String    @map("estado")
+  cuentaExternaId    String?   @map("cuenta_externa_id")
+  modoProductivo     Boolean?  @map("modo_productivo")
+  alcances           String    @default("") @map("alcances")
+  conectadaEn        DateTime? @map("conectada_en")
+  expiraEn           DateTime? @map("expira_en")
+  version            Int       @default(1) @map("version")
+  actorId            String    @map("actor_id")
+  correlacionId      String    @map("correlacion_id")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
+
+  @@unique([prestadorTenantId, proveedor], map: "uq_cuentas_cobro_prestador_proveedor")
+  @@map("cuentas_cobro_prestador")
+}
+
+// WEB-09D: encrypted OAuth tokens of a provider account (AES-256-GCM, key outside the DB).
+model CredencialCuentaCobro {
+  id                 String   @id(map: "credenciales_cuenta_cobro_pkey")
+  prestadorTenantId  String   @map("prestador_tenant_id")
+  proveedor          String   @map("proveedor")
+  credencialCifrada  String   @map("credencial_cifrada")
+  versionClave       String   @map("version_clave")
+  fechaActualizacion DateTime @map("fecha_actualizacion")
+
+  @@unique([prestadorTenantId, proveedor], map: "uq_credenciales_cuenta_cobro_prestador")
+  @@map("credenciales_cuenta_cobro")
+}
+
+// WEB-09D: single-use OAuth state (sha256 digest) with the encrypted PKCE verifier.
+model EstadoOAuthCobro {
+  id                 String    @id(map: "estados_oauth_cobro_pkey")
+  huellaEstado       String    @map("huella_estado")
+  prestadorTenantId  String    @map("prestador_tenant_id")
+  actorId            String    @map("actor_id")
+  proveedor          String    @map("proveedor")
+  verificadorCifrado String    @map("verificador_cifrado")
+  expiraEn           DateTime  @map("expira_en")
+  consumidoEn        DateTime? @map("consumido_en")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+
+  @@unique([huellaEstado], map: "uq_estados_oauth_cobro_huella")
+  @@index([prestadorTenantId, fechaCreacion], map: "idx_estados_oauth_cobro_prestador")
+  @@map("estados_oauth_cobro")
 }
 
 model MovimientoContable {

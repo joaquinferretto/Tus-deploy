@@ -69,6 +69,8 @@ export class IdentidadServicioEnMemoria implements PuertoIdentidadServicio {
       prestadorId: listing.merchantId,
       kind: listing.kind,
       priceMode: listing.priceMode ?? null,
+      nombre: listing.name ?? null,
+      categoria: listing.cohort ?? null,
     }
   }
 

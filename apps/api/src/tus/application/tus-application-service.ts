@@ -18,6 +18,7 @@ import type { TusWhatsAppService } from '../whatsapp/index.ts'
 import type { TusReportingService } from '../reporting/index.ts'
 import { TrabajoError, type ServicioTrabajo } from '../work/index.ts'
 import type { ServicioFinanzasServicios } from '../finance/servicios/servicio.ts'
+import type { ModuloPagosServicio } from '../finance/servicios/composicion-pagos.ts'
 import type { TusOperationsTelemetry } from '@factory/observability'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 import { TUS_BOUNDED_CONTEXTS } from '../ports/index.ts'
@@ -67,6 +68,8 @@ export interface TusApplicationDependencies {
   reporting?: TusReportingService
   work?: ServicioTrabajo
   serviceFinance?: ServicioFinanzasServicios
+  // WEB-09D: payment configuration (admin), provider payment accounts and readiness.
+  servicePayments?: ModuloPagosServicio
   operationsTelemetry?: TusOperationsTelemetry
   evaluadorHabilitacion?: EvaluadorHabilitacion
   perfilHabilitacion?: PerfilHabilitacion
@@ -85,6 +88,7 @@ export class TusApplicationService {
   readonly reporting?: TusReportingService
   readonly work?: ServicioTrabajo
   readonly serviceFinance?: ServicioFinanzasServicios
+  readonly servicePayments?: ModuloPagosServicio
   readonly contexts = TUS_BOUNDED_CONTEXTS
   private readonly dependencies: TusApplicationDependencies
   private readonly lifecycle: ServicioCicloVidaCompromiso
@@ -103,6 +107,7 @@ export class TusApplicationService {
     this.reporting = dependencies.reporting
     this.work = dependencies.work
     this.serviceFinance = dependencies.serviceFinance
+    this.servicePayments = dependencies.servicePayments
     this.evaluadorHabilitacion = dependencies.evaluadorHabilitacion
     if (!dependencies.transaction) throw new Error('TUS transaction boundary is required')
     this.lifecycle = new ServicioCicloVidaCompromiso(dependencies.transaction, dependencies.now, {
