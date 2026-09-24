@@ -58,7 +58,8 @@ export function verifyWebhookSignature(
     return { valid: false, reason: WEBHOOK_SIGNATURE_FAILURE_REASONS.EXPIRED_SIGNATURE }
   }
 
-  const ageSeconds = Math.abs(nowMs - parsed.timestamp * 1000) / 1000
+  // Mercado Pago sends `ts` in milliseconds (official docs: `ts=1742505638683`).
+  const ageSeconds = Math.abs(nowMs - parsed.timestamp) / 1000
 
   if (ageSeconds > toleranceSeconds) {
     return {

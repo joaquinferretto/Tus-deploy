@@ -131,7 +131,7 @@ test('rejects missing, expired, and mismatched webhook signatures', () => {
   const requestId = 'request-1'
   const dataId = 'payment-1'
   const nowMs = 1_700_000_000_000
-  const timestamp = Math.floor(nowMs / 1000)
+  const timestamp = nowMs
   const signature = createWebhookSignature({
     rawBody,
     secret,
@@ -182,7 +182,7 @@ test('rejects missing, expired, and mismatched webhook signatures', () => {
 test('raw-body mode signs exact bytes and parses only after verification', () => {
   const rawBody = Buffer.from('{"data":{"id":"payment-1"}}\n')
   const secret = 'webhook-secret-placeholder'
-  const timestamp = 1_700_000_000
+  const timestamp = 1_700_000_000_000
   const signature = createWebhookSignature({
     rawBody,
     secret,
@@ -196,7 +196,7 @@ test('raw-body mode signs exact bytes and parses only after verification', () =>
       secret,
       signatureHeader: signature,
       mode: WEBHOOK_SIGNATURE_MODES.RAW_BODY,
-      nowMs: timestamp * 1000,
+      nowMs: timestamp,
     }).valid,
     true,
   )
@@ -206,7 +206,7 @@ test('raw-body mode signs exact bytes and parses only after verification', () =>
       secret,
       signatureHeader: signature,
       mode: WEBHOOK_SIGNATURE_MODES.RAW_BODY,
-      nowMs: timestamp * 1000,
+      nowMs: timestamp,
     }).valid,
     true,
   )
@@ -320,4 +320,32 @@ test('never leaks the access token in provider errors', async () => {
       return true
     },
   )
+})
+
+test('webhook ts is milliseconds as documented by Mercado Pago (regression)', () => {
+  const rawBody = Buffer.from('{"type":"payment","data":{"id":"123456"}}')
+  const secret = 'webhook-secret-placeholder'
+  const requestId = 'bb56a2f1-6aae-46ac-982e-9dcd3581d08e'
+  const dataId = '123456'
+  const nowMs = 1_742_505_638_683
+  const sign = (timestamp, overrides = {}) =>
+    createWebhookSignature({ rawBody, secret, timestamp, requestId, dataId, ...overrides })
+  const verify = (signatureHeader, overrides = {}) =>
+    verifyWebhookSignature({ rawBody, secret, signatureHeader, requestId, dataId, nowMs, ...overrides })
+
+  // Current millisecond timestamp is valid; the manifest uses the ts exactly as received.
+  assert.equal(verify(sign(nowMs)).valid, true)
+  assert.equal(verify(sign(nowMs - 299_000)).valid, true)
+  // Older than the 300 s tolerance is expired.
+  assert.equal(verify(sign(nowMs - 301_000)).reason, 'expired-signature')
+  // A seconds-based ts (the previous bug) is now far in the past and rejected.
+  assert.equal(verify(sign(Math.floor(nowMs / 1000))).reason, 'expired-signature')
+  // Tampered signature, wrong request id, wrong data id and wrong secret are rejected.
+  const valid = sign(nowMs)
+  assert.equal(verify(valid.replace(/v1=./u, (match) => (match.endsWith('0') ? 'v1=1' : 'v1=0'))).reason, 'mismatched-signature')
+  assert.equal(verify(valid, { requestId: 'other-request' }).reason, 'mismatched-signature')
+  assert.equal(verify(valid, { dataId: '654321' }).reason, 'mismatched-signature')
+  assert.equal(verify(valid, { secret: 'other-secret' }).reason, 'mismatched-signature')
+  // Uppercase alphanumeric data ids are lower-cased in the manifest.
+  assert.equal(verify(sign(nowMs, { dataId: 'ORD01ABC' }), { dataId: 'ORD01ABC' }).valid, true)
 })
