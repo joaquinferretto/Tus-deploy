@@ -46,6 +46,7 @@
       "git restore *": "ask",
 
       "git push *": "deny",
+      "git push origin web-tus": "deny",
       "git reset --hard*": "deny",
       "git clean *": "deny",
 
