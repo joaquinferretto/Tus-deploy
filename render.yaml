@@ -51,6 +51,30 @@ services:
         value: render-managed-redis
       - key: SECRET_STORE_REF
         sync: false
+      # Browser origins allowed by the API (the public Web URL), comma-separated.
+      - key: CORS_ORIGINS
+        sync: false
+      # Native readiness: MongoDB, Redis and the Python worker are optional for the API.
+      - key: NATIVE_PROFILE
+        value: "1"
+      # WEB-09D payments. Every value below stays empty until the owner authorizes real money;
+      # payments remain unavailable (fail closed) while any of them is missing.
+      - key: TUS_WEB_BASE_URL
+        sync: false
+      - key: TUS_PLATFORM_ADMIN_TENANT_ID
+        sync: false
+      - key: MERCADO_PAGO_ENVIRONMENT
+        value: sandbox
+      - key: MERCADO_PAGO_CLIENT_ID
+        sync: false
+      - key: MERCADO_PAGO_CLIENT_SECRET
+        sync: false
+      - key: MERCADO_PAGO_WEBHOOK_SECRET
+        sync: false
+      - key: MERCADO_PAGO_OAUTH_REDIRECT_URI
+        sync: false
+      - key: TUS_PAYMENT_CREDENTIALS_KEY
+        sync: false
       - key: TUS_DEPLOYMENT_PROFILE
         value: render-native
       - key: TUS_ROUTES_ENABLED
