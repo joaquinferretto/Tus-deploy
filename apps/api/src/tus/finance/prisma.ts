@@ -9,6 +9,7 @@ import type {
   ResultadoConciliacion,
 } from './index.ts'
 import { FinanceError } from './index.ts'
+import { asegurarSujetoFinancieroUnico } from './sujeto.ts'
 
 // Prisma delegates are narrowed at the boundary; row fields are validated by
 // the conversion helpers below before entering the finance domain.
@@ -166,6 +167,8 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
     } catch {
       const existing = await this.client.movimientoContable.findUnique({ where: { tenantId_entradaId: { tenantId: entry.tenantId, entradaId: entry.entryId } } })
       if (!existing) throw new Error('ledger entry append failed')
+      // The id is taken by a service-obligation entry: never read it as a legacy movement.
+      if (existing.compromisoId !== entry.commitmentId) throw new FinanceError(409, 'LEDGER_IMMUTABLE', 'ledger entry id belongs to another financial subject')
       const persisted = convertirFilaEnMovimientoContable(existing)
       if (JSON.stringify(persisted) !== JSON.stringify(entry)) throw new FinanceError(409, 'LEDGER_IMMUTABLE', 'ledger entries are append-only')
       return persisted
@@ -229,7 +232,7 @@ export class PrismaTusFinanceStore implements PuertoAlmacenFinanzas {
 }
 
 function convertirIntencionPagoEnFila(value: IntencionPago): Row {
-  return { id: value.paymentId, versionContrato: value.contractVersion, pagoId: value.paymentId, tenantId: value.tenantId, compromisoId: value.commitmentId, proveedor: value.provider, referenciaProveedor: value.providerReference, estadoProveedor: value.providerStatus, estadoComercial: value.commercialStatus, monto: value.amount, moneda: value.currency, claveIdempotencia: value.idempotencyKey, correlacionId: value.correlationId, credencialesRecolectadas: value.credentialsCollected, origen: value.source, ordenId: value.orderId, operacionPosId: value.posOperationId, comercianteRegistro: value.merchantOfRecord, modeloCobro: value.collectionModel, politicaDistribucion: value.splitPolicy, fechaLiberacion: new Date(value.releaseAt), fechaEventoProveedor: value.providerEventAt === null ? null : new Date(value.providerEventAt), errorProveedor: value.providerError, fechaCreacion: new Date(value.createdAt), fechaActualizacion: new Date(value.updatedAt) }
+  return asegurarSujetoFinancieroUnico({ id: value.paymentId, versionContrato: value.contractVersion, pagoId: value.paymentId, tenantId: value.tenantId, compromisoId: value.commitmentId, proveedor: value.provider, referenciaProveedor: value.providerReference, estadoProveedor: value.providerStatus, estadoComercial: value.commercialStatus, monto: value.amount, moneda: value.currency, claveIdempotencia: value.idempotencyKey, correlacionId: value.correlationId, credencialesRecolectadas: value.credentialsCollected, origen: value.source, ordenId: value.orderId, operacionPosId: value.posOperationId, comercianteRegistro: value.merchantOfRecord, modeloCobro: value.collectionModel, politicaDistribucion: value.splitPolicy, fechaLiberacion: new Date(value.releaseAt), fechaEventoProveedor: value.providerEventAt === null ? null : new Date(value.providerEventAt), errorProveedor: value.providerError, fechaCreacion: new Date(value.createdAt), fechaActualizacion: new Date(value.updatedAt) })
 }
 
 function convertirFilaEnIntencionPago(row: Row): IntencionPago {
@@ -239,7 +242,7 @@ function convertirFilaEnIntencionPago(row: Row): IntencionPago {
 }
 
 function convertirInstantaneaComisionEnFila(value: InstantaneaComision): Row {
-  return { id: value.snapshotId, versionContrato: value.contractVersion, instantaneaId: value.snapshotId, tenantId: value.tenantId, compromisoId: value.commitmentId, contexto: value.context, montoBruto: value.grossAmount, deducciones: value.deductions, baseComisionable: value.commissionableBase, tasaPuntosBase: value.rateBps, versionRegla: value.ruleVersion, montoComision: value.commissionAmount, montoNeto: value.netAmount, moneda: value.currency, referenciaProveedor: value.providerReference, evidenciaId: value.evidenceId, estadoContable: value.ledgerStatus, fechaCreacion: new Date(value.createdAt) }
+  return asegurarSujetoFinancieroUnico({ id: value.snapshotId, versionContrato: value.contractVersion, instantaneaId: value.snapshotId, tenantId: value.tenantId, compromisoId: value.commitmentId, contexto: value.context, montoBruto: value.grossAmount, deducciones: value.deductions, baseComisionable: value.commissionableBase, tasaPuntosBase: value.rateBps, versionRegla: value.ruleVersion, montoComision: value.commissionAmount, montoNeto: value.netAmount, moneda: value.currency, referenciaProveedor: value.providerReference, evidenciaId: value.evidenceId, estadoContable: value.ledgerStatus, fechaCreacion: new Date(value.createdAt) })
 }
 
 function convertirFilaEnInstantaneaComision(row: Row): InstantaneaComision {
@@ -247,7 +250,7 @@ function convertirFilaEnInstantaneaComision(row: Row): InstantaneaComision {
 }
 
 function convertirMovimientoContableEnFila(value: MovimientoContable): Row {
-  return { id: value.entryId, entradaId: value.entryId, tenantId: value.tenantId, compromisoId: value.commitmentId, tipoEntrada: value.entryType, monto: value.amount, moneda: value.currency, entradaVinculadaId: value.linkedEntryId, motivo: value.reason, inmutable: value.immutable, fechaCreacion: new Date(value.createdAt) }
+  return asegurarSujetoFinancieroUnico({ id: value.entryId, entradaId: value.entryId, tenantId: value.tenantId, compromisoId: value.commitmentId, tipoEntrada: value.entryType, monto: value.amount, moneda: value.currency, entradaVinculadaId: value.linkedEntryId, motivo: value.reason, inmutable: value.immutable, fechaCreacion: new Date(value.createdAt) })
 }
 
 function convertirFilaEnMovimientoContable(row: Row): MovimientoContable {

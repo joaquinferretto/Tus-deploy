@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { existsSync, readdirSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -46,10 +47,18 @@ async function withTempRoot(contents, callback) {
 test('inventory classifies the complete backlog and excludes comment-only destructive words', async () => {
   const inventory = await inventoryMigrations({ migrationsDirectory: MIGRATIONS_ROOT })
 
-  assert.equal(inventory.pendingMigrations.length, 29)
-  assert.equal(inventory.migrations.length, 32)
-  assert.equal(inventory.destructiveStatementCount, 30)
-  assert.deepEqual(inventory.destructiveTokens, ['CASCADE', 'DROP'])
+  // Derived from the directory instead of frozen counts: new forward-only migrations must not
+  // require editing this test, while every DROP/TRUNCATE/CASCADE stays classified.
+  const directories = readdirSync(MIGRATIONS_ROOT, { withFileTypes: true }).filter((entry) => entry.isDirectory() && existsSync(join(MIGRATIONS_ROOT, entry.name, 'migration.sql')))
+  const statements = inventory.migrations.flatMap((migration) => migration.statements)
+  assert.equal(inventory.migrations.length, directories.length)
+  assert.equal(inventory.pendingMigrations.length, directories.length - 3)
+  assert.equal(inventory.destructiveStatementCount, statements.filter((statement) => statement.classification === 'destructive').length)
+  assert.equal(inventory.highRiskStatementCount, statements.filter((statement) => statement.classification === 'high_risk').length)
+  assert.equal(inventory.destructiveStatementCount > 0, true)
+  assert.deepEqual(inventory.destructiveTokens, ['CASCADE'])
+  assert.equal(inventory.constraintRelaxations.every((entry) => /ALTER COLUMN "[a-z_]+" DROP NOT NULL/u.test(entry.sql)), true)
+  assert.equal(inventory.constraintRelaxations.some((entry) => entry.migration === '20260923100000_tus_service_finance_identity'), true)
   assert.equal(inventory.commentOnlyTokenCount > 0, true)
   assert.equal(inventory.migrations.some((migration) => migration.name === REPAIR_MIGRATION_NAME), true)
   assert.equal(inventory.migrations.some((migration) => migration.name === LAUNCH_MIGRATION_NAME), true)

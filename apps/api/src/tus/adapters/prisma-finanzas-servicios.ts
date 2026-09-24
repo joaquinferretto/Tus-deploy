@@ -42,6 +42,13 @@ import type {
   ResultadoEventoProveedor,
 } from '../finance/servicios/servicio.ts'
 import { isSerializationFailure, isUniqueConstraint, mapTrabajo } from './prisma-work.ts'
+import { asegurarSujetoFinancieroUnico } from '../finance/sujeto.ts'
+
+// Service keys live in their own namespace inside `idempotencia_financiera`, which the legacy
+// commitment finance flow shares with raw keys: the same tenant key can never collide across flows.
+export function claveIdempotenciaServicio(key: string): string {
+  return `servicio:${key}`
+}
 
 type Fila = Record<string, unknown>
 
@@ -205,7 +212,7 @@ export class IdempotenciaFinancieraPrisma implements PuertoIdempotenciaFinancier
     key: string
   }): Promise<RegistroIdempotenciaFinanciera | null> {
     const row = await this.client.idempotenciaFinanciera.findFirst({
-      where: { tenantId: input.tenantId, claveIdempotencia: input.key },
+      where: { tenantId: input.tenantId, claveIdempotencia: claveIdempotenciaServicio(input.key) },
     })
     if (!row) return null
     const response = row['respuesta']
@@ -232,7 +239,7 @@ export class IdempotenciaFinancieraPrisma implements PuertoIdempotenciaFinancier
       data: {
         id: `finanzas-servicio-${input.tenantId}-${input.key}`,
         tenantId: input.tenantId,
-        claveIdempotencia: input.key,
+        claveIdempotencia: claveIdempotenciaServicio(input.key),
         hashSolicitud: input.record.requestHash,
         respuesta: input.record.response,
       },
@@ -279,7 +286,9 @@ export class IntencionesPagoServicioPrisma implements PuertoIntencionesPagoServi
   }
 
   async crear(intent: IntencionPagoServicioDominio): Promise<void> {
-    await this.client.intencionPago.create({ data: filaIntencion(intent) })
+    await this.client.intencionPago.create({
+      data: asegurarSujetoFinancieroUnico(filaIntencion(intent)),
+    })
   }
 
   async actualizar(intent: IntencionPagoServicioDominio): Promise<void> {
@@ -430,7 +439,7 @@ export class ComisionesServicioPrisma implements PuertoComisionesServicio {
 
   async crear(snapshot: InstantaneaComisionServicio): Promise<void> {
     await this.client.instantaneaComision.create({
-      data: {
+      data: asegurarSujetoFinancieroUnico({
         id: snapshot.snapshotId,
         versionContrato: TUS_CONTRACT_VERSION,
         instantaneaId: snapshot.snapshotId,
@@ -450,7 +459,7 @@ export class ComisionesServicioPrisma implements PuertoComisionesServicio {
         evidenciaId: snapshot.evidenceId,
         estadoContable: 'held',
         fechaCreacion: new Date(snapshot.createdAt),
-      },
+      }),
     })
   }
 }
@@ -482,7 +491,7 @@ export class LedgerServicioPrisma implements PuertoLedgerServicio {
 
   async agregar(entry: MovimientoContableServicio): Promise<void> {
     await this.client.movimientoContable.create({
-      data: {
+      data: asegurarSujetoFinancieroUnico({
         id: entry.entryId,
         entradaId: entry.entryId,
         tenantId: entry.tenantId,
@@ -495,7 +504,7 @@ export class LedgerServicioPrisma implements PuertoLedgerServicio {
         motivo: entry.reason,
         inmutable: true,
         fechaCreacion: new Date(entry.createdAt),
-      },
+      }),
     })
   }
 }
@@ -707,7 +716,7 @@ export function filaIntencion(intent: IntencionPagoServicioDominio): Fila {
     estadoComercial: estadoComercialLegacy(intent.providerStatus),
     monto: intent.amountMinor,
     moneda: intent.currency,
-    claveIdempotencia: `servicio:${intent.idempotencyKey}`,
+    claveIdempotencia: claveIdempotenciaServicio(intent.idempotencyKey),
     correlacionId: intent.correlationId,
     credencialesRecolectadas: false,
     origen: intent.source,

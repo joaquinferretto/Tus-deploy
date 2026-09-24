@@ -617,6 +617,12 @@ body y `estado` el resultado de procesamiento. `auditoria_finanzas_servicio` es 
 `monto_comision + monto_neto = monto_bruto`). `conciliaciones_servicio` guarda corridas append-only con `hallazgos` JSON.
 La comisión reutiliza `instantaneas_comision` y los asientos `movimientos_contables` con `obligacion_id`.
 
+**DB-09-SAFETY.** `20260924100000_tus_finance_subject_hardening` valida los CHECK XOR, reserva el espacio `svc-*` del
+ledger para `obligacion_id`, agrega `uq_obligaciones_pago_identidad_prestador` y las FKs
+`fk_intenciones_pago_obligacion_prestador`, `fk_liquidaciones_servicio_obligacion_prestador` y
+`fk_eventos_webhook_pago_intenciones` (todas RESTRICT, NOT VALID + VALIDATE). Ver matriz en
+`docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

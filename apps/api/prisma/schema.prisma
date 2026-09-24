@@ -958,9 +958,13 @@ model IntencionPago {
   fechaActualizacion       DateTime  @map("fecha_actualizacion")
 
   compromiso Compromiso?             @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_compromisos")
-  obligacion ObligacionPagoServicio? @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_obligaciones")
+  obligacion ObligacionPagoServicio? @relation("IntencionPagoObligacion", fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_obligaciones")
+
+  obligacionIdentidad ObligacionPagoServicio? @relation("IntencionPagoIdentidadObligacion", fields: [tenantId, obligacionId, prestadorTenantId, ordenId], references: [tenantId, obligacionId, prestadorTenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_obligacion_prestador")
+  eventosProveedor    EventoWebhookPago[]
 
   @@unique([tenantId, pagoId], map: "uq_intenciones_pago_tenant_pago")
+  @@unique([tenantId, pagoId, obligacionId], map: "uq_intenciones_pago_tenant_pago_obligacion")
   @@unique([tenantId, compromisoId], map: "uq_intenciones_pago_tenant_compromiso")
   @@unique([tenantId, claveIdempotencia], map: "uq_intenciones_pago_tenant_clave_idempotencia")
   @@unique([tenantId, obligacionId, intento], map: "uq_intenciones_pago_tenant_obligacion_intento")
@@ -998,18 +1002,21 @@ model ObligacionPagoServicio {
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-  trabajo              Trabajo                     @relation(fields: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_trabajos")
-  presupuesto          Presupuesto?                @relation(fields: [tenantId, presupuestoId, presupuestoVersion], references: [tenantId, presupuestoId, version], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_presupuestos")
-  intencionesPago      IntencionPago[]
-  instantaneasComision InstantaneaComision[]
-  movimientosContables MovimientoContable[]
-  eventosProveedor     EventoWebhookPago[]
-  auditorias           AuditoriaFinanzasServicio[]
-  liquidaciones        LiquidacionServicio[]
-  conciliaciones       ConciliacionServicio[]
+  trabajo                  Trabajo                     @relation(fields: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_trabajos")
+  presupuesto              Presupuesto?                @relation(fields: [tenantId, presupuestoId, presupuestoVersion], references: [tenantId, presupuestoId, version], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_presupuestos")
+  intencionesPago          IntencionPago[]             @relation("IntencionPagoObligacion")
+  intencionesPagoIdentidad IntencionPago[]             @relation("IntencionPagoIdentidadObligacion")
+  instantaneasComision     InstantaneaComision[]
+  movimientosContables     MovimientoContable[]
+  eventosProveedor         EventoWebhookPago[]
+  auditorias               AuditoriaFinanzasServicio[]
+  liquidaciones            LiquidacionServicio[]       @relation("LiquidacionObligacion")
+  liquidacionesIdentidad   LiquidacionServicio[]       @relation("LiquidacionIdentidadObligacion")
+  conciliaciones           ConciliacionServicio[]
 
   @@unique([tenantId, obligacionId], map: "uq_obligaciones_pago_tenant_obligacion")
   @@unique([tenantId, trabajoId], map: "uq_obligaciones_pago_tenant_trabajo")
+  @@unique([tenantId, obligacionId, prestadorTenantId, trabajoId], map: "uq_obligaciones_pago_identidad_prestador")
   @@index([prestadorTenantId, prestadorId, estado], map: "idx_obligaciones_pago_prestador_estado")
   @@index([tenantId, estado], map: "idx_obligaciones_pago_tenant_estado")
   @@map("obligaciones_pago_servicio")
@@ -1061,7 +1068,8 @@ model LiquidacionServicio {
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-  obligacion ObligacionPagoServicio @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_liquidaciones_servicio_obligaciones")
+  obligacion          ObligacionPagoServicio @relation("LiquidacionObligacion", fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_liquidaciones_servicio_obligaciones")
+  obligacionIdentidad ObligacionPagoServicio @relation("LiquidacionIdentidadObligacion", fields: [tenantId, obligacionId, prestadorTenantId, trabajoId], references: [tenantId, obligacionId, prestadorTenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_liquidaciones_servicio_obligacion_prestador")
 
   @@unique([tenantId, liquidacionId], map: "uq_liquidaciones_servicio_tenant_liquidacion")
   @@unique([tenantId, obligacionId], map: "uq_liquidaciones_servicio_tenant_obligacion")
@@ -1880,6 +1888,7 @@ model EventoWebhookPago {
   fechaRecepcion      DateTime? @map("fecha_recepcion")
 
   obligacion ObligacionPagoServicio? @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_eventos_webhook_pago_obligaciones")
+  intencion  IntencionPago?          @relation(fields: [tenantId, pagoId, obligacionId], references: [tenantId, pagoId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_eventos_webhook_pago_intenciones")
 
   @@unique([tenantId, proveedor, eventoProveedorId], map: "uq_eventos_webhook_pago_tenant_evento")
   @@index([tenantId, estado, fechaOcurrencia], map: "idx_eventos_webhook_pago_tenant_estado_ocurrencia")

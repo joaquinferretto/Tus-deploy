@@ -302,6 +302,75 @@ reversed`, `frozen -> reversed`). `eligible` exige pago aprobado y `Trabajo.comp
 | Settlement interno                  | B     | Estados internos correctos; sin payout                                            |
 | Captura, split, payout, refund real | C     | Fuera de alcance (WEB-09E)                                                        |
 
+## DB-09-SAFETY — modelo financiero de sujeto dual (IMPLEMENTADO)
+
+**Decision:** se mantiene un unico ledger y tablas financieras compartidas. `intenciones_pago`, `instantaneas_comision` y
+`movimientos_contables` referencian **exactamente uno** de dos sujetos con FK real: `compromiso_id` (legacy, FK a
+`compromisos`) u `obligacion_id` (servicios, FK a `obligaciones_pago_servicio`). No se usa `subject_type + subject_id`.
+
+**Motivo:** evitar duplicar ledger, intenciones, comision, conciliacion y settlement por tipo de sujeto.
+
+**`DROP NOT NULL`:** existe solo en `20260923100000_tus_service_finance_identity`, una sentencia por tabla. No borra
+columnas ni filas: reemplaza la invariante "`compromiso_id` obligatorio" por "`(compromiso_id IS NULL) <> (obligacion_id IS
+NULL)`" (`ck_*_sujeto_unico`). El repo ya tenia el precedente `reservas.servicio_id DROP NOT NULL` (WEB-04D1).
+Riesgos reales: un camino de escritura que omita ambos sujetos (bloqueado por CHECK y por `asegurarSujetoFinancieroUnico`),
+uniques que ignoran NULL (ver tabla) y consultas que asuman `compromiso_id` presente (ver abajo).
+
+### Invariantes por tabla
+
+| Tabla                    | Legacy          | Servicio                           | XOR                     | Unicidad legacy                   | Unicidad servicio                                                      | FKs                                                                                 |
+| ------------------------ | --------------- | ---------------------------------- | ----------------------- | --------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `intenciones_pago`       | `compromiso_id` | `obligacion_id`                    | CHECK validado          | `(tenant, compromiso_id)`         | `(tenant, obligacion_id, intento)`, `(tenant, pago_id, obligacion_id)` | compromisos; obligacion; `(tenant, obligacion, prestador_tenant, orden_id=trabajo)` |
+| `instantaneas_comision`  | `compromiso_id` | `obligacion_id`                    | CHECK validado          | `(tenant, compromiso_id)`         | `(tenant, obligacion_id)`                                              | compromisos; obligacion                                                             |
+| `movimientos_contables`  | `compromiso_id` | `obligacion_id`                    | CHECK validado          | `(tenant, entrada_id)` compartido | idem + ids `svc-*` (CHECK `espacio_sujeto`)                            | compromisos; obligacion                                                             |
+| `liquidaciones_servicio` | —               | `obligacion_id` NOT NULL           | n/a                     | —                                 | `(tenant, obligacion_id)`                                              | obligacion; `(tenant, obligacion, prestador_tenant, trabajo)`                       |
+| `eventos_webhook_pago`   | sin sujeto      | `pago_id` + `obligacion_id` juntos | CHECK `sujeto_completo` | `(tenant, proveedor, evento)`     | idem                                                                   | `(tenant, pago, obligacion)` a la intencion exacta                                  |
+
+Todas las FKs son `ON DELETE RESTRICT ON UPDATE NO ACTION`; no hay cascadas. Cada unicidad logica tiene una variante con
+la columna del sujeto no nula, por lo que la semantica de NULL de PostgreSQL no deja filas sin proteger. No hicieron falta
+indices parciales: la unica unicidad dependiente de estado ("una intencion activa por obligacion") la cubre la
+transaccion serializable mas el unique `(tenant, obligacion_id, intento)`.
+
+### Consultas y codigo
+
+- No hay SQL crudo, `INNER JOIN` ni `include` de `compromiso` sobre estas tablas. El store legacy (`finance/prisma.ts`)
+  filtra siempre por `compromisoId` y el de servicios por `obligacionId`; ninguno lista filas del otro sujeto.
+- Cambios: `appendLedger` legacy responde `LEDGER_IMMUTABLE` si el id pertenece a otro sujeto en vez de mapear la fila;
+  todos los escritores pasan por `asegurarSujetoFinancieroUnico`; las claves de idempotencia de servicios se guardan como
+  `servicio:<clave>` en `idempotencia_financiera`, compartida con claves crudas legacy, para que el mismo tenant y la
+  misma clave no colisionen entre flujos.
+- Billing, reporting, soporte y delivery no leen estas tablas.
+
+### Checker de migraciones
+
+`scripts/tus-migration-repair-lib.mjs` clasificaba como `destructive` cualquier `DROP`. Ahora clasifica cada accion de
+`ALTER TABLE` por separado y toma la mas severa: `constraint_relaxation` (solo `ALTER COLUMN x DROP NOT NULL`),
+`high_risk` (`DROP CONSTRAINT`, `DROP DEFAULT`, `DROP INDEX|TRIGGER|FUNCTION`), `destructive` (`DROP TABLE|SCHEMA|TYPE|COLUMN`,
+`TRUNCATE`, `CASCADE`, `DELETE FROM` y cualquier `DROP` no reconocido). El gate rechaza `destructive`, `high_risk` y
+`ambiguous`; acepta la relajacion y la informa. Una sentencia `DROP NOT NULL, DROP COLUMN` queda `destructive`.
+
+### Datos historicos
+
+Las filas historicas cumplen el XOR por construccion (`compromiso_id` era NOT NULL y `obligacion_id` nacio vacia), por
+eso `20260924100000_tus_finance_subject_hardening` valida los CHECKs sin backfill. Los CHECKs de monto no negativo sobre
+tablas legacy siguen `NOT VALID` hasta auditar datos reales. No se detecto ninguna fila con ambos sujetos NULL.
+
+### Checklist antes de aplicar WEB-08/WEB-09 en una base real (NO aplicado)
+
+1. Backup restaurable verificado y ventana acordada.
+2. Baseline: `_prisma_migrations` y esquema real comparados con `DER_TUS.dbml`; confirmar que las migraciones hasta
+   `20260917100000_tus_work_budget` coinciden antes de las cuatro de WEB-09/DB-09.
+3. Filas incompatibles (solo lectura): intenciones, instantaneas y movimientos con `compromiso_id IS NULL`; montos negativos
+   en tablas legacy; `entrada_id LIKE 'svc-%'` en ledger legacy; eventos con `pago_id` sin `obligacion_id`.
+4. Locks: `CREATE UNIQUE INDEX` sin `CONCURRENTLY` bloquea escrituras de la tabla durante el build; `ALTER COLUMN DROP
+NOT NULL` toma ACCESS EXCLUSIVE brevemente; `VALIDATE CONSTRAINT` no bloquea escrituras. Medir tamaño de tablas y usar
+   `lock_timeout`.
+5. Orden: `20260917100000` → `20260923100000` → `20260923110000` → `20260923120000` → `20260924100000`, forward-only.
+6. Dry run en una copia descartable con `prisma migrate deploy` y los tests de integracion PostgreSQL.
+7. Smoke posterior: `/health`, `/ready`, lectura de trabajos y `GET /tus/v1/work/:workId/finance`.
+8. Rollback operativo: no hay down migrations; ante fallo restaurar backup o aplicar una migracion correctiva forward-only.
+   Volver a `SET NOT NULL` solo es posible mientras no existan filas de servicio.
+
 ## WEB-09D — auditoria de superficie Web (PENDIENTE, grado B)
 
 **Estado:** auditada, no implementada. No se agrega UI financiera en esta ejecucion.

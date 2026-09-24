@@ -199,10 +199,26 @@ const REQUIRED_CONSTRAINTS = Object.freeze({
 
 const ROOT_DIRECTORY = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const MIGRATION_FILE_PATTERN = /migration\.sql$/u
-const DESTRUCTIVE_TOKEN_PATTERN = /\b(?:DROP|TRUNCATE|CASCADE)\b/iu
+const DATA_LOSS_TOKEN_PATTERN = /\b(?:TRUNCATE|CASCADE)\b/iu
+const DROP_TOKEN_PATTERN = /\bDROP\b/iu
 const DELETE_PATTERN = /\bDELETE\s+FROM\b/iu
-const MUTATING_PATTERN = /^(?:UPDATE|INSERT|ALTER\s+TABLE[\s\S]*\b(?:DROP|ALTER)\b)/iu
+const MUTATING_PATTERN = /^(?:UPDATE|INSERT)\b/iu
 const TAGGED_CLEANUP_PATTERN = /repair:(?:tagged-cleanup|evidence-cleanup)/iu
+const SQL_IDENTIFIER = String.raw`(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*)`
+const ALTER_TABLE_PATTERN = new RegExp(
+  String.raw`^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${SQL_IDENTIFIER}(?:\.${SQL_IDENTIFIER})?\s+([\s\S]+?)\s*;?\s*$`,
+  'iu'
+)
+// The only relaxation accepted by name: one column loses NOT NULL; no data or column is removed.
+const DROP_NOT_NULL_ACTION = new RegExp(String.raw`^ALTER\s+(?:COLUMN\s+)?${SQL_IDENTIFIER}\s+DROP\s+NOT\s+NULL$`, 'iu')
+const SEVERITY = Object.freeze({
+  'comment-only': 0,
+  additive: 1,
+  constraint_relaxation: 2,
+  ambiguous: 3,
+  high_risk: 4,
+  destructive: 5,
+})
 
 export function stripSqlComments(sql) {
   const input = String(sql ?? '')
@@ -374,8 +390,11 @@ export function classifySqlStatement(sql) {
   const original = String(sql ?? '')
   const executable = stripSqlComments(original).trim()
   if (!executable) return 'comment-only'
-  if (DESTRUCTIVE_TOKEN_PATTERN.test(executable)) return 'destructive'
+  if (DATA_LOSS_TOKEN_PATTERN.test(executable)) return 'destructive'
   if (DELETE_PATTERN.test(executable) && !TAGGED_CLEANUP_PATTERN.test(original)) return 'destructive'
+  const alterTable = ALTER_TABLE_PATTERN.exec(executable)
+  if (alterTable) return classifyAlterTableActions(alterTable[1])
+  if (DROP_TOKEN_PATTERN.test(executable)) return classifyDropStatement(executable)
   if (/INSERT\s+INTO\s+"_prisma_migrations"/iu.test(executable)
     && new RegExp(`(?:${REPAIR_MIGRATION_NAME}|${LAUNCH_MIGRATION_NAME})`, 'u').test(executable)) return 'additive'
   if (/\b(?:_prisma_migrations|migration_name|finished_at|rolled_back_at)\b/iu.test(executable)
@@ -389,6 +408,56 @@ export function classifySqlStatement(sql) {
   return 'ambiguous'
 }
 
+// Each ALTER TABLE action is classified on its own and the statement takes the most severe
+// result, so `DROP NOT NULL` can never whitelist a `DROP COLUMN` in the same statement.
+function classifyAlterTableActions(actionsSql) {
+  const actions = splitTopLevelCommas(actionsSql)
+  if (actions.length === 0) return 'ambiguous'
+  return actions.map(classifyAlterTableAction).reduce((worst, current) => (SEVERITY[current] > SEVERITY[worst] ? current : worst), 'additive')
+}
+
+function classifyAlterTableAction(action) {
+  const normalized = action.trim().replace(/\s+/gu, ' ')
+  if (DROP_NOT_NULL_ACTION.test(normalized)) return 'constraint_relaxation'
+  if (/^DROP\s+(?:COLUMN\b|IF\s+EXISTS\b)/iu.test(normalized)) return 'destructive'
+  if (/^DROP\s+CONSTRAINT\b/iu.test(normalized)) return 'high_risk'
+  if (new RegExp(String.raw`^ALTER\s+(?:COLUMN\s+)?${SQL_IDENTIFIER}\s+DROP\s+DEFAULT$`, 'iu').test(normalized)) return 'high_risk'
+  if (DROP_TOKEN_PATTERN.test(normalized.replace(/'(?:[^']|'')*'/gu, "''"))) return 'destructive'
+  if (/^ADD\s+(?:COLUMN|CONSTRAINT)\b/iu.test(normalized)) return 'additive'
+  if (/^VALIDATE\s+CONSTRAINT\s+\S+$/iu.test(normalized)) return 'additive'
+  return 'ambiguous'
+}
+
+function classifyDropStatement(executable) {
+  if (/^DROP\s+(?:TABLE|SCHEMA|TYPE|DATABASE|VIEW|MATERIALIZED\s+VIEW|SEQUENCE|DOMAIN|EXTENSION|COLUMN)\b/iu.test(executable)) return 'destructive'
+  if (/^DROP\s+(?:INDEX|TRIGGER|FUNCTION|PROCEDURE|POLICY|RULE|CONSTRAINT)\b/iu.test(executable)) return 'high_risk'
+  // DROP inside DO blocks, function bodies or unknown forms is not reviewable by pattern.
+  return 'destructive'
+}
+
+function splitTopLevelCommas(sql) {
+  const parts = []
+  let depth = 0
+  let quote = null
+  let start = 0
+  for (let index = 0; index < sql.length; index += 1) {
+    const character = sql[index]
+    if (quote) {
+      if (character === quote) quote = null
+      continue
+    }
+    if (character === "'" || character === '"') quote = character
+    else if (character === '(') depth += 1
+    else if (character === ')') depth = Math.max(0, depth - 1)
+    else if (character === ',' && depth === 0) {
+      parts.push(sql.slice(start, index))
+      start = index + 1
+    }
+  }
+  parts.push(sql.slice(start))
+  return parts.map((part) => part.trim()).filter(Boolean)
+}
+
 export async function inventoryMigrations({ migrationsDirectory, repairMigrationName = REPAIR_MIGRATION_NAME, repairMigrationNames } = {}) {
   const directory = migrationsDirectory ?? join(ROOT_DIRECTORY, 'apps', 'api', 'prisma', 'migrations')
   const entries = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))
@@ -396,6 +465,8 @@ export async function inventoryMigrations({ migrationsDirectory, repairMigration
   const nonHistoricalNames = new Set(repairMigrationNames ?? [repairMigrationName, LAUNCH_MIGRATION_NAME, PHYSICAL_SPANISH_MIGRATION_NAME])
   let destructiveStatementCount = 0
   let ambiguousStatementCount = 0
+  let highRiskStatementCount = 0
+  const constraintRelaxations = []
   let commentOnlyTokenCount = 0
   const destructiveTokens = new Set()
   for (const entry of entries) {
@@ -416,6 +487,8 @@ export async function inventoryMigrations({ migrationsDirectory, repairMigration
         for (const token of stripSqlComments(statement).match(/\b(?:DROP|TRUNCATE|CASCADE)\b/giu) ?? []) destructiveTokens.add(token.toUpperCase())
       }
       if (classification === 'ambiguous') ambiguousStatementCount += 1
+      if (classification === 'high_risk') highRiskStatementCount += 1
+      if (classification === 'constraint_relaxation') constraintRelaxations.push({ migration: entry.name, sql: redactText(statement) })
       if (classification === 'comment-only') commentOnlyTokenCount += 1
       return { classification, sql: redactText(statement) }
     })
@@ -427,12 +500,15 @@ export async function inventoryMigrations({ migrationsDirectory, repairMigration
     pendingMigrations,
     destructiveStatementCount,
     ambiguousStatementCount,
+    highRiskStatementCount,
+    constraintRelaxationCount: constraintRelaxations.length,
+    constraintRelaxations,
     commentOnlyTokenCount,
     destructiveTokens: [...destructiveTokens].sort(),
   }
 }
 
-export function gateInventory({ statements = [], destructiveStatementCount = 0, ambiguousStatementCount = 0 } = {}) {
+export function gateInventory({ statements = [], destructiveStatementCount = 0, ambiguousStatementCount = 0, highRiskStatementCount = 0 } = {}) {
   const classified = statements.map((statement) => {
     const sql = typeof statement === 'string' ? statement : statement.sql
     const initialClassification = classifySqlStatement(sql)
@@ -441,14 +517,27 @@ export function gateInventory({ statements = [], destructiveStatementCount = 0, 
   })
   const destructive = classified.filter((statement) => statement.classification === 'destructive')
   const ambiguous = classified.filter((statement) => statement.classification === 'ambiguous')
+  const highRisk = classified.filter((statement) => statement.classification === 'high_risk')
+  const relaxations = classified.filter((statement) => statement.classification === 'constraint_relaxation')
   const totalDestructive = destructive.length + Number(destructiveStatementCount)
   const totalAmbiguous = ambiguous.length + Number(ambiguousStatementCount)
+  const totalHighRisk = highRisk.length + Number(highRiskStatementCount)
   return {
-    status: totalDestructive === 0 && totalAmbiguous === 0 ? 'passed' : 'rejected',
+    status: totalDestructive === 0 && totalAmbiguous === 0 && totalHighRisk === 0 ? 'passed' : 'rejected',
     destructiveStatementCount: totalDestructive,
     ambiguousStatementCount: totalAmbiguous,
+    highRiskStatementCount: totalHighRisk,
+    constraintRelaxationCount: relaxations.length,
     statements: classified,
-    reason: totalDestructive > 0 ? 'destructive-sql-rejected' : totalAmbiguous > 0 ? 'ambiguous-sql-rejected' : 'safe-additive-sql',
+    reason: totalDestructive > 0
+      ? 'destructive-sql-rejected'
+      : totalHighRisk > 0
+        ? 'high-risk-sql-rejected'
+        : totalAmbiguous > 0
+          ? 'ambiguous-sql-rejected'
+          : relaxations.length > 0
+            ? 'safe-additive-sql-with-constraint-relaxation'
+            : 'safe-additive-sql',
   }
 }
 

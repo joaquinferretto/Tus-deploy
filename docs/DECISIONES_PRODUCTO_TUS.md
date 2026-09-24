@@ -299,6 +299,13 @@ superficie de prestador y WEB-08D expone lectura/decisión cliente sin reconstru
 
 La matriz de evidencia y los criterios para una futura activacion estan en `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
 
+### W09-01: Ledger unico con sujeto financiero dual
+
+- Las tablas financieras compartidas referencian exactamente uno entre `compromiso_id` (legacy) y `obligacion_id`
+  (servicios WEB-08), con FK real y CHECK XOR validado; no se separan tablas por tipo de sujeto.
+- `ALTER COLUMN compromiso_id DROP NOT NULL` es una relajacion controlada reemplazada por el XOR; no elimina datos.
+- Detalle, matriz de unicidad y checklist de aplicacion: `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md` (DB-09-SAFETY).
+
 ## Alcance de la Build
 
 Incluido:

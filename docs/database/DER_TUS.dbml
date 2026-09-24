@@ -1625,6 +1625,7 @@ Table obligaciones_pago_servicio {
   indexes {
     (tenant_id, obligacion_id) [unique, name: 'uq_obligaciones_pago_tenant_obligacion']
     (tenant_id, trabajo_id) [unique, name: 'uq_obligaciones_pago_tenant_trabajo', note: '1:1 con Trabajo']
+    (tenant_id, obligacion_id, prestador_tenant_id, trabajo_id) [unique, name: 'uq_obligaciones_pago_identidad_prestador']
     (prestador_tenant_id, prestador_id, estado) [name: 'idx_obligaciones_pago_prestador_estado']
     (tenant_id, estado) [name: 'idx_obligaciones_pago_tenant_estado']
   }
@@ -1829,6 +1830,9 @@ Ref: eventos_webhook_pago.(tenant_id, obligacion_id) > obligaciones_pago_servici
 Ref: auditoria_finanzas_servicio.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
 Ref: liquidaciones_servicio.(tenant_id, obligacion_id) - obligaciones_pago_servicio.(tenant_id, obligacion_id)
 Ref: conciliaciones_servicio.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
+Ref: intenciones_pago.(tenant_id, obligacion_id, prestador_tenant_id, orden_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id, prestador_tenant_id, trabajo_id)
+Ref: liquidaciones_servicio.(tenant_id, obligacion_id, prestador_tenant_id, trabajo_id) - obligaciones_pago_servicio.(tenant_id, obligacion_id, prestador_tenant_id, trabajo_id)
+Ref: eventos_webhook_pago.(tenant_id, pago_id, obligacion_id) > intenciones_pago.(tenant_id, pago_id, obligacion_id)
 Ref: presupuestos.(tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
 Ref: lineas_presupuesto.presupuesto_registro_id > presupuestos.id
 Ref: aceptaciones_presupuesto.presupuesto_registro_id > presupuestos.id
