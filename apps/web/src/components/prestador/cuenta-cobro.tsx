@@ -88,9 +88,11 @@ export function CuentaCobro({
     } catch (error) {
       if (errorStatus(error) === 401) onUnauthorized()
       setNotice(
-        errorStatus(error) === 503
-          ? 'La conexión con Mercado Pago todavía no está habilitada en TUS.'
-          : 'No se pudo iniciar la conexión con Mercado Pago. Reintentá.'
+        error instanceof TusRequestError && error.code === 'PROVIDER_IDENTITY_NOT_VERIFIED'
+          ? 'Primero completá la verificación de identidad. Después vas a poder conectar Mercado Pago.'
+          : errorStatus(error) === 503
+            ? 'La conexión con Mercado Pago todavía no está habilitada en TUS.'
+            : 'No se pudo iniciar la conexión con Mercado Pago. Reintentá.'
       )
     } finally {
       setBusy(false)

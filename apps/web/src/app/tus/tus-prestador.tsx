@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { createTusWebAuthClient, toTusWebSession } from '@/lib/tus-auth-client'
 import { TrabajoPrestador } from '@/components/prestador/trabajo-prestador'
 import { CuentaCobro } from '@/components/prestador/cuenta-cobro'
+import { VerificacionIdentidad } from '@/components/prestador/verificacion-identidad'
 import {
   createTusWebClient,
   createTusWebFetchTransport,
@@ -834,6 +835,15 @@ export function TusPrestadorSurface(): React.ReactNode {
               confirmed by TUS.
             </p>
           </section>
+          <VerificacionIdentidad
+            onUnauthorized={() => {
+              createTusWebAuthClient().clearLocalSession()
+              setAuthStatus('expired')
+              setAuthMessage('Your TUS session expired. Sign in again to continue.')
+              setSession(null)
+            }}
+            session={session}
+          />
           <CuentaCobro
             onUnauthorized={() => {
               createTusWebAuthClient().clearLocalSession()
