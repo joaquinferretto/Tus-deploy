@@ -212,7 +212,7 @@ test('WU4 mounts authenticated finance routes and returns a held response when p
     await application.marketplace.store.commitments.saveMany([${JSON.stringify(commitment())}])
     const sessions = new InMemoryTusSessionResolver()
     sessions.add('finance-token', { sessionId: 'finance-session', subjectId: 'customer-a', tenantId: 'tenant-a', roles: ['customer'], permissions: ['tus:checkout'] })
-    const app = createApp({ tusRouter: createTusHttpRouter({ application, sessions }) })
+    const app = createApp({ tusRouter: createTusHttpRouter({ application, sessions }), tusRoutesEnabled: true })
     const server = app.listen(0)
     const address = server.address()
     const response = await fetch('http://127.0.0.1:' + address.port + '/tus/v1/finanzas/payment-intents', { method: 'POST', headers: { authorization: 'Bearer finance-token', 'content-type': 'application/json', 'x-correlation-id': 'corr-http', 'idempotency-key': 'http-pay-key' }, body: JSON.stringify({ commitmentId: 'commitment-finance-1', requestHash: 'http-hash' }) })

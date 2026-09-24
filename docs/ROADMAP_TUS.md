@@ -19,6 +19,7 @@
 | WEB-06   | Completada                  | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider.               |
 | WEB-07   | Completada                  | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda. |
 | WEB-08   | WEB-08A/B/C/D/E completadas | Modelo/API de Trabajo, superficies prestador y cliente para presupuesto y cancelacion temprana sin inventar agenda ni cierre.  |
+| WEB-09A  | Completada                  | Obligacion financiera canonica por Trabajo, dinero bigint/string y migracion aditiva no aplicada a una base real.              |
 
 ## WEB-04D2 entregado
 
@@ -192,8 +193,8 @@ Pendiente cuando exista un target autorizado:
 - WEB-08 corrigio la autorizacion de evidencia para exigir tenant prestador y unifico la lectura de detalle en una transaccion.
   Permanecen diferidos por requerir decision o migracion: proyeccion cliente/prestador de metadata, idempotency fingerprint
   canonico server-side, carrera entre validacion de reserva y creacion de Trabajo, y constraints compuestas adicionales.
-- WEB-09 no tiene capacidades financieras grado A: el sujeto financiero no coincide aun con
-  `CompromisoMercadoServicios`, existen representaciones monetarias divergentes y los side effects no son atomicos. Ver
+- WEB-09A resolvio el sujeto financiero de servicios (`ObligacionPagoServicio`) y la frontera monetaria. Ningun flujo
+  financiero es grado A mientras no exista provider real, migracion aplicada y prueba PostgreSQL descartable. Ver
   `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
 - El worker Python sigue siendo un scaffold bloqueado, no un consumidor productivo.
 

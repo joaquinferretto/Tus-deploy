@@ -31,6 +31,9 @@ import {
   UnavailableMercadoPagoFinanceProvider,
 } from '../finance/index.ts'
 import { PrismaTusFinanceStore, type ClientePrismaFinanzas } from '../finance/prisma.ts'
+import { ServicioFinanzasServicios } from '../finance/servicios/servicio.ts'
+import { AlmacenFinanzasServicioEnMemoria, IdentidadServicioEnMemoria, TransaccionFinanzasServicioEnMemoria } from '../finance/servicios/memoria.ts'
+import { TransaccionFinanzasServicioPrisma, type ClientePrismaFinanzasServicio } from '../adapters/prisma-finanzas-servicios.ts'
 import { InMemoryDeliveryStore, TusDeliveryService } from '../delivery/index.ts'
 import { InMemoryPosStore, TusPosService } from '../pos/index.ts'
 import { PrismaDeliveryStore, PrismaPosStore } from '../adapters/delivery-pos.ts'
@@ -78,6 +81,10 @@ export function createTusApplication(
   const workIdempotency = new InMemoryTrabajoIdempotencyStore()
   const workOutbox = new InMemoryTrabajoOutboxStore()
   const work = new ServicioTrabajo(new InMemoryTrabajoTransaction({ work: workStore, idempotency: workIdempotency, outbox: workOutbox }), options.now)
+  const serviceFinance = new ServicioFinanzasServicios(
+    new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore)),
+    options.now
+  )
   return new TusApplicationService({
     commitments,
     audits,
@@ -94,6 +101,7 @@ export function createTusApplication(
     whatsapp,
     reporting,
     work,
+    serviceFinance,
     ...options,
   })
 }
@@ -115,6 +123,7 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
   const whatsapp = new TusWhatsAppService({ store: new PrismaWhatsAppActionStore(client as never), evaluadorHabilitacion })
   const reporting = new TusReportingService({ store: new PrismaReportingStore(client as never) })
   const work = new ServicioTrabajo(new PrismaTrabajoTransaction(client), () => Date.now())
+  const serviceFinance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio))
   return new TusApplicationService({
     commitments: commitmentStore,
     compensations: new PrismaTusCompensationStore(client),
@@ -136,6 +145,7 @@ export function createPrismaTusApplication(client: TusPrismaClient): TusApplicat
     whatsapp,
     reporting,
     work,
+    serviceFinance,
     evaluadorHabilitacion,
     perfilHabilitacion: 'native-local',
     alcanceHabilitacion: 'argentina-stage-1',

@@ -279,6 +279,63 @@ export function validarEvidenciaTrabajo(value: unknown): EvidenciaTrabajo {
   return value as unknown as EvidenciaTrabajo
 }
 
+// WEB-09A: canonical financial identity of a WEB-08 service. One obligation per Trabajo; the
+// amount is derived server-side from the accepted budget or a fixed-price commitment and is
+// carried on the wire as a minor-unit decimal string.
+export const ESTADOS_OBLIGACION_PAGO_SERVICIO = {
+  PENDIENTE_PAGO: 'pending_payment',
+  PAGADA: 'paid',
+  REINTEGRADA: 'refunded',
+  CONTRACARGO: 'charged_back',
+} as const
+
+export type EstadoObligacionPagoServicio = (typeof ESTADOS_OBLIGACION_PAGO_SERVICIO)[keyof typeof ESTADOS_OBLIGACION_PAGO_SERVICIO]
+
+export const ORIGENES_IMPORTE_OBLIGACION_SERVICIO = {
+  PRESUPUESTO_ACEPTADO: 'accepted_budget',
+  PRECIO_FIJO_COMPROMISO: 'fixed_price_commitment',
+} as const
+
+export type OrigenImporteObligacionServicio = (typeof ORIGENES_IMPORTE_OBLIGACION_SERVICIO)[keyof typeof ORIGENES_IMPORTE_OBLIGACION_SERVICIO]
+
+export interface ObligacionPagoServicio {
+  contractVersion: TusContractVersion
+  obligacionId: string
+  tenantId: string
+  clienteId: string
+  prestadorTenantId: string
+  prestadorId: string
+  publicacionId: string
+  commitmentId: string
+  trabajoId: string
+  amountSource: OrigenImporteObligacionServicio
+  budgetId: string | null
+  budgetVersion: number | null
+  amountMinor: string
+  currency: string
+  status: EstadoObligacionPagoServicio
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+export function validarObligacionPagoServicio(value: unknown): ObligacionPagoServicio {
+  if (!isRecord(value)) throw new ContractValidationError('tus-service-payment-obligation', undefined, 'payload must be an object')
+  assertTusVersion('tus-service-payment-obligation', value['contractVersion'])
+  for (const field of ['obligacionId', 'tenantId', 'clienteId', 'prestadorTenantId', 'prestadorId', 'publicacionId', 'commitmentId', 'trabajoId', 'currency', 'createdAt', 'updatedAt']) {
+    if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, `${field} is required`)
+  }
+  if (!Object.values(ESTADOS_OBLIGACION_PAGO_SERVICIO).includes(value['status'] as EstadoObligacionPagoServicio) || !Number.isInteger(value['version']) || Number(value['version']) < 1 || !isMinorAmount(value['amountMinor']) || !/^[A-Z]{3}$/.test(String(value['currency'])) || !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])) {
+    throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, 'obligation state is invalid')
+  }
+  const budgetBacked = value['amountSource'] === ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRESUPUESTO_ACEPTADO
+  const fixedPrice = value['amountSource'] === ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRECIO_FIJO_COMPROMISO
+  const hasBudget = typeof value['budgetId'] === 'string' && value['budgetId'].length > 0 && Number.isInteger(value['budgetVersion']) && Number(value['budgetVersion']) > 0
+  const withoutBudget = value['budgetId'] === null && value['budgetVersion'] === null
+  if (!(budgetBacked && hasBudget) && !(fixedPrice && withoutBudget)) throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, 'amount source is inconsistent with the budget reference')
+  return value as unknown as ObligacionPagoServicio
+}
+
 function isMinorAmount(value: unknown): value is string {
   return typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
 }

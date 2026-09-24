@@ -874,7 +874,8 @@ Table intenciones_pago {
   version_contrato varchar [note: 'ex contractVersion']
   pago_id varchar [note: 'ex paymentId']
   tenant_id varchar
-  compromiso_id varchar [note: 'FK objetivo -> compromisos (1:1); ex commitmentId']
+  compromiso_id varchar [null, note: 'FK -> compromisos (legacy); NULL cuando el sujeto es obligacion_id; ex commitmentId']
+  obligacion_id varchar [null, note: 'WEB-09A: FK -> obligaciones_pago_servicio; exactamente un sujeto por fila']
   proveedor varchar [note: 'ex provider; [EXTERNA]']
   referencia_proveedor varchar [null, note: 'ex providerReference; [EXTERNA]']
   estado_proveedor varchar [note: 'ex providerStatus; [EXTERNA]']
@@ -929,7 +930,8 @@ Table instantaneas_comision {
   version_contrato varchar [note: 'ex contractVersion']
   instantanea_id varchar [note: 'ex snapshotId']
   tenant_id varchar
-  compromiso_id varchar [note: 'FK objetivo -> compromisos (RESTRICT); ex commitmentId']
+  compromiso_id varchar [null, note: 'NULL cuando el sujeto es obligacion_id; FK objetivo -> compromisos (RESTRICT); ex commitmentId']
+  obligacion_id varchar [null, note: 'WEB-09A: FK -> obligaciones_pago_servicio; exactamente un sujeto por fila']
   contexto varchar [note: 'ex context']
   monto_bruto bigint [note: 'ex grossAmount']
   deducciones bigint [note: 'ex deductions']
@@ -957,7 +959,8 @@ Table movimientos_contables {
   id varchar [pk]
   entrada_id varchar [note: 'ex entryId']
   tenant_id varchar
-  compromiso_id varchar [note: 'FK objetivo -> compromisos (RESTRICT); ex commitmentId']
+  compromiso_id varchar [null, note: 'NULL cuando el sujeto es obligacion_id; FK objetivo -> compromisos (RESTRICT); ex commitmentId']
+  obligacion_id varchar [null, note: 'WEB-09A: FK -> obligaciones_pago_servicio; exactamente un sujeto por fila']
   tipo_entrada varchar [note: 'ex entryType']
   monto bigint [note: 'ex amount']
   moneda varchar [note: 'ex currency']
@@ -1518,6 +1521,39 @@ Table registros_operaciones {
 // TRABAJO Y PRESUPUESTO WEB-08A/B
 // ============================================================
 
+Table obligaciones_pago_servicio {
+  id varchar [pk]
+  version_contrato varchar
+  obligacion_id varchar
+  tenant_id varchar [note: 'tenant cliente (igual a trabajos.tenant_id)']
+  cliente_id varchar
+  prestador_tenant_id varchar
+  prestador_id varchar
+  publicacion_id varchar
+  compromiso_id varchar [note: 'compromisos_mercado_servicios, via FK compuesta a trabajos']
+  trabajo_id varchar
+  origen_importe varchar [note: 'accepted_budget | fixed_price_commitment']
+  presupuesto_id varchar [null]
+  presupuesto_version int [null]
+  monto bigint [note: 'minor units >= 0']
+  moneda varchar [note: 'ISO 4217']
+  estado varchar [note: 'pending_payment | paid | refunded | charged_back']
+  version int
+  actor_id varchar
+  correlacion_id varchar
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+
+  indexes {
+    (tenant_id, obligacion_id) [unique, name: 'uq_obligaciones_pago_tenant_obligacion']
+    (tenant_id, trabajo_id) [unique, name: 'uq_obligaciones_pago_tenant_trabajo', note: '1:1 con Trabajo']
+    (prestador_tenant_id, prestador_id, estado) [name: 'idx_obligaciones_pago_prestador_estado']
+    (tenant_id, estado) [name: 'idx_obligaciones_pago_tenant_estado']
+  }
+
+  Note: 'WEB-09A: identidad financiera canonica de un servicio WEB-08. No implica cobro ni payout.'
+}
+
 Table trabajos {
   id varchar [pk]
   version_contrato varchar
@@ -1541,6 +1577,7 @@ Table trabajos {
   indexes {
     (tenant_id, trabajo_id) [unique, name: 'uq_trabajos_tenant_trabajo']
     (tenant_id, compromiso_id) [unique, name: 'uq_trabajos_tenant_compromiso']
+    (tenant_id, trabajo_id, compromiso_id, prestador_tenant_id, prestador_id, publicacion_id) [unique, name: 'uq_trabajos_identidad_financiera']
     (tenant_id, presupuesto_aceptado_id, presupuesto_aceptado_version) [unique, name: 'uq_trabajos_tenant_presupuesto_aceptado']
     (tenant_id, estado) [name: 'idx_trabajos_tenant_estado']
     (prestador_tenant_id, prestador_id, estado) [name: 'idx_trabajos_prestador_estado']
@@ -1705,6 +1742,11 @@ Ref: trabajos.(prestador_tenant_id, publicacion_id) > publicaciones.(tenant_id, 
 Ref: trabajos.(reserva_tenant_id, reserva_id) > reservas.(tenant_id, reserva_id)
 Ref: trabajos.(tenant_id, presupuesto_aceptado_id, presupuesto_aceptado_version) > presupuestos.(tenant_id, presupuesto_id, version)
 Ref: diagnosticos.(tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
+Ref: obligaciones_pago_servicio.(tenant_id, trabajo_id, compromiso_id, prestador_tenant_id, prestador_id, publicacion_id) - trabajos.(tenant_id, trabajo_id, compromiso_id, prestador_tenant_id, prestador_id, publicacion_id)
+Ref: obligaciones_pago_servicio.(tenant_id, presupuesto_id, presupuesto_version) > presupuestos.(tenant_id, presupuesto_id, version)
+Ref: intenciones_pago.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
+Ref: instantaneas_comision.(tenant_id, obligacion_id) - obligaciones_pago_servicio.(tenant_id, obligacion_id)
+Ref: movimientos_contables.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
 Ref: presupuestos.(tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
 Ref: lineas_presupuesto.presupuesto_registro_id > presupuestos.id
 Ref: aceptaciones_presupuesto.presupuesto_registro_id > presupuestos.id

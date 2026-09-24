@@ -742,8 +742,10 @@ model Trabajo {
   transiciones        TransicionTrabajo[]
   evidencias          EvidenciaTrabajo[]
   auditorias          AuditoriaTrabajo[]
+  obligacionesPago    ObligacionPagoServicio[]
 
   @@unique([tenantId, trabajoId], map: "uq_trabajos_tenant_trabajo")
+  @@unique([tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], map: "uq_trabajos_identidad_financiera")
   @@unique([tenantId, compromisoId], map: "uq_trabajos_tenant_compromiso")
   @@unique([tenantId, presupuestoAceptadoId, presupuestoAceptadoVersion], map: "uq_trabajos_tenant_presupuesto_aceptado")
   @@index([tenantId, estado], map: "idx_trabajos_tenant_estado")
@@ -793,10 +795,11 @@ model Presupuesto {
   fechaCreacion      DateTime  @map("fecha_creacion")
   fechaActualizacion DateTime  @map("fecha_actualizacion")
 
-  trabajo         Trabajo                 @relation("TrabajoPresupuestos", fields: [tenantId, trabajoId], references: [tenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_presupuestos_trabajos")
-  trabajoAceptado Trabajo?                @relation("PresupuestoAceptadoTrabajo")
-  lineas          LineaPresupuesto[]
-  aceptaciones    AceptacionPresupuesto[]
+  trabajo          Trabajo                  @relation("TrabajoPresupuestos", fields: [tenantId, trabajoId], references: [tenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_presupuestos_trabajos")
+  trabajoAceptado  Trabajo?                 @relation("PresupuestoAceptadoTrabajo")
+  lineas           LineaPresupuesto[]
+  aceptaciones     AceptacionPresupuesto[]
+  obligacionesPago ObligacionPagoServicio[]
 
   @@unique([tenantId, presupuestoId, version], map: "uq_presupuestos_tenant_presupuesto_version")
   @@index([tenantId, trabajoId, version], map: "idx_presupuestos_tenant_trabajo_version")
@@ -928,7 +931,8 @@ model IntencionPago {
   versionContrato          String    @map("version_contrato")
   pagoId                   String    @map("pago_id")
   tenantId                 String    @map("tenant_id")
-  compromisoId             String    @map("compromiso_id")
+  compromisoId             String?   @map("compromiso_id")
+  obligacionId             String?   @map("obligacion_id")
   proveedor                String    @map("proveedor")
   referenciaProveedor      String?   @map("referencia_proveedor")
   estadoProveedor          String    @map("estado_proveedor")
@@ -950,14 +954,56 @@ model IntencionPago {
   fechaCreacion            DateTime  @map("fecha_creacion")
   fechaActualizacion       DateTime  @map("fecha_actualizacion")
 
-  compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_compromisos")
+  compromiso Compromiso?             @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_compromisos")
+  obligacion ObligacionPagoServicio? @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_obligaciones")
 
   @@unique([tenantId, pagoId], map: "uq_intenciones_pago_tenant_pago")
   @@unique([tenantId, compromisoId], map: "uq_intenciones_pago_tenant_compromiso")
   @@unique([tenantId, claveIdempotencia], map: "uq_intenciones_pago_tenant_clave_idempotencia")
+  @@index([tenantId, obligacionId], map: "idx_intenciones_pago_tenant_obligacion")
   @@index([tenantId, estadoProveedor], map: "idx_intenciones_pago_tenant_estado_proveedor")
   @@index([tenantId, estadoComercial], map: "idx_intenciones_pago_tenant_estado_comercial")
   @@map("intenciones_pago")
+}
+
+// WEB-09A: canonical financial identity of a WEB-08 service. tenant_id is the customer
+// tenant (same as trabajos.tenant_id); the composite FK pins the whole chain
+// Trabajo -> CompromisoMercadoServicios -> Publicacion -> Prestador so an obligation
+// cannot mix tenants, providers, publications or commitments.
+model ObligacionPagoServicio {
+  id                 String   @id(map: "obligaciones_pago_servicio_pkey")
+  versionContrato    String   @map("version_contrato")
+  obligacionId       String   @map("obligacion_id")
+  tenantId           String   @map("tenant_id")
+  clienteId          String   @map("cliente_id")
+  prestadorTenantId  String   @map("prestador_tenant_id")
+  prestadorId        String   @map("prestador_id")
+  publicacionId      String   @map("publicacion_id")
+  compromisoId       String   @map("compromiso_id")
+  trabajoId          String   @map("trabajo_id")
+  origenImporte      String   @map("origen_importe")
+  presupuestoId      String?  @map("presupuesto_id")
+  presupuestoVersion Int?     @map("presupuesto_version")
+  monto              BigInt   @map("monto")
+  moneda             String   @map("moneda")
+  estado             String   @map("estado")
+  version            Int      @default(1) @map("version")
+  actorId            String   @map("actor_id")
+  correlacionId      String   @map("correlacion_id")
+  fechaCreacion      DateTime @map("fecha_creacion")
+  fechaActualizacion DateTime @map("fecha_actualizacion")
+
+  trabajo              Trabajo               @relation(fields: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_trabajos")
+  presupuesto          Presupuesto?          @relation(fields: [tenantId, presupuestoId, presupuestoVersion], references: [tenantId, presupuestoId, version], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_presupuestos")
+  intencionesPago      IntencionPago[]
+  instantaneasComision InstantaneaComision[]
+  movimientosContables MovimientoContable[]
+
+  @@unique([tenantId, obligacionId], map: "uq_obligaciones_pago_tenant_obligacion")
+  @@unique([tenantId, trabajoId], map: "uq_obligaciones_pago_tenant_trabajo")
+  @@index([prestadorTenantId, prestadorId, estado], map: "idx_obligaciones_pago_prestador_estado")
+  @@index([tenantId, estado], map: "idx_obligaciones_pago_tenant_estado")
+  @@map("obligaciones_pago_servicio")
 }
 
 model IdempotenciaFinanciera {
@@ -979,7 +1025,8 @@ model InstantaneaComision {
   versionContrato     String   @map("version_contrato")
   instantaneaId       String   @map("instantanea_id")
   tenantId            String   @map("tenant_id")
-  compromisoId        String   @map("compromiso_id")
+  compromisoId        String?  @map("compromiso_id")
+  obligacionId        String?  @map("obligacion_id")
   contexto            String   @map("contexto")
   montoBruto          BigInt   @map("monto_bruto")
   deducciones         BigInt   @map("deducciones")
@@ -994,10 +1041,12 @@ model InstantaneaComision {
   estadoContable      String   @map("estado_contable")
   fechaCreacion       DateTime @map("fecha_creacion")
 
-  compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_instantaneas_comision_compromisos")
+  compromiso Compromiso?             @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_instantaneas_comision_compromisos")
+  obligacion ObligacionPagoServicio? @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_instantaneas_comision_obligaciones")
 
   @@unique([tenantId, instantaneaId], map: "uq_instantaneas_comision_tenant_instantanea")
   @@unique([tenantId, compromisoId], map: "uq_instantaneas_comision_tenant_compromiso")
+  @@unique([tenantId, obligacionId], map: "uq_instantaneas_comision_tenant_obligacion")
   @@index([tenantId, versionRegla], map: "idx_instantaneas_comision_tenant_version_regla")
   @@map("instantaneas_comision")
 }
@@ -1006,7 +1055,8 @@ model MovimientoContable {
   id                 String   @id(map: "movimientos_contables_pkey")
   entradaId          String   @map("entrada_id")
   tenantId           String   @map("tenant_id")
-  compromisoId       String   @map("compromiso_id")
+  compromisoId       String?  @map("compromiso_id")
+  obligacionId       String?  @map("obligacion_id")
   tipoEntrada        String   @map("tipo_entrada")
   monto              BigInt   @map("monto")
   moneda             String   @map("moneda")
@@ -1015,11 +1065,13 @@ model MovimientoContable {
   inmutable          Boolean  @default(true) @map("inmutable")
   fechaCreacion      DateTime @map("fecha_creacion")
 
-  compromiso Compromiso @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_movimientos_contables_compromisos")
+  compromiso Compromiso?             @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_movimientos_contables_compromisos")
+  obligacion ObligacionPagoServicio? @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_movimientos_contables_obligaciones")
 
   @@unique([tenantId, entradaId], map: "uq_movimientos_tenant_entrada")
   @@index([tenantId, compromisoId, fechaCreacion], map: "idx_movimientos_tenant_compromiso_fecha_creacion")
   @@index([tenantId, entradaVinculadaId], map: "idx_movimientos_tenant_entrada_vinculada")
+  @@index([tenantId, obligacionId, fechaCreacion], map: "idx_movimientos_tenant_obligacion_fecha_creacion")
   @@map("movimientos_contables")
 }
 

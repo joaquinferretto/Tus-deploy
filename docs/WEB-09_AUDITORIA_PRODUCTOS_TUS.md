@@ -185,6 +185,59 @@ Toda migracion debe ser aditiva y forward-only. No se aplico ninguna durante WEB
 Los mocks actuales no prueban atomicidad PostgreSQL, FK reales, JSON con `bigint`, carreras ni side effects de provider. La
 activacion queda bloqueada hasta contar con esos tests y un target descartable autorizado.
 
+## WEB-09A — modelo financiero canonico (IMPLEMENTADO)
+
+**Estado:** implementado sin provider, sin cobro y sin migracion aplicada a una base real.
+
+### Mapa comercial real
+
+```text
+Publicacion (tenant prestador)
+  -> CompromisoMercadoServicios (tenant cliente, prestador_tenant_id, publicacion_id, monto BIGINT total minor)
+  -> Trabajo (1:1 por (tenant_id, compromiso_id); FK compuesta al compromiso)
+  -> Presupuesto aceptado (opcional, versionado)
+  -> ObligacionPagoServicio (1:1 por (tenant_id, trabajo_id); FK compuesta a Trabajo)
+```
+
+- `Compromiso` (`compromisos`) es el agregado legacy de commitments directos: su `tenant_id` es el tenant del prestador y
+  su FK a `prestadores` impide representar un compromiso cross-tenant del marketplace. No es el sujeto de servicios.
+- `CompromisoMercadoServicios` es el compromiso comercial de un servicio; `Trabajo` su ejecucion.
+- `ObligacionPagoServicio` es la identidad financiera canonica: fija tenant cliente, tenant/prestador, publicacion, compromiso,
+  Trabajo y, si existe, la version de presupuesto aceptada. La FK compuesta a `trabajos` rechaza cadenas mezcladas.
+- El finance legacy (`TusFinanceService`) rechaza compromisos marketplace con `SERVICE_OBLIGATION_REQUIRED`: su `amount`
+  esta en unidades mayores y sus tablas no son FK-validas para ese sujeto.
+
+### Importe y dinero
+
+- Importe derivado en servidor: presupuesto aceptado (`accepted_budget`) o compromiso de precio final
+  (`fixed_price_commitment`, `priceMode` `fixed`/`precio_fijo` o sin modo). `precio_desde` y `por_hora` sin presupuesto
+  quedan bloqueados con `AMOUNT_NOT_FINAL`: definir su base de cobro es una decision de producto pendiente.
+- Representacion canonica: `bigint` minor units + ISO 4217 en dominio/Prisma; string decimal en JSON
+  (`amountMinor`); unidades mayores solo en el adapter de provider (`minorUnitsToMajorDecimal`), sin floats. Helpers
+  centralizados en `packages/contracts/src/money.ts`; comision por basis points con redondeo half-up entero.
+- `MarketplaceCommitment.amount` sigue siendo un campo de presentacion en unidades mayores (wire contract sin cambios); la
+  logica financiera usa `priceSnapshot.minor * quantity` o `compromisos_mercado_servicios.monto`.
+
+### Persistencia
+
+- Migracion `20260923100000_tus_service_finance_identity`: crea `obligaciones_pago_servicio` con CHECKs de monto, moneda,
+  estado y origen; agrega `obligacion_id` a `intenciones_pago`, `instantaneas_comision` y `movimientos_contables`, relaja
+  `compromiso_id` y exige un unico sujeto por fila con CHECK `NOT VALID`. No hay backfill, borrado ni reescritura. Se
+  mantiene un unico ledger (append-only por trigger existente).
+- Estados de obligacion: `pending_payment -> paid -> refunded | charged_back`. `Trabajo.completed` no cambia la obligacion.
+- Idempotencia financiera: clave por tenant y huella `sha256` calculada en servidor desde el comando canonico; misma clave y
+  misma solicitud reproduce la respuesta, misma clave con otra solicitud devuelve `IDEMPOTENCY_CONFLICT`. Persistida en
+  `idempotencia_financiera` dentro de la misma transaccion serializable, con reintento acotado ante P2034/P2002.
+
+### Fronteras Mercado Pago
+
+| Frontera                                             | Rol                                                                   | Decision                                                |
+| ---------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------- |
+| `apps/api/src/tus/finance` (`ProveedorPagoFinanzas`) | Legacy `Compromiso`                                                   | Se conserva; no financia servicios                      |
+| `apps/api/src/providers/mercado-pago`                | Adapter in-memory con saga/outbox propios, solo router de integracion | Referencia; no canonico                                 |
+| `packages/mercado-pago`                              | Cliente HTTP portable, firma con raw body, refunds, Money Out         | Base del futuro adapter WEB-09E                         |
+| Puerto de pagos de servicio (WEB-09B)                | Interfaz canonica TUS                                                 | Unica frontera que usan B/C; fake determinista en tests |
+
 ## Decision
 
 WEB-09 queda cerrada como auditoria y plan. No se implementa ni activa provider real, captura, split, refund externo,

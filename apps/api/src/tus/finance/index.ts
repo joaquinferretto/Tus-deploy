@@ -661,6 +661,9 @@ export class TusFinanceService {
     const commitment = await this.commitmentLookup(commitmentId)
     if (!commitment) throw new FinanceError(404, 'NOT_FOUND', 'commitment was not found')
     if (commitment.tenantId !== tenantId) throw new FinanceError(403, 'FORBIDDEN', 'commitment is outside the authenticated tenant')
+    // Marketplace commitments expose `amount` in major units and are not FK-valid for the
+    // legacy `compromisos` finance tables; services are financed through ObligacionPagoServicio.
+    if ('priceSnapshot' in commitment) throw new FinanceError(409, 'SERVICE_OBLIGATION_REQUIRED', 'marketplace commitments are financed through the service payment obligation')
     return commitment
   }
 

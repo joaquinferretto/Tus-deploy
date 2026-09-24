@@ -296,7 +296,7 @@ test('BUILD 12F2 maps commission, evidence, and confirmation delegates without c
   assert.match(schema, /versionRegla\s+String\s+@map\("version_regla"\)/)
   assert.match(schema, /evidenciaId\s+String\s+@map\("evidencia_id"\)/)
   assert.match(schema, /@@unique\(\[tenantId, compromisoId\], map: "uq_confirmaciones_fin_tenant_compromiso"\)/)
-  assert.match(schema, /model InstantaneaComision[\s\S]*?compromiso\s+Compromiso\s+@relation\(fields: \[tenantId, compromisoId\], references: \[tenantId, compromisoId\], onDelete: Restrict, onUpdate: NoAction, map: "fk_instantaneas_comision_compromisos"\)/)
+  assert.match(schema, /model InstantaneaComision[\s\S]*?compromiso\s+Compromiso\??\s+@relation\(fields: \[tenantId, compromisoId\], references: \[tenantId, compromisoId\], onDelete: Restrict, onUpdate: NoAction, map: "fk_instantaneas_comision_compromisos"\)/)
 })
 
 test('BUILD 12F3 maps ledger, freeze, and reconciliation delegates without changing financial values', () => {

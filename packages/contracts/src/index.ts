@@ -4,7 +4,24 @@ import type { ContractVersion } from './base.ts'
 export { CONTRACT_VERSION, ContractValidationError } from './base.ts'
 
 export type { ContractVersion } from './base.ts'
-export { addMoney, createMoney, type Money } from './money.ts'
+export {
+  addMoney,
+  assertBasisPoints,
+  BASIS_POINTS_DENOMINATOR,
+  calculateBasisPointsAmount,
+  createMoney,
+  createNonNegativeMoney,
+  currencyMinorExponent,
+  formatMinorUnits,
+  isMinorUnitsString,
+  majorDecimalToMinorUnits,
+  MINOR_UNITS_PATTERN,
+  minorUnitsToMajorDecimal,
+  normalizeCurrency,
+  parseMinorUnits,
+  subtractMoney,
+  type Money,
+} from './money.ts'
 
 export interface TraceContext {
   traceId: string

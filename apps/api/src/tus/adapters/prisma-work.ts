@@ -541,15 +541,15 @@ export class PrismaTrabajoTransaction implements TrabajoTransactionPort {
   }
 }
 
-function isSerializationFailure(error: unknown): boolean {
+export function isSerializationFailure(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2034'
 }
 
-function isUniqueConstraint(error: unknown): boolean {
+export function isUniqueConstraint(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002'
 }
 
-function mapTrabajo(row: Record<string, unknown>): Trabajo {
+export function mapTrabajo(row: Record<string, unknown>): Trabajo {
   return {
     contractVersion: stringValue(row, 'versionContrato') as typeof TUS_CONTRACT_VERSION,
     trabajoId: stringValue(row, 'trabajoId'),
