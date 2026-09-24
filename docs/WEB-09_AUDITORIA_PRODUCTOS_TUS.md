@@ -371,6 +371,44 @@ NOT NULL` toma ACCESS EXCLUSIVE brevemente; `VALIDATE CONSTRAINT` no bloquea esc
 8. Rollback operativo: no hay down migrations; ante fallo restaurar backup o aplicar una migracion correctiva forward-only.
    Volver a `SET NOT NULL` solo es posible mientras no existan filas de servicio.
 
+## DB-09-GATE y DB-09-DRYRUN (2026-09-24)
+
+### Gate de migraciones
+
+`reviewMigrationChain` (`scripts/tus-migration-repair-lib.mjs`) acepta una cadena solo por razones explicitas:
+
+- `append_only_guard`: funcion `RETURNS trigger` cuyo cuerpo es unicamente `RAISE EXCEPTION '<literal>'` (con `OR REPLACE`
+  solo si ninguna migracion anterior definio ese nombre) y `CREATE TRIGGER ... BEFORE UPDATE OR DELETE ... FOR EACH ROW` sobre
+  una funcion guard ya reconocida. Sin contexto de cadena ambas sentencias siguen `ambiguous`; `gateInventory` las rechaza.
+- `REVIEWED_MIGRATION_STATEMENTS`: tres sentencias de `20260917100000_tus_work_budget` (backfill determinista, reemplazo de
+  FK en la misma sentencia y `ON DELETE CASCADE` de lineas a presupuesto) fijadas por migracion + sha256 del SQL normalizado;
+  cualquier edicion o copia en otra migracion vuelve a bloquear.
+- `DROP FUNCTION`, `DROP TRIGGER` y demas DROP siguen `high_risk`/`destructive`; el historial anterior a WEB-08 sigue bloqueado.
+
+La cadena `20260917100000` → `20260924100000` queda aceptada.
+
+### Dry run en PostgreSQL descartable
+
+- Cluster creado con `initdb` en el scratchpad del agente (PostgreSQL 16.15), `127.0.0.1:55439`, `system_identifier`
+  7688946921154849088, DBs `tus_dryrun_fresh` y `tus_dryrun_upgrade`; detenido con `pg_ctl stop` y data dir eliminado. El
+  servicio local `postgresql-x64-16` (puerto 5432) no se toco.
+- **Fresh install:** `prisma migrate deploy` aplico las 38 migraciones en 4,5 s (WEB-08/09: 96, 36, 20, 29 y 12 ms).
+- **Upgrade:** baseline hasta `20260916140000` (33 migraciones, 4,1 s), datos legacy sinteticos y luego las cinco migraciones
+  WEB-08/09 en 1,87 s (107, 39, 22, 25 y 14 ms). El backfill de `prestador_tenant_id` y los `VALIDATE` pasaron sobre filas
+  legacy; la fila legacy conservo `compromiso_id` con `obligacion_id` NULL.
+- `_prisma_migrations`: 38 aplicadas, 0 sin terminar, 0 revertidas en ambas DBs. `prisma validate`: OK.
+- **Drift:** `migrate diff` DB → `schema.prisma` reporta 112 lineas identicas en fresh, en el baseline previo contra el schema
+  de `ba8db98` y despues del upgrade: WEB-08/09 no agregan drift. El drift es historico (FKs `tenant_id → "TusTenant"` NOT
+  VALID, indices y defaults creados por migraciones previas y no declarados en Prisma). Consecuencia operativa: las filas de
+  servicio en `intenciones_pago` y `movimientos_contables` tambien requieren que `tenant_id` exista en `"TusTenant"`.
+- **Constraints reales:** 41/41 casos SQL pasan (XOR en las tres tablas, FK obligacion+prestador+trabajo, intencion exacta desde
+  inbox, uniques por sujeto, espacio `svc-*`, idempotencia `servicio:<clave>` junto a la clave legacy, RESTRICT en borrados,
+  triggers append-only, CHECKs de obligacion y liquidacion). Sin FKs en cascada en tablas financieras.
+- **Locks:** solo `AccessExclusiveLock` sobre tablas nuevas y `ShareRowExclusiveLock`/`ShareLock` sobre `trabajos` y
+  `presupuestos` durante la creacion de FKs; todos concedidos sin espera (sesion unica).
+- **API:** levantada con `tsx src/index.ts` contra `tus_dryrun_upgrade` (PID 17516, puerto 3199): `/health` 200, `/ready` 200,
+  rutas financieras 403 sin sesion, 2 conexiones a la DB descartable; proceso detenido y puerto libre.
+
 ## WEB-09D — auditoria de superficie Web (PENDIENTE, grado B)
 
 **Estado:** auditada, no implementada. No se agrega UI financiera en esta ejecucion.

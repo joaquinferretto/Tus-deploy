@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -456,6 +457,112 @@ function splitTopLevelCommas(sql) {
   }
   parts.push(sql.slice(start))
   return parts.map((part) => part.trim()).filter(Boolean)
+}
+
+// Append-only guard DDL (DB-09-GATE). Recognized structurally, never by keyword:
+// - a function whose whole body is `RAISE EXCEPTION '<literal>'` and returns trigger;
+//   `OR REPLACE` is accepted only when no earlier migration defined that function;
+// - a plain `CREATE TRIGGER ... BEFORE UPDATE OR DELETE ... FOR EACH ROW` executing a guard
+//   function already recognized in the migration chain.
+// Anything else involving functions or triggers stays ambiguous (fail-closed).
+const GUARD_FUNCTION_PATTERN = new RegExp(
+  String.raw`^CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\s+(${SQL_IDENTIFIER}(?:\.${SQL_IDENTIFIER})?)\s*\(\s*\)\s+RETURNS\s+trigger\s+LANGUAGE\s+plpgsql\s+AS\s+(\$[A-Za-z_]*\$)\s*BEGIN\s+RAISE\s+EXCEPTION\s+'(?:[^']|'')*'\s*;\s*END\s*;?\s*\3\s*;?$`,
+  'iu'
+)
+const GUARD_TRIGGER_PATTERN = new RegExp(
+  String.raw`^CREATE\s+TRIGGER\s+${SQL_IDENTIFIER}\s+BEFORE\s+(?:UPDATE\s+OR\s+DELETE|DELETE\s+OR\s+UPDATE)\s+ON\s+${SQL_IDENTIFIER}(?:\.${SQL_IDENTIFIER})?\s+FOR\s+EACH\s+ROW\s+EXECUTE\s+(?:FUNCTION|PROCEDURE)\s+(${SQL_IDENTIFIER}(?:\.${SQL_IDENTIFIER})?)\s*\(\s*\)\s*;?$`,
+  'iu'
+)
+const FUNCTION_DEFINITION_PATTERN = new RegExp(
+  String.raw`^CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(${SQL_IDENTIFIER}(?:\.${SQL_IDENTIFIER})?)\s*\(`,
+  'iu'
+)
+
+// Individually reviewed statements of historical migrations. Keyed by migration and by the
+// sha256 of the comment-free, whitespace-normalized SQL: any edit invalidates the review.
+export const REVIEWED_MIGRATION_STATEMENTS = Object.freeze([
+  {
+    migration: '20260917100000_tus_work_budget',
+    classification: 'ambiguous',
+    sha256: '00ed05da8d50065f153ee9ad42f426300032415816a561181f5f46ee0c623a15',
+    reason: 'Deterministic backfill of the new prestador_tenant_id column from publicaciones.tenant_id; the next statement sets NOT NULL, so any unmatched row aborts the migration instead of guessing.',
+  },
+  {
+    migration: '20260917100000_tus_work_budget',
+    classification: 'high_risk',
+    sha256: '38880b2172369b71ca4f2d142b039d4add71ca52010e7bdeb65cb428de61c0d1',
+    reason: 'Replaces fk_compromisos_mercado_servicios_publicaciones in the same statement with the tenant-scoped (prestador_tenant_id, publicacion_id) FK; RESTRICT, no data removed.',
+  },
+  {
+    migration: '20260917100000_tus_work_budget',
+    classification: 'destructive',
+    sha256: 'eddacfc3677b9ed32f2806f32afedc4df3670fe8145a4cb760bbdd831deb24b9',
+    reason: 'ON DELETE CASCADE only from lineas_presupuesto (strict children of one budget version) to presupuestos, matching the Prisma relation; budget versions are never deleted by the application and are restricted by trabajos.',
+  },
+])
+
+export function normalizedStatementHash(sql) {
+  return createHash('sha256').update(stripSqlComments(sql).trim().replace(/\s+/gu, ' ')).digest('hex')
+}
+
+function nombreFuncion(identifier) {
+  const parts = identifier.split('.').map((part) => part.replace(/^"|"$/gu, '').toLowerCase())
+  return parts.length === 1 ? `public.${parts[0]}` : parts.join('.')
+}
+
+export function createMigrationContext() {
+  return { definedFunctions: new Set(), guardFunctions: new Set() }
+}
+
+// Classifies with chain context and records the functions a statement defines.
+export function classifyStatementInContext(sql, context = createMigrationContext()) {
+  const executable = stripSqlComments(sql).trim()
+  let classification = classifySqlStatement(sql)
+  if (classification === 'ambiguous') {
+    const guardFunction = GUARD_FUNCTION_PATTERN.exec(executable)
+    if (guardFunction) {
+      const name = nombreFuncion(guardFunction[2])
+      if (!guardFunction[1] || !context.definedFunctions.has(name)) {
+        classification = 'append_only_guard'
+        context.guardFunctions.add(name)
+      }
+    }
+    const guardTrigger = GUARD_TRIGGER_PATTERN.exec(executable)
+    if (guardTrigger && context.guardFunctions.has(nombreFuncion(guardTrigger[1]))) classification = 'append_only_guard'
+  }
+  const defined = FUNCTION_DEFINITION_PATTERN.exec(executable)
+  if (defined) context.definedFunctions.add(nombreFuncion(defined[1]))
+  return classification
+}
+
+const ACCEPTED_CLASSIFICATIONS = new Set(['comment-only', 'additive', 'constraint_relaxation', 'append_only_guard'])
+
+// Reviews a known migration chain in order. A migration is accepted only when every statement
+// is safe by classification or matches an individually reviewed statement hash.
+export async function reviewMigrationChain({ migrationsDirectory, names } = {}) {
+  const directory = migrationsDirectory ?? join(ROOT_DIRECTORY, 'apps', 'api', 'prisma', 'migrations')
+  const entries = (await readdir(directory, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right))
+  const context = createMigrationContext()
+  const selected = new Set(names ?? entries)
+  const reviews = []
+  for (const name of entries) {
+    const path = join(directory, name, 'migration.sql')
+    if (!existsSync(path)) continue
+    const statements = splitSqlStatements(await readFile(path, 'utf8')).map((sql) => {
+      const classification = classifyStatementInContext(sql, context)
+      const sha256 = normalizedStatementHash(sql)
+      const reviewed = REVIEWED_MIGRATION_STATEMENTS.find((entry) => entry.migration === name && entry.sha256 === sha256 && entry.classification === classification)
+      return { classification, sha256, reviewed: reviewed?.reason ?? null, sql: redactText(sql) }
+    })
+    if (!selected.has(name)) continue
+    const blocking = statements.filter((statement) => !ACCEPTED_CLASSIFICATIONS.has(statement.classification) && !statement.reviewed)
+    reviews.push({ name, accepted: blocking.length === 0, blocking, statements })
+  }
+  const missing = [...selected].filter((name) => !reviews.some((review) => review.name === name))
+  return { accepted: missing.length === 0 && reviews.every((review) => review.accepted), missing, reviews }
 }
 
 export async function inventoryMigrations({ migrationsDirectory, repairMigrationName = REPAIR_MIGRATION_NAME, repairMigrationNames } = {}) {
