@@ -2032,3 +2032,122 @@ Ref: suscripciones.(tenant_id, plan_id) > planes_suscripcion.(tenant_id, plan_id
 // ============================================================
 // Documentadas en DICCIONARIO_DATOS_TUS.md (matriz de relaciones no-FK).
 // No se modelan como Ref porque no son FK SQL.
+
+// ============================================================
+// IDENTITY-NOSIS (20260927100000_tus_identity_verification)
+// ============================================================
+Table verificaciones_identidad {
+  id varchar [pk]
+  tenant_id varchar
+  usuario_id varchar
+  proveedor_id varchar
+  tipo_documento varchar [note: 'dni']
+  numero_documento varchar [null]
+  nombre_extraido varchar [null]
+  apellido_extraido varchar [null]
+  fecha_nacimiento_extraida varchar [null]
+  sexo_extraido varchar [null]
+  cuil_verificado varchar [null]
+  estado varchar
+  metodo_verificacion varchar [null, note: 'nosis_browser | nosis_api | demo | manual']
+  referencia_proveedor varchar [null]
+  motivo_revision varchar [null]
+  nota_decision varchar [null]
+  consentimiento_aceptado_en timestamp [null]
+  consentimiento_version varchar [null]
+  consentimiento_proposito varchar [null]
+  lectura_ocr jsonb [null]
+  lectura_vision jsonb [null]
+  resultado_externo jsonb [null, note: 'snapshot minimo: resultCount, nameMatch, cuilValid']
+  intentos int
+  version int
+  fecha_creacion timestamp
+  encolada_en timestamp [null]
+  procesamiento_iniciado_en timestamp [null]
+  verificada_en timestamp [null]
+  rechazada_en timestamp [null]
+  fecha_actualizacion timestamp
+  indexes {
+    (tenant_id, fecha_creacion) [name: 'ix_verificaciones_identidad_tenant']
+    (estado, fecha_creacion) [name: 'ix_verificaciones_identidad_estado']
+    numero_documento [unique, name: 'uq_verificaciones_identidad_documento_verificado', note: 'parcial WHERE estado = verified']
+    cuil_verificado [unique, name: 'uq_verificaciones_identidad_cuil_verificado', note: 'parcial WHERE estado = verified']
+  }
+  Note: 'IDENTITY-NOSIS: verificacion de identidad del prestador.'
+}
+
+Table documentos_identidad {
+  id varchar [pk, note: 'verificacion_id:lado']
+  verificacion_id varchar
+  tenant_id varchar
+  lado varchar [note: 'front | back']
+  tipo_mime varchar
+  tamano int
+  sha256 varchar
+  contenido_cifrado text [note: 'AES-256-GCM, clave TUS_IDENTITY_DOCUMENTS_KEY fuera de la DB']
+  version_clave varchar
+  fecha_creacion timestamp
+  indexes {
+    (verificacion_id, lado) [unique, name: 'uq_documentos_identidad_lado']
+  }
+}
+
+Table cola_verificacion_identidad {
+  id varchar [pk]
+  verificacion_id varchar
+  etapa varchar [note: 'lectura | consulta']
+  estado varchar [note: 'queued | leased | done | cancelled']
+  encolado_en timestamp
+  disponible_en timestamp
+  intentos int
+  lease_owner varchar [null]
+  lease_hasta timestamp [null]
+  ultimo_error varchar [null]
+  fecha_actualizacion timestamp
+  indexes {
+    verificacion_id [unique, name: 'uq_cola_verificacion_identidad_activo', note: 'parcial WHERE estado IN (queued, leased)']
+    (estado, encolado_en, disponible_en) [name: 'ix_cola_verificacion_identidad_fifo']
+  }
+}
+
+Table consultas_proveedor_identidad {
+  id varchar [pk]
+  proveedor_id varchar
+  verificacion_id varchar
+  consumida_en timestamp
+  indexes {
+    (proveedor_id, consumida_en) [name: 'ix_consultas_proveedor_identidad_ventana']
+  }
+  Note: 'append-only (trigger); ventana deslizante 7/h'
+}
+
+Table estado_proveedor_identidad {
+  proveedor_id varchar [pk]
+  estado varchar [note: 'running | paused | session_required | circuit_open']
+  errores_consecutivos int
+  motivo varchar [null]
+  version int
+  fecha_actualizacion timestamp
+}
+
+Table sesiones_navegador_proveedor {
+  proveedor_id varchar [pk]
+  estado_cifrado text [note: 'AES-256-GCM, TUS_NOSIS_SESSION_KEY']
+  version_clave varchar
+  fecha_actualizacion timestamp
+}
+
+Table auditoria_identidad {
+  id varchar [pk]
+  accion varchar
+  verificacion_id varchar [null]
+  tenant_id varchar [null]
+  actor_id varchar
+  correlacion_id varchar
+  metadata jsonb [note: 'DNI/CUIL enmascarados']
+  fecha_creacion timestamp
+  indexes {
+    (verificacion_id, fecha_creacion) [name: 'ix_auditoria_identidad_verificacion']
+  }
+  Note: 'append-only (trigger)'
+}

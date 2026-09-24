@@ -604,6 +604,13 @@ server-derived y tenant-scoped.
 | Futuro MP | `MERCADO_PAGO_CLIENT_SECRET` | no | sí |
 | Futuro MP | `MERCADO_PAGO_WEBHOOK_SECRET` | no | sí |
 | Futuro MP | `TUS_PAYMENT_CREDENTIALS_KEY` | no | sí |
+| Hostinger API | `IDENTITY_PROVIDER=nosis-browser` | sí (identidad) | no |
+| Hostinger API + worker | `TUS_IDENTITY_DOCUMENTS_KEY` | sí (subidas de DNI) | sí |
+| Host worker | `NOSIS_BROWSER_*`, `TUS_NOSIS_SESSION_KEY`, `GROQ_API_KEY` | para verificar automáticamente | credenciales y claves sí |
+
+La verificación de identidad (migración `20260927100000_tus_identity_verification`, worker Chromium separado y runbook)
+está en `docs/IDENTIDAD_PRESTADORES_TUS.md`. Sin worker las verificaciones quedan en cola y el admin puede aprobarlas
+manualmente con motivo.
 
 ## 14. Resultado y blockers actuales
 

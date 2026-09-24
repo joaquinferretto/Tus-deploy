@@ -83,6 +83,15 @@ services:
         sync: false
       - key: TUS_PAYMENT_CREDENTIALS_KEY
         sync: false
+      # IDENTITY-NOSIS (API side: consent, encrypted DNI uploads, queue, admin). The Mi Nosis
+      # browser worker runs as a separate process on a host with Chromium; see
+      # docs/IDENTIDAD_PRESTADORES_TUS.md. The API never needs the Nosis credentials.
+      - key: IDENTITY_PROVIDER
+        value: nosis-browser
+      - key: NOSIS_BROWSER_MAX_CHECKS_PER_HOUR
+        value: "7"
+      - key: TUS_IDENTITY_DOCUMENTS_KEY
+        sync: false
       - key: TUS_DEPLOYMENT_PROFILE
         value: render-native
       - key: TUS_ROUTES_ENABLED

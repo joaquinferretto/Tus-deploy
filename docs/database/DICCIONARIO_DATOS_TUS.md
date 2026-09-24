@@ -641,6 +641,16 @@ tasa y monto juntos o ambos NULL), el reclamo de despacho `despacho_reclamado_ha
 reembolso total (FK a la intención exacta, únicos por intento y por clave de idempotencia, estados
 `requested | submitted | requires_review | failed`); el estado monetario sigue cambiando solo con el webhook verificado.
 
+**IDENTITY-NOSIS.** `20260927100000_tus_identity_verification` (aditiva, solo tablas nuevas):
+`verificaciones_identidad` (estado con CHECK; `verified` exige DNI, método y fecha; DNI 6–9 dígitos y CUIL 11 dígitos por
+CHECK; índices únicos parciales sobre `numero_documento` y `cuil_verificado` donde `estado = 'verified'`; versión
+optimista; lecturas OCR/visión y snapshot externo mínimo en JSONB). `documentos_identidad` (imagen sin metadata cifrada
+AES-256-GCM, un lado por verificación). `cola_verificacion_identidad` (FIFO por `encolado_en`, lease con `lease_owner` /
+`lease_hasta`, un trabajo activo por verificación por índice parcial). `consultas_proveedor_identidad` (append-only; una
+fila por búsqueda enviada, base de la ventana deslizante 7/h). `estado_proveedor_identidad` (running/paused/
+session_required/circuit_open con versión). `sesiones_navegador_proveedor` (estado Playwright cifrado).
+`auditoria_identidad` (append-only, DNI/CUIL enmascarados). Relaciones lógicas sin FK: `verificacion_id` y `tenant_id`.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

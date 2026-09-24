@@ -391,3 +391,14 @@ con la evidencia focal de D2.
 - `docs/database/DER_TUS.dbml`: modelo relacional objetivo y físico etiquetado.
 - `docs/database/DICCIONARIO_DATOS_TUS.md`: semántica, FKs y deuda legacy.
 - `README.md`: operación local, despliegue y comandos.
+
+## IDENTITY-NOSIS: identidad de prestadores
+
+Módulo `apps/api/src/tus/identidad/` (hexagonal): dominio puro (`modelo.ts`: estados, normalización, CUIL, conciliación,
+matching), puertos (`puertos.ts`), servicio HTTP (`servicio.ts`: consentimiento, subida cifrada, encolado, admin), worker
+separado (`worker.ts`: lease FIFO, etapas lectura/consulta, límite 7/h, sesión, circuit breaker, reintentos), lectores
+(`lectores.ts`: OCR tesseract.js y visión Groq por `fetch`), proveedores (`proveedor.ts`: interfaz, demo;
+`nosis-browser.ts`: Playwright/Chromium con `MiNosisPage`), adaptadores en memoria y Prisma
+(`adapters/prisma-identidad.ts`, transacciones Serializable). La API solo encola; el worker corre con
+`pnpm tus:identity:worker`. Gates en marketplace, aplicación (aceptar trabajo) y pagos (OAuth y disponibilidad). Detalle:
+`docs/IDENTIDAD_PRESTADORES_TUS.md`.

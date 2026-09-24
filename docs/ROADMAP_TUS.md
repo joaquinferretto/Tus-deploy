@@ -192,7 +192,8 @@ Pendiente cuando exista un target autorizado:
   cuando el historial diverge.
 - Migraciones pendientes en `factory_local` (solo lectura, 2026-09-24): 8, desde
   `20260916140000_tus_provider_agenda_publication_modes` hasta `20260925100000_tus_service_payment_configuration`, mas
-  `20260926100000_tus_service_payment_checkout` (WEB-09E): 9 en total. No se aplicaron; runbook en `docs/PRODUCCION_TUS.md`.
+  `20260926100000_tus_service_payment_checkout` (WEB-09E) y `20260927100000_tus_identity_verification`
+  (IDENTITY-NOSIS): 10 en total. No se aplicaron; runbook en `docs/PRODUCCION_TUS.md`.
 - La suite global excede el timeout y mezcla gates no focales: seguridad del workflow, secret store Render,
   imports TypeScript sin extensión, disponibilidad de `pnpm` y smoke PostgreSQL.
 - El target PostgreSQL físico no se valida sin `DATABASE_URL` y autorización de un entorno descartable.
@@ -218,6 +219,13 @@ Pendiente cuando exista un target autorizado:
   prestador, reembolso total con revision manual si el vendedor no tiene saldo, Web de pago y cobros. Migracion
   `20260926100000_tus_service_payment_checkout`. Implementado hasta el boundary externo; **falta la prueba en el sandbox
   de Mercado Pago** (sin credenciales) y el dinero real sigue apagado.
+- IDENTITY-NOSIS (2026-09-24): verificación de identidad de prestadores. Consentimiento versionado, DNI frente/dorso
+  cifrado y sin metadata, OCR (tesseract.js) + visión (Groq) conciliados, cola FIFO persistente con lease, worker separado
+  (concurrencia 1) contra Mi Nosis por Chromium con límite global 7/h, sesión cifrada, circuit breaker, reintentos 5/15/60,
+  revisión admin y gates backend (publicar servicio, aceptar trabajo, conectar Mercado Pago, cobrar). Migración
+  `20260927100000_tus_identity_verification`. Solución temporal hasta la API de Nosis; **falta la primera consulta real**
+  (credenciales del operador y confirmación de selectores) y decidir el host del worker. Ver
+  `docs/IDENTIDAD_PRESTADORES_TUS.md`.
 - El worker Python sigue siendo un scaffold bloqueado, no un consumidor productivo.
 
 ## Regla de actualización

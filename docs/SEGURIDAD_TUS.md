@@ -106,6 +106,26 @@ Corrección:
 - Las GitHub Actions usan tags mayores y no SHAs inmutables.
 - Vercel Preview necesita dominios estables o allowlist explícita; no se habilitan wildcards CORS.
 
+## IDENTITY-NOSIS: controles de identidad de prestadores
+
+- DNI: magic bytes (el Content-Type no decide), 8 KB–8 MB, parseo estructural, rechazo de SVG/HTML/ejecutables, EXIF/GPS/XMP
+  y chunks de texto eliminados antes de guardar; cifrado AES-256-GCM con `TUS_IDENTITY_DOCUMENTS_KEY` y AAD por
+  verificación/lado; sin URL pública. Solo el admin de plataforma (`tus:identity:admin` + tenant de plataforma) ve las
+  imágenes, con `no-store`, `nosniff` y CSP `default-src 'none'`.
+- Tenancy: el prestador opera solo sobre la verificación de su tenant de sesión; campos de autoridad falsificados → 403.
+- Enviar solo encola (202): la API nunca abre un navegador ni espera a Nosis.
+- Sesión de Mi Nosis cifrada con `TUS_NOSIS_SESSION_KEY`; credenciales solo como secretos del host del worker.
+- Desafíos de terceros (reCAPTCHA/hCaptcha/Turnstile) **no se automatizan**: pasan a `session_required` y login humano.
+- Solo se extraen DNI, nombre y CUIL; snapshot mínimo; auditoría append-only con DNI/CUIL enmascarados; logs sin
+  cookies, HTML, contraseñas ni documentos completos.
+- DNI/CUIL verificados únicos por índice parcial; aprobación manual exige motivo y revisa duplicados.
+- Riesgo residual (Medium): los selectores de Mi Nosis se validaron solo contra un mock; la primera consulta real debe
+  hacerse con `pnpm tus:identity:nosis-check` y un DNI autorizado. Low: `aceptarConsentimiento` permite reiniciar una
+  verificación `rejected` por API (la Web no lo ofrece); cada reintento consume un cupo de 7/h.
+- Privacidad (Medium, decisión legal): el lector de visión envía frente y dorso del DNI a Groq (procesador externo) por
+  HTTPS. Revisar términos de retención de Groq y, si corresponde, mencionar el procesamiento por IA en el consentimiento
+  (hoy dice "fuentes externas de validación"). Sin `GROQ_API_KEY` no se envía nada y todo va a revisión manual.
+
 ## Gate obligatorio antes de staging
 
 - [ ] Working tree esperado y commit/release ID registrados; `opencode.json` fuera del cambio.
