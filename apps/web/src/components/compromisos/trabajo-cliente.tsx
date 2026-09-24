@@ -15,6 +15,7 @@ import { formatTusDate } from '@/lib/tus-journeys'
 import { type TusWebSession } from '@/lib/tus-ui-contract'
 import { createWorkIntent, type WorkIntent } from '@/lib/tus-work-intent'
 import { TusActionButton, TusStateMessage } from '../../app/tus/tus-ui'
+import { PagoTrabajo } from './pago-trabajo'
 
 type WorkListState = {
   status: 'loading' | 'ready' | 'empty' | 'disabled' | 'error'
@@ -353,6 +354,11 @@ export function TrabajoCliente({
               ))}
             </ul>
           )}
+          <PagoTrabajo
+            onUnauthorized={onUnauthorized}
+            session={session}
+            workId={detail.work.trabajoId}
+          />
           <h4>History</h4>
           <ul>
             {detail.transitions.map((transition) => (

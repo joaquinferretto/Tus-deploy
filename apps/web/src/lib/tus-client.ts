@@ -17,6 +17,8 @@ import type {
   LineaPresupuesto,
   Presupuesto,
   Trabajo,
+  CuentaCobroPrestador,
+  VistaPreviaPagoServicio,
 } from '@factory/contracts/tus'
 
 import { resolveWebApiBaseUrl } from './api-url'
@@ -83,6 +85,15 @@ export interface TusWorkDetail {
 
 export interface TusWorkListResponse {
   works: readonly TusWork[]
+}
+
+// WEB-09D: server-derived payment preview and provider payment account. The Web never sends
+// an amount; it only renders what TUS returns.
+export type TusPaymentPreview = VistaPreviaPagoServicio
+export type TusPaymentAccount = CuentaCobroPrestador & { connectAvailable: boolean }
+export interface TusPaymentIntentResponse {
+  status: 'executed' | 'replay' | 'existing'
+  payment: { paymentId: string; providerStatus: string; dispatchStatus: string }
 }
 
 export type TusWorkMutationResponse<T> = {
@@ -527,6 +538,15 @@ export interface TusWebClient {
   whatsappSupportHandoff(
     input: TusWebContext & { senderId: string; reason: string }
   ): Promise<TusWhatsAppSupportHandoffResponse>
+  paymentPreview(context: TusWebContext, workId: string): Promise<TusPaymentPreview>
+  createWorkPaymentIntent(
+    input: TusWebContext & { workId: string; idempotencyKey: string }
+  ): Promise<TusPaymentIntentResponse>
+  paymentAccount(context: TusWebContext): Promise<TusPaymentAccount>
+  connectPaymentAccount(
+    context: TusWebContext
+  ): Promise<{ authorizationUrl: string; expiresAt: string }>
+  disconnectPaymentAccount(context: TusWebContext): Promise<TusPaymentAccount>
   listWork(context: TusWebContext): Promise<TusWorkListResponse>
   workDetail(context: TusWebContext, workId: string): Promise<TusWorkDetail>
   acceptWorkCommitment(
@@ -851,6 +871,40 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         method: 'POST',
         path: '/tus/v1/whatsapp/support-handoff',
         body: { senderId, reason },
+      }),
+    paymentPreview: (context, workId) =>
+      transport.request<TusPaymentPreview>({
+        ...context,
+        method: 'GET',
+        path: `/tus/v1/work/${encodeURIComponent(workId)}/payment-preview`,
+      }),
+    createWorkPaymentIntent: ({ workId, idempotencyKey, ...context }) =>
+      transport.request<TusPaymentIntentResponse>({
+        ...context,
+        idempotencyKey,
+        method: 'POST',
+        path: `/tus/v1/work/${encodeURIComponent(workId)}/payment-intents`,
+        body: {},
+      }),
+    paymentAccount: (context) =>
+      transport.request<TusPaymentAccount>({
+        ...context,
+        method: 'GET',
+        path: '/tus/v1/provider/payment-account',
+      }),
+    connectPaymentAccount: (context) =>
+      transport.request<{ authorizationUrl: string; expiresAt: string }>({
+        ...context,
+        method: 'POST',
+        path: '/tus/v1/provider/payment-account/mercado-pago/connect',
+        body: {},
+      }),
+    disconnectPaymentAccount: (context) =>
+      transport.request<TusPaymentAccount>({
+        ...context,
+        method: 'POST',
+        path: '/tus/v1/provider/payment-account/disconnect',
+        body: {},
       }),
     listWork: (context) =>
       transport.request<TusWorkListResponse>({
