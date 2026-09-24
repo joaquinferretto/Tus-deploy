@@ -948,6 +948,10 @@ Table instantaneas_comision {
   evidencia_id varchar [note: '[LOGICA] referencia a evidencia financiera']
   estado_contable varchar [note: 'ex ledgerStatus']
   fecha_creacion timestamp [note: 'ex createdAt']
+  politica_comision_id varchar [null, note: 'WEB-09D: [LOGICA] politica aplicada (politicas_comision_servicio.politica_id); NULL = regla por defecto o fila historica']
+  comision_proveedor_pago bigint [null, note: 'WEB-09D: fee del PSP en minor units informado por el evento; NULL si no se conoce']
+  fee_proveedor_a_cargo varchar [null, note: 'WEB-09D: undetermined | provider | platform (snapshot)']
+  neto_prestador bigint [null, note: 'WEB-09D: bruto - comision TUS - fee PSP si lo absorbe el prestador; NULL si no se puede afirmar']
 
   indexes {
     (tenant_id, instantanea_id) [unique, name: 'uq_instantaneas_comision_tenant_instantanea']
@@ -1577,6 +1581,95 @@ Table conciliaciones_servicio {
   fecha_creacion timestamp
 
   Note: 'WEB-09C: corridas append-only (trigger).'
+}
+
+Table politicas_comision_servicio {
+  id varchar [pk]
+  politica_id varchar [unique]
+  alcance varchar [note: 'global | categoria | prestador']
+  alcance_ref varchar [null, note: 'NULL solo para global; categoria = cohorte de la publicacion; prestador = prestador_id']
+  clave_alcance varchar [note: 'global | categoria:<ref> | prestador:<ref> (CHECK)']
+  version int
+  tasa_puntos_base int [note: '0..3000 bp (CHECK)']
+  version_regla varchar
+  fee_psp_a_cargo varchar [note: 'undetermined | provider | platform']
+  motivo varchar
+  actor_id varchar
+  correlacion_id varchar
+  fecha_creacion timestamp
+
+  indexes {
+    (clave_alcance, version) [unique, name: 'uq_politicas_comision_clave_version']
+  }
+
+  Note: 'WEB-09D: politica de comision versionada, append-only (trigger). Global de plataforma, sin tenant.'
+}
+
+Table configuraciones_pagos_servicio {
+  id varchar [pk]
+  configuracion_id varchar [unique]
+  version int [unique]
+  pagos_habilitados boolean
+  proveedor varchar [note: 'mercado-pago (CHECK)']
+  moneda varchar
+  motivo varchar
+  actor_id varchar
+  correlacion_id varchar
+  fecha_creacion timestamp
+
+  Note: 'WEB-09D: interruptor de producto de pagos, append-only (trigger). Nunca guarda secretos.'
+}
+
+Table cuentas_cobro_prestador {
+  id varchar [pk]
+  prestador_tenant_id varchar
+  proveedor varchar
+  estado varchar [note: 'not_connected | connected | revoked | expired | error']
+  cuenta_externa_id varchar [null, note: '[EXTERNA] user_id de Mercado Pago']
+  modo_productivo boolean [null]
+  alcances varchar [note: 'scopes OAuth separados por espacio']
+  conectada_en timestamp [null]
+  expira_en timestamp [null]
+  version int
+  actor_id varchar
+  correlacion_id varchar
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+
+  indexes {
+    (prestador_tenant_id, proveedor) [unique, name: 'uq_cuentas_cobro_prestador_proveedor']
+  }
+
+  Note: 'WEB-09D: vinculo OAuth del prestador; solo referencias seguras.'
+}
+
+Table credenciales_cuenta_cobro {
+  id varchar [pk]
+  prestador_tenant_id varchar
+  proveedor varchar
+  credencial_cifrada text [note: 'AES-256-GCM v1.<iv>.<tag>.<ct>; AAD = tenant; clave fuera de la DB']
+  version_clave varchar
+  fecha_actualizacion timestamp
+
+  indexes {
+    (prestador_tenant_id, proveedor) [unique, name: 'uq_credenciales_cuenta_cobro_prestador']
+  }
+
+  Note: 'WEB-09D: tokens OAuth cifrados; se borran al desconectar. Nunca se exponen por HTTP.'
+}
+
+Table estados_oauth_cobro {
+  id varchar [pk]
+  huella_estado varchar [unique, note: 'sha256 hex del state (CHECK)']
+  prestador_tenant_id varchar
+  actor_id varchar
+  proveedor varchar
+  verificador_cifrado text [note: 'PKCE code_verifier cifrado']
+  expira_en timestamp
+  consumido_en timestamp [null, note: 'uso unico: UPDATE ... WHERE consumido_en IS NULL AND expira_en > now()']
+  fecha_creacion timestamp
+
+  Note: 'WEB-09D: state OAuth de un solo uso con TTL de 10 minutos.'
 }
 
 Table auditoria_finanzas_servicio {

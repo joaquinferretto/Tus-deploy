@@ -190,6 +190,9 @@ Pendiente cuando exista un target autorizado:
 
 - `render.yaml` aún declara `prisma migrate deploy`; la política TUS exige baseline forward-only target-specific
   cuando el historial diverge.
+- Migraciones pendientes en `factory_local` (solo lectura, 2026-09-24): 8, desde
+  `20260916140000_tus_provider_agenda_publication_modes` hasta `20260925100000_tus_service_payment_configuration`. No se
+  aplicaron; runbook en `docs/PRODUCCION_TUS.md`.
 - La suite global excede el timeout y mezcla gates no focales: seguridad del workflow, secret store Render,
   imports TypeScript sin extensión, disponibilidad de `pnpm` y smoke PostgreSQL.
 - El target PostgreSQL físico no se valida sin `DATABASE_URL` y autorización de un entorno descartable.
@@ -203,6 +206,12 @@ Pendiente cuando exista un target autorizado:
 - WEB-09A resolvio el sujeto financiero de servicios (`ObligacionPagoServicio`) y la frontera monetaria. Ningun flujo
   financiero es grado A mientras no exista provider real, migracion aplicada y prueba PostgreSQL descartable. Ver
   `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
+- WEB-09D (2026-09-24): preview canonica de pago para el cliente (`GET /tus/v1/work/:workId/payment-preview`), cobro solo con
+  trabajo completado y presupuesto aceptado, comision configurable y versionada (bp, snapshot inmutable), cuenta de cobro del
+  prestador por OAuth de Mercado Pago (tokens cifrados), administracion de pagos por tenant de plataforma y Web de pago y
+  cobros. Migracion `20260925100000_tus_service_payment_configuration`. Pagos reales siguen apagados: falta WEB-09E
+  (adaptador de cobro con `marketplace_fee`, webhook publico con firma real, refunds) y la decision de quien absorbe el fee
+  de Mercado Pago. Guia de despliegue y activacion: `docs/PRODUCCION_TUS.md`.
 - El worker Python sigue siendo un scaffold bloqueado, no un consumidor productivo.
 
 ## Regla de actualización

@@ -306,6 +306,30 @@ La matriz de evidencia y los criterios para una futura activacion estan en `docs
 - `ALTER COLUMN compromiso_id DROP NOT NULL` es una relajacion controlada reemplazada por el XOR; no elimina datos.
 - Detalle, matriz de unicidad y checklist de aplicacion: `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md` (DB-09-SAFETY).
 
+### W09-02: Cuando y cuanto se cobra un servicio (WEB-09D)
+
+- Un servicio se paga cuando el Trabajo esta `completed`; aceptar el presupuesto fija el monto pero no cobra.
+- La unica autoridad monetaria es el presupuesto aceptado y versionado. Nunca se cobra desde el precio de la publicacion
+  (`precio_desde`, `por_hora` ni precio fijo); sin presupuesto aceptado el trabajo no es cobrable.
+- El servidor calcula el importe. Abrir la pantalla de pago no escribe nada; sin proveedor habilitado no se registran
+  intenciones ni obligaciones y la Web informa "Pago online no disponible todavia".
+
+### W09-03: Comision TUS configurable y congelada
+
+- La comision es una politica persistida, versionada y append-only en basis points (1000 bp = 10%), con limite 0..3000,
+  alcance global, por categoria (cohorte) o por prestador, editable por el admin de plataforma sin redeploy.
+- La tasa usada en un pago queda congelada en su snapshot junto al fee del PSP y el neto del prestador; los cambios
+  posteriores no recalculan historia.
+- Quien absorbe la comision de Mercado Pago queda **pendiente de decision de negocio** (`pspFeeBearer = undetermined`);
+  mientras no se decida, los pagos no se pueden habilitar.
+
+### W09-04: Mercado Pago marketplace con cuenta propia del prestador
+
+- Producto: split de pagos de Mercado Pago (Checkout Pro/API marketplace). El prestador conecta su cuenta por OAuth; el
+  cobro se crea con su token y TUS retiene `marketplace_fee`. No hay transferencias manuales ni payouts de TUS.
+- TUS no guarda secretos de plataforma en la base; los tokens del prestador se guardan cifrados con una clave externa.
+- Dinero real permanece apagado hasta implementar y probar WEB-09E en sandbox (ver `docs/PRODUCCION_TUS.md`).
+
 ## Alcance de la Build
 
 Incluido:

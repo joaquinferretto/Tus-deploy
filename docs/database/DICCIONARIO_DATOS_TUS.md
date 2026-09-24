@@ -623,6 +623,16 @@ ledger para `obligacion_id`, agrega `uq_obligaciones_pago_identidad_prestador` y
 `fk_eventos_webhook_pago_intenciones` (todas RESTRICT, NOT VALID + VALIDATE). Ver matriz en
 `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
 
+**WEB-09D.** `20260925100000_tus_service_payment_configuration` (aditiva): `instantaneas_comision` agrega
+`politica_comision_id`, `comision_proveedor_pago`, `fee_proveedor_a_cargo` y `neto_prestador` (nullable; filas históricas
+NULL; CHECK validado de no negativos y valores permitidos). `politicas_comision_servicio` (append-only por trigger; tasa
+0..3000 bp por CHECK; `clave_alcance` + `version` únicos) y `configuraciones_pagos_servicio` (append-only; `version` única)
+son configuración de plataforma sin tenant. `cuentas_cobro_prestador` guarda el vínculo OAuth del prestador (una fila por
+tenant prestador y proveedor, versión optimista, `connected` exige `cuenta_externa_id`). `credenciales_cuenta_cobro` guarda
+tokens cifrados AES-256-GCM con la clave en `TUS_PAYMENT_CREDENTIALS_KEY` (fuera de la DB). `estados_oauth_cobro` guarda el
+`state` OAuth solo como sha256 y el verificador PKCE cifrado, con consumo atómico de un solo uso. Ninguna tabla guarda
+credenciales de la plataforma.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación
