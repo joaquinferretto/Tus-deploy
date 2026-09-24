@@ -882,6 +882,18 @@ export class TusMarketplaceService {
             'INVALID',
             'checkout requires at least one marketplace line'
           )
+        // WEB-08G: un carrito del tenant genera compromisos una sola vez. Un reintento con otra
+        // clave de idempotencia no duplica pedidos: recibe los compromisos ya creados.
+        const previous = (await store.commitments.forTenant(input.tenantId)).filter(
+          (commitment) => commitment.cartId === input.cartId
+        )
+        if (previous.length > 0)
+          throw new MarketplaceError(
+            409,
+            'CART_ALREADY_CHECKED_OUT',
+            'cart was already checked out with another idempotency key',
+            { commitmentIds: previous.map((commitment) => commitment.commitmentId) }
+          )
         const commitments: MarketplaceCommitment[] = []
         const audits: RegistroAuditoriaMercadoServicios[] = []
         const productQuantities = new Map<string, number>()

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   ESTADOS_DIAGNOSTICO,
   ESTADOS_PRESUPUESTO,
@@ -131,12 +132,19 @@ export interface PresupuestoPersistido extends Presupuesto {
   correlationId: string
 }
 
+// WEB-08F: el expediente se proyecta en servidor segun la parte que lo lee. Las transiciones
+// visibles no llevan actor ni correlacion: son identificadores internos de la otra parte.
+export type AudienciaTrabajo = 'customer' | 'provider'
+
+export type TransicionTrabajoVisible = Omit<TransicionTrabajo, 'actorId' | 'correlationId'>
+
 export interface TrabajoDetalle {
+  viewer: AudienciaTrabajo
   work: Trabajo
   diagnoses: Diagnostico[]
   budgets: Presupuesto[]
   evidence: EvidenciaTrabajo[]
-  transitions: TransicionTrabajo[]
+  transitions: TransicionTrabajoVisible[]
 }
 
 export type TrabajoMutation<T extends Record<string, unknown>> = Promise<
@@ -146,6 +154,10 @@ export type TrabajoMutation<T extends Record<string, unknown>> = Promise<
 export interface TrabajoStorePort {
   findAccessible(input: { tenantId: string; trabajoId: string }): Promise<Trabajo | null>
   findByCommitment(input: { tenantId: string; commitmentId: string }): Promise<Trabajo | null>
+  findByReservation(input: {
+    prestadorTenantId: string
+    reservationId: string
+  }): Promise<Trabajo | null>
   listAccessible(tenantId: string): Promise<Trabajo[]>
   createWork(work: Trabajo): Promise<void>
   updateWork(input: {
@@ -228,10 +240,23 @@ export interface TrabajoOutboxPort {
   list(tenantId: string): TrabajoOutboxRecord[]
 }
 
+// WEB-08H: la reserva se valida y bloquea dentro de la misma transaccion que crea el trabajo.
+// `lockForWork` devuelve true solo si la reserva confirmada pertenece al prestador, al cliente y
+// a la publicacion del compromiso, y la mantiene bloqueada hasta el commit.
+export interface TrabajoReservaPort {
+  lockForWork(input: {
+    ownerTenantId: string
+    reservationId: string
+    customerTenantId: string
+    listingId: string
+  }): Promise<boolean>
+}
+
 export interface TrabajoTransactionRepositories {
   work: TrabajoStorePort
   idempotency: TrabajoIdempotencyPort
   outbox: TrabajoOutboxPort
+  reservations?: TrabajoReservaPort
 }
 
 export interface TrabajoTransactionPort {
@@ -250,6 +275,15 @@ export class TrabajoError extends Error {
     this.status = status
     this.code = code
   }
+}
+
+class ResultadoExistente<T extends Record<string, unknown>> {
+  constructor(readonly value: T) {}
+}
+
+interface HuellaOperacion {
+  operation: string
+  payload: Record<string, unknown>
 }
 
 export class ServicioTrabajo {
@@ -285,7 +319,15 @@ export class ServicioTrabajo {
         'commitment is not available for provider acceptance'
       )
 
-    return this.execute(input, async (repositories) => {
+    const reservationId = input.reservationId?.trim() || undefined
+    const fingerprint = {
+      operation: 'work.accept',
+      payload: {
+        commitmentId: input.commitment.commitmentId,
+        reservationId: reservationId ?? null,
+      },
+    }
+    return this.execute(input, fingerprint, async (repositories) => {
       const existing = await repositories.work.findByCommitment({
         tenantId: input.commitment.tenantId,
         commitmentId: input.commitment.commitmentId,
@@ -297,7 +339,39 @@ export class ServicioTrabajo {
             'FORBIDDEN',
             'work is outside the authenticated provider tenant'
           )
-        return { work: existing }
+        if (reservationId && existing.reservaId !== reservationId)
+          throw new TrabajoError(
+            409,
+            'INVALID_RESERVATION_LINK',
+            'work already exists for the commitment with another reservation'
+          )
+        return new ResultadoExistente({ work: existing })
+      }
+      if (reservationId) {
+        const linked = await repositories.work.findByReservation({
+          prestadorTenantId: input.tenantId,
+          reservationId,
+        })
+        if (linked)
+          throw new TrabajoError(
+            409,
+            'RESERVATION_ALREADY_LINKED',
+            'reservation is already linked to another work'
+          )
+        if (!repositories.reservations)
+          throw new TrabajoError(503, 'UNAVAILABLE', 'TUS calendar composition is unavailable')
+        const locked = await repositories.reservations.lockForWork({
+          ownerTenantId: input.tenantId,
+          reservationId,
+          customerTenantId: input.commitment.tenantId,
+          listingId: input.publication.listingId,
+        })
+        if (!locked)
+          throw new TrabajoError(
+            409,
+            'INVALID_RESERVATION_LINK',
+            'reservation does not belong to the accepted service commitment'
+          )
       }
 
       const createdAt = input.createdAt
@@ -309,7 +383,7 @@ export class ServicioTrabajo {
         commitmentId: input.commitment.commitmentId,
         prestadorId: input.commitment.merchantId,
         publicacionId: input.commitment.listingId,
-        ...(input.reservationId ? { reservaId: input.reservationId } : {}),
+        ...(reservationId ? { reservaId: reservationId } : {}),
         clienteId: input.commitment.tenantId,
         status: ESTADOS_TRABAJO.SOLICITADO,
         version: 1,
@@ -337,20 +411,29 @@ export class ServicioTrabajo {
     return this.transaction.run(async ({ work: store }) => {
       const work = await store.findAccessible({ tenantId: context.tenantId, trabajoId })
       if (!work) throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
+      const viewer = audienceOf(work, context)
+      const scope = { tenantId: work.tenantId, trabajoId: work.trabajoId }
+      const belongs = (item: { tenantId: string; trabajoId: string }) =>
+        item.tenantId === work.tenantId && item.trabajoId === work.trabajoId
+      const diagnoses = (await store.listDiagnoses(scope)).filter(belongs)
+      const budgets = (await store.listBudgets(scope)).filter(belongs)
+      const evidence = (await store.listEvidence(scope)).filter(belongs)
+      const transitions = (await store.listTransitions(scope)).filter(belongs)
       return {
+        viewer,
         work,
-        diagnoses: await store.listDiagnoses({
-          tenantId: work.tenantId,
-          trabajoId: work.trabajoId,
-        }),
-        budgets: (
-          await store.listBudgets({ tenantId: work.tenantId, trabajoId: work.trabajoId })
-        ).map(({ recordId: _recordId, correlationId: _correlationId, ...budget }) => budget),
-        evidence: await store.listEvidence({ tenantId: work.tenantId, trabajoId: work.trabajoId }),
-        transitions: await store.listTransitions({
-          tenantId: work.tenantId,
-          trabajoId: work.trabajoId,
-        }),
+        // Los borradores de diagnostico y presupuesto son trabajo interno del prestador.
+        diagnoses:
+          viewer === 'provider'
+            ? diagnoses
+            : diagnoses.filter((item) => item.status === ESTADOS_DIAGNOSTICO.CONFIRMADO),
+        budgets: budgets
+          .filter((item) => viewer === 'provider' || item.status !== ESTADOS_PRESUPUESTO.BORRADOR)
+          .map(({ recordId: _recordId, correlationId: _correlationId, ...budget }) => budget),
+        evidence,
+        transitions: transitions.map(
+          ({ actorId: _actorId, correlationId: _correlationId, ...transition }) => transition
+        ),
       }
     })
   }
@@ -365,7 +448,15 @@ export class ServicioTrabajo {
   ): TrabajoMutation<{ diagnosis: Diagnostico; work: Trabajo }> {
     validateMutationContext(input)
     requireText(input.descripcionOriginal, 'descripcionOriginal')
-    return this.execute(input, async (repositories) => {
+    const fingerprint = {
+      operation: 'work.diagnosis.create',
+      payload: {
+        trabajoId: input.trabajoId,
+        descripcionOriginal: input.descripcionOriginal,
+        datosEstructurados: input.datosEstructurados ?? null,
+      },
+    }
+    return this.execute(input, fingerprint, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
       ensureProvider(work, input)
       if (
@@ -436,7 +527,15 @@ export class ServicioTrabajo {
   ): TrabajoMutation<{ diagnosis: Diagnostico }> {
     validateMutationContext(input)
     requirePositiveInteger(input.expectedVersion, 'expectedVersion')
-    return this.execute(input, async (repositories) => {
+    const fingerprint = {
+      operation: 'work.diagnosis.confirm',
+      payload: {
+        trabajoId: input.trabajoId,
+        diagnosticoId: input.diagnosticoId,
+        expectedVersion: input.expectedVersion,
+      },
+    }
+    return this.execute(input, fingerprint, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
       ensureProvider(work, input)
       const current = await repositories.work.findDiagnosis({
@@ -445,7 +544,8 @@ export class ServicioTrabajo {
         diagnosticoId: input.diagnosticoId,
       })
       if (!current) throw new TrabajoError(404, 'NOT_FOUND', 'diagnosis was not found')
-      if (current.status === ESTADOS_DIAGNOSTICO.CONFIRMADO) return { diagnosis: current }
+      if (current.status === ESTADOS_DIAGNOSTICO.CONFIRMADO)
+        return new ResultadoExistente({ diagnosis: current })
       if (current.status !== ESTADOS_DIAGNOSTICO.BORRADOR)
         throw new TrabajoError(409, 'INVALID_STATE', 'diagnosis cannot be confirmed')
       if (current.version !== input.expectedVersion)
@@ -496,7 +596,18 @@ export class ServicioTrabajo {
       (!isIsoTimestamp(input.validUntil) || Date.parse(input.validUntil) <= this.now())
     )
       throw new TrabajoError(400, 'INVALID', 'validUntil must be in the future')
-    return this.execute(input, async (repositories) => {
+    const fingerprint = {
+      operation: 'work.budget.create',
+      payload: {
+        trabajoId: input.trabajoId,
+        currency: input.currency,
+        scope: input.scope,
+        totalMinor: input.totalMinor,
+        lines: input.lines,
+        validUntil: input.validUntil ?? null,
+      },
+    }
+    return this.execute(input, fingerprint, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
       ensureProvider(work, input)
       if (!work.budgetRequired)
@@ -574,7 +685,18 @@ export class ServicioTrabajo {
     validateMutationContext(input)
     requirePositiveInteger(input.presupuestoVersion, 'presupuestoVersion')
     if (input.decision === 'rejected') requireText(input.reason ?? '', 'reason')
-    return this.execute(input, async (repositories) => {
+    const fingerprint = {
+      operation: 'work.budget.decide',
+      payload: {
+        trabajoId: input.trabajoId,
+        presupuestoId: input.presupuestoId,
+        presupuestoVersion: input.presupuestoVersion,
+        decision: input.decision,
+        reason: input.reason ?? null,
+        acceptanceId: input.acceptanceId ?? null,
+      },
+    }
+    return this.execute(input, fingerprint, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
       ensureCustomer(work, input)
       const budget = await repositories.work.findBudget({
@@ -591,7 +713,7 @@ export class ServicioTrabajo {
       if (existing) {
         if (existing.decision !== input.decision)
           throw new TrabajoError(409, 'ALREADY_DECIDED', 'budget already has another decision')
-        return { budget, acceptance: existing, work }
+        return new ResultadoExistente({ budget, acceptance: existing, work })
       }
       if (work.status !== ESTADOS_TRABAJO.PRESUPUESTO_PENDIENTE)
         throw new TrabajoError(
@@ -692,7 +814,8 @@ export class ServicioTrabajo {
   async startWork(input: ComandoTransicionTrabajo): TrabajoMutation<{ work: Trabajo }> {
     validateMutationContext(input)
     requirePositiveInteger(input.expectedVersion, 'expectedVersion')
-    return this.execute(input, async (repositories) => {
+    const fingerprint = transitionFingerprint('work.start', input)
+    return this.execute(input, fingerprint, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
       ensureProvider(work, input)
       if (work.budgetRequired && work.status !== ESTADOS_TRABAJO.ACEPTADO)
@@ -726,7 +849,8 @@ export class ServicioTrabajo {
   async completeWork(input: ComandoTransicionTrabajo): TrabajoMutation<{ work: Trabajo }> {
     validateMutationContext(input)
     requirePositiveInteger(input.expectedVersion, 'expectedVersion')
-    return this.execute(input, async (repositories) => {
+    const fingerprint = transitionFingerprint('work.complete', input)
+    return this.execute(input, fingerprint, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
       ensureProvider(work, input)
       if (work.version !== input.expectedVersion)
@@ -748,7 +872,8 @@ export class ServicioTrabajo {
   async cancelWork(input: ComandoTransicionTrabajo): TrabajoMutation<{ work: Trabajo }> {
     validateMutationContext(input)
     requirePositiveInteger(input.expectedVersion, 'expectedVersion')
-    return this.execute(input, async (repositories) => {
+    const fingerprint = transitionFingerprint('work.cancel', input)
+    return this.execute(input, fingerprint, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
       ensureProvider(work, input)
       if (work.version !== input.expectedVersion)
@@ -781,7 +906,18 @@ export class ServicioTrabajo {
       throw new TrabajoError(400, 'INVALID', 'phase is invalid')
     if (!isIsoTimestamp(input.occurredAt))
       throw new TrabajoError(400, 'INVALID', 'occurredAt must be a valid timestamp')
-    return this.execute(input, async (repositories) => {
+    const fingerprint = {
+      operation: 'work.evidence.record',
+      payload: {
+        trabajoId: input.trabajoId,
+        evidenceId: input.evidenceId,
+        phase: input.phase,
+        reference: input.reference,
+        metadata: input.metadata,
+        occurredAt: input.occurredAt,
+      },
+    }
+    return this.execute(input, fingerprint, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
       ensureProvider(work, input)
       if (work.status === ESTADOS_TRABAJO.CANCELADO)
@@ -802,7 +938,7 @@ export class ServicioTrabajo {
       if (existing) {
         if (existing.trabajoId !== work.trabajoId)
           throw new TrabajoError(409, 'CONFLICT', 'evidence id belongs to another work')
-        return { evidence: existing }
+        return new ResultadoExistente({ evidence: existing })
       }
       const evidence: EvidenciaTrabajo = {
         contractVersion: TUS_CONTRACT_VERSION,
@@ -932,16 +1068,21 @@ export class ServicioTrabajo {
     })
   }
 
+  // WEB-08G: la huella de idempotencia se deriva en servidor de la operacion y de sus campos
+  // semanticos. El `requestHash` del cliente sigue siendo obligatorio por contrato pero no decide
+  // si un reintento es el mismo pedido; `createdAt` queda fuera para que un reintento sea replay.
   private async execute<T extends Record<string, unknown>>(
     input: TrabajoContext & { idempotencyKey: string; requestHash: string; createdAt: string },
-    operation: (repositories: TrabajoTransactionRepositories) => Promise<T>
+    fingerprint: HuellaOperacion,
+    operation: (repositories: TrabajoTransactionRepositories) => Promise<T | ResultadoExistente<T>>
   ): Promise<{ status: 'executed' | 'replay' } & T> {
+    const requestHash = fingerprintRequest(fingerprint)
     return this.transaction.run(async (repositories) => {
       const now = this.now()
       const claim = await repositories.idempotency.claim({
         tenantId: input.tenantId,
         key: input.idempotencyKey,
-        requestHash: input.requestHash,
+        requestHash,
         now,
         expiresAt: now + 15 * 60 * 1000,
       })
@@ -958,13 +1099,15 @@ export class ServicioTrabajo {
           throw new TrabajoError(500, 'INVALID_REPLAY', 'idempotency replay is invalid')
         return { status: 'replay', ...(claim.response as T) }
       }
-      const response = await operation(repositories)
+      const outcome = await operation(repositories)
+      const existing = outcome instanceof ResultadoExistente
+      const response = existing ? outcome.value : outcome
       await repositories.idempotency.complete({
         tenantId: input.tenantId,
         key: input.idempotencyKey,
         response,
       })
-      return { status: 'executed', ...response }
+      return { status: existing ? 'replay' : 'executed', ...response }
     })
   }
 }
@@ -995,6 +1138,18 @@ export class InMemoryTrabajoStore implements TrabajoStorePort {
     return work ? structuredClone(work) : null
   }
 
+  async findByReservation(input: {
+    prestadorTenantId: string
+    reservationId: string
+  }): Promise<Trabajo | null> {
+    const work = [...this.works.values()].find(
+      (candidate) =>
+        candidate.prestadorTenantId === input.prestadorTenantId &&
+        candidate.reservaId === input.reservationId
+    )
+    return work ? structuredClone(work) : null
+  }
+
   async listAccessible(tenantId: string): Promise<Trabajo[]> {
     return [...this.works.values()]
       .filter((work) => work.tenantId === tenantId || work.prestadorTenantId === tenantId)
@@ -1005,6 +1160,15 @@ export class InMemoryTrabajoStore implements TrabajoStorePort {
     const key = workKey(work.tenantId, work.commitmentId)
     if (this.works.has(key))
       throw new TrabajoError(409, 'CONFLICT', 'work already exists for commitment')
+    // Espejo de `uq_trabajos_reserva`: una reserva vincula como maximo un trabajo.
+    if (
+      work.reservaId &&
+      (await this.findByReservation({
+        prestadorTenantId: work.prestadorTenantId,
+        reservationId: work.reservaId,
+      }))
+    )
+      throw new TrabajoError(409, 'RESERVATION_ALREADY_LINKED', 'reservation is already linked')
     this.works.set(key, structuredClone(work))
   }
 
@@ -1306,6 +1470,7 @@ export class InMemoryTrabajoTransaction implements TrabajoTransactionPort {
       work: InMemoryTrabajoStore
       idempotency: InMemoryTrabajoIdempotencyStore
       outbox: InMemoryTrabajoOutboxStore
+      reservations?: TrabajoReservaPort
     }
   ) {}
 
@@ -1352,6 +1517,72 @@ function initialTransition(
     reason: 'work.accepted',
     createdAt: input.createdAt,
   }
+}
+
+interface ReservaVinculable {
+  tenantId: string
+  ownerTenantId: string
+  listingId?: string
+  status: string
+}
+
+// Adaptador en memoria: valida contra el calendario dentro del cerrojo serial de
+// `InMemoryTrabajoTransaction`, la unica via de escritura de trabajos en memoria.
+export class ReservasTrabajoEnMemoria implements TrabajoReservaPort {
+  constructor(
+    private readonly findBooking: (
+      ownerTenantId: string,
+      reservationId: string
+    ) => Promise<ReservaVinculable | null>
+  ) {}
+
+  async lockForWork(input: {
+    ownerTenantId: string
+    reservationId: string
+    customerTenantId: string
+    listingId: string
+  }): Promise<boolean> {
+    const booking = await this.findBooking(input.ownerTenantId, input.reservationId)
+    return (
+      booking !== null &&
+      booking.ownerTenantId === input.ownerTenantId &&
+      booking.tenantId === input.customerTenantId &&
+      booking.listingId === input.listingId &&
+      booking.status === 'confirmed'
+    )
+  }
+}
+
+function audienceOf(work: Trabajo, context: TrabajoContext): AudienciaTrabajo {
+  if (work.prestadorTenantId === context.tenantId) return 'provider'
+  if (work.tenantId === context.tenantId) return 'customer'
+  throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
+}
+
+function transitionFingerprint(
+  operation: string,
+  input: ComandoTransicionTrabajo
+): HuellaOperacion {
+  return {
+    operation,
+    payload: { trabajoId: input.trabajoId, expectedVersion: input.expectedVersion },
+  }
+}
+
+export function fingerprintRequest(fingerprint: HuellaOperacion): string {
+  return `sha256:${createHash('sha256').update(canonicalJson(fingerprint)).digest('hex')}`
+}
+
+function canonicalJson(value: unknown): string {
+  if (typeof value === 'bigint') return JSON.stringify(value.toString())
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`
+  if (isRecord(value))
+    return `{${Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`
+  return JSON.stringify(value ?? null)
 }
 
 function ensureProvider(work: Trabajo, context: TrabajoContext): void {

@@ -177,22 +177,25 @@ test('WEB-08B rejects an unrelated reservation before creating work', () => {
   const result = runTypeScriptScenario(`
     const { TUS_CONTRACT_VERSION } = await import('./packages/contracts/src/tus.ts')
     const { TusApplicationService } = await import('./apps/api/src/tus/application/tus-application-service.ts')
-    const { TrabajoError } = await import('./apps/api/src/tus/work/index.ts')
+    const { InMemoryTrabajoIdempotencyStore, InMemoryTrabajoOutboxStore, InMemoryTrabajoStore, InMemoryTrabajoTransaction, ReservasTrabajoEnMemoria, ServicioTrabajo, TrabajoError } = await import('./apps/api/src/tus/work/index.ts')
     const commitment = { contractVersion: TUS_CONTRACT_VERSION, commitmentId: 'commitment-1', cartId: 'cart-1', tenantId: 'customer-tenant', merchantId: 'provider-1', context: 'service', amount: 1000, currency: 'ARS', status: 'pending', lineIds: ['line-1'], version: 1, createdAt: '2026-09-17T10:00:00.000Z', listingId: 'listing-1', quantity: 1, availabilityVersion: 1, policyVersion: 'policy-1', priceSnapshot: { currency: 'ARS', minor: 100000n } }
     const publication = { contractVersion: TUS_CONTRACT_VERSION, listingId: 'listing-1', tenantId: 'provider-tenant', merchantId: 'provider-1', kind: 'service', name: 'Repair estimate', description: 'Quote first', cohort: 'repairs-trades', locationId: 'location-1', currency: 'ARS', price: 1000, priceMinor: 100000n, priceSnapshot: { currency: 'ARS', minor: 100000n }, availabilityVersion: 1, published: true, policyVersion: 'policy-1', stock: null, durationMinutes: 60, capacity: 1, workingHours: [], bookingMode: 'auto', priceMode: 'fixed', createdAt: '2026-09-17T10:00:00.000Z', updatedAt: '2026-09-17T10:00:00.000Z' }
+    const store = new InMemoryTrabajoStore()
+    const reservations = new ReservasTrabajoEnMemoria(async () => ({ tenantId: 'other-customer-tenant', ownerTenantId: 'provider-tenant', listingId: 'listing-1', status: 'confirmed' }))
+    const work = new ServicioTrabajo(new InMemoryTrabajoTransaction({ work: store, idempotency: new InMemoryTrabajoIdempotencyStore(), outbox: new InMemoryTrabajoOutboxStore(), reservations }))
     const application = new TusApplicationService({
       commitments: {}, compensations: {}, audits: {}, idempotency: {}, outbox: {},
       transaction: { run: async () => undefined },
       marketplace: { store: { commitments: { find: async () => commitment }, listings: { find: async () => publication } } },
-      calendar: { findBookingForProvider: async () => ({ tenantId: 'other-customer-tenant', ownerTenantId: 'provider-tenant', listingId: 'listing-1', status: 'confirmed' }) },
-      work: { acceptCommitment: async () => ({ status: 'executed' }) },
+      work,
     })
     let code = ''
     try { await application.acceptServiceCommitment({ tenantId: 'provider-tenant', subjectId: 'provider-user', correlationId: 'corr-provider', roles: ['merchant'], permissions: ['tus:work:write'] }, { commitmentId: commitment.commitmentId, reservationId: 'reservation-1', idempotencyKey: 'accept-1', requestHash: 'hash-accept-1', createdAt: '2026-09-17T10:00:00.000Z' }) } catch (error) { code = error instanceof TrabajoError ? error.code : 'unknown' }
-    console.log(JSON.stringify({ code }))
+    console.log(JSON.stringify({ code, works: store.snapshot().works.size }))
   `)
 
   assert.equal(result.code, 'INVALID_RESERVATION_LINK')
+  assert.equal(result.works, 0)
 })
 
 test('WEB-08B accepts a confirmed reservation with persisted customer ownership', () => {

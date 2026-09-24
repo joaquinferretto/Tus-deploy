@@ -25,6 +25,7 @@ import {
   type TrabajoIdempotencyPort,
   type TrabajoOutboxPort,
   type TrabajoOutboxRecord,
+  type TrabajoReservaPort,
   type TrabajoStorePort,
   type TrabajoTransactionPort,
   type TrabajoTransactionRepositories,
@@ -50,6 +51,16 @@ export class PrismaTrabajoStore implements TrabajoStorePort {
   }): Promise<Trabajo | null> {
     const row = await this.client.trabajo.findFirst({
       where: { tenantId: input.tenantId, compromisoId: input.commitmentId },
+    })
+    return row ? mapTrabajo(row) : null
+  }
+
+  async findByReservation(input: {
+    prestadorTenantId: string
+    reservationId: string
+  }): Promise<Trabajo | null> {
+    const row = await this.client.trabajo.findFirst({
+      where: { reservaTenantId: input.prestadorTenantId, reservaId: input.reservationId },
     })
     return row ? mapTrabajo(row) : null
   }
@@ -510,9 +521,37 @@ export class PrismaTrabajoOutboxStore implements TrabajoOutboxPort {
   }
 }
 
+// WEB-08H: valida y bloquea la reserva en la transaccion del trabajo. El UPDATE condicional sin
+// cambio efectivo toma el lock de fila: una cancelacion concurrente espera al commit o, si ya
+// modifico la fila, esta transaccion Serializable falla y se reintenta sobre el estado nuevo.
+export class PrismaTrabajoReservaStore implements TrabajoReservaPort {
+  constructor(private readonly client: TusPrismaClient) {}
+
+  async lockForWork(input: {
+    ownerTenantId: string
+    reservationId: string
+    customerTenantId: string
+    listingId: string
+  }): Promise<boolean> {
+    const result = await this.client.reserva.updateMany({
+      where: {
+        tenantId: input.ownerTenantId,
+        reservaId: input.reservationId,
+        clienteTenantId: input.customerTenantId,
+        publicacionId: input.listingId,
+        estado: 'confirmed',
+      },
+      data: { estado: 'confirmed' },
+    })
+    return result.count === 1
+  }
+}
+
 export class PrismaTrabajoTransaction implements TrabajoTransactionPort {
   constructor(private readonly client: TusPrismaClient) {}
 
+  // Un conflicto de unicidad (dos aceptaciones del mismo compromiso o reserva con distinta
+  // clave) aborta la transaccion; el reintento relee y devuelve el trabajo existente como replay.
   async run<TValue>(
     operation: (repositories: TrabajoTransactionRepositories) => Promise<TValue>
   ): Promise<TValue> {
@@ -524,11 +563,12 @@ export class PrismaTrabajoTransaction implements TrabajoTransactionPort {
               work: new PrismaTrabajoStore(client),
               idempotency: new PrismaTrabajoIdempotencyStore(client),
               outbox: new PrismaTrabajoOutboxStore(client),
+              reservations: new PrismaTrabajoReservaStore(client),
             }),
           { isolationLevel: 'Serializable' }
         )
       } catch (error) {
-        if (!isSerializationFailure(error)) throw error
+        if (!isSerializationFailure(error) && !isUniqueConstraint(error)) throw error
         if (attempt === 2)
           throw new TrabajoError(
             409,

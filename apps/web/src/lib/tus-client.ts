@@ -67,13 +67,13 @@ export interface TusWorkTransition {
   previousStatus: TusWork['status'] | null
   status: TusWork['status']
   version: number
-  actorId: string
-  correlationId: string
   reason: string
   createdAt: string
 }
 
+// WEB-08F: el servidor proyecta el expediente segun quien lo lee; `viewer` indica esa audiencia.
 export interface TusWorkDetail {
+  viewer: 'customer' | 'provider'
   work: TusWork
   diagnoses: readonly TusWorkDiagnosis[]
   budgets: readonly TusWorkBudget[]

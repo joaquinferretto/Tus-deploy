@@ -748,6 +748,7 @@ model Trabajo {
   @@unique([tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], map: "uq_trabajos_identidad_financiera")
   @@unique([tenantId, compromisoId], map: "uq_trabajos_tenant_compromiso")
   @@unique([tenantId, presupuestoAceptadoId, presupuestoAceptadoVersion], map: "uq_trabajos_tenant_presupuesto_aceptado")
+  @@unique([reservaTenantId, reservaId], map: "uq_trabajos_reserva")
   @@index([tenantId, estado], map: "idx_trabajos_tenant_estado")
   @@index([prestadorTenantId, prestadorId, estado], map: "idx_trabajos_prestador_estado")
   @@map("trabajos")

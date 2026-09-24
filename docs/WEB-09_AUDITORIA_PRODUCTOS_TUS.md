@@ -361,11 +361,13 @@ tablas legacy siguen `NOT VALID` hasta auditar datos reales. No se detecto ningu
 2. Baseline: `_prisma_migrations` y esquema real comparados con `DER_TUS.dbml`; confirmar que las migraciones hasta
    `20260917100000_tus_work_budget` coinciden antes de las cuatro de WEB-09/DB-09.
 3. Filas incompatibles (solo lectura): intenciones, instantaneas y movimientos con `compromiso_id IS NULL`; montos negativos
-   en tablas legacy; `entrada_id LIKE 'svc-%'` en ledger legacy; eventos con `pago_id` sin `obligacion_id`.
+   en tablas legacy; `entrada_id LIKE 'svc-%'` en ledger legacy; eventos con `pago_id` sin `obligacion_id`; trabajos que
+   comparten `(reserva_tenant_id, reserva_id)` no nulos (bloquean `uq_trabajos_reserva`).
 4. Locks: `CREATE UNIQUE INDEX` sin `CONCURRENTLY` bloquea escrituras de la tabla durante el build; `ALTER COLUMN DROP
 NOT NULL` toma ACCESS EXCLUSIVE brevemente; `VALIDATE CONSTRAINT` no bloquea escrituras. Medir tamaño de tablas y usar
    `lock_timeout`.
-5. Orden: `20260917100000` → `20260923100000` → `20260923110000` → `20260923120000` → `20260924100000`, forward-only.
+5. Orden: `20260917100000` → `20260923100000` → `20260923110000` → `20260923120000` → `20260924100000` →
+   `20260924130000`, forward-only.
 6. Dry run en una copia descartable con `prisma migrate deploy` y los tests de integracion PostgreSQL.
 7. Smoke posterior: `/health`, `/ready`, lectura de trabajos y `GET /tus/v1/work/:workId/finance`.
 8. Rollback operativo: no hay down migrations; ante fallo restaurar backup o aplicar una migracion correctiva forward-only.
@@ -408,6 +410,98 @@ La cadena `20260917100000` → `20260924100000` queda aceptada.
   `presupuestos` durante la creacion de FKs; todos concedidos sin espera (sesion unica).
 - **API:** levantada con `tsx src/index.ts` contra `tus_dryrun_upgrade` (PID 17516, puerto 3199): `/health` 200, `/ready` 200,
   rutas financieras 403 sin sesion, 2 conexiones a la DB descartable; proceso detenido y puerto libre.
+
+## WEB-08F/G/H — cierre de deudas de Trabajo (IMPLEMENTADO, 2026-09-24)
+
+Cierra los tres pendientes que WEB-08 habia diferido antes de WEB-09D. Sin cambios en `packages/contracts`; no se toca
+Mercado Pago ni flags de provider.
+
+### WEB-08F — visibilidad del expediente
+
+La autorizacion se aplica en `ServicioTrabajo.getWork` (servidor), con el tenant tomado de la sesion; la Web no filtra.
+
+| Dato                      | Cliente (`tenantId` del trabajo)            | Prestador (`prestadorTenantId`)  |
+| ------------------------- | ------------------------------------------- | -------------------------------- |
+| Acceso                    | solo trabajos propios                       | solo trabajos donde es prestador |
+| Trabajo (estado, version) | si                                          | si                               |
+| Diagnosticos              | solo `confirmed`                            | todos, incluidos borradores      |
+| Presupuestos y versiones  | todos salvo `draft`; sin `recordId` interno | todos; sin `recordId` interno    |
+| Evidencias del trabajo    | si                                          | si                               |
+| Transiciones (eventos)    | estado, version, motivo, fecha              | idem                             |
+| `actorId`/`correlationId` | no en transiciones                          | no en transiciones               |
+| Pago                      | `GET .../finance` (audiencia propia WEB-09) | idem, con comision y neto        |
+
+- La respuesta agrega `viewer: 'customer' | 'provider'` (aditivo). Otro tenant, incluido otro prestador, recibe `404`.
+- Cada coleccion se filtra ademas por `tenantId` + `trabajoId` del trabajo resuelto (defensa ante un adapter defectuoso).
+- `Diagnostico` y `EvidenciaTrabajo` conservan `actorId`/`correlationId` porque el contract los exige; son identificadores
+  del prestador, no datos del cliente. Las transiciones dejan de exponerlos porque mezclan actores de ambas partes.
+- `Trabajo` no contiene direccion ni ubicacion: las reglas de privacidad geografica existentes no cambian.
+- Reclamos: no existe vinculo reclamo↔trabajo en el modelo actual; soporte sigue con su autorizacion propia.
+
+### WEB-08G — deduplicacion
+
+Relevamiento previo: la idempotencia de Trabajo era por `(tenantId, idempotency-key)` pero comparaba el `requestHash` que
+envia el cliente; `trabajoId` ya era determinista por compromiso y `uq_trabajos_tenant_compromiso` impedia dos trabajos por
+compromiso, pero una reserva podia quedar vinculada a varios trabajos y un carrito podia generar pedidos dos veces con otra
+clave.
+
+- **Huella en servidor:** `ServicioTrabajo.execute` guarda `sha256` de `{operation, campos semanticos}` calculado en servidor.
+  El `requestHash` del cliente sigue siendo obligatorio (contract) pero no decide. Misma clave + mismo pedido → `replay`
+  aunque cambie el hash del cliente o `createdAt`; misma clave + otro pedido u otra operacion → `409 CONFLICT`.
+- **Trabajo existente:** aceptar un compromiso ya aceptado con otra clave devuelve el trabajo existente con
+  `status: 'replay'` (HTTP 200), sin nuevas transiciones, auditoria ni outbox. Igual para evidencia repetida, diagnostico ya
+  confirmado y decision de presupuesto ya registrada.
+- **Reserva:** una reserva vincula como maximo un trabajo (`RESERVATION_ALREADY_LINKED`), en dominio y con el indice unico
+  `uq_trabajos_reserva (reserva_tenant_id, reserva_id)`.
+- **Carrito:** `checkout` rechaza un segundo checkout del mismo `(tenantId, cartId)` con otra clave
+  (`409 CART_ALREADY_CHECKED_OUT`, `details.commitmentIds` con los compromisos existentes). La misma clave sigue en replay.
+- **Carreras:** `PrismaTrabajoTransaction` reintenta (max. 3) ante `P2034` y ahora tambien `P2002`; el reintento relee y
+  resuelve como replay. El checkout ya corria en `Serializable` con reintento.
+- Transicion: registros de idempotencia de Trabajo creados antes de este cambio guardan el hash del cliente; reintentar esas
+  claves devuelve `409 CONFLICT` en lugar de replay. Afecta solo reintentos de pedidos anteriores al despliegue.
+
+### WEB-08H — reserva y trabajo atomicos
+
+- La validacion de reserva salio de `TusApplicationService` y paso a `ServicioTrabajo.acceptCommitment`, dentro de la misma
+  transaccion `Serializable` que crea trabajo, transicion, auditoria, outbox y registro de idempotencia.
+- Puerto nuevo `TrabajoReservaPort.lockForWork`. En Prisma es un `UPDATE reservas ... SET estado = 'confirmed' WHERE
+tenant_id = prestador AND reserva_id AND cliente_tenant_id AND publicacion_id AND estado = 'confirmed'` sin cambio efectivo:
+  valida y toma el lock de fila en la misma sentencia. En memoria valida contra el calendario dentro del cerrojo serial.
+- No hay estado intermedio: si falla cualquier paso posterior se revierten trabajo, vinculo, idempotencia, auditoria y outbox;
+  la reserva no cambia. La reserva no se "consume" con un cambio de estado; el vinculo es la fila de `trabajos`.
+
+### Migracion
+
+`20260924130000_tus_work_reservation_unique`: `CREATE UNIQUE INDEX "uq_trabajos_reserva"`. Forward-only, aditiva,
+clasificada `additive` por el gate DB-09 y agregada a su cadena. Los NULL no colisionan. Si la base real tuviera dos trabajos
+sobre una reserva, el indice falla sin modificar datos (consulta previa en el checklist).
+
+### Validacion
+
+- Tests nuevos `tests/foundation/web-08fgh.test.mjs` (6): proyeccion por audiencia en servicio y HTTP, tenant ajeno y
+  cabecera `x-tenant-id` falsificada, huella en servidor, 5 aceptaciones concurrentes, reserva unica, rollback ante fallo
+  intermedio, lock y reintento del adapter Prisma. `web-08-workflow` actualiza el rechazo de reserva al servicio real.
+- Focales: WEB-08, WEB-09, `tus-web-*`, DB-09, p8/p9 (con `TUS_ROUTES_ENABLED=true`) y `p0-contracts`: 244/244.
+- Suite foundation completa: 588/601. Las 13 fallas son previas y ajenas al cambio: `pnpm` fuera del PATH, CRLF en archivos
+  de deploy, regex de documentacion nativa, frontera git e import sin extension de `apps/web/src/lib/api-url`.
+- `contracts:validate` 107 schemas; typecheck contracts/API/Web; `prisma validate`; build API; Prettier en archivos que ya
+  cumplian; `git diff --check`.
+- **PostgreSQL 16 real** (cluster descartable en el scratchpad, `127.0.0.1:55441`, detenido y borrado; el servicio local 5432
+  no se toco), 39 migraciones aplicadas:
+  - 6 aceptaciones concurrentes del mismo compromiso con claves distintas: 1 `executed`, 5 `replay`, 1 trabajo, 1 transicion.
+  - 2 compromisos concurrentes sobre la misma reserva: 1 `executed`, 1 `RESERVATION_ALREADY_LINKED`.
+  - Fallo inyectado despues del INSERT del trabajo: 0 trabajos, 0 idempotencia, 0 outbox, 0 auditoria, reserva intacta;
+    el reintento con la misma clave ejecuta.
+  - Cancelacion de reserva abierta antes del lock: `INVALID_RESERVATION_LINK`, sin trabajo.
+  - Lock tomado por el trabajo: la cancelacion concurrente espero 558 ms hasta el commit.
+  - INSERT directo de un segundo trabajo sobre la misma reserva: `23505`.
+  - Tabla real de idempotencia: misma clave con otro hash de cliente → replay; con otro compromiso → `CONFLICT`.
+
+### Residuales
+
+- La cancelacion de una reserva en el calendario no consulta si hay un trabajo vinculado; espera el lock pero luego cancela.
+  Que hacer con el trabajo en ese caso es una decision de producto.
+- ESLint de `prisma-work.ts` reporta 7 imports de tipo sin uso, preexistentes a este cambio.
 
 ## WEB-09D — auditoria de superficie Web (PENDIENTE, grado B)
 

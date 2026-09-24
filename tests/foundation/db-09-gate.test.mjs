@@ -20,6 +20,7 @@ const WEB_08_09_CHAIN = [
   '20260923110000_tus_service_payment_intents',
   '20260923120000_tus_service_settlement_reconciliation',
   '20260924100000_tus_finance_subject_hardening',
+  '20260924130000_tus_work_reservation_unique',
 ]
 const GUARD_FUNCTION = `CREATE OR REPLACE FUNCTION public.tus_guard_fixture() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

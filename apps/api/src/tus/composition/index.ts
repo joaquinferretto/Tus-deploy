@@ -7,7 +7,7 @@ import {
   InMemoryTusSessionResolver,
   InMemoryTusTransaction,
 } from '../adapters/in-memory.ts'
-import { InMemoryTrabajoIdempotencyStore, InMemoryTrabajoOutboxStore, InMemoryTrabajoStore, InMemoryTrabajoTransaction, ServicioTrabajo } from '../work/index.ts'
+import { InMemoryTrabajoIdempotencyStore, InMemoryTrabajoOutboxStore, InMemoryTrabajoStore, InMemoryTrabajoTransaction, ReservasTrabajoEnMemoria, ServicioTrabajo } from '../work/index.ts'
 import { TusApplicationService, type TusApplicationDependencies } from '../application/tus-application-service.ts'
 import { InMemoryMarketplaceStore, TusMarketplaceService } from '../catalog/index.ts'
 import { InMemoryServiceCalendarStore, ServiceCalendarService } from '../calendar/index.ts'
@@ -80,7 +80,7 @@ export function createTusApplication(
   const workStore = new InMemoryTrabajoStore()
   const workIdempotency = new InMemoryTrabajoIdempotencyStore()
   const workOutbox = new InMemoryTrabajoOutboxStore()
-  const work = new ServicioTrabajo(new InMemoryTrabajoTransaction({ work: workStore, idempotency: workIdempotency, outbox: workOutbox }), options.now)
+  const work = new ServicioTrabajo(new InMemoryTrabajoTransaction({ work: workStore, idempotency: workIdempotency, outbox: workOutbox, reservations: new ReservasTrabajoEnMemoria((ownerTenantId, reservationId) => calendar.findBookingForProvider(ownerTenantId, reservationId)) }), options.now)
   const serviceFinance = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore)),
     options.now

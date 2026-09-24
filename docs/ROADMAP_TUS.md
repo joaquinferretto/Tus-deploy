@@ -195,8 +195,9 @@ Pendiente cuando exista un target autorizado:
 - El target PostgreSQL físico no se valida sin `DATABASE_URL` y autorización de un entorno descartable.
 - Las rutas TUS, provider actions, jobs y consumidores externos permanecen deshabilitados por defecto.
 - WEB-08 corrigio la autorizacion de evidencia para exigir tenant prestador y unifico la lectura de detalle en una transaccion.
-  Permanecen diferidos por requerir decision o migracion: proyeccion cliente/prestador de metadata, idempotency fingerprint
-  canonico server-side, carrera entre validacion de reserva y creacion de Trabajo, y constraints compuestas adicionales.
+  WEB-08F/G/H cerraron la proyeccion cliente/prestador del expediente, la huella de idempotencia en servidor con
+  deduplicacion de trabajo, reserva y carrito, y la validacion atomica de reserva + Trabajo (`uq_trabajos_reserva`); detalle en
+  `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`. Sigue pendiente la politica de cancelar una reserva con trabajo vinculado.
 - WEB-09A resolvio el sujeto financiero de servicios (`ObligacionPagoServicio`) y la frontera monetaria. Ningun flujo
   financiero es grado A mientras no exista provider real, migracion aplicada y prueba PostgreSQL descartable. Ver
   `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.

@@ -198,25 +198,7 @@ export class TusApplicationService {
     const publication = await this.marketplace.store.listings.find(commitment.listingId)
     if (!publication)
       throw new TrabajoError(404, 'NOT_FOUND', 'commitment publication was not found')
-    if (input.reservationId) {
-      if (!this.calendar)
-        throw new TrabajoError(503, 'UNAVAILABLE', 'TUS calendar composition is unavailable')
-      const reservation = await this.calendar.findBookingForProvider(
-        context.tenantId,
-        input.reservationId
-      )
-      if (
-        !reservation ||
-        reservation.tenantId !== commitment.tenantId ||
-        reservation.listingId !== publication.listingId ||
-        reservation.status !== 'confirmed'
-      )
-        throw new TrabajoError(
-          409,
-          'INVALID_RESERVATION_LINK',
-          'reservation does not belong to the accepted service commitment'
-        )
-    }
+    // WEB-08H: la reserva se valida y bloquea dentro de la transaccion que crea el trabajo.
     return this.work.acceptCommitment({
       tenantId: context.tenantId,
       actorId: context.subjectId,

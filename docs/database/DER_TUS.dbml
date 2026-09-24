@@ -1658,6 +1658,7 @@ Table trabajos {
     (tenant_id, compromiso_id) [unique, name: 'uq_trabajos_tenant_compromiso']
     (tenant_id, trabajo_id, compromiso_id, prestador_tenant_id, prestador_id, publicacion_id) [unique, name: 'uq_trabajos_identidad_financiera']
     (tenant_id, presupuesto_aceptado_id, presupuesto_aceptado_version) [unique, name: 'uq_trabajos_tenant_presupuesto_aceptado']
+    (reserva_tenant_id, reserva_id) [unique, name: 'uq_trabajos_reserva']
     (tenant_id, estado) [name: 'idx_trabajos_tenant_estado']
     (prestador_tenant_id, prestador_id, estado) [name: 'idx_trabajos_prestador_estado']
   }

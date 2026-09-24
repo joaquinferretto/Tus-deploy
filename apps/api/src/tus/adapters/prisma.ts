@@ -154,6 +154,7 @@ interface PrismaBookingDelegate {
   upsert(input: { where: { id: string }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
   findUnique(input: { where: { id: string } }): Promise<Record<string, unknown> | null>
   findMany(input: { where: Record<string, unknown> }): Promise<Record<string, unknown>[]>
+  updateMany(input: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>
 }
 
 interface DelegadoPrismaEvidenciaHabilitacion {
