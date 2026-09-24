@@ -162,8 +162,29 @@ probar la cadena completa sobre una base PostgreSQL 16 descartable con pgvector:
 8. `20260925100000_tus_service_payment_configuration`
 9. `20260926100000_tus_service_payment_checkout` (WEB-09E)
 
-Todas son aditivas y forward-only; el gate DB-09 acepta la cadena. Dry run en PostgreSQL 16 descartable: 41/41 desde cero
-en 5,4 s y upgrade desde 40 con datos previos en 1,8 s.
+La lista completa no se debe mantener a mano. Recalcularla desde el checkout antes de cada release:
+
+```powershell
+Get-ChildItem -LiteralPath apps/api/prisma/migrations -Directory |
+  Where-Object { Test-Path (Join-Path $_.FullName 'migration.sql') } |
+  Sort-Object Name |
+  Select-Object -ExpandProperty Name
+```
+
+```bash
+find apps/api/prisma/migrations -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+```
+
+La auditoría de este checkout encontró 41 migraciones; la primera es
+`20260823120000_identity_persistence` y la última `20260926100000_tus_service_payment_checkout` (WEB-09E).
+La migración de vector es `20260824150000_p3_embeddings_pgvector`. Las migraciones de finanzas incluyen
+`20260826120000_tus_finance`, `20260827090500_tus_finance`, `20260923100000_tus_service_finance_identity`,
+`20260923110000_tus_service_payment_intents`, `20260923120000_tus_service_settlement_reconciliation`,
+`20260924100000_tus_finance_subject_hardening`, `20260925100000_tus_service_payment_configuration` y
+`20260926100000_tus_service_payment_checkout`.
+
+El resultado histórico 41/41 desde cero no se reutiliza como prueba del proveedor elegido: debe repetirse en una DB
+PostgreSQL 16 descartable y registrarse con el commit exacto.
 
 **No aplicar sobre `factory_local` ni sobre una base compartida sin autorización explícita.**
 
@@ -194,6 +215,82 @@ en 5,4 s y upgrade desde 40 con datos previos en 1,8 s.
 14. **Rollback:** no hay down migrations. Si algo falla antes de abrir tráfico: restaurar el backup del paso 3 y
     redeployar el commit anterior. Si falla después: preferir una migración correctiva forward-only; restaurar solo si hay
     corrupción y aceptando perder escrituras posteriores al backup.
+
+### 6.1 PostgreSQL administrado, URLs, SSL y pgvector
+
+El código usa PostgreSQL estándar, Prisma y `pg`; no usa APIs de Supabase, Neon ni Render. Los tres perfiles son válidos
+solo si el target ofrece PostgreSQL 16, TLS, `vector` y conexiones Prisma:
+
+| Proveedor | `DATABASE_URL` runtime | `DIRECT_URL` Prisma | Consideración |
+|---|---|---|---|
+| Supabase | Pooler de sesión para una red IPv4 o conexión directa en una red IPv6 | Conexión directa | Migraciones, backups y restore deben usar la conexión directa. Ver [Supabase Connect](https://supabase.com/docs/guides/database/connecting-to-postgres). |
+| Neon | URL pooled (`-pooler`) para la API persistente | URL directa sin `-pooler` | Prisma Migrate requiere conexión directa. Ver [Neon connection methods](https://neon.com/docs/connect/choose-connection). |
+| Render PostgreSQL | URL interna si API y DB comparten región, o externa desde Hostinger | URL directa/externa apta para DDL | Confirmar versión 16 y extensión en el dashboard. Ver [Render Postgres](https://render.com/docs/postgresql-creating-connecting). |
+
+La API solo lee `DATABASE_URL`. `DIRECT_URL` es para `prisma validate`, `prisma migrate deploy` e introspección/release;
+no debe imprimirse ni ser necesaria para requests. Si el proveedor no separa endpoints, se puede usar la misma URL en ambas
+variables, manteniendo TLS y confirmando que el endpoint soporta DDL.
+
+La configuración productiva debe usar `sslmode=require` como mínimo. Cuando el proveedor entrega CA, preferir
+`sslmode=verify-full` con `sslrootcert`; no usar `sslmode=no-verify`, `rejectUnauthorized=false` ni certificados
+desactivados. El driver `pg` recibe la política desde la URL y el código no agrega bypass TLS.
+
+La migración `20260824150000_p3_embeddings_pgvector/migration.sql` ejecuta `CREATE EXTENSION IF NOT EXISTS vector`, crea
+`vector(1024)` y un índice HNSW `vector_cosine_ops`. Si el usuario migrador no puede crear extensiones, un operador debe
+habilitarla previamente en el target autorizado:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
+```
+
+No ejecutar esas sentencias contra `factory_local` ni una base compartida sin autorización.
+
+### 6.2 Comandos de release sin secretos en Git
+
+PowerShell:
+
+```powershell
+$env:DATABASE_URL = 'postgresql://RUNTIME_USER:PASSWORD@POOL_HOST:5432/DB?sslmode=require'
+$env:DIRECT_URL = 'postgresql://MIGRATION_USER:PASSWORD@DIRECT_HOST:5432/DB?sslmode=verify-full'
+corepack pnpm --filter @factory/api exec prisma validate
+corepack pnpm --filter @factory/api prisma:migrate:deploy
+```
+
+Bash:
+
+```bash
+export DATABASE_URL='postgresql://RUNTIME_USER:PASSWORD@POOL_HOST:5432/DB?sslmode=require'
+export DIRECT_URL='postgresql://MIGRATION_USER:PASSWORD@DIRECT_HOST:5432/DB?sslmode=verify-full'
+corepack pnpm --filter @factory/api exec prisma validate
+corepack pnpm --filter @factory/api prisma:migrate:deploy
+```
+
+Después de migrar, verificar en la DB autorizada:
+
+```sql
+SELECT current_setting('server_version'), extname, extversion
+FROM pg_extension
+WHERE extname = 'vector';
+
+SELECT migration_name, finished_at, rolled_back_at
+FROM "_prisma_migrations"
+ORDER BY started_at;
+```
+
+Una DB fresh debe reportar 41 migraciones terminadas, sin `rolled_back_at` ni filas fallidas. No marcar el resultado como
+válido si el target no es PostgreSQL 16 o si el check `vector` falla.
+
+### 6.3 Usuarios y timeouts
+
+Separar, cuando el proveedor lo permita, un usuario de migración con DDL de un usuario runtime sin `SUPERUSER`,
+`CREATEDB` ni `CREATEROLE`. El runtime solo necesita DML y las funciones/objetos ya instalados por migración. Si el
+proveedor no permite esta separación en staging, registrarlo como deuda operativa y no elevar privilegios más allá de lo
+necesario.
+
+Antes de migrar, fijar en la sesión o rol migrador `lock_timeout = '5s'` y `statement_timeout = '300s'`, o usar los
+parámetros equivalentes en `DIRECT_URL`. La API mantiene conexión máxima 2, timeout de conexión/statement de 60 segundos,
+dos intentos acotados y cierre del pool fallido; no aumentar el pool sin evidencia de carga.
 
 ## 7. Mercado Pago: qué hay y cómo se configura
 
@@ -265,7 +362,7 @@ Web muestra "Estamos confirmando tu pago" y consulta a TUS hasta que llega el we
    **Vinculación de aplicaciones**; guardar y **revelar la clave secreta** → `MERCADO_PAGO_WEBHOOK_SECRET`.
 6. **Cuentas de prueba**: crear un usuario **vendedor** (será el prestador) y un usuario **comprador** (el cliente).
    Usar las tarjetas de prueba de la documentación.
-7. Cargar las variables en Render con `MERCADO_PAGO_ENVIRONMENT=sandbox` y `TUS_MERCADOPAGO_ENABLED=true`.
+7. Cargar las variables en Hostinger con `MERCADO_PAGO_ENVIRONMENT=sandbox` y `TUS_MERCADOPAGO_ENABLED=true`.
 8. Ejecutar `node scripts/dev/mercado-pago-sandbox-check.mjs` con esas variables (no imprime secretos; se niega a correr
    en producción).
 
@@ -386,3 +483,149 @@ adaptador esté configurado.
 - [ ] Ejecutar smoke funcional sin pagos y confirmar `PAYMENTS_DISABLED`.
 - [ ] Probar SIGTERM y rollback de API/Web; documentar el resultado y el operador.
 - [ ] Solo después marcar RELEASE-STAGING-01 GO; el dinero real sigue fuera de alcance.
+
+## 12. STAGING REAL: orden operativo exacto
+
+Esta sección es la lista corta para la primera activación. No crea proyectos, no modifica DNS, no ejecuta deploy y no
+aplica migraciones por sí sola.
+
+### 12.1 Preflight del checkout
+
+1. Confirmar branch `web-tus`, commit exacto, Node `22.x` y pnpm `9.15.9`.
+2. Usar el repo completo en Hostinger y Vercel con `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `apps/*` y `packages/*`.
+   No subir solo `apps/api`: los imports `workspace:*` requieren el monorepo.
+3. Ejecutar:
+
+```bash
+corepack pnpm install --frozen-lockfile
+corepack pnpm --filter @factory/api... build
+corepack pnpm --filter @factory/web... build
+```
+
+En Windows, el build standalone puede fallar por symlinks `EPERM`; ese resultado no sustituye el build Linux de Vercel.
+No usar `NEXT_DISABLE_STANDALONE=true` como evidencia de Vercel: sirve únicamente para validación local del compilado.
+
+### 12.2 Crear la base PostgreSQL descartable
+
+1. Crear una DB nueva PostgreSQL 16 en el proveedor elegido, con región cercana a Hostinger y sin datos compartidos.
+2. Confirmar `server_version` y `vector` con los SQL de §6.1.
+3. Obtener una URL pooled para `DATABASE_URL` y una directa para `DIRECT_URL`; percent-encodear contraseñas.
+4. Probar backup/restore o PITR antes de migrar. Si el proveedor no soporta `vector` o restore verificable, detenerse.
+5. Aplicar únicamente:
+
+```bash
+corepack pnpm --filter @factory/api exec prisma validate
+corepack pnpm --filter @factory/api prisma:migrate:deploy
+```
+
+6. Ejecutar las consultas de `_prisma_migrations`, `vector` y las tablas de smoke de §6. No reutilizar `factory_local`.
+
+### 12.3 Configurar Hostinger
+
+Crear una Node.js app desde la raíz del repositorio, con Node `22.x`. La configuración exacta del panel debe ser:
+
+| Campo | Valor |
+|---|---|
+| Working directory | raíz del repositorio, donde viven `package.json` y `pnpm-workspace.yaml` |
+| Install | `corepack pnpm install --frozen-lockfile` |
+| Build | `corepack pnpm --filter @factory/api... build` |
+| Release manual | `corepack pnpm --filter @factory/api prisma:migrate:deploy` |
+| Start | `corepack pnpm --filter @factory/api start` |
+| Liveness | `/health` |
+| Readiness | `/ready`, solo si el panel puede retirarlo del tráfico cuando no sea 200 |
+
+Hostinger debe proporcionar `PORT`; la API usa `PORT` en production y `API_PORT`/`PORT`/`3101` en local. No fijar un
+puerto público en el start command. Medir la cadena de proxies antes de fijar `TRUST_PROXY_HOPS`; nunca usar `true`.
+
+Configurar inicialmente `NATIVE_PROFILE=1`, `TUS_ROUTES_ENABLED=true`, `TUS_PROVIDER_ACTIONS_ENABLED=false`,
+`TUS_MERCADOPAGO_ENABLED=false`, `TUS_RELEASE_JOBS_ENABLED=false` y `TUS_FLEET_JOBS_ENABLED=false`.
+
+### 12.4 Configurar Vercel
+
+1. Importar el repo completo con **Root Directory = raíz**; no elegir `apps/web` como raíz porque se perdería el workspace.
+2. Mantener `vercel.json`; usa `pnpm install --frozen-lockfile` y `pnpm --filter @factory/web... build`.
+3. Configurar Node `22.x` si el proyecto Vercel lo permite; el `engines` raíz restringe Node a `>=20.11.0 <23`.
+4. Cargar solo `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL` y opcionalmente `NEXT_PUBLIC_SUPPORT_WHATSAPP_URL`.
+5. No cargar `DATABASE_URL`, `DIRECT_URL`, secretos OAuth, claves MP ni `TUS_PAYMENT_CREDENTIALS_KEY` en Vercel.
+6. Validar `/`, `/sign-in`, `/tus/mercado` y `/tus/prestador`. `NEXT_PUBLIC_API_URL` no tiene fallback localhost en production.
+
+### 12.5 CORS y autenticación
+
+1. Después de conocer la URL estable de Vercel, fijar `CORS_ORIGINS=https://<web>` sin wildcard ni slash final y redeployar
+   la API.
+2. Probar un `Origin` permitido, uno denegado y una request sin `Origin`.
+3. La autenticación actual usa `Authorization: Bearer`; no hay cookie de sesión que requiera `SameSite`, `Domain` o
+   `Secure`. `credentials: true` en CORS se conserva para compatibilidad futura, pero no convierte el Bearer en cookie.
+4. Si se agregan cookies en una fase futura, preferir `app.<dominio>` + `api.<dominio>` y revisar explícitamente
+   `SameSite=None; Secure`, CORS credentials y CSRF antes de activarlas.
+
+### 12.6 Cuenta de staging y smoke sin pagos
+
+1. Registrar una cuenta de equipo con `POST /auth/register`.
+2. Verificarla solo mediante el SQL de §5, limitado a una cuenta de staging autorizada; no crear un bypass HTTP público.
+3. Comprobar `/health` y `/ready`.
+4. Ejecutar el recorrido cliente/prestador de §8 con `TUS_MERCADOPAGO_ENABLED=false`.
+5. Confirmar `payment-preview` con `PAYMENTS_DISABLED`, sin checkout externo ni OAuth.
+6. Enviar SIGTERM desde el panel o proceso controlado y comprobar cierre HTTP, Prisma, pool y recursos opcionales dentro
+   de `SHUTDOWN_TIMEOUT_MS`.
+
+### 12.7 Matriz inicial de flags
+
+| Flag | Staging inicial | Producción inicial | Razón |
+|---|---:|---:|---|
+| `TUS_ROUTES_ENABLED` | `true` | `false` hasta evidencia | habilita el negocio TUS sin habilitar providers |
+| `TUS_PROVIDER_ACTIONS_ENABLED` | `false` | `false` | monta webhooks/OAuth de providers externos; no es necesario para el flujo sin pagos |
+| `TUS_MERCADOPAGO_ENABLED` | `false` | `false` | dinero y OAuth externos apagados |
+| `TUS_RELEASE_JOBS_ENABLED` | `false` | `false` | no hay evidencia de workers/leases |
+| `TUS_FLEET_JOBS_ENABLED` | `false` | `false` | no activar operaciones de flota |
+| `TUS_WHATSAPP_ENABLED` | `false` | `false` | provider externo no verificado |
+| `TUS_AWS_ENABLED` | `false` | `false` | cloud/object storage no requerido por este staging |
+
+`TUS_PROVIDER_ACTIONS_ENABLED=false` no bloquea auth, tenancy, marketplace, trabajos, agenda ni la preview de pago; solo
+deja fuera las rutas de integración Mercado Pago/WhatsApp. No confundir flags con autorización: los permisos siguen siendo
+server-derived y tenant-scoped.
+
+## 13. Variables para cargar
+
+| Plataforma | Variable | Obligatoria ahora | Secreta |
+|---|---|---:|---:|
+| Hostinger API | `NODE_ENV=production` | sí | no |
+| Hostinger API | `DATABASE_URL` pooled | sí | sí |
+| Hostinger release | `DIRECT_URL` directa | solo migración | sí |
+| Hostinger API | `CORS_ORIGINS` | sí | no |
+| Hostinger API | `PORT` | la entrega el panel | no |
+| Hostinger API | `NATIVE_PROFILE=1` | sí para staging | no |
+| Hostinger API | `TUS_ROUTES_ENABLED=true` | sí para usar TUS | no |
+| Hostinger API | `TRUST_PROXY_HOPS` | después de medir | no |
+| Hostinger API | `TUS_MERCADOPAGO_ENABLED=false` | sí | no |
+| Vercel Web | `NEXT_PUBLIC_API_URL` | sí | no |
+| Vercel Web | `NEXT_PUBLIC_SITE_URL` | recomendada | no |
+| Vercel Web | `NEXT_PUBLIC_SUPPORT_WHATSAPP_URL` | no | no |
+| Futuro MP | `MERCADO_PAGO_CLIENT_SECRET` | no | sí |
+| Futuro MP | `MERCADO_PAGO_WEBHOOK_SECRET` | no | sí |
+| Futuro MP | `TUS_PAYMENT_CREDENTIALS_KEY` | no | sí |
+
+## 14. Resultado y blockers actuales
+
+| Resultado | Estado actual | Evidencia faltante |
+|---|---|---|
+| CODE READY FOR STAGING | `YES` para API/Web local | build standalone Linux/Vercel y audit SCA final del target |
+| POSTGRESQL 16 READY | `NO` | DB descartable real, migrate deploy, backup/restore y SQL de versión |
+| PGVECTOR READY | `NO` | extensión `vector` verificada en el target |
+| HOSTINGER CONFIG READY | `YES` como contrato | panel, proxy, health, ready y SIGTERM reales |
+| VERCEL CONFIG READY | `YES` como contrato | build/deploy y navegador reales |
+| SECURITY GATE | `PASS` para hardening local; `PENDING` para SCA/infra | cerrar audit scoped y evidencia externa |
+| MERCADO PAGO REAL | `OFF` | no se debe activar en esta fase |
+| MERCADO PAGO SANDBOX | código `READY`; verificación `NO` | credenciales sandbox y cuentas de prueba autorizadas |
+
+### Clasificación
+
+- **Bloquea deploy:** PostgreSQL 16/pgvector sin validar, build standalone Linux sin evidencia, SCA High residual del target,
+  proxy/CORS/health reales sin probar.
+- **Bloquea usar TUS:** `/ready` no 200, migraciones incompletas, `TUS_ROUTES_ENABLED` apagado o login sin procedimiento de
+  verificación de staging.
+- **Bloquea pagos sandbox:** credenciales, seller/buyer de prueba, callback/webhook y runner sandbox sin ejecutar.
+- **Bloquea pagos productivos:** todo lo anterior más legal, fiscal, KYC/KYB, settlement y evidencia de dinero real.
+
+No hacer push ni ejecutar deploy automático desde este documento. El commit/branch y el árbol Git deben quedar registrados
+antes de que el dueño cargue credenciales y ejecute la fase externa.

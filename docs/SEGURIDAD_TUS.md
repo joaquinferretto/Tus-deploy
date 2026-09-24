@@ -92,7 +92,11 @@ Corrección:
 - La topología real de Hostinger no fue observada. `TRUST_PROXY_HOPS=1` solo es correcto si existe exactamente un salto de
   proxy y el proceso Node no es accesible directamente.
 - No se ejecutó SCA online ni DAST. El lockfile y las acciones de CI deben revisarse periódicamente; un advisory High/Critical
-  vigente hace fallar el gate.
+- vigente en el target de staging hace fallar el gate.
+- La actualización local de esta fase llevó Next a `15.5.26` y fijó `sharp>=0.35.4`, `postcss>=8.5.23` y `qs>=6.16.0`.
+  El audit global actual no tiene Critical y conserva 19 High/6 moderate exclusivamente bajo `apps/mobile`/Expo, que no
+  forma parte del despliegue Hostinger/Vercel de esta fase. La remediación móvil queda pendiente y bloquea una aprobación
+  de seguridad del monorepo completo, aunque no el alcance API/Web una vez repetido el audit scoped.
 - `/ready` comprueba el piso de tablas del release, no la versión de pgvector ni filas fallidas de `_prisma_migrations`.
   Esos controles siguen en el release job/runbook.
 
