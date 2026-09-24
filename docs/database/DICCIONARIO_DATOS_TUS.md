@@ -633,6 +633,14 @@ tokens cifrados AES-256-GCM con la clave en `TUS_PAYMENT_CREDENTIALS_KEY` (fuera
 `state` OAuth solo como sha256 y el verificador PKCE cifrado, con consumo atómico de un solo uso. Ninguna tabla guarda
 credenciales de la plataforma.
 
+**WEB-09E.** `20260926100000_tus_service_payment_checkout` (aditiva): `intenciones_pago` agrega la preferencia de
+Checkout Pro (`preferencia_id`, único por proveedor; `url_checkout` https; `checkout_expira_en`), la comisión congelada al
+crear el checkout (`tasa_comision_bps`, `version_regla_comision`, `politica_comision_id`, `comision_marketplace` ≤ `monto`;
+tasa y monto juntos o ambos NULL), el reclamo de despacho `despacho_reclamado_hasta` y `entorno_proveedor`
+(`sandbox | production | deterministic`). Filas previas quedan con NULL. `reembolsos_servicio` registra intentos de
+reembolso total (FK a la intención exacta, únicos por intento y por clave de idempotencia, estados
+`requested | submitted | requires_review | failed`); el estado monetario sigue cambiando solo con el webhook verificado.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

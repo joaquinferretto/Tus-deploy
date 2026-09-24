@@ -320,15 +320,19 @@ La matriz de evidencia y los criterios para una futura activacion estan en `docs
   alcance global, por categoria (cohorte) o por prestador, editable por el admin de plataforma sin redeploy.
 - La tasa usada en un pago queda congelada en su snapshot junto al fee del PSP y el neto del prestador; los cambios
   posteriores no recalculan historia.
-- Quien absorbe la comision de Mercado Pago queda **pendiente de decision de negocio** (`pspFeeBearer = undetermined`);
-  mientras no se decida, los pagos no se pueden habilitar.
+- WEB-09E (decision definitiva): el cliente paga exactamente el total del presupuesto aceptado; del total se descuentan
+  el fee de Mercado Pago (el que informa Mercado Pago) y la comision TUS: `netoPrestador = total - feeMP - comisionTus`.
+  `pspFeeBearer = provider`; `platform` no esta soportado.
 
 ### W09-04: Mercado Pago marketplace con cuenta propia del prestador
 
 - Producto: split de pagos de Mercado Pago (Checkout Pro/API marketplace). El prestador conecta su cuenta por OAuth; el
   cobro se crea con su token y TUS retiene `marketplace_fee`. No hay transferencias manuales ni payouts de TUS.
 - TUS no guarda secretos de plataforma en la base; los tokens del prestador se guardan cifrados con una clave externa.
-- Dinero real permanece apagado hasta implementar y probar WEB-09E en sandbox (ver `docs/PRODUCCION_TUS.md`).
+- WEB-09E implementa Checkout Pro con Split 1:1. Un redirect nunca confirma un pago; solo el webhook verificado mas la
+  consulta del pago a Mercado Pago. Reembolsos: solo total, por el admin de plataforma; si el vendedor no tiene saldo
+  queda en revision manual y TUS no cubre su parte.
+- Dinero real permanece apagado hasta la prueba sandbox con credenciales y la habilitacion `settlement` por evidencia.
 
 ## Alcance de la Build
 

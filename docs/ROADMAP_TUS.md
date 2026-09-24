@@ -191,8 +191,8 @@ Pendiente cuando exista un target autorizado:
 - `render.yaml` aún declara `prisma migrate deploy`; la política TUS exige baseline forward-only target-specific
   cuando el historial diverge.
 - Migraciones pendientes en `factory_local` (solo lectura, 2026-09-24): 8, desde
-  `20260916140000_tus_provider_agenda_publication_modes` hasta `20260925100000_tus_service_payment_configuration`. No se
-  aplicaron; runbook en `docs/PRODUCCION_TUS.md`.
+  `20260916140000_tus_provider_agenda_publication_modes` hasta `20260925100000_tus_service_payment_configuration`, mas
+  `20260926100000_tus_service_payment_checkout` (WEB-09E): 9 en total. No se aplicaron; runbook en `docs/PRODUCCION_TUS.md`.
 - La suite global excede el timeout y mezcla gates no focales: seguridad del workflow, secret store Render,
   imports TypeScript sin extensión, disponibilidad de `pnpm` y smoke PostgreSQL.
 - El target PostgreSQL físico no se valida sin `DATABASE_URL` y autorización de un entorno descartable.
@@ -212,6 +212,12 @@ Pendiente cuando exista un target autorizado:
   cobros. Migracion `20260925100000_tus_service_payment_configuration`. Pagos reales siguen apagados: falta WEB-09E
   (adaptador de cobro con `marketplace_fee`, webhook publico con firma real, refunds) y la decision de quien absorbe el fee
   de Mercado Pago. Guia de despliegue y activacion: `docs/PRODUCCION_TUS.md`.
+- WEB-09E (2026-09-24): integracion real de Mercado Pago con Checkout Pro y Split 1:1 (token OAuth del prestador,
+  `marketplace_fee` = comision congelada al crear el checkout), renovacion automatica de tokens, webhook publico firmado
+  (`ts` en ms; bug del paquete corregido), consulta del pago server-to-server, fee real de Mercado Pago y neto del
+  prestador, reembolso total con revision manual si el vendedor no tiene saldo, Web de pago y cobros. Migracion
+  `20260926100000_tus_service_payment_checkout`. Implementado hasta el boundary externo; **falta la prueba en el sandbox
+  de Mercado Pago** (sin credenciales) y el dinero real sigue apagado.
 - El worker Python sigue siendo un scaffold bloqueado, no un consumidor productivo.
 
 ## Regla de actualización

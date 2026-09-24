@@ -899,6 +899,15 @@ Table intenciones_pago {
   error_proveedor varchar [null, note: 'ex providerError']
   fecha_creacion timestamp [note: 'ex createdAt']
   fecha_actualizacion timestamp [note: 'ex updatedAt']
+  preferencia_id varchar [null, note: 'WEB-09E: [EXTERNA] preferencia Checkout Pro; unique (proveedor, preferencia_id)']
+  url_checkout varchar [null, note: 'WEB-09E: URL https de Mercado Pago; no confirma pagos']
+  checkout_expira_en timestamp [null]
+  tasa_comision_bps int [null, note: 'WEB-09E: tasa congelada al crear el checkout (0..3000)']
+  version_regla_comision varchar [null]
+  politica_comision_id varchar [null, note: '[LOGICA] politicas_comision_servicio.politica_id']
+  comision_marketplace bigint [null, note: 'WEB-09E: marketplace_fee enviado a Mercado Pago; <= monto']
+  despacho_reclamado_hasta timestamp [null, note: 'WEB-09E: reclamo corto contra checkouts duplicados']
+  entorno_proveedor varchar [null, note: 'sandbox | production | deterministic']
 
   indexes {
     (tenant_id, pago_id) [unique, name: 'uq_intenciones_pago_tenant_pago']
@@ -1582,6 +1591,39 @@ Table conciliaciones_servicio {
 
   Note: 'WEB-09C: corridas append-only (trigger).'
 }
+
+Table reembolsos_servicio {
+  id varchar [pk]
+  version_contrato varchar
+  reembolso_id varchar
+  tenant_id varchar
+  prestador_tenant_id varchar
+  obligacion_id varchar
+  pago_id varchar
+  intento int
+  monto bigint [note: '> 0; solo reembolso total']
+  moneda varchar
+  estado varchar [note: 'requested | submitted | requires_review | failed']
+  referencia_reembolso_proveedor varchar [null, note: '[EXTERNA] id de reembolso de Mercado Pago']
+  error_proveedor varchar [null, note: 'codigo seguro, por ejemplo INSUFFICIENT_SELLER_FUNDS']
+  motivo varchar
+  clave_idempotencia varchar
+  actor_id varchar
+  correlacion_id varchar
+  version int
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+
+  indexes {
+    (tenant_id, reembolso_id) [unique, name: 'uq_reembolsos_servicio_tenant_reembolso']
+    (tenant_id, clave_idempotencia) [unique, name: 'uq_reembolsos_servicio_tenant_clave']
+    (tenant_id, pago_id, intento) [unique, name: 'uq_reembolsos_servicio_pago_intento']
+  }
+
+  Note: 'WEB-09E: intentos de reembolso via el vendedor (Split 1:1). FK (tenant_id, pago_id, obligacion_id) -> intenciones_pago RESTRICT. El dinero cambia solo por webhook verificado.'
+}
+
+Ref: reembolsos_servicio.(tenant_id, pago_id, obligacion_id) > intenciones_pago.(tenant_id, pago_id, obligacion_id) [delete: restrict]
 
 Table politicas_comision_servicio {
   id varchar [pk]

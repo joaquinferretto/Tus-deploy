@@ -1,8 +1,9 @@
 # Producción TUS: despliegue, variables, migraciones y pagos
 
-> **Estado (2026-09-24, rama `web-tus`):** Web y API son desplegables para que el equipo vea y use TUS. El **dinero real
-> no es habilitable**: falta WEB-09E (adaptador de cobro de Mercado Pago, webhook público con firma real y refunds) y la
-> decisión de quién absorbe la comisión de Mercado Pago. Todo lo de pagos falla cerrado mientras tanto.
+> **Estado (2026-09-24, rama `web-tus`):** Web y API son desplegables para que el equipo vea y use TUS. La integración
+> real de Mercado Pago (WEB-09E: Checkout Pro + Split 1:1, OAuth con renovación, webhook firmado y reembolsos) está
+> implementada para **sandbox**, pero **no se probó contra Mercado Pago** porque no hay credenciales de prueba cargadas. El
+> **dinero real no es habilitable**. Todo lo de pagos falla cerrado mientras falte configuración.
 
 Este documento es la guía práctica. El detalle técnico de pagos está en `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
 
@@ -55,9 +56,11 @@ Pagos (todas opcionales hasta habilitar dinero real; si falta cualquiera, los pa
 | `TUS_PAYMENT_CREDENTIALS_KEY`     | 32 bytes aleatorios en base64 para cifrar tokens de prestadores          | **sí**  |
 | `TUS_WEB_BASE_URL`                | `https://<dominio-web>`; destino del redirect después del OAuth          | no      |
 | `TUS_PLATFORM_ADMIN_TENANT_ID`    | tenant cuyos usuarios con `tus:payments:admin` administran pagos         | no      |
+| `MERCADO_PAGO_NOTIFICATION_URL`   | `https://<api>/tus/v1/integrations/mercado-pago/webhooks` (HTTPS)        | no      |
+| `MERCADO_PAGO_MARKETPLACE`        | opcional; solo si Mercado Pago exige `marketplace` con `marketplace_fee` | no      |
 
 \* No es secreto pero tratalo como configuración sensible. El access token y la public key **de TUS** no se usan en este
-flujo (los cobros se crean con el token de cada prestador); no los cargues hasta que WEB-09E los necesite.
+flujo (los cobros se crean con el token OAuth de cada prestador); no hace falta cargarlos.
 
 Generar la clave de cifrado (una vez, guardarla en el secret store; si se pierde, los prestadores deben reconectar):
 
@@ -148,8 +151,10 @@ Pendientes contra `factory_local` (consulta de solo lectura, 2026-09-24). Para p
 6. `20260924100000_tus_finance_subject_hardening`
 7. `20260924130000_tus_work_reservation_unique`
 8. `20260925100000_tus_service_payment_configuration`
+9. `20260926100000_tus_service_payment_checkout` (WEB-09E)
 
-Todas son aditivas y forward-only; el gate DB-09 acepta la cadena. Dry run en PostgreSQL 16 descartable: 40/40 en 5,5 s.
+Todas son aditivas y forward-only; el gate DB-09 acepta la cadena. Dry run en PostgreSQL 16 descartable: 41/41 desde cero
+en 5,4 s y upgrade desde 40 con datos previos en 1,8 s.
 
 **No aplicar sobre `factory_local` ni sobre una base compartida sin autorización explícita.**
 
@@ -164,9 +169,9 @@ Todas son aditivas y forward-only; el gate DB-09 acepta la cadena. Dry run en Po
 5. **Aplicar:** `pnpm --filter @factory/api prisma:migrate:deploy` (o el `preDeployCommand` de Render).
 6. **Verificar historial:**
    `SELECT migration_name, finished_at, rolled_back_at FROM _prisma_migrations ORDER BY started_at DESC LIMIT 10;`
-   → las 8 con `finished_at` no nulo y `rolled_back_at` nulo; `prisma migrate status` → "Database schema is up to date".
+   → las 9 con `finished_at` no nulo y `rolled_back_at` nulo; `prisma migrate status` → "Database schema is up to date".
 7. **Smoke DB:** existen `politicas_comision_servicio`, `configuraciones_pagos_servicio`, `cuentas_cobro_prestador`,
-   `obligaciones_pago_servicio`; triggers `tus_politica_comision_append_only_trigger` y
+   `obligaciones_pago_servicio`, `reembolsos_servicio`; columna `intenciones_pago.comision_marketplace`; triggers `tus_politica_comision_append_only_trigger` y
    `tus_configuracion_pagos_append_only_trigger`.
 8. **Iniciar la API.**
 9. `GET /health` → 200.
@@ -179,51 +184,88 @@ Todas son aditivas y forward-only; el gate DB-09 acepta la cadena. Dry run en Po
 
 ## 7. Mercado Pago: qué hay y cómo se configura
 
-### Modelo elegido (documentación oficial de Mercado Pago Argentina)
+### Modelo implementado (WEB-09E, documentación oficial de Mercado Pago Argentina)
 
-- Producto: **Split de pagos / marketplace** con Checkout Pro o Checkout API.
-- **Cuenta de TUS:** es la dueña de la _aplicación_ en Mercado Pago Developers y recibe la comisión (`marketplace_fee`).
-- **Cuenta del prestador:** cada prestador conecta **su propia** cuenta por OAuth. El cobro se crea con el token del
-  prestador; Mercado Pago acredita el pago en la cuenta del prestador y separa automáticamente la comisión de TUS. TUS no
-  transfiere dinero al prestador.
-- **Fee de Mercado Pago:** en el split nativo Mercado Pago descuenta primero su comisión y luego la de TUS del saldo del
-  vendedor (lo absorbe el prestador). Si el negocio quiere que lo absorba TUS, hay que ajustar la comisión enviada
-  (no implementado). Esta decisión está **pendiente** y bloquea la habilitación.
+- Producto: **Split de Pagos 1:1 (marketplace) con Checkout Pro**. TUS es el marketplace; cada prestador es el vendedor.
+- **Cuenta de TUS:** es la dueña de la _aplicación_ en Mercado Pago Developers y recibe su comisión (`marketplace_fee`).
+- **Cuenta del prestador:** cada prestador conecta **su propia** cuenta por OAuth. La preferencia de pago se crea con el
+  token del prestador; Mercado Pago cobra al cliente, acredita en la cuenta del prestador y separa automáticamente la
+  comisión de TUS. TUS **no** cobra todo en su cuenta ni hace transferencias manuales.
+- Por qué Checkout Pro y no Checkout API: Mercado Pago aloja el checkout (TUS no toca datos de tarjeta), TUS mantiene la
+  autoridad sobre monto, comisión e idempotencia y el split 1:1 funciona igual con `marketplace_fee`. Hay una sola
+  implementación productiva.
 
-### Cómo se calcula la comisión y el neto (ejemplo)
+### Dinero: quién paga qué
 
-Cliente paga **$100.000** (10.000.000 centavos). Comisión TUS 10% = 1000 bp:
+**El cliente paga exactamente el total del presupuesto aceptado. No se le suma la comisión de TUS ni la de Mercado Pago.**
 
-| Concepto                    | Cálculo                            | Resultado   |
-| --------------------------- | ---------------------------------- | ----------- |
-| Total pagado por el cliente | presupuesto aceptado               | $100.000,00 |
-| Comisión TUS                | 100.000 × 1000 / 10000 (half-up)   | $10.000,00  |
-| Bruto del prestador         | total − comisión TUS               | $90.000,00  |
-| Fee Mercado Pago (ejemplo)  | lo informa Mercado Pago en el pago | $5.000,00   |
-| Neto del prestador          | si el prestador absorbe el fee     | $85.000,00  |
+```text
+Cliente paga total presupuesto
+- fee Mercado Pago        (lo informa Mercado Pago en el pago; nunca se estima)
+- comisión TUS            (tasa en bp sobre el total, congelada al crear el checkout)
+= neto prestador
+```
 
-Todo en centavos (`bigint`), sin floats. La tasa, la comisión, el fee y el neto quedan congelados en el snapshot del pago;
-cambiar la comisión después no altera pagos anteriores.
+Ejemplo con presupuesto aceptado de **$50.000** y comisión TUS 10% (1000 bp):
+
+| Concepto                    | Cálculo                                       | Resultado  |
+| --------------------------- | --------------------------------------------- | ---------- |
+| Total pagado por el cliente | presupuesto aceptado                          | $50.000,00 |
+| Comisión TUS                | 50.000 × 1000 / 10000 (enteros, half-up)      | $5.000,00  |
+| Fee Mercado Pago (ejemplo)  | `fee_details` tipo `mercadopago_fee` del pago | $3.000,00  |
+| Neto del prestador          | 50.000 − 3.000 − 5.000                        | $42.000,00 |
+
+- Todo en centavos (`bigint`); la conversión a decimal solo ocurre al hablar con Mercado Pago.
+- La comisión se convierte a **monto** y se congela en la intención de pago al crear el checkout; eso es lo que recibe
+  Mercado Pago como `marketplace_fee` y lo que se registra al aprobarse. Si TUS pasa de 10% a 12%, los pagos ya
+  iniciados siguen en 10%.
+- Si Mercado Pago todavía no informó su fee al aprobar, el neto queda "pendiente" y se completa una sola vez cuando llega
+  el dato (nunca se inventa una tasa).
+
+### Endpoints
+
+| Ruta                                                                         | Quién               | Qué hace                                             |
+| ---------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------- |
+| `GET /tus/v1/work/:id/payment-preview`                                       | cliente del trabajo | total, estado, si se puede pagar (solo lectura)      |
+| `POST /tus/v1/work/:id/checkout` (+ `Idempotency-Key`)                       | cliente del trabajo | crea o reutiliza el checkout y devuelve la URL de MP |
+| `POST /tus/v1/integrations/mercado-pago/webhooks`                            | Mercado Pago        | notificaciones firmadas (`x-signature`)              |
+| `GET /tus/v1/work/:id/finance`                                               | cliente / prestador | estado; el prestador ve bruto, comisión, fee y neto  |
+| `GET/POST /tus/v1/provider/payment-account...`                               | prestador           | estado, conectar (OAuth) y desconectar               |
+| `GET /tus/v1/integrations/mercado-pago/oauth/callback`                       | navegador (OAuth)   | vuelve de Mercado Pago y guarda la conexión          |
+| `POST /tus/v1/admin/payments/refunds` (+ `Idempotency-Key`)                  | admin de plataforma | reembolso total                                      |
+| `GET/POST /tus/v1/admin/payments/{status,configuration,commission-policies}` | admin               | estado, interruptor y comisión                       |
+
+La vuelta del navegador desde Mercado Pago (`/tus/compromisos?pago=retorno&trabajo=<id>`) **nunca confirma** un pago: la
+Web muestra "Estamos confirmando tu pago" y consulta a TUS hasta que llega el webhook verificado.
 
 ### Pasos en Mercado Pago Developers (manuales, los hace el dueño de la cuenta TUS)
 
-1. Entrar a <https://www.mercadopago.com.ar/developers/panel/app> con la cuenta de TUS y **crear una aplicación**
-   (tipo de solución: pagos online / marketplace; producto Checkout Pro o Checkout API).
-2. En la app: **URLs de redireccionamiento** → `https://<api>/tus/v1/integrations/mercado-pago/oauth/callback` (exacta,
-   estática; es `MERCADO_PAGO_OAUTH_REDIRECT_URI`).
-3. Habilitar **"flujo de código de autorización con PKCE"** (TUS ya envía `code_challenge` S256).
-4. Copiar **Número de aplicación** (`MERCADO_PAGO_CLIENT_ID`) y **Client secret** (`MERCADO_PAGO_CLIENT_SECRET`) de
-   _Credenciales_. Usar primero credenciales y **cuentas de prueba** (vendedor y comprador) para sandbox.
-5. **Webhooks → Configurar notificaciones**: URL de producción del webhook (se define en WEB-09E; todavía no existe la
-   ruta), evento _Pagos_ y _Vinculación de aplicaciones_; revelar la **clave secreta** → `MERCADO_PAGO_WEBHOOK_SECRET`.
-6. Cargar las variables en Render (§2) con `MERCADO_PAGO_ENVIRONMENT=sandbox` y `TUS_MERCADOPAGO_ENABLED=true`.
+1. Entrar a <https://www.mercadopago.com.ar/developers/panel/app> con la cuenta de TUS y **crear una aplicación**:
+   pagos online, **Checkout Pro**, con **modelo marketplace / Split de Pagos** (si el formulario lo pregunta).
+2. En la app → **URLs de redireccionamiento**: `https://<api>/tus/v1/integrations/mercado-pago/oauth/callback`
+   (exacta y estática; es `MERCADO_PAGO_OAUTH_REDIRECT_URI`).
+3. Habilitar el **flujo de código de autorización con PKCE** (TUS envía `code_challenge` S256).
+4. **Credenciales de prueba** → copiar _Número de aplicación_ (`MERCADO_PAGO_CLIENT_ID`) y _Client secret_
+   (`MERCADO_PAGO_CLIENT_SECRET`). No usar credenciales productivas en esta fase.
+5. **Webhooks → Configurar notificaciones** (modo pruebas): URL
+   `https://<api>/tus/v1/integrations/mercado-pago/webhooks` (es `MERCADO_PAGO_NOTIFICATION_URL`), eventos **Pagos** y
+   **Vinculación de aplicaciones**; guardar y **revelar la clave secreta** → `MERCADO_PAGO_WEBHOOK_SECRET`.
+6. **Cuentas de prueba**: crear un usuario **vendedor** (será el prestador) y un usuario **comprador** (el cliente).
+   Usar las tarjetas de prueba de la documentación.
+7. Cargar las variables en Render con `MERCADO_PAGO_ENVIRONMENT=sandbox` y `TUS_MERCADOPAGO_ENABLED=true`.
+8. Ejecutar `node scripts/dev/mercado-pago-sandbox-check.mjs` con esas variables (no imprime secretos; se niega a correr
+   en producción).
+
+Si Mercado Pago rechaza la preferencia con `marketplace_fee` pidiendo el campo `marketplace`, cargar
+`MERCADO_PAGO_MARKETPLACE` con el valor que indique la app (la documentación lo asocia al Application ID).
 
 ### Cómo conecta su cuenta un prestador
 
-`/tus/prestador` → "Cobros con Mercado Pago" → **Conectar Mercado Pago** → login y autorización en Mercado Pago → vuelve a
-TUS con "Mercado Pago quedó conectado". TUS guarda solo el id de cuenta, scopes, vencimiento y los tokens cifrados.
-"Desconectar" borra los tokens en TUS; revocar el acceso en Mercado Pago lo hace el prestador desde su cuenta. El access
-token dura 180 días (la renovación automática es parte de WEB-09E).
+`/tus/prestador` → "Cobros con Mercado Pago" → **Conectar Mercado Pago** (Conectando…) → login y autorización en Mercado
+Pago → vuelve a TUS: **Conectado**. TUS guarda solo id de cuenta, scopes, vencimiento y los tokens cifrados. El token dura
+180 días y **se renueva automáticamente** 7 días antes de vencer, en el momento de usarlo. Si la renovación falla y el
+token ya venció, la cuenta pasa a **Requiere reconexión** y los pagos de ese prestador quedan no disponibles hasta que
+reconecte. "Desconectar" borra los tokens en TUS; revocar el acceso en Mercado Pago lo hace el prestador desde su cuenta.
 
 ### Configurar la comisión (admin de plataforma)
 
@@ -233,7 +275,7 @@ Requisitos: `TUS_PLATFORM_ADMIN_TENANT_ID=<tenant>` y una sesión de ese tenant 
 # Estado (solo booleanos, nunca valores de secretos) y bloqueos pendientes
 curl -H "Authorization: Bearer $TOKEN" -H "X-Correlation-Id: ops-1" https://<api>/tus/v1/admin/payments/status
 
-# Comisión global 10%, fee de Mercado Pago a cargo del prestador (expectedVersion = versión actual, 0 si no hay)
+# Comisión global 10% (expectedVersion = versión actual; 0 si no hay). Sin política persistida rige 10%.
 curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -H "X-Correlation-Id: ops-2" \
   -d '{"scope":"global","rateBps":1000,"pspFeeBearer":"provider","reason":"lanzamiento","expectedVersion":0}' \
   https://<api>/tus/v1/admin/payments/commission-policies
@@ -242,22 +284,50 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 curl -X POST ... -d '{"scope":"prestador","scopeRef":"<prestadorId>","rateBps":500,"pspFeeBearer":"provider","reason":"acuerdo","expectedVersion":0}' ...
 ```
 
-Límites: 0 a 3000 bp (0% a 30%). Cada cambio crea una versión nueva (no se edita ni borra historia).
+Límites: 0 a 3000 bp (0% a 30%). Cada cambio crea una versión nueva. `pspFeeBearer` debe ser `provider` (decisión de
+producto: el fee de Mercado Pago sale del prestador); `platform` y `undetermined` bloquean los pagos.
 
-### Habilitar y deshabilitar pagos
+### Reembolsos
 
-Habilitar exige **todo** esto (el endpoint `status` lista lo que falta en `blockers`):
+- Solo **reembolso total**, iniciado por el admin de plataforma:
+  `POST /tus/v1/admin/payments/refunds` con `{"tenantId":"<tenant cliente>","paymentId":"<pago TUS>","reason":"..."}` e
+  `Idempotency-Key`. TUS llama a Mercado Pago con el token del prestador, body vacío y `X-Idempotency-Key` propia.
+- En Split 1:1 Mercado Pago descuenta el reembolso de forma proporcional al vendedor y al marketplace, y **puede
+  rechazarlo si el vendedor no tiene saldo**. En ese caso el reembolso queda en **`requires_review`**, el pago sigue
+  `paid` y hay que intervenir manualmente (acordar con el prestador o devolver por otro medio). TUS **no** cubre la parte
+  del prestador ni hace transferencias automáticas.
+- Timeouts o errores ambiguos también quedan en `requires_review` (no se reintenta a ciegas para no reembolsar dos veces).
+- La obligación pasa a `refunded` solo cuando llega el webhook verificado con el pago `refunded`.
+- Reembolso parcial: **no soportado** (Mercado Pago lo informa como `approved` + `partially_refunded`).
 
-1. WEB-09E implementado y probado en sandbox (hoy `REAL_PAYMENT_ADAPTER_NOT_IMPLEMENTED`).
-2. Variables de Mercado Pago cargadas y `TUS_MERCADOPAGO_ENABLED=true`.
-3. Política con `pspFeeBearer` decidido (`provider` o `platform`).
-4. Configuración de producto: `POST /tus/v1/admin/payments/configuration`
-   `{"paymentsEnabled":true,"reason":"...","expectedVersion":<n>}`.
-5. El prestador del trabajo con cuenta conectada.
+### Habilitar y deshabilitar pagos (sandbox)
 
-Deshabilitar (inmediato, sin redeploy): `POST /tus/v1/admin/payments/configuration` con `"paymentsEnabled":false`.
-Corte de emergencia a nivel entorno: `TUS_MERCADOPAGO_ENABLED=false` y redeploy/restart de la API. Los pagos ya
-registrados no se borran; la preview vuelve a "Pago online no disponible todavía".
+Los pagos solo se ofrecen si se cumple **todo** (el endpoint `status` lista lo que falta en `blockers`):
+
+1. Variables de Mercado Pago completas, `TUS_MERCADOPAGO_ENABLED=true` y `MERCADO_PAGO_ENVIRONMENT=sandbox`.
+2. Política de comisión válida (por defecto 10%, fee a cargo del prestador).
+3. `POST /tus/v1/admin/payments/configuration` `{"paymentsEnabled":true,"reason":"...","expectedVersion":<n>}`.
+4. El prestador del trabajo con cuenta de Mercado Pago **Conectada**.
+5. En `production` además: decisión de habilitación `settlement` **autorizada por evidencia** (legal, impuestos,
+   KYB/KYC, Mercado Pago, etc.). Ninguna variable puede saltear ese gate; sin evidencia el motivo es
+   `PRODUCTION_NOT_AUTHORIZED`.
+
+Deshabilitar (inmediato, sin redeploy): `"paymentsEnabled":false`. Corte de emergencia: `TUS_MERCADOPAGO_ENABLED=false` y
+reinicio de la API. Los pagos registrados no se borran; los webhooks de pagos ya creados siguen conciliándose mientras el
+adaptador esté configurado.
+
+### Prueba sandbox de punta a punta (pendiente de credenciales)
+
+1. `node scripts/dev/mercado-pago-sandbox-check.mjs --oauth` → todo `OK`.
+2. Prestador (usuario vendedor de prueba): conectar Mercado Pago en `/tus/prestador`.
+3. Flujo del trabajo hasta `completed` con presupuesto aceptado (por ejemplo $50.000).
+4. Cliente (usuario comprador de prueba): "Pagar con Mercado Pago" → pagar con tarjeta de prueba aprobada.
+5. Verificar: la Web muestra "Estamos confirmando tu pago" y luego **Pago confirmado** con el número de Mercado Pago; el
+   prestador ve importe, comisión TUS, costo Mercado Pago y neto; en Mercado Pago el vendedor recibió el neto y la cuenta
+   TUS la comisión.
+6. Repetir con tarjeta **rechazada** (la Web ofrece reintentar en el mismo checkout) y con un pago **pendiente**.
+7. Reembolso total desde el admin y verificar que el webhook deja la obligación `refunded`.
+8. Reenviar una notificación desde el panel de Mercado Pago: TUS responde `duplicate` sin efectos.
 
 ## 8. Smoke posterior al despliegue
 
@@ -266,8 +336,8 @@ registrados no se borran; la preview vuelve a "Pago online no disponible todaví
 3. Login con una cuenta del equipo verificada.
 4. Prestador: publicar un servicio; cliente: comprarlo; prestador: aceptar, diagnosticar, presupuestar; cliente: aceptar
    presupuesto; prestador: iniciar y completar.
-5. Cliente: el bloque "Pago" muestra el total del presupuesto y "Pago online no disponible todavía"; no aparece ningún
-   pago registrado (`GET /tus/v1/work/<id>/finance` → `obligation: null`).
+5. Sin pagos habilitados: el bloque "Pago" muestra el total y "Pago online no disponible todavía"; no se registra ningún
+   pago (`GET /tus/v1/work/<id>/finance` → `obligation: null`).
 6. Admin: `GET /tus/v1/admin/payments/status` lista los `blockers` esperados.
 
 ## 9. Rollback
@@ -280,11 +350,11 @@ registrados no se borran; la preview vuelve a "Pago online no disponible todaví
 
 ## 10. Qué falta exactamente para dinero real
 
-1. Decisión de negocio: quién absorbe el fee de Mercado Pago.
-2. WEB-09E: adaptador `PuertoProveedorPagosServicio` sobre `packages/mercado-pago` con el token del prestador y
-   `marketplace_fee`, ruta pública de webhook con raw body y verificación `x-signature` (corregir antes el `ts` en
-   milisegundos del paquete), consulta del pago a Mercado Pago antes de aprobar, worker de despacho, renovación de tokens,
-   refunds reales y conciliación contra reportes.
-3. Prueba completa en sandbox con cuentas de prueba (pago aprobado, rechazado, reembolso, webhook duplicado).
-4. Revisión legal/fiscal (facturación de la comisión, términos para prestadores).
-5. Solo entonces: `MERCADO_PAGO_ENVIRONMENT=production`, credenciales productivas y `paymentsEnabled:true`.
+1. **Prueba sandbox completa** (§7) con credenciales y cuentas de prueba reales — no se pudo ejecutar: no hay
+   credenciales en este entorno.
+2. Confirmar en sandbox: que `marketplace_fee` se acepta sin `marketplace` (o cargar `MERCADO_PAGO_MARKETPLACE`), que
+   las notificaciones configuradas por `notification_url` llegan con `x-signature`, y el formato del error de reembolso
+   sin saldo.
+3. Revisión legal/fiscal (facturación de la comisión, términos para prestadores) y evidencia de habilitación
+   `settlement` para producción.
+4. Solo entonces: credenciales productivas, `MERCADO_PAGO_ENVIRONMENT=production` y `paymentsEnabled:true`.
