@@ -335,11 +335,25 @@ export class ServicioTrabajo {
 
   async getWork(context: TrabajoContext, trabajoId: string): Promise<TrabajoDetalle> {
     validateContext(context)
-    const work = await this.transaction.run(async ({ work: store }) =>
-      store.findAccessible({ tenantId: context.tenantId, trabajoId })
-    )
-    if (!work) throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
-    return this.detail(work)
+    return this.transaction.run(async ({ work: store }) => {
+      const work = await store.findAccessible({ tenantId: context.tenantId, trabajoId })
+      if (!work) throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
+      return {
+        work,
+        diagnoses: await store.listDiagnoses({
+          tenantId: work.tenantId,
+          trabajoId: work.trabajoId,
+        }),
+        budgets: (
+          await store.listBudgets({ tenantId: work.tenantId, trabajoId: work.trabajoId })
+        ).map(({ recordId: _recordId, correlationId: _correlationId, ...budget }) => budget),
+        evidence: await store.listEvidence({ tenantId: work.tenantId, trabajoId: work.trabajoId }),
+        transitions: await store.listTransitions({
+          tenantId: work.tenantId,
+          trabajoId: work.trabajoId,
+        }),
+      }
+    })
   }
 
   async listWorks(context: TrabajoContext): Promise<Trabajo[]> {
@@ -770,6 +784,7 @@ export class ServicioTrabajo {
       throw new TrabajoError(400, 'INVALID', 'occurredAt must be a valid timestamp')
     return this.execute(input, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
+      ensureProvider(work, input)
       if (work.status === ESTADOS_TRABAJO.CANCELADO)
         throw new TrabajoError(409, 'INVALID_STATE', 'cancelled work cannot receive evidence')
       if (
@@ -820,21 +835,6 @@ export class ServicioTrabajo {
       })
       return { evidence }
     })
-  }
-
-  private async detail(work: Trabajo): Promise<TrabajoDetalle> {
-    return this.transaction.run(async ({ work: store }) => ({
-      work,
-      diagnoses: await store.listDiagnoses({ tenantId: work.tenantId, trabajoId: work.trabajoId }),
-      budgets: (
-        await store.listBudgets({ tenantId: work.tenantId, trabajoId: work.trabajoId })
-      ).map(({ recordId: _recordId, correlationId: _correlationId, ...budget }) => budget),
-      evidence: await store.listEvidence({ tenantId: work.tenantId, trabajoId: work.trabajoId }),
-      transitions: await store.listTransitions({
-        tenantId: work.tenantId,
-        trabajoId: work.trabajoId,
-      }),
-    }))
   }
 
   private async requireWork(
