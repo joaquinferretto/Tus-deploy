@@ -1,24 +1,24 @@
 # Roadmap de TUS
 
-> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-18. Builds `WEB-08A`, `WEB-08B`, `WEB-08C`, `WEB-08D` y
+> **Fuente canonica de estado.** Ultima actualizacion: 2026-09-23. Builds `WEB-08A`, `WEB-08B`, `WEB-08C`, `WEB-08D` y
 > `WEB-08E` implementadas dentro de sus limites de API; no se activan pagos ni providers. La auditoria WEB-09 queda documentada
 > en `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
 
 ## Estado de fases
 
-| Fase     | Estado                     | Evidencia                                                                                                                      |
-| -------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| WEB-01   | Completada                 | Workspace Web preparado en `e263a39`.                                                                                          |
-| WEB-02   | Completada                 | Mercado de servicios en `e9e72b2`.                                                                                             |
-| WEB-03   | Completada                 | Compromisos de cliente en `a75497f`.                                                                                           |
-| WEB-04   | Completada                 | Calendario y reservas Web en `d659e85`; mantiene flujo legacy.                                                                 |
-| WEB-04D1 | Schema/migración preparada | Modelo Prisma/DB y migración en `29e8977`; aplicación física al target pendiente.                                              |
-| WEB-04D2 | Ajuste backend entregado   | Disponibilidad y reserva canónicas por `listingId`; base `5f56c84`, modalidades físicas y concurrencia alineadas.              |
-| WEB-04D3 | Completada                 | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico.                             |
-| WEB-05   | Completada                 | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider.         |
-| WEB-06   | Completada                 | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider.               |
-| WEB-07   | Completada                 | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda. |
-| WEB-08   | WEB-08A/B/C/D/E completadas | Modelo/API de Trabajo, superficies prestador y cliente para presupuesto y cancelacion temprana sin inventar agenda ni cierre. |
+| Fase     | Estado                      | Evidencia                                                                                                                      |
+| -------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| WEB-01   | Completada                  | Workspace Web preparado en `e263a39`.                                                                                          |
+| WEB-02   | Completada                  | Mercado de servicios en `e9e72b2`.                                                                                             |
+| WEB-03   | Completada                  | Compromisos de cliente en `a75497f`.                                                                                           |
+| WEB-04   | Completada                  | Calendario y reservas Web en `d659e85`; mantiene flujo legacy.                                                                 |
+| WEB-04D1 | Schema/migración preparada  | Modelo Prisma/DB y migración en `29e8977`; aplicación física al target pendiente.                                              |
+| WEB-04D2 | Ajuste backend entregado    | Disponibilidad y reserva canónicas por `listingId`; base `5f56c84`, modalidades físicas y concurrencia alineadas.              |
+| WEB-04D3 | Completada                  | Discovery, slots, booking y checkout de servicios consumen el contrato canónico; sin delta físico.                             |
+| WEB-05   | Completada                  | POS Web usa dispositivo, sesión, operación idempotente y consulta de estado existentes; sin delta backend ni provider.         |
+| WEB-06   | Completada                  | Soporte Web usa casos, evidencia y handoff WhatsApp existentes; sin timeline HTTP, retry automático ni provider.               |
+| WEB-07   | Completada                  | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda. |
+| WEB-08   | WEB-08A/B/C/D/E completadas | Modelo/API de Trabajo, superficies prestador y cliente para presupuesto y cancelacion temprana sin inventar agenda ni cierre.  |
 
 ## WEB-04D2 entregado
 
@@ -189,6 +189,12 @@ Pendiente cuando exista un target autorizado:
   imports TypeScript sin extensión, disponibilidad de `pnpm` y smoke PostgreSQL.
 - El target PostgreSQL físico no se valida sin `DATABASE_URL` y autorización de un entorno descartable.
 - Las rutas TUS, provider actions, jobs y consumidores externos permanecen deshabilitados por defecto.
+- WEB-08 corrigio la autorizacion de evidencia para exigir tenant prestador y unifico la lectura de detalle en una transaccion.
+  Permanecen diferidos por requerir decision o migracion: proyeccion cliente/prestador de metadata, idempotency fingerprint
+  canonico server-side, carrera entre validacion de reserva y creacion de Trabajo, y constraints compuestas adicionales.
+- WEB-09 no tiene capacidades financieras grado A: el sujeto financiero no coincide aun con
+  `CompromisoMercadoServicios`, existen representaciones monetarias divergentes y los side effects no son atomicos. Ver
+  `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.
 - El worker Python sigue siendo un scaffold bloqueado, no un consumidor productivo.
 
 ## Regla de actualización
