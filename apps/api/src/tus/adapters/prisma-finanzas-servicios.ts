@@ -1,6 +1,9 @@
 import {
   TUS_CONTRACT_VERSION,
   parseMinorUnits,
+  type EstadoDespachoPagoServicio,
+  type EstadoProveedorPagoServicio,
+  type OrigenIntencionPagoServicio,
   type EstadoObligacionPagoServicio,
   type EstadoPresupuesto,
   type OrigenImporteObligacionServicio,
@@ -11,12 +14,21 @@ import {
   type ObligacionServicio,
   type RegistroIdempotenciaFinanciera,
 } from '../finance/servicios/modelo.ts'
+import type { IntencionPagoServicioDominio } from '../finance/servicios/pagos.ts'
 import type {
+  PuertoAuditoriaFinanciera,
   PuertoIdempotenciaFinanciera,
   PuertoIdentidadServicio,
+  PuertoInboxEventosPago,
+  PuertoIntencionesPagoServicio,
   PuertoObligacionesServicio,
+  PuertoOutboxFinanciero,
   PuertoTransaccionFinanzasServicio,
+  RegistroAuditoriaFinanciera,
+  RegistroEventoProveedor,
+  RegistroOutboxFinanciero,
   RepositoriosFinanzasServicio,
+  ResultadoEventoProveedor,
 } from '../finance/servicios/servicio.ts'
 import { isSerializationFailure, isUniqueConstraint, mapTrabajo } from './prisma-work.ts'
 
@@ -36,6 +48,10 @@ export interface ClientePrismaFinanzasServicio {
   presupuesto: DelegadoPrismaFinanzasServicio
   obligacionPagoServicio: DelegadoPrismaFinanzasServicio
   idempotenciaFinanciera: DelegadoPrismaFinanzasServicio
+  intencionPago: DelegadoPrismaFinanzasServicio
+  eventoWebhookPago: DelegadoPrismaFinanzasServicio
+  outboxEvent: DelegadoPrismaFinanzasServicio
+  auditoriaFinanzasServicio: DelegadoPrismaFinanzasServicio
   $transaction<T>(
     callback: (client: ClientePrismaFinanzasServicio) => Promise<T>,
     options?: { isolationLevel?: 'Serializable' }
@@ -131,6 +147,16 @@ export class ObligacionesServicioPrisma implements PuertoObligacionesServicio {
     return row ? mapearObligacion(row) : null
   }
 
+  async buscar(input: {
+    tenantId: string
+    obligacionId: string
+  }): Promise<ObligacionServicio | null> {
+    const row = await this.client.obligacionPagoServicio.findFirst({
+      where: { tenantId: input.tenantId, obligacionId: input.obligacionId },
+    })
+    return row ? mapearObligacion(row) : null
+  }
+
   async crear(obligacion: ObligacionServicio): Promise<void> {
     await this.client.obligacionPagoServicio.create({ data: filaObligacion(obligacion) })
   }
@@ -199,6 +225,165 @@ export class IdempotenciaFinancieraPrisma implements PuertoIdempotenciaFinancier
   }
 }
 
+// Service intents share `intenciones_pago` with legacy commitment intents; they always carry
+// `obligacion_id` and never `compromiso_id`. Legacy-only columns get neutral, explicit values.
+export class IntencionesPagoServicioPrisma implements PuertoIntencionesPagoServicio {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  async listarPorObligacion(input: { tenantId: string; obligacionId: string }) {
+    const rows = await this.client.intencionPago.findMany({
+      where: { tenantId: input.tenantId, obligacionId: input.obligacionId },
+      orderBy: { intento: 'asc' },
+    })
+    return rows.map(mapearIntencion)
+  }
+
+  async buscar(input: { tenantId: string; paymentId: string }) {
+    const row = await this.client.intencionPago.findFirst({
+      where: { tenantId: input.tenantId, pagoId: input.paymentId, obligacionId: { not: null } },
+    })
+    return row ? mapearIntencion(row) : null
+  }
+
+  async buscarPorReferenciaProveedor(providerReference: string) {
+    const rows = await this.client.intencionPago.findMany({
+      where: {
+        proveedor: 'mercado-pago',
+        referenciaProveedor: providerReference,
+        obligacionId: { not: null },
+      },
+    })
+    return rows.map(mapearIntencion)
+  }
+
+  async buscarPorPaymentId(paymentId: string) {
+    const rows = await this.client.intencionPago.findMany({
+      where: { pagoId: paymentId, obligacionId: { not: null } },
+    })
+    return rows.map(mapearIntencion)
+  }
+
+  async crear(intent: IntencionPagoServicioDominio): Promise<void> {
+    await this.client.intencionPago.create({ data: filaIntencion(intent) })
+  }
+
+  async actualizar(intent: IntencionPagoServicioDominio): Promise<void> {
+    const result = await this.client.intencionPago.updateMany({
+      where: {
+        tenantId: intent.tenantId,
+        pagoId: intent.paymentId,
+        obligacionId: intent.obligacionId,
+      },
+      data: {
+        estadoProveedor: intent.providerStatus,
+        estadoDespacho: intent.dispatchStatus,
+        referenciaProveedor: intent.providerReference,
+        errorProveedor: intent.providerError,
+        fechaEventoProveedor: intent.providerEventAt ? new Date(intent.providerEventAt) : null,
+        estadoComercial: estadoComercialLegacy(intent.providerStatus),
+        fechaActualizacion: new Date(intent.updatedAt),
+      },
+    })
+    if (result.count !== 1)
+      throw new ErrorFinanzasServicio(409, 'VERSION_CONFLICT', 'payment intent was not updated')
+  }
+}
+
+export class InboxEventosPagoPrisma implements PuertoInboxEventosPago {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  async buscar(input: { tenantId: string; provider: string; eventId: string }) {
+    const row = await this.client.eventoWebhookPago.findFirst({
+      where: {
+        tenantId: input.tenantId,
+        proveedor: input.provider,
+        eventoProveedorId: input.eventId,
+      },
+    })
+    return row ? mapearEvento(row) : null
+  }
+
+  async registrar(record: RegistroEventoProveedor): Promise<void> {
+    await this.client.eventoWebhookPago.create({
+      data: {
+        id: `evento-pago-${record.tenantId}-${record.provider}-${record.eventId}`,
+        tenantId: record.tenantId,
+        proveedor: record.provider,
+        eventoProveedorId: record.eventId,
+        firma: record.signature,
+        fechaOcurrencia: new Date(record.occurredAt),
+        datosEvento: { rawBody: record.rawBody },
+        estado: record.result,
+        fechaCreacion: new Date(record.receivedAt),
+        pagoId: record.paymentId,
+        obligacionId: record.obligacionId,
+        referenciaProveedor: record.providerReference,
+        estadoProveedor: record.status,
+        monto: record.amountMinor,
+        moneda: record.currency,
+        motivo: record.reason,
+        fechaRecepcion: new Date(record.receivedAt),
+      },
+    })
+  }
+
+  async listarPorObligacion(input: { tenantId: string; obligacionId: string }) {
+    const rows = await this.client.eventoWebhookPago.findMany({
+      where: { tenantId: input.tenantId, obligacionId: input.obligacionId },
+      orderBy: { fechaOcurrencia: 'asc' },
+    })
+    return rows.map(mapearEvento)
+  }
+}
+
+// Reuses the shared OutboxEvent table; no second bus.
+export class OutboxFinancieroPrisma implements PuertoOutboxFinanciero {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  async publicar(record: RegistroOutboxFinanciero): Promise<void> {
+    await this.client.outboxEvent.create({
+      data: {
+        id: record.eventId,
+        tenantId: record.tenantId,
+        aggregateType: record.aggregateType,
+        aggregateId: record.aggregateId,
+        eventType: record.eventType,
+        payload: record.payload,
+        status: 'pending',
+        attempts: 0,
+        availableAt: new Date(record.createdAt),
+        createdAt: new Date(record.createdAt),
+      },
+    })
+  }
+}
+
+export class AuditoriaFinancieraPrisma implements PuertoAuditoriaFinanciera {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  async registrar(record: RegistroAuditoriaFinanciera): Promise<void> {
+    await this.client.auditoriaFinanzasServicio.create({
+      data: {
+        id: record.auditId,
+        tenantId: record.tenantId,
+        prestadorTenantId: record.prestadorTenantId,
+        obligacionId: record.obligacionId,
+        tipoRecurso: record.resourceType,
+        recursoId: record.resourceId,
+        accion: record.action,
+        origen: record.origin,
+        actorId: record.actorId,
+        correlacionId: record.correlationId,
+        claveIdempotencia: record.idempotencyKey,
+        estadoAnterior: record.previousStatus,
+        estadoNuevo: record.status,
+        metadatos: record.metadata,
+        fechaCreacion: new Date(record.createdAt),
+      },
+    })
+  }
+}
+
 export class TransaccionFinanzasServicioPrisma implements PuertoTransaccionFinanzasServicio {
   constructor(protected readonly client: ClientePrismaFinanzasServicio) {}
 
@@ -228,6 +413,10 @@ export class TransaccionFinanzasServicioPrisma implements PuertoTransaccionFinan
       identidad: new IdentidadServicioPrisma(client),
       obligaciones: new ObligacionesServicioPrisma(client),
       idempotencia: new IdempotenciaFinancieraPrisma(client),
+      intenciones: new IntencionesPagoServicioPrisma(client),
+      inbox: new InboxEventosPagoPrisma(client),
+      outbox: new OutboxFinancieroPrisma(client),
+      auditoria: new AuditoriaFinancieraPrisma(client),
     }
   }
 }
@@ -283,6 +472,94 @@ export function mapearObligacion(row: Fila): ObligacionServicio {
     createdAt: fecha(row, 'fechaCreacion'),
     updatedAt: fecha(row, 'fechaActualizacion'),
   }
+}
+
+export function filaIntencion(intent: IntencionPagoServicioDominio): Fila {
+  return {
+    id: intent.paymentId,
+    versionContrato: TUS_CONTRACT_VERSION,
+    pagoId: intent.paymentId,
+    tenantId: intent.tenantId,
+    compromisoId: null,
+    obligacionId: intent.obligacionId,
+    prestadorTenantId: intent.prestadorTenantId,
+    intento: intent.attempt,
+    estadoDespacho: intent.dispatchStatus,
+    proveedor: 'mercado-pago',
+    referenciaProveedor: intent.providerReference,
+    estadoProveedor: intent.providerStatus,
+    estadoComercial: estadoComercialLegacy(intent.providerStatus),
+    monto: intent.amountMinor,
+    moneda: intent.currency,
+    claveIdempotencia: `servicio:${intent.idempotencyKey}`,
+    correlacionId: intent.correlationId,
+    credencialesRecolectadas: false,
+    origen: intent.source,
+    ordenId: intent.trabajoId,
+    operacionPosId: null,
+    comercianteRegistro: 'tus-intermediary',
+    modeloCobro: 'intermediary',
+    fechaLiberacion: new Date(intent.createdAt),
+    fechaEventoProveedor: intent.providerEventAt ? new Date(intent.providerEventAt) : null,
+    errorProveedor: intent.providerError,
+    fechaCreacion: new Date(intent.createdAt),
+    fechaActualizacion: new Date(intent.updatedAt),
+  }
+}
+
+export function mapearIntencion(row: Fila): IntencionPagoServicioDominio {
+  const claveIdempotencia = texto(row, 'claveIdempotencia')
+  return {
+    paymentId: texto(row, 'pagoId'),
+    obligacionId: texto(row, 'obligacionId'),
+    trabajoId: texto(row, 'ordenId'),
+    tenantId: texto(row, 'tenantId'),
+    prestadorTenantId: texto(row, 'prestadorTenantId'),
+    attempt: Number(row['intento']),
+    amountMinor: parseMinorUnits(row['monto']),
+    currency: texto(row, 'moneda'),
+    providerStatus: texto(row, 'estadoProveedor') as EstadoProveedorPagoServicio,
+    dispatchStatus: texto(row, 'estadoDespacho') as EstadoDespachoPagoServicio,
+    source: texto(row, 'origen') as OrigenIntencionPagoServicio,
+    providerReference: textoNullable(row, 'referenciaProveedor'),
+    providerError: textoNullable(row, 'errorProveedor'),
+    providerEventAt: row['fechaEventoProveedor'] ? fecha(row, 'fechaEventoProveedor') : null,
+    idempotencyKey: claveIdempotencia.startsWith('servicio:')
+      ? claveIdempotencia.slice('servicio:'.length)
+      : claveIdempotencia,
+    correlationId: texto(row, 'correlacionId'),
+    createdAt: fecha(row, 'fechaCreacion'),
+    updatedAt: fecha(row, 'fechaActualizacion'),
+  }
+}
+
+function mapearEvento(row: Fila): RegistroEventoProveedor {
+  const datos = row['datosEvento'] as { rawBody?: unknown } | null
+  return {
+    eventId: texto(row, 'eventoProveedorId'),
+    tenantId: texto(row, 'tenantId'),
+    provider: 'mercado-pago',
+    paymentId: texto(row, 'pagoId'),
+    obligacionId: texto(row, 'obligacionId'),
+    providerReference: texto(row, 'referenciaProveedor'),
+    status: texto(row, 'estadoProveedor'),
+    amountMinor: parseMinorUnits(row['monto']),
+    currency: texto(row, 'moneda'),
+    signature: texto(row, 'firma'),
+    rawBody: typeof datos?.rawBody === 'string' ? datos.rawBody : '',
+    occurredAt: fecha(row, 'fechaOcurrencia'),
+    receivedAt: fecha(row, 'fechaRecepcion'),
+    result: texto(row, 'estado') as ResultadoEventoProveedor,
+    reason: textoNullable(row, 'motivo'),
+  }
+}
+
+// The legacy commercial status column is informational for service intents; settlement lives
+// in the WEB-09C internal settlement aggregate.
+function estadoComercialLegacy(status: EstadoProveedorPagoServicio): string {
+  if (status === 'refunded') return 'refunded'
+  if (status === 'charged_back') return 'frozen'
+  return 'held'
 }
 
 export function texto(row: Fila, key: string): string {

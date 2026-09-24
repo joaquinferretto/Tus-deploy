@@ -22,6 +22,7 @@ import { WhatsAppActionError } from '../whatsapp/index.ts'
 import { ErrorCalendario } from '../calendar/index.ts'
 import { HabilitacionBloqueadaError, type EvaluadorHabilitacion, type PerfilHabilitacion } from '../readiness/index.ts'
 import { TrabajoError } from '../work/index.ts'
+import { ErrorFinanzasServicio } from '../finance/servicios/modelo.ts'
 
 const TUS_API_VERSION = 'v1'
 
@@ -328,6 +329,30 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
 
   router.post(['/tus/work/:workId/cancel', '/tus/v1/trabajos/:workId/cancelar', '/tus/v1/work/:workId/cancel'], async (request: Request, response: Response) => {
     await workTransition(request, response, sessions, application, 'cancel')
+  })
+
+  // WEB-09B: the amount, currency, tenant and provider state are derived server-side from the
+  // work's payment obligation; the payload can only carry the idempotency key.
+  router.post(['/tus/work/:workId/payment-intents', '/tus/v1/trabajos/:workId/pagos', '/tus/v1/work/:workId/payment-intents'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:checkout', 'tus:work:accept']) || hasSpoofedAuthority(body, request, context) || !application.serviceFinance) { sendError(response, 403, 'FORBIDDEN', 'TUS service payment is not authorized'); return }
+    const forbidden = SERVICE_PAYMENT_AUTHORITY_FIELDS.filter((field) => body[field] !== undefined)
+    if (forbidden.length > 0) { sendError(response, 400, 'CLIENT_AUTHORITY_FIELDS', `server-derived fields cannot be supplied: ${forbidden.join(', ')}`); return }
+    const headerKey = readHeader(request, 'idempotency-key')
+    const bodyKey = readOptionalString(body, 'idempotencyKey')
+    if (!headerKey && !bodyKey) { sendError(response, 400, 'INVALID', 'idempotency-key is required'); return }
+    if (headerKey && bodyKey && headerKey !== bodyKey) { sendError(response, 400, 'INVALID', 'idempotency keys do not match'); return }
+    try {
+      const result = await application.serviceFinance.crearIntencionPago({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '', idempotencyKey: headerKey || bodyKey || '' })
+      response.status(result.status === 'executed' ? 201 : 200).json(result)
+    } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  router.get(['/tus/work/:workId/finance', '/tus/v1/trabajos/:workId/finanzas', '/tus/v1/work/:workId/finance'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasAnyPermission(context, ['tus:work:read', 'tus:marketplace:read', 'tus:checkout']) || hasSpoofedAuthority({}, request, context) || !application.serviceFinance) { sendError(response, 403, 'FORBIDDEN', 'TUS service finance access is not authorized'); return }
+    try { response.status(200).json(await application.serviceFinance.consultarFinanzasTrabajo({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '' })) } catch (error) { sendServiceFinanceError(response, error) }
   })
 
   router.post(['/tus/marketplace/onboarding', '/tus/v1/mercado-servicios/onboarding', '/tus/v1/marketplace/onboarding'], async (request: Request, response: Response) => {
@@ -1415,6 +1440,16 @@ function sendReportingError(response: Response, error: unknown): void {
   }
   if (error instanceof ReportingError) { response.status(error.status).json({ code: error.code, error: error.message }); return }
   sendError(response, 500, 'UNAVAILABLE', 'TUS report was not generated')
+}
+
+const SERVICE_PAYMENT_AUTHORITY_FIELDS = ['amount', 'amountMinor', 'currency', 'status', 'providerStatus', 'providerReference', 'approvedAt', 'commissionMinor', 'netMinor', 'obligacionId', 'clienteId', 'prestadorTenantId', 'createdAt'] as const
+
+function sendServiceFinanceError(response: Response, error: unknown): void {
+  if (error instanceof ErrorFinanzasServicio) {
+    response.status(error.status).json({ code: error.code, error: error.message })
+    return
+  }
+  sendError(response, 500, 'UNAVAILABLE', 'TUS service finance operation was not committed')
 }
 
 function sendWorkError(response: Response, error: unknown): void {

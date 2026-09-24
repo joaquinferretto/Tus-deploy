@@ -238,6 +238,35 @@ Publicacion (tenant prestador)
 | `packages/mercado-pago`                              | Cliente HTTP portable, firma con raw body, refunds, Money Out         | Base del futuro adapter WEB-09E                         |
 | Puerto de pagos de servicio (WEB-09B)                | Interfaz canonica TUS                                                 | Unica frontera que usan B/C; fake determinista en tests |
 
+## WEB-09B — intencion de pago y eventos deterministas (IMPLEMENTADO)
+
+**Estado:** implementado sin provider real. La composicion Prisma usa `ProveedorPagosServicioNoDisponible`; ningun pago de
+servicio puede quedar aprobado sin un evento verificado de un provider habilitado.
+
+- **Intencion:** `POST /tus/v1/work/:workId/payment-intents` (alias `/tus/v1/trabajos/:workId/pagos`) exige sesion del
+  tenant cliente, `tus:checkout` o `tus:work:accept` e `idempotency-key`. Rechaza `amount`, `amountMinor`, `currency`,
+  estados, referencias, fechas e identidades en el body (`CLIENT_AUTHORITY_FIELDS`). Crea la obligacion si falta, reutiliza
+  una intencion `pending` activa y numera intentos por obligacion; nunca llama al provider dentro de la transaccion.
+- **Lectura:** `GET /tus/v1/work/:workId/finance` (alias `/tus/v1/trabajos/:workId/finanzas`) para cliente o prestador;
+  otros tenants reciben `404`.
+- **Persistencia:** la intencion vive en `intenciones_pago` con `obligacion_id`, `intento`, `estado_despacho` y
+  `prestador_tenant_id`; `estado_proveedor` separado de `estado_despacho`. Las columnas legacy reciben valores neutros.
+- **Despacho:** `despacharIntencionPago` es un paso de worker: lee, llama al puerto fuera de la transaccion con clave
+  idempotente = `paymentId` y registra `dispatched` o `dispatch_failed`. No existe worker productivo ni endpoint de despacho.
+- **Provider canonico:** `PuertoProveedorPagosServicio` (crear pago + verificar evento). Implementaciones:
+  `ProveedorPagosServicioNoDisponible` (runtime) y `ProveedorPagosServicioDeterminista` (tests, HMAC sobre raw body y
+  montos en unidades mayores convertidos sin floats). WEB-09E debe implementar este puerto sobre `packages/mercado-pago`.
+- **Eventos:** firma primero; resolucion por referencia del provider (o por `paymentId` cuando el despacho no llego a
+  persistirse); inbox durable `eventos_webhook_pago` unico por tenant/provider/evento con raw body. Resultados:
+  `applied`, `no_op`, `stale`, `ignored_unknown_status`, `rejected_transition`, `quarantined` (monto, moneda o
+  referencia). Duplicados devuelven el resultado original sin efectos; eventos desconocidos o sin intencion no mutan dinero.
+- **Estados provider:** `pending -> approved | rejected | expired | cancelled`; `approved -> refunded | charged_back`.
+  `approved` mueve la obligacion a `paid`; `refunded`/`charged_back` a sus estados homonimos.
+- **Outbox y auditoria:** `tus.payment.intent_created`, `tus.payment.intent_dispatched` y `tus.payment.status_changed` en
+  la tabla compartida `OutboxEvent`; `auditoria_finanzas_servicio` registra origen, actor, correlacion, clave y transicion,
+  sin secretos. Estado, inbox, outbox y auditoria comparten transaccion serializable con reintento P2034/P2002.
+- Migracion `20260923110000_tus_service_payment_intents`: aditiva, no aplicada a una base real.
+
 ## Decision
 
 WEB-09 queda cerrada como auditoria y plan. No se implementa ni activa provider real, captura, split, refund externo,

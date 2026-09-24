@@ -3,7 +3,15 @@ import { parseMinorUnits } from '@factory/contracts'
 import type { MarketplaceStorePort } from '../../catalog/index.ts'
 import type { TrabajoStorePort } from '../../work/index.ts'
 import type { ObligacionServicio, RegistroIdempotenciaFinanciera } from './modelo.ts'
+import type { IntencionPagoServicioDominio } from './pagos.ts'
 import type {
+  PuertoAuditoriaFinanciera,
+  PuertoInboxEventosPago,
+  PuertoIntencionesPagoServicio,
+  PuertoOutboxFinanciero,
+  RegistroAuditoriaFinanciera,
+  RegistroEventoProveedor,
+  RegistroOutboxFinanciero,
   PuertoIdempotenciaFinanciera,
   PuertoIdentidadServicio,
   PuertoObligacionesServicio,
@@ -78,10 +86,24 @@ export class IdentidadServicioEnMemoria implements PuertoIdentidadServicio {
 export interface EstadoFinanzasServicioEnMemoria {
   obligaciones: Map<string, ObligacionServicio>
   idempotencia: Map<string, RegistroIdempotenciaFinanciera>
+  intenciones: Map<string, IntencionPagoServicioDominio>
+  inbox: Map<string, RegistroEventoProveedor>
+  outbox: RegistroOutboxFinanciero[]
+  auditoria: RegistroAuditoriaFinanciera[]
 }
 
+export type PuertoConFallaInyectable = 'outbox' | 'auditoria' | 'inbox' | 'intenciones'
+
 export class AlmacenFinanzasServicioEnMemoria {
-  state: EstadoFinanzasServicioEnMemoria = { obligaciones: new Map(), idempotencia: new Map() }
+  state: EstadoFinanzasServicioEnMemoria = {
+    obligaciones: new Map(),
+    idempotencia: new Map(),
+    intenciones: new Map(),
+    inbox: new Map(),
+    outbox: [],
+    auditoria: [],
+  }
+  private readonly fallas = new Set<PuertoConFallaInyectable>()
 
   snapshot(): EstadoFinanzasServicioEnMemoria {
     return structuredClone(this.state)
@@ -91,10 +113,27 @@ export class AlmacenFinanzasServicioEnMemoria {
     this.state = state
   }
 
+  // Test hook: makes the next write on a port fail so rollback can be asserted.
+  inyectarFalla(port: PuertoConFallaInyectable): void {
+    this.fallas.add(port)
+  }
+
+  private verificarFalla(port: PuertoConFallaInyectable): void {
+    if (this.fallas.delete(port)) throw new Error(`injected ${port} failure`)
+  }
+
   obligaciones(): PuertoObligacionesServicio {
     return {
       buscarPorTrabajo: async (input) =>
         clonar(this.state.obligaciones.get(clave(input.tenantId, input.trabajoId)) ?? null),
+      buscar: async (input) =>
+        clonar(
+          [...this.state.obligaciones.values()].find(
+            (obligacion) =>
+              obligacion.tenantId === input.tenantId &&
+              obligacion.obligacionId === input.obligacionId
+          ) ?? null
+        ),
       crear: async (obligacion) => {
         const key = clave(obligacion.tenantId, obligacion.trabajoId)
         if (this.state.obligaciones.has(key))
@@ -120,6 +159,83 @@ export class AlmacenFinanzasServicioEnMemoria {
         if (this.state.idempotencia.has(key))
           throw Object.assign(new Error('unique idempotency key'), { code: 'P2002' })
         this.state.idempotencia.set(key, clonar(input.record))
+      },
+    }
+  }
+
+  intenciones(): PuertoIntencionesPagoServicio {
+    const all = () => [...this.state.intenciones.values()]
+    return {
+      listarPorObligacion: async (input) =>
+        all()
+          .filter(
+            (intent) =>
+              intent.tenantId === input.tenantId && intent.obligacionId === input.obligacionId
+          )
+          .map(clonar),
+      buscar: async (input) =>
+        clonar(this.state.intenciones.get(clave(input.tenantId, input.paymentId)) ?? null),
+      buscarPorReferenciaProveedor: async (reference) =>
+        all()
+          .filter((intent) => intent.providerReference === reference)
+          .map(clonar),
+      buscarPorPaymentId: async (paymentId) =>
+        all()
+          .filter((intent) => intent.paymentId === paymentId)
+          .map(clonar),
+      crear: async (intent) => {
+        this.verificarFalla('intenciones')
+        const key = clave(intent.tenantId, intent.paymentId)
+        if (this.state.intenciones.has(key))
+          throw Object.assign(new Error('unique payment'), { code: 'P2002' })
+        this.state.intenciones.set(key, clonar(intent))
+      },
+      actualizar: async (intent) => {
+        this.verificarFalla('intenciones')
+        this.state.intenciones.set(clave(intent.tenantId, intent.paymentId), clonar(intent))
+      },
+    }
+  }
+
+  inbox(): PuertoInboxEventosPago {
+    return {
+      buscar: async (input) =>
+        clonar(
+          this.state.inbox.get(clave(input.tenantId, `${input.provider}:${input.eventId}`)) ?? null
+        ),
+      registrar: async (record) => {
+        this.verificarFalla('inbox')
+        const key = clave(record.tenantId, `${record.provider}:${record.eventId}`)
+        if (this.state.inbox.has(key))
+          throw Object.assign(new Error('unique provider event'), { code: 'P2002' })
+        this.state.inbox.set(key, clonar(record))
+      },
+      listarPorObligacion: async (input) =>
+        [...this.state.inbox.values()]
+          .filter(
+            (record) =>
+              record.tenantId === input.tenantId && record.obligacionId === input.obligacionId
+          )
+          .map(clonar),
+    }
+  }
+
+  outbox(): PuertoOutboxFinanciero {
+    return {
+      publicar: async (record) => {
+        this.verificarFalla('outbox')
+        if (this.state.outbox.some((existing) => existing.eventId === record.eventId))
+          throw Object.assign(new Error('unique outbox event'), { code: 'P2002' })
+        this.state.outbox.push(clonar(record))
+      },
+    }
+  }
+
+  auditoria(): PuertoAuditoriaFinanciera {
+    return {
+      registrar: async (record) => {
+        this.verificarFalla('auditoria')
+        this.state.auditoria.push(clonar(record))
       },
     }
   }
@@ -160,6 +276,10 @@ export class TransaccionFinanzasServicioEnMemoria implements PuertoTransaccionFi
       identidad: this.identidad,
       obligaciones: this.store.obligaciones(),
       idempotencia: this.store.idempotencia(),
+      intenciones: this.store.intenciones(),
+      inbox: this.store.inbox(),
+      outbox: this.store.outbox(),
+      auditoria: this.store.auditoria(),
     }
   }
 }

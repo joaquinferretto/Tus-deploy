@@ -933,6 +933,9 @@ model IntencionPago {
   tenantId                 String    @map("tenant_id")
   compromisoId             String?   @map("compromiso_id")
   obligacionId             String?   @map("obligacion_id")
+  prestadorTenantId        String?   @map("prestador_tenant_id")
+  intento                  Int?      @map("intento")
+  estadoDespacho           String?   @map("estado_despacho")
   proveedor                String    @map("proveedor")
   referenciaProveedor      String?   @map("referencia_proveedor")
   estadoProveedor          String    @map("estado_proveedor")
@@ -960,7 +963,9 @@ model IntencionPago {
   @@unique([tenantId, pagoId], map: "uq_intenciones_pago_tenant_pago")
   @@unique([tenantId, compromisoId], map: "uq_intenciones_pago_tenant_compromiso")
   @@unique([tenantId, claveIdempotencia], map: "uq_intenciones_pago_tenant_clave_idempotencia")
+  @@unique([tenantId, obligacionId, intento], map: "uq_intenciones_pago_tenant_obligacion_intento")
   @@index([tenantId, obligacionId], map: "idx_intenciones_pago_tenant_obligacion")
+  @@index([proveedor, referenciaProveedor], map: "idx_intenciones_pago_proveedor_referencia")
   @@index([tenantId, estadoProveedor], map: "idx_intenciones_pago_tenant_estado_proveedor")
   @@index([tenantId, estadoComercial], map: "idx_intenciones_pago_tenant_estado_comercial")
   @@map("intenciones_pago")
@@ -993,17 +998,44 @@ model ObligacionPagoServicio {
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-  trabajo              Trabajo               @relation(fields: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_trabajos")
-  presupuesto          Presupuesto?          @relation(fields: [tenantId, presupuestoId, presupuestoVersion], references: [tenantId, presupuestoId, version], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_presupuestos")
+  trabajo              Trabajo                     @relation(fields: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_trabajos")
+  presupuesto          Presupuesto?                @relation(fields: [tenantId, presupuestoId, presupuestoVersion], references: [tenantId, presupuestoId, version], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_presupuestos")
   intencionesPago      IntencionPago[]
   instantaneasComision InstantaneaComision[]
   movimientosContables MovimientoContable[]
+  eventosProveedor     EventoWebhookPago[]
+  auditorias           AuditoriaFinanzasServicio[]
 
   @@unique([tenantId, obligacionId], map: "uq_obligaciones_pago_tenant_obligacion")
   @@unique([tenantId, trabajoId], map: "uq_obligaciones_pago_tenant_trabajo")
   @@index([prestadorTenantId, prestadorId, estado], map: "idx_obligaciones_pago_prestador_estado")
   @@index([tenantId, estado], map: "idx_obligaciones_pago_tenant_estado")
   @@map("obligaciones_pago_servicio")
+}
+
+// WEB-09B: append-only audit of service finance transitions. No secrets or raw provider bodies.
+model AuditoriaFinanzasServicio {
+  id                String   @id(map: "auditoria_finanzas_servicio_pkey")
+  tenantId          String   @map("tenant_id")
+  prestadorTenantId String   @map("prestador_tenant_id")
+  obligacionId      String   @map("obligacion_id")
+  tipoRecurso       String   @map("tipo_recurso")
+  recursoId         String   @map("recurso_id")
+  accion            String   @map("accion")
+  origen            String   @map("origen")
+  actorId           String   @map("actor_id")
+  correlacionId     String   @map("correlacion_id")
+  claveIdempotencia String?  @map("clave_idempotencia")
+  estadoAnterior    String?  @map("estado_anterior")
+  estadoNuevo       String?  @map("estado_nuevo")
+  metadatos         Json     @map("metadatos")
+  fechaCreacion     DateTime @map("fecha_creacion")
+
+  obligacion ObligacionPagoServicio @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_auditoria_finanzas_servicio_obligaciones")
+
+  @@index([tenantId, obligacionId, fechaCreacion], map: "idx_auditoria_fin_servicio_obligacion_fecha")
+  @@index([prestadorTenantId, fechaCreacion], map: "idx_auditoria_fin_servicio_prestador_fecha")
+  @@map("auditoria_finanzas_servicio")
 }
 
 model IdempotenciaFinanciera {
@@ -1774,18 +1806,29 @@ model Reserva {
 }
 
 model EventoWebhookPago {
-  id                String   @id(map: "eventos_webhook_pago_pkey")
-  tenantId          String   @map("tenant_id")
-  proveedor         String   @map("proveedor")
-  eventoProveedorId String   @map("evento_proveedor_id")
-  firma             String   @map("firma")
-  fechaOcurrencia   DateTime @map("fecha_ocurrencia")
-  datosEvento       Json     @map("datos_evento")
-  estado            String   @map("estado")
-  fechaCreacion     DateTime @map("fecha_creacion")
+  id                  String    @id(map: "eventos_webhook_pago_pkey")
+  tenantId            String    @map("tenant_id")
+  proveedor           String    @map("proveedor")
+  eventoProveedorId   String    @map("evento_proveedor_id")
+  firma               String    @map("firma")
+  fechaOcurrencia     DateTime  @map("fecha_ocurrencia")
+  datosEvento         Json      @map("datos_evento")
+  estado              String    @map("estado")
+  fechaCreacion       DateTime  @map("fecha_creacion")
+  pagoId              String?   @map("pago_id")
+  obligacionId        String?   @map("obligacion_id")
+  referenciaProveedor String?   @map("referencia_proveedor")
+  estadoProveedor     String?   @map("estado_proveedor")
+  monto               BigInt?   @map("monto")
+  moneda              String?   @map("moneda")
+  motivo              String?   @map("motivo")
+  fechaRecepcion      DateTime? @map("fecha_recepcion")
+
+  obligacion ObligacionPagoServicio? @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_eventos_webhook_pago_obligaciones")
 
   @@unique([tenantId, proveedor, eventoProveedorId], map: "uq_eventos_webhook_pago_tenant_evento")
   @@index([tenantId, estado, fechaOcurrencia], map: "idx_eventos_webhook_pago_tenant_estado_ocurrencia")
+  @@index([tenantId, obligacionId], map: "idx_eventos_webhook_pago_tenant_obligacion")
   @@map("eventos_webhook_pago")
 }
 

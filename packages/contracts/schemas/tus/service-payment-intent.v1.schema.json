@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tus/service-payment-intent.v1",
+  "title": "TUS service payment intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "paymentId",
+    "obligacionId",
+    "trabajoId",
+    "tenantId",
+    "attempt",
+    "provider",
+    "amountMinor",
+    "currency",
+    "providerStatus",
+    "dispatchStatus",
+    "source",
+    "providerReference",
+    "providerError",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "paymentId": { "type": "string", "minLength": 1 },
+    "obligacionId": { "type": "string", "minLength": 1 },
+    "trabajoId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "provider": { "const": "mercado-pago" },
+    "amountMinor": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "providerStatus": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "expired",
+        "cancelled",
+        "refunded",
+        "charged_back"
+      ]
+    },
+    "dispatchStatus": { "enum": ["pending_dispatch", "dispatched", "dispatch_failed"] },
+    "source": { "enum": ["held-no-provider", "deterministic-test-only", "authorized"] },
+    "providerReference": { "type": ["string", "null"] },
+    "providerError": { "type": ["string", "null"] },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  }
+}

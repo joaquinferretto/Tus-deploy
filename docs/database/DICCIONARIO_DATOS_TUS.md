@@ -607,6 +607,11 @@ y `movimientos_contables` conservan un único ledger/tabla: agregan `obligacion_
 CHECK `ck_*_sujeto_unico` (NOT VALID, aplica a filas nuevas) exige exactamente un sujeto. El relajamiento de NOT NULL no
 reescribe ni elimina datos.
 
+**WEB-09B.** Las intenciones de servicio usan `intenciones_pago` con `obligacion_id`, `intento` (único por obligación),
+`estado_despacho` y `prestador_tenant_id`. `eventos_webhook_pago` es el inbox durable: agrega `pago_id`, `obligacion_id`,
+`referencia_proveedor`, `estado_proveedor`, `monto`, `moneda`, `motivo` y `fecha_recepcion`; `datos_evento` guarda el raw
+body y `estado` el resultado de procesamiento. `auditoria_finanzas_servicio` es append-only y referencia la obligación.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

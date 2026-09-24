@@ -876,6 +876,9 @@ Table intenciones_pago {
   tenant_id varchar
   compromiso_id varchar [null, note: 'FK -> compromisos (legacy); NULL cuando el sujeto es obligacion_id; ex commitmentId']
   obligacion_id varchar [null, note: 'WEB-09A: FK -> obligaciones_pago_servicio; exactamente un sujeto por fila']
+  prestador_tenant_id varchar [null, note: 'WEB-09B: tenant prestador de la obligacion']
+  intento int [null, note: 'WEB-09B: intento por obligacion']
+  estado_despacho varchar [null, note: 'WEB-09B: pending_dispatch | dispatched | dispatch_failed']
   proveedor varchar [note: 'ex provider; [EXTERNA]']
   referencia_proveedor varchar [null, note: 'ex providerReference; [EXTERNA]']
   estado_proveedor varchar [note: 'ex providerStatus; [EXTERNA]']
@@ -1069,12 +1072,21 @@ Table eventos_webhook_pago {
   firma varchar [note: 'ex signature; [EXTERNA]']
   fecha_ocurrencia timestamp [note: 'ex occurredAt']
   datos_evento json [note: 'ex payload; [EXTERNA]']
-  estado varchar [note: 'ex status']
+  estado varchar [note: 'ex status; WEB-09B: resultado de procesamiento del inbox']
   fecha_creacion timestamp [note: 'ex createdAt']
+  pago_id varchar [null, note: 'WEB-09B']
+  obligacion_id varchar [null, note: 'WEB-09B: FK -> obligaciones_pago_servicio']
+  referencia_proveedor varchar [null, note: 'WEB-09B; [EXTERNA]']
+  estado_proveedor varchar [null, note: 'WEB-09B: estado crudo informado']
+  monto bigint [null, note: 'WEB-09B: minor units informadas por el provider']
+  moneda varchar [null]
+  motivo varchar [null, note: 'WEB-09B: razon de cuarentena/descarte']
+  fecha_recepcion timestamp [null]
 
   indexes {
     (tenant_id, proveedor, evento_proveedor_id) [unique, name: 'uq_eventos_webhook_pago_tenant_evento']
     (tenant_id, estado, fecha_ocurrencia) [name: 'idx_eventos_webhook_pago_tenant_estado_ocurrencia']
+    (tenant_id, obligacion_id) [name: 'idx_eventos_webhook_pago_tenant_obligacion']
   }
 
   Note: 'EventoWebhookPago = evento de proveedor. proveedor/evento_proveedor_id/firma/datos_evento [EXTERNA].'
@@ -1521,6 +1533,26 @@ Table registros_operaciones {
 // TRABAJO Y PRESUPUESTO WEB-08A/B
 // ============================================================
 
+Table auditoria_finanzas_servicio {
+  id varchar [pk]
+  tenant_id varchar
+  prestador_tenant_id varchar
+  obligacion_id varchar
+  tipo_recurso varchar
+  recurso_id varchar
+  accion varchar
+  origen varchar [note: 'customer | provider_event | system']
+  actor_id varchar
+  correlacion_id varchar
+  clave_idempotencia varchar [null]
+  estado_anterior varchar [null]
+  estado_nuevo varchar [null]
+  metadatos json
+  fecha_creacion timestamp
+
+  Note: 'WEB-09B: auditoria append-only de finanzas de servicio; sin secretos ni raw bodies.'
+}
+
 Table obligaciones_pago_servicio {
   id varchar [pk]
   version_contrato varchar
@@ -1747,6 +1779,8 @@ Ref: obligaciones_pago_servicio.(tenant_id, presupuesto_id, presupuesto_version)
 Ref: intenciones_pago.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
 Ref: instantaneas_comision.(tenant_id, obligacion_id) - obligaciones_pago_servicio.(tenant_id, obligacion_id)
 Ref: movimientos_contables.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
+Ref: eventos_webhook_pago.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
+Ref: auditoria_finanzas_servicio.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
 Ref: presupuestos.(tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
 Ref: lineas_presupuesto.presupuesto_registro_id > presupuestos.id
 Ref: aceptaciones_presupuesto.presupuesto_registro_id > presupuestos.id

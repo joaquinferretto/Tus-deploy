@@ -336,6 +336,53 @@ export function validarObligacionPagoServicio(value: unknown): ObligacionPagoSer
   return value as unknown as ObligacionPagoServicio
 }
 
+// WEB-09B: local payment intent for a service obligation. `providerStatus` only changes through
+// verified provider events; `source` states whether any provider could have been involved.
+export const ESTADOS_PROVEEDOR_PAGO_SERVICIO = ['pending', 'approved', 'rejected', 'expired', 'cancelled', 'refunded', 'charged_back'] as const
+export type EstadoProveedorPagoServicio = (typeof ESTADOS_PROVEEDOR_PAGO_SERVICIO)[number]
+export const ESTADOS_DESPACHO_PAGO_SERVICIO = ['pending_dispatch', 'dispatched', 'dispatch_failed'] as const
+export type EstadoDespachoPagoServicio = (typeof ESTADOS_DESPACHO_PAGO_SERVICIO)[number]
+export const ORIGENES_INTENCION_PAGO_SERVICIO = ['held-no-provider', 'deterministic-test-only', 'authorized'] as const
+export type OrigenIntencionPagoServicio = (typeof ORIGENES_INTENCION_PAGO_SERVICIO)[number]
+
+export interface IntencionPagoServicio {
+  contractVersion: TusContractVersion
+  paymentId: string
+  obligacionId: string
+  trabajoId: string
+  tenantId: string
+  attempt: number
+  provider: 'mercado-pago'
+  amountMinor: string
+  currency: string
+  providerStatus: EstadoProveedorPagoServicio
+  dispatchStatus: EstadoDespachoPagoServicio
+  source: OrigenIntencionPagoServicio
+  providerReference: string | null
+  providerError: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export function validarIntencionPagoServicio(value: unknown): IntencionPagoServicio {
+  if (!isRecord(value)) throw new ContractValidationError('tus-service-payment-intent', undefined, 'payload must be an object')
+  assertTusVersion('tus-service-payment-intent', value['contractVersion'])
+  for (const field of ['paymentId', 'obligacionId', 'trabajoId', 'tenantId', 'currency', 'createdAt', 'updatedAt']) {
+    if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-service-payment-intent', TUS_CONTRACT_VERSION, `${field} is required`)
+  }
+  if (
+    value['provider'] !== 'mercado-pago' ||
+    !Number.isInteger(value['attempt']) || Number(value['attempt']) < 1 ||
+    !isMinorAmount(value['amountMinor']) ||
+    !ESTADOS_PROVEEDOR_PAGO_SERVICIO.includes(value['providerStatus'] as EstadoProveedorPagoServicio) ||
+    !ESTADOS_DESPACHO_PAGO_SERVICIO.includes(value['dispatchStatus'] as EstadoDespachoPagoServicio) ||
+    !ORIGENES_INTENCION_PAGO_SERVICIO.includes(value['source'] as OrigenIntencionPagoServicio) ||
+    !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])
+  ) throw new ContractValidationError('tus-service-payment-intent', TUS_CONTRACT_VERSION, 'payment intent state is invalid')
+  if (value['source'] === 'held-no-provider' && value['providerStatus'] !== 'pending') throw new ContractValidationError('tus-service-payment-intent', TUS_CONTRACT_VERSION, 'a payment without provider cannot claim a provider outcome')
+  return value as unknown as IntencionPagoServicio
+}
+
 function isMinorAmount(value: unknown): value is string {
   return typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
 }

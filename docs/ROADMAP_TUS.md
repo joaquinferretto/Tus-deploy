@@ -20,6 +20,7 @@
 | WEB-07   | Completada                  | Prestador Web usa onboarding, listings, publicación y operaciones existentes; no inventa lectura ni creación segura de agenda. |
 | WEB-08   | WEB-08A/B/C/D/E completadas | Modelo/API de Trabajo, superficies prestador y cliente para presupuesto y cancelacion temprana sin inventar agenda ni cierre.  |
 | WEB-09A  | Completada                  | Obligacion financiera canonica por Trabajo, dinero bigint/string y migracion aditiva no aplicada a una base real.              |
+| WEB-09B  | Completada                  | Intencion de pago, inbox de eventos verificados, outbox y auditoria con provider fake; runtime sin provider habilitado.        |
 
 ## WEB-04D2 entregado
 
