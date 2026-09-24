@@ -15,11 +15,11 @@ import { TusActionButton, TusStateMessage } from '../../app/tus/tus-ui'
 // receives tokens in the browser; it only redirects to Mercado Pago's authorization page.
 
 const STATUS_COPY: Record<string, string> = {
-  not_connected: 'Sin cuenta de Mercado Pago conectada',
-  connected: 'Cuenta de Mercado Pago conectada',
-  revoked: 'Cuenta desconectada',
-  expired: 'La autorización venció; volvé a conectar la cuenta',
-  error: 'La conexión falló; volvé a intentarlo',
+  not_connected: 'No conectado',
+  connected: 'Conectado',
+  revoked: 'Desconectado',
+  expired: 'Requiere reconexión: la autorización de Mercado Pago venció',
+  error: 'Error: la cuenta de Mercado Pago cambió; volvé a conectarla',
 }
 
 const CALLBACK_ERRORS: Record<string, string> = {
@@ -150,11 +150,13 @@ export function CuentaCobro({
           ) : account.connectAvailable ? (
             <TusActionButton
               loading={busy}
-              loadingLabel="Abriendo Mercado Pago…"
+              loadingLabel="Conectando…"
               onClick={() => void connect()}
               type="button"
             >
-              Conectar Mercado Pago
+              {account.status === 'expired' || account.status === 'error'
+                ? 'Reconectar Mercado Pago'
+                : 'Conectar Mercado Pago'}
             </TusActionButton>
           ) : (
             <p role="status">

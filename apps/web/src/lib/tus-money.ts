@@ -8,6 +8,16 @@ export function formatMoney(amountMinor: string, currency: string): string {
   return `${currency === 'ARS' ? '$' : currency} ${units},${cents}`
 }
 
-const tusMoneyModule = { formatMoney }
+// WEB-09E: the browser only navigates to Mercado Pago's own HTTPS domains.
+export function esUrlCheckoutMercadoPago(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && /(^|\.)mercadopago\.com(\.[a-z]{2})?$/u.test(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+const tusMoneyModule = { formatMoney, esUrlCheckoutMercadoPago }
 
 export default tusMoneyModule

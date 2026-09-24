@@ -12,6 +12,7 @@ import {
 import { formatTusDate, type TusWebSession } from '@/lib/tus-ui-contract'
 import { createWorkIntent, type WorkIntent } from '@/lib/tus-work-intent'
 import { TusActionButton, TusStateMessage } from '../../app/tus/tus-ui'
+import { CobroTrabajo } from './cobro-trabajo'
 
 type WorkLoadState = {
   status: 'loading' | 'ready' | 'empty' | 'error' | 'disabled'
@@ -819,6 +820,11 @@ export function TrabajoPrestador({
               </TusActionButton>
             </div>
           </section>
+          <CobroTrabajo
+            onUnauthorized={onUnauthorized}
+            session={session}
+            workId={detail.work.trabajoId}
+          />
         </div>
       )}
       {feedback.status === 'idle' ? null : (

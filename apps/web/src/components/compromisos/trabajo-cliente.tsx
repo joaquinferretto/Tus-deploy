@@ -62,10 +62,21 @@ export function TrabajoCliente({
   const detailRequestRef = useRef(0)
   const mutationInFlightRef = useRef(false)
   const retryRef = useRef<(() => Promise<void>) | null>(null)
+  // WEB-09E: back from Mercado Pago (`?pago=retorno&trabajo=<id>`): reopen that work and let the
+  // payment block confirm against TUS. The URL itself never confirms a payment.
+  const returnFromCheckoutRef = useRef<string | null>(null)
 
   function handleUnauthorized(error: unknown): void {
     if (errorStatus(error) === 401) onUnauthorized()
   }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const returning = params.get('pago') === 'retorno' ? params.get('trabajo') : null
+    if (!returning || !canReadWork(session)) return
+    returnFromCheckoutRef.current = returning
+    void loadDetail(returning)
+  }, [session])
 
   useEffect(() => {
     if (!canReadWork(session)) {
@@ -356,6 +367,7 @@ export function TrabajoCliente({
           )}
           <PagoTrabajo
             onUnauthorized={onUnauthorized}
+            returningFromCheckout={returnFromCheckoutRef.current === detail.work.trabajoId}
             session={session}
             workId={detail.work.trabajoId}
           />

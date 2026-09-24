@@ -96,6 +96,33 @@ export interface TusPaymentIntentResponse {
   payment: { paymentId: string; providerStatus: string; dispatchStatus: string }
 }
 
+// WEB-09E: hosted Mercado Pago checkout; the URL is only where to pay, never a confirmation.
+export interface TusCheckoutStartResponse {
+  status: 'created' | 'existing'
+  checkoutUrl: string
+  payment: { paymentId: string; providerStatus: string; dispatchStatus: string }
+}
+
+export interface TusWorkFinanceResponse {
+  viewer: 'customer' | 'provider'
+  obligation: { status: string; amountMinor: string; currency: string } | null
+  payments: readonly {
+    paymentId: string
+    providerStatus: string
+    providerReference: string | null
+  }[]
+  settlement?: { status: string; payoutStatus: string } | null
+  commission?: {
+    rateBps: number
+    ruleVersion: string
+    grossMinor?: string
+    commissionMinor?: string
+    pspFeeMinor?: string | null
+    providerNetMinor?: string | null
+    currency?: string
+  } | null
+}
+
 export type TusWorkMutationResponse<T> = {
   status: 'executed' | 'replay'
 } & T
@@ -542,6 +569,10 @@ export interface TusWebClient {
   createWorkPaymentIntent(
     input: TusWebContext & { workId: string; idempotencyKey: string }
   ): Promise<TusPaymentIntentResponse>
+  startWorkCheckout(
+    input: TusWebContext & { workId: string; idempotencyKey: string }
+  ): Promise<TusCheckoutStartResponse>
+  workFinance(context: TusWebContext, workId: string): Promise<TusWorkFinanceResponse>
   paymentAccount(context: TusWebContext): Promise<TusPaymentAccount>
   connectPaymentAccount(
     context: TusWebContext
@@ -885,6 +916,20 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         method: 'POST',
         path: `/tus/v1/work/${encodeURIComponent(workId)}/payment-intents`,
         body: {},
+      }),
+    startWorkCheckout: ({ workId, idempotencyKey, ...context }) =>
+      transport.request<TusCheckoutStartResponse>({
+        ...context,
+        idempotencyKey,
+        method: 'POST',
+        path: `/tus/v1/work/${encodeURIComponent(workId)}/checkout`,
+        body: {},
+      }),
+    workFinance: (context, workId) =>
+      transport.request<TusWorkFinanceResponse>({
+        ...context,
+        method: 'GET',
+        path: `/tus/v1/work/${encodeURIComponent(workId)}/finance`,
       }),
     paymentAccount: (context) =>
       transport.request<TusPaymentAccount>({
