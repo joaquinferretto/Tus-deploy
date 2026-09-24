@@ -26,5 +26,12 @@
     "node": ">=20.11.0 <23",
     "pnpm": ">=9.15.9 <10"
   },
-  "packageManager": "pnpm@9.15.9"
+  "packageManager": "pnpm@9.15.9",
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.23",
+      "qs": "6.16.0",
+      "sharp": "0.35.4"
+    }
+  }
 }

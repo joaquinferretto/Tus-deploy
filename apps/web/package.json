@@ -13,7 +13,7 @@
     "clean": "rm -rf .next"
   },
   "dependencies": {
-    "next": "^15.0.0",
+    "next": "^15.5.24",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zustand": "^5.0.0",
