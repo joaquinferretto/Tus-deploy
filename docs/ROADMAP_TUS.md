@@ -22,6 +22,8 @@
 | WEB-09A  | Completada                  | Obligacion financiera canonica por Trabajo, dinero bigint/string y migracion aditiva no aplicada a una base real.              |
 | WEB-09B  | Completada                  | Intencion de pago, inbox de eventos verificados, outbox y auditoria con provider fake; runtime sin provider habilitado.        |
 | WEB-09C  | Completada                  | Comision exacta, ledger unico append-only, liquidacion interna sin payout y conciliacion determinista.                         |
+| WEB-09D  | Auditada, grado B           | Lectura financiera disponible; UI pendiente de decisiones de producto sobre cobro previo a provider. Ver auditoria WEB-09.     |
+| WEB-09E  | Fuera de alcance            | Provider real, OAuth, captura, split, payout y refund real no implementados.                                                   |
 
 ## WEB-04D2 entregado
 

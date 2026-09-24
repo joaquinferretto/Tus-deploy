@@ -302,6 +302,56 @@ reversed`, `frozen -> reversed`). `eligible` exige pago aprobado y `Trabajo.comp
 | Settlement interno                  | B     | Estados internos correctos; sin payout                                            |
 | Captura, split, payout, refund real | C     | Fuera de alcance (WEB-09E)                                                        |
 
+## WEB-09D — auditoria de superficie Web (PENDIENTE, grado B)
+
+**Estado:** auditada, no implementada. No se agrega UI financiera en esta ejecucion.
+
+### Backend disponible y consumible sin mentir
+
+| Dato                                      | Endpoint                                    | Cliente | Prestador | Alcanzable hoy en runtime                                   |
+| ----------------------------------------- | ------------------------------------------- | ------- | --------- | ----------------------------------------------------------- |
+| Importe y moneda de la obligacion         | `GET /tus/v1/work/:workId/finance`          | Si      | Si        | Solo despues de crear la obligacion                         |
+| Estado de intencion (`pending`, despacho) | idem                                        | Si      | Si        | Si, siempre `pending` / `held-no-provider`                  |
+| Comision, neto, liquidacion interna       | idem                                        | No      | Si        | No: requiere un evento `approved` de un provider habilitado |
+| Crear intencion                           | `POST /tus/v1/work/:workId/payment-intents` | Si      | No        | Si, pero nunca se despacha ni se cobra                      |
+
+### Motivos del grado B
+
+1. Con `ProveedorPagosServicioNoDisponible` ninguna intencion sale de `pending`; la Web solo podria mostrar "pendiente"
+   indefinidamente. Comision, neto y liquidacion quedan siempre vacios para el prestador.
+2. Ofrecer un boton "Pagar" que registra una intencion sin cobro es una **decision de producto no documentada**: habria
+   que definir el copy, si se permite registrar intencion antes de habilitar el provider y como se cancela.
+3. La obligacion se crea solo con un comando del cliente; no existe una lectura de "importe a pagar" sin persistir.
+   Mostrar el importe antes requiere decidir si alcanza con el total del presupuesto aceptado que WEB-08D ya muestra o si se
+   agrega una vista previa derivada en servidor.
+4. `precio_desde` y `por_hora` sin presupuesto quedan bloqueados (`AMOUNT_NOT_FINAL`) hasta una decision de producto.
+
+### Especificacion preparada para cuando se habilite
+
+- **Cliente** (`apps/web/src/components/compromisos/trabajo-cliente.tsx`): bloque "Pago" con importe y moneda de la
+  obligacion formateados desde `amountMinor` (string, sin floats), estado de la ultima intencion y copy explicito:
+  "El cobro en linea todavia no esta habilitado" mientras `source = held-no-provider`. Nunca mostrar "aprobado por Mercado
+  Pago" sin `providerStatus = approved` con `source = authorized`.
+- **Prestador** (`apps/web/src/components/prestador/trabajo-prestador.tsx`): bruto, comision (regla y bps), neto y estado de
+  liquidacion interna solo si `settlement` existe; mostrar siempre "Transferencia al prestador: no ejecutada"
+  (`payoutStatus = not_executed`). Nunca "pagado al prestador".
+- Cliente HTTP: extender `apps/web/src/lib/tus-client.ts` con `GET .../finance`; el POST solo tras la decision del punto 2.
+- Mantener UI simple; no construir un dashboard financiero.
+
+### Decisiones requeridas para pasar a A
+
+1. Momento y condiciones del cobro de un servicio (antes de iniciar, al aceptar presupuesto o al completar).
+2. Si el cliente puede registrar una intencion antes de que exista provider habilitado.
+3. Base de cobro para `precio_desde` y `por_hora` sin presupuesto.
+4. Provider real, credenciales y activacion (WEB-09E).
+
+## WEB-09E — provider real (NO IMPLEMENTADO, fuera de alcance)
+
+No se implementaron llamadas reales a Mercado Pago, OAuth, credenciales, captura, split, payout, refund real, webhook
+publico ni activacion de provider actions. `TUS_PROVIDER_ACTIONS_ENABLED`, gates financieros y jobs de release siguen
+apagados. El futuro adapter debe implementar `PuertoProveedorPagosServicio` sobre `packages/mercado-pago`, verificar la
+firma con el raw body y consultar statements para la conciliacion.
+
 ## Decision
 
 WEB-09 queda cerrada como auditoria y plan. No se implementa ni activa provider real, captura, split, refund externo,
