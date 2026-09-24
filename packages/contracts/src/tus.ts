@@ -362,6 +362,10 @@ export interface IntencionPagoServicio {
   providerError: string | null
   createdAt: string
   updatedAt: string
+  // WEB-09E: hosted checkout (Checkout Pro preference). The URL is only a place to pay;
+  // it never confirms anything. The commission is frozen when the checkout is created.
+  checkoutUrl?: string | null
+  checkoutExpiresAt?: string | null
 }
 
 export function validarIntencionPagoServicio(value: unknown): IntencionPagoServicio {
@@ -454,14 +458,22 @@ export interface ResumenFinancieroTrabajoServicio {
   obligation: ObligacionPagoServicio | null
   payments: IntencionPagoServicio[]
   settlement?: LiquidacionServicio | null
-  commission?: { rateBps: number; ruleVersion: string } | null
+  commission?: {
+    rateBps: number
+    ruleVersion: string
+    grossMinor?: string
+    commissionMinor?: string
+    pspFeeMinor?: string | null
+    providerNetMinor?: string | null
+    currency?: string
+  } | null
 }
 
 // WEB-09D: a service is paid once the work is `completed`, and only for the accepted budget.
 // The preview is read-only and server-derived: the Web never sends an amount.
 export const MOTIVOS_NO_COBRABLE_SERVICIO = ['WORK_CANCELLED', 'WORK_NOT_COMPLETED', 'BUDGET_REQUIRED', 'BUDGET_INCONSISTENT', 'INCONSISTENT_COMMERCIAL_CHAIN', 'ALREADY_PAID', 'OBLIGATION_CLOSED'] as const
 export type MotivoNoCobrableServicio = (typeof MOTIVOS_NO_COBRABLE_SERVICIO)[number]
-export const MOTIVOS_PAGO_NO_DISPONIBLE = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PSP_FEE_POLICY_UNDECIDED', 'PROVIDER_ACCOUNT_NOT_CONNECTED'] as const
+export const MOTIVOS_PAGO_NO_DISPONIBLE = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PRODUCTION_NOT_AUTHORIZED', 'PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', 'PROVIDER_ACCOUNT_NOT_CONNECTED'] as const
 export type MotivoPagoNoDisponible = (typeof MOTIVOS_PAGO_NO_DISPONIBLE)[number]
 export type EstadoPagoVistaPrevia = 'not_started' | EstadoProveedorPagoServicio
 
@@ -480,6 +492,10 @@ export interface VistaPreviaPagoServicio {
   obligation: { obligacionId: string; status: EstadoObligacionPagoServicio } | null
   paymentStatus: EstadoPagoVistaPrevia
   latestPaymentId: string | null
+  // Mercado Pago payment id once a verified approval exists (customer receipt reference).
+  paymentReference?: string | null
+  // A hosted checkout attempt was rejected/cancelled; the customer may retry the same checkout.
+  lastAttemptFailed?: boolean
   provider: 'mercado-pago'
   paymentAvailable: boolean
   unavailableReason: MotivoNoCobrableServicio | MotivoPagoNoDisponible | null
@@ -494,6 +510,28 @@ export function validarVistaPreviaPagoServicio(value: unknown): VistaPreviaPagoS
     throw new ContractValidationError('tus-service-payment-preview', TUS_CONTRACT_VERSION, 'payment preview is inconsistent')
   }
   return value as unknown as VistaPreviaPagoServicio
+}
+
+// WEB-09E: refund of an approved service payment through the seller (Split 1:1). Only total
+// refunds are modelled. `requires_review` means Mercado Pago refused it (for example the
+// seller has no balance); TUS never covers the seller's part automatically.
+export const ESTADOS_REEMBOLSO_SERVICIO = ['requested', 'submitted', 'requires_review', 'failed'] as const
+export type EstadoReembolsoServicio = (typeof ESTADOS_REEMBOLSO_SERVICIO)[number]
+
+export interface ReembolsoServicio {
+  contractVersion: TusContractVersion
+  reembolsoId: string
+  obligacionId: string
+  paymentId: string
+  tenantId: string
+  amountMinor: string
+  currency: string
+  status: EstadoReembolsoServicio
+  providerRefundId: string | null
+  providerError: string | null
+  reason: string
+  createdAt: string
+  updatedAt: string
 }
 
 // Commission policy: basis points (1000 bp = 10%), versioned and append-only. 0 <= rate <= 3000

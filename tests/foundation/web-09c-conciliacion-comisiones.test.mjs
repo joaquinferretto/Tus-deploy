@@ -66,6 +66,12 @@ test('WEB-09C books an exact commission, a single ledger set and a held internal
   assert.deepEqual(result.providerView.commission, {
     rateBps: 1000,
     ruleVersion: 'mvp-10-percent-v1',
+    grossMinor: '123457',
+    commissionMinor: '12346',
+    pspFeeMinor: null,
+    // No PSP fee reported: the provider net cannot be affirmed yet (never estimated).
+    providerNetMinor: null,
+    currency: 'ARS',
   })
   assert.equal(result.customerView.settlement, undefined)
   assert.equal(result.customerView.commission, undefined)

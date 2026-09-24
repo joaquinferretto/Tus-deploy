@@ -73,6 +73,10 @@ services:
         sync: false
       - key: MERCADO_PAGO_OAUTH_REDIRECT_URI
         sync: false
+      - key: MERCADO_PAGO_NOTIFICATION_URL
+        sync: false
+      - key: MERCADO_PAGO_MARKETPLACE
+        sync: false
       - key: TUS_PAYMENT_CREDENTIALS_KEY
         sync: false
       - key: TUS_DEPLOYMENT_PROFILE

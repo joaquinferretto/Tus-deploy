@@ -24,13 +24,14 @@ export interface ReglaComisionAplicable {
   pspFeeBearer: ResponsableFeePsp
 }
 
-// Used only while no global policy has been recorded. It keeps the existing 10% rule and leaves
-// the PSP fee bearer undecided, which keeps real payments unavailable.
+// Used only while no global policy has been recorded: the existing 10% rule. WEB-09E product
+// decision: the customer pays exactly the accepted budget and the Mercado Pago fee is deducted
+// from the provider (Split 1:1 native behaviour), so the default bearer is `provider`.
 export const REGLA_COMISION_APLICABLE_POR_DEFECTO: ReglaComisionAplicable = Object.freeze({
   politicaId: null,
   rateBps: REGLA_COMISION_SERVICIO_POR_DEFECTO.rateBps,
   ruleVersion: REGLA_COMISION_SERVICIO_POR_DEFECTO.ruleVersion,
-  pspFeeBearer: 'undetermined',
+  pspFeeBearer: 'provider',
 })
 
 export type PoliticaComisionDominio = Omit<PoliticaComisionServicio, 'contractVersion'> & {
@@ -134,6 +135,7 @@ export interface EstadoOperativoPagos {
   redirectUriConfigured: boolean
   credentialsKeyConfigured: boolean
   webBaseUrlConfigured: boolean
+  notificationUrlConfigured: boolean
   realProviderAdapterAvailable: boolean
 }
 
@@ -152,6 +154,9 @@ export function leerEstadoOperativoPagos(
     redirectUriConfigured: present('MERCADO_PAGO_OAUTH_REDIRECT_URI'),
     credentialsKeyConfigured: present('TUS_PAYMENT_CREDENTIALS_KEY'),
     webBaseUrlConfigured: present('TUS_WEB_BASE_URL'),
+    notificationUrlConfigured: /^https:\/\//u.test(
+      env['MERCADO_PAGO_NOTIFICATION_URL']?.trim() ?? ''
+    ),
     realProviderAdapterAvailable,
   }
 }
@@ -172,6 +177,7 @@ export function proveedorOperativo(estado: EstadoOperativoPagos): boolean {
   return (
     oauthConfigurado(estado) &&
     estado.webhookSecretConfigured &&
+    estado.notificationUrlConfigured &&
     estado.realProviderAdapterAvailable
   )
 }
@@ -213,7 +219,10 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
   constructor(
     private readonly store: PuertoConfiguracionPagos,
     private readonly operativo: () => EstadoOperativoPagos,
-    private readonly cuentaConectada: (prestadorTenantId: string) => Promise<boolean>
+    private readonly cuentaConectada: (prestadorTenantId: string) => Promise<boolean>,
+    // Production money also needs the evidence-based readiness decision (legal, tax, KYB/KYC,
+    // Mercado Pago...). No environment variable can bypass it. Sandbox does not move real money.
+    private readonly produccionAutorizada: () => Promise<boolean> = async () => false
   ) {}
 
   async reglaComision(input: {
@@ -230,11 +239,18 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
   }): Promise<{ available: boolean; reason: MotivoPagoNoDisponible | null }> {
     const configuracion = await this.store.ultimaConfiguracion()
     if (!configuracion?.paymentsEnabled) return { available: false, reason: 'PAYMENTS_DISABLED' }
-    if (!proveedorOperativo(this.operativo()))
+    const operativo = this.operativo()
+    if (!proveedorOperativo(operativo))
       return { available: false, reason: 'PROVIDER_NOT_CONFIGURED' }
+    if (operativo.environment === 'production' && !(await this.produccionAutorizada()))
+      return { available: false, reason: 'PRODUCTION_NOT_AUTHORIZED' }
     const rule = await this.reglaComision(input)
     if (rule.pspFeeBearer === 'undetermined')
       return { available: false, reason: 'PSP_FEE_POLICY_UNDECIDED' }
+    // Split 1:1 deducts the Mercado Pago fee from the seller; a platform-paid fee would need a
+    // different product and is not supported.
+    if (rule.pspFeeBearer === 'platform')
+      return { available: false, reason: 'PSP_FEE_POLICY_UNSUPPORTED' }
     if (!(await this.cuentaConectada(input.prestadorTenantId)))
       return { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }
     return { available: true, reason: null }
@@ -251,7 +267,8 @@ export class ServicioConfiguracionPagos {
   constructor(
     private readonly store: PuertoConfiguracionPagos,
     private readonly operativo: () => EstadoOperativoPagos,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly produccionAutorizada: () => Promise<boolean> = async () => false
   ) {}
 
   async listarPoliticas(): Promise<PoliticaComisionServicio[]> {
@@ -395,9 +412,13 @@ export class ServicioConfiguracionPagos {
     if (!operational.redirectUriConfigured) blockers.push('MERCADO_PAGO_OAUTH_REDIRECT_URI_MISSING')
     if (!operational.credentialsKeyConfigured) blockers.push('TUS_PAYMENT_CREDENTIALS_KEY_MISSING')
     if (!operational.webBaseUrlConfigured) blockers.push('TUS_WEB_BASE_URL_MISSING')
-    if (!operational.realProviderAdapterAvailable)
-      blockers.push('REAL_PAYMENT_ADAPTER_NOT_IMPLEMENTED')
+    if (!operational.notificationUrlConfigured)
+      blockers.push('MERCADO_PAGO_NOTIFICATION_URL_MISSING')
+    if (!operational.realProviderAdapterAvailable) blockers.push('REAL_PAYMENT_ADAPTER_UNAVAILABLE')
     if (global.pspFeeBearer === 'undetermined') blockers.push('PSP_FEE_POLICY_UNDECIDED')
+    if (global.pspFeeBearer === 'platform') blockers.push('PSP_FEE_POLICY_UNSUPPORTED')
+    if (operational.environment === 'production' && !(await this.produccionAutorizada()))
+      blockers.push('PRODUCTION_READINESS_NOT_AUTHORIZED')
     return {
       checkedAt: new Date(this.now()).toISOString(),
       productEnabled: configuracion?.paymentsEnabled ?? false,

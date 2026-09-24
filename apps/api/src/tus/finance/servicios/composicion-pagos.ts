@@ -3,6 +3,7 @@ import {
   ServicioConfiguracionPagos,
   leerEstadoOperativoPagos,
   oauthConfigurado,
+  proveedorOperativo,
   type EstadoOperativoPagos,
   type PuertoConfiguracionPagos,
 } from './configuracion.ts'
@@ -13,15 +14,21 @@ import {
   type PuertoCuentasCobro,
   type PuertoOAuthMercadoPago,
 } from './cuentas-cobro.ts'
+import {
+  ProveedorPagosMercadoPago,
+  type ConfiguracionProveedorMercadoPago,
+} from './mercado-pago.ts'
+import { ProveedorPagosServicioNoDisponible, type PuertoProveedorPagosServicio } from './pagos.ts'
 
-// WEB-09E (real Mercado Pago payment adapter) is not implemented, so the runtime can never make
-// a payment available even when every variable is present. Flip only together with that adapter.
-export const ADAPTADOR_PAGO_REAL_DISPONIBLE = false
+// WEB-09E: the real Mercado Pago adapter exists. It is only composed when every variable is
+// present; otherwise the runtime keeps `ProveedorPagosServicioNoDisponible` (fail closed).
+export const ADAPTADOR_PAGO_REAL_DISPONIBLE = true
 
 export interface ModuloPagosServicio {
   configuracion: ServicioConfiguracionPagos
   cuentas: ServicioCuentasCobro
   politica: PoliticaCobroPersistida
+  proveedor: PuertoProveedorPagosServicio
   operativo: () => EstadoOperativoPagos
   platformAdminTenantId: string | null
 }
@@ -33,6 +40,10 @@ export function crearModuloPagosServicio(input: {
   now?: () => number
   oauth?: PuertoOAuthMercadoPago
   realProviderAdapterAvailable?: boolean
+  // Evidence-based readiness for real money (production only). Defaults to "not authorized".
+  produccionAutorizada?: () => Promise<boolean>
+  // Tests inject a fake HTTP transport for the Mercado Pago API.
+  mercadoPago?: Pick<ConfiguracionProveedorMercadoPago, 'fetch' | 'apiBaseUrl'>
 }): ModuloPagosServicio {
   const now = input.now ?? (() => Date.now())
   const env = input.env
@@ -73,13 +84,38 @@ export function crearModuloPagosServicio(input: {
     oauth,
     now
   )
+  const produccionAutorizada = input.produccionAutorizada ?? (async () => false)
+  const proveedor: PuertoProveedorPagosServicio =
+    oauthListo && proveedorOperativo(estado) && estado.environment !== 'unset'
+      ? new ProveedorPagosMercadoPago(
+          {
+            environment: estado.environment,
+            webhookSecret: env['MERCADO_PAGO_WEBHOOK_SECRET']!.trim(),
+            notificationUrl: env['MERCADO_PAGO_NOTIFICATION_URL']!.trim(),
+            webBaseUrl: env['TUS_WEB_BASE_URL']!.trim(),
+            marketplace: env['MERCADO_PAGO_MARKETPLACE']?.trim() || null,
+            now,
+            ...input.mercadoPago,
+          },
+          cuentas
+        )
+      : new ProveedorPagosServicioNoDisponible()
   const platformAdminTenantId = env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null
   return {
-    configuracion: new ServicioConfiguracionPagos(input.configuracion, operativo, now),
-    cuentas,
-    politica: new PoliticaCobroPersistida(input.configuracion, operativo, (tenantId) =>
-      cuentas.cuentaConectada(tenantId)
+    configuracion: new ServicioConfiguracionPagos(
+      input.configuracion,
+      operativo,
+      now,
+      produccionAutorizada
     ),
+    cuentas,
+    politica: new PoliticaCobroPersistida(
+      input.configuracion,
+      operativo,
+      (tenantId) => cuentas.cuentaConectada(tenantId),
+      produccionAutorizada
+    ),
+    proveedor,
     operativo,
     platformAdminTenantId,
   }

@@ -26,6 +26,8 @@ import type {
   PuertoIdentidadServicio,
   PuertoObligacionesServicio,
   PuertoTransaccionFinanzasServicio,
+  PuertoReembolsosServicio,
+  ReembolsoServicioDominio,
   RepositoriosFinanzasServicio,
 } from './servicio.ts'
 
@@ -106,6 +108,7 @@ export interface EstadoFinanzasServicioEnMemoria {
   ledger: Map<string, MovimientoContableServicio>
   liquidaciones: Map<string, LiquidacionServicioDominio>
   conciliaciones: (ConciliacionServicio & { prestadorTenantId: string })[]
+  reembolsos: Map<string, ReembolsoServicioDominio>
 }
 
 export type PuertoConFallaInyectable =
@@ -123,6 +126,7 @@ export class AlmacenFinanzasServicioEnMemoria {
     ledger: new Map(),
     liquidaciones: new Map(),
     conciliaciones: [],
+    reembolsos: new Map(),
   }
   private readonly fallas = new Set<PuertoConFallaInyectable>()
 
@@ -262,6 +266,52 @@ export class AlmacenFinanzasServicioEnMemoria {
           throw Object.assign(new Error('unique commission per obligation'), { code: 'P2002' })
         this.state.comisiones.set(key, clonar(snapshot))
       },
+      registrarFeeProveedor: async (input) => {
+        const key = clave(input.tenantId, input.obligacionId)
+        const current = this.state.comisiones.get(key)
+        if (!current || current.pspFeeMinor !== null) return false
+        this.state.comisiones.set(key, {
+          ...current,
+          pspFeeMinor: input.pspFeeMinor,
+          providerNetMinor: input.providerNetMinor,
+        })
+        return true
+      },
+    }
+  }
+
+  reembolsos(): PuertoReembolsosServicio {
+    return {
+      listarPorPago: async (input) =>
+        [...this.state.reembolsos.values()]
+          .filter(
+            (refund) => refund.tenantId === input.tenantId && refund.paymentId === input.paymentId
+          )
+          .map((refund) => clonar(refund)),
+      buscarPorClave: async (input) =>
+        clonar(
+          [...this.state.reembolsos.values()].find(
+            (refund) => refund.tenantId === input.tenantId && refund.idempotencyKey === input.key
+          ) ?? null
+        ),
+      crear: async (refund) => {
+        const duplicate = [...this.state.reembolsos.values()].some(
+          (item) =>
+            item.tenantId === refund.tenantId &&
+            (item.reembolsoId === refund.reembolsoId ||
+              item.idempotencyKey === refund.idempotencyKey ||
+              (item.paymentId === refund.paymentId && item.attempt === refund.attempt))
+        )
+        if (duplicate) throw Object.assign(new Error('unique refund'), { code: 'P2002' })
+        this.state.reembolsos.set(clave(refund.tenantId, refund.reembolsoId), clonar(refund))
+      },
+      actualizar: async (input) => {
+        const key = clave(input.refund.tenantId, input.refund.reembolsoId)
+        const current = this.state.reembolsos.get(key)
+        if (!current || current.version !== input.expectedVersion) return false
+        this.state.reembolsos.set(key, clonar(input.refund))
+        return true
+      },
     }
   }
 
@@ -368,6 +418,7 @@ export class TransaccionFinanzasServicioEnMemoria implements PuertoTransaccionFi
       ledger: this.store.ledger(),
       liquidaciones: this.store.liquidaciones(),
       conciliaciones: this.store.conciliaciones(),
+      reembolsos: this.store.reembolsos(),
     }
   }
 }

@@ -4,8 +4,10 @@ import type {
   EstadoProveedorPagoServicio,
   IntencionPagoServicio,
   LiquidacionServicio,
+  EstadoReembolsoServicio,
   MotivoNoCobrableServicio,
   ObligacionPagoServicio,
+  ReembolsoServicio,
   Trabajo,
   VistaPreviaPagoServicio,
 } from '@factory/contracts'
@@ -18,6 +20,7 @@ import {
 import { PoliticaCobroFija, type PuertoPoliticaCobro } from './configuracion.ts'
 import {
   REGLA_COMISION_SERVICIO_POR_DEFECTO,
+  calcularDesgloseCobro,
   calcularInstantaneaComision,
   crearLiquidacion,
   evaluarConciliacion,
@@ -56,6 +59,7 @@ import {
   type EventoPagoNormalizado,
   type IntencionPagoServicioDominio,
   type PuertoProveedorPagosServicio,
+  type ResultadoCheckout,
 } from './pagos.ts'
 
 // Reads the WEB-08 commercial chain inside the finance transaction. Every lookup is scoped:
@@ -194,6 +198,43 @@ export interface PuertoComisionesServicio {
     obligacionId: string
   }): Promise<InstantaneaComisionServicio | null>
   crear(snapshot: InstantaneaComisionServicio): Promise<void>
+  // WEB-09E: write-once completion of the PSP fee when Mercado Pago reports it after approval.
+  registrarFeeProveedor(input: {
+    tenantId: string
+    obligacionId: string
+    pspFeeMinor: bigint
+    providerNetMinor: bigint
+  }): Promise<boolean>
+}
+
+// WEB-09E refund attempts (total refunds only). Status changes of money still come only from
+// verified provider events; this record tracks the request sent to Mercado Pago.
+export interface ReembolsoServicioDominio {
+  reembolsoId: string
+  tenantId: string
+  prestadorTenantId: string
+  obligacionId: string
+  paymentId: string
+  attempt: number
+  amountMinor: bigint
+  currency: string
+  status: EstadoReembolsoServicio
+  providerRefundId: string | null
+  providerError: string | null
+  reason: string
+  idempotencyKey: string
+  actorId: string
+  correlationId: string
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PuertoReembolsosServicio {
+  listarPorPago(input: { tenantId: string; paymentId: string }): Promise<ReembolsoServicioDominio[]>
+  buscarPorClave(input: { tenantId: string; key: string }): Promise<ReembolsoServicioDominio | null>
+  crear(refund: ReembolsoServicioDominio): Promise<void>
+  actualizar(input: { refund: ReembolsoServicioDominio; expectedVersion: number }): Promise<boolean>
 }
 
 // Shared append-only ledger (`movimientos_contables`): no update or delete operation exists.
@@ -230,6 +271,7 @@ export interface RepositoriosFinanzasServicio {
   ledger: PuertoLedgerServicio
   liquidaciones: PuertoLiquidacionesServicio
   conciliaciones: PuertoConciliacionesServicio
+  reembolsos: PuertoReembolsosServicio
 }
 
 // Implementations run the callback in one serializable transaction (Prisma) or one
@@ -251,7 +293,7 @@ export type ResultadoIntencionPago = {
 
 export type ResultadoDespachoPago =
   | {
-      status: 'dispatched' | 'already_dispatched' | 'not_dispatchable'
+      status: 'dispatched' | 'already_dispatched' | 'not_dispatchable' | 'in_progress'
       payment: IntencionPagoServicio
     }
   | { status: 'dispatch_failed'; reason: string; payment: IntencionPagoServicio }
@@ -275,7 +317,27 @@ export interface ResumenFinancieroTrabajoServicio {
   payments: IntencionPagoServicio[]
   // Provider-only: commission and internal settlement. Customers never receive them.
   settlement?: LiquidacionServicio | null
-  commission?: { rateBps: number; ruleVersion: string } | null
+  commission?: {
+    rateBps: number
+    ruleVersion: string
+    grossMinor?: string
+    commissionMinor?: string
+    pspFeeMinor?: string | null
+    providerNetMinor?: string | null
+    currency?: string
+  } | null
+}
+
+export type ResultadoCheckoutServicio = {
+  status: 'created' | 'existing'
+  obligation: ObligacionPagoServicio
+  payment: IntencionPagoServicio
+  checkoutUrl: string
+}
+
+export type ResultadoReembolso = {
+  status: 'submitted' | 'requires_review' | 'failed' | 'existing' | 'replay'
+  refund: ReembolsoServicio
 }
 
 export type ResultadoEvaluacionLiquidacion = {
@@ -285,6 +347,9 @@ export type ResultadoEvaluacionLiquidacion = {
 }
 
 const ACTOR_PROVEEDOR = 'provider:mercado-pago'
+// A dispatch claim protects the provider call against concurrent clicks; it expires so that a
+// crashed request never blocks the payment forever.
+const DURACION_RECLAMO_DESPACHO_MS = 30_000
 
 export class ServicioFinanzasServicios {
   protected readonly transaction: PuertoTransaccionFinanzasServicio
@@ -385,6 +450,11 @@ export class ServicioFinanzasServicios {
           : null,
         paymentStatus: latest?.providerStatus ?? 'not_started',
         latestPaymentId: latest?.paymentId ?? null,
+        paymentReference:
+          intents.find((intent) => intent.providerStatus === 'approved')?.providerReference ?? null,
+        lastAttemptFailed:
+          latest?.providerStatus === 'pending' &&
+          Boolean(latest.providerError?.startsWith('PAYMENT_')),
         provider: 'mercado-pago',
         paymentAvailable: availability?.available === true,
         unavailableReason: notPayableReason ?? availability?.reason ?? null,
@@ -444,7 +514,7 @@ export class ServicioFinanzasServicios {
     repositories: RepositoriosFinanzasServicio,
     context: ContextoFinanzasServicio,
     trabajoId: string
-  ): Promise<void> {
+  ): Promise<{ publicacion: PublicacionServicioFinanciera | null; trabajo: Trabajo }> {
     const trabajo = await this.requerirTrabajo(repositories, context, trabajoId)
     if (trabajo.tenantId !== context.tenantId)
       throw new ErrorFinanzasServicio(
@@ -466,6 +536,7 @@ export class ServicioFinanzasServicios {
         availability.reason ?? 'PAYMENTS_DISABLED',
         'online payment is not available yet'
       )
+    return { publicacion: cobro.publicacion, trabajo }
   }
 
   // Customer command: fixes the payable amount of a work from persisted commercial facts.
@@ -536,7 +607,7 @@ export class ServicioFinanzasServicios {
           status: 'replay',
           ...(idempotency.response as Omit<ResultadoIntencionPago, 'status'>),
         }
-      await this.exigirCobroDisponible(repositories, input, input.trabajoId)
+      const { publicacion } = await this.exigirCobroDisponible(repositories, input, input.trabajoId)
       const obligation = await this.asegurarObligacion(repositories, input, input.trabajoId, key)
       if (obligation.status !== 'pending_payment')
         throw new ErrorFinanzasServicio(
@@ -563,6 +634,19 @@ export class ServicioFinanzasServicios {
       } else {
         const attempt = intents.reduce((max, candidate) => Math.max(max, candidate.attempt), 0) + 1
         const now = this.isoNow()
+        // WEB-09E: the commission is converted to an amount now and frozen on the intent; it is
+        // what Mercado Pago receives as `marketplace_fee` and what the approval snapshot books.
+        const rule = await this.politica.reglaComision({
+          prestadorTenantId: obligation.prestadorTenantId,
+          prestadorId: obligation.prestadorId,
+          categoria: publicacion?.categoria ?? null,
+        })
+        const breakdown = calcularDesgloseCobro({
+          grossMinor: obligation.amountMinor,
+          rateBps: rule.rateBps,
+          pspFeeBearer: 'provider',
+          pspFeeMinor: null,
+        })
         intent = {
           paymentId: identificadorPago(obligation.obligacionId, attempt),
           obligacionId: obligation.obligacionId,
@@ -582,6 +666,17 @@ export class ServicioFinanzasServicios {
           correlationId: input.correlationId,
           createdAt: now,
           updatedAt: now,
+          commission: {
+            rateBps: rule.rateBps,
+            ruleVersion: rule.ruleVersion,
+            politicaId: rule.politicaId,
+            commissionMinor: breakdown.commissionMinor,
+          },
+          checkoutReference: null,
+          checkoutUrl: null,
+          checkoutExpiresAt: null,
+          dispatchClaimedUntil: null,
+          environment: this.proveedor.environment ?? null,
         }
         await repositories.intenciones.crear(intent)
         await this.auditar(repositories, obligation, {
@@ -620,31 +715,55 @@ export class ServicioFinanzasServicios {
     })
   }
 
-  // Worker step: calls the provider outside any database transaction, then records the result.
-  // The provider idempotency key is the payment id, so a retry after a crash is safe.
+  // Calls the provider outside any database transaction, then records the result. A short
+  // claim stored on the intent makes concurrent requests wait instead of creating a second
+  // checkout; the provider idempotency key is the server-side payment id.
   async despacharIntencionPago(input: {
     tenantId: string
     paymentId: string
     correlationId: string
   }): Promise<ResultadoDespachoPago> {
-    const intent = await this.transaction.ejecutar((repositories) =>
-      this.requerirIntencion(repositories, input.tenantId, input.paymentId)
-    )
-    if (intent.dispatchStatus === 'dispatched')
-      return { status: 'already_dispatched', payment: proyectarIntencionPago(intent) }
-    if (intent.providerStatus !== 'pending')
-      return { status: 'not_dispatchable', payment: proyectarIntencionPago(intent) }
-    let providerReference: string | null = null
+    const claim = await this.transaction.ejecutar(async (repositories) => {
+      const intent = await this.requerirIntencion(repositories, input.tenantId, input.paymentId)
+      if (intent.dispatchStatus === 'dispatched')
+        return { status: 'already_dispatched' as const, intent }
+      if (intent.providerStatus !== 'pending')
+        return { status: 'not_dispatchable' as const, intent }
+      if (intent.dispatchClaimedUntil && Date.parse(intent.dispatchClaimedUntil) > this.now())
+        return { status: 'in_progress' as const, intent }
+      const claimed: IntencionPagoServicioDominio = {
+        ...intent,
+        dispatchClaimedUntil: new Date(this.now() + DURACION_RECLAMO_DESPACHO_MS).toISOString(),
+        updatedAt: this.isoNow(),
+      }
+      await repositories.intenciones.actualizar(claimed)
+      const obligation = await this.requerirObligacion(
+        repositories,
+        intent.tenantId,
+        intent.obligacionId
+      )
+      const publicacion = await repositories.identidad.buscarPublicacion({
+        prestadorTenantId: obligation.prestadorTenantId,
+        publicacionId: obligation.publicacionId,
+      })
+      return { status: 'claimed' as const, intent: claimed, title: publicacion?.nombre ?? null }
+    })
+    if (claim.status !== 'claimed')
+      return { status: claim.status, payment: proyectarIntencionPago(claim.intent) }
+    const intent = claim.intent
+    let result: ResultadoCheckout | null = null
     let failure: string | null = null
     try {
-      providerReference = (
-        await this.proveedor.crearPago({
-          paymentId: intent.paymentId,
-          idempotencyKey: intent.paymentId,
-          amountMinor: intent.amountMinor,
-          currency: intent.currency,
-        })
-      ).providerReference
+      result = await this.proveedor.crearPago({
+        paymentId: intent.paymentId,
+        idempotencyKey: intent.paymentId,
+        amountMinor: intent.amountMinor,
+        currency: intent.currency,
+        prestadorTenantId: intent.prestadorTenantId,
+        commissionMinor: intent.commission?.commissionMinor ?? null,
+        title: claim.title ?? 'Servicio TUS',
+        trabajoId: intent.trabajoId,
+      })
     } catch (error) {
       failure = error instanceof ErrorProveedorPagos ? error.code : 'PROVIDER_UNAVAILABLE'
     }
@@ -656,7 +775,11 @@ export class ServicioFinanzasServicios {
         current.obligacionId
       )
       if (current.dispatchStatus === 'dispatched') {
-        if (providerReference && current.providerReference !== providerReference)
+        if (
+          result?.providerReference &&
+          current.providerReference &&
+          current.providerReference !== result.providerReference
+        )
           throw new ErrorFinanzasServicio(
             409,
             'PROVIDER_REFERENCE_CONFLICT',
@@ -664,20 +787,27 @@ export class ServicioFinanzasServicios {
           )
         return { status: 'already_dispatched', payment: proyectarIntencionPago(current) }
       }
-      const updated: IntencionPagoServicioDominio = failure
-        ? {
-            ...current,
-            dispatchStatus: 'dispatch_failed',
-            providerError: failure,
-            updatedAt: this.isoNow(),
-          }
-        : {
-            ...current,
-            dispatchStatus: 'dispatched',
-            providerReference,
-            providerError: null,
-            updatedAt: this.isoNow(),
-          }
+      const updated: IntencionPagoServicioDominio =
+        failure || !result
+          ? {
+              ...current,
+              dispatchStatus: 'dispatch_failed',
+              providerError: failure ?? 'PROVIDER_UNAVAILABLE',
+              dispatchClaimedUntil: null,
+              updatedAt: this.isoNow(),
+            }
+          : {
+              ...current,
+              dispatchStatus: 'dispatched',
+              // A provider event may already have set the payment reference (crash window).
+              providerReference: current.providerReference ?? result.providerReference,
+              checkoutReference: result.checkoutReference ?? null,
+              checkoutUrl: result.checkoutUrl ?? null,
+              checkoutExpiresAt: result.checkoutExpiresAt ?? null,
+              providerError: null,
+              dispatchClaimedUntil: null,
+              updatedAt: this.isoNow(),
+            }
       await repositories.intenciones.actualizar(updated)
       await this.auditar(repositories, obligation, {
         resourceType: 'payment',
@@ -689,15 +819,231 @@ export class ServicioFinanzasServicios {
         idempotencyKey: updated.paymentId,
         previousStatus: current.dispatchStatus,
         status: updated.dispatchStatus,
-        metadata: failure ? { error: failure } : { providerReference },
+        metadata: failure
+          ? { error: failure }
+          : {
+              providerReference: updated.providerReference,
+              checkoutReference: updated.checkoutReference ?? null,
+              commissionMinor: updated.commission?.commissionMinor.toString(10) ?? null,
+            },
       })
       if (!failure)
         await this.publicar(repositories, updated, 'tus.payment.intent_dispatched', {
-          providerReference,
+          providerReference: updated.providerReference ?? updated.checkoutReference ?? null,
         })
       return failure
         ? { status: 'dispatch_failed', reason: failure, payment: proyectarIntencionPago(updated) }
         : { status: 'dispatched', payment: proyectarIntencionPago(updated) }
+    })
+  }
+
+  // WEB-09E customer command: creates (or reuses) the payment intent and its hosted checkout
+  // and returns the provider URL. The browser only sends the work id and an intent key; amount,
+  // commission and seller come from the server. The URL never confirms a payment.
+  async iniciarCheckout(
+    input: ContextoFinanzasServicio & { trabajoId: string; idempotencyKey: string }
+  ): Promise<ResultadoCheckoutServicio> {
+    const created = await this.crearIntencionPago(input)
+    const current = await this.transaction.ejecutar((repositories) =>
+      this.requerirIntencion(repositories, created.payment.tenantId, created.payment.paymentId)
+    )
+    let payment = proyectarIntencionPago(current)
+    if (current.dispatchStatus !== 'dispatched' || !current.checkoutUrl) {
+      const dispatched = await this.despacharIntencionPago({
+        tenantId: current.tenantId,
+        paymentId: current.paymentId,
+        correlationId: input.correlationId,
+      })
+      if (dispatched.status === 'in_progress')
+        throw new ErrorFinanzasServicio(409, 'IN_PROGRESS', 'the checkout is being created; retry')
+      if (dispatched.status === 'dispatch_failed')
+        throw new ErrorFinanzasServicio(
+          dispatched.reason === 'PROVIDER_ACCOUNT_NOT_CONNECTED' ? 503 : 502,
+          dispatched.reason,
+          'Mercado Pago did not create the checkout'
+        )
+      if (dispatched.status === 'not_dispatchable')
+        throw new ErrorFinanzasServicio(
+          409,
+          'OBLIGATION_NOT_PAYABLE',
+          'payment is no longer pending'
+        )
+      payment = dispatched.payment
+    }
+    if (!payment.checkoutUrl)
+      throw new ErrorFinanzasServicio(502, 'PROVIDER_REJECTED', 'provider returned no checkout URL')
+    return {
+      status: created.status === 'executed' ? 'created' : 'existing',
+      obligation: created.obligation,
+      payment,
+      checkoutUrl: payment.checkoutUrl,
+    }
+  }
+
+  // WEB-09E platform command: total refund of an approved payment through the seller account.
+  // The provider decides; a refusal (for example seller without balance) stays visible as
+  // `requires_review`. TUS never covers the seller's part automatically.
+  async solicitarReembolso(input: {
+    tenantId: string
+    paymentId: string
+    actorId: string
+    correlationId: string
+    idempotencyKey: string
+    reason: string
+  }): Promise<ResultadoReembolso> {
+    const key = validarClaveIdempotencia(input.idempotencyKey)
+    const reason = input.reason?.trim().slice(0, 500)
+    if (!reason) throw new ErrorFinanzasServicio(400, 'INVALID', 'refund reason is required')
+    if (!this.proveedor.reembolsar)
+      throw new ErrorFinanzasServicio(503, 'PROVIDER_NOT_CONFIGURED', 'refunds are not available')
+    const prepared = await this.transaction.ejecutar(async (repositories) => {
+      const previous = await repositories.reembolsos.buscarPorClave({
+        tenantId: input.tenantId,
+        key,
+      })
+      if (previous) {
+        if (previous.paymentId !== input.paymentId)
+          throw new ErrorFinanzasServicio(
+            409,
+            'IDEMPOTENCY_CONFLICT',
+            'idempotency key was already used for another refund'
+          )
+        return { status: 'replay' as const, refund: previous }
+      }
+      const intent = await this.requerirIntencion(repositories, input.tenantId, input.paymentId)
+      if (intent.providerStatus !== 'approved' || !intent.providerReference)
+        throw new ErrorFinanzasServicio(
+          409,
+          'NOT_REFUNDABLE',
+          'only approved payments can be refunded'
+        )
+      const refunds = await repositories.reembolsos.listarPorPago({
+        tenantId: intent.tenantId,
+        paymentId: intent.paymentId,
+      })
+      const active = refunds.find(
+        (refund) => refund.status === 'requested' || refund.status === 'submitted'
+      )
+      if (active) return { status: 'existing' as const, refund: active }
+      const now = this.isoNow()
+      const attempt = refunds.reduce((max, refund) => Math.max(max, refund.attempt), 0) + 1
+      const refund: ReembolsoServicioDominio = {
+        reembolsoId: `reembolso-${intent.paymentId}-${attempt}`,
+        tenantId: intent.tenantId,
+        prestadorTenantId: intent.prestadorTenantId,
+        obligacionId: intent.obligacionId,
+        paymentId: intent.paymentId,
+        attempt,
+        amountMinor: intent.amountMinor,
+        currency: intent.currency,
+        status: 'requested',
+        providerRefundId: null,
+        providerError: null,
+        reason,
+        idempotencyKey: key,
+        actorId: input.actorId,
+        correlationId: input.correlationId,
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      }
+      await repositories.reembolsos.crear(refund)
+      const obligation = await this.requerirObligacion(
+        repositories,
+        intent.tenantId,
+        intent.obligacionId
+      )
+      await this.auditar(repositories, obligation, {
+        resourceType: 'payment',
+        resourceId: intent.paymentId,
+        action: 'payment.refund_requested',
+        origin: 'system',
+        actorId: input.actorId,
+        correlationId: input.correlationId,
+        idempotencyKey: key,
+        previousStatus: null,
+        status: 'requested',
+        metadata: { reembolsoId: refund.reembolsoId, amountMinor: refund.amountMinor.toString(10) },
+      })
+      return {
+        status: 'new' as const,
+        refund,
+        providerReference: intent.providerReference,
+      }
+    })
+    if (prepared.status !== 'new')
+      return { status: prepared.status, refund: proyectarReembolso(prepared.refund) }
+    let providerRefundId: string | null = null
+    let failure: string | null = null
+    try {
+      providerRefundId = (
+        await this.proveedor.reembolsar({
+          prestadorTenantId: prepared.refund.prestadorTenantId,
+          providerReference: prepared.providerReference,
+          idempotencyKey: prepared.refund.reembolsoId,
+        })
+      ).providerRefundId
+    } catch (error) {
+      failure = error instanceof ErrorProveedorPagos ? error.code : 'PROVIDER_UNAVAILABLE'
+    }
+    return this.transaction.ejecutar(async (repositories) => {
+      // Only errors that prove nothing reached Mercado Pago are `failed` (retryable). Timeouts
+      // and unavailability are ambiguous and, like a seller without balance, need manual review.
+      const status: EstadoReembolsoServicio = !failure
+        ? 'submitted'
+        : failure === 'PROVIDER_ACCOUNT_NOT_CONNECTED'
+          ? 'failed'
+          : 'requires_review'
+      const next: ReembolsoServicioDominio = {
+        ...prepared.refund,
+        status,
+        providerRefundId,
+        providerError: failure,
+        version: prepared.refund.version + 1,
+        updatedAt: this.isoNow(),
+      }
+      if (
+        !(await repositories.reembolsos.actualizar({
+          refund: next,
+          expectedVersion: prepared.refund.version,
+        }))
+      )
+        throw new ErrorFinanzasServicio(409, 'VERSION_CONFLICT', 'refund changed concurrently')
+      const obligation = await this.requerirObligacion(
+        repositories,
+        next.tenantId,
+        next.obligacionId
+      )
+      await this.auditar(repositories, obligation, {
+        resourceType: 'payment',
+        resourceId: next.paymentId,
+        action: `payment.refund_${status}`,
+        origin: 'system',
+        actorId: input.actorId,
+        correlationId: input.correlationId,
+        idempotencyKey: next.idempotencyKey,
+        previousStatus: 'requested',
+        status,
+        metadata: { reembolsoId: next.reembolsoId, providerRefundId, error: failure },
+      })
+      await repositories.outbox.publicar({
+        eventId: `tus.payment.refund_${status}:${next.reembolsoId}`,
+        tenantId: next.tenantId,
+        aggregateType: 'intencion_pago_servicio',
+        aggregateId: next.paymentId,
+        eventType: `tus.payment.refund_${status}`,
+        payload: {
+          paymentId: next.paymentId,
+          refundId: next.reembolsoId,
+          providerTenantId: next.prestadorTenantId,
+          error: failure,
+        },
+        createdAt: this.isoNow(),
+      })
+      return {
+        status: status === 'submitted' ? 'submitted' : status,
+        refund: proyectarReembolso(next),
+      }
     })
   }
 
@@ -706,7 +1052,7 @@ export class ServicioFinanzasServicios {
   async ingerirEventoProveedor(input: EntradaEventoProveedor): Promise<ResultadoIngestaEvento> {
     let event: EventoPagoNormalizado
     try {
-      event = this.proveedor.verificarEvento(input)
+      event = await this.proveedor.verificarEvento(input)
     } catch (error) {
       if (error instanceof ErrorFinanzasServicio && error.code === 'PROVIDER_UNAVAILABLE')
         throw error
@@ -731,6 +1077,21 @@ export class ServicioFinanzasServicios {
       )
       const outcome = this.evaluarEvento(intent, event)
       let updatedIntent = intent
+      if (outcome.reason?.startsWith('hosted_checkout_attempt_')) {
+        updatedIntent = {
+          ...intent,
+          providerError: `PAYMENT_${String(event.status).toUpperCase()}`,
+          updatedAt: this.isoNow(),
+        }
+        await repositories.intenciones.actualizar(updatedIntent)
+      }
+      if (
+        outcome.result === 'no_op' &&
+        event.status === 'approved' &&
+        event.pspFeeMinor !== null &&
+        event.pspFeeMinor !== undefined
+      )
+        await this.completarFeeProveedor(repositories, obligation, event)
       let updatedObligation = obligation
       if (outcome.result === 'applied') {
         const nextStatus = event.status as EstadoProveedorPagoServicio
@@ -869,7 +1230,19 @@ export class ServicioFinanzasServicios {
         ...summary,
         settlement: settlement ? proyectarLiquidacion(settlement) : null,
         commission: snapshot
-          ? { rateBps: snapshot.rateBps, ruleVersion: snapshot.ruleVersion }
+          ? {
+              rateBps: snapshot.rateBps,
+              ruleVersion: snapshot.ruleVersion,
+              grossMinor: formatMinorUnits(snapshot.grossMinor),
+              commissionMinor: formatMinorUnits(snapshot.commissionMinor),
+              pspFeeMinor:
+                snapshot.pspFeeMinor === null ? null : formatMinorUnits(snapshot.pspFeeMinor),
+              providerNetMinor:
+                snapshot.providerNetMinor === null
+                  ? null
+                  : formatMinorUnits(snapshot.providerNetMinor),
+              currency: snapshot.currency,
+            }
           : null,
       }
     })
@@ -1049,11 +1422,20 @@ export class ServicioFinanzasServicios {
         prestadorTenantId: obligation.prestadorTenantId,
         publicacionId: obligation.publicacionId,
       })
-      const rule = await this.politica.reglaComision({
-        prestadorTenantId: obligation.prestadorTenantId,
-        prestadorId: obligation.prestadorId,
-        categoria: publicacion?.categoria ?? null,
-      })
+      // WEB-09E: an intent created with a checkout carries the commission already sent to the
+      // provider; that frozen rule wins over the policy in force today.
+      const rule = intent.commission
+        ? {
+            rateBps: intent.commission.rateBps,
+            ruleVersion: intent.commission.ruleVersion,
+            politicaId: intent.commission.politicaId,
+            pspFeeBearer: 'provider' as const,
+          }
+        : await this.politica.reglaComision({
+            prestadorTenantId: obligation.prestadorTenantId,
+            prestadorId: obligation.prestadorId,
+            categoria: publicacion?.categoria ?? null,
+          })
       const snapshot = calcularInstantaneaComision({
         obligation,
         intent,
@@ -1062,6 +1444,12 @@ export class ServicioFinanzasServicios {
         now,
         pspFeeMinor: event.pspFeeMinor ?? null,
       })
+      if (intent.commission && snapshot.commissionMinor !== intent.commission.commissionMinor)
+        throw new ErrorFinanzasServicio(
+          409,
+          'COMMISSION_MISMATCH',
+          'approval commission differs from the frozen checkout commission'
+        )
       await repositories.comisiones.crear(snapshot)
       for (const entry of movimientosAprobacion(snapshot, now))
         await repositories.ledger.agregar(entry)
@@ -1120,6 +1508,37 @@ export class ServicioFinanzasServicios {
     await this.publicarLiquidacion(repositories, moved, `tus.service_settlement.${target}`)
   }
 
+  // Write-once: the PSP fee may arrive after the approval (for example on a later
+  // `payment.updated`). It completes the snapshot net without rewriting the commission.
+  protected async completarFeeProveedor(
+    repositories: RepositoriosFinanzasServicio,
+    obligation: ObligacionServicio,
+    event: EventoPagoNormalizado
+  ): Promise<void> {
+    const snapshot = await repositories.comisiones.buscar({
+      tenantId: obligation.tenantId,
+      obligacionId: obligation.obligacionId,
+    })
+    if (!snapshot || snapshot.pspFeeMinor !== null || event.pspFeeMinor == null) return
+    const breakdown = calcularDesgloseCobro({
+      grossMinor: snapshot.grossMinor,
+      rateBps: snapshot.rateBps,
+      pspFeeBearer: 'provider',
+      pspFeeMinor: event.pspFeeMinor,
+    })
+    if (
+      breakdown.commissionMinor !== snapshot.commissionMinor ||
+      breakdown.providerNetMinor === null
+    )
+      return
+    await repositories.comisiones.registrarFeeProveedor({
+      tenantId: snapshot.tenantId,
+      obligacionId: snapshot.obligacionId,
+      pspFeeMinor: event.pspFeeMinor,
+      providerNetMinor: breakdown.providerNetMinor,
+    })
+  }
+
   protected async guardarLiquidacion(
     repositories: RepositoriosFinanzasServicio,
     previous: LiquidacionServicioDominio,
@@ -1165,8 +1584,24 @@ export class ServicioFinanzasServicios {
       return { result: 'quarantined', reason: 'currency_mismatch' }
     if (event.amountMinor !== intent.amountMinor)
       return { result: 'quarantined', reason: 'amount_mismatch' }
+    if (
+      intent.commission &&
+      event.marketplaceFeeMinor !== null &&
+      event.marketplaceFeeMinor !== undefined &&
+      event.marketplaceFeeMinor !== intent.commission.commissionMinor
+    )
+      return { result: 'quarantined', reason: 'marketplace_fee_mismatch' }
     if (event.status === 'unknown')
       return { result: 'ignored_unknown_status', reason: `unmapped:${event.rawStatus}` }
+    // WEB-09E hosted checkout: one preference can collect several payment attempts (a rejected
+    // card followed by an approved one). Until a payment is locked by approval, a failed attempt
+    // is informative and never closes the intent; otherwise a later approval would be lost.
+    if (
+      intent.checkoutReference &&
+      intent.providerReference === null &&
+      (event.status === 'rejected' || event.status === 'cancelled' || event.status === 'expired')
+    )
+      return { result: 'no_op', reason: `hosted_checkout_attempt_${event.status}` }
     if (
       intent.providerEventAt &&
       Date.parse(event.occurredAt) <= Date.parse(intent.providerEventAt)
@@ -1188,9 +1623,12 @@ export class ServicioFinanzasServicios {
     if (byReference.length === 1)
       return byReference[0]!.paymentId === event.paymentId ? byReference[0]! : null
     if (byReference.length > 1) return null
-    // Crash window: the provider created the payment but the dispatch result was not stored.
+    // Crash window (reference not stored yet) or a hosted checkout collecting a payment for our
+    // external reference. When the intent is already locked to another payment, the event is
+    // still correlated so that `evaluarEvento` quarantines it (possible double charge) instead
+    // of silently dropping it.
     const byPayment = await repositories.intenciones.buscarPorPaymentId(event.paymentId)
-    return byPayment.length === 1 && byPayment[0]!.providerReference === null ? byPayment[0]! : null
+    return byPayment.length === 1 ? byPayment[0]! : null
   }
 
   protected async requerirTrabajo(
@@ -1353,3 +1791,21 @@ export class ServicioFinanzasServicios {
 }
 
 export default { ServicioFinanzasServicios }
+
+export function proyectarReembolso(refund: ReembolsoServicioDominio): ReembolsoServicio {
+  return {
+    contractVersion: TUS_CONTRACT_VERSION,
+    reembolsoId: refund.reembolsoId,
+    obligacionId: refund.obligacionId,
+    paymentId: refund.paymentId,
+    tenantId: refund.tenantId,
+    amountMinor: formatMinorUnits(refund.amountMinor),
+    currency: refund.currency,
+    status: refund.status,
+    providerRefundId: refund.providerRefundId,
+    providerError: refund.providerError,
+    reason: refund.reason,
+    createdAt: refund.createdAt,
+    updatedAt: refund.updatedAt,
+  }
+}

@@ -12,6 +12,17 @@ import {
 } from '@factory/contracts'
 import { ErrorFinanzasServicio } from './modelo.ts'
 
+export type EntornoProveedorPago = 'sandbox' | 'production' | 'deterministic'
+
+// WEB-09E: TUS commission frozen on the intent when the checkout is created. It is sent to
+// Mercado Pago as `marketplace_fee` and the approval snapshot must reproduce exactly this value.
+export interface ComisionIntencionPago {
+  rateBps: number
+  ruleVersion: string
+  politicaId: string | null
+  commissionMinor: bigint
+}
+
 // WEB-09B payment intent: local, durable record of the intention to collect an obligation.
 // It never claims provider approval; provider state only changes through verified events.
 export interface IntencionPagoServicioDominio {
@@ -33,6 +44,13 @@ export interface IntencionPagoServicioDominio {
   correlationId: string
   createdAt: string
   updatedAt: string
+  // WEB-09E (optional for legacy rows and fixtures).
+  commission?: ComisionIntencionPago | null
+  checkoutReference?: string | null
+  checkoutUrl?: string | null
+  checkoutExpiresAt?: string | null
+  dispatchClaimedUntil?: string | null
+  environment?: EntornoProveedorPago | null
 }
 
 const TRANSICIONES_PROVEEDOR: Readonly<
@@ -78,6 +96,8 @@ export function proyectarIntencionPago(
     providerError: intent.providerError,
     createdAt: intent.createdAt,
     updatedAt: intent.updatedAt,
+    checkoutUrl: intent.checkoutUrl ?? null,
+    checkoutExpiresAt: intent.checkoutExpiresAt ?? null,
   }
 }
 
@@ -91,32 +111,69 @@ export interface EventoPagoNormalizado {
   amountMinor: bigint
   currency: string
   occurredAt: string
-  // WEB-09D: PSP fee reported by the provider for an approval (exact minor units), if any.
+  // PSP fee reported by the provider (exact minor units); null while not reported.
   pspFeeMinor?: bigint | null
+  // WEB-09E: marketplace fee actually applied by the provider; must match the intent.
+  marketplaceFeeMinor?: bigint | null
+  // WEB-09E: seller account that collected the payment (Mercado Pago `collector_id`).
+  collectorId?: string | null
 }
 
 export interface EntradaEventoProveedor {
   rawBody: string
   signature: string
   receivedAt: string
+  // WEB-09E: Mercado Pago signs `data.id` (query string) and `x-request-id` (header).
+  requestId?: string
+  dataId?: string
 }
 
-// Canonical TUS payment provider boundary used by WEB-09B/C. The real Mercado Pago adapter
-// (WEB-09E) must implement this port on top of `packages/mercado-pago`; tests use the fake.
+export interface SolicitudCheckout {
+  paymentId: string
+  idempotencyKey: string
+  amountMinor: bigint
+  currency: string
+  // WEB-09E: seller account and marketplace fee (minor units) frozen on the intent.
+  prestadorTenantId?: string
+  commissionMinor?: bigint | null
+  title?: string
+  trabajoId?: string
+}
+
+export interface ResultadoCheckout {
+  // Provider payment id when the provider creates the payment immediately (fake/API); null for
+  // hosted checkouts, whose payment id only arrives through a verified notification.
+  providerReference: string | null
+  checkoutReference?: string | null
+  checkoutUrl?: string | null
+  checkoutExpiresAt?: string | null
+}
+
+// Canonical TUS payment provider boundary used by WEB-09B/C/E. Implementations:
+// `ProveedorPagosServicioNoDisponible` (runtime without configuration),
+// `ProveedorPagosServicioDeterminista` (tests) and `ProveedorPagosMercadoPago` (WEB-09E).
 export interface PuertoProveedorPagosServicio {
   readonly provider: 'mercado-pago'
   readonly source: OrigenIntencionPagoServicio
-  crearPago(input: {
-    paymentId: string
+  readonly environment?: EntornoProveedorPago
+  crearPago(input: SolicitudCheckout): Promise<ResultadoCheckout>
+  verificarEvento(
+    input: EntradaEventoProveedor
+  ): EventoPagoNormalizado | Promise<EventoPagoNormalizado>
+  reembolsar?(input: {
+    prestadorTenantId: string
+    providerReference: string
     idempotencyKey: string
-    amountMinor: bigint
-    currency: string
-  }): Promise<{ providerReference: string }>
-  verificarEvento(input: EntradaEventoProveedor): EventoPagoNormalizado
+  }): Promise<{ providerRefundId: string }>
 }
 
 export class ErrorProveedorPagos extends Error {
-  readonly code: 'PROVIDER_UNAVAILABLE' | 'PROVIDER_TIMEOUT' | 'PROVIDER_REJECTED'
+  readonly code:
+    | 'PROVIDER_UNAVAILABLE'
+    | 'PROVIDER_TIMEOUT'
+    | 'PROVIDER_REJECTED'
+    | 'PROVIDER_ACCOUNT_NOT_CONNECTED'
+    | 'INSUFFICIENT_SELLER_FUNDS'
 
   constructor(code: ErrorProveedorPagos['code'], message: string) {
     super(message)
@@ -125,12 +182,12 @@ export class ErrorProveedorPagos extends Error {
   }
 }
 
-// Production default until WEB-09E: no network, no credentials, never approves anything.
+// Default without configuration: no network, no credentials, never approves anything.
 export class ProveedorPagosServicioNoDisponible implements PuertoProveedorPagosServicio {
   readonly provider = 'mercado-pago' as const
   readonly source = 'held-no-provider' as const
 
-  async crearPago(): Promise<{ providerReference: string }> {
+  async crearPago(): Promise<ResultadoCheckout> {
     throw new ErrorProveedorPagos('PROVIDER_UNAVAILABLE', 'payment provider is not enabled')
   }
 
@@ -159,7 +216,10 @@ const MAPA_ESTADOS_FAKE: Readonly<Record<string, EstadoProveedorPagoServicio>> =
 export class ProveedorPagosServicioDeterminista implements PuertoProveedorPagosServicio {
   readonly provider = 'mercado-pago' as const
   readonly source = 'deterministic-test-only' as const
+  readonly environment = 'deterministic' as const
   readonly llamadas: string[] = []
+  readonly checkouts: SolicitudCheckout[] = []
+  readonly reembolsos: string[] = []
   private fallasPendientes: ErrorProveedorPagos['code'][] = []
 
   constructor(private readonly secret: string) {
@@ -170,17 +230,29 @@ export class ProveedorPagosServicioDeterminista implements PuertoProveedorPagosS
     this.fallasPendientes.push(...codes)
   }
 
-  async crearPago(input: {
-    paymentId: string
-    idempotencyKey: string
-    amountMinor: bigint
-    currency: string
-  }): Promise<{ providerReference: string }> {
+  async crearPago(input: SolicitudCheckout): Promise<ResultadoCheckout> {
     this.llamadas.push(input.idempotencyKey)
+    this.checkouts.push({ ...input })
     const falla = this.fallasPendientes.shift()
     if (falla) throw new ErrorProveedorPagos(falla, `deterministic provider ${falla}`)
     minorUnitsToMajorDecimal(input.amountMinor, input.currency)
-    return { providerReference: `fake-mp-${input.paymentId}` }
+    return {
+      providerReference: `fake-mp-${input.paymentId}`,
+      checkoutReference: `fake-pref-${input.paymentId}`,
+      checkoutUrl: `https://sandbox.mercadopago.test/checkout/${encodeURIComponent(input.paymentId)}`,
+      checkoutExpiresAt: null,
+    }
+  }
+
+  async reembolsar(input: {
+    prestadorTenantId: string
+    providerReference: string
+    idempotencyKey: string
+  }): Promise<{ providerRefundId: string }> {
+    this.reembolsos.push(input.idempotencyKey)
+    const falla = this.fallasPendientes.shift()
+    if (falla) throw new ErrorProveedorPagos(falla, `deterministic provider ${falla}`)
+    return { providerRefundId: `fake-refund-${input.providerReference}` }
   }
 
   firmar(rawBody: string): string {
@@ -211,6 +283,8 @@ export class ProveedorPagosServicioDeterminista implements PuertoProveedorPagosS
     const occurredAt = String(data['date_last_updated'] ?? '')
     if (!eventId || !providerReference || !paymentId || !Number.isFinite(Date.parse(occurredAt)))
       throw new ErrorFinanzasServicio(400, 'INVALID_EVENT', 'provider event identity is incomplete')
+    const optionalMinor = (key: string) =>
+      data[key] === undefined ? null : majorDecimalToMinorUnits(String(data[key]), currency)
     return {
       eventId,
       providerReference,
@@ -219,11 +293,10 @@ export class ProveedorPagosServicioDeterminista implements PuertoProveedorPagosS
       status: MAPA_ESTADOS_FAKE[rawStatus] ?? 'unknown',
       amountMinor: majorDecimalToMinorUnits(String(data['transaction_amount'] ?? ''), currency),
       currency,
-      pspFeeMinor:
-        data['fee_amount'] === undefined
-          ? null
-          : majorDecimalToMinorUnits(String(data['fee_amount']), currency),
       occurredAt: new Date(occurredAt).toISOString(),
+      pspFeeMinor: optionalMinor('fee_amount'),
+      marketplaceFeeMinor: optionalMinor('marketplace_fee'),
+      collectorId: data['collector_id'] === undefined ? null : String(data['collector_id']),
     }
   }
 }

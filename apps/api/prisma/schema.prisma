@@ -957,14 +957,26 @@ model IntencionPago {
   errorProveedor           String?   @map("error_proveedor")
   fechaCreacion            DateTime  @map("fecha_creacion")
   fechaActualizacion       DateTime  @map("fecha_actualizacion")
+  // WEB-09E: Checkout Pro preference and commission frozen when the checkout is created.
+  preferenciaId            String?   @map("preferencia_id")
+  urlCheckout              String?   @map("url_checkout")
+  checkoutExpiraEn         DateTime? @map("checkout_expira_en")
+  tasaComisionBps          Int?      @map("tasa_comision_bps")
+  versionReglaComision     String?   @map("version_regla_comision")
+  politicaComisionId       String?   @map("politica_comision_id")
+  comisionMarketplace      BigInt?   @map("comision_marketplace")
+  despachoReclamadoHasta   DateTime? @map("despacho_reclamado_hasta")
+  entornoProveedor         String?   @map("entorno_proveedor")
 
   compromiso Compromiso?             @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_compromisos")
   obligacion ObligacionPagoServicio? @relation("IntencionPagoObligacion", fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_obligaciones")
 
   obligacionIdentidad ObligacionPagoServicio? @relation("IntencionPagoIdentidadObligacion", fields: [tenantId, obligacionId, prestadorTenantId, ordenId], references: [tenantId, obligacionId, prestadorTenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_obligacion_prestador")
   eventosProveedor    EventoWebhookPago[]
+  reembolsos          ReembolsoServicio[]
 
   @@unique([tenantId, pagoId], map: "uq_intenciones_pago_tenant_pago")
+  @@unique([proveedor, preferenciaId], map: "uq_intenciones_pago_preferencia")
   @@unique([tenantId, pagoId, obligacionId], map: "uq_intenciones_pago_tenant_pago_obligacion")
   @@unique([tenantId, compromisoId], map: "uq_intenciones_pago_tenant_compromiso")
   @@unique([tenantId, claveIdempotencia], map: "uq_intenciones_pago_tenant_clave_idempotencia")
@@ -1241,6 +1253,37 @@ model EstadoOAuthCobro {
   @@unique([huellaEstado], map: "uq_estados_oauth_cobro_huella")
   @@index([prestadorTenantId, fechaCreacion], map: "idx_estados_oauth_cobro_prestador")
   @@map("estados_oauth_cobro")
+}
+
+// WEB-09E: refund attempts of an approved service payment (total refunds only).
+model ReembolsoServicio {
+  id                           String   @id(map: "reembolsos_servicio_pkey")
+  versionContrato              String   @map("version_contrato")
+  reembolsoId                  String   @map("reembolso_id")
+  tenantId                     String   @map("tenant_id")
+  prestadorTenantId            String   @map("prestador_tenant_id")
+  obligacionId                 String   @map("obligacion_id")
+  pagoId                       String   @map("pago_id")
+  intento                      Int      @map("intento")
+  monto                        BigInt   @map("monto")
+  moneda                       String   @map("moneda")
+  estado                       String   @map("estado")
+  referenciaReembolsoProveedor String?  @map("referencia_reembolso_proveedor")
+  errorProveedor               String?  @map("error_proveedor")
+  motivo                       String   @map("motivo")
+  claveIdempotencia            String   @map("clave_idempotencia")
+  actorId                      String   @map("actor_id")
+  correlacionId                String   @map("correlacion_id")
+  version                      Int      @default(1) @map("version")
+  fechaCreacion                DateTime @map("fecha_creacion")
+  fechaActualizacion           DateTime @map("fecha_actualizacion")
+
+  intencion IntencionPago @relation(fields: [tenantId, pagoId, obligacionId], references: [tenantId, pagoId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_reembolsos_servicio_intenciones")
+
+  @@unique([tenantId, reembolsoId], map: "uq_reembolsos_servicio_tenant_reembolso")
+  @@unique([tenantId, claveIdempotencia], map: "uq_reembolsos_servicio_tenant_clave")
+  @@unique([tenantId, pagoId, intento], map: "uq_reembolsos_servicio_pago_intento")
+  @@map("reembolsos_servicio")
 }
 
 model MovimientoContable {

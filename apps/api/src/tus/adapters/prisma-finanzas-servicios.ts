@@ -35,6 +35,8 @@ import type {
   PuertoObligacionesServicio,
   PuertoOutboxFinanciero,
   PuertoTransaccionFinanzasServicio,
+  PuertoReembolsosServicio,
+  ReembolsoServicioDominio,
   RegistroAuditoriaFinanciera,
   RegistroEventoProveedor,
   RegistroOutboxFinanciero,
@@ -74,6 +76,7 @@ export interface ClientePrismaFinanzasServicio {
   movimientoContable: DelegadoPrismaFinanzasServicio
   liquidacionServicio: DelegadoPrismaFinanzasServicio
   conciliacionServicio: DelegadoPrismaFinanzasServicio
+  reembolsoServicio?: DelegadoPrismaFinanzasServicio
   $transaction<T>(
     callback: (client: ClientePrismaFinanzasServicio) => Promise<T>,
     options?: { isolationLevel?: 'Serializable' }
@@ -308,6 +311,7 @@ export class IntencionesPagoServicioPrisma implements PuertoIntencionesPagoServi
         fechaEventoProveedor: intent.providerEventAt ? new Date(intent.providerEventAt) : null,
         estadoComercial: estadoComercialLegacy(intent.providerStatus),
         fechaActualizacion: new Date(intent.updatedAt),
+        ...camposCheckout(intent),
       },
     })
     if (result.count !== 1)
@@ -473,6 +477,117 @@ export class ComisionesServicioPrisma implements PuertoComisionesServicio {
         netoPrestador: snapshot.providerNetMinor,
       }),
     })
+  }
+
+  async registrarFeeProveedor(input: {
+    tenantId: string
+    obligacionId: string
+    pspFeeMinor: bigint
+    providerNetMinor: bigint
+  }): Promise<boolean> {
+    const result = await this.client.instantaneaComision.updateMany({
+      where: {
+        tenantId: input.tenantId,
+        obligacionId: input.obligacionId,
+        comisionProveedorPago: null,
+      },
+      data: { comisionProveedorPago: input.pspFeeMinor, netoPrestador: input.providerNetMinor },
+    })
+    return result.count === 1
+  }
+}
+
+// WEB-09E refund attempts (`reembolsos_servicio`), optimistic versions.
+export class ReembolsosServicioPrisma implements PuertoReembolsosServicio {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  private get delegado(): DelegadoPrismaFinanzasServicio {
+    if (!this.client.reembolsoServicio)
+      throw new ErrorFinanzasServicio(503, 'UNAVAILABLE', 'refund persistence is not composed')
+    return this.client.reembolsoServicio
+  }
+
+  async listarPorPago(input: { tenantId: string; paymentId: string }) {
+    const rows = await this.delegado.findMany({
+      where: { tenantId: input.tenantId, pagoId: input.paymentId },
+      orderBy: { intento: 'asc' },
+    })
+    return rows.map(mapearReembolso)
+  }
+
+  async buscarPorClave(input: { tenantId: string; key: string }) {
+    const row = await this.delegado.findFirst({
+      where: { tenantId: input.tenantId, claveIdempotencia: input.key },
+    })
+    return row ? mapearReembolso(row) : null
+  }
+
+  async crear(refund: ReembolsoServicioDominio): Promise<void> {
+    await this.delegado.create({
+      data: {
+        id: refund.reembolsoId,
+        versionContrato: TUS_CONTRACT_VERSION,
+        reembolsoId: refund.reembolsoId,
+        tenantId: refund.tenantId,
+        prestadorTenantId: refund.prestadorTenantId,
+        obligacionId: refund.obligacionId,
+        pagoId: refund.paymentId,
+        intento: refund.attempt,
+        monto: refund.amountMinor,
+        moneda: refund.currency,
+        estado: refund.status,
+        referenciaReembolsoProveedor: refund.providerRefundId,
+        errorProveedor: refund.providerError,
+        motivo: refund.reason,
+        claveIdempotencia: refund.idempotencyKey,
+        actorId: refund.actorId,
+        correlacionId: refund.correlationId,
+        version: refund.version,
+        fechaCreacion: new Date(refund.createdAt),
+        fechaActualizacion: new Date(refund.updatedAt),
+      },
+    })
+  }
+
+  async actualizar(input: { refund: ReembolsoServicioDominio; expectedVersion: number }) {
+    const result = await this.delegado.updateMany({
+      where: {
+        tenantId: input.refund.tenantId,
+        reembolsoId: input.refund.reembolsoId,
+        version: input.expectedVersion,
+      },
+      data: {
+        estado: input.refund.status,
+        referenciaReembolsoProveedor: input.refund.providerRefundId,
+        errorProveedor: input.refund.providerError,
+        version: input.refund.version,
+        fechaActualizacion: new Date(input.refund.updatedAt),
+      },
+    })
+    return result.count === 1
+  }
+}
+
+function mapearReembolso(row: Fila): ReembolsoServicioDominio {
+  return {
+    reembolsoId: texto(row, 'reembolsoId'),
+    tenantId: texto(row, 'tenantId'),
+    prestadorTenantId: texto(row, 'prestadorTenantId'),
+    obligacionId: texto(row, 'obligacionId'),
+    paymentId: texto(row, 'pagoId'),
+    attempt: Number(row['intento']),
+    amountMinor: parseMinorUnits(row['monto']),
+    currency: texto(row, 'moneda'),
+    status: texto(row, 'estado') as ReembolsoServicioDominio['status'],
+    providerRefundId: textoNullable(row, 'referenciaReembolsoProveedor'),
+    providerError: textoNullable(row, 'errorProveedor'),
+    reason: texto(row, 'motivo'),
+    idempotencyKey: texto(row, 'claveIdempotencia'),
+    actorId: texto(row, 'actorId'),
+    correlationId: texto(row, 'correlacionId'),
+    version: Number(row['version']),
+    createdAt: fecha(row, 'fechaCreacion'),
+    updatedAt: fecha(row, 'fechaActualizacion'),
   }
 }
 
@@ -654,6 +769,7 @@ export class TransaccionFinanzasServicioPrisma implements PuertoTransaccionFinan
       ledger: new LedgerServicioPrisma(client),
       liquidaciones: new LiquidacionesServicioPrisma(client),
       conciliaciones: new ConciliacionesServicioPrisma(client),
+      reembolsos: new ReembolsosServicioPrisma(client),
     }
   }
 }
@@ -741,6 +857,24 @@ export function filaIntencion(intent: IntencionPagoServicioDominio): Fila {
     errorProveedor: intent.providerError,
     fechaCreacion: new Date(intent.createdAt),
     fechaActualizacion: new Date(intent.updatedAt),
+    ...camposCheckout(intent),
+    tasaComisionBps: intent.commission?.rateBps ?? null,
+    versionReglaComision: intent.commission?.ruleVersion ?? null,
+    politicaComisionId: intent.commission?.politicaId ?? null,
+    comisionMarketplace: intent.commission?.commissionMinor ?? null,
+    entornoProveedor: intent.environment ?? null,
+  }
+}
+
+// WEB-09E mutable checkout fields; the frozen commission is only written on creation.
+function camposCheckout(intent: IntencionPagoServicioDominio): Fila {
+  return {
+    preferenciaId: intent.checkoutReference ?? null,
+    urlCheckout: intent.checkoutUrl ?? null,
+    checkoutExpiraEn: intent.checkoutExpiresAt ? new Date(intent.checkoutExpiresAt) : null,
+    despachoReclamadoHasta: intent.dispatchClaimedUntil
+      ? new Date(intent.dispatchClaimedUntil)
+      : null,
   }
 }
 
@@ -767,6 +901,23 @@ export function mapearIntencion(row: Fila): IntencionPagoServicioDominio {
     correlationId: texto(row, 'correlacionId'),
     createdAt: fecha(row, 'fechaCreacion'),
     updatedAt: fecha(row, 'fechaActualizacion'),
+    commission:
+      row['comisionMarketplace'] === null || row['comisionMarketplace'] === undefined
+        ? null
+        : {
+            rateBps: Number(row['tasaComisionBps']),
+            ruleVersion: texto(row, 'versionReglaComision'),
+            politicaId: textoNullable(row, 'politicaComisionId'),
+            commissionMinor: parseMinorUnits(row['comisionMarketplace']),
+          },
+    checkoutReference: textoNullable(row, 'preferenciaId'),
+    checkoutUrl: textoNullable(row, 'urlCheckout'),
+    checkoutExpiresAt: row['checkoutExpiraEn'] ? fecha(row, 'checkoutExpiraEn') : null,
+    dispatchClaimedUntil: row['despachoReclamadoHasta']
+      ? fecha(row, 'despachoReclamadoHasta')
+      : null,
+    environment: (textoNullable(row, 'entornoProveedor') ??
+      null) as IntencionPagoServicioDominio['environment'],
   }
 }
 

@@ -355,6 +355,58 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     try { response.status(200).json(await application.serviceFinance.consultarFinanzasTrabajo({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '' })) } catch (error) { sendServiceFinanceError(response, error) }
   })
 
+  // WEB-09E: starts (or resumes) the Mercado Pago checkout of a completed work. The body carries
+  // no money: amount, commission and seller are re-derived server-side. Returns the hosted URL.
+  router.post(['/tus/v1/work/:workId/checkout', '/tus/v1/trabajos/:workId/pago/checkout'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!context || !hasAnyPermission(context, ['tus:checkout', 'tus:work:accept']) || hasSpoofedAuthority(body, request, context) || !application.serviceFinance) { sendError(response, 403, 'FORBIDDEN', 'TUS service payment is not authorized'); return }
+    const forbidden = SERVICE_PAYMENT_AUTHORITY_FIELDS.filter((field) => body[field] !== undefined)
+    if (forbidden.length > 0) { sendError(response, 400, 'CLIENT_AUTHORITY_FIELDS', `server-derived fields cannot be supplied: ${forbidden.join(', ')}`); return }
+    const headerKey = readHeader(request, 'idempotency-key')
+    if (!headerKey) { sendError(response, 400, 'INVALID', 'idempotency-key is required'); return }
+    try {
+      const result = await application.serviceFinance.iniciarCheckout({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: request.params['workId'] ?? '', idempotencyKey: headerKey })
+      response.status(result.status === 'created' ? 201 : 200).json(result)
+    } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
+  // WEB-09E public Mercado Pago webhook. Authenticity comes only from `x-signature` (HMAC with the
+  // application secret, `ts` in ms) plus a server-to-server read of the payment; the body is not
+  // trusted. Duplicates and non-actionable topics answer 200 so Mercado Pago stops retrying.
+  router.post(['/tus/v1/integrations/mercado-pago/webhooks'], async (request: Request, response: Response) => {
+    if (!application.serviceFinance) { sendError(response, 503, 'PROVIDER_NOT_CONFIGURED', 'payments are not configured'); return }
+    const rawBody = typeof (request as { rawBody?: unknown }).rawBody === 'string' ? (request as unknown as { rawBody: string }).rawBody : JSON.stringify(request.body ?? {})
+    const dataId = readQueryString(request.query['data.id']) || readQueryString(asRecord(request.query['data'])['id']) || readQueryString(request.query['id'])
+    try {
+      const result = await application.serviceFinance.ingerirEventoProveedor({ rawBody, signature: readHeader(request, 'x-signature'), requestId: readHeader(request, 'x-request-id') || undefined, dataId: dataId || undefined, receivedAt: new Date(now()).toISOString() })
+      if (result.status === 'invalid') {
+        if (['INVALID_SIGNATURE', 'EXPIRED_SIGNATURE'].includes(result.reason)) { sendError(response, 401, result.reason, 'notification signature rejected'); return }
+        if (['UNSUPPORTED_TOPIC', 'UNKNOWN_COLLECTOR'].includes(result.reason)) { response.status(200).json({ status: 'ignored', reason: result.reason }); return }
+        sendError(response, 400, result.reason, 'notification rejected'); return
+      }
+      response.status(200).json(result.status === 'unmatched' ? { status: result.status, reason: result.reason } : { status: result.status, result: 'result' in result ? result.result : null })
+    } catch (error) {
+      // Transient failures (provider lookup, database) answer 5xx so Mercado Pago retries.
+      if (error instanceof ErrorFinanzasServicio && error.status < 500) { response.status(error.status).json({ code: error.code }); return }
+      sendError(response, 503, 'RETRY_LATER', 'notification was not processed')
+    }
+  })
+
+  // WEB-09E platform refund (total). Mercado Pago may refuse it (for example a seller without
+  // balance in Split 1:1): the refund stays `requires_review`; TUS never covers the seller part.
+  router.post(['/tus/v1/admin/payments/refunds'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!isPlatformPaymentsAdmin(context, application) || !application.serviceFinance) { sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized'); return }
+    const key = readHeader(request, 'idempotency-key')
+    if (!key) { sendError(response, 400, 'INVALID', 'idempotency-key is required'); return }
+    try {
+      const result = await application.serviceFinance.solicitarReembolso({ tenantId: readString(body, 'tenantId'), paymentId: readString(body, 'paymentId'), reason: readString(body, 'reason'), actorId: context!.subjectId, correlationId: context!.correlationId, idempotencyKey: key })
+      response.status(result.status === 'submitted' ? 201 : 200).json(result)
+    } catch (error) { sendServiceFinanceError(response, error) }
+  })
+
   // WEB-09D: read-only payment preview for the customer of a work. Never writes: no obligation,
   // intent, audit or outbox is created by reading it. The provider receives 403, others 404.
   router.get(['/tus/work/:workId/payment-preview', '/tus/v1/trabajos/:workId/pago/vista-previa', '/tus/v1/work/:workId/payment-preview'], async (request: Request, response: Response) => {

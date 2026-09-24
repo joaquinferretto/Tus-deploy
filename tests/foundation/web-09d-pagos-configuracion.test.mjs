@@ -12,7 +12,7 @@ const PAYMENTS_SETUP = `
   const { calcularDesgloseCobro } = await import('./apps/api/src/tus/finance/servicios/liquidacion.ts')
   const plain = (value) => JSON.parse(JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? item.toString() : item))
   const writes = () => financeStore.state.obligaciones.size + financeStore.state.intenciones.size + financeStore.state.auditoria.length + financeStore.state.outbox.length + financeStore.state.idempotencia.size
-  const readyEnv = { TUS_MERCADOPAGO_ENABLED: 'true', MERCADO_PAGO_ENVIRONMENT: 'sandbox', MERCADO_PAGO_CLIENT_ID: 'app-id', MERCADO_PAGO_CLIENT_SECRET: 'client-secret-value', MERCADO_PAGO_WEBHOOK_SECRET: 'webhook-secret-value', MERCADO_PAGO_OAUTH_REDIRECT_URI: 'https://api.example.test/tus/v1/integrations/mercado-pago/oauth/callback', TUS_PAYMENT_CREDENTIALS_KEY: Buffer.alloc(32, 7).toString('base64'), TUS_WEB_BASE_URL: 'https://web.example.test' }
+  const readyEnv = { TUS_MERCADOPAGO_ENABLED: 'true', MERCADO_PAGO_ENVIRONMENT: 'sandbox', MERCADO_PAGO_CLIENT_ID: 'app-id', MERCADO_PAGO_CLIENT_SECRET: 'client-secret-value', MERCADO_PAGO_WEBHOOK_SECRET: 'webhook-secret-value', MERCADO_PAGO_OAUTH_REDIRECT_URI: 'https://api.example.test/tus/v1/integrations/mercado-pago/oauth/callback', TUS_PAYMENT_CREDENTIALS_KEY: Buffer.alloc(32, 7).toString('base64'), TUS_WEB_BASE_URL: 'https://web.example.test', MERCADO_PAGO_NOTIFICATION_URL: 'https://api.example.test/tus/v1/integrations/mercado-pago/webhooks' }
   function financeWith(politica) {
     return new ServicioFinanzasServicios(new TransaccionFinanzasServicioEnMemoria(financeStore, new IdentidadServicioEnMemoria(workStore, marketplace)), clock, proveedorPagos, undefined, politica)
   }
@@ -105,11 +105,15 @@ test('WEB-09D provider disabled: preview still works, payment is unavailable and
     const noAdapter = financeWith(new PoliticaCobroPersistida(config, () => leerEstadoOperativoPagos(readyEnv, false), async () => true))
     const adapterReason = (await noAdapter.consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
     const ready = () => leerEstadoOperativoPagos(readyEnv, true)
+    // WEB-09E: an explicit undetermined bearer blocks, a platform-paid fee is unsupported.
+    await admin.registrarPolitica({ actorId: 'admin', correlationId: 'c' }, { scope: 'global', rateBps: 1000, pspFeeBearer: 'undetermined', reason: 'draft', expectedVersion: 0 })
     const undecided = (await financeWith(new PoliticaCobroPersistida(config, ready, async () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
-    await admin.registrarPolitica({ actorId: 'admin', correlationId: 'c' }, { scope: 'global', rateBps: 1000, pspFeeBearer: 'provider', reason: 'launch', expectedVersion: 0 })
+    await admin.registrarPolitica({ actorId: 'admin', correlationId: 'c' }, { scope: 'global', rateBps: 1000, pspFeeBearer: 'platform', reason: 'platform', expectedVersion: 1 })
+    const unsupported = (await financeWith(new PoliticaCobroPersistida(config, ready, async () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
+    await admin.registrarPolitica({ actorId: 'admin', correlationId: 'c' }, { scope: 'global', rateBps: 1000, pspFeeBearer: 'provider', reason: 'launch', expectedVersion: 2 })
     const notLinked = (await financeWith(new PoliticaCobroPersistida(config, ready, async () => false)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
     const linked = await financeWith(new PoliticaCobroPersistida(config, ready, async () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })
-    console.log(JSON.stringify({ preview, intentCode, obligationCode, stillOff: stillOff.unavailableReason, adapterReason, undecided, notLinked, linked: [linked.paymentAvailable, linked.unavailableReason], writes: writes() }))
+    console.log(JSON.stringify({ preview, intentCode, obligationCode, stillOff: stillOff.unavailableReason, adapterReason, undecided, unsupported, notLinked, linked: [linked.paymentAvailable, linked.unavailableReason], writes: writes() }))
   `)
 
   assert.equal(result.preview.payable, true)
@@ -121,6 +125,7 @@ test('WEB-09D provider disabled: preview still works, payment is unavailable and
   assert.equal(result.stillOff, 'PROVIDER_NOT_CONFIGURED')
   assert.equal(result.adapterReason, 'PROVIDER_NOT_CONFIGURED')
   assert.equal(result.undecided, 'PSP_FEE_POLICY_UNDECIDED')
+  assert.equal(result.unsupported, 'PSP_FEE_POLICY_UNSUPPORTED')
   assert.equal(result.notLinked, 'PROVIDER_ACCOUNT_NOT_CONNECTED')
   assert.deepEqual(result.linked, [true, null])
   assert.equal(result.writes, 0)
@@ -151,7 +156,7 @@ test('WEB-09D commission is configurable, bounded, scoped and frozen in each sna
     await admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1200, pspFeeBearer: 'provider', reason: 'raise to 12%', expectedVersion: 1 })
     const second = plain(await pay('second', '10000000', '100000.00', '5000.00'))
     const firstAgain = plain([...financeStore.state.comisiones.values()].find((snapshot) => snapshot.obligacionId === first.obligacionId))
-    await admin.registrarPolitica(ctx, { scope: 'prestador', scopeRef: 'provider-1', rateBps: 500, pspFeeBearer: 'platform', reason: 'partner', expectedVersion: 0 })
+    await admin.registrarPolitica(ctx, { scope: 'prestador', scopeRef: 'provider-1', rateBps: 500, pspFeeBearer: 'provider', reason: 'partner', expectedVersion: 0 })
     const partner = plain(await pay('partner', '10000000', '100000.00', '5000.00'))
     const breakdowns = {
       undetermined: plain(calcularDesgloseCobro({ grossMinor: 10000000n, rateBps: 1000, pspFeeBearer: 'undetermined', pspFeeMinor: 500000n })),
@@ -190,8 +195,9 @@ test('WEB-09D commission is configurable, bounded, scoped and frozen in each sna
   assert.equal(result.second.commissionMinor, '1200000')
   assert.deepEqual(result.firstAgain, result.first)
   assert.equal(result.partner.rateBps, 500)
-  assert.equal(result.partner.pspFeeBearer, 'platform')
-  assert.equal(result.partner.providerNetMinor, '9500000')
+  assert.equal(result.partner.pspFeeBearer, 'provider')
+  // 100.000 - 5% TUS (5.000) - Mercado Pago fee (5.000) = 90.000
+  assert.equal(result.partner.providerNetMinor, '9000000')
   assert.equal(result.breakdowns.undetermined.providerNetMinor, null)
   assert.equal(result.breakdowns.platform.providerNetMinor, '9000000')
   assert.equal(result.breakdowns.unknownFee.providerNetMinor, null)
@@ -366,8 +372,10 @@ test('WEB-09D HTTP: preview is customer-only, the Web cannot send money, admin a
   assert.equal(result.callback, 503)
   assert.equal(result.status.status, 200)
   assert.ok(result.status.body.blockers.includes('TUS_MERCADOPAGO_ENABLED_FALSE'))
-  assert.ok(result.status.body.blockers.includes('REAL_PAYMENT_ADAPTER_NOT_IMPLEMENTED'))
-  assert.ok(result.status.body.blockers.includes('PSP_FEE_POLICY_UNDECIDED'))
+  assert.ok(result.status.body.blockers.includes('PAYMENTS_DISABLED'))
+  // WEB-09E: the adapter exists and the fee bearer defaults to the provider (product decision).
+  assert.ok(!result.status.body.blockers.includes('REAL_PAYMENT_ADAPTER_UNAVAILABLE'))
+  assert.ok(!result.status.body.blockers.includes('PSP_FEE_POLICY_UNDECIDED'))
   assert.equal(result.status.body.operational.clientSecretConfigured, true)
   assert.doesNotMatch(result.status.text, /client-secret-value|webhook-secret-value|app-id/u)
   assert.equal(result.fakeAdmin, 403)

@@ -45,7 +45,7 @@ import { PrismaDeliveryStore, PrismaPosStore } from '../adapters/delivery-pos.ts
 import { InMemorySupportStore, PrismaSupportStore, TusSupportService } from '../support/index.ts'
 import { InMemoryWhatsAppActionStore, PrismaWhatsAppActionStore, TusWhatsAppService } from '../whatsapp/index.ts'
 import { InMemoryReportingStore, PrismaReportingStore, TusReportingService } from '../reporting/index.ts'
-import { EvaluadorHabilitacion } from '../readiness/index.ts'
+import { EvaluadorHabilitacion, PERFILES_HABILITACION } from '../readiness/index.ts'
 
 export function createTusApplication(
   options: Pick<TusApplicationDependencies, 'now' | 'releasePolicy' | 'operationsTelemetry' | 'evaluadorHabilitacion' | 'perfilHabilitacion' | 'alcanceHabilitacion'> = {},
@@ -103,7 +103,7 @@ export function createTusApplication(
   const serviceFinance = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore)),
     options.now,
-    undefined,
+    servicePayments.proveedor,
     undefined,
     servicePayments.politica
   )
@@ -147,9 +147,20 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
   const reporting = new TusReportingService({ store: new PrismaReportingStore(client as never) })
   const work = new ServicioTrabajo(new PrismaTrabajoTransaction(client), () => Date.now())
   const paymentsClient = client as unknown as ClientePrismaConfiguracionPagos
-  const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient) })
-  // The provider port stays `ProveedorPagosServicioNoDisponible` until WEB-09E exists.
-  const serviceFinance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio), () => Date.now(), undefined, undefined, servicePayments.politica)
+  // WEB-09E: real money in production also needs the evidence-based `settlement` readiness
+  // decision; a blocked or failing evaluation keeps payments unavailable.
+  const perfilPagos = PERFILES_HABILITACION.find((perfil) => perfil === env['TUS_DEPLOYMENT_PROFILE']) ?? 'render-native'
+  const produccionAutorizada = async () => {
+    try {
+      const decision = await evaluadorHabilitacion.require({ tenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || 'tus-platform', actorId: 'system:service-payments', correlationId: `service-payments-readiness-${Date.now()}`, capability: 'settlement', profile: perfilPagos, scope: 'argentina-stage-1' })
+      return decision.enabled && decision.disposition === 'authorized'
+    } catch {
+      return false
+    }
+  }
+  const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient), produccionAutorizada })
+  // The provider is Mercado Pago only when every variable is present; otherwise unavailable.
+  const serviceFinance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio), () => Date.now(), servicePayments.proveedor, undefined, servicePayments.politica)
   return new TusApplicationService({
     commitments: commitmentStore,
     compensations: new PrismaTusCompensationStore(client),

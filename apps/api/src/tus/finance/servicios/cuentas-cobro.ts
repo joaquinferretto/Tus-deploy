@@ -49,6 +49,12 @@ export interface PuertoCuentasCobro {
     updatedAt: string
   }): Promise<void>
   borrarCredencial(prestadorTenantId: string): Promise<void>
+  // WEB-09E: encrypted tokens are read only server-side to call Mercado Pago as the seller.
+  leerCredencial(
+    prestadorTenantId: string
+  ): Promise<{ ciphertext: string; keyVersion: string } | null>
+  // Maps a Mercado Pago `user_id` (collector) back to the linked provider account.
+  buscarCuentaPorExterna(externalAccountId: string): Promise<CuentaCobroDominio | null>
   crearEstado(estado: EstadoOAuthDominio): Promise<void>
   // Atomically marks the state consumed; null when unknown, expired or already used.
   consumirEstado(stateDigest: string, now: string): Promise<EstadoOAuthDominio | null>
@@ -88,6 +94,22 @@ export class AlmacenCuentasCobroEnMemoria implements PuertoCuentasCobro {
 
   async borrarCredencial(prestadorTenantId: string): Promise<void> {
     this.credenciales.delete(prestadorTenantId)
+  }
+
+  async leerCredencial(
+    prestadorTenantId: string
+  ): Promise<{ ciphertext: string; keyVersion: string } | null> {
+    const credential = this.credenciales.get(prestadorTenantId)
+    return credential
+      ? { ciphertext: credential.ciphertext, keyVersion: credential.keyVersion }
+      : null
+  }
+
+  async buscarCuentaPorExterna(externalAccountId: string): Promise<CuentaCobroDominio | null> {
+    const cuenta = [...this.cuentas.values()].find(
+      (item) => item.externalAccountId === externalAccountId && item.status === 'connected'
+    )
+    return cuenta ? { ...cuenta, scopes: [...cuenta.scopes] } : null
   }
 
   async crearEstado(estado: EstadoOAuthDominio): Promise<void> {
@@ -172,6 +194,8 @@ export interface PuertoOAuthMercadoPago {
     codeVerifier: string
     redirectUri: string
   }): Promise<TokenOAuthMercadoPago>
+  // grant_type=refresh_token. Mercado Pago rotates the refresh token on every renewal.
+  renovarToken(input: { refreshToken: string }): Promise<TokenOAuthMercadoPago>
 }
 
 type FetchLike = (
@@ -198,6 +222,19 @@ export class ClienteOAuthMercadoPagoHttp implements PuertoOAuthMercadoPago {
     codeVerifier: string
     redirectUri: string
   }): Promise<TokenOAuthMercadoPago> {
+    return this.solicitarToken({
+      code: input.code,
+      grant_type: 'authorization_code',
+      redirect_uri: input.redirectUri,
+      code_verifier: input.codeVerifier,
+    })
+  }
+
+  async renovarToken(input: { refreshToken: string }): Promise<TokenOAuthMercadoPago> {
+    return this.solicitarToken({ grant_type: 'refresh_token', refresh_token: input.refreshToken })
+  }
+
+  private async solicitarToken(grant: Record<string, string>): Promise<TokenOAuthMercadoPago> {
     const fetchImpl = this.options.fetch ?? (globalThis.fetch as unknown as FetchLike)
     let response: Awaited<ReturnType<FetchLike>>
     try {
@@ -209,11 +246,10 @@ export class ClienteOAuthMercadoPagoHttp implements PuertoOAuthMercadoPago {
           body: JSON.stringify({
             client_id: this.options.clientId,
             client_secret: this.options.clientSecret,
-            code: input.code,
-            grant_type: 'authorization_code',
-            redirect_uri: input.redirectUri,
-            code_verifier: input.codeVerifier,
-            test_token: this.options.testToken ? 'true' : 'false',
+            ...grant,
+            ...(grant['grant_type'] === 'authorization_code'
+              ? { test_token: this.options.testToken ? 'true' : 'false' }
+              : {}),
           }),
           signal: AbortSignal.timeout(this.options.timeoutMs ?? 10_000),
         }
@@ -264,6 +300,9 @@ export interface ConfiguracionOAuthCobro {
   stateTtlMs?: number
 }
 
+// Renew the seller token when it expires within 7 days (tokens last 180 days).
+export const RENOVACION_ANTICIPADA_MS = 7 * 24 * 60 * 60 * 1000
+
 export class ServicioCuentasCobro {
   constructor(
     private readonly store: PuertoCuentasCobro,
@@ -288,9 +327,127 @@ export class ServicioCuentasCobro {
     }
   }
 
+  // A linked account stays usable while its status is `connected`: an access token close to
+  // expiry is renewed on use. A failed renewal moves the account to `expired` (reconnect).
   async cuentaConectada(prestadorTenantId: string): Promise<boolean> {
     const cuenta = await this.store.buscarCuenta(prestadorTenantId)
-    return proyectarCuenta(prestadorTenantId, cuenta, this.now()).status === 'connected'
+    return cuenta?.status === 'connected'
+  }
+
+  async cuentaPorExterna(externalAccountId: string): Promise<CuentaCobroDominio | null> {
+    return this.store.buscarCuentaPorExterna(externalAccountId)
+  }
+
+  // Server-side only: returns the seller access token to call Mercado Pago on its behalf,
+  // renewing it first when it expires within RENOVACION_ANTICIPADA_MS. Never logged/returned.
+  async tokenVigente(
+    prestadorTenantId: string
+  ): Promise<{ accessToken: string; externalAccountId: string }> {
+    const boveda = this.boveda
+    const cuenta = await this.store.buscarCuenta(prestadorTenantId)
+    if (!boveda || !cuenta || cuenta.status !== 'connected' || !cuenta.externalAccountId)
+      throw new ErrorFinanzasServicio(
+        503,
+        'PROVIDER_ACCOUNT_NOT_CONNECTED',
+        'the provider has no connected Mercado Pago account'
+      )
+    const stored = await this.store.leerCredencial(prestadorTenantId)
+    if (!stored) {
+      await this.marcarCuenta(cuenta, 'expired', 'system:token-refresh')
+      throw new ErrorFinanzasServicio(
+        503,
+        'PROVIDER_ACCOUNT_NOT_CONNECTED',
+        'provider credentials are missing'
+      )
+    }
+    const aad = `payment-account:${prestadorTenantId}`
+    const tokens = JSON.parse(boveda.descifrar(stored.ciphertext, aad)) as {
+      accessToken: string
+      refreshToken: string | null
+      publicKey: string | null
+    }
+    const expiresAt = cuenta.expiresAt ? Date.parse(cuenta.expiresAt) : null
+    if (expiresAt === null || expiresAt - this.now() > RENOVACION_ANTICIPADA_MS)
+      return { accessToken: tokens.accessToken, externalAccountId: cuenta.externalAccountId }
+    const stillValid = expiresAt > this.now()
+    if (!tokens.refreshToken || !this.oauth) {
+      if (stillValid)
+        return { accessToken: tokens.accessToken, externalAccountId: cuenta.externalAccountId }
+      await this.marcarCuenta(cuenta, 'expired', 'system:token-refresh')
+      throw new ErrorFinanzasServicio(
+        503,
+        'PROVIDER_ACCOUNT_NOT_CONNECTED',
+        'provider authorization expired'
+      )
+    }
+    let renewed: TokenOAuthMercadoPago
+    try {
+      renewed = await this.oauth.renovarToken({ refreshToken: tokens.refreshToken })
+    } catch {
+      // A transient failure keeps a still valid token; an expired one fails closed.
+      if (stillValid)
+        return { accessToken: tokens.accessToken, externalAccountId: cuenta.externalAccountId }
+      await this.marcarCuenta(cuenta, 'expired', 'system:token-refresh')
+      throw new ErrorFinanzasServicio(
+        503,
+        'PROVIDER_ACCOUNT_NOT_CONNECTED',
+        'provider authorization expired'
+      )
+    }
+    if (renewed.userId !== cuenta.externalAccountId) {
+      await this.marcarCuenta(cuenta, 'error', 'system:token-refresh')
+      throw new ErrorFinanzasServicio(
+        503,
+        'PROVIDER_ACCOUNT_NOT_CONNECTED',
+        'renewed token belongs to another account'
+      )
+    }
+    const nowIso = new Date(this.now()).toISOString()
+    await this.store.guardarCredencial({
+      prestadorTenantId,
+      ciphertext: boveda.cifrar(
+        JSON.stringify({
+          accessToken: renewed.accessToken,
+          refreshToken: renewed.refreshToken ?? tokens.refreshToken,
+          publicKey: renewed.publicKey ?? tokens.publicKey,
+        }),
+        aad
+      ),
+      keyVersion: boveda.keyVersion,
+      updatedAt: nowIso,
+    })
+    await this.store.guardarCuenta(
+      {
+        ...cuenta,
+        scopes: renewed.scopes.length > 0 ? renewed.scopes : cuenta.scopes,
+        expiresAt:
+          renewed.expiresInSeconds === null
+            ? null
+            : new Date(this.now() + renewed.expiresInSeconds * 1000).toISOString(),
+        version: cuenta.version + 1,
+        actorId: 'system:token-refresh',
+        updatedAt: nowIso,
+      },
+      cuenta.version
+    )
+    return { accessToken: renewed.accessToken, externalAccountId: cuenta.externalAccountId }
+  }
+
+  private async marcarCuenta(
+    cuenta: CuentaCobroDominio,
+    status: EstadoCuentaCobro,
+    actorId: string
+  ): Promise<void> {
+    await this.store.guardarCuenta(
+      {
+        ...cuenta,
+        status,
+        version: cuenta.version + 1,
+        actorId,
+        updatedAt: new Date(this.now()).toISOString(),
+      },
+      cuenta.version
+    )
   }
 
   async iniciarConexion(context: {
@@ -453,15 +610,12 @@ export function proyectarCuenta(
   cuenta: CuentaCobroDominio | null,
   now: number
 ): CuentaCobroPrestador {
-  const expired =
-    cuenta?.status === 'connected' &&
-    cuenta.expiresAt !== null &&
-    Date.parse(cuenta.expiresAt) <= now
+  void now
   return {
     contractVersion: TUS_CONTRACT_VERSION,
     prestadorTenantId,
     provider: 'mercado-pago',
-    status: !cuenta ? 'not_connected' : expired ? 'expired' : cuenta.status,
+    status: !cuenta ? 'not_connected' : cuenta.status,
     externalAccountId: cuenta?.externalAccountId ?? null,
     liveMode: cuenta?.liveMode ?? null,
     scopes: cuenta?.scopes ?? [],

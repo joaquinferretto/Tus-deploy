@@ -214,6 +214,24 @@ export class CuentasCobroPrisma implements PuertoCuentasCobro {
     })
   }
 
+  async leerCredencial(
+    prestadorTenantId: string
+  ): Promise<{ ciphertext: string; keyVersion: string } | null> {
+    const row = await this.client.credencialCuentaCobro.findFirst({
+      where: { prestadorTenantId, proveedor: PROVEEDOR },
+    })
+    return row
+      ? { ciphertext: String(row['credencialCifrada']), keyVersion: String(row['versionClave']) }
+      : null
+  }
+
+  async buscarCuentaPorExterna(externalAccountId: string): Promise<CuentaCobroDominio | null> {
+    const row = await this.client.cuentaCobroPrestador.findFirst({
+      where: { cuentaExternaId: externalAccountId, proveedor: PROVEEDOR, estado: 'connected' },
+    })
+    return row ? this.buscarCuenta(String(row['prestadorTenantId'])) : null
+  }
+
   async crearEstado(estado: EstadoOAuthDominio): Promise<void> {
     await crearUnico(() =>
       this.client.estadoOAuthCobro.create({
