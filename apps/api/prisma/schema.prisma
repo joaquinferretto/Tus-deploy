@@ -2433,3 +2433,123 @@ model TusDeadLetter {
   @@unique([tenantId, id])
   @@index([tenantId, jobId, createdAt])
 }
+
+// IDENTITY-NOSIS: provider (prestador) identity verification. Partial unique indexes on verified
+// DNI/CUIL live in the migration (Prisma cannot express them).
+model VerificacionIdentidad {
+  id                       String    @id(map: "verificaciones_identidad_pkey")
+  tenantId                 String    @map("tenant_id")
+  usuarioId                String    @map("usuario_id")
+  proveedorId              String    @map("proveedor_id")
+  tipoDocumento            String    @default("dni") @map("tipo_documento")
+  numeroDocumento          String?   @map("numero_documento")
+  nombreExtraido           String?   @map("nombre_extraido")
+  apellidoExtraido         String?   @map("apellido_extraido")
+  fechaNacimientoExtraida  String?   @map("fecha_nacimiento_extraida")
+  sexoExtraido             String?   @map("sexo_extraido")
+  cuilVerificado           String?   @map("cuil_verificado")
+  estado                   String    @map("estado")
+  metodoVerificacion       String?   @map("metodo_verificacion")
+  referenciaProveedor      String?   @map("referencia_proveedor")
+  motivoRevision           String?   @map("motivo_revision")
+  notaDecision             String?   @map("nota_decision")
+  consentimientoAceptadoEn DateTime? @map("consentimiento_aceptado_en")
+  consentimientoVersion    String?   @map("consentimiento_version")
+  consentimientoProposito  String?   @map("consentimiento_proposito")
+  lecturaOcr               Json?     @map("lectura_ocr")
+  lecturaVision            Json?     @map("lectura_vision")
+  resultadoExterno         Json?     @map("resultado_externo")
+  intentos                 Int       @default(0) @map("intentos")
+  version                  Int       @default(1) @map("version")
+  fechaCreacion            DateTime  @map("fecha_creacion")
+  encoladaEn               DateTime? @map("encolada_en")
+  procesamientoIniciadoEn  DateTime? @map("procesamiento_iniciado_en")
+  verificadaEn             DateTime? @map("verificada_en")
+  rechazadaEn              DateTime? @map("rechazada_en")
+  fechaActualizacion       DateTime  @map("fecha_actualizacion")
+
+  @@index([tenantId, fechaCreacion], map: "ix_verificaciones_identidad_tenant")
+  @@index([estado, fechaCreacion], map: "ix_verificaciones_identidad_estado")
+  @@map("verificaciones_identidad")
+}
+
+// IDENTITY-NOSIS: DNI images, metadata stripped and encrypted (TUS_IDENTITY_DOCUMENTS_KEY).
+model DocumentoIdentidad {
+  id               String   @id(map: "documentos_identidad_pkey")
+  verificacionId   String   @map("verificacion_id")
+  tenantId         String   @map("tenant_id")
+  lado             String   @map("lado")
+  tipoMime         String   @map("tipo_mime")
+  tamano           Int      @map("tamano")
+  sha256           String   @map("sha256")
+  contenidoCifrado String   @map("contenido_cifrado")
+  versionClave     String   @map("version_clave")
+  fechaCreacion    DateTime @map("fecha_creacion")
+
+  @@unique([verificacionId, lado], map: "uq_documentos_identidad_lado")
+  @@map("documentos_identidad")
+}
+
+// IDENTITY-NOSIS: persistent FIFO queue with DB lease (one active job per verification).
+model ColaVerificacionIdentidad {
+  id                 String    @id(map: "cola_verificacion_identidad_pkey")
+  verificacionId     String    @map("verificacion_id")
+  etapa              String    @map("etapa")
+  estado             String    @map("estado")
+  encoladoEn         DateTime  @map("encolado_en")
+  disponibleEn       DateTime  @map("disponible_en")
+  intentos           Int       @default(0) @map("intentos")
+  leaseOwner         String?   @map("lease_owner")
+  leaseHasta         DateTime? @map("lease_hasta")
+  ultimoError        String?   @map("ultimo_error")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
+
+  @@index([estado, encoladoEn, disponibleEn], map: "ix_cola_verificacion_identidad_fifo")
+  @@map("cola_verificacion_identidad")
+}
+
+// IDENTITY-NOSIS: append-only record of every external search submitted (sliding 7/hour window).
+model ConsultaProveedorIdentidad {
+  id             String   @id(map: "consultas_proveedor_identidad_pkey")
+  proveedorId    String   @map("proveedor_id")
+  verificacionId String   @map("verificacion_id")
+  consumidaEn    DateTime @map("consumida_en")
+
+  @@index([proveedorId, consumidaEn], map: "ix_consultas_proveedor_identidad_ventana")
+  @@map("consultas_proveedor_identidad")
+}
+
+model EstadoProveedorIdentidad {
+  proveedorId         String   @id(map: "estado_proveedor_identidad_pkey") @map("proveedor_id")
+  estado              String   @map("estado")
+  erroresConsecutivos Int      @default(0) @map("errores_consecutivos")
+  motivo              String?  @map("motivo")
+  version             Int      @map("version")
+  fechaActualizacion  DateTime @map("fecha_actualizacion")
+
+  @@map("estado_proveedor_identidad")
+}
+
+// IDENTITY-NOSIS: Mi Nosis browser storage state, encrypted (TUS_NOSIS_SESSION_KEY).
+model SesionNavegadorProveedor {
+  proveedorId        String   @id(map: "sesiones_navegador_proveedor_pkey") @map("proveedor_id")
+  estadoCifrado      String   @map("estado_cifrado")
+  versionClave       String   @map("version_clave")
+  fechaActualizacion DateTime @map("fecha_actualizacion")
+
+  @@map("sesiones_navegador_proveedor")
+}
+
+model AuditoriaIdentidad {
+  id             String   @id(map: "auditoria_identidad_pkey")
+  accion         String   @map("accion")
+  verificacionId String?  @map("verificacion_id")
+  tenantId       String?  @map("tenant_id")
+  actorId        String   @map("actor_id")
+  correlacionId  String   @map("correlacion_id")
+  metadata       Json     @map("metadata")
+  fechaCreacion  DateTime @map("fecha_creacion")
+
+  @@index([verificacionId, fechaCreacion], map: "ix_auditoria_identidad_verificacion")
+  @@map("auditoria_identidad")
+}
