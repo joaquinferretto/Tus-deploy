@@ -8,7 +8,7 @@ Define a safe, durable, tenant-isolated PostgreSQL backend whose claims are back
 
 ### Requirement: Canonical configuration and seed safety
 
-The system MUST use only the repository-root `.env` `DATABASE_URL`; it MUST NOT add or honor new URL variables. Development seed MUST require explicit confirmation, preserve the user-owned remote-development target, be idempotent, and fail closed for ambiguous or production targets.
+The running application and development seed MUST use only the repository-root `.env` `DATABASE_URL`; Prisma release commands MAY use a separate `DIRECT_URL` for the same database and DDL only. Development seed MUST require explicit confirmation, preserve the user-owned remote-development target, be idempotent, and fail closed for ambiguous or production targets.
 
 #### Scenario: Confirmed versus unsafe seed
 - GIVEN a confirmed user-owned development target, or an ambiguous/production target

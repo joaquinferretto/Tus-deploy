@@ -50,10 +50,10 @@ test('identity schemas participate in the canonical contract validation command'
     }
   )
 
-  assert.match(output, /Validated 98 JSON Schema contract\(s\)/)
+  assert.match(output, /Validated 107 JSON Schema contract\(s\)/)
 })
 
-test('verified sign-in issues a scoped session and records redacted security metadata', () => {
+test('public registration ignores caller tenant authority and issues an owner session', () => {
   const result = runTypeScriptScenario(`
     const { createInMemoryAuthService } = (await import('./apps/api/src/auth-security/composition.ts')).default
 
@@ -74,7 +74,8 @@ test('verified sign-in issues a scoped session and records redacted security met
     console.log(JSON.stringify({
       ok: signIn.ok,
       hasSession: signIn.ok && signIn.session.accessToken.length > 20,
-      tenantId: signIn.ok ? signIn.session.tenantId : null,
+      callerTenantRejected: signIn.ok && signIn.session.tenantId !== 'workspace-a',
+      roles: signIn.ok ? signIn.session.scope.roles : [],
       deviceId: signIn.ok ? signIn.session.deviceId : null,
       eventSafe: auth.audit.events.every((event) => !JSON.stringify(event).includes('Correct horse')),
     }))
@@ -83,7 +84,8 @@ test('verified sign-in issues a scoped session and records redacted security met
   assert.deepEqual(result, {
     ok: true,
     hasSession: true,
-    tenantId: 'workspace-a',
+    callerTenantRejected: true,
+    roles: ['owner'],
     deviceId: 'device-a',
     eventSafe: true,
   })
@@ -193,8 +195,8 @@ test('account updates cannot mutate privilege fields or another actor identity',
     const { createInMemoryAuthService } = (await import('./apps/api/src/auth-security/composition.ts')).default
 
     const auth = createInMemoryAuthService({ now: () => 1_700_000_000_000 })
-    const first = await auth.register({ email: 'first@example.com', password: 'First password 123!', displayName: 'First', tenantId: 'tenant-a' })
-    const second = await auth.register({ email: 'second@example.com', password: 'Second password 456!', displayName: 'Second', tenantId: 'tenant-b' })
+    const first = await auth.register({ email: 'first@example.com', password: 'First password 123!', displayName: 'First' })
+    const second = await auth.register({ email: 'second@example.com', password: 'Second password 456!', displayName: 'Second' })
     const displayName = await auth.updateAccount({ actorId: first.account.id, accountId: first.account.id, changes: { displayName: 'Updated First' } })
     const roleEscalation = await auth.updateAccount({ actorId: first.account.id, accountId: first.account.id, changes: { roles: ['product-superadmin'] } })
     const crossAccount = await auth.updateAccount({ actorId: first.account.id, accountId: second.account.id, changes: { displayName: 'Stolen' } })
@@ -211,7 +213,7 @@ test('account updates cannot mutate privilege fields or another actor identity',
     displayName: true,
     roleEscalation: 'FORBIDDEN',
     crossAccount: 'FORBIDDEN',
-    storedRole: ['member'],
+    storedRole: ['owner'],
   })
 })
 

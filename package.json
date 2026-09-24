@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "turbo run dev --parallel",
     "build": "turbo run build --concurrency=1",
+    "pretest": "corepack pnpm --filter @factory/errors build",
     "test": "node scripts/test-runner.mjs",
     "test:foundation": "node --experimental-strip-types --experimental-transform-types --experimental-loader ./scripts/node-strip-types-loader.mjs --test tests/foundation/*.test.mjs",
     "lint": "turbo run lint --concurrency=1",

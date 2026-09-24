@@ -18,7 +18,7 @@ const { createCorsMiddleware, CORS_ALLOWED_HEADERS } = await import(
   '../../apps/api/src/presentation/middleware/cors.ts'
 )
 const { createSafeLogger } = await import('../../apps/api/src/presentation/middleware/logger.ts')
-const { resolveListenHost, resolveListenPort } = await import('../../apps/api/src/platform/runtime.ts')
+const { resolveListenHost, resolveListenPort, resolveTrustProxy } = await import('../../apps/api/src/platform/runtime.ts')
 const { incompleteSchema } = await import('../../apps/api/src/infrastructure/database/lifecycle.ts')
 const { InMemoryIdentityStore } = await import(
   '../../apps/api/src/auth-security/adapters/in-memory-identity-store.ts'
@@ -97,6 +97,13 @@ test('Render uses PORT and public binding while local development remains loopba
   assert.equal(resolveListenHost({ NODE_ENV: 'production' }), '0.0.0.0')
   assert.equal(resolveListenPort({ API_PORT: '3999' }, 'development'), 3999)
   assert.equal(resolveListenHost({ NODE_ENV: 'development' }), '127.0.0.1')
+})
+
+test('trusted proxy hops are explicit and bounded', () => {
+  assert.equal(resolveTrustProxy({}), false)
+  assert.equal(resolveTrustProxy({ TRUST_PROXY_HOPS: '1' }), 1)
+  assert.throws(() => resolveTrustProxy({ TRUST_PROXY_HOPS: 'true' }), /Invalid trusted proxy/u)
+  assert.throws(() => resolveTrustProxy({ TRUST_PROXY_HOPS: '0' }), /Invalid trusted proxy/u)
 })
 
 test('incomplete schema is explicit and safe for readiness consumers', () => {

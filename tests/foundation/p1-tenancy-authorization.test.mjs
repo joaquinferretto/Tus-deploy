@@ -93,6 +93,28 @@ test('organization bootstrap creates a default workspace, owner role, and active
   })
 })
 
+test('Prisma tenancy membership lookup resolves account identity to its user identity', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaTenancyStore } = (await import('./apps/api/src/tenancy/adapters/prisma.ts')).default
+    const calls = []
+    const client = {
+      account: { findUnique: async ({ where, include }) => (calls.push(['account', where, include]), { user: { id: 'user-a' } }) },
+      membership: { findFirst: async ({ where }) => (calls.push(['membership', where]), { id: 'membership-a', organizationId: 'tenant-a', userId: 'user-a', roleIds: [], status: 'active', createdAt: new Date(1) }) },
+    }
+    const store = new PrismaTenancyStore(client)
+    const membership = await store.findMembershipByActor('tenant-a', 'account-a')
+    console.log(JSON.stringify({ membership, calls }))
+  `)
+
+  assert.deepEqual(result, {
+    membership: { id: 'membership-a', tenantId: 'tenant-a', userId: 'user-a', roleIds: [], status: 'active', createdAt: 1, revokedAt: null },
+    calls: [
+      ['account', { id: 'account-a' }, { user: true }],
+      ['membership', { organizationId: 'tenant-a', userId: 'user-a' }],
+    ],
+  })
+})
+
 test('resource reads and writes stay tenant-scoped, including direct identifiers and list filters', () => {
   const result = runTypeScriptScenario(`
     const { createInMemoryTenancyService } = (await import('./apps/api/src/tenancy/composition.ts')).default

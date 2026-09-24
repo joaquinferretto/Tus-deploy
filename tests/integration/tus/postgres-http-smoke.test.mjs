@@ -184,6 +184,11 @@ test('child process receives only the canonical DATABASE_URL and safe runtime va
   })
 
   assert.equal(environment.DATABASE_URL, 'postgresql://user:secret@db.example.test/tus?sslmode=require')
+  const migrationEnvironment = buildPostgresChildEnvironment({
+    postgresUrl: 'postgresql://user:secret@db.example.test/tus?sslmode=require',
+    directUrl: 'postgresql://migration:secret@db.example.test/tus?sslmode=require',
+  })
+  assert.equal(migrationEnvironment.DIRECT_URL, 'postgresql://migration:secret@db.example.test/tus?sslmode=require')
   assert.equal(environment.PATH, 'safe-path')
   assert.equal('AWS_SECRET_ACCESS_KEY' in environment, false)
   assert.equal('TUS_POSTGRES_URL' in environment, false)

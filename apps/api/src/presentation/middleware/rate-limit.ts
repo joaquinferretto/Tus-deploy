@@ -1,17 +1,21 @@
 import rateLimit from 'express-rate-limit'
 import RedisStore from 'rate-limit-redis'
 
-const useRedisStore = process.env['NATIVE_PROFILE'] !== '1' && Boolean(process.env['REDIS_URL'])
-const redisStore = useRedisStore
-  ? new RedisStore({
+function createRedisStore(prefix: string): RedisStore | undefined {
+  const useRedisStore = process.env['NATIVE_PROFILE'] !== '1' && Boolean(process.env['REDIS_URL'])
+  return useRedisStore
+    ? new RedisStore({
       sendCommand: async (...args: string[]) => {
         const { getRedisClient } = await import('../../infrastructure/database/redis/client.js')
         const client = getRedisClient() as unknown as { call(...command: string[]): Promise<never> }
         return client.call(...args)
       },
-      prefix: 'rl:',
+      prefix,
     })
-  : undefined
+    : undefined
+}
+
+const redisStore = createRedisStore('rl:global:')
 
 export const rateLimitMiddleware = rateLimit({
   ...(redisStore ? { store: redisStore } : {}),
@@ -26,4 +30,17 @@ export const rateLimitMiddleware = rateLimit({
     // Skip rate limiting for health checks
     return req.path === '/health' || req.path === '/ready'
   },
+})
+
+const authRedisStore = createRedisStore('rl:auth:')
+
+export const authRateLimitMiddleware = rateLimit({
+  ...(authRedisStore ? { store: authRedisStore } : {}),
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: {
+    error: 'Too many authentication attempts from this IP, please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 })

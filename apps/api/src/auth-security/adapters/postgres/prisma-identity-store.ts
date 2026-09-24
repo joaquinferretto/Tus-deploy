@@ -89,6 +89,13 @@ interface CreateDelegate {
   create(args: { data: Record<string, unknown> }): Promise<unknown>
 }
 
+interface MembershipDelegate extends CreateDelegate {
+  findFirst(args: {
+    where: { organizationId: string; userId: string; status: string }
+    select: { id: true }
+  }): Promise<{ id: string } | null>
+}
+
 export interface PrismaIdentityClient {
   user: UserDelegate
   account: AccountDelegate
@@ -101,7 +108,7 @@ export interface PrismaIdentityClient {
   organization: CreateDelegate
   workspace: CreateDelegate
   tenantRole: CreateDelegate
-  membership: CreateDelegate
+  membership: MembershipDelegate
   auditEvent?: {
     create(args: { data: Record<string, unknown> }): Promise<unknown>
   }
@@ -281,6 +288,20 @@ export class PrismaIdentityStore implements IdentityStore {
         updatedAt: toRequiredDate(account.updatedAt),
       },
     })
+  }
+
+  async hasActiveMembership(accountId: string, tenantId: string): Promise<boolean> {
+    const account = await this.client.account.findUnique({
+      where: { id: accountId },
+      include: { user: true },
+    })
+    if (!account) return false
+
+    const membership = await this.client.membership.findFirst({
+      where: { organizationId: tenantId, userId: account.user.id, status: 'active' },
+      select: { id: true },
+    })
+    return membership !== null
   }
 
   private async bootstrapTenant(account: Account, userId: string): Promise<void> {

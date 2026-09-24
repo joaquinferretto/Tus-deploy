@@ -9,6 +9,7 @@ Values are never copied into this document or emitted by a runner.
 | Canonical name/source | Consumer | Alias status | Removal evidence |
 |---|---|---|---|
 | Root `.env` `DATABASE_URL` | Prisma/API and local native profile | Canonical application source | Required for local application configuration |
+| `DIRECT_URL` | Prisma CLI release step only | Canonical direct migration endpoint | Never consumed by the running API or seed scripts |
 | `NODE_ENV` | API/runtime and safety gate | Existing profile metadata | `development`/`test` prove local intent; `production` refuses seed |
 | `FACTORY_PROFILE` | API/runtime and safety gate | Existing profile metadata | `local`/`test` prove local intent; deployment profiles refuse seed |
 | `NEXT_PUBLIC_API_URL` | `apps/web/src/lib/*` | Canonical web public API URL | `API_BASE_URL` remains a deployment alias until all manifests are migrated |
@@ -28,8 +29,9 @@ Similar names are not proof that a variable is unused.
 ## Safe normalization rules
 
 1. Do not read or print secret values while inventorying consumers.
-2. Keep `DATABASE_URL` as the only database URL key; no runner URL or ambient
-   value configures Prisma, the seed, or the deployed application.
+2. Keep `DATABASE_URL` as the only application/seed database URL. `DIRECT_URL`
+   is a release-only Prisma connection for DDL and must target the same database;
+   it never overrides runtime or seed authority.
 3. Do not require or read the former six-field `TUS_TEST_*` metadata contract.
    Existing `NODE_ENV`/`FACTORY_PROFILE` values are the only profile inputs.
 4. Any removal requires a dated evidence entry, passing contract tests, and a
@@ -46,3 +48,4 @@ Similar names are not proof that a variable is unused.
 | 2026-08-30 | Initial inventory for TUS product hardening | Aliases retained; no unproven variable removed | deterministic |
 | 2026-08-30 | Render/Vercel contract review | Render remains fail-closed; Vercel uses the Next app contract and has no provider activation | deployment / external-blocked |
 | 2026-08-31 | PostgreSQL safety simplification | Root `DATABASE_URL` only; explicit local/test profile and seed intent; former runner URL/metadata inputs removed from active consumers | deterministic |
+| 2026-09-24 | Managed PostgreSQL release split | `DATABASE_URL` remains runtime/seed authority; `DIRECT_URL` is restricted to Prisma migration jobs for the same database | staging / release |

@@ -489,7 +489,7 @@ function isUnsafeHost(hostname) {
   return /(?:^|[-_.])(prod|production|shared|pooler|staging|stage)(?:[-_.]|$)/iu.test(hostname)
 }
 
-export function buildPostgresChildEnvironment({ postgresUrl, baseEnvironment = process.env, extra = {} } = {}) {
+export function buildPostgresChildEnvironment({ postgresUrl, directUrl, baseEnvironment = process.env, extra = {} } = {}) {
   const childEnvironment = Object.fromEntries(
     SAFE_CHILD_ENV_VARS
       .filter((name) => typeof baseEnvironment?.[name] === 'string' && baseEnvironment[name].length > 0)
@@ -500,7 +500,12 @@ export function buildPostgresChildEnvironment({ postgresUrl, baseEnvironment = p
       .filter((name) => typeof extra?.[name] === 'string' && extra[name].length > 0)
       .map((name) => [name, extra[name]]),
   )
-  return { ...childEnvironment, DATABASE_URL: postgresUrl, ...safeExtra }
+  return {
+    ...childEnvironment,
+    DATABASE_URL: postgresUrl,
+    ...(directUrl ? { DIRECT_URL: directUrl } : {}),
+    ...safeExtra,
+  }
 }
 
 function zeroPostgresActions() {
@@ -1147,7 +1152,7 @@ async function runPrismaCommand(args, postgresUrl, timeoutMs) {
   const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
   await execFileAsync(command, ['--filter', '@factory/api', 'exec', 'prisma', ...args], {
     cwd: REPO_ROOT,
-    env: buildPostgresChildEnvironment({ postgresUrl }),
+    env: buildPostgresChildEnvironment({ postgresUrl, directUrl: postgresUrl }),
     timeout: timeoutMs,
     windowsHide: true,
     maxBuffer: 32 * 1024,

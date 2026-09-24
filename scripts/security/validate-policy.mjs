@@ -8,7 +8,8 @@ const REQUIRED_SCAN_COMMANDS = [
 
 const SENSITIVE_RENDER_KEYS = [
   'DATABASE_URL',
-  'MONGODB_URI',
+  'DIRECT_URL',
+  'MONGODB_URL',
   'REDIS_URL',
   'B2_ENDPOINT',
   'B2_BUCKET',
@@ -62,7 +63,7 @@ export function validateSecurityPolicy({
       findings.push(`security workflow is missing ${command}`)
   }
 
-  if (!securityWorkflow.includes('permissions:\n  contents: read')) {
+  if (!/permissions:\r?\n\s+contents:\s*read/u.test(securityWorkflow)) {
     findings.push('security workflow must use read-only repository permissions')
   }
   if (!ciWorkflow.includes('pnpm install --frozen-lockfile')) {

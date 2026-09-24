@@ -64,6 +64,16 @@ test('tracked-secret scanning catches committed synthetic credentials without re
   runFailingScan(['--tracked'], directory)
 })
 
+test('secret scanning permits only exact, documented fixture values', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'factory-p6-fixture-'))
+  const fixture = join(directory, 'fixture.txt')
+   writeFileSync(fixture, 'SECURITY_SCAN_FIXTURE\naccess_token: "access-token-placeholder"\n')
+  execFileSync(process.execPath, [scanner, '--paths', fixture], { cwd: root, encoding: 'utf8' })
+
+   writeFileSync(fixture, 'SECURITY_SCAN_FIXTURE\naccess_token: "access-token-placeholder-real-value"\n')
+  runFailingScan(['--paths', fixture], root)
+})
+
 test('security policy blocks credential printing and enforces secret-store-only bootstrap', () => {
   const policy = validateSecurityPolicy({
     securityWorkflow: readFileSync(join(root, '.github', 'workflows', 'security.yml'), 'utf8'),

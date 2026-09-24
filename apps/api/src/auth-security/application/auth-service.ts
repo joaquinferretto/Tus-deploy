@@ -38,7 +38,6 @@ export interface RegisterInput {
   email: string
   password: string
   displayName: string
-  tenantId?: string
 }
 
 export interface RegisterResult {
@@ -113,14 +112,13 @@ export class AuthService {
     }
 
     const now = this.dependencies.clock.now()
-    const requestedTenantId = input.tenantId?.trim()
     const account: Account = {
       id: this.dependencies.ids.next(),
       email: input.email.trim(),
       normalizedEmail,
       displayName: input.displayName.trim(),
-      tenantId: requestedTenantId || this.dependencies.ids.next(),
-      roles: requestedTenantId ? ['member'] : ['owner'],
+      tenantId: this.dependencies.ids.next(),
+      roles: ['owner'],
       status: 'active',
       emailVerifiedAt: null,
       createdAt: now,
@@ -137,7 +135,7 @@ export class AuthService {
     }
     const verificationToken = this.dependencies.tokens.issue()
 
-    await store.saveAccount(account, { bootstrapTenant: !requestedTenantId })
+    await store.saveAccount(account, { bootstrapTenant: true })
     await store.saveCredential(credential)
     await store.saveVerificationToken({
       id: this.dependencies.ids.next(),

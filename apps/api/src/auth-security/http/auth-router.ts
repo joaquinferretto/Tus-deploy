@@ -20,7 +20,6 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
         email: readString(body, 'email'),
         password: readString(body, 'password'),
         displayName: readString(body, 'displayName'),
-        tenantId: readOptionalString(body, 'tenantId'),
       })
       response.status(201).json({ account: result.account, credential: result.credential })
     } catch (error) {

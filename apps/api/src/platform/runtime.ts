@@ -21,3 +21,15 @@ export function resolveListenHost(
   if (environment['NODE_ENV'] === 'production' || environment['RENDER'] === 'true') return '0.0.0.0'
   return '127.0.0.1'
 }
+
+export function resolveTrustProxy(
+  environment: Record<string, string | undefined> = process.env,
+): number | false {
+  const configured = environment['TRUST_PROXY_HOPS']?.trim()
+  if (!configured) return false
+  const hops = Number(configured)
+  if (!Number.isInteger(hops) || hops < 1 || hops > 10) {
+    throw new Error('Invalid trusted proxy configuration')
+  }
+  return hops
+}

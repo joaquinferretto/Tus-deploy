@@ -14,6 +14,8 @@ import { connectPrisma, disconnectPrisma } from './prisma/client.ts'
 export const REQUIRED_API_SCHEMA_TABLES = [
   'evidencias_habilitacion',
   'decisiones_habilitacion',
+  'configuraciones_pagos_servicio',
+  'reembolsos_servicio',
 ] as const
 
 export interface SchemaReadiness {

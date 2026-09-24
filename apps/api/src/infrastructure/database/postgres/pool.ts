@@ -32,7 +32,7 @@ export function createPostgresPool(databaseUrl: string = readRootDatabaseUrl() ?
 
   const config: PoolConfig = {
     connectionString: databaseUrl,
-    max: 20,
+    max: 2,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: DATABASE_ATTEMPT_TIMEOUT_MS,
     statement_timeout: DATABASE_ATTEMPT_TIMEOUT_MS,

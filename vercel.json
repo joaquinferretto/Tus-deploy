@@ -1,7 +1,7 @@
 {
   "framework": "nextjs",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm --filter @factory/web build",
+  "buildCommand": "pnpm --filter @factory/web... build",
   "outputDirectory": "apps/web/.next",
   "env": {
     "TUS_ROUTES_ENABLED": "false",

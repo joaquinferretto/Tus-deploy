@@ -64,6 +64,7 @@ export function loadApiRuntimeConfig(options: ApiRuntimeConfigOptions = {}): Api
 
   if (!databaseUrl) throw new Error('Missing canonical PostgreSQL configuration')
   if (!/^postgres(?:ql)?:\/\//iu.test(databaseUrl)) throw new Error('Invalid canonical PostgreSQL configuration')
+  if (environmentName === 'production') validateProductionDatabaseTls(databaseUrl)
 
   const shutdownTimeoutMs = Number(options.shutdownTimeoutMs ?? environment['SHUTDOWN_TIMEOUT_MS'] ?? DEFAULT_SHUTDOWN_TIMEOUT_MS)
   if (!Number.isFinite(shutdownTimeoutMs) || shutdownTimeoutMs <= 0) {
@@ -77,6 +78,18 @@ export function loadApiRuntimeConfig(options: ApiRuntimeConfigOptions = {}): Api
     shutdownTimeoutMs: Math.min(shutdownTimeoutMs, 120_000),
     environment: environmentName,
     providersEnabled: false,
+  }
+}
+
+function validateProductionDatabaseTls(databaseUrl: string): void {
+  let sslMode: string | null
+  try {
+    sslMode = new URL(databaseUrl).searchParams.get('sslmode')
+  } catch {
+    throw new Error('Invalid canonical PostgreSQL configuration')
+  }
+  if (!sslMode || !['require', 'verify-ca', 'verify-full'].includes(sslMode.toLowerCase())) {
+    throw new Error('Production PostgreSQL requires TLS')
   }
 }
 

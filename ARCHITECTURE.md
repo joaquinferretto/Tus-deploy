@@ -77,6 +77,9 @@ no bounded contexts adicionales.
 6. acciones de proveedores cuando `TUS_PROVIDER_ACTIONS_ENABLED=true`;
 7. handlers de 404 y errores.
 
+En desarrollo local, la API usa `API_PORT=3101` por defecto; `PORT` prevalece en
+produccion y un `API_PORT` explicito conserva prioridad fuera de produccion.
+
 `apps/api/src/tus/composition/index.ts` arma los servicios con stores in-memory o Prisma. La misma logica de
 aplicacion se puede ejecutar en tests deterministas y en persistencia PostgreSQL sin cambiar el contrato de uso.
 

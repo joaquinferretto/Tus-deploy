@@ -27,6 +27,11 @@ export class InMemoryIdentityStore implements IdentityStore {
     return this.accounts.get(accountId)
   }
 
+  async hasActiveMembership(accountId: string, tenantId: string): Promise<boolean> {
+    const account = this.accounts.get(accountId)
+    return account?.status === 'active' && account.tenantId === tenantId
+  }
+
   async saveAccount(account: Account): Promise<void> {
     this.accounts.set(account.id, account)
   }

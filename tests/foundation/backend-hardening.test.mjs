@@ -41,6 +41,21 @@ test('API configuration reads only root DATABASE_URL and seed safety fails close
   }
 })
 
+test('production PostgreSQL configuration requires TLS', () => {
+  assert.throws(
+    () => loadApiRuntimeConfig({ environment: { NODE_ENV: 'production', DATABASE_URL: 'postgresql://user:secret@db.example.test/tus' } }),
+    /requires TLS/u,
+  )
+  assert.throws(
+    () => loadApiRuntimeConfig({ environment: { NODE_ENV: 'production', DATABASE_URL: 'postgresql://user:secret@db.example.test/tus?sslmode=disable' } }),
+    /requires TLS/u,
+  )
+  assert.equal(
+    loadApiRuntimeConfig({ environment: { NODE_ENV: 'production', DATABASE_URL: 'postgresql://user:secret@db.example.test/tus?sslmode=require' } }).environment,
+    'production',
+  )
+})
+
 test('database startup makes exactly two bounded attempts and closes each failed pool', async () => {
   let attempts = 0
   let closed = 0

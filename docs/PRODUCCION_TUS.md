@@ -1,6 +1,7 @@
 # Producción TUS: despliegue, variables, migraciones y pagos
 
-> **Estado (2026-09-24, rama `web-tus`):** Web y API son desplegables para que el equipo vea y use TUS. La integración
+> **Estado (2026-09-24, rama `web-tus`):** el paquete de staging está preparado, pero el despliegue permanece en
+> **NO-GO** hasta completar el checklist de este documento y el gate de `docs/SEGURIDAD_TUS.md`. La integración
 > real de Mercado Pago (WEB-09E: Checkout Pro + Split 1:1, OAuth con renovación, webhook firmado y reembolsos) está
 > implementada para **sandbox**, pero **no se probó contra Mercado Pago** porque no hay credenciales de prueba cargadas. El
 > **dinero real no es habilitable**. Todo lo de pagos falla cerrado mientras falte configuración.
@@ -9,11 +10,11 @@ Este documento es la guía práctica. El detalle técnico de pagos está en `doc
 
 ## 1. Arquitectura de despliegue recomendada
 
-| Pieza      | Destino recomendado                   | Configuración en el repo                                |
-| ---------- | ------------------------------------- | ------------------------------------------------------- |
-| Web        | Vercel (o Render `factory-web`)       | `vercel.json`, `apps/web/next.config.js`, `render.yaml` |
-| API        | Render `factory-api` (Node 20/22)     | `render.yaml` (build, `preDeployCommand`, `/health`)    |
-| PostgreSQL | PostgreSQL administrado (Neon/Render) | `DATABASE_URL`; migraciones Prisma forward-only         |
+| Pieza      | Destino de staging             | Configuración en el repo                                      |
+| ---------- | ------------------------------ | ------------------------------------------------------------- |
+| Web        | Vercel                        | `vercel.json`, `apps/web/next.config.js`                       |
+| API        | Hostinger Node.js, Node 22    | comandos reproducibles de §3; `/health` y `/ready`             |
+| PostgreSQL | PostgreSQL 16 administrado    | `DATABASE_URL` pooled + `DIRECT_URL` directa; Prisma forward-only |
 
 No se usan Docker ni Terraform en este perfil. Nada de esto se aplicó automáticamente: no se creó infraestructura paga ni
 se desplegó.
@@ -23,20 +24,23 @@ jobs de release/flota, provider actions. Con `NATIVE_PROFILE=1` el `/ready` de l
 
 ## 2. Variables de entorno
 
-Nunca pegues valores reales en Git, en este documento ni en `NEXT_PUBLIC_*`. Los secretos van en el panel de Render
+Nunca pegues valores reales en Git, en este documento ni en `NEXT_PUBLIC_*`. Los secretos van en el panel de Hostinger
 (Environment → secret) o en el secret manager que use el equipo. `.env.example` solo tiene marcadores.
 
-### API (Render `factory-api`)
+### API (Hostinger)
 
 | Variable                       | Obligatoria      | Valor / ejemplo                                              | Secreto |
 | ------------------------------ | ---------------- | ------------------------------------------------------------ | ------- |
 | `NODE_ENV`                     | sí               | `production`                                                 | no      |
 | `DATABASE_URL`                 | sí               | `postgresql://USER:PASSWORD@HOST:5432/DB?sslmode=require`    | **sí**  |
+| `DIRECT_URL`                   | solo release     | endpoint directo de la misma DB, con TLS y permisos DDL      | **sí**  |
 | `CORS_ORIGINS`                 | sí               | `https://<dominio-web>` (separadas por coma, sin `/` final)  | no      |
 | `NATIVE_PROFILE`               | sí               | `1` (Mongo/Redis/worker opcionales para `/ready`)            | no      |
 | `TUS_ROUTES_ENABLED`           | sí para usar TUS | `true` (en `render.yaml` sigue `false` por política; ver §5) | no      |
 | `SECRET_STORE_REF`             | no (declarativa) | referencia del secret store; la API no la lee al arrancar    | no      |
-| `PORT` / `HOST`                | no               | los pone Render; en producción escucha en `0.0.0.0`          | no      |
+| `PORT`                         | sí               | lo entrega Hostinger; prevalece sobre `API_PORT`             | no      |
+| `HOST`                         | no               | default productivo `0.0.0.0`                                 | no      |
+| `TRUST_PROXY_HOPS`             | sí               | `1` si hay exactamente un proxy Hostinger delante de Node    | no      |
 | `SHUTDOWN_TIMEOUT_MS`          | no               | default del runtime                                          | no      |
 | `TUS_PROVIDER_ACTIONS_ENABLED` | no               | `false`                                                      | no      |
 | `TUS_RELEASE_JOBS_ENABLED`     | no               | `false`                                                      | no      |
@@ -82,48 +86,53 @@ La Web **no** necesita ningún secreto. Nunca definas tokens o claves en variabl
 
 ### PostgreSQL
 
-- PostgreSQL 16 (probado con 16.15). TLS (`sslmode=require`) en el proveedor administrado.
-- Un usuario con permisos DDL para `prisma migrate deploy` (puede ser distinto del usuario de runtime si el proveedor lo
-  permite).
+- PostgreSQL 16. TLS obligatorio: la API rechaza `DATABASE_URL` productiva sin `sslmode=require`, `verify-ca` o
+  `verify-full`.
+- `DATABASE_URL`: endpoint pooled, usuario de runtime con privilegios mínimos y límite de conexiones acorde al plan.
+- `DIRECT_URL`: endpoint directo de la misma base, usuario de migración con DDL; cargarlo solo en el release job.
+- Confirmar antes de migrar que `vector` está disponible e instalado. La cadena crea HNSW y falla si el plan no soporta
+  pgvector.
 - Backups automáticos + posibilidad de restauración puntual (PITR) antes de migrar.
 
-## 3. Desplegar la API (Render)
+## 3. Preparar la API en Hostinger
 
-1. En Render: New → Blueprint → este repositorio, rama `web-tus` (o crear el servicio web manualmente con los mismos
-   comandos).
-2. Comandos (ya en `render.yaml`):
-   - Build: `pnpm install --frozen-lockfile && pnpm --filter @factory/api build`
-   - Pre-deploy: `pnpm --filter @factory/api prisma:migrate:deploy` (solo después de hacer el backup; ver §6)
-   - Start: `pnpm --filter @factory/api start` (`node dist/index.js`)
-   - Health check: `/health`
-3. Cargar las variables de §2 (API). Mínimo: `DATABASE_URL`, `CORS_ORIGINS`, `NATIVE_PROFILE=1`,
-   `TUS_ROUTES_ENABLED=true`.
-4. Verificar:
+1. Configurar raíz del repositorio, Node `22.x` y Corepack/pnpm `9.15.9`.
+2. Install: `corepack pnpm install --frozen-lockfile`.
+3. Build: `corepack pnpm --filter @factory/api... build`. Los tres puntos son obligatorios: compilan primero todas las
+   dependencias workspace y evitan depender de `dist/` cacheado.
+4. Release, manual y separado del build: `corepack pnpm --filter @factory/api prisma:migrate:deploy`, únicamente después
+   del gate PostgreSQL de §6. No configurar migración automática hasta probar la cadena sobre un clon descartable.
+5. Start: `corepack pnpm --filter @factory/api start` (`node dist/index.js`). No usar `tsx`, watcher ni `pnpm dev`.
+6. Cargar las variables de §2. Para staging funcional: `NATIVE_PROFILE=1`, `TUS_ROUTES_ENABLED=true`, provider actions y
+   pagos en `false`.
+7. Verificar:
    - `GET https://<api>/health` → `200 {"status":"ok"}`.
    - `GET https://<api>/ready` → `200 {"ready":true}` (con `NATIVE_PROFILE=1`; si da `503` revisar `dependencies` y
      `schema` en la respuesta).
-5. La API cierra de forma ordenada ante `SIGTERM` (HTTP, base de datos y clientes opcionales con timeout).
+8. Configurar liveness en `/health` y, si Hostinger permite readiness, tráfico solo con `/ready` en 200.
+9. Verificar que `TRUST_PROXY_HOPS=1` devuelve buckets de rate limit por IP real. Si la topología tiene otro número de
+   proxies, medirlo y fijar el valor exacto; nunca usar `trust proxy=true`.
 
 ## 4. Desplegar la Web (Vercel)
 
 1. Importar el repositorio en Vercel. Opción recomendada: **Root Directory = raíz del repo** (usa `vercel.json`:
-   instala con pnpm y construye `@factory/web`). Alternativa: Root Directory `apps/web` con framework Next.js.
+   instala con pnpm y ejecuta `pnpm --filter @factory/web... build`). No usar `apps/web` como raíz sin replicar el acceso
+   a dependencias workspace.
 2. Variables: `NEXT_PUBLIC_API_URL=https://<api>`, `NEXT_PUBLIC_SITE_URL=https://<web>`.
 3. Deploy. Luego agregar `https://<web>` a `CORS_ORIGINS` de la API y redeployar la API.
 4. Verificar `https://<web>/`, `/sign-in`, `/tus/mercado` y `/tus/prestador`. Si la API no responde, la Web muestra
    estados de error con reintento (no usa mocks).
 
-El build local en Windows puede fallar solo en el paso `standalone` por symlinks (`EPERM`); en Linux (Vercel/Render) no
-aplica. Para verificar localmente: `NEXT_DISABLE_STANDALONE=true pnpm --filter @factory/web build`.
+El build local en Windows puede fallar solo en el paso `standalone` por symlinks (`EPERM`); en Linux/Vercel no aplica.
+Para verificar localmente: `NEXT_DISABLE_STANDALONE=true pnpm --filter @factory/web... build`.
 
 ## 5. Habilitar TUS para el equipo (sin dinero real)
 
-1. `TUS_ROUTES_ENABLED=true` en la API. `render.yaml` lo mantiene en `false` porque los tests de contrato de despliegue
-   fijan esa política; si usás Blueprint, cambiá el valor en el panel **y** tené en cuenta que un "sync" del Blueprint puede
-   volverlo a `false` (alternativa: editar `render.yaml` como decisión explícita).
+1. `TUS_ROUTES_ENABLED=true` en la API de staging. Mantener `TUS_PROVIDER_ACTIONS_ENABLED=false` y
+   `TUS_MERCADOPAGO_ENABLED=false`.
 2. Cuentas del equipo: `POST /auth/register` crea cuenta y tenant, pero **el backend no envía emails todavía**
    (`InMemoryEmailSender`) y el login exige email verificado. Hasta integrar un proveedor de correo, un operador puede
-   verificar cuentas **del equipo** con SQL auditado sobre la base de producción:
+    verificar cuentas **del equipo** con SQL auditado solo sobre la base de staging:
 
    ```sql
    UPDATE "Account" a SET "emailVerifiedAt" = now(), "updatedAt" = now()
@@ -140,8 +149,8 @@ aplica. Para verificar localmente: `NEXT_DISABLE_STANDALONE=true pnpm --filter @
 
 ## 6. Migraciones de base de datos (runbook)
 
-Pendientes contra `factory_local` (consulta de solo lectura, 2026-09-24). Para producción recalcular con
-`prisma migrate status` contra la base real:
+La DB de staging debe ser nueva y vacía. No usar `factory_local`. Antes de aplicar, clasificar el target como **fresh** y
+probar la cadena completa sobre una base PostgreSQL 16 descartable con pgvector:
 
 1. `20260916140000_tus_provider_agenda_publication_modes`
 2. `20260917100000_tus_work_budget`
@@ -158,27 +167,31 @@ en 5,4 s y upgrade desde 40 con datos previos en 1,8 s.
 
 **No aplicar sobre `factory_local` ni sobre una base compartida sin autorización explícita.**
 
-1. **Backup:** snapshot del proveedor + `pg_dump --format=custom --no-owner "$DATABASE_URL" > tus-pre-migracion.dump`;
-   verificar que se puede restaurar en una base descartable.
-2. **Detener la API** (Render: suspender el servicio o escalar a 0) para evitar escrituras durante el DDL.
-3. **Preflight de solo lectura** (checklist DB-09-SAFETY en `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`): filas legacy
+1. **Preflight:** `SHOW server_version;` y consultar `pg_available_extensions` para `vector`. Si la credencial de migración
+   no puede instalarla, pedir al proveedor que lo haga antes.
+2. **Linaje:** confirmar DB vacía o `_prisma_migrations` canónico sin filas fallidas. Un target divergente es NO-GO y no
+   debe recibir replay histórico.
+3. **Backup:** snapshot/PITR del proveedor; incluso en staging, probar restauración antes del primer cambio con datos.
+4. **Detener la API** si el target ya recibe tráfico, para evitar escrituras durante el DDL.
+5. **Preflight de solo lectura** (checklist DB-09-SAFETY en `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`): filas legacy
    incompatibles y trabajos que compartan reserva (bloquean `uq_trabajos_reserva`).
-4. **Timeouts de sesión** para que un lock no quede colgado:
-   `DATABASE_URL="...?options=-c%20lock_timeout%3D5s%20-c%20statement_timeout%3D300s"` (o
+6. **Timeouts de sesión** para que un lock no quede colgado:
+   `DIRECT_URL="...?options=-c%20lock_timeout%3D5s%20-c%20statement_timeout%3D300s"` (o
    `ALTER ROLE <migrador> SET lock_timeout = '5s'; ALTER ROLE <migrador> SET statement_timeout = '300s';`).
-5. **Aplicar:** `pnpm --filter @factory/api prisma:migrate:deploy` (o el `preDeployCommand` de Render).
-6. **Verificar historial:**
+7. **Aplicar:** `corepack pnpm --filter @factory/api prisma:migrate:deploy`; Prisma usa `DIRECT_URL` para DDL.
+8. **Verificar historial:**
    `SELECT migration_name, finished_at, rolled_back_at FROM _prisma_migrations ORDER BY started_at DESC LIMIT 10;`
-   → las 9 con `finished_at` no nulo y `rolled_back_at` nulo; `prisma migrate status` → "Database schema is up to date".
-7. **Smoke DB:** existen `politicas_comision_servicio`, `configuraciones_pagos_servicio`, `cuentas_cobro_prestador`,
+   → en una DB fresh, las 41 migraciones deben tener `finished_at` no nulo y `rolled_back_at` nulo; en un upgrade, las 9
+   nuevas de este release deben cumplirlo; `prisma migrate status` → "Database schema is up to date".
+9. **Smoke DB:** existen `politicas_comision_servicio`, `configuraciones_pagos_servicio`, `cuentas_cobro_prestador`,
    `obligaciones_pago_servicio`, `reembolsos_servicio`; columna `intenciones_pago.comision_marketplace`; triggers `tus_politica_comision_append_only_trigger` y
    `tus_configuracion_pagos_append_only_trigger`.
-8. **Iniciar la API.**
-9. `GET /health` → 200.
-10. `GET /ready` → 200.
-11. **Smoke funcional:** login de una cuenta de prueba, `GET /tus/v1/work`, `GET /tus/v1/work/<id>/payment-preview`
+10. **Iniciar la API.**
+11. `GET /health` → 200.
+12. `GET /ready` → 200.
+13. **Smoke funcional:** login de una cuenta de prueba, `GET /tus/v1/work`, `GET /tus/v1/work/<id>/payment-preview`
     (debe responder `paymentAvailable:false` con `PAYMENTS_DISABLED`), `GET /tus/v1/admin/payments/status` con el admin.
-12. **Rollback:** no hay down migrations. Si algo falla antes de abrir tráfico: restaurar el backup del paso 1 y
+14. **Rollback:** no hay down migrations. Si algo falla antes de abrir tráfico: restaurar el backup del paso 3 y
     redeployar el commit anterior. Si falla después: preferir una migración correctiva forward-only; restaurar solo si hay
     corrupción y aceptando perder escrituras posteriores al backup.
 
@@ -343,8 +356,8 @@ adaptador esté configurado.
 ## 9. Rollback
 
 - **Web:** Vercel → Deployments → "Promote to Production" del deploy anterior (instantáneo).
-- **API:** Render → Deploys → "Rollback" al deploy anterior. Si la versión nueva ya migró, la anterior sigue funcionando
-  porque las migraciones son aditivas.
+- **API:** seleccionar en Hostinger el artefacto/commit anterior. Si la versión nueva ya migró, validar compatibilidad antes
+  de volver; no asumir que todo el historial es reversible.
 - **Base:** ver §6 paso 12.
 - **Pagos:** `paymentsEnabled:false` o `TUS_MERCADOPAGO_ENABLED=false` (§7).
 
@@ -358,3 +371,18 @@ adaptador esté configurado.
 3. Revisión legal/fiscal (facturación de la comisión, términos para prestadores) y evidencia de habilitación
    `settlement` para producción.
 4. Solo entonces: credenciales productivas, `MERCADO_PAGO_ENVIRONMENT=production` y `paymentsEnabled:true`.
+
+## 11. Checklist práctico de staging
+
+- [ ] Leer y aprobar `docs/SEGURIDAD_TUS.md`; sin Critical/High abiertos.
+- [ ] Registrar commit exacto, Node 22.x y pnpm 9.15.9.
+- [ ] Ejecutar install frozen y builds `@factory/api...` / `@factory/web...` desde checkout limpio.
+- [ ] Confirmar PostgreSQL 16, TLS, pgvector, DB fresh y backup/restore ensayado.
+- [ ] Probar `prisma migrate deploy` primero sobre DB descartable; no usar `factory_local`.
+- [ ] Configurar Hostinger con `DATABASE_URL` pooled, `DIRECT_URL` solo release y `TRUST_PROXY_HOPS` medido.
+- [ ] Configurar Vercel con `NEXT_PUBLIC_API_URL` y sin secretos públicos.
+- [ ] Dejar `TUS_MERCADOPAGO_ENABLED=false`, provider actions y jobs apagados.
+- [ ] Verificar CORS exacto, `/health`, `/ready`, registro, login y revocación de membership.
+- [ ] Ejecutar smoke funcional sin pagos y confirmar `PAYMENTS_DISABLED`.
+- [ ] Probar SIGTERM y rollback de API/Web; documentar el resultado y el operador.
+- [ ] Solo después marcar RELEASE-STAGING-01 GO; el dinero real sigue fuera de alcance.

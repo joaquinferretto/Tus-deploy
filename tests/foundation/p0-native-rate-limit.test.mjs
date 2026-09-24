@@ -7,8 +7,9 @@ test('native API can load rate limiting without attempting Redis when Redis is d
   delete process.env.REDIS_URL
   process.env.NATIVE_PROFILE = '1'
   try {
-    const { rateLimitMiddleware } = await import('../../apps/api/src/presentation/middleware/rate-limit.ts')
+    const { authRateLimitMiddleware, rateLimitMiddleware } = await import('../../apps/api/src/presentation/middleware/rate-limit.ts')
     assert.equal(typeof rateLimitMiddleware, 'function')
+    assert.equal(typeof authRateLimitMiddleware, 'function')
   } finally {
     if (previous === undefined) delete process.env.REDIS_URL
     else process.env.REDIS_URL = previous

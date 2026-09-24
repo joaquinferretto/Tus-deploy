@@ -16,8 +16,12 @@ interface RoleRow { id: string; tenantId: string; name: string; permissions: str
 interface MembershipRow { id: string; organizationId: string; userId: string; roleIds: string[]; status: string; createdAt: Date }
 interface InvitationRow { id: string; tenantId: string; email: string; roleIds: string[]; tokenDigest: string; status: string; expiresAt: Date; createdAt: Date; acceptedAt: Date | null }
 interface ResourceRow { id: string; tenantId: string; type: string; value: string }
+interface AccountIdentityRow { user: { id: string } }
 
 export interface TenantPrismaClient {
+  account: {
+    findUnique(args: { where: { id: string }; include: { user: true } }): Promise<AccountIdentityRow | null>
+  }
   organization: {
     findUnique(args: { where: { id: string } }): Promise<OrganizationRow | null>
     create(args: { data: Record<string, unknown> }): Promise<OrganizationRow>
@@ -129,7 +133,9 @@ export class PrismaTenancyStore implements TenancyStore {
   }
 
   async findMembershipByActor(tenantId: string, actorId: string): Promise<Membership | undefined> {
-    const row = await this.client.membership.findFirst({ where: { organizationId: tenantId, userId: actorId } })
+    const account = await this.client.account.findUnique({ where: { id: actorId }, include: { user: true } })
+    if (!account) return undefined
+    const row = await this.client.membership.findFirst({ where: { organizationId: tenantId, userId: account.user.id } })
     return row ? this.mapMembership(row) : undefined
   }
 

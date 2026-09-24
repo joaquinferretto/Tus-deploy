@@ -150,6 +150,26 @@ test('Prisma adapter scopes credential, token, session, and device operations to
   })
 })
 
+test('Prisma membership checks resolve the account foreign key to the user identity', () => {
+  const result = runTypeScriptScenario(`
+    const { PrismaIdentityStore } = (await import('./apps/api/src/auth-security/adapters/postgres/prisma-identity-store.ts')).default
+    const calls = []
+    const client = {
+      account: { findUnique: async ({ where, include }) => (calls.push(['account', where, include]), { user: { id: 'user-a' } }) },
+      membership: { findFirst: async ({ where, select }) => (calls.push(['membership', where, select]), { id: 'membership-a' }) },
+    }
+    const store = new PrismaIdentityStore(client)
+    const active = await store.hasActiveMembership('account-a', 'tenant-a')
+    console.log(JSON.stringify({ active, calls }))
+  `)
+
+  assert.equal(result.active, true)
+  assert.deepEqual(result.calls, [
+    ['account', { id: 'account-a' }, { user: true }],
+    ['membership', { organizationId: 'tenant-a', userId: 'user-a', status: 'active' }, { id: true }],
+  ])
+})
+
 test('Prisma registration bootstrap creates the generated tenant structure before the account', () => {
   const result = runTypeScriptScenario(`
     const { PrismaIdentityStore } = (await import('./apps/api/src/auth-security/adapters/postgres/prisma-identity-store.ts')).default

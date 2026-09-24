@@ -2,7 +2,7 @@ import express from 'express'
 import type { Application, Router } from 'express'
 import type { Server } from 'node:http'
 import { helmetMiddleware } from './presentation/middleware/helmet.ts'
-import { rateLimitMiddleware } from './presentation/middleware/rate-limit.ts'
+import { authRateLimitMiddleware, rateLimitMiddleware } from './presentation/middleware/rate-limit.ts'
 import { corsMiddleware } from './presentation/middleware/cors.ts'
 import { createHealthRouter, healthRouter } from './presentation/routes/health.ts'
 import { createTusIntegrationRouter } from './tus/integration/index.ts'
@@ -32,7 +32,7 @@ import { createApiLifecycle, type ApiLifecycle } from './platform/lifecycle.ts'
 import { createBodyLimitMiddleware } from './presentation/middleware/body-limits.ts'
 import { correlationMiddleware } from './presentation/middleware/correlation.ts'
 import { createErrorHandler, createNotFoundHandler } from './presentation/middleware/error.ts'
-import { resolveListenHost, resolveListenPort } from './platform/runtime.ts'
+import { resolveListenHost, resolveListenPort, resolveTrustProxy } from './platform/runtime.ts'
 import { createSafeLogger } from './presentation/middleware/logger.ts'
 
 export interface StartServerOptions {
@@ -57,10 +57,12 @@ export interface CreateAppOptions {
   getReadiness?: () => Promise<ApiReadiness>
   tusRoutesEnabled?: boolean
   providerRoutesEnabled?: boolean
+  trustProxy?: number | false
 }
 
 export function createApp(options: CreateAppOptions = {}): Application {
   const app = express()
+  app.set('trust proxy', options.trustProxy ?? resolveTrustProxy(process.env))
   const prisma = getPrismaClient() as unknown as TusPrismaClient
   const auth = createPrismaAuthService(prisma as unknown as PrismaIdentityClient)
   const sessions = new DurableIdentitySessionResolver(auth.store)
@@ -76,6 +78,13 @@ export function createApp(options: CreateAppOptions = {}): Application {
   app.use(helmetMiddleware)
   app.use(corsMiddleware)
   app.use(rateLimitMiddleware)
+  app.use([
+    '/auth/register',
+    '/auth/sign-in',
+    '/auth/verify-email',
+    '/auth/recovery/request',
+    '/auth/recovery/complete',
+  ], authRateLimitMiddleware)
 
   // Body parsing
   app.use(createBodyLimitMiddleware())

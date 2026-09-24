@@ -33,6 +33,10 @@ export class UnavailableIdentityStore implements IdentityStore {
     return this.unavailable()
   }
 
+  async hasActiveMembership(): Promise<boolean> {
+    return this.unavailable()
+  }
+
   async saveAccount(): Promise<void> {
     return this.unavailable()
   }

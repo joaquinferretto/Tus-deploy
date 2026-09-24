@@ -12,12 +12,62 @@ const explicitPaths = argumentsList.filter((value) => !value.startsWith('--'))
 const root = process.cwd()
 
 const secretPatterns = [
-  /AKIA[0-9A-Z]{16}/,
-  /(?:ghp_|gho_|github_pat_|xox[baprs]-|npm_|sk_live_)[A-Za-z0-9_-]{16,}/,
-  /-----BEGIN [A-Z ]+PRIVATE KEY-----/,
-  /\b[A-Z][A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|API_KEY)\b\s*=\s*["']?(?!your-|change-|fictitious|example|local:)[A-Za-z0-9+/=_\-.]{20,}/,
-  /(?:api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key)\s*[:=]\s*["'](?!your-|change-|fictitious|example|local:)[^"']{16,}["']/i,
+  { category: 'AWS key', pattern: /AKIA[0-9A-Z]{16}/ },
+  { category: 'provider token', pattern: /(?:ghp_|gho_|github_pat_|xox[baprs]-|npm_|sk_live_)[A-Za-z0-9_-]{16,}/ },
+  { category: 'private key', pattern: /-----BEGIN [A-Z ]+PRIVATE KEY-----/ },
+  { category: 'inline credential', pattern: /(?:api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key)\s*[:=]\s*["'](?!your-|change-|fictitious|example|local:)[^"']{16,}["']/i },
 ]
+
+const knownFixtureValues = [
+  'fictitious-local-secret-not-for-production',
+  'secret-token-must-not-be-quarantined',
+  'access-token-placeholder',
+  'sandbox-webhook-secret',
+  'client-secret-value',
+  'webhook-secret-value',
+  'APP_USR-seller-access-token',
+  'TG-refresh-token',
+]
+
+const documentedFixturePaths = [
+  'apps/mobile/tests/unit/tus-pos.test.ts',
+  'packages/mercado-pago/tests/mercado-pago.test.cjs',
+  'tests/foundation/fixtures/mercado-pago-sandbox.mjs',
+  'tests/foundation/p6-security.test.mjs',
+  'tests/foundation/web-09d-pagos-configuracion.test.mjs',
+  'tests/foundation/web-09e-mercado-pago.test.mjs',
+]
+
+function withoutKnownFixtures(content, candidatePath) {
+  const normalizedPath = candidatePath.replaceAll('\\', '/')
+  const isDocumentedFixture = documentedFixturePaths.some((path) => normalizedPath === path || normalizedPath.endsWith(`/${path}`))
+    || content.includes('SECURITY_SCAN_FIXTURE')
+  if (!isDocumentedFixture) return content
+  return knownFixtureValues.reduce(
+    (safeContent, fixture) => safeContent.replace(
+      new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(fixture)}(?![A-Za-z0-9_-])`, 'gu'),
+      'fictitious-fixture',
+    ),
+    content,
+  )
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+}
+
+function hasEnvironmentCredential(content) {
+  for (const line of content.split(/\r?\n/gu)) {
+    const assignment = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/u)
+    if (!assignment || !/(?:SECRET|TOKEN|PASSWORD|API_KEY)$/u.test(assignment[1] ?? '')) continue
+    const value = (assignment[2] ?? '').replace(/^(["'])(.*)\1$/u, '$2')
+    if (!/^[A-Za-z0-9+/=_\-.]+$/u.test(value)) continue
+    if (value.length < 20) continue
+    if (/^(?:your-|change-|fictitious|example|local:)/iu.test(value)) continue
+    return true
+  }
+  return false
+}
 
 function gitPaths(args) {
   try {
@@ -74,9 +124,15 @@ for (const path of paths) {
   }
 
   const content = readCandidate(path, mode === 'tracked' || mode === 'staged')
-  if (content !== null && secretPatterns.some((pattern) => pattern.test(content))) {
+  const safeContent = content === null ? null : withoutKnownFixtures(content, path)
+  const finding = safeContent === null
+    ? undefined
+    : hasEnvironmentCredential(safeContent)
+      ? { category: 'environment credential' }
+      : secretPatterns.find(({ pattern }) => pattern.test(safeContent))
+  if (finding) {
     // Never print matching content: report only the path and remediation category.
-    console.error(`Secret-like content detected in ${shownPath}`)
+    console.error(`Secret-like ${finding.category} content detected in ${shownPath}`)
     findings += 1
   }
 }

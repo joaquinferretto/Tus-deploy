@@ -329,7 +329,14 @@ importers:
 
   packages/email: {}
 
-  packages/errors: {}
+  packages/errors:
+    devDependencies:
+      '@factory/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
 
   packages/eslint-config:
     dependencies:

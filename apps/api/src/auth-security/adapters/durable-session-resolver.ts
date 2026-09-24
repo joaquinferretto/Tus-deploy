@@ -28,6 +28,7 @@ export class DurableIdentitySessionResolver implements TusSessionResolverPort {
 
     const account = await this.store.getAccount(session.accountId)
     if (!account || account.status !== 'active' || account.tenantId !== session.tenantId) return null
+    if (!await this.store.hasActiveMembership(account.id, session.tenantId)) return null
 
     return {
       subjectId: account.id,
