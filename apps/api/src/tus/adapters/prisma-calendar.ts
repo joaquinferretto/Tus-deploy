@@ -96,6 +96,21 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
     },
     forCalendar: async (calendarId: string) =>
       (await this.client.reserva.findMany({ where: { calendarioId: calendarId } })).map(toBooking),
+    // WEB-08I: UPDATE sin cambio efectivo para tomar el lock de fila, igual que la vinculacion
+    // WEB-08H. En Serializable, si la fila cambio desde el snapshot la transaccion falla (P2034)
+    // y el reintento relee el vinculo ya confirmado.
+    lockForChange: async (input: { ownerTenantId: string; bookingId: string }) => {
+      await this.client.reserva.updateMany({
+        where: { tenantId: input.ownerTenantId, reservaId: input.bookingId },
+        data: { version: { increment: 0 } },
+      })
+    },
+    linkedWorkId: async (input: { ownerTenantId: string; bookingId: string }) => {
+      const row = await this.client.trabajo.findFirst({
+        where: { reservaTenantId: input.ownerTenantId, reservaId: input.bookingId },
+      })
+      return row ? String(row['trabajoId']) : null
+    },
   }
 
   readonly idempotency = {

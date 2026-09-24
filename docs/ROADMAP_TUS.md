@@ -197,7 +197,9 @@ Pendiente cuando exista un target autorizado:
 - WEB-08 corrigio la autorizacion de evidencia para exigir tenant prestador y unifico la lectura de detalle en una transaccion.
   WEB-08F/G/H cerraron la proyeccion cliente/prestador del expediente, la huella de idempotencia en servidor con
   deduplicacion de trabajo, reserva y carrito, y la validacion atomica de reserva + Trabajo (`uq_trabajos_reserva`); detalle en
-  `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`. Sigue pendiente la politica de cancelar una reserva con trabajo vinculado.
+  `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`. WEB-08I: una reserva vinculada a un trabajo no puede cancelarse directamente
+  desde calendario (`409 RESERVATION_LINKED_TO_WORK`); desde ese momento el trabajo es la autoridad de su ciclo de vida y
+  `cancelWork` cancela trabajo y reserva en la misma transaccion.
 - WEB-09A resolvio el sujeto financiero de servicios (`ObligacionPagoServicio`) y la frontera monetaria. Ningun flujo
   financiero es grado A mientras no exista provider real, migracion aplicada y prueba PostgreSQL descartable. Ver
   `docs/WEB-09_AUDITORIA_PRODUCTOS_TUS.md`.

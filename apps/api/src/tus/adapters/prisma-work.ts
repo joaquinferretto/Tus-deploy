@@ -545,6 +545,24 @@ export class PrismaTrabajoReservaStore implements TrabajoReservaPort {
     })
     return result.count === 1
   }
+
+  // WEB-08I: la cancelacion del trabajo cancela la reserva en la misma transaccion. El trabajo
+  // la cancela el prestador, por eso no aplica la ventana de cancelacion tardia del cliente.
+  async cancelForWork(input: {
+    ownerTenantId: string
+    reservationId: string
+    updatedAt: string
+  }): Promise<boolean> {
+    const result = await this.client.reserva.updateMany({
+      where: { tenantId: input.ownerTenantId, reservaId: input.reservationId, estado: 'confirmed' },
+      data: {
+        estado: 'cancelled',
+        version: { increment: 1 },
+        fechaActualizacion: new Date(input.updatedAt),
+      },
+    })
+    return result.count === 1
+  }
 }
 
 export class PrismaTrabajoTransaction implements TrabajoTransactionPort {

@@ -600,7 +600,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      response.status(200).json(await requireCalendar(application).cancel(context, { bookingId: request.params['bookingId'] ?? '', now: readString(body, 'now') || new Date(now()).toISOString(), reason: readString(body, 'reason'), ...(readFiniteNumber(body, 'expectedVersion') === undefined ? {} : { expectedVersion: readFiniteNumber(body, 'expectedVersion') }) }))
+      response.status(200).json(proyectarResultadoReserva(await requireCalendar(application).cancel(context, { bookingId: request.params['bookingId'] ?? '', now: readString(body, 'now') || new Date(now()).toISOString(), reason: readString(body, 'reason'), ...(readFiniteNumber(body, 'expectedVersion') === undefined ? {} : { expectedVersion: readFiniteNumber(body, 'expectedVersion') }) })))
     } catch (error) { sendCalendarError(response, error) }
   })
 
@@ -612,7 +612,7 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
       return
     }
     try {
-      response.status(200).json(await requireCalendar(application).markNoShow(context, { bookingId: request.params['bookingId'] ?? '', now: readString(body, 'now') || new Date(now()).toISOString() }))
+      response.status(200).json(proyectarResultadoReserva(await requireCalendar(application).markNoShow(context, { bookingId: request.params['bookingId'] ?? '', now: readString(body, 'now') || new Date(now()).toISOString() })))
     } catch (error) { sendCalendarError(response, error) }
   })
 

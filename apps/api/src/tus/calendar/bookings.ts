@@ -9,6 +9,7 @@ import {
   type EntradaCalendario,
 } from './rules.ts'
 import type { Publicacion } from '../catalog/index.ts'
+import { SerializadorEnMemoria } from '../domain/serializador-en-memoria.ts'
 import { effectiveListingDuration, publicationRequiresBudget } from '../catalog/index.ts'
 
 const BOOKING_STATUS = {
@@ -89,6 +90,10 @@ export interface ServiceCalendarStorePort {
     save(booking: Reserva): Promise<void>
     find(bookingId: string): Promise<Reserva | null>
     forCalendar(calendarId: string): Promise<Reserva[]>
+    // WEB-08I: bloquea la fila de la reserva hasta el fin de la transaccion; es el mismo lock que
+    // toma `TrabajoReservaPort.lockForWork` al vincularla a un trabajo (WEB-08H).
+    lockForChange(input: { ownerTenantId: string; bookingId: string }): Promise<void>
+    linkedWorkId(input: { ownerTenantId: string; bookingId: string }): Promise<string | null>
   }
   idempotency: {
     claim(input: { tenantId: string; key: string; requestHash: string }): Promise<{
@@ -114,7 +119,21 @@ export class InMemoryServiceCalendarStore implements ServiceCalendarStorePort {
   private readonly idempotencyRecords = new Map<string, IdempotencyRecord>()
   private readonly auditRecords: CalendarAuditRecord[] = []
   private readonly outboxRecords: CalendarOutboxRecord[] = []
-  private transactionTail: Promise<void> = Promise.resolve()
+  private readonly serializer: SerializadorEnMemoria
+  private readonly findLinkedWorkId: (
+    ownerTenantId: string,
+    bookingId: string
+  ) => Promise<string | null>
+
+  constructor(
+    options: {
+      serializer?: SerializadorEnMemoria
+      linkedWorkId?: (ownerTenantId: string, bookingId: string) => Promise<string | null>
+    } = {}
+  ) {
+    this.serializer = options.serializer ?? new SerializadorEnMemoria()
+    this.findLinkedWorkId = options.linkedWorkId ?? (async () => null)
+  }
 
   readonly calendars = {
     save: async (calendar: Calendario) => {
@@ -144,6 +163,10 @@ export class InMemoryServiceCalendarStore implements ServiceCalendarStorePort {
       [...this.bookingRecords.values()]
         .filter((booking) => booking.calendarId === calendarId)
         .map((booking) => structuredClone(booking)),
+    // En memoria el serializador compartido con Trabajo ya excluye la vinculacion concurrente.
+    lockForChange: async (_input: { ownerTenantId: string; bookingId: string }) => undefined,
+    linkedWorkId: async (input: { ownerTenantId: string; bookingId: string }) =>
+      this.findLinkedWorkId(input.ownerTenantId, input.bookingId),
   }
 
   readonly idempotency = {
@@ -205,21 +228,15 @@ export class InMemoryServiceCalendarStore implements ServiceCalendarStorePort {
   }
 
   async transaction<T>(operation: (store: ServiceCalendarStorePort) => Promise<T>): Promise<T> {
-    const previous = this.transactionTail
-    let release!: () => void
-    this.transactionTail = new Promise<void>((resolve) => {
-      release = resolve
+    return this.serializer.run(async () => {
+      const snapshot = this.snapshot()
+      try {
+        return await operation(this)
+      } catch (error) {
+        this.restore(snapshot)
+        throw error
+      }
     })
-    await previous
-    const snapshot = this.snapshot()
-    try {
-      return await operation(this)
-    } catch (error) {
-      this.restore(snapshot)
-      throw error
-    } finally {
-      release()
-    }
   }
 
   private snapshot() {
@@ -608,6 +625,7 @@ export class ServiceCalendarService {
           'FORBIDDEN',
           'booking is not owned by the authenticated customer'
         )
+      await ensureNotLinkedToWork(store, booking)
       if (input.expectedVersion !== undefined && input.expectedVersion !== booking.version)
         throw new ErrorCalendario(409, 'STALE_VERSION', 'booking version is stale')
       if (booking.status !== BOOKING_STATUS.CONFIRMED) return booking
@@ -646,6 +664,7 @@ export class ServiceCalendarService {
       const booking = await store.bookings.find(input.bookingId)
       if (!booking || booking.ownerTenantId !== context.tenantId)
         throw new ErrorCalendario(403, 'FORBIDDEN', 'booking is outside the operator tenant')
+      await ensureNotLinkedToWork(store, booking)
       const calendar = await store.calendars.find(booking.calendarId)
       if (
         !calendar ||
@@ -706,6 +725,25 @@ export class ServiceCalendarService {
       createdAt,
     })
   }
+}
+
+// WEB-08I: una reserva vinculada a un trabajo no puede cancelarse ni marcarse directamente desde
+// calendario; desde ese momento el trabajo es la autoridad de su ciclo de vida. Se bloquea la
+// fila antes de consultar el vinculo, asi una vinculacion concurrente termina antes o despues
+// del chequeo y nunca en el medio. Se evalua despues de la autorizacion: un tenant ajeno recibe
+// 403 sin poder inferir si existe el vinculo.
+async function ensureNotLinkedToWork(
+  store: ServiceCalendarStorePort,
+  booking: Reserva
+): Promise<void> {
+  const reference = { ownerTenantId: booking.ownerTenantId, bookingId: booking.bookingId }
+  await store.bookings.lockForChange(reference)
+  if (await store.bookings.linkedWorkId(reference))
+    throw new ErrorCalendario(
+      409,
+      'RESERVATION_LINKED_TO_WORK',
+      'booking is linked to a work; its lifecycle is managed through the work'
+    )
 }
 
 function assertRead(context: TusAuthenticatedTenantContext): void {

@@ -499,9 +499,90 @@ sobre una reserva, el indice falla sin modificar datos (consulta previa en el ch
 
 ### Residuales
 
-- La cancelacion de una reserva en el calendario no consulta si hay un trabajo vinculado; espera el lock pero luego cancela.
-  Que hacer con el trabajo en ese caso es una decision de producto.
+- ~~La cancelacion de una reserva en el calendario no consulta si hay un trabajo vinculado.~~ Resuelto en WEB-08I.
 - ESLint de `prisma-work.ts` reporta 7 imports de tipo sin uso, preexistentes a este cambio.
+
+## WEB-08I — coherencia entre cancelacion de reserva y trabajo (IMPLEMENTADO, 2026-09-24)
+
+**Regla:** una reserva vinculada a un trabajo no puede cancelarse directamente desde calendario; desde ese momento el
+trabajo es la autoridad de su ciclo de vida.
+
+### Calendario
+
+- `ServiceCalendarService.cancel` y `markNoShow` (las dos unicas escrituras del calendario sobre una reserva existente)
+  ejecutan `ensureNotLinkedToWork` dentro de su transaccion: bloquean la fila de la reserva y consultan
+  `trabajos(reserva_tenant_id, reserva_id)`. Si hay trabajo: `409 RESERVATION_LINKED_TO_WORK`, sin escribir reserva,
+  trabajo, idempotencia, auditoria ni outbox (el calendario solo audita intentos permitidos).
+- Reserva sin trabajo: comportamiento anterior sin cambios (`cancelled` o `cancelled-late` segun la ventana).
+- La validacion corre despues de la autorizacion existente: un tenant ajeno recibe el mismo `403 FORBIDDEN` haya o no vinculo,
+  y el error `409` no incluye el `trabajoId` (el formato de error de calendario no tiene campo de detalle y no se amplio).
+- Se valida en servidor; no depende de que Web o Mobile oculten acciones.
+
+### Concurrencia (sin segunda estrategia de locking)
+
+Se reutiliza el mecanismo de WEB-08H: lock de fila sobre `reservas` mediante un `UPDATE` sin cambio efectivo, dentro de
+transacciones `Serializable` con reintento ante `P2034` (trabajo y calendario ya usaban ese regimen).
+
+- **El trabajo toma el lock primero:** la cancelacion espera; al commit su transaccion falla por serializacion, reintenta,
+  ve el trabajo y responde `RESERVATION_LINKED_TO_WORK`.
+- **La cancelacion toma el lock primero:** la vinculacion espera; al commit reintenta, `lockForWork` ya no encuentra la
+  reserva `confirmed` y responde `INVALID_RESERVATION_LINK`.
+- En memoria, calendario y Trabajo comparten `SerializadorEnMemoria` (`apps/api/src/tus/domain/serializador-en-memoria.ts`)
+  en la composicion, asi sus transacciones tampoco se intercalan.
+- No hace falta DDL nuevo: `uq_trabajos_reserva` (WEB-08G) sigue siendo la garantia fisica de una reserva por trabajo; el
+  estado cruzado lo garantizan el lock y la transaccion. Sin migracion en WEB-08I.
+
+### Cancelacion desde el trabajo
+
+Ya existia una operacion canonica (`cancelWork`, WEB-08E: solo prestador, `expectedVersion`, idempotente). Es ahora la
+unica via para cancelar una reserva vinculada:
+
+- En la misma transaccion: transicion del trabajo a `cancelled` + `TrabajoReservaPort.cancelForWork` (`UPDATE reservas SET
+estado = 'cancelled', version = version + 1 WHERE ... estado = 'confirmed'`) + auditoria `reservation.cancelled` + evento
+  `tus.work.cancelled` con `reservationId` y `reservationCancelled`. Un fallo en cualquier paso revierte trabajo y reserva.
+- Se usa `cancelled` y no `cancelled-late`: la ventana tardia es una politica sobre el cliente y esta cancelacion la
+  ejecuta el prestador.
+- Idempotencia WEB-08G: misma clave → `replay` sin escrituras; otra clave sobre un trabajo ya cancelado →
+  `409 INVALID_STATE` sin escrituras. No se agregaron estados.
+- El cliente no cancela trabajos (decision WEB-08E vigente): con reserva vinculada debe gestionarlo con el prestador.
+
+### Estados terminales
+
+Estados reales: trabajo `requested | in_diagnosis | budget_pending | accepted | in_progress | completed | cancelled`;
+reserva `confirmed | cancelled | cancelled-late | no-show`.
+
+- Trabajo `cancelled` → la reserva vinculada queda `cancelled` en la misma transaccion (si seguia `confirmed`).
+- Trabajo `completed` → la reserva queda `confirmed` como registro historico; no existe estado de reserva "cumplida" y no se
+  inventa. El calendario tampoco puede marcarla `no-show`.
+- Cualquier reconciliacion futura entre estado terminal del trabajo y reserva pertenece al flujo del trabajo.
+
+### Correccion incidental
+
+`POST /tus/v1/calendar/bookings/:id/cancel` y `/no-show` devolvian la reserva cruda; en reservas de publicacion
+`priceSnapshot.minor` es `BigInt` y la respuesta fallaba con `500` despues de confirmar la cancelacion. Ahora usan la misma
+proyeccion `proyectarResultadoReserva` que la creacion de reservas (omite `priceSnapshot`).
+
+### Validacion
+
+- `tests/foundation/web-08i.test.mjs` (4, composicion en memoria real + HTTP): cancelacion libre, `409` para cliente,
+  prestador y no-show con reserva/trabajo/contadores intactos, tenant ajeno indistinguible, cancelacion coordinada con replay
+  y sin duplicados, 6 carreras + ambos ordenes forzados, adapters Prisma. Sin la guarda, 3 de 4 tests fallan.
+- Suites WEB-08/08FGH/09A-C, DB-09, p8/p9/p10, `tus-web-*` y `p0-contracts`: 252/252. Contracts (107), typecheck API/Web,
+  `prisma validate`, build API y `git diff --check`: OK.
+- Suite foundation completa: 592/605; las mismas 13 fallas preexistentes y ambientales registradas en WEB-08F/G/H, sin
+  regresiones nuevas.
+- **PostgreSQL 16 real** (cluster descartable `127.0.0.1:55442`, detenido y borrado; 39 migraciones aplicadas):
+  - Reserva sin trabajo: `cancelled`, version 2.
+  - Reserva con trabajo: cliente, prestador y no-show → `RESERVATION_LINKED_TO_WORK`; tenant ajeno → `FORBIDDEN` igual que
+    sin vinculo; reserva, trabajo, outbox, idempotencia, auditorias y transiciones sin cambios.
+  - Trabajo con el lock primero: la cancelacion espero 585 ms y fallo; reserva `confirmed`, trabajo creado.
+  - Cancelacion con el lock primero: la vinculacion espero 575 ms y fallo con `INVALID_RESERVATION_LINK`; sin trabajo.
+  - 12 carreras sin orden impuesto: 0 con ambos exitos, 0 estados inconsistentes (en todas gano la cancelacion, cuyo camino
+    es mas corto; los dos ordenes quedan cubiertos por los escenarios forzados).
+  - `cancelWork`: trabajo y reserva `cancelled` (version 2); +1 outbox, +2 auditorias, +1 transicion; replay y otra clave sin
+    escrituras; el calendario sigue rechazando la reserva.
+  - Fallo inyectado en el outbox de `cancelWork`: trabajo `requested` v1 y reserva `confirmed` v1, contadores intactos.
+  - `uq_trabajos_reserva` presente; INSERT duplicado → `23505`.
 
 ## WEB-09D — auditoria de superficie Web (PENDIENTE, grado B)
 

@@ -11,6 +11,7 @@ import { InMemoryTrabajoIdempotencyStore, InMemoryTrabajoOutboxStore, InMemoryTr
 import { TusApplicationService, type TusApplicationDependencies } from '../application/tus-application-service.ts'
 import { InMemoryMarketplaceStore, TusMarketplaceService } from '../catalog/index.ts'
 import { InMemoryServiceCalendarStore, ServiceCalendarService } from '../calendar/index.ts'
+import { SerializadorEnMemoria } from '../domain/serializador-en-memoria.ts'
 import {
   AlmacenPrismaReferenciasAuditoria,
   PrismaTusCommitmentStore,
@@ -51,7 +52,14 @@ export function createTusApplication(
   const idempotency = new InMemoryTusIdempotencyStore()
   const outbox = new InMemoryTusOutboxStore()
   const marketplaceStore = new InMemoryMarketplaceStore()
-  const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore(), options.now)
+  // WEB-08I: Trabajo y calendario comparten un serializador en memoria y el vinculo reserva-trabajo.
+  const reservationSerializer = new SerializadorEnMemoria()
+  const workStore = new InMemoryTrabajoStore()
+  const calendarStore = new InMemoryServiceCalendarStore({
+    serializer: reservationSerializer,
+    linkedWorkId: async (ownerTenantId, bookingId) => (await workStore.findByReservation({ prestadorTenantId: ownerTenantId, reservationId: bookingId }))?.trabajoId ?? null,
+  })
+  const calendar = new ServiceCalendarService(calendarStore, options.now)
   const marketplace = new TusMarketplaceService(marketplaceStore, {
     evaluadorHabilitacion: options.evaluadorHabilitacion,
     perfilHabilitacion: options.perfilHabilitacion,
@@ -77,10 +85,14 @@ export function createTusApplication(
   const support = new TusSupportService({ store: new InMemorySupportStore(), commitmentLookup, now: options.now, telemetry: options.operationsTelemetry, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
   const whatsapp = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), now: options.now, telemetry: options.operationsTelemetry, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
   const reporting = new TusReportingService({ store: new InMemoryReportingStore(), now: options.now, telemetry: options.operationsTelemetry })
-  const workStore = new InMemoryTrabajoStore()
   const workIdempotency = new InMemoryTrabajoIdempotencyStore()
   const workOutbox = new InMemoryTrabajoOutboxStore()
-  const work = new ServicioTrabajo(new InMemoryTrabajoTransaction({ work: workStore, idempotency: workIdempotency, outbox: workOutbox, reservations: new ReservasTrabajoEnMemoria((ownerTenantId, reservationId) => calendar.findBookingForProvider(ownerTenantId, reservationId)) }), options.now)
+  const work = new ServicioTrabajo(new InMemoryTrabajoTransaction({ work: workStore, idempotency: workIdempotency, outbox: workOutbox, reservations: new ReservasTrabajoEnMemoria((ownerTenantId, reservationId) => calendar.findBookingForProvider(ownerTenantId, reservationId), async (ownerTenantId, reservationId, updatedAt) => {
+    const booking = await calendarStore.bookings.find(reservationId)
+    if (!booking || booking.ownerTenantId !== ownerTenantId || booking.status !== 'confirmed') return false
+    await calendarStore.bookings.save({ ...booking, status: 'cancelled', version: booking.version + 1, updatedAt })
+    return true
+  }) }, reservationSerializer), options.now)
   const serviceFinance = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore)),
     options.now

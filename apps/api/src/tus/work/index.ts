@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { SerializadorEnMemoria } from '../domain/serializador-en-memoria.ts'
 import {
   ESTADOS_DIAGNOSTICO,
   ESTADOS_PRESUPUESTO,
@@ -249,6 +250,13 @@ export interface TrabajoReservaPort {
     reservationId: string
     customerTenantId: string
     listingId: string
+  }): Promise<boolean>
+  // WEB-08I: cancela la reserva vinculada dentro de la transaccion que cancela el trabajo, con el
+  // mismo lock de fila. Devuelve false si la reserva ya no estaba confirmada (nada que cambiar).
+  cancelForWork(input: {
+    ownerTenantId: string
+    reservationId: string
+    updatedAt: string
   }): Promise<boolean>
 }
 
@@ -891,7 +899,11 @@ export class ServicioTrabajo {
         ESTADOS_TRABAJO.CANCELADO,
         'work.cancelled'
       )
-      await this.publish(repositories, updated, 'tus.work.cancelled', {})
+      // WEB-08I: el trabajo es la autoridad de la reserva vinculada; ambos se cancelan juntos.
+      const reservation = work.reservaId
+        ? await this.cancelLinkedReservation(repositories, input, updated, work.reservaId)
+        : {}
+      await this.publish(repositories, updated, 'tus.work.cancelled', reservation)
       return { work: updated }
     })
   }
@@ -982,6 +994,34 @@ export class ServicioTrabajo {
     })
     if (!work) throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
     return work
+  }
+
+  private async cancelLinkedReservation(
+    repositories: TrabajoTransactionRepositories,
+    input: TrabajoContext & { createdAt: string },
+    work: Trabajo,
+    reservationId: string
+  ): Promise<{ reservationId: string; reservationCancelled: boolean }> {
+    if (!repositories.reservations)
+      throw new TrabajoError(503, 'UNAVAILABLE', 'TUS calendar composition is unavailable')
+    const cancelled = await repositories.reservations.cancelForWork({
+      ownerTenantId: work.prestadorTenantId,
+      reservationId,
+      updatedAt: input.createdAt,
+    })
+    if (cancelled)
+      await this.recordChange(
+        repositories,
+        input,
+        work,
+        'reservation.cancelled',
+        'reservation',
+        reservationId,
+        {
+          reason: 'work.cancelled',
+        }
+      )
+    return { reservationId, reservationCancelled: cancelled }
   }
 
   private async transition(
@@ -1464,40 +1504,35 @@ export class InMemoryTrabajoOutboxStore implements TrabajoOutboxPort {
 }
 
 export class InMemoryTrabajoTransaction implements TrabajoTransactionPort {
-  private transactionTail: Promise<void> = Promise.resolve()
+  // WEB-08I: la composicion en memoria comparte este serializador con el calendario.
   constructor(
     private readonly repositories: {
       work: InMemoryTrabajoStore
       idempotency: InMemoryTrabajoIdempotencyStore
       outbox: InMemoryTrabajoOutboxStore
       reservations?: TrabajoReservaPort
-    }
+    },
+    private readonly serializer: SerializadorEnMemoria = new SerializadorEnMemoria()
   ) {}
 
   async run<TValue>(
     operation: (repositories: TrabajoTransactionRepositories) => Promise<TValue>
   ): Promise<TValue> {
-    const previous = this.transactionTail
-    let release!: () => void
-    this.transactionTail = new Promise<void>((resolve) => {
-      release = resolve
+    return this.serializer.run(async () => {
+      const snapshot = {
+        work: this.repositories.work.snapshot(),
+        idempotency: this.repositories.idempotency.snapshot(),
+        outbox: this.repositories.outbox.snapshot(),
+      }
+      try {
+        return await operation(this.repositories)
+      } catch (error) {
+        this.repositories.work.restore(snapshot.work)
+        this.repositories.idempotency.restore(snapshot.idempotency)
+        this.repositories.outbox.restore(snapshot.outbox)
+        throw error
+      }
     })
-    await previous
-    const snapshot = {
-      work: this.repositories.work.snapshot(),
-      idempotency: this.repositories.idempotency.snapshot(),
-      outbox: this.repositories.outbox.snapshot(),
-    }
-    try {
-      return await operation(this.repositories)
-    } catch (error) {
-      this.repositories.work.restore(snapshot.work)
-      this.repositories.idempotency.restore(snapshot.idempotency)
-      this.repositories.outbox.restore(snapshot.outbox)
-      throw error
-    } finally {
-      release()
-    }
   }
 }
 
@@ -1533,8 +1568,26 @@ export class ReservasTrabajoEnMemoria implements TrabajoReservaPort {
     private readonly findBooking: (
       ownerTenantId: string,
       reservationId: string
-    ) => Promise<ReservaVinculable | null>
+    ) => Promise<ReservaVinculable | null>,
+    private readonly cancelBooking?: (
+      ownerTenantId: string,
+      reservationId: string,
+      updatedAt: string
+    ) => Promise<boolean>
   ) {}
+
+  // En memoria el calendario no participa del rollback de Trabajo: `cancelWork` la invoca despues
+  // de la transicion y solo la siguen escrituras en memoria que no fallan (auditoria y outbox).
+  // En PostgreSQL trabajo y reserva se revierten juntos.
+  async cancelForWork(input: {
+    ownerTenantId: string
+    reservationId: string
+    updatedAt: string
+  }): Promise<boolean> {
+    if (!this.cancelBooking)
+      throw new TrabajoError(503, 'UNAVAILABLE', 'TUS calendar composition is unavailable')
+    return this.cancelBooking(input.ownerTenantId, input.reservationId, input.updatedAt)
+  }
 
   async lockForWork(input: {
     ownerTenantId: string
