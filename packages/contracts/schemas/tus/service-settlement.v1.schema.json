@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tus/service-settlement.v1",
+  "title": "TUS internal service settlement",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "liquidacionId",
+    "obligacionId",
+    "trabajoId",
+    "tenantId",
+    "prestadorTenantId",
+    "grossMinor",
+    "commissionMinor",
+    "netMinor",
+    "currency",
+    "status",
+    "reason",
+    "payoutStatus",
+    "version",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "liquidacionId": { "type": "string", "minLength": 1 },
+    "obligacionId": { "type": "string", "minLength": 1 },
+    "trabajoId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "prestadorTenantId": { "type": "string", "minLength": 1 },
+    "grossMinor": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+    "commissionMinor": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+    "netMinor": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "status": { "enum": ["held", "eligible", "frozen", "reversed"] },
+    "reason": { "type": "string", "minLength": 1 },
+    "payoutStatus": { "const": "not_executed" },
+    "version": { "type": "integer", "minimum": 1 },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  }
+}

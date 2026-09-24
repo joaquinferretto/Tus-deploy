@@ -612,6 +612,11 @@ reescribe ni elimina datos.
 `referencia_proveedor`, `estado_proveedor`, `monto`, `moneda`, `motivo` y `fecha_recepcion`; `datos_evento` guarda el raw
 body y `estado` el resultado de procesamiento. `auditoria_finanzas_servicio` es append-only y referencia la obligación.
 
+**WEB-09C.** `liquidaciones_servicio` guarda la liquidación interna única por obligación (bruto, comisión y neto en bigint,
+`estado` `held | eligible | frozen | reversed`, `estado_desembolso` fijo en `not_executed` por CHECK y
+`monto_comision + monto_neto = monto_bruto`). `conciliaciones_servicio` guarda corridas append-only con `hallazgos` JSON.
+La comisión reutiliza `instantaneas_comision` y los asientos `movimientos_contables` con `obligacion_id`.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

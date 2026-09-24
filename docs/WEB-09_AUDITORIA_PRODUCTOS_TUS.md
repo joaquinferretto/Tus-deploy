@@ -267,6 +267,41 @@ servicio puede quedar aprobado sin un evento verificado de un provider habilitad
   sin secretos. Estado, inbox, outbox y auditoria comparten transaccion serializable con reintento P2034/P2002.
 - Migracion `20260923110000_tus_service_payment_intents`: aditiva, no aplicada a una base real.
 
+## WEB-09C — ledger, comision y conciliacion internos (IMPLEMENTADO)
+
+**Estado:** implementado como contabilidad interna. No hay split, payout, refund ni transferencia real.
+
+- **Ledger:** unico, `movimientos_contables`, append-only por el trigger existente. Los asientos de servicio usan
+  `obligacion_id` e ids deterministas (`svc-gross-*`, `svc-commission-*`, `svc-payable-*`, `svc-refund-*`,
+  `svc-chargeback-*`), de modo que el mismo efecto no puede registrarse dos veces por `(tenant_id, entrada_id)`.
+- **Comision:** regla existente `mvp-10-percent-v1` (1000 bps) sin nueva decision comercial; base = importe de la
+  obligacion; redondeo half-up entero; snapshot inmutable unico por obligacion en `instantaneas_comision` con base, tasa,
+  version, comision, neto, moneda, referencia y evidencia (`provider-event:<id>`). Solo se calcula ante un evento
+  `approved` verificado y aplicado; el inbox evita duplicados.
+- **Liquidacion interna:** `liquidaciones_servicio` (`held -> eligible | frozen | reversed`, `eligible -> frozen |
+reversed`, `frozen -> reversed`). `eligible` exige pago aprobado y `Trabajo.completed` (`evaluarLiquidacion`, paso de
+  sistema sin HTTP). `estado_desembolso` es siempre `not_executed` por CHECK: nada indica que el prestador cobro.
+- **Refund/contracargo:** solo por evento verificado; agregan `refund_compensation` o `chargeback_compensation` vinculados al
+  asiento bruto y mueven la liquidacion a `reversed` o `frozen`. No se llama al provider.
+- **Conciliacion:** `conciliarObligacion` compara inbox verificado, intenciones, ledger, snapshot y liquidacion. Hallazgos:
+  `matched`, `missing`, `duplicate`, `amount_mismatch`, `currency_mismatch`, `invalid_state`. Cada corrida se
+  guarda append-only en `conciliaciones_servicio` (trigger); una discrepancia congela la liquidacion y nunca corrige montos.
+  La fuente externa sigue siendo el evento firmado recibido; no existe consulta de statements del provider (WEB-09E).
+- **Superficie:** `GET /tus/v1/work/:workId/finance` agrega `settlement` y regla de comision solo para el prestador.
+- **Billing:** sin cambios; no se emite factura fiscal.
+- Migracion `20260923120000_tus_service_settlement_reconciliation`: aditiva, no aplicada a una base real.
+
+### Clasificacion posterior a WEB-09A/B/C
+
+| Capacidad                           | Grado | Motivo                                                                            |
+| ----------------------------------- | ----- | --------------------------------------------------------------------------------- |
+| PaymentIntent de servicio           | B     | Persistente, idempotente y atomico; sin provider habilitado ni worker de despacho |
+| Webhook/eventos                     | B     | Inbox durable, firma, dedupe y orden; sin ruta publica ni provider real           |
+| Comision TUS                        | B     | Exacta, versionada y deduplicada; sin cobro real de la comision                   |
+| Conciliacion                        | B     | Interna y determinista; sin statements del provider                               |
+| Settlement interno                  | B     | Estados internos correctos; sin payout                                            |
+| Captura, split, payout, refund real | C     | Fuera de alcance (WEB-09E)                                                        |
+
 ## Decision
 
 WEB-09 queda cerrada como auditoria y plan. No se implementa ni activa provider real, captura, split, refund externo,

@@ -5,6 +5,16 @@ import type { TrabajoStorePort } from '../../work/index.ts'
 import type { ObligacionServicio, RegistroIdempotenciaFinanciera } from './modelo.ts'
 import type { IntencionPagoServicioDominio } from './pagos.ts'
 import type {
+  InstantaneaComisionServicio,
+  LiquidacionServicioDominio,
+  MovimientoContableServicio,
+} from './liquidacion.ts'
+import type { ConciliacionServicio } from '@factory/contracts'
+import type {
+  PuertoComisionesServicio,
+  PuertoConciliacionesServicio,
+  PuertoLedgerServicio,
+  PuertoLiquidacionesServicio,
   PuertoAuditoriaFinanciera,
   PuertoInboxEventosPago,
   PuertoIntencionesPagoServicio,
@@ -90,9 +100,14 @@ export interface EstadoFinanzasServicioEnMemoria {
   inbox: Map<string, RegistroEventoProveedor>
   outbox: RegistroOutboxFinanciero[]
   auditoria: RegistroAuditoriaFinanciera[]
+  comisiones: Map<string, InstantaneaComisionServicio>
+  ledger: Map<string, MovimientoContableServicio>
+  liquidaciones: Map<string, LiquidacionServicioDominio>
+  conciliaciones: (ConciliacionServicio & { prestadorTenantId: string })[]
 }
 
-export type PuertoConFallaInyectable = 'outbox' | 'auditoria' | 'inbox' | 'intenciones'
+export type PuertoConFallaInyectable =
+  'outbox' | 'auditoria' | 'inbox' | 'intenciones' | 'ledger' | 'liquidaciones'
 
 export class AlmacenFinanzasServicioEnMemoria {
   state: EstadoFinanzasServicioEnMemoria = {
@@ -102,6 +117,10 @@ export class AlmacenFinanzasServicioEnMemoria {
     inbox: new Map(),
     outbox: [],
     auditoria: [],
+    comisiones: new Map(),
+    ledger: new Map(),
+    liquidaciones: new Map(),
+    conciliaciones: [],
   }
   private readonly fallas = new Set<PuertoConFallaInyectable>()
 
@@ -231,6 +250,69 @@ export class AlmacenFinanzasServicioEnMemoria {
     }
   }
 
+  comisiones(): PuertoComisionesServicio {
+    return {
+      buscar: async (input) =>
+        clonar(this.state.comisiones.get(clave(input.tenantId, input.obligacionId)) ?? null),
+      crear: async (snapshot) => {
+        const key = clave(snapshot.tenantId, snapshot.obligacionId)
+        if (this.state.comisiones.has(key))
+          throw Object.assign(new Error('unique commission per obligation'), { code: 'P2002' })
+        this.state.comisiones.set(key, clonar(snapshot))
+      },
+    }
+  }
+
+  // Append-only: an existing entry id is never overwritten, mirroring the database trigger.
+  ledger(): PuertoLedgerServicio {
+    return {
+      listar: async (input) =>
+        [...this.state.ledger.values()]
+          .filter(
+            (entry) =>
+              entry.tenantId === input.tenantId && entry.obligacionId === input.obligacionId
+          )
+          .map(clonar),
+      agregar: async (entry) => {
+        this.verificarFalla('ledger')
+        const key = clave(entry.tenantId, entry.entryId)
+        if (this.state.ledger.has(key))
+          throw Object.assign(new Error('ledger entries are append-only'), { code: 'P2002' })
+        this.state.ledger.set(key, clonar(entry))
+      },
+    }
+  }
+
+  liquidaciones(): PuertoLiquidacionesServicio {
+    return {
+      buscar: async (input) =>
+        clonar(this.state.liquidaciones.get(clave(input.tenantId, input.obligacionId)) ?? null),
+      crear: async (settlement) => {
+        this.verificarFalla('liquidaciones')
+        const key = clave(settlement.tenantId, settlement.obligacionId)
+        if (this.state.liquidaciones.has(key))
+          throw Object.assign(new Error('unique settlement per obligation'), { code: 'P2002' })
+        this.state.liquidaciones.set(key, clonar(settlement))
+      },
+      actualizar: async ({ settlement, expectedVersion }) => {
+        this.verificarFalla('liquidaciones')
+        const key = clave(settlement.tenantId, settlement.obligacionId)
+        const current = this.state.liquidaciones.get(key)
+        if (!current || current.version !== expectedVersion) return null
+        this.state.liquidaciones.set(key, clonar(settlement))
+        return clonar(settlement)
+      },
+    }
+  }
+
+  conciliaciones(): PuertoConciliacionesServicio {
+    return {
+      registrar: async (result) => {
+        this.state.conciliaciones.push(clonar(result))
+      },
+    }
+  }
+
   auditoria(): PuertoAuditoriaFinanciera {
     return {
       registrar: async (record) => {
@@ -280,6 +362,10 @@ export class TransaccionFinanzasServicioEnMemoria implements PuertoTransaccionFi
       inbox: this.store.inbox(),
       outbox: this.store.outbox(),
       auditoria: this.store.auditoria(),
+      comisiones: this.store.comisiones(),
+      ledger: this.store.ledger(),
+      liquidaciones: this.store.liquidaciones(),
+      conciliaciones: this.store.conciliaciones(),
     }
   }
 }

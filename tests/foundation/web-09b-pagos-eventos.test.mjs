@@ -251,7 +251,7 @@ test('WEB-09B Prisma adapters persist service intents in the shared table, the i
       trabajo: [{ versionContrato: '1.0.0', trabajoId: 'trabajo-1', tenantId: 'customer', prestadorTenantId: 'provider', compromisoId: 'commitment-1', prestadorId: 'p-1', publicacionId: 'listing-1', reservaId: null, clienteId: 'customer', estado: 'requested', version: 1, requierePresupuesto: false, presupuestoAceptadoId: null, presupuestoAceptadoVersion: null, fechaCreacion: new Date('2026-09-23T09:00:00.000Z'), fechaActualizacion: new Date('2026-09-23T09:00:00.000Z') }],
       compromisoMercadoServicios: [{ tenantId: 'customer', compromisoId: 'commitment-1', prestadorTenantId: 'provider', prestadorId: 'p-1', publicacionId: 'listing-1', contexto: 'service', estado: 'confirmed', monto: 250000n, moneda: 'ARS' }],
       publicacion: [{ tenantId: 'provider', id: 'listing-1', prestadorId: 'p-1', tipo: 'service', modalidadPrecio: 'fixed' }],
-      presupuesto: [], obligacionPagoServicio: [], idempotenciaFinanciera: [], intencionPago: [{ pagoId: 'legacy', tenantId: 'customer', compromisoId: 'legacy-commitment', obligacionId: null, referenciaProveedor: 'fake-mp-legacy', proveedor: 'mercado-pago' }], eventoWebhookPago: [], outboxEvent: [], auditoriaFinanzasServicio: [],
+      presupuesto: [], obligacionPagoServicio: [], idempotenciaFinanciera: [], intencionPago: [{ pagoId: 'legacy', tenantId: 'customer', compromisoId: 'legacy-commitment', obligacionId: null, referenciaProveedor: 'fake-mp-legacy', proveedor: 'mercado-pago' }], eventoWebhookPago: [], outboxEvent: [], auditoriaFinanzasServicio: [], instantaneaComision: [], movimientoContable: [], liquidacionServicio: [], conciliacionServicio: [],
     }
     const client = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, delegate(rows)]))
     client.$transaction = async (callback) => callback(client)
@@ -280,6 +280,7 @@ test('WEB-09B Prisma adapters persist service intents in the shared table, the i
   assert.deepEqual(result.outbox, [
     'intencion_pago_servicio:tus.payment.intent_created',
     'intencion_pago_servicio:tus.payment.intent_dispatched',
+    'liquidacion_servicio:tus.service_settlement.held',
     'intencion_pago_servicio:tus.payment.status_changed',
   ])
   assert.equal(result.obligation, 'paid')

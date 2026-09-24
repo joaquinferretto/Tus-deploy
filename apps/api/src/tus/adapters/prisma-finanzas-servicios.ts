@@ -16,6 +16,17 @@ import {
 } from '../finance/servicios/modelo.ts'
 import type { IntencionPagoServicioDominio } from '../finance/servicios/pagos.ts'
 import type {
+  InstantaneaComisionServicio,
+  LiquidacionServicioDominio,
+  MovimientoContableServicio,
+  TipoMovimientoServicio,
+} from '../finance/servicios/liquidacion.ts'
+import type { ConciliacionServicio, EstadoLiquidacionServicio } from '@factory/contracts'
+import type {
+  PuertoComisionesServicio,
+  PuertoConciliacionesServicio,
+  PuertoLedgerServicio,
+  PuertoLiquidacionesServicio,
   PuertoAuditoriaFinanciera,
   PuertoIdempotenciaFinanciera,
   PuertoIdentidadServicio,
@@ -52,6 +63,10 @@ export interface ClientePrismaFinanzasServicio {
   eventoWebhookPago: DelegadoPrismaFinanzasServicio
   outboxEvent: DelegadoPrismaFinanzasServicio
   auditoriaFinanzasServicio: DelegadoPrismaFinanzasServicio
+  instantaneaComision: DelegadoPrismaFinanzasServicio
+  movimientoContable: DelegadoPrismaFinanzasServicio
+  liquidacionServicio: DelegadoPrismaFinanzasServicio
+  conciliacionServicio: DelegadoPrismaFinanzasServicio
   $transaction<T>(
     callback: (client: ClientePrismaFinanzasServicio) => Promise<T>,
     options?: { isolationLevel?: 'Serializable' }
@@ -384,6 +399,203 @@ export class AuditoriaFinancieraPrisma implements PuertoAuditoriaFinanciera {
   }
 }
 
+// Service snapshots share `instantaneas_comision`; `(tenant_id, obligacion_id)` is unique.
+export class ComisionesServicioPrisma implements PuertoComisionesServicio {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  async buscar(input: {
+    tenantId: string
+    obligacionId: string
+  }): Promise<InstantaneaComisionServicio | null> {
+    const row = await this.client.instantaneaComision.findFirst({
+      where: { tenantId: input.tenantId, obligacionId: input.obligacionId },
+    })
+    if (!row) return null
+    return {
+      snapshotId: texto(row, 'instantaneaId'),
+      tenantId: texto(row, 'tenantId'),
+      obligacionId: texto(row, 'obligacionId'),
+      grossMinor: parseMinorUnits(row['montoBruto']),
+      commissionableBaseMinor: parseMinorUnits(row['baseComisionable']),
+      rateBps: Number(row['tasaPuntosBase']),
+      ruleVersion: texto(row, 'versionRegla'),
+      commissionMinor: parseMinorUnits(row['montoComision']),
+      netMinor: parseMinorUnits(row['montoNeto']),
+      currency: texto(row, 'moneda'),
+      providerReference: texto(row, 'referenciaProveedor'),
+      evidenceId: texto(row, 'evidenciaId'),
+      createdAt: fecha(row, 'fechaCreacion'),
+    }
+  }
+
+  async crear(snapshot: InstantaneaComisionServicio): Promise<void> {
+    await this.client.instantaneaComision.create({
+      data: {
+        id: snapshot.snapshotId,
+        versionContrato: TUS_CONTRACT_VERSION,
+        instantaneaId: snapshot.snapshotId,
+        tenantId: snapshot.tenantId,
+        compromisoId: null,
+        obligacionId: snapshot.obligacionId,
+        contexto: 'service',
+        montoBruto: snapshot.grossMinor,
+        deducciones: 0n,
+        baseComisionable: snapshot.commissionableBaseMinor,
+        tasaPuntosBase: snapshot.rateBps,
+        versionRegla: snapshot.ruleVersion,
+        montoComision: snapshot.commissionMinor,
+        montoNeto: snapshot.netMinor,
+        moneda: snapshot.currency,
+        referenciaProveedor: snapshot.providerReference,
+        evidenciaId: snapshot.evidenceId,
+        estadoContable: 'held',
+        fechaCreacion: new Date(snapshot.createdAt),
+      },
+    })
+  }
+}
+
+// Single ledger: rows are only created; the database trigger rejects UPDATE and DELETE.
+export class LedgerServicioPrisma implements PuertoLedgerServicio {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  async listar(input: {
+    tenantId: string
+    obligacionId: string
+  }): Promise<MovimientoContableServicio[]> {
+    const rows = await this.client.movimientoContable.findMany({
+      where: { tenantId: input.tenantId, obligacionId: input.obligacionId },
+      orderBy: { fechaCreacion: 'asc' },
+    })
+    return rows.map((row) => ({
+      entryId: texto(row, 'entradaId'),
+      tenantId: texto(row, 'tenantId'),
+      obligacionId: texto(row, 'obligacionId'),
+      entryType: texto(row, 'tipoEntrada') as TipoMovimientoServicio,
+      amountMinor: parseMinorUnits(row['monto']),
+      currency: texto(row, 'moneda'),
+      linkedEntryId: textoNullable(row, 'entradaVinculadaId'),
+      reason: texto(row, 'motivo'),
+      createdAt: fecha(row, 'fechaCreacion'),
+    }))
+  }
+
+  async agregar(entry: MovimientoContableServicio): Promise<void> {
+    await this.client.movimientoContable.create({
+      data: {
+        id: entry.entryId,
+        entradaId: entry.entryId,
+        tenantId: entry.tenantId,
+        compromisoId: null,
+        obligacionId: entry.obligacionId,
+        tipoEntrada: entry.entryType,
+        monto: entry.amountMinor,
+        moneda: entry.currency,
+        entradaVinculadaId: entry.linkedEntryId,
+        motivo: entry.reason,
+        inmutable: true,
+        fechaCreacion: new Date(entry.createdAt),
+      },
+    })
+  }
+}
+
+export class LiquidacionesServicioPrisma implements PuertoLiquidacionesServicio {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  async buscar(input: {
+    tenantId: string
+    obligacionId: string
+  }): Promise<LiquidacionServicioDominio | null> {
+    const row = await this.client.liquidacionServicio.findFirst({
+      where: { tenantId: input.tenantId, obligacionId: input.obligacionId },
+    })
+    if (!row) return null
+    return {
+      liquidacionId: texto(row, 'liquidacionId'),
+      tenantId: texto(row, 'tenantId'),
+      prestadorTenantId: texto(row, 'prestadorTenantId'),
+      obligacionId: texto(row, 'obligacionId'),
+      trabajoId: texto(row, 'trabajoId'),
+      grossMinor: parseMinorUnits(row['montoBruto']),
+      commissionMinor: parseMinorUnits(row['montoComision']),
+      netMinor: parseMinorUnits(row['montoNeto']),
+      currency: texto(row, 'moneda'),
+      status: texto(row, 'estado') as EstadoLiquidacionServicio,
+      reason: texto(row, 'motivo'),
+      version: Number(row['version']),
+      createdAt: fecha(row, 'fechaCreacion'),
+      updatedAt: fecha(row, 'fechaActualizacion'),
+    }
+  }
+
+  async crear(settlement: LiquidacionServicioDominio): Promise<void> {
+    await this.client.liquidacionServicio.create({
+      data: {
+        id: settlement.liquidacionId,
+        versionContrato: TUS_CONTRACT_VERSION,
+        liquidacionId: settlement.liquidacionId,
+        tenantId: settlement.tenantId,
+        prestadorTenantId: settlement.prestadorTenantId,
+        obligacionId: settlement.obligacionId,
+        trabajoId: settlement.trabajoId,
+        montoBruto: settlement.grossMinor,
+        montoComision: settlement.commissionMinor,
+        montoNeto: settlement.netMinor,
+        moneda: settlement.currency,
+        estado: settlement.status,
+        motivo: settlement.reason,
+        estadoDesembolso: 'not_executed',
+        version: settlement.version,
+        fechaCreacion: new Date(settlement.createdAt),
+        fechaActualizacion: new Date(settlement.updatedAt),
+      },
+    })
+  }
+
+  async actualizar(input: { settlement: LiquidacionServicioDominio; expectedVersion: number }) {
+    const { settlement } = input
+    const result = await this.client.liquidacionServicio.updateMany({
+      where: {
+        tenantId: settlement.tenantId,
+        obligacionId: settlement.obligacionId,
+        version: input.expectedVersion,
+      },
+      data: {
+        estado: settlement.status,
+        motivo: settlement.reason,
+        version: settlement.version,
+        fechaActualizacion: new Date(settlement.updatedAt),
+      },
+    })
+    return result.count === 1 ? settlement : null
+  }
+}
+
+export class ConciliacionesServicioPrisma implements PuertoConciliacionesServicio {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  async registrar(result: ConciliacionServicio & { prestadorTenantId: string }): Promise<void> {
+    await this.client.conciliacionServicio.create({
+      data: {
+        id: result.conciliacionId,
+        versionContrato: result.contractVersion,
+        conciliacionId: result.conciliacionId,
+        tenantId: result.tenantId,
+        prestadorTenantId: result.prestadorTenantId,
+        obligacionId: result.obligacionId,
+        estado: result.status,
+        hallazgos: result.findings,
+        montoEsperado: parseMinorUnits(result.expectedMinor),
+        moneda: result.currency,
+        actorId: result.actorId,
+        correlacionId: result.correlationId,
+        fechaCreacion: new Date(result.createdAt),
+      },
+    })
+  }
+}
+
 export class TransaccionFinanzasServicioPrisma implements PuertoTransaccionFinanzasServicio {
   constructor(protected readonly client: ClientePrismaFinanzasServicio) {}
 
@@ -417,6 +629,10 @@ export class TransaccionFinanzasServicioPrisma implements PuertoTransaccionFinan
       inbox: new InboxEventosPagoPrisma(client),
       outbox: new OutboxFinancieroPrisma(client),
       auditoria: new AuditoriaFinancieraPrisma(client),
+      comisiones: new ComisionesServicioPrisma(client),
+      ledger: new LedgerServicioPrisma(client),
+      liquidaciones: new LiquidacionesServicioPrisma(client),
+      conciliaciones: new ConciliacionesServicioPrisma(client),
     }
   }
 }

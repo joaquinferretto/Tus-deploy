@@ -1,10 +1,27 @@
 import { randomUUID } from 'node:crypto'
 import type {
+  ConciliacionServicio,
   EstadoProveedorPagoServicio,
   IntencionPagoServicio,
+  LiquidacionServicio,
   ObligacionPagoServicio,
   Trabajo,
 } from '@factory/contracts'
+import { ESTADOS_TRABAJO, TUS_CONTRACT_VERSION, formatMinorUnits } from '@factory/contracts'
+import {
+  REGLA_COMISION_SERVICIO_POR_DEFECTO,
+  calcularInstantaneaComision,
+  crearLiquidacion,
+  evaluarConciliacion,
+  movimientoCompensacion,
+  movimientosAprobacion,
+  proyectarLiquidacion,
+  transicionarLiquidacion,
+  type InstantaneaComisionServicio,
+  type LiquidacionServicioDominio,
+  type MovimientoContableServicio,
+  type ReglaComisionServicio,
+} from './liquidacion.ts'
 import {
   ErrorFinanzasServicio,
   derivarObligacionServicio,
@@ -129,7 +146,7 @@ export interface PuertoInboxEventosPago {
 export interface RegistroOutboxFinanciero {
   eventId: string
   tenantId: string
-  aggregateType: 'obligacion_pago_servicio' | 'intencion_pago_servicio'
+  aggregateType: 'obligacion_pago_servicio' | 'intencion_pago_servicio' | 'liquidacion_servicio'
   aggregateId: string
   eventType: string
   payload: Record<string, unknown>
@@ -162,6 +179,37 @@ export interface PuertoAuditoriaFinanciera {
   registrar(record: RegistroAuditoriaFinanciera): Promise<void>
 }
 
+// One commission snapshot per obligation (unique index); the snapshot is immutable.
+export interface PuertoComisionesServicio {
+  buscar(input: {
+    tenantId: string
+    obligacionId: string
+  }): Promise<InstantaneaComisionServicio | null>
+  crear(snapshot: InstantaneaComisionServicio): Promise<void>
+}
+
+// Shared append-only ledger (`movimientos_contables`): no update or delete operation exists.
+export interface PuertoLedgerServicio {
+  listar(input: { tenantId: string; obligacionId: string }): Promise<MovimientoContableServicio[]>
+  agregar(entry: MovimientoContableServicio): Promise<void>
+}
+
+export interface PuertoLiquidacionesServicio {
+  buscar(input: {
+    tenantId: string
+    obligacionId: string
+  }): Promise<LiquidacionServicioDominio | null>
+  crear(settlement: LiquidacionServicioDominio): Promise<void>
+  actualizar(input: {
+    settlement: LiquidacionServicioDominio
+    expectedVersion: number
+  }): Promise<LiquidacionServicioDominio | null>
+}
+
+export interface PuertoConciliacionesServicio {
+  registrar(result: ConciliacionServicio & { prestadorTenantId: string }): Promise<void>
+}
+
 export interface RepositoriosFinanzasServicio {
   identidad: PuertoIdentidadServicio
   obligaciones: PuertoObligacionesServicio
@@ -170,6 +218,10 @@ export interface RepositoriosFinanzasServicio {
   inbox: PuertoInboxEventosPago
   outbox: PuertoOutboxFinanciero
   auditoria: PuertoAuditoriaFinanciera
+  comisiones: PuertoComisionesServicio
+  ledger: PuertoLedgerServicio
+  liquidaciones: PuertoLiquidacionesServicio
+  conciliaciones: PuertoConciliacionesServicio
 }
 
 // Implementations run the callback in one serializable transaction (Prisma) or one
@@ -213,6 +265,15 @@ export interface ResumenFinancieroTrabajoServicio {
   viewer: 'customer' | 'provider'
   obligation: ObligacionPagoServicio | null
   payments: IntencionPagoServicio[]
+  // Provider-only: commission and internal settlement. Customers never receive them.
+  settlement?: LiquidacionServicio | null
+  commission?: { rateBps: number; ruleVersion: string } | null
+}
+
+export type ResultadoEvaluacionLiquidacion = {
+  status: 'eligible' | 'unchanged'
+  reason: string
+  settlement: LiquidacionServicio | null
 }
 
 const ACTOR_PROVEEDOR = 'provider:mercado-pago'
@@ -221,15 +282,18 @@ export class ServicioFinanzasServicios {
   protected readonly transaction: PuertoTransaccionFinanzasServicio
   protected readonly now: () => number
   protected readonly proveedor: PuertoProveedorPagosServicio
+  protected readonly reglaComision: ReglaComisionServicio
 
   constructor(
     transaction: PuertoTransaccionFinanzasServicio,
     now: () => number = () => Date.now(),
-    proveedor: PuertoProveedorPagosServicio = new ProveedorPagosServicioNoDisponible()
+    proveedor: PuertoProveedorPagosServicio = new ProveedorPagosServicioNoDisponible(),
+    reglaComision: ReglaComisionServicio = REGLA_COMISION_SERVICIO_POR_DEFECTO
   ) {
     this.transaction = transaction
     this.now = now
     this.proveedor = proveedor
+    this.reglaComision = reglaComision
   }
 
   // Customer command: fixes the payable amount of a work from persisted commercial facts.
@@ -606,7 +670,7 @@ export class ServicioFinanzasServicios {
             obligacionId: obligation.obligacionId,
           })
         : []
-      return {
+      const summary: ResumenFinancieroTrabajoServicio = {
         trabajoId: trabajo.trabajoId,
         viewer,
         obligation: obligation ? proyectarObligacion(obligation) : null,
@@ -614,19 +678,296 @@ export class ServicioFinanzasServicios {
           .sort((left, right) => left.attempt - right.attempt)
           .map(proyectarIntencionPago),
       }
+      if (viewer === 'customer') return summary
+      const settlement = obligation
+        ? await repositories.liquidaciones.buscar({
+            tenantId: obligation.tenantId,
+            obligacionId: obligation.obligacionId,
+          })
+        : null
+      const snapshot = obligation
+        ? await repositories.comisiones.buscar({
+            tenantId: obligation.tenantId,
+            obligacionId: obligation.obligacionId,
+          })
+        : null
+      return {
+        ...summary,
+        settlement: settlement ? proyectarLiquidacion(settlement) : null,
+        commission: snapshot
+          ? { rateBps: snapshot.rateBps, ruleVersion: snapshot.ruleVersion }
+          : null,
+      }
     })
   }
 
-  // Extension point for internal effects of an applied provider transition (WEB-09C).
+  // System step (future consumer of `tus.work.completed`): marks the internal settlement as
+  // eligible only when the payment is approved and the work is completed. It moves no money.
+  async evaluarLiquidacion(input: {
+    tenantId: string
+    obligacionId: string
+    correlationId: string
+  }): Promise<ResultadoEvaluacionLiquidacion> {
+    return this.transaction.ejecutar(async (repositories) => {
+      const obligation = await this.requerirObligacion(
+        repositories,
+        input.tenantId,
+        input.obligacionId
+      )
+      const settlement = await repositories.liquidaciones.buscar({
+        tenantId: obligation.tenantId,
+        obligacionId: obligation.obligacionId,
+      })
+      if (!settlement)
+        return { status: 'unchanged', reason: 'payment_not_approved', settlement: null }
+      if (settlement.status !== 'held')
+        return {
+          status: 'unchanged',
+          reason: `settlement_${settlement.status}`,
+          settlement: proyectarLiquidacion(settlement),
+        }
+      if (obligation.status !== 'paid')
+        return {
+          status: 'unchanged',
+          reason: `obligation_${obligation.status}`,
+          settlement: proyectarLiquidacion(settlement),
+        }
+      const trabajo = await repositories.identidad.buscarTrabajoAccesible({
+        tenantId: obligation.tenantId,
+        trabajoId: obligation.trabajoId,
+      })
+      if (trabajo?.status !== ESTADOS_TRABAJO.COMPLETADO)
+        return {
+          status: 'unchanged',
+          reason: 'work_not_completed',
+          settlement: proyectarLiquidacion(settlement),
+        }
+      const eligible = transicionarLiquidacion(
+        settlement,
+        'eligible',
+        'work_completed_payment_approved',
+        this.isoNow()
+      )
+      await this.guardarLiquidacion(repositories, settlement, eligible)
+      await this.auditar(repositories, obligation, {
+        resourceType: 'settlement',
+        resourceId: settlement.liquidacionId,
+        action: 'settlement.eligible',
+        origin: 'system',
+        actorId: 'system:settlement-evaluation',
+        correlationId: input.correlationId,
+        idempotencyKey: null,
+        previousStatus: settlement.status,
+        status: eligible.status,
+        metadata: { payoutStatus: 'not_executed' },
+      })
+      await this.publicarLiquidacion(repositories, eligible, 'tus.service_settlement.eligible')
+      return {
+        status: 'eligible',
+        reason: eligible.reason,
+        settlement: proyectarLiquidacion(eligible),
+      }
+    })
+  }
+
+  // Internal reconciliation: provider evidence (verified inbox) vs local payment vs ledger vs
+  // settlement. Discrepancies freeze the settlement but never rewrite economic records.
+  async conciliarObligacion(input: {
+    tenantId: string
+    obligacionId: string
+    actorId: string
+    correlationId: string
+  }): Promise<ConciliacionServicio> {
+    return this.transaction.ejecutar(async (repositories) => {
+      const obligation = await this.requerirObligacion(
+        repositories,
+        input.tenantId,
+        input.obligacionId
+      )
+      const scope = { tenantId: obligation.tenantId, obligacionId: obligation.obligacionId }
+      const [intents, events, ledger, snapshot, settlement] = await Promise.all([
+        repositories.intenciones.listarPorObligacion(scope),
+        repositories.inbox.listarPorObligacion(scope),
+        repositories.ledger.listar(scope),
+        repositories.comisiones.buscar(scope),
+        repositories.liquidaciones.buscar(scope),
+      ])
+      const evaluation = evaluarConciliacion({
+        obligation,
+        intents,
+        events,
+        ledger,
+        snapshot,
+        settlement,
+      })
+      const now = this.isoNow()
+      const result: ConciliacionServicio = {
+        contractVersion: TUS_CONTRACT_VERSION,
+        conciliacionId: `conciliacion-${obligation.obligacionId}-${randomUUID()}`,
+        obligacionId: obligation.obligacionId,
+        tenantId: obligation.tenantId,
+        status: evaluation.status,
+        findings: evaluation.findings,
+        expectedMinor: formatMinorUnits(obligation.amountMinor),
+        currency: obligation.currency,
+        actorId: input.actorId,
+        correlationId: input.correlationId,
+        createdAt: now,
+      }
+      await repositories.conciliaciones.registrar({
+        ...result,
+        prestadorTenantId: obligation.prestadorTenantId,
+      })
+      if (
+        evaluation.status === 'discrepancy' &&
+        settlement &&
+        (settlement.status === 'held' || settlement.status === 'eligible')
+      ) {
+        const frozen = transicionarLiquidacion(
+          settlement,
+          'frozen',
+          'reconciliation_discrepancy',
+          now
+        )
+        await this.guardarLiquidacion(repositories, settlement, frozen)
+        await this.publicarLiquidacion(repositories, frozen, 'tus.service_settlement.frozen')
+      }
+      await this.auditar(repositories, obligation, {
+        resourceType: 'reconciliation',
+        resourceId: result.conciliacionId,
+        action: `reconciliation.${evaluation.status}`,
+        origin: 'system',
+        actorId: input.actorId,
+        correlationId: input.correlationId,
+        idempotencyKey: null,
+        previousStatus: settlement?.status ?? null,
+        status: evaluation.status,
+        metadata: { findings: evaluation.findings.map((finding) => finding.code) },
+      })
+      return result
+    })
+  }
+
+  // Internal effects of an applied provider transition. Runs inside the event transaction, so
+  // the inbox uniqueness plus deterministic ids prevent any double commission or ledger entry.
   protected async alAplicarEventoPago(
-    _repositories: RepositoriosFinanzasServicio,
-    _input: {
+    repositories: RepositoriosFinanzasServicio,
+    input: {
       previousIntent: IntencionPagoServicioDominio
       intent: IntencionPagoServicioDominio
       obligation: ObligacionServicio
       event: EventoPagoNormalizado
     }
-  ): Promise<void> {}
+  ): Promise<void> {
+    const { intent, obligation, event } = input
+    const now = this.isoNow()
+    const scope = { tenantId: obligation.tenantId, obligacionId: obligation.obligacionId }
+    if (intent.providerStatus === 'approved') {
+      if (await repositories.comisiones.buscar(scope))
+        throw new ErrorFinanzasServicio(
+          409,
+          'COMMISSION_ALREADY_BOOKED',
+          'obligation already has a commission snapshot'
+        )
+      const snapshot = calcularInstantaneaComision({
+        obligation,
+        intent,
+        rule: this.reglaComision,
+        evidenceId: `provider-event:${event.eventId}`,
+        now,
+      })
+      await repositories.comisiones.crear(snapshot)
+      for (const entry of movimientosAprobacion(snapshot, now))
+        await repositories.ledger.agregar(entry)
+      const settlement = crearLiquidacion(obligation, snapshot, now)
+      await repositories.liquidaciones.crear(settlement)
+      await this.auditar(repositories, obligation, {
+        resourceType: 'settlement',
+        resourceId: settlement.liquidacionId,
+        action: 'settlement.held',
+        origin: 'provider_event',
+        actorId: ACTOR_PROVEEDOR,
+        correlationId: `provider-event:${event.eventId}`,
+        idempotencyKey: event.eventId,
+        previousStatus: null,
+        status: settlement.status,
+        metadata: {
+          grossMinor: snapshot.grossMinor.toString(10),
+          commissionMinor: snapshot.commissionMinor.toString(10),
+          netMinor: snapshot.netMinor.toString(10),
+          ruleVersion: snapshot.ruleVersion,
+          payoutStatus: 'not_executed',
+        },
+      })
+      await this.publicarLiquidacion(repositories, settlement, 'tus.service_settlement.held')
+      return
+    }
+    if (intent.providerStatus !== 'refunded' && intent.providerStatus !== 'charged_back') return
+    const entryType =
+      intent.providerStatus === 'refunded' ? 'refund_compensation' : 'chargeback_compensation'
+    await repositories.ledger.agregar(
+      movimientoCompensacion(obligation, entryType, event.eventId, now)
+    )
+    const settlement = await repositories.liquidaciones.buscar(scope)
+    if (!settlement) return
+    const target = intent.providerStatus === 'refunded' ? 'reversed' : 'frozen'
+    if (settlement.status === target || settlement.status === 'reversed') return
+    const moved = transicionarLiquidacion(
+      settlement,
+      target,
+      `provider_${intent.providerStatus}`,
+      now
+    )
+    await this.guardarLiquidacion(repositories, settlement, moved)
+    await this.auditar(repositories, obligation, {
+      resourceType: 'settlement',
+      resourceId: settlement.liquidacionId,
+      action: `settlement.${target}`,
+      origin: 'provider_event',
+      actorId: ACTOR_PROVEEDOR,
+      correlationId: `provider-event:${event.eventId}`,
+      idempotencyKey: event.eventId,
+      previousStatus: settlement.status,
+      status: target,
+      metadata: { payoutStatus: 'not_executed' },
+    })
+    await this.publicarLiquidacion(repositories, moved, `tus.service_settlement.${target}`)
+  }
+
+  protected async guardarLiquidacion(
+    repositories: RepositoriosFinanzasServicio,
+    previous: LiquidacionServicioDominio,
+    next: LiquidacionServicioDominio
+  ): Promise<void> {
+    const persisted = await repositories.liquidaciones.actualizar({
+      settlement: next,
+      expectedVersion: previous.version,
+    })
+    if (!persisted)
+      throw new ErrorFinanzasServicio(409, 'VERSION_CONFLICT', 'settlement changed concurrently')
+  }
+
+  protected async publicarLiquidacion(
+    repositories: RepositoriosFinanzasServicio,
+    settlement: LiquidacionServicioDominio,
+    eventType: string
+  ): Promise<void> {
+    await repositories.outbox.publicar({
+      eventId: `${eventType}:${settlement.liquidacionId}:${settlement.version}`,
+      tenantId: settlement.tenantId,
+      aggregateType: 'liquidacion_servicio',
+      aggregateId: settlement.liquidacionId,
+      eventType,
+      payload: {
+        settlementId: settlement.liquidacionId,
+        obligationId: settlement.obligacionId,
+        providerTenantId: settlement.prestadorTenantId,
+        status: settlement.status,
+        payoutStatus: 'not_executed',
+      },
+      createdAt: this.isoNow(),
+    })
+  }
 
   protected evaluarEvento(
     intent: IntencionPagoServicioDominio,

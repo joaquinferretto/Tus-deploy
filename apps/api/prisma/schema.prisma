@@ -1005,6 +1005,8 @@ model ObligacionPagoServicio {
   movimientosContables MovimientoContable[]
   eventosProveedor     EventoWebhookPago[]
   auditorias           AuditoriaFinanzasServicio[]
+  liquidaciones        LiquidacionServicio[]
+  conciliaciones       ConciliacionServicio[]
 
   @@unique([tenantId, obligacionId], map: "uq_obligaciones_pago_tenant_obligacion")
   @@unique([tenantId, trabajoId], map: "uq_obligaciones_pago_tenant_trabajo")
@@ -1036,6 +1038,59 @@ model AuditoriaFinanzasServicio {
   @@index([tenantId, obligacionId, fechaCreacion], map: "idx_auditoria_fin_servicio_obligacion_fecha")
   @@index([prestadorTenantId, fechaCreacion], map: "idx_auditoria_fin_servicio_prestador_fecha")
   @@map("auditoria_finanzas_servicio")
+}
+
+// WEB-09C: internal settlement per paid obligation. It never represents a payout: the
+// transfer state is fixed to 'not_executed' by a CHECK constraint.
+model LiquidacionServicio {
+  id                 String   @id(map: "liquidaciones_servicio_pkey")
+  versionContrato    String   @map("version_contrato")
+  liquidacionId      String   @map("liquidacion_id")
+  tenantId           String   @map("tenant_id")
+  prestadorTenantId  String   @map("prestador_tenant_id")
+  obligacionId       String   @map("obligacion_id")
+  trabajoId          String   @map("trabajo_id")
+  montoBruto         BigInt   @map("monto_bruto")
+  montoComision      BigInt   @map("monto_comision")
+  montoNeto          BigInt   @map("monto_neto")
+  moneda             String   @map("moneda")
+  estado             String   @map("estado")
+  motivo             String   @map("motivo")
+  estadoDesembolso   String   @default("not_executed") @map("estado_desembolso")
+  version            Int      @default(1) @map("version")
+  fechaCreacion      DateTime @map("fecha_creacion")
+  fechaActualizacion DateTime @map("fecha_actualizacion")
+
+  obligacion ObligacionPagoServicio @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_liquidaciones_servicio_obligaciones")
+
+  @@unique([tenantId, liquidacionId], map: "uq_liquidaciones_servicio_tenant_liquidacion")
+  @@unique([tenantId, obligacionId], map: "uq_liquidaciones_servicio_tenant_obligacion")
+  @@index([prestadorTenantId, estado], map: "idx_liquidaciones_servicio_prestador_estado")
+  @@map("liquidaciones_servicio")
+}
+
+// WEB-09C: append-only reconciliation runs. Findings are evidence; they never rewrite money.
+model ConciliacionServicio {
+  id                String   @id(map: "conciliaciones_servicio_pkey")
+  versionContrato   String   @map("version_contrato")
+  conciliacionId    String   @map("conciliacion_id")
+  tenantId          String   @map("tenant_id")
+  prestadorTenantId String   @map("prestador_tenant_id")
+  obligacionId      String   @map("obligacion_id")
+  estado            String   @map("estado")
+  hallazgos         Json     @map("hallazgos")
+  montoEsperado     BigInt   @map("monto_esperado")
+  moneda            String   @map("moneda")
+  actorId           String   @map("actor_id")
+  correlacionId     String   @map("correlacion_id")
+  fechaCreacion     DateTime @map("fecha_creacion")
+
+  obligacion ObligacionPagoServicio @relation(fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_conciliaciones_servicio_obligaciones")
+
+  @@unique([tenantId, conciliacionId], map: "uq_conciliaciones_servicio_tenant_conciliacion")
+  @@index([tenantId, obligacionId, fechaCreacion], map: "idx_conciliaciones_servicio_obligacion_fecha")
+  @@index([tenantId, estado, fechaCreacion], map: "idx_conciliaciones_servicio_estado_fecha")
+  @@map("conciliaciones_servicio")
 }
 
 model IdempotenciaFinanciera {

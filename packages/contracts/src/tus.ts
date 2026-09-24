@@ -383,6 +383,80 @@ export function validarIntencionPagoServicio(value: unknown): IntencionPagoServi
   return value as unknown as IntencionPagoServicio
 }
 
+// WEB-09C: internal settlement of a paid service obligation. `payoutStatus` is always
+// `not_executed`: no transfer to the provider exists in the runtime.
+export const ESTADOS_LIQUIDACION_SERVICIO = ['held', 'eligible', 'frozen', 'reversed'] as const
+export type EstadoLiquidacionServicio = (typeof ESTADOS_LIQUIDACION_SERVICIO)[number]
+
+export interface LiquidacionServicio {
+  contractVersion: TusContractVersion
+  liquidacionId: string
+  obligacionId: string
+  trabajoId: string
+  tenantId: string
+  prestadorTenantId: string
+  grossMinor: string
+  commissionMinor: string
+  netMinor: string
+  currency: string
+  status: EstadoLiquidacionServicio
+  reason: string
+  payoutStatus: 'not_executed'
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+export function validarLiquidacionServicio(value: unknown): LiquidacionServicio {
+  if (!isRecord(value)) throw new ContractValidationError('tus-service-settlement', undefined, 'payload must be an object')
+  assertTusVersion('tus-service-settlement', value['contractVersion'])
+  for (const field of ['liquidacionId', 'obligacionId', 'trabajoId', 'tenantId', 'prestadorTenantId', 'currency', 'reason', 'createdAt', 'updatedAt']) {
+    if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-service-settlement', TUS_CONTRACT_VERSION, `${field} is required`)
+  }
+  if (!isMinorAmount(value['grossMinor']) || !isMinorAmount(value['commissionMinor']) || !isMinorAmount(value['netMinor']) || BigInt(value['commissionMinor']) + BigInt(value['netMinor']) !== BigInt(value['grossMinor'])) throw new ContractValidationError('tus-service-settlement', TUS_CONTRACT_VERSION, 'settlement amounts do not add up')
+  if (!ESTADOS_LIQUIDACION_SERVICIO.includes(value['status'] as EstadoLiquidacionServicio) || value['payoutStatus'] !== 'not_executed' || !Number.isInteger(value['version']) || Number(value['version']) < 1) throw new ContractValidationError('tus-service-settlement', TUS_CONTRACT_VERSION, 'settlement state is invalid')
+  return value as unknown as LiquidacionServicio
+}
+
+export const CODIGOS_HALLAZGO_CONCILIACION_SERVICIO = ['matched', 'missing', 'duplicate', 'amount_mismatch', 'currency_mismatch', 'invalid_state'] as const
+export type CodigoHallazgoConciliacionServicio = (typeof CODIGOS_HALLAZGO_CONCILIACION_SERVICIO)[number]
+
+export interface HallazgoConciliacionServicio {
+  code: CodigoHallazgoConciliacionServicio
+  detail: string
+}
+
+export interface ConciliacionServicio {
+  contractVersion: TusContractVersion
+  conciliacionId: string
+  obligacionId: string
+  tenantId: string
+  status: 'matched' | 'discrepancy' | 'pending'
+  findings: HallazgoConciliacionServicio[]
+  expectedMinor: string
+  currency: string
+  actorId: string
+  correlationId: string
+  createdAt: string
+}
+
+export function validarConciliacionServicio(value: unknown): ConciliacionServicio {
+  if (!isRecord(value)) throw new ContractValidationError('tus-service-reconciliation', undefined, 'payload must be an object')
+  assertTusVersion('tus-service-reconciliation', value['contractVersion'])
+  if (!['matched', 'discrepancy', 'pending'].includes(String(value['status'])) || !isMinorAmount(value['expectedMinor']) || !Array.isArray(value['findings']) || value['findings'].some((finding) => !isRecord(finding) || !CODIGOS_HALLAZGO_CONCILIACION_SERVICIO.includes(finding['code'] as CodigoHallazgoConciliacionServicio) || typeof finding['detail'] !== 'string')) throw new ContractValidationError('tus-service-reconciliation', TUS_CONTRACT_VERSION, 'reconciliation result is invalid')
+  return value as unknown as ConciliacionServicio
+}
+
+// Read model for the Web: the customer never receives commission or settlement data.
+export interface ResumenFinancieroTrabajoServicio {
+  trabajoId: string
+  viewer: 'customer' | 'provider'
+  obligation: ObligacionPagoServicio | null
+  payments: IntencionPagoServicio[]
+  settlement?: LiquidacionServicio | null
+  commission?: { rateBps: number; ruleVersion: string } | null
+}
+
 function isMinorAmount(value: unknown): value is string {
   return typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)
 }

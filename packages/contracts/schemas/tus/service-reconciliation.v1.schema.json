@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tus/service-reconciliation.v1",
+  "title": "TUS internal service reconciliation run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "conciliacionId",
+    "obligacionId",
+    "tenantId",
+    "status",
+    "findings",
+    "expectedMinor",
+    "currency",
+    "actorId",
+    "correlationId",
+    "createdAt"
+  ],
+  "properties": {
+    "contractVersion": { "type": "string" },
+    "conciliacionId": { "type": "string", "minLength": 1 },
+    "obligacionId": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["matched", "discrepancy", "pending"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "detail"],
+        "properties": {
+          "code": {
+            "enum": [
+              "matched",
+              "missing",
+              "duplicate",
+              "amount_mismatch",
+              "currency_mismatch",
+              "invalid_state"
+            ]
+          },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "expectedMinor": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "actorId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "minLength": 1 }
+  }
+}

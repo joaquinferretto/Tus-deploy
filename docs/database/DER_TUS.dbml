@@ -1533,6 +1533,52 @@ Table registros_operaciones {
 // TRABAJO Y PRESUPUESTO WEB-08A/B
 // ============================================================
 
+Table liquidaciones_servicio {
+  id varchar [pk]
+  version_contrato varchar
+  liquidacion_id varchar
+  tenant_id varchar
+  prestador_tenant_id varchar
+  obligacion_id varchar
+  trabajo_id varchar
+  monto_bruto bigint
+  monto_comision bigint
+  monto_neto bigint [note: 'monto_comision + monto_neto = monto_bruto']
+  moneda varchar
+  estado varchar [note: 'held | eligible | frozen | reversed']
+  motivo varchar
+  estado_desembolso varchar [note: "siempre 'not_executed' (CHECK)"]
+  version int
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+
+  indexes {
+    (tenant_id, liquidacion_id) [unique, name: 'uq_liquidaciones_servicio_tenant_liquidacion']
+    (tenant_id, obligacion_id) [unique, name: 'uq_liquidaciones_servicio_tenant_obligacion']
+    (prestador_tenant_id, estado) [name: 'idx_liquidaciones_servicio_prestador_estado']
+  }
+
+  Note: 'WEB-09C: liquidacion interna; no representa payout.'
+}
+
+Table conciliaciones_servicio {
+  id varchar [pk]
+  version_contrato varchar
+  conciliacion_id varchar
+  tenant_id varchar
+  prestador_tenant_id varchar
+  obligacion_id varchar
+  estado varchar [note: 'matched | discrepancy | pending']
+  hallazgos json
+  monto_esperado bigint
+  moneda varchar
+  actor_id varchar
+  correlacion_id varchar
+  fecha_creacion timestamp
+
+  Note: 'WEB-09C: corridas append-only (trigger).'
+}
+
 Table auditoria_finanzas_servicio {
   id varchar [pk]
   tenant_id varchar
@@ -1781,6 +1827,8 @@ Ref: instantaneas_comision.(tenant_id, obligacion_id) - obligaciones_pago_servic
 Ref: movimientos_contables.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
 Ref: eventos_webhook_pago.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
 Ref: auditoria_finanzas_servicio.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
+Ref: liquidaciones_servicio.(tenant_id, obligacion_id) - obligaciones_pago_servicio.(tenant_id, obligacion_id)
+Ref: conciliaciones_servicio.(tenant_id, obligacion_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id)
 Ref: presupuestos.(tenant_id, trabajo_id) > trabajos.(tenant_id, trabajo_id)
 Ref: lineas_presupuesto.presupuesto_registro_id > presupuestos.id
 Ref: aceptaciones_presupuesto.presupuesto_registro_id > presupuestos.id
