@@ -91,8 +91,8 @@ Corrección:
   operativo auditado; producción necesita proveedor de correo antes de registro público.
 - La topología real de Hostinger no fue observada. `TRUST_PROXY_HOPS=1` solo es correcto si existe exactamente un salto de
   proxy y el proceso Node no es accesible directamente.
-- No se ejecutó SCA online ni DAST. El lockfile y las acciones de CI deben revisarse periódicamente; un advisory High/Critical
-- vigente en el target de staging hace fallar el gate.
+- Se ejecutó `pnpm audit --prod` contra el advisory feed; no se ejecutó DAST contra un host público. El lockfile y las
+  acciones de CI deben revisarse periódicamente; un advisory High/Critical vigente en el target de staging hace fallar el gate.
 - La actualización local de esta fase llevó Next a `15.5.26` y fijó `sharp>=0.35.4`, `postcss>=8.5.23` y `qs>=6.16.0`.
   El audit global actual no tiene Critical y conserva 19 High/6 moderate exclusivamente bajo `apps/mobile`/Expo, que no
   forma parte del despliegue Hostinger/Vercel de esta fase. La remediación móvil queda pendiente y bloquea una aprobación
