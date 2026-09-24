@@ -6,7 +6,6 @@ import {
   TUS_CONTRACT_VERSION,
   type AceptacionPresupuesto,
   type Diagnostico,
-  type EstadoDiagnostico,
   type EstadoPresupuesto,
   type EstadoTrabajo,
   type EvidenciaTrabajo,
@@ -1156,11 +1155,18 @@ export class InMemoryTrabajoStore implements TrabajoStorePort {
     const key = decisionKey(decision.tenantId, decision.budgetRecordId)
     if (this.decisions.has(key))
       throw new TrabajoError(409, 'ALREADY_DECIDED', 'budget already has a decision')
-    const {
-      budgetRecordId: _budgetRecordId,
-      correlationId: _correlationId,
-      ...publicDecision
-    } = decision
+    const publicDecision: AceptacionPresupuesto = {
+      contractVersion: decision.contractVersion,
+      acceptanceId: decision.acceptanceId,
+      presupuestoId: decision.presupuestoId,
+      presupuestoVersion: decision.presupuestoVersion,
+      trabajoId: decision.trabajoId,
+      tenantId: decision.tenantId,
+      actorId: decision.actorId,
+      decision: decision.decision,
+      ...(decision.reason ? { reason: decision.reason } : {}),
+      createdAt: decision.createdAt,
+    }
     this.decisions.set(key, structuredClone(publicDecision))
   }
 
