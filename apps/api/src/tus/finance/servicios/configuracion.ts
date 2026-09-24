@@ -222,7 +222,10 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     private readonly cuentaConectada: (prestadorTenantId: string) => Promise<boolean>,
     // Production money also needs the evidence-based readiness decision (legal, tax, KYB/KYC,
     // Mercado Pago...). No environment variable can bypass it. Sandbox does not move real money.
-    private readonly produccionAutorizada: () => Promise<boolean> = async () => false
+    private readonly produccionAutorizada: () => Promise<boolean> = async () => false,
+    // IDENTITY-NOSIS: a provider receives money only after its identity is verified.
+    private readonly identidadVerificada:
+      ((prestadorTenantId: string) => Promise<boolean>) | null = null
   ) {}
 
   async reglaComision(input: {
@@ -251,6 +254,8 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     // different product and is not supported.
     if (rule.pspFeeBearer === 'platform')
       return { available: false, reason: 'PSP_FEE_POLICY_UNSUPPORTED' }
+    if (this.identidadVerificada && !(await this.identidadVerificada(input.prestadorTenantId)))
+      return { available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }
     if (!(await this.cuentaConectada(input.prestadorTenantId)))
       return { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }
     return { available: true, reason: null }

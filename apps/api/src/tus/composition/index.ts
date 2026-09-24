@@ -46,10 +46,15 @@ import { InMemorySupportStore, PrismaSupportStore, TusSupportService } from '../
 import { InMemoryWhatsAppActionStore, PrismaWhatsAppActionStore, TusWhatsAppService } from '../whatsapp/index.ts'
 import { InMemoryReportingStore, PrismaReportingStore, TusReportingService } from '../reporting/index.ts'
 import { EvaluadorHabilitacion, PERFILES_HABILITACION } from '../readiness/index.ts'
+import type { ServicioVerificacionIdentidad } from '../identidad/servicio.ts'
+import { crearServicioIdentidad } from '../identidad/composicion.ts'
+import { TransaccionIdentidadPrisma, type ClientePrismaIdentidad } from '../adapters/prisma-identidad.ts'
 
 export function createTusApplication(
-  options: Pick<TusApplicationDependencies, 'now' | 'releasePolicy' | 'operationsTelemetry' | 'evaluadorHabilitacion' | 'perfilHabilitacion' | 'alcanceHabilitacion'> = {},
+  // `identity` (optional here) turns on the IDENTITY-NOSIS provider gates in memory as well.
+  options: Pick<TusApplicationDependencies, 'now' | 'releasePolicy' | 'operationsTelemetry' | 'evaluadorHabilitacion' | 'perfilHabilitacion' | 'alcanceHabilitacion' | 'identity'> = {},
 ): TusApplicationService {
+  const identidadVerificada = options.identity ? (tenantId: string) => options.identity!.identidadVerificada(tenantId) : undefined
   const commitments = new InMemoryTusCommitmentStore()
   const compensations = new InMemoryTusCompensationStore()
   const audits = new AlmacenReferenciasAuditoriaEnMemoria()
@@ -69,6 +74,7 @@ export function createTusApplication(
     perfilHabilitacion: options.perfilHabilitacion,
     alcanceHabilitacion: options.alcanceHabilitacion,
     calendarResolver: calendar,
+    identidadVerificada,
   })
   const commitmentLookup = async (commitmentId: string) => (await commitments.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
   const finance = new TusFinanceService({
@@ -99,7 +105,7 @@ export function createTusApplication(
   }) }, reservationSerializer), options.now)
   // In-memory composition never reads process.env: payments stay unavailable unless a test
   // injects its own module. The preview still works.
-  const servicePayments = crearModuloPagosServicio({ env: {}, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: options.now })
+  const servicePayments = crearModuloPagosServicio({ env: {}, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: options.now, identidadVerificada })
   const serviceFinance = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore)),
     options.now,
@@ -133,7 +139,11 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
   const evaluadorHabilitacion = new EvaluadorHabilitacion(new AlmacenPrismaEvidenciaHabilitacion(client))
   const marketplaceStore = new PrismaMarketplaceStore(client)
   const calendar = new ServiceCalendarService(new PrismaServiceCalendarStore(client))
-  const marketplace = new TusMarketplaceService(marketplaceStore, { evaluadorHabilitacion, calendarResolver: calendar })
+  // IDENTITY-NOSIS: always enforced with PostgreSQL. Until a provider is verified it cannot
+  // publish services, accept work, link Mercado Pago or receive payments.
+  const identity: ServicioVerificacionIdentidad = crearServicioIdentidad({ transaction: new TransaccionIdentidadPrisma(client as unknown as ClientePrismaIdentidad), env })
+  const identidadVerificada = (tenantId: string) => identity.identidadVerificada(tenantId)
+  const marketplace = new TusMarketplaceService(marketplaceStore, { evaluadorHabilitacion, calendarResolver: calendar, identidadVerificada })
   const commitmentStore = new PrismaTusCommitmentStore(client)
   const commitmentLookup = async (commitmentId: string) => (await commitmentStore.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
   const delivery = new TusDeliveryService({
@@ -158,7 +168,7 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
       return false
     }
   }
-  const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient), produccionAutorizada })
+  const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient), produccionAutorizada, identidadVerificada })
   // The provider is Mercado Pago only when every variable is present; otherwise unavailable.
   const serviceFinance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio), () => Date.now(), servicePayments.proveedor, undefined, servicePayments.politica)
   return new TusApplicationService({
@@ -184,6 +194,7 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
     work,
     serviceFinance,
     servicePayments,
+    identity,
     evaluadorHabilitacion,
     perfilHabilitacion: 'native-local',
     alcanceHabilitacion: 'argentina-stage-1',

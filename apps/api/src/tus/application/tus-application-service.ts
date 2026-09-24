@@ -21,6 +21,7 @@ import type { ServicioFinanzasServicios } from '../finance/servicios/servicio.ts
 import type { ModuloPagosServicio } from '../finance/servicios/composicion-pagos.ts'
 import type { TusOperationsTelemetry } from '@factory/observability'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
+import type { ServicioVerificacionIdentidad } from '../identidad/servicio.ts'
 import { TUS_BOUNDED_CONTEXTS } from '../ports/index.ts'
 import type {
   ReferenciaAuditoria,
@@ -70,6 +71,8 @@ export interface TusApplicationDependencies {
   serviceFinance?: ServicioFinanzasServicios
   // WEB-09D: payment configuration (admin), provider payment accounts and readiness.
   servicePayments?: ModuloPagosServicio
+  // IDENTITY-NOSIS: provider identity verification (consent, DNI upload, queue, admin review).
+  identity?: ServicioVerificacionIdentidad
   operationsTelemetry?: TusOperationsTelemetry
   evaluadorHabilitacion?: EvaluadorHabilitacion
   perfilHabilitacion?: PerfilHabilitacion
@@ -89,6 +92,7 @@ export class TusApplicationService {
   readonly work?: ServicioTrabajo
   readonly serviceFinance?: ServicioFinanzasServicios
   readonly servicePayments?: ModuloPagosServicio
+  readonly identity?: ServicioVerificacionIdentidad
   readonly contexts = TUS_BOUNDED_CONTEXTS
   private readonly dependencies: TusApplicationDependencies
   private readonly lifecycle: ServicioCicloVidaCompromiso
@@ -108,6 +112,7 @@ export class TusApplicationService {
     this.work = dependencies.work
     this.serviceFinance = dependencies.serviceFinance
     this.servicePayments = dependencies.servicePayments
+    this.identity = dependencies.identity
     this.evaluadorHabilitacion = dependencies.evaluadorHabilitacion
     if (!dependencies.transaction) throw new Error('TUS transaction boundary is required')
     this.lifecycle = new ServicioCicloVidaCompromiso(dependencies.transaction, dependencies.now, {
@@ -203,6 +208,12 @@ export class TusApplicationService {
     const publication = await this.marketplace.store.listings.find(commitment.listingId)
     if (!publication)
       throw new TrabajoError(404, 'NOT_FOUND', 'commitment publication was not found')
+    if (this.identity && !(await this.identity.identidadVerificada(context.tenantId)))
+      throw new TrabajoError(
+        403,
+        'PROVIDER_IDENTITY_NOT_VERIFIED',
+        'verify your identity before accepting work'
+      )
     // WEB-08H: la reserva se valida y bloquea dentro de la transaccion que crea el trabajo.
     return this.work.acceptCommitment({
       tenantId: context.tenantId,

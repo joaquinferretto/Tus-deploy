@@ -23,6 +23,7 @@ import { ErrorCalendario } from '../calendar/index.ts'
 import { HabilitacionBloqueadaError, type EvaluadorHabilitacion, type PerfilHabilitacion } from '../readiness/index.ts'
 import { TrabajoError } from '../work/index.ts'
 import { ErrorFinanzasServicio } from '../finance/servicios/modelo.ts'
+import { ErrorIdentidad } from '../identidad/modelo.ts'
 
 const TUS_API_VERSION = 'v1'
 
@@ -442,6 +443,94 @@ export function createTusHttpRouter({ application, sessions, now = () => Date.no
     if (!result.redirectUrl) { sendError(response, 503, 'PROVIDER_NOT_CONFIGURED', 'Mercado Pago account linking is not configured'); return }
     response.setHeader('cache-control', 'no-store')
     response.redirect(303, result.redirectUrl)
+  })
+
+  // IDENTITY-NOSIS: provider identity verification. The provider only ever sees its own
+  // verification (tenant from the session). Submitting answers "queued" immediately: reading,
+  // matching and the external search happen in the separate worker.
+  const IDENTITY_PATHS = ['/tus/v1/provider/identity-verification', '/tus/v1/prestador/verificacion-identidad']
+  const identityProvider = async (request: Request, response: Response, body: Record<string, unknown> = {}) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !hasPermission(context, 'tus:marketplace:write') || hasSpoofedAuthority(body, request, context) || !application.identity) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS identity verification is not authorized')
+      return null
+    }
+    response.setHeader('cache-control', 'no-store')
+    return { identity: application.identity, ctx: { tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId } }
+  }
+  router.get(IDENTITY_PATHS, async (request: Request, response: Response) => {
+    const auth = await identityProvider(request, response)
+    if (!auth) return
+    try { response.status(200).json(await auth.identity.estado(auth.ctx)) } catch (error) { sendIdentityError(response, error) }
+  })
+  router.post(IDENTITY_PATHS.map((path) => `${path}/consent`), async (request: Request, response: Response) => {
+    const body = asRecord(request.body)
+    const auth = await identityProvider(request, response, body)
+    if (!auth) return
+    try { response.status(200).json(await auth.identity.aceptarConsentimiento(auth.ctx, { accepted: body['accepted'], consentVersion: body['consentVersion'] })) } catch (error) { sendIdentityError(response, error) }
+  })
+  // Raw image bytes (the declared Content-Type is not trusted: magic bytes decide).
+  const rawDocument = express.raw({ type: ['image/jpeg', 'image/png', 'image/webp', 'application/octet-stream'], limit: '9mb' })
+  router.put(IDENTITY_PATHS.map((path) => `${path}/documents/:side`), rawDocument, async (request: Request, response: Response) => {
+    const auth = await identityProvider(request, response)
+    if (!auth) return
+    try { response.status(200).json(await auth.identity.subirDocumento(auth.ctx, request.params['side'], request.body)) } catch (error) { sendIdentityError(response, error) }
+  })
+  router.post(IDENTITY_PATHS.map((path) => `${path}/submit`), async (request: Request, response: Response) => {
+    const auth = await identityProvider(request, response, asRecord(request.body))
+    if (!auth) return
+    try { response.status(202).json(await auth.identity.enviar(auth.ctx)) } catch (error) { sendIdentityError(response, error) }
+  })
+
+  // IDENTITY-NOSIS platform administration: `tus:identity:admin` AND the platform tenant
+  // (TUS_PLATFORM_ADMIN_TENANT_ID). DNI images are served only here, never cached.
+  const identityAdmin = async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const adminTenantId = application.servicePayments?.platformAdminTenantId
+    if (!context || !adminTenantId || context.tenantId !== adminTenantId || !hasPermission(context, 'tus:identity:admin') || !application.identity) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS identity administration is not authorized')
+      return null
+    }
+    response.setHeader('cache-control', 'no-store')
+    return { identity: application.identity, ctx: { tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId } }
+  }
+  router.get(['/tus/v1/admin/identity-verifications'], async (request: Request, response: Response) => {
+    const auth = await identityAdmin(request, response)
+    if (!auth) return
+    try { response.status(200).json({ verifications: await auth.identity.listar({ status: readQueryString(request.query['status']) || undefined, limit: Number(readQueryString(request.query['limit'])) || undefined }) }) } catch (error) { sendIdentityError(response, error) }
+  })
+  router.get(['/tus/v1/admin/identity-verifications/:verificationId'], async (request: Request, response: Response) => {
+    const auth = await identityAdmin(request, response)
+    if (!auth) return
+    try { response.status(200).json(await auth.identity.detalle(request.params['verificationId'] ?? '')) } catch (error) { sendIdentityError(response, error) }
+  })
+  router.get(['/tus/v1/admin/identity-verifications/:verificationId/documents/:side'], async (request: Request, response: Response) => {
+    const auth = await identityAdmin(request, response)
+    if (!auth) return
+    try {
+      const document = await auth.identity.documentoParaRevision(request.params['verificationId'] ?? '', request.params['side'])
+      response.setHeader('content-type', document.mimeType)
+      response.setHeader('x-content-type-options', 'nosniff')
+      response.setHeader('content-disposition', 'inline')
+      response.setHeader('content-security-policy', "default-src 'none'")
+      response.status(200).end(document.bytes)
+    } catch (error) { sendIdentityError(response, error) }
+  })
+  router.post(['/tus/v1/admin/identity-verifications/:verificationId/decision'], async (request: Request, response: Response) => {
+    const auth = await identityAdmin(request, response)
+    if (!auth) return
+    const body = asRecord(request.body)
+    try { response.status(200).json(await auth.identity.decidir(auth.ctx, request.params['verificationId'] ?? '', { decision: body['decision'], reason: body['reason'] })) } catch (error) { sendIdentityError(response, error) }
+  })
+  router.get(['/tus/v1/admin/identity-worker'], async (request: Request, response: Response) => {
+    const auth = await identityAdmin(request, response)
+    if (!auth) return
+    try { response.status(200).json(await auth.identity.estadoWorker()) } catch (error) { sendIdentityError(response, error) }
+  })
+  router.post(['/tus/v1/admin/identity-worker/:action'], async (request: Request, response: Response) => {
+    const auth = await identityAdmin(request, response)
+    if (!auth) return
+    try { response.status(200).json(await auth.identity.controlarWorker(auth.ctx, request.params['action'])) } catch (error) { sendIdentityError(response, error) }
   })
 
   // WEB-09D platform administration. Requires `tus:payments:admin` AND the platform tenant
@@ -1576,6 +1665,14 @@ function sendServiceFinanceError(response: Response, error: unknown): void {
     return
   }
   sendError(response, 500, 'UNAVAILABLE', 'TUS service finance operation was not committed')
+}
+
+function sendIdentityError(response: Response, error: unknown): void {
+  if (error instanceof ErrorIdentidad) {
+    response.status(error.status).json({ code: error.code, error: error.message })
+    return
+  }
+  sendError(response, 500, 'UNAVAILABLE', 'TUS identity operation was not committed')
 }
 
 function sendWorkError(response: Response, error: unknown): void {

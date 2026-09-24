@@ -42,6 +42,8 @@ export function crearModuloPagosServicio(input: {
   realProviderAdapterAvailable?: boolean
   // Evidence-based readiness for real money (production only). Defaults to "not authorized".
   produccionAutorizada?: () => Promise<boolean>
+  // IDENTITY-NOSIS gate (provider identity verified). Absent only in isolated unit compositions.
+  identidadVerificada?: (tenantId: string) => Promise<boolean>
   // Tests inject a fake HTTP transport for the Mercado Pago API.
   mercadoPago?: Pick<ConfiguracionProveedorMercadoPago, 'fetch' | 'apiBaseUrl'>
 }): ModuloPagosServicio {
@@ -82,7 +84,8 @@ export function crearModuloPagosServicio(input: {
       : null,
     oauthListo ? boveda : null,
     oauth,
-    now
+    now,
+    input.identidadVerificada ?? null
   )
   const produccionAutorizada = input.produccionAutorizada ?? (async () => false)
   const proveedor: PuertoProveedorPagosServicio =
@@ -113,7 +116,8 @@ export function crearModuloPagosServicio(input: {
       input.configuracion,
       operativo,
       (tenantId) => cuentas.cuentaConectada(tenantId),
-      produccionAutorizada
+      produccionAutorizada,
+      input.identidadVerificada ?? null
     ),
     proveedor,
     operativo,

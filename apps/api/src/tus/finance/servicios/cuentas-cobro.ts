@@ -310,7 +310,9 @@ export class ServicioCuentasCobro {
     private readonly config: ConfiguracionOAuthCobro | null,
     private readonly boveda: BovedaCredencialesAesGcm | null,
     private readonly oauth: PuertoOAuthMercadoPago | null,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    // IDENTITY-NOSIS: Mercado Pago can only be linked after the identity is verified.
+    private readonly identidadVerificada: ((tenantId: string) => Promise<boolean>) | null = null
   ) {}
 
   get disponible(): boolean {
@@ -456,6 +458,12 @@ export class ServicioCuentasCobro {
     correlationId: string
   }): Promise<{ authorizationUrl: string; expiresAt: string }> {
     const { config, boveda } = this.requerirConfiguracion()
+    if (this.identidadVerificada && !(await this.identidadVerificada(context.tenantId)))
+      throw new ErrorFinanzasServicio(
+        403,
+        'PROVIDER_IDENTITY_NOT_VERIFIED',
+        'verify your identity before linking a payment account'
+      )
     const state = randomBytes(32).toString('base64url')
     const verifier = randomBytes(48).toString('base64url')
     const challenge = createHash('sha256').update(verifier).digest('base64url')

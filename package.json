@@ -15,7 +15,10 @@
     "typecheck": "turbo run typecheck --concurrency=1",
     "contracts:validate": "node packages/contracts/scripts/validate-schemas.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "tus:identity:worker": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/identidad/cli.ts worker",
+    "tus:identity:nosis-login": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/identidad/cli.ts nosis-login",
+    "tus:identity:nosis-check": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/identidad/cli.ts nosis-check"
   },
   "devDependencies": {
     "prettier": "^3.2.5",
