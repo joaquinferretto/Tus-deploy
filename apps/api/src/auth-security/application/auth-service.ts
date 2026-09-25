@@ -195,17 +195,70 @@ export class AuthService {
     }
 
     const now = this.dependencies.clock.now()
-    const deviceId = input.device?.deviceId?.trim() || this.dependencies.ids.next()
-    const deviceLabel = input.device?.label?.trim() || 'Unspecified device'
+    credential.lastUsedAt = now
+    credential.updatedAt = now
+    await store.saveCredential(credential)
+    return this.issueSession(store, account, input.device, 'credential_verified')
+  }
+
+  // Federated sign-in (Google): the identity was already verified by the OIDC boundary. The same
+  // account gates as password sign-in apply and the SAME session type is issued, so the rest of
+  // TUS never knows how the person authenticated.
+  async signInFederated(input: { accountId: string; device?: SignInInput['device'] }): Promise<SignInResult> {
+    return this.runTransaction(async (store) => {
+      const account = await store.getAccount(input.accountId)
+      if (!account || account.status !== 'active' || !account.emailVerifiedAt || !(await store.hasActiveMembership(account.id, account.tenantId))) {
+        await this.record(account, AUTH_EVENT_KIND.AUTH_FAILED, 'denied', 'federated_account_unavailable')
+        return failure(AUTH_RESULT_CODE.INVALID_CREDENTIALS, GENERIC_AUTH_FAILURE_MESSAGE)
+      }
+      return this.issueSession(store, account, input.device, 'federated_identity_verified')
+    })
+  }
+
+  // Account for a verified federated identity: no password credential. The email is verified
+  // only because the identity provider asserted email_verified=true (checked by the caller).
+  async registerFederated(input: { email: string; displayName: string }): Promise<{ ok: true; account: SafeAccount } | AuthFailure> {
+    return this.runTransaction(async (store) => {
+      const normalizedEmail = normalizeEmail(input.email)
+      const displayName = input.displayName.trim().slice(0, 120)
+      if (!validateEmail(normalizedEmail) || displayName.length === 0)
+        return failure(AUTH_RESULT_CODE.INVALID_CREDENTIALS, 'Invalid registration input')
+      if (await store.findAccountByEmail(normalizedEmail))
+        return failure(AUTH_RESULT_CODE.INVALID_CREDENTIALS, 'Account already exists')
+      const now = this.dependencies.clock.now()
+      const account: Account = {
+        id: this.dependencies.ids.next(),
+        email: input.email.trim(),
+        normalizedEmail,
+        displayName,
+        tenantId: this.dependencies.ids.next(),
+        roles: ['owner'],
+        status: 'active',
+        emailVerifiedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }
+      await store.saveAccount(account, { bootstrapTenant: true })
+      await this.record(account, AUTH_EVENT_KIND.ACCOUNT_REGISTERED, 'success', 'federated_account_created')
+      return { ok: true, account: this.safeAccount(account) }
+    })
+  }
+
+  private async issueSession(
+    store: IdentityStore,
+    account: Account,
+    device: SignInInput['device'],
+    reason: string
+  ): Promise<SignInResult> {
+    const now = this.dependencies.clock.now()
+    const deviceId = device?.deviceId?.trim() || this.dependencies.ids.next()
+    const deviceLabel = device?.label?.trim() || 'Unspecified device'
     await store.saveDevice(account.id, {
       deviceId,
       label: deviceLabel,
       firstSeenAt: now,
       lastSeenAt: now,
     })
-    credential.lastUsedAt = now
-    credential.updatedAt = now
-    await store.saveCredential(credential)
 
     const accessToken = this.dependencies.tokens.issue()
     const session: Session = {
@@ -223,7 +276,7 @@ export class AuthService {
       revokedAt: null,
     }
     await store.saveSession(session)
-    await this.record(account, AUTH_EVENT_KIND.AUTH_SIGNED_IN, 'success', 'credential_verified')
+    await this.record(account, AUTH_EVENT_KIND.AUTH_SIGNED_IN, 'success', reason)
     await this.record(account, AUTH_EVENT_KIND.SESSION_CREATED, 'success', 'scoped_session_issued')
 
     return {

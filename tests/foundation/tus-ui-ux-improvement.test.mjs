@@ -116,18 +116,26 @@ test('PR1 distinguishes missing credentials from unavailable storage without lea
 })
 
 test('PR3 gives public and recovery pages semantic landmarks and descriptive headings', () => {
+  // The public home is the marketplace (apps/web/src/features/home); page.tsx only composes it.
   const page = readFileSync(join(root, 'apps/web/src/app/page.tsx'), 'utf8')
+  const home = readFileSync(join(root, 'apps/web/src/features/home/home-page.tsx'), 'utf8')
+  const header = readFileSync(join(root, 'apps/web/src/features/home/public-header.tsx'), 'utf8')
   const recovery = readFileSync(join(root, 'apps/web/src/app/(auth)/recovery/page.tsx'), 'utf8')
 
-  for (const source of [page, recovery]) {
-    assert.match(source, /<TusSkipLink\s*\/?\s*>/)
-    assert.match(source, /id="tus-main-content"/)
-    assert.match(source, /<nav[^>]+aria-label=/)
-    assert.match(source, /<h1[\s>]/)
-  }
-  assert.match(page, /<h3>/)
-  assert.doesNotMatch(page, /<h2>/)
-  assert.match(page, /<Link[^>]+href="\/sign-in"/)
+  assert.match(page, /<HomePage\b/)
+  assert.match(home, /href="#contenido"/)
+  assert.match(home, /<main id="contenido">/)
+  assert.match(header, /<nav[^>]+aria-label=/)
+  assert.match(home, /<h1[\s>]/)
+  // One h1, then h2 sections and h3 items (no skipped levels).
+  assert.equal((home.match(/<h1[\s>]/g) ?? []).length, 1)
+  assert.match(home, /<h2[\s>]/)
+  assert.match(home, /<h3[\s>]/)
+  assert.match(header, /<Link[^>]+href="\/sign-in"/)
+  assert.match(recovery, /<TusSkipLink\s*\/?\s*>/)
+  assert.match(recovery, /id="tus-main-content"/)
+  assert.match(recovery, /<nav[^>]+aria-label=/)
+  assert.match(recovery, /<h1[\s>]/)
   assert.match(recovery, /href=\{`\/sign-in\?returnTo=/)
 })
 

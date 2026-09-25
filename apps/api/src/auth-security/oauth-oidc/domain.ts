@@ -43,6 +43,9 @@ export interface OAuthIdentity {
   subject: string
   email: string | null
   emailVerified: boolean
+  // Optional profile claims (never used as identity keys).
+  name?: string | null
+  picture?: string | null
 }
 
 export interface OidcTokenClaims {
@@ -53,6 +56,8 @@ export interface OidcTokenClaims {
   email: string | null
   emailVerified: boolean
   expiresAt: number
+  name?: string | null
+  picture?: string | null
 }
 
 export type OAuthOidcFailure = {

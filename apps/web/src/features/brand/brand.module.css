@@ -1,0 +1,19 @@
+.logo {
+  display: block;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+/* Fallback while /brand/tus-logo.png is not provided: a plain wordmark, not a logo recreation. */
+.wordmark {
+  color: #ff5a00;
+  display: inline-block;
+  font-size: 1.75rem;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.wordmarkAuth {
+  font-size: 2.75rem;
+}

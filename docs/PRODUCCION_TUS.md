@@ -72,6 +72,18 @@ Generar la clave de cifrado (una vez, guardarla en el secret store; si se pierde
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
 ```
 
+Ingreso con Google (opcional; sin las tres variables el botón aparece como no disponible):
+
+| Variable               | Qué es                                                                          | Secreto |
+| ---------------------- | ------------------------------------------------------------------------------- | ------- |
+| `GOOGLE_CLIENT_ID`     | Client ID del cliente OAuth "Aplicación web" de Google Cloud                    | no*     |
+| `GOOGLE_CLIENT_SECRET` | Client secret de ese cliente                                                    | **sí**  |
+| `GOOGLE_REDIRECT_URI`  | `https://<api>/auth/oauth/google/callback` (exacta, registrada en Google, HTTPS) | no      |
+
+También requiere `TUS_WEB_BASE_URL` (destino del callback). En Google Cloud Console → APIs y servicios → Credenciales →
+Crear credenciales → ID de cliente de OAuth → Aplicación web: agregar como "URI de redireccionamiento autorizado" el valor
+exacto de `GOOGLE_REDIRECT_URI`; en "Pantalla de consentimiento" usar los scopes `openid`, `email` y `profile`.
+
 ### Web (Vercel o Render `factory-web`)
 
 | Variable                           | Obligatoria | Valor                                                                 |
@@ -80,6 +92,7 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
 | `NEXT_PUBLIC_SITE_URL`             | recomendada | `https://<dominio-web>`                                               |
 | `NEXT_PUBLIC_SUPPORT_WHATSAPP_URL` | no          | URL pública de soporte                                                |
 | `API_BASE_URL`                     | no          | si se define debe ser igual a `NEXT_PUBLIC_API_URL`                   |
+| `NEXT_PUBLIC_MAP_*`                | no          | proveedor de tiles y centro del mapa de la home (default OSM/Córdoba) |
 
 La Web **no** necesita ningún secreto. Nunca definas tokens o claves en variables `NEXT_PUBLIC_*`. Sin
 `NEXT_PUBLIC_API_URL` el build de producción falla a propósito; no hay `localhost` fijo.
@@ -444,6 +457,8 @@ adaptador esté configurado.
 1. `/health` 200 y `/ready` 200.
 2. Web carga `/`, `/sign-in`, `/tus/mercado` y `/tus/prestador` sin errores de CORS en la consola.
 3. Login con una cuenta del equipo verificada.
+   Si Google está configurado: `/sign-in` → "Continuar con Google" vuelve a `/ingresar/google` y entra al panel;
+   `/registro` → "Registrarme con Google" con un email nuevo pide aceptar términos en `/registro/completar`.
 4. Prestador: publicar un servicio; cliente: comprarlo; prestador: aceptar, diagnosticar, presupuestar; cliente: aceptar
    presupuesto; prestador: iniciar y completar.
 5. Sin pagos habilitados: el bloque "Pago" muestra el total y "Pago online no disponible todavía"; no se registra ningún
@@ -598,6 +613,7 @@ server-derived y tenant-scoped.
 | Hostinger API          | `TUS_ROUTES_ENABLED=true`                                                      |                                      sí para usar TUS |                       no |
 | Hostinger API          | `TRUST_PROXY_HOPS`                                                             |                                      después de medir |                       no |
 | Hostinger API          | `TUS_MERCADOPAGO_ENABLED=false`                                                |                                                    sí |                       no |
+| Hostinger API          | `GOOGLE_CLIENT_ID`, `GOOGLE_REDIRECT_URI`, `GOOGLE_CLIENT_SECRET`              |                             para ingresar con Google |           solo el secret |
 | Vercel Web             | `NEXT_PUBLIC_API_URL`                                                          |                                                    sí |                       no |
 | Vercel Web             | `NEXT_PUBLIC_SITE_URL`                                                         |                                           recomendada |                       no |
 | Vercel Web             | `NEXT_PUBLIC_SUPPORT_WHATSAPP_URL`                                             |                                                    no |                       no |

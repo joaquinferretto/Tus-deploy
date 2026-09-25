@@ -126,6 +126,28 @@ Corrección:
   HTTPS. Revisar términos de retención de Groq y, si corresponde, mencionar el procesamiento por IA en el consentimiento
   (hoy dice "fuentes externas de validación"). Sin `GROQ_API_KEY_1..6` ni `GROQ_API_KEY` no se envía nada y todo va a revisión manual.
 
+## Ingreso y registro con Google (OIDC)
+
+- Un único flujo Authorization Code + PKCE ejecutado por la API (`/auth/oauth/google/start` → Google →
+  `/auth/oauth/google/callback`). La Web solo navega al endpoint de inicio: `GOOGLE_CLIENT_SECRET` vive únicamente en la API
+  y no existe ninguna variable `NEXT_PUBLIC_GOOGLE_*`.
+- La API valida `state` (sha256 guardado, consumo atómico de un solo uso, expira en minutos), `nonce`, PKCE S256, firma
+  RS256 del `id_token` contra el JWKS de Google (`kid`, caché según `max-age`), `iss`, `aud`, `exp` y `email_verified`.
+- **Decisión `email_verified`:** si Google no confirma el email se rechaza el ingreso (`google_email_not_verified`). Por eso
+  una cuenta creada con Google nace con `emailVerifiedAt` y puede iniciar sesión sin el correo de verificación.
+- Identidad permanente = proveedor + emisor + `sub` (`identidades_externas`, única). El email nunca identifica.
+- Vinculación segura: si el email ya pertenece a una cuenta TUS no se crea otra ni se vincula en silencio; se pide
+  iniciar sesión con contraseña y la vinculación exige una sesión de menos de 10 minutos, el mismo email y que ese `sub` no
+  esté vinculado a otra cuenta. Solo quien controla un Google con ese email verificado llega a esa pantalla, así que no
+  habilita enumeración de cuentas; el login por contraseña sigue devolviendo el mismo mensaje para email o clave incorrectos.
+- El callback entrega a la Web un código de un solo uso en el fragmento (`#code=`), nunca un token de sesión; la Web lo
+  canjea por POST y obtiene la misma sesión TUS (Bearer opaco en `sessionStorage`) que el login con contraseña.
+  `Referrer-Policy: no-referrer` en el callback; rate limit en canje, alta y vinculación.
+- No se guardan access tokens ni refresh tokens de Google. Sin las tres variables `GOOGLE_*` y `TUS_WEB_BASE_URL` el
+  proveedor queda deshabilitado (fail closed) y la Web muestra el botón como no disponible.
+- El registro con Google exige aceptar términos. La "intención" (contratar u ofrecer servicios) solo elige la pantalla
+  siguiente; los roles los decide el backend.
+
 ## Gate obligatorio antes de staging
 
 - [ ] Working tree esperado y commit/release ID registrados; `opencode.json` fuera del cambio.

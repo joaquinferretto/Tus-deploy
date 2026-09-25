@@ -64,7 +64,7 @@ export class OAuthOidcService {
     url.searchParams.set('client_id', provider.config.clientId)
     url.searchParams.set('redirect_uri', input.redirectUri)
     url.searchParams.set('response_type', 'code')
-    url.searchParams.set('scope', 'openid email')
+    url.searchParams.set('scope', 'openid email profile')
     url.searchParams.set('state', state)
     url.searchParams.set('nonce', nonce)
     url.searchParams.set('code_challenge', createPkceChallenge(codeVerifier))
@@ -122,6 +122,8 @@ export class OAuthOidcService {
         subject: claims.subject,
         email: claims.email,
         emailVerified: claims.emailVerified,
+        name: claims.name ?? null,
+        picture: claims.picture ?? null,
       },
     }
   }

@@ -34,6 +34,7 @@ model Account {
   recoveryTokens     RecoveryToken[]
   devices            Device[]
   sessions           Session[]
+  identidadesExternas IdentidadExterna[]
 
   @@unique([userId, tenantId])
   @@index([tenantId])
@@ -2713,4 +2714,48 @@ model FragmentoConocimiento {
   @@unique([documentoId, indice], map: "uq_fragmentos_conocimiento_documento_indice")
   @@index([busqueda], map: "ix_fragmentos_conocimiento_busqueda", type: Gin)
   @@map("fragmentos_conocimiento")
+}
+
+// Google OpenID Connect identities linked to TUS accounts (provider + issuer + subject).
+model IdentidadExterna {
+  id          String   @id(map: "identidades_externas_pkey")
+  cuentaId    String   @map("cuenta_id")
+  cuenta      Account  @relation(fields: [cuentaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_identidades_externas_cuenta")
+  proveedor   String   @map("proveedor")
+  emisor      String   @map("emisor")
+  sujeto      String   @map("sujeto")
+  email       String?  @map("email")
+  vinculadaEn DateTime @map("vinculada_en")
+
+  @@unique([proveedor, emisor, sujeto], map: "uq_identidades_externas_identidad")
+  @@index([cuentaId], map: "ix_identidades_externas_cuenta")
+  @@map("identidades_externas")
+}
+
+// OAuth authorization transactions (hashed state, nonce, PKCE verifier; single use).
+model TransaccionOAuth {
+  id           String    @id(map: "transacciones_oauth_pkey")
+  proveedor    String    @map("proveedor")
+  hashState    String    @map("hash_state")
+  nonce        String    @map("nonce")
+  codeVerifier String    @map("code_verifier")
+  redirectUri  String    @map("redirect_uri")
+  expiraEn     DateTime  @map("expira_en")
+  consumidaEn  DateTime? @map("consumida_en")
+
+  @@unique([hashState], map: "uq_transacciones_oauth_hash_state")
+  @@map("transacciones_oauth")
+}
+
+// Single-use hand-off codes from the OAuth callback to the Web (sha256 only).
+model CodigoIngresoOAuth {
+  id         String    @id(map: "codigos_ingreso_oauth_pkey")
+  hashCodigo String    @map("hash_codigo")
+  tipo       String    @map("tipo")
+  datos      Json      @map("datos")
+  expiraEn   DateTime  @map("expira_en")
+  usadoEn    DateTime? @map("usado_en")
+
+  @@unique([hashCodigo], map: "uq_codigos_ingreso_oauth_hash")
+  @@map("codigos_ingreso_oauth")
 }

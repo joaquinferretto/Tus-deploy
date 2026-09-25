@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { test } from 'node:test'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = join(import.meta.dirname, '..', '..')
@@ -61,22 +62,25 @@ test('PR5 keeps product and service facts separate and makes stale reporting rec
   assert.equal(result.current.status, 'ready')
 })
 
-test('PR5 homepage exposes the full customer, merchant, operations, and POS chain', () => {
+test('PR5 public home is the marketplace entry and the authenticated chain stays reachable', () => {
   const result = runTypeScriptScenario(`
-    const { renderToStaticMarkup } = await import('./apps/web/node_modules/react-dom/server')
-    const React = await import('./apps/web/node_modules/react')
-    globalThis.React = React
-    const pageModule = await import('./apps/web/src/app/page.tsx')
-    const HomePage = typeof pageModule.default === 'function' ? pageModule.default : pageModule.default.default
-    console.log(JSON.stringify({ markup: renderToStaticMarkup(React.createElement(HomePage)) }))
+    const journeyModule = await import('./apps/web/src/lib/tus-journeys.ts')
+    const { buildTusJourneyLinks } = journeyModule.default ?? journeyModule
+    const journeys = buildTusJourneyLinks({ roles: ['customer', 'merchant', 'operations', 'staff'], permissions: ['tus:read', 'tus:operations:read', 'tus:pos:write'] })
+    console.log(JSON.stringify({ journeys: journeys.map((journey) => journey.href) }))
   `)
+  const home = ['home-page.tsx', 'public-header.tsx', 'recent-requests.tsx']
+    .map((file) => readFileSync(join(root, 'apps/web/src/features/home', file), 'utf8'))
+    .join('\n')
 
-  assert.match(result.markup, /href="\/tus\?surface=discovery"/)
-  assert.match(result.markup, /href="\/tus\?surface=commitments"/)
-  assert.match(result.markup, /href="\/tus\/operations"/)
-  assert.match(result.markup, /href="\/tus\/pos"/)
-  assert.match(result.markup, /customer|merchant|operations|POS/i)
-  assert.match(result.markup, /online operation requires connectivity/i)
+  assert.match(home, /href="\/sign-in"/)
+  assert.match(home, /href="\/registro"/)
+  assert.match(home, /Solicitudes recientes/)
+  assert.match(home, /href="\/registro\?intencion=prestador"/)
+  // The customer, merchant, operations and POS chain lives behind sign-in (/tus).
+  for (const href of ['/tus?surface=discovery', '/tus?surface=commitments', '/tus/operations', '/tus/pos'])
+    assert.ok(result.journeys.includes(href), href)
+  assert.match(readFileSync(join(root, 'apps/web/src/app/page.tsx'), 'utf8'), /online operation requires connectivity/i)
 })
 
 test('PR4 uses en-AR formatting while preserving foreign and missing currency facts', () => {

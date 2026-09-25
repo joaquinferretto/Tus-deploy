@@ -2151,3 +2151,48 @@ Table auditoria_identidad {
   }
   Note: 'append-only (trigger)'
 }
+
+// ============================================================
+// GOOGLE SIGN-IN (20260929100000_tus_google_federated_auth)
+// ============================================================
+// "Account" es la tabla de cuentas de auth-security (fuera del DER Core); la FK es física.
+Table identidades_externas {
+  id varchar [pk]
+  cuenta_id varchar [note: 'FK "Account"(id) ON DELETE RESTRICT']
+  proveedor varchar [note: "CHECK: 'google'"]
+  emisor varchar [note: 'iss del id_token (https://accounts.google.com)']
+  sujeto varchar [note: 'sub del id_token; identidad permanente (nunca el email)']
+  email varchar [null, note: 'email verificado al vincular; solo informativo']
+  vinculada_en timestamp
+  indexes {
+    (proveedor, emisor, sujeto) [unique, name: 'uq_identidades_externas_identidad']
+    cuenta_id [name: 'ix_identidades_externas_cuenta']
+  }
+  Note: 'Sin access/refresh tokens de Google.'
+}
+
+Table transacciones_oauth {
+  id varchar [pk]
+  proveedor varchar
+  hash_state varchar [note: 'sha256 hex del state']
+  nonce varchar
+  code_verifier varchar [note: 'PKCE; vive minutos y se consume una vez']
+  redirect_uri varchar
+  expira_en timestamp
+  consumida_en timestamp [null]
+  indexes {
+    hash_state [unique, name: 'uq_transacciones_oauth_hash_state']
+  }
+}
+
+Table codigos_ingreso_oauth {
+  id varchar [pk]
+  hash_codigo varchar [note: 'sha256 hex del código de un solo uso']
+  tipo varchar [note: "CHECK: 'session' | 'signup' | 'link'"]
+  datos jsonb [note: 'cuenta o identidad pendiente (sin tokens)']
+  expira_en timestamp
+  usado_en timestamp [null]
+  indexes {
+    hash_codigo [unique, name: 'uq_codigos_ingreso_oauth_hash']
+  }
+}

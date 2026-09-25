@@ -651,6 +651,14 @@ fila por búsqueda enviada, base de la ventana deslizante 7/h). `estado_proveedo
 session_required/circuit_open con versión). `sesiones_navegador_proveedor` (estado Playwright cifrado).
 `auditoria_identidad` (append-only, DNI/CUIL enmascarados). Relaciones lógicas sin FK: `verificacion_id` y `tenant_id`.
 
+**GOOGLE SIGN-IN.** `20260929100000_tus_google_federated_auth` (aditiva, solo tablas nuevas):
+`identidades_externas` (identidad federada permanente `(proveedor, emisor, sujeto)` única; FK física a `"Account"(id)`
+ON DELETE RESTRICT / ON UPDATE NO ACTION; `proveedor` con CHECK `google`; el email es solo informativo y nunca identifica).
+`transacciones_oauth` (state/nonce/PKCE de cada intento; solo el sha256 del `state`, único; consumo atómico de un solo uso;
+expira en minutos). `codigos_ingreso_oauth` (código de un solo uso que entrega el resultado del callback a la Web sin
+poner un token de sesión en la URL; solo el sha256; `tipo` con CHECK `session | signup | link`; TTL 2/15/15 min).
+No se guardan access tokens ni refresh tokens de Google. Relación lógica sin FK: `datos.accountId` de los códigos.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

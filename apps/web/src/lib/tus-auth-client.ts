@@ -25,6 +25,12 @@ export interface TusWebAuthRequest {
     | '/auth/register'
     | '/auth/recovery/request'
     | '/auth/recovery/complete'
+    | '/auth/oauth/providers'
+    | '/auth/oauth/exchange'
+    | '/auth/oauth/signup'
+    | '/auth/oauth/signup/preview'
+    | '/auth/oauth/link'
+    | '/auth/oauth/link/preview'
   correlationId: string
   accessToken?: string
   body?: unknown
@@ -55,6 +61,14 @@ export interface TusWebAuthClient {
   restore(returnTo?: string): Promise<TusSessionState>
   signOut(): Promise<void>
   clearLocalSession(): void
+  // Google (OpenID Connect through the TUS API). The API validates Google and issues the SAME
+  // session type as password sign-in; the Web only exchanges single-use codes.
+  googleAvailable(): Promise<boolean>
+  googleExchange(code: string): Promise<TusSessionState>
+  googleSignupPreview(code: string): Promise<{ email: string | null; name: string | null } | null>
+  googleSignup(input: { code: string; displayName: string; acceptedTerms: boolean }): Promise<TusSessionState>
+  googleLinkPreview(code: string): Promise<{ emailMasked: string | null } | null>
+  googleLink(code: string): Promise<TusAuthActionState>
 }
 
 export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): TusWebAuthClient {
@@ -62,6 +76,25 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
   const storage = options.storage ?? createBrowserSessionStorage()
   const createCorrelationId = options.createCorrelationId ?? createDefaultCorrelationId
   const now = options.now ?? (() => Date.now())
+
+  // One path for every way of signing in: the server session is re-confirmed through
+  // /auth/session before anything is stored.
+  async function establish(path: TusWebAuthRequest['path'], body: unknown, fallback: string): Promise<TusSessionState> {
+    try {
+      const correlationId = createCorrelationId()
+      const response = await transport.request<unknown>({ method: 'POST', path, correlationId, body })
+      const serverSession = parseTusServerSession(response)
+      const context = await bootstrapContext(transport, serverSession.accessToken, correlationId)
+      if (context.sessionId !== serverSession.id || context.tenantId !== serverSession.tenantId || context.subjectId !== serverSession.accountId) {
+        throw new TusAuthError('The server returned an inconsistent session scope.', 502, 'SESSION_SCOPE_MISMATCH')
+      }
+      const session = createTusAuthenticatedSession({ accessToken: serverSession.accessToken, expiresAt: serverSession.expiresAt, context })
+      storage.write(serializeCredential(session))
+      return authenticatedState(session)
+    } catch (error: unknown) {
+      return authState(error, undefined, fallback)
+    }
+  }
 
   return {
     async register(input) {
@@ -86,20 +119,52 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
       })
     },
     async signIn(input) {
+      return establish('/auth/sign-in', { email: input.email, password: input.password }, 'Sign-in could not be confirmed by TUS.')
+    },
+
+    async googleAvailable() {
       try {
-        const correlationId = createCorrelationId()
-        const response = await transport.request<unknown>({ method: 'POST', path: '/auth/sign-in', correlationId, body: { email: input.email, password: input.password } })
-        const serverSession = parseTusServerSession(response)
-        const context = await bootstrapContext(transport, serverSession.accessToken, correlationId)
-        if (context.sessionId !== serverSession.id || context.tenantId !== serverSession.tenantId || context.subjectId !== serverSession.accountId) {
-          throw new TusAuthError('The server returned an inconsistent session scope.', 502, 'SESSION_SCOPE_MISMATCH')
-        }
-        const session = createTusAuthenticatedSession({ accessToken: serverSession.accessToken, expiresAt: serverSession.expiresAt, context })
-        storage.write(serializeCredential(session))
-        return authenticatedState(session)
-      } catch (error: unknown) {
-        return authState(error, undefined, 'Sign-in could not be confirmed by TUS.')
+        const response = await transport.request<{ google?: { available?: unknown } }>({ method: 'GET', path: '/auth/oauth/providers', correlationId: createCorrelationId() })
+        return response?.google?.available === true
+      } catch {
+        return false
       }
+    },
+
+    async googleExchange(code) {
+      return establish('/auth/oauth/exchange', { code }, 'Google sign-in could not be confirmed by TUS.')
+    },
+
+    async googleSignupPreview(code) {
+      try {
+        const response = await transport.request<{ email?: unknown; name?: unknown }>({ method: 'POST', path: '/auth/oauth/signup/preview', correlationId: createCorrelationId(), body: { code } })
+        return { email: typeof response.email === 'string' ? response.email : null, name: typeof response.name === 'string' ? response.name : null }
+      } catch {
+        return null
+      }
+    },
+
+    async googleSignup(input) {
+      return establish('/auth/oauth/signup', { code: input.code, displayName: input.displayName, acceptedTerms: input.acceptedTerms }, 'Google sign-up could not be confirmed by TUS.')
+    },
+
+    async googleLinkPreview(code) {
+      try {
+        const response = await transport.request<{ emailMasked?: unknown }>({ method: 'POST', path: '/auth/oauth/link/preview', correlationId: createCorrelationId(), body: { code } })
+        return { emailMasked: typeof response.emailMasked === 'string' ? response.emailMasked : null }
+      } catch {
+        return null
+      }
+    },
+
+    async googleLink(code) {
+      const credential = readCredential(storage)
+      return authAction(transport, createCorrelationId, {
+        method: 'POST',
+        path: '/auth/oauth/link',
+        body: { code },
+        ...(credential === null ? {} : { accessToken: credential.accessToken }),
+      })
     },
 
     async restore(returnTo) {
@@ -161,6 +226,15 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
       clearStorage(storage)
     },
   }
+}
+
+export function tusGoogleStartUrl(): string {
+  const baseUrl = resolveWebApiBaseUrl({
+    canonicalUrl: process.env['NEXT_PUBLIC_API_URL'],
+    legacyUrl: process.env['API_BASE_URL'],
+    nodeEnv: process.env['NODE_ENV'],
+  })
+  return `${baseUrl}/auth/oauth/google/start`
 }
 
 export interface TusAuthActionState {
