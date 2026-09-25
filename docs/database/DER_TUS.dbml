@@ -2196,3 +2196,28 @@ Table codigos_ingreso_oauth {
     hash_codigo [unique, name: 'uq_codigos_ingreso_oauth_hash']
   }
 }
+
+// ============================================================
+// SOLICITUDES DE SERVICIO (20260930100000_tus_solicitudes_servicio)
+// ============================================================
+Table solicitudes_servicio {
+  id varchar [pk]
+  cuenta_id varchar [note: 'FK "Account"(id) ON DELETE RESTRICT; nunca sale en la vista pública']
+  categoria varchar [note: "CHECK: plomeria | electricidad | mecanica | pintura | aire | otros"]
+  titulo varchar [note: 'CHECK 5..90; sin teléfonos, emails ni links (validación de aplicación)']
+  descripcion varchar [null, note: 'CHECK <= 500']
+  nombre_publico varchar [note: 'nombre + inicial ("Laura M."), derivado de la cuenta']
+  zona varchar [note: 'barrio de Corrientes Capital (catálogo de la API)']
+  latitud float [note: 'centro del barrio ± ~300 m, 3 decimales; nunca ubicación exacta']
+  longitud float
+  presupuesto_maximo int [null, note: 'pesos; NULL = a convenir; CHECK > 0']
+  urgencia varchar [note: "CHECK: urgente | hoy_manana | esta_semana | sin_apuro"]
+  estado varchar [note: "CHECK: abierta | cerrada"]
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+  expira_en timestamp [note: 'vigencia 30 días']
+  indexes {
+    (estado, fecha_creacion) [name: 'ix_solicitudes_servicio_estado_fecha']
+    (cuenta_id, fecha_creacion) [name: 'ix_solicitudes_servicio_cuenta_fecha']
+  }
+}

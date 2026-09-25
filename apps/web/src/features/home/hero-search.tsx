@@ -1,9 +1,7 @@
 'use client'
 
-import { CATEGORIES, type RequestFilters } from './types'
+import { CATEGORIES, CORRIENTES_ZONES, type RequestFilters } from './types'
 import styles from './home.module.css'
-
-const ZONES = ['Nueva Córdoba', 'General Paz', 'Alta Córdoba', 'Güemes', 'Alberdi', 'Cerro de las Rosas', 'Jardín', 'Centro']
 
 // Filters only (no data leaves the browser here): the search never submits a form to a server.
 export function HeroSearch({
@@ -64,7 +62,7 @@ export function HeroSearch({
           value={filters.zone}
         />
         <datalist id="zonas">
-          {ZONES.map((zone) => (
+          {CORRIENTES_ZONES.map((zone) => (
             <option key={zone} value={zone} />
           ))}
         </datalist>

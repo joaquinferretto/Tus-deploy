@@ -44,15 +44,39 @@ export interface RequestFilters {
 export const EMPTY_FILTERS: RequestFilters = { query: '', category: '', zone: '' }
 
 export interface RequestsSource {
-  // `example` data must be labelled as such in the UI.
-  readonly kind: 'example' | 'api'
-  list(filters: RequestFilters): Promise<MapRequest[]>
+  // Server-side filter by category; text and zone filters run in the browser (same list for map
+  // and list, no refetch on every keystroke).
+  list(input: { category: CategoryId | '' }): Promise<MapRequest[]>
 }
 
-// Default map view (configurable). Córdoba Capital for the MVP; no geolocation is requested.
+// Barrios of Corrientes Capital: the API owns their approximate centres and rejects any other zone.
+export const CORRIENTES_ZONES = [
+  'Centro',
+  'Camba Cuá',
+  'La Rosada',
+  'Barrio Sur',
+  'San Gerónimo',
+  '1000 Viviendas',
+  'Libertad',
+  'San Benito',
+  'Laguna Seca',
+  'Pirayuí',
+  'Molina Punta',
+] as const
+
+export const URGENCIES = [
+  { id: 'urgente', label: 'Urgente' },
+  { id: 'hoy_manana', label: 'Hoy o mañana' },
+  { id: 'esta_semana', label: 'Esta semana' },
+  { id: 'sin_apuro', label: 'Sin apuro' },
+] as const
+
+export type UrgencyId = (typeof URGENCIES)[number]['id']
+
+// Default map view (configurable). Corrientes Capital for the MVP; no geolocation is requested.
 export const DEFAULT_MAP_CENTER = {
-  lat: Number(process.env['NEXT_PUBLIC_MAP_DEFAULT_LAT'] ?? '') || -31.4167,
-  lng: Number(process.env['NEXT_PUBLIC_MAP_DEFAULT_LNG'] ?? '') || -64.1833,
+  lat: Number(process.env['NEXT_PUBLIC_MAP_DEFAULT_LAT'] ?? '') || -27.4692,
+  lng: Number(process.env['NEXT_PUBLIC_MAP_DEFAULT_LNG'] ?? '') || -58.8306,
   zoom: 13,
-  label: process.env['NEXT_PUBLIC_MAP_DEFAULT_LABEL'] || 'Córdoba Capital',
+  label: process.env['NEXT_PUBLIC_MAP_DEFAULT_LABEL'] || 'Corrientes Capital',
 }

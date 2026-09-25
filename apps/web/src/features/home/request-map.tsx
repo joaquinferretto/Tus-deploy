@@ -27,12 +27,12 @@ function markerIcon(request: MapRequest, active: boolean) {
   })
 }
 
-// On wide screens the hero card (top-left) and the search bar (bottom) cover part of the map:
-// markers and popups are kept inside the free area.
+// On wide screens the filters bar covers the top of the map: markers and popups are kept below it.
+// On phones the filters sit above the map, outside it.
 function overlayPadding(map: L.Map) {
-  const wide = map.getSize().x > 900
+  const wide = map.getSize().x > 768
   return wide
-    ? { topLeft: L.point(Math.min(600, map.getSize().x * 0.42), 60), bottomRight: L.point(60, 150) }
+    ? { topLeft: L.point(40, 150), bottomRight: L.point(40, 80) }
     : { topLeft: L.point(24, 24), bottomRight: L.point(24, 24) }
 }
 
@@ -88,7 +88,7 @@ export default function RequestMap({
 }): React.ReactNode {
   const [touch] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches)
   const [interactive, setInteractive] = useState(!touch)
-  const [wide] = useState(() => typeof window !== 'undefined' && window.innerWidth > 900)
+  const [wide] = useState(() => typeof window !== 'undefined' && window.innerWidth > 768)
   const [recenterSignal, setRecenterSignal] = useState(0)
   const markers = useRef(new Map<string, L.Marker>())
   const selected = useMemo(() => requests.find((request) => request.id === selectedId) ?? null, [requests, selectedId])
@@ -109,8 +109,8 @@ export default function RequestMap({
         zoomControl={false}
       >
         <TileLayer attribution={TILE_ATTRIBUTION} url={TILE_URL} />
-        {/* Top-right: the hero card covers the top-left corner on wide screens. */}
-        <ZoomControl position="topright" zoomInTitle="Acercar" zoomOutTitle="Alejar" />
+        {/* Bottom-left: the filters bar covers the top of the map on wide screens. */}
+        <ZoomControl position="bottomleft" zoomInTitle="Acercar" zoomOutTitle="Alejar" />
         <MapController interactive={interactive} recenterSignal={recenterSignal} requests={requests} selected={selected} />
         {requests.map((request) => {
           const category = categoryOf(request.category)
@@ -129,7 +129,7 @@ export default function RequestMap({
               title={`${category.label}: ${request.title}`}
               zIndexOffset={active ? 1000 : 0}
             >
-              <Popup autoPanPaddingBottomRight={[60, 160]} autoPanPaddingTopLeft={[wide ? 620 : 24, 70]}>
+              <Popup autoPanPaddingBottomRight={[40, 80]} autoPanPaddingTopLeft={[24, wide ? 150 : 24]}>
                 <div className={styles.popup}>
                   <span className={styles.popupCategory} style={{ color: category.color }}>
                     {category.label}

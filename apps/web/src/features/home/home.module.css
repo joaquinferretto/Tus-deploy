@@ -176,10 +176,21 @@
 
 /* ---- hero -------------------------------------------------------------------------------- */
 .hero {
-  background: linear-gradient(180deg, #fff3ea 0%, #f6f1ea 100%);
+  background: #f6f1ea;
+  height: clamp(520px, calc(100vh - 64px), 820px);
   isolation: isolate;
-  min-height: 680px;
   position: relative;
+}
+
+.srOnly {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
 }
 
 .mapLayer {
@@ -197,47 +208,14 @@
   width: 100%;
 }
 
-.heroOverlay {
-  margin: 0 auto;
-  max-width: 1280px;
-  padding: 40px 20px;
-  pointer-events: none;
-  position: relative;
-  z-index: 500;
-}
 
-.heroCard {
-  background: rgba(255, 255, 255, 0.97);
-  border: 1px solid var(--tus-line);
-  border-radius: 20px;
-  box-shadow: var(--tus-shadow);
-  max-width: 560px;
-  padding: 28px;
-  pointer-events: auto;
-}
 
-.heroTitle {
-  font-size: clamp(2rem, 4vw, 3rem);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.05;
-  margin: 0 0 12px;
-}
 
-.accent {
-  color: var(--tus-orange);
-}
 
-.heroText {
-  color: var(--tus-ink-soft);
-  font-size: 1.05rem;
-  line-height: 1.5;
-  margin: 0 0 20px;
-}
 
 .searchDock {
-  bottom: 28px;
   left: 0;
+  top: 20px;
   pointer-events: none;
   position: absolute;
   right: 0;
@@ -299,19 +277,9 @@
   min-width: 120px;
 }
 
-.exampleBadge {
-  background: var(--tus-orange-soft);
-  border-radius: 999px;
-  color: var(--tus-orange-strong);
-  display: inline-block;
-  font-size: 0.75rem;
-  font-weight: 600;
-  margin-top: 14px;
-  padding: 4px 10px;
-}
 
 .mapControls {
-  bottom: 120px;
+  bottom: 28px;
   display: flex;
   gap: 8px;
   position: absolute;
@@ -330,6 +298,13 @@
   top: 12px;
   transform: translateX(-50%);
   z-index: 600;
+}
+
+/* On wide screens the filters sit on top of the map: the notice goes below them. */
+@media (min-width: 769px) {
+  .mapNotice {
+    top: 130px;
+  }
 }
 
 /* Leaflet markers and popups (global Leaflet classes are styled by leaflet.css). */
@@ -413,6 +388,13 @@
 .sectionSubtitle {
   color: var(--tus-ink-soft);
   margin: 6px 0 0;
+}
+
+.sectionActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
 }
 
 .seeAll {
@@ -684,11 +666,12 @@
   .hero {
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    height: auto;
   }
 
   .mapLayer {
-    height: 360px;
+    height: 70vh;
+    min-height: 420px;
     order: 2;
     position: relative;
   }
@@ -697,14 +680,10 @@
     bottom: 16px;
   }
 
-  .heroOverlay {
-    order: 1;
-    padding: 20px 16px 12px;
-  }
 
   .searchDock {
     order: 1;
-    padding: 0 16px 16px;
+    padding: 12px 16px;
     position: static;
   }
 
@@ -712,9 +691,6 @@
     width: 100%;
   }
 
-  .heroCard {
-    padding: 20px;
-  }
 
   .search {
     grid-template-columns: 1fr;

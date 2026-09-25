@@ -38,19 +38,12 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
       <PublicHeader logo={logo} />
       <main id="contenido">
         <section aria-labelledby="home-titulo" className={styles.hero}>
+          {/* The hero is only the map and the filters; the title stays for screen readers and SEO. */}
+          <h1 className={styles.srOnly} id="home-titulo">
+            Servicios cerca tuyo: personas de tu zona buscando ayuda profesional
+          </h1>
           <div aria-label="Mapa de solicitudes en tu zona" className={styles.mapLayer} role="region">
             <RequestMap highlightedId={highlightedId} onSelect={select} requests={data} selectedId={selectedId} />
-          </div>
-          <div className={styles.heroOverlay}>
-            <div className={styles.heroCard}>
-              <h1 className={styles.heroTitle} id="home-titulo">
-                La ayuda que necesitás, <span className={styles.accent}>más cerca.</span>
-              </h1>
-              <p className={styles.heroText}>
-                Conectamos personas que necesitan una solución con profesionales disponibles en su zona.
-              </p>
-              {requests.sourceKind === 'example' ? <span className={styles.exampleBadge}>Mapa con solicitudes de ejemplo</span> : null}
-            </div>
           </div>
           <div className={styles.searchDock}>
             <HeroSearch
@@ -62,7 +55,6 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
         </section>
 
         <RecentRequests
-          exampleData={requests.sourceKind === 'example'}
           onHover={setHighlightedId}
           onSelect={select}
           requests={data}

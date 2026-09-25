@@ -12,14 +12,12 @@ export function RecentRequests({
   selectedId,
   onSelect,
   onHover,
-  exampleData,
 }: {
   status: 'loading' | 'error' | 'success'
   requests: MapRequest[]
   selectedId: string | null
   onSelect: (id: string) => void
   onHover: (id: string | null) => void
-  exampleData: boolean
 }): React.ReactNode {
   return (
     <section aria-labelledby="solicitudes-titulo" className={styles.section} id="solicitudes">
@@ -30,12 +28,16 @@ export function RecentRequests({
           </h2>
           <p className={styles.sectionSubtitle}>
             Personas de tu zona buscando ayuda profesional.
-            {exampleData ? ' (Ejemplos ilustrativos mientras se publican las primeras solicitudes.)' : ''}
           </p>
         </div>
-        <a className={styles.seeAll} href={`/sign-in?returnTo=${encodeURIComponent('/tus/prestador')}`}>
-          Ver todas las solicitudes →
-        </a>
+        <div className={styles.sectionActions}>
+          <a className={styles.buttonPrimary} href="/publicar">
+            Publicar mi solicitud
+          </a>
+          <a className={styles.seeAll} href={`/sign-in?returnTo=${encodeURIComponent('/tus/prestador')}`}>
+            Ver todas las solicitudes →
+          </a>
+        </div>
       </div>
       {status === 'loading' ? (
         <div aria-busy="true" aria-label="Cargando solicitudes" className={styles.list}>
@@ -49,7 +51,8 @@ export function RecentRequests({
         </p>
       ) : requests.length === 0 ? (
         <p className={styles.state} role="status">
-          Todavía no hay solicitudes visibles en esta zona.
+          Todavía no hay solicitudes visibles en esta zona.{' '}
+          <a href="/publicar">Publicá la primera</a>.
         </p>
       ) : (
         <ul className={styles.list}>

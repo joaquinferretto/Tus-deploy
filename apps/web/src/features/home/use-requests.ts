@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
-import { getRequestsSource } from './requests-source'
+import { getRequestsSource, matchesFilters } from './requests-source'
 import type { RequestFilters } from './types'
 
 export function useDebouncedValue<T>(value: T, delayMs = 300): T {
@@ -15,14 +15,15 @@ export function useDebouncedValue<T>(value: T, delayMs = 300): T {
   return debounced
 }
 
-// ONE query feeds both the map and the list (never two arrays that can diverge).
+// ONE query feeds both the map and the list (never two arrays that can diverge). It is keyed by
+// category only; text and zone are applied to the same result in the browser.
 export function useRecentRequests(filters: RequestFilters) {
   const debounced = useDebouncedValue(filters)
   const source = getRequestsSource()
-  const query = useQuery({
-    queryKey: ['home-requests', source.kind, debounced.query, debounced.category, debounced.zone],
-    queryFn: () => source.list(debounced),
-    staleTime: 60_000,
+  return useQuery({
+    queryKey: ['home-requests', debounced.category],
+    queryFn: () => source.list({ category: debounced.category }),
+    select: (requests) => requests.filter((request) => matchesFilters(request, debounced)),
+    staleTime: 30_000,
   })
-  return { ...query, sourceKind: source.kind }
 }

@@ -659,6 +659,14 @@ expira en minutos). `codigos_ingreso_oauth` (código de un solo uso que entrega 
 poner un token de sesión en la URL; solo el sha256; `tipo` con CHECK `session | signup | link`; TTL 2/15/15 min).
 No se guardan access tokens ni refresh tokens de Google. Relación lógica sin FK: `datos.accountId` de los códigos.
 
+**SOLICITUDES DE SERVICIO.** `20260930100000_tus_solicitudes_servicio` (aditiva, una tabla nueva): `solicitudes_servicio`
+guarda lo que un cliente necesita (categoría, título, descripción opcional, barrio, presupuesto máximo opcional, urgencia)
+para el mapa público de la home. FK física `cuenta_id → "Account"(id)` ON DELETE RESTRICT / ON UPDATE NO ACTION. Privacidad:
+no hay columnas de dirección, teléfono ni email; `latitud`/`longitud` son el centro del barrio con un desplazamiento
+determinístico de ±~300 m, redondeado a 3 decimales; `nombre_publico` es nombre + inicial. CHECKs de categoría, urgencia,
+estado, longitudes, presupuesto y rango de coordenadas. Vigencia 30 días (`expira_en`); límites de 5 publicaciones por
+cuenta cada 24 h y 10 abiertas a la vez (aplicación). Índices para el listado público y para "mis solicitudes".
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

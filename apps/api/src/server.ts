@@ -13,6 +13,9 @@ import { createTusIntegrationRouter } from './tus/integration/index.ts'
 import { createTusHttpRouter } from './tus/http/router.ts'
 import { createPrismaTusApplication } from './tus/composition/index.ts'
 import { crearModuloWhatsappPrisma } from './tus/asistente/prisma-composicion.ts'
+import { crearServicioSolicitudes } from './tus/solicitudes/composicion.ts'
+import { crearRouterSolicitudes } from './tus/solicitudes/http.ts'
+import type { ClientePrismaSolicitudes } from './tus/solicitudes/almacenes.ts'
 import type { ModuloWhatsapp } from './tus/asistente/composicion.ts'
 import type { TusPrismaClient } from './tus/adapters/prisma.ts'
 import { getPrismaClient } from './infrastructure/database/prisma/client.ts'
@@ -83,6 +86,8 @@ export function createApp(options: CreateAppOptions = {}): Application {
     prisma: prisma as unknown as FederatedPrismaClient,
   })
   const tenancy = createPrismaTenancyService(prisma as unknown as TenantPrismaClient)
+  // Service requests shown on the public home map (same PostgreSQL, through Prisma).
+  const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, prisma: prisma as unknown as ClientePrismaSolicitudes })
   const application = createPrismaTusApplication(prisma)
   const whatsapp = options.tusRouter
     ? undefined
@@ -130,7 +135,10 @@ export function createApp(options: CreateAppOptions = {}): Application {
     (options.tusRouter !== undefined || process.env['TUS_ROUTES_ENABLED'] === 'true')
   const providerRoutesEnabled =
     options.providerRoutesEnabled ?? process.env['TUS_PROVIDER_ACTIONS_ENABLED'] === 'true'
-  if (tusRoutesEnabled) app.use(tusRouter)
+  if (tusRoutesEnabled) {
+    app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
+    app.use(tusRouter)
+  }
   if (providerRoutesEnabled)
     app.use(
       createTusIntegrationRouter({

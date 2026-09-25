@@ -1,6 +1,5 @@
 // Generated from the CSS module class names. Regenerate when classes change.
 declare const styles: {
-  readonly accent: string
   readonly avatar: string
   readonly brandLink: string
   readonly buttonGhost: string
@@ -9,7 +8,6 @@ declare const styles: {
   readonly categoryIcon: string
   readonly cellMain: string
   readonly chevron: string
-  readonly exampleBadge: string
   readonly field: string
   readonly footer: string
   readonly footerInner: string
@@ -18,10 +16,6 @@ declare const styles: {
   readonly headerActions: string
   readonly headerInner: string
   readonly hero: string
-  readonly heroCard: string
-  readonly heroOverlay: string
-  readonly heroText: string
-  readonly heroTitle: string
   readonly hideMobile: string
   readonly hideTablet: string
   readonly label: string
@@ -56,12 +50,14 @@ declare const styles: {
   readonly searchButton: string
   readonly searchDock: string
   readonly section: string
+  readonly sectionActions: string
   readonly sectionHeader: string
   readonly sectionSubtitle: string
   readonly sectionTitle: string
   readonly seeAll: string
   readonly skeletonRow: string
   readonly skipLink: string
+  readonly srOnly: string
   readonly state: string
   readonly step: string
   readonly stepNumber: string

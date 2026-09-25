@@ -35,6 +35,7 @@ model Account {
   devices            Device[]
   sessions           Session[]
   identidadesExternas IdentidadExterna[]
+  solicitudesServicio SolicitudServicio[]
 
   @@unique([userId, tenantId])
   @@index([tenantId])
@@ -2758,4 +2759,29 @@ model CodigoIngresoOAuth {
 
   @@unique([hashCodigo], map: "uq_codigos_ingreso_oauth_hash")
   @@map("codigos_ingreso_oauth")
+}
+
+// Solicitudes de servicio del mapa público (20260930100000_tus_solicitudes_servicio). CHECKs de
+// categoría/urgencia/estado/longitudes en SQL. Solo barrio y punto aproximado: sin datos de contacto.
+model SolicitudServicio {
+  id                 String   @id(map: "solicitudes_servicio_pkey")
+  cuentaId           String   @map("cuenta_id")
+  categoria          String   @map("categoria")
+  titulo             String   @map("titulo")
+  descripcion        String?  @map("descripcion")
+  nombrePublico      String   @map("nombre_publico")
+  zona               String   @map("zona")
+  latitud            Float    @map("latitud")
+  longitud           Float    @map("longitud")
+  presupuestoMaximo  Int?     @map("presupuesto_maximo")
+  urgencia           String   @map("urgencia")
+  estado             String   @map("estado")
+  creadaEn           DateTime @map("fecha_creacion")
+  actualizadaEn      DateTime @map("fecha_actualizacion")
+  expiraEn           DateTime @map("expira_en")
+  cuenta             Account  @relation(fields: [cuentaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_cuenta")
+
+  @@index([estado, creadaEn(sort: Desc)], map: "ix_solicitudes_servicio_estado_fecha")
+  @@index([cuentaId, creadaEn], map: "ix_solicitudes_servicio_cuenta_fecha")
+  @@map("solicitudes_servicio")
 }

@@ -148,6 +148,19 @@ Corrección:
 - El registro con Google exige aceptar términos. La "intención" (contratar u ofrecer servicios) solo elige la pantalla
   siguiente; los roles los decide el backend.
 
+## Solicitudes de servicio (mapa público)
+
+- `GET /tus/v1/public/solicitudes` es público y solo devuelve: categoría, título, descripción, nombre + inicial, barrio,
+  punto aproximado (centro del barrio ±~300 m, 3 decimales), presupuesto máximo, urgencia y fecha. Nunca el id de cuenta,
+  email, teléfono ni dirección (no existen columnas para eso). `cache-control: public, max-age=30`.
+- Publicar (`POST /tus/v1/solicitudes`) exige sesión TUS de una cuenta activa con email verificado. La cuenta, el nombre
+  público y las coordenadas los decide la API: si el cliente manda `accountId`, `lat`, `lng`, `status`, `requesterName` o un
+  `tenantId`/`actorId` ajeno se responde 403.
+- El texto público rechaza teléfonos, emails y links (validación en API y Web) para que el contacto ocurra dentro de TUS.
+- Anti-abuso: 5 publicaciones por cuenta cada 24 h, 10 abiertas a la vez, vigencia 30 días, más el rate limit global.
+  Solo la dueña puede cerrar su solicitud.
+- La Web nunca habla con la base: todo pasa por la API (Prisma). No hay claves de Supabase en el frontend.
+
 ## Gate obligatorio antes de staging
 
 - [ ] Working tree esperado y commit/release ID registrados; `opencode.json` fuera del cambio.

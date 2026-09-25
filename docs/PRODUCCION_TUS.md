@@ -92,7 +92,7 @@ exacto de `GOOGLE_REDIRECT_URI`; en "Pantalla de consentimiento" usar los scopes
 | `NEXT_PUBLIC_SITE_URL`             | recomendada | `https://<dominio-web>`                                               |
 | `NEXT_PUBLIC_SUPPORT_WHATSAPP_URL` | no          | URL pública de soporte                                                |
 | `API_BASE_URL`                     | no          | si se define debe ser igual a `NEXT_PUBLIC_API_URL`                   |
-| `NEXT_PUBLIC_MAP_*`                | no          | proveedor de tiles y centro del mapa de la home (default OSM/Córdoba) |
+| `NEXT_PUBLIC_MAP_*`                | no          | proveedor de tiles y centro del mapa de la home (default OSM/Corrientes) |
 
 La Web **no** necesita ningún secreto. Nunca definas tokens o claves en variables `NEXT_PUBLIC_*`. Sin
 `NEXT_PUBLIC_API_URL` el build de producción falla a propósito; no hay `localhost` fijo.
@@ -258,6 +258,30 @@ SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
 ```
 
 No ejecutar esas sentencias contra `factory_local` ni una base compartida sin autorización.
+
+### 6.1.1 Supabase paso a paso (base de TUS, incluidas las solicitudes del mapa)
+
+TUS usa Supabase **solo como PostgreSQL**: la API se conecta con Prisma por `DATABASE_URL`. No se usa Supabase Auth, ni
+`supabase-js`, ni claves `anon`/`service_role` en la Web.
+
+1. Crear el proyecto (región cercana, p. ej. São Paulo) y guardar la contraseña de la base en el gestor de secretos.
+2. Database → Extensions: habilitar `vector` (lo necesita la migración de embeddings).
+3. **Cerrar la Data API**: Supabase publica el esquema `public` por PostgREST y las tablas que crean las migraciones
+   quedarían accesibles con la clave `anon`. Como TUS no usa esa API: Project Settings → Data API → desactivarla (o quitar
+   `public` de "Exposed schemas"). Alternativa: habilitar RLS sin políticas en todas las tablas.
+4. Connect → copiar las URIs:
+   - `DATABASE_URL` (runtime de la API en Hostinger): **Session pooler** (IPv4, puerto 5432), agregando `?sslmode=require`.
+     No usar el Transaction pooler (6543) salvo que se agregue `pgbouncer=true&connection_limit=1`.
+   - `DIRECT_URL` (solo migraciones, desde la máquina de release): **Direct connection** si hay IPv6; si no, el mismo
+     Session pooler.
+5. Aplicar migraciones desde la máquina de release (nunca desde la Web):
+   `DATABASE_URL=... DIRECT_URL=... pnpm --filter @factory/api exec prisma migrate deploy`.
+   **Bloqueante conocido:** en una base vacía fallan las migraciones históricas `20260911120000` y `20260911130000` (sus
+   marcadores superan `varchar(36)` de `_prisma_migrations.id`). Resolverlo con una migración de reparación revisada
+   antes del primer `migrate deploy` en Supabase; no editar las migraciones históricas.
+6. Cargar `DATABASE_URL` como secreto en Hostinger y redeployar la API. Verificar `/health`, `/ready` y
+   `GET /tus/v1/public/solicitudes` (debe responder `{"items":[]}` con la base vacía).
+7. Probar de punta a punta: iniciar sesión en la Web → `/publicar` → publicar → la solicitud aparece en el mapa de `/`.
 
 ### 6.2 Comandos de release sin secretos en Git
 
@@ -457,6 +481,7 @@ adaptador esté configurado.
 1. `/health` 200 y `/ready` 200.
 2. Web carga `/`, `/sign-in`, `/tus/mercado` y `/tus/prestador` sin errores de CORS en la consola.
 3. Login con una cuenta del equipo verificada.
+   Solicitudes: `/publicar` con esa cuenta → la solicitud aparece en el mapa de `/` (zona aproximada) y en "Mis solicitudes".
    Si Google está configurado: `/sign-in` → "Continuar con Google" vuelve a `/ingresar/google` y entra al panel;
    `/registro` → "Registrarme con Google" con un email nuevo pide aceptar términos en `/registro/completar`.
 4. Prestador: publicar un servicio; cliente: comprarlo; prestador: aceptar, diagnosticar, presupuestar; cliente: aceptar

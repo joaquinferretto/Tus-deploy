@@ -1,8 +1,9 @@
-import { EXAMPLE_REQUESTS } from './example-requests'
-import { categoryOf, type MapRequest, type RequestFilters, type RequestsSource } from './types'
+import { resolveWebApiBaseUrl } from '../../lib/api-url'
 
-// Privacy guard applied to EVERY source (examples today, API later): coordinates are rounded to
-// ~110 m (3 decimals) and only a zone label survives; at most two images; no exact addresses.
+import { CATEGORIES, URGENCIES, categoryOf, type CategoryId, type MapRequest, type RequestFilters, type RequestsSource } from './types'
+
+// Privacy guard applied to whatever the API returns (defence in depth; the API already sends only
+// public fields): coordinates rounded to ~110 m (3 decimals), zone label only, at most two images.
 export function toPublicRequest(request: MapRequest): MapRequest {
   const round = (value: number) => Math.round(value * 1000) / 1000
   return {
@@ -46,16 +47,82 @@ export function matchesFilters(request: MapRequest, filters: RequestFilters): bo
   return terms.some((term) => haystack.includes(term.slice(0, Math.max(4, term.length - 2))))
 }
 
-// TEMPORARY: the backend does not expose a public feed of client requests yet (commitments are
-// private to each tenant). The home uses these centralized examples, clearly labelled in the UI,
-// until an API source with the same shape exists. Swapping sources does not touch the UI.
-export const exampleRequestsSource: RequestsSource = {
-  kind: 'example',
-  async list(filters) {
-    return EXAMPLE_REQUESTS.map(toPublicRequest).filter((request) => matchesFilters(request, filters))
-  },
+// Shape of GET /tus/v1/public/solicitudes (apps/api/src/tus/solicitudes/modelo.ts).
+export interface PublicRequestDto {
+  id: string
+  category: string
+  title: string
+  description: string | null
+  requesterName: string
+  approximateLocation: { lat: number; lng: number; label: string }
+  budgetMax: number | null
+  urgency: string
+  createdAt: string
+  images: string[]
 }
 
+const PESOS = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
+
+export function budgetLabel(budgetMax: number | null): string {
+  return budgetMax ? `Hasta $${PESOS.format(budgetMax)}` : 'A convenir'
+}
+
+export function urgencyLabel(urgency: string): string {
+  return URGENCIES.find((item) => item.id === urgency)?.label ?? ''
+}
+
+export function timeAgoLabel(createdAt: string, now = Date.now()): string {
+  const minutes = Math.max(0, Math.round((now - Date.parse(createdAt)) / 60_000))
+  if (!Number.isFinite(minutes)) return ''
+  if (minutes < 1) return 'Recién'
+  if (minutes < 60) return `Hace ${minutes} min`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `Hace ${hours} h`
+  const days = Math.round(hours / 24)
+  return days === 1 ? 'Hace 1 día' : `Hace ${days} días`
+}
+
+// Drops anything malformed instead of breaking the map.
+export function fromPublicDto(dto: PublicRequestDto, now = Date.now()): MapRequest | null {
+  const location = dto?.approximateLocation
+  if (typeof dto?.id !== 'string' || !CATEGORIES.some((category) => category.id === dto.category)) return null
+  if (!location || !Number.isFinite(location.lat) || !Number.isFinite(location.lng) || typeof location.label !== 'string') return null
+  return toPublicRequest({
+    id: dto.id,
+    category: dto.category as CategoryId,
+    title: String(dto.title ?? ''),
+    ...(dto.description ? { description: dto.description } : {}),
+    ...(dto.requesterName ? { requesterName: dto.requesterName } : {}),
+    approximateLocation: { lat: location.lat, lng: location.lng, label: location.label },
+    budgetLabel: budgetLabel(dto.budgetMax),
+    urgencyLabel: urgencyLabel(dto.urgency),
+    createdAtLabel: timeAgoLabel(dto.createdAt, now),
+    images: Array.isArray(dto.images) ? dto.images.filter((image) => typeof image === 'string' && image.startsWith('/')) : [],
+  })
+}
+
+// Requests published by clients, stored in the TUS PostgreSQL (Supabase in production) and read
+// through the API. The Web never talks to the database directly.
+export function createApiRequestsSource(fetchImpl: typeof fetch = (...args) => fetch(...args)): RequestsSource {
+  return {
+    async list({ category }) {
+      const base = resolveWebApiBaseUrl({
+        canonicalUrl: process.env['NEXT_PUBLIC_API_URL'],
+        legacyUrl: process.env['API_BASE_URL'],
+        nodeEnv: process.env['NODE_ENV'],
+      })
+      const query = category ? `?categoria=${encodeURIComponent(category)}` : ''
+      const response = await fetchImpl(`${base}/tus/v1/public/solicitudes${query}`, { headers: { Accept: 'application/json' } })
+      if (!response.ok) throw new Error(`Solicitudes no disponibles (HTTP ${response.status})`)
+      const body = (await response.json()) as { items?: PublicRequestDto[] }
+      const now = Date.now()
+      return (Array.isArray(body.items) ? body.items : []).map((item) => fromPublicDto(item, now)).filter((item): item is MapRequest => item !== null)
+    },
+  }
+}
+
+const apiRequestsSource = createApiRequestsSource()
+
 export function getRequestsSource(): RequestsSource {
-  return exampleRequestsSource
+  return apiRequestsSource
 }

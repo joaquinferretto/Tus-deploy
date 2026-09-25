@@ -4,7 +4,7 @@
   object-fit: contain;
 }
 
-/* Fallback while /brand/tus-logo.png is not provided: a plain wordmark, not a logo recreation. */
+/* Fallback while the logo in /brand/ is not provided: a plain wordmark, not a logo recreation. */
 .wordmark {
   color: #ff5a00;
   display: inline-block;
