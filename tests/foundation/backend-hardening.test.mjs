@@ -23,11 +23,9 @@ test('API configuration reads only root DATABASE_URL and seed safety fails close
     await writeFile(join(root, '.env'), 'DATABASE_URL=postgresql://user:secret@localhost/tus\n', 'utf8')
 
     assert.equal(readRootDatabaseUrl(root), 'postgresql://user:secret@localhost/tus')
-    assert.equal(
-      loadApiRuntimeConfig({ rootDirectory: root, environment: { NODE_ENV: 'development', TUS_POSTGRES_URL: 'wrong' } })
-        .dbAttemptTimeoutMs,
-      60_000,
-    )
+    const runtimeConfig = loadApiRuntimeConfig({ rootDirectory: root, environment: { NODE_ENV: 'development', TUS_POSTGRES_URL: 'wrong' } })
+    assert.equal(runtimeConfig.dbAttemptTimeoutMs, 60_000)
+    assert.equal(runtimeConfig.providersEnabled, false)
     assert.equal(
       validateDevelopmentSeedRequest({ environment: 'development', confirmed: false }),
       'explicit-development-confirmation-required',

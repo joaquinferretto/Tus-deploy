@@ -26,7 +26,7 @@ function fakeFetch(response, status = 200, requests = []) {
 test('creates a generic preference payload without provider-domain fields', async () => {
   const requests = []
   const client = new MercadoPagoClient({
-    accessToken: 'access-token-placeholder',
+    accessToken: 'token-fixture',
     fetch: fakeFetch(
       { id: 'preference-test', init_point: 'https://example.invalid/checkout' },
       201,
@@ -79,7 +79,7 @@ test('creates a generic preference payload without provider-domain fields', asyn
 test('normalizes payment and refund responses', async () => {
   const requests = []
   const client = new MercadoPagoClient({
-    accessToken: 'access-token-placeholder',
+    accessToken: 'token-fixture',
     fetch: async (url, init) => {
       requests.push({ url, init })
 
@@ -127,7 +127,7 @@ test('normalizes payment and refund responses', async () => {
 
 test('rejects missing, expired, and mismatched webhook signatures', () => {
   const rawBody = Buffer.from('{"type":"payment","data":{"id":"payment-1"}}')
-  const secret = 'webhook-secret-placeholder'
+  const secret = 'secret-fixture'
   const requestId = 'request-1'
   const dataId = 'payment-1'
   const nowMs = 1_700_000_000_000
@@ -263,7 +263,7 @@ test('maps authoritative payment and optional Money Out events by external refer
 test('creates and normalizes optional Money Out transaction intents', async () => {
   const requests = []
   const client = new MercadoPagoMoneyOutClient({
-    accessToken: 'access-token-placeholder',
+    accessToken: 'token-fixture',
     fetch: fakeFetch(
       {
         id: 'transaction-1',
@@ -304,7 +304,7 @@ test('creates and normalizes optional Money Out transaction intents', async () =
 })
 
 test('never leaks the access token in provider errors', async () => {
-  const accessToken = 'access-token-placeholder'
+  const accessToken = 'token-fixture'
   const client = new MercadoPagoClient({
     accessToken,
     fetch: fakeFetch({ error: 'synthetic failure' }, 500),

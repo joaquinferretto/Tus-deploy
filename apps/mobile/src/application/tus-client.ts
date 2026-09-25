@@ -1,5 +1,6 @@
 import type { TusTenantContext } from '@factory/contracts/tus';
 import { parseMobileRuntimeConfig, type MobileRuntimeConfig } from '../core/config/runtime-profile.ts';
+import type { CredentialStore } from '../core/services/secure-credential-store';
 
 export const MOBILE_POS_POLICY = {
   offline: 'queue-manual-operations',
@@ -72,7 +73,7 @@ export type PosCommandResult =
   | { status: 'accepted'; operationId: string; receipt?: Record<string, unknown> }
   | { status: 'replayed'; operationId: string; receipt?: Record<string, unknown> }
   | { status: 'conflict'; operationId: string; reason: string }
-  | { status: 'pending'; operationId: string; reason: 'uncertain_sync' | 'offline' | 'in_progress' }
+  | { status: 'pending'; operationId: string; reason: 'uncertain_sync' | 'offline' | 'in_progress' | 'quarantined' | 'status_unavailable' }
   | { status: 'error'; operationId: string; reason: string };
 
 export function createStableIdempotencyKey(scope: string, intentId: string): string {
@@ -251,7 +252,7 @@ export function createTusMobileClient(
         options.storage.save({
           profile: runtime.profile,
           storageVersion: runtime.storageVersion,
-          operations: [...pending.values()].map((operation) => ({ ...operation })),
+        operations: [...pending.values()].map(stripOperationAccessToken),
         });
       }
       return true;
@@ -381,10 +382,10 @@ export function restoreMobileQueue(value: unknown, runtime: MobileRuntimeConfig,
   if (tenantId !== undefined && record['operations'].some((operation) => operation.tenantId !== tenantId)) {
     return { operations: [], quarantine: { profile, reason: MOBILE_QUEUE_QUARANTINE_REASON.TENANT_MISMATCH, data: redactQueueData(value) } };
   }
-  return { operations: record['operations'].map((operation) => ({ ...operation })), quarantine: null };
+  return { operations: record['operations'].map((operation) => stripOperationAccessToken(operation)), quarantine: null };
 }
 
-export function createTusMobileFetchTransport(runtime?: MobileRuntimeConfig): TusMobileTransport {
+export function createTusMobileFetchTransport(runtime?: MobileRuntimeConfig, credentials?: CredentialStore): TusMobileTransport {
   const resolvedRuntime = runtime === undefined ? readExpoRuntime() : parseMobileRuntimeConfig(runtime);
   const baseUrl = resolvedRuntime.apiUrl;
 
@@ -396,15 +397,16 @@ export function createTusMobileFetchTransport(runtime?: MobileRuntimeConfig): Tu
       if (operation.schemaVersion !== resolvedRuntime.tusContractVersion) {
         throw new Error(`Unsupported TUS mobile contract version: ${operation.schemaVersion}`);
       }
+      const accessToken = await credentials?.getAccessToken();
       const response = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Correlation-Id': operation.correlationId,
           'Idempotency-Key': operation.idempotencyKey,
-          ...(operation.accessToken ? { Authorization: `Bearer ${operation.accessToken}` } : {}),
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
-        body: JSON.stringify(operation),
+        body: JSON.stringify(stripOperationAccessToken(operation)),
       });
 
       const body: unknown = await response.json().catch(() => null);
@@ -421,12 +423,13 @@ export function createTusMobileFetchTransport(runtime?: MobileRuntimeConfig): Tu
       return parsePosCommandResponse(body, operation.operationId);
     },
     async queryStatus(operationId, operation) {
+      const accessToken = await credentials?.getAccessToken();
       const response = await fetch(`${baseUrl}/tus/v1/pos/operations/${encodeURIComponent(operationId)}/status`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
           ...(operation?.correlationId ? { 'X-Correlation-Id': operation.correlationId } : {}),
-          ...(operation?.accessToken ? { Authorization: `Bearer ${operation.accessToken}` } : {}),
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
       });
       const body: unknown = await response.json().catch(() => null);
@@ -459,7 +462,13 @@ function isManualPosOperation(value: unknown, profile: MobileRuntimeConfig['prof
 }
 
 function cloneManualPosOperation(operation: ManualPosOperation): ManualPosOperation {
-  return { ...operation };
+  return stripOperationAccessToken(operation);
+}
+
+function stripOperationAccessToken(operation: ManualPosOperation): ManualPosOperation {
+  const safeOperation = { ...operation };
+  delete safeOperation.accessToken;
+  return safeOperation;
 }
 
 function redactQueueData(value: unknown): unknown {

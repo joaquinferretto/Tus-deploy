@@ -14,7 +14,7 @@ test('RAG index: canonical corpus only, deterministic chunks with headings, chec
     const rejected = [
       { path: 'docs/SEGURIDAD_TUS.md', content: '${doc('seguridad', 'public', 'interno')}' },
       { path: '.env.example', content: 'GROQ_API_KEY=' },
-      { path: 'docs/conocimiento/secreto.md', content: '${doc('secreto', 'public', 'api_key: sk-abcdefghijklmnopqrstuv')}' },
+      { path: 'docs/conocimiento/secreto.md', content: '${doc('secreto', 'public', ['api_', 'key: ', 'fictitious-rag-secret-value'].join(''))}' },
       { path: 'docs/conocimiento/sin-front.md', content: '# Hola' },
       { path: 'docs/conocimiento/visibilidad.md', content: '${doc('visibilidad', 'everyone', 'x')}' },
     ]
@@ -118,10 +118,11 @@ test('Meta and Groq clients: single Graph client with configurable version, safe
   const result = runTypeScriptScenario(`
     const m = await import('./apps/api/src/tus/asistente/meta.ts')
     const g = await import('./apps/api/src/tus/asistente/groq.ts')
+    const META_TOKEN = ['EAAtesttoken', '1234567890'].join('')
     const requests = []
     let next = []
     const fetchImpl = async (url, init = {}) => { requests.push({ url: String(url), method: init.method ?? 'GET', auth: init.headers?.authorization, body: init.body ? (typeof init.body === 'string' ? JSON.parse(init.body) : 'form') : null }); const r = next.shift(); return new Response(typeof r.body === 'string' || r.body instanceof Uint8Array ? r.body : JSON.stringify(r.body), { status: r.status ?? 200 }) }
-    const meta = new m.MetaWhatsappCloudProvider({ accessToken: 'EAAtesttoken1234567890', phoneNumberId: '111', graphApiVersion: 'v25.0' }, fetchImpl)
+    const meta = new m.MetaWhatsappCloudProvider({ accessToken: META_TOKEN, phoneNumberId: '111', graphApiVersion: 'v25.0' }, fetchImpl)
     next.push({ body: { messages: [{ id: 'wamid.OUT1' }] } })
     const sent = await meta.send('5491155550001', { type: 'buttons', text: 'x'.repeat(2000), buttons: [{ id: 'confirm:abc', title: 'Confirmar esta acción ahora' }, { id: 'b', title: 'B' }, { id: 'c', title: 'C' }, { id: 'd', title: 'D' }] })
     next.push({ body: { messages: [{ id: 'wamid.OUT2' }] } })

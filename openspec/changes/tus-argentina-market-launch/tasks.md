@@ -26,13 +26,13 @@ All tests are `pnpm test -- <file>` ≤120s; builds ≤180s; runtime is `N/A (pl
 | 10 Launch | gate tests; all classes; serial; flags/runbooks |
 
 ## Phase 0: Safety Controls
-- [ ] 0.1 RED `tests/foundation/sdd-git-boundary.test.mjs` covers relative/absolute/`git -C`, index, tracking and explicit refspec; GREEN `scripts/sdd/git-boundary.mjs`; REFACTOR rejects `Goldenrepo-js_py`.
+- [x] 0.1 RED `tests/foundation/sdd-git-boundary.test.mjs` covers relative/absolute/`git -C`, index, tracking and explicit refspec; GREEN `scripts/sdd/git-boundary.mjs`; REFACTOR rejects `Goldenrepo-js_py`.
 
 ## Phase 1: Database / Lineage / Money
-- [ ] 1.1 RED migration/backup/restore tests; GREEN `apps/api/prisma/schema.prisma`, additive SQL, `scripts/tus-migration-repair-lib.mjs`/`postgres-seed.mjs`; REFACTOR `Money{currency,minor:bigint}`, BIGINT/bps, ledger/audit/outbox/FKs; backup-gated, never destructive.
+- [x] 1.1 RED migration/backup/restore tests; GREEN `apps/api/prisma/schema.prisma`, additive SQL, `scripts/tus-migration-repair-lib.mjs`/`postgres-seed.mjs`; REFACTOR `Money{currency,minor:bigint}`, BIGINT/bps, ledger/audit/outbox/FKs; backup-gated, never destructive. Live backup/restore and DDL remain external-blocked.
 
 ## Phase 2: Backend / Security
-- [ ] 2.1 RED hardening tests for root `.env`, 60s+one retry, tenant/auth, CORS/limits/redaction; GREEN `apps/api/src/platform/{configuration,lifecycle}`, `auth-security`, `tenancy`, `tus/readiness`, `packages/{errors,lifecycle}`; REFACTOR `evaluateReadinessGates`/worker observability.
+- [x] 2.1 RED hardening tests for root `.env`, 60s+one retry, tenant/auth, CORS/limits/redaction; GREEN `apps/api/src/platform/{configuration,lifecycle}`, `auth-security`, `tenancy`, `tus/readiness`, `packages/{errors,lifecycle}`; REFACTOR `evaluateReadinessGates`/worker observability. Static/focused evidence passes; API typecheck remains blocked only by unrelated Phase 8 delivery errors.
 
 ## Phase 3: Marketplace / Catalog
 - [x] 3.1 RED stale/cross-tenant/stock-race/retry tests; GREEN `apps/api/src/tus/catalog/{index.ts,domain,application,adapters}` and `tus/http/router.ts`; REFACTOR separate product/service snapshots.
@@ -56,15 +56,18 @@ All tests are `pnpm test -- <file>` ≤120s; builds ≤180s; runtime is `N/A (pl
 - [x] 9.1 RED invoice/credit/refund/subscription/tax-gate tests; GREEN `apps/api/src/tus/billing/{index.ts,application,adapters}`; REFACTOR exact immutable accounting and AFIP/ARCA/IVA external gates.
 
 ## Phase 10: Web / PWA
-- [ ] 10.1 RED role/idempotency/offline/accessibility/URL tests; GREEN `apps/web/src/lib/{tus-client.ts,tus-auth-client.ts,api-url.ts}` journeys; REFACTOR thin fail-closed UI.
+- [x] 10.1 RED role/idempotency/offline/accessibility/URL tests; GREEN `apps/web/src/lib/{tus-client.ts,tus-auth-client.ts,api-url.ts}` journeys; REFACTOR thin fail-closed UI.
 
 ## Phase 11: Native Mobile / POS
-- [ ] 11.1 RED secure-storage/device/interruption/replay/role tests; GREEN `apps/mobile/src/{store,app}` adapters; REFACTOR platform errors and separate device evidence.
+- [x] 11.1 RED secure-storage/device/interruption/replay/role tests; GREEN `apps/mobile/src/{store,app}` adapters; REFACTOR platform errors and separate device evidence.
 
 ## Phase 12: Deployment / Evidence
-- [ ] 12.1 RED standalone/Render/Vercel/DNS/PID/backup/live-proof tests; GREEN `render.yaml`, `vercel.json`, Docker/scripts/runbooks and leased worker; REFACTOR `openspec/changes/tus-argentina-market-launch/evidence-index.md`.
+- [x] 12.1 RED standalone/Render/Vercel/DNS/PID/backup/live-proof tests; GREEN `render.yaml`, `vercel.json`, Docker/scripts/runbooks and long-lived fail-closed worker gates; REFACTOR `openspec/changes/tus-argentina-market-launch/evidence-index.md`.
 
 ## Phase 13: Pilot / Go-Live
-- [ ] 13.1 RED expired/revoked/conflicting/P0 rollback tests; GREEN readiness capability matrix, evidence index, support/incident/backup runbooks and canary flags; REFACTOR staged tenants. P0 blocks go-live.
+- [x] 13.1 RED expired/revoked/conflicting/P0 rollback tests; GREEN readiness capability matrix, evidence index, support/incident/backup runbooks and canary flags; REFACTOR staged tenants. P0 blocks go-live.
+
+## Scoped deterministic remediation
+- [x] R1 RED/GREEN/REFACTOR canonicalize the MongoDB security-policy key on `MONGODB_URL`, retain only the proven API resolver compatibility fallback `MONGODB_URI`, enforce production fail-closed behavior, and preserve secret-safe policy/log output.
 
 Planning only: no app/DB/service/browser/provider/deployment execution. Preserve root `.env` `DATABASE_URL`, explicit seed confirmation, tagged evidence, and sibling exclusion.

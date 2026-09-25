@@ -15,7 +15,7 @@ const secretPatterns = [
   { category: 'AWS key', pattern: /AKIA[0-9A-Z]{16}/ },
   { category: 'provider token', pattern: /(?:ghp_|gho_|github_pat_|xox[baprs]-|npm_|sk_live_)[A-Za-z0-9_-]{16,}/ },
   { category: 'private key', pattern: /-----BEGIN [A-Z ]+PRIVATE KEY-----/ },
-  { category: 'inline credential', pattern: /(?:api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key)\s*[:=]\s*["'](?!your-|change-|fictitious|example|local:)[^"']{16,}["']/i },
+  { category: 'inline credential', pattern: /(?:api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key)\s*[:=]\s*["'](?!your-|change-|fictitious|example|local:)[^"'\r\n]{16,}["']/i },
 ]
 
 const knownFixtureValues = [

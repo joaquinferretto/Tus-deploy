@@ -117,7 +117,11 @@ export class SecureCredentialStore implements CredentialStore, SensitiveItemStor
   }
 
   async setSessionToken(accessToken: string, expiresAt: number): Promise<void> {
-    await this.setTokens({ accessToken, refreshToken: '', expiresAt })
+    await Promise.all([
+      this.setItem('auth.accessToken', accessToken),
+      this.setItem('auth.expiresAt', String(expiresAt)),
+      this.removeItem('auth.refreshToken'),
+    ])
   }
 
   async clear(): Promise<void> {

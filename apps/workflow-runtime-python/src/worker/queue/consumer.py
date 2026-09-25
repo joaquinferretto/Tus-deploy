@@ -24,10 +24,23 @@ class WorkflowQueueConsumer:
         self.validator = Draft202012Validator(json.loads(Path(schema_path).read_text(encoding="utf-8")))
         self.queue_name = f"bull:{queue_name}:wait"
 
-    async def consume_forever(self) -> None:
-        while True:
-            _, payload = await self.redis.blpop(self.queue_name, timeout=0)
+    async def consume_forever(self, stop_event: asyncio.Event | None = None) -> None:
+        stop_event = stop_event or asyncio.Event()
+        while not stop_event.is_set():
+            result = await self.redis.blpop(self.queue_name, timeout=1)
+            if result is None:
+                continue
+            _, payload = result
             await self.handle_job(json.loads(payload))
+
+    async def close(self) -> None:
+        close = getattr(self.redis, "aclose", None)
+        if close is None:
+            close = getattr(self.redis, "close", None)
+        if close is not None:
+            result = close()
+            if asyncio.iscoroutine(result):
+                await result
 
     async def handle_job(self, job: dict[str, Any]) -> dict[str, Any]:
         self.validator.validate(job)

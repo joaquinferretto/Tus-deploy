@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { resolveWebApiBaseUrl } from './api-url'
+import { resolveWebApiBaseUrl } from './api-url.ts'
 
 const API_BASE_URL = resolveWebApiBaseUrl({
   canonicalUrl: process.env['NEXT_PUBLIC_API_URL'],

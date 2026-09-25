@@ -9,7 +9,7 @@
     "start": "node .next/standalone/server.js",
     "lint": "next lint",
     "lint:security": "eslint . --ext .ts,.tsx --max-warnings 0",
-    "test": "node -e \"process.exit(0)\"",
+    "test": "node ../../scripts/test-runner.mjs tests/foundation/p12-deployment-operations.test.mjs",
     "clean": "rm -rf .next"
   },
   "dependencies": {

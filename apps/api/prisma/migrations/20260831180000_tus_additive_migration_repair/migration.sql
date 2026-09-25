@@ -102,10 +102,12 @@ CREATE TABLE IF NOT EXISTS "TusPosOperation" (
   "expectedVersion" INTEGER,
   "kind" TEXT NOT NULL,
   "context" TEXT NOT NULL,
-  "amount" DOUBLE PRECISION NOT NULL,
+  "amount" BIGINT NOT NULL,
   "currency" TEXT NOT NULL,
   "response" JSONB,
-  CONSTRAINT "TusPosOperation_pkey" PRIMARY KEY ("id")
+  CONSTRAINT "TusPosOperation_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "TusPosOperation_currency_iso_check" CHECK ("currency" ~ '^[A-Z]{3}$'),
+  CONSTRAINT "TusPosOperation_amount_non_negative_check" CHECK ("amount" >= 0)
 );
 CREATE TABLE IF NOT EXISTS "TusPosReceipt" (
   "id" TEXT NOT NULL,
@@ -114,7 +116,7 @@ CREATE TABLE IF NOT EXISTS "TusPosReceipt" (
   "operationId" TEXT NOT NULL,
   "kind" TEXT NOT NULL,
   "context" TEXT NOT NULL,
-  "amount" DOUBLE PRECISION NOT NULL,
+  "amount" BIGINT NOT NULL,
   "currency" TEXT NOT NULL,
   "status" TEXT NOT NULL,
   "source" TEXT NOT NULL,
@@ -122,7 +124,9 @@ CREATE TABLE IF NOT EXISTS "TusPosReceipt" (
   "settlement" TEXT NOT NULL,
   "integrityHash" TEXT NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL,
-  CONSTRAINT "TusPosReceipt_pkey" PRIMARY KEY ("id")
+  CONSTRAINT "TusPosReceipt_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "TusPosReceipt_currency_iso_check" CHECK ("currency" ~ '^[A-Z]{3}$'),
+  CONSTRAINT "TusPosReceipt_amount_non_negative_check" CHECK ("amount" >= 0)
 );
 CREATE TABLE IF NOT EXISTS "TusPosDevice" (
   "id" TEXT NOT NULL,
@@ -305,11 +309,6 @@ DO $$
 BEGIN
   ALTER TABLE "TusPosConflict" ADD CONSTRAINT "TusPosConflict_tenant_operation_fk"
     FOREIGN KEY ("tenantId", "operationId") REFERENCES "TusPosOperation" ("tenantId", "operationId") NOT VALID;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-DO $$
-BEGIN
-  ALTER TABLE "TusPosOperation" ADD CONSTRAINT "TusPosOperation_amount_non_negative_check" CHECK ("amount" >= 0);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 DO $$

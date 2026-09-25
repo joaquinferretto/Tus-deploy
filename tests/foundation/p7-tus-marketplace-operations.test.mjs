@@ -464,7 +464,7 @@ test('server mounts signed provider webhook routes and keeps invalid requests fa
     provider: paymentProvider,
   })
   const router = createTusIntegrationRouter({ mercadoPago, providerActionsEnabled: true })
-  const app = createApp({ tusRouter: router, tusRoutesEnabled: true })
+  const app = createApp({ tusRouter: router })
   const server = app.listen(0)
 
   try {
@@ -793,8 +793,9 @@ test('mobile POS queues manual operations offline and preserves conflicts for ex
   assert.deepEqual(client.pendingOperations(), [])
 })
 
-test('web fetch transport forwards tenant context without accepting payment credentials', async () => {
+test('web fetch transport keeps authority in the bearer session and never accepts payment credentials', async () => {
   const originalFetch = globalThis.fetch
+  const originalApiUrl = process.env.NEXT_PUBLIC_API_URL
   const calls = []
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options })
@@ -811,29 +812,26 @@ test('web fetch transport forwards tenant context without accepting payment cred
   }
 
   try {
-    const previousApiUrl = process.env.NEXT_PUBLIC_API_URL
     process.env.NEXT_PUBLIC_API_URL = 'http://localhost:3101'
     const { createTusWebFetchTransport } = await import('../../apps/web/src/lib/tus-client.ts')
-    try {
-      const response = await createTusWebFetchTransport().request({
-        method: 'POST',
-        path: '/tus/v1/whatsapp/handoff',
-        tenantId: 'tenant-a',
-        actorId: 'customer-a',
-        correlationId: 'corr-fetch',
-        body: { type: 'handoff', commitmentId: 'commitment-1' },
-      })
+    const response = await createTusWebFetchTransport().request({
+      method: 'POST',
+      path: '/tus/v1/whatsapp/handoff',
+      tenantId: 'tenant-a',
+      actorId: 'customer-a',
+      correlationId: 'corr-fetch',
+      body: { type: 'handoff', commitmentId: 'commitment-1' },
+    })
 
-      assert.equal(response.credentialsCollected, false)
-      assert.equal(calls[0].url, 'http://localhost:3101/tus/v1/whatsapp/handoff')
-      assert.equal(calls[0].options.headers['X-Tenant-Id'], 'tenant-a')
-      assert.equal(calls[0].options.headers.Authorization, undefined)
-    } finally {
-      if (previousApiUrl === undefined) delete process.env.NEXT_PUBLIC_API_URL
-      else process.env.NEXT_PUBLIC_API_URL = previousApiUrl
-    }
+    assert.equal(response.credentialsCollected, false)
+    assert.equal(calls[0].url, 'http://localhost:3101/tus/v1/whatsapp/handoff')
+    assert.equal(calls[0].options.headers['X-Tenant-Id'], undefined)
+    assert.equal(calls[0].options.headers['X-Actor-Id'], undefined)
+    assert.equal(calls[0].options.headers.Authorization, undefined)
   } finally {
     globalThis.fetch = originalFetch
+    if (originalApiUrl === undefined) delete process.env.NEXT_PUBLIC_API_URL
+    else process.env.NEXT_PUBLIC_API_URL = originalApiUrl
   }
 })
 

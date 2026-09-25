@@ -7,11 +7,16 @@ from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+
+
 class RuntimeSettings(BaseSettings):
     """Central runtime configuration for worker, graph, storage and telemetry."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Local configuration is rooted at the repository. Deployed secrets
+        # still arrive as the canonical environment names from the platform.
+        env_file=REPOSITORY_ROOT / ".env",
         env_prefix="WORKER_",
         extra="ignore",
         case_sensitive=False,
@@ -27,7 +32,9 @@ class RuntimeSettings(BaseSettings):
     langsmith_endpoint: HttpUrl | str = Field(default="https://api.smith.langchain.com")
     langsmith_project: str = Field(default="golden-boilerplate")
 
-    redis_url: str = Field(default="redis://localhost:6379/0")
+    redis_url: str | None = Field(default=None, validation_alias="REDIS_URL")
+    queue_ref: str | None = Field(default=None, validation_alias="QUEUE_REF")
+    queue_ownership: str = Field(default="external-blocked-placeholder", validation_alias="WORKER_QUEUE_OWNERSHIP")
     database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
     enable_consumer: bool = Field(default=False, validation_alias="WORKER_ENABLE_CONSUMER")
     deployment_status: str = Field(default="external-blocked-placeholder", validation_alias="WORKER_DEPLOYMENT_STATUS")
@@ -71,7 +78,14 @@ class RuntimeSettings(BaseSettings):
 
     @property
     def consumer_ready(self) -> bool:
-        return self.enable_consumer and self.deployment_status == "active" and bool(self.database_url)
+        return (
+            self.enable_consumer
+            and self.deployment_status == "active"
+            and bool(self.database_url)
+            and bool(self.redis_url)
+            and bool(self.queue_ref)
+            and self.queue_ownership == "active"
+        )
 
 
 @lru_cache(maxsize=1)

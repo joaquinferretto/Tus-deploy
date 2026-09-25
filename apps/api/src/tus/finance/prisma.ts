@@ -14,100 +14,100 @@ import { asegurarSujetoFinancieroUnico } from './sujeto.ts'
 // Prisma delegates are narrowed at the boundary; row fields are validated by
 // the conversion helpers below before entering the finance domain.
 type Row = {
-  [key: string]: any
-  id?: any
-  contractVersion?: any
-  paymentId?: any
-  tenantId?: any
-  commitmentId?: any
-  providerReference?: any
-  providerStatus?: any
-  commercialStatus?: any
-  amount?: any
-  currency?: any
-  idempotencyKey?: any
-  correlationId?: any
-  entradaId?: any
-  compromisoId?: any
-  tipoEntrada?: any
-  monto?: any
-  moneda?: any
-  entradaVinculadaId?: any
-  motivo?: any
-  inmutable?: any
-  fechaCreacion?: any
-  bloqueoId?: any
-  activo?: any
-  conciliacionId?: any
-  referenciaProveedor?: any
-  montoProveedor?: any
-  evidenciaId?: any
-  correlacionId?: any
-  estado?: any
-  determinista?: any
-  source?: any
-  createdAt?: any
-  updatedAt?: any
-  snapshotId?: any
-  context?: any
-  grossAmount?: any
-  deductions?: any
-  commissionableBase?: any
-  rateBps?: any
-  ruleVersion?: any
-  commissionAmount?: any
-  netAmount?: any
-  evidenceId?: any
-  ledgerStatus?: any
-  entryId?: any
-  entryType?: any
-  linkedEntryId?: any
-  reason?: any
-  occurredAt?: any
-  actorId?: any
-  kind?: any
-  confirmationId?: any
-  confirmedAt?: any
-  freezeId?: any
-  reconciliationId?: any
-  providerAmount?: any
-  status?: any
-  deterministic?: any
-  response?: any
-  requestHash?: any
-  versionContrato?: any
-  pagoId?: any
-  proveedor?: any
-  estadoProveedor?: any
-  estadoComercial?: any
-  claveIdempotencia?: any
-  credencialesRecolectadas?: any
-  origen?: any
-  ordenId?: any
-  operacionPosId?: any
-  comercianteRegistro?: any
-  modeloCobro?: any
-  politicaDistribucion?: any
-  fechaLiberacion?: any
-  fechaEventoProveedor?: any
-  errorProveedor?: any
-  fechaActualizacion?: any
-  hashSolicitud?: any
-  respuesta?: any
-  instantaneaId?: any
-  contexto?: any
-  montoBruto?: any
-  deducciones?: any
-  baseComisionable?: any
-  tasaPuntosBase?: any
-  versionRegla?: any
-  montoComision?: any
-  montoNeto?: any
-  estadoContable?: any
-  tipo?: any
-  fechaOcurrencia?: any
-  confirmacionId?: any
-  fechaConfirmacion?: any
+  [key: string]: unknown
+  id?: unknown
+  contractVersion?: unknown
+  paymentId?: unknown
+  tenantId?: unknown
+  commitmentId?: unknown
+  providerReference?: unknown
+  providerStatus?: unknown
+  commercialStatus?: unknown
+  amount?: unknown
+  currency?: unknown
+  idempotencyKey?: unknown
+  correlationId?: unknown
+  source?: unknown
+  createdAt?: unknown
+  updatedAt?: unknown
+  snapshotId?: unknown
+  context?: unknown
+  grossAmount?: unknown
+  deductions?: unknown
+  commissionableBase?: unknown
+  rateBps?: unknown
+  ruleVersion?: unknown
+  commissionAmount?: unknown
+  netAmount?: unknown
+  evidenceId?: unknown
+  ledgerStatus?: unknown
+  entryId?: unknown
+  entryType?: unknown
+  linkedEntryId?: unknown
+  reason?: unknown
+  occurredAt?: unknown
+  actorId?: unknown
+  kind?: unknown
+  confirmationId?: unknown
+  confirmedAt?: unknown
+  freezeId?: unknown
+  reconciliationId?: unknown
+  providerAmount?: unknown
+  status?: unknown
+  deterministic?: unknown
+  response?: unknown
+  requestHash?: unknown
+  entradaId?: unknown
+  compromisoId?: unknown
+  tipoEntrada?: unknown
+  monto?: unknown
+  moneda?: unknown
+  entradaVinculadaId?: unknown
+  motivo?: unknown
+  inmutable?: unknown
+  fechaCreacion?: unknown
+  bloqueoId?: unknown
+  activo?: unknown
+  conciliacionId?: unknown
+  referenciaProveedor?: unknown
+  montoProveedor?: unknown
+  evidenciaId?: unknown
+  correlacionId?: unknown
+  estado?: unknown
+  determinista?: unknown
+  versionContrato?: unknown
+  pagoId?: unknown
+  proveedor?: unknown
+  estadoProveedor?: unknown
+  estadoComercial?: unknown
+  claveIdempotencia?: unknown
+  credencialesRecolectadas?: unknown
+  origen?: unknown
+  ordenId?: unknown
+  operacionPosId?: unknown
+  comercianteRegistro?: unknown
+  modeloCobro?: unknown
+  politicaDistribucion?: unknown
+  fechaLiberacion?: unknown
+  fechaEventoProveedor?: unknown
+  errorProveedor?: unknown
+  fechaActualizacion?: unknown
+  hashSolicitud?: unknown
+  respuesta?: unknown
+  instantaneaId?: unknown
+  contexto?: unknown
+  montoBruto?: unknown
+  deducciones?: unknown
+  baseComisionable?: unknown
+  tasaPuntosBase?: unknown
+  versionRegla?: unknown
+  montoComision?: unknown
+  montoNeto?: unknown
+  estadoContable?: unknown
+  tipo?: unknown
+  fechaOcurrencia?: unknown
+  confirmacionId?: unknown
+  fechaConfirmacion?: unknown
 }
 
 type Delegate = {
@@ -278,6 +278,7 @@ function convertirCongelamientoFinancieroEnFila(value: CongelamientoFinanciero):
 }
 
 function convertirFilaEnCongelamientoFinanciero(row: Row): CongelamientoFinanciero {
+  if (row.activo !== true) throw new Error('finance persistence active freeze field is invalid')
   return { freezeId: texto(row.bloqueoId), tenantId: texto(row.tenantId), commitmentId: texto(row.compromisoId), reason: texto(row.motivo) as CongelamientoFinanciero['reason'], actorId: texto(row.actorId), correlationId: texto(row.correlacionId), active: true, createdAt: fechaEnMilisegundos(row.fechaCreacion) }
 }
 
@@ -306,7 +307,8 @@ function textoOpcional(value: unknown): string | undefined {
 
 function numero(value: unknown): number {
   const normalized = typeof value === 'bigint' ? Number(value) : value
-  if (typeof normalized !== 'number' || !Number.isSafeInteger(normalized) || normalized < 0) throw new Error('finance persistence number field is invalid')
+  if (typeof normalized !== 'number' || !Number.isSafeInteger(normalized) || normalized < 0) throw new Error('finance persistence exact minor field is invalid')
+  if (typeof value === 'bigint' && BigInt(normalized) !== value) throw new Error('finance persistence exact minor field exceeds safe boundary')
   return normalized
 }
 

@@ -17,6 +17,7 @@ export default function HomePage(): React.ReactNode {
             TUS / field notes
           </Link>
           <Link href="/sign-in">Sign in</Link>
+          <Link href="/recovery">Recover access</Link>
         </nav>
         <section className="tus-hero tus-reveal" aria-labelledby="home-title">
           <div>
@@ -76,6 +77,14 @@ export default function HomePage(): React.ReactNode {
              operation requires connectivity; installability does not promise offline operation.
            </p>
           <Link href="/tus?surface=commitments">Review the promise ledger →</Link>
+        </section>
+        <section className="tus-boundary-note" aria-label="TUS PWA capabilities">
+          <strong>Installable, not magically offline</strong>
+          <p>
+            Install TUS for faster return. Updates are announced before replacement, and offline
+            records remain queued until the server can acknowledge the same intent.
+          </p>
+          <span data-pwa-capability="install update offline">Install · update · offline queue</span>
         </section>
         <p className="tus-footer-note">
           <span>Buenos Aires / 2026</span>

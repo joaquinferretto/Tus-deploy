@@ -1,4 +1,4 @@
-import { createPosOperationId, createStableIdempotencyKey, createTusMobileClient, parseManualPosAmount, parsePosCommandResponse, posFeedback, type ManualPosOperation, type MobileQueueEnvelope, type MobileQueueQuarantineRecord } from '../../src/application/tus-client'
+import { createPosOperationId, createStableIdempotencyKey, createTusMobileClient, createTusMobileFetchTransport, parseManualPosAmount, parsePosCommandResponse, posFeedback, type ManualPosOperation, type MobileQueueEnvelope, type MobileQueueQuarantineRecord } from '../../src/application/tus-client'
 import { POS_INTENT_STATUS, buildPersistKey, posIntentActionLabel, resolvePosIntentState } from '../../src/store/app-store'
 import { resolveMobileRuntimeConfig } from '../../src/core/config/runtime-profile'
 import { buildMMKVStorageIdentity } from '../../src/core/services/mmkv-storage'
@@ -263,10 +263,58 @@ describe('TUS mobile POS queue', () => {
     expect(persisted).toEqual({ profile: 'staging', storageVersion: 1, operations: [] })
   })
 
+  it('never persists an access token and resolves replay credentials securely', async () => {
+    let online = false
+    let persisted: MobileQueueEnvelope | null = null
+    const client = createTusMobileClient(
+      { request: async ({ operation: next }) => ({ status: 'accepted', operationId: next.operationId }) },
+      {
+        runtime: stagingRuntime,
+        isOnline: () => online,
+        storage: {
+          load: () => null,
+          save: (next) => { persisted = next },
+        },
+      },
+    )
+
+    await client.recordManualOperation({ ...operation, accessToken: 'must-persist' })
+
+    expect(JSON.stringify(persisted)).not.toContain('must-persist')
+    const saved = persisted as MobileQueueEnvelope | null
+    expect(saved?.operations[0]).not.toHaveProperty('accessToken')
+    const originalFetch = globalThis.fetch
+    const authorizationHeaders: string[] = []
+    globalThis.fetch = async (_input, init) => {
+      authorizationHeaders.push(new Headers(init?.headers).get('authorization') ?? '')
+      return new Response(JSON.stringify({ status: 'accepted', operationId: operation.operationId }), { status: 200 })
+    }
+
+    try {
+      const transport = createTusMobileFetchTransport(stagingRuntime, {
+        getAccessToken: async () => 'fresh-token',
+        getRefreshToken: async () => null,
+        getTokenSnapshot: async () => ({ accessToken: 'fresh-token', refreshToken: null, expiresAt: null }),
+        setTokens: async () => undefined,
+        clear: async () => undefined,
+      })
+
+      await transport.request({
+        method: 'POST',
+        path: '/tus/v1/pos/manual-operations',
+        operation: { ...operation, accessToken: 'stale-token' },
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+
+    expect(authorizationHeaders).toEqual(['Bearer fresh-token'])
+  })
+
   it('quarantines legacy and cross-profile queue data without replaying it', async () => {
     const quarantined: MobileQueueQuarantineRecord[] = []
     let requests = 0
-    const legacyOperation = { ...operation, accessToken: 'secret-token-must-not-be-quarantined' }
+    const legacyOperation = { ...operation, accessToken: 'token-fixture' }
     const client = createTusMobileClient(
       { request: async () => { requests += 1; return { status: 'accepted', operationId: operation.operationId } } },
       {
@@ -286,7 +334,7 @@ describe('TUS mobile POS queue', () => {
     expect(quarantined).toEqual([
       expect.objectContaining({ profile: 'staging', reason: 'profile_mismatch' }),
     ])
-    expect(JSON.stringify(quarantined[0]?.data)).not.toContain('secret-token-must-not-be-quarantined')
+    expect(JSON.stringify(quarantined[0]?.data)).not.toContain('token-fixture')
     expect(await client.syncPendingOperations()).toEqual([])
     expect(requests).toBe(0)
   })

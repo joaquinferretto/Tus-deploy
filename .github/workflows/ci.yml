@@ -24,10 +24,10 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm test
+      - run: pnpm run build
       - run: pnpm run contracts:validate
       - run: pnpm run security:scan
       - run: node scripts/security/validate-policy.mjs

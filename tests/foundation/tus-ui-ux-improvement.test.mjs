@@ -33,29 +33,30 @@ test('PR1 accepts only internal return paths and rejects external deep links', (
   assert.equal(result.fallback, '/tus')
 })
 
-test('PR1 persists a web credential only after the server returns tenant scope', () => {
+test('PR1 persists only the confirmed bearer credential in session-scoped storage', () => {
   const result = runTypeScriptScenario(`
     const { createTusWebAuthClient } = (await import('./apps/web/src/lib/tus-auth-client.ts')).default
     const requests = []
-    let stored = null
+     let stored = null
+     let writeCalled = false
     const client = createTusWebAuthClient({
       transport: { request: async (input) => {
         requests.push(input)
         if (input.path === '/auth/sign-in') return { session: { id: 'session-1', accessToken: 'secret', accountId: 'actor-1', tenantId: 'tenant-1', deviceId: 'browser', scope: { tenantId: 'tenant-1', roles: ['member'], permissions: ['tus:read'] }, expiresAt: 4102444800000 } }
         return { context: { subjectId: 'actor-1', sessionId: 'session-1', tenantId: 'tenant-1', roles: ['member'], permissions: ['tus:read'], correlationId: input.correlationId } }
       } },
-      storage: { read: () => stored, write: (value) => { stored = value }, clear: () => { stored = null } },
+        storage: { read: () => stored, write: (value) => { stored = value; writeCalled = true }, clear: () => { stored = null } },
       createCorrelationId: () => 'corr-pr1',
     })
     const state = await client.signIn({ email: 'person@example.com', password: 'secret-password' })
-    console.log(JSON.stringify({ state, stored: JSON.parse(stored), requests }))
+     console.log(JSON.stringify({ state, stored, writeCalled, requests }))
   `)
 
   assert.equal(result.state.status, 'authenticated')
   assert.equal(result.state.session.tenantId, 'tenant-1')
   assert.equal(result.state.session.subjectId, 'actor-1')
-  assert.equal(result.stored.accessToken, 'secret')
-  assert.equal(result.stored.context, undefined)
+   assert.deepEqual(JSON.parse(result.stored), { accessToken: 'secret', expiresAt: 4102444800000 })
+   assert.equal(result.writeCalled, true)
   assert.deepEqual(
     result.requests.map(({ path, body }) => ({ path, body })),
     [
@@ -65,7 +66,7 @@ test('PR1 persists a web credential only after the server returns tenant scope',
   )
 })
 
-test('PR1 clears a web credential and reports expiry when session bootstrap is unauthorized', async () => {
+test('PR1 rejects a persisted credential when the server revokes its session', async () => {
   const result = runTypeScriptScenario(`
     const { createTusWebAuthClient } = (await import('./apps/web/src/lib/tus-auth-client.ts')).default
     let stored = JSON.stringify({ accessToken: 'revoked-secret', expiresAt: 4102444800000 })
@@ -78,7 +79,7 @@ test('PR1 clears a web credential and reports expiry when session bootstrap is u
     console.log(JSON.stringify({ state, stored }))
   `)
 
-  assert.equal(result.state.status, 'expired')
+   assert.equal(result.state.status, 'expired')
   assert.equal(result.state.returnTo, '/tus/operations')
   assert.equal(result.stored, null)
 })
@@ -101,7 +102,7 @@ test('PR1 never fabricates web identity from malformed or client-authored sessio
   assert.deepEqual(result.requests, [])
 })
 
-test('PR1 maps missing credentials and storage failures without leaking secrets', () => {
+test('PR1 distinguishes missing credentials from unavailable storage without leaking failures', () => {
   const result = runTypeScriptScenario(`
     const { createTusWebAuthClient } = (await import('./apps/web/src/lib/tus-auth-client.ts')).default
     const missing = createTusWebAuthClient({ storage: { read: () => null, write: () => undefined, clear: () => undefined }, transport: { request: async () => ({}) } })
@@ -110,7 +111,7 @@ test('PR1 maps missing credentials and storage failures without leaking secrets'
   `)
 
   assert.equal(result.missing.status, 'unauthenticated')
-  assert.equal(result.unavailable.status, 'unavailable')
+   assert.equal(result.unavailable.status, 'unavailable')
   assert.doesNotMatch(JSON.stringify(result.unavailable), /storage secret/)
 })
 

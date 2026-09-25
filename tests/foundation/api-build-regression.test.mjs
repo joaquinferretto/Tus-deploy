@@ -4,10 +4,10 @@ import { test } from 'node:test'
 import { resolve } from 'node:path'
 
 const repositoryRoot = resolve(import.meta.dirname, '../..')
-const packageManager = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+const corepack = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
 
 test('API TypeScript build remains deterministic', () => {
-  const result = spawnSync(packageManager, ['--filter', '@factory/api...', 'build'], {
+  const result = spawnSync(corepack, ['pnpm', '--filter', '@factory/api...', 'build'], {
     cwd: repositoryRoot,
     encoding: 'utf8',
     shell: process.platform === 'win32',

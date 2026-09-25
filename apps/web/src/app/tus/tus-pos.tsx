@@ -21,6 +21,7 @@ import {
   type TusPosResponse,
   type TusPosSession,
 } from '@/lib/tus-client'
+import { createTusOfflineRecord } from '@/lib/tus-web-contract'
 import { resolveTusRoleLabel } from '../../lib/tus-journeys'
 import { TusActionButton, TusFieldError, TusStateMessage } from './tus-ui'
 
@@ -64,8 +65,14 @@ export function TusPosSurface(): React.ReactNode {
   const [recentOperations, setRecentOperations] = useState<RecentPosOperation[]>([])
   const [refreshingOperationId, setRefreshingOperationId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [online, setOnline] = useState(true)
 
   useEffect(() => {
+    setOnline(window.navigator.onLine)
+    const handleOnline = () => setOnline(true)
+    const handleOffline = () => setOnline(false)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
     void createTusWebAuthClient()
       .restore(window.location.pathname)
       .then((result) => {
@@ -73,6 +80,10 @@ export function TusPosSurface(): React.ReactNode {
         setAuthMessage(result.message)
         setSession(result.session === undefined ? null : toTusWebSession(result.session))
       })
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
   }, [])
 
   async function recordOperation(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -135,6 +146,24 @@ export function TusPosSurface(): React.ReactNode {
     setSubmitting(true)
     setFeedback(null)
     try {
+      if (!online) {
+        const offlinePayload = { ...nextOperation }
+        delete offlinePayload.accessToken
+        const offlineRecord = createTusOfflineRecord({
+          kind: nextOperation.kind,
+          operationId: nextOperation.operationId,
+          idempotencyKey: nextOperation.idempotencyKey,
+          payload: offlinePayload,
+        })
+        window.sessionStorage.setItem(
+          `tus.offline.${nextOperation.operationId}`,
+          JSON.stringify(offlineRecord)
+        )
+        const nextFeedback = posFeedback(offlineRecord)
+        setFeedback(nextFeedback)
+        upsertRecentOperation(nextOperation, offlineRecord.status, nextFeedback.evidence)
+        return
+      }
       const response = await createTusWebClient(createTusWebFetchTransport()).recordManualOperation(
         nextOperation
       )
@@ -175,6 +204,18 @@ export function TusPosSurface(): React.ReactNode {
     if (session === null || session === undefined || refreshingOperationId !== null) return
     setRefreshingOperationId(recent.operation.operationId)
     try {
+      if (!online) {
+        setOperation(recent.operation)
+        setFeedback({
+          status: 'pending',
+          operationId: recent.operation.operationId,
+          message: 'TUS status is still unavailable while this device is offline.',
+          evidence: 'No status request was sent and the original operation was not resubmitted.',
+          retryable: false,
+          action: 'refresh',
+        })
+        return
+      }
       const response = await createTusWebClient(createTusWebFetchTransport()).posOperationStatus(
         session,
         recent.operation.operationId
@@ -397,8 +438,13 @@ export function TusPosSurface(): React.ReactNode {
               loadingLabel="Waiting for TUS…"
               type="submit"
             >
-              Send to TUS
+              {online ? 'Send to TUS' : 'Queue securely for reconnect'}
             </TusActionButton>
+            <p className="tus-field-note" role="status">
+              {online
+                ? 'Online: the operation will be sent for server acknowledgement.'
+                : 'Offline: no provider call is made; the same idempotent operation is queued locally.'}
+            </p>
             {feedback === null ? (
               <p className="tus-boundary-note">
                 No local success state is shown. Pending and conflicts stay visible until the server

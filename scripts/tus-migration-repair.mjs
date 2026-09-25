@@ -1,6 +1,8 @@
 import { fileURLToPath } from 'node:url'
 
 import {
+  generateIsolatedRestoreProof,
+  LIVE_SCHEMA_CONFORMANCE_REPAIR_PATH,
   parseRepairArguments,
   redactText,
   runRepair,
@@ -8,6 +10,30 @@ import {
 
 export async function main(argumentsList = process.argv.slice(2)) {
   const parsed = parseRepairArguments(argumentsList)
+  if (parsed.intent === 'create-restore-proof') {
+    if (parsed.invalidArguments.length > 0) return blockedCliResult('unsupported-argument', 'Unsupported arguments were rejected before database access.', parsed.invalidArguments)
+    const result = await generateIsolatedRestoreProof({
+      confirmed: parsed.confirmed,
+      backupId: parsed.backupId,
+      proofPath: parsed.restoreProofPath,
+    })
+    return {
+      status: result.status,
+      executive_summary: result.status === 'passed'
+        ? 'A fresh schema-only isolated restore proof was generated and bound to the backup fingerprint.'
+        : 'The isolated restore proof stopped before an unproven repair could proceed.',
+      proof: result.proof ?? null,
+      target: result.target ?? null,
+      backup: result.backup ?? null,
+      restore: result.restore ?? null,
+      safety_gate: { status: result.status === 'passed' || result.safetyGate === 'passed' ? 'passed' : 'blocked', reason: result.reason ?? 'passed' },
+      side_effects: result.sideEffects,
+      cleanup_state: result.cleanupState,
+      risks: result.reason ? [result.reason] : [],
+      next_recommended: result.status === 'passed' ? 'apply' : 'create-restore-proof',
+      skill_resolution: skillResolution(),
+    }
+  }
   if (parsed.intent !== 'apply') {
     return {
       status: 'blocked',
@@ -42,17 +68,20 @@ export async function main(argumentsList = process.argv.slice(2)) {
       skill_resolution: skillResolution(),
     }
   }
-  const result = await runRepair({ confirmed: parsed.confirmed, backupId: parsed.backupId })
+  const result = await runRepair({
+    confirmed: parsed.confirmed,
+    backupId: parsed.backupId,
+    restoreProofPath: parsed.restoreProofPath,
+    repairUnit: 'live-schema-conformance',
+  })
   const blockedRisk = result.reason ? [result.reason] : []
   return {
     status: result.status,
-    executive_summary: result.status === 'partial'
-      ? 'The additive baseline completed; durable POS rerun remains bounded to the next phase.'
-      : result.status === 'success'
-        ? 'The additive baseline and all requested bounded verification completed.'
-        : 'The additive migration repair stopped before an unsafe or unproven operation.',
+    executive_summary: result.status === 'success'
+      ? 'The additive live schema conformance repair and metadata verification completed.'
+      : 'The live schema conformance repair stopped before an unsafe or unproven operation.',
     artifacts: [
-      'apps/api/prisma/migrations/20260909090000_tus_argentina_market_launch/migration.sql',
+      LIVE_SCHEMA_CONFORMANCE_REPAIR_PATH,
       'scripts/tus-migration-repair-lib.mjs',
       'scripts/tus-migration-repair.mjs',
       'tests/integration/tus/migration-repair.test.mjs',
@@ -60,13 +89,14 @@ export async function main(argumentsList = process.argv.slice(2)) {
     migration_inventory: summarizeInventory(result.inventory),
     safety_gate: { status: result.safetyGate === 'passed' ? 'passed' : 'blocked', reason: result.reason ?? 'passed' },
     connection_attempts: result.connectionAttempts,
+    preflight: result.preflight ?? { status: 'not-run' },
     migration_result: result.migrationResult,
     schema_verification: result.schemaVerification,
     pos_verification: result.posVerification,
     side_effects: result.sideEffects,
     cleanup_state: result.cleanupState,
     risks: blockedRisk,
-    next_recommended: result.status === 'partial' ? 'bounded-pos-rerun' : result.status === 'success' ? 'none' : 'provide-restorable-backup-handle',
+    next_recommended: result.status === 'success' ? 'none' : 'provide-restorable-backup-handle',
     skill_resolution: skillResolution(),
   }
 }
@@ -88,11 +118,30 @@ function zeroSideEffects() {
   return { connections: 0, writes: 0, deletes: 0, migrationInvocations: 0, providerCalls: 0 }
 }
 
+function blockedCliResult(reason, summary, invalidArguments = []) {
+  return {
+    status: 'blocked',
+    executive_summary: summary,
+    artifacts: [],
+    migration_inventory: null,
+    safety_gate: { status: 'blocked', reason, invalidArguments: invalidArguments.map((argument) => redactText(argument)) },
+    connection_attempts: [],
+    migration_result: { status: 'not-started' },
+    schema_verification: { status: 'not-started' },
+    side_effects: zeroSideEffects(),
+    cleanup_state: 'not-started',
+    risks: [reason],
+    next_recommended: 'create-restore-proof',
+    skill_resolution: skillResolution(),
+  }
+}
+
 function skillResolution() {
   return {
     apply: 'C:\\Users\\mmmau\\.config\\opencode\\skills\\sdd-apply\\SKILL.md',
     shared: 'C:\\Users\\mmmau\\.config\\opencode\\skills\\_shared\\SKILL.md',
     typescript: 'C:\\Users\\mmmau\\.config\\opencode\\skills\\curated\\typescript\\SKILL.md',
+    workUnitCommits: 'C:\\Users\\mmmau\\.config\\opencode\\skills\\work-unit-commits\\SKILL.md',
     mode: 'Strict TDD',
   }
 }

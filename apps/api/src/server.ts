@@ -111,7 +111,9 @@ export function createApp(options: CreateAppOptions = {}): Application {
   )
   app.use(createAuthRouter({ service: auth.service, sessions }))
   app.use(createTenancyRouter({ service: tenancy.service, sessions }))
-  const tusRoutesEnabled = options.tusRoutesEnabled ?? process.env['TUS_ROUTES_ENABLED'] === 'true'
+  const tusRoutesEnabled =
+    options.tusRoutesEnabled ??
+    (options.tusRouter !== undefined || process.env['TUS_ROUTES_ENABLED'] === 'true')
   const providerRoutesEnabled =
     options.providerRoutesEnabled ?? process.env['TUS_PROVIDER_ACTIONS_ENABLED'] === 'true'
   if (tusRoutesEnabled) app.use(tusRouter)

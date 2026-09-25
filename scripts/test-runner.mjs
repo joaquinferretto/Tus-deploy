@@ -10,6 +10,8 @@ import {
 
 export { DEFAULT_TEST_TIMEOUT_MS, createFailureRecord, discoverTestFiles, selectTestFiles }
 
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
+
 function timeoutMs() {
   const value = Number(process.env.TEST_FILE_TIMEOUT_MS ?? DEFAULT_TEST_TIMEOUT_MS)
   return Number.isFinite(value) && value > 0 ? value : DEFAULT_TEST_TIMEOUT_MS
@@ -18,7 +20,7 @@ function timeoutMs() {
 function run() {
   let files
   try {
-    files = selectTestFiles(process.cwd(), process.argv.slice(2))
+    files = selectTestFiles(repositoryRoot, process.argv.slice(2))
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
     return 1
@@ -30,12 +32,12 @@ function run() {
   }
 
   let exitCode = 0
+  const typeScriptFlag = supportsTypeTransforms() ? '--experimental-transform-types' : '--experimental-strip-types'
   for (const file of files) {
     const result = spawnSync(
       process.execPath,
       [
-        '--experimental-strip-types',
-        '--experimental-transform-types',
+        typeScriptFlag,
         '--experimental-loader',
         './scripts/node-strip-types-loader.mjs',
         '--test',
@@ -43,7 +45,7 @@ function run() {
         file,
       ],
       {
-        cwd: process.cwd(),
+        cwd: repositoryRoot,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: timeoutMs(),
@@ -68,6 +70,11 @@ function run() {
   }
 
   return exitCode
+}
+
+function supportsTypeTransforms() {
+  const [major, minor] = process.versions.node.split('.').map(Number)
+  return major > 22 || (major === 22 && minor >= 6)
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) process.exitCode = run()

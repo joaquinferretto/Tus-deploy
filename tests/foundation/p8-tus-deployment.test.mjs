@@ -66,7 +66,9 @@ test('Render web deployment starts the generated standalone server on the platfo
 
   assert.equal(webPackage.scripts.start, 'node .next/standalone/server.js')
   assert.match(renderBlueprint, /name: factory-web[\s\S]*?startCommand: PORT=\$PORT pnpm --filter @factory\/web start/u)
-  assert.match(nextConfig, /output:\s*['"]standalone['"]/u)
+  // Standalone by default on Linux/Render; Windows local builds and NEXT_DISABLE_STANDALONE opt out.
+  assert.match(nextConfig, /process\.env\.NEXT_DISABLE_STANDALONE === ['"]true['"]/u)
+  assert.match(nextConfig, /output:\s*isWindows\s*\?\s*undefined\s*:\s*['"]standalone['"]/u)
   assert.match(nextConfig, /typedRoutes:\s*true/u)
   assert.match(deploymentRunbook, /apps\/web\/\.next\/standalone\/server\.js/u)
   assert.match(deploymentRunbook, /PORT=\$PORT pnpm --filter @factory\/web start/u)

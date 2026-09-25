@@ -98,7 +98,7 @@ test('PR4 requires a POS response body and preserves the authoritative receipt w
   assert.equal(result.invalid.reason, 'invalid_server_response')
 })
 
-test('PR4 joins API URLs once and preserves contract transport headers and idempotency', () => {
+test('PR4 joins API URLs once and preserves Bearer authority, correlation, and idempotency', () => {
   const result = runTypeScriptScenario(`
     const { createTusWebFetchTransport, createTusWebClient, createStableIdempotencyKey, joinTusApiUrl } = (await import('./apps/web/src/lib/tus-client.ts')).default
     const originalFetch = globalThis.fetch
@@ -121,8 +121,8 @@ test('PR4 joins API URLs once and preserves contract transport headers and idemp
 
   assert.equal(result.url, 'http://localhost:3101/tus/v1/mercado-servicios/checkout')
   assert.equal(result.joined, 'https://api.example/tus/v1/mercado-servicios')
-  assert.equal(result.headers['X-Tenant-Id'], 'tenant-a')
-  assert.equal(result.headers['X-Actor-Id'], 'actor-a')
+  assert.equal(result.headers['X-Tenant-Id'], undefined)
+  assert.equal(result.headers['X-Actor-Id'], undefined)
   assert.equal(result.headers['X-Correlation-Id'], 'corr-a')
   assert.equal(result.headers.Authorization, 'Bearer token-a')
   assert.equal(result.headers['Idempotency-Key'], 'tus:checkout:intent-a')

@@ -27,6 +27,26 @@ test('security controls and rotation procedure are versioned without reading .en
   assert.ok(existsSync(join(root, '.env')))
 })
 
+test('secret scanner does not join an empty assignment with a quoted string on the next line', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'factory-secret-scan-'))
+  const benign = join(directory, 'benign.mjs')
+  // An empty env placeholder followed by an unrelated quoted string on the next line.
+  writeFileSync(benign, ["const files = [{ content: 'GROQ_API_KEY=' },", "  { path: 'docs/conocimiento/secreto.md', content: 'otro' }]"].join('\n'))
+  execFileSync(process.execPath, ['scripts/security/scan-secrets.mjs', '--paths', benign], { encoding: 'utf8' })
+
+  // A real single-line inline credential is still detected.
+  const real = join(directory, 'real.mjs')
+  const syntheticSecret = ['s3cr3t', 'Value', 'ABCDEFGHIJ', '1234'].join('')
+  writeFileSync(real, ['const config = { client', `_secret: '${syntheticSecret}' }`].join(''))
+  assert.throws(
+    () => execFileSync(process.execPath, ['scripts/security/scan-secrets.mjs', '--paths', real], { encoding: 'utf8' }),
+    (error) => {
+      assert.doesNotMatch(`${error.stdout ?? ''}${error.stderr ?? ''}`, new RegExp(syntheticSecret))
+      return error.status === 1
+    },
+  )
+})
+
 test('secret scanner blocks a staged-like credential without printing its value', () => {
   const directory = mkdtempSync(join(tmpdir(), 'factory-secret-scan-'))
   const file = join(directory, 'candidate.txt')

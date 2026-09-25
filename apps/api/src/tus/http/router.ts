@@ -1693,7 +1693,7 @@ export function createTusHttpRouter({
           context,
           body as unknown as EntradaPublicacion
         )
-        response.status(201).json(proyectarPublicacionMercado(listing))
+        sendMarketplaceJson(response, 201, proyectarPublicacionMercado(listing))
       } catch (error) {
         sendMarketplaceError(response, error)
       }
@@ -1730,7 +1730,7 @@ export function createTusHttpRouter({
       }
       try {
         const listing = await requireMarketplace(application).publishListing(context, listingId)
-        response.status(200).json(proyectarPublicacionMercado(listing))
+        sendMarketplaceJson(response, 200, proyectarPublicacionMercado(listing))
       } catch (error) {
         sendMarketplaceError(response, error)
       }
@@ -1756,9 +1756,10 @@ export function createTusHttpRouter({
               }
             : {}),
         })
-        response
-          .status(200)
-          .json({ ...discovery, items: discovery.items.map(proyectarPublicacionMercado) })
+        sendMarketplaceJson(response, 200, {
+          ...discovery,
+          items: discovery.items.map(proyectarPublicacionMercado),
+        })
       } catch (error) {
         sendMarketplaceError(response, error)
       }
@@ -1785,9 +1786,10 @@ export function createTusHttpRouter({
       }
       try {
         const operations = await requireMarketplace(application).merchantOperations(context)
-        response
-          .status(200)
-          .json({ ...operations, listings: operations.listings.map(proyectarPublicacionMercado) })
+        sendMarketplaceJson(response, 200, {
+          ...operations,
+          listings: operations.listings.map(proyectarPublicacionMercado),
+        })
       } catch (error) {
         sendMarketplaceError(response, error)
       }
@@ -1861,9 +1863,11 @@ export function createTusHttpRouter({
           createdAt: readString(body, 'createdAt') || new Date().toISOString(),
           lines,
         })
-        response
-          .status(result.status === 'replay' ? 200 : 201)
-          .json(proyectarCheckoutMercado(result))
+        sendMarketplaceJson(
+          response,
+          result.status === 'replay' ? 200 : 201,
+          proyectarCheckoutMercado(result)
+        )
       } catch (error) {
         sendMarketplaceError(response, error)
       }
@@ -1899,7 +1903,7 @@ export function createTusHttpRouter({
       }
       try {
         const result = await requireMarketplace(application).customerCommitments(context)
-        response.status(200).json({
+        sendMarketplaceJson(response, 200, {
           ...result,
           commitments: result.commitments.map((commitment) =>
             isRecord(commitment) ? proyectarCompromiso(commitment) : commitment
@@ -1939,16 +1943,16 @@ export function createTusHttpRouter({
         return
       }
       try {
-        response
-          .status(200)
-          .json(
-            proyectarCompromiso(
-              await requireMarketplace(application).customerCommitment(
-                context,
-                request.params['commitmentId'] ?? ''
-              )
+        sendMarketplaceJson(
+          response,
+          200,
+          proyectarCompromiso(
+            await requireMarketplace(application).customerCommitment(
+              context,
+              request.params['commitmentId'] ?? ''
             )
           )
+        )
       } catch (error) {
         if (error instanceof MarketplaceError && error.code === 'FORBIDDEN') {
           await recordMarketplaceDenied(
@@ -3510,6 +3514,21 @@ function sendMarketplaceError(response: Response, error: unknown): void {
     return
   }
   sendError(response, 500, 'UNAVAILABLE', 'TUS marketplace operation was not committed')
+}
+
+function sendMarketplaceJson(response: Response, status: number, payload: unknown): void {
+  response.status(status).json(serializeMarketplaceJson(payload))
+}
+
+function serializeMarketplaceJson(value: unknown): unknown {
+  if (typeof value === 'bigint') return value.toString()
+  if (Array.isArray(value)) return value.map(serializeMarketplaceJson)
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, serializeMarketplaceJson(nested)])
+    )
+  }
+  return value
 }
 
 function sendCalendarError(response: Response, error: unknown): void {

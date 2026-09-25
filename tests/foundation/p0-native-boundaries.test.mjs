@@ -14,8 +14,8 @@ test('native documentation separates smoke scope from the Docker Compose gate', 
   const nativeEvidence = read('docs/evidence/native-smoke.md')
   const composeEvidence = read('docs/evidence/compose-smoke.md')
 
-  assert.match(runbook, /cd backend && pnpm run dev/)
-  assert.match(runbook, /cd frontend && pnpm run dev/)
+  assert.match(runbook, /node scripts\/dev\/native-profile\.mjs api/)
+  assert.match(runbook, /node scripts\/dev\/native-profile\.mjs web/)
   assert.match(runbook, /PostgreSQL.*required/i)
   assert.match(runbook, /MongoDB.*disabled|MongoDB.*fake/i)
   assert.match(nativeEvidence, /native.*smoke/i)

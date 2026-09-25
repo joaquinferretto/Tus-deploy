@@ -17,6 +17,12 @@ durable records rather than treated as rollback authority.
 4. Preserve the PostgreSQL ledger, outbox, idempotency records, and DLQ. Keep
    the failed version available for diagnosis without serving it.
 
+The Render pre-deploy boundary is additionally gated by a verified backup,
+`TUS_MIGRATION_PLAN=additive-only`, reconciled historical migration state, and
+the exact selected launch migration. Without all four attestations, Prisma is not
+invoked. Historical destructive or ambiguous migrations are never replayed as a
+rollback strategy.
+
 ## Rollback
 
 1. Select the last passing versioned profile/configuration.
@@ -43,6 +49,19 @@ target/evidence window is approved. Re-run preflight and migration checks from
 zero, create unique fixtures, and keep the failed migration evidence immutable
 and separate from the new attempt. A retry failure remains
 `not-production-ready` and follows this rollback procedure again.
+
+## Live schema conformance correction
+
+The conformance correction is forward-only and runs once in a bounded
+transaction after the root `.env` development target, generated hash-bound
+schema-only isolated-restore proof, aggregate preflight, and marker-lineage
+gates pass. There is no down migration. A statement failure must roll back the
+transaction; an uncertain commit or post-commit metadata mismatch requires an
+owner-approved isolated restore. Do not replay the historical additive marker,
+baseline, POS repair, or any pending migration backlog. The proof must show an
+actual PostgreSQL 16.2 `pg_restore` invocation with explicit scratch
+`--dbname`, `--schema-only`, `--no-owner`, `--no-acl`, and `--exit-on-error`; an
+archive list or hand-written receipt is not sufficient.
 
 ## Evidence
 

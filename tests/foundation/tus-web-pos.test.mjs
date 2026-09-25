@@ -118,7 +118,9 @@ test('WEB-05 renders real session state, an empty visit state, and status refres
   assert.match(source, /formatTusCurrency/)
   assert.match(refreshBody, /posOperationStatus/)
   assert.doesNotMatch(refreshBody, /recordManualOperation|sendOperation/)
-  assert.doesNotMatch(source, /JSON\.stringify/)
+  assert.match(source, /delete offlinePayload\.accessToken/)
+  assert.match(source, /JSON\.stringify\(offlineRecord\)/)
+  assert.doesNotMatch(source, /JSON\.stringify\(nextOperation\)/)
 })
 
 test('WEB-05 keeps session and operation actions usable on narrow screens', () => {

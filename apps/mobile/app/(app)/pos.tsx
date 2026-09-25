@@ -1,5 +1,6 @@
+import { AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type AppStateStatus } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 
 import { createPosOperationId, createStableIdempotencyKey, createTusMobileClient, createTusMobileFetchTransport, parseManualPosAmount, posFeedback, type ManualPosOperation, type MobilePosFeedback, type MobileQueueEnvelope, type MobileQueueQuarantineRecord, type OfflinePosStorage, type TusMobileClient } from '@application/tus-client';
 import { readMobileRuntimeConfig, type MobileRuntimeConfig } from '@core/config/runtime-profile';
@@ -9,6 +10,7 @@ import { posIntentActionLabel, useAppStore } from '@/store';
 import { TusAccessibleButton, TusStateView } from '@presentation/components';
 import { TUS_MOBILE_LAYOUT, resolveTusConnectivityPresentation } from '@presentation/layout/tus-responsive';
 import { resolveMobilePosMode, resolveMobileRoleLabel } from '@presentation/journeys/tus-journeys';
+import { createMobileLifecycleController } from '@application/mobile-lifecycle';
 
 type PosMode = 'product' | 'service';
 
@@ -17,6 +19,7 @@ export default function PosScreen() {
   const tenantId = useAppStore((state) => state.auth.tenantId);
   const roles = useAppStore((state) => state.auth.roles);
   const networkOnline = useAppStore((state) => state.network.isOnline);
+  const setNetworkOnline = useAppStore((state) => state.setNetworkOnline);
   const markPosIntent = useAppStore((state) => state.markPosIntent);
   const [mode, setMode] = useState<PosMode>('product');
   const [amountInput, setAmountInput] = useState('');
@@ -39,6 +42,7 @@ export default function PosScreen() {
   const lastIntentDraftRef = useRef<{ version: number; mode: PosMode; amount: number } | null>(null);
   const runtimeRef = useRef<MobileRuntimeConfig | null>(null);
   const wasOnlineRef = useRef(false);
+  const syncPendingRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   onlineRef.current = !offline && networkOnline;
   useEffect(() => {
@@ -69,11 +73,11 @@ export default function PosScreen() {
     let cancelled = false;
     async function restoreQueue(): Promise<void> {
       try {
-        const runtime = runtimeRef.current ?? readMobileRuntimeConfig();
-        runtimeRef.current = runtime;
-        const storage = await createEncryptedMMKVClient({ runtime, namespace: 'tus-pos' });
-        const queueStorage = createQueueStorage(storage);
-        const client = createTusMobileClient(createTusMobileFetchTransport(runtime), {
+            const runtime = runtimeRef.current ?? readMobileRuntimeConfig();
+            runtimeRef.current = runtime;
+            const storage = await createEncryptedMMKVClient({ runtime, namespace: 'tus-pos' });
+            const queueStorage = createQueueStorage(storage);
+            const client = createTusMobileClient(createTusMobileFetchTransport(runtime, new SecureCredentialStore({ runtime })), {
           runtime,
           isOnline: () => onlineRef.current,
           storage: queueStorage,
@@ -169,6 +173,20 @@ export default function PosScreen() {
     }
   }
 
+  async function refreshOperationStatus(): Promise<void> {
+    if (clientRef.current === null || feedback === null) return;
+    setSyncing(true);
+    try {
+      const result = await clientRef.current.queryOperationStatus(feedback.operationId);
+      applyFeedback(result);
+      setPendingCount(clientRef.current.pendingOperations().length);
+    } catch (error) {
+      applyFeedback({ status: 'error', operationId: feedback.operationId, reason: error instanceof Error ? error.message : 'status_unavailable' });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function resolveLastConflict(): Promise<void> {
     if (clientRef.current === null || feedback === null) return;
     try {
@@ -207,6 +225,8 @@ export default function PosScreen() {
     }
   }
 
+  syncPendingRef.current = syncPending;
+
   const canCapture = credentialStatus === 'ready' && storageStatus === 'ready' && session !== null && clientRef.current !== null;
   const isOnline = onlineRef.current;
   const connectivity = resolveTusConnectivityPresentation({ isOnline, pendingCount });
@@ -216,9 +236,31 @@ export default function PosScreen() {
     const becameOnline = !wasOnlineRef.current && isOnline;
     wasOnlineRef.current = isOnline;
     if ((becameOnline || storageStatus === 'ready') && isOnline && clientRef.current?.pendingOperations().length) {
-      void syncPending();
+      void syncPendingRef.current();
     }
   }, [isOnline, storageStatus]);
+
+  useEffect(() => {
+    const lifecycle = createMobileLifecycleController({
+      isOnline: () => onlineRef.current,
+      hasPending: () => (clientRef.current?.pendingOperations().length ?? 0) > 0,
+      onConnectivityChange: (nextOnline) => {
+        onlineRef.current = !offline && nextOnline;
+        setNetworkOnline(nextOnline);
+      },
+       syncPending: () => syncPendingRef.current(),
+    });
+    const unsubscribeNetwork = NetInfo.addEventListener((state) => {
+      void lifecycle.onConnectivityChange(state.isConnected === true);
+    });
+    const appStateSubscription = AppState.addEventListener('change', (state: AppStateStatus) => {
+      void lifecycle.onAppStateChange(state === 'active' ? 'active' : state === 'background' ? 'background' : 'inactive');
+    });
+    return () => {
+      unsubscribeNetwork();
+      appStateSubscription.remove();
+    };
+  }, [offline, setNetworkOnline]);
 
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" style={styles.container}>
@@ -255,7 +297,7 @@ export default function PosScreen() {
       <TusAccessibleButton disabled={!canCapture || syncing} label="Record manual operation" loading={submitting} onPress={() => void recordManualOperation()} style={styles.primaryButton} />
       <View style={styles.queueRow}><Text style={styles.queueLabel}>Pending local operations</Text><Text style={styles.queueCount}>{pendingCount}</Text></View>
       {pendingCount > 0 ? <TusAccessibleButton disabled={!isOnline} label={isOnline ? 'Sync pending operations' : 'Sync unavailable offline'} loading={syncing} loadingLabel="Syncing pending operations…" onPress={() => void syncPending()} style={styles.secondaryButton} /> : null}
-       {feedback === null ? <Text style={styles.status}>No local success state is shown. The next state comes from the server or remains pending.</Text> : <FeedbackView feedback={feedback} onRetry={() => void retryLastOperation()} onResolve={() => void resolveLastConflict()} />}
+           {feedback === null ? <Text style={styles.status}>No local success state is shown. The next state comes from the server or remains pending.</Text> : <FeedbackView feedback={feedback} onRefresh={() => void refreshOperationStatus()} onRetry={() => void retryLastOperation()} onResolve={() => void resolveLastConflict()} />}
       <Text style={styles.policy}>Provider capture: not claimed · Settlement: not claimed · Conflict policy: preserve and review</Text>
     </ScrollView>
   );
@@ -279,15 +321,14 @@ function createNewOperation(session: { accessToken: string; tenantId: string; ac
     shiftId: 'mobile-shift',
     schemaVersion: '1.0.0',
     createdAt: new Date().toISOString(),
-    accessToken: session.accessToken,
   };
 }
 
-function FeedbackView({ feedback, onRetry, onResolve }: { feedback: MobilePosFeedback; onRetry: () => void; onResolve: () => void }) {
+function FeedbackView({ feedback, onRefresh, onRetry, onResolve }: { feedback: MobilePosFeedback; onRefresh: () => void; onRetry: () => void; onResolve: () => void }) {
   const isAlert = feedback.status === 'conflict' || feedback.status === 'error';
   const actionLabel = feedback.action === 'resolve' ? 'Discard preserved conflict' : posIntentActionLabel(feedback.action);
   if (feedback.status === 'conflict') return <View accessibilityLiveRegion="assertive" accessibilityRole="alert" style={styles.feedback}><Text style={styles.feedbackTitle}>{feedback.message}</Text><Text style={styles.feedbackBody}>{feedback.evidence}</Text><Text style={styles.feedbackMeta}>Operation: {feedback.operationId}</Text><TusAccessibleButton label="Retry preserved operation" onPress={onRetry} style={styles.feedbackButton} /><TusAccessibleButton label="Discard preserved conflict" onPress={onResolve} style={styles.feedbackButton} /></View>;
-  return <View accessibilityLiveRegion={isAlert ? 'assertive' : 'polite'} accessibilityRole={isAlert ? 'alert' : undefined} style={styles.feedback}><Text style={styles.feedbackTitle}>{feedback.message}</Text><Text style={styles.feedbackBody}>{feedback.evidence}</Text><Text style={styles.feedbackMeta}>Operation: {feedback.operationId}</Text><TusAccessibleButton disabled={!feedback.retryable && feedback.action !== 'refresh'} label={actionLabel} onPress={onRetry} style={styles.feedbackButton} /></View>;
+  return <View accessibilityLiveRegion={isAlert ? 'assertive' : 'polite'} accessibilityRole={isAlert ? 'alert' : undefined} style={styles.feedback}><Text style={styles.feedbackTitle}>{feedback.message}</Text><Text style={styles.feedbackBody}>{feedback.evidence}</Text><Text style={styles.feedbackMeta}>Operation: {feedback.operationId}</Text><TusAccessibleButton disabled={!feedback.retryable && feedback.action !== 'refresh'} label={actionLabel} onPress={feedback.action === 'refresh' ? onRefresh : onRetry} style={styles.feedbackButton} /></View>;
 }
 
 function createQueueStorage(storage: MMKVLocalStorageClient): OfflinePosStorage {

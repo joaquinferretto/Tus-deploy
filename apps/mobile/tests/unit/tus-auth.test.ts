@@ -22,6 +22,46 @@ function credentialStore(initial: { accessToken: string | null; expiresAt: numbe
 }
 
 describe('TUS mobile auth bootstrap', () => {
+  it('supports registration and recovery without creating a local authenticated session', async () => {
+    const credentials = credentialStore({ accessToken: null, expiresAt: null })
+    const paths: string[] = []
+    const client = createTusMobileAuthClient({
+      credentials,
+      createCorrelationId: () => 'mobile-correlation',
+      transport: {
+        async request(input) {
+          paths.push(input.path)
+          return { status: 202, body: { accepted: true } }
+        },
+      },
+    })
+
+    await expect(client.register({ email: 'new@example.com', password: 'secret-password', displayName: 'New operator' })).resolves.toMatchObject({ status: 'accepted' })
+    await expect(client.requestRecovery('new@example.com')).resolves.toMatchObject({ status: 'accepted' })
+    await expect(client.completeRecovery({ token: 'recovery-token', newPassword: 'new-secret-password' })).resolves.toMatchObject({ status: 'accepted' })
+
+    expect(paths).toEqual(['/auth/register', '/auth/recovery/request', '/auth/recovery/complete'])
+    await expect(credentials.getTokenSnapshot()).resolves.toMatchObject({ accessToken: null })
+  })
+
+  it('fails closed when sign-in and session context disagree', async () => {
+    const credentials = credentialStore({ accessToken: null, expiresAt: null })
+    const client = createTusMobileAuthClient({
+      credentials,
+      transport: {
+        async request(input) {
+          if (input.path === '/auth/sign-in') return { status: 200, body: { session: { id: 'session-1', accessToken: 'mobile-secret', accountId: 'actor-1', tenantId: 'tenant-a', deviceId: 'device-1', scope: { tenantId: 'tenant-a', roles: ['staff'], permissions: ['tus:pos:write'] }, expiresAt: 4102444800000 } } }
+          return { status: 200, body: { context: { subjectId: 'actor-1', sessionId: 'session-1', tenantId: 'tenant-b', roles: ['staff'], permissions: ['tus:pos:write'], correlationId: 'mobile-correlation' } } }
+        },
+      },
+    })
+
+    const state = await client.signIn({ email: 'person@example.com', password: 'secret-password' })
+
+    expect(state.status).toBe('unavailable')
+    await expect(credentials.getTokenSnapshot()).resolves.toMatchObject({ accessToken: null })
+  })
+
   it('stores a credential only after server-derived tenant context is confirmed', async () => {
     const credentials = credentialStore({ accessToken: null, expiresAt: null })
     const requests: string[] = []
