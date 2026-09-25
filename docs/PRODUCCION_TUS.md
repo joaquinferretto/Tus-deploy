@@ -274,17 +274,85 @@ TUS usa Supabase **solo como PostgreSQL**: la API se conecta con Prisma por `DAT
      No usar el Transaction pooler (6543) salvo que se agregue `pgbouncer=true&connection_limit=1`.
    - `DIRECT_URL` (solo migraciones, desde la máquina de release): **Direct connection** si hay IPv6; si no, el mismo
      Session pooler.
-5. Aplicar migraciones desde la máquina de release (nunca desde la Web):
-   `DATABASE_URL=... DIRECT_URL=... pnpm --filter @factory/api exec prisma migrate deploy`.
-   **Bloqueante conocido:** en una base vacía fallan las migraciones históricas `20260911120000` y `20260911130000` (sus
-   marcadores superan `varchar(36)` de `_prisma_migrations.id`). Resolverlo con una migración de reparación revisada
-   antes del primer `migrate deploy` en Supabase; no editar las migraciones históricas.
-6. Cargar `DATABASE_URL` como secreto en Hostinger y redeployar la API. Verificar `/health`, `/ready` y
-   `GET /tus/v1/public/solicitudes` (debe responder `{"items":[]}` con la base vacía).
+5. Migraciones: **siempre con `node scripts/db/migrate-deploy.mjs`**, nunca con `prisma migrate deploy` directo sobre
+   una base nueva (ver 6.1.2). El despliegue de Hostinger lo corre solo después de compilar (`HOSTINGER_API_BUILD=1`);
+   para la primera inicialización puede correrse también desde la máquina de release con las variables cargadas en la
+   sesión (sin escribirlas en archivos ni en el historial).
+6. Cargar `DATABASE_URL`, `DIRECT_URL` y `NODE_EXTRA_CA_CERTS` (ver 6.1.3) en Hostinger y redeployar la API. Verificar
+   `/health`, `/ready` y `GET /tus/v1/public/solicitudes` (debe responder `{"items":[]}` con la base vacía).
 7. Probar de punta a punta: iniciar sesión en la Web → `/publicar` → publicar → la solicitud aparece en el mapa de `/`.
 
 La migración `20261001100000_tus_directorio_prestadores` (perfiles públicos, solicitudes dirigidas e imágenes) va
 después de `20260930100000_tus_solicitudes_servicio`; es aditiva y las solicitudes existentes quedan públicas.
+
+### 6.1.2 Migraciones automáticas e inicialización de una base nueva
+
+`scripts/db/migrate-deploy.mjs` (lógica en `scripts/db/migrate-deploy-lib.mjs`, tests en
+`tests/foundation/tus-migrate-deploy.test.mjs`) es el único camino de migración de despliegue:
+
+- `scripts/hostinger-postinstall.mjs` lo ejecuta **después de compilar la API y antes de que Hostinger la arranque**. Si
+  falla, la instalación termina con código distinto de 0 y el despliegue queda fallido. La API **nunca** migra al
+  arrancar y la Web (Vercel) nunca migra.
+- Requiere `DATABASE_URL` y `DIRECT_URL` (misma base; en producción con `sslmode=require|verify-ca|verify-full`). Se niega a
+  correr contra `factory_local`, sin TLS en producción, con migraciones fallidas previas o sobre un esquema `public` con
+  tablas y sin historial de Prisma. Solo imprime host, puerto, base, `sslmode` y el ref del proyecto Supabase; nunca
+  usuario ni contraseña.
+- **Mismo proyecto Supabase:** si alguna de las dos URLs es de Supabase, ambas tienen que ser endpoints reconocidos del
+  mismo proyecto: directa o PgBouncer dedicado `db.<ref>.supabase.co` (usuario `postgres`) y Supavisor
+  `aws-N-<región>.pooler.supabase.com` (usuario `<rol>.<ref>`, puertos 5432 o 6543). Cualquier combinación
+  directa/pooler del mismo `<ref>` se acepta; refs distintos, un pooler sin `<rol>.<ref>`, un host de Supabase no
+  reconocido o mezclar Supabase con otro proveedor detienen el proceso antes de conectar.
+- **`migrate status` estricto:** solo se sigue si la salida completa coincide con el formato conocido de Prisma 5 ("al
+  día" con exit 0, o lista de pendientes con exit 1 —el caso normal— o 0), la cantidad de migraciones coincide con el
+  directorio y todos los nombres existen localmente. Migraciones fallidas, errores de conexión (`P1001`, `P1003`, ...) y
+  **cualquier salida o error no reconocido** detienen el proceso antes de escribir.
+- **Preflight de solo lectura** antes de la primera escritura: `migrate status` informa lo mismo para una base vacía que
+  para una con tablas ajenas, así que un bloque `DO` que solo consulta el catálogo aborta si `public` tiene objetos y no
+  existe `_prisma_migrations`.
+- Es idempotente: sin pendientes termina con "nothing to apply". Nunca usa `migrate reset`, `db push` ni `--accept-data-loss`.
+
+Por qué no alcanza con `prisma migrate deploy` en una base **vacía** (reproducido con la cadena real en PostgreSQL 16
+descartable):
+
+1. **22001 en `20260911120000_tus_pos_index_constraint_repair`** (y luego en `20260911130000`): Prisma crea
+   `_prisma_migrations.id` como `VARCHAR(36)` y registra su fila antes de ejecutar cada migración. Esas migraciones
+   terminan con `INSERT ... SELECT '<marcador de 38/41 caracteres>' ... WHERE NOT EXISTS` (pensado para
+   `scripts/tus-migration-repair.mjs`, que crea la tabla con `id TEXT`); el `WHERE` descarta la fila, pero la constante
+   igual se convierte a `VARCHAR(36)` y falla. **Solución:** si hay pendientes de esas dos, el script crea la tabla con el
+   formato de Prisma salvo `id TEXT` (o amplía `id` a `TEXT` si ya existe; sin reescritura). Así el `NOT EXISTS` encuentra
+   la fila de Prisma y no se inserta ningún marcador.
+2. **42883 en `20260911130000_tus_live_schema_conformance_repair`**: compara `ARRAY(SELECT attname ...)` (`name[]`) con
+   `text[]`; ese operador no existe en ninguna versión de PostgreSQL, así que esa migración no pudo aplicarse nunca tal cual.
+   **Solución sin editar el archivo:** el script aplica con Prisma todo lo anterior, ejecuta esa migración derivada del
+   archivo original con una sola sustitución verificada (`)::text[] = definition.index_columns`) y sin su `INSERT` de
+   marcador, **en una transacción**, y la registra con `prisma migrate resolve --applied` (checksum real del archivo). Si
+   el archivo cambiara de forma inesperada, la derivación falla y no se aplica nada. Luego corre `prisma migrate deploy`
+   con el resto y exige `migrate status` al día.
+
+Validado en PostgreSQL 16 descartable con TLS: base nueva completa (49 migraciones, 49 filas con checksum real y sin
+marcadores), segunda ejecución sin cambios, esquema idéntico (`pg_dump --schema-only`) al de la cadena ejecutada como si
+`20260911130000` fuese correcta, base existente (historial con marcadores de la herramienta de reparación) que solo recibe
+lo pendiente y queda idéntica, y arranque real de la API con `/health` y `/ready`.
+
+`prisma migrate diff` contra `schema.prisma` sigue mostrando diferencias **previas** (la base de referencia es idéntica):
+objetos solo-SQL que Prisma no representa y que deben conservarse (FKs a tenants y conversaciones, índices parciales/HNSW,
+defaults y `NOT NULL` agregados por migraciones, tabla legacy `RefreshTokenFamily`) y 9 índices declarados en
+`schema.prisma` que ninguna migración crea (más un nombre de índice truncado). Estos últimos solo afectan rendimiento; se
+corrigen con una migración de convergencia nueva, nunca editando la historia.
+
+### 6.1.3 TLS de la API contra Supabase (sin desactivar la verificación)
+
+La API usa `pg` para el chequeo de arranque. Con `pg` 8.2x, `sslmode=require` se trata como `verify-full`: verifica la
+cadena y el nombre del servidor. El certificado de Supabase lo firma la CA propia de Supabase, que Node no trae, y el
+arranque falla con `reason=SELF_SIGNED_CERT_IN_CHAIN` o `UNABLE_TO_VERIFY_LEAF_SIGNATURE` (reproducido con una CA propia).
+Prisma (migraciones y cliente) no es afectado. La solución es confiar en esa CA, no desactivar TLS:
+
+1. Supabase → Project Settings → Database → SSL Configuration → **Download certificate** (CA pública, no es secreto).
+2. Guardarla en el repo como `apps/api/certs/supabase-ca.crt` (o subirla al servidor de Hostinger).
+3. En Hostinger: `NODE_EXTRA_CA_CERTS=<ruta absoluta a ese archivo>` (Node la lee al iniciar el proceso).
+
+Con la CA confiada, el mismo arranque llega a `/ready`. Si el log dice `reason=ERR_TLS_CERT_ALTNAME_INVALID`, el host de
+`DATABASE_URL` no coincide con el certificado (usar exactamente el host que muestra Supabase en Connect).
 
 ### 6.2 Comandos de release sin secretos en Git
 

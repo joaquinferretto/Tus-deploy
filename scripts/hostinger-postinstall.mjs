@@ -40,3 +40,20 @@ run([
 ])
 
 console.log('[hostinger] API compilada correctamente')
+
+// Migraciones: después de compilar y antes de que Hostinger arranque la API. Si fallan, la
+// instalación termina con exit != 0 y el despliegue queda marcado como fallido. La API nunca
+// migra al arrancar. Requiere DATABASE_URL y DIRECT_URL en las variables del panel de Hostinger.
+console.log('[hostinger] Aplicando migraciones de base de datos...')
+const migrate = spawnSync(process.execPath, ['scripts/db/migrate-deploy.mjs'], {
+  stdio: 'inherit',
+  env: process.env,
+  shell: false,
+})
+
+if (migrate.error || migrate.status !== 0) {
+  console.error('[hostinger] Las migraciones fallaron: el despliegue se detiene sin arrancar la API nueva')
+  process.exit(migrate.status || 1)
+}
+
+console.log('[hostinger] Migraciones aplicadas; base al día')
