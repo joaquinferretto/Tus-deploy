@@ -24,10 +24,19 @@ function run(args) {
   }
 }
 
-console.log('[hostinger] Generando Prisma Client...')
-run(['--filter', '@factory/api', 'prisma:generate'])
+console.log('[hostinger] Asegurando devDependencies del workspace...')
+run([
+  'install',
+  '--prod=false',
+  '--frozen-lockfile',
+  '--ignore-scripts',
+])
 
 console.log('[hostinger] Compilando dependencias y API...')
-run(['--filter', '@factory/api...', 'build'])
+run([
+  '--filter',
+  '@factory/api...',
+  'build',
+])
 
 console.log('[hostinger] API compilada correctamente')
