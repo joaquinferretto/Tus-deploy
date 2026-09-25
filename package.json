@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Neutral, deterministic product factory foundation",
+
   "scripts": {
+    "postinstall": "node scripts/hostinger-postinstall.mjs",
     "dev": "turbo run dev --parallel",
     "build": "turbo run build --concurrency=1",
     "pretest": "corepack pnpm --filter @factory/errors build",
