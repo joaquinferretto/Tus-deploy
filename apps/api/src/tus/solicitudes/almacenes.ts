@@ -1,9 +1,11 @@
 import type {
   CategoriaSolicitud,
   EstadoAsignacion,
+  EstadoPostulacion,
   EstadoSolicitud,
   ImagenSolicitud,
   OrigenSolicitud,
+  PostulacionSolicitud,
   SolicitudServicio,
   UrgenciaSolicitud,
   VisibilidadSolicitud,
@@ -17,6 +19,7 @@ const unique = () => Object.assign(new Error('unique violation'), { code: 'P2002
 export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
   readonly solicitudes = new Map<string, SolicitudServicio>()
   readonly imagenes = new Map<string, ImagenSolicitud>()
+  readonly postulaciones = new Map<string, PostulacionSolicitud>()
 
   private copia(solicitud: SolicitudServicio): SolicitudServicio {
     const imagenes = [...this.imagenes.values()].filter((imagen) => imagen.solicitudId === solicitud.id).map((imagen) => imagen.orden)
@@ -68,6 +71,9 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
     item.estado = 'cerrada'
     if (item.estadoAsignacion === 'pendiente') item.estadoAsignacion = 'cancelada'
     item.actualizadaEn = input.ahora
+    // Cerrar la solicitud responde a quienes seguían esperando.
+    for (const postulacion of this.postulaciones.values())
+      if (postulacion.solicitudId === item.id && postulacion.estado === 'pendiente') Object.assign(postulacion, { estado: 'rechazada', actualizadaEn: input.ahora })
     return true
   }
 
@@ -90,6 +96,54 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
     const found = [...this.imagenes.values()].find((item) => item.solicitudId === solicitudId && item.orden === orden)
     return found ? { ...found } : null
   }
+
+  async guardarPostulacion(postulacion: PostulacionSolicitud) {
+    if ([...this.postulaciones.values()].some((item) => item.solicitudId === postulacion.solicitudId && item.prestadorTenantId === postulacion.prestadorTenantId)) throw unique()
+    this.postulaciones.set(postulacion.id, { ...postulacion })
+  }
+
+  async postulacionesDe(solicitudId: string) {
+    return [...this.postulaciones.values()]
+      .filter((item) => item.solicitudId === solicitudId)
+      .sort((a, b) => a.creadaEn - b.creadaEn)
+      .map((item) => ({ ...item }))
+  }
+
+  async postulacionesDePrestador(prestadorTenantId: string) {
+    return [...this.postulaciones.values()]
+      .filter((item) => item.prestadorTenantId === prestadorTenantId)
+      .sort((a, b) => b.creadaEn - a.creadaEn)
+      .slice(0, 100)
+      .map((item) => ({ ...item }))
+  }
+
+  async aceptarPostulacion(input: { solicitudId: string; cuentaId: string; postulacionId: string; ahora: number }) {
+    const solicitud = this.solicitudes.get(input.solicitudId)
+    const elegida = this.postulaciones.get(input.postulacionId)
+    if (!solicitud || solicitud.cuentaId !== input.cuentaId || solicitud.visibilidad !== 'publica' || solicitud.estado !== 'abierta' || solicitud.expiraEn <= input.ahora) return false
+    if (!elegida || elegida.solicitudId !== solicitud.id || elegida.estado !== 'pendiente') return false
+    Object.assign(solicitud, {
+      visibilidad: 'dirigida',
+      prestadorTenantId: elegida.prestadorTenantId,
+      prestadorId: elegida.prestadorId,
+      estadoAsignacion: 'aceptada',
+      respondidaEn: input.ahora,
+      actualizadaEn: input.ahora,
+    })
+    for (const postulacion of this.postulaciones.values())
+      if (postulacion.solicitudId === solicitud.id && postulacion.estado === 'pendiente')
+        Object.assign(postulacion, { estado: postulacion.id === elegida.id ? 'aceptada' : 'rechazada', actualizadaEn: input.ahora })
+    return true
+  }
+
+  async cerrarPostulacion(input: { postulacionId: string; estado: 'rechazada' | 'retirada'; solicitudId?: string; prestadorTenantId?: string; ahora: number }) {
+    const postulacion = this.postulaciones.get(input.postulacionId)
+    if (!postulacion || postulacion.estado !== 'pendiente') return false
+    if (input.solicitudId !== undefined && postulacion.solicitudId !== input.solicitudId) return false
+    if (input.prestadorTenantId !== undefined && postulacion.prestadorTenantId !== input.prestadorTenantId) return false
+    Object.assign(postulacion, { estado: input.estado, actualizadaEn: input.ahora })
+    return true
+  }
 }
 
 // ---- PostgreSQL (solicitudes_servicio + imagenes_solicitud) ----------------------------------
@@ -109,11 +163,27 @@ interface DelegadoImagenes {
   findFirst(input: { where: Fila }): Promise<Fila | null>
 }
 
-export interface ClientePrismaSolicitudes {
+interface DelegadoPostulaciones {
+  create(input: { data: Fila }): Promise<Fila>
+  findFirst(input: { where: Fila }): Promise<Fila | null>
+  findMany(input: { where: Fila; orderBy?: Fila; take?: number }): Promise<Fila[]>
+  updateMany(input: { where: Fila; data: Fila }): Promise<{ count: number }>
+}
+
+type DelegadosSolicitudes = {
   solicitudServicio: DelegadoSolicitudes
   imagenSolicitud: DelegadoImagenes
-  $transaction<T>(operations: Promise<T>[]): Promise<T[]>
+  postulacionSolicitud: DelegadoPostulaciones
 }
+
+export interface ClientePrismaSolicitudes extends DelegadosSolicitudes {
+  $transaction<T>(operations: Promise<T>[]): Promise<T[]>
+  // Transacción interactiva: lanzar dentro de `fn` revierte todo.
+  $transaction<T>(fn: (tx: DelegadosSolicitudes) => Promise<T>): Promise<T>
+}
+
+// Señal interna para revertir la transacción de aceptación cuando una condición no se cumple.
+class SinCambios extends Error {}
 
 // Solo el orden de las fotos, nunca los bytes, al listar solicitudes.
 const CON_IMAGENES = { imagenes: { select: { orden: true } } }
@@ -121,6 +191,19 @@ const CON_IMAGENES = { imagenes: { select: { orden: true } } }
 const aFecha = (value: number) => new Date(value)
 const desdeFecha = (value: unknown) => (value instanceof Date ? value.getTime() : Number(value))
 const opcionalFecha = (value: unknown) => (value === null || value === undefined ? null : desdeFecha(value))
+
+function desdeFilaPostulacion(fila: Fila): PostulacionSolicitud {
+  return {
+    id: String(fila['id']),
+    solicitudId: String(fila['solicitudId']),
+    prestadorTenantId: String(fila['prestadorTenantId']),
+    prestadorId: String(fila['prestadorId']),
+    mensaje: (fila['mensaje'] as string | null | undefined) ?? null,
+    estado: fila['estado'] as EstadoPostulacion,
+    creadaEn: desdeFecha(fila['fechaCreacion']),
+    actualizadaEn: desdeFecha(fila['fechaActualizacion']),
+  }
+}
 
 function desdeFila(fila: Fila): SolicitudServicio {
   const imagenes = Array.isArray(fila['imagenes']) ? (fila['imagenes'] as Fila[]).map((imagen) => Number(imagen['orden'])) : []
@@ -218,6 +301,11 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
         where: { id: input.id, cuentaId: input.cuentaId, estado: 'abierta', OR: [{ estadoAsignacion: null }, { estadoAsignacion: { in: ['aceptada', 'rechazada', 'cancelada'] } }] },
         data: { estado: 'cerrada', actualizadaEn: aFecha(input.ahora) },
       }),
+      // Cerrar la solicitud responde a quienes seguían esperando (solo si es de la cuenta).
+      this.client.postulacionSolicitud.updateMany({
+        where: { solicitudId: input.id, estado: 'pendiente', solicitud: { cuentaId: input.cuentaId } },
+        data: { estado: 'rechazada', fechaActualizacion: aFecha(input.ahora) },
+      }),
     ])
     return pendiente!.count + resto!.count === 1
   }
@@ -263,5 +351,76 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
       contenido: Buffer.from(fila['contenido'] as Uint8Array),
       creadaEn: desdeFecha(fila['fechaCreacion']),
     }
+  }
+
+  async guardarPostulacion(postulacion: PostulacionSolicitud) {
+    await this.client.postulacionSolicitud.create({
+      data: {
+        id: postulacion.id,
+        solicitudId: postulacion.solicitudId,
+        prestadorTenantId: postulacion.prestadorTenantId,
+        prestadorId: postulacion.prestadorId,
+        mensaje: postulacion.mensaje,
+        estado: postulacion.estado,
+        fechaCreacion: aFecha(postulacion.creadaEn),
+        fechaActualizacion: aFecha(postulacion.actualizadaEn),
+      },
+    })
+  }
+
+  async postulacionesDe(solicitudId: string) {
+    const filas = await this.client.postulacionSolicitud.findMany({ where: { solicitudId }, orderBy: { fechaCreacion: 'asc' }, take: 50 })
+    return filas.map(desdeFilaPostulacion)
+  }
+
+  async postulacionesDePrestador(prestadorTenantId: string) {
+    const filas = await this.client.postulacionSolicitud.findMany({ where: { prestadorTenantId }, orderBy: { fechaCreacion: 'desc' }, take: 100 })
+    return filas.map(desdeFilaPostulacion)
+  }
+
+  async aceptarPostulacion(input: { solicitudId: string; cuentaId: string; postulacionId: string; ahora: number }) {
+    const ahora = aFecha(input.ahora)
+    try {
+      await this.client.$transaction(async (tx) => {
+        const elegida = await tx.postulacionSolicitud.findFirst({ where: { id: input.postulacionId, solicitudId: input.solicitudId, estado: 'pendiente' } })
+        if (!elegida) throw new SinCambios()
+        // El UPDATE condicional toma el lock de la fila: una segunda aceptación concurrente
+        // re-evalúa el WHERE, ya no encuentra la solicitud pública y revierte.
+        const solicitud = await tx.solicitudServicio.updateMany({
+          where: { id: input.solicitudId, cuentaId: input.cuentaId, visibilidad: 'publica', estado: 'abierta', expiraEn: { gt: ahora } },
+          data: {
+            visibilidad: 'dirigida',
+            prestadorTenantId: elegida['prestadorTenantId'],
+            prestadorId: elegida['prestadorId'],
+            estadoAsignacion: 'aceptada',
+            respondidaEn: ahora,
+            actualizadaEn: ahora,
+          },
+        })
+        if (solicitud.count !== 1) throw new SinCambios()
+        const aceptada = await tx.postulacionSolicitud.updateMany({ where: { id: input.postulacionId, estado: 'pendiente' }, data: { estado: 'aceptada', fechaActualizacion: ahora } })
+        if (aceptada.count !== 1) throw new SinCambios()
+        await tx.postulacionSolicitud.updateMany({ where: { solicitudId: input.solicitudId, estado: 'pendiente' }, data: { estado: 'rechazada', fechaActualizacion: ahora } })
+      })
+      return true
+    } catch (error) {
+      if (error instanceof SinCambios) return false
+      // El índice parcial de un solo aceptado cubre cualquier carrera que el WHERE no vea.
+      if ((error as { code?: unknown })?.code === 'P2002') return false
+      throw error
+    }
+  }
+
+  async cerrarPostulacion(input: { postulacionId: string; estado: 'rechazada' | 'retirada'; solicitudId?: string; prestadorTenantId?: string; ahora: number }) {
+    const result = await this.client.postulacionSolicitud.updateMany({
+      where: {
+        id: input.postulacionId,
+        estado: 'pendiente',
+        ...(input.solicitudId !== undefined ? { solicitudId: input.solicitudId } : {}),
+        ...(input.prestadorTenantId !== undefined ? { prestadorTenantId: input.prestadorTenantId } : {}),
+      },
+      data: { estado: input.estado, fechaActualizacion: aFecha(input.ahora) },
+    })
+    return result.count === 1
   }
 }

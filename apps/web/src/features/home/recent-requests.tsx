@@ -34,7 +34,7 @@ export function RecentRequests({
           <a className={styles.buttonPrimary} href="/publicar">
             Publicar mi solicitud
           </a>
-          <a className={styles.seeAll} href={`/sign-in?returnTo=${encodeURIComponent('/tus/prestador')}`}>
+          <a className={styles.seeAll} href="/prestador/solicitudes#abiertas">
             Ver todas las solicitudes →
           </a>
         </div>

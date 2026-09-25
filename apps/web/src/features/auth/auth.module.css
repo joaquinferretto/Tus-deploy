@@ -33,11 +33,24 @@
   align-items: center;
   background: #ffffff;
   border-bottom: 1px solid var(--tus-line);
-  display: flex;
+  display: grid;
+  gap: 16px;
   grid-column: 1 / -1;
-  justify-content: space-between;
+  grid-template-areas: 'back brand .';
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   min-height: 72px;
   padding: 8px clamp(16px, 2.5vw, 40px);
+}
+
+.topBarBack {
+  grid-area: back;
+  justify-self: start;
+}
+
+.topBarBrand {
+  display: inline-flex;
+  grid-area: brand;
+  justify-self: center;
 }
 
 .topBar a {

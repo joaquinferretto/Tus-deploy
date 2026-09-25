@@ -144,6 +144,21 @@ export class ServicioDirectorio {
     return this.deps.perfiles.porTenant(tenantId)
   }
 
+  // Quién puede postularse a una solicitud pública: mismo criterio que el directorio (perfil
+  // visible y prestador aprobado), sin filtrar por oficio.
+  async postulante(tenantId: string): Promise<{ perfil: PerfilPublico } | null> {
+    const perfil = await this.deps.perfiles.porTenant(tenantId)
+    if (!perfil || !perfil.visible) return null
+    const prestador = await this.deps.fuentes.prestador(tenantId)
+    if (!prestador?.aprobado || prestador.prestadorId !== perfil.prestadorId) return null
+    return { perfil }
+  }
+
+  async perfilPublicoDe(tenantId: string): Promise<{ id: string; nombrePublico: string; oficio: string; zona: string } | null> {
+    const perfil = await this.deps.perfiles.porTenant(tenantId)
+    return perfil ? { id: perfil.id, nombrePublico: perfil.nombrePublico, oficio: perfil.oficio, zona: perfil.zona } : null
+  }
+
   // ---- asistente ------------------------------------------------------------------------------
 
   interpretar(texto: unknown): Interpretacion {

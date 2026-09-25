@@ -20,7 +20,8 @@ const NAV = [
   { href: '/#ayuda', label: 'Ayuda' },
 ] as const
 
-type AuthView = { status: 'unknown' } | { status: 'guest' } | { status: 'signed-in'; initial: string }
+type AuthView =
+  { status: 'unknown' } | { status: 'guest' } | { status: 'signed-in'; initial: string }
 
 // The session lives in sessionStorage as a bearer credential; the header only shows "Ir a mi
 // panel" after /auth/session confirms it with the server (restore), never from local data alone.
@@ -40,7 +41,8 @@ function useAuthView(): AuthView {
       .restore('/tus')
       .then((result) => {
         if (cancelled) return
-        if (result.status === 'authenticated' && result.session) setView({ status: 'signed-in', initial: 'Yo' })
+        if (result.status === 'authenticated' && result.session)
+          setView({ status: 'signed-in', initial: 'Yo' })
         else setView({ status: 'guest' })
       })
       .catch(() => {
@@ -61,16 +63,24 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
   const back = pathname === '/' ? null : pathname
   const signInHref = withReturnTo('/sign-in', back) as Route
   const registerHref = withReturnTo('/registro', back) as Route
-  const current = (href: string) => (href !== '/' && !href.startsWith('/#') && (pathname === href || pathname.startsWith(`${href}/`)) ? 'page' : undefined)
+  const current = (href: string) =>
+    href !== '/' && !href.startsWith('/#') && (pathname === href || pathname.startsWith(`${href}/`))
+      ? 'page'
+      : undefined
 
   const actions =
     auth.status === 'signed-in' ? (
-      <Link className={styles.buttonPrimary} href="/tus">
-        <span className={styles.avatar} aria-hidden="true">
-          {auth.initial}
-        </span>
-        Ir a mi panel
-      </Link>
+      <>
+        <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>
+          Mi perfil
+        </Link>
+        <Link className={styles.buttonPrimary} href="/tus">
+          <span className={styles.avatar} aria-hidden="true">
+            {auth.initial}
+          </span>
+          Ir a mi panel
+        </Link>
+      </>
     ) : (
       <>
         <Link className={styles.buttonSecondary} href={signInHref}>
@@ -111,14 +121,24 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
       {open ? (
         <nav aria-label="Menú" className={styles.mobileMenu} id="menu-movil">
           {NAV.map((item) => (
-            <a aria-current={current(item.href)} href={item.href} key={item.href} onClick={() => setOpen(false)}>
+            <a
+              aria-current={current(item.href)}
+              href={item.href}
+              key={item.href}
+              onClick={() => setOpen(false)}
+            >
               {item.label}
             </a>
           ))}
           {auth.status === 'signed-in' ? (
-            <Link className={styles.buttonPrimary} href="/tus">
-              Ir a mi panel
-            </Link>
+            <>
+              <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>
+                Mi perfil
+              </Link>
+              <Link className={styles.buttonPrimary} href="/tus">
+                Ir a mi panel
+              </Link>
+            </>
           ) : (
             <>
               <Link className={styles.buttonSecondary} href={signInHref}>

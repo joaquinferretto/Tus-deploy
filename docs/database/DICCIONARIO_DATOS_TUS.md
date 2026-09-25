@@ -680,6 +680,16 @@ prestador destino la pasa a `aceptada` o `rechazada`. `imagenes_solicitud`: hast
 único), JPEG/PNG/WEBP de hasta 3 MB, guardadas sin EXIF/GPS/XMP; públicas solo si la solicitud es pública y está
 abierta, privadas (dueña y prestador destino) si es dirigida. Las filas existentes quedan `web_publica`/`publica`.
 
+`postulaciones_solicitud` (20261002100000): un prestador aprobado con perfil público visible, de cualquier oficio, se
+ofrece para una solicitud pública abierta (`estado` nace `pendiente`, `mensaje` opcional de hasta 300 caracteres sin datos
+de contacto). Una postulación por prestador y solicitud (`uq_postulaciones_solicitud_prestador`). El cliente decide: al
+aceptar una, en una transacción la solicitud pasa a `visibilidad = dirigida`, `prestador_*` del postulante y
+`estado_asignacion = aceptada` (sale del mapa), esa postulación queda `aceptada` y el resto de las pendientes `rechazada`;
+el índice parcial `uq_postulaciones_solicitud_aceptada` (solo SQL) garantiza un único aceptado aunque haya dos
+aceptaciones concurrentes. El cliente también puede rechazar a un postulante; el prestador puede retirarse (`retirada`)
+mientras siga pendiente, y cerrar la solicitud rechaza a los pendientes. FKs RESTRICT a `solicitudes_servicio` y a
+`prestadores (tenant_id, prestador_id)`.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

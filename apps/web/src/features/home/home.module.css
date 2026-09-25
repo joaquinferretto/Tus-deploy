@@ -57,8 +57,11 @@
 
 .headerInner {
   align-items: center;
-  display: flex;
+  /* Logo siempre al centro: menú a la izquierda, acciones a la derecha, columnas laterales iguales. */
+  display: grid;
   gap: 24px;
+  grid-template-areas: 'nav brand actions';
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   height: 64px;
   padding: 0 clamp(16px, 2.5vw, 40px);
   width: 100%;
@@ -67,13 +70,17 @@
 .brandLink {
   align-items: center;
   display: inline-flex;
+  grid-area: brand;
+  justify-self: center;
   text-decoration: none;
 }
 
 .nav {
   display: flex;
-  flex: 1;
-  gap: 4px;
+  gap: 2px;
+  grid-area: nav;
+  justify-self: start;
+  min-width: 0;
 }
 
 .nav a {
@@ -82,7 +89,7 @@
   color: var(--tus-ink-soft);
   font-size: 0.95rem;
   font-weight: 500;
-  padding: 8px 12px;
+  padding: 8px 10px;
   text-decoration: none;
 }
 
@@ -104,7 +111,8 @@
   align-items: center;
   display: flex;
   gap: 10px;
-  margin-left: auto;
+  grid-area: actions;
+  justify-self: end;
 }
 
 .buttonPrimary,
@@ -641,8 +649,9 @@
 }
 
 /* ---- responsive ---------------------------------------------------------------------------- */
-/* Five destinations + two buttons need ~1100px; below that the menu takes over. */
-@media (max-width: 1120px) {
+/* Con el logo centrado, cada lado tiene media barra: los cinco destinos necesitan ~1400px; debajo
+   el menú toma su lugar y el logo sigue en el centro (la columna izquierda queda vacía). */
+@media (max-width: 1400px) {
   .nav {
     display: none;
   }

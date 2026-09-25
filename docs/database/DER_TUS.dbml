@@ -2264,3 +2264,21 @@ Table imagenes_solicitud {
     (solicitud_id, orden) [unique, name: 'uq_imagenes_solicitud_orden']
   }
 }
+
+// 20261002100000: postulaciones de prestadores (de cualquier oficio) a solicitudes públicas.
+// El cliente decide; aceptar deja la solicitud dirigida y 'aceptada' para ese prestador.
+Table postulaciones_solicitud {
+  id varchar [pk]
+  solicitud_id varchar [ref: > solicitudes_servicio.id]
+  prestador_tenant_id varchar
+  prestador_id varchar [note: 'FK compuesta (prestador_tenant_id, prestador_id) -> prestadores RESTRICT']
+  mensaje varchar [null, note: 'CHECK 1..300; sin teléfonos, emails ni links (validado en la API)']
+  estado varchar [default: 'pendiente', note: 'CHECK: pendiente | aceptada | rechazada | retirada']
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+  indexes {
+    (solicitud_id, prestador_tenant_id) [unique, name: 'uq_postulaciones_solicitud_prestador']
+    solicitud_id [unique, name: 'uq_postulaciones_solicitud_aceptada', note: "parcial: WHERE estado = 'aceptada' (solo SQL)"]
+    (prestador_tenant_id, fecha_creacion) [name: 'ix_postulaciones_solicitud_prestador_fecha']
+  }
+}

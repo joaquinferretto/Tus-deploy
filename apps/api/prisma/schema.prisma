@@ -641,6 +641,7 @@ model Prestador {
   trabajos    Trabajo[]
   perfilPublico       PerfilPublicoPrestador?
   solicitudesDirigidas SolicitudServicio[]
+  postulaciones       PostulacionSolicitud[]
 
   @@unique([tenantId, prestadorId], map: "uq_prestadores_tenant_prestador")
   @@index([tenantId, estado], map: "idx_prestadores_tenant_estado")
@@ -2792,6 +2793,7 @@ model SolicitudServicio {
   cuenta             Account  @relation(fields: [cuentaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_cuenta")
   prestador          Prestador? @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_prestador")
   imagenes           ImagenSolicitud[]
+  postulaciones      PostulacionSolicitud[]
 
   @@index([estado, creadaEn(sort: Desc)], map: "ix_solicitudes_servicio_estado_fecha")
   @@index([cuentaId, creadaEn], map: "ix_solicitudes_servicio_cuenta_fecha")
@@ -2834,4 +2836,23 @@ model ImagenSolicitud {
 
   @@unique([solicitudId, orden], map: "uq_imagenes_solicitud_orden")
   @@map("imagenes_solicitud")
+}
+
+// Postulaciones de prestadores a solicitudes públicas (20261002100000). El cliente elige a quién
+// acepta; el índice parcial uq_postulaciones_solicitud_aceptada (solo SQL) admite un solo aceptado.
+model PostulacionSolicitud {
+  id                 String   @id(map: "postulaciones_solicitud_pkey")
+  solicitudId        String   @map("solicitud_id")
+  prestadorTenantId  String   @map("prestador_tenant_id")
+  prestadorId        String   @map("prestador_id")
+  mensaje            String?  @map("mensaje")
+  estado             String   @default("pendiente") @map("estado")
+  fechaCreacion      DateTime @map("fecha_creacion")
+  fechaActualizacion DateTime @map("fecha_actualizacion")
+  solicitud          SolicitudServicio @relation(fields: [solicitudId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_postulaciones_solicitud_solicitud")
+  prestador          Prestador @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_postulaciones_solicitud_prestador")
+
+  @@unique([solicitudId, prestadorTenantId], map: "uq_postulaciones_solicitud_prestador")
+  @@index([prestadorTenantId, fechaCreacion], map: "ix_postulaciones_solicitud_prestador_fecha")
+  @@map("postulaciones_solicitud")
 }

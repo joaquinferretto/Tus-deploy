@@ -102,7 +102,8 @@ test('REQUESTS client: directed request carries only the chosen provider and ori
   assert.equal(result.uploadCall.headers['Content-Type'], 'application/octet-stream')
   assert.match(result.labels[0], /pendiente de aceptación/)
   assert.doesNotMatch(result.labels[0], /confirm|acept[oó]/i)
-  assert.match(result.labels[1], /aceptó/)
+  // Confirmed only after the answer (provider accepted, or the client chose an applicant).
+  assert.match(result.labels[1], /^Confirmado con /)
   assert.equal(result.publica, 'Publicada en el mapa')
 })
 

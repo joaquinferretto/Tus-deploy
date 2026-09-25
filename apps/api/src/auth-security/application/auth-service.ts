@@ -519,6 +519,12 @@ export class AuthService {
     return { ok: true }
   }
 
+  // "Mi perfil": the session's own account only (never another id), in its safe shape.
+  async getOwnAccount(actorId: string): Promise<SafeAccount | null> {
+    const account = await this.dependencies.store.getAccount(actorId)
+    return account ? this.safeAccount(account) : null
+  }
+
   async updateAccount(input: {
     actorId: string
     accountId: string

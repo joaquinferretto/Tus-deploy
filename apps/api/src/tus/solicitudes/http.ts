@@ -15,6 +15,12 @@ import type { ServicioSolicitudes } from './servicio.ts'
 // - GET  /tus/v1/solicitudes/:id/imagenes/:orden            foto para la dueña o el prestador destino.
 // - GET  /tus/v1/prestador/solicitudes                      bandeja del prestador (dirigidas a él).
 // - POST /tus/v1/prestador/solicitudes/:id/(aceptar|rechazar)
+// Postulaciones a solicitudes públicas (el cliente decide a quién acepta):
+// - POST /tus/v1/prestador/solicitudes/:id/postular               el prestador se ofrece.
+// - GET  /tus/v1/prestador/postulaciones                          sus postulaciones.
+// - POST /tus/v1/prestador/postulaciones/:id/retirar              se baja antes de la decisión.
+// - GET  /tus/v1/solicitudes/:id/postulaciones                    postulantes (solo la dueña).
+// - POST /tus/v1/solicitudes/:id/postulaciones/:pid/(aceptar|rechazar)
 export function crearRouterSolicitudes({ servicio, sessions }: { servicio: ServicioSolicitudes; sessions: TusSessionResolverPort }): Router {
   const router = express.Router()
 
@@ -155,6 +161,84 @@ export function crearRouterSolicitudes({ servicio, sessions }: { servicio: Servi
       const result = await servicio.responder(context.tenantId, request.params['id'], decision)
       if (result.ok) response.status(200).json(result.solicitud)
       else enviarError(response, 404, 'NOT_FOUND', 'Pending request not found')
+    })
+  )
+
+  router.post(
+    '/tus/v1/prestador/solicitudes/:id/postular',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      if (!context.permissions.includes('tus:marketplace:write')) {
+        enviarError(response, 403, 'FORBIDDEN', 'Only providers can apply to service requests')
+        return
+      }
+      const body = comoRegistro(request.body)
+      if (autoridadFalsificada(body, context)) {
+        enviarError(response, 403, 'FORBIDDEN', 'Client authority fields are not accepted')
+        return
+      }
+      const result = await servicio.postular({ tenantId: context.tenantId, cuentaId: context.subjectId }, request.params['id'], body)
+      if (result.ok) response.status(201).json(result.postulacion)
+      else if (result.code === 'INVALID_REQUEST') response.status(422).json({ code: result.code, error: 'The application has invalid fields', fields: result.fields })
+      else if (result.code === 'ALREADY_APPLIED') enviarError(response, 409, result.code, 'You already applied to this request')
+      else if (result.code === 'REQUEST_FULL') enviarError(response, 409, result.code, 'This request is not taking more applications')
+      else if (result.code === 'SELF_REQUEST') enviarError(response, 409, result.code, 'You cannot apply to your own request')
+      else if (result.code === 'PROVIDER_NOT_AVAILABLE') enviarError(response, 403, result.code, 'Complete and publish your provider profile to apply')
+      else enviarError(response, 404, 'NOT_FOUND', 'Open service request not found')
+    })
+  )
+
+  router.get(
+    '/tus/v1/prestador/postulaciones',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      // Siempre limitadas al tenant de la sesión.
+      response.status(200).json({ items: await servicio.misPostulaciones(context.tenantId) })
+    })
+  )
+
+  router.post(
+    '/tus/v1/prestador/postulaciones/:id/retirar',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      if (!context.permissions.includes('tus:marketplace:write')) {
+        enviarError(response, 403, 'FORBIDDEN', 'Only the provider can withdraw this application')
+        return
+      }
+      const result = await servicio.retirarPostulacion(context.tenantId, request.params['id'])
+      if (result.ok) response.status(200).json({ status: 'retirada' })
+      else enviarError(response, 404, 'NOT_FOUND', 'Pending application not found')
+    })
+  )
+
+  router.get(
+    '/tus/v1/solicitudes/:id/postulaciones',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      const result = await servicio.postulantes(context.subjectId, request.params['id'])
+      if (result.ok) response.status(200).json({ items: result.items })
+      else enviarError(response, 404, 'NOT_FOUND', 'Service request not found')
+    })
+  )
+
+  router.post(
+    ['/tus/v1/solicitudes/:id/postulaciones/:postulacionId/aceptar', '/tus/v1/solicitudes/:id/postulaciones/:postulacionId/rechazar'],
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      if (request.path.endsWith('/aceptar')) {
+        const result = await servicio.elegirPostulante(context.subjectId, request.params['id'], request.params['postulacionId'])
+        if (result.ok) response.status(200).json(result.solicitud)
+        else enviarError(response, 409, 'NOT_AVAILABLE', 'The request or the application is no longer pending')
+        return
+      }
+      const result = await servicio.rechazarPostulante(context.subjectId, request.params['id'], request.params['postulacionId'])
+      if (result.ok) response.status(200).json({ status: 'rechazada' })
+      else enviarError(response, 404, 'NOT_FOUND', 'Pending application not found')
     })
   )
 

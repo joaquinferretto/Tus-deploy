@@ -36,6 +36,8 @@ declare const styles: {
   readonly title: string
   readonly toggle: string
   readonly topBar: string
+  readonly topBarBack: string
+  readonly topBarBrand: string
   readonly visualContent: string
   readonly visualGrid: string
   readonly visualList: string

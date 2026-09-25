@@ -103,7 +103,7 @@ export default function RequestMap({
         attributionControl
         center={[DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng]}
         dragging={!touch}
-        scrollWheelZoom={false}
+        scrollWheelZoom={!touch}
         style={{ height: '100%', width: '100%' }}
         zoom={DEFAULT_MAP_CENTER.zoom}
         zoomControl={false}
@@ -152,7 +152,7 @@ export default function RequestMap({
                       ))}
                     </div>
                   ) : null}
-                  <a className={styles.popupCta} href={`/sign-in?returnTo=${encodeURIComponent('/tus/prestador')}`}>
+                  <a className={styles.popupCta} href="/prestador/solicitudes#abiertas">
                     Ver solicitud →
                   </a>
                 </div>

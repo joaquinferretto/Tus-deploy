@@ -93,6 +93,37 @@ export interface SolicitudRecibidaPrestador {
   images: string[]
 }
 
+// Postulaciones a solicitudes públicas: el prestador se ofrece y el cliente decide.
+export const ESTADOS_POSTULACION_TUS = ['pendiente', 'aceptada', 'rechazada', 'retirada'] as const
+export type EstadoPostulacionTus = (typeof ESTADOS_POSTULACION_TUS)[number]
+
+// Lo que ve el prestador de cada postulación suya.
+export interface PostulacionPrestador {
+  id: string
+  message: string | null
+  status: EstadoPostulacionTus
+  createdAt: string
+  request: {
+    id: string
+    category: OficioTus
+    title: string
+    requesterName: string
+    approximateArea: string
+    budgetMax: number | null
+    urgency: UrgenciaSolicitudTus
+    open: boolean
+  }
+}
+
+// Lo que ve el cliente de cada postulante (solo perfil público).
+export interface PostulanteSolicitud {
+  id: string
+  provider: { id: string; displayName: string; profession: OficioTus; approximateArea: string }
+  message: string | null
+  status: EstadoPostulacionTus
+  createdAt: string
+}
+
 // ---- validación en el borde (respuestas de la API) --------------------------------------------
 
 export const CLAVES_PRESTADOR_PUBLICO = [

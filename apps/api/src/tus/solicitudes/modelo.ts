@@ -27,6 +27,11 @@ export const ORIGENES_WEB: readonly OrigenSolicitud[] = ['web_publica', 'web_ass
 export type VisibilidadSolicitud = 'publica' | 'dirigida'
 export type EstadoAsignacion = 'pendiente' | 'aceptada' | 'rechazada' | 'cancelada'
 
+// Postulación de un prestador (de cualquier oficio) a una solicitud pública. El cliente decide:
+// aceptar a uno convierte la solicitud en dirigida y 'aceptada' para ese prestador, y rechaza al
+// resto de los pendientes. 'retirada': el prestador se bajó antes de la decisión.
+export type EstadoPostulacion = 'pendiente' | 'aceptada' | 'rechazada' | 'retirada'
+
 export const IMAGENES_POR_SOLICITUD = 2
 export const TAMANO_MAXIMO_IMAGEN = 3 * 1024 * 1024
 
@@ -55,6 +60,8 @@ export const LIMITES_SOLICITUD = {
   abiertasPorCuenta: 10,
   vigenciaDias: 30,
   listadoPublicoMax: 100,
+  mensajePostulacionMax: 300,
+  postulacionesPorSolicitud: 20,
 } as const
 
 export interface SolicitudServicio {
@@ -81,6 +88,17 @@ export interface SolicitudServicio {
   respondidaEn: number | null
   // Órdenes (1, 2) de las fotos guardadas; derivado de imagenes_solicitud.
   imagenes: number[]
+}
+
+export interface PostulacionSolicitud {
+  id: string
+  solicitudId: string
+  prestadorTenantId: string
+  prestadorId: string
+  mensaje: string | null
+  estado: EstadoPostulacion
+  creadaEn: number
+  actualizadaEn: number
 }
 
 export interface ImagenSolicitud {
@@ -135,6 +153,33 @@ export interface VistaSolicitudRecibida {
   images: string[]
 }
 
+// Lo que ve el cliente de cada postulante: solo el perfil público (nunca tenant ni contacto).
+export interface VistaPostulante {
+  id: string
+  provider: { id: string; displayName: string; profession: string; approximateArea: string }
+  message: string | null
+  status: EstadoPostulacion
+  createdAt: string
+}
+
+// Lo que ve el prestador de sus postulaciones.
+export interface VistaPostulacionPropia {
+  id: string
+  message: string | null
+  status: EstadoPostulacion
+  createdAt: string
+  request: {
+    id: string
+    category: CategoriaSolicitud
+    title: string
+    requesterName: string
+    approximateArea: string
+    budgetMax: number | null
+    urgency: UrgenciaSolicitud
+    open: boolean
+  }
+}
+
 export interface NuevaSolicitud {
   categoria: CategoriaSolicitud
   titulo: string
@@ -144,7 +189,7 @@ export interface NuevaSolicitud {
   urgencia: UrgenciaSolicitud
 }
 
-export type CampoSolicitud = 'category' | 'title' | 'description' | 'zone' | 'budgetMax' | 'urgency'
+export type CampoSolicitud = 'category' | 'title' | 'description' | 'zone' | 'budgetMax' | 'urgency' | 'message'
 
 export function validarNuevaSolicitud(body: Record<string, unknown>): { ok: true; valor: NuevaSolicitud } | { ok: false; campos: CampoSolicitud[] } {
   const campos: CampoSolicitud[] = []
@@ -175,6 +220,16 @@ export function validarNuevaSolicitud(body: Record<string, unknown>): { ok: true
       urgencia: urgencia as UrgenciaSolicitud,
     },
   }
+}
+
+// Mensaje opcional del prestador al postularse: mismo criterio anti-contacto que la solicitud.
+export function validarMensajePostulacion(value: unknown): { ok: true; valor: string | null } | { ok: false } {
+  if (value === undefined || value === null) return { ok: true, valor: null }
+  if (typeof value !== 'string') return { ok: false }
+  const texto = value.replace(/\s+/gu, ' ').trim()
+  if (!texto) return { ok: true, valor: null }
+  if (texto.length > LIMITES_SOLICITUD.mensajePostulacionMax || contieneContacto(texto)) return { ok: false }
+  return { ok: true, valor: texto }
 }
 
 // El texto es público: se rechazan emails, teléfonos y links para que nadie publique datos de
@@ -250,5 +305,24 @@ export function vistaRecibida(solicitud: SolicitudServicio): VistaSolicitudRecib
     assignment: solicitud.estadoAsignacion ?? 'pendiente',
     respondedAt: solicitud.respondidaEn === null ? null : new Date(solicitud.respondidaEn).toISOString(),
     images: urlImagenes(solicitud, 'private'),
+  }
+}
+
+export function vistaPostulacionPropia(postulacion: PostulacionSolicitud, solicitud: SolicitudServicio, ahora: number): VistaPostulacionPropia {
+  return {
+    id: postulacion.id,
+    message: postulacion.mensaje,
+    status: postulacion.estado,
+    createdAt: new Date(postulacion.creadaEn).toISOString(),
+    request: {
+      id: solicitud.id,
+      category: solicitud.categoria,
+      title: solicitud.titulo,
+      requesterName: solicitud.nombrePublico,
+      approximateArea: solicitud.zona,
+      budgetMax: solicitud.presupuestoMaximo,
+      urgency: solicitud.urgencia,
+      open: solicitud.estado === 'abierta' && solicitud.expiraEn > ahora,
+    },
   }
 }

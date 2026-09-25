@@ -1,3 +1,5 @@
+import type { PostulanteSolicitud } from '@factory/contracts'
+
 import { resolveWebApiBaseUrl } from '../../lib/api-url'
 import type { TusWebSession } from '../../lib/tus-ui-contract'
 
@@ -107,6 +109,35 @@ export function createRequestsClient(session: TusWebSession, fetchImpl: typeof f
       return Array.isArray(body.items) ? body.items : []
     },
 
+    // Providers who offered to help with a public request. The client decides.
+    async applicants(id: string): Promise<PostulanteSolicitud[]> {
+      const response = await fetchImpl(`${apiBase()}/tus/v1/solicitudes/${encodeURIComponent(id)}/postulaciones`, { cache: 'no-store', headers: headers() })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const body = (await response.json()) as { items?: PostulanteSolicitud[] }
+      return Array.isArray(body.items) ? body.items : []
+    },
+
+    // Accepting one takes the request off the map, confirms that provider and declines the rest.
+    async chooseApplicant(id: string, applicationId: string): Promise<OwnRequestDto | null> {
+      const response = await fetchImpl(`${apiBase()}/tus/v1/solicitudes/${encodeURIComponent(id)}/postulaciones/${encodeURIComponent(applicationId)}/aceptar`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: headers(true),
+        body: '{}',
+      })
+      return response.ok ? ((await response.json()) as OwnRequestDto) : null
+    },
+
+    async declineApplicant(id: string, applicationId: string): Promise<boolean> {
+      const response = await fetchImpl(`${apiBase()}/tus/v1/solicitudes/${encodeURIComponent(id)}/postulaciones/${encodeURIComponent(applicationId)}/rechazar`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: headers(true),
+        body: '{}',
+      })
+      return response.ok
+    },
+
     async close(id: string): Promise<boolean> {
       const response = await fetchImpl(`${apiBase()}/tus/v1/solicitudes/${encodeURIComponent(id)}/cerrar`, {
         method: 'POST',
@@ -149,7 +180,8 @@ export function requestStatusLabel(item: OwnRequestDto): string {
     const name = item.provider?.displayName ?? 'el profesional'
     switch (item.assignment) {
       case 'aceptada':
-        return `${name} aceptó tu solicitud`
+        // Directed (the provider accepted) or chosen among applicants (the client accepted).
+        return `Confirmado con ${name}`
       case 'rechazada':
         return `${name} no puede tomarla. Podés elegir a otro profesional.`
       case 'cancelada':
@@ -159,4 +191,11 @@ export function requestStatusLabel(item: OwnRequestDto): string {
     }
   }
   return item.status === 'abierta' ? 'Publicada en el mapa' : 'Cerrada'
+}
+
+export const APPLICATION_STATUS: Record<PostulanteSolicitud['status'], string> = {
+  pendiente: 'Esperando tu decisión',
+  aceptada: 'Aceptado',
+  rechazada: 'No elegido',
+  retirada: 'Se retiró'
 }

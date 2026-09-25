@@ -1,4 +1,4 @@
-import type { CategoriaSolicitud, EstadoAsignacion, ImagenSolicitud, SolicitudServicio } from './modelo.ts'
+import type { CategoriaSolicitud, EstadoAsignacion, ImagenSolicitud, PostulacionSolicitud, SolicitudServicio } from './modelo.ts'
 
 export interface AlmacenSolicitudes {
   guardar(solicitud: SolicitudServicio): Promise<void>
@@ -18,6 +18,19 @@ export interface AlmacenSolicitudes {
   // Lanza { code: 'P2002' } si ese orden ya existe.
   guardarImagen(imagen: ImagenSolicitud): Promise<void>
   imagen(solicitudId: string, orden: number): Promise<ImagenSolicitud | null>
+
+  // ---- postulaciones a solicitudes públicas ----
+  // Lanza { code: 'P2002' } si ese prestador ya se postuló a la solicitud.
+  guardarPostulacion(postulacion: PostulacionSolicitud): Promise<void>
+  postulacionesDe(solicitudId: string): Promise<PostulacionSolicitud[]>
+  postulacionesDePrestador(prestadorTenantId: string): Promise<PostulacionSolicitud[]>
+  // Atómico: la solicitud (de la cuenta, pública, abierta y vigente) pasa a dirigida y 'aceptada'
+  // para el postulante; esa postulación pendiente queda 'aceptada' y el resto de las pendientes
+  // 'rechazada'. false (sin cambios) si alguna condición no se cumple.
+  aceptarPostulacion(input: { solicitudId: string; cuentaId: string; postulacionId: string; ahora: number }): Promise<boolean>
+  // Transición condicional pendiente -> rechazada|retirada. `prestadorTenantId` limita al dueño
+  // de la postulación (retirar); `solicitudId` a la solicitud del cliente (rechazar).
+  cerrarPostulacion(input: { postulacionId: string; estado: 'rechazada' | 'retirada'; solicitudId?: string; prestadorTenantId?: string; ahora: number }): Promise<boolean>
 }
 
 export interface CuentasSolicitudes {
@@ -28,4 +41,8 @@ export interface CuentasSolicitudes {
 export interface DestinosSolicitud {
   destino(providerId: unknown): Promise<{ perfil: { id: string; tenantId: string; prestadorId: string; nombrePublico: string } } | null>
   perfilPorTenant(tenantId: string): Promise<{ id: string; nombrePublico: string } | null>
+  // Prestador que puede postularse: perfil visible y prestador aprobado (de cualquier oficio).
+  postulante(tenantId: string): Promise<{ perfil: { id: string; tenantId: string; prestadorId: string; nombrePublico: string } } | null>
+  // Perfil público para mostrarle al cliente quién se postuló.
+  perfilPublicoDe(tenantId: string): Promise<{ id: string; nombrePublico: string; oficio: string; zona: string } | null>
 }

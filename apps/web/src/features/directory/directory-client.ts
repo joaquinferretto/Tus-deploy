@@ -3,6 +3,7 @@ import type {
   InterpretacionNecesidad,
   PaginaDirectorio,
   PerfilPrestadorPublico,
+  PostulacionPrestador,
   ResultadoCandidatos,
   SolicitudRecibidaPrestador,
 } from '@factory/contracts'
@@ -99,6 +100,12 @@ export function createDirectoryClient(fetchImpl: Fetch = (...args) => fetch(...a
     inbox: (session: TusWebSession) => call<{ items: SolicitudRecibidaPrestador[] }>(fetchImpl, '/tus/v1/prestador/solicitudes', {}, session),
     answer: (session: TusWebSession, id: string, decision: 'aceptar' | 'rechazar') =>
       call<SolicitudRecibidaPrestador>(fetchImpl, `/tus/v1/prestador/solicitudes/${encodeURIComponent(id)}/${decision}`, { method: 'POST', body: '{}' }, session),
+    // Public requests: the provider offers to help; the client decides.
+    apply: (session: TusWebSession, id: string, message: string) =>
+      call<PostulacionPrestador>(fetchImpl, `/tus/v1/prestador/solicitudes/${encodeURIComponent(id)}/postular`, { method: 'POST', body: JSON.stringify(message.trim() ? { message } : {}) }, session),
+    myApplications: (session: TusWebSession) => call<{ items: PostulacionPrestador[] }>(fetchImpl, '/tus/v1/prestador/postulaciones', {}, session),
+    withdraw: (session: TusWebSession, id: string) =>
+      call<{ status: 'retirada' }>(fetchImpl, `/tus/v1/prestador/postulaciones/${encodeURIComponent(id)}/retirar`, { method: 'POST', body: '{}' }, session),
   }
 }
 

@@ -10,7 +10,9 @@ import {
   TAMANO_MAXIMO_IMAGEN,
   nombrePublico,
   ubicacionAproximada,
+  validarMensajePostulacion,
   validarNuevaSolicitud,
+  vistaPostulacionPropia,
   vistaPropia,
   vistaPublica,
   vistaRecibida,
@@ -18,7 +20,10 @@ import {
   type CategoriaSolicitud,
   type ImagenSolicitud,
   type OrigenSolicitud,
+  type PostulacionSolicitud,
   type SolicitudServicio,
+  type VistaPostulacionPropia,
+  type VistaPostulante,
   type VistaPropiaSolicitud,
   type VistaPublicaSolicitud,
   type VistaSolicitudRecibida,
@@ -35,6 +40,8 @@ export type CodigoErrorSolicitud =
   | 'SELF_REQUEST'
   | 'INVALID_IMAGE'
   | 'IMAGE_LIMIT'
+  | 'ALREADY_APPLIED'
+  | 'REQUEST_FULL'
 
 export type ResultadoSolicitud<T> =
   | ({ ok: true } & T)
@@ -163,6 +170,113 @@ export class ServicioSolicitudes {
     if (!actualizada) return { ok: false, code: 'NOT_FOUND' }
     const solicitud = await this.deps.almacen.obtener(id)
     return solicitud ? { ok: true, solicitud: vistaRecibida(solicitud) } : { ok: false, code: 'NOT_FOUND' }
+  }
+
+  // ---- postulaciones a solicitudes públicas -----------------------------------------------------
+  // Cualquier prestador aprobado con perfil público visible puede ofrecerse, sea o no de ese
+  // oficio. Postularse no confirma nada: el cliente decide a quién acepta.
+
+  async postular(
+    actor: { tenantId: string; cuentaId: string },
+    id: unknown,
+    body: Record<string, unknown>
+  ): Promise<ResultadoSolicitud<{ postulacion: VistaPostulacionPropia }>> {
+    if (!idValido(id)) return { ok: false, code: 'NOT_FOUND' }
+    const mensaje = validarMensajePostulacion(body['message'])
+    if (!mensaje.ok) return { ok: false, code: 'INVALID_REQUEST', fields: ['message'] }
+    const ahora = this.now()
+    const solicitud = await this.deps.almacen.obtener(id)
+    if (!solicitud || solicitud.visibilidad !== 'publica' || solicitud.estado !== 'abierta' || solicitud.expiraEn <= ahora) return { ok: false, code: 'NOT_FOUND' }
+    if (solicitud.cuentaId === actor.cuentaId) return { ok: false, code: 'SELF_REQUEST' }
+    const duena = await this.deps.cuentas.getAccount(solicitud.cuentaId)
+    if (duena?.tenantId === actor.tenantId) return { ok: false, code: 'SELF_REQUEST' }
+    const postulante = this.deps.destinos ? await this.deps.destinos.postulante(actor.tenantId) : null
+    if (!postulante) return { ok: false, code: 'PROVIDER_NOT_AVAILABLE' }
+    const existentes = await this.deps.almacen.postulacionesDe(solicitud.id)
+    if (existentes.some((item) => item.prestadorTenantId === actor.tenantId)) return { ok: false, code: 'ALREADY_APPLIED' }
+    if (existentes.length >= LIMITES_SOLICITUD.postulacionesPorSolicitud) return { ok: false, code: 'REQUEST_FULL' }
+    const postulacion: PostulacionSolicitud = {
+      id: this.newId(),
+      solicitudId: solicitud.id,
+      prestadorTenantId: actor.tenantId,
+      prestadorId: postulante.perfil.prestadorId,
+      mensaje: mensaje.valor,
+      estado: 'pendiente',
+      creadaEn: ahora,
+      actualizadaEn: ahora,
+    }
+    try {
+      await this.deps.almacen.guardarPostulacion(postulacion)
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === 'P2002') return { ok: false, code: 'ALREADY_APPLIED' }
+      throw error
+    }
+    return { ok: true, postulacion: vistaPostulacionPropia(postulacion, solicitud, ahora) }
+  }
+
+  async misPostulaciones(prestadorTenantId: string): Promise<VistaPostulacionPropia[]> {
+    const ahora = this.now()
+    const postulaciones = await this.deps.almacen.postulacionesDePrestador(prestadorTenantId)
+    const vistas = await Promise.all(
+      postulaciones.map(async (postulacion) => {
+        const solicitud = await this.deps.almacen.obtener(postulacion.solicitudId)
+        return solicitud ? vistaPostulacionPropia(postulacion, solicitud, ahora) : null
+      })
+    )
+    return vistas.filter((vista): vista is VistaPostulacionPropia => vista !== null)
+  }
+
+  async retirarPostulacion(prestadorTenantId: string, postulacionId: unknown): Promise<ResultadoSolicitud<object>> {
+    if (!idValido(postulacionId)) return { ok: false, code: 'NOT_FOUND' }
+    const retirada = await this.deps.almacen.cerrarPostulacion({ postulacionId, estado: 'retirada', prestadorTenantId, ahora: this.now() })
+    return retirada ? { ok: true } : { ok: false, code: 'NOT_FOUND' }
+  }
+
+  // Postulantes de una solicitud: solo para su dueña, con el perfil público de cada prestador.
+  async postulantes(cuentaId: string, id: unknown): Promise<ResultadoSolicitud<{ items: VistaPostulante[] }>> {
+    const solicitud = await this.solicitudPropia(cuentaId, id)
+    if (!solicitud) return { ok: false, code: 'NOT_FOUND' }
+    const postulaciones = await this.deps.almacen.postulacionesDe(solicitud.id)
+    const items = await Promise.all(
+      postulaciones
+        .filter((postulacion) => postulacion.estado !== 'retirada')
+        .map(async (postulacion): Promise<VistaPostulante | null> => {
+          const perfil = await this.deps.destinos?.perfilPublicoDe(postulacion.prestadorTenantId)
+          if (!perfil) return null
+          return {
+            id: postulacion.id,
+            provider: { id: perfil.id, displayName: perfil.nombrePublico, profession: perfil.oficio, approximateArea: perfil.zona },
+            message: postulacion.mensaje,
+            status: postulacion.estado,
+            createdAt: new Date(postulacion.creadaEn).toISOString(),
+          }
+        })
+    )
+    return { ok: true, items: items.filter((item): item is VistaPostulante => item !== null) }
+  }
+
+  // El cliente acepta a un postulante: la solicitud sale del mapa y queda confirmada con él.
+  async elegirPostulante(cuentaId: string, id: unknown, postulacionId: unknown): Promise<ResultadoSolicitud<{ solicitud: VistaPropiaSolicitud }>> {
+    if (!idValido(id) || !idValido(postulacionId)) return { ok: false, code: 'NOT_FOUND' }
+    const aceptada = await this.deps.almacen.aceptarPostulacion({ solicitudId: id, cuentaId, postulacionId, ahora: this.now() })
+    if (!aceptada) return { ok: false, code: 'NOT_FOUND' }
+    const solicitud = await this.deps.almacen.obtener(id)
+    if (!solicitud) return { ok: false, code: 'NOT_FOUND' }
+    const perfil = solicitud.prestadorTenantId ? await this.deps.destinos?.perfilPorTenant(solicitud.prestadorTenantId) : null
+    return { ok: true, solicitud: vistaPropia(solicitud, perfil ? { id: perfil.id, displayName: perfil.nombrePublico } : null) }
+  }
+
+  async rechazarPostulante(cuentaId: string, id: unknown, postulacionId: unknown): Promise<ResultadoSolicitud<object>> {
+    const solicitud = await this.solicitudPropia(cuentaId, id)
+    if (!solicitud || !idValido(postulacionId)) return { ok: false, code: 'NOT_FOUND' }
+    const rechazada = await this.deps.almacen.cerrarPostulacion({ postulacionId, estado: 'rechazada', solicitudId: solicitud.id, ahora: this.now() })
+    return rechazada ? { ok: true } : { ok: false, code: 'NOT_FOUND' }
+  }
+
+  private async solicitudPropia(cuentaId: string, id: unknown): Promise<SolicitudServicio | null> {
+    if (!idValido(id)) return null
+    const solicitud = await this.deps.almacen.obtener(id)
+    return solicitud && solicitud.cuentaId === cuentaId ? solicitud : null
   }
 
   // ---- imágenes ---------------------------------------------------------------------------------

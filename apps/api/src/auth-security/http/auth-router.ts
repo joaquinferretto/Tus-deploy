@@ -53,6 +53,18 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
     response.status(200).json({ context })
   }))
 
+  // Own account for "Mi perfil"; the id always comes from the session.
+  router.get('/auth/account', asyncHandler(async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const account = context ? await service.getOwnAccount(context.subjectId) : null
+    if (!context || !account) {
+      response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
+      return
+    }
+    response.setHeader('cache-control', 'no-store')
+    response.status(200).json({ account })
+  }))
+
   router.post('/auth/sign-out', asyncHandler(async (request: Request, response: Response) => {
     const accessToken = bearerToken(request)
     const context = await authenticate(request, sessions)
