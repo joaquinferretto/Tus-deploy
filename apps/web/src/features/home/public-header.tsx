@@ -1,13 +1,20 @@
 'use client'
 
+import type { Route } from 'next'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
+
+import { withReturnTo } from '../auth/auth-validation'
 
 import { createTusWebAuthClient } from '@/lib/tus-auth-client'
 import styles from './home.module.css'
 
+// Two ways to find help: the assistant ("no sé a quién necesito") and the directory ("quiero un
+// electricista"). Both end in the same TUS service request.
 const NAV = [
-  { href: '/#solicitudes', label: 'Buscar servicios' },
+  { href: '/asistente', label: 'Buscar servicios' },
+  { href: '/trabajadores', label: 'Buscar trabajador' },
   { href: '/#como-funciona', label: 'Cómo funciona' },
   { href: '/#profesionales', label: 'Para profesionales' },
   { href: '/#ayuda', label: 'Ayuda' },
@@ -49,6 +56,12 @@ function useAuthView(): AuthView {
 export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNode {
   const auth = useAuthView()
   const [open, setOpen] = useState(false)
+  const pathname = usePathname() ?? '/'
+  // From the assistant or a worker profile, signing in comes back to the same screen.
+  const back = pathname === '/' ? null : pathname
+  const signInHref = withReturnTo('/sign-in', back) as Route
+  const registerHref = withReturnTo('/registro', back) as Route
+  const current = (href: string) => (href !== '/' && !href.startsWith('/#') && (pathname === href || pathname.startsWith(`${href}/`)) ? 'page' : undefined)
 
   const actions =
     auth.status === 'signed-in' ? (
@@ -60,10 +73,10 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
       </Link>
     ) : (
       <>
-        <Link className={styles.buttonSecondary} href="/sign-in">
+        <Link className={styles.buttonSecondary} href={signInHref}>
           Iniciar sesión
         </Link>
-        <Link className={styles.buttonPrimary} href="/registro">
+        <Link className={styles.buttonPrimary} href={registerHref}>
           Registrarse
         </Link>
       </>
@@ -77,7 +90,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
         </Link>
         <nav aria-label="Navegación principal" className={styles.nav}>
           {NAV.map((item) => (
-            <a href={item.href} key={item.href}>
+            <a aria-current={current(item.href)} href={item.href} key={item.href}>
               {item.label}
             </a>
           ))}
@@ -98,7 +111,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
       {open ? (
         <nav aria-label="Menú" className={styles.mobileMenu} id="menu-movil">
           {NAV.map((item) => (
-            <a href={item.href} key={item.href} onClick={() => setOpen(false)}>
+            <a aria-current={current(item.href)} href={item.href} key={item.href} onClick={() => setOpen(false)}>
               {item.label}
             </a>
           ))}
@@ -108,10 +121,10 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
             </Link>
           ) : (
             <>
-              <Link className={styles.buttonSecondary} href="/sign-in">
+              <Link className={styles.buttonSecondary} href={signInHref}>
                 Iniciar sesión
               </Link>
-              <Link className={styles.buttonPrimary} href="/registro">
+              <Link className={styles.buttonPrimary} href={registerHref}>
                 Registrarse
               </Link>
             </>

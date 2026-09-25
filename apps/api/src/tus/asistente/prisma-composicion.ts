@@ -10,13 +10,15 @@ import {
   crearModuloWhatsapp,
   type ModuloWhatsapp,
 } from './composicion.ts'
+import type { ServiciosCompartidosAsistente } from './dominio.ts'
 
 // Production composition (PostgreSQL). The access token and app secret stay in env memory only.
 export function crearModuloWhatsappPrisma(
   prisma: unknown,
   application: TusApplicationService,
   identityStore: ConstructorParameters<typeof ResolutorCuentaIdentidad>[0],
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  servicios?: ServiciosCompartidosAsistente
 ): ModuloWhatsapp {
   const client = prisma as ClientePrismaAsistente
   return crearModuloWhatsapp({
@@ -24,6 +26,7 @@ export function crearModuloWhatsappPrisma(
     transaction: new TransaccionAsistentePrisma(client),
     accounts: new ResolutorCuentaIdentidad(identityStore, alcanceDeCuenta),
     application,
+    ...(servicios ? { servicios } : {}),
     knowledgeIndex: new IndiceConocimientoPrisma(client),
   })
 }

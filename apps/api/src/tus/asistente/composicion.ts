@@ -8,7 +8,7 @@ import {
   type EmbeddingProvider,
   type PuertoIndiceConocimiento,
 } from './conocimiento.ts'
-import { DominioAsistenteTus, type PuertoDominioAsistente } from './dominio.ts'
+import { DominioAsistenteTus, type PuertoDominioAsistente, type ServiciosCompartidosAsistente } from './dominio.ts'
 import { GroqChatProvider, TranscriptorGroq, type ChatProvider, type Transcriptor } from './groq.ts'
 import {
   LIMITES_INGRESO_POR_DEFECTO,
@@ -116,6 +116,8 @@ export function crearModuloWhatsapp(input: {
   transaction: PuertoTransaccionAsistente
   accounts: ResolutorCuentaAsistente
   application?: TusApplicationService
+  // Directorio y solicitud TUS compartidos con la Web (mismas reglas en ambos canales).
+  servicios?: ServiciosCompartidosAsistente
   domain?: PuertoDominioAsistente
   knowledgeIndex?: PuertoIndiceConocimiento | null
   whatsapp?: WhatsappProvider
@@ -170,7 +172,7 @@ export function crearModuloWhatsapp(input: {
       })
     : null
   const domain =
-    input.domain ?? (input.application ? new DominioAsistenteTus(input.application, now) : null)
+    input.domain ?? (input.application ? new DominioAsistenteTus(input.application, now, input.servicios) : null)
   if (!domain) throw new Error('the WhatsApp assistant needs the TUS application or a domain port')
   const vinculacion = new ServicioVinculacionWhatsapp(
     input.transaction,

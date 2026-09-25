@@ -2216,8 +2216,51 @@ Table solicitudes_servicio {
   fecha_creacion timestamp
   fecha_actualizacion timestamp
   expira_en timestamp [note: 'vigencia 30 días']
+  origen varchar [default: 'web_publica', note: 'CHECK: web_publica | web_assistant | web_directory | whatsapp']
+  visibilidad varchar [default: 'publica', note: 'CHECK: publica | dirigida']
+  prestador_tenant_id varchar [null, note: 'solo dirigidas (CHECK de coherencia)']
+  prestador_id varchar [null]
+  estado_asignacion varchar [null, note: 'CHECK: pendiente | aceptada | rechazada | cancelada']
+  respondida_en timestamp [null]
   indexes {
     (estado, fecha_creacion) [name: 'ix_solicitudes_servicio_estado_fecha']
     (cuenta_id, fecha_creacion) [name: 'ix_solicitudes_servicio_cuenta_fecha']
+  }
+}
+
+// ============================================================
+// DIRECTORIO Y SOLICITUDES DIRIGIDAS (20261001100000_tus_directorio_prestadores)
+// ============================================================
+Table perfiles_publicos_prestador {
+  id varchar [pk, note: 'id público del perfil (el único id que ve la Web)']
+  tenant_id varchar
+  prestador_id varchar
+  nombre_publico varchar [note: 'CHECK 2..60; sin teléfonos ni emails (aplicación)']
+  oficio varchar [note: 'CHECK: plomeria | electricidad | mecanica | pintura | aire | otros']
+  zona varchar [note: 'barrio de Corrientes; nunca dirección']
+  descripcion varchar [null, note: 'CHECK <= 600']
+  anios_experiencia int [null, note: 'CHECK 0..70; declarado por el prestador']
+  visible boolean [default: true]
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+  indexes {
+    (tenant_id, prestador_id) [unique, name: 'uq_perfiles_publicos_prestador_prestador']
+    (visible, oficio) [name: 'ix_perfiles_publicos_prestador_oficio']
+  }
+}
+Ref: perfiles_publicos_prestador.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id) [delete: restrict]
+Ref: solicitudes_servicio.(prestador_tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id) [delete: restrict]
+
+Table imagenes_solicitud {
+  id varchar [pk]
+  solicitud_id varchar [ref: > solicitudes_servicio.id]
+  orden int [note: 'CHECK 1 | 2']
+  tipo_mime varchar [note: 'CHECK: image/jpeg | image/png | image/webp']
+  tamano_bytes int [note: 'CHECK 1..3 MB']
+  sha256 varchar
+  contenido bytea [note: 'sin EXIF/GPS/XMP (saneado antes de guardar)']
+  fecha_creacion timestamp
+  indexes {
+    (solicitud_id, orden) [unique, name: 'uq_imagenes_solicitud_orden']
   }
 }

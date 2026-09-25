@@ -1,11 +1,12 @@
 'use client'
 
+import type { Route } from 'next'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 
 import { createTusWebAuthClient, sanitizeTusReturnTo } from '@/lib/tus-auth-client'
 import { FormError, GoogleAuthButton, PasswordField, Separator, TextField } from './auth-fields'
-import { googleErrorMessage, signInErrorMessage, validateLogin, type FieldErrors } from './auth-validation'
+import { googleErrorMessage, rememberReturnTo, signInErrorMessage, takeReturnTo, validateLogin, withReturnTo, type FieldErrors } from './auth-validation'
 import styles from './auth.module.css'
 
 // Email + password sign-in. `onAuthenticated` lets other flows (Google linking) continue after
@@ -28,7 +29,10 @@ export function LoginForm({
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    setReturnTo(sanitizeTusReturnTo(params.get('returnTo') ?? undefined))
+    const requested = params.get('returnTo')
+    setReturnTo(sanitizeTusReturnTo(requested ?? undefined))
+    // Also covers "Continuar con Google": the destination survives the round trip.
+    if (requested) rememberReturnTo(sanitizeTusReturnTo(requested))
     const googleError = googleErrorMessage(params.get('error'))
     if (googleError) setMessage(googleError)
   }, [])
@@ -47,7 +51,7 @@ export function LoginForm({
       return
     }
     if (onAuthenticated) await onAuthenticated()
-    else window.location.assign(result.returnTo ?? returnTo)
+    else window.location.assign(takeReturnTo() ?? result.returnTo ?? returnTo)
   }
 
   return (
@@ -95,7 +99,7 @@ export function LoginForm({
       {showRegisterLink ? (
         <p className={styles.footerText}>
           ¿No tenés cuenta?{' '}
-          <Link className={styles.link} href="/registro">
+          <Link className={styles.link} href={withReturnTo('/registro', returnTo === '/tus' ? null : returnTo) as Route}>
             Registrate
           </Link>
         </p>

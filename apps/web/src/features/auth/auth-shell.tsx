@@ -19,13 +19,13 @@ export function AuthShell({
 }): React.ReactNode {
   return (
     <div className={styles.shell}>
+      <header className={styles.topBar}>
+        <Link aria-label="TUS, volver al inicio" href="/">
+          {logo}
+        </Link>
+        <Link href="/">← Volver al inicio</Link>
+      </header>
       <main className={styles.formSide} id="contenido">
-        <div className={styles.topBar}>
-          <Link aria-label="TUS, volver al inicio" href="/">
-            {logo}
-          </Link>
-          <Link href="/">← Volver al inicio</Link>
-        </div>
         <div className={styles.formWrap}>
           <h1 className={styles.title}>{title}</h1>
           <p className={styles.subtitle}>{subtitle}</p>

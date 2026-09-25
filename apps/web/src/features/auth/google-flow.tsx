@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 
 import { createTusWebAuthClient } from '@/lib/tus-auth-client'
 import { FormError, RoleIntentSelector, TextField } from './auth-fields'
-import { destinationFor, readFragmentParam, type RoleIntent } from './auth-validation'
+import { destinationFor, readFragmentParam, takeReturnTo, type RoleIntent } from './auth-validation'
 import { LoginForm } from './login-form'
 import styles from './auth.module.css'
 
@@ -28,7 +28,7 @@ export function GoogleSignInCompletion(): React.ReactNode {
     const client = createTusWebAuthClient()
     if (code) {
       void client.googleExchange(code).then((result) => {
-        if (result.status === 'authenticated') window.location.assign('/tus')
+        if (result.status === 'authenticated') window.location.assign(takeReturnTo() ?? '/tus')
         else setState({ kind: 'error', message: 'No pudimos completar el ingreso con Google. Probá de nuevo.' })
       })
       return
@@ -67,7 +67,7 @@ export function GoogleSignInCompletion(): React.ReactNode {
       <LoginForm
         onAuthenticated={async () => {
           const linked = await createTusWebAuthClient().googleLink(state.code)
-          if (linked.status === 'accepted') window.location.assign('/tus')
+          if (linked.status === 'accepted') window.location.assign(takeReturnTo() ?? '/tus')
           else
             setState({
               kind: 'error',
@@ -122,7 +122,7 @@ export function GoogleSignupCompletion(): React.ReactNode {
     setMessage('')
     const result = await createTusWebAuthClient().googleSignup({ code, displayName: displayName.trim(), acceptedTerms })
     if (result.status === 'authenticated') {
-      window.location.assign(destinationFor(intent))
+      window.location.assign(takeReturnTo() ?? destinationFor(intent))
       return
     }
     setStatus('ready')

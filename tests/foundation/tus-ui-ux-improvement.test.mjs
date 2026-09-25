@@ -131,7 +131,9 @@ test('PR3 gives public and recovery pages semantic landmarks and descriptive hea
   assert.equal((home.match(/<h1[\s>]/g) ?? []).length, 1)
   assert.match(home, /<h2[\s>]/)
   assert.match(home, /<h3[\s>]/)
-  assert.match(header, /<Link[^>]+href="\/sign-in"/)
+  // Sign-in keeps the current page as return destination (assistant, worker profile).
+  assert.match(header, /withReturnTo\('\/sign-in', back\)/)
+  assert.match(header, /<Link[^>]+href=\{signInHref\}/)
   assert.match(recovery, /<TusSkipLink\s*\/?\s*>/)
   assert.match(recovery, /id="tus-main-content"/)
   assert.match(recovery, /<nav[^>]+aria-label=/)

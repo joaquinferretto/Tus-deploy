@@ -60,9 +60,8 @@
   display: flex;
   gap: 24px;
   height: 64px;
-  margin: 0 auto;
-  max-width: 1280px;
-  padding: 0 20px;
+  padding: 0 clamp(16px, 2.5vw, 40px);
+  width: 100%;
 }
 
 .brandLink {
@@ -78,6 +77,7 @@
 }
 
 .nav a {
+  white-space: nowrap;
   border-radius: 8px;
   color: var(--tus-ink-soft);
   font-size: 0.95rem;
@@ -89,6 +89,15 @@
 .nav a:hover {
   background: var(--tus-surface);
   color: var(--tus-ink);
+}
+
+.nav a[aria-current='page'] {
+  color: var(--tus-orange-strong);
+  font-weight: 600;
+}
+
+.mobileMenu a[aria-current='page'] {
+  color: var(--tus-orange-strong);
 }
 
 .headerActions {
@@ -632,7 +641,8 @@
 }
 
 /* ---- responsive ---------------------------------------------------------------------------- */
-@media (max-width: 900px) {
+/* Five destinations + two buttons need ~1100px; below that the menu takes over. */
+@media (max-width: 1120px) {
   .nav {
     display: none;
   }

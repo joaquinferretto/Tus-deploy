@@ -1,5 +1,4 @@
-import { createPublicKey, verify } from 'node:crypto'
-import type { webcrypto } from 'node:crypto'
+import { createPublicKey, verify, type JsonWebKey } from 'node:crypto'
 import type { OAuthOidcProviderConfig, OidcTokenClaims } from '../domain.js'
 import type { OAuthOidcProvider } from '../ports.js'
 
@@ -22,7 +21,7 @@ export interface GoogleOidcConfig {
   jwksUri?: string
 }
 
-interface Jwk extends webcrypto.JsonWebKey {
+interface Jwk extends JsonWebKey {
   kid?: string
 }
 

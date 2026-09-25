@@ -639,6 +639,8 @@ model Prestador {
 
   compromisos Compromiso[]
   trabajos    Trabajo[]
+  perfilPublico       PerfilPublicoPrestador?
+  solicitudesDirigidas SolicitudServicio[]
 
   @@unique([tenantId, prestadorId], map: "uq_prestadores_tenant_prestador")
   @@index([tenantId, estado], map: "idx_prestadores_tenant_estado")
@@ -2779,9 +2781,57 @@ model SolicitudServicio {
   creadaEn           DateTime @map("fecha_creacion")
   actualizadaEn      DateTime @map("fecha_actualizacion")
   expiraEn           DateTime @map("expira_en")
+  // Directorio / asistente (20261001100000_tus_directorio_prestadores): origen y, si el cliente
+  // eligió un prestador, el destino y su respuesta. CHECKs de coherencia en SQL.
+  origen             String    @default("web_publica") @map("origen")
+  visibilidad        String    @default("publica") @map("visibilidad")
+  prestadorTenantId  String?   @map("prestador_tenant_id")
+  prestadorId        String?   @map("prestador_id")
+  estadoAsignacion   String?   @map("estado_asignacion")
+  respondidaEn       DateTime? @map("respondida_en")
   cuenta             Account  @relation(fields: [cuentaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_cuenta")
+  prestador          Prestador? @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_prestador")
+  imagenes           ImagenSolicitud[]
 
   @@index([estado, creadaEn(sort: Desc)], map: "ix_solicitudes_servicio_estado_fecha")
   @@index([cuentaId, creadaEn], map: "ix_solicitudes_servicio_cuenta_fecha")
+  @@index([prestadorTenantId, estadoAsignacion, creadaEn], map: "ix_solicitudes_servicio_prestador_asignacion")
   @@map("solicitudes_servicio")
+}
+
+// Perfil público del prestador para "Buscar trabajador" (20261001100000). Solo datos que el
+// prestador elige publicar: nombre público, oficio, barrio, descripción, experiencia.
+model PerfilPublicoPrestador {
+  id                 String   @id(map: "perfiles_publicos_prestador_pkey")
+  tenantId           String   @map("tenant_id")
+  prestadorId        String   @map("prestador_id")
+  nombrePublico      String   @map("nombre_publico")
+  oficio             String   @map("oficio")
+  zona               String   @map("zona")
+  descripcion        String?  @map("descripcion")
+  aniosExperiencia   Int?     @map("anios_experiencia")
+  visible            Boolean  @default(true) @map("visible")
+  fechaCreacion      DateTime @map("fecha_creacion")
+  fechaActualizacion DateTime @map("fecha_actualizacion")
+  prestador          Prestador @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_prestador")
+
+  @@unique([tenantId, prestadorId], map: "uq_perfiles_publicos_prestador_prestador")
+  @@index([visible, oficio], map: "ix_perfiles_publicos_prestador_oficio")
+  @@map("perfiles_publicos_prestador")
+}
+
+// Fotos de solicitudes (hasta 2, sin metadata). 20261001100000.
+model ImagenSolicitud {
+  id            String   @id(map: "imagenes_solicitud_pkey")
+  solicitudId   String   @map("solicitud_id")
+  orden         Int      @map("orden")
+  tipoMime      String   @map("tipo_mime")
+  tamanoBytes   Int      @map("tamano_bytes")
+  sha256        String   @map("sha256")
+  contenido     Bytes    @map("contenido")
+  fechaCreacion DateTime @map("fecha_creacion")
+  solicitud     SolicitudServicio @relation(fields: [solicitudId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_imagenes_solicitud_solicitud")
+
+  @@unique([solicitudId, orden], map: "uq_imagenes_solicitud_orden")
+  @@map("imagenes_solicitud")
 }

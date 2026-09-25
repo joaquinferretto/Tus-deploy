@@ -13,6 +13,7 @@
   display: grid;
   font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
   min-height: 100dvh;
 }
 
@@ -27,13 +28,16 @@
   padding: 32px 24px;
 }
 
+/* Full-width bar above both columns (same edges as the home navbar). */
 .topBar {
   align-items: center;
+  background: #ffffff;
+  border-bottom: 1px solid var(--tus-line);
   display: flex;
+  grid-column: 1 / -1;
   justify-content: space-between;
-  margin: 0 auto 24px;
-  max-width: 420px;
-  width: 100%;
+  min-height: 72px;
+  padding: 8px clamp(16px, 2.5vw, 40px);
 }
 
 .topBar a {
@@ -361,4 +365,59 @@
   .title {
     font-size: 1.6rem;
   }
+}
+
+/* File picker: the native input stays accessible (visually hidden); the label is the button. */
+.filePicker {
+  position: relative;
+}
+
+.fileInput {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.fileButton {
+  align-items: center;
+  background: #ffffff;
+  border: 1px dashed var(--tus-line);
+  border-radius: 12px;
+  color: var(--tus-ink);
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 600;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 14px;
+}
+
+.filePicker:focus-within .fileButton {
+  border-color: var(--tus-orange);
+  outline: 2px solid var(--tus-orange);
+  outline-offset: 2px;
+}
+
+.fileInput:disabled + .fileButton {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.counter {
+  color: var(--tus-muted);
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+/* Link-styled buttons (Quitar, Cerrar solicitud): no native button chrome. */
+button.link {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
 }

@@ -1,8 +1,12 @@
 // Generated from the CSS module class names. Regenerate when classes change.
 declare const styles: {
   readonly checkbox: string
+  readonly counter: string
   readonly field: string
   readonly fieldError: string
+  readonly fileButton: string
+  readonly fileInput: string
+  readonly filePicker: string
   readonly footerText: string
   readonly form: string
   readonly formError: string

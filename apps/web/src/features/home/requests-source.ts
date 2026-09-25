@@ -83,7 +83,9 @@ export function timeAgoLabel(createdAt: string, now = Date.now()): string {
 }
 
 // Drops anything malformed instead of breaking the map.
-export function fromPublicDto(dto: PublicRequestDto, now = Date.now()): MapRequest | null {
+// Images are API paths of public request photos (/tus/v1/public/solicitudes/:id/imagenes/:n):
+// resolved against the API origin; anything else is dropped.
+export function fromPublicDto(dto: PublicRequestDto, now = Date.now(), apiBase = ''): MapRequest | null {
   const location = dto?.approximateLocation
   if (typeof dto?.id !== 'string' || !CATEGORIES.some((category) => category.id === dto.category)) return null
   if (!location || !Number.isFinite(location.lat) || !Number.isFinite(location.lng) || typeof location.label !== 'string') return null
@@ -97,7 +99,9 @@ export function fromPublicDto(dto: PublicRequestDto, now = Date.now()): MapReque
     budgetLabel: budgetLabel(dto.budgetMax),
     urgencyLabel: urgencyLabel(dto.urgency),
     createdAtLabel: timeAgoLabel(dto.createdAt, now),
-    images: Array.isArray(dto.images) ? dto.images.filter((image) => typeof image === 'string' && image.startsWith('/')) : [],
+    images: Array.isArray(dto.images)
+      ? dto.images.filter((image) => typeof image === 'string' && /^\/tus\/v1\/public\/solicitudes\/[A-Za-z0-9-]+\/imagenes\/[12]$/u.test(image)).map((image) => `${apiBase}${image}`)
+      : [],
   })
 }
 
@@ -116,7 +120,7 @@ export function createApiRequestsSource(fetchImpl: typeof fetch = (...args) => f
       if (!response.ok) throw new Error(`Solicitudes no disponibles (HTTP ${response.status})`)
       const body = (await response.json()) as { items?: PublicRequestDto[] }
       const now = Date.now()
-      return (Array.isArray(body.items) ? body.items : []).map((item) => fromPublicDto(item, now)).filter((item): item is MapRequest => item !== null)
+      return (Array.isArray(body.items) ? body.items : []).map((item) => fromPublicDto(item, now, base)).filter((item): item is MapRequest => item !== null)
     },
   }
 }

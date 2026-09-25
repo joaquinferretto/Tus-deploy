@@ -349,6 +349,8 @@ export function TusPrestadorSurface(): React.ReactNode {
         <Link href="/tus/operations">Operations</Link>
         <Link href="/tus/pos">POS</Link>
         <Link href="/tus/soporte">Support</Link>
+        <Link href="/prestador/solicitudes">Solicitudes recibidas</Link>
+        <Link href="/prestador/perfil-publico">Mi perfil público</Link>
       </div>
       <header className="tus-workspace-header">
         <div>

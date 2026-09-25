@@ -1,5 +1,6 @@
 import * as z from 'zod/v4'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
+import { IDS_OFICIOS, type OficioId } from '../directorio/oficios.ts'
 import type { PuertoDominioAsistente } from './dominio.ts'
 import type { DefinicionHerramientaChat } from './groq.ts'
 
@@ -19,6 +20,8 @@ export type AudienciaHerramienta = 'public' | 'linked' | 'provider'
 
 const ID = z.string().regex(/^[A-Za-z0-9._:-]{3,120}$/u, 'invalid id')
 const CATEGORIAS = ['beauty-personal-care', 'repairs-trades'] as const
+// Oficios del catálogo canónico (directorio/oficios.ts): los mismos que usa la Web.
+const OFICIOS_IDS = IDS_OFICIOS as unknown as [OficioId, ...OficioId[]]
 
 interface Herramienta<S extends z.ZodType = z.ZodType> {
   name: string
@@ -48,20 +51,31 @@ export const HERRAMIENTAS = [
   }),
   herramienta({
     name: 'search_providers',
-    description: 'Agrupa por prestador los servicios publicados que coinciden con la búsqueda (referencia pública del prestador, sin datos de contacto).',
+    description:
+      'Busca prestadores reales del directorio TUS compatibles con la necesidad (oficio y barrio de Corrientes). Devuelve hasta 5 con datos públicos: nombre público, oficio, barrio aproximado, verificación, trabajos completados y horarios publicados. Nunca inventes prestadores, valoraciones ni disponibilidad.',
     audience: 'public',
-    schema: z.strictObject({ query: z.string().trim().min(2).max(80).nullable(), category: z.enum(CATEGORIAS).nullable() }),
+    schema: z.strictObject({
+      query: z.string().trim().min(2).max(300).nullable(),
+      profession: z.enum(OFICIOS_IDS).nullable(),
+      zone: z.string().trim().min(2).max(60).nullable(),
+    }),
     confirmation: null,
     execute: async (args, _actor, domain) => {
-      const services = await domain.buscarServicios({ query: args.query, category: args.category })
-      const providers = new Map<string, { providerRef: string; categories: Set<string>; services: string[] }>()
-      for (const service of services) {
-        const entry = providers.get(service.providerRef) ?? { providerRef: service.providerRef, categories: new Set(), services: [] }
-        entry.categories.add(service.category)
-        entry.services.push(service.name)
-        providers.set(service.providerRef, entry)
+      const result = await domain.buscarPrestadores({ query: args.query, profession: args.profession, zone: args.zone })
+      return {
+        profession: result.profession,
+        providers: result.providers.map((item) => ({
+          providerId: item.id,
+          name: item.displayName,
+          profession: item.profession.title,
+          area: item.approximateArea,
+          distanceKm: item.distanceKm,
+          verified: item.verified,
+          completedJobs: item.completedJobs,
+          availability: item.availability.label,
+        })),
+        note: result.providers.length === 0 ? 'No hay prestadores disponibles para esa búsqueda en este momento.' : 'El cliente elige; no elijas por él.',
       }
-      return { providers: [...providers.values()].map((item) => ({ ...item, categories: [...item.categories] })) }
     },
   }),
   herramienta({
@@ -181,6 +195,30 @@ export const HERRAMIENTAS = [
     execute: async (args, actor, domain, extra) => ({ request: await domain.crearSolicitud(actor.context!, { listingId: args.listingId, idempotencyKey: extra.idempotencyKey }) }),
   }),
   herramienta({
+    name: 'request_provider',
+    description: 'Prepara una solicitud TUS dirigida al prestador que el cliente eligió (requiere confirmación explícita). Queda pendiente hasta que el prestador la acepte.',
+    audience: 'linked',
+    schema: z.strictObject({
+      providerId: z.string().regex(/^[A-Za-z0-9-]{8,64}$/u),
+      title: z.string().trim().min(5).max(90),
+      description: z.string().trim().max(500).nullable(),
+      zone: z.string().trim().min(2).max(60),
+      urgency: z.enum(['urgente', 'hoy_manana', 'esta_semana', 'sin_apuro']),
+      budgetMax: z.number().int().positive().max(100_000_000).nullable(),
+    }),
+    confirmation: {
+      summarize: (args) =>
+        `Voy a enviar tu solicitud al prestador elegido:
+${args.title}${args.description ? `
+${args.description}` : ''}
+Barrio: ${args.zone}
+Urgencia: ${args.urgency.replace('_', ' ')}${args.budgetMax ? `
+Presupuesto máximo: $${args.budgetMax}` : ''}
+Queda pendiente hasta que el prestador la acepte. ¿Confirmás?`,
+    },
+    execute: async (args, actor, domain) => ({ request: await domain.solicitarPrestador(actor.context!, args) }),
+  }),
+  herramienta({
     name: 'accept_budget',
     description: 'Prepara la aceptación de un presupuesto de un trabajo del cliente (requiere confirmación).',
     audience: 'linked',
@@ -262,7 +300,7 @@ export function detectarIntencion(text: string): IntencionAsistente {
 }
 
 const HERRAMIENTAS_POR_INTENCION: Record<IntencionAsistente, { client: NombreHerramienta[]; provider: NombreHerramienta[] }> = {
-  buscar: { client: ['search_services', 'search_providers', 'get_service_details', 'create_service_request'], provider: [] },
+  buscar: { client: ['search_providers', 'request_provider', 'search_services', 'get_service_details', 'create_service_request'], provider: [] },
   trabajos: { client: ['list_my_works', 'get_my_work', 'list_my_requests'], provider: ['list_provider_jobs', 'get_provider_job', 'cancel_work', 'complete_work'] },
   presupuesto: { client: ['list_my_works', 'get_my_budget', 'accept_budget', 'reject_budget'], provider: ['list_provider_jobs', 'get_provider_job'] },
   reserva: { client: ['list_my_reservations', 'search_services', 'get_service_details'], provider: ['list_provider_reservations'] },

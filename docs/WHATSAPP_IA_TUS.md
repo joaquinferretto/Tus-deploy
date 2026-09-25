@@ -61,6 +61,14 @@ identity, base de datos o logs.
 
 La Web administrativa esta en `/tus/admin/whatsapp`.
 
+## Buscar prestadores y solicitar desde WhatsApp
+
+- `search_providers` (público): usa el mismo directorio que "Buscar trabajador" (oficio del catálogo canónico, barrio de
+  Corrientes, verificación y trabajos reales). Devuelve hasta 5 prestadores con datos públicos; sin resultados lo dice.
+- `request_provider` (contacto vinculado, confirmación explícita): crea la misma solicitud TUS que la Web, dirigida al
+  prestador elegido, con `origen = whatsapp`. Queda pendiente hasta que el prestador la acepta en `/prestador/solicitudes`.
+- No hay reglas propias de WhatsApp: ambas herramientas delegan en `ServicioDirectorio` y `ServicioSolicitudes`.
+
 ## Worker y ciclo de vida
 
 Con `TUS_WHATSAPP_ENABLED=true` y configuracion valida, `startServer()` crea el worker embebido, procesa leases de `cola_conversacion_whatsapp` y lo detiene mediante `AbortController` durante shutdown. Si la configuracion activa tiene problemas, el arranque falla cerrado.

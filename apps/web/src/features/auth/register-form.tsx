@@ -1,11 +1,12 @@
 'use client'
 
+import type { Route } from 'next'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 
 import { createTusWebAuthClient } from '@/lib/tus-auth-client'
 import { FormError, GoogleAuthButton, PasswordField, RoleIntentSelector, Separator, TextField } from './auth-fields'
-import { MIN_PASSWORD_LENGTH, registerErrorMessage, validateRegister, type FieldErrors, type RoleIntent } from './auth-validation'
+import { MIN_PASSWORD_LENGTH, registerErrorMessage, rememberReturnTo, safeInternalPath, validateRegister, withReturnTo, type FieldErrors, type RoleIntent } from './auth-validation'
 import styles from './auth.module.css'
 
 // Email sign-up. The API creates the account and asks for email verification before the first
@@ -18,9 +19,15 @@ export function RegisterForm(): React.ReactNode {
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
+  const [returnTo, setReturnTo] = useState<string | null>(null)
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('intencion') === 'prestador') setIntent('prestador')
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('intencion') === 'prestador') setIntent('prestador')
+    // Came from the assistant or a worker profile: go back there after signing in (also via Google).
+    const requested = safeInternalPath(params.get('returnTo'))
+    setReturnTo(requested)
+    rememberReturnTo(requested)
   }, [])
 
   const update = (key: keyof typeof values) => (event: React.ChangeEvent<HTMLInputElement>) =>
@@ -58,7 +65,7 @@ export function RegisterForm(): React.ReactNode {
           ¡Listo! Creamos tu cuenta. Te enviamos un correo a <strong>{values.email.trim()}</strong> para verificarla. Después
           podés iniciar sesión.
         </p>
-        <Link className={styles.primary} href="/sign-in">
+        <Link className={styles.primary} href={withReturnTo('/sign-in', returnTo) as Route}>
           Ir a iniciar sesión
         </Link>
       </div>
@@ -108,7 +115,7 @@ export function RegisterForm(): React.ReactNode {
       </form>
       <p className={styles.footerText}>
         ¿Ya tenés cuenta?{' '}
-        <Link className={styles.link} href="/sign-in">
+        <Link className={styles.link} href={withReturnTo('/sign-in', returnTo) as Route}>
           Iniciá sesión
         </Link>
       </p>

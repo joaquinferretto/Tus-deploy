@@ -1,16 +1,34 @@
 import { createHash } from 'node:crypto'
 
+import { IDS_OFICIOS, type OficioId } from '../directorio/oficios.ts'
+
 // Solicitudes de servicio: un cliente publica qué necesita y en qué barrio; los prestadores de la
 // zona las ven en el mapa público de la home. Privacidad por diseño: nunca se pide dirección,
 // teléfono ni ubicación exacta. Solo se guarda el barrio y un punto aproximado derivado de él.
 
-export const CATEGORIAS_SOLICITUD = ['plomeria', 'electricidad', 'mecanica', 'pintura', 'aire', 'otros'] as const
-export type CategoriaSolicitud = (typeof CATEGORIAS_SOLICITUD)[number]
+// Las categorías de solicitud son los oficios del catálogo canónico (directorio/oficios.ts).
+export const CATEGORIAS_SOLICITUD = IDS_OFICIOS
+export type CategoriaSolicitud = OficioId
 
 export const URGENCIAS_SOLICITUD = ['urgente', 'hoy_manana', 'esta_semana', 'sin_apuro'] as const
 export type UrgenciaSolicitud = (typeof URGENCIAS_SOLICITUD)[number]
 
 export type EstadoSolicitud = 'abierta' | 'cerrada'
+
+// Una sola solicitud TUS para todos los canales; el origen queda como metadata.
+export const ORIGENES_SOLICITUD = ['web_publica', 'web_assistant', 'web_directory', 'whatsapp'] as const
+export type OrigenSolicitud = (typeof ORIGENES_SOLICITUD)[number]
+// Orígenes que puede declarar la Web (WhatsApp lo fija el servidor).
+export const ORIGENES_WEB: readonly OrigenSolicitud[] = ['web_publica', 'web_assistant', 'web_directory']
+
+// 'publica': aparece en el mapa. 'dirigida': el cliente eligió un prestador; solo la ven el cliente
+// y ese prestador. Elegido no es confirmado: la asignación queda 'pendiente' hasta que el prestador
+// acepta.
+export type VisibilidadSolicitud = 'publica' | 'dirigida'
+export type EstadoAsignacion = 'pendiente' | 'aceptada' | 'rechazada' | 'cancelada'
+
+export const IMAGENES_POR_SOLICITUD = 2
+export const TAMANO_MAXIMO_IMAGEN = 3 * 1024 * 1024
 
 // Barrios de Corrientes Capital con su centro aproximado. La Web muestra la misma lista.
 export const ZONAS_CORRIENTES: ReadonlyArray<{ nombre: string; lat: number; lng: number }> = [
@@ -55,6 +73,25 @@ export interface SolicitudServicio {
   creadaEn: number
   actualizadaEn: number
   expiraEn: number
+  origen: OrigenSolicitud
+  visibilidad: VisibilidadSolicitud
+  prestadorTenantId: string | null
+  prestadorId: string | null
+  estadoAsignacion: EstadoAsignacion | null
+  respondidaEn: number | null
+  // Órdenes (1, 2) de las fotos guardadas; derivado de imagenes_solicitud.
+  imagenes: number[]
+}
+
+export interface ImagenSolicitud {
+  id: string
+  solicitudId: string
+  orden: number
+  tipoMime: 'image/jpeg' | 'image/png' | 'image/webp'
+  tamanoBytes: number
+  sha256: string
+  contenido: Buffer
+  creadaEn: number
 }
 
 // Lo único que sale en el endpoint público.
@@ -74,6 +111,28 @@ export interface VistaPublicaSolicitud {
 export interface VistaPropiaSolicitud extends VistaPublicaSolicitud {
   status: EstadoSolicitud
   expiresAt: string
+  origin: OrigenSolicitud
+  // Solo en solicitudes dirigidas: a quién se envió y qué respondió.
+  provider: { id: string; displayName: string } | null
+  assignment: EstadoAsignacion | null
+  respondedAt: string | null
+}
+
+// Lo que ve el prestador destino: sin cuenta, email ni teléfono del cliente.
+export interface VistaSolicitudRecibida {
+  id: string
+  category: CategoriaSolicitud
+  title: string
+  description: string | null
+  requesterName: string
+  approximateArea: string
+  budgetMax: number | null
+  urgency: UrgenciaSolicitud
+  createdAt: string
+  origin: OrigenSolicitud
+  assignment: EstadoAsignacion
+  respondedAt: string | null
+  images: string[]
 }
 
 export interface NuevaSolicitud {
@@ -142,6 +201,11 @@ export function ubicacionAproximada(zona: string, id: string): { lat: number; ln
   return { lat: redondear(centro.lat + desplazamiento(hash[0]!)), lng: redondear(centro.lng + desplazamiento(hash[1]!)) }
 }
 
+const urlImagenes = (solicitud: SolicitudServicio, base: 'public' | 'private') =>
+  [...solicitud.imagenes]
+    .sort((x, y) => x - y)
+    .map((orden) => (base === 'public' ? `/tus/v1/public/solicitudes/${solicitud.id}/imagenes/${orden}` : `/tus/v1/solicitudes/${solicitud.id}/imagenes/${orden}`))
+
 export function vistaPublica(solicitud: SolicitudServicio): VistaPublicaSolicitud {
   return {
     id: solicitud.id,
@@ -153,10 +217,38 @@ export function vistaPublica(solicitud: SolicitudServicio): VistaPublicaSolicitu
     budgetMax: solicitud.presupuestoMaximo,
     urgency: solicitud.urgencia,
     createdAt: new Date(solicitud.creadaEn).toISOString(),
-    images: [],
+    images: urlImagenes(solicitud, 'public'),
   }
 }
 
-export function vistaPropia(solicitud: SolicitudServicio): VistaPropiaSolicitud {
-  return { ...vistaPublica(solicitud), status: solicitud.estado, expiresAt: new Date(solicitud.expiraEn).toISOString() }
+export function vistaPropia(solicitud: SolicitudServicio, prestador: { id: string; displayName: string } | null = null): VistaPropiaSolicitud {
+  return {
+    ...vistaPublica(solicitud),
+    // Las fotos de una solicitud dirigida no son públicas.
+    images: urlImagenes(solicitud, solicitud.visibilidad === 'publica' ? 'public' : 'private'),
+    status: solicitud.estado,
+    expiresAt: new Date(solicitud.expiraEn).toISOString(),
+    origin: solicitud.origen,
+    provider: solicitud.visibilidad === 'dirigida' ? prestador : null,
+    assignment: solicitud.estadoAsignacion,
+    respondedAt: solicitud.respondidaEn === null ? null : new Date(solicitud.respondidaEn).toISOString(),
+  }
+}
+
+export function vistaRecibida(solicitud: SolicitudServicio): VistaSolicitudRecibida {
+  return {
+    id: solicitud.id,
+    category: solicitud.categoria,
+    title: solicitud.titulo,
+    description: solicitud.descripcion,
+    requesterName: solicitud.nombrePublico,
+    approximateArea: solicitud.zona,
+    budgetMax: solicitud.presupuestoMaximo,
+    urgency: solicitud.urgencia,
+    createdAt: new Date(solicitud.creadaEn).toISOString(),
+    origin: solicitud.origen,
+    assignment: solicitud.estadoAsignacion ?? 'pendiente',
+    respondedAt: solicitud.respondidaEn === null ? null : new Date(solicitud.respondidaEn).toISOString(),
+    images: urlImagenes(solicitud, 'private'),
+  }
 }

@@ -171,7 +171,7 @@ test('SOLICITUDES are mounted with the TUS routes and persisted through Prisma (
   const schema = readFileSync(join(root, 'apps/api/prisma/schema.prisma'), 'utf8')
   const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20260930100000_tus_solicitudes_servicio/migration.sql'), 'utf8')
   assert.match(server, /if \(tusRoutesEnabled\) \{\s*app\.use\(crearRouterSolicitudes/)
-  assert.match(server, /crearServicioSolicitudes\(\{ cuentas: auth\.store, prisma:/)
+  assert.match(server, /crearServicioSolicitudes\(\{ cuentas: auth\.store, destinos: directorio, prisma:/)
   assert.match(schema, /model SolicitudServicio \{[\s\S]*@@map\("solicitudes_servicio"\)/)
   assert.match(migration, /REFERENCES public\."Account"\("id"\) ON DELETE RESTRICT/)
   assert.doesNotMatch(migration, /\b(DROP|CASCADE|ALTER TABLE)\b/i)

@@ -16,6 +16,9 @@ import { crearModuloWhatsappPrisma } from './tus/asistente/prisma-composicion.ts
 import { crearServicioSolicitudes } from './tus/solicitudes/composicion.ts'
 import { crearRouterSolicitudes } from './tus/solicitudes/http.ts'
 import type { ClientePrismaSolicitudes } from './tus/solicitudes/almacenes.ts'
+import { crearServicioDirectorio } from './tus/directorio/composicion.ts'
+import { crearRouterDirectorio } from './tus/directorio/http.ts'
+import type { ClientePrismaDirectorio } from './tus/directorio/almacenes.ts'
 import type { ModuloWhatsapp } from './tus/asistente/composicion.ts'
 import type { TusPrismaClient } from './tus/adapters/prisma.ts'
 import { getPrismaClient } from './infrastructure/database/prisma/client.ts'
@@ -86,12 +89,14 @@ export function createApp(options: CreateAppOptions = {}): Application {
     prisma: prisma as unknown as FederatedPrismaClient,
   })
   const tenancy = createPrismaTenancyService(prisma as unknown as TenantPrismaClient)
-  // Service requests shown on the public home map (same PostgreSQL, through Prisma).
-  const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, prisma: prisma as unknown as ClientePrismaSolicitudes })
   const application = createPrismaTusApplication(prisma)
+  // "Buscar trabajador" (directorio) and the one TUS service request used by the home map, the
+  // directory, the Web assistant and WhatsApp (same PostgreSQL, through Prisma).
+  const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio })
+  const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes })
   const whatsapp = options.tusRouter
     ? undefined
-    : crearModuloWhatsappPrisma(prisma, application, auth.store)
+    : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes })
   const tusRouter = options.tusRouter ?? createTusHttpRouter({ application, sessions, whatsapp })
   if (whatsapp) app.locals['tusWhatsappAssistant'] = whatsapp
 
@@ -137,6 +142,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     options.providerRoutesEnabled ?? process.env['TUS_PROVIDER_ACTIONS_ENABLED'] === 'true'
   if (tusRoutesEnabled) {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
+    app.use(crearRouterDirectorio({ servicio: directorio, sessions }))
     app.use(tusRouter)
   }
   if (providerRoutesEnabled)

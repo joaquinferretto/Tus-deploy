@@ -667,6 +667,19 @@ determinístico de ±~300 m, redondeado a 3 decimales; `nombre_publico` es nombr
 estado, longitudes, presupuesto y rango de coordenadas. Vigencia 30 días (`expira_en`); límites de 5 publicaciones por
 cuenta cada 24 h y 10 abiertas a la vez (aplicación). Índices para el listado público y para "mis solicitudes".
 
+**DIRECTORIO Y SOLICITUDES DIRIGIDAS.** `20261001100000_tus_directorio_prestadores` (aditiva: dos tablas nuevas y
+columnas/constraints nuevos en `solicitudes_servicio`; no modifica constraints ni datos existentes):
+`perfiles_publicos_prestador` (lo que el prestador elige mostrar en "Buscar trabajador": nombre público, oficio del
+catálogo canónico, barrio, descripción y años de experiencia declarados; uno por prestador; FK compuesta a `prestadores`
+RESTRICT; su `id` es el único identificador que sale a la Web). En `solicitudes_servicio`: `origen`
+(`web_publica | web_assistant | web_directory | whatsapp`, default `web_publica`), `visibilidad` (`publica | dirigida`,
+default `publica`), `prestador_tenant_id`/`prestador_id` (FK compuesta a `prestadores` RESTRICT, solo en dirigidas),
+`estado_asignacion` (`pendiente | aceptada | rechazada | cancelada`) y `respondida_en`. Un CHECK de coherencia impide
+dirigidas sin prestador o públicas con prestador. "Elegido" no es "confirmado": la asignación nace `pendiente` y solo el
+prestador destino la pasa a `aceptada` o `rechazada`. `imagenes_solicitud`: hasta 2 fotos por solicitud (orden 1/2
+único), JPEG/PNG/WEBP de hasta 3 MB, guardadas sin EXIF/GPS/XMP; públicas solo si la solicitud es pública y está
+abierta, privadas (dueña y prestador destino) si es dirigida. Las filas existentes quedan `web_publica`/`publica`.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

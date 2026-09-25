@@ -63,3 +63,39 @@ export function readFragmentParam(hash: string, key: string): string | null {
   const value = params.get(key)
   return value && /^[A-Za-z0-9_-]{43}$/u.test(value) ? value : null
 }
+
+// ---- volver a donde estaba el usuario después de iniciar sesión o registrarse ------------------
+// El destino sobrevive al viaje a Google y a la verificación del correo en sessionStorage. Solo
+// rutas internas ("/..."), nunca URLs externas.
+const RETURN_TO_KEY = 'tus.auth.returnTo'
+
+export function safeInternalPath(value: string | null | undefined): string | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  return /^\/(?!\/)[^\s\\]*$/u.test(trimmed) && trimmed.length <= 300 ? trimmed : null
+}
+
+export function rememberReturnTo(value: string | null | undefined): void {
+  const path = safeInternalPath(value)
+  if (!path) return
+  try {
+    window.sessionStorage.setItem(RETURN_TO_KEY, path)
+  } catch {
+    // Solo una comodidad: sin storage se vuelve al panel.
+  }
+}
+
+export function takeReturnTo(): string | null {
+  try {
+    const path = safeInternalPath(window.sessionStorage.getItem(RETURN_TO_KEY))
+    window.sessionStorage.removeItem(RETURN_TO_KEY)
+    return path
+  } catch {
+    return null
+  }
+}
+
+export function withReturnTo(path: '/sign-in' | '/registro', returnTo: string | null): string {
+  const safe = safeInternalPath(returnTo)
+  return safe ? `${path}?returnTo=${encodeURIComponent(safe)}` : path
+}

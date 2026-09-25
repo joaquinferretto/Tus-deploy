@@ -20,8 +20,8 @@ const FAKE_API = `
   const now = Date.parse('2026-09-25T12:00:00.000Z')
   const dto = (id, category, title, label, extra = {}) => ({ id, category, title, description: null, requesterName: 'Laura M.', approximateLocation: { lat: -27.4692345, lng: -58.8306789, label }, budgetMax: null, urgency: 'urgente', createdAt: new Date(now - 20 * 60_000).toISOString(), images: [], ...extra })
   const items = [
-    dto('a', 'plomeria', 'Pierde agua la canilla', 'Camba Cuá', { budgetMax: 25000, images: ['/uno.jpg', '/dos.jpg', '/tres.jpg'], phone: '+5493794000000', address: 'Calle Falsa 123' }),
-    dto('b', 'electricidad', 'Salta la térmica con el horno', 'Centro', { urgency: 'hoy_manana', images: ['/uno.jpg'] }),
+    dto('a', 'plomeria', 'Pierde agua la canilla', 'Camba Cuá', { budgetMax: 25000, images: ['/tus/v1/public/solicitudes/a/imagenes/1', '/tus/v1/public/solicitudes/a/imagenes/2', '/uno.jpg'], phone: '+5493794000000', address: 'Calle Falsa 123' }),
+    dto('b', 'electricidad', 'Salta la térmica con el horno', 'Centro', { urgency: 'hoy_manana', images: ['/tus/v1/public/solicitudes/b/imagenes/1'] }),
     dto('c', 'pintura', 'Pintar un dormitorio', 'Libertad', { images: ['https://evil.example/x.png'] }),
     dto('d', 'jardineria', 'Categoría desconocida', 'Centro'),
     { id: 'e', category: 'plomeria', title: 'Sin ubicación' },
@@ -52,6 +52,8 @@ test('HOME reads requests from the API and keeps only approximate, non-identifyi
   assert.deepEqual(result.requested, ['https://api.tusservicios.shop/tus/v1/public/solicitudes', 'https://api.tusservicios.shop/tus/v1/public/solicitudes?categoria=electricidad'])
   assert.deepEqual(result.all.map((request) => request.id), ['a', 'b', 'c'])
   assert.deepEqual(result.all.map((request) => request.images.length), [2, 1, 0])
+  // Photos are served by the API: resolved against its origin, never the Web's.
+  assert.equal(result.all[0].images[0], 'https://api.tusservicios.shop/tus/v1/public/solicitudes/a/imagenes/1')
   assert.deepEqual(result.all[0].approximateLocation, { lat: -27.469, lng: -58.831, label: 'Camba Cuá' })
   assert.equal(result.all[0].budgetLabel, 'Hasta $25.000')
   assert.equal(result.all[0].urgencyLabel, 'Urgente')
@@ -116,7 +118,7 @@ test('PUBLISH client validates like the API and sends only the request fields wi
   assert.deepEqual(result.checks[2].sort(), ['budgetMax', 'category', 'urgency', 'zone'])
   const page = web('features/requests/publish-request.tsx')
   assert.match(page, /sign-in\?returnTo=/)
-  assert.match(page, /no incluyas teléfono, email ni dirección/)
+  assert.match(web('features/requests/request-form.tsx'), /No incluyas teléfono, email ni dirección/)
   assert.ok(existsSync(join(root, 'apps/web/src/app/publicar/page.tsx')))
 })
 

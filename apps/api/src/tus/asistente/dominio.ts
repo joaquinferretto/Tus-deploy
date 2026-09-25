@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import type { TusApplicationService } from '../application/tus-application-service.ts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
+import type { CandidatoPrestador } from '../directorio/modelo.ts'
+import type { ServicioDirectorio } from '../directorio/servicio.ts'
+import type { ServicioSolicitudes } from '../solicitudes/servicio.ts'
 
 // The assistant reaches TUS only through this port. The adapter below delegates to the SAME
 // application services used by the Web/API routes (marketplace, work, finance, identity), so
@@ -49,6 +52,18 @@ export interface PuertoDominioAsistente {
   crearSolicitud(context: TusAuthenticatedTenantContext, input: { listingId: string; idempotencyKey: string }): Promise<{ requestId: string; status: string }>
   decidirPresupuesto(context: TusAuthenticatedTenantContext, input: { workId: string; budgetId: string; decision: 'accepted' | 'rejected'; reason?: string; idempotencyKey: string }): Promise<{ workId: string; status: string }>
   transicionTrabajo(context: TusAuthenticatedTenantContext, input: { workId: string; action: 'cancel' | 'complete'; idempotencyKey: string }): Promise<{ workId: string; status: string }>
+  // Directorio y solicitud TUS: los mismos casos de uso que el asistente Web y "Buscar trabajador".
+  buscarPrestadores(filter: { query: string | null; profession: string | null; zone: string | null }): Promise<{ profession: string | null; providers: CandidatoPrestador[] }>
+  solicitarPrestador(
+    context: TusAuthenticatedTenantContext,
+    input: { providerId: string; title: string; description: string | null; zone: string; urgency: string; budgetMax: number | null }
+  ): Promise<{ requestId: string; assignment: string; providerName: string | null }>
+}
+
+// Servicios compartidos con la Web. Sin ellos las herramientas de directorio fallan cerradas.
+export interface ServiciosCompartidosAsistente {
+  directorio: ServicioDirectorio
+  solicitudes: ServicioSolicitudes
 }
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -56,8 +71,47 @@ const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(valu
 export class DominioAsistenteTus implements PuertoDominioAsistente {
   constructor(
     private readonly application: TusApplicationService,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly compartidos?: ServiciosCompartidosAsistente
   ) {}
+
+  private get servicios() {
+    if (!this.compartidos) throw Object.assign(new Error('directory unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    return this.compartidos
+  }
+
+  async buscarPrestadores(filter: { query: string | null; profession: string | null; zone: string | null }) {
+    // El oficio explícito manda; si no, se interpreta el texto con las mismas reglas que la Web.
+    const interpretado = filter.query ? this.servicios.directorio.interpretar(filter.query) : null
+    const profession = filter.profession ?? interpretado?.category ?? null
+    if (!profession) return { profession: null, providers: [] }
+    const zone = filter.zone ?? interpretado?.zone ?? null
+    const result = await this.servicios.directorio.buscarCandidatos({ oficio: profession, zona: zone })
+    return { profession, providers: result.items }
+  }
+
+  async solicitarPrestador(
+    context: TusAuthenticatedTenantContext,
+    input: { providerId: string; title: string; description: string | null; zone: string; urgency: string; budgetMax: number | null }
+  ) {
+    const destino = await this.servicios.directorio.perfil(input.providerId)
+    if (!destino) throw Object.assign(new Error('provider unavailable'), { status: 409, code: 'PROVIDER_NOT_AVAILABLE' })
+    const result = await this.servicios.solicitudes.publicar(
+      context.subjectId,
+      {
+        category: destino.profession.id,
+        title: input.title,
+        description: input.description ?? '',
+        zone: input.zone,
+        urgency: input.urgency,
+        budgetMax: input.budgetMax,
+        providerId: input.providerId,
+      },
+      { origen: 'whatsapp' }
+    )
+    if (!result.ok) throw Object.assign(new Error('request rejected'), { status: 409, code: result.code })
+    return { requestId: result.solicitud.id, assignment: result.solicitud.assignment ?? 'pendiente', providerName: result.solicitud.provider?.displayName ?? null }
+  }
 
   private get marketplace() {
     if (!this.application.marketplace) throw Object.assign(new Error('marketplace unavailable'), { status: 503, code: 'UNAVAILABLE' })

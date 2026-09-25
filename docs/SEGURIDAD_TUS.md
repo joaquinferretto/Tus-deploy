@@ -161,6 +161,22 @@ Corrección:
   Solo la dueña puede cerrar su solicitud.
 - La Web nunca habla con la base: todo pasa por la API (Prisma). No hay claves de Supabase en el frontend.
 
+## Buscar trabajador, asistente y solicitudes dirigidas
+
+- DTO públicos explícitos (`@factory/contracts`, `tus-directorio.ts`): nunca salen `tenantId`, `prestadorId`, email,
+  teléfono, dirección, coordenadas, DNI ni CUIL; el id público es el del perfil. `rating` es siempre `null`: TUS no tiene
+  reseñas todavía y nada se inventa. Verificación, trabajos completados y horarios los calcula TUS, no el prestador.
+- El directorio y el perfil son públicos; buscar candidatos con el asistente, crear solicitudes, subir fotos y ver la
+  bandeja requieren sesión. El prestador solo edita su perfil (`tus:marketplace:write`, sin campos de autoridad).
+- La IA no consulta la base: el asistente Web interpreta el texto con reglas determinísticas y llama a los mismos casos de
+  uso (`ServicioDirectorio`, `ServicioSolicitudes`) que "Buscar trabajador" y que las herramientas de WhatsApp
+  (`search_providers`, `request_provider` con confirmación explícita). El cliente siempre elige; la solicitud dirigida
+  queda `pendiente` hasta que el prestador destino acepta. Solo el tenant destino puede responder.
+- La Web solo puede declarar orígenes Web; `whatsapp` lo fija el servidor. Un prestador no puede pedirse a sí mismo.
+- Fotos: tipo por magic bytes, sin metadata, máx. 3 MB y 2 por solicitud; respuesta con `nosniff`,
+  `default-src 'none'` y `cross-origin-resource-policy: cross-origin` (la Web está en otro dominio). Las de solicitudes
+  dirigidas se sirven solo con sesión (dueña o prestador destino) y `no-store`.
+
 ## Gate obligatorio antes de staging
 
 - [ ] Working tree esperado y commit/release ID registrados; `opencode.json` fuera del cambio.

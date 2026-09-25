@@ -14,11 +14,20 @@ export interface NewRequestInput {
   zone: string
   budgetMax: number | null
   urgency: UrgencyId
+  // Id público del perfil elegido: la solicitud queda dirigida a ese prestador ("pendiente").
+  providerId?: string
+  origin?: 'web_publica' | 'web_assistant' | 'web_directory'
 }
+
+export type RequestAssignment = 'pendiente' | 'aceptada' | 'rechazada' | 'cancelada'
 
 export interface OwnRequestDto extends PublicRequestDto {
   status: 'abierta' | 'cerrada'
   expiresAt: string
+  origin: string
+  provider: { id: string; displayName: string } | null
+  assignment: RequestAssignment | null
+  respondedAt: string | null
 }
 
 export type RequestField = 'category' | 'title' | 'description' | 'zone' | 'budgetMax' | 'urgency'
@@ -26,7 +35,9 @@ export type RequestField = 'category' | 'title' | 'description' | 'zone' | 'budg
 export type PublishResult =
   | { ok: true; request: OwnRequestDto }
   | { ok: false; kind: 'invalid'; fields: RequestField[] }
-  | { ok: false; kind: 'unauthorized' | 'rate_limited' | 'not_allowed' | 'unavailable' }
+  | { ok: false; kind: 'unauthorized' | 'rate_limited' | 'not_allowed' | 'unavailable' | 'provider_unavailable' | 'self_request' }
+
+export type ImageUploadResult = { ok: true } | { ok: false; kind: 'invalid' | 'limit' | 'unavailable' }
 
 function apiBase(): string {
   return resolveWebApiBaseUrl({
@@ -60,7 +71,29 @@ export function createRequestsClient(session: TusWebSession, fetchImpl: typeof f
         }
         if (response.status === 401) return { ok: false, kind: 'unauthorized' }
         if (response.status === 429) return { ok: false, kind: 'rate_limited' }
+        if (response.status === 409) {
+          const body = (await response.json().catch(() => null)) as { code?: string } | null
+          return { ok: false, kind: body?.code === 'SELF_REQUEST' ? 'self_request' : 'provider_unavailable' }
+        }
         if (response.status === 403) return { ok: false, kind: 'not_allowed' }
+        return { ok: false, kind: 'unavailable' }
+      } catch {
+        return { ok: false, kind: 'unavailable' }
+      }
+    },
+
+    // Photos go after the request exists (octet-stream; the API strips metadata).
+    async uploadImage(id: string, file: Blob): Promise<ImageUploadResult> {
+      try {
+        const response = await fetchImpl(`${apiBase()}/tus/v1/solicitudes/${encodeURIComponent(id)}/imagenes`, {
+          method: 'POST',
+          cache: 'no-store',
+          headers: { ...headers(), 'Content-Type': 'application/octet-stream' },
+          body: file,
+        })
+        if (response.ok) return { ok: true }
+        if (response.status === 409) return { ok: false, kind: 'limit' }
+        if (response.status === 422 || response.status === 415) return { ok: false, kind: 'invalid' }
         return { ok: false, kind: 'unavailable' }
       } catch {
         return { ok: false, kind: 'unavailable' }
@@ -108,4 +141,22 @@ export function validateNewRequest(input: NewRequestInput): RequestField[] {
   if (input.budgetMax !== null && (!Number.isInteger(input.budgetMax) || input.budgetMax <= 0 || input.budgetMax > 100_000_000)) fields.push('budgetMax')
   if (!input.urgency) fields.push('urgency')
   return fields
+}
+
+// "Elegido" is not "confirmado": a directed request shows the provider's real answer.
+export function requestStatusLabel(item: OwnRequestDto): string {
+  if (item.provider || item.assignment) {
+    const name = item.provider?.displayName ?? 'el profesional'
+    switch (item.assignment) {
+      case 'aceptada':
+        return `${name} aceptó tu solicitud`
+      case 'rechazada':
+        return `${name} no puede tomarla. Podés elegir a otro profesional.`
+      case 'cancelada':
+        return 'Cancelaste esta solicitud'
+      default:
+        return `Enviada a ${name} · pendiente de aceptación`
+    }
+  }
+  return item.status === 'abierta' ? 'Publicada en el mapa' : 'Cerrada'
 }

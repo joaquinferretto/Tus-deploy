@@ -283,6 +283,9 @@ TUS usa Supabase **solo como PostgreSQL**: la API se conecta con Prisma por `DAT
    `GET /tus/v1/public/solicitudes` (debe responder `{"items":[]}` con la base vacía).
 7. Probar de punta a punta: iniciar sesión en la Web → `/publicar` → publicar → la solicitud aparece en el mapa de `/`.
 
+La migración `20261001100000_tus_directorio_prestadores` (perfiles públicos, solicitudes dirigidas e imágenes) va
+después de `20260930100000_tus_solicitudes_servicio`; es aditiva y las solicitudes existentes quedan públicas.
+
 ### 6.2 Comandos de release sin secretos en Git
 
 PowerShell:
@@ -482,6 +485,9 @@ adaptador esté configurado.
 2. Web carga `/`, `/sign-in`, `/tus/mercado` y `/tus/prestador` sin errores de CORS en la consola.
 3. Login con una cuenta del equipo verificada.
    Solicitudes: `/publicar` con esa cuenta → la solicitud aparece en el mapa de `/` (zona aproximada) y en "Mis solicitudes".
+   Directorio: el prestador completa `/prestador/perfil-publico`; aparece en `/trabajadores`; un cliente abre su perfil →
+   "Solicitar servicio" → el prestador la ve en `/prestador/solicitudes` y la acepta; el cliente ve "aceptó tu solicitud" en
+   `/mis-solicitudes`. Asistente: `/asistente` → describir el problema → barrio/urgencia → elegir un candidato real.
    Si Google está configurado: `/sign-in` → "Continuar con Google" vuelve a `/ingresar/google` y entra al panel;
    `/registro` → "Registrarme con Google" con un email nuevo pide aceptar términos en `/registro/completar`.
 4. Prestador: publicar un servicio; cliente: comprarlo; prestador: aceptar, diagnosticar, presupuestar; cliente: aceptar
