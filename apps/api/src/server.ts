@@ -37,6 +37,7 @@ import {
 } from './infrastructure/database/lifecycle.ts'
 import type { ApiReadiness } from './presentation/routes/health.ts'
 import { loadApiRuntimeConfig, type ApiRuntimeConfig } from './platform/configuration/domain.ts'
+import { safeStartupReason } from './infrastructure/database/postgres/pool.ts'
 import { disconnectMongoDB } from './infrastructure/database/mongodb/connection.ts'
 import { disconnectRedis } from './infrastructure/database/redis/client.ts'
 import { createApiLifecycle, type ApiLifecycle } from './platform/lifecycle.ts'
@@ -181,7 +182,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     const app = options.app ?? createApp({ databaseLifecycle })
     const whatsapp = readWhatsappAssistant(app)
     if (whatsapp?.config.enabled && whatsapp.config.problems.length > 0)
-      throw new Error('WhatsApp configuration is invalid')
+      throw Object.assign(new Error('WhatsApp configuration is invalid'), { reason: 'WHATSAPP_CONFIG_INVALID' })
     server = await listen(app, port, host, runtimeConfig.shutdownTimeoutMs)
     lifecycle.register('database', databaseLifecycle.close)
     lifecycle.register('mongodb', disconnectMongoDB)
@@ -232,11 +233,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
     logger.info('api listening', { details: { host, port } })
     return { server, lifecycle, shutdown }
-  } catch {
+  } catch (error) {
     if (server?.listening)
       await closeHttpServer(server, runtimeConfig.shutdownTimeoutMs).catch(() => undefined)
     await databaseLifecycle.close().catch(() => undefined)
-    throw new Error('API startup failed; diagnostics redacted')
+    // Solo un código seguro (ver safeStartupReason), para poder diagnosticar desde los logs.
+    throw Object.assign(new Error('API startup failed; diagnostics redacted'), { reason: safeStartupReason(error) })
   }
 }
 

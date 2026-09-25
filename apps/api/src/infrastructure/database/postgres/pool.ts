@@ -27,6 +27,21 @@ export interface BoundedDatabaseRetryOptions {
 
 let pool: PostgresPoolLike | undefined
 
+// Causa de un fallo de arranque apta para logs: solo códigos (pg/libpq como 28P01, TLS de Node
+// como SELF_SIGNED_CERT_IN_CHAIN, red como ENOTFOUND, Prisma como P1001) o nombres de tablas
+// faltantes. Nunca el mensaje, la URL, el host ni el usuario.
+export function safeStartupReason(error: unknown): string {
+  const value = error as { reason?: unknown; missingTables?: unknown; code?: unknown; errorCode?: unknown; cause?: { code?: unknown }; name?: unknown } | null
+  if (typeof value?.reason === 'string' && /^[A-Z0-9_:,a-z-]{2,300}$/u.test(value.reason)) return value.reason
+  if (Array.isArray(value?.missingTables)) {
+    const tables = value.missingTables.filter((table): table is string => typeof table === 'string' && /^[a-z0-9_-]{1,64}$/u.test(table))
+    return `SCHEMA_INCOMPLETE:${tables.join(',')}`
+  }
+  for (const code of [value?.code, value?.errorCode, value?.cause?.code])
+    if (typeof code === 'string' && /^[A-Z0-9_]{2,48}$/u.test(code)) return code
+  return typeof value?.name === 'string' && /^[A-Za-z]{1,40}$/u.test(value.name) ? value.name : 'UNKNOWN'
+}
+
 export function createPostgresPool(databaseUrl: string = readRootDatabaseUrl() ?? ''): PostgresPoolLike {
   if (!databaseUrl) throw new Error('Missing canonical PostgreSQL configuration')
 
@@ -52,6 +67,7 @@ export async function withBoundedDatabaseStartupRetry<T>(
   const timeoutMs = boundedTimeout(options.attemptTimeoutMs)
   const sleep = options.sleep ?? ((durationMs: number) => new Promise<void>((resolve) => setTimeout(resolve, durationMs)))
   const diagnostics: Array<{ attempt: number; timeoutMs: number; status: 'passed' }> = []
+  let lastReason = 'UNKNOWN'
 
   for (let attempt = 1; attempt <= DATABASE_MAX_ATTEMPTS; attempt += 1) {
     let resource: PostgresPoolLike | undefined
@@ -66,7 +82,8 @@ export async function withBoundedDatabaseStartupRetry<T>(
       )
       diagnostics.push({ attempt, timeoutMs, status: 'passed' })
       return { value, diagnostics }
-    } catch {
+    } catch (error) {
+      lastReason = safeStartupReason(error)
       await closeFailedResource(resource)
       try {
         await options.onAttemptFailure?.({ attempt })
@@ -82,6 +99,7 @@ export async function withBoundedDatabaseStartupRetry<T>(
   const error = new Error('PostgreSQL startup failed after two bounded attempts; diagnostics redacted')
   error.name = 'PostgresStartupError'
   Object.assign(error, {
+    reason: lastReason,
     attempts: DATABASE_MAX_ATTEMPTS,
     diagnostics: Array.from({ length: DATABASE_MAX_ATTEMPTS }, (_, index) => ({
       attempt: index + 1,
@@ -141,15 +159,15 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   const guarded = Promise.resolve(promise)
   guarded.catch(() => undefined)
   return new Promise<T>((resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('PostgreSQL startup attempt timed out')), timeoutMs)
+    timer = setTimeout(() => reject(Object.assign(new Error('PostgreSQL startup attempt timed out'), { reason: 'DB_ATTEMPT_TIMEOUT' })), timeoutMs)
     guarded.then(
       (value) => {
         if (timer) clearTimeout(timer)
         resolve(value)
       },
-      () => {
+      (cause: unknown) => {
         if (timer) clearTimeout(timer)
-        reject(new Error('PostgreSQL startup attempt failed'))
+        reject(Object.assign(new Error('PostgreSQL startup attempt failed'), { reason: safeStartupReason(cause) }))
       },
     )
   })

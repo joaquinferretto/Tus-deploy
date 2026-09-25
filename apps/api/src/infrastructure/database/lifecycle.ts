@@ -62,7 +62,7 @@ export function createDatabaseLifecycle(options: DatabaseLifecycleOptions): Data
           await candidate.query('SELECT 1')
           await prismaConnector(options.config.databaseUrl)
           const schema = await schemaChecker(candidate)
-          if (!schema.compatible) throw new Error('Required PostgreSQL schema is incompatible')
+          if (!schema.compatible) throw Object.assign(new Error('Required PostgreSQL schema is incompatible'), { missingTables: schema.missing })
           return candidate
         },
         {
