@@ -35,5 +35,5 @@ test('P4.5 governance schemas participate in canonical contract validation', () 
     encoding: 'utf8',
   })
 
-  assert.match(output, /Validated 98 JSON Schema contract\(s\)/)
+  assert.match(output, /Validated 107 JSON Schema contract\(s\)/)
 })

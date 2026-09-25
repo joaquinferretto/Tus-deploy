@@ -508,6 +508,49 @@ export interface TusWhatsAppSupportHandoffResponse {
   createdAt?: string
 }
 
+export interface TusWhatsappAdminConversation {
+  conversationId: string
+  contact: {
+    contactId: string
+    waIdMasked: string | null
+    displayName: string | null
+    linked: boolean
+    linkedTenantId: string | null
+    blocked: boolean
+  }
+  mode: 'bot' | 'human'
+  status: 'active' | 'closed'
+  handoffReason: string | null
+  unread: number
+  lastMessage: { direction: 'inbound' | 'outbound'; preview: string; status: string } | null
+  lastActivity: string
+  serviceWindowOpen: boolean
+}
+
+export interface TusWhatsappAdminDetail {
+  conversationId: string
+  contact: TusWhatsappAdminConversation['contact']
+  mode: 'bot' | 'human'
+  status: 'active' | 'closed'
+  handoffReason: string | null
+  serviceWindowOpen: boolean
+  operatorId: string | null
+  summary: string | null
+  messages: readonly {
+    messageId: string
+    direction: 'inbound' | 'outbound'
+    actor: string
+    type: string
+    text: string | null
+    status: string
+    createdAt: string
+    location?: { latitude: number; longitude: number } | null
+    hasMedia?: boolean
+  }[]
+}
+
+export type TusWhatsappAdminAction = 'takeover' | 'release' | 'reply' | 'unlink' | 'block'
+
 export interface TusWebClient {
   discover(context: TusWebContext): Promise<TusDiscoveryResponse>
   merchantOperations(context: TusWebContext): Promise<TusMerchantOperationsResponse>
@@ -565,6 +608,20 @@ export interface TusWebClient {
   whatsappSupportHandoff(
     input: TusWebContext & { senderId: string; reason: string }
   ): Promise<TusWhatsAppSupportHandoffResponse>
+  listWhatsappAdminConversations(
+    context: TusWebContext,
+    mode?: 'bot' | 'human'
+  ): Promise<{ conversations: readonly TusWhatsappAdminConversation[] }>
+  getWhatsappAdminConversation(
+    context: TusWebContext,
+    conversationId: string
+  ): Promise<TusWhatsappAdminDetail>
+  whatsappAdminAction(
+    context: TusWebContext,
+    conversationId: string,
+    action: TusWhatsappAdminAction,
+    body?: Record<string, unknown>
+  ): Promise<Record<string, unknown>>
   paymentPreview(context: TusWebContext, workId: string): Promise<TusPaymentPreview>
   createWorkPaymentIntent(
     input: TusWebContext & { workId: string; idempotencyKey: string }
@@ -730,6 +787,126 @@ export function parseTusSupportCases(payload: unknown): TusSupportCasesResponse 
       })
     : []
   return { cases }
+}
+
+export function parseTusWhatsappAdminConversations(payload: unknown): {
+  conversations: readonly TusWhatsappAdminConversation[]
+} {
+  const record = asRecord(payload)
+  const conversations = Array.isArray(record['conversations'])
+    ? record['conversations'].flatMap((value) => {
+        const item = asRecord(value)
+        const contact = asRecord(item['contact'])
+        const mode = item['mode']
+        const status = item['status']
+        if (
+          typeof item['conversationId'] !== 'string' ||
+          (mode !== 'bot' && mode !== 'human') ||
+          (status !== 'active' && status !== 'closed') ||
+          typeof contact['contactId'] !== 'string' ||
+          typeof item['lastActivity'] !== 'string'
+        )
+          return []
+        const last = item['lastMessage'] === null ? null : asRecord(item['lastMessage'])
+        return [
+          {
+            conversationId: item['conversationId'],
+            contact: {
+              contactId: contact['contactId'],
+              waIdMasked: typeof contact['waIdMasked'] === 'string' ? contact['waIdMasked'] : null,
+              displayName:
+                typeof contact['displayName'] === 'string' ? contact['displayName'] : null,
+              linked: contact['linked'] === true,
+              linkedTenantId:
+                typeof contact['linkedTenantId'] === 'string' ? contact['linkedTenantId'] : null,
+              blocked: contact['blocked'] === true,
+            },
+            mode: mode as 'bot' | 'human',
+            status: status as 'active' | 'closed',
+            handoffReason: typeof item['handoffReason'] === 'string' ? item['handoffReason'] : null,
+            unread: typeof item['unread'] === 'number' ? item['unread'] : 0,
+            lastMessage:
+              last &&
+              typeof last['direction'] === 'string' &&
+              typeof last['preview'] === 'string' &&
+              typeof last['status'] === 'string'
+                ? {
+                    direction: last['direction'] as 'inbound' | 'outbound',
+                    preview: last['preview'],
+                    status: last['status'],
+                  }
+                : null,
+            lastActivity: item['lastActivity'],
+            serviceWindowOpen: item['serviceWindowOpen'] === true,
+          },
+        ]
+      })
+    : []
+  return { conversations }
+}
+
+export function parseTusWhatsappAdminDetail(payload: unknown): TusWhatsappAdminDetail {
+  const item = asRecord(payload)
+  const contact = asRecord(item['contact'])
+  const mode = item['mode']
+  const status = item['status']
+  if (
+    typeof item['conversationId'] !== 'string' ||
+    typeof contact['contactId'] !== 'string' ||
+    (mode !== 'bot' && mode !== 'human') ||
+    (status !== 'active' && status !== 'closed')
+  )
+    throw new Error('invalid WhatsApp conversation response')
+  const messages = Array.isArray(item['messages'])
+    ? item['messages'].flatMap((value) => {
+        const message = asRecord(value)
+        if (
+          typeof message['messageId'] !== 'string' ||
+          (message['direction'] !== 'inbound' && message['direction'] !== 'outbound') ||
+          typeof message['actor'] !== 'string' ||
+          typeof message['type'] !== 'string' ||
+          typeof message['status'] !== 'string' ||
+          typeof message['createdAt'] !== 'string'
+        )
+          return []
+        const location = asRecord(message['location'])
+        return [
+          {
+            messageId: message['messageId'],
+            direction: message['direction'] as 'inbound' | 'outbound',
+            actor: message['actor'],
+            type: message['type'],
+            text: typeof message['text'] === 'string' ? message['text'] : null,
+            status: message['status'],
+            createdAt: message['createdAt'],
+            ...(typeof location['latitude'] === 'number' &&
+            typeof location['longitude'] === 'number'
+              ? { location: { latitude: location['latitude'], longitude: location['longitude'] } }
+              : {}),
+            ...(message['hasMedia'] === true ? { hasMedia: true } : {}),
+          },
+        ]
+      })
+    : []
+  return {
+    conversationId: item['conversationId'],
+    contact: {
+      contactId: contact['contactId'],
+      waIdMasked: typeof contact['waIdMasked'] === 'string' ? contact['waIdMasked'] : null,
+      displayName: typeof contact['displayName'] === 'string' ? contact['displayName'] : null,
+      linked: contact['linked'] === true,
+      linkedTenantId:
+        typeof contact['linkedTenantId'] === 'string' ? contact['linkedTenantId'] : null,
+      blocked: contact['blocked'] === true,
+    },
+    mode: mode as 'bot' | 'human',
+    status: status as 'active' | 'closed',
+    handoffReason: typeof item['handoffReason'] === 'string' ? item['handoffReason'] : null,
+    serviceWindowOpen: item['serviceWindowOpen'] === true,
+    operatorId: typeof item['operatorId'] === 'string' ? item['operatorId'] : null,
+    summary: typeof item['summary'] === 'string' ? item['summary'] : null,
+    messages,
+  }
 }
 
 export function classifyTusRequestError(error: unknown, intentId: string): TusIntentFeedback {
@@ -902,6 +1079,29 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         method: 'POST',
         path: '/tus/v1/whatsapp/support-handoff',
         body: { senderId, reason },
+      }),
+    listWhatsappAdminConversations: async (context, mode) => {
+      const response = await transport.request<unknown>({
+        ...context,
+        method: 'GET',
+        path: `/tus/v1/admin/whatsapp/conversations${mode ? `?mode=${encodeURIComponent(mode)}` : ''}`,
+      })
+      return parseTusWhatsappAdminConversations(response)
+    },
+    getWhatsappAdminConversation: async (context, conversationId) => {
+      const response = await transport.request<unknown>({
+        ...context,
+        method: 'GET',
+        path: `/tus/v1/admin/whatsapp/conversations/${encodeURIComponent(conversationId)}`,
+      })
+      return parseTusWhatsappAdminDetail(response)
+    },
+    whatsappAdminAction: (context, conversationId, action, body = {}) =>
+      transport.request<Record<string, unknown>>({
+        ...context,
+        method: 'POST',
+        path: `/tus/v1/admin/whatsapp/conversations/${encodeURIComponent(conversationId)}/${action}`,
+        body,
       }),
     paymentPreview: (context, workId) =>
       transport.request<TusPaymentPreview>({
@@ -1388,6 +1588,8 @@ const tusClientModule = {
   parseTusPosOperationStatus,
   parseTusPosResponse,
   parseTusSupportCases,
+  parseTusWhatsappAdminConversations,
+  parseTusWhatsappAdminDetail,
   tusIntentFeedback,
 }
 

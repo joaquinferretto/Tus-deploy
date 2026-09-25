@@ -2553,3 +2553,164 @@ model AuditoriaIdentidad {
   @@index([verificacionId, fechaCreacion], map: "ix_auditoria_identidad_verificacion")
   @@map("auditoria_identidad")
 }
+
+// WHATSAPP-AI-01: WhatsApp Cloud API contacts. `wa_id` exactly as Meta delivers it.
+model ContactoWhatsapp {
+  id                String    @id(map: "contactos_whatsapp_pkey")
+  waId              String    @map("wa_id")
+  nombrePerfil      String?   @map("nombre_perfil")
+  cuentaVinculadaId String?   @map("cuenta_vinculada_id")
+  tenantVinculadoId String?   @map("tenant_vinculado_id")
+  vinculadoEn       DateTime? @map("vinculado_en")
+  bloqueadoHasta    DateTime? @map("bloqueado_hasta")
+  motivoBloqueo     String?   @map("motivo_bloqueo")
+  ultimoEntranteEn  DateTime? @map("ultimo_entrante_en")
+  version           Int       @default(1) @map("version")
+  fechaCreacion     DateTime  @map("fecha_creacion")
+
+  @@unique([waId], map: "uq_contactos_whatsapp_wa_id")
+  @@map("contactos_whatsapp")
+}
+
+// WHATSAPP-AI-01: one active conversation per contact (partial unique index in the migration).
+model ConversacionWhatsapp {
+  id                   String    @id(map: "conversaciones_whatsapp_pkey")
+  contactoId           String    @map("contacto_id")
+  estado               String    @map("estado")
+  modo                 String    @map("modo")
+  motivoDerivacion     String?   @map("motivo_derivacion")
+  derivadaEn           DateTime? @map("derivada_en")
+  operadorId           String?   @map("operador_id")
+  abiertaEn            DateTime  @map("abierta_en")
+  ultimoMensajeEn      DateTime  @map("ultimo_mensaje_en")
+  ultimoEntranteEn     DateTime? @map("ultimo_entrante_en")
+  noLeidos             Int       @default(0) @map("no_leidos")
+  resumen              String?   @map("resumen")
+  mensajesResumidos    Int       @default(0) @map("mensajes_resumidos")
+  estadoConversacional Json      @map("estado_conversacional")
+  version              Int       @default(1) @map("version")
+
+  @@index([modo, ultimoMensajeEn], map: "ix_conversaciones_whatsapp_panel")
+  @@map("conversaciones_whatsapp")
+}
+
+// WHATSAPP-AI-01: messages; `wamid` unique when present (partial unique index in the migration).
+model MensajeConversacionWhatsapp {
+  id             String    @id(map: "mensajes_conversacion_whatsapp_pkey")
+  conversacionId String    @map("conversacion_id")
+  contactoId     String    @map("contacto_id")
+  wamid          String?   @map("wamid")
+  direccion      String    @map("direccion")
+  tipo           String    @map("tipo")
+  texto          String?   @map("texto")
+  estado         String    @map("estado")
+  estadoEn       DateTime? @map("estado_en")
+  fechaExterna   DateTime? @map("fecha_externa")
+  respondeAWamid String?   @map("responde_a_wamid")
+  actor          String    @map("actor")
+  metadata       Json      @map("metadata")
+  correlacionId  String    @map("correlacion_id")
+  fechaCreacion  DateTime  @map("fecha_creacion")
+
+  @@index([conversacionId, fechaCreacion], map: "ix_mensajes_conversacion_whatsapp_historial")
+  @@map("mensajes_conversacion_whatsapp")
+}
+
+model ColaConversacionWhatsapp {
+  id                 String    @id(map: "cola_conversacion_whatsapp_pkey")
+  conversacionId     String    @map("conversacion_id")
+  estado             String    @map("estado")
+  disponibleEn       DateTime  @map("disponible_en")
+  leaseOwner         String?   @map("lease_owner")
+  leaseHasta         DateTime? @map("lease_hasta")
+  intentos           Int       @default(0) @map("intentos")
+  ultimoError        String?   @map("ultimo_error")
+  correlacionId      String    @map("correlacion_id")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
+
+  @@map("cola_conversacion_whatsapp")
+}
+
+// WHATSAPP-AI-01: single-use account link tokens (sha256 only).
+model TokenVinculacionWhatsapp {
+  id               String    @id(map: "tokens_vinculacion_whatsapp_pkey")
+  contactoId       String    @map("contacto_id")
+  hashToken        String    @map("hash_token")
+  expiraEn         DateTime  @map("expira_en")
+  usadoEn          DateTime? @map("usado_en")
+  usadoPorCuentaId String?   @map("usado_por_cuenta_id")
+  fechaCreacion    DateTime  @map("fecha_creacion")
+
+  @@unique([hashToken], map: "uq_tokens_vinculacion_whatsapp_hash")
+  @@map("tokens_vinculacion_whatsapp")
+}
+
+model ConfirmacionAsistente {
+  id             String    @id(map: "confirmaciones_asistente_pkey")
+  conversacionId String    @map("conversacion_id")
+  contactoId     String    @map("contacto_id")
+  cuentaId       String    @map("cuenta_id")
+  tenantId       String    @map("tenant_id")
+  herramienta    String    @map("herramienta")
+  argumentos     Json      @map("argumentos")
+  hashArgumentos String    @map("hash_argumentos")
+  resumen        String    @map("resumen")
+  estado         String    @map("estado")
+  resultado      Json?     @map("resultado")
+  expiraEn       DateTime  @map("expira_en")
+  fechaCreacion  DateTime  @map("fecha_creacion")
+  decididaEn     DateTime? @map("decidida_en")
+
+  @@index([conversacionId, fechaCreacion], map: "ix_confirmaciones_asistente_conversacion")
+  @@map("confirmaciones_asistente")
+}
+
+model AuditoriaAsistente {
+  id             String   @id(map: "auditoria_asistente_pkey")
+  accion         String   @map("accion")
+  contactoId     String?  @map("contacto_id")
+  conversacionId String?  @map("conversacion_id")
+  actorId        String   @map("actor_id")
+  correlacionId  String   @map("correlacion_id")
+  metadata       Json     @map("metadata")
+  fechaCreacion  DateTime @map("fecha_creacion")
+
+  @@index([conversacionId, fechaCreacion], map: "ix_auditoria_asistente_conversacion")
+  @@map("auditoria_asistente")
+}
+
+// WHATSAPP-AI-01: TUS knowledge base (RAG). Vectors live in "RagEmbedding".
+model DocumentoConocimiento {
+  id                 String   @id(map: "documentos_conocimiento_pkey")
+  fuente             String   @map("fuente")
+  titulo             String   @map("titulo")
+  version            String   @map("version")
+  visibilidad        String   @map("visibilidad")
+  audiencia          String   @map("audiencia")
+  idioma             String   @map("idioma")
+  activo             Boolean  @map("activo")
+  checksum           String   @map("checksum")
+  versionEmbeddings  String?  @map("version_embeddings")
+  fechaActualizacion DateTime @map("fecha_actualizacion")
+
+  @@map("documentos_conocimiento")
+}
+
+model FragmentoConocimiento {
+  id               String                   @id(map: "fragmentos_conocimiento_pkey")
+  documentoId      String                   @map("documento_id")
+  versionDocumento String                   @map("version_documento")
+  indice           Int                      @map("indice")
+  seccion          String                   @map("seccion")
+  texto            String                   @map("texto")
+  visibilidad      String                   @map("visibilidad")
+  audiencia        String                   @map("audiencia")
+  idioma           String                   @map("idioma")
+  activo           Boolean                  @map("activo")
+  busqueda         Unsupported("tsvector")? @default(dbgenerated("to_tsvector('spanish'::regconfig, ((seccion || ' '::text) || texto))")) @map("busqueda")
+
+  @@unique([documentoId, indice], map: "uq_fragmentos_conocimiento_documento_indice")
+  @@index([busqueda], map: "ix_fragmentos_conocimiento_busqueda", type: Gin)
+  @@map("fragmentos_conocimiento")
+}

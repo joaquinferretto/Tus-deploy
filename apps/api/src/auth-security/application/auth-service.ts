@@ -34,6 +34,12 @@ const SESSION_TTL_MS = 60 * 60 * 1000
 const MEMBER_PERMISSIONS = ['tus:checkout', 'tus:marketplace:read', 'tus:read'] as const
 const OWNER_PERMISSIONS = [...MEMBER_PERMISSIONS, 'tus:marketplace:write'] as const
 
+// Single source of the session scope of an account (also used by WhatsApp to derive the CURRENT
+// authority of a linked account on every turn instead of trusting a stored role).
+export function alcanceDeCuenta(roles: readonly string[]): { roles: string[]; permissions: string[] } {
+  return { roles: [...roles], permissions: roles.includes('owner') ? [...OWNER_PERMISSIONS] : [...MEMBER_PERMISSIONS] }
+}
+
 export interface RegisterInput {
   email: string
   password: string
@@ -210,8 +216,7 @@ export class AuthService {
       accessTokenDigest: this.dependencies.tokens.digest(accessToken),
       scope: {
         tenantId: account.tenantId,
-        roles: [...account.roles],
-        permissions: account.roles.includes('owner') ? [...OWNER_PERMISSIONS] : [...MEMBER_PERMISSIONS],
+        ...alcanceDeCuenta(account.roles),
       },
       createdAt: now,
       expiresAt: now + SESSION_TTL_MS,

@@ -1,4 +1,5 @@
 import { BovedaCredencialesAesGcm } from '../finance/servicios/cuentas-cobro.ts'
+import { crearPoolCredencialesGroq, tieneCredencialesGroq } from '../../providers/groq/index.ts'
 import {
   MotorOcrTesseract,
   ModeloVisionGroq,
@@ -62,7 +63,7 @@ export function leerConfiguracionIdentidad(
     production,
     documentsKeyConfigured: keyOk('TUS_IDENTITY_DOCUMENTS_KEY'),
     sessionKeyConfigured: keyOk('TUS_NOSIS_SESSION_KEY'),
-    groqConfigured: Boolean(env['GROQ_API_KEY']?.trim()),
+    groqConfigured: tieneCredencialesGroq(env),
     nosisCredentialsConfigured: Boolean(
       env['NOSIS_BROWSER_DOCUMENTO']?.trim() && env['NOSIS_BROWSER_CLAVE']?.trim()
     ),
@@ -164,9 +165,12 @@ export function crearWorkerIdentidad(input: {
       'TUS_IDENTITY_DOCUMENTS_KEY (32 bytes, base64) is required by the identity worker'
     )
   const env = input.env
+  const groqPool = crearPoolCredencialesGroq(env, {
+    log: (message) => input.log?.('groq.credential.selected', { message }),
+  })
   const vision = config.groqConfigured
     ? new ModeloVisionGroq({
-        apiKey: env['GROQ_API_KEY']!.trim(),
+        pool: groqPool!,
         model: env['GROQ_VISION_MODEL']?.trim() || undefined,
         responseFormat:
           env['GROQ_VISION_RESPONSE_FORMAT']?.trim() === 'json_schema'

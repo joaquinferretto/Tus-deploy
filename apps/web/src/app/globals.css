@@ -1294,6 +1294,98 @@ a {
   border-color: #9b3d31;
 }
 
+.tus-whatsapp-admin {
+  align-items: start;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+}
+
+.tus-whatsapp-conversation {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.tus-whatsapp-conversation[data-selected='true'] {
+  border-left: 3px solid var(--clay);
+  padding-left: 14px;
+}
+
+.tus-whatsapp-conversation:focus-visible {
+  outline: 2px solid var(--clay);
+  outline-offset: 6px;
+}
+
+.tus-whatsapp-detail-meta {
+  border-left: 3px solid var(--moss);
+  display: grid;
+  gap: 8px;
+  margin-top: 24px;
+  padding-left: 16px;
+}
+
+.tus-whatsapp-detail-meta span {
+  color: var(--moss);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tus-whatsapp-detail-meta p {
+  line-height: 1.5;
+  margin: 0;
+}
+
+.tus-whatsapp-messages {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 26px 0 0;
+  max-height: 540px;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.tus-whatsapp-messages li {
+  background: rgba(255, 255, 255, 0.44);
+  border-left: 3px solid var(--line);
+  padding: 12px 14px;
+}
+
+.tus-whatsapp-messages li[data-direction='inbound'] {
+  border-left-color: var(--clay);
+}
+
+.tus-whatsapp-messages li[data-direction='outbound'] {
+  border-left-color: var(--moss);
+}
+
+.tus-whatsapp-messages small {
+  color: var(--moss);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tus-whatsapp-messages p {
+  line-height: 1.45;
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.tus-whatsapp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
 @media (max-width: 720px) {
   .tus-nav-links,
   .tus-surface-tabs {
@@ -1351,6 +1443,18 @@ a {
 
   .tus-support-handoff .tus-support-form {
     margin-top: 28px;
+  }
+
+  .tus-whatsapp-admin {
+    grid-template-columns: 1fr;
+  }
+
+  .tus-whatsapp-actions {
+    display: grid;
+  }
+
+  .tus-whatsapp-actions .tus-action-button {
+    width: 100%;
   }
 
   .tus-prestador-facts,

@@ -20,7 +20,7 @@ navegador sin tocar cola, límite, matching ni gates.
 4. "Enviar para verificar" responde **202 `queued`** de inmediato con el mensaje
    "Tu documentación está siendo verificada. Te avisaremos cuando finalice el proceso." La API nunca abre un navegador.
 5. Worker separado (concurrencia 1), etapa **lectura**: OCR (tesseract.js, MRZ TD1 con dígitos de control) + visión
-   (Groq, `GROQ_API_KEY`, esquema estricto validado con zod; no inventa campos). Ambos lectores deben coincidir en el DNI
+   (Groq, `GROQ_API_KEY_1..6` con fallback legacy `GROQ_API_KEY`, esquema estricto validado con zod; no inventa campos). Ambos lectores deben coincidir en el DNI
    con confianza ≥ 0,6; si no → revisión (`DOCUMENT_READER_MISMATCH`, `DOCUMENT_LOW_CONFIDENCE`, `DOCUMENT_UNREADABLE`) **sin
    gastar una consulta a Nosis**. Un DNI ya verificado por otro prestador → `IDENTITY_ALREADY_VERIFIED` sin consulta.
 6. Etapa **consulta**: FIFO, límite global 7/h, búsqueda **solo por documento** en el Localizador; se leen únicamente
@@ -120,22 +120,22 @@ reauthenticate`, con DNI/CUIL enmascarados. Logs prohibidos: contraseñas, cooki
 
 ## 8. Configuración
 
-| Variable                                                   | Dónde        | Secreta | Nota                                                                                                   |
-| ---------------------------------------------------------- | ------------ | ------: | ------------------------------------------------------------------------------------------------------ |
-| `IDENTITY_PROVIDER`                                        | API y worker |      no | `nosis-browser` (default) o `demo`; `demo` se rechaza con `NODE_ENV=production`; `nosis-api` reservado |
-| `NOSIS_BROWSER_MAX_CHECKS_PER_HOUR`                        | API y worker |      no | 1..7, default 7                                                                                        |
-| `NOSIS_BROWSER_CONCURRENCY`                                | worker       |      no | solo `1`                                                                                               |
-| `NOSIS_BROWSER_HEADLESS`                                   | worker       |      no | `true`                                                                                                 |
-| `NOSIS_BROWSER_AUTO_LOGIN`                                 | worker       |      no | `true`: reingresa solo si no hay desafío externo                                                       |
-| `NOSIS_BROWSER_LOGIN_URL`, `NOSIS_BROWSER_LOCALIZADOR_URL` | worker       |      no | URLs de Mi Nosis de la cuenta operadora                                                                |
-| `NOSIS_BROWSER_DOCUMENTO`, `NOSIS_BROWSER_CLAVE`           | worker       |  **sí** | nunca en Git ni en la API                                                                              |
-| `NOSIS_BROWSER_SELECTORS`                                  | worker       |      no | JSON parcial para ajustar selectores                                                                   |
-| `TUS_NOSIS_SESSION_KEY`                                    | worker       |  **sí** | 32 bytes base64                                                                                        |
-| `TUS_IDENTITY_DOCUMENTS_KEY`                               | API y worker |  **sí** | 32 bytes base64; sin ella las subidas responden 503                                                    |
-| `GROQ_API_KEY`                                             | worker       |  **sí** | lector de visión; sin ella todo va a revisión manual                                                   |
-| `GROQ_VISION_MODEL`                                        | worker       |      no | default `qwen/qwen3.8-27b`                                                                             |
-| `GROQ_VISION_RESPONSE_FORMAT`                              | worker       |      no | `json_object` (default) o `json_schema` si el modelo soporta salida estricta                           |
-| `TESSERACT_LANG_PATH`                                      | worker       |      no | opcional: datos de idioma locales para OCR sin descarga                                                |
+| Variable                                                   | Dónde        | Secreta | Nota                                                                                                       |
+| ---------------------------------------------------------- | ------------ | ------: | ---------------------------------------------------------------------------------------------------------- |
+| `IDENTITY_PROVIDER`                                        | API y worker |      no | `nosis-browser` (default) o `demo`; `demo` se rechaza con `NODE_ENV=production`; `nosis-api` reservado     |
+| `NOSIS_BROWSER_MAX_CHECKS_PER_HOUR`                        | API y worker |      no | 1..7, default 7                                                                                            |
+| `NOSIS_BROWSER_CONCURRENCY`                                | worker       |      no | solo `1`                                                                                                   |
+| `NOSIS_BROWSER_HEADLESS`                                   | worker       |      no | `true`                                                                                                     |
+| `NOSIS_BROWSER_AUTO_LOGIN`                                 | worker       |      no | `true`: reingresa solo si no hay desafío externo                                                           |
+| `NOSIS_BROWSER_LOGIN_URL`, `NOSIS_BROWSER_LOCALIZADOR_URL` | worker       |      no | URLs de Mi Nosis de la cuenta operadora                                                                    |
+| `NOSIS_BROWSER_DOCUMENTO`, `NOSIS_BROWSER_CLAVE`           | worker       |  **sí** | nunca en Git ni en la API                                                                                  |
+| `NOSIS_BROWSER_SELECTORS`                                  | worker       |      no | JSON parcial para ajustar selectores                                                                       |
+| `TUS_NOSIS_SESSION_KEY`                                    | worker       |  **sí** | 32 bytes base64                                                                                            |
+| `TUS_IDENTITY_DOCUMENTS_KEY`                               | API y worker |  **sí** | 32 bytes base64; sin ella las subidas responden 503                                                        |
+| `GROQ_API_KEY` y `GROQ_API_KEY_1..6`                       | worker       |  **sí** | pool de visión; usa las numeradas primero y la legacy como fallback; sin ninguna todo va a revisión manual |
+| `GROQ_VISION_MODEL`                                        | worker       |      no | default `qwen/qwen3.8-27b`                                                                                 |
+| `GROQ_VISION_RESPONSE_FORMAT`                              | worker       |      no | `json_object` (default) o `json_schema` si el modelo soporta salida estricta                               |
+| `TESSERACT_LANG_PATH`                                      | worker       |      no | opcional: datos de idioma locales para OCR sin descarga                                                    |
 
 ## 9. Hosting del worker
 

@@ -60,23 +60,23 @@ Corrección:
 
 ## Controles verificados
 
-| Área | Resultado |
-| --- | --- |
-| Autoridad HTTP | Tenant/actor se derivan de la sesión; headers/body incompatibles se rechazan. |
-| CORS | Allowlist exacta por `CORS_ORIGINS`; no wildcard con credenciales. |
-| Proxy | `TRUST_PROXY_HOPS` acepta solo 1..10; default `false`; nunca `trust proxy=true`. |
-| Rate limit | Bucket global 100/15 min y bucket auth independiente 10/15 min; prefijos Redis separados. |
-| Errores/logs | Envelopes acotados, correlation ID y redacción de URLs/secretos. |
-| Body limits | JSON 1 MB, form 100 KB y upload 10 MB. |
-| Sesiones | Tokens opacos almacenados como digest; expiración, revocación y membership activa. |
-| Password recovery | Respuesta no enumerable, token de un uso, TTL y revocación de sesiones. |
-| OAuth MP | State aleatorio de un uso, PKCE S256, redirect estático y tokens AES-256-GCM ligados al tenant. |
-| Checkout MP | Monto/moneda/comisión derivados del servidor; URL HTTPS limitada a dominios Mercado Pago. |
-| Webhook MP | Firma y timestamp antes de lookup; validación server-to-server; inbox durable e idempotencia. |
-| Refunds | Admin tenant + permiso específico + idempotencia; resultados ambiguos pasan a revisión. |
-| Frontend | No hay secretos en `NEXT_PUBLIC_*`; el retorno del navegador nunca confirma un pago. |
-| PostgreSQL | TLS obligatorio en producción; runtime pooled separado de migración directa; pool auxiliar máximo 2. |
-| Migraciones | Lock Prisma PostgreSQL y readiness exige tablas WEB-09D/E. No se aplicó ninguna migración real. |
+| Área              | Resultado                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| Autoridad HTTP    | Tenant/actor se derivan de la sesión; headers/body incompatibles se rechazan.                        |
+| CORS              | Allowlist exacta por `CORS_ORIGINS`; no wildcard con credenciales.                                   |
+| Proxy             | `TRUST_PROXY_HOPS` acepta solo 1..10; default `false`; nunca `trust proxy=true`.                     |
+| Rate limit        | Bucket global 100/15 min y bucket auth independiente 10/15 min; prefijos Redis separados.            |
+| Errores/logs      | Envelopes acotados, correlation ID y redacción de URLs/secretos.                                     |
+| Body limits       | JSON 1 MB, form 100 KB y upload 10 MB.                                                               |
+| Sesiones          | Tokens opacos almacenados como digest; expiración, revocación y membership activa.                   |
+| Password recovery | Respuesta no enumerable, token de un uso, TTL y revocación de sesiones.                              |
+| OAuth MP          | State aleatorio de un uso, PKCE S256, redirect estático y tokens AES-256-GCM ligados al tenant.      |
+| Checkout MP       | Monto/moneda/comisión derivados del servidor; URL HTTPS limitada a dominios Mercado Pago.            |
+| Webhook MP        | Firma y timestamp antes de lookup; validación server-to-server; inbox durable e idempotencia.        |
+| Refunds           | Admin tenant + permiso específico + idempotencia; resultados ambiguos pasan a revisión.              |
+| Frontend          | No hay secretos en `NEXT_PUBLIC_*`; el retorno del navegador nunca confirma un pago.                 |
+| PostgreSQL        | TLS obligatorio en producción; runtime pooled separado de migración directa; pool auxiliar máximo 2. |
+| Migraciones       | Lock Prisma PostgreSQL y readiness exige tablas WEB-09D/E. No se aplicó ninguna migración real.      |
 
 ## Riesgos residuales
 
@@ -124,7 +124,7 @@ Corrección:
   verificación `rejected` por API (la Web no lo ofrece); cada reintento consume un cupo de 7/h.
 - Privacidad (Medium, decisión legal): el lector de visión envía frente y dorso del DNI a Groq (procesador externo) por
   HTTPS. Revisar términos de retención de Groq y, si corresponde, mencionar el procesamiento por IA en el consentimiento
-  (hoy dice "fuentes externas de validación"). Sin `GROQ_API_KEY` no se envía nada y todo va a revisión manual.
+  (hoy dice "fuentes externas de validación"). Sin `GROQ_API_KEY_1..6` ni `GROQ_API_KEY` no se envía nada y todo va a revisión manual.
 
 ## Gate obligatorio antes de staging
 

@@ -1,5 +1,6 @@
 import rateLimit from 'express-rate-limit'
 import RedisStore from 'rate-limit-redis'
+import { WEBHOOK_PATH_PREFIXES } from './body-limits.ts'
 
 function createRedisStore(prefix: string): RedisStore | undefined {
   const useRedisStore = process.env['NATIVE_PROFILE'] !== '1' && Boolean(process.env['REDIS_URL'])
@@ -27,9 +28,21 @@ export const rateLimitMiddleware = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // Skip rate limiting for health checks
-    return req.path === '/health' || req.path === '/ready'
+    // Skip rate limiting for health checks. Signed provider webhooks (Meta, Mercado Pago) come
+    // from a few provider IPs in bursts: they use `webhookRateLimitMiddleware` instead.
+    return req.path === '/health' || req.path === '/ready' || WEBHOOK_PATH_PREFIXES.some((prefix) => req.path.startsWith(prefix))
   },
+})
+
+const webhookRedisStore = createRedisStore('rl:webhooks:')
+
+export const webhookRateLimitMiddleware = rateLimit({
+  ...(webhookRedisStore ? { store: webhookRedisStore } : {}),
+  windowMs: 60 * 1000,
+  max: 600,
+  message: { error: 'Too many webhook requests.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 })
 
 const authRedisStore = createRedisStore('rl:auth:')

@@ -20,9 +20,7 @@ import {
   isSupportedWhatsAppAction,
   splitCartIntoCommitments,
 } from '../../apps/api/src/tus/domain/index.ts'
-import {
-  createTusApplication,
-} from '../../apps/api/src/tus/composition/index.ts'
+import { createTusApplication } from '../../apps/api/src/tus/composition/index.ts'
 import {
   createTusIntegrationRouter,
   TusActivationController,
@@ -56,16 +54,16 @@ const tenantContext = {
 test('Stage 1 publication accepts approved cohorts and rejects regulated healthcare', () => {
   assert.deepEqual(
     evaluateStage1Publication({ cohort: 'beauty-personal-care', regulatedHealthcare: false }),
-    { allowed: true, reason: 'approved_stage_1_cohort' },
+    { allowed: true, reason: 'approved_stage_1_cohort' }
   )
   assert.deepEqual(
     evaluateStage1Publication({ cohort: 'beauty-personal-care', regulatedHealthcare: true }),
-    { allowed: false, reason: 'regulated_vertical_excluded' },
+    { allowed: false, reason: 'regulated_vertical_excluded' }
   )
-  assert.deepEqual(
-    evaluateStage1Publication({ cohort: 'rentals', regulatedHealthcare: false }),
-    { allowed: false, reason: 'cohort_not_enabled' },
-  )
+  assert.deepEqual(evaluateStage1Publication({ cohort: 'rentals', regulatedHealthcare: false }), {
+    allowed: false,
+    reason: 'cohort_not_enabled',
+  })
 })
 
 test('mixed carts create independent product and service commitments', () => {
@@ -74,12 +72,27 @@ test('mixed carts create independent product and service commitments', () => {
     cartId: 'cart-1',
     createdAt: '2026-01-01T00:00:00.000Z',
     lines: [
-      { lineId: 'line-product', context: 'product', merchantId: 'merchant-a', amount: 1200, currency: 'ARS' },
-      { lineId: 'line-service', context: 'service', merchantId: 'merchant-a', amount: 800, currency: 'ARS' },
+      {
+        lineId: 'line-product',
+        context: 'product',
+        merchantId: 'merchant-a',
+        amount: 1200,
+        currency: 'ARS',
+      },
+      {
+        lineId: 'line-service',
+        context: 'service',
+        merchantId: 'merchant-a',
+        amount: 800,
+        currency: 'ARS',
+      },
     ],
   })
 
-  assert.deepEqual(commitments.map((commitment) => commitment.context), ['product', 'service'])
+  assert.deepEqual(
+    commitments.map((commitment) => commitment.context),
+    ['product', 'service']
+  )
   assert.notEqual(commitments[0].commitmentId, commitments[1].commitmentId)
   assert.ok(commitments.every((commitment) => commitment.status === 'pending'))
   assert.equal(commitments[0].tenantId, 'tenant-a')
@@ -92,13 +105,21 @@ test('tenant authorization denies foreign commitments without exposing them', ()
     ...tenantContext,
     cartId: 'cart-2',
     createdAt: '2026-01-01T00:00:00.000Z',
-    lines: [{ lineId: 'line-1', context: 'product', merchantId: 'merchant-a', amount: 100, currency: 'ARS' }],
+    lines: [
+      {
+        lineId: 'line-1',
+        context: 'product',
+        merchantId: 'merchant-a',
+        amount: 100,
+        currency: 'ARS',
+      },
+    ],
   })
 
   assert.deepEqual(authorizeCommitmentAccess(tenantContext, commitment), { allowed: true })
   assert.deepEqual(
     authorizeCommitmentAccess({ ...tenantContext, tenantId: 'tenant-b' }, commitment),
-    { allowed: false, reason: 'tenant_mismatch' },
+    { allowed: false, reason: 'tenant_mismatch' }
   )
 })
 
@@ -117,7 +138,7 @@ test('release requires completion evidence, supports confirmation, and rejects c
       completionEvidence: evidence,
       now: '2026-01-01T11:59:59.000Z',
     }),
-    { eligible: false, reason: 'service_release_window_pending' },
+    { eligible: false, reason: 'service_release_window_pending' }
   )
   assert.deepEqual(
     esElegibleParaLiberacion({
@@ -125,7 +146,7 @@ test('release requires completion evidence, supports confirmation, and rejects c
       completionEvidence: evidence,
       now: '2026-01-01T12:00:00.000Z',
     }),
-    { eligible: true, reason: 'service_release_window_elapsed' },
+    { eligible: true, reason: 'service_release_window_elapsed' }
   )
   assert.deepEqual(
     esElegibleParaLiberacion({
@@ -133,7 +154,7 @@ test('release requires completion evidence, supports confirmation, and rejects c
       completionEvidence: { ...evidence, kind: 'check-in' },
       now: '2026-01-02T00:00:00.000Z',
     }),
-    { eligible: false, reason: 'completion_evidence_required' },
+    { eligible: false, reason: 'completion_evidence_required' }
   )
   assert.deepEqual(
     esElegibleParaLiberacion({
@@ -142,7 +163,7 @@ test('release requires completion evidence, supports confirmation, and rejects c
       customerConfirmedAt: '2026-01-01T01:00:00.000Z',
       now: '2026-01-01T01:00:01.000Z',
     }),
-    { eligible: true, reason: 'customer_confirmed' },
+    { eligible: true, reason: 'customer_confirmed' }
   )
 })
 
@@ -171,7 +192,7 @@ test('disputes and risk holds freeze release regardless of elapsed time', () => 
       dispute,
       now: '2026-01-03T00:00:00.000Z',
     }),
-    { eligible: false, reason: 'absolute_freeze' },
+    { eligible: false, reason: 'absolute_freeze' }
   )
   assert.deepEqual(
     esElegibleParaLiberacion({
@@ -181,7 +202,7 @@ test('disputes and risk holds freeze release regardless of elapsed time', () => 
       riskHold: true,
       now: '2026-01-03T00:00:00.000Z',
     }),
-    { eligible: false, reason: 'absolute_freeze' },
+    { eligible: false, reason: 'absolute_freeze' }
   )
 })
 
@@ -207,7 +228,7 @@ test('support cases retain the affected commitment linkage and open incident sta
       commitmentId: 'commitment-product',
       tenantId: 'tenant-a',
       status: 'open',
-    },
+    }
   )
 })
 
@@ -245,7 +266,7 @@ test('WhatsApp allows discovery and secure payment handoff but rejects unsupport
   })
   assert.throws(
     () => createMercadoPagoHandoff({ tenantId: 'tenant-a', checkoutUrl: 'not-a-url' }),
-    /HTTPS|redirect|URL/i,
+    /HTTPS|redirect|URL/i
   )
 })
 
@@ -261,7 +282,7 @@ test('readiness gates fail closed until every required production gate is ready'
       aws: true,
       groqMigration: true,
     }),
-    { enabled: false, failedGates: ['posPilot'] },
+    { enabled: false, failedGates: ['posPilot'] }
   )
   assert.deepEqual(
     evaluarRequisitosHabilitacion({
@@ -274,7 +295,7 @@ test('readiness gates fail closed until every required production gate is ready'
       aws: true,
       groqMigration: true,
     }),
-    { enabled: true, failedGates: [] },
+    { enabled: true, failedGates: [] }
   )
 })
 
@@ -290,7 +311,7 @@ test('readiness gates require the AWS target and Groq migration backlog before a
       aws: true,
       groqMigration: false,
     }),
-    { enabled: false, failedGates: ['groqMigration'] },
+    { enabled: false, failedGates: ['groqMigration'] }
   )
 })
 
@@ -312,7 +333,12 @@ test('provider adapters map signed webhook state into tenant-scoped audit/outbox
     action: 'payment.approved',
     payload: { data: { id: 'payment-1' }, type: 'payment', action: 'payment.approved' },
     context: { tenantId: 'tenant-a', actorId: 'provider', correlationId: 'corr-mp' },
-    signature: createMercadoPagoSignature('mp-secret', 'mp-event-1', 'mp-request-1', paymentTimestamp),
+    signature: createMercadoPagoSignature(
+      'mp-secret',
+      'mp-event-1',
+      'mp-request-1',
+      paymentTimestamp
+    ),
   }
   const paymentResult = await mercadoPago.receiveWebhook(paymentEvent)
 
@@ -342,7 +368,12 @@ test('provider adapters map signed webhook state into tenant-scoped audit/outbox
     messageType: 'text',
     text: 'search beauty',
     context: { tenantId: 'tenant-a', actorId: 'whatsapp', correlationId: 'corr-wa' },
-    signature: createWhatsAppSignature('wa-secret', 'wa-event-1', 'wa-request-1', whatsappTimestamp),
+    signature: createWhatsAppSignature(
+      'wa-secret',
+      'wa-event-1',
+      'wa-request-1',
+      whatsappTimestamp
+    ),
   }
   const whatsappResult = await whatsapp.receiveWebhook(whatsappEvent)
 
@@ -357,7 +388,12 @@ test('provider adapters map signed webhook state into tenant-scoped audit/outbox
     eventId: 'wa-event-denied',
     requestId: 'wa-request-denied',
     from: '+549999',
-    signature: createWhatsAppSignature('wa-secret', 'wa-event-denied', 'wa-request-denied', whatsappTimestamp),
+    signature: createWhatsAppSignature(
+      'wa-secret',
+      'wa-event-denied',
+      'wa-request-denied',
+      whatsappTimestamp
+    ),
   }
   const deniedResult = await whatsapp.receiveWebhook(deniedEvent)
 
@@ -381,9 +417,12 @@ test('activation gates guard release jobs and rollback emits a compensating entr
 
   await assert.rejects(
     activation.enqueueReleaseJob(releaseJob),
-    (error) => error.code === 'TUS_ACTIVATION_BLOCKED',
+    (error) => error.code === 'TUS_ACTIVATION_BLOCKED'
   )
-  assert.deepEqual(activation.status(), { enabled: false, failedGates: ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'posPilot', 'aws', 'groqMigration'] })
+  assert.deepEqual(activation.status(), {
+    enabled: false,
+    failedGates: ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'posPilot', 'aws', 'groqMigration'],
+  })
 
   assert.deepEqual(
     activation.evaluate({
@@ -396,9 +435,12 @@ test('activation gates guard release jobs and rollback emits a compensating entr
       aws: true,
       groqMigration: true,
     }),
-    { enabled: true, failedGates: [] },
+    { enabled: true, failedGates: [] }
   )
-  assert.deepEqual(await activation.enqueueReleaseJob(releaseJob), { status: 'queued', ...releaseJob })
+  assert.deepEqual(await activation.enqueueReleaseJob(releaseJob), {
+    status: 'queued',
+    ...releaseJob,
+  })
 
   const compensation = activation.rollback('provider-readiness-regressed')
   assert.deepEqual(compensation, {
@@ -416,9 +458,13 @@ test('server mounts signed provider webhook routes and keeps invalid requests fa
   const paymentStore = new InMemoryMercadoPagoStore()
   const paymentProvider = new DeterministicMercadoPagoProvider()
   paymentProvider.setPayment('payment-route', { amount: 500, currency: 'ARS', status: 'approved' })
-  const mercadoPago = new MercadoPagoAdapter({ secret: 'route-secret', store: paymentStore, provider: paymentProvider })
-  const router = createTusIntegrationRouter({ mercadoPago })
-  const app = createApp({ tusRouter: router })
+  const mercadoPago = new MercadoPagoAdapter({
+    secret: 'route-secret',
+    store: paymentStore,
+    provider: paymentProvider,
+  })
+  const router = createTusIntegrationRouter({ mercadoPago, providerActionsEnabled: true })
+  const app = createApp({ tusRouter: router, tusRoutesEnabled: true })
   const server = app.listen(0)
 
   try {
@@ -443,7 +489,9 @@ test('server mounts signed provider webhook routes and keeps invalid requests fa
     assert.equal(response.status, 422)
     assert.deepEqual(await response.json(), { status: 'rejected', reason: 'invalid_signature' })
   } finally {
-    await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    )
   }
 })
 
@@ -457,17 +505,36 @@ test('TUS application orchestrates mixed checkout with tenant-scoped audit and o
     recordId: 'idempotency-cart-application-1',
     expiresAt: Date.parse('2026-01-01T00:05:00.000Z'),
     lines: [
-      { lineId: 'product-1', context: 'product', merchantId: 'merchant-a', amount: 1500, currency: 'ARS' },
-      { lineId: 'service-1', context: 'service', merchantId: 'merchant-a', amount: 2200, currency: 'ARS' },
+      {
+        lineId: 'product-1',
+        context: 'product',
+        merchantId: 'merchant-a',
+        amount: 1500,
+        currency: 'ARS',
+      },
+      {
+        lineId: 'service-1',
+        context: 'service',
+        merchantId: 'merchant-a',
+        amount: 2200,
+        currency: 'ARS',
+      },
     ],
   }
 
   const result = await application.checkout(input)
 
   assert.equal(result.status, 'executed')
-  assert.deepEqual(result.commitments.map((commitment) => commitment.context), ['product', 'service'])
-  assert.ok(result.commitments.every((commitment) => commitment.tenantId === tenantContext.tenantId))
-  assert.ok(result.auditReferences.every((reference) => reference.tenantId === tenantContext.tenantId))
+  assert.deepEqual(
+    result.commitments.map((commitment) => commitment.context),
+    ['product', 'service']
+  )
+  assert.ok(
+    result.commitments.every((commitment) => commitment.tenantId === tenantContext.tenantId)
+  )
+  assert.ok(
+    result.auditReferences.every((reference) => reference.tenantId === tenantContext.tenantId)
+  )
   assert.equal(application.outbox.list(tenantContext.tenantId).length, 1)
 })
 
@@ -481,7 +548,13 @@ test('TUS application replays an idempotent checkout without duplicating commitm
     recordId: 'idempotency-cart-application-retry',
     expiresAt: Date.parse('2026-01-01T00:05:00.000Z'),
     lines: [
-      { lineId: 'product-retry', context: 'product', merchantId: 'merchant-a', amount: 300, currency: 'ARS' },
+      {
+        lineId: 'product-retry',
+        context: 'product',
+        merchantId: 'merchant-a',
+        amount: 300,
+        currency: 'ARS',
+      },
     ],
   }
 
@@ -495,7 +568,9 @@ test('TUS application replays an idempotent checkout without duplicating commitm
 })
 
 test('TUS application enforces tenant isolation for commitment reads and configurable release policy', async () => {
-  const application = createTusApplication({ releasePolicy: { localReleaseAfterMs: 90 * 60 * 1000 } })
+  const application = createTusApplication({
+    releasePolicy: { localReleaseAfterMs: 90 * 60 * 1000 },
+  })
   const input = {
     ...tenantContext,
     cartId: 'cart-application-isolation',
@@ -504,7 +579,13 @@ test('TUS application enforces tenant isolation for commitment reads and configu
     recordId: 'idempotency-cart-application-isolation',
     expiresAt: Date.parse('2026-01-01T00:05:00.000Z'),
     lines: [
-      { lineId: 'local-product', context: 'product', merchantId: 'merchant-a', amount: 500, currency: 'ARS' },
+      {
+        lineId: 'local-product',
+        context: 'product',
+        merchantId: 'merchant-a',
+        amount: 500,
+        currency: 'ARS',
+      },
     ],
   }
 
@@ -512,8 +593,11 @@ test('TUS application enforces tenant isolation for commitment reads and configu
   const commitmentId = created.commitments[0].commitmentId
 
   assert.deepEqual(
-    await application.getCommitment({ tenantId: 'tenant-b', actorId: 'actor-b', correlationId: 'corr-b' }, commitmentId),
-    { status: 'forbidden' },
+    await application.getCommitment(
+      { tenantId: 'tenant-b', actorId: 'actor-b', correlationId: 'corr-b' },
+      commitmentId
+    ),
+    { status: 'forbidden' }
   )
   assert.deepEqual(
     application.evaluateRelease({
@@ -528,7 +612,7 @@ test('TUS application enforces tenant isolation for commitment reads and configu
       }),
       now: '2026-01-01T01:30:00.000Z',
     }),
-    { eligible: true, reason: 'local_policy_elapsed' },
+    { eligible: true, reason: 'local_policy_elapsed' }
   )
   assert.deepEqual(
     application.evaluateRelease({
@@ -544,7 +628,7 @@ test('TUS application enforces tenant isolation for commitment reads and configu
       riskHold: true,
       now: '2026-01-02T00:00:00.000Z',
     }),
-    { eligible: false, reason: 'absolute_freeze' },
+    { eligible: false, reason: 'absolute_freeze' }
   )
 })
 
@@ -558,7 +642,13 @@ test('TUS application rejects idempotency hash conflicts and returns only author
     recordId: 'idempotency-cart-application-conflict',
     expiresAt: Date.parse('2026-01-01T00:05:00.000Z'),
     lines: [
-      { lineId: 'service-conflict', context: 'service', merchantId: 'merchant-a', amount: 700, currency: 'ARS' },
+      {
+        lineId: 'service-conflict',
+        context: 'service',
+        merchantId: 'merchant-a',
+        amount: 700,
+        currency: 'ARS',
+      },
     ],
   }
 
@@ -568,7 +658,7 @@ test('TUS application rejects idempotency hash conflicts and returns only author
   assert.equal(conflict.status, 'conflict')
   assert.deepEqual(
     await application.getCommitment(tenantContext, created.commitments[0].commitmentId),
-    { status: 'found', commitment: created.commitments[0] },
+    { status: 'found', commitment: created.commitments[0] }
   )
 })
 
@@ -609,9 +699,21 @@ test('web client keeps discovery, merchant, customer, and WhatsApp handoff reque
     },
   })
 
-  await client.discover({ tenantId: 'tenant-a', actorId: 'customer-a', correlationId: 'corr-discovery' })
-  await client.merchantOperations({ tenantId: 'tenant-a', actorId: 'merchant-a', correlationId: 'corr-merchant' })
-  await client.customerCommitments({ tenantId: 'tenant-a', actorId: 'customer-a', correlationId: 'corr-commitments' })
+  await client.discover({
+    tenantId: 'tenant-a',
+    actorId: 'customer-a',
+    correlationId: 'corr-discovery',
+  })
+  await client.merchantOperations({
+    tenantId: 'tenant-a',
+    actorId: 'merchant-a',
+    correlationId: 'corr-merchant',
+  })
+  await client.customerCommitments({
+    tenantId: 'tenant-a',
+    actorId: 'customer-a',
+    correlationId: 'corr-commitments',
+  })
   const handoff = await client.whatsappPaymentHandoff({
     tenantId: 'tenant-a',
     actorId: 'customer-a',
@@ -620,12 +722,23 @@ test('web client keeps discovery, merchant, customer, and WhatsApp handoff reque
     confirmationId: 'confirmation-1',
   })
 
-  assert.deepEqual(requests.map(({ method, path, tenantId }) => ({ method, path, tenantId })), [
-    { method: 'GET', path: '/tus/v1/marketplace/discovery', tenantId: 'tenant-a' },
-    { method: 'GET', path: '/tus/v1/marketplace/merchant/operations', tenantId: 'tenant-a' },
-    { method: 'GET', path: '/tus/v1/marketplace/customer/commitments', tenantId: 'tenant-a' },
-    { method: 'POST', path: '/tus/v1/whatsapp/handoff', tenantId: 'tenant-a' },
-  ])
+  assert.deepEqual(
+    requests.map(({ method, path, tenantId }) => ({ method, path, tenantId })),
+    [
+      { method: 'GET', path: '/tus/v1/mercado-servicios/discovery', tenantId: 'tenant-a' },
+      {
+        method: 'GET',
+        path: '/tus/v1/mercado-servicios/merchant/operations',
+        tenantId: 'tenant-a',
+      },
+      {
+        method: 'GET',
+        path: '/tus/v1/mercado-servicios/customer/commitments',
+        tenantId: 'tenant-a',
+      },
+      { method: 'POST', path: '/tus/v1/whatsapp/handoff', tenantId: 'tenant-a' },
+    ]
+  )
   assert.equal(requests[3].body.commitmentId, 'commitment-1')
   assert.equal(handoff.credentialsCollected, false)
 })
@@ -637,10 +750,14 @@ test('mobile POS queues manual operations offline and preserves conflicts for ex
     {
       async request(input) {
         sent.push(input)
-        return { status: 'conflict', operationId: input.operation.operationId, reason: 'server_version_changed' }
+        return {
+          status: 'conflict',
+          operationId: input.operation.operationId,
+          reason: 'server_version_changed',
+        }
       },
     },
-    { isOnline: () => online },
+    { isOnline: () => online }
   )
 
   const queued = await client.recordManualOperation({
@@ -663,7 +780,9 @@ test('mobile POS queues manual operations offline and preserves conflicts for ex
 
   online = true
   const sync = await client.syncPendingOperations()
-  assert.deepEqual(sync, [{ status: 'conflict', operationId: 'pos-op-1', reason: 'server_version_changed' }])
+  assert.deepEqual(sync, [
+    { status: 'conflict', operationId: 'pos-op-1', reason: 'server_version_changed' },
+  ])
   assert.equal(client.pendingOperations()[0].operationId, 'pos-op-1')
   assert.equal(sent[0].path, '/tus/v1/pos/manual-operations')
 
@@ -679,30 +798,40 @@ test('web fetch transport forwards tenant context without accepting payment cred
   const calls = []
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options })
-    return new Response(JSON.stringify({
-      contractVersion: TUS_CONTRACT_VERSION,
-      provider: 'mercado-pago',
-      tenantId: 'tenant-a',
-      redirectUrl: 'https://www.mercadopago.com.ar/checkout/v1/redirect',
-      credentialsCollected: false,
-    }), { status: 200, headers: { 'content-type': 'application/json' } })
+    return new Response(
+      JSON.stringify({
+        contractVersion: TUS_CONTRACT_VERSION,
+        provider: 'mercado-pago',
+        tenantId: 'tenant-a',
+        redirectUrl: 'https://www.mercadopago.com.ar/checkout/v1/redirect',
+        credentialsCollected: false,
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    )
   }
 
   try {
+    const previousApiUrl = process.env.NEXT_PUBLIC_API_URL
+    process.env.NEXT_PUBLIC_API_URL = 'http://localhost:3101'
     const { createTusWebFetchTransport } = await import('../../apps/web/src/lib/tus-client.ts')
-    const response = await createTusWebFetchTransport().request({
-      method: 'POST',
-      path: '/tus/v1/whatsapp/handoff',
-      tenantId: 'tenant-a',
-      actorId: 'customer-a',
-      correlationId: 'corr-fetch',
-      body: { type: 'handoff', commitmentId: 'commitment-1' },
-    })
+    try {
+      const response = await createTusWebFetchTransport().request({
+        method: 'POST',
+        path: '/tus/v1/whatsapp/handoff',
+        tenantId: 'tenant-a',
+        actorId: 'customer-a',
+        correlationId: 'corr-fetch',
+        body: { type: 'handoff', commitmentId: 'commitment-1' },
+      })
 
-    assert.equal(response.credentialsCollected, false)
-    assert.equal(calls[0].url, 'http://localhost:3101/tus/v1/whatsapp/handoff')
-    assert.equal(calls[0].options.headers['X-Tenant-Id'], 'tenant-a')
-    assert.equal(calls[0].options.headers.Authorization, undefined)
+      assert.equal(response.credentialsCollected, false)
+      assert.equal(calls[0].url, 'http://localhost:3101/tus/v1/whatsapp/handoff')
+      assert.equal(calls[0].options.headers['X-Tenant-Id'], 'tenant-a')
+      assert.equal(calls[0].options.headers.Authorization, undefined)
+    } finally {
+      if (previousApiUrl === undefined) delete process.env.NEXT_PUBLIC_API_URL
+      else process.env.NEXT_PUBLIC_API_URL = previousApiUrl
+    }
   } finally {
     globalThis.fetch = originalFetch
   }

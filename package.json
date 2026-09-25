@@ -18,7 +18,10 @@
     "clean": "turbo run clean",
     "tus:identity:worker": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/identidad/cli.ts worker",
     "tus:identity:nosis-login": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/identidad/cli.ts nosis-login",
-    "tus:identity:nosis-check": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/identidad/cli.ts nosis-check"
+    "tus:identity:nosis-check": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/identidad/cli.ts nosis-check",
+    "tus:rag:ingest": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/asistente/cli.ts ingest",
+    "tus:rag:search": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/asistente/cli.ts search",
+    "tus:rag:stats": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/asistente/cli.ts stats"
   },
   "devDependencies": {
     "prettier": "^3.2.5",

@@ -1,4 +1,5 @@
 import * as z from 'zod/v4'
+import { crearPoolCredencialesGroq, type GroqCredentialPool } from '../../providers/groq/index.ts'
 import { normalizarDni, type LecturaDocumento } from './modelo.ts'
 
 // Document readers only produce CANDIDATE data. Neither reader verifies identity.
@@ -215,7 +216,8 @@ const GROQ_MAX_IMAGENES = 3
 const GROQ_MAX_BYTES_REQUEST = 20 * 1024 * 1024
 
 export interface OpcionesVisionGroq {
-  apiKey: string
+  apiKey?: string
+  pool?: GroqCredentialPool
   model?: string
   // `json_schema` (strict structured outputs) only on models that support it; `json_object`
   // (JSON mode) otherwise. Either way the answer is validated with zod afterwards.
@@ -228,8 +230,16 @@ export interface OpcionesVisionGroq {
 // Groq vision (OpenAI-compatible chat completions) with the GROQ_API_KEY. No SDK: plain fetch.
 // The images travel as base64 data URLs; nothing is logged.
 export class ModeloVisionGroq implements ModeloVisionDocumento {
+  private readonly pool: GroqCredentialPool
+
   constructor(private readonly options: OpcionesVisionGroq) {
-    if (!options.apiKey) throw new Error('GROQ_API_KEY is required for the vision reader')
+    const pool =
+      options.pool ??
+      (options.apiKey
+        ? crearPoolCredencialesGroq({ GROQ_API_KEY: options.apiKey }, { fetch: options.fetch })
+        : null)
+    if (!pool) throw new Error('GROQ_API_KEY is required for the vision reader')
+    this.pool = pool
   }
 
   async extraer(images: ImagenParaLectura[]): Promise<LecturaVisionModelo | null> {
@@ -259,15 +269,15 @@ export class ModeloVisionGroq implements ModeloVisionDocumento {
       ],
     })
     if (Buffer.byteLength(body) > GROQ_MAX_BYTES_REQUEST) return null
-    const fetchImpl = this.options.fetch ?? fetch
-    const response = await fetchImpl(this.options.endpoint ?? GROQ_CHAT_COMPLETIONS_URL, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${this.options.apiKey}`,
-        'content-type': 'application/json',
-      },
-      body,
-      signal: AbortSignal.timeout(this.options.timeoutMs ?? 60_000),
+    const response = await this.pool.request({
+      url: this.options.endpoint ?? GROQ_CHAT_COMPLETIONS_URL,
+      idempotent: true,
+      createInit: () => ({
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(this.options.timeoutMs ?? 60_000),
+      }),
     })
     // Provider errors are reported by status only (the body may echo request data).
     if (!response.ok) throw new Error(`groq vision request failed with status ${response.status}`)

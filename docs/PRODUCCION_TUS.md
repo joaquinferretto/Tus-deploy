@@ -10,11 +10,11 @@ Este documento es la guía práctica. El detalle técnico de pagos está en `doc
 
 ## 1. Arquitectura de despliegue recomendada
 
-| Pieza      | Destino de staging             | Configuración en el repo                                      |
-| ---------- | ------------------------------ | ------------------------------------------------------------- |
-| Web        | Vercel                        | `vercel.json`, `apps/web/next.config.js`                       |
-| API        | Hostinger Node.js, Node 22    | comandos reproducibles de §3; `/health` y `/ready`             |
-| PostgreSQL | PostgreSQL 16 administrado    | `DATABASE_URL` pooled + `DIRECT_URL` directa; Prisma forward-only |
+| Pieza      | Destino de staging         | Configuración en el repo                                          |
+| ---------- | -------------------------- | ----------------------------------------------------------------- |
+| Web        | Vercel                     | `vercel.json`, `apps/web/next.config.js`                          |
+| API        | Hostinger Node.js, Node 22 | comandos reproducibles de §3; `/health` y `/ready`                |
+| PostgreSQL | PostgreSQL 16 administrado | `DATABASE_URL` pooled + `DIRECT_URL` directa; Prisma forward-only |
 
 No se usan Docker ni Terraform en este perfil. Nada de esto se aplicó automáticamente: no se creó infraestructura paga ni
 se desplegó.
@@ -132,7 +132,7 @@ Para verificar localmente: `NEXT_DISABLE_STANDALONE=true pnpm --filter @factory/
    `TUS_MERCADOPAGO_ENABLED=false`.
 2. Cuentas del equipo: `POST /auth/register` crea cuenta y tenant, pero **el backend no envía emails todavía**
    (`InMemoryEmailSender`) y el login exige email verificado. Hasta integrar un proveedor de correo, un operador puede
-    verificar cuentas **del equipo** con SQL auditado solo sobre la base de staging:
+   verificar cuentas **del equipo** con SQL auditado solo sobre la base de staging:
 
    ```sql
    UPDATE "Account" a SET "emailVerifiedAt" = now(), "updatedAt" = now()
@@ -221,11 +221,11 @@ PostgreSQL 16 descartable y registrarse con el commit exacto.
 El código usa PostgreSQL estándar, Prisma y `pg`; no usa APIs de Supabase, Neon ni Render. Los tres perfiles son válidos
 solo si el target ofrece PostgreSQL 16, TLS, `vector` y conexiones Prisma:
 
-| Proveedor | `DATABASE_URL` runtime | `DIRECT_URL` Prisma | Consideración |
-|---|---|---|---|
-| Supabase | Pooler de sesión para una red IPv4 o conexión directa en una red IPv6 | Conexión directa | Migraciones, backups y restore deben usar la conexión directa. Ver [Supabase Connect](https://supabase.com/docs/guides/database/connecting-to-postgres). |
-| Neon | URL pooled (`-pooler`) para la API persistente | URL directa sin `-pooler` | Prisma Migrate requiere conexión directa. Ver [Neon connection methods](https://neon.com/docs/connect/choose-connection). |
-| Render PostgreSQL | URL interna si API y DB comparten región, o externa desde Hostinger | URL directa/externa apta para DDL | Confirmar versión 16 y extensión en el dashboard. Ver [Render Postgres](https://render.com/docs/postgresql-creating-connecting). |
+| Proveedor         | `DATABASE_URL` runtime                                                | `DIRECT_URL` Prisma               | Consideración                                                                                                                                            |
+| ----------------- | --------------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Supabase          | Pooler de sesión para una red IPv4 o conexión directa en una red IPv6 | Conexión directa                  | Migraciones, backups y restore deben usar la conexión directa. Ver [Supabase Connect](https://supabase.com/docs/guides/database/connecting-to-postgres). |
+| Neon              | URL pooled (`-pooler`) para la API persistente                        | URL directa sin `-pooler`         | Prisma Migrate requiere conexión directa. Ver [Neon connection methods](https://neon.com/docs/connect/choose-connection).                                |
+| Render PostgreSQL | URL interna si API y DB comparten región, o externa desde Hostinger   | URL directa/externa apta para DDL | Confirmar versión 16 y extensión en el dashboard. Ver [Render Postgres](https://render.com/docs/postgresql-creating-connecting).                         |
 
 La API solo lee `DATABASE_URL`. `DIRECT_URL` es para `prisma validate`, `prisma migrate deploy` e introspección/release;
 no debe imprimirse ni ser necesaria para requests. Si el proveedor no separa endpoints, se puede usar la misma URL en ambas
@@ -524,15 +524,15 @@ corepack pnpm --filter @factory/api prisma:migrate:deploy
 
 Crear una Node.js app desde la raíz del repositorio, con Node `22.x`. La configuración exacta del panel debe ser:
 
-| Campo | Valor |
-|---|---|
+| Campo             | Valor                                                                    |
+| ----------------- | ------------------------------------------------------------------------ |
 | Working directory | raíz del repositorio, donde viven `package.json` y `pnpm-workspace.yaml` |
-| Install | `corepack pnpm install --frozen-lockfile` |
-| Build | `corepack pnpm --filter @factory/api... build` |
-| Release manual | `corepack pnpm --filter @factory/api prisma:migrate:deploy` |
-| Start | `corepack pnpm --filter @factory/api start` |
-| Liveness | `/health` |
-| Readiness | `/ready`, solo si el panel puede retirarlo del tráfico cuando no sea 200 |
+| Install           | `corepack pnpm install --frozen-lockfile`                                |
+| Build             | `corepack pnpm --filter @factory/api... build`                           |
+| Release manual    | `corepack pnpm --filter @factory/api prisma:migrate:deploy`              |
+| Start             | `corepack pnpm --filter @factory/api start`                              |
+| Liveness          | `/health`                                                                |
+| Readiness         | `/ready`, solo si el panel puede retirarlo del tráfico cuando no sea 200 |
 
 Hostinger debe proporcionar `PORT`; la API usa `PORT` en production y `API_PORT`/`PORT`/`3101` en local. No fijar un
 puerto público en el start command. Medir la cadena de proxies antes de fijar `TRUST_PROXY_HOPS`; nunca usar `true`.
@@ -571,15 +571,15 @@ Configurar inicialmente `NATIVE_PROFILE=1`, `TUS_ROUTES_ENABLED=true`, `TUS_PROV
 
 ### 12.7 Matriz inicial de flags
 
-| Flag | Staging inicial | Producción inicial | Razón |
-|---|---:|---:|---|
-| `TUS_ROUTES_ENABLED` | `true` | `false` hasta evidencia | habilita el negocio TUS sin habilitar providers |
-| `TUS_PROVIDER_ACTIONS_ENABLED` | `false` | `false` | monta webhooks/OAuth de providers externos; no es necesario para el flujo sin pagos |
-| `TUS_MERCADOPAGO_ENABLED` | `false` | `false` | dinero y OAuth externos apagados |
-| `TUS_RELEASE_JOBS_ENABLED` | `false` | `false` | no hay evidencia de workers/leases |
-| `TUS_FLEET_JOBS_ENABLED` | `false` | `false` | no activar operaciones de flota |
-| `TUS_WHATSAPP_ENABLED` | `false` | `false` | provider externo no verificado |
-| `TUS_AWS_ENABLED` | `false` | `false` | cloud/object storage no requerido por este staging |
+| Flag                           | Staging inicial |      Producción inicial | Razón                                                                               |
+| ------------------------------ | --------------: | ----------------------: | ----------------------------------------------------------------------------------- |
+| `TUS_ROUTES_ENABLED`           |          `true` | `false` hasta evidencia | habilita el negocio TUS sin habilitar providers                                     |
+| `TUS_PROVIDER_ACTIONS_ENABLED` |         `false` |                 `false` | monta webhooks/OAuth de providers externos; no es necesario para el flujo sin pagos |
+| `TUS_MERCADOPAGO_ENABLED`      |         `false` |                 `false` | dinero y OAuth externos apagados                                                    |
+| `TUS_RELEASE_JOBS_ENABLED`     |         `false` |                 `false` | no hay evidencia de workers/leases                                                  |
+| `TUS_FLEET_JOBS_ENABLED`       |         `false` |                 `false` | no activar operaciones de flota                                                     |
+| `TUS_WHATSAPP_ENABLED`         |         `false` |                 `false` | provider externo no verificado                                                      |
+| `TUS_AWS_ENABLED`              |         `false` |                 `false` | cloud/object storage no requerido por este staging                                  |
 
 `TUS_PROVIDER_ACTIONS_ENABLED=false` no bloquea auth, tenancy, marketplace, trabajos, agenda ni la preview de pago; solo
 deja fuera las rutas de integración Mercado Pago/WhatsApp. No confundir flags con autorización: los permisos siguen siendo
@@ -587,26 +587,26 @@ server-derived y tenant-scoped.
 
 ## 13. Variables para cargar
 
-| Plataforma | Variable | Obligatoria ahora | Secreta |
-|---|---|---:|---:|
-| Hostinger API | `NODE_ENV=production` | sí | no |
-| Hostinger API | `DATABASE_URL` pooled | sí | sí |
-| Hostinger release | `DIRECT_URL` directa | solo migración | sí |
-| Hostinger API | `CORS_ORIGINS` | sí | no |
-| Hostinger API | `PORT` | la entrega el panel | no |
-| Hostinger API | `NATIVE_PROFILE=1` | sí para staging | no |
-| Hostinger API | `TUS_ROUTES_ENABLED=true` | sí para usar TUS | no |
-| Hostinger API | `TRUST_PROXY_HOPS` | después de medir | no |
-| Hostinger API | `TUS_MERCADOPAGO_ENABLED=false` | sí | no |
-| Vercel Web | `NEXT_PUBLIC_API_URL` | sí | no |
-| Vercel Web | `NEXT_PUBLIC_SITE_URL` | recomendada | no |
-| Vercel Web | `NEXT_PUBLIC_SUPPORT_WHATSAPP_URL` | no | no |
-| Futuro MP | `MERCADO_PAGO_CLIENT_SECRET` | no | sí |
-| Futuro MP | `MERCADO_PAGO_WEBHOOK_SECRET` | no | sí |
-| Futuro MP | `TUS_PAYMENT_CREDENTIALS_KEY` | no | sí |
-| Hostinger API | `IDENTITY_PROVIDER=nosis-browser` | sí (identidad) | no |
-| Hostinger API + worker | `TUS_IDENTITY_DOCUMENTS_KEY` | sí (subidas de DNI) | sí |
-| Host worker | `NOSIS_BROWSER_*`, `TUS_NOSIS_SESSION_KEY`, `GROQ_API_KEY` | para verificar automáticamente | credenciales y claves sí |
+| Plataforma             | Variable                                                                       |                                     Obligatoria ahora |                  Secreta |
+| ---------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------: | -----------------------: |
+| Hostinger API          | `NODE_ENV=production`                                                          |                                                    sí |                       no |
+| Hostinger API          | `DATABASE_URL` pooled                                                          |                                                    sí |                       sí |
+| Hostinger release      | `DIRECT_URL` directa                                                           |                                        solo migración |                       sí |
+| Hostinger API          | `CORS_ORIGINS`                                                                 |                                                    sí |                       no |
+| Hostinger API          | `PORT`                                                                         |                                   la entrega el panel |                       no |
+| Hostinger API          | `NATIVE_PROFILE=1`                                                             |                                       sí para staging |                       no |
+| Hostinger API          | `TUS_ROUTES_ENABLED=true`                                                      |                                      sí para usar TUS |                       no |
+| Hostinger API          | `TRUST_PROXY_HOPS`                                                             |                                      después de medir |                       no |
+| Hostinger API          | `TUS_MERCADOPAGO_ENABLED=false`                                                |                                                    sí |                       no |
+| Vercel Web             | `NEXT_PUBLIC_API_URL`                                                          |                                                    sí |                       no |
+| Vercel Web             | `NEXT_PUBLIC_SITE_URL`                                                         |                                           recomendada |                       no |
+| Vercel Web             | `NEXT_PUBLIC_SUPPORT_WHATSAPP_URL`                                             |                                                    no |                       no |
+| Futuro MP              | `MERCADO_PAGO_CLIENT_SECRET`                                                   |                                                    no |                       sí |
+| Futuro MP              | `MERCADO_PAGO_WEBHOOK_SECRET`                                                  |                                                    no |                       sí |
+| Futuro MP              | `TUS_PAYMENT_CREDENTIALS_KEY`                                                  |                                                    no |                       sí |
+| Hostinger API          | `IDENTITY_PROVIDER=nosis-browser`                                              |                                        sí (identidad) |                       no |
+| Hostinger API + worker | `TUS_IDENTITY_DOCUMENTS_KEY`                                                   |                                   sí (subidas de DNI) |                       sí |
+| Host worker            | `NOSIS_BROWSER_*`, `TUS_NOSIS_SESSION_KEY`, `GROQ_API_KEY`/`GROQ_API_KEY_1..6` | para verificar automáticamente; pool Groq round-robin | credenciales y claves sí |
 
 La verificación de identidad (migración `20260927100000_tus_identity_verification`, worker Chromium separado y runbook)
 está en `docs/IDENTIDAD_PRESTADORES_TUS.md`. Sin worker las verificaciones quedan en cola y el admin puede aprobarlas
@@ -614,16 +614,16 @@ manualmente con motivo.
 
 ## 14. Resultado y blockers actuales
 
-| Resultado | Estado actual | Evidencia faltante |
-|---|---|---|
-| CODE READY FOR STAGING | `YES` para API/Web local | build standalone Linux/Vercel y audit SCA final del target |
-| POSTGRESQL 16 READY | `NO` | DB descartable real, migrate deploy, backup/restore y SQL de versión |
-| PGVECTOR READY | `NO` | extensión `vector` verificada en el target |
-| HOSTINGER CONFIG READY | `YES` como contrato | panel, proxy, health, ready y SIGTERM reales |
-| VERCEL CONFIG READY | `YES` como contrato | build/deploy y navegador reales |
-| SECURITY GATE | `PASS` para hardening local; `PENDING` para SCA/infra | cerrar audit scoped y evidencia externa |
-| MERCADO PAGO REAL | `OFF` | no se debe activar en esta fase |
-| MERCADO PAGO SANDBOX | código `READY`; verificación `NO` | credenciales sandbox y cuentas de prueba autorizadas |
+| Resultado              | Estado actual                                         | Evidencia faltante                                                   |
+| ---------------------- | ----------------------------------------------------- | -------------------------------------------------------------------- |
+| CODE READY FOR STAGING | `YES` para API/Web local                              | build standalone Linux/Vercel y audit SCA final del target           |
+| POSTGRESQL 16 READY    | `NO`                                                  | DB descartable real, migrate deploy, backup/restore y SQL de versión |
+| PGVECTOR READY         | `NO`                                                  | extensión `vector` verificada en el target                           |
+| HOSTINGER CONFIG READY | `YES` como contrato                                   | panel, proxy, health, ready y SIGTERM reales                         |
+| VERCEL CONFIG READY    | `YES` como contrato                                   | build/deploy y navegador reales                                      |
+| SECURITY GATE          | `PASS` para hardening local; `PENDING` para SCA/infra | cerrar audit scoped y evidencia externa                              |
+| MERCADO PAGO REAL      | `OFF`                                                 | no se debe activar en esta fase                                      |
+| MERCADO PAGO SANDBOX   | código `READY`; verificación `NO`                     | credenciales sandbox y cuentas de prueba autorizadas                 |
 
 ### Clasificación
 

@@ -183,5 +183,5 @@ test('canonical contract validation includes the P1.5 auth schemas', () => {
     }
   )
 
-  assert.match(output, /Validated 98 JSON Schema contract\(s\)/)
+  assert.match(output, /Validated 107 JSON Schema contract\(s\)/)
 })
