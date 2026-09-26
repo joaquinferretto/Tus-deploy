@@ -84,6 +84,32 @@ También requiere `TUS_WEB_BASE_URL` (destino del callback). En Google Cloud Con
 Crear credenciales → ID de cliente de OAuth → Aplicación web: agregar como "URI de redireccionamiento autorizado" el valor
 exacto de `GOOGLE_REDIRECT_URI`; en "Pantalla de consentimiento" usar los scopes `openid`, `email` y `profile`.
 
+Para los dominios actuales, cargar en Hostinger (API):
+
+```text
+GOOGLE_CLIENT_ID=<ID del cliente OAuth de Google>
+GOOGLE_CLIENT_SECRET=<secreto del mismo cliente, solo en Hostinger>
+GOOGLE_REDIRECT_URI=https://api.tusservicios.shop/auth/oauth/google/callback
+TUS_WEB_BASE_URL=https://tusservicios.shop
+```
+
+Registrar esa misma URI de callback en Google Cloud y revisar la audiencia y el estado de publicación. Google contempla
+una excepción a la lista de usuarios de prueba para los scopes básicos `openid`, `email` y `profile` usados aquí; una
+aplicación interna de Workspace puede seguir restringida a su organización. Ver la
+[documentación de estados OAuth](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview).
+Guardar las variables y redesplegar la API. `GET /auth/oauth/providers` debe devolver HTTP 200 con
+`{"google":{"available":true}}`; un 200 con `available:false` significa que Google sigue deshabilitado.
+`GET /auth/oauth/google/start` devuelve **303** a Google (una redirección correcta, no debe devolver 200).
+
+Login y registro usan el mismo flujo: después de validar Google, un correo nuevo recibe un código de registro de un
+solo uso en `/ingresar/google#code=...`. `POST /auth/oauth/exchange` crea la cuenta con el nombre y correo verificado de
+Google, la vincula y devuelve HTTP 200 con una sesión TUS. No pide contraseña ni un segundo formulario. Un ingreso
+posterior recupera la misma cuenta. Si el correo ya pertenece a otra cuenta TUS sin ese vínculo, exige iniciar sesión
+en esa cuenta para vincular Google; no fusiona cuentas por coincidencia de correo.
+
+La disponibilidad y los HTTP 200 no prueban por sí solos el consentimiento real en Google: verificar una primera entrada
+y una segunda entrada con una cuenta de prueba autorizada, comprobando que conserva la misma cuenta TUS.
+
 ### Web (Vercel o Render `factory-web`)
 
 | Variable                           | Obligatoria | Valor                                                                 |

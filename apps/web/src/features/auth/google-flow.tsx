@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { createTusWebAuthClient } from '@/lib/tus-auth-client'
 import { FormError, RoleIntentSelector, TextField } from './auth-fields'
@@ -19,9 +19,12 @@ function takeFragment(key: string): string | null {
 
 // /ingresar/google: `#code=` signs in; `#link=` asks for the password of the existing account.
 export function GoogleSignInCompletion(): React.ReactNode {
+  const started = useRef(false)
   const [state, setState] = useState<{ kind: 'working' } | { kind: 'error'; message: string } | { kind: 'link'; code: string; email: string | null }>({ kind: 'working' })
 
   useEffect(() => {
+    if (started.current) return
+    started.current = true
     const code = readFragmentParam(window.location.hash, 'code')
     const link = readFragmentParam(window.location.hash, 'link')
     window.history.replaceState(null, '', window.location.pathname)
@@ -30,14 +33,14 @@ export function GoogleSignInCompletion(): React.ReactNode {
       void client.googleExchange(code).then((result) => {
         if (result.status === 'authenticated') window.location.assign(takeReturnTo() ?? '/tus')
         else setState({ kind: 'error', message: 'No pudimos completar el ingreso con Google. Probá de nuevo.' })
-      })
+      }).catch(() => setState({ kind: 'error', message: 'No pudimos conectar. Volvé a ingresar con Google.' }))
       return
     }
     if (link) {
       void client.googleLinkPreview(link).then((preview) => {
         if (preview) setState({ kind: 'link', code: link, email: preview.emailMasked })
         else setState({ kind: 'error', message: 'El enlace venció. Volvé a ingresar con Google.' })
-      })
+      }).catch(() => setState({ kind: 'error', message: 'No pudimos conectar. Volvé a ingresar con Google.' }))
       return
     }
     setState({ kind: 'error', message: 'El enlace de ingreso no es válido.' })

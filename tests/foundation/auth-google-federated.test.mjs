@@ -82,8 +82,8 @@ test('GOOGLE sign-up then sign-in: one flow, same TUS session type, roles from t
     const preview = await google.previewSignup({ code: signupCode })
     const noTerms = await google.completeSignup({ code: signupCode, displayName: 'Nueva Persona', acceptedTerms: false })
     // Extra authority fields in the body are ignored: roles come from the account model.
-    const created = await google.completeSignup({ code: signupCode, displayName: 'Nueva Persona', acceptedTerms: true, roles: ['admin'], tenantId: 'other' })
-    const replay = await google.completeSignup({ code: signupCode, displayName: 'x', acceptedTerms: true })
+    const created = await google.exchange({ code: signupCode, roles: ['admin'], tenantId: 'other' })
+    const replay = await google.exchange({ code: signupCode })
     const context = await sessions.resolve(created.session.accessToken, 'corr-1')
     const account = await auth.store.getAccount(created.session.accountId)
     // Second time: straight to a session code.
@@ -100,7 +100,7 @@ test('GOOGLE sign-up then sign-in: one flow, same TUS session type, roles from t
     const expired = await google.exchange({ code: fragment(third, 'code') })
     console.log(JSON.stringify({ first: first.replace(/#.*/, ''), preview, noTerms: noTerms.code, created: Object.keys(created.session).sort(), replay: replay.code, context: [context.subjectId === created.session.accountId, context.roles, context.permissions.includes('tus:marketplace:write')], verified: account.emailVerifiedAt !== null, tenantKept: created.session.tenantId !== 'other', second: second.replace(/#.*/, ''), sameAccount: exchanged.session.accountId === created.session.accountId, exchangeReplay: exchangeReplay.code, context2: Boolean(context2), password: password.ok, expired: expired.code, identities: (await google.dependencies.identities.listForAccount(created.session.accountId)).map((i) => [i.providerId, i.subject]) }))
   `)
-  assert.equal(result.first, 'https://web.tus.test/registro/completar')
+  assert.equal(result.first, 'https://web.tus.test/ingresar/google')
   assert.deepEqual(result.preview, { ok: true, email: 'nueva@example.com', name: 'Nueva Persona' })
   assert.equal(result.noTerms, 'TERMS_REQUIRED')
   assert.deepEqual(result.created, ['accessToken', 'accountId', 'deviceId', 'expiresAt', 'id', 'scope', 'tenantId'])
@@ -115,6 +115,36 @@ test('GOOGLE sign-up then sign-in: one flow, same TUS session type, roles from t
   assert.equal(result.password, false)
   assert.equal(result.expired, 'INVALID_CODE')
   assert.deepEqual(result.identities, [['google', 'google-sub-001']])
+})
+
+test('GOOGLE automatic signup: two pending callbacks reuse one account; replay and expired signup codes cannot register', () => {
+  const result = runTypeScriptScenario(`${SETUP}
+    const identity = { subject: 'new-auto', email: 'auto@example.com', name: 'Nombre de Google' }
+    const first = await googleCallback(identity)
+    const second = await googleCallback(identity)
+    const concurrent = await Promise.all([
+      google.exchange({ code: fragment(first, 'code') }),
+      google.exchange({ code: fragment(first, 'code') }),
+    ])
+    const created = concurrent.find(r => r.ok)
+    const duplicate = await google.exchange({ code: fragment(second, 'code') })
+    const account = await auth.store.getAccount(created.session.accountId)
+    const expired = await googleCallback({ subject: 'expired-new', email: 'expired@example.com' })
+    now += 16 * 60 * 1000
+    const expiredResult = await google.exchange({ code: fragment(expired, 'code') })
+    console.log(JSON.stringify({
+      successes: concurrent.filter(r => r.ok).length,
+      failures: concurrent.filter(r => !r.ok).map(r => r.code),
+      sameAccount: duplicate.session.accountId === created.session.accountId,
+      name: account.displayName, count: auth.store.accounts.size,
+      expired: expiredResult.code,
+      expiredAccount: Boolean(await auth.store.findAccountByEmail('expired@example.com')),
+    }))
+  `)
+  assert.deepEqual(result, {
+    successes: 1, failures: ['INVALID_CODE'], sameAccount: true,
+    name: 'Nombre de Google', count: 1, expired: 'INVALID_CODE', expiredAccount: false,
+  })
 })
 
 test('GOOGLE callback security: invalid or replayed state, cancelled consent, unverified email and disabled accounts never produce a session', () => {
@@ -132,14 +162,14 @@ test('GOOGLE callback security: invalid or replayed state, cancelled consent, un
     const badCode = await google.exchange({ code: '../../etc' })
     // Disabled account: Google does not bypass account gates.
     const signup = await googleCallback({ subject: 's-4', email: 'c@example.com' })
-    const created = await google.completeSignup({ code: fragment(signup, 'code'), displayName: 'C', acceptedTerms: true })
+    const created = await google.exchange({ code: fragment(signup, 'code') })
     const account = await auth.store.getAccount(created.session.accountId)
     await auth.store.saveAccount({ ...account, status: 'disabled' })
     const disabled = await google.exchange({ code: fragment(await googleCallback({ subject: 's-4', email: 'c@example.com' }), 'code') })
     console.log(JSON.stringify({ invalidState, ok: ok.split('#')[0], replayed, cancelled, missing, unverified, noEmail, badCode: badCode.code, disabled: disabled.code }))
   `)
   assert.equal(result.invalidState, 'https://web.tus.test/sign-in?error=google_invalid')
-  assert.equal(result.ok, 'https://web.tus.test/registro/completar')
+  assert.equal(result.ok, 'https://web.tus.test/ingresar/google')
   assert.equal(result.replayed, 'https://web.tus.test/sign-in?error=google_invalid')
   assert.equal(result.cancelled, 'https://web.tus.test/sign-in?error=google_cancelled')
   assert.equal(result.missing, 'https://web.tus.test/sign-in?error=google_invalid')
@@ -242,7 +272,7 @@ test('GOOGLE HTTP routes: providers status, start redirect, callback redirect to
       provider.codes.set('http-code', { subject: 'http-sub', email: 'http@example.com' })
       const callback = await fetch(base(server) + '/auth/oauth/google/callback?state=' + state + '&code=http-code', { redirect: 'manual' })
       const signupCode = fragment(callback.headers.get('location'), 'code')
-      const signup = await fetch(base(server) + '/auth/oauth/signup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: signupCode, displayName: 'Http', acceptedTerms: true }) })
+      const signup = await fetch(base(server) + '/auth/oauth/exchange', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: signupCode }) })
       const signupBody = await signup.json()
       const bad = await fetch(base(server) + '/auth/oauth/exchange', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'x'.repeat(43) }) })
       console.log(JSON.stringify({ providers, offProviders, start: [start.status, new URL(start.headers.get('location')).host, start.headers.get('cache-control')], offStart: [offStart.status, offStart.headers.get('location')], callback: [callback.status, callback.headers.get('location').split('#')[0], callback.headers.get('referrer-policy')], signup: [signup.status, Boolean(signupBody.session?.accessToken), signup.headers.get('cache-control')], bad: [bad.status, (await bad.json()).error?.code ?? null] }))
@@ -252,7 +282,7 @@ test('GOOGLE HTTP routes: providers status, start redirect, callback redirect to
   assert.deepEqual(result.offProviders, { google: { available: false } })
   assert.deepEqual(result.start, [303, 'accounts.google.com', 'no-store'])
   assert.deepEqual(result.offStart, [303, 'https://web.tus.test/sign-in?error=google_unavailable'])
-  assert.deepEqual(result.callback, [303, 'https://web.tus.test/registro/completar', 'no-referrer'])
-  assert.deepEqual(result.signup, [201, true, 'no-store'])
+  assert.deepEqual(result.callback, [303, 'https://web.tus.test/ingresar/google', 'no-referrer'])
+  assert.deepEqual(result.signup, [200, true, 'no-store'])
   assert.equal(result.bad[0], 401)
 })

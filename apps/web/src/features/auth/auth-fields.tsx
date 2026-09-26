@@ -109,6 +109,7 @@ export function GoogleAuthButton({ label }: { label: 'Continuar con Google' | 'R
         {label}
       </button>
       {available === false ? <p className={styles.googleHint}>El ingreso con Google todavía no está disponible.</p> : null}
+      {available === true ? <p className={styles.googleHint}>Si es tu primera vez, creamos tu cuenta con los datos de Google y entrás directamente.</p> : null}
     </div>
   )
 }

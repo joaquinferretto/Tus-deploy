@@ -101,11 +101,16 @@ export class FederatedAuthService {
       const code = await this.issueCode('link', identityPayload)
       return { redirectTo: `${web}/ingresar/google#link=${code}` }
     }
+    // A first Google visit uses the same completion screen as a returning user.
+    // The short-lived signup code is exchanged for an account and a TUS session;
+    // Google tokens and user data never travel in the redirect URL.
     const code = await this.issueCode('signup', identityPayload)
-    return { redirectTo: `${web}/registro/completar#code=${code}` }
+    return { redirectTo: `${web}/ingresar/google#code=${code}` }
   }
 
   async exchange(input: { code: unknown; device?: SignInInput['device'] }): Promise<SignInResult | FederatedFailure> {
+    const signup = await this.peek(input.code, 'signup')
+    if (signup) return this.registerAndSignIn({ code: input.code, device: input.device })
     const code = await this.consume(input.code, 'session')
     if (!code?.payload.accountId) return this.fail(FEDERATED_RESULT_CODE.INVALID_CODE, 'The sign-in link is invalid or expired')
     const result = await this.dependencies.auth.signInFederated({ accountId: code.payload.accountId, ...(input.device ? { device: input.device } : {}) })
@@ -121,11 +126,22 @@ export class FederatedAuthService {
 
   async completeSignup(input: { code: unknown; displayName: unknown; acceptedTerms: unknown; device?: SignInInput['device'] }): Promise<SignInResult | FederatedFailure> {
     if (input.acceptedTerms !== true) return this.fail(FEDERATED_RESULT_CODE.TERMS_REQUIRED, 'Terms must be accepted')
+    return this.registerAndSignIn(input)
+  }
+
+  private async registerAndSignIn(input: { code: unknown; displayName?: unknown; device?: SignInInput['device'] }): Promise<SignInResult | FederatedFailure> {
     const displayName = typeof input.displayName === 'string' ? input.displayName.trim().slice(0, 120) : ''
     const pending = await this.peek(input.code, 'signup')
     if (!pending?.payload.email || !pending.payload.subject) return this.fail(FEDERATED_RESULT_CODE.INVALID_CODE, 'The sign-up link is invalid or expired')
     const code = await this.consume(input.code, 'signup')
     if (!code) return this.fail(FEDERATED_RESULT_CODE.INVALID_CODE, 'The sign-up link is invalid or expired')
+    // Another tab may have completed this Google identity since the callback.
+    // Reuse only the verified provider/issuer/subject, never just a matching email.
+    const linked = await this.dependencies.identities.find(code.payload.providerId!, code.payload.issuer!, code.payload.subject!)
+    if (linked) {
+      const session = await this.dependencies.auth.signInFederated({ accountId: linked.accountId, ...(input.device ? { device: input.device } : {}) })
+      return session.ok ? session : this.fail(FEDERATED_RESULT_CODE.SIGN_IN_FAILED, 'The account cannot sign in')
+    }
     const created = await this.dependencies.auth.registerFederated({ email: code.payload.email!, displayName: displayName || code.payload.name || code.payload.email!.split('@')[0]! })
     if (!created.ok) return this.fail(FEDERATED_RESULT_CODE.ACCOUNT_EXISTS, 'An account with this email already exists; sign in to link Google')
     await this.dependencies.identities.save({
