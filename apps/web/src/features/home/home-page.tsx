@@ -21,13 +21,19 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
   const [filters, setFilters] = useState<RequestFilters>(EMPTY_FILTERS)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [highlightedId, setHighlightedId] = useState<string | null>(null)
+  const [searchSignal, setSearchSignal] = useState(0)
   const requests = useRecentRequests(filters)
   const data = requests.data ?? []
   const status = requests.isPending ? 'loading' : requests.isError ? 'error' : 'success'
 
   function select(id: string) {
     setSelectedId(id)
-    document.getElementById(`solicitud-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
+
+  function changeFilters(next: RequestFilters) {
+    setFilters(next)
+    setSelectedId(null)
+    setHighlightedId(null)
   }
 
   return (
@@ -43,14 +49,22 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
             Servicios cerca tuyo: personas de tu zona buscando ayuda profesional
           </h1>
           <div aria-label="Mapa de solicitudes en tu zona" className={styles.mapLayer} role="region">
-            <RequestMap highlightedId={highlightedId} onSelect={select} requests={data} selectedId={selectedId} />
+            <RequestMap highlightedId={highlightedId} onSelect={select} requests={data} selectedId={selectedId} searchSignal={searchSignal} />
           </div>
           <div className={styles.searchDock}>
             <HeroSearch
               filters={filters}
-              onChange={setFilters}
-              onSubmit={() => document.getElementById('solicitudes')?.scrollIntoView({ behavior: 'smooth' })}
+              onChange={changeFilters}
+              onSubmit={() => { setSelectedId(null); setSearchSignal((value) => value + 1) }}
             />
+            <div className={styles.mapResults}>
+              <span role="status" aria-live="polite">
+                {status === 'loading' ? 'Buscando solicitudes en el mapa…' : status === 'error' ? 'No pudimos cargar el mapa de solicitudes.' : data.length === 0 ? 'No hay solicitudes con estos filtros.' : `${data.length} ${data.length === 1 ? 'solicitud en el mapa' : 'solicitudes en el mapa'}`}
+              </span>
+              {status === 'error' ? <button type="button" onClick={() => void requests.refetch()}>Reintentar</button> : null}
+              {filters.query || filters.category || filters.zone ? <button type="button" onClick={() => changeFilters(EMPTY_FILTERS)}>Limpiar filtros</button> : null}
+              <a href="#solicitudes">Ver lista</a>
+            </div>
           </div>
         </section>
 

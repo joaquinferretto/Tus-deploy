@@ -23,6 +23,7 @@ declare const styles: {
   readonly mapControls: string
   readonly mapLayer: string
   readonly mapNotice: string
+  readonly mapResults: string
   readonly mapSkeleton: string
   readonly marker: string
   readonly markerActive: string

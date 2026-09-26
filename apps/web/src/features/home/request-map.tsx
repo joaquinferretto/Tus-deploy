@@ -9,6 +9,7 @@ import { MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap } from 'rea
 
 import { DEFAULT_MAP_CENTER, categoryOf, type MapRequest } from './types'
 import styles from './home.module.css'
+import { categoryMarkerSvg } from './category-icons'
 
 // OpenStreetMap tiles by default (attribution required). For heavy production traffic configure
 // a tile provider in NEXT_PUBLIC_MAP_TILE_URL instead of the community OSM servers.
@@ -20,7 +21,7 @@ function markerIcon(request: MapRequest, active: boolean) {
   const category = categoryOf(request.category)
   return L.divIcon({
     className: '',
-    html: `<span class="${styles.marker} ${active ? styles.markerActive : ''}" style="background:${category.color}">${category.label[0]}</span>`,
+    html: `<span class="${styles.marker} ${active ? styles.markerActive : ''}" style="background:${category.color}">${categoryMarkerSvg(category.id)}</span>`,
     iconAnchor: [17, 17],
     iconSize: [34, 34],
     popupAnchor: [0, -18],
@@ -32,7 +33,7 @@ function markerIcon(request: MapRequest, active: boolean) {
 function overlayPadding(map: L.Map) {
   const wide = map.getSize().x > 768
   return wide
-    ? { topLeft: L.point(40, 150), bottomRight: L.point(40, 80) }
+    ? { topLeft: L.point(40, 190), bottomRight: L.point(40, 80) }
     : { topLeft: L.point(24, 24), bottomRight: L.point(24, 24) }
 }
 
@@ -80,11 +81,13 @@ export default function RequestMap({
   selectedId,
   highlightedId,
   onSelect,
+  searchSignal = 0,
 }: {
   requests: MapRequest[]
   selectedId: string | null
   highlightedId: string | null
   onSelect: (id: string) => void
+  searchSignal?: number
 }): React.ReactNode {
   const [touch] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches)
   const [interactive, setInteractive] = useState(!touch)
@@ -111,7 +114,7 @@ export default function RequestMap({
         <TileLayer attribution={TILE_ATTRIBUTION} url={TILE_URL} />
         {/* Bottom-left: the filters bar covers the top of the map on wide screens. */}
         <ZoomControl position="bottomleft" zoomInTitle="Acercar" zoomOutTitle="Alejar" />
-        <MapController interactive={interactive} recenterSignal={recenterSignal} requests={requests} selected={selected} />
+        <MapController interactive={interactive} recenterSignal={recenterSignal + searchSignal} requests={requests} selected={selected} />
         {requests.map((request) => {
           const category = categoryOf(request.category)
           const active = request.id === selectedId || request.id === highlightedId
@@ -129,7 +132,7 @@ export default function RequestMap({
               title={`${category.label}: ${request.title}`}
               zIndexOffset={active ? 1000 : 0}
             >
-              <Popup autoPanPaddingBottomRight={[40, 80]} autoPanPaddingTopLeft={[24, wide ? 150 : 24]}>
+              <Popup autoPanPaddingBottomRight={[40, 80]} autoPanPaddingTopLeft={[24, wide ? 190 : 24]}>
                 <div className={styles.popup}>
                   <span className={styles.popupCategory} style={{ color: category.color }}>
                     {category.label}

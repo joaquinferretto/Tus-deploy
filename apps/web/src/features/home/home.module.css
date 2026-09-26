@@ -244,6 +244,35 @@
   width: calc(100% - 40px);
 }
 
+.mapResults {
+  align-items: center;
+  background: var(--tus-white);
+  border: 1px solid var(--tus-line);
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(20, 33, 61, 0.08);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  gap: 8px 16px;
+  margin: 8px auto 0;
+  max-width: 1040px;
+  padding: 10px 14px;
+  pointer-events: auto;
+  width: calc(100% - 40px);
+}
+
+.mapResults span { flex: 1; }
+.mapResults button, .mapResults a {
+  background: transparent;
+  border: 0;
+  color: var(--tus-ink);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.mapResults button:focus-visible, .mapResults a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+
 .search {
   background: var(--tus-white);
   border: 1px solid var(--tus-line);
@@ -709,6 +738,8 @@
   .searchDock > form {
     width: 100%;
   }
+
+  .mapResults { width: 100%; }
 
 
   .search {

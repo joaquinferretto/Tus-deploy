@@ -68,7 +68,7 @@ export function HeroSearch({
         </datalist>
       </div>
       <button className={`${styles.buttonPrimary} ${styles.searchButton}`} type="submit">
-        Buscar
+        Buscar en el mapa
       </button>
     </form>
   )
