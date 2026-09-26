@@ -14,7 +14,7 @@ import {
 } from './tus-ui-contract'
 import { resolveWebApiBaseUrl } from './api-url.ts'
 
-const DEFAULT_RETURN_TO = '/tus'
+const DEFAULT_RETURN_TO = '/mi-perfil'
 
 export interface TusWebAuthRequest {
   method: 'GET' | 'POST'

@@ -1,6 +1,5 @@
-import { TusDashboard } from './tus-dashboard'
+import { redirect } from 'next/navigation'
 
 export default function TusPlatformPage() {
-  // The dashboard owns the contract-backed Reporting, Support, and WhatsApp surfaces.
-  return <TusDashboard />
+  redirect('/mi-perfil')
 }

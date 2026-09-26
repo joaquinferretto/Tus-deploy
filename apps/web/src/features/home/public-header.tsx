@@ -74,7 +74,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
         <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>
           Mi perfil
         </Link>
-        <Link className={styles.buttonPrimary} href="/tus">
+        <Link className={styles.buttonPrimary} href="/mi-perfil">
           <span className={styles.avatar} aria-hidden="true">
             {auth.initial}
           </span>
@@ -135,7 +135,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
               <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>
                 Mi perfil
               </Link>
-              <Link className={styles.buttonPrimary} href="/tus">
+              <Link className={styles.buttonPrimary} href="/mi-perfil">
                 Ir a mi panel
               </Link>
             </>

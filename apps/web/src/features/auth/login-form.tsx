@@ -25,7 +25,7 @@ export function LoginForm({
   const [errors, setErrors] = useState<FieldErrors>({})
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [returnTo, setReturnTo] = useState('/tus')
+  const [returnTo, setReturnTo] = useState('/mi-perfil')
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -99,7 +99,7 @@ export function LoginForm({
       {showRegisterLink ? (
         <p className={styles.footerText}>
           ¿No tenés cuenta?{' '}
-          <Link className={styles.link} href={withReturnTo('/registro', returnTo === '/tus' ? null : returnTo) as Route}>
+          <Link className={styles.link} href={withReturnTo('/registro', returnTo === '/mi-perfil' ? null : returnTo) as Route}>
             Registrate
           </Link>
         </p>

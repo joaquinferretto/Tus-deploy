@@ -31,7 +31,7 @@ export function GoogleSignInCompletion(): React.ReactNode {
     const client = createTusWebAuthClient()
     if (code) {
       void client.googleExchange(code).then((result) => {
-        if (result.status === 'authenticated') window.location.assign(takeReturnTo() ?? '/tus')
+        if (result.status === 'authenticated') window.location.assign(takeReturnTo() ?? '/mi-perfil')
         else setState({ kind: 'error', message: 'No pudimos completar el ingreso con Google. Probá de nuevo.' })
       }).catch(() => setState({ kind: 'error', message: 'No pudimos conectar. Volvé a ingresar con Google.' }))
       return
@@ -70,7 +70,7 @@ export function GoogleSignInCompletion(): React.ReactNode {
       <LoginForm
         onAuthenticated={async () => {
           const linked = await createTusWebAuthClient().googleLink(state.code)
-          if (linked.status === 'accepted') window.location.assign(takeReturnTo() ?? '/tus')
+          if (linked.status === 'accepted') window.location.assign(takeReturnTo() ?? '/mi-perfil')
           else
             setState({
               kind: 'error',

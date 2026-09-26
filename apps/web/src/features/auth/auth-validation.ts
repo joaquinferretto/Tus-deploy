@@ -54,8 +54,8 @@ export function googleErrorMessage(code: string | null): string | null {
 // Registration intent only chooses where to go next; it never grants a role.
 export type RoleIntent = 'cliente' | 'prestador'
 
-export function destinationFor(intent: RoleIntent): '/tus/mercado' | '/tus/prestador' {
-  return intent === 'prestador' ? '/tus/prestador' : '/tus/mercado'
+export function destinationFor(intent: RoleIntent): '/mi-perfil' | '/prestador/perfil-publico' {
+  return intent === 'prestador' ? '/prestador/perfil-publico' : '/mi-perfil'
 }
 
 export function readFragmentParam(hash: string, key: string): string | null {

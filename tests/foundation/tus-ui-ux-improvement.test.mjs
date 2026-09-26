@@ -28,9 +28,9 @@ test('PR1 accepts only internal return paths and rejects external deep links', (
   `)
 
   assert.equal(result.internal, '/tus/pos?surface=staff')
-  assert.equal(result.external, '/tus')
-  assert.equal(result.protocolRelative, '/tus')
-  assert.equal(result.fallback, '/tus')
+  assert.equal(result.external, '/mi-perfil')
+  assert.equal(result.protocolRelative, '/mi-perfil')
+  assert.equal(result.fallback, '/mi-perfil')
 })
 
 test('PR1 persists only the confirmed bearer credential in session-scoped storage', () => {
