@@ -24,6 +24,8 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client before typecheck
+        run: pnpm --filter @factory/api prisma:generate
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm test
