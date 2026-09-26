@@ -11,6 +11,8 @@ dist/
 *.pfx
 *.crt
 *.cer
+# Public Supabase CA, verified and documented in apps/api/certs/README.md.
+!apps/api/certs/supabase-ca.crt
 *.tfstate
 *.tfstate.*
 .terraform/

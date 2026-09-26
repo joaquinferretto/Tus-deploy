@@ -1,5 +1,6 @@
 import { Pool } from 'pg'
 import type { PoolConfig } from 'pg'
+import { resolve } from 'node:path'
 
 import {
   DATABASE_ATTEMPT_TIMEOUT_MS,
@@ -42,11 +43,26 @@ export function safeStartupReason(error: unknown): string {
   return typeof value?.name === 'string' && /^[A-Za-z]{1,40}$/u.test(value.name) ? value.name : 'UNKNOWN'
 }
 
+// Both src/ and dist/ have the same depth. Resolve from this module, never the
+// hosting provider's working directory. pg reads sslrootcert before connecting.
+export function postgresConnectionString(databaseUrl: string): string {
+  const url = new URL(databaseUrl)
+  const supabase = /^(?:db\.[a-z0-9]+\.supabase\.co|aws-[a-z0-9-]+\.pooler\.supabase\.com)$/u.test(url.hostname)
+  const mode = url.searchParams.get('sslmode')
+  if (!supabase || !['require', 'verify-ca', 'verify-full'].includes(mode ?? '')) return databaseUrl
+  url.searchParams.set('sslmode', 'verify-full')
+  url.searchParams.delete('uselibpqcompat')
+  if (!url.searchParams.has('sslrootcert')) {
+    url.searchParams.set('sslrootcert', resolve(__dirname, '../../../../certs/supabase-ca.crt'))
+  }
+  return url.toString()
+}
+
 export function createPostgresPool(databaseUrl: string = readRootDatabaseUrl() ?? ''): PostgresPoolLike {
   if (!databaseUrl) throw new Error('Missing canonical PostgreSQL configuration')
 
   const config: PoolConfig = {
-    connectionString: databaseUrl,
+    connectionString: postgresConnectionString(databaseUrl),
     max: 2,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: DATABASE_ATTEMPT_TIMEOUT_MS,

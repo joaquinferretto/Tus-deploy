@@ -347,9 +347,15 @@ cadena y el nombre del servidor. El certificado de Supabase lo firma la CA propi
 arranque falla con `reason=SELF_SIGNED_CERT_IN_CHAIN` o `UNABLE_TO_VERIFY_LEAF_SIGNATURE` (reproducido con una CA propia).
 Prisma (migraciones y cliente) no es afectado. La solución es confiar en esa CA, no desactivar TLS:
 
-1. Supabase → Project Settings → Database → SSL Configuration → **Download certificate** (CA pública, no es secreto).
-2. Guardarla en el repo como `apps/api/certs/supabase-ca.crt` (o subirla al servidor de Hostinger).
-3. En Hostinger: `NODE_EXTRA_CA_CERTS=<ruta absoluta a ese archivo>` (Node la lee al iniciar el proceso).
+La CA pública oficial está incluida en `apps/api/certs/supabase-ca.crt`, con su fuente, huella y vencimiento en el README
+de esa carpeta. El pool `pg` la carga automáticamente para hosts Supabase reconocidos con `sslmode=require`, `verify-ca`
+o `verify-full`, usando `sslrootcert` y forzando `verify-full`. Verifica cadena y hostname; no desactiva la validación TLS.
+La ruta se resuelve desde el módulo compilado, independientemente del directorio de trabajo de Hostinger. Conservar la
+carpeta `apps/api/certs` en el artefacto. No hace falta configurar `NODE_EXTRA_CA_CERTS` para este pool.
+
+Si se especifica `sslrootcert` en `DATABASE_URL`, ese certificado tiene prioridad. Para renovar la CA, descargarla desde
+Supabase → Database → SSL Configuration → **Download certificate**, verificar su procedencia y actualizar el archivo y
+su huella documentada. No usar certificados recuperados de una conexión TLS no verificada.
 
 Con la CA confiada, el mismo arranque llega a `/ready`. Si el log dice `reason=ERR_TLS_CERT_ALTNAME_INVALID`, el host de
 `DATABASE_URL` no coincide con el certificado (usar exactamente el host que muestra Supabase en Connect).
