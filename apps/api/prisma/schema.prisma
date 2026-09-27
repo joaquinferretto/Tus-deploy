@@ -2809,7 +2809,10 @@ model PerfilPublicoPrestador {
   prestadorId        String   @map("prestador_id")
   nombrePublico      String   @map("nombre_publico")
   oficio             String   @map("oficio")
-  zona               String   @map("zona")
+  zona               String?  @map("zona")
+  zonasCobertura     String[] @default([]) @map("zonas_cobertura")
+  modalidadAtencion  String   @default("domicilio") @map("modalidad_atencion")
+  radioCoberturaKm   Int?     @map("radio_cobertura_km")
   descripcion        String?  @map("descripcion")
   aniosExperiencia   Int?     @map("anios_experiencia")
   visible            Boolean  @default(true) @map("visible")
@@ -2819,6 +2822,7 @@ model PerfilPublicoPrestador {
 
   @@unique([tenantId, prestadorId], map: "uq_perfiles_publicos_prestador_prestador")
   @@index([visible, oficio], map: "ix_perfiles_publicos_prestador_oficio")
+  @@index([visible, modalidadAtencion], map: "ix_perfiles_publicos_prestador_modalidad")
   @@map("perfiles_publicos_prestador")
 }
 

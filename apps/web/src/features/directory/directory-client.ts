@@ -95,7 +95,7 @@ export function createDirectoryClient(fetchImpl: Fetch = (...args) => fetch(...a
       call<ResultadoCandidatos>(fetchImpl, '/tus/v1/asistente/candidatos', { method: 'POST', body: JSON.stringify(input) }, session),
     // Provider side.
     myProfile: (session: TusWebSession) => call<{ profile: (PerfilPrestadorPublico & { visible: boolean }) | null }>(fetchImpl, '/tus/v1/prestador/perfil-publico', {}, session),
-    saveProfile: (session: TusWebSession, input: { displayName: string; profession: string; zone: string; description: string; yearsOfExperience: number | null; visible: boolean }) =>
+    saveProfile: (session: TusWebSession, input: { displayName: string; profession: string; zone: string; serviceZones: string[]; serviceMode: 'local' | 'domicilio' | 'mixto'; coverageRadiusKm: number | null; description: string; yearsOfExperience: number | null; visible: boolean }) =>
       call<{ profile: PerfilPrestadorPublico & { visible: boolean } }>(fetchImpl, '/tus/v1/prestador/perfil-publico', { method: 'PUT', body: JSON.stringify(input) }, session),
     inbox: (session: TusWebSession) => call<{ items: SolicitudRecibidaPrestador[] }>(fetchImpl, '/tus/v1/prestador/solicitudes', {}, session),
     answer: (session: TusWebSession, id: string, decision: 'aceptar' | 'rechazar') =>

@@ -18,7 +18,10 @@ const RETURN_TO = '/prestador/perfil-publico'
 const FIELD_MESSAGES: Record<string, string> = {
   displayName: 'Usá tu nombre o el de tu negocio (2 a 60 caracteres, sin teléfonos ni emails).',
   profession: 'Elegí tu oficio.',
-  zone: 'Elegí el barrio donde trabajás.',
+  zone: 'Elegí un barrio válido.',
+  serviceZones: 'Elegí hasta 8 zonas válidas.',
+  serviceMode: 'Elegí cómo atendés.',
+  coverageRadiusKm: 'Ingresá un radio entre 1 y 100 km.',
   description: 'Hasta 600 caracteres, sin teléfonos, emails ni links.',
   yearsOfExperience: 'Ingresá los años como número entero (0 a 70).',
 }
@@ -28,7 +31,7 @@ const FIELD_MESSAGES: Record<string, string> = {
 export function ProviderPublicProfile(): React.ReactNode {
   const session = useTusSession(RETURN_TO)
   const [catalog, setCatalog] = useState<{ items: OficioPublico[]; zones: string[] }>({ items: [], zones: [] })
-  const [values, setValues] = useState({ displayName: '', profession: '', zone: '', description: '', years: '', visible: true })
+  const [values, setValues] = useState({ displayName: '', profession: '', zone: '', serviceZones: [] as string[], serviceMode: 'domicilio' as 'local' | 'domicilio' | 'mixto', coverageRadiusKm: '', description: '', years: '', visible: true })
   const [status, setStatus] = useState<'loading' | 'ready' | 'saving' | 'saved' | 'not_provider' | 'error'>('loading')
   const [fields, setFields] = useState<string[]>([])
   const [message, setMessage] = useState('')
@@ -45,7 +48,10 @@ export function ProviderPublicProfile(): React.ReactNode {
           setValues({
             displayName: mine.profile.displayName,
             profession: mine.profile.profession.id,
-            zone: mine.profile.approximateArea,
+            zone: mine.profile.serviceZones[0] ?? '',
+            serviceZones: mine.profile.serviceZones,
+            serviceMode: mine.profile.coverage.mode,
+            coverageRadiusKm: mine.profile.coverage.radiusKm === null ? '' : String(mine.profile.coverage.radiusKm),
             description: mine.profile.description ?? '',
             years: mine.profile.yearsOfExperience === null ? '' : String(mine.profile.yearsOfExperience),
             visible: mine.profile.visible,
@@ -64,10 +70,14 @@ export function ProviderPublicProfile(): React.ReactNode {
     setMessage('')
     try {
       const years = values.years.trim() === '' ? null : Number(values.years)
+      const coverageRadiusKm = values.coverageRadiusKm.trim() === '' ? null : Number(values.coverageRadiusKm)
       const result = await client.saveProfile(session.session, {
         displayName: values.displayName.trim(),
         profession: values.profession,
         zone: values.zone,
+        serviceZones: values.serviceZones,
+        serviceMode: values.serviceMode,
+        coverageRadiusKm,
         description: values.description.trim(),
         yearsOfExperience: years,
         visible: values.visible,
@@ -113,7 +123,7 @@ export function ProviderPublicProfile(): React.ReactNode {
   return (
     <form className={authStyles.form} noValidate onSubmit={(event) => void save(event)}>
       <p className={authStyles.notice}>
-        Esto es lo que ven los clientes en “Buscar trabajador”. No publiques teléfono, email ni dirección: solo tu barrio. La verificación,
+        Esto es lo que ven los clientes en “Buscar trabajador”. No publiques teléfono, email ni dirección: solo zonas aproximadas. La verificación,
         los trabajos realizados y tus horarios los calcula TUS.
       </p>
       <TextField
@@ -138,9 +148,9 @@ export function ProviderPublicProfile(): React.ReactNode {
           <FieldError id="perfil-oficio-error" message={error('profession')} />
         </div>
         <div className={authStyles.field}>
-          <label htmlFor="perfil-barrio">Barrio donde trabajás</label>
+          <label htmlFor="perfil-barrio">Zona principal (opcional)</label>
           <select className={authStyles.input} id="perfil-barrio" onChange={(event) => setValues((current) => ({ ...current, zone: event.target.value }))} value={values.zone}>
-            <option value="">Elegí un barrio</option>
+            <option value="">Usar fallback si existe</option>
             {catalog.zones.map((zone) => (
               <option key={zone} value={zone}>
                 {zone}
@@ -150,6 +160,47 @@ export function ProviderPublicProfile(): React.ReactNode {
           <FieldError id="perfil-barrio-error" message={error('zone')} />
         </div>
       </div>
+      <fieldset className={authStyles.field}>
+        <legend>Zonas donde prestás servicio (opcional)</legend>
+        <p className={styles.muted} style={{ fontSize: '0.9rem', margin: 0 }}>Podés elegir varias. Si no elegís ninguna, usamos una zona aproximada de tu identidad verificada cuando esté disponible.</p>
+        <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginTop: 8 }}>
+          {catalog.zones.map((zone) => (
+            <label className={authStyles.checkbox} key={zone}>
+              <input
+                checked={values.serviceZones.includes(zone)}
+                onChange={(event) => setValues((current) => ({ ...current, serviceZones: event.target.checked ? [...new Set([...current.serviceZones, zone])] : current.serviceZones.filter((item) => item !== zone) }))}
+                type="checkbox"
+              />
+              <span>{zone}</span>
+            </label>
+          ))}
+        </div>
+        <FieldError id="perfil-zonas-error" message={error('serviceZones')} />
+      </fieldset>
+      <div className={authStyles.row2}>
+        <div className={authStyles.field}>
+          <label htmlFor="perfil-modalidad">Modalidad de atención</label>
+          <select className={authStyles.input} id="perfil-modalidad" onChange={(event) => setValues((current) => ({ ...current, serviceMode: event.target.value as typeof current.serviceMode }))} value={values.serviceMode}>
+            <option value="local">Atiendo en un lugar</option>
+            <option value="domicilio">Voy a domicilio</option>
+            <option value="mixto">Lugar y domicilio</option>
+          </select>
+          <FieldError id="perfil-modalidad-error" message={error('serviceMode')} />
+        </div>
+        <TextField
+          error={error('coverageRadiusKm')}
+          id="perfil-radio"
+          inputMode="numeric"
+          label="Radio de cobertura en km (opcional)"
+          onChange={(event) => setValues((current) => ({ ...current, coverageRadiusKm: event.target.value }))}
+          value={values.coverageRadiusKm}
+        />
+      </div>
+      <p className={authStyles.notice}>
+        {publicId && values.serviceZones.length === 0 && values.zone === ''
+          ? 'Si tu identidad está verificada y tiene una zona válida, se mostrará una referencia aproximada. Tu dirección exacta nunca se publica.'
+          : 'Usamos únicamente zonas aproximadas. Tu dirección exacta nunca se publica.'}
+      </p>
       <div className={authStyles.field}>
         <label htmlFor="perfil-descripcion">Descripción (opcional)</label>
         <textarea

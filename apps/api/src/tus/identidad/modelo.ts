@@ -198,6 +198,14 @@ export interface PersonaFuenteExterna {
   // "Denominación" as shown by the source, usually "APELLIDO NOMBRE" or "APELLIDO, NOMBRE".
   fullName: string | null
   cuil: string | null
+  // Optional normalized area returned by an identity source. Exact address data is never stored.
+  verifiedArea?: AreaDomicilioVerificada | null
+}
+
+export interface AreaDomicilioVerificada {
+  barrio: string | null
+  localidad: string | null
+  provincia: string | null
 }
 
 export type ResultadoComparacion =

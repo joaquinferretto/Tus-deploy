@@ -8,6 +8,7 @@ import {
   enmascararDni,
   proximoReintento,
   reconciliarLecturas,
+  type PersonaFuenteExterna,
   type MotivoRevisionIdentidad,
 } from './modelo.ts'
 import { ErrorProveedorIdentidad, type IdentityVerificationProvider } from './proveedor.ts'
@@ -368,7 +369,7 @@ export class WorkerVerificacionIdentidad {
   private async resolver(
     job: TrabajoIdentidad,
     verification: VerificacionIdentidad,
-    results: { documentNumber: string | null; fullName: string | null; cuil: string | null }[],
+    results: PersonaFuenteExterna[],
     providerReference: string | null
   ): Promise<ResultadoCicloIdentidad> {
     const comparison = compararConFuente({
@@ -377,7 +378,12 @@ export class WorkerVerificacionIdentidad {
       lastName: verification.extractedLastName,
       results,
     })
-    const snapshot = {
+    const snapshot: {
+      resultCount: number
+      nameMatch: string | null
+      cuilValid: boolean | null
+      verifiedArea?: PersonaFuenteExterna['verifiedArea']
+    } = {
       resultCount: results.length,
       nameMatch:
         comparison.decision === 'verified'
@@ -394,6 +400,7 @@ export class WorkerVerificacionIdentidad {
             ? false
             : null,
     }
+    if (comparison.decision === 'verified' && results[0]?.verifiedArea) snapshot.verifiedArea = results[0].verifiedArea
     const base = {
       ...verification,
       providerReference,

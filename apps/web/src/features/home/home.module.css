@@ -409,6 +409,13 @@
   text-decoration: none;
 }
 
+.popupActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 /* ---- recent requests ------------------------------------------------------------------ */
 .section {
   margin: 0 auto;
@@ -434,6 +441,20 @@
 .sectionSubtitle {
   color: var(--tus-ink-soft);
   margin: 6px 0 0;
+}
+
+.providerGrid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.providerSelected {
+  outline: 3px solid rgba(255, 90, 0, 0.35);
+  outline-offset: 3px;
 }
 
 .sectionActions {
@@ -762,6 +783,10 @@
   .sectionHeader {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .providerGrid {
+    grid-template-columns: 1fr;
   }
 
   .row {

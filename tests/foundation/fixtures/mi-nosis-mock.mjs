@@ -2,7 +2,7 @@
 // `mode` switches: loginChallenge (third-party widget marker), layoutChanged, sessionsCleared.
 export const MI_NOSIS_MOCK_SETUP = `
   const http = await import('node:http')
-  const mock = { logins: 0, searches: [], sessions: new Set(), mode: { loginChallenge: false, layoutChanged: false }, checkboxSeen: [] }
+  const mock = { logins: 0, searches: [], sessions: new Set(), mode: { loginChallenge: false, layoutChanged: false, includeArea: false }, checkboxSeen: [] }
   const people = {
     '30111222': [['30.111.222', 'PRUEBA DEMO, JUAN', '20-30111222-0', 'Comercio', '11-5555-0000']],
     '30111224': [['30.111.224', 'PRUEBA UNO, ANA', '27-30111224-1', '-', '-'], ['30.111.224', 'PRUEBA DOS, ANA', '23-30111224-6', '-', '-']],
@@ -39,8 +39,9 @@ export const MI_NOSIS_MOCK_SETUP = `
       mock.searches.push({ tipo: url.searchParams.get('tipo'), query })
       const rows = people[query] ?? []
       if (rows.length === 0) return send(200, page(form + '<p>No se encontraron resultados</p>'))
-      const headers = mock.mode.layoutChanged ? ['Col A', 'Col B', 'Col C'] : ['Documento', 'Denominación', 'CUIT/CUIL', 'Actividad', 'Teléfono']
-      return send(200, page(form + '<table><thead><tr>' + headers.map((h) => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>' + rows.map((r) => '<tr>' + r.map((c) => '<td>' + c + '</td>').join('') + '</tr>').join('') + '</tbody></table>'))
+      const headers = mock.mode.layoutChanged ? ['Col A', 'Col B', 'Col C'] : ['Documento', 'Denominación', 'CUIT/CUIL', 'Actividad', 'Teléfono', ...(mock.mode.includeArea ? ['Barrio', 'Localidad', 'Provincia', 'Domicilio'] : [])]
+      const withArea = (row) => mock.mode.includeArea ? [...row, 'Camba Cuá', 'Corrientes Capital', 'Corrientes', 'Av. Siempre Viva 742'] : row
+      return send(200, page(form + '<table><thead><tr>' + headers.map((h) => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>' + rows.map((r) => '<tr>' + withArea(r).map((c) => '<td>' + c + '</td>').join('') + '</tr>').join('') + '</tbody></table>'))
     }
     send(404, page('not found'))
   })

@@ -67,7 +67,7 @@ export function crearRouterDirectorio({ servicio, sessions }: { servicio: Servic
       const context = await autenticar(request, response, sessions)
       if (!context) return
       const body = comoRegistro(request.body)
-      if (!context.permissions.includes('tus:marketplace:write') || ['tenantId', 'prestadorId', 'merchantId', 'id', 'verified', 'completedJobs', 'rating'].some((key) => key in body)) {
+      if (!context.permissions.includes('tus:marketplace:write') || ['tenantId', 'prestadorId', 'merchantId', 'id', 'verified', 'completedJobs', 'rating', 'address', 'direccion', 'street', 'houseNumber', 'latitude', 'longitude', 'lat', 'lng', 'exactLatitude', 'exactLongitude', 'documentAddress'].some((key) => key in body)) {
         enviarError(response, 403, 'FORBIDDEN', 'This profile cannot be edited with this session')
         return
       }

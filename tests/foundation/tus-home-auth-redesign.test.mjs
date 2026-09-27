@@ -122,18 +122,19 @@ test('PUBLISH client validates like the API and sends only the request fields wi
   assert.ok(existsSync(join(root, 'apps/web/src/app/publicar/page.tsx')))
 })
 
-test('HOME map is client-only, shares one query with the list and exposes the required states', () => {
+test('HOME map is client-only, uses the provider directory, and keeps requests separate', () => {
   const home = web('features/home/home-page.tsx')
   const list = web('features/home/recent-requests.tsx')
-  const map = web('features/home/request-map.tsx')
-  const hook = web('features/home/use-requests.ts')
+  const map = web('features/home/provider-map.tsx')
+  const hook = web('features/home/use-providers.ts')
   const page = web('app/page.tsx')
 
-  assert.match(home, /dynamic\(\(\) => import\('\.\/request-map'\)[\s\S]*ssr: false/)
-  // One data source feeds map and list.
-  assert.equal((home.match(/useRecentRequests\(/g) ?? []).length, 1)
-  assert.match(home, /<RequestMap[^>]+requests=\{data\}/)
-  assert.match(home, /<RecentRequests[\s\S]*requests=\{data\}/)
+  assert.match(home, /dynamic\(\(\) => import\('\.\/provider-map'\)[\s\S]*ssr: false/)
+  assert.match(home, /useHomeProviders\(filters\)/)
+  assert.match(home, /<ProviderMap[^>]+workers=\{providerData\}/)
+  assert.match(home, /<ProviderResults[\s\S]*workers=\{providerData\}/)
+  assert.match(home, /<RecentRequests[\s\S]*requests=\{requestData\}/)
+  assert.doesNotMatch(home, /RequestMap|request-map/)
   assert.match(hook, /useDebouncedValue/)
   assert.match(list, /Todavía no hay solicitudes visibles en esta zona\./)
   assert.match(list, /Personas de tu zona buscando ayuda profesional\./)
@@ -146,6 +147,7 @@ test('HOME map is client-only, shares one query with the list and exposes the re
   assert.match(home, /Quiero ofrecer mis servicios/)
   assert.match(map, /Recentrar/)
   assert.match(map, /zona aproximada/)
+  assert.match(map, /Solicitar servicio/)
   assert.doesNotMatch(map, /geolocation/)
   assert.match(web('features/home/types.ts'), /-27\.4692[\s\S]*-58\.8306[\s\S]*Corrientes Capital/)
   assert.match(page, /title: 'TUS \| Servicios cerca tuyo'/)

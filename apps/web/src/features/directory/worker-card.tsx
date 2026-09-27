@@ -45,7 +45,8 @@ export function WorkerCard({
             : 'Todavía sin trabajos en TUS'}
         </li>
         <li>
-          {worker.approximateArea} · zona aproximada
+          {worker.publicArea} · zona aproximada
+          {worker.serviceZones.length > 1 ? ` · ${worker.serviceZones.length} zonas` : ''}
           {distance !== null ? ` · ${distance < 1 ? 'muy cerca' : `a ~${String(distance).replace('.', ',')} km`}` : ''}
         </li>
         <li className={worker.availability.status === 'atiende_hoy' ? styles.available : styles.muted}>{worker.availability.label}</li>

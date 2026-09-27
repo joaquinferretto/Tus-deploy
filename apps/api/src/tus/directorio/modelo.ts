@@ -2,6 +2,7 @@ import type { CandidatoPrestador, DisponibilidadPublica, PerfilPrestadorPublico,
 
 import { contieneContacto, ZONAS_CORRIENTES } from '../solicitudes/modelo.ts'
 import { OFICIOS, esOficio, normalizarTexto, oficio, type OficioId } from './oficios.ts'
+import { resolverUbicacionPublicaPrestador, type AreaDomicilioFallback, type ResolucionUbicacionPublica } from './ubicacion.ts'
 
 // Directorio "Buscar trabajador" y búsqueda del asistente. Todo lo que sale de acá es público:
 // nombre que el prestador eligió mostrar, oficio, barrio, descripción, experiencia y hechos
@@ -14,7 +15,10 @@ export interface PerfilPublico {
   prestadorId: string
   nombrePublico: string
   oficio: OficioId
-  zona: string
+  zona: string | null
+  zonasCobertura: string[]
+  modalidadAtencion: 'local' | 'domicilio' | 'mixto'
+  radioCoberturaKm: number | null
   descripcion: string | null
   aniosExperiencia: number | null
   visible: boolean
@@ -54,12 +58,15 @@ export type { CandidatoPrestador, PerfilPrestadorPublico, PrestadorPublico }
 
 // ---- validación del perfil que edita el prestador ----------------------------------------------
 
-export type CampoPerfil = 'displayName' | 'profession' | 'zone' | 'description' | 'yearsOfExperience' | 'visible'
+export type CampoPerfil = 'displayName' | 'profession' | 'zone' | 'serviceZones' | 'serviceMode' | 'coverageRadiusKm' | 'description' | 'yearsOfExperience' | 'visible'
 
 export interface EntradaPerfil {
   nombrePublico: string
   oficio: OficioId
-  zona: string
+  zona: string | null
+  zonasCobertura: string[]
+  modalidadAtencion: 'local' | 'domicilio' | 'mixto'
+  radioCoberturaKm: number | null
   descripcion: string | null
   aniosExperiencia: number | null
   visible: boolean
@@ -70,24 +77,38 @@ export function validarPerfil(body: Record<string, unknown>): { ok: true; valor:
   const texto = (value: unknown) => (typeof value === 'string' ? value.replace(/\s+/gu, ' ').trim() : '')
   const nombre = texto(body['displayName'])
   const descripcion = texto(body['description'])
-  const zona = ZONAS_CORRIENTES.find((item) => item.nombre === body['zone'])
+  const zonaInput = typeof body['zone'] === 'string' ? body['zone'].trim() : ''
+  const zona = ZONAS_CORRIENTES.find((item) => item.nombre === zonaInput)?.nombre ?? null
+  const zonasInput = [zona, ...(Array.isArray(body['serviceZones']) ? body['serviceZones'] : [])]
+  const zonasCobertura = [...new Set(zonasInput.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean))]
+  const zonasValidas = zonasCobertura.length <= 8 && zonasCobertura.every((value) => ZONAS_CORRIENTES.some((item) => item.nombre === value))
+  const modalidadCruda = body['serviceMode'] ?? 'domicilio'
+  const modalidadAtencion = modalidadCruda === 'local' || modalidadCruda === 'domicilio' || modalidadCruda === 'mixto' ? modalidadCruda : null
+  const radioCrudo = body['coverageRadiusKm']
+  const radioCoberturaKm = radioCrudo === null || radioCrudo === undefined || radioCrudo === '' ? null : radioCrudo
   const experienciaCruda = body['yearsOfExperience']
   const experiencia = experienciaCruda === null || experienciaCruda === undefined || experienciaCruda === '' ? null : experienciaCruda
   const visible = body['visible'] === undefined ? true : body['visible']
 
   if (nombre.length < 2 || nombre.length > 60 || contieneContacto(nombre) || /\d{3,}/u.test(nombre)) campos.push('displayName')
   if (!esOficio(body['profession'])) campos.push('profession')
-  if (!zona) campos.push('zone')
+  if (body['zone'] !== undefined && body['zone'] !== null && zonaInput && !zona) campos.push('zone')
+  if (!zonasValidas) campos.push('serviceZones')
+  if (!modalidadAtencion) campos.push('serviceMode')
+  if (radioCoberturaKm !== null && (typeof radioCoberturaKm !== 'number' || !Number.isInteger(radioCoberturaKm) || radioCoberturaKm < 1 || radioCoberturaKm > 100)) campos.push('coverageRadiusKm')
   if (descripcion.length > 600 || contieneContacto(descripcion)) campos.push('description')
   if (experiencia !== null && (typeof experiencia !== 'number' || !Number.isInteger(experiencia) || experiencia < 0 || experiencia > 70)) campos.push('yearsOfExperience')
   if (typeof visible !== 'boolean') campos.push('visible')
-  if (campos.length > 0 || !zona) return { ok: false, campos }
+  if (campos.length > 0) return { ok: false, campos }
   return {
     ok: true,
     valor: {
       nombrePublico: nombre,
       oficio: body['profession'] as OficioId,
-      zona: zona.nombre,
+      zona,
+      zonasCobertura: zonasCobertura.length > 0 ? zonasCobertura : zona ? [zona] : [],
+      modalidadAtencion: modalidadAtencion!,
+      radioCoberturaKm: radioCoberturaKm as number | null,
       descripcion: descripcion || null,
       aniosExperiencia: experiencia as number | null,
       visible: visible as boolean,
@@ -124,8 +145,9 @@ export function disponibilidad(servicios: ServicioResumen[], now: number): Dispo
   return { status: 'otros_dias', label: `Atiende ${dias.map((dia) => DIAS[dia] ?? '').filter(Boolean).join(', ')}`, today: null }
 }
 
-export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador, now: number): PrestadorPublico {
+export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador, now: number, ubicacion?: ResolucionUbicacionPublica): PrestadorPublico {
   const info = oficio(perfil.oficio)
+  const resolved = ubicacion ?? resolverUbicacionPublicaPrestador({ zone: perfil.zona, serviceZones: perfil.zonasCobertura, mode: perfil.modalidadAtencion, radiusKm: perfil.radioCoberturaKm })
   const precios = hechos.servicios.filter((servicio) => servicio.precio !== null && servicio.precio > 0)
   const minimo = precios.sort((a, b) => a.precio! - b.precio!)[0]
   return {
@@ -133,7 +155,12 @@ export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador,
     displayName: perfil.nombrePublico,
     initials: iniciales(perfil.nombrePublico),
     profession: { id: info.id, label: info.label, title: info.profesion },
-    approximateArea: perfil.zona,
+    approximateArea: resolved.publicArea,
+    publicArea: resolved.publicArea,
+    serviceZones: resolved.serviceZones,
+    locationSource: resolved.source,
+    mapLocations: resolved.mapLocations,
+    coverage: resolved.coverage,
     verified: hechos.verificado,
     completedJobs: hechos.trabajosCompletados,
     rating: null,
@@ -143,9 +170,9 @@ export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador,
   }
 }
 
-export function proyectarPerfil(perfil: PerfilPublico, hechos: HechosPrestador, now: number): PerfilPrestadorPublico {
+export function proyectarPerfil(perfil: PerfilPublico, hechos: HechosPrestador, now: number, ubicacion?: ResolucionUbicacionPublica): PerfilPrestadorPublico {
   return {
-    ...proyectarPublico(perfil, hechos, now),
+    ...proyectarPublico(perfil, hechos, now, ubicacion),
     description: perfil.descripcion,
     services: hechos.servicios.map((servicio) => ({
       listingId: servicio.listingId,
@@ -158,9 +185,19 @@ export function proyectarPerfil(perfil: PerfilPublico, hechos: HechosPrestador, 
   }
 }
 
+export function resolverUbicacionDePerfil(perfil: PerfilPublico, identityFallback?: AreaDomicilioFallback | null): ResolucionUbicacionPublica {
+  return resolverUbicacionPublicaPrestador({
+    zone: perfil.zona,
+    serviceZones: perfil.zonasCobertura,
+    mode: perfil.modalidadAtencion,
+    radiusKm: perfil.radioCoberturaKm,
+    identityFallback,
+  })
+}
+
 // ---- distancia aproximada entre barrios ---------------------------------------------------------
 
-export function distanciaEntreZonas(a: string, b: string): number | null {
+export function distanciaEntreZonas(a: string | null, b: string | null): number | null {
   const origen = ZONAS_CORRIENTES.find((zona) => zona.nombre === a)
   const destino = ZONAS_CORRIENTES.find((zona) => zona.nombre === b)
   if (!origen || !destino) return null

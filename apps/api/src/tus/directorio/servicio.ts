@@ -6,6 +6,7 @@ import {
   interpretarNecesidad,
   proyectarPerfil,
   proyectarPublico,
+  resolverUbicacionDePerfil,
   validarPerfil,
   type CampoPerfil,
   type CandidatoPrestador,
@@ -42,6 +43,7 @@ export type ResultadoPerfil =
 interface Enriquecido {
   perfil: PerfilPublico
   hechos: HechosPrestador
+  ubicacion: ReturnType<typeof resolverUbicacionDePerfil>
   publico: PrestadorPublico
 }
 
@@ -64,7 +66,11 @@ export class ServicioDirectorio {
   async miPerfil(context: TusAuthenticatedTenantContext): Promise<(PerfilPrestadorPublico & { visible: boolean }) | null> {
     const perfil = await this.deps.perfiles.porTenant(context.tenantId)
     if (!perfil) return null
-    return { ...proyectarPerfil(perfil, await this.deps.fuentes.hechos(context.tenantId), this.now()), visible: perfil.visible }
+    const [hechos, fallback] = await Promise.all([
+      this.deps.fuentes.hechos(context.tenantId),
+      this.deps.fuentes.ubicacionIdentidadVerificada?.(context.tenantId) ?? Promise.resolve(null),
+    ])
+    return { ...proyectarPerfil(perfil, hechos, this.now(), resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible }
   }
 
   async guardarPerfil(context: TusAuthenticatedTenantContext, body: Record<string, unknown>): Promise<ResultadoPerfil> {
@@ -83,7 +89,11 @@ export class ServicioDirectorio {
       actualizadoEn: ahora,
     }
     await this.deps.perfiles.guardar(perfil)
-    return { ok: true, perfil: { ...proyectarPerfil(perfil, await this.deps.fuentes.hechos(context.tenantId), ahora), visible: perfil.visible } }
+    const [hechos, fallback] = await Promise.all([
+      this.deps.fuentes.hechos(context.tenantId),
+      this.deps.fuentes.ubicacionIdentidadVerificada?.(context.tenantId) ?? Promise.resolve(null),
+    ])
+    return { ok: true, perfil: { ...proyectarPerfil(perfil, hechos, ahora, resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible } }
   }
 
   // ---- lectura pública ------------------------------------------------------------------------
@@ -100,14 +110,14 @@ export class ServicioDirectorio {
     let items = await this.enriquecerVisibles(oficioFiltro ?? oficioTexto ?? undefined)
     if (q) {
       const terminos = q.split(' ').filter((termino) => termino.length >= 3)
-      items = items.filter(({ perfil, hechos }) => {
+      items = items.filter(({ perfil, hechos, ubicacion }) => {
         if (oficioTexto && perfil.oficio === oficioTexto) return true
         const info = oficio(perfil.oficio)
-        const texto = normalizarTexto(`${perfil.nombrePublico} ${info.label} ${info.profesion} ${info.palabrasClave} ${perfil.descripcion ?? ''} ${hechos.servicios.map((servicio) => servicio.nombre).join(' ')}`)
+        const texto = normalizarTexto(`${perfil.nombrePublico} ${info.label} ${info.profesion} ${info.palabrasClave} ${perfil.descripcion ?? ''} ${ubicacion.serviceZones.join(' ')} ${ubicacion.publicArea} ${hechos.servicios.map((servicio) => servicio.nombre).join(' ')}`)
         return terminos.every((termino) => texto.includes(termino))
       })
     }
-    if (zona) items = items.filter(({ perfil }) => normalizarTexto(perfil.zona) === normalizarTexto(zona))
+    if (zona) items = items.filter(({ ubicacion }) => ubicacion.serviceZones.some((item) => normalizarTexto(item) === normalizarTexto(zona)) || normalizarTexto(ubicacion.publicArea) === normalizarTexto(zona))
     if (filtros.verificados === true || filtros.verificados === 'true' || filtros.verificados === '1') items = items.filter((item) => item.publico.verified)
     if (filtros.atiendeHoy === true || filtros.atiendeHoy === 'true' || filtros.atiendeHoy === '1') items = items.filter((item) => item.publico.availability.status === 'atiende_hoy')
 
@@ -125,9 +135,12 @@ export class ServicioDirectorio {
     if (typeof id !== 'string' || !/^[A-Za-z0-9-]{8,64}$/u.test(id)) return null
     const perfil = await this.deps.perfiles.porId(id)
     if (!perfil || !perfil.visible) return null
-    const hechos = await this.deps.fuentes.hechos(perfil.tenantId)
+    const [hechos, fallback] = await Promise.all([
+      this.deps.fuentes.hechos(perfil.tenantId),
+      this.deps.fuentes.ubicacionIdentidadVerificada?.(perfil.tenantId) ?? Promise.resolve(null),
+    ])
     if (!hechos.aprobado) return null
-    return proyectarPerfil(perfil, hechos, this.now())
+    return proyectarPerfil(perfil, hechos, this.now(), resolverUbicacionDePerfil(perfil, fallback))
   }
 
   // Destino interno de una solicitud dirigida: solo prestadores visibles y aprobados.
@@ -156,7 +169,7 @@ export class ServicioDirectorio {
 
   async perfilPublicoDe(tenantId: string): Promise<{ id: string; nombrePublico: string; oficio: string; zona: string } | null> {
     const perfil = await this.deps.perfiles.porTenant(tenantId)
-    return perfil ? { id: perfil.id, nombrePublico: perfil.nombrePublico, oficio: perfil.oficio, zona: perfil.zona } : null
+    return perfil ? { id: perfil.id, nombrePublico: perfil.nombrePublico, oficio: perfil.oficio, zona: perfil.zona ?? perfil.zonasCobertura[0] ?? '' } : null
   }
 
   // ---- asistente ------------------------------------------------------------------------------
@@ -172,7 +185,7 @@ export class ServicioDirectorio {
     const limite = Math.max(1, Math.min(CANDIDATOS_MAXIMOS, input.limite ?? CANDIDATOS_MAXIMOS))
     const items = this.ordenar(await this.enriquecerVisibles(input.oficio as OficioId), 'relevancia', zona).slice(0, limite)
     return {
-      items: items.map((item) => ({ ...item.publico, distanceKm: zona ? distanciaEntreZonas(zona, item.perfil.zona) : null })),
+      items: items.map((item) => ({ ...item.publico, distanceKm: zona ? distanciaEntreZonas(zona, item.ubicacion.primaryZone) : null })),
       reason: items.length > 0 ? 'ok' : 'no_providers',
     }
   }
@@ -184,8 +197,12 @@ export class ServicioDirectorio {
     const now = this.now()
     const enriquecidos = await Promise.all(
       perfiles.map(async (perfil) => {
-        const hechos = await this.deps.fuentes.hechos(perfil.tenantId)
-        return hechos.aprobado ? { perfil, hechos, publico: proyectarPublico(perfil, hechos, now) } : null
+        const [hechos, fallback] = await Promise.all([
+          this.deps.fuentes.hechos(perfil.tenantId),
+          this.deps.fuentes.ubicacionIdentidadVerificada?.(perfil.tenantId) ?? Promise.resolve(null),
+        ])
+        const ubicacion = resolverUbicacionDePerfil(perfil, fallback)
+        return hechos.aprobado ? { perfil, hechos, ubicacion, publico: proyectarPublico(perfil, hechos, now, ubicacion) } : null
       })
     )
     return enriquecidos.filter((item): item is Enriquecido => item !== null)
@@ -194,7 +211,7 @@ export class ServicioDirectorio {
   // Relevancia: verificados primero, luego cercanía de barrio (si hay zona), trabajos completados,
   // quien atiende hoy y quien tiene servicios publicados. Todo sobre datos reales.
   private ordenar(items: Enriquecido[], orden: OrdenDirectorio, zona: string | null): Enriquecido[] {
-    const distancia = (item: Enriquecido) => (zona ? distanciaEntreZonas(zona, item.perfil.zona) ?? 99 : 0)
+    const distancia = (item: Enriquecido) => (zona ? distanciaEntreZonas(zona, item.ubicacion.primaryZone) ?? 99 : 0)
     const hoy = (item: Enriquecido) => (item.publico.availability.status === 'atiende_hoy' ? 1 : 0)
     return [...items].sort((a, b) => {
       if (orden === 'trabajos') return b.publico.completedJobs - a.publico.completedJobs || Number(b.publico.verified) - Number(a.publico.verified)

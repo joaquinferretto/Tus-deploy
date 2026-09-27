@@ -1,6 +1,6 @@
 // Contratos públicos del directorio "Buscar trabajador", del asistente "Buscar servicios" y de la
 // solicitud TUS dirigida a un prestador. Son DTO explícitos: nunca entidades de base de datos ni
-// ids internos (tenant/prestador), direcciones, teléfonos, emails, documentos o coordenadas.
+// ids internos (tenant/prestador), direcciones, teléfonos, emails, documentos o coordenadas exactas.
 
 export const OFICIOS_TUS = ['plomeria', 'electricidad', 'aire', 'pintura', 'mecanica', 'otros'] as const
 export type OficioTus = (typeof OFICIOS_TUS)[number]
@@ -33,12 +33,33 @@ export interface DisponibilidadPublica {
   today: { start: string; end: string } | null
 }
 
+export type FuenteUbicacionPublica = 'configured' | 'identity_fallback' | 'none'
+
+export type ModalidadAtencionPublica = 'local' | 'domicilio' | 'mixto'
+
+export interface UbicacionMapaPrestador {
+  label: string
+  lat: number
+  lng: number
+  precision: 'zone'
+}
+
+export interface CoberturaPublicaPrestador {
+  mode: ModalidadAtencionPublica
+  radiusKm: number | null
+}
+
 export interface PrestadorPublico {
   id: string
   displayName: string
   initials: string
   profession: { id: OficioTus; label: string; title: string }
   approximateArea: string
+  publicArea: string
+  serviceZones: string[]
+  locationSource: FuenteUbicacionPublica
+  mapLocations: UbicacionMapaPrestador[]
+  coverage: CoberturaPublicaPrestador
   verified: boolean
   completedJobs: number
   // TUS todavía no tiene reseñas: siempre null (nunca una valoración inventada).
@@ -132,6 +153,11 @@ export const CLAVES_PRESTADOR_PUBLICO = [
   'initials',
   'profession',
   'approximateArea',
+  'publicArea',
+  'serviceZones',
+  'locationSource',
+  'mapLocations',
+  'coverage',
   'verified',
   'completedJobs',
   'rating',
@@ -141,7 +167,7 @@ export const CLAVES_PRESTADOR_PUBLICO = [
 ] as const
 
 // Claves que un DTO público de prestador jamás puede traer.
-export const CLAVES_PRIVADAS_PRESTADOR = ['tenantId', 'prestadorId', 'merchantId', 'email', 'phone', 'telefono', 'address', 'direccion', 'lat', 'lng', 'latitude', 'longitude', 'dni', 'cuil', 'documentNumber'] as const
+export const CLAVES_PRIVADAS_PRESTADOR = ['tenantId', 'prestadorId', 'merchantId', 'email', 'phone', 'telefono', 'address', 'direccion', 'street', 'houseNumber', 'documentAddress', 'lat', 'lng', 'latitude', 'longitude', 'exactLatitude', 'exactLongitude', 'dni', 'cuil', 'documentNumber'] as const
 
 const esRegistro = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -157,6 +183,16 @@ export function esPrestadorPublico(value: unknown): value is PrestadorPublico {
     esRegistro(profession) &&
     (OFICIOS_TUS as readonly unknown[]).includes(profession['id']) &&
     typeof value['approximateArea'] === 'string' &&
+    typeof value['publicArea'] === 'string' &&
+    Array.isArray(value['serviceZones']) && value['serviceZones'].every((zone) => typeof zone === 'string') &&
+    ['configured', 'identity_fallback', 'none'].includes(String(value['locationSource'])) &&
+    Array.isArray(value['mapLocations']) && value['mapLocations'].every((location) => {
+      if (!esRegistro(location)) return false
+      return typeof location['label'] === 'string' && Number.isFinite(location['lat']) && Number.isFinite(location['lng']) && location['precision'] === 'zone'
+    }) &&
+    esRegistro(value['coverage']) &&
+    ['local', 'domicilio', 'mixto'].includes(String(value['coverage']['mode'])) &&
+    (value['coverage']['radiusKm'] === null || Number.isInteger(value['coverage']['radiusKm'])) &&
     typeof value['verified'] === 'boolean' &&
     Number.isInteger(value['completedJobs']) &&
     value['rating'] === null &&

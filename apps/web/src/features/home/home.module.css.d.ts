@@ -37,7 +37,10 @@ declare const styles: {
   readonly popupCta: string
   readonly popupImages: string
   readonly popupMeta: string
+  readonly popupActions: string
   readonly popupTitle: string
+  readonly providerGrid: string
+  readonly providerSelected: string
   readonly price: string
   readonly proBand: string
   readonly proTitle: string

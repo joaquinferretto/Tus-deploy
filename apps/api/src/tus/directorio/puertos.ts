@@ -1,4 +1,5 @@
 import type { HechosPrestador, PerfilPublico } from './modelo.ts'
+import type { AreaDomicilioFallback } from './ubicacion.ts'
 import type { OficioId } from './oficios.ts'
 
 export interface AlmacenPerfiles {
@@ -15,4 +16,5 @@ export interface FuentesDirectorio {
   // El prestador (merchant) del tenant: id y si está aprobado para operar.
   prestador(tenantId: string): Promise<{ prestadorId: string; aprobado: boolean } | null>
   hechos(tenantId: string): Promise<HechosPrestador>
+  ubicacionIdentidadVerificada?(tenantId: string): Promise<AreaDomicilioFallback | null>
 }

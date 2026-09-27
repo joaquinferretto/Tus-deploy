@@ -3,6 +3,7 @@ import type {
   LecturaDocumento,
   MetodoVerificacionIdentidad,
   MotivoRevisionIdentidad,
+  AreaDomicilioVerificada,
 } from './modelo.ts'
 
 export interface VerificacionIdentidad {
@@ -32,6 +33,7 @@ export interface VerificacionIdentidad {
     resultCount: number
     nameMatch: string | null
     cuilValid: boolean | null
+    verifiedArea?: AreaDomicilioVerificada | null
   } | null
   attempts: number
   version: number

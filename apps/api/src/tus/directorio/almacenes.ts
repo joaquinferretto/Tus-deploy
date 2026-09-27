@@ -50,13 +50,22 @@ export interface ClientePrismaDirectorio {
 const desdeFecha = (value: unknown) => (value instanceof Date ? value.getTime() : Number(value))
 
 function desdeFila(fila: Fila): PerfilPublico {
+  const zona = fila['zona'] === null || fila['zona'] === undefined ? null : String(fila['zona'])
+  const zonasCobertura = Array.isArray(fila['zonasCobertura'])
+    ? fila['zonasCobertura'].filter((item): item is string => typeof item === 'string')
+    : zona
+      ? [zona]
+      : []
   return {
     id: String(fila['id']),
     tenantId: String(fila['tenantId']),
     prestadorId: String(fila['prestadorId']),
     nombrePublico: String(fila['nombrePublico']),
     oficio: fila['oficio'] as OficioId,
-    zona: String(fila['zona']),
+    zona,
+    zonasCobertura,
+    modalidadAtencion: fila['modalidadAtencion'] === 'local' || fila['modalidadAtencion'] === 'mixto' ? fila['modalidadAtencion'] : 'domicilio',
+    radioCoberturaKm: fila['radioCoberturaKm'] === null || fila['radioCoberturaKm'] === undefined ? null : Number(fila['radioCoberturaKm']),
     descripcion: (fila['descripcion'] as string | null) ?? null,
     aniosExperiencia: fila['aniosExperiencia'] === null || fila['aniosExperiencia'] === undefined ? null : Number(fila['aniosExperiencia']),
     visible: fila['visible'] === true,
@@ -73,6 +82,9 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
       nombrePublico: perfil.nombrePublico,
       oficio: perfil.oficio,
       zona: perfil.zona,
+      zonasCobertura: perfil.zonasCobertura,
+      modalidadAtencion: perfil.modalidadAtencion,
+      radioCoberturaKm: perfil.radioCoberturaKm,
       descripcion: perfil.descripcion,
       aniosExperiencia: perfil.aniosExperiencia,
       visible: perfil.visible,
@@ -138,6 +150,10 @@ export class FuentesDirectorioTus implements FuentesDirectorio {
         horario: publicacion.workingHours.map((item) => ({ day: item.day, start: item.start, end: item.end })),
       }))
     return { aprobado: prestador?.aprobado ?? false, verificado, trabajosCompletados, servicios }
+  }
+
+  async ubicacionIdentidadVerificada(tenantId: string) {
+    return this.application.identity?.ubicacionPublicaVerificada?.(tenantId) ?? null
   }
 }
 

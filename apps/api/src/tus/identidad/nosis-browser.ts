@@ -8,8 +8,9 @@ import {
 import type { BrowserSessionStore } from './puertos.ts'
 
 // Temporary adapter until the Nosis API is contracted: automates the operator's own Mi Nosis
-// account with Chromium. Only the DNI search of the "Localizador" is used and only document
-// number, name and CUIL are read. Never searches by phone or activity, never stores pages.
+// account with Chromium. Only the DNI search of the "Localizador" is used. Document number, name,
+// CUIL and, when exposed as separate fields, a normalized area are read; exact address columns
+// are never stored. Never searches by phone or activity, never stores pages.
 
 // ---- selectors (single place to adjust when Mi Nosis changes its layout) ------------------
 
@@ -184,7 +185,7 @@ export class MiNosisPage {
     await this.page.locator(this.selectors.localizadorSubmit).first().click()
   }
 
-  // Reads ONLY document number, name and CUIL of each result row.
+  // Reads identity fields plus optional area columns; exact address columns are ignored.
   async readResult(): Promise<PersonaFuenteExterna[]> {
     const table = this.page.locator(this.selectors.resultadosTabla).first()
     const empty = this.page.locator(this.selectors.sinResultados).first()
@@ -226,14 +227,25 @@ export class MiNosisPage {
     const docIndex = index(/documento|dni/iu)
     const nameIndex = index(/denominaci|apellido|nombre/iu)
     const cuilIndex = index(/cui[lt]/iu)
+    const barrioIndex = index(/^barrio$/iu)
+    const localidadIndex = index(/^localidad$|^ciudad$/iu)
+    const provinciaIndex = index(/^provincia$/iu)
     if (docIndex < 0 || nameIndex < 0 || cuilIndex < 0)
       throw layout('result columns not recognized', true)
-    return rows.body.map((cells) => ({
-      documentNumber:
-        normalizarDni(cells[docIndex] ?? null) ?? (soloDigitos(cells[docIndex]) || null),
-      fullName: (cells[nameIndex] ?? '').trim() || null,
-      cuil: soloDigitos(cells[cuilIndex]) || null,
-    }))
+    return rows.body.map((cells) => {
+      const area = {
+        barrio: areaValue(cells[barrioIndex] ?? null),
+        localidad: areaValue(cells[localidadIndex] ?? null),
+        provincia: areaValue(cells[provinciaIndex] ?? null),
+      }
+      return {
+        documentNumber:
+          normalizarDni(cells[docIndex] ?? null) ?? (soloDigitos(cells[docIndex]) || null),
+        fullName: (cells[nameIndex] ?? '').trim() || null,
+        cuil: soloDigitos(cells[cuilIndex]) || null,
+        ...(area.barrio || area.localidad || area.provincia ? { verifiedArea: area } : {}),
+      }
+    })
   }
 
   private async hayDesafioExterno(): Promise<boolean> {
@@ -272,6 +284,11 @@ function desafio(searchSubmitted = false) {
 
 function layout(message: string, searchSubmitted = false) {
   return new ErrorProveedorIdentidad('NOSIS_LAYOUT_CHANGED', message, searchSubmitted)
+}
+
+function areaValue(value: string | null): string | null {
+  const normalized = (value ?? '').replace(/\s+/gu, ' ').trim()
+  return normalized && normalized.length <= 80 && !/\d/iu.test(normalized) ? normalized : null
 }
 
 export type LanzadorChromium = (options: {

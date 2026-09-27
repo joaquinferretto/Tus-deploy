@@ -8,6 +8,7 @@ import {
   VERSION_CONSENTIMIENTO_IDENTIDAD,
   enmascararCuil,
   enmascararDni,
+  type AreaDomicilioVerificada,
   type EstadoVerificacionIdentidad,
 } from './modelo.ts'
 import type {
@@ -78,6 +79,16 @@ export class ServicioVerificacionIdentidad {
     return this.transaction.ejecutar((repositories) =>
       repositories.verificaciones.tenantVerificado(tenantId)
     )
+  }
+
+  // Only a verified, normalized area may be consumed by the public directory.
+  // Exact address fields are deliberately not part of this contract.
+  async ubicacionPublicaVerificada(tenantId: string): Promise<AreaDomicilioVerificada | null> {
+    return this.transaction.ejecutar(async (repositories) => {
+      const current = await repositories.verificaciones.ultimaDeTenant(tenantId)
+      if (!current || current.status !== 'verified') return null
+      return sanitizarAreaDomicilio(current.externalSnapshot?.verifiedArea ?? null)
+    })
   }
 
   async estado(context: ContextoIdentidad): Promise<VistaVerificacionPrestador> {
@@ -549,4 +560,16 @@ export class ServicioVerificacionIdentidad {
 
 export function aadDocumento(verificationId: string, side: 'front' | 'back'): string {
   return `identity-document:${verificationId}:${side}`
+}
+
+function sanitizarAreaDomicilio(value: AreaDomicilioVerificada | null): AreaDomicilioVerificada | null {
+  if (!value) return null
+  const clean = (input: unknown): string | null => {
+    if (typeof input !== 'string') return null
+    const text = input.replace(/\s+/gu, ' ').trim()
+    if (!text || text.length > 80 || /\d/iu.test(text)) return null
+    return text
+  }
+  const area = { barrio: clean(value.barrio), localidad: clean(value.localidad), provincia: clean(value.provincia) }
+  return area.barrio || area.localidad || area.provincia ? area : null
 }

@@ -1,39 +1,48 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 
+import { createDirectoryClient } from '../directory/directory-client'
 import { HeroSearch } from './hero-search'
 import { PublicHeader } from './public-header'
+import { ProviderResults } from './provider-results'
 import { RecentRequests } from './recent-requests'
-import { EMPTY_FILTERS, type RequestFilters } from './types'
+import { EMPTY_FILTERS } from './types'
 import { useRecentRequests } from './use-requests'
+import { useHomeProviders } from './use-providers'
+import type { ProviderMapFilters } from './providers-source'
 import styles from './home.module.css'
 
 // Leaflet needs `window`: the map is loaded only in the browser; the rest of the home renders on
 // the server and a light skeleton keeps the hero stable while the map loads.
-const RequestMap = dynamic(() => import('./request-map'), {
+const ProviderMap = dynamic(() => import('./provider-map'), {
   ssr: false,
   loading: () => <div aria-hidden="true" className={styles.mapSkeleton} />,
 })
 
 export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
-  const [filters, setFilters] = useState<RequestFilters>(EMPTY_FILTERS)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [highlightedId, setHighlightedId] = useState<string | null>(null)
+  const [filters, setFilters] = useState<ProviderMapFilters>({ query: '', profession: '', zone: '' })
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null)
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
   const [searchSignal, setSearchSignal] = useState(0)
-  const requests = useRecentRequests(filters)
-  const data = requests.data ?? []
-  const status = requests.isPending ? 'loading' : requests.isError ? 'error' : 'success'
+  const directory = createDirectoryClient()
+  const catalog = useQuery({ queryKey: ['home-directory-catalog'], queryFn: () => directory.catalog(), staleTime: 5 * 60_000 })
+  const providers = useHomeProviders(filters)
+  const requests = useRecentRequests(EMPTY_FILTERS)
+  const providerData = providers.data ?? []
+  const providerStatus = providers.isPending ? 'loading' : providers.isError ? 'error' : 'success'
+  const requestData = requests.data ?? []
+  const requestStatus = requests.isPending ? 'loading' : requests.isError ? 'error' : 'success'
 
-  function select(id: string) {
-    setSelectedId(id)
+  function selectProvider(id: string) {
+    setSelectedProviderId(id)
   }
 
-  function changeFilters(next: RequestFilters) {
+  function changeFilters(next: ProviderMapFilters) {
     setFilters(next)
-    setSelectedId(null)
-    setHighlightedId(null)
+    setSelectedProviderId(null)
   }
 
   return (
@@ -46,34 +55,38 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
         <section aria-labelledby="home-titulo" className={styles.hero}>
           {/* The hero is only the map and the filters; the title stays for screen readers and SEO. */}
           <h1 className={styles.srOnly} id="home-titulo">
-            Servicios cerca tuyo: personas de tu zona buscando ayuda profesional
+            Prestadores y zonas de atención cerca tuyo
           </h1>
-          <div aria-label="Mapa de solicitudes en tu zona" className={styles.mapLayer} role="region">
-            <RequestMap highlightedId={highlightedId} onSelect={select} requests={data} selectedId={selectedId} searchSignal={searchSignal} />
+          <div aria-label="Mapa de prestadores y zonas de atención" className={styles.mapLayer} role="region">
+            <ProviderMap onSelect={selectProvider} searchSignal={searchSignal} selectedId={selectedProviderId} workers={providerData} />
           </div>
           <div className={styles.searchDock}>
             <HeroSearch
+              catalog={catalog.data?.items ?? []}
               filters={filters}
               onChange={changeFilters}
-              onSubmit={() => { setSelectedId(null); setSearchSignal((value) => value + 1) }}
+              zones={catalog.data?.zones ?? []}
+              onSubmit={() => { setSelectedProviderId(null); setSearchSignal((value) => value + 1) }}
             />
             <div className={styles.mapResults}>
               <span role="status" aria-live="polite">
-                {status === 'loading' ? 'Buscando solicitudes en el mapa…' : status === 'error' ? 'No pudimos cargar el mapa de solicitudes.' : data.length === 0 ? 'No hay solicitudes con estos filtros.' : `${data.length} ${data.length === 1 ? 'solicitud en el mapa' : 'solicitudes en el mapa'}`}
+                {providerStatus === 'loading' ? 'Buscando prestadores en el mapa…' : providerStatus === 'error' ? 'No pudimos cargar el mapa de prestadores.' : providerData.length === 0 ? 'No hay prestadores con estos filtros.' : `${providerData.length} ${providerData.length === 1 ? 'prestador en el mapa' : 'prestadores en el mapa'}`}
               </span>
-              {status === 'error' ? <button type="button" onClick={() => void requests.refetch()}>Reintentar</button> : null}
-              {filters.query || filters.category || filters.zone ? <button type="button" onClick={() => changeFilters(EMPTY_FILTERS)}>Limpiar filtros</button> : null}
-              <a href="#solicitudes">Ver lista</a>
+              {providerStatus === 'error' ? <button type="button" onClick={() => void providers.refetch()}>Reintentar</button> : null}
+              {filters.query || filters.profession || filters.zone ? <button type="button" onClick={() => changeFilters({ query: '', profession: '', zone: '' })}>Limpiar filtros</button> : null}
+              <a href="#prestadores">Ver prestadores</a>
             </div>
           </div>
         </section>
 
+        <ProviderResults onSelect={selectProvider} selectedId={selectedProviderId} status={providerStatus} workers={providerData} />
+
         <RecentRequests
-          onHover={setHighlightedId}
-          onSelect={select}
-          requests={data}
-          selectedId={selectedId}
-          status={status}
+          onHover={() => undefined}
+          onSelect={setSelectedRequestId}
+          requests={requestData}
+          selectedId={selectedRequestId}
+          status={requestStatus}
         />
 
         <section aria-labelledby="como-funciona-titulo" className={styles.section} id="como-funciona">

@@ -7,7 +7,7 @@ import { MI_NOSIS_MOCK_SETUP } from './fixtures/mi-nosis-mock.mjs'
 // Real headless Chromium (playwright-core) against a local Mi Nosis mock. No real person and
 // no real Nosis endpoint is ever contacted.
 
-test('IDENTITY-NOSIS browser: login with the native checkbox, encrypted session reuse, DNI-only search, only DNI/name/CUIL read', () => {
+test('IDENTITY-NOSIS browser: login with the native checkbox, encrypted session reuse, DNI-only search and safe area read', () => {
   const result = runTypeScriptScenario(`${MI_NOSIS_MOCK_SETUP}
     try {
       let slots = 0
@@ -23,8 +23,9 @@ test('IDENTITY-NOSIS browser: login with the native checkbox, encrypted session 
       // A new process reuses the encrypted session: no new login.
       const second = newBrowserProvider({ autoLogin: false })
       await second.prepararSesion()
+      mock.mode.includeArea = true
       const again = await second.consultar({ documentNumber: '30111222' }, slot)
-      console.log(JSON.stringify({ logins: mock.logins, checkbox: mock.checkboxSeen, single, none: none.results, many: many.results.length, again: again.results.length, slots, searches: mock.searches, storedPlain: stored.ciphertext.includes(token) || stored.ciphertext.includes('mn_session'), keyVersion: stored.keyVersion }))
+      console.log(JSON.stringify({ logins: mock.logins, checkbox: mock.checkboxSeen, single, none: none.results, many: many.results.length, again, slots, searches: mock.searches, storedPlain: stored.ciphertext.includes(token) || stored.ciphertext.includes('mn_session'), keyVersion: stored.keyVersion }))
     } finally { await shutdown() }
   `)
   assert.equal(result.logins, 1)
@@ -39,7 +40,14 @@ test('IDENTITY-NOSIS browser: login with the native checkbox, encrypted session 
   ])
   assert.deepEqual(result.none, [])
   assert.equal(result.many, 2)
-  assert.equal(result.again, 1)
+  assert.deepEqual(result.again.results, [
+    {
+      documentNumber: '30111222',
+      fullName: 'PRUEBA DEMO, JUAN',
+      cuil: '20301112220',
+      verifiedArea: { barrio: 'Camba Cuá', localidad: 'Corrientes Capital', provincia: 'Corrientes' },
+    },
+  ])
   assert.equal(result.slots, 4)
   assert.ok(
     result.searches.every((search) => search.tipo === 'doc'),
