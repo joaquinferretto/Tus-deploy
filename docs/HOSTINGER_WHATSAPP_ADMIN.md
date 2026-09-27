@@ -95,7 +95,7 @@ Variables en hPanel (reiniciar/redeploy después):
 | Variable | Valor |
 | --- | --- |
 | `TUS_PLATFORM_ADMIN_EMAILS` | tu email de admin |
-| `TUS_MFA_ENCRYPTION_KEY` | 32 bytes en base64. Se puede generar en tu propia PC (PowerShell): `[Convert]::ToBase64String((1..32 \| % {Get-Random -Max 256}))` o con Node `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. No cambiarla después. |
+| `TUS_MFA_ENCRYPTION_KEY` | 32 bytes en base64. Se genera en tu propia PC (no en Hostinger) con PowerShell: `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`. No cambiarla después. |
 | `TUS_ADMIN_BOOTSTRAP_CODE` | una frase larga que inventás vos (24+ caracteres). Borrarla cuando termines. |
 | `TRUST_PROXY_HOPS` | `1` |
 
