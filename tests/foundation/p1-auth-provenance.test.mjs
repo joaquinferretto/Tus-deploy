@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { join, relative, resolve, win32 } from 'node:path'
 import { test } from 'node:test'
 
 const root = resolve(import.meta.dirname, '..', '..')
@@ -78,6 +78,9 @@ function sourceSnapshot() {
 }
 
 function sourceIsOutsideFactory(sourceRoot) {
+  // The evidence roots are Windows paths. On another OS (CI on Linux) a Windows absolute path can
+  // never be inside the checkout, while path.relative() would treat it as a relative file name.
+  if (process.platform !== 'win32' && win32.isAbsolute(sourceRoot)) return true
   const pathFromFactory = relative(root, sourceRoot)
   return (
     pathFromFactory === '..' ||

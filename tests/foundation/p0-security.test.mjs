@@ -24,7 +24,9 @@ test('security controls and rotation procedure are versioned without reading .en
   assert.ok(existsSync(join(root, 'scripts', 'security', 'scan-secrets.mjs')))
   assert.ok(existsSync(join(root, 'docs', 'security', 'incident-response.md')))
   assert.match(readFileSync(join(root, '.github', 'workflows', 'security.yml'), 'utf8'), /scan-secrets/)
-  assert.ok(existsSync(join(root, '.env')))
+  // .env is local-only: ignored and never versioned (CI has none, so its existence is not required).
+  assert.match(readFileSync(join(root, '.gitignore'), 'utf8'), /^\.env\*?$/mu)
+  assert.equal(execFileSync('git', ['ls-files', '--', '.env'], { cwd: root, encoding: 'utf8' }).trim(), '')
 })
 
 test('secret scanner does not join an empty assignment with a quoted string on the next line', () => {

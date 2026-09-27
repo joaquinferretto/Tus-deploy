@@ -95,7 +95,9 @@ test('failed database startup never invokes the listener', async () => {
     },
   }
 
-  await assert.rejects(startServer({ app, databaseLifecycle: lifecycle, installSignalHandlers: false }), /database|startup|unavailable/i)
+  // Explicit config: the test must not depend on a local .env (CI has none).
+  const runtimeConfig = { databaseUrl: 'postgresql://test@127.0.0.1:5432/test', dbAttemptTimeoutMs: 1000, dbMaxAttempts: 2, shutdownTimeoutMs: 1000, environment: 'test', providersEnabled: false }
+  await assert.rejects(startServer({ app, databaseLifecycle: lifecycle, runtimeConfig, installSignalHandlers: false }), /database|startup|unavailable/i)
   assert.equal(listens, 0)
 })
 

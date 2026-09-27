@@ -14,6 +14,12 @@ jobs:
   deterministic:
     name: Deterministic checks
     runs-on: ubuntu-latest
+    env:
+      # CI has no local environment file. The API builds its Prisma client at startup (lazy: it never connects until a
+      # query), so tests with in-memory services only need a syntactically valid URL. Dummy value,
+      # no password and no real database behind it.
+      DATABASE_URL: postgresql://ci@127.0.0.1:5432/tus_ci?schema=public
+      DIRECT_URL: postgresql://ci@127.0.0.1:5432/tus_ci?schema=public
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
@@ -24,6 +30,8 @@ jobs:
           node-version: 22
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Install headless Chromium for the identity browser tests
+        run: pnpm --filter @factory/api exec playwright-core install --with-deps chromium-headless-shell
       - name: Generate Prisma client before typecheck
         run: pnpm --filter @factory/api prisma:generate
       - run: pnpm run typecheck
