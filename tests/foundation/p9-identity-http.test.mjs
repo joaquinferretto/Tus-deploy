@@ -19,20 +19,20 @@ test('authenticated signup, tenant bootstrap, and session authorization survive 
     const express = (await import('./apps/api/node_modules/express/index.js')).default
     const { createInMemoryAuthService } = (await import('./apps/api/src/auth-security/composition.ts')).default
     const { DurableIdentitySessionResolver } = (await import('./apps/api/src/auth-security/adapters/durable-session-resolver.ts')).default
-    const { createAuthRouter } = (await import('./apps/api/src/auth-security/http/auth-router.ts')).default
-    const { createTenancyRouter } = (await import('./apps/api/src/tenancy/http/tenancy-router.ts')).default
-    const { createInMemoryTenancyService } = (await import('./apps/api/src/tenancy/composition.ts')).default
-    const { createTusHttpRouter } = (await import('./apps/api/src/tus/http/router.ts')).default
+     const { createAuthRouter } = (await import('./apps/api/src/auth-security/http/auth-router.ts')).default
+     const { createTenancyRouter } = (await import('./apps/api/src/tenancy/http/tenancy-router.ts')).default
+     const { createInMemoryTenancyService } = (await import('./apps/api/src/tenancy/composition.ts')).default
+     const { createTusHttpRouter } = (await import('./apps/api/src/tus/http/router.ts')).default
     const { createTusApplication } = (await import('./apps/api/src/tus/composition/index.ts')).default
 
     const auth = createInMemoryAuthService({ now: () => 1_700_000_000_000 })
     const firstApp = express()
     firstApp.use(express.json())
-    const firstResolver = new DurableIdentitySessionResolver(auth.store, () => 1_700_000_000_000)
-    const tenancy = createInMemoryTenancyService({ now: () => 1_700_000_000_000 })
-    firstApp.use(createAuthRouter({ service: auth.service, sessions: firstResolver }))
-    firstApp.use(createTenancyRouter({ service: tenancy.service, sessions: firstResolver }))
-    firstApp.use(createTusHttpRouter({ application: createTusApplication(), sessions: firstResolver }))
+     const firstResolver = new DurableIdentitySessionResolver(auth.store, () => 1_700_000_000_000)
+     const tenancy = createInMemoryTenancyService({ now: () => 1_700_000_000_000 })
+     firstApp.use(createAuthRouter({ service: auth.service, sessions: firstResolver }))
+     firstApp.use(createTenancyRouter({ service: tenancy.service, sessions: firstResolver }))
+     firstApp.use(createTusHttpRouter({ application: createTusApplication(), sessions: firstResolver }))
     const firstServer = await new Promise((resolve) => { const server = firstApp.listen(0, () => resolve(server)) })
     const firstPort = firstServer.address().port
     const request = async (path, options = {}) => fetch('http://127.0.0.1:' + firstPort + path, { ...options, headers: { 'content-type': 'application/json', ...(options.headers ?? {}) } })
@@ -45,15 +45,15 @@ test('authenticated signup, tenant bootstrap, and session authorization survive 
     const session = await signIn.json()
     const context = await request('/auth/session', { headers: { authorization: 'Bearer ' + session.session.accessToken, 'x-correlation-id': 'corr-a' } })
     const contextBody = await context.json()
-    const bootstrap = await request('/tenancy/organizations', { method: 'POST', headers: { authorization: 'Bearer ' + session.session.accessToken, 'x-correlation-id': 'corr-bootstrap' }, body: JSON.stringify({ name: 'Owner business', slug: 'owner-business' }) })
+     const bootstrapRoute = await request('/tenancy/organizations', { method: 'POST', headers: { authorization: 'Bearer ' + session.session.accessToken, 'x-correlation-id': 'corr-bootstrap' }, body: JSON.stringify({ name: 'Hijacked business', slug: 'hijacked-business' }) })
     await new Promise((resolve, reject) => firstServer.close((error) => error ? reject(error) : resolve()))
 
     const secondApp = express()
     secondApp.use(express.json())
-    const secondResolver = new DurableIdentitySessionResolver(auth.store, () => 1_700_000_000_000)
-    secondApp.use(createAuthRouter({ service: auth.service, sessions: secondResolver }))
-    secondApp.use(createTenancyRouter({ service: tenancy.service, sessions: secondResolver }))
-    secondApp.use(createTusHttpRouter({ application: createTusApplication(), sessions: secondResolver }))
+     const secondResolver = new DurableIdentitySessionResolver(auth.store, () => 1_700_000_000_000)
+     secondApp.use(createAuthRouter({ service: auth.service, sessions: secondResolver }))
+     secondApp.use(createTenancyRouter({ service: tenancy.service, sessions: secondResolver }))
+     secondApp.use(createTusHttpRouter({ application: createTusApplication(), sessions: secondResolver }))
     const secondServer = await new Promise((resolve) => { const server = secondApp.listen(0, () => resolve(server)) })
     const secondPort = secondServer.address().port
     const restarted = await fetch('http://127.0.0.1:' + secondPort + '/auth/session', { headers: { authorization: 'Bearer ' + session.session.accessToken, 'x-correlation-id': 'corr-restart' } })
@@ -62,11 +62,14 @@ test('authenticated signup, tenant bootstrap, and session authorization survive 
     const afterSignOut = await fetch('http://127.0.0.1:' + secondPort + '/auth/session', { headers: { authorization: 'Bearer ' + session.session.accessToken, 'x-correlation-id': 'corr-after-sign-out' } })
     await new Promise((resolve, reject) => secondServer.close((error) => error ? reject(error) : resolve()))
 
-    console.log(JSON.stringify({
-      registration: registration.status,
-      context: context.status,
-      bootstrap: bootstrap.status,
-      tenantGenerated: contextBody.context.tenantId !== 'victim-tenant',
+     console.log(JSON.stringify({
+       registration: registration.status,
+       registrationStatus: registrationBody.status,
+       registrationHasSession: Boolean(registrationBody.session),
+       context: context.status,
+       bootstrapRoute: bootstrapRoute.status,
+       organizationPreserved: auth.store.organizations.get(contextBody.context.tenantId)?.name === 'Owner',
+       tenantGenerated: contextBody.context.tenantId !== 'victim-tenant',
       ownerRole: registrationBody.account.roles,
       actorId: contextBody.context.subjectId,
       restarted: restarted.status,
@@ -74,7 +77,11 @@ test('authenticated signup, tenant bootstrap, and session authorization survive 
       signedOut: signedOut.status,
       afterSignOut: afterSignOut.status,
       audited: auth.audit.events.some((event) => event.kind === 'session.created' && event.tenantId === contextBody.context.tenantId),
-      tenantPersisted: tenancy.store.organizations.has(contextBody.context.tenantId) && tenancy.store.memberships.size === 1,
+       tenantPersisted: auth.store.tenants.has(contextBody.context.tenantId)
+         && auth.store.organizations.has(contextBody.context.tenantId)
+         && auth.store.workspaces.has(contextBody.context.tenantId + ':default')
+         && auth.store.roles.has(contextBody.context.tenantId + ':owner')
+         && auth.store.memberships.has(contextBody.context.tenantId + ':' + contextBody.context.subjectId),
     }))
   `)
 
@@ -82,8 +89,11 @@ test('authenticated signup, tenant bootstrap, and session authorization survive 
   const { actorId, ...stableResult } = result
   assert.deepEqual(stableResult, {
     registration: 201,
+    registrationStatus: 'pending_verification',
+    registrationHasSession: false,
     context: 200,
-    bootstrap: 201,
+    bootstrapRoute: 404,
+    organizationPreserved: true,
     tenantGenerated: true,
     ownerRole: ['owner'],
     restarted: 200,

@@ -1,7 +1,6 @@
 import type {
   Invitation,
   Membership,
-  Organization,
   Role,
   TenantResource,
   TenancyAuditEvent,
@@ -9,8 +8,6 @@ import type {
 } from './domain.js'
 
 export interface TenancyStore {
-  saveOrganization(organization: Organization): Promise<void>
-  findOrganization(organizationId: string): Promise<Organization | undefined>
   saveWorkspace(workspace: Workspace): Promise<void>
   findWorkspace(workspaceId: string): Promise<Workspace | undefined>
   saveRole(role: Role): Promise<void>

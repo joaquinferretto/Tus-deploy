@@ -1,7 +1,6 @@
 import type {
   Invitation,
   Membership,
-  Organization,
   Role,
   TenantResource,
   TenancyAuditEvent,
@@ -10,7 +9,6 @@ import type {
 import type { TenancyStore } from '../ports.js'
 import type { TenancyAuditSink } from '../ports.js'
 
-interface OrganizationRow { id: string; name: string; slug: string; defaultWorkspaceId: string; createdAt: Date }
 interface WorkspaceRow { id: string; organizationId: string; name: string; slug: string; createdAt: Date }
 interface RoleRow { id: string; tenantId: string; name: string; permissions: string[]; resourceScopes: string[]; createdAt: Date }
 interface MembershipRow { id: string; organizationId: string; userId: string; roleIds: string[]; status: string; createdAt: Date }
@@ -21,11 +19,6 @@ interface AccountIdentityRow { user: { id: string } }
 export interface TenantPrismaClient {
   account: {
     findUnique(args: { where: { id: string }; include: { user: true } }): Promise<AccountIdentityRow | null>
-  }
-  organization: {
-    findUnique(args: { where: { id: string } }): Promise<OrganizationRow | null>
-    create(args: { data: Record<string, unknown> }): Promise<OrganizationRow>
-    update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<OrganizationRow>
   }
   workspace: {
     findUnique(args: { where: { id: string } }): Promise<WorkspaceRow | null>
@@ -85,17 +78,6 @@ export class PrismaTenancyStore implements TenancyStore {
 
   constructor(client: TenantPrismaClient) {
     this.client = client
-  }
-
-  async saveOrganization(value: Organization): Promise<void> {
-    const existing = await this.client.organization.findUnique({ where: { id: value.id } })
-    if (!existing) await this.client.organization.create({ data: { id: value.id, name: value.name, slug: value.slug, defaultWorkspaceId: value.defaultWorkspaceId, createdAt: new Date(value.createdAt), updatedAt: new Date(value.createdAt) } })
-    else await this.client.organization.update({ where: { id: value.id }, data: { name: value.name, slug: value.slug, defaultWorkspaceId: value.defaultWorkspaceId } })
-  }
-
-  async findOrganization(id: string): Promise<Organization | undefined> {
-    const row = await this.client.organization.findUnique({ where: { id } })
-    return row ? { id: row.id, name: row.name, slug: row.slug, defaultWorkspaceId: row.defaultWorkspaceId, createdAt: row.createdAt.getTime() } : undefined
   }
 
   async saveWorkspace(value: Workspace): Promise<void> {

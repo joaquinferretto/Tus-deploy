@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import type {
   Invitation,
   Membership,
-  Organization,
   Role,
   TenantResource,
   TenancyAuditEvent,
@@ -16,22 +15,11 @@ import type {
 } from '../ports.js'
 
 export class InMemoryTenancyStore implements TenancyStore {
-  readonly organizations = new Map<string, Organization>()
   readonly workspaces = new Map<string, Workspace>()
   readonly roles = new Map<string, Role>()
   readonly memberships = new Map<string, Membership>()
   readonly invitations = new Map<string, Invitation>()
   readonly resources = new Map<string, TenantResource>()
-
-  async saveOrganization(organization: Organization): Promise<void> {
-    this.organizations.set(organization.id, { ...organization })
-  }
-
-  async findOrganization(organizationId: string): Promise<Organization | undefined> {
-    const organization = this.organizations.get(organizationId)
-    return organization ? { ...organization } : undefined
-  }
-
   async saveWorkspace(workspace: Workspace): Promise<void> {
     this.workspaces.set(workspace.id, { ...workspace })
   }

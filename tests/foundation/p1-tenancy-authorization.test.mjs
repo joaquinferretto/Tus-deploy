@@ -8,7 +8,15 @@ const root = join(import.meta.dirname, '..', '..')
 const tsxCli = join(root, 'apps/api/node_modules/tsx/dist/cli.mjs')
 
 function runTypeScriptScenario(source) {
-  const wrapped = `(async () => {\n${source}\n})()`
+  const wrapped = `(async () => {
+    const seedTenant = async (tenancy, tenantId, actorId = 'owner') => {
+      const role = { id: tenantId + ':owner', tenantId, name: 'Owner', permissions: ['membership:invite', 'membership:revoke', 'resource:read', 'resource:write', 'role:manage', 'workspace:write'], resourceScopes: ['*'], createdAt: 1_700_000_000_000 }
+      await tenancy.store.saveRole(role)
+      await tenancy.store.saveMembership({ id: tenantId + ':' + actorId, tenantId, userId: actorId, roleIds: [role.id], status: 'active', createdAt: 1_700_000_000_000, revokedAt: null })
+      return { organization: { id: tenantId }, role }
+    }
+${source}
+})()`
   const output = execFileSync(process.execPath, [tsxCli, '--eval', wrapped], {
     cwd: root,
     encoding: 'utf8',
@@ -60,39 +68,6 @@ test('missing or invalid tenant context is denied and produces correlated redact
   })
 })
 
-test('organization bootstrap creates a default workspace, owner role, and active membership', () => {
-  const result = runTypeScriptScenario(`
-    const { createInMemoryTenancyService } = (await import('./apps/api/src/tenancy/composition.ts')).default
-    const tenancy = createInMemoryTenancyService({ now: () => 1_700_000_000_000 })
-    const created = await tenancy.createOrganization({ actorId: 'actor-a', name: 'Acme', slug: 'acme', correlationId: 'corr-1' })
-    const context = { tenantId: created.organization.id, actorId: 'actor-a', correlationId: 'corr-2' }
-    const decision = await tenancy.authorize({ context, action: 'workspace:write', resourceType: 'workspace', resourceId: created.workspace.id })
-
-    console.log(JSON.stringify({
-      ok: created.ok,
-      workspace: created.workspace.slug,
-      membership: created.membership.status,
-      owner: created.role.permissions.sort(),
-      allowed: decision.allowed,
-    }))
-  `)
-
-  assert.deepEqual(result, {
-    ok: true,
-    workspace: 'default',
-    membership: 'active',
-    owner: [
-      'membership:invite',
-      'membership:revoke',
-      'resource:read',
-      'resource:write',
-      'role:manage',
-      'workspace:write',
-    ],
-    allowed: true,
-  })
-})
-
 test('Prisma tenancy membership lookup resolves account identity to its user identity', () => {
   const result = runTypeScriptScenario(`
     const { PrismaTenancyStore } = (await import('./apps/api/src/tenancy/adapters/prisma.ts')).default
@@ -119,8 +94,8 @@ test('resource reads and writes stay tenant-scoped, including direct identifiers
   const result = runTypeScriptScenario(`
     const { createInMemoryTenancyService } = (await import('./apps/api/src/tenancy/composition.ts')).default
     const tenancy = createInMemoryTenancyService({ now: () => 1_700_000_000_000 })
-    const a = await tenancy.createOrganization({ actorId: 'actor-a', name: 'A', slug: 'a', correlationId: 'corr-a' })
-    const b = await tenancy.createOrganization({ actorId: 'actor-b', name: 'B', slug: 'b', correlationId: 'corr-b' })
+    const a = await seedTenant(tenancy, 'tenant-a', 'actor-a')
+    const b = await seedTenant(tenancy, 'tenant-b', 'actor-b')
     await tenancy.writeResource({ context: { tenantId: a.organization.id, actorId: 'actor-a', correlationId: 'corr-a1' }, resource: { id: 'doc-a', type: 'document', tenantId: a.organization.id, value: 'A' } })
     await tenancy.writeResource({ context: { tenantId: b.organization.id, actorId: 'actor-b', correlationId: 'corr-b1' }, resource: { id: 'doc-b', type: 'document', tenantId: b.organization.id, value: 'B' } })
     const crossRead = await tenancy.readResource({ context: { tenantId: a.organization.id, actorId: 'actor-a', correlationId: 'corr-a2' }, resourceType: 'document', resourceId: 'doc-b' })
@@ -143,7 +118,7 @@ test('roles and permissions are evaluated with deny-by-default resource scopes',
   const result = runTypeScriptScenario(`
     const { createInMemoryTenancyService } = (await import('./apps/api/src/tenancy/composition.ts')).default
     const tenancy = createInMemoryTenancyService()
-    const created = await tenancy.createOrganization({ actorId: 'owner', name: 'Acme', slug: 'acme', correlationId: 'corr-1' })
+    const created = await seedTenant(tenancy, 'tenant-a')
     const viewer = await tenancy.createRole({ context: { tenantId: created.organization.id, actorId: 'owner', correlationId: 'corr-2' }, name: 'Viewer', permissions: ['resource:read'], resourceScopes: ['document:*'] })
     await tenancy.addMembership({ context: { tenantId: created.organization.id, actorId: 'owner', correlationId: 'corr-3' }, userId: 'viewer', roleIds: [viewer.role.id] })
     const context = { tenantId: created.organization.id, actorId: 'viewer', correlationId: 'corr-4' }
@@ -165,7 +140,7 @@ test('membership revocation immediately denies future access and records the lif
   const result = runTypeScriptScenario(`
     const { createInMemoryTenancyService } = (await import('./apps/api/src/tenancy/composition.ts')).default
     const tenancy = createInMemoryTenancyService()
-    const created = await tenancy.createOrganization({ actorId: 'owner', name: 'Acme', slug: 'acme', correlationId: 'corr-1' })
+    const created = await seedTenant(tenancy, 'tenant-a')
     const member = await tenancy.addMembership({ context: { tenantId: created.organization.id, actorId: 'owner', correlationId: 'corr-2' }, userId: 'member', roleIds: [created.role.id] })
     const revoked = await tenancy.revokeMembership({ context: { tenantId: created.organization.id, actorId: 'owner', correlationId: 'corr-3' }, membershipId: member.membership.id })
     const denied = await tenancy.authorize({ context: { tenantId: created.organization.id, actorId: 'member', correlationId: 'corr-4' }, action: 'resource:read', resourceType: 'document', resourceId: 'doc-1' })
@@ -185,7 +160,7 @@ test('invitations require tenant permission, bind to the invited email, expire, 
     const { createInMemoryTenancyService } = (await import('./apps/api/src/tenancy/composition.ts')).default
     let now = 1_700_000_000_000
     const tenancy = createInMemoryTenancyService({ now: () => now })
-    const created = await tenancy.createOrganization({ actorId: 'owner', name: 'Acme', slug: 'acme', correlationId: 'corr-1' })
+    const created = await seedTenant(tenancy, 'tenant-a')
     const context = { tenantId: created.organization.id, actorId: 'owner', correlationId: 'corr-2' }
     const invitation = await tenancy.inviteMember({ context, email: 'member@example.test', roleIds: [created.role.id], ttlMs: 1000 })
     const wrongEmail = await tenancy.acceptInvitation({ token: invitation.token, userId: 'member', email: 'attacker@example.test', correlationId: 'corr-3' })
@@ -228,7 +203,7 @@ test('audit events contain actor, tenant, correlation, outcome, and redacted met
   const result = runTypeScriptScenario(`
     const { createInMemoryTenancyService } = (await import('./apps/api/src/tenancy/composition.ts')).default
     const tenancy = createInMemoryTenancyService()
-    const created = await tenancy.createOrganization({ actorId: 'owner', name: 'Acme', slug: 'acme', correlationId: 'corr-1' })
+    const created = await seedTenant(tenancy, 'tenant-a')
     await tenancy.authorize({ context: { tenantId: created.organization.id, actorId: 'member', correlationId: 'corr-denied' }, action: 'resource:delete', resourceType: 'document', resourceId: 'secret-doc' })
     const event = tenancy.audit.events.at(-1)
     console.log(JSON.stringify({ actorId: event.actorId, tenantRecorded: event.tenantId === created.organization.id, correlationId: event.correlationId, outcome: event.outcome, reason: event.reason, metadata: event.metadata, leaks: JSON.stringify(event).includes('secret-doc') }))

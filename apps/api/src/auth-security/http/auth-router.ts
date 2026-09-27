@@ -21,7 +21,7 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
         password: readString(body, 'password'),
         displayName: readString(body, 'displayName'),
       })
-      response.status(201).json({ account: result.account, credential: result.credential })
+      response.status(201).json({ status: result.status, account: result.account, credential: result.credential })
     } catch (error) {
       response.status(400).json(createErrorEnvelope(error, getCorrelationId(request), 'INVALID_REQUEST'))
     }

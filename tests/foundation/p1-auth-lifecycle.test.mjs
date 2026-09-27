@@ -53,26 +53,30 @@ test('identity schemas participate in the canonical contract validation command'
   assert.match(output, /Validated 107 JSON Schema contract\(s\)/)
 })
 
-test('public registration ignores caller tenant authority and issues an owner session', () => {
+test('public registration ignores caller tenant authority and stays pending until verification', () => {
   const result = runTypeScriptScenario(`
     const { createInMemoryAuthService } = (await import('./apps/api/src/auth-security/composition.ts')).default
 
-    const auth = createInMemoryAuthService({ now: () => 1_700_000_000_000 })
-    const registration = await auth.register({
+     const auth = createInMemoryAuthService({ now: () => 1_700_000_000_000 })
+     const registration = await auth.register({
       email: 'member@example.com',
       password: 'Correct horse battery staple 42!',
       displayName: 'Neutral Member',
-      tenantId: 'workspace-a',
-    })
-    await auth.verifyEmail({ token: registration.verificationToken })
+       tenantId: 'workspace-a',
+     })
+     const pendingSignIn = await auth.signIn({ email: 'member@example.com', password: 'Correct horse battery staple 42!' })
+     await auth.verifyEmail({ token: registration.verificationToken })
     const signIn = await auth.signIn({
       email: 'member@example.com',
       password: 'Correct horse battery staple 42!',
       device: { deviceId: 'device-a', label: 'Browser' },
     })
 
-    console.log(JSON.stringify({
-      ok: signIn.ok,
+     console.log(JSON.stringify({
+       registrationStatus: registration.status,
+       registrationHasSession: Boolean(registration.session),
+       pendingSignIn: pendingSignIn.ok,
+       ok: signIn.ok,
       hasSession: signIn.ok && signIn.session.accessToken.length > 20,
       callerTenantRejected: signIn.ok && signIn.session.tenantId !== 'workspace-a',
       roles: signIn.ok ? signIn.session.scope.roles : [],
@@ -81,7 +85,10 @@ test('public registration ignores caller tenant authority and issues an owner se
     }))
   `)
 
-  assert.deepEqual(result, {
+   assert.deepEqual(result, {
+    registrationStatus: 'pending_verification',
+    registrationHasSession: false,
+    pendingSignIn: false,
     ok: true,
     hasSession: true,
     callerTenantRejected: true,
@@ -91,7 +98,7 @@ test('public registration ignores caller tenant authority and issues an owner se
   })
 })
 
-test('registration without a tenant creates an owner session for marketplace bootstrap', () => {
+test('registration without a tenant creates the owner bootstrap while sign-in remains verification-gated', () => {
   const result = runTypeScriptScenario(`
     const { createInMemoryAuthService } = (await import('./apps/api/src/auth-security/composition.ts')).default
     const auth = createInMemoryAuthService({ now: () => 1_700_000_000_000 })
@@ -102,16 +109,74 @@ test('registration without a tenant creates an owner session for marketplace boo
     })
     await auth.verifyEmail({ token: registration.verificationToken })
     const signIn = await auth.signIn({ email: 'owner@example.com', password: 'Correct horse battery staple 42!' })
+    const tenantId = registration.account.tenantId
+    const organization = auth.store.organizations.get(tenantId)
+    const workspace = auth.store.workspaces.get(tenantId + ':default')
+    const role = auth.store.roles.get(tenantId + ':owner')
+    const membership = auth.store.memberships.get(tenantId + ':' + registration.account.id)
     console.log(JSON.stringify({
       roles: registration.account.roles,
       sessionRoles: signIn.ok ? signIn.session.scope.roles : [],
       permissions: signIn.ok ? signIn.session.scope.permissions : [],
+      bootstrap: {
+        tenant: auth.store.tenants.get(tenantId)?.name === 'TUS Owner',
+        organization: organization?.id === tenantId && organization.defaultWorkspaceId === workspace?.id,
+        workspace: workspace?.organizationId === tenantId && workspace.slug === 'default',
+        role: role?.name === 'Owner' && role.permissions.includes('tus:marketplace:write'),
+        membership: membership?.userId === registration.account.id && membership.status === 'active' && membership.roleIds.includes(role?.id),
+      },
     }))
   `)
 
   assert.deepEqual(result.roles, ['owner'])
   assert.deepEqual(result.sessionRoles, ['owner'])
   assert.ok(result.permissions.includes('tus:marketplace:write'))
+  assert.deepEqual(result.bootstrap, {
+    tenant: true,
+    organization: true,
+    workspace: true,
+    role: true,
+    membership: true,
+  })
+})
+
+test('registration rolls back the complete initial tenant graph when a later write fails', () => {
+  const result = runTypeScriptScenario(`
+    const { createInMemoryAuthService } = (await import('./apps/api/src/auth-security/composition.ts')).default
+    const auth = createInMemoryAuthService({ now: () => 1_700_000_000_000 })
+    auth.store.saveVerificationToken = async () => { throw new Error('verification-write-failed') }
+    let error = ''
+    try {
+      await auth.register({ email: 'atomic@example.com', password: 'Correct horse battery staple 42!', displayName: 'Atomic' })
+    } catch (caught) {
+      error = caught.message
+    }
+    console.log(JSON.stringify({
+      error,
+      users: auth.store.users.size,
+      accounts: auth.store.accounts.size,
+      tenants: auth.store.tenants.size,
+      organizations: auth.store.organizations.size,
+      workspaces: auth.store.workspaces.size,
+      roles: auth.store.roles.size,
+      memberships: auth.store.memberships.size,
+      credentials: auth.store.credentials.size,
+      emails: auth.email.messages.length,
+    }))
+  `)
+
+  assert.deepEqual(result, {
+    error: 'verification-write-failed',
+    users: 0,
+    accounts: 0,
+    tenants: 0,
+    organizations: 0,
+    workspaces: 0,
+    roles: 0,
+    memberships: 0,
+    credentials: 0,
+    emails: 0,
+  })
 })
 
 test('unknown credentials and recovery requests are non-enumerating', () => {

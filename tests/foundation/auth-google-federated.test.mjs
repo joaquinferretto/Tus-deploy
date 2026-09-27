@@ -117,6 +117,40 @@ test('GOOGLE sign-up then sign-in: one flow, same TUS session type, roles from t
   assert.deepEqual(result.identities, [['google', 'google-sub-001']])
 })
 
+test('GOOGLE signup creates the same initial tenant graph as password registration', () => {
+  const result = runTypeScriptScenario(`${SETUP}
+    const graph = (account) => {
+      const tenant = auth.store.tenants.get(account.tenantId)
+      const organization = auth.store.organizations.get(account.tenantId)
+      const workspace = auth.store.workspaces.get(account.tenantId + ':default')
+      const role = auth.store.roles.get(account.tenantId + ':owner')
+      const membership = auth.store.memberships.get(account.tenantId + ':' + account.id)
+      return {
+        tenant: Boolean(tenant && tenant.id === account.tenantId && tenant.name === account.displayName && tenant.status === 'active'),
+        organization: Boolean(organization && organization.id === account.tenantId && organization.defaultWorkspaceId === workspace?.id),
+        workspace: Boolean(workspace && workspace.organizationId === account.tenantId && workspace.slug === 'default'),
+        role: Boolean(role && role.tenantId === account.tenantId && role.name === 'Owner' && role.permissions.includes('tus:marketplace:write') && role.resourceScopes.includes('*')),
+        membership: Boolean(membership && membership.organizationId === account.tenantId && membership.userId === account.id && membership.workspaceId === workspace?.id && membership.status === 'active' && membership.roleIds.includes(role?.id)),
+      }
+    }
+    const password = await passwordAccount('password@example.com')
+    const redirect = await googleCallback({ subject: 'graph-google', email: 'google-graph@example.com', name: 'Google Graph' })
+    const googleSession = await google.exchange({ code: fragment(redirect, 'code') })
+    const googleAccount = await auth.store.getAccount(googleSession.session.accountId)
+    console.log(JSON.stringify({ password: graph(password), google: graph(googleAccount), sessionReady: googleSession.ok }))
+  `)
+
+  assert.deepEqual(result.password, {
+    tenant: true,
+    organization: true,
+    workspace: true,
+    role: true,
+    membership: true,
+  })
+  assert.deepEqual(result.google, result.password)
+  assert.equal(result.sessionReady, true)
+})
+
 test('GOOGLE automatic signup: two pending callbacks reuse one account; replay and expired signup codes cannot register', () => {
   const result = runTypeScriptScenario(`${SETUP}
     const identity = { subject: 'new-auto', email: 'auto@example.com', name: 'Nombre de Google' }

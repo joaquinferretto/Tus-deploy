@@ -8,8 +8,79 @@ import type {
   VerificationToken,
 } from '../domain/models.js'
 
+interface InMemoryUser {
+  id: string
+  email: string
+  normalizedEmail: string
+  displayName: string
+}
+
+interface InMemoryTenant {
+  id: string
+  slug: string
+  name: string
+  status: string
+  createdAt: number
+  updatedAt: number
+}
+
+interface InMemoryOrganization {
+  id: string
+  name: string
+  slug: string
+  defaultWorkspaceId: string
+  createdAt: number
+  updatedAt: number
+}
+
+interface InMemoryWorkspace {
+  id: string
+  organizationId: string
+  name: string
+  slug: string
+  createdAt: number
+  updatedAt: number
+}
+
+interface InMemoryRole {
+  id: string
+  tenantId: string
+  name: string
+  permissions: string[]
+  resourceScopes: string[]
+  createdAt: number
+}
+
+interface InMemoryMembership {
+  id: string
+  organizationId: string
+  workspaceId: string
+  userId: string
+  role: string
+  roleIds: string[]
+  status: string
+  createdAt: number
+  updatedAt: number
+}
+
+const BOOTSTRAP_PERMISSIONS = [
+  'membership:invite',
+  'membership:revoke',
+  'resource:read',
+  'resource:write',
+  'role:manage',
+  'tus:marketplace:write',
+  'workspace:write',
+]
+
 export class InMemoryIdentityStore implements IdentityStore {
+  readonly users = new Map<string, InMemoryUser>()
   readonly accounts = new Map<string, Account>()
+  readonly tenants = new Map<string, InMemoryTenant>()
+  readonly organizations = new Map<string, InMemoryOrganization>()
+  readonly workspaces = new Map<string, InMemoryWorkspace>()
+  readonly roles = new Map<string, InMemoryRole>()
+  readonly memberships = new Map<string, InMemoryMembership>()
   readonly credentials = new Map<string, PasswordCredential>()
   readonly verificationTokens = new Map<string, VerificationToken>()
   readonly recoveryTokens = new Map<string, RecoveryToken>()
@@ -29,10 +100,19 @@ export class InMemoryIdentityStore implements IdentityStore {
 
   async hasActiveMembership(accountId: string, tenantId: string): Promise<boolean> {
     const account = this.accounts.get(accountId)
-    return account?.status === 'active' && account.tenantId === tenantId
+    const membership = account ? this.memberships.get(`${tenantId}:${account.id}`) : undefined
+    return account?.status === 'active' && account.tenantId === tenantId && membership?.status === 'active'
   }
 
-  async saveAccount(account: Account): Promise<void> {
+  async saveAccount(account: Account, options: { bootstrapTenant?: boolean } = {}): Promise<void> {
+    const existing = this.accounts.get(account.id)
+    if (!existing && options.bootstrapTenant) this.bootstrapTenant(account)
+    this.users.set(account.id, {
+      id: account.id,
+      email: account.email,
+      normalizedEmail: account.normalizedEmail,
+      displayName: account.displayName,
+    })
     this.accounts.set(account.id, account)
   }
 
@@ -99,7 +179,13 @@ export class InMemoryIdentityStore implements IdentityStore {
     })
     await previous
     const snapshot = {
+      users: cloneMap(this.users),
       accounts: cloneMap(this.accounts),
+      tenants: cloneMap(this.tenants),
+      organizations: cloneMap(this.organizations),
+      workspaces: cloneMap(this.workspaces),
+      roles: cloneMap(this.roles),
+      memberships: cloneMap(this.memberships),
       credentials: cloneMap(this.credentials),
       verificationTokens: cloneMap(this.verificationTokens),
       recoveryTokens: cloneMap(this.recoveryTokens),
@@ -109,7 +195,13 @@ export class InMemoryIdentityStore implements IdentityStore {
     try {
       return await operation(this)
     } catch (error) {
+      restoreMap(this.users, snapshot.users)
       restoreMap(this.accounts, snapshot.accounts)
+      restoreMap(this.tenants, snapshot.tenants)
+      restoreMap(this.organizations, snapshot.organizations)
+      restoreMap(this.workspaces, snapshot.workspaces)
+      restoreMap(this.roles, snapshot.roles)
+      restoreMap(this.memberships, snapshot.memberships)
       restoreMap(this.credentials, snapshot.credentials)
       restoreMap(this.verificationTokens, snapshot.verificationTokens)
       restoreMap(this.recoveryTokens, snapshot.recoveryTokens)
@@ -119,6 +211,58 @@ export class InMemoryIdentityStore implements IdentityStore {
     } finally {
       release()
     }
+  }
+
+  private bootstrapTenant(account: Account): void {
+    if (this.tenants.has(account.tenantId)) throw new Error('Tenant already exists')
+    const createdAt = account.createdAt
+    const workspaceId = `${account.tenantId}:default`
+    const roleId = `${account.tenantId}:owner`
+    const membershipId = `${account.tenantId}:${account.id}`
+
+    this.tenants.set(account.tenantId, {
+      id: account.tenantId,
+      slug: account.tenantId,
+      name: account.displayName,
+      status: 'active',
+      createdAt,
+      updatedAt: createdAt,
+    })
+    this.organizations.set(account.tenantId, {
+      id: account.tenantId,
+      name: account.displayName,
+      slug: account.tenantId,
+      defaultWorkspaceId: workspaceId,
+      createdAt,
+      updatedAt: createdAt,
+    })
+    this.workspaces.set(workspaceId, {
+      id: workspaceId,
+      organizationId: account.tenantId,
+      name: 'Default',
+      slug: 'default',
+      createdAt,
+      updatedAt: createdAt,
+    })
+    this.roles.set(roleId, {
+      id: roleId,
+      tenantId: account.tenantId,
+      name: 'Owner',
+      permissions: [...BOOTSTRAP_PERMISSIONS],
+      resourceScopes: ['*'],
+      createdAt,
+    })
+    this.memberships.set(membershipId, {
+      id: membershipId,
+      organizationId: account.tenantId,
+      workspaceId,
+      userId: account.id,
+      role: roleId,
+      roleIds: [roleId],
+      status: 'active',
+      createdAt,
+      updatedAt: createdAt,
+    })
   }
 }
 

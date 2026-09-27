@@ -8,7 +8,6 @@ import {
   type AuthorizationRequest,
   type Invitation,
   type Membership,
-  type Organization,
   type Role,
   type TenantContext,
   type TenantResource,
@@ -25,29 +24,12 @@ import type {
   TenancyTokenIssuer,
 } from '../ports.js'
 
-const OWNER_PERMISSIONS = [
-  'membership:invite',
-  'membership:revoke',
-  'resource:read',
-  'resource:write',
-  'role:manage',
-  'workspace:write',
-].sort()
-
 export interface TenancyServiceDependencies {
   store: TenancyStore
   audit: TenancyAuditSink
   ids: TenancyIdGenerator
   tokens: TenancyTokenIssuer
   clock: TenancyClock
-}
-
-export interface CreateOrganizationInput {
-  actorId: string
-  name: string
-  slug: string
-  correlationId: string
-  organizationId?: string
 }
 
 export interface CreateWorkspaceInput {
@@ -99,16 +81,6 @@ export interface WriteResourceInput {
   resource: TenantResource
 }
 
-export type OrganizationResult =
-  | {
-      ok: true
-      organization: Organization
-      workspace: Workspace
-      role: Role
-      membership: Membership
-    }
-  | TenancyFailure
-
 export type WorkspaceResult = { ok: true; workspace: Workspace } | TenancyFailure
 export type RoleResult = { ok: true; role: Role } | TenancyFailure
 export type MembershipResult = { ok: true; membership: Membership } | TenancyFailure
@@ -121,64 +93,6 @@ export class TenancyService {
 
   constructor(dependencies: TenancyServiceDependencies) {
     this.dependencies = dependencies
-  }
-
-  async createOrganization(input: CreateOrganizationInput): Promise<OrganizationResult> {
-    if (!input.actorId.trim() || !input.name.trim() || !input.slug.trim())
-      return this.failure(
-        null,
-        input.actorId || null,
-        input.correlationId,
-        'INVALID',
-        'invalid_organization'
-      )
-
-    const organizationId = input.organizationId?.trim() || this.dependencies.ids.next()
-    const workspace: Workspace = {
-      id: this.dependencies.ids.next(),
-      organizationId,
-      name: 'Default',
-      slug: 'default',
-      createdAt: this.dependencies.clock.now(),
-    }
-    const organization: Organization = {
-      id: organizationId,
-      name: input.name.trim(),
-      slug: input.slug.trim().toLowerCase(),
-      defaultWorkspaceId: workspace.id,
-      createdAt: this.dependencies.clock.now(),
-    }
-    const role: Role = {
-      id: this.dependencies.ids.next(),
-      tenantId: organization.id,
-      name: 'Owner',
-      permissions: [...OWNER_PERMISSIONS],
-      resourceScopes: ['*'],
-      createdAt: this.dependencies.clock.now(),
-    }
-    const membership: Membership = {
-      id: this.dependencies.ids.next(),
-      tenantId: organization.id,
-      userId: input.actorId,
-      roleIds: [role.id],
-      status: MEMBERSHIP_STATUS.ACTIVE,
-      createdAt: this.dependencies.clock.now(),
-      revokedAt: null,
-    }
-    await this.dependencies.store.saveOrganization(organization)
-    await this.dependencies.store.saveWorkspace(workspace)
-    await this.dependencies.store.saveRole(role)
-    await this.dependencies.store.saveMembership(membership)
-    await this.record({
-      action: 'organization:create',
-      actorId: input.actorId,
-      tenantId: organization.id,
-      correlationId: input.correlationId,
-      outcome: 'success',
-      reason: 'organization_bootstrapped',
-      metadata: {},
-    })
-    return { ok: true, organization, workspace, role, membership }
   }
 
   async createWorkspace(input: CreateWorkspaceInput): Promise<WorkspaceResult> {

@@ -12,31 +12,6 @@ export interface TenancyRouterDependencies {
 export function createTenancyRouter({ service, sessions }: TenancyRouterDependencies): Router {
   const router = express.Router()
 
-  router.post('/tenancy/organizations', asyncHandler(async (request: Request, response: Response) => {
-    const context = await authenticate(request, sessions)
-    if (!context) {
-      response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
-      return
-    }
-    const body = asRecord(request.body)
-    if (hasSpoofedAuthority(body, context)) {
-      response.status(403).json(createErrorEnvelope(new Error('client authority rejected'), getCorrelationId(request), 'FORBIDDEN'))
-      return
-    }
-    if (!service) {
-      response.status(503).json(createErrorEnvelope(new Error('tenant persistence unavailable'), getCorrelationId(request), 'UNAVAILABLE'))
-      return
-    }
-    const result = await service.createOrganization({
-      actorId: context.subjectId,
-      name: readString(body['name']),
-      slug: readString(body['slug']),
-      correlationId: context.correlationId,
-      organizationId: context.tenantId,
-    })
-    sendResult(response, result, 201, getCorrelationId(request))
-  }))
-
   router.post('/tenancy/invitations', asyncHandler(async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!context || !service) {
@@ -80,13 +55,6 @@ async function authenticate(
   if (!authorization.startsWith('Bearer ') || !correlationId) return null
   const accessToken = authorization.slice('Bearer '.length).trim()
   return accessToken ? sessions.resolve(accessToken, correlationId) : null
-}
-
-function hasSpoofedAuthority(body: Record<string, unknown>, context: TusAuthenticatedTenantContext): boolean {
-  const tenantId = body['tenantId']
-  const actorId = body['actorId']
-  return (typeof tenantId === 'string' && tenantId !== context.tenantId)
-    || (typeof actorId === 'string' && actorId !== context.subjectId)
 }
 
 function tenancyContext(context: TusAuthenticatedTenantContext) {

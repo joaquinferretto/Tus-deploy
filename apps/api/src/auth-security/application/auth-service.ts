@@ -47,6 +47,7 @@ export interface RegisterInput {
 }
 
 export interface RegisterResult {
+  status: 'pending_verification'
   account: SafeAccount
   credential: SafeCredential
   verificationToken: string
@@ -157,6 +158,7 @@ export class AuthService {
     await this.record(account, AUTH_EVENT_KIND.ACCOUNT_REGISTERED, 'success', 'account_created')
 
     return {
+      status: 'pending_verification',
       account: this.safeAccount(account),
       credential: this.safeCredential(credential),
       verificationToken,
