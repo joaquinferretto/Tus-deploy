@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isIP } from 'node:net'
 import type { Request, RequestHandler } from 'express'
 import { createSafeLogger } from './logger.ts'
 
@@ -17,7 +18,19 @@ export function createCorrelationMiddleware(): RequestHandler {
     response.setHeader('X-Correlation-Id', correlationId)
     response.locals['correlationId'] = correlationId
     logger.info('request started', { correlationId })
-    response.once('finish', () => logger.info('request completed', { correlationId }))
+    response.once('finish', () => logger.info('request completed', {
+      correlationId,
+      ...(process.env['TRUST_PROXY_DIAGNOSTICS'] === 'true' ? {
+        details: {
+          status: response.statusCode,
+          clientIp: request.ip,
+          socketPeer: request.socket.remoteAddress,
+          // Only IP literals; never dump headers, credentials or the request body.
+          forwardedFor: String(request.headers['x-forwarded-for'] ?? '').slice(0, 1024)
+            .split(',').map((value) => value.trim()).filter((value) => isIP(value)).slice(-16),
+        },
+      } : {}),
+    }))
     next()
   }
 }

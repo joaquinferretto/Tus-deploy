@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
+import { parseScenarioOutput } from './scenario-output.mjs'
 
 export const root = join(import.meta.dirname, '..', '..', '..')
 const tsxCli = join(root, 'apps/api/node_modules/tsx/dist/cli.mjs')
@@ -13,7 +14,7 @@ export function runTypeScriptScenario(source) {
       encoding: 'utf8',
     }
   )
-  return JSON.parse(output.trim())
+  return parseScenarioOutput(output)
 }
 
 // Builds a WEB-08 service chain in memory: publication -> commitment -> Trabajo (-> budget).

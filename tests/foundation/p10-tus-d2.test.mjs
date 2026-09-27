@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { parseScenarioOutput } from './fixtures/scenario-output.mjs'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -12,7 +13,7 @@ function runTypeScriptScenario(source) {
   const tsxCli = join(root, 'apps/api/node_modules/tsx/dist/cli.mjs')
   const wrapped = `(async () => {\n${source}\n})()`
   const output = execFileSync(process.execPath, [tsxCli, '--eval', wrapped], { cwd: root, encoding: 'utf8' })
-  return JSON.parse(output.trim())
+  return parseScenarioOutput(output)
 }
 
 test('D2 resolves the principal provider calendar and books a service publication by listingId', async () => {

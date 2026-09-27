@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { parseScenarioOutput } from './fixtures/scenario-output.mjs'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
@@ -17,7 +18,7 @@ function runTypeScriptScenario(source) {
     cwd: root,
     encoding: 'utf8',
   })
-  return JSON.parse(output.trim())
+  return parseScenarioOutput(output)
 }
 
 function headers(token, permission = 'tus:read', idempotencyKey) {

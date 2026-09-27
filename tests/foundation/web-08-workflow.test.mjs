@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { parseScenarioOutput } from './fixtures/scenario-output.mjs'
 import { execFileSync } from 'node:child_process'
 import { test } from 'node:test'
 import { join } from 'node:path'
@@ -15,7 +16,7 @@ function runTypeScriptScenario(source) {
       encoding: 'utf8',
     }
   )
-  return JSON.parse(output.trim())
+  return parseScenarioOutput(output)
 }
 
 test('WEB-08B records a tenant-scoped budget workflow with replay, locking, audit, and outbox facts', () => {

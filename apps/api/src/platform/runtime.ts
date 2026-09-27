@@ -1,3 +1,5 @@
+import { isIP } from 'node:net'
+
 const DEFAULT_API_PORT = 3101
 
 export function resolveListenPort(
@@ -24,8 +26,20 @@ export function resolveListenHost(
 
 export function resolveTrustProxy(
   environment: Record<string, string | undefined> = process.env,
-): number | false {
+): number | string[] | false {
   const configured = environment['TRUST_PROXY_HOPS']?.trim()
+  const addresses = environment['TRUST_PROXY_ADDRESSES']?.trim()
+  if (addresses) {
+    if (configured) throw new Error('Configure trusted proxy addresses OR hops, not both')
+    const values = addresses.split(',').map((value) => value.trim())
+    if (values.length > 32 || values.some((value) => {
+      const [address, prefix, extra] = value.split('/')
+      const family = isIP(address ?? '')
+      return !family || extra !== undefined || (prefix !== undefined &&
+        (!/^\d+$/u.test(prefix) || Number(prefix) < 1 || Number(prefix) > (family === 4 ? 32 : 128)))
+    })) throw new Error('Invalid trusted proxy addresses')
+    return values
+  }
   if (!configured) return false
   const hops = Number(configured)
   if (!Number.isInteger(hops) || hops < 1 || hops > 10) {

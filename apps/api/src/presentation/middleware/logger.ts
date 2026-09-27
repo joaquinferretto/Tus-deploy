@@ -19,7 +19,8 @@ export interface SafeLogger {
 }
 
 export function createSafeLogger(sink: (event: SafeLogEvent) => void = (event) => {
-  console.error(JSON.stringify(event))
+  if (event.level === 'error') console.error(JSON.stringify(event))
+  else console.log(JSON.stringify(event))
 }): SafeLogger {
   return {
     info: (message, context) => emit(sink, 'info', message, context),
