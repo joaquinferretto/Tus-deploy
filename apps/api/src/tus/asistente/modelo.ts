@@ -213,6 +213,10 @@ export function redactarPii(text: string): string {
     .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gu, '[email]')
     .replace(/(?<![+\d])\b(?:\d[ -]?){12,18}\d\b/gu, '[tarjeta]')
     .replace(/(?:\+?54\s?9?\s?)?(?:\(?\d{2,4}\)?[\s-]?)\d{3,4}[\s-]?\d{4}\b/gu, '[telefono]')
+    // Característica + número de 6 a 8 dígitos ("3794 123456", "(379) 4123456") y 10 dígitos
+    // seguidos ("3794123456"). El separador es obligatorio en el primero para no tocar montos.
+    .replace(/(?:\+?54\s?9?\s?)?\(?\b\d{2,4}\)?[\s-]\d{6,8}\b/gu, '[telefono]')
+    .replace(/(?<![\d[])\b\d{10}\b/gu, '[telefono]')
 }
 
 export function enmascararWaId(waId: string): string {
