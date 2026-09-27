@@ -23,7 +23,8 @@
     "tus:identity:nosis-check": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/identidad/cli.ts nosis-check",
     "tus:rag:ingest": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/asistente/cli.ts ingest",
     "tus:rag:search": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/asistente/cli.ts search",
-    "tus:rag:stats": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/asistente/cli.ts stats"
+    "tus:rag:stats": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/asistente/cli.ts stats",
+    "tus:rag:smoke": "node apps/api/node_modules/tsx/dist/cli.mjs apps/api/src/tus/asistente/cli.ts smoke"
   },
   "devDependencies": {
     "prettier": "^3.2.5",

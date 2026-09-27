@@ -18,6 +18,7 @@ import { crearRouterSolicitudes } from './tus/solicitudes/http.ts'
 import type { ClientePrismaSolicitudes } from './tus/solicitudes/almacenes.ts'
 import { crearServicioDirectorio } from './tus/directorio/composicion.ts'
 import { crearRouterDirectorio } from './tus/directorio/http.ts'
+import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import type { ClientePrismaDirectorio } from './tus/directorio/almacenes.ts'
 import type { ModuloWhatsapp } from './tus/asistente/composicion.ts'
 import type { TusPrismaClient } from './tus/adapters/prisma.ts'
@@ -144,6 +145,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
   if (tusRoutesEnabled) {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
     app.use(crearRouterDirectorio({ servicio: directorio, sessions }))
+    app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
     app.use(tusRouter)
   }
   if (providerRoutesEnabled)

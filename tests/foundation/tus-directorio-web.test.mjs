@@ -109,7 +109,8 @@ test('REQUESTS client: directed request carries only the chosen provider and ori
 
 test('ASSISTANT: guided chat, auth gate before searching, client chooses, same request workflow, no invented data', () => {
   const chat = web('features/assistant/assistant-chat.tsx')
-  assert.match(chat, /Hola, soy el asistente de TUS\. Contame qué necesitás resolver\./)
+  // The greeting also invites questions: they are answered from public knowledge (/tus/v1/asistente/ayuda).
+  assert.match(chat, /Hola, soy el asistente de TUS\. Contame qué necesitás resolver o preguntame cómo funciona TUS\./)
   assert.match(chat, /Para buscar prestadores disponibles y guardar tu solicitud necesitás iniciar sesión o crear una cuenta\./)
   assert.match(chat, /No encontré prestadores disponibles para esa búsqueda en este momento\./)
   assert.match(chat, /withReturnTo\('\/sign-in', RETURN_TO\)/)

@@ -10,9 +10,11 @@ import { crearProveedorEmbeddings, leerLimites } from './composicion.ts'
 import {
   formatearFragmentosParaPrompt,
   RecuperadorConocimiento,
+  UMBRAL_LEXICO,
   indexarConocimiento,
   type ArchivoConocimiento,
 } from './conocimiento.ts'
+import { ServicioAyudaPublica } from './ayuda.ts'
 import { redactarPii } from './modelo.ts'
 
 const repositoryRoot = resolve(process.cwd())
@@ -24,12 +26,13 @@ const out = (event: string, fields: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }))
 
 async function main() {
-  if (!['ingest', 'search', 'stats'].includes(command ?? '')) {
+  if (!['ingest', 'search', 'stats', 'smoke'].includes(command ?? '')) {
     out('rag.usage', {
       commands: [
         'tus:rag:ingest [--dry-run]',
         'tus:rag:search --query <text> [--linked] [--provider]',
         'tus:rag:stats',
+        'tus:rag:smoke',
       ],
     })
     process.exitCode = 2
@@ -41,6 +44,7 @@ async function main() {
   try {
     if (command === 'ingest') await ingest(index)
     else if (command === 'search') await search(index)
+    else if (command === 'smoke') await smoke(index)
     else await stats(index)
   } finally {
     await disconnectPrisma()
@@ -79,7 +83,7 @@ async function search(index: IndiceConocimientoPrisma) {
   const retriever = new RecuperadorConocimiento(index, embeddings, {
     topK: leerLimites(env).topK,
     minVectorScore: 0.35,
-    minLexicalScore: 0.34,
+    minLexicalScore: UMBRAL_LEXICO,
   })
   const result = await retriever.buscar(redactarPii(query), {
     linked: process.argv.includes('--linked'),
@@ -98,6 +102,37 @@ async function search(index: IndiceConocimientoPrisma) {
     })),
     promptData: formatearFragmentosParaPrompt(result.results).slice(0, 5000),
   })
+}
+
+// Smoke de solo lectura sobre la base configurada: índice no vacío, respuestas públicas conocidas y
+// abstención ante un dato vivo de negocio. Exit 1 si algo falla. No escribe ni reindexa.
+const SMOKE_CASOS: { question: string; expect: 'answered' | 'low_confidence'; document?: string }[] = [
+  { question: '¿Qué es TUS?', expect: 'answered', document: 'que-es-tus' },
+  { question: '¿Puedo cancelar un trabajo?', expect: 'answered', document: 'cancelaciones' },
+  { question: '¿Cómo acepto un presupuesto?', expect: 'answered', document: 'presupuestos' },
+  { question: '¿Cuánto debo cobrarle a Juan?', expect: 'low_confidence' },
+]
+
+async function smoke(index: IndiceConocimientoPrisma) {
+  const statistics = await index.estadisticas()
+  if (statistics.activeDocuments === 0) {
+    out('rag.smoke.failed', { reason: 'index is empty; run tus:rag:ingest', statistics })
+    process.exitCode = 1
+    return
+  }
+  const embeddings = crearProveedorEmbeddings(env)
+  const ayuda = new ServicioAyudaPublica(
+    new RecuperadorConocimiento(index, embeddings, { topK: leerLimites(env).topK, minVectorScore: 0.35, minLexicalScore: UMBRAL_LEXICO })
+  )
+  const checks = []
+  for (const item of SMOKE_CASOS) {
+    const result = await ayuda.responder(item.question)
+    const top = result.status === 'answered' ? result.answers[0]?.documentId ?? null : null
+    checks.push({ question: item.question, expected: item.expect, status: result.status, top, ok: result.status === item.expect && (!item.document || top === item.document) })
+  }
+  const passed = checks.every((check) => check.ok)
+  out(passed ? 'rag.smoke.passed' : 'rag.smoke.failed', { statistics, strategy: embeddings ? 'hybrid' : 'lexical', checks })
+  if (!passed) process.exitCode = 1
 }
 
 async function stats(index: IndiceConocimientoPrisma) {

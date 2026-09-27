@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "description": "Evaluación del conocimiento público de TUS (ayuda Web anónima). Ver docs/rag/EVALUACION_CONOCIMIENTO_TUS.md.",
+  "actor": { "linked": false, "isProvider": false },
+  "forbiddenEverywhere": ["operacion-soporte-interno", "cobros-prestador"],
+  "cases": [
+    { "question": "¿Cómo funciona TUS para un cliente?", "expect": "answered", "topDocument": "como-funciona-cliente" },
+    { "question": "¿Qué es TUS?", "expect": "answered", "topDocument": "que-es-tus" },
+    { "question": "¿Puedo cancelar un trabajo?", "expect": "answered", "topDocument": "cancelaciones" },
+    { "question": "¿Cómo acepto un presupuesto?", "expect": "answered", "topDocument": "presupuestos" },
+    { "question": "¿Puedo pagar en efectivo?", "expect": "answered", "topDocument": "pagos" },
+    { "question": "¿Cómo me conecta Mercado Pago?", "expect": "answered", "anyDocument": ["pagos", "como-funciona-cliente"] },
+    { "question": "¿Cómo recibe el dinero el prestador?", "expect": "answered", "topDocument": "pagos" },
+    { "question": "¿Qué pasa si el trabajador no responde?", "expect": "answered", "topDocument": "como-funciona-cliente", "section": "Si el prestador no responde" },
+    { "question": "¿Puedo compartir mi DNI por WhatsApp?", "expect": "answered", "topDocument": "asistente-whatsapp", "section": "Privacidad en el chat" },
+    { "question": "¿Cómo me registro?", "expect": "answered", "topDocument": "registro-y-cuenta" },
+    { "question": "¿Cuánto debo cobrarle a Juan?", "expect": "low_confidence", "why": "dato vivo de negocio: lo resuelven las tools, no el RAG" },
+    { "question": "¿Cuál es la capital de Francia?", "expect": "low_confidence", "why": "fuera del dominio de TUS" },
+    { "question": "cómo opera el soporte interno", "expect": "low_confidence", "why": "documento internal-admin: nunca visible para la Web" },
+    { "question": "protección TUS garantía asegurada", "expect": "low_confidence", "why": "coincidencia débil (solo \"TUS\"): no se improvisa" }
+  ]
+}

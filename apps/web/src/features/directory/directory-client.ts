@@ -91,6 +91,8 @@ export function createDirectoryClient(fetchImpl: Fetch = (...args) => fetch(...a
     profile: (id: string) => call<PerfilPrestadorPublico>(fetchImpl, `/tus/v1/public/prestadores/${encodeURIComponent(id)}`),
     interpret: (text: string) =>
       call<InterpretacionNecesidad>(fetchImpl, '/tus/v1/asistente/interpretar', { method: 'POST', body: JSON.stringify({ text }) }),
+    // Public help: extractive answers from TUS public knowledge (never live account data).
+    help: (question: string) => call<RespuestaAyudaPublica>(fetchImpl, '/tus/v1/asistente/ayuda', { method: 'POST', body: JSON.stringify({ question }) }),
     candidates: (session: TusWebSession, input: { profession: string; zone: string | null }) =>
       call<ResultadoCandidatos>(fetchImpl, '/tus/v1/asistente/candidatos', { method: 'POST', body: JSON.stringify(input) }, session),
     // Provider side.
@@ -120,5 +122,9 @@ export async function privateImageUrl(session: TusWebSession, path: string, fetc
     return null
   }
 }
+
+export type RespuestaAyudaPublica =
+  | { status: 'answered'; answers: { documentId: string; documentTitle: string; section: string; excerpt: string }[] }
+  | { status: 'low_confidence' }
 
 export const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'] as const

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import {
   DIMENSION_EMBEDDINGS,
+  PESO_ENCABEZADO,
+  PESO_FRASE,
+  UMBRAL_LEXICO,
   VERSION_CHUNKER,
+  fraseNormalizada,
   VERSION_INDICE,
   tokensBusqueda,
   type DocumentoConocimiento,
@@ -756,21 +760,45 @@ export class IndiceConocimientoPrisma implements PuertoIndiceConocimiento {
       .filter((term) => /^[a-z0-9ñ]+$/u.test(term))
       .slice(0, 12)
     if (terms.length === 0) return []
+    // Mismo ranking que IndiceConocimientoEnMemoria: cobertura + PESO_ENCABEZADO × cobertura en
+    // título/sección + PESO_FRASE si la pregunta es una frase del título o la sección. $6 solo
+    // contiene [a-z0-9ñ ] (fraseNormalizada), así que es seguro dentro de LIKE.
+    // Cada término cuenta si coincide con el diccionario 'spanish' (stemming) O con 'simple': en
+    // PostgreSQL "tus" es stopword de 'spanish', así que sin 'simple' la marca TUS nunca coincidía.
+    const frase = fraseNormalizada(query)
     const rows = await this.client.$queryRawUnsafe<Fila[]>(
-      `SELECT f."id", f."documento_id", f."version_documento", f."indice", f."seccion", f."texto", f."visibilidad", f."audiencia", f."activo", d."titulo",
-              (SELECT count(*) FROM unnest($1::text[]) AS t(term) WHERE f."busqueda" @@ to_tsquery('spanish', t.term))::float / cardinality($1::text[]) AS score
-         FROM public."fragmentos_conocimiento" f
-         JOIN public."documentos_conocimiento" d ON d."id" = f."documento_id"
-        WHERE f."busqueda" @@ to_tsquery('spanish', array_to_string($1::text[], ' | '))
-          AND f."activo" AND d."activo" AND f."version_documento" = d."version"
-          AND f."visibilidad" = ANY($2::text[]) AND f."audiencia" = ANY($3::text[]) AND f."idioma" = $4
-        ORDER BY score DESC, ts_rank(f."busqueda", to_tsquery('spanish', array_to_string($1::text[], ' | '))) DESC
+      `WITH candidatos AS (
+         SELECT f."id", f."documento_id", f."version_documento", f."indice", f."seccion", f."texto", f."visibilidad", f."audiencia", f."activo", d."titulo", f."busqueda",
+                (SELECT count(*) FROM unnest($1::text[]) AS t(term)
+                  WHERE f."busqueda" @@ to_tsquery('spanish', t.term)
+                     OR to_tsvector('simple', f."seccion" || ' ' || f."texto") @@ to_tsquery('simple', t.term))::float / cardinality($1::text[]) AS cobertura,
+                (SELECT count(*) FROM unnest($1::text[]) AS t(term)
+                  WHERE to_tsvector('spanish', d."titulo" || ' ' || f."seccion") @@ to_tsquery('spanish', t.term)
+                     OR to_tsvector('simple', d."titulo" || ' ' || f."seccion") @@ to_tsquery('simple', t.term))::float / cardinality($1::text[]) AS cobertura_encabezado,
+                (length($6) >= 4 AND (
+                  regexp_replace(translate(lower(d."titulo"), 'áéíóúü', 'aeiouu'), '[^a-z0-9ñ]+', ' ', 'g') LIKE '%' || $6 || '%'
+                  OR regexp_replace(translate(lower(f."seccion"), 'áéíóúü', 'aeiouu'), '[^a-z0-9ñ]+', ' ', 'g') LIKE '%' || $6 || '%'
+                )) AS frase_exacta
+           FROM public."fragmentos_conocimiento" f
+           JOIN public."documentos_conocimiento" d ON d."id" = f."documento_id"
+          WHERE (f."busqueda" @@ to_tsquery('spanish', array_to_string($1::text[], ' | '))
+                 OR to_tsvector('simple', f."seccion" || ' ' || f."texto") @@ to_tsquery('simple', array_to_string($1::text[], ' | ')))
+            AND f."activo" AND d."activo" AND f."version_documento" = d."version"
+            AND f."visibilidad" = ANY($2::text[]) AND f."audiencia" = ANY($3::text[]) AND f."idioma" = $4
+       )
+       SELECT "id", "documento_id", "version_documento", "indice", "seccion", "texto", "visibilidad", "audiencia", "activo", "titulo",
+              CASE WHEN cobertura < ${UMBRAL_LEXICO} THEN cobertura
+                   ELSE cobertura + ${PESO_ENCABEZADO} * cobertura_encabezado + CASE WHEN frase_exacta THEN ${PESO_FRASE} ELSE 0 END
+              END AS score
+         FROM candidatos
+        ORDER BY score DESC, ts_rank("busqueda", to_tsquery('spanish', array_to_string($1::text[], ' | '))) DESC
         LIMIT $5`,
       terms,
       filter.visibilities,
       filter.audiences,
       filter.language,
-      limit
+      limit,
+      frase
     )
     return this.mapResultados(rows)
   }

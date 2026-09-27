@@ -57,3 +57,19 @@ if (migrate.error || migrate.status !== 0) {
 }
 
 console.log('[hostinger] Migraciones aplicadas; base al día')
+
+// Conocimiento del asistente (docs/conocimiento, allowlist sin PII): reindexación idempotente,
+// solo recalcula lo que cambió. Es una dependencia OPCIONAL: si falla, la API arranca igual y la
+// ayuda del asistente responde "no disponible" en vez de inventar; por eso no detiene el despliegue.
+console.log('[hostinger] Indexando conocimiento del asistente...')
+const ingest = spawnSync(
+  process.execPath,
+  ['apps/api/node_modules/tsx/dist/cli.mjs', 'apps/api/src/tus/asistente/cli.ts', 'ingest'],
+  { stdio: 'inherit', env: process.env, shell: false, timeout: 300_000 },
+)
+
+if (ingest.error || ingest.status !== 0) {
+  console.warn('[hostinger] AVISO: la indexación de conocimiento falló; la ayuda del asistente queda degradada hasta el próximo despliegue')
+} else {
+  console.log('[hostinger] Conocimiento indexado')
+}

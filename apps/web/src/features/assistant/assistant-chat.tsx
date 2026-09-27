@@ -35,10 +35,12 @@ interface Need {
 interface Message {
   from: 'assistant' | 'user'
   text: string
+  // Help answers show where the text comes from (public TUS knowledge).
+  source?: string
 }
 
 const EMPTY_NEED: Need = { text: '', category: null, alternatives: [], zone: null, zoneAsked: false, urgency: null, budget: null, budgetAsked: false }
-const GREETING = 'Hola, soy el asistente de TUS. Contame qué necesitás resolver.'
+const GREETING = 'Hola, soy el asistente de TUS. Contame qué necesitás resolver o preguntame cómo funciona TUS.'
 
 function loadNeed(): Need | null {
   try {
@@ -57,6 +59,12 @@ function saveNeed(need: Need | null) {
   } catch {
     // Only a convenience to resume after signing in.
   }
+}
+
+// A question about how TUS works (not a job description): answered from public knowledge.
+export function looksLikeQuestion(text: string): boolean {
+  const normalized = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/gu, '').trim()
+  return /\?/u.test(text) || /^(como|que|puedo|cuando|donde|cual|cuanto tarda|por que|se puede|hay que|tus )/u.test(normalized)
 }
 
 // Title of the request: first sentence of the description (5..90 characters).
@@ -82,7 +90,8 @@ export function AssistantChat(): React.ReactNode {
   const [restored, setRestored] = useState(false)
   const endRef = useRef<HTMLLIElement>(null)
 
-  const say = (text: string, from: Message['from'] = 'assistant') => setMessages((current) => [...current, { from, text }])
+  const say = (text: string, from: Message['from'] = 'assistant', source?: string) =>
+    setMessages((current) => [...current, { from, text, ...(source ? { source } : {}) }])
   const label = (id: CategoryId | null) => catalog.find((item) => item.id === id)?.label ?? id ?? ''
 
   useEffect(() => {
@@ -182,7 +191,11 @@ export function AssistantChat(): React.ReactNode {
         budgetAsked: interpretation.budgetMax !== null,
       }
       if (next.category) say(`Parece un trabajo de ${label(next.category) || next.category}.${next.zone ? ` Zona: ${next.zone}.` : ''}`)
-      else say('¿Qué tipo de profesional necesitás?')
+      else if (next.alternatives.length === 0 && looksLikeQuestion(clean)) {
+        // Not a job: answer from public knowledge and let the person keep going.
+        await answerHelp(clean)
+        return
+      } else say('¿Qué tipo de profesional necesitás?')
     } catch {
       say('No pude interpretar tu mensaje ahora. Elegí el tipo de profesional:')
     } finally {
@@ -190,6 +203,22 @@ export function AssistantChat(): React.ReactNode {
     }
     setNeed(next)
     await advance(next)
+  }
+
+  async function answerHelp(question: string) {
+    setBusy(true)
+    try {
+      const result = await client.help(question)
+      if (result.status === 'answered' && result.answers.length > 0) {
+        for (const answer of result.answers) say(answer.excerpt, 'assistant', `${answer.documentTitle}${answer.section && answer.section !== answer.documentTitle ? ` · ${answer.section}` : ''}`)
+        say('¿Te ayudo con algo más? Si necesitás un profesional, contame qué tenés que resolver.')
+      } else say('No tengo suficiente información confiable para responder eso. Podés escribirnos desde Ayuda o contarme qué tenés que resolver para buscar un profesional.')
+    } catch {
+      say('La ayuda no está disponible ahora. Podés seguir buscando profesionales en "Buscar trabajador" o contarme qué necesitás.')
+    } finally {
+      setBusy(false)
+      setStep('describe')
+    }
   }
 
   function update(patch: Partial<Need>, userText: string) {
@@ -242,7 +271,7 @@ export function AssistantChat(): React.ReactNode {
   return (
     <div className={styles.narrow}>
       <h1 className={styles.title}>Buscar servicios</h1>
-      <p className={styles.subtitle}>Contale tu problema al asistente de TUS: te ayuda a encontrar profesionales reales de tu zona. Vos elegís.</p>
+      <p className={styles.subtitle}>Contale tu problema al asistente de TUS: te ayuda a encontrar profesionales reales de tu zona y responde tus dudas sobre cómo funciona TUS. Vos elegís.</p>
 
       <section aria-label="Conversación con el asistente de TUS" className={styles.chat}>
         <ol aria-live="polite" className={styles.messages}>
@@ -250,6 +279,7 @@ export function AssistantChat(): React.ReactNode {
             <li className={`${styles.bubble} ${message.from === 'assistant' ? styles.fromAssistant : styles.fromUser}`} key={index}>
               <span className={styles.srOnlyLabel}>{message.from === 'assistant' ? 'Asistente: ' : 'Vos: '}</span>
               {message.text}
+              {message.source ? <small className={styles.muted} style={{ display: 'block', marginTop: 4 }}>Fuente: {message.source}</small> : null}
             </li>
           ))}
 

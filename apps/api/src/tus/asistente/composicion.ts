@@ -1,10 +1,12 @@
 import type { TusApplicationService } from '../application/tus-application-service.ts'
+import { ServicioAyudaPublica } from './ayuda.ts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { crearPoolCredencialesGroq } from '../../providers/groq/index.ts'
 import {
   EmbeddingsLocalesHash,
   ProveedorEmbeddingsCompatibleOpenAI,
   RecuperadorConocimiento,
+  UMBRAL_LEXICO,
   type EmbeddingProvider,
   type PuertoIndiceConocimiento,
 } from './conocimiento.ts'
@@ -104,6 +106,8 @@ export interface ModuloWhatsapp {
   soporte: ServicioSoporteWhatsapp
   plantillas: WhatsappTemplateService
   orquestador: OrquestadorConversacion
+  // Ayuda pública de la Web: mismo índice y mismo recuperador (filtrado por visibilidad) que WhatsApp.
+  ayuda: ServicioAyudaPublica
   platformAdminTenantId: string | null
   crearWorker(options?: {
     owner?: string
@@ -168,7 +172,7 @@ export function crearModuloWhatsapp(input: {
     ? new RecuperadorConocimiento(input.knowledgeIndex, embeddings, {
         topK: limits.topK,
         minVectorScore: 0.35,
-        minLexicalScore: 0.34,
+        minLexicalScore: UMBRAL_LEXICO,
       })
     : null
   const domain =
@@ -200,6 +204,7 @@ export function crearModuloWhatsapp(input: {
     soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now),
     plantillas: WhatsappTemplateService.desdeEnv(env),
     orquestador,
+    ayuda: new ServicioAyudaPublica(knowledge, input.metric),
     platformAdminTenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null,
     crearWorker: (options = {}) =>
       new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, ...options }),

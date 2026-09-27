@@ -12,7 +12,8 @@ export const VISIBILIDADES_CONOCIMIENTO = [
 ] as const
 export type VisibilidadConocimiento = (typeof VISIBILIDADES_CONOCIMIENTO)[number]
 
-export const VERSION_CHUNKER = 'markdown-headings-v1'
+// v2: el H1 que repite el título ya no se duplica en el heading path ("T > T > sección").
+export const VERSION_CHUNKER = 'markdown-headings-v2'
 export const VERSION_INDICE = 'conocimiento-tus-v1'
 export const DIMENSION_EMBEDDINGS = 1024 // Existing P3 column: "RagEmbedding"."vector" vector(1024)
 
@@ -96,7 +97,8 @@ export function parsearDocumentoConocimiento(
       audience,
       language: 'es',
       active: fields.get('active') !== 'false',
-      checksum: checksumConocimiento(`${title}\n${version}\n${visibility}\n${audience}\n${body}`),
+      // Incluye la versión del chunker: si cambia la forma de fragmentar, el documento se reindexa una vez.
+      checksum: checksumConocimiento(`${VERSION_CHUNKER}\n${title}\n${version}\n${visibility}\n${audience}\n${body}`),
       updatedAt: fields.get('updated') ?? '',
     },
     body,
@@ -117,11 +119,15 @@ export function fragmentarMarkdown(
   body: string
 ): FragmentoConocimiento[] {
   const sections: { heading: string; text: string }[] = []
-  let headings: string[] = [document.title]
+  // Pila por nivel (índice 0 = H1). El path es título + encabezados vigentes, sin repetir el
+  // título si un encabezado lo copia y con un máximo de 4 niveles.
+  const stack: string[] = []
+  const path = () =>
+    [document.title, ...stack.filter((item) => item && fraseNormalizada(item) !== fraseNormalizada(document.title))].slice(0, 4).join(' > ')
   let buffer: string[] = []
   const flush = () => {
     const text = buffer.join('\n').trim()
-    if (text) sections.push({ heading: headings.join(' > '), text })
+    if (text) sections.push({ heading: path(), text })
     buffer = []
   }
   for (const line of body.split(/\r?\n/u)) {
@@ -129,7 +135,8 @@ export function fragmentarMarkdown(
     if (heading) {
       flush()
       const level = heading[1]!.length
-      headings = [...headings.slice(0, Math.max(1, level)), heading[2]!.trim()].slice(0, 4)
+      stack.length = level - 1
+      stack[level - 1] = heading[2]!.trim()
       continue
     }
     buffer.push(line)
@@ -245,6 +252,31 @@ export class ProveedorEmbeddingsCompatibleOpenAI implements EmbeddingProvider {
       return normalizarVector(vector as number[])
     })
   }
+}
+
+// Texto comparable para frases: minúsculas, sin acentos ni signos. Solo [a-z0-9ñ ] (seguro como
+// parámetro de LIKE en PostgreSQL).
+export function fraseNormalizada(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .replace(/[^a-z0-9ñ]+/gu, ' ')
+    .trim()
+}
+
+// Ranking léxico (mismo criterio en memoria y en PostgreSQL): cobertura de términos del texto +
+// 0,5 × cobertura en título/sección + 1 si la pregunta completa aparece como frase en el título o
+// la sección ("¿Qué es TUS?" → documento "Qué es TUS", no cualquiera que diga "TUS").
+// Los boosts REORDENAN resultados que ya son relevantes: solo se suman si la cobertura base supera
+// el umbral léxico. Así un "TUS" suelto en el título no vuelve confiable una coincidencia débil.
+export const PESO_ENCABEZADO = 0.5
+export const PESO_FRASE = 1
+export const UMBRAL_LEXICO = 0.34
+
+export function rankingLexico(cobertura: number, coberturaEncabezado: number, fraseExacta: boolean): number {
+  if (cobertura < UMBRAL_LEXICO) return cobertura
+  return cobertura + PESO_ENCABEZADO * coberturaEncabezado + (fraseExacta ? PESO_FRASE : 0)
 }
 
 export function tokensBusqueda(text: string): string[] {
@@ -450,16 +482,17 @@ export class IndiceConocimientoEnMemoria implements PuertoIndiceConocimiento {
     return [...this.chunks.values()]
       .filter((chunk) => this.permitido(chunk, filter))
       .map((chunk) => {
-        const words = tokensBusqueda(`${chunk.heading} ${chunk.text}`)
-        const hits = [...terms].filter((term) =>
-          words.some(
-            (word) => word === term || (term.length > 4 && word.startsWith(term.slice(0, 5)))
-          )
-        )
+        const title = this.documents.get(chunk.documentId)!.title
+        const coincide = (words: string[]) =>
+          [...terms].filter((term) => words.some((word) => word === term || (term.length > 4 && word.startsWith(term.slice(0, 5))))).length
+        const hits = coincide(tokensBusqueda(`${chunk.heading} ${chunk.text}`))
+        const headingHits = coincide(tokensBusqueda(`${title} ${chunk.heading}`))
+        const frase = fraseNormalizada(query)
+        const exacta = frase.length >= 4 && (fraseNormalizada(title).includes(frase) || fraseNormalizada(chunk.heading).includes(frase))
         return {
           chunk: stripVector(chunk),
-          documentTitle: this.documents.get(chunk.documentId)!.title,
-          score: hits.length / terms.size,
+          documentTitle: title,
+          score: rankingLexico(hits / terms.size, headingHits / terms.size, exacta),
         }
       })
       .filter((item) => item.score > 0)
@@ -601,7 +634,7 @@ export class RecuperadorConocimiento {
     private readonly options: { topK: number; minVectorScore: number; minLexicalScore: number } = {
       topK: 4,
       minVectorScore: 0.35,
-      minLexicalScore: 0.34,
+      minLexicalScore: UMBRAL_LEXICO,
     }
   ) {}
 
