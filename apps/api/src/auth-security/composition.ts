@@ -22,12 +22,14 @@ import type { AuditSink } from './ports/security.js'
 
 export interface InMemoryAuthServiceOptions {
   now?: () => number
+  platformAdminEmails?: readonly string[]
 }
 
 export interface AuthServiceFactoryOptions {
   store: IdentityStore
   now?: () => number
   audit?: AuditSink
+  platformAdminEmails?: readonly string[]
 }
 
 export function createAuthService(options: AuthServiceFactoryOptions) {
@@ -43,6 +45,7 @@ export function createAuthService(options: AuthServiceFactoryOptions) {
     audit,
     email,
     recoveryRateLimiter: new FixedWindowRateLimiter(),
+    ...(options.platformAdminEmails ? { platformAdminEmails: options.platformAdminEmails } : {}),
   })
 
   return {
@@ -63,7 +66,7 @@ export function createAuthService(options: AuthServiceFactoryOptions) {
 
 export function createInMemoryAuthService(options: InMemoryAuthServiceOptions = {}) {
   const store = new InMemoryIdentityStore()
-  return { ...createAuthService({ store, now: options.now }), store }
+  return { ...createAuthService({ store, now: options.now, platformAdminEmails: options.platformAdminEmails }), store }
 }
 
 export function createPrismaAuthService(
@@ -72,7 +75,7 @@ export function createPrismaAuthService(
 ) {
   const store = new PrismaIdentityStore(client)
   const audit = client.auditEvent ? new PrismaSecurityAuditSink(client) : undefined
-  return { ...createAuthService({ store, now: options.now, audit }), store }
+  return { ...createAuthService({ store, now: options.now, audit, platformAdminEmails: options.platformAdminEmails }), store }
 }
 
 export { AuthService } from './application/auth-service.js'

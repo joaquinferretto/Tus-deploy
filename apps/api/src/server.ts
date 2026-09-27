@@ -25,6 +25,7 @@ import type { ModuloWhatsapp } from './tus/asistente/composicion.ts'
 import type { TusPrismaClient } from './tus/adapters/prisma.ts'
 import { getPrismaClient } from './infrastructure/database/prisma/client.ts'
 import { createPrismaAuthService } from './auth-security/composition.ts'
+import { leerAdminsPlataforma } from './auth-security/application/auth-service.ts'
 import { createAuthRouter } from './auth-security/http/auth-router.ts'
 import { createFederatedAuth, createFederatedAuthRouter, readGoogleAuthSettings } from './auth-security/federated/composition.ts'
 import type { FederatedPrismaClient } from './auth-security/federated/adapters/stores.ts'
@@ -81,7 +82,9 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const app = express()
   app.set('trust proxy', options.trustProxy ?? resolveTrustProxy(process.env))
   const prisma = getPrismaClient() as unknown as TusPrismaClient
-  const auth = createPrismaAuthService(prisma as unknown as PrismaIdentityClient)
+  const auth = createPrismaAuthService(prisma as unknown as PrismaIdentityClient, {
+    platformAdminEmails: leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS']),
+  })
   const sessions = new DurableIdentitySessionResolver(auth.store)
   // Google sign-in/sign-up: same account model and session type as password sign-in.
   const federated = createFederatedAuth({

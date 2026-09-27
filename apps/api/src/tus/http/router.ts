@@ -36,6 +36,7 @@ import { TrabajoError } from '../work/index.ts'
 import { ErrorFinanzasServicio } from '../finance/servicios/modelo.ts'
 import { ErrorIdentidad } from '../identidad/modelo.ts'
 import type { ModuloWhatsapp } from '../asistente/composicion.ts'
+import { leerAdminsPlataforma } from '../../auth-security/application/auth-service.ts'
 import { ErrorAsistente } from '../asistente/modelo.ts'
 import {
   parsearWebhookMeta,
@@ -1228,14 +1229,7 @@ export function createTusHttpRouter({
   // Human support panel: `tus:whatsapp:support` AND the platform tenant.
   const whatsappSupport = async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
-    const adminTenantId = whatsapp?.platformAdminTenantId
-    if (
-      !context ||
-      !whatsapp ||
-      !adminTenantId ||
-      context.tenantId !== adminTenantId ||
-      !hasPermission(context, 'tus:whatsapp:support')
-    ) {
+    if (!context || !whatsapp || !esAdminPlataforma(context, 'tus:whatsapp:support', whatsapp.platformAdminTenantId)) {
       sendError(response, 403, 'FORBIDDEN', 'TUS WhatsApp support is not authorized')
       return null
     }
@@ -1400,14 +1394,7 @@ export function createTusHttpRouter({
   // (TUS_PLATFORM_ADMIN_TENANT_ID). DNI images are served only here, never cached.
   const identityAdmin = async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
-    const adminTenantId = application.servicePayments?.platformAdminTenantId
-    if (
-      !context ||
-      !adminTenantId ||
-      context.tenantId !== adminTenantId ||
-      !hasPermission(context, 'tus:identity:admin') ||
-      !application.identity
-    ) {
+    if (!context || !esAdminPlataforma(context, 'tus:identity:admin', application.servicePayments?.platformAdminTenantId) || !application.identity) {
       sendError(response, 403, 'FORBIDDEN', 'TUS identity administration is not authorized')
       return null
     }
@@ -1514,8 +1501,8 @@ export function createTusHttpRouter({
     }
   )
 
-  // WEB-09D platform administration. Requires `tus:payments:admin` AND the platform tenant
-  // configured in TUS_PLATFORM_ADMIN_TENANT_ID; without that variable every call is 403.
+  // WEB-09D platform administration. Requires `tus:payments:admin` (only allowlisted verified
+  // emails get it) and, when TUS_PLATFORM_ADMIN_TENANT_ID is set, that tenant.
   router.get(['/tus/v1/admin/payments/status'], async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     if (!isPlatformPaymentsAdmin(context, application)) {
@@ -3838,13 +3825,17 @@ function isPlatformPaymentsAdmin(
   context: TusAuthenticatedTenantContext | null,
   application: TusApplicationService
 ): boolean {
-  const adminTenantId = application.servicePayments?.platformAdminTenantId
-  return Boolean(
-    context &&
-    adminTenantId &&
-    context.tenantId === adminTenantId &&
-    hasPermission(context, 'tus:payments:admin')
-  )
+  return Boolean(context && esAdminPlataforma(context, 'tus:payments:admin', application.servicePayments?.platformAdminTenantId))
+}
+
+// Platform administration: the permission is minted ONLY for allowlisted verified emails at
+// sign-in (auth-service PLATFORM_ADMIN_PERMISSIONS). When TUS_PLATFORM_ADMIN_TENANT_ID is set the
+// session must also belong to that tenant (defense in depth); without it the permission decides.
+// Fail closed without any platform-admin configuration (neither tenant nor email allowlist).
+function esAdminPlataforma(context: TusAuthenticatedTenantContext, permission: string, adminTenantId: string | null | undefined): boolean {
+  if (!hasPermission(context, permission)) return false
+  if (adminTenantId) return context.tenantId === adminTenantId
+  return leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS']).length > 0
 }
 
 function sendServiceFinanceError(response: Response, error: unknown): void {

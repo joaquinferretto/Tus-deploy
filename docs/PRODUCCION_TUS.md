@@ -60,6 +60,7 @@ Pagos (todas opcionales hasta habilitar dinero real; si falta cualquiera, los pa
 | `TUS_PAYMENT_CREDENTIALS_KEY`     | 32 bytes aleatorios en base64 para cifrar tokens de prestadores          | **sí**  |
 | `TUS_WEB_BASE_URL`                | `https://<dominio-web>`; destino del redirect después del OAuth          | no      |
 | `TUS_PLATFORM_ADMIN_TENANT_ID`    | tenant cuyos usuarios con `tus:payments:admin` administran pagos         | no      |
+| `TUS_PLATFORM_ADMIN_EMAILS`       | emails (coma) de los admins de plataforma; solo con email verificado     | no      |
 | `MERCADO_PAGO_NOTIFICATION_URL`   | `https://<api>/tus/v1/integrations/mercado-pago/webhooks` (HTTPS)        | no      |
 | `MERCADO_PAGO_MARKETPLACE`        | opcional; solo si Mercado Pago exige `marketplace` con `marketplace_fee` | no      |
 
@@ -523,7 +524,11 @@ reconecte. "Desconectar" borra los tokens en TUS; revocar el acceso en Mercado P
 
 ### Configurar la comisión (admin de plataforma)
 
-Requisitos: `TUS_PLATFORM_ADMIN_TENANT_ID=<tenant>` y una sesión de ese tenant con el permiso `tus:payments:admin`.
+Requisitos: `TUS_PLATFORM_ADMIN_EMAILS=<email del admin>` en Hostinger y una sesión de esa cuenta con el email verificado:
+al iniciar sesión recibe `tus:payments:admin`, `tus:identity:admin` y `tus:whatsapp:support` (nunca por roles, la Web ni
+WhatsApp). Si además se define `TUS_PLATFORM_ADMIN_TENANT_ID`, la sesión tiene que ser de ese tenant. Sin ninguna de las dos
+variables todo lo administrativo responde 403. Quitar un email de la lista no revoca sesiones ya emitidas hasta que
+vencen: para cortar el acceso de inmediato, cerrar sesión de esa cuenta.
 
 ```bash
 # Estado (solo booleanos, nunca valores de secretos) y bloqueos pendientes

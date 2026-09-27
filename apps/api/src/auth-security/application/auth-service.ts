@@ -34,6 +34,16 @@ const SESSION_TTL_MS = 60 * 60 * 1000
 const MEMBER_PERMISSIONS = ['tus:checkout', 'tus:marketplace:read', 'tus:read'] as const
 const OWNER_PERMISSIONS = [...MEMBER_PERMISSIONS, 'tus:marketplace:write'] as const
 
+// Platform administration. These permissions are NEVER derived from roles: only a session of an
+// account whose VERIFIED email is in the operator-configured allowlist (TUS_PLATFORM_ADMIN_EMAILS,
+// set in the API environment, never in the repository) receives them, and only at sign-in on the
+// Web/API (the WhatsApp resolver uses alcanceDeCuenta and never grants them).
+export const PLATFORM_ADMIN_PERMISSIONS = ['tus:payments:admin', 'tus:identity:admin', 'tus:whatsapp:support'] as const
+
+export function leerAdminsPlataforma(value: string | undefined): string[] {
+  return [...new Set((value ?? '').split(',').map((item) => item.trim().toLowerCase()).filter((item) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(item)))]
+}
+
 // Single source of the session scope of an account (also used by WhatsApp to derive the CURRENT
 // authority of a linked account on every turn instead of trusting a stored role).
 export function alcanceDeCuenta(roles: readonly string[]): { roles: string[]; permissions: string[] } {
@@ -91,6 +101,8 @@ export interface AuthServiceDependencies {
   passwordHasher: PasswordHasher
   audit: AuditSink
   email: EmailSender
+  // Verified emails allowed to administer the platform (normalized, lowercase).
+  platformAdminEmails?: readonly string[]
   recoveryRateLimiter: RateLimiter
 }
 
@@ -271,7 +283,7 @@ export class AuthService {
       accessTokenDigest: this.dependencies.tokens.digest(accessToken),
       scope: {
         tenantId: account.tenantId,
-        ...alcanceDeCuenta(account.roles),
+        ...this.alcanceDeSesion(account),
       },
       createdAt: now,
       expiresAt: now + SESSION_TTL_MS,
@@ -556,6 +568,16 @@ export class AuthService {
     account.updatedAt = this.dependencies.clock.now()
     await store.saveAccount(account)
     return { ok: true, account: this.safeAccount(account) }
+  }
+
+  // Session scope: role-derived permissions plus platform administration only for an allowlisted
+  // account with a verified email.
+  private alcanceDeSesion(account: Account): { roles: string[]; permissions: string[] } {
+    const scope = alcanceDeCuenta(account.roles)
+    const admins = this.dependencies.platformAdminEmails ?? []
+    const email = (account.normalizedEmail ?? account.email).trim().toLowerCase()
+    if (!account.emailVerifiedAt || !admins.includes(email)) return scope
+    return { roles: scope.roles, permissions: [...new Set([...scope.permissions, ...PLATFORM_ADMIN_PERMISSIONS])] }
   }
 
   private safeAccount(account: Account): SafeAccount {
