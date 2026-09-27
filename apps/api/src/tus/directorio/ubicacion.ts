@@ -1,3 +1,4 @@
+import { sinAcentos } from '../texto.ts'
 import { ZONAS_CORRIENTES } from '../solicitudes/modelo.ts'
 
 import type {
@@ -117,10 +118,7 @@ function safeLabel(value: string | null | undefined): string | null {
 }
 
 function normalize(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/gu, '')
+  return sinAcentos(value.toLowerCase())
     .replace(/[^a-z0-9ñ\s]/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim()

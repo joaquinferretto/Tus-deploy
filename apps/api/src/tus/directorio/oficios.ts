@@ -1,3 +1,5 @@
+import { sinAcentos } from '../texto.ts'
+
 // Catálogo canónico de oficios de TUS. Es la única fuente para: categorías de solicitudes, oficio
 // del perfil público del prestador, directorio "Buscar trabajador", asistente Web y WhatsApp.
 // Los ids están fijados por CHECK en PostgreSQL (solicitudes_servicio, perfiles_publicos_prestador):
@@ -55,10 +57,7 @@ export function oficio(id: OficioId) {
 }
 
 export function normalizarTexto(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/gu, '')
+  return sinAcentos(value.toLowerCase())
     .replace(/[^a-z0-9ñ\s]/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim()

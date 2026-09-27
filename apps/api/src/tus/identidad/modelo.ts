@@ -1,3 +1,5 @@
+import { sinAcentos } from '../texto.ts'
+
 // IDENTITY-NOSIS: identity verification of providers (prestadores). Pure domain: states,
 // normalization, Argentine CUIL validation, document reconciliation and matching. No I/O.
 
@@ -58,9 +60,7 @@ export function soloDigitos(value: string | null | undefined): string {
 // Trim, collapse spaces, uppercase and strip diacritics. Only used for comparison; the original
 // value is preserved separately.
 export function normalizarNombre(value: string | null | undefined): string {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/gu, '')
+  return sinAcentos(String(value ?? ''))
     .replace(/[^A-Za-zÑñ' -]+/gu, ' ')
     .toUpperCase()
     .replace(/\s+/gu, ' ')

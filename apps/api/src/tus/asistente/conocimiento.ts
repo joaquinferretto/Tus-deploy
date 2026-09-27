@@ -1,3 +1,4 @@
+import { sinAcentos } from '../texto.ts'
 import { createHash } from 'node:crypto'
 
 // RAG for KNOWLEDGE only (what TUS is, how budgets, payments or verification work). Live business
@@ -257,10 +258,7 @@ export class ProveedorEmbeddingsCompatibleOpenAI implements EmbeddingProvider {
 // Texto comparable para frases: minúsculas, sin acentos ni signos. Solo [a-z0-9ñ ] (seguro como
 // parámetro de LIKE en PostgreSQL).
 export function fraseNormalizada(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/gu, '')
+  return sinAcentos(text.toLowerCase())
     .replace(/[^a-z0-9ñ]+/gu, ' ')
     .trim()
 }
@@ -280,10 +278,7 @@ export function rankingLexico(cobertura: number, coberturaEncabezado: number, fr
 }
 
 export function tokensBusqueda(text: string): string[] {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/gu, '')
+  return sinAcentos(text.toLowerCase())
     .split(/[^a-z0-9ñ]+/u)
     .filter((token) => token.length > 2 && !STOPWORDS.has(token))
 }

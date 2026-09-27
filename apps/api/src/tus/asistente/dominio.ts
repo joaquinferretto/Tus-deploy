@@ -1,3 +1,4 @@
+import { sinAcentos } from '../texto.ts'
 import { createHash } from 'node:crypto'
 import type { TusApplicationService } from '../application/tus-application-service.ts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
@@ -221,17 +222,14 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
 
   async buscarServicios(filter: { query: string | null; category: string | null }): Promise<ServicioPublico[]> {
     const discovered = await this.marketplace.discover(filter.category ? { cohort: filter.category as never } : {})
-    const terms = (filter.query ?? '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/gu, '')
+    const terms = sinAcentos((filter.query ?? '').toLowerCase())
       .split(/\s+/u)
       .filter((term) => term.length > 2)
     return discovered.items
       .filter((item) => item.kind === 'service')
       .filter((item) => {
         if (terms.length === 0) return true
-        const haystack = `${item.name} ${item.description}`.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/gu, '')
+        const haystack = sinAcentos(`${item.name} ${item.description}`.toLowerCase())
         return terms.some((term) => haystack.includes(term.slice(0, Math.max(4, term.length - 2))))
       })
       .slice(0, 5)
