@@ -2,10 +2,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
 
-// En producción (Node de Hostinger) `String.prototype.normalize('NFD')` no descompone los acentos:
-// "salta la térmica" dejaba de clasificarse, el RAG no encontraba "¿Qué es TUS?" y los nombres con
-// tilde no coincidían en la verificación de identidad. Se simula ese runtime (normalize = identidad).
-test('TEXTO sin acentos: works even when the runtime normalize() is a no-op (Hostinger)', () => {
+// sinAcentos no depende del soporte de Intl del runtime: se simula un normalize() que no hace nada
+// (runtimes sin ICU completo) y todo sigue funcionando: clasificación, conocimiento e identidad.
+test('TEXTO sin acentos: works even when the runtime normalize() is a no-op', () => {
   const result = runTypeScriptScenario(`
     String.prototype.normalize = function () { return String(this) }
     const { sinAcentos } = await import('./apps/api/src/tus/texto.ts')

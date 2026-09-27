@@ -1,8 +1,8 @@
-// Quitar acentos sin depender del runtime. En producción (Node de Hostinger) `normalize('NFD')` no
-// descompone los caracteres acentuados, así que "térmica", "cañería" o "Qué" quedaban con tilde y
-// no coincidían con las palabras clave, el directorio ni el conocimiento. Se intenta NFD (si el
-// runtime lo soporta), se quitan las marcas combinantes y además se mapean explícitamente los
-// precompuestos del español. La ñ pasa a n, igual que con NFD (las palabras clave ya lo asumen).
+// Quitar acentos sin depender del soporte de Intl del runtime: se intenta NFD (si el runtime lo
+// soporta), se quitan las marcas combinantes y además se mapean explícitamente los precompuestos
+// del español. Es defensivo: la falla que motivó esto ("salta la térmica" sin clasificar en
+// producción) resultó venir del cliente de prueba (curl en Git Bash mandaba mal los bytes no ASCII);
+// con UTF-8 correcto producción siempre clasificó bien. La ñ pasa a n, igual que con NFD.
 const MAPA: Readonly<Record<string, string>> = {
   á: 'a', à: 'a', ä: 'a', â: 'a', ã: 'a',
   é: 'e', è: 'e', ë: 'e', ê: 'e',
