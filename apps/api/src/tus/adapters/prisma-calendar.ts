@@ -1,5 +1,6 @@
 import type { TusPrismaClient } from './prisma.ts'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
+import { ErrorCalendario } from '../calendar/bookings.ts'
 import type {
   CalendarAuditRecord,
   CalendarOutboxRecord,
@@ -17,6 +18,9 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
 
   readonly calendars = {
     save: async (calendar: Calendario) => {
+      const existing = await this.client.calendario.findUnique({ where: { id: calendar.calendarId } })
+      if (existing && String(existing['tenantId']) !== calendar.tenantId)
+        throw new ErrorCalendario(409, 'CALENDAR_ID_CONFLICT', 'calendar id is already in use')
       await this.client.calendario.upsert({
         where: { id: calendar.calendarId },
         create: calendarRow(calendar),

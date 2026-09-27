@@ -184,3 +184,15 @@ test('calendar management is role- and tenant-scoped and preserves audit/outbox 
   assert.equal(store.audit.list('merchant-tenant').length, 1)
   assert.equal(store.outbox.list('merchant-tenant')[0].eventType, 'calendar.created')
 })
+
+test('calendar creation rejects an identifier already owned by another tenant', async () => {
+  const store = new InMemoryServiceCalendarStore()
+  const service = new ServiceCalendarService(store)
+  await service.createCalendar(operatorContext(), calendarInput({ calendarId: 'shared-calendar' }))
+
+  await assert.rejects(
+    () => service.createCalendar({ ...operatorContext(), tenantId: 'other-tenant' }, calendarInput({ calendarId: 'shared-calendar' })),
+    (error) => error instanceof ServiceCalendarError && error.code === 'CALENDAR_ID_CONFLICT',
+  )
+  assert.equal((await store.calendars.find('shared-calendar'))?.tenantId, 'merchant-tenant')
+})

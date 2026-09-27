@@ -317,6 +317,8 @@ export class ServiceCalendarService {
       updatedAt: now,
     }
     await this.store.transaction(async (store) => {
+      if (await store.calendars.find(calendar.calendarId))
+        throw new ErrorCalendario(409, 'CALENDAR_ID_CONFLICT', 'calendar id is already in use')
       await store.calendars.save(calendar)
       await this.record(
         store,
