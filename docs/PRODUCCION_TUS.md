@@ -62,6 +62,9 @@ Pagos (todas opcionales hasta habilitar dinero real; si falta cualquiera, los pa
 | `TUS_PLATFORM_ADMIN_TENANT_ID`    | tenant cuyos usuarios con `tus:payments:admin` administran pagos         | no      |
 | `TUS_PLATFORM_ADMIN_EMAILS`       | emails (coma) de los admins de plataforma; solo con email verificado     | no      |
 | `TUS_MFA_ENCRYPTION_KEY`          | 32 bytes aleatorios en base64; cifra los secretos TOTP del MFA de admin  | **sí**  |
+| `EMAIL_PROVIDER`                  | `resend`; sin esto no se envían emails de verificación ni de reset        | no      |
+| `RESEND_API_KEY`                  | clave de Resend                                                          | **sí**  |
+| `EMAIL_FROM`                      | remitente de un dominio verificado, p. ej. `TUS <no-reply@tusservicios.shop>` | no  |
 | `MERCADO_PAGO_NOTIFICATION_URL`   | `https://<api>/tus/v1/integrations/mercado-pago/webhooks` (HTTPS)        | no      |
 | `MERCADO_PAGO_MARKETPLACE`        | opcional; solo si Mercado Pago exige `marketplace` con `marketplace_fee` | no      |
 
@@ -192,17 +195,46 @@ La Web **no** necesita ningún secreto. Nunca definas tokens o claves en variabl
   Eliminarlo exige mover esos estilos a clases CSS.
 - Vista previa de Vercel: la barra de comentarios de Vercel (vercel.live) queda bloqueada por la CSP; producción no la usa.
 
-### 4.2 Sesión en sessionStorage (riesgo y plan)
+### 4.2 Sesión en cookie HttpOnly y CSRF
 
-La Web guarda el token de sesión en `sessionStorage` (`TUS_SESSION_STORAGE_KEY`, `src/lib/tus-auth-client.ts`) y lo manda
-como `Authorization: Bearer`. Riesgo: un XSS en el origen de la Web podría leerlo (dura lo que la pestaña y la
-expiración de la sesión). Mitigaciones actuales: CSP con nonce y sin `'unsafe-eval'`, React escapa todo el contenido,
-ningún `dangerouslySetInnerHTML`, `credentials: 'omit'`, CORS de la API limitado al dominio de la Web y, para lo más
-sensible (administración), un segundo factor por sesión. Plan de migración (no hecho todavía; requiere tests de punta a
-punta): 1) la API emite la sesión en una cookie `__Host-tus_session` `HttpOnly; Secure; SameSite=Lax; Path=/` desde un
-subdominio común (p. ej. servir la API bajo `tusservicios.shop/api` vía rewrite de Vercel, así la cookie es first-party);
-2) protección CSRF para mutaciones (token doble o encabezado personalizado obligatorio + `SameSite`); 3) la Web deja de
-leer/escribir el token y el resolver acepta cookie o Bearer durante la transición; 4) retirar el Bearer de la Web.
+- La Web ya no guarda el token: al iniciar sesión (email + contraseña o Google) la API lo entrega en la cookie
+  `__Host-tus_session` (`HttpOnly; Secure; SameSite=Strict; Path=/`, sin `Domain`, vida = la de la sesión, 1 h) y en el
+  cuerpo manda solo el marcador `"cookie-session"`. JavaScript (y por lo tanto un XSS) no puede leer el token. En
+  `sessionStorage` queda solo `{ accessToken: "cookie-session", expiresAt }`, sin secretos.
+- `tusservicios.shop`, `www.tusservicios.shop` y `api.tusservicios.shop` son el mismo *site*: la cookie viaja en los
+  `fetch` de la Web (`credentials: 'include'`) y nunca en requests iniciados por otro sitio.
+- Clientes nativos (sin encabezado `Origin`) siguen recibiendo el token Bearer; la API acepta cookie o Bearer.
+- CSRF: toda mutación (`POST/PUT/PATCH/DELETE`) autenticada con la cookie exige `Origin` (o `Referer`) dentro de
+  `CORS_ORIGINS`; si no, 403 `CSRF_REJECTED`. Es una segunda defensa, independiente de `SameSite=Strict`.
+- CORS: `CORS_ORIGINS` debe listar exactamente `https://tusservicios.shop,https://www.tusservicios.shop`; nunca `*`
+  (se descarta aunque se configure).
+- Logout revoca la sesión en el servidor y borra la cookie. Iniciar sesión siempre crea una sesión nueva; pasar el MFA
+  rota la sesión (token nuevo, el anterior queda revocado); cambiar o restablecer la contraseña revoca todas.
+- Desarrollo local por HTTP: `TUS_SESSION_COOKIE_SECURE=false` (la cookie pasa a llamarse `tus_session`).
+
+### 4.3 Email propio de TUS (sin Google)
+
+- Registro con email + contraseña: la API crea la cuenta y manda un enlace de un solo uso
+  (`https://tusservicios.shop/verificar-email?token=...`, 24 h, solo se guarda el hash). Sin verificar no hay sesión.
+  La respuesta es siempre la misma, exista o no el email (si ya existe y no está verificado se reenvía el enlace; si
+  está verificado, se avisa al dueño por email).
+- "Reenviar email de verificación" (`/verificar-email` sin token): respuesta genérica, 1 por minuto y 5 por hora por email.
+- "Olvidé mi contraseña" (`/olvide-contrasena`): respuesta genérica; enlace de un solo uso a
+  `/restablecer-contrasena?token=...` (1 h). Al cambiarla se revocan todas las sesiones. Un admin sigue necesitando MFA.
+- Avisos de seguridad por email: contraseña cambiada o restablecida, MFA activado/desactivado, códigos de recuperación
+  regenerados, intento de registro con un email existente. Si el proveedor falla, la acción no se bloquea y queda
+  `email.delivery_failed` en `AuditEvent`.
+- Proveedor: **Resend** por su API HTTPS (sin SDK). Variables en Hostinger: `EMAIL_PROVIDER=resend`,
+  `RESEND_API_KEY=<clave>`, `EMAIL_FROM=TUS <no-reply@tusservicios.shop>` (dominio verificado en Resend) y
+  `TUS_WEB_BASE_URL=https://tusservicios.shop`. Sin clave el envío queda cerrado por configuración: todo lo demás
+  funciona, pero no llegan los emails (y sin verificación no se puede iniciar sesión). El puerto `EmailSender` de
+  `auth-security` permite cambiar de proveedor (SMTP, SES) sin tocar el auth.
+- Contraseñas: 12 a 256 caracteres, sin reglas de símbolos. Se rechazan las que aparecen en filtraciones
+  (Pwned Passwords con k-anonymity: solo salen 5 caracteres del SHA-1; si el servicio no responde, no bloquea).
+  `TUS_PWNED_PASSWORDS=disabled` lo apaga.
+- Límites persistentes en PostgreSQL (`auth_rate_limits`, sobreviven a un reinicio): inicio de sesión 10 cada 15 min
+  por email, recuperación 5 cada 15 min, reenvío de verificación 1/min y 5/h, MFA 5 cada 15 min por cuenta y operación.
+  Por IP: 40 cada 15 min en rutas de auth y 1500 cada 15 min en el resto (mapa, directorio y navegación no se frenan).
 
 El build local en Windows puede fallar solo en el paso `standalone` por symlinks (`EPERM`); en Linux/Vercel no aplica.
 Para verificar localmente: `NEXT_DISABLE_STANDALONE=true pnpm --filter @factory/web... build`.
@@ -564,11 +596,12 @@ reconecte. "Desconectar" borra los tokens en TUS; revocar el acceso en Mercado P
 
 ### Configurar la comisión (admin de plataforma)
 
-Requisitos: `TUS_PLATFORM_ADMIN_EMAILS=<email del admin>` en Hostinger y una sesión de esa cuenta con el email verificado:
-al iniciar sesión recibe `tus:payments:admin`, `tus:identity:admin` y `tus:whatsapp:support` (nunca por roles, la Web ni
-WhatsApp). Si además se define `TUS_PLATFORM_ADMIN_TENANT_ID`, la sesión tiene que ser de ese tenant. Sin ninguna de las dos
-variables todo lo administrativo responde 403. Quitar un email de la lista no revoca sesiones ya emitidas hasta que
-vencen: para cortar el acceso de inmediato, cerrar sesión de esa cuenta.
+Requisitos: `TUS_PLATFORM_ADMIN_EMAILS=<email del admin>` en Hostinger y una sesión de esa cuenta **iniciada con email +
+contraseña de TUS** (nunca con Google: una sesión de Google jamás tiene alcance de admin) y con el email verificado por el
+flujo propio de TUS. Esa sesión recibe `tus:payments:admin`, `tus:identity:admin` y `tus:whatsapp:support` (nunca por
+roles, la Web ni WhatsApp). Si además se define `TUS_PLATFORM_ADMIN_TENANT_ID`, la sesión tiene que ser de ese tenant.
+Sin ninguna de las dos variables todo lo administrativo responde 403. La lista se lee **en cada request**: quitar un
+email (o cambiar el email de la cuenta) corta el acceso de admin en el siguiente request, aunque la sesión sea vieja.
 
 **MFA obligatorio.** Además de lo anterior, la API solo respeta esos permisos en una sesión que pasó el segundo factor
 TOTP (`apps/api/src/auth-security/mfa`). El control está en el backend: el resolver de sesiones
@@ -580,8 +613,10 @@ máximo), así que una sesión creada antes del MFA o sin el código no administ
    `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Sin esa clave el MFA responde 503 y
    nadie es admin. **No cambiarla**: con otra clave los secretos guardados no se pueden descifrar (habría que volver a
    enrolar).
-2. Entrar con la cuenta admin y abrir `/tus/admin/identidad` (o `/tus/admin/whatsapp`, `/tus/admin/seguridad`). La
-   primera vez pide configurar la app autenticadora (Google Authenticator, Microsoft Authenticator, 1Password...):
+2. Registrarse en `/registro` con email + contraseña, confirmar el email con el enlace recibido, iniciar sesión en
+   `/sign-in` con email + contraseña y abrir `/tus/admin/identidad` (o `/tus/admin/whatsapp`, `/tus/admin/seguridad`). La
+   primera vez pide configurar la app autenticadora (Google Authenticator, Microsoft Authenticator, 1Password...; la app
+   solo genera el código TOTP, la cuenta de Google no participa en el login de TUS):
    se muestra la clave una sola vez, se confirma con un código y se entregan 8 códigos de recuperación de un solo uso
    (solo se guarda su hash). En cada sesión nueva pide el código de 6 dígitos.
 3. `/tus/admin/seguridad`: regenerar códigos de recuperación (exige un código actual e invalida los anteriores) o
