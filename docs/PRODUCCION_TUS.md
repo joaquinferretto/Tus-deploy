@@ -102,8 +102,9 @@ Guardar las variables y redesplegar la API. `GET /auth/oauth/providers` debe dev
 `GET /auth/oauth/google/start` devuelve **303** a Google (una redirección correcta, no debe devolver 200).
 
 Login y registro usan el mismo flujo: después de validar Google, un correo nuevo recibe un código de registro de un
-solo uso en `/ingresar/google#code=...`. `POST /auth/oauth/exchange` crea la cuenta con el nombre y correo verificado de
-Google, la vincula y devuelve HTTP 200 con una sesión TUS. No pide contraseña ni un segundo formulario. Un ingreso
+solo uso en `/ingresar/google#code=...`. `POST /auth/oauth/exchange` crea la cuenta y el mismo grafo inicial de tenant,
+organización, workspace, rol y membership que el registro por contraseña, usando el nombre y correo verificado de Google;
+la vincula y devuelve HTTP 200 con una sesión TUS. No pide contraseña ni un segundo formulario. Un ingreso
 posterior recupera la misma cuenta. Si el correo ya pertenece a otra cuenta TUS sin ese vínculo, exige iniciar sesión
 en esa cuenta para vincular Google; no fusiona cuentas por coincidencia de correo.
 
@@ -169,7 +170,8 @@ Para verificar localmente: `NEXT_DISABLE_STANDALONE=true pnpm --filter @factory/
 
 1. `TUS_ROUTES_ENABLED=true` en la API de staging. Mantener `TUS_PROVIDER_ACTIONS_ENABLED=false` y
    `TUS_MERCADOPAGO_ENABLED=false`.
-2. Cuentas del equipo: `POST /auth/register` crea cuenta y tenant, pero **el backend no envía emails todavía**
+2. Cuentas del equipo: `POST /auth/register` crea de forma atómica usuario, cuenta, tenant, organización inicial,
+   workspace, rol Owner y membership, pero **el backend no envía emails todavía**
    (`InMemoryEmailSender`) y el login exige email verificado. Hasta integrar un proveedor de correo, un operador puede
    verificar cuentas **del equipo** con SQL auditado solo sobre la base de staging:
 
@@ -306,10 +308,12 @@ TUS usa Supabase **solo como PostgreSQL**: la API se conecta con Prisma por `DAT
    sesión (sin escribirlas en archivos ni en el historial).
 6. Cargar `DATABASE_URL`, `DIRECT_URL` y `NODE_EXTRA_CA_CERTS` (ver 6.1.3) en Hostinger y redeployar la API. Verificar
    `/health`, `/ready` y `GET /tus/v1/public/solicitudes` (debe responder `{"items":[]}` con la base vacía).
-7. Probar de punta a punta: iniciar sesión en la Web → `/publicar` → publicar → la solicitud aparece en el mapa de `/`.
+7. Probar de punta a punta: consultar `/` → verificar que el mapa muestra prestadores y zonas aproximadas → iniciar sesión
+   en la Web → `/publicar` → publicar → comprobar la sección separada de solicitudes recientes.
 
 La migración `20261001100000_tus_directorio_prestadores` (perfiles públicos, solicitudes dirigidas e imágenes) va
-después de `20260930100000_tus_solicitudes_servicio`; es aditiva y las solicitudes existentes quedan públicas.
+después de `20260930100000_tus_solicitudes_servicio`; `20261003100000_tus_directorio_ubicaciones` agrega cobertura
+pública y debe aplicarse después de ambas. Todas son aditivas y las solicitudes existentes quedan públicas.
 
 ### 6.1.2 Migraciones automáticas e inicialización de una base nueva
 

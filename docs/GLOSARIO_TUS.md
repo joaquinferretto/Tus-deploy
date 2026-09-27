@@ -150,6 +150,8 @@ Conservar también `OAuth`, `OIDC`, `PKCE`, `MFA`, `RAG`, `POS`, `SDK`, `API`, `
 | Inventario        | `Inventario`              | `Inventory`    | Productos y cantidades disponibles para operar.                              | Catálogo                         |
 | Disponibilidad    | `Disponibilidad`          | `Availability` | Indicación de cuándo o bajo qué condiciones puede prestarse o venderse algo. | Existencia                       |
 | Zona de servicio  | `ZonaServicio`            | `Service Area` | Área geográfica donde un prestador puede prestar un servicio.                | Área del proveedor               |
+| Cobertura pública | `CoberturaPublica`        | `Public Coverage` | Modalidad y radio opcional que el prestador declara para su atención.      | Domicilio exacto                 |
+| Ubicación pública | `UbicacionPublica`        | `Public Location` | Área o centro aproximado que TUS puede mostrar sin revelar un domicilio. | Coordenada privada               |
 
 ### Agenda, disponibilidad y reserva de publicaciones
 

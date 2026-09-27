@@ -751,11 +751,11 @@ Table consentimientos_whatsapp {
   fecha_actualizacion timestamp [note: 'ex updatedAt']
 
   indexes {
-    (tenant_id, destinatario_id) [unique, name: 'uq_consentimientos_whatsapp_tenant_destinatario']
+    (tenant_id, tipo_destinatario, destinatario_id) [unique, name: 'uq_consentimientos_whatsapp_tenant_tipo_destinatario']
     (tenant_id, estado) [name: 'idx_consentimientos_whatsapp_tenant_estado']
   }
 
-  Note: 'ConsentimientoWhatsApp = consentimiento. destinatario_id [EXTERNA].'
+  Note: 'ConsentimientoWhatsApp = consentimiento con origen auditable (web_linking | whatsapp_inbound | operator_console | opt_out). destinatario_id [EXTERNA].'
 }
 
 Table mensajes_whatsapp {

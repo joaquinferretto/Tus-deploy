@@ -323,7 +323,7 @@ Deja trazabilidad de los renombres físicos aplicados por la migración. Muestra
 | `acciones_whatsapp`                 | `id` | varchar | Surrogate                                | —                       | `(tenant_id, clave_idempotencia)`                                                         |
 | `confirmaciones_whatsapp`           | `id` | varchar | Surrogate                                | `confirmacion_id`       | `(tenant_id, confirmacion_id)`                                                            |
 | `auditoria_whatsapp`                | `id` | varchar | Surrogate                                | —                       | —                                                                                         |
-| `consentimientos_whatsapp`          | `id` | varchar | Surrogate                                | —                       | `(tenant_id, destinatario_id)`                                                            |
+| `consentimientos_whatsapp`          | `id` | varchar | Surrogate                                | —                       | `(tenant_id, tipo_destinatario, destinatario_id)`                                         |
 | `mensajes_whatsapp`                 | `id` | varchar | Surrogate                                | `mensaje_id`            | `(tenant_id, mensaje_id)`                                                                 |
 | `eventos_webhook_whatsapp`          | `id` | varchar | Surrogate                                | —                       | `(tenant_id, evento_proveedor_id)`                                                        |
 | `evidencias_habilitacion`           | `id` | varchar | Surrogate                                | —                       | `(tenant_id, capacidad, requisito, referencia_evidencia)`                                 |
@@ -571,7 +571,7 @@ siguen siendo hechos separados, versionados y auditables.
 
 ### 7.7 WhatsApp
 
-Canal gobernado; referencias externas a Meta (`remitente_id`, `destinatario_id`, `plantilla`, `evento_proveedor_id`, `firma`) nunca son FK. `consentimiento_id` lógica.
+Canal gobernado; referencias externas a Meta (`remitente_id`, `destinatario_id`, `plantilla`, `evento_proveedor_id`, `firma`) nunca son FK. `consentimiento_id` lógica. El `origen` del consentimiento se normaliza a `web_linking`, `whatsapp_inbound`, `operator_console` u `opt_out`; `whatsapp_inbound` representa conversación y no marketing.
 
 ### 7.8 Habilitación
 
@@ -668,10 +668,15 @@ estado, longitudes, presupuesto y rango de coordenadas. Vigencia 30 días (`expi
 cuenta cada 24 h y 10 abiertas a la vez (aplicación). Índices para el listado público y para "mis solicitudes".
 
 **DIRECTORIO Y SOLICITUDES DIRIGIDAS.** `20261001100000_tus_directorio_prestadores` (aditiva: dos tablas nuevas y
-columnas/constraints nuevos en `solicitudes_servicio`; no modifica constraints ni datos existentes):
+ columnas/constraints nuevos en `solicitudes_servicio`; no modifica constraints ni datos existentes):
 `perfiles_publicos_prestador` (lo que el prestador elige mostrar en "Buscar trabajador": nombre público, oficio del
 catálogo canónico, barrio, descripción y años de experiencia declarados; uno por prestador; FK compuesta a `prestadores`
-RESTRICT; su `id` es el único identificador que sale a la Web). En `solicitudes_servicio`: `origen`
+RESTRICT; su `id` es el único identificador que sale a la Web). La migración aditiva
+`20261003100000_tus_directorio_ubicaciones` hace `zona` nullable para perfiles sin zona declarada y agrega
+`zonas_cobertura` (hasta 8 zonas canónicas), `modalidad_atencion` (`local | domicilio | mixto`) y
+`radio_cobertura_km` (1–100 opcional). La ubicación pública puede usar un área normalizada proveniente de una verificación
+de identidad, pero solo se expone como zona/localidad y como centro aproximado; no se copia la dirección exacta.
+En `solicitudes_servicio`: `origen`
 (`web_publica | web_assistant | web_directory | whatsapp`, default `web_publica`), `visibilidad` (`publica | dirigida`,
 default `publica`), `prestador_tenant_id`/`prestador_id` (FK compuesta a `prestadores` RESTRICT, solo en dirigidas),
 `estado_asignacion` (`pendiente | aceptada | rechazada | cancelada`) y `respondida_en`. Un CHECK de coherencia impide

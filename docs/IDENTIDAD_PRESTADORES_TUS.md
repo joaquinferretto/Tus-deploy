@@ -24,10 +24,11 @@ navegador sin tocar cola, límite, matching ni gates.
    con confianza ≥ 0,6; si no → revisión (`DOCUMENT_READER_MISMATCH`, `DOCUMENT_LOW_CONFIDENCE`, `DOCUMENT_UNREADABLE`) **sin
    gastar una consulta a Nosis**. Un DNI ya verificado por otro prestador → `IDENTITY_ALREADY_VERIFIED` sin consulta.
 6. Etapa **consulta**: FIFO, límite global 7/h, búsqueda **solo por documento** en el Localizador; se leen únicamente
-   DNI, denominación (nombre) y CUIT/CUIL.
+   DNI, denominación (nombre) y CUIT/CUIL. Si la fuente expone columnas separadas de barrio, localidad y provincia,
+   también se normaliza ese área sin números; nunca se guarda una dirección textual.
 7. Comparación: DNI exacto, CUIL válido (11 dígitos, prefijo 20/23/24/27, dígito verificador y DNI embebido), nombre
    normalizado (acentos, mayúsculas, espacios) sin fuzzy permisivo.
-8. Resultado: `verified` (método `nosis_browser`, snapshot mínimo `{resultCount, nameMatch, cuilValid}`),
+8. Resultado: `verified` (método `nosis_browser`, snapshot mínimo `{resultCount, nameMatch, cuilValid}` y área opcional),
    `review_required` o `rejected`. Verificado desbloquea al prestador.
 
 | Situación                                         | Resultado                                                         |
@@ -113,7 +114,7 @@ Migración aditiva `20260927100000_tus_identity_verification`: `verificaciones_i
 `verified`. Validada en PostgreSQL 16 desechable: base nueva y upgrade desde la migración anterior producen el mismo
 esquema, sin drift contra `schema.prisma`.
 
-De Nosis solo se guarda el snapshot mínimo; nunca páginas, HTML, teléfonos, actividad ni otros datos. Auditoría:
+De Nosis solo se guarda el snapshot mínimo; nunca páginas, HTML, teléfonos, actividad, direcciones exactas ni otros datos. Auditoría:
 `verification.created/consent_accepted/document_uploaded/queued/processing/verified/review_required/rejected/
 retry_scheduled`, `nosis.session_required/session_restored/rate_limited/circuit_opened`, `worker.pause/resume/
 reauthenticate`, con DNI/CUIL enmascarados. Logs prohibidos: contraseñas, cookies, sesión, DNI/CUIL completos, HTML.

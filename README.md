@@ -32,6 +32,8 @@ La implementacion actual incluye:
 - Contratos JSON Schema para interoperabilidad entre TypeScript y Python.
 - Runtime Python preparado para LangGraph, con activacion fail-closed.
 - Tests deterministas y tests de integracion HTTP.
+- Directorio público de prestadores con filtros, mapa por zonas aproximadas, cobertura laboral configurable y fallback
+  restringido a áreas normalizadas de identidad verificada.
 
 Los flags de despliegue mantienen deshabilitados por defecto las rutas TUS, las acciones de proveedores, los release jobs, los fleet jobs y los consumidores externos. La habilitacion de produccion requiere evidencia y gates de readiness; una respuesta `disabled`, `pending`, `conflict` o `unavailable` no se interpreta como exito.
 
@@ -48,6 +50,7 @@ Los flags de despliegue mantienen deshabilitados por defecto las rutas TUS, las 
 | POS                 | Dispositivos, sesiones, operaciones manuales, recibos, reembolsos, conflictos y fallas de impresora.    |
 | Soporte             | Casos, evidencia, resolucion y enlace con el compromiso afectado.                                       |
 | WhatsApp            | Consentimiento, plantillas, handoff y acciones permitidas.                                              |
+| Directorio          | Búsqueda pública de prestadores, mapa de zonas aproximadas y solicitud dirigida desde perfiles.          |
 | Reporting           | Reporte operativo con freshness, dimensiones y estados no afirmativos.                                  |
 | Workflows           | Puente API-queue-Python con validacion de contratos compartidos.                                        |
 
@@ -359,7 +362,7 @@ El proceso API carga configuracion PostgreSQL canonica desde `DATABASE_URL` o de
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | Health      | `GET /health`, `GET /ready`                                                                                                              |
 | Auth        | `/auth/register`, `/auth/sign-in`, `/auth/session`, `/auth/sign-out`, `/auth/verify-email`, recovery, cuentas y credenciales.            |
-| Tenancy     | `/tenancy/organizations`, invitations y membresias.                                                                                      |
+| Tenancy     | invitations y membresias; la organizacion inicial nace durante el registro y no tiene endpoint de bootstrap.                            |
 | Core TUS    | `/tus/checkout`, `/tus/commitments/:commitmentId`, transiciones y compensaciones.                                                        |
 | Marketplace | `/tus/v1/marketplace/*` y alias `/tus/v1/mercado-servicios/*`. Incluye onboarding, listings, publish, discovery, checkout y commitments. |
 | Calendar    | `/tus/v1/calendar`, slots, bookings, cancel y no-show.                                                                                   |

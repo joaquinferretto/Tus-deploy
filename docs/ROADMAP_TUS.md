@@ -24,6 +24,7 @@
 | WEB-09C  | Completada                  | Comision exacta, ledger unico append-only, liquidacion interna sin payout y conciliacion determinista.                         |
 | WEB-09D  | Auditada, grado B           | Lectura financiera disponible; UI pendiente de decisiones de producto sobre cobro previo a provider. Ver auditoria WEB-09.     |
 | WEB-09E  | Fuera de alcance            | Provider real, OAuth, captura, split, payout y refund real no implementados.                                                   |
+| WEB-DIR  | Completada                  | Directorio público, mapa de prestadores por zonas aproximadas, cobertura laboral y fallback seguro de identidad.               |
 
 ## WEB-04D2 entregado
 

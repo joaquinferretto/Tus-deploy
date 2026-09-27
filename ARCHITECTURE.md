@@ -83,6 +83,17 @@ produccion y un `API_PORT` explicito conserva prioridad fuera de produccion.
 `apps/api/src/tus/composition/index.ts` arma los servicios con stores in-memory o Prisma. La misma logica de
 aplicacion se puede ejecutar en tests deterministas y en persistencia PostgreSQL sin cambiar el contrato de uso.
 
+### Bootstrap de identidad y tenancy
+
+El registro es el unico dueño del bootstrap inicial de una cuenta. `AuthService.register()` y
+`registerFederated()` ejecutan, dentro de la transaccion del store de identidad, la creacion de usuario, cuenta, tenant,
+organizacion inicial, workspace `Default`, rol `Owner` y membership activa. Prisma usa `$transaction` y el store in-memory
+serializa y revierte el mismo grafo para conservar la semantica entre entornos.
+
+La cuenta mantiene un `tenantId` y no existe un caso de producto para multiples organizaciones. Por eso el router de tenancy
+solo expone invitaciones y ciclo de vida de memberships; no existe un endpoint HTTP alternativo que pueda volver a ejecutar el
+bootstrap inicial. El alta social de Google termina en `registerFederated()` y comparte exactamente este camino.
+
 Las familias canónicas relevantes son:
 
 - marketplace: `/tus/v1/marketplace/*` y alias `/tus/v1/mercado-servicios/*`;
@@ -330,6 +341,26 @@ pre-deploy y permanece como deuda operativa documentada.
 La Web ya conecta el journey nuevo con discovery, slots, booking y checkout por `listingId`. La ruta de calendario legacy
 `calendarId + serviceId` sigue disponible para consumidores existentes y queda aislada del flujo canónico. La activación HTTP
 de TUS y el guard de readiness siguen dependiendo de sus flags y evidencias; D3 y WEB-05 no cambian esa política.
+
+### Directorio público de prestadores
+
+La home y `/trabajadores` consultan `GET /tus/v1/public/prestadores`; no usan las solicitudes de clientes como fuente del mapa.
+`ServicioDirectorio` es el caso de uso compartido por el directorio Web, el asistente Web y las herramientas de WhatsApp.
+
+La ubicación pública se resuelve, en este orden:
+
+1. zonas laborales configuradas en `PerfilPublicoPrestador`;
+2. área normalizada de una identidad verificada, si la fuente la entregó;
+3. localidad/provincia sin pin si el área no coincide con una zona canónica;
+4. `locationSource=none` y sin ubicación si no hay datos.
+
+El perfil persiste solo `zona`, `zonas_cobertura`, `modalidad_atencion` y `radio_cobertura_km`. Los pins son centros de zonas
+canónicas de Corrientes, redondeados a 3 decimales y marcados con precisión `zone`; nunca representan una dirección exacta.
+El área opcional del snapshot de identidad se sanitiza antes de consumirse y no puede contener números. La migración aditiva es
+`20261003100000_tus_directorio_ubicaciones`; no modifica la tabla de solicitudes ni almacena domicilios privados.
+
+Las rutas Web desconocidas usan `apps/web/src/app/not-found.tsx` y vuelven a `/`; el fallback de `tus` aplica la misma regla.
+Las rutas inexistentes del API continúan siendo 404 JSON desde Express.
 
 ## Validacion y evidencia
 

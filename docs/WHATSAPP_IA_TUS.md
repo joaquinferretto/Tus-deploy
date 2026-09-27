@@ -69,6 +69,23 @@ La Web administrativa esta en `/tus/admin/whatsapp`.
   prestador elegido, con `origen = whatsapp`. Queda pendiente hasta que el prestador la acepta en `/prestador/solicitudes`.
 - No hay reglas propias de WhatsApp: ambas herramientas delegan en `ServicioDirectorio` y `ServicioSolicitudes`.
 
+Las acciones HTTP de WhatsApp (`/tus/v1/whatsapp/actions`) fallan cerradas: el sender debe estar vinculado a una cuenta TUS
+activa dentro del tenant y debe existir un `ConsentimientoWhatsApp` persistido en estado `active`. El booleano `consent` de la
+request es una confirmación adicional, no reemplaza el consentimiento durable. Un sender sin política, sin vínculo, bloqueado,
+o con consentimiento ausente/revocado solo puede terminar en handoff; nunca ejecuta una mutación.
+
+### Procedencia del consentimiento
+
+- `web_linking` se registra dentro de la confirmación Web que vincula el contacto con una cuenta TUS. Es la procedencia explícita
+  para habilitar acciones y comunicaciones de la cuenta.
+- `whatsapp_inbound` se registra cuando una persona inicia una conversación desde WhatsApp. Es evidencia de consentimiento para
+  conversar, no autorización general de marketing ni de mensajes plantilla outbound.
+- Un inbound de un contacto todavía no vinculado conserva la evidencia auditable con el `wa_id` enmascarado, pero no inventa un
+  `tenantId`. El tenant aparece recién después de la vinculación Web.
+- El endpoint administrativo de consentimiento deriva `operator_console`; ignora cualquier `source` enviado por el cliente.
+- Los orígenes y el propósito de conversación quedan en la auditoría del asistente y, cuando existe tenant, en
+  `ConsentimientoWhatsApp`. Las plantillas outbound requieren consentimiento explícito distinto de `whatsapp_inbound`.
+
 ## Worker y ciclo de vida
 
 Con `TUS_WHATSAPP_ENABLED=true` y configuracion valida, `startServer()` crea el worker embebido, procesa leases de `cola_conversacion_whatsapp` y lo detiene mediante `AbortController` durante shutdown. Si la configuracion activa tiene problemas, el arranque falla cerrado.

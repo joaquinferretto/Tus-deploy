@@ -334,6 +334,46 @@ La matriz de evidencia y los criterios para una futura activacion estan en `docs
   queda en revision manual y TUS no cubre su parte.
 - Dinero real permanece apagado hasta la prueba sandbox con credenciales y la habilitacion `settlement` por evidencia.
 
+## WHATSAPP-01: consentimiento con procedencia verificable
+
+- La vinculación desde Web registra `web_linking` dentro de la confirmación autenticada y con tenant derivado de la sesión.
+- Un mensaje inbound voluntario registra `whatsapp_inbound` como consentimiento de conversación. No se asigna tenant a un número
+  no vinculado y esa procedencia no habilita marketing general ni plantillas outbound.
+- El origen administrativo se deriva como `operator_console`; el cliente no puede enviar una procedencia arbitraria para cambiar el
+  significado del consentimiento.
+- La evidencia se registra en la auditoría del asistente y, cuando el contacto tiene tenant, en `ConsentimientoWhatsApp`, sin
+  exponer el número completo en logs o respuestas administrativas.
+
+## WEB-DIR: directorio y mapa público de prestadores
+
+**Estado:** implementado en contratos, API, Prisma, Web e identidad; los pagos y providers externos siguen sujetos a sus gates.
+
+### DIR-01: el mapa representa oferta, no demanda
+
+- La fuente del mapa principal es `GET /tus/v1/public/prestadores`; `GET /tus/v1/public/solicitudes` permanece como sección
+  separada de solicitudes recientes y no se mezcla con los pins de prestadores.
+- Los filtros de oficio, zona y texto se resuelven mediante `ServicioDirectorio`, compartido por Web y WhatsApp. El catálogo y
+  las zonas provienen de `GET /tus/v1/public/oficios`.
+
+### DIR-02: cobertura laboral y fallback de identidad
+
+- La configuración manual (`zona`, `zonas_cobertura`, `modalidad_atencion`, `radio_cobertura_km`) tiene prioridad.
+- Sin configuración manual, una identidad `verified` puede aportar únicamente un área normalizada de barrio/localidad/provincia.
+  La fuente puede entregar ese área solo en columnas separadas; una dirección textual se descarta.
+- Un área que no coincide con una zona canónica se muestra como localidad/provincia sin pin. Sin área, el perfil queda sin
+  ubicación pública. Ningún dato de domicilio, documento o coordenada exacta sale en el DTO público.
+
+### DIR-03: ubicación aproximada determinista
+
+- Cada pin usa el centro de una zona canónica de Corrientes, redondeado a 3 decimales y marcado `precision: zone`.
+- El perfil público expone origen de ubicación, zonas, modalidad y radio, pero no calle, altura, DNI, CUIL, email, teléfono ni
+  campos de autoridad. La migración `20261003100000_tus_directorio_ubicaciones` es aditiva y backfillea las zonas existentes.
+
+### DIR-04: navegación segura
+
+- Las rutas Web desconocidas vuelven a `/` mediante el `not-found.tsx` raíz; el segmento `/tus` conserva el mismo fallback.
+- Una entidad pública inexistente mantiene su UX específica cuando la ruta existe; una API inexistente sigue respondiendo 404 JSON.
+
 ## Alcance de la Build
 
 Incluido:

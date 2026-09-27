@@ -58,6 +58,57 @@ Corrección:
 - `DurableIdentitySessionResolver` falla cerrado si la membership falta o fue revocada.
 - Existe regresión que reutiliza el mismo token antes y después de revocar autoridad.
 
+### SEC-01-H3: re-inicialización de organización por un miembro autenticado
+
+**Severidad previa:** High. **Estado:** corregido.
+
+`POST /tenancy/organizations` usaba el tenant de la sesión como `organizationId`, pero el servicio podía actualizar una
+organización existente y volver a crear workspace, rol `Owner` y membership activa sin un gate de bootstrap. Un miembro podía
+intentar cambiar el nombre/slug del tenant y obtener autoridad de Owner. La ruta fue retirada: no existe un caso de producto
+para múltiples organizaciones por cuenta y el registro es el único dueño del bootstrap inicial.
+
+Corrección:
+
+- `AuthService.register()` y `registerFederated()` delegan el bootstrap completo al store de identidad dentro de su transacción.
+- Prisma e in-memory crean usuario, tenant, organización inicial, workspace `Default`, rol `Owner` y membership activa; una
+  falla posterior revierte el grafo completo.
+- `POST /tenancy/organizations` ya no se monta como flujo HTTP; `p9-identity-http.test.mjs` verifica que no existe y los tests
+  de auth verifican bootstrap por contraseña y Google con la misma forma.
+
+### SEC-01-H4: colisión global de `calendarId` entre tenants
+
+**Severidad previa:** High. **Estado:** corregido.
+
+`Calendario.id` es una clave primaria global y el adapter Prisma usaba `upsert` por ese id. Un tenant podía enviar el id de
+otra agenda y sobrescribirla o provocar una relación inconsistente.
+
+Corrección:
+
+- `ServiceCalendarService.createCalendar()` comprueba la existencia del id dentro de la transacción antes de guardar y devuelve
+  `CALENDAR_ID_CONFLICT` sin revelar datos del tenant dueño.
+- `PrismaServiceCalendarStore` repite el límite antes del `upsert` y rechaza cualquier tenant distinto.
+- `tests/integration/tus/catalog-booking.test.mjs` prueba la colisión cross-tenant y confirma que la agenda original permanece.
+
+### SEC-01-H5: autorización y consentimiento WhatsApp fail-open
+
+**Severidad previa:** High. **Estado:** corregido.
+
+Las acciones podían ejecutarse cuando no existía una política de sender y cuando `consent: true` no tenía un consentimiento
+persistido activo.
+
+Corrección:
+
+- La ausencia de `authorizeSender`, allowlist o política persistida devuelve `sender_not_authorized`.
+- La composición Prisma autoriza solo un `ContactoWhatsapp` vinculado a la cuenta y tenant de la sesión, sin bloqueo activo.
+- Las acciones requieren `consent: true` y `ConsentimientoWhatsApp` persistido con estado `active`; ausencia o revocación devuelve
+  `messaging_consent_required`.
+- La procedencia se normaliza a `web_linking`, `whatsapp_inbound`, `operator_console` u `opt_out`; la ruta HTTP no acepta un
+  origen arbitrario del body. `whatsapp_inbound` habilita evidencia de conversación, pero no mensajes plantilla outbound.
+- La confirmación Web y la primera conversación inbound registran el origen y propósito en la auditoría del asistente; un inbound
+  sin vinculación no recibe un tenant inventado.
+- `tests/foundation/p8-tus-operations.test.mjs` y `tests/foundation/p9-support-operations.test.mjs` cubren ausencia de política,
+  ausencia de consentimiento, sender no autorizado y el flujo HTTP de consentimiento previo a la acción.
+
 ## Controles verificados
 
 | Área              | Resultado                                                                                            |
@@ -69,6 +120,9 @@ Corrección:
 | Errores/logs      | Envelopes acotados, correlation ID y redacción de URLs/secretos.                                     |
 | Body limits       | JSON 1 MB, form 100 KB y upload 10 MB.                                                               |
 | Sesiones          | Tokens opacos almacenados como digest; expiración, revocación y membership activa.                   |
+| Bootstrap tenant  | El registro es el único dueño; crea el grafo inicial en una transacción y no existe endpoint de re-bootstrap. |
+| Calendario        | `calendarId` colisionado entre tenants se rechaza antes del `upsert` global.                         |
+| WhatsApp          | Sender vinculado y consentimiento persistido activo; configuración ausente falla cerrada.            |
 | Password recovery | Respuesta no enumerable, token de un uso, TTL y revocación de sesiones.                              |
 | OAuth MP          | State aleatorio de un uso, PKCE S256, redirect estático y tokens AES-256-GCM ligados al tenant.      |
 | Checkout MP       | Monto/moneda/comisión derivados del servidor; URL HTTPS limitada a dominios Mercado Pago.            |
@@ -116,8 +170,9 @@ Corrección:
 - Enviar solo encola (202): la API nunca abre un navegador ni espera a Nosis.
 - Sesión de Mi Nosis cifrada con `TUS_NOSIS_SESSION_KEY`; credenciales solo como secretos del host del worker.
 - Desafíos de terceros (reCAPTCHA/hCaptcha/Turnstile) **no se automatizan**: pasan a `session_required` y login humano.
-- Solo se extraen DNI, nombre y CUIL; snapshot mínimo; auditoría append-only con DNI/CUIL enmascarados; logs sin
-  cookies, HTML, contraseñas ni documentos completos.
+- Solo se extraen DNI, nombre y CUIL; cuando la fuente entrega columnas separadas se puede conservar un área normalizada
+  sin números (barrio/localidad/provincia), nunca la dirección textual. Snapshot mínimo; auditoría append-only con
+  DNI/CUIL enmascarados; logs sin cookies, HTML, contraseñas ni documentos completos.
 - DNI/CUIL verificados únicos por índice parcial; aprobación manual exige motivo y revisa duplicados.
 - Riesgo residual (Medium): los selectores de Mi Nosis se validaron solo contra un mock; la primera consulta real debe
   hacerse con `pnpm tus:identity:nosis-check` y un DNI autorizado. Low: `aceptarConsentimiento` permite reiniciar una
@@ -148,7 +203,21 @@ Corrección:
 - El registro con Google exige aceptar términos. La "intención" (contratar u ofrecer servicios) solo elige la pantalla
   siguiente; los roles los decide el backend.
 
-## Solicitudes de servicio (mapa público)
+## Directorio de prestadores y solicitudes públicas
+
+- La home muestra prestadores y sus zonas de atención, no solicitudes de clientes. `GET /tus/v1/public/prestadores`
+  reutiliza `ServicioDirectorio` para oficio, zona y texto; el asistente Web y WhatsApp usa el mismo caso de uso.
+- El DTO público contiene `publicArea`, `serviceZones`, modalidad de cobertura y `mapLocations` con precisión `zone`.
+  Las coordenadas son centros de zonas conocidas, redondeados a 3 decimales; no representan domicilios.
+- La ubicación efectiva sigue este orden: zonas configuradas por el prestador; área normalizada de una identidad verificada;
+  o `locationSource=none` sin pin. El fallback nunca copia dirección, calle, altura, documento o coordenadas exactas al perfil.
+- El perfil permite zona principal, varias zonas, modalidad local/domicilio/mixta y radio opcional. La sesión decide el tenant
+  y el actor; el body no puede aportar tenant, actor, coordenadas ni dirección.
+
+`GET /tus/v1/public/solicitudes` permanece público para compatibilidad y alimenta la sección separada de solicitudes recientes;
+no es la fuente del mapa principal.
+
+### Solicitudes de servicio (mapa público histórico)
 
 - `GET /tus/v1/public/solicitudes` es público y solo devuelve: categoría, título, descripción, nombre + inicial, barrio,
   punto aproximado (centro del barrio ±~300 m, 3 decimales), presupuesto máximo, urgencia y fecha. Nunca el id de cuenta,
@@ -191,6 +260,9 @@ Corrección:
 - [ ] `/health` 200, `/ready` 200 y shutdown SIGTERM dentro del grace period.
 - [ ] Registro malicioso con `tenantId` no obtiene el tenant pedido.
 - [ ] Membership revocada invalida inmediatamente el token existente.
+- [ ] Re-inicializar una organización existente no cambia su metadata ni crea Owner membership.
+- [ ] Reutilizar un `calendarId` ajeno no sobrescribe ni devuelve la agenda del tenant dueño.
+- [ ] Acciones WhatsApp sin sender vinculado o consentimiento persistido activo terminan en handoff y no mutan.
 - [ ] `TUS_MERCADOPAGO_ENABLED=false` y configuración persistida de pagos deshabilitada.
 
 ## Regla de decisión
