@@ -316,7 +316,7 @@ test('MFA wiring: every API router resolves sessions through the MFA gate; only 
   assert.match(server, /const sessions = new MfaAdminSessionResolver\(rawSessions, mfa, auth\.store, \(\) =>\s*leerAdminsPlataforma\(process\.env\['TUS_PLATFORM_ADMIN_EMAILS'\]\)/u)
   assert.equal((server.match(/rawSessions/gu) ?? []).length, 3, 'declared, gated and given to the MFA router only')
   assert.match(server, /createTusHttpRouter\(\{ application, sessions, whatsapp \}\)/u)
-  assert.match(server, /'\/auth\/mfa',\s*'\/auth\/verify-email\/resend',\s*\],\s*authRateLimitMiddleware/u)
+  assert.match(server, /'\/auth\/mfa',\s*'\/auth\/verify-email\/resend',\s*'\/auth\/admin\/bootstrap-verify',\s*\],\s*authRateLimitMiddleware/u)
   const migration = read('apps/api/prisma/migrations/20261005100000_tus_admin_mfa/migration.sql')
   assert.doesNotMatch(migration, /\bDROP\b|ALTER TABLE|TRUNCATE|DELETE FROM|UPDATE public/iu, 'additive migration')
   assert.match(migration, /"secret_ciphertext" text NOT NULL/u)

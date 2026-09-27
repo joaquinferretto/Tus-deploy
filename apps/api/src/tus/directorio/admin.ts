@@ -9,6 +9,8 @@ export function crearAltaPrestadorAdmin(deps: {
   accounts: IdentityStore
   application: TusApplicationService
   directorio: ServicioDirectorio
+  // Creates a password-less, unverified account that only owns the directory profile.
+  createManagedAccount?: (input: { email: string; displayName: string }) => Promise<{ ok: true; accountId: string } | { ok: false; code: string }>
 }) {
   return async (admin: TusAuthenticatedTenantContext, body: Record<string, unknown>) => {
     if (!admin.permissions.includes('tus:providers:admin')) return { status: 403, code: 'FORBIDDEN' }
@@ -18,8 +20,17 @@ export function crearAltaPrestadorAdmin(deps: {
     if (!validation.ok) return { status: 422, code: 'INVALID_PROFILE', fields: validation.campos }
     const email = typeof body['email'] === 'string' ? body['email'].trim().toLowerCase() : ''
     if (!email || email.length > 254) return { status: 422, code: 'INVALID_EMAIL' }
-    const account = await deps.accounts.findAccountByEmail(email)
-    if (!account || account.status !== 'active' || !account.emailVerifiedAt) return { status: 409, code: 'VERIFIED_ACCOUNT_REQUIRED' }
+    let account = await deps.accounts.findAccountByEmail(email)
+    // New email: the admin creates a managed provider (no password, nobody can sign in with it).
+    if (!account && deps.createManagedAccount) {
+      const created = await deps.createManagedAccount({ email, displayName: String(body['displayName'] ?? '') })
+      if (!created.ok) return { status: 409, code: created.code }
+      account = await deps.accounts.getAccount(created.accountId)
+    }
+    // An existing account must be verified, unless it is a managed one (no password credential):
+    // an admin never takes over somebody else's pending sign-up.
+    const managed = account && !account.emailVerifiedAt ? !(await deps.accounts.findPasswordCredential(account.id)) : false
+    if (!account || account.status !== 'active' || (!account.emailVerifiedAt && !managed)) return { status: 409, code: 'VERIFIED_ACCOUNT_REQUIRED' }
     const marketplace = deps.application.marketplace
     if (!marketplace) return { status: 503, code: 'UNAVAILABLE' }
     // The admin is the audit actor; the target tenant is resolved from the account, never from input.

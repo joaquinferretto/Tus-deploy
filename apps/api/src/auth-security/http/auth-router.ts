@@ -33,6 +33,13 @@ export function createAuthRouter({ service, sessions, cookies = readSessionCooki
     }
   }))
 
+  // Admin activation without an email provider (TUS_ADMIN_BOOTSTRAP_CODE). Generic 400 on any failure.
+  router.post('/auth/admin/bootstrap-verify', asyncHandler(async (request: Request, response: Response) => {
+    const body = asRecord(request.body)
+    const result = await service.verifyAdminWithBootstrapCode({ email: readString(body, 'email'), code: readString(body, 'code') })
+    sendLifecycleResult(response, result, 204, getCorrelationId(request))
+  }))
+
   // "Reenviar email de verificación": always 202 (no enumeration); limited per email.
   router.post('/auth/verify-email/resend', asyncHandler(async (request: Request, response: Response) => {
     await service.resendVerification({ email: readString(asRecord(request.body), 'email') })

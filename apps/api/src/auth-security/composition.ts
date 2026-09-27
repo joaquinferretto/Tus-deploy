@@ -41,6 +41,8 @@ export interface AuthServiceFactoryOptions {
   verificationResendRateLimiter?: RateLimiter
   verificationResendCooldown?: RateLimiter
   passwordBreachChecker?: PasswordBreachChecker
+  adminBootstrapCode?: string
+  adminBootstrapRateLimiter?: RateLimiter
 }
 
 export function createAuthService(options: AuthServiceFactoryOptions) {
@@ -61,6 +63,8 @@ export function createAuthService(options: AuthServiceFactoryOptions) {
     ...(options.verificationResendRateLimiter ? { verificationResendRateLimiter: options.verificationResendRateLimiter } : {}),
     ...(options.verificationResendCooldown ? { verificationResendCooldown: options.verificationResendCooldown } : {}),
     ...(options.passwordBreachChecker ? { passwordBreachChecker: options.passwordBreachChecker } : {}),
+    ...(options.adminBootstrapCode ? { adminBootstrapCode: options.adminBootstrapCode } : {}),
+    ...(options.adminBootstrapRateLimiter ? { adminBootstrapRateLimiter: options.adminBootstrapRateLimiter } : {}),
   })
 
   return {
@@ -108,6 +112,8 @@ export function createPrismaAuthService(
             signInRateLimiter: durable('sign-in', 10, 15 * 60_000),
             verificationResendRateLimiter: durable('verify-resend', 5, 60 * 60_000),
             verificationResendCooldown: durable('verify-resend-gap', 1, 60_000),
+            adminBootstrapCode: env['TUS_ADMIN_BOOTSTRAP_CODE']?.trim() || undefined,
+            adminBootstrapRateLimiter: durable('admin-bootstrap', 5, 15 * 60_000),
             // Pwned Passwords k-anonymity check; TUS_PWNED_PASSWORDS=disabled turns it off.
             ...(env['TUS_PWNED_PASSWORDS'] === 'disabled' ? {} : { passwordBreachChecker: new PwnedPasswordsChecker() }),
           }

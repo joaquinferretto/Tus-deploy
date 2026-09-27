@@ -142,6 +142,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
       '/auth/oauth/link',
       '/auth/mfa',
       '/auth/verify-email/resend',
+      '/auth/admin/bootstrap-verify',
     ],
     authRateLimitMiddleware
   )
@@ -181,7 +182,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     options.providerRoutesEnabled ?? process.env['TUS_PROVIDER_ACTIONS_ENABLED'] === 'true'
   if (tusRoutesEnabled) {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
-    app.use(crearRouterDirectorio({ servicio: directorio, sessions, adminSave: crearAltaPrestadorAdmin({ accounts: auth.store, application, directorio }) }))
+    app.use(crearRouterDirectorio({ servicio: directorio, sessions, adminSave: crearAltaPrestadorAdmin({ accounts: auth.store, application, directorio, createManagedAccount: (input) => auth.service.createManagedProviderAccount(input) }) }))
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
     app.use(tusRouter)
   }

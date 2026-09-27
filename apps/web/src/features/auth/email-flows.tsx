@@ -201,3 +201,50 @@ export function ResetPasswordForm(): React.ReactNode {
     </form>
   )
 }
+
+// Admin activation without an email provider: the operator's bootstrap code (set in the API
+// environment as TUS_ADMIN_BOOTSTRAP_CODE) verifies an allowlisted admin email once. The account
+// must already be registered with email + password; MFA is still required afterwards.
+export function AdminBootstrapForm(): React.ReactNode {
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [error, setError] = useState('')
+  const [done, setDone] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!validEmail(email) || code.trim().length < 24) {
+      setError('Ingresá tu email y el código de arranque completo (24 caracteres o más).')
+      return
+    }
+    setSubmitting(true)
+    setError('')
+    const result = await createTusWebAuthClient().verifyAdminWithBootstrapCode({ email: email.trim(), code: code.trim() })
+    setSubmitting(false)
+    if (result.status === 'accepted') return setDone(true)
+    setError('No pudimos activar la cuenta. Revisá el email, el código y que ya te hayas registrado con email y contraseña.')
+  }
+
+  if (done)
+    return (
+      <div className={styles.form}>
+        <p className={styles.success} role="status">
+          Cuenta de administración confirmada. Iniciá sesión con tu email y contraseña; después te pedimos el código de la app autenticadora.
+        </p>
+        <Link className={styles.primary} href="/sign-in?returnTo=%2Ftus%2Fadmin%2Fseguridad">
+          Iniciar sesión
+        </Link>
+      </div>
+    )
+  return (
+    <form className={styles.form} noValidate onSubmit={(event) => void submit(event)}>
+      <FormError message={error} />
+      <TextField autoComplete="email" id="bootstrap-email" inputMode="email" label="Email de administración" onChange={(event) => setEmail(event.target.value)} type="email" value={email} />
+      <PasswordField autoComplete="off" id="bootstrap-code" label="Código de arranque (el que cargaste en Hostinger)" onChange={(event) => setCode(event.target.value)} value={code} />
+      <button className={styles.primary} disabled={submitting} type="submit">
+        {submitting ? 'Confirmando…' : 'Confirmar cuenta de administración'}
+      </button>
+    </form>
+  )
+}

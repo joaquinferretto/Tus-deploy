@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto'
 import type { Clock } from '../ports/clock.js'
 import type { IdentityStore } from '../ports/identity-store.js'
 import {
@@ -127,6 +128,10 @@ export interface AuthServiceDependencies {
   verificationResendRateLimiter?: RateLimiter
   verificationResendCooldown?: RateLimiter
   passwordBreachChecker?: PasswordBreachChecker
+  // Operator-chosen one-time code (TUS_ADMIN_BOOTSTRAP_CODE, >= 24 chars) that verifies an
+  // allowlisted admin email without an email provider. Knowing it proves control of the server env.
+  adminBootstrapCode?: string
+  adminBootstrapRateLimiter?: RateLimiter
 }
 
 export class AuthService {
@@ -161,6 +166,62 @@ export class AuthService {
       this.dependencies.email.sendVerification({ email: created.account.email, token: created.verificationToken })
     )
     return { status: 'pending_verification', created }
+  }
+
+  // Admin bootstrap without email delivery: an account already registered with email + password,
+  // whose email is in TUS_PLATFORM_ADMIN_EMAILS, is verified with the operator's bootstrap code.
+  // Same generic failure for every reason; 5 attempts per 15 min per email. MFA is still required.
+  async verifyAdminWithBootstrapCode(input: { email: string; code: string }): Promise<LifecycleResult> {
+    const normalizedEmail = normalizeEmail(input.email)
+    const expected = (this.dependencies.adminBootstrapCode ?? '').trim()
+    const deny = async (reason: string, account?: Account) => {
+      await this.record(account, AUTH_EVENT_KIND.ACCOUNT_VERIFIED, 'denied', reason)
+      return failure(AUTH_RESULT_CODE.INVALID_TOKEN, 'Invalid bootstrap request')
+    }
+    if (expected.length < 24) return deny('bootstrap_disabled')
+    const limiter = this.dependencies.adminBootstrapRateLimiter
+    if (limiter && !(await limiter.allow(normalizedEmail, this.dependencies.clock.now()))) return deny('rate_limited')
+    const given = createHash('sha256').update(input.code.trim()).digest()
+    const matches = timingSafeEqual(given, createHash('sha256').update(expected).digest())
+    const account = await this.dependencies.store.findAccountByEmail(normalizedEmail)
+    const allowlisted = (this.dependencies.platformAdminEmails ?? []).includes(normalizedEmail)
+    if (!matches || !allowlisted || !account || account.status !== 'active') return deny('bootstrap_rejected', account)
+    if (!(await this.dependencies.store.findPasswordCredential(account.id))) return deny('bootstrap_requires_password', account)
+    if (!account.emailVerifiedAt) {
+      const now = this.dependencies.clock.now()
+      account.emailVerifiedAt = now
+      account.updatedAt = now
+      await this.dependencies.store.saveAccount(account)
+    }
+    await this.record(account, AUTH_EVENT_KIND.ACCOUNT_VERIFIED, 'success', 'admin_bootstrap_code')
+    return { ok: true }
+  }
+
+  // Provider loaded by a platform admin (offline onboarding, tests): an account WITHOUT password
+  // and with the email unverified, so nobody can sign in with it; it only owns a directory profile.
+  async createManagedProviderAccount(input: { email: string; displayName: string }): Promise<{ ok: true; accountId: string; tenantId: string } | AuthFailure> {
+    const normalizedEmail = normalizeEmail(input.email)
+    const displayName = input.displayName.trim().slice(0, 120)
+    if (!validateEmail(normalizedEmail) || !displayName) return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Invalid provider account')
+    return this.runTransaction(async (store) => {
+      if (await store.findAccountByEmail(normalizedEmail)) return failure(AUTH_RESULT_CODE.CONFLICT, 'Account already exists')
+      const now = this.dependencies.clock.now()
+      const account: Account = {
+        id: this.dependencies.ids.next(),
+        email: normalizedEmail,
+        normalizedEmail,
+        displayName,
+        tenantId: this.dependencies.ids.next(),
+        roles: ['owner'],
+        status: 'active',
+        emailVerifiedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      }
+      await store.saveAccount(account, { bootstrapTenant: true })
+      await this.record(account, AUTH_EVENT_KIND.ACCOUNT_REGISTERED, 'success', 'managed_provider_account_created')
+      return { ok: true, accountId: account.id, tenantId: account.tenantId }
+    })
   }
 
   // "Reenviar email de verificación": always the same public answer. At most 5 per hour and one

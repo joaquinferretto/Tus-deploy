@@ -39,7 +39,7 @@ export function PrestadoresAdmin() {
       const result = await response.json() as { code?: string; profile?: { id: string }; fields?: string[] }
       if (!response.ok) {
         setMessage(response.status === 403 ? 'Volvé a Seguridad y confirmá tu segundo factor; después iniciá sesión nuevamente si te faltan permisos.'
-          : result.code === 'VERIFIED_ACCOUNT_REQUIRED' ? 'El prestador debe tener una cuenta de TUS activa con su email confirmado.'
+          : result.code === 'VERIFIED_ACCOUNT_REQUIRED' ? 'Ese email tiene un registro pendiente de confirmar de otra persona: usá otro email.'
           : result.code === 'PROVIDER_NOT_APPROVED' ? 'El prestador no está aprobado. Esta pantalla no cambia ese estado.'
           : result.fields?.length ? `Revisá los campos: ${result.fields.join(', ')}.` : 'No pudimos guardar el perfil. Revisá los datos e intentá nuevamente.')
         return
@@ -53,7 +53,7 @@ export function PrestadoresAdmin() {
   return <>
     <nav className="tus-nav-links"><Link href="/tus/admin/seguridad">Seguridad y autenticador</Link><Link href="/tus/admin/identidad">Verificación de identidad</Link></nav>
     <header className="tus-workspace-header"><div><p className="tus-kicker">Administración</p><h1>Cargar o editar un prestador</h1></div></header>
-    <p>Ingresá el email de su cuenta de TUS ya confirmada. Si tiene un perfil, estos datos lo actualizan. Su contraseña no se modifica.</p>
+    <p>Si el email ya tiene una cuenta confirmada, se actualiza su perfil (su contraseña no cambia). Si no tiene cuenta, se crea un prestador administrado: sin contraseña y sin email para confirmar, nadie puede iniciar sesión con él; sirve para cargar prestadores a mano y probar la búsqueda.</p>
     <form className="tus-support-form" onSubmit={event => void save(event)}>
       <label htmlFor="provider-email">Email de la cuenta del prestador</label><input id="provider-email" name="email" type="email" maxLength={254} required autoComplete="off" />
       <label htmlFor="provider-name">Nombre público</label><input id="provider-name" name="displayName" minLength={2} maxLength={60} required />

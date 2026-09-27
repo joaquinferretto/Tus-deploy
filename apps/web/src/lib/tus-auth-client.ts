@@ -26,6 +26,7 @@ export interface TusWebAuthRequest {
     | '/auth/register'
     | '/auth/verify-email'
     | '/auth/verify-email/resend'
+    | '/auth/admin/bootstrap-verify'
     | '/auth/recovery/request'
     | '/auth/recovery/complete'
     | '/auth/oauth/providers'
@@ -61,6 +62,7 @@ export interface TusWebAuthClient {
   register(input: { email: string; password: string; displayName: string }): Promise<TusAuthActionState>
   verifyEmail(token: string): Promise<TusAuthActionState>
   resendVerification(email: string): Promise<TusAuthActionState>
+  verifyAdminWithBootstrapCode(input: { email: string; code: string }): Promise<TusAuthActionState>
   requestRecovery(email: string): Promise<TusAuthActionState>
   completeRecovery(input: { token: string; newPassword: string }): Promise<TusAuthActionState>
   restore(returnTo?: string): Promise<TusSessionState>
@@ -111,6 +113,9 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
     },
     async verifyEmail(token) {
       return authAction(transport, createCorrelationId, { method: 'POST', path: '/auth/verify-email', body: { token } })
+    },
+    async verifyAdminWithBootstrapCode(input) {
+      return authAction(transport, createCorrelationId, { method: 'POST', path: '/auth/admin/bootstrap-verify', body: input })
     },
     async resendVerification(email) {
       return authAction(transport, createCorrelationId, { method: 'POST', path: '/auth/verify-email/resend', body: { email } })

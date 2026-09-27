@@ -85,42 +85,36 @@ corepack pnpm tus:rag:ingest
 No se ejecutó ingest contra producción en esta tarea. Los tests conversacionales usan un modelo
 guionado: verifican el flujo real de backend y sus restricciones, no evalúan la calidad de Groq en vivo.
 
-## Admin, Authenticator y alta manual
+## Admin, Authenticator y alta manual (sin consola y sin email)
 
-Configurar en Hostinger (sin copiar secretos al chat):
+Todo se hace desde el panel de variables de Hostinger y la Web; no hace falta ejecutar comandos en
+Hostinger. La migración y la reindexación del corpus corren solas en el postinstall del deploy.
 
-| Variable | Configuración |
+Variables en hPanel (reiniciar/redeploy después):
+
+| Variable | Valor |
 | --- | --- |
-| `TUS_PLATFORM_ADMIN_EMAILS` | El email de tu cuenta admin, ya configurado según lo informado |
-| `TUS_MFA_ENCRYPTION_KEY` | Una clave aleatoria estable de 32 bytes en base64; no es el código del teléfono |
-| `TUS_ROUTES_ENABLED` | `true` |
-| `TUS_WEB_BASE_URL` | `https://tusservicios.shop` |
-| `CORS_ORIGINS` | `https://tusservicios.shop,https://www.tusservicios.shop` |
-| `EMAIL_PROVIDER` | `resend` |
-| `RESEND_API_KEY` | Credencial privada de Resend |
-| `EMAIL_FROM` | Remitente autorizado en el dominio verificado de Resend |
+| `TUS_PLATFORM_ADMIN_EMAILS` | tu email de admin |
+| `TUS_MFA_ENCRYPTION_KEY` | 32 bytes en base64. Se puede generar en tu propia PC (PowerShell): `[Convert]::ToBase64String((1..32 \| % {Get-Random -Max 256}))` o con Node `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. No cambiarla después. |
+| `TUS_ADMIN_BOOTSTRAP_CODE` | una frase larga que inventás vos (24+ caracteres). Borrarla cuando termines. |
+| `TRUST_PROXY_HOPS` | `1` |
 
-Mantener la clave MFA: reemplazarla hace ilegibles los secretos ya enrolados. Ejecutar las migraciones
-pendientes, incluida `auth_rate_limits`, como parte del release; no asumir que el código local ya existe en producción.
+Pasos:
 
-1. Registrarse con el email permitido o utilizar la cuenta existente. Confirmar el email.
-2. Iniciar sesión con **email y contraseña de TUS**. Google no concede administración. La allowlist
-   no crea ni cambia la contraseña. No se comprobó ni reutilizó la contraseña escrita en el chat;
-   la política de registro/reset exige 12–256 caracteres y rechaza contraseñas filtradas.
-3. Abrir `/tus/admin/seguridad` y pulsar **Configurar autenticador**.
-4. En Google Authenticator: agregar cuenta → ingresar clave de configuración → nombre TUS →
-   copiar la clave que muestra **esa pantalla privada**, elegir basada en tiempo. También existe
-   el enlace `otpauth` para abrir una app compatible en el teléfono.
-5. Escribir en TUS el código actual de seis dígitos. Guardar los códigos de recuperación fuera del chat.
-   Este paso lo realiza el titular con su teléfono; no se puede dar por completado desde el repositorio.
-6. Abrir `/tus/admin/prestadores`. El nuevo permiso `tus:providers:admin` requiere un inicio de sesión
-   nuevo después del despliegue; todas las rutas lo verifican detrás de la elevación MFA.
+1. `/registro`: registrate con tu email de admin y una contraseña de 12+ caracteres (una frase larga).
+2. `/activar-admin`: escribí tu email y el código de arranque. Esto confirma tu email sin mandar un mail.
+3. `/sign-in`: entrá con email y contraseña (nunca con Google: una sesión de Google no es admin).
+4. `/tus/admin/seguridad` → **Configurar autenticador**. En Google Authenticator: `+` → **Ingresar clave de
+   configuración** → nombre `TUS` → pegá la clave que muestra la pantalla → **Basada en tiempo**. La app
+   muestra un número de 6 dígitos que cambia cada 30 segundos: ese es el código que se escribe en TUS.
+   Guardá los 8 códigos de recuperación.
+5. Borrá `TUS_ADMIN_BOOTSTRAP_CODE` en Hostinger.
+6. `/tus/admin/prestadores`: cargá prestadores. Si el email no tiene cuenta, se crea un **prestador
+   administrado**: sin contraseña y sin email a confirmar, nadie puede iniciar sesión con él; sirve para
+   cargar prestadores a mano y probar la búsqueda de la IA. Nunca se marca como identidad verificada.
+   La zona tiene que ser una del catálogo (hoy no incluye Ponce).
 
-La pantalla permite crear/actualizar el perfil de un prestador con **cuenta activa y email confirmado**:
-email, nombre público, oficio, zona, modalidad y descripción. No crea cuentas ni contraseñas por otro,
-no cambia identidades verificadas, precios, calificaciones ni trabajos completados. Reutiliza onboarding
-y directorio, conserva las restricciones de publicación y registra al admin como actor de auditoría.
-No reactiva prestadores previamente suspendidos/no aprobados.
+Cada inicio de sesión nuevo pide contraseña + el código de 6 dígitos de la app.
 
 ## Archivos de esta fase
 
