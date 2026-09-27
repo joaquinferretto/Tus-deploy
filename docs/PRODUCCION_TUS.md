@@ -61,6 +61,7 @@ Pagos (todas opcionales hasta habilitar dinero real; si falta cualquiera, los pa
 | `TUS_WEB_BASE_URL`                | `https://<dominio-web>`; destino del redirect después del OAuth          | no      |
 | `TUS_PLATFORM_ADMIN_TENANT_ID`    | tenant cuyos usuarios con `tus:payments:admin` administran pagos         | no      |
 | `TUS_PLATFORM_ADMIN_EMAILS`       | emails (coma) de los admins de plataforma; solo con email verificado     | no      |
+| `TUS_MFA_ENCRYPTION_KEY`          | 32 bytes aleatorios en base64; cifra los secretos TOTP del MFA de admin  | **sí**  |
 | `MERCADO_PAGO_NOTIFICATION_URL`   | `https://<api>/tus/v1/integrations/mercado-pago/webhooks` (HTTPS)        | no      |
 | `MERCADO_PAGO_MARKETPLACE`        | opcional; solo si Mercado Pago exige `marketplace` con `marketplace_fee` | no      |
 
@@ -163,6 +164,45 @@ La Web **no** necesita ningún secreto. Nunca definas tokens o claves en variabl
 3. Deploy. Luego agregar `https://<web>` a `CORS_ORIGINS` de la API y redeployar la API.
 4. Verificar `https://<web>/`, `/sign-in`, `/tus/mercado` y `/tus/prestador`. Si la API no responde, la Web muestra
    estados de error con reintento (no usa mocks).
+
+### 4.1 Headers de seguridad y Content Security Policy
+
+- `apps/web/next.config.js` agrega a toda respuesta: `Strict-Transport-Security: max-age=63072000; includeSubDomains`,
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`,
+  `Cross-Origin-Opener-Policy: same-origin` y `Permissions-Policy` (cámara, micrófono, geolocalización, pagos, USB,
+  serie, bluetooth y topics deshabilitados). No se envía `X-Powered-By`.
+- `apps/web/src/middleware.ts` arma la CSP por request con un nonce nuevo (`src/lib/security-headers.ts`). Next.js
+  estampa ese nonce en sus scripts; las páginas se renderizan por request (`await headers()` en el layout) para que
+  ninguna quede prerenderizada con un nonce viejo. Política de producción:
+
+  ```text
+  default-src 'self'; script-src 'self' 'nonce-<por request>' 'strict-dynamic'; style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob: <API> <tiles>; font-src 'self' data:; connect-src 'self' <API>; media-src 'self' blob:;
+  worker-src 'self' blob:; manifest-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self';
+  form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  ```
+
+  `<API>` es el origen de `NEXT_PUBLIC_API_URL` y `<tiles>` el de `NEXT_PUBLIC_MAP_TILE_URL` (por defecto
+  `https://tile.openstreetmap.org`). Google OAuth y Mercado Pago son navegaciones completas que inicia la API: no
+  necesitan entradas. Si se agrega un recurso externo nuevo (fuente, script, analytics, otro servidor de mapas) hay que
+  sumarlo en `security-headers.ts`; nunca desactivar la CSP ni agregar `'unsafe-eval'` (solo existe en desarrollo).
+- `'unsafe-inline'` queda **solo en `style-src`**: React renderiza en el servidor las props `style={...}` como atributos
+  `style` (fotos de solicitudes, perfil, mapas) y Leaflet usa estilos de posicionamiento; los atributos no admiten nonce
+  y un nonce en `style-src` haría que el navegador ignore `'unsafe-inline'`. Un estilo inline no ejecuta código.
+  Eliminarlo exige mover esos estilos a clases CSS.
+- Vista previa de Vercel: la barra de comentarios de Vercel (vercel.live) queda bloqueada por la CSP; producción no la usa.
+
+### 4.2 Sesión en sessionStorage (riesgo y plan)
+
+La Web guarda el token de sesión en `sessionStorage` (`TUS_SESSION_STORAGE_KEY`, `src/lib/tus-auth-client.ts`) y lo manda
+como `Authorization: Bearer`. Riesgo: un XSS en el origen de la Web podría leerlo (dura lo que la pestaña y la
+expiración de la sesión). Mitigaciones actuales: CSP con nonce y sin `'unsafe-eval'`, React escapa todo el contenido,
+ningún `dangerouslySetInnerHTML`, `credentials: 'omit'`, CORS de la API limitado al dominio de la Web y, para lo más
+sensible (administración), un segundo factor por sesión. Plan de migración (no hecho todavía; requiere tests de punta a
+punta): 1) la API emite la sesión en una cookie `__Host-tus_session` `HttpOnly; Secure; SameSite=Lax; Path=/` desde un
+subdominio común (p. ej. servir la API bajo `tusservicios.shop/api` vía rewrite de Vercel, así la cookie es first-party);
+2) protección CSRF para mutaciones (token doble o encabezado personalizado obligatorio + `SameSite`); 3) la Web deja de
+leer/escribir el token y el resolver acepta cookie o Bearer durante la transición; 4) retirar el Bearer de la Web.
 
 El build local en Windows puede fallar solo en el paso `standalone` por symlinks (`EPERM`); en Linux/Vercel no aplica.
 Para verificar localmente: `NEXT_DISABLE_STANDALONE=true pnpm --filter @factory/web... build`.
@@ -529,6 +569,29 @@ al iniciar sesión recibe `tus:payments:admin`, `tus:identity:admin` y `tus:what
 WhatsApp). Si además se define `TUS_PLATFORM_ADMIN_TENANT_ID`, la sesión tiene que ser de ese tenant. Sin ninguna de las dos
 variables todo lo administrativo responde 403. Quitar un email de la lista no revoca sesiones ya emitidas hasta que
 vencen: para cortar el acceso de inmediato, cerrar sesión de esa cuenta.
+
+**MFA obligatorio.** Además de lo anterior, la API solo respeta esos permisos en una sesión que pasó el segundo factor
+TOTP (`apps/api/src/auth-security/mfa`). El control está en el backend: el resolver de sesiones
+(`MfaAdminSessionResolver`) quita los permisos de admin de cualquier sesión sin una elevación MFA vigente (12 h como
+máximo), así que una sesión creada antes del MFA o sin el código no administra nada aunque la Web muestre la pantalla.
+
+1. Generar la clave una sola vez y cargarla en Hostinger como `TUS_MFA_ENCRYPTION_KEY` (junto con
+   `TUS_PLATFORM_ADMIN_EMAILS`), y reiniciar la API:
+   `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Sin esa clave el MFA responde 503 y
+   nadie es admin. **No cambiarla**: con otra clave los secretos guardados no se pueden descifrar (habría que volver a
+   enrolar).
+2. Entrar con la cuenta admin y abrir `/tus/admin/identidad` (o `/tus/admin/whatsapp`, `/tus/admin/seguridad`). La
+   primera vez pide configurar la app autenticadora (Google Authenticator, Microsoft Authenticator, 1Password...):
+   se muestra la clave una sola vez, se confirma con un código y se entregan 8 códigos de recuperación de un solo uso
+   (solo se guarda su hash). En cada sesión nueva pide el código de 6 dígitos.
+3. `/tus/admin/seguridad`: regenerar códigos de recuperación (exige un código actual e invalida los anteriores) o
+   desactivar el MFA (exige la contraseña actual y un código; revoca todas las elevaciones).
+4. Límite: 5 intentos cada 15 minutos por cuenta y operación, además del rate limit de `/auth/mfa`. Cada operación
+   queda en `AuditEvent` (`mfa.*`, sin códigos ni secretos).
+5. Recuperación si se perdieron el teléfono y todos los códigos: un operador con acceso a la base desactiva el
+   enrolamiento (`UPDATE mfa_enrollments SET status = 'disabled', disabled_at = now() WHERE account_id = '<id>' AND status = 'active';`
+   y `UPDATE mfa_session_elevations SET revoked_at = now() WHERE account_id = '<id>' AND revoked_at IS NULL;`) y la cuenta
+   vuelve a enrolar al entrar. Hacerlo solo tras verificar la identidad del administrador por otro canal.
 
 ```bash
 # Estado (solo booleanos, nunca valores de secretos) y bloqueos pendientes
