@@ -21,7 +21,9 @@ const redisStore = createRedisStore('rl:global:')
 export const rateLimitMiddleware = rateLimit({
   ...(redisStore ? { store: redisStore } : {}),
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  // Generous per IP: map, directory and navigation make many reads (and many people share a
+  // carrier NAT). Sensitive auth has its own per-IP limit plus durable per-account limits.
+  max: 1500,
   message: {
     error: 'Too many requests from this IP, please try again later.',
   },
@@ -50,7 +52,8 @@ const authRedisStore = createRedisStore('rl:auth:')
 export const authRateLimitMiddleware = rateLimit({
   ...(authRedisStore ? { store: authRedisStore } : {}),
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  // Per IP on login/reset/verify/MFA; per-email and per-account limits live in PostgreSQL.
+  max: 40,
   message: {
     error: 'Too many authentication attempts from this IP, please try again later.',
   },

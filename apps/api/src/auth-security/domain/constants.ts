@@ -23,6 +23,9 @@ export const AUTH_EVENT_KIND = {
   RECOVERY_COMPLETED: 'recovery.completed',
   SESSION_CREATED: 'session.created',
   SESSION_REVOKED: 'session.revoked',
+  SESSION_ROTATED: 'session.rotated',
+  VERIFICATION_RESENT: 'verification.resent',
+  EMAIL_DELIVERY_FAILED: 'email.delivery_failed',
 } as const
 
 export type AuthEventKind = (typeof AUTH_EVENT_KIND)[keyof typeof AUTH_EVENT_KIND]
@@ -34,6 +37,7 @@ export const AUTH_RESULT_CODE = {
   RATE_LIMITED: 'RATE_LIMITED',
   VALIDATION_FAILED: 'VALIDATION_FAILED',
   CONFLICT: 'CONFLICT',
+  PASSWORD_BREACHED: 'PASSWORD_BREACHED',
 } as const
 
 export type AuthResultCode = (typeof AUTH_RESULT_CODE)[keyof typeof AUTH_RESULT_CODE]

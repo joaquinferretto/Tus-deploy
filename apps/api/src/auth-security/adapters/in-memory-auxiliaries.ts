@@ -1,4 +1,4 @@
-import type { AuditSink, EmailSender, RateLimiter } from '../ports/security.js'
+import type { AuditSink, EmailSender, RateLimiter, SecurityNotificationKind } from '../ports/security.js'
 import type { SecurityEvent } from '../domain/models.js'
 
 export class InMemoryAuditSink implements AuditSink {
@@ -10,9 +10,10 @@ export class InMemoryAuditSink implements AuditSink {
 }
 
 export interface SentMessage {
-  kind: 'verification' | 'recovery'
+  kind: 'verification' | 'recovery' | 'security'
   email: string
   token: string
+  notification?: SecurityNotificationKind
 }
 
 export class InMemoryEmailSender implements EmailSender {
@@ -24,6 +25,10 @@ export class InMemoryEmailSender implements EmailSender {
 
   async sendRecovery(input: { email: string; token: string }): Promise<void> {
     this.messages.push({ kind: 'recovery', ...input })
+  }
+
+  async sendSecurityNotification(input: { email: string; kind: SecurityNotificationKind }): Promise<void> {
+    this.messages.push({ kind: 'security', email: input.email, token: '', notification: input.kind })
   }
 }
 

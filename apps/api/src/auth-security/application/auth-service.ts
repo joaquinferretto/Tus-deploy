@@ -1,12 +1,15 @@
 import type { Clock } from '../ports/clock.js'
 import type { IdentityStore } from '../ports/identity-store.js'
-import type {
-  AuditSink,
-  EmailSender,
-  IdGenerator,
-  PasswordHasher,
-  RateLimiter,
-  TokenIssuer,
+import {
+  SECURITY_NOTIFICATION,
+  type AuditSink,
+  type EmailSender,
+  type IdGenerator,
+  type PasswordBreachChecker,
+  type PasswordHasher,
+  type RateLimiter,
+  type SecurityNotificationKind,
+  type TokenIssuer,
 } from '../ports/security.js'
 import type {
   Account,
@@ -38,7 +41,7 @@ const OWNER_PERMISSIONS = [...MEMBER_PERMISSIONS, 'tus:marketplace:write'] as co
 // account whose VERIFIED email is in the operator-configured allowlist (TUS_PLATFORM_ADMIN_EMAILS,
 // set in the API environment, never in the repository) receives them, and only at sign-in on the
 // Web/API (the WhatsApp resolver uses alcanceDeCuenta and never grants them).
-export const PLATFORM_ADMIN_PERMISSIONS = ['tus:payments:admin', 'tus:identity:admin', 'tus:whatsapp:support'] as const
+export const PLATFORM_ADMIN_PERMISSIONS = ['tus:payments:admin', 'tus:identity:admin', 'tus:whatsapp:support', 'tus:providers:admin'] as const
 
 export function leerAdminsPlataforma(value: string | undefined): string[] {
   return [...new Set((value ?? '').split(',').map((item) => item.trim().toLowerCase()).filter((item) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(item)))]
@@ -56,11 +59,26 @@ export interface RegisterInput {
   displayName: string
 }
 
+// The public answer to a sign-up is always the same ("check your email"), whether the email was
+// new or already registered (no account enumeration). The account/token are only returned to
+// in-process callers and tests for NEW accounts.
 export interface RegisterResult {
   status: 'pending_verification'
   account: SafeAccount
   credential: SafeCredential
   verificationToken: string
+}
+
+export interface RegisterOutcome {
+  status: 'pending_verification'
+  created?: RegisterResult
+}
+
+export class PasswordPolicyError extends Error {
+  constructor(readonly code: 'VALIDATION_FAILED' | 'PASSWORD_BREACHED') {
+    super(code === 'PASSWORD_BREACHED' ? 'Password appears in known data breaches' : 'Invalid registration input')
+    this.name = 'PasswordPolicyError'
+  }
 }
 
 export interface SignInInput {
@@ -104,6 +122,11 @@ export interface AuthServiceDependencies {
   // Verified emails allowed to administer the platform (normalized, lowercase).
   platformAdminEmails?: readonly string[]
   recoveryRateLimiter: RateLimiter
+  // Per normalized email (durable in production): sign-in attempts and verification re-sends.
+  signInRateLimiter?: RateLimiter
+  verificationResendRateLimiter?: RateLimiter
+  verificationResendCooldown?: RateLimiter
+  passwordBreachChecker?: PasswordBreachChecker
 }
 
 export class AuthService {
@@ -114,18 +137,60 @@ export class AuthService {
   }
 
   async register(input: RegisterInput): Promise<RegisterResult> {
-    return this.runTransaction((store) => this.registerWithinStore(input, store))
+    const outcome = await this.registerAccount(input)
+    if (!outcome.created) throw new Error('Account already exists')
+    return outcome.created
+  }
+
+  // Email sign-up for the HTTP boundary: same answer for new and existing emails. An existing
+  // unverified account gets a new verification link; a verified one gets a security notice.
+  async registerAccount(input: RegisterInput): Promise<RegisterOutcome> {
+    const normalizedEmail = normalizeEmail(input.email)
+    if (!validateEmail(normalizedEmail) || !validatePassword(input.password) || input.displayName.trim().length === 0) {
+      throw new PasswordPolicyError('VALIDATION_FAILED')
+    }
+    if (await this.passwordIsBreached(input.password)) throw new PasswordPolicyError('PASSWORD_BREACHED')
+    const existing = await this.dependencies.store.findAccountByEmail(normalizedEmail)
+    if (existing) {
+      if (!existing.emailVerifiedAt) await this.resendVerification({ email: normalizedEmail })
+      else await this.notify(existing, SECURITY_NOTIFICATION.REGISTRATION_ATTEMPT)
+      return { status: 'pending_verification' }
+    }
+    const created = await this.runTransaction((store) => this.registerWithinStore(input, store))
+    await this.deliver(created.account.id, created.account.tenantId, () =>
+      this.dependencies.email.sendVerification({ email: created.account.email, token: created.verificationToken })
+    )
+    return { status: 'pending_verification', created }
+  }
+
+  // "Reenviar email de verificación": always the same public answer. At most 5 per hour and one
+  // per minute for the same email (durable limiter in production).
+  async resendVerification(input: { email: string }): Promise<{ accepted: true }> {
+    const normalizedEmail = normalizeEmail(input.email)
+    const now = this.dependencies.clock.now()
+    if (!validateEmail(normalizedEmail)) return { accepted: true }
+    const cooldown = this.dependencies.verificationResendCooldown
+    const limiter = this.dependencies.verificationResendRateLimiter
+    if ((cooldown && !(await cooldown.allow(normalizedEmail, now))) || (limiter && !(await limiter.allow(normalizedEmail, now)))) {
+      return { accepted: true }
+    }
+    const account = await this.dependencies.store.findAccountByEmail(normalizedEmail)
+    if (!account || account.emailVerifiedAt || account.status !== 'active') return { accepted: true }
+    const token = this.dependencies.tokens.issue()
+    await this.dependencies.store.saveVerificationToken({
+      id: this.dependencies.ids.next(),
+      accountId: account.id,
+      tokenDigest: this.dependencies.tokens.digest(token),
+      expiresAt: now + VERIFICATION_TTL_MS,
+      consumedAt: null,
+    })
+    await this.record(account, AUTH_EVENT_KIND.VERIFICATION_RESENT, 'accepted', 'verification_resent')
+    await this.deliver(account.id, account.tenantId, () => this.dependencies.email.sendVerification({ email: account.email, token }))
+    return { accepted: true }
   }
 
   private async registerWithinStore(input: RegisterInput, store: IdentityStore): Promise<RegisterResult> {
     const normalizedEmail = normalizeEmail(input.email)
-    if (
-      !validateEmail(normalizedEmail) ||
-      !validatePassword(input.password) ||
-      input.displayName.trim().length === 0
-    ) {
-      throw new Error('Invalid registration input')
-    }
     if (await store.findAccountByEmail(normalizedEmail)) {
       throw new Error('Account already exists')
     }
@@ -163,10 +228,6 @@ export class AuthService {
       expiresAt: now + VERIFICATION_TTL_MS,
       consumedAt: null,
     })
-    await this.dependencies.email.sendVerification({
-      email: account.email,
-      token: verificationToken,
-    })
     await this.record(account, AUTH_EVENT_KIND.ACCOUNT_REGISTERED, 'success', 'account_created')
 
     return {
@@ -184,7 +245,34 @@ export class AuthService {
   }
 
   async signIn(input: SignInInput): Promise<SignInResult> {
+    // Same limit for existing and unknown emails (no enumeration); it slows password guessing on
+    // one account without locking the whole site.
+    const limiter = this.dependencies.signInRateLimiter
+    if (limiter && !(await limiter.allow(normalizeEmail(input.email), this.dependencies.clock.now()))) {
+      await this.record(undefined, AUTH_EVENT_KIND.AUTH_FAILED, 'denied', 'rate_limited')
+      return failure(AUTH_RESULT_CODE.RATE_LIMITED, 'Too many attempts, try again later')
+    }
     return this.runTransaction((store) => this.signInWithinStore(input, store))
+  }
+
+  // New session for the same account (fresh token and id, scope re-evaluated) and revocation of
+  // the old one: used after the second factor so a token issued before MFA never gains power.
+  async rotateSession(input: { accessToken: string }): Promise<SignInResult> {
+    return this.runTransaction(async (store) => {
+      const now = this.dependencies.clock.now()
+      const digest = this.dependencies.tokens.digest(input.accessToken)
+      const current = await store.findSessionByAccessTokenDigest(digest)
+      const account = current ? await store.getAccount(current.accountId) : undefined
+      if (!current || current.revokedAt !== null || current.expiresAt <= now || !account || account.status !== 'active' || !account.emailVerifiedAt) {
+        return failure(AUTH_RESULT_CODE.INVALID_TOKEN, 'Invalid or expired session')
+      }
+      await store.revokeSession(digest, now)
+      // Rotation keeps the admin eligibility of the ORIGINAL session (a Google session stays non-admin).
+      const wasAdmin = PLATFORM_ADMIN_PERMISSIONS.some((permission) => current.scope.permissions.includes(permission))
+      const rotated = await this.issueSession(store, account, { deviceId: current.deviceId }, 'session_rotated', { platformAdmin: wasAdmin })
+      await this.record(account, AUTH_EVENT_KIND.SESSION_ROTATED, 'success', 'session_rotated')
+      return rotated
+    })
   }
 
   private async signInWithinStore(input: SignInInput, store: IdentityStore): Promise<SignInResult> {
@@ -212,7 +300,7 @@ export class AuthService {
     credential.lastUsedAt = now
     credential.updatedAt = now
     await store.saveCredential(credential)
-    return this.issueSession(store, account, input.device, 'credential_verified')
+    return this.issueSession(store, account, input.device, 'credential_verified', { platformAdmin: true })
   }
 
   // Federated sign-in (Google): the identity was already verified by the OIDC boundary. The same
@@ -225,7 +313,9 @@ export class AuthService {
         await this.record(account, AUTH_EVENT_KIND.AUTH_FAILED, 'denied', 'federated_account_unavailable')
         return failure(AUTH_RESULT_CODE.INVALID_CREDENTIALS, GENERIC_AUTH_FAILURE_MESSAGE)
       }
-      return this.issueSession(store, account, input.device, 'federated_identity_verified')
+      // Platform administration is never reachable through Google: the admin always signs in
+      // with the TUS email + password (then MFA). A federated session never carries admin scope.
+      return this.issueSession(store, account, input.device, 'federated_identity_verified', { platformAdmin: false })
     })
   }
 
@@ -262,7 +352,8 @@ export class AuthService {
     store: IdentityStore,
     account: Account,
     device: SignInInput['device'],
-    reason: string
+    reason: string,
+    options: { platformAdmin: boolean }
   ): Promise<SignInResult> {
     const now = this.dependencies.clock.now()
     const deviceId = device?.deviceId?.trim() || this.dependencies.ids.next()
@@ -283,7 +374,7 @@ export class AuthService {
       accessTokenDigest: this.dependencies.tokens.digest(accessToken),
       scope: {
         tenantId: account.tenantId,
-        ...this.alcanceDeSesion(account),
+        ...(options.platformAdmin ? this.alcanceDeSesion(account) : alcanceDeCuenta(account.roles)),
       },
       createdAt: now,
       expiresAt: now + SESSION_TTL_MS,
@@ -355,12 +446,17 @@ export class AuthService {
   }
 
   async requestPasswordRecovery(input: { email: string }): Promise<RecoveryRequestResult> {
-    return this.runTransaction((store) => this.requestPasswordRecoveryWithinStore(input, store))
+    const result = await this.runTransaction((store) => this.requestPasswordRecoveryWithinStore(input, store))
+    if (result.recoveryToken && result.recipient) {
+      const { recipient, recoveryToken } = result
+      await this.deliver(recipient.accountId, recipient.tenantId, () => this.dependencies.email.sendRecovery({ email: recipient.email, token: recoveryToken }))
+    }
+    return { public: result.public, ...(result.recoveryToken ? { recoveryToken: result.recoveryToken } : {}) }
   }
 
-  private async requestPasswordRecoveryWithinStore(input: { email: string }, store: IdentityStore): Promise<RecoveryRequestResult> {
+  private async requestPasswordRecoveryWithinStore(input: { email: string }, store: IdentityStore): Promise<RecoveryRequestResult & { recipient?: { accountId: string; tenantId: string; email: string } }> {
     const normalizedEmail = normalizeEmail(input.email)
-    const allowed = this.dependencies.recoveryRateLimiter.allow(
+    const allowed = await this.dependencies.recoveryRateLimiter.allow(
       normalizedEmail,
       this.dependencies.clock.now()
     )
@@ -387,22 +483,27 @@ export class AuthService {
       expiresAt: this.dependencies.clock.now() + RECOVERY_TTL_MS,
       consumedAt: null,
     })
-    await this.dependencies.email.sendRecovery({ email: account.email, token: recoveryToken })
     await this.record(account, AUTH_EVENT_KIND.RECOVERY_REQUESTED, 'accepted', 'request_processed')
-    return { public: { accepted: true, message: GENERIC_RECOVERY_MESSAGE }, recoveryToken }
+    return { public: { accepted: true, message: GENERIC_RECOVERY_MESSAGE }, recoveryToken, recipient: { accountId: account.id, tenantId: account.tenantId, email: account.email } }
   }
 
+  // A reset only changes the password: sessions are revoked and an admin still needs the second
+  // factor on the next sign-in (MFA is never skipped by a reset).
   async completePasswordRecovery(input: {
     token: string
     newPassword: string
   }): Promise<LifecycleResult> {
-    return this.runTransaction((store) => this.completePasswordRecoveryWithinStore(input, store))
+    if (validatePassword(input.newPassword) && (await this.passwordIsBreached(input.newPassword)))
+      return failure(AUTH_RESULT_CODE.PASSWORD_BREACHED, 'Password appears in known data breaches')
+    const result = await this.runTransaction((store) => this.completePasswordRecoveryWithinStore(input, store))
+    if (result.ok) await this.notifyAccount(result.accountId, SECURITY_NOTIFICATION.PASSWORD_RESET)
+    return result.ok ? { ok: true } : result
   }
 
   private async completePasswordRecoveryWithinStore(input: {
     token: string
     newPassword: string
-  }, store: IdentityStore): Promise<LifecycleResult> {
+  }, store: IdentityStore): Promise<{ ok: true; accountId: string } | AuthFailure> {
     if (!validatePassword(input.newPassword)) {
       return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Password does not meet policy')
     }
@@ -439,7 +540,7 @@ export class AuthService {
     await store.saveRecoveryToken(token)
     await store.revokeSessions(account.id, now)
     await this.record(account, AUTH_EVENT_KIND.RECOVERY_COMPLETED, 'success', 'credential_reset')
-    return { ok: true }
+    return { ok: true, accountId: account.id }
   }
 
   // Re-authentication for sensitive actions (e.g. turning MFA off): 'ok' only when the current
@@ -458,7 +559,46 @@ export class AuthService {
     currentPassword: string
     newPassword: string
   }): Promise<LifecycleResult> {
-    return this.runTransaction((store) => this.changePasswordWithinStore(input, store))
+    if (validatePassword(input.newPassword) && (await this.passwordIsBreached(input.newPassword)))
+      return failure(AUTH_RESULT_CODE.PASSWORD_BREACHED, 'Password appears in known data breaches')
+    const result = await this.runTransaction((store) => this.changePasswordWithinStore(input, store))
+    if (result.ok) await this.notifyAccount(input.actorId, SECURITY_NOTIFICATION.PASSWORD_CHANGED)
+    return result
+  }
+
+  // Security email for an account (MFA changes, password changes). Never blocks the action: a
+  // delivery failure is audited.
+  async notifyAccount(accountId: string, kind: SecurityNotificationKind): Promise<void> {
+    const account = await this.dependencies.store.getAccount(accountId)
+    if (account) await this.notify(account, kind)
+  }
+
+  private async notify(account: Account, kind: SecurityNotificationKind): Promise<void> {
+    const send = this.dependencies.email.sendSecurityNotification
+    if (!send) return
+    await this.deliver(account.id, account.tenantId, () => send.call(this.dependencies.email, { email: account.email, kind }))
+  }
+
+  private async deliver(accountId: string, tenantId: string, send: () => Promise<void>): Promise<void> {
+    try {
+      await send()
+    } catch (error) {
+      const reason = error instanceof Error && 'reason' in error && typeof error.reason === 'string' ? error.reason : 'delivery_failed'
+      await this.dependencies.audit.record({
+        contractVersion: CONTRACT_VERSION,
+        kind: AUTH_EVENT_KIND.EMAIL_DELIVERY_FAILED,
+        occurredAt: new Date(this.dependencies.clock.now()).toISOString(),
+        actorId: accountId,
+        tenantId,
+        outcome: 'denied',
+        correlationId: this.dependencies.ids.next(),
+        metadata: { reason },
+      })
+    }
+  }
+
+  private async passwordIsBreached(password: string): Promise<boolean> {
+    return this.dependencies.passwordBreachChecker ? this.dependencies.passwordBreachChecker.isBreached(password) : false
   }
 
   private async changePasswordWithinStore(input: {

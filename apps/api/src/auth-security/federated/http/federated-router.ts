@@ -3,10 +3,13 @@ import { asyncHandler, createErrorEnvelope } from '../../../presentation/middlew
 import { getCorrelationId } from '../../../presentation/middleware/correlation.ts'
 import type { FederatedAuthService } from '../application/federated-auth-service.js'
 import type { FederatedFailure } from '../domain.js'
+import { deliverSession, readSessionCookieSettings, type SessionCookieSettings } from '../../http/session-cookie.js'
 
 // Google sign-in / sign-up. The Web navigates to /start; Google returns to /callback (registered
 // redirect URI); the Web then exchanges the single-use code for the normal TUS session.
-export function createFederatedAuthRouter(service: FederatedAuthService, webBaseUrl: string | null): Router {
+// Google is an optional way in for regular users; it never yields platform administration (see
+// AuthService.signInFederated). The Web receives the session in the HttpOnly cookie.
+export function createFederatedAuthRouter(service: FederatedAuthService, webBaseUrl: string | null, cookies: SessionCookieSettings = readSessionCookieSettings()): Router {
   const router = express.Router()
   const web = (webBaseUrl ?? '').replace(/\/+$/u, '')
 
@@ -38,7 +41,7 @@ export function createFederatedAuthRouter(service: FederatedAuthService, webBase
     const result = await service.exchange({ code: body['code'], device: device(body) })
     if (!result.ok) return fail(request, response, result, 401)
     response.setHeader('cache-control', 'no-store')
-    response.status(200).json({ session: result.session })
+    response.status(200).json({ session: deliverSession(request, response, result.session, cookies) })
   }))
 
   router.post('/auth/oauth/signup/preview', asyncHandler(async (request: Request, response: Response) => {
@@ -53,7 +56,7 @@ export function createFederatedAuthRouter(service: FederatedAuthService, webBase
     const result = await service.completeSignup({ code: body['code'], displayName: body['displayName'], acceptedTerms: body['acceptedTerms'], device: device(body) })
     if (!result.ok) return fail(request, response, result, result.code === 'ACCOUNT_EXISTS' ? 409 : 400)
     response.setHeader('cache-control', 'no-store')
-    response.status(201).json({ session: result.session })
+    response.status(201).json({ session: deliverSession(request, response, result.session, cookies) })
   }))
 
   router.post('/auth/oauth/link/preview', asyncHandler(async (request: Request, response: Response) => {

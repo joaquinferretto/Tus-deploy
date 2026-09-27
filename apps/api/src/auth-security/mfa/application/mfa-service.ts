@@ -113,7 +113,7 @@ export class MfaService {
       return this.fail(enrollment.accountId, MFA_RESULT_CODE.REPLAYED, 'MFA enrollment is not available')
     }
     const now = this.dependencies.now()
-    if (!this.dependencies.rateLimiter.allow(`${enrollment.accountId}:confirm`, now)) {
+    if (!(await this.dependencies.rateLimiter.allow(`${enrollment.accountId}:confirm`, now))) {
       return this.fail(enrollment.accountId, MFA_RESULT_CODE.RATE_LIMITED, 'MFA confirmation rate limit exceeded')
     }
     if (!(await this.acceptCode(enrollment, input.code, now))) {
@@ -140,7 +140,7 @@ export class MfaService {
       return this.fail(enrollment.accountId, MFA_RESULT_CODE.INVALID, 'MFA enrollment is not active')
     }
     const now = this.dependencies.now()
-    if (!this.dependencies.rateLimiter.allow(`${enrollment.accountId}:challenge`, now)) {
+    if (!(await this.dependencies.rateLimiter.allow(`${enrollment.accountId}:challenge`, now))) {
       return this.fail(enrollment.accountId, MFA_RESULT_CODE.RATE_LIMITED, 'MFA challenge rate limit exceeded')
     }
     const challenge = this.dependencies.tokens.issue()
@@ -174,7 +174,7 @@ export class MfaService {
     if (!enrollment || enrollment.status !== MFA_ENROLLMENT_STATUS.ACTIVE) {
       return this.fail(challenge.accountId, MFA_RESULT_CODE.INVALID, 'MFA enrollment is not active')
     }
-    if (!this.dependencies.rateLimiter.allow(`${challenge.accountId}:verify`, now)) {
+    if (!(await this.dependencies.rateLimiter.allow(`${challenge.accountId}:verify`, now))) {
       return this.fail(challenge.accountId, MFA_RESULT_CODE.RATE_LIMITED, 'MFA verification rate limit exceeded')
     }
     if (!(await this.acceptCode(enrollment, input.code, now))) {
@@ -196,7 +196,7 @@ export class MfaService {
     if (!isAuthenticatedSubject(input.subject, accountId))
       return this.fail(accountId, MFA_RESULT_CODE.FORBIDDEN, 'MFA recovery is not permitted')
     const now = this.dependencies.now()
-    if (!this.dependencies.rateLimiter.allow(`${accountId}:recovery`, now)) {
+    if (!(await this.dependencies.rateLimiter.allow(`${accountId}:recovery`, now))) {
       return this.fail(accountId, MFA_RESULT_CODE.RATE_LIMITED, 'MFA recovery rate limit exceeded')
     }
     const consumed = await this.consumeRecoveryCode(accountId, input.code, now)
@@ -217,7 +217,7 @@ export class MfaService {
     const enrollment = await this.dependencies.store.findEnrollmentForAccount(accountId, MFA_ENROLLMENT_STATUS.ACTIVE)
     if (!enrollment) return this.fail(accountId, MFA_RESULT_CODE.INVALID, 'MFA enrollment is not active')
     const now = this.dependencies.now()
-    if (!this.dependencies.rateLimiter.allow(`${accountId}:regenerate`, now)) {
+    if (!(await this.dependencies.rateLimiter.allow(`${accountId}:regenerate`, now))) {
       return this.fail(accountId, MFA_RESULT_CODE.RATE_LIMITED, 'MFA recovery codes rate limit exceeded')
     }
     if (!(await this.acceptCode(enrollment, input.code, now))) {
@@ -244,7 +244,7 @@ export class MfaService {
     const enrollment = await this.dependencies.store.findEnrollmentForAccount(accountId, MFA_ENROLLMENT_STATUS.ACTIVE)
     if (!enrollment) return this.fail(accountId, MFA_RESULT_CODE.INVALID, 'MFA enrollment is not active')
     const now = this.dependencies.now()
-    if (!this.dependencies.rateLimiter.allow(`${accountId}:disable`, now)) {
+    if (!(await this.dependencies.rateLimiter.allow(`${accountId}:disable`, now))) {
       return this.fail(accountId, MFA_RESULT_CODE.RATE_LIMITED, 'MFA disable rate limit exceeded')
     }
     const second = (await this.acceptCode(enrollment, input.code, now)) || (await this.consumeRecoveryCode(accountId, input.code, now, false)).ok
@@ -280,6 +280,14 @@ export class MfaService {
     if (!subject.accountId || !subject.sessionId) return false
     if (!(await this.dependencies.store.findEnrollmentForAccount(subject.accountId, MFA_ENROLLMENT_STATUS.ACTIVE))) return false
     return Boolean(await this.liveElevation(subject))
+  }
+
+  // Session rotation after MFA: the proof moves to the NEW session and the old one loses it.
+  async moveElevation(from: AuthenticatedSubject, to: AuthenticatedSubject): Promise<void> {
+    const elevation = await this.liveElevation(from)
+    if (!elevation || from.accountId !== to.accountId) return
+    await this.dependencies.store.saveElevation({ ...elevation, sessionId: to.sessionId })
+    await this.dependencies.store.saveElevation({ ...elevation, revokedAt: this.dependencies.now() })
   }
 
   // When this session last proved the second factor (null without a live elevation).

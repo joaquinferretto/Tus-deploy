@@ -44,8 +44,9 @@ export interface MfaIdGenerator {
   next(): string
 }
 
+// May be durable (PostgreSQL) so the limit survives a restart.
 export interface MfaRateLimiter {
-  allow(key: string, now: number): boolean
+  allow(key: string, now: number): boolean | Promise<boolean>
 }
 
 export interface MfaAuditSink {

@@ -18,11 +18,16 @@ import {
 import { SystemClock } from './adapters/system.js'
 import type { Clock } from './ports/clock.js'
 import type { IdentityStore } from './ports/identity-store.js'
-import type { AuditSink } from './ports/security.js'
+import type { AuditSink, EmailSender, PasswordBreachChecker, RateLimiter } from './ports/security.js'
+import { PostgresRateLimiter, type RawQueryClient } from './adapters/postgres/postgres-rate-limiter.js'
+import { createEmailSenderFromEnv } from './adapters/email/email-senders.js'
+import { PwnedPasswordsChecker } from './adapters/pwned-passwords.js'
 
 export interface InMemoryAuthServiceOptions {
   now?: () => number
   platformAdminEmails?: readonly string[]
+  // Production environment (email provider, durable limits, breach check). Tests omit it.
+  env?: Record<string, string | undefined>
 }
 
 export interface AuthServiceFactoryOptions {
@@ -30,11 +35,17 @@ export interface AuthServiceFactoryOptions {
   now?: () => number
   audit?: AuditSink
   platformAdminEmails?: readonly string[]
+  email?: EmailSender
+  recoveryRateLimiter?: RateLimiter
+  signInRateLimiter?: RateLimiter
+  verificationResendRateLimiter?: RateLimiter
+  verificationResendCooldown?: RateLimiter
+  passwordBreachChecker?: PasswordBreachChecker
 }
 
 export function createAuthService(options: AuthServiceFactoryOptions) {
   const audit = options.audit ?? new InMemoryAuditSink()
-  const email = new InMemoryEmailSender()
+  const email = options.email ?? new InMemoryEmailSender()
   const clock: Clock = options.now ? { now: options.now } : new SystemClock()
   const service = new AuthService({
     store: options.store,
@@ -44,8 +55,12 @@ export function createAuthService(options: AuthServiceFactoryOptions) {
     passwordHasher: new ScryptPasswordHasher(),
     audit,
     email,
-    recoveryRateLimiter: new FixedWindowRateLimiter(),
+    recoveryRateLimiter: options.recoveryRateLimiter ?? new FixedWindowRateLimiter(),
     ...(options.platformAdminEmails ? { platformAdminEmails: options.platformAdminEmails } : {}),
+    ...(options.signInRateLimiter ? { signInRateLimiter: options.signInRateLimiter } : {}),
+    ...(options.verificationResendRateLimiter ? { verificationResendRateLimiter: options.verificationResendRateLimiter } : {}),
+    ...(options.verificationResendCooldown ? { verificationResendCooldown: options.verificationResendCooldown } : {}),
+    ...(options.passwordBreachChecker ? { passwordBreachChecker: options.passwordBreachChecker } : {}),
   })
 
   return {
@@ -75,7 +90,32 @@ export function createPrismaAuthService(
 ) {
   const store = new PrismaIdentityStore(client)
   const audit = client.auditEvent ? new PrismaSecurityAuditSink(client) : undefined
-  return { ...createAuthService({ store, now: options.now, audit, platformAdminEmails: options.platformAdminEmails }), store }
+  const env = options.env ?? {}
+  // Durable per-email limits (auth_rate_limits) when the client can run raw SQL.
+  const raw = (client as unknown as Partial<RawQueryClient>).$queryRawUnsafe ? (client as unknown as RawQueryClient) : null
+  const durable = (scope: string, max: number, windowMs: number) => (raw ? new PostgresRateLimiter(raw, scope, max, windowMs) : undefined)
+  const email = options.env ? createEmailSenderFromEnv(env) : undefined
+  return {
+    ...createAuthService({
+      store,
+      now: options.now,
+      audit,
+      platformAdminEmails: options.platformAdminEmails,
+      ...(email ? { email: email.sender } : {}),
+      ...(options.env
+        ? {
+            recoveryRateLimiter: durable('recovery', 5, 15 * 60_000),
+            signInRateLimiter: durable('sign-in', 10, 15 * 60_000),
+            verificationResendRateLimiter: durable('verify-resend', 5, 60 * 60_000),
+            verificationResendCooldown: durable('verify-resend-gap', 1, 60_000),
+            // Pwned Passwords k-anonymity check; TUS_PWNED_PASSWORDS=disabled turns it off.
+            ...(env['TUS_PWNED_PASSWORDS'] === 'disabled' ? {} : { passwordBreachChecker: new PwnedPasswordsChecker() }),
+          }
+        : {}),
+    }),
+    store,
+    emailProvider: email?.provider ?? 'in-memory',
+  }
 }
 
 export { AuthService } from './application/auth-service.js'

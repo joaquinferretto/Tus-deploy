@@ -14,7 +14,8 @@ import {
 import { RandomRecoveryCodeGenerator, TotpCodeVerifier, TotpSecretGenerator } from './adapters/totp.js'
 import { createMfaSecretCipher, PrismaMfaStore, type PrismaMfaClient } from './adapters/prisma-mfa-store.js'
 import type { MfaAuditEvent } from './domain.js'
-import type { MfaAuditSink, MfaStore } from './ports.js'
+import type { MfaAuditSink, MfaRateLimiter, MfaStore } from './ports.js'
+import { PostgresRateLimiter, type RawQueryClient } from '../adapters/postgres/postgres-rate-limiter.js'
 
 export interface InMemoryMfaServiceOptions {
   now?: () => number
@@ -56,7 +57,7 @@ export function createInMemoryMfaService(options: InMemoryMfaServiceOptions = {}
 // Real second factor: RFC 6238 TOTP, 160-bit random secrets, random single-use recovery codes,
 // opaque challenge tokens and 5 attempts per 15 minutes per account and operation (a 6-digit
 // code cannot be brute-forced behind the password).
-export function createTotpMfaService(options: { store: MfaStore; audit: MfaAuditSink; now?: () => number }): MfaService {
+export function createTotpMfaService(options: { store: MfaStore; audit: MfaAuditSink; now?: () => number; rateLimiter?: MfaRateLimiter }): MfaService {
   return new MfaService({
     store: options.store,
     verifier: new TotpCodeVerifier(),
@@ -64,7 +65,7 @@ export function createTotpMfaService(options: { store: MfaStore; audit: MfaAudit
     recoveryCodes: new RandomRecoveryCodeGenerator(),
     tokens: new OpaqueMfaTokenIssuer(),
     ids: new RandomMfaIdGenerator(),
-    rateLimiter: new FixedWindowMfaRateLimiter(5, 15 * 60_000),
+    rateLimiter: options.rateLimiter ?? new FixedWindowMfaRateLimiter(5, 15 * 60_000),
     audit: options.audit,
     now: options.now ?? (() => Date.now()),
   })
@@ -99,7 +100,13 @@ export class PrismaMfaAuditSink implements MfaAuditSink {
 export function createPrismaMfaService(client: PrismaMfaClient & AuditEventClient, env: Record<string, string | undefined>): MfaService | null {
   const cipher = createMfaSecretCipher(env['TUS_MFA_ENCRYPTION_KEY'])
   if (!cipher) return null
-  return createTotpMfaService({ store: new PrismaMfaStore(client, cipher), audit: new PrismaMfaAuditSink(client) })
+  // Attempts are counted in PostgreSQL (auth_rate_limits): the limit survives a restart.
+  const raw = (client as unknown as Partial<RawQueryClient>).$queryRawUnsafe ? (client as unknown as RawQueryClient) : null
+  return createTotpMfaService({
+    store: new PrismaMfaStore(client, cipher),
+    audit: new PrismaMfaAuditSink(client),
+    ...(raw ? { rateLimiter: new PostgresRateLimiter(raw, 'mfa', 5, 15 * 60_000) } : {}),
+  })
 }
 
 export { MfaService } from './application/mfa-service.js'

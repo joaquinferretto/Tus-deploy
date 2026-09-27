@@ -18,7 +18,11 @@
         "credential.disabled",
         "recovery.requested",
         "recovery.completed",
-        "session.created"
+        "session.created",
+        "session.revoked",
+        "session.rotated",
+        "verification.resent",
+        "email.delivery_failed"
       ]
     },
     "occurredAt": { "type": "string", "format": "date-time" },

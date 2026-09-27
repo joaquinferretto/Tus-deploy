@@ -1,6 +1,7 @@
 import express from 'express'
 import type { Request, Response, Router } from 'express'
-import type { AuthService } from '../application/auth-service.js'
+import { PasswordPolicyError, type AuthService } from '../application/auth-service.js'
+import { clearSessionCookie, deliverSession, readSessionCookieSettings, type SessionCookieSettings } from './session-cookie.js'
 import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../../tus/ports/index.ts'
 import { asyncHandler, createErrorEnvelope } from '../../presentation/middleware/error.ts'
 import { getCorrelationId } from '../../presentation/middleware/correlation.ts'
@@ -8,23 +9,34 @@ import { getCorrelationId } from '../../presentation/middleware/correlation.ts'
 export interface AuthRouterDependencies {
   service: AuthService
   sessions: TusSessionResolverPort
+  cookies?: SessionCookieSettings
+  now?: () => number
 }
 
-export function createAuthRouter({ service, sessions }: AuthRouterDependencies): Router {
+export function createAuthRouter({ service, sessions, cookies = readSessionCookieSettings(), now = () => Date.now() }: AuthRouterDependencies): Router {
   const router = express.Router()
 
+  // Same answer for a new email and an already registered one (no account enumeration): the
+  // person is told to check the inbox. No session is issued before the email is verified.
   router.post('/auth/register', asyncHandler(async (request: Request, response: Response) => {
     const body = asRecord(request.body)
     try {
-      const result = await service.register({
+      await service.registerAccount({
         email: readString(body, 'email'),
         password: readString(body, 'password'),
         displayName: readString(body, 'displayName'),
       })
-      response.status(201).json({ status: result.status, account: result.account, credential: result.credential })
+      response.status(201).json({ status: 'pending_verification' })
     } catch (error) {
-      response.status(400).json(createErrorEnvelope(error, getCorrelationId(request), 'INVALID_REQUEST'))
+      const code = error instanceof PasswordPolicyError && error.code === 'PASSWORD_BREACHED' ? 'PASSWORD_BREACHED' : 'INVALID_REQUEST'
+      response.status(400).json(createErrorEnvelope(error, getCorrelationId(request), code))
     }
+  }))
+
+  // "Reenviar email de verificación": always 202 (no enumeration); limited per email.
+  router.post('/auth/verify-email/resend', asyncHandler(async (request: Request, response: Response) => {
+    await service.resendVerification({ email: readString(asRecord(request.body), 'email') })
+    response.status(202).json({ accepted: true })
   }))
 
   router.post('/auth/sign-in', asyncHandler(async (request: Request, response: Response) => {
@@ -38,10 +50,11 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
       },
     })
     if (!result.ok) {
-      response.status(401).json(createErrorEnvelope(new Error(result.message), getCorrelationId(request), result.code))
+      response.status(result.code === 'RATE_LIMITED' ? 429 : 401).json(createErrorEnvelope(new Error(result.message), getCorrelationId(request), result.code))
       return
     }
-    response.status(200).json({ session: result.session })
+    // The Web gets the token only in the HttpOnly cookie; native clients get the Bearer token.
+    response.status(200).json({ session: deliverSession(request, response, result.session, cookies, now) })
   }))
 
   router.get('/auth/session', asyncHandler(async (request: Request, response: Response) => {
@@ -72,7 +85,10 @@ export function createAuthRouter({ service, sessions }: AuthRouterDependencies):
       response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
       return
     }
-    sendLifecycleResult(response, await service.signOut({ accessToken }), 204, getCorrelationId(request))
+    // Server-side revocation; the cookie is also cleared.
+    const result = await service.signOut({ accessToken })
+    clearSessionCookie(response, cookies)
+    sendLifecycleResult(response, result, 204, getCorrelationId(request))
   }))
 
   router.post('/auth/verify-email', asyncHandler(async (request: Request, response: Response) => {
@@ -157,7 +173,7 @@ function sendLifecycleResult(
 ): void {
   if (!result.ok) {
     response
-      .status(result.code === 'FORBIDDEN' ? 403 : result.code === 'INVALID_TOKEN' ? 400 : 422)
+      .status(result.code === 'FORBIDDEN' ? 403 : result.code === 'INVALID_TOKEN' ? 400 : result.code === 'RATE_LIMITED' ? 429 : 422)
       .json(createErrorEnvelope(new Error(result.message), correlationId, result.code))
     return
   }

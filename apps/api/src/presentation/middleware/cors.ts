@@ -14,11 +14,16 @@ export const CORS_ALLOWED_HEADERS = [
   'X-Request-Id',
 ] as const
 
-export function createCorsMiddleware(environment: Record<string, string | undefined> = process.env) {
-  const allowedOrigins = (environment['CORS_ORIGINS'] ?? 'http://localhost:3000')
+// Exact Web origins allowed to call the API with credentials (never `*`).
+export function readCorsOrigins(environment: Record<string, string | undefined> = process.env): string[] {
+  return (environment['CORS_ORIGINS'] ?? 'http://localhost:3000')
     .split(',')
     .map((origin) => origin.trim())
-    .filter(Boolean)
+    .filter((origin) => origin && origin !== '*')
+}
+
+export function createCorsMiddleware(environment: Record<string, string | undefined> = process.env) {
+  const allowedOrigins = readCorsOrigins(environment)
 
   return cors({
     origin: (origin, callback) => {

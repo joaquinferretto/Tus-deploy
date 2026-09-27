@@ -2927,3 +2927,14 @@ model MfaSessionElevation {
   @@index([accountId], map: "ix_mfa_session_elevations_account")
   @@map("mfa_session_elevations")
 }
+
+// Durable fixed-window limits of sensitive authentication (keys are "<scope>:<sha256>").
+model AuthRateLimit {
+  key             String   @id(map: "auth_rate_limits_pkey") @map("key")
+  windowStartedAt DateTime @map("window_started_at")
+  attempts        Int      @map("attempts")
+  updatedAt       DateTime @map("updated_at")
+
+  @@index([updatedAt], map: "ix_auth_rate_limits_updated")
+  @@map("auth_rate_limits")
+}
