@@ -223,9 +223,18 @@ export interface Interpretacion {
 
 // Interpretación determinística y auditable: palabras clave del catálogo, barrios conocidos y
 // expresiones de urgencia/presupuesto. No inventa: si no reconoce algo, devuelve null.
+// Palabras que por sí solas no alcanzan para decidir el oficio ("se rompió el motor" puede ser un
+// auto, una bomba de agua, un portón o un aire). Solas, devuelven sus oficios posibles como
+// alternativas para que el cliente elija; con más contexto, puntúan como cualquier otra palabra.
+const TERMINOS_AMBIGUOS: Readonly<Record<string, readonly OficioId[]>> = {
+  motor: ['mecanica', 'plomeria', 'aire', 'otros'],
+}
+
 export function interpretarNecesidad(texto: string): Interpretacion {
   const normalizado = normalizarTexto(texto.slice(0, 600))
-  const palabras = normalizado.split(' ').filter((palabra) => palabra.length >= 3)
+  const todas = normalizado.split(' ').filter((palabra) => palabra.length >= 3)
+  const ambiguas = todas.filter((palabra) => palabra in TERMINOS_AMBIGUOS)
+  const palabras = todas.filter((palabra) => !(palabra in TERMINOS_AMBIGUOS))
   const puntajes = OFICIOS.map((item) => {
     const claves = normalizarTexto(`${item.palabrasClave} ${item.label} ${item.profesion}`).split(' ').filter((clave) => clave.length >= 3)
     const puntaje = palabras.reduce((total, palabra) => total + (claves.some((clave) => clave === palabra || (palabra.length >= 5 && clave.startsWith(palabra.slice(0, 5)))) ? 1 : 0), 0)
@@ -251,9 +260,12 @@ export function interpretarNecesidad(texto: string): Interpretacion {
   const monto = /(?:\$\s*|hasta\s+)(\d{1,3}(?:[.\s]\d{3})+|\d{3,9})(?!\d)|(\d{1,3}(?:[.\s]\d{3})+|\d{4,9})\s*(?:pesos|\$)/iu.exec(texto)
   const presupuesto = monto ? Number((monto[1] ?? monto[2] ?? '').replace(/[.\s]/gu, '')) : null
 
+  // Sin otra evidencia que un término ambiguo: se pregunta, no se elige.
+  const alternativasAmbiguas = mejores.length === 0 && ambiguas.length > 0 ? [...new Set(ambiguas.flatMap((palabra) => TERMINOS_AMBIGUOS[palabra] ?? []))] : []
+
   return {
     category: mejores.length === 1 ? mejores[0]! : null,
-    alternatives: mejores.length > 1 ? mejores : [],
+    alternatives: mejores.length > 1 ? mejores : alternativasAmbiguas,
     zone: zona,
     urgency: urgencia,
     budgetMax: presupuesto && Number.isInteger(presupuesto) && presupuesto > 0 && presupuesto <= 100_000_000 ? presupuesto : null,

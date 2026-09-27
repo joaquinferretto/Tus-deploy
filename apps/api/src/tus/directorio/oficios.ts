@@ -8,7 +8,7 @@ export const OFICIOS = [
     id: 'plomeria',
     label: 'Plomería',
     profesion: 'Plomero/a',
-    palabrasClave: 'plomero plomera plomeria caneria cano canilla agua perdida gotea pierde bacha sifon inodoro deposito termotanque calefon destapacion destapar cloaca desague griferia',
+    palabrasClave: 'plomero plomera plomeria caneria cano canilla agua perdida gotea pierde bacha sifon inodoro deposito termotanque calefon destapacion destapar cloaca desague griferia bomba',
   },
   {
     id: 'electricidad',
@@ -38,7 +38,7 @@ export const OFICIOS = [
     id: 'otros',
     label: 'Otros oficios',
     profesion: 'Oficios varios',
-    palabrasClave: 'carpintero carpinteria mueble placard armado albanil albanileria construccion obra cerrajero cerradura llave jardin jardinero mudanza tecnico reparacion',
+    palabrasClave: 'carpintero carpinteria mueble placard armado albanil albanileria construccion obra cerrajero cerradura llave jardin jardinero mudanza tecnico reparacion porton',
   },
 ] as const
 
