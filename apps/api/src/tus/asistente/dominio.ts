@@ -126,7 +126,7 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     const profession = filter.profession ?? interpretado?.category ?? null
     if (!profession) return { profession: null, providers: [] }
     const zone = filter.zone ?? interpretado?.zone ?? null
-    const result = await this.servicios.directorio.buscarCandidatos({ oficio: profession, zona: zone })
+    const result = await this.servicios.directorio.buscarCandidatos({ oficio: profession, zona: zone, exigirCobertura: true })
     return { profession, providers: result.items }
   }
 

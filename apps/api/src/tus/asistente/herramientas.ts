@@ -42,6 +42,19 @@ const conTrabajo = z.strictObject({ workId: ID })
 
 export const HERRAMIENTAS = [
   herramienta({
+    name: 'collect_service_request',
+    description: 'Conserva los datos que el usuario ya dio para buscar un prestador. Si falta oficio, problema o zona, formulá una pregunta natural SOLO sobre lo faltante. No incluyas resultados ni prestadores en la pregunta. Si cambia de necesidad, reemplazá los datos anteriores. Usá null para datos desconocidos; nunca los supongas.',
+    audience: 'public',
+    schema: z.strictObject({
+      profession: z.enum(OFICIOS_IDS).nullable(),
+      problem: z.string().trim().min(3).max(300).nullable(),
+      zone: z.string().trim().min(2).max(60).nullable(),
+      question: z.string().trim().min(5).max(500).nullable(),
+    }),
+    confirmation: null,
+    execute: async (args) => args,
+  }),
+  herramienta({
     name: 'search_services',
     description: 'Busca servicios publicados en TUS por texto libre y/o categoría. Devuelve datos públicos (sin datos personales).',
     audience: 'public',
@@ -55,9 +68,9 @@ export const HERRAMIENTAS = [
       'Busca prestadores reales del directorio TUS compatibles con la necesidad (oficio y barrio de Corrientes). Devuelve hasta 5 con datos públicos: nombre público, oficio, barrio aproximado, verificación, trabajos completados y horarios publicados. Nunca inventes prestadores, valoraciones ni disponibilidad.',
     audience: 'public',
     schema: z.strictObject({
-      query: z.string().trim().min(2).max(300).nullable(),
-      profession: z.enum(OFICIOS_IDS).nullable(),
-      zone: z.string().trim().min(2).max(60).nullable(),
+      query: z.string().trim().min(3).max(300),
+      profession: z.enum(OFICIOS_IDS),
+      zone: z.string().trim().min(2).max(60),
     }),
     confirmation: null,
     execute: async (args, _actor, domain) => {
@@ -74,7 +87,7 @@ export const HERRAMIENTAS = [
           completedJobs: item.completedJobs,
           availability: item.availability.label,
         })),
-        note: result.providers.length === 0 ? 'No hay prestadores disponibles para esa búsqueda en este momento.' : 'El cliente elige; no elijas por él.',
+        note: result.providers.length === 0 ? 'La búsqueda no encontró prestadores compatibles.' : 'Los horarios publicados no confirman disponibilidad para un trabajo. El cliente elige.',
       }
     },
   }),
@@ -351,7 +364,7 @@ export function detectarIntencion(text: string): IntencionAsistente {
 }
 
 const HERRAMIENTAS_POR_INTENCION: Record<IntencionAsistente, { client: NombreHerramienta[]; provider: NombreHerramienta[] }> = {
-  buscar: { client: ['search_providers', 'request_provider', 'search_services', 'get_service_details', 'create_service_request'], provider: [] },
+  buscar: { client: ['collect_service_request', 'search_providers', 'request_provider', 'search_services', 'get_service_details', 'create_service_request'], provider: [] },
   postulaciones: {
     client: ['list_my_open_requests', 'list_request_applicants', 'choose_applicant'],
     provider: ['search_open_requests', 'apply_to_request'],

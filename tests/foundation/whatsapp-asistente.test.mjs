@@ -96,8 +96,8 @@ test('WHATSAPP tools: public search without link, private data needs link, users
     await workStore.updateWork?.({ tenantId: customer.tenantId, trabajoId: otherWork.trabajoId, expectedVersion: otherWork.version, work: { ...otherWork, tenantId: stranger.tenantId, version: otherWork.version + 1 } })
     const out = {}
     // 1. Unlinked contact: public search works.
-    script = ({ messages }) => !messages.some((m) => m.role === 'tool') ? { toolCalls: [llamada('search_services', { query: 'electricista', category: null })] } : { content: 'Encontré: ' + JSON.parse(messages[messages.length - 1].content).services.map((s) => s.name).join(', ') }
-    await say('5491155550201', 'Necesito un electricista')
+    script = ({ messages }) => !messages.some((m) => m.role === 'tool') ? { toolCalls: [llamada('collect_service_request', { profession: 'electricidad', problem: 'No funciona la luz', zone: 'Ponce', question: null })] } : { toolCalls: [llamada('search_services', { query: 'electricista', category: null })] }
+    await say('5491155550201', 'Necesito un electricista en Ponce porque no funciona la luz')
     out.publicSearch = [lastSent().message.text, chat.calls[0].tools]
     // 2. Unlinked contact asking private data: link offered, model not called.
     const before = chat.calls.length
@@ -168,7 +168,7 @@ test('WHATSAPP tools: public search without link, private data needs link, users
     'workId',
   ])
   assert.ok(result.loopCalls <= 6, 'tool loop is bounded by WHATSAPP_AI_MAX_TOOL_CALLS')
-  assert.match(result.loopReply, /no puedo responder bien/u)
+  assert.match(result.loopReply, /Tuve un problema procesando/u)
 })
 
 test('WHATSAPP confirmations: writes need a bound, expiring, single-use confirmation; the budget is accepted through the work domain once', () => {
@@ -223,7 +223,7 @@ test('WHATSAPP confirmations: writes need a bound, expiring, single-use confirma
   assert.match(result.looseYes, /¿Sí a qué/u)
 })
 
-test('WHATSAPP handoff and support panel: user request and sensitive topics stop the bot; operator takes over, answers inside the 24h window only, returns to AI', () => {
+test('WHATSAPP never automatically hands off; explicit admin takeover keeps the existing authorization and 24h window', () => {
   const result = runTypeScriptScenario(`${SETUP}
     const { createTusHttpRouter } = await import('./apps/api/src/tus/http/router.ts')
     const { createApp } = (await import('./apps/api/src/server.ts')).default
@@ -269,12 +269,12 @@ test('WHATSAPP handoff and support panel: user request and sensitive topics stop
       console.log(JSON.stringify(out))
     } finally { server.close() }
   `)
-  assert.match(result.handoffReply, /persona del equipo de TUS/u)
+  assert.match(result.handoffReply, /no hay un operador humano/u)
   assert.equal(result.noModel, true)
-  assert.equal(result.botSilent, true)
-  assert.equal(result.sensitive, 'sensitive_topic')
+  assert.equal(result.botSilent, false)
+  assert.equal(result.sensitive, null)
   assert.equal(result.fakeAdmin, 403)
-  assert.deepEqual(result.list.map((c) => c[1]).sort(), ['****0401', '****0402'])
+  assert.deepEqual(result.list, [])
   assert.ok(result.list.every((c) => c[0] === 'human' && c[2] === true))
   assert.equal(result.listLeak, false)
   assert.ok(result.detailMessages >= 3)
@@ -290,7 +290,6 @@ test('WHATSAPP handoff and support panel: user request and sensitive topics stop
   assert.equal(result.release, 'bot')
   assert.equal(result.botBack, 'Volví, soy el asistente de TUS.')
   for (const action of [
-    'assistant.handoff',
     'support.takeover',
     'support.operator_reply',
     'support.returned_to_bot',

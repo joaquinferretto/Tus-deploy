@@ -1,7 +1,7 @@
 ---
 id: cancelaciones
 title: Cancelaciones
-version: 1
+version: 2
 visibility: public
 audience: all
 language: es
@@ -14,5 +14,5 @@ Un trabajo puede cancelarse mientras no esté completado. Hoy la cancelación de
 panel (o por WhatsApp con confirmación). Si el trabajo tiene una reserva asociada, al cancelar el trabajo también se
 cancela la reserva.
 
-Si sos cliente y necesitás cancelar, o tenés un problema con un trabajo o con un pago, escribí "soporte" y te atiende una
-persona del equipo de TUS. Los reclamos, reintegros y disputas los resuelve siempre una persona, no el asistente.
+El asistente no resuelve reclamos, reintegros ni disputas y este número no tiene un operador humano conectado.
+Solo puede consultar los datos y realizar las acciones que TUS habilita para tu cuenta, con confirmación cuando corresponda.

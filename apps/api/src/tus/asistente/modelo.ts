@@ -38,6 +38,8 @@ export interface EstadoConversacional {
   activeListingId: string | null
   // Request draft being collected (never authoritative: the tool revalidates everything).
   draft: {
+    profession?: string | null
+    candidates?: { providerId: string; name: string }[]
     listingId: string | null
     problem: string | null
     zone: string | null
@@ -270,7 +272,7 @@ export function respuestaConfirmacion(
 
 export const MENSAJES = {
   handoff:
-    'Listo, te paso con una persona del equipo de TUS. Te van a responder por este mismo chat.',
+    'Este número tiene un asistente automático; no hay un operador humano conectado.',
   handoffActive: null,
   rateLimited: 'Estás enviando muchos mensajes seguidos. Esperá un momento y volvé a escribirme.',
   unsupported: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribís?',
@@ -282,7 +284,7 @@ export const MENSAJES = {
   linkRequired:
     'Para ver o hacer cosas de tu cuenta primero tengo que vincular este WhatsApp con tu cuenta TUS.',
   aiUnavailable:
-    'Ahora no puedo responder bien. Probá de nuevo en unos minutos o escribí "soporte" para hablar con una persona.',
+    'Tuve un problema procesando tu solicitud. Probá nuevamente en unos minutos.',
   noInfo: 'No tengo información suficiente para asegurarte eso.',
   confirmationExpired: 'Esa confirmación ya venció. Si querés, lo preparo de nuevo.',
   confirmationCancelled: 'Listo, no hice ningún cambio.',

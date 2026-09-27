@@ -358,7 +358,7 @@ test('WHATSAPP uses the same directory and request services (no duplicated rules
     const actor = { contactId: 'contact', conversationId: 'conv', context, isProvider: false }
     const anon = { ...actor, context: null }
     const run = (name, args, who = actor, confirmed) => validarYEjecutar({ name, rawArguments: JSON.stringify(args), actor: who, domain, allowed: new Set(['search_providers', 'request_provider']), timeoutMs: 2000, ...(confirmed ? { confirmed } : {}) })
-    const busqueda = await run('search_providers', { query: 'pierde agua la bacha en el centro', profession: null, zone: null }, anon)
+    const busqueda = await run('search_providers', { query: 'pierde agua la bacha', profession: 'plomeria', zone: 'Centro' }, anon)
     const pedido = { providerId: carlos.perfil.id, title: 'Pierde agua la bacha', description: null, zone: 'Centro', urgency: 'hoy_manana', budgetMax: null }
     const sinVincular = await run('request_provider', pedido, anon)
     const sinConfirmar = await run('request_provider', pedido)

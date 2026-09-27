@@ -72,10 +72,8 @@ export class WorkerConversacionesWhatsapp {
         )
       )
       this.options.log?.('whatsapp.turn_failed', { exhausted, correlationId: job.correlationId })
-      if (exhausted)
-        await this.orchestrator.derivar(job.conversationId, 'processing_failed', job.correlationId)
       return {
-        outcome: exhausted ? 'handoff_after_failure' : 'retry_scheduled',
+        outcome: exhausted ? 'failed' : 'retry_scheduled',
         conversationId: job.conversationId,
       }
     }

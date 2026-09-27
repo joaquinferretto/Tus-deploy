@@ -179,11 +179,16 @@ export class ServicioDirectorio {
   }
 
   // Candidatos compatibles (3 a 5 cuando existen). El cliente elige; nunca se elige por él.
-  async buscarCandidatos(input: { oficio: unknown; zona?: unknown; limite?: number }): Promise<{ items: CandidatoPrestador[]; reason: 'ok' | 'no_providers' | 'invalid_profession' }> {
+  async buscarCandidatos(input: { oficio: unknown; zona?: unknown; limite?: number; exigirCobertura?: boolean }): Promise<{ items: CandidatoPrestador[]; reason: 'ok' | 'no_providers' | 'invalid_profession' }> {
     if (!esOficio(input.oficio)) return { items: [], reason: 'invalid_profession' }
     const zona = typeof input.zona === 'string' && input.zona.trim() ? input.zona.trim() : null
     const limite = Math.max(1, Math.min(CANDIDATOS_MAXIMOS, input.limite ?? CANDIDATOS_MAXIMOS))
-    const items = this.ordenar(await this.enriquecerVisibles(input.oficio as OficioId), 'relevancia', zona).slice(0, limite)
+    const normalizarZona = (value: string) => normalizarTexto(value).replace(/^barrio\s+/u, '')
+    const visibles = await this.enriquecerVisibles(input.oficio as OficioId)
+    const compatibles = input.exigirCobertura && zona
+      ? visibles.filter(item => item.ubicacion.serviceZones.some(value => normalizarZona(value) === normalizarZona(zona)))
+      : visibles
+    const items = this.ordenar(compatibles, 'relevancia', zona).slice(0, limite)
     return {
       items: items.map((item) => ({ ...item.publico, distanceKm: zona ? distanciaEntreZonas(zona, item.ubicacion.primaryZone) : null })),
       reason: items.length > 0 ? 'ok' : 'no_providers',

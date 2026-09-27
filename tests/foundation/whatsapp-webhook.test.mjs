@@ -69,7 +69,7 @@ test('WHATSAPP ingest: out-of-order statuses never regress, other numbers ignore
     script = ({ messages }) => ({ content: 'Respuesta única a: ' + messages[messages.length - 1].content.replaceAll('\\n', ' / ') })
     // Two quick messages: one queued job, one turn, one answer.
     await deliver(inbound('5491155550010', 'Hola'))
-    await deliver(inbound('5491155550010', 'Necesito un electricista'))
+    await deliver(inbound('5491155550010', 'Gracias por responder'))
     const jobs = [...waStore.state.cola.values()].length
     const outcomes = []
     for (let i = 0; i < 3; i += 1) outcomes.push((await waWorker.procesarSiguiente()).outcome)
@@ -95,7 +95,7 @@ test('WHATSAPP ingest: out-of-order statuses never regress, other numbers ignore
   `)
   assert.equal(result.jobs, 1)
   assert.deepEqual(result.outcomes, ['processed', 'idle', 'idle'])
-  assert.deepEqual(result.answers, ['Respuesta única a: Hola / Necesito un electricista'])
+  assert.deepEqual(result.answers, ['Respuesta única a: Hola / Gracias por responder'])
   assert.equal(result.afterOld, 'delivered')
   assert.equal(result.final, 'read')
   assert.equal(result.foreignResult.accepted, 0)

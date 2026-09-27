@@ -223,6 +223,11 @@ export class ServicioIngresoWhatsapp {
       )
     const updatedConversation: ConversacionWhatsapp = {
       ...conversation,
+      // Recover chats stranded by the former automatic handoff. Explicit operator takeovers
+      // retain their owner and are never silently overridden.
+      ...(conversation.mode === 'human' && !conversation.operatorId ? {
+        mode: 'bot' as const, handoffReason: null, handoffAt: null,
+      } : {}),
       lastMessageAt: nowIso,
       lastInboundAt: nowIso,
       unreadCount: conversation.unreadCount + 1,
@@ -231,7 +236,7 @@ export class ServicioIngresoWhatsapp {
     await repositories.conversaciones.actualizar(updatedConversation, conversation.version)
     if (rateLimited) return 'rate_limited'
     // Human mode: the operator answers; the assistant is not scheduled.
-    if (conversation.mode === 'bot')
+    if (updatedConversation.mode === 'bot')
       await repositories.cola.encolar({
         jobId: `trabajo-conversacion-${randomUUID()}`,
         conversationId: conversation.conversationId,
