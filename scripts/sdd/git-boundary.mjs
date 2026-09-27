@@ -1,4 +1,14 @@
-import { basename, isAbsolute, resolve } from 'node:path'
+import * as nativePath from 'node:path'
+import { win32 } from 'node:path'
+
+// The boundary receives Windows paths (the repository lives on Windows). On Linux (CI) the native
+// path module would treat "C:\..." as a relative file name, so Windows-looking paths always use
+// win32 semantics and everything else uses the platform ones.
+const looksWindows = (value) => typeof value === 'string' && (/^[A-Za-z]:[\\/]/u.test(value) || value.includes('\\'))
+const flavor = (...values) => (values.some(looksWindows) ? win32 : nativePath)
+const resolve = (...values) => flavor(...values).resolve(...values)
+const basename = (value) => flavor(value).basename(value)
+const isAbsolute = (value) => flavor(value).isAbsolute(value)
 
 export const ALLOWED_REPOSITORY_NAME = 'Goldenrepo-js-py'
 export const FORBIDDEN_REPOSITORY_NAME = 'Goldenrepo-js_py'
