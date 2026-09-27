@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import type { MfaAuditEvent, MfaChallenge, MfaEnrollment, MfaRecoveryCode } from '../domain.js'
+import type { MfaAuditEvent, MfaChallenge, MfaEnrollment, MfaEnrollmentStatus, MfaRecoveryCode, MfaSessionElevation } from '../domain.js'
 import type {
   MfaAuditSink,
   MfaCodeVerifier,
@@ -14,6 +14,7 @@ export class InMemoryMfaStore implements MfaStore {
   readonly enrollments = new Map<string, MfaEnrollment>()
   readonly challenges = new Map<string, MfaChallenge>()
   readonly recoveryCodes = new Map<string, MfaRecoveryCode>()
+  readonly elevations = new Map<string, MfaSessionElevation>()
 
   async saveEnrollment(enrollment: MfaEnrollment): Promise<void> {
     this.enrollments.set(enrollment.id, enrollment)
@@ -37,6 +38,27 @@ export class InMemoryMfaStore implements MfaStore {
 
   async findRecoveryCode(codeDigest: string): Promise<MfaRecoveryCode | undefined> {
     return this.recoveryCodes.get(codeDigest)
+  }
+
+  async findEnrollmentForAccount(accountId: string, status: MfaEnrollmentStatus): Promise<MfaEnrollment | undefined> {
+    return [...this.enrollments.values()].reverse().find((item) => item.accountId === accountId && item.status === status)
+  }
+
+  async invalidateRecoveryCodes(accountId: string, at: number): Promise<void> {
+    for (const code of this.recoveryCodes.values()) if (code.accountId === accountId && !code.invalidatedAt) code.invalidatedAt = at
+  }
+
+  async saveElevation(elevation: MfaSessionElevation): Promise<void> {
+    this.elevations.set(elevation.sessionId, { ...elevation })
+  }
+
+  async findElevation(sessionId: string): Promise<MfaSessionElevation | undefined> {
+    const elevation = this.elevations.get(sessionId)
+    return elevation ? { ...elevation } : undefined
+  }
+
+  async revokeElevations(accountId: string, at: number): Promise<void> {
+    for (const elevation of this.elevations.values()) if (elevation.accountId === accountId && elevation.revokedAt === null) elevation.revokedAt = at
   }
 }
 

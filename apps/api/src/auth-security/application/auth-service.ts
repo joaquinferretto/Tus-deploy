@@ -442,6 +442,17 @@ export class AuthService {
     return { ok: true }
   }
 
+  // Re-authentication for sensitive actions (e.g. turning MFA off): 'ok' only when the current
+  // password matches an active password credential. Constant work when there is none.
+  async verifyCurrentPassword(accountId: string, password: string): Promise<'ok' | 'mismatch' | 'no_password'> {
+    const account = await this.dependencies.store.getAccount(accountId)
+    const credential = account ? await this.dependencies.store.findPasswordCredential(account.id) : undefined
+    const active = Boolean(credential && credential.status === CREDENTIAL_STATUS.ACTIVE)
+    const matches = await this.dependencies.passwordHasher.verify(password, active ? credential!.passwordHash : this.dependencies.passwordHasher.dummyHash)
+    if (!active) return 'no_password'
+    return matches ? 'ok' : 'mismatch'
+  }
+
   async changePassword(input: {
     actorId: string
     currentPassword: string

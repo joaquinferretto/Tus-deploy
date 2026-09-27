@@ -30,6 +30,10 @@ import { createAuthRouter } from './auth-security/http/auth-router.ts'
 import { createFederatedAuth, createFederatedAuthRouter, readGoogleAuthSettings } from './auth-security/federated/composition.ts'
 import type { FederatedPrismaClient } from './auth-security/federated/adapters/stores.ts'
 import { DurableIdentitySessionResolver } from './auth-security/adapters/durable-session-resolver.ts'
+import { createPrismaMfaService } from './auth-security/mfa/composition.ts'
+import type { PrismaMfaClient } from './auth-security/mfa/adapters/prisma-mfa-store.ts'
+import { MfaAdminSessionResolver } from './auth-security/mfa/admin-gate.ts'
+import { createMfaRouter } from './auth-security/mfa/http/mfa-router.ts'
 import type { PrismaIdentityClient } from './auth-security/adapters/postgres/prisma-identity-store.ts'
 import { createPrismaTenancyService } from './tenancy/composition.ts'
 import { createTenancyRouter } from './tenancy/http/tenancy-router.ts'
@@ -85,7 +89,11 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const auth = createPrismaAuthService(prisma as unknown as PrismaIdentityClient, {
     platformAdminEmails: leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS']),
   })
-  const sessions = new DurableIdentitySessionResolver(auth.store)
+  // Platform admin permissions are honored only for sessions that passed the second factor:
+  // every router below resolves sessions through the MFA gate (see mfa/admin-gate.ts).
+  const rawSessions = new DurableIdentitySessionResolver(auth.store)
+  const mfa = createPrismaMfaService(prisma as unknown as PrismaMfaClient, process.env)
+  const sessions = new MfaAdminSessionResolver(rawSessions, mfa)
   // Google sign-in/sign-up: same account model and session type as password sign-in.
   const federated = createFederatedAuth({
     auth: auth.service,
@@ -122,6 +130,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
       '/auth/oauth/exchange',
       '/auth/oauth/signup',
       '/auth/oauth/link',
+      '/auth/mfa',
     ],
     authRateLimitMiddleware
   )
@@ -140,6 +149,14 @@ export function createApp(options: CreateAppOptions = {}): Application {
   )
   app.use(createVersionRouter())
   app.use(createAuthRouter({ service: auth.service, sessions }))
+  app.use(
+    createMfaRouter({
+      service: mfa,
+      sessions: rawSessions,
+      accounts: auth.service,
+      reauthenticate: (accountId, password) => auth.service.verifyCurrentPassword(accountId, password),
+    })
+  )
   app.use(createFederatedAuthRouter(federated.service, federated.webBaseUrl ?? process.env['TUS_WEB_BASE_URL'] ?? null))
   app.use(createTenancyRouter({ service: tenancy.service, sessions }))
   const tusRoutesEnabled =
