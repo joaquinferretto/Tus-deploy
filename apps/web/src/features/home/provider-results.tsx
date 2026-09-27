@@ -5,7 +5,7 @@ import type { PrestadorPublico } from '@factory/contracts'
 import { WorkerCard } from '../directory/worker-card'
 import styles from './home.module.css'
 
-export function ProviderResults({ workers, status, selectedId, onSelect }: { workers: PrestadorPublico[]; status: 'loading' | 'error' | 'success'; selectedId: string | null; onSelect: (id: string) => void }): React.ReactNode {
+export function ProviderResults({ workers, status, selectedId, onSelect, filtered = true }: { workers: PrestadorPublico[]; status: 'loading' | 'error' | 'success'; selectedId: string | null; onSelect: (id: string) => void; filtered?: boolean }): React.ReactNode {
   return (
     <section aria-labelledby="prestadores-titulo" className={styles.section} id="prestadores">
       <div className={styles.sectionHeader}>
@@ -15,7 +15,15 @@ export function ProviderResults({ workers, status, selectedId, onSelect }: { wor
         </div>
         <a className={styles.seeAll} href="/trabajadores">Ver directorio completo →</a>
       </div>
-      {status === 'loading' ? <p className={styles.state} role="status">Buscando prestadores…</p> : status === 'error' ? <p className={styles.state} role="alert">No pudimos cargar los prestadores en este momento.</p> : workers.length === 0 ? <p className={styles.state} role="status">No encontramos prestadores con esos filtros.</p> : <ul className={styles.providerGrid}>{workers.slice(0, 6).map((worker) => <li className={worker.id === selectedId ? styles.providerSelected : undefined} key={worker.id} onClick={() => onSelect(worker.id)}><WorkerCard worker={worker} /></li>)}</ul>}
+      {status === 'loading' ? <p className={styles.state} role="status">Buscando prestadores…</p> : status === 'error' ? <p className={styles.state} role="alert">No pudimos cargar los prestadores en este momento.</p> : workers.length === 0 ? (
+        filtered ? (
+          <p className={styles.state} role="status">No encontramos prestadores con esos filtros.</p>
+        ) : (
+          <p className={styles.state} role="status">
+            Todavía no hay prestadores publicados. ¿Sos profesional? <a href="/prestador/perfil-publico">Creá tu perfil público</a> y aparecé acá.
+          </p>
+        )
+      ) : <ul className={styles.providerGrid}>{workers.slice(0, 6).map((worker) => <li className={worker.id === selectedId ? styles.providerSelected : undefined} key={worker.id} onClick={() => onSelect(worker.id)}><WorkerCard worker={worker} /></li>)}</ul>}
     </section>
   )
 }

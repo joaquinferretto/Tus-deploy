@@ -27,6 +27,7 @@ test('PR3 exposes coherent Argentina-first manifest metadata and real icon entri
   assert.equal(result.short_name, 'TUS')
   assert.match(result.description, /Argentina/i)
   assert.equal(result.start_url, '/tus')
+  assert.ok(result.start_url.startsWith(result.scope), 'start_url must be within scope')
   assert.equal(result.display, 'standalone')
   assert.equal(result.background_color, '#f4f0e7')
   assert.equal(result.theme_color, '#f4f0e7')

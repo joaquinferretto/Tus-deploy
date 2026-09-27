@@ -66,6 +66,8 @@ export function WorkerDirectory(): React.ReactNode {
   }
 
   const loadingFirstPage = results.isPending && page === 1
+  // Sin filtros, vacío significa que todavía no hay profesionales publicados.
+  const filtered = Boolean(debouncedQuery.trim() || profession || zone || verified || today)
   return (
     <div className={styles.container}>
       <h1 className={styles.title}>Encontrá al profesional que necesitás</h1>
@@ -161,11 +163,17 @@ export function WorkerDirectory(): React.ReactNode {
           </div>
         ) : items.length === 0 ? (
           <div className={styles.state} role="status">
-            No encontramos profesionales con esos filtros.
+            {filtered ? 'No encontramos profesionales con esos filtros.' : 'Todavía no hay profesionales publicados en TUS. Contale tu problema al asistente o publicá tu solicitud en el mapa para que se ofrezcan.'}
             <div className={styles.stateActions}>
-              <button className={homeStyles.buttonSecondary} onClick={clear} type="button">
-                Ver todos
-              </button>
+              {filtered ? (
+                <button className={homeStyles.buttonSecondary} onClick={clear} type="button">
+                  Ver todos
+                </button>
+              ) : (
+                <a className={homeStyles.buttonSecondary} href="/publicar">
+                  Publicar mi solicitud
+                </a>
+              )}
               <a className={homeStyles.buttonPrimary} href="/asistente">
                 Contale tu problema al asistente
               </a>

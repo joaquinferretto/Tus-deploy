@@ -9,7 +9,9 @@ export default function manifest(): MetadataRoute.Manifest {
     lang: TUS_LOCALE,
     dir: 'ltr',
     start_url: '/tus',
-    scope: '/tus/',
+    // Todo el sitio: /mi-perfil, /mis-solicitudes y /asistente están fuera de /tus. El start_url
+    // tiene que quedar dentro del scope (si no, el navegador ignora el scope).
+    scope: '/',
     display: 'standalone',
     background_color: '#f4f0e7',
     theme_color: '#f4f0e7',

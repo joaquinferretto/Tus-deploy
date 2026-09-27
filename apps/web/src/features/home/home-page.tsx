@@ -35,6 +35,8 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
   const providerStatus = providers.isPending ? 'loading' : providers.isError ? 'error' : 'success'
   const requestData = requests.data ?? []
   const requestStatus = requests.isPending ? 'loading' : requests.isError ? 'error' : 'success'
+  // Sin filtros, una lista vacía significa que todavía no hay prestadores publicados (no "con estos filtros").
+  const filtered = Boolean(filters.query || filters.profession || filters.zone)
 
   function selectProvider(id: string) {
     setSelectedProviderId(id)
@@ -70,16 +72,16 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
             />
             <div className={styles.mapResults}>
               <span role="status" aria-live="polite">
-                {providerStatus === 'loading' ? 'Buscando prestadores en el mapa…' : providerStatus === 'error' ? 'No pudimos cargar el mapa de prestadores.' : providerData.length === 0 ? 'No hay prestadores con estos filtros.' : `${providerData.length} ${providerData.length === 1 ? 'prestador en el mapa' : 'prestadores en el mapa'}`}
+                {providerStatus === 'loading' ? 'Buscando prestadores en el mapa…' : providerStatus === 'error' ? 'No pudimos cargar el mapa de prestadores.' : providerData.length === 0 ? (filtered ? 'No hay prestadores con estos filtros.' : 'Todavía no hay prestadores publicados en TUS.') : `${providerData.length} ${providerData.length === 1 ? 'prestador en el mapa' : 'prestadores en el mapa'}`}
               </span>
               {providerStatus === 'error' ? <button type="button" onClick={() => void providers.refetch()}>Reintentar</button> : null}
-              {filters.query || filters.profession || filters.zone ? <button type="button" onClick={() => changeFilters({ query: '', profession: '', zone: '' })}>Limpiar filtros</button> : null}
+              {filtered ? <button type="button" onClick={() => changeFilters({ query: '', profession: '', zone: '' })}>Limpiar filtros</button> : null}
               <a href="#prestadores">Ver prestadores</a>
             </div>
           </div>
         </section>
 
-        <ProviderResults onSelect={selectProvider} selectedId={selectedProviderId} status={providerStatus} workers={providerData} />
+        <ProviderResults filtered={filtered} onSelect={selectProvider} selectedId={selectedProviderId} status={providerStatus} workers={providerData} />
 
         <RecentRequests
           onHover={() => undefined}
@@ -102,7 +104,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
             <li className={styles.step}>
               <span className={styles.stepNumber}>2</span>
               <h3 className={styles.stepTitle}>Elegís al profesional</h3>
-              <p className={styles.rowText}>Recibís presupuestos de profesionales verificados de tu zona.</p>
+              <p className={styles.rowText}>Elegís un profesional del directorio o aceptás a quien se ofrezca para tu solicitud. Siempre decidís vos.</p>
             </li>
             <li className={styles.step}>
               <span className={styles.stepNumber}>3</span>
@@ -130,6 +132,8 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
         <div className={styles.footerInner}>
           <span>© TUS · Servicios cerca tuyo</span>
           <nav aria-label="Ayuda" className={styles.footerLinks}>
+            {/* Preguntas sobre cómo funciona TUS: el asistente responde con el conocimiento público. */}
+            <a href="/asistente">Preguntas frecuentes</a>
             <a href="/sign-in">Iniciar sesión</a>
             <a href="/registro">Crear cuenta</a>
             <a href="/recovery">Recuperar acceso</a>
