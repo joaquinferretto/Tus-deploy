@@ -9,6 +9,7 @@ import {
 } from './presentation/middleware/rate-limit.ts'
 import { corsMiddleware } from './presentation/middleware/cors.ts'
 import { createHealthRouter, healthRouter } from './presentation/routes/health.ts'
+import { createVersionRouter } from './presentation/routes/version.ts'
 import { createTusIntegrationRouter } from './tus/integration/index.ts'
 import { createTusHttpRouter } from './tus/http/router.ts'
 import { createPrismaTusApplication } from './tus/composition/index.ts'
@@ -134,6 +135,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
         })
       : healthRouter
   )
+  app.use(createVersionRouter())
   app.use(createAuthRouter({ service: auth.service, sessions }))
   app.use(createFederatedAuthRouter(federated.service, federated.webBaseUrl ?? process.env['TUS_WEB_BASE_URL'] ?? null))
   app.use(createTenancyRouter({ service: tenancy.service, sessions }))

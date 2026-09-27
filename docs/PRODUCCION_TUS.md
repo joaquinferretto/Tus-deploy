@@ -585,6 +585,13 @@ adaptador esté configurado.
 
 ## 8. Smoke posterior al despliegue
 
+0. **Qué build corre:** `GET https://api.tusservicios.shop/version` → `{ service, commit, builtAt, startedAt }`. `commit` tiene
+   que ser el SHA de `alfajoresnande/Tus-deploy` main (`gh api repos/alfajoresnande/Tus-deploy/commits/main --jq .sha`).
+   Si el SHA es viejo, Hostinger no desplegó ese commit (revisar el build en el panel); si el SHA es el nuevo pero
+   `startedAt` es anterior al deploy, el proceso no se reinició (reiniciar la app). El SHA sale de `git rev-parse HEAD`
+   en el build (`scripts/build-api.mjs` → `dist/build-info.json`) o, sin `.git`, de `TUS_BUILD_SHA`/`SOURCE_COMMIT`.
+   Vercel: `gh api repos/joaquinferretto/Tus-deploy/deployments?sha=<SHA>` debe tener un deployment `Production` con estado
+   `success`. Un push exitoso no prueba un deploy.
 1. `/health` 200 y `/ready` 200.
 2. Web carga `/`, `/sign-in`, `/tus/mercado` y `/tus/prestador` sin errores de CORS en la consola.
 3. Login con una cuenta del equipo verificada.
