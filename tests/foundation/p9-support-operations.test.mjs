@@ -115,6 +115,8 @@ test('PR8 validates typed WhatsApp actions, sender authorization, quote freshnes
       now: () => now,
     })
     const staff = ${JSON.stringify(context())}
+     await service.recordConsent(staff, { recipientType: 'customer', recipientId: '+549111', source: 'operator_console', granted: true })
+     await service.recordConsent(staff, { recipientType: 'customer', recipientId: '+549999', source: 'operator_console', granted: true })
     const quote = await service.execute({ ...staff, senderId: '+549111', action: { type: 'quote', tenantId: 'tenant-a' }, consent: true, idempotencyKey: 'wa-quote-pr8', requestHash: 'quote-pr8-v1' })
     const confirmation = await service.execute({ ...staff, senderId: '+549111', action: { type: 'confirm', tenantId: 'tenant-a', confirmationId: quote.confirmationId }, confirmationId: quote.confirmationId, consent: true, idempotencyKey: 'wa-confirm-pr8', requestHash: 'confirm-pr8-v1' })
     const replay = await service.execute({ ...staff, senderId: '+549111', action: { type: 'confirm', tenantId: 'tenant-a', confirmationId: quote.confirmationId }, confirmationId: quote.confirmationId, consent: true, idempotencyKey: 'wa-confirm-pr8', requestHash: 'confirm-pr8-v1' })
@@ -148,6 +150,7 @@ test('PR8 fails closed for stale WhatsApp quotes, unsupported actions, missing c
       now: () => Date.parse('2026-08-27T12:00:00.000Z'),
     })
     const staff = ${JSON.stringify(context())}
+     await service.recordConsent(staff, { recipientType: 'customer', recipientId: '+549111', source: 'operator_console', granted: true })
     const quote = await service.execute({ ...staff, senderId: '+549111', action: { type: 'quote', tenantId: 'tenant-a' }, consent: true, idempotencyKey: 'wa-stale-quote', requestHash: 'stale-quote-v1' })
     currentPrice = 2000
     const stale = await service.execute({ ...staff, senderId: '+549111', action: { type: 'confirm', tenantId: 'tenant-a', confirmationId: quote.confirmationId }, confirmationId: quote.confirmationId, consent: true, idempotencyKey: 'wa-stale-confirm', requestHash: 'stale-confirm-v1' })
@@ -234,7 +237,7 @@ test('PR8 authenticated local HTTP smoke keeps support, reporting, and WhatsApp 
     const { createTusApplication } = (await import('./apps/api/src/tus/composition/index.ts')).default
     const { InMemoryTusSessionResolver } = (await import('./apps/api/src/tus/adapters/in-memory.ts')).default
     const { createTusHttpRouter } = (await import('./apps/api/src/tus/http/router.ts')).default
-    const application = createTusApplication()
+    const application = createTusApplication({ whatsappAuthorizedSenders: { 'tenant-a': ['+549111'] } })
     await application.marketplace.store.commitments.saveMany([{ commitmentId: 'commitment-http-pr8', tenantId: 'tenant-a' }])
     const sessions = new InMemoryTusSessionResolver()
     sessions.add('pr8-token', ${JSON.stringify(context())})
@@ -247,8 +250,10 @@ test('PR8 authenticated local HTTP smoke keeps support, reporting, and WhatsApp 
       const headers = { authorization: 'Bearer pr8-token', 'x-correlation-id': 'corr-http-pr8', 'content-type': 'application/json' }
       const supportResponse = await fetch('http://127.0.0.1:' + port + '/tus/v1/soporte/cases', { method: 'POST', headers, body: JSON.stringify({ caseId: 'case-http-pr8', commitmentId: 'commitment-http-pr8', category: 'delivery_incident' }) })
       const reportResponse = await fetch('http://127.0.0.1:' + port + '/tus/v1/reports/operations', { headers })
+      const consentResponse = await fetch('http://127.0.0.1:' + port + '/tus/v1/whatsapp/consent', { method: 'POST', headers, body: JSON.stringify({ recipientType: 'customer', recipientId: '+549111', source: 'spoofed-client-source', granted: true }) })
       const whatsappResponse = await fetch('http://127.0.0.1:' + port + '/tus/v1/whatsapp/actions', { method: 'POST', headers: { ...headers, 'idempotency-key': 'wa-http-pr8' }, body: JSON.stringify({ action: { type: 'search', tenantId: 'tenant-a' }, senderId: '+549111', consent: true, requestHash: 'http-pr8-v1' }) })
-      console.log(JSON.stringify({ supportStatus: supportResponse.status, support: await supportResponse.json(), reportStatus: reportResponse.status, report: await reportResponse.json(), whatsappStatus: whatsappResponse.status, whatsapp: await whatsappResponse.json() }))
+       const consent = await consentResponse.json()
+       console.log(JSON.stringify({ supportStatus: supportResponse.status, support: await supportResponse.json(), reportStatus: reportResponse.status, report: await reportResponse.json(), consentStatus: consentResponse.status, consent, whatsappStatus: whatsappResponse.status, whatsapp: await whatsappResponse.json() }))
     } finally {
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
     }
@@ -258,7 +263,10 @@ test('PR8 authenticated local HTTP smoke keeps support, reporting, and WhatsApp 
   assert.equal(result.support.tenantId, 'tenant-a')
   assert.equal(result.reportStatus, 200)
   assert.equal(result.report.tenantId, 'tenant-a')
+   assert.equal(result.consentStatus, 200)
+   assert.equal(result.consent.source, 'operator_console')
   assert.equal(result.whatsappStatus, 200)
+  assert.equal(result.whatsapp.status, 'completed')
   assert.equal(result.whatsapp.credentialsCollected, false)
 })
 

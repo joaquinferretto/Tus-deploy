@@ -40,12 +40,12 @@ test('phase 7 governs consent, template variables, opt-out, support handoff, aud
       supportHandoff: async ({ reason }) => ({ handoffId: 'support-' + reason }),
     })
     const context = ${JSON.stringify(staffContext())}
-    const consent = await service.recordConsent(context, { recipientType: 'customer', recipientId: 'customer-a', source: 'checkout', granted: true })
+    const consent = await service.recordConsent(context, { recipientType: 'customer', recipientId: 'customer-a', source: 'operator_console', granted: true })
     const queued = await service.sendTemplate(context, { recipientType: 'customer', recipientId: 'customer-a', template: 'order_status', templateVersion: '1', variables: { orderId: 'order-a', status: 'ready', token: 'secret=do-not-send' }, idempotencyKey: 'wa-template-1', requestHash: 'hash-1' })
     let templateConflict = ''
     try { await service.sendTemplate(context, { recipientType: 'customer', recipientId: 'customer-a', template: 'order_status', templateVersion: '1', variables: { orderId: 'order-other', status: 'ready' }, idempotencyKey: 'wa-template-1', requestHash: 'hash-other' }) } catch (error) { templateConflict = error.code }
     const handoff = await service.handoffToSupport(context, { senderId: 'customer-a', reason: 'refund_request' })
-    const optedOut = await service.optOut(context, { recipientType: 'customer', recipientId: 'customer-a', source: 'whatsapp' })
+    const optedOut = await service.optOut(context, { recipientType: 'customer', recipientId: 'customer-a' })
     let blocked = ''
     try { await service.sendTemplate(context, { recipientType: 'customer', recipientId: 'customer-a', template: 'order_status', templateVersion: '1', variables: { orderId: 'order-b', status: 'ready' }, idempotencyKey: 'wa-template-2', requestHash: 'hash-2' }) } catch (error) { blocked = error.code }
    console.log(JSON.stringify({ consent, queued, templateConflict, handoff, optedOut, blocked, outbox: store.listOutbox('tenant-a'), audits: store.listAudits('tenant-a') }))

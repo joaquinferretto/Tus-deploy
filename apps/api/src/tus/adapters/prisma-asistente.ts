@@ -22,6 +22,7 @@ import {
 } from '../asistente/modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from '../asistente/puertos.ts'
 import { isSerializationFailure } from './prisma-work.ts'
+import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
 
 type Fila = Record<string, unknown>
 
@@ -41,6 +42,16 @@ export interface ClientePrismaAsistente {
   tokenVinculacionWhatsapp: DelegadoPrismaAsistente
   confirmacionAsistente: DelegadoPrismaAsistente
   auditoriaAsistente: DelegadoPrismaAsistente
+  consentimientoWhatsApp?: {
+    findUnique(input: {
+      where: { tenantId_tipoDestinatario_destinatarioId: { tenantId: string; tipoDestinatario: string; destinatarioId: string } }
+    }): Promise<Fila | null>
+    upsert(input: {
+      where: { tenantId_tipoDestinatario_destinatarioId: { tenantId: string; tipoDestinatario: string; destinatarioId: string } }
+      create: Fila
+      update: Fila
+    }): Promise<Fila>
+  }
   $transaction<T>(
     callback: (client: ClientePrismaAsistente) => Promise<T>,
     options?: { isolationLevel?: 'Serializable' }
@@ -474,6 +485,64 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
             correlacionId: event.correlationId,
             metadata: event.metadata,
             fechaCreacion: new Date(event.createdAt),
+          },
+        })
+      },
+    },
+    consentimientosWhatsapp: {
+      buscar: async (tenantId, recipientType, recipientId) => {
+        const row = await client.consentimientoWhatsApp?.findUnique({
+          where: {
+            tenantId_tipoDestinatario_destinatarioId: {
+              tenantId,
+              tipoDestinatario: recipientType,
+              destinatarioId: recipientId,
+            },
+          },
+        })
+        if (!row) return null
+        return {
+          consentId: String(row['id']),
+          tenantId: String(row['tenantId']),
+          recipientType: String(row['tipoDestinatario']) as ConsentimientoWhatsApp['recipientType'],
+          recipientId: String(row['destinatarioId']),
+          status: String(row['estado']) as ConsentimientoWhatsApp['status'],
+          source: String(row['origen']),
+          grantedAt: new Date(String(row['fechaOtorgamiento'])).toISOString(),
+          revokedAt: row['fechaRevocacion'] ? new Date(String(row['fechaRevocacion'])).toISOString() : null,
+          updatedAt: new Date(String(row['fechaActualizacion'])).toISOString(),
+          retentionUntil: new Date(String(row['fechaActualizacion'])).toISOString(),
+        }
+      },
+      guardar: async (value: ConsentimientoWhatsApp) => {
+        if (!client.consentimientoWhatsApp) return
+        await client.consentimientoWhatsApp.upsert({
+          where: {
+            tenantId_tipoDestinatario_destinatarioId: {
+              tenantId: value.tenantId,
+              tipoDestinatario: value.recipientType,
+              destinatarioId: value.recipientId,
+            },
+          },
+          create: {
+            id: value.consentId,
+            tenantId: value.tenantId,
+            destinatarioId: value.recipientId,
+            tipoDestinatario: value.recipientType,
+            estado: value.status,
+            origen: value.source,
+            fechaOtorgamiento: new Date(value.grantedAt),
+            fechaRevocacion: null,
+            fechaCreacion: new Date(value.grantedAt),
+            fechaActualizacion: new Date(value.updatedAt),
+          },
+          update: {
+            tipoDestinatario: value.recipientType,
+            estado: value.status,
+            origen: value.source,
+            fechaOtorgamiento: new Date(value.grantedAt),
+            fechaRevocacion: null,
+            fechaActualizacion: new Date(value.updatedAt),
           },
         })
       },

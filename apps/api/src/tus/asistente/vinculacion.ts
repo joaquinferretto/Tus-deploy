@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { ErrorAsistente, enmascararWaId, type ContactoWhatsapp } from './modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
+import { WHATSAPP_CONSENT_ORIGINS, crearConsentimientoWhatsApp } from '../whatsapp/consent.ts'
 
 export const TTL_TOKEN_VINCULACION_MS = 10 * 60 * 1000
 
@@ -133,6 +134,22 @@ export class ServicioVinculacionWhatsapp {
         context.accountId,
         context.correlationId,
         { tenantId: context.tenantId }
+      )
+      const consent = crearConsentimientoWhatsApp({
+        tenantId: context.tenantId,
+        recipientType: 'customer',
+        recipientId: contact.waId,
+        source: WHATSAPP_CONSENT_ORIGINS.WEB_LINKING,
+        now: this.now(),
+      })
+      await repositories.consentimientosWhatsapp.guardar(consent)
+      await this.auditar(
+        repositories,
+        'whatsapp.consent.recorded',
+        next,
+        context.accountId,
+        context.correlationId,
+        { origin: WHATSAPP_CONSENT_ORIGINS.WEB_LINKING, purpose: 'conversation' }
       )
       return { linked: true, whatsappMasked: enmascararWaId(contact.waId) }
     })

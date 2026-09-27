@@ -33,11 +33,13 @@ test('WU6 enforces typed WhatsApp actions, consent, expiring confirmation, and t
     const { TusWhatsAppService, InMemoryWhatsAppActionStore } = (await import('./apps/api/src/tus/whatsapp/index.ts')).default
     const service = new TusWhatsAppService({
       store: new InMemoryWhatsAppActionStore(),
+      authorizedSenders: { 'tenant-a': ['customer-a'] },
       discover: async (tenantId) => tenantId === 'tenant-a' ? [{ listingId: 'listing-a', tenantId, name: 'Haircut', price: 1200, currency: 'ARS' }] : [],
       commitments: async (tenantId, commitmentId) => tenantId === 'tenant-a' && commitmentId === 'commitment-a' ? { commitmentId, tenantId, status: 'pending' } : null,
       now: () => Date.parse('2026-08-26T12:00:00.000Z'),
     })
     const staff = ${JSON.stringify(context())}
+     await service.recordConsent(staff, { recipientType: 'customer', recipientId: 'customer-a', source: 'operator_console', granted: true })
     const search = await service.execute({ ...staff, senderId: 'customer-a', action: { type: 'search', tenantId: 'tenant-a' }, consent: true, idempotencyKey: 'wa-search', requestHash: 'search-v1' })
     const quote = await service.execute({ ...staff, senderId: 'customer-a', action: { type: 'quote', tenantId: 'tenant-a' }, consent: true, idempotencyKey: 'wa-quote', requestHash: 'quote-v1' })
     const confirmation = await service.execute({ ...staff, senderId: 'customer-a', action: { type: 'confirm', tenantId: 'tenant-a', confirmationId: quote.confirmationId }, confirmationId: quote.confirmationId, consent: true, idempotencyKey: 'wa-confirm', requestHash: 'confirm-v1' })
@@ -60,8 +62,10 @@ test('WU6 enforces typed WhatsApp actions, consent, expiring confirmation, and t
 test('WU6 hands off sensitive WhatsApp actions and never collects credentials', () => {
   const result = runTypeScriptScenario(`
     const { TusWhatsAppService, InMemoryWhatsAppActionStore } = (await import('./apps/api/src/tus/whatsapp/index.ts')).default
-    const service = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), now: () => Date.parse('2026-08-26T12:00:00.000Z') })
-    const handoff = await service.execute({ ...${JSON.stringify(context())}, senderId: 'customer-a', action: { type: 'refund', tenantId: 'tenant-a' }, consent: true, idempotencyKey: 'wa-refund', requestHash: 'refund-v1' })
+    const service = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), authorizedSenders: { 'tenant-a': ['customer-a'] }, now: () => Date.parse('2026-08-26T12:00:00.000Z') })
+    const staff = ${JSON.stringify(context())}
+     await service.recordConsent(staff, { recipientType: 'customer', recipientId: 'customer-a', source: 'operator_console', granted: true })
+    const handoff = await service.execute({ ...staff, senderId: 'customer-a', action: { type: 'refund', tenantId: 'tenant-a' }, consent: true, idempotencyKey: 'wa-refund', requestHash: 'refund-v1' })
     console.log(JSON.stringify(handoff))
   `)
 
@@ -69,6 +73,24 @@ test('WU6 hands off sensitive WhatsApp actions and never collects credentials', 
   assert.equal(result.reason, 'sensitive_action_requires_authenticated_handoff')
   assert.equal(result.credentialsCollected, false)
   assert.equal(result.mutated, false)
+})
+
+test('WU6 fails closed when sender authorization or persisted consent is unavailable', () => {
+  const result = runTypeScriptScenario(`
+    const { TusWhatsAppService, InMemoryWhatsAppActionStore } = (await import('./apps/api/src/tus/whatsapp/index.ts')).default
+    const staff = ${JSON.stringify(context())}
+    const missingPolicy = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), now: () => 1_700_000_000_000 })
+     await missingPolicy.recordConsent(staff, { recipientType: 'customer', recipientId: 'customer-a', source: 'operator_console', granted: true })
+    const senderDenied = await missingPolicy.execute({ ...staff, senderId: 'customer-a', action: { type: 'search', tenantId: 'tenant-a' }, consent: true, idempotencyKey: 'wa-policy-missing', requestHash: 'policy-missing-v1' })
+    const missingConsent = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), authorizedSenders: { 'tenant-a': ['customer-a'] }, now: () => 1_700_000_000_000 })
+    const consentDenied = await missingConsent.execute({ ...staff, senderId: 'customer-a', action: { type: 'search', tenantId: 'tenant-a' }, consent: true, idempotencyKey: 'wa-consent-missing', requestHash: 'consent-missing-v1' })
+    console.log(JSON.stringify({ senderDenied, consentDenied }))
+  `)
+
+  assert.equal(result.senderDenied.reason, 'sender_not_authorized')
+  assert.equal(result.consentDenied.reason, 'messaging_consent_required')
+  assert.equal(result.senderDenied.mutated, false)
+  assert.equal(result.consentDenied.mutated, false)
 })
 
 test('WU6 supports bilateral evidence, auditable timelines, and compensating dispute outcomes', () => {
@@ -155,7 +177,7 @@ test('WU6 emits correlated redacted telemetry and alertable tenant-boundary sign
 
 test('WU6 exposes operations routes and SEO foundations without enabling financial release', () => {
   const source = readFileSync(join(root, 'apps/api/src/tus/http/router.ts'), 'utf8')
-  const page = readFileSync(join(root, 'apps/web/src/app/tus/page.tsx'), 'utf8')
+  const page = readFileSync(join(root, 'apps/web/src/app/tus/tus-operations.tsx'), 'utf8')
   const observability = readFileSync(join(root, 'packages/observability/src/index.ts'), 'utf8')
   assert.match(source, /whatsapp\/actions/)
   assert.match(source, /support\/cases/)

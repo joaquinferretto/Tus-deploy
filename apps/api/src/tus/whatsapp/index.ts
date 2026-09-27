@@ -2,6 +2,15 @@ import type { AccionWhatsApp } from '@factory/contracts'
 import type { TusOperationsTelemetry } from '@factory/observability'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
+import {
+  WHATSAPP_CONSENT_ORIGINS,
+  WHATSAPP_CONSENT_STATUS,
+  WHATSAPP_RECIPIENT_TYPES,
+  normalizarOrigenConsentimiento,
+  type ConsentimientoWhatsApp,
+  type EstadoConsentimientoWhatsApp,
+  type TipoDestinatarioWhatsApp,
+} from './consent.ts'
 
 const ACTION_STATUS = {
   COMPLETED: 'completed',
@@ -19,23 +28,9 @@ const SUPPORTED_ACTIONS = new Set<AccionWhatsApp['type']>([
   'confirm',
 ])
 
-const WHATSAPP_RECIPIENT_TYPES = {
-  TENANT: 'tenant',
-  MERCHANT: 'merchant',
-  CUSTOMER: 'customer',
-} as const
-
-const WHATSAPP_CONSENT_STATUS = {
-  ACTIVE: 'active',
-  REVOKED: 'revoked',
-} as const
-
 const WHATSAPP_OUTBOX_STATUS = {
   PENDING: 'pending',
 } as const
-
-type TipoDestinatarioWhatsApp = (typeof WHATSAPP_RECIPIENT_TYPES)[keyof typeof WHATSAPP_RECIPIENT_TYPES]
-type EstadoConsentimientoWhatsApp = (typeof WHATSAPP_CONSENT_STATUS)[keyof typeof WHATSAPP_CONSENT_STATUS]
 
 type EstadoAccionWhatsApp = (typeof ACTION_STATUS)[keyof typeof ACTION_STATUS]
 
@@ -93,19 +88,6 @@ export interface RegistroAuditoriaAccionWhatsApp {
   correlationId: string
   createdAt: string
   retentionUntil?: string
-}
-
-export interface ConsentimientoWhatsApp {
-  consentId: string
-  tenantId: string
-  recipientType: TipoDestinatarioWhatsApp
-  recipientId: string
-  status: EstadoConsentimientoWhatsApp
-  source: string
-  grantedAt: string
-  revokedAt: string | null
-  updatedAt: string
-  retentionUntil: string
 }
 
 export interface EntradaListaPermitidaPlantillaWhatsApp {
@@ -176,6 +158,7 @@ export interface PuertoAlmacenAccionWhatsApp {
   consumeConfirmation(tenantId: string, confirmationId: string, senderId: string, now: number): MaybePromise<boolean>
   registrarAuditoriaWhatsApp(value: RegistroAuditoriaAccionWhatsApp): MaybePromise<void>
   listAudits(tenantId: string): RegistroAuditoriaAccionWhatsApp[]
+  isSenderAuthorized?(tenantId: string, senderId: string, now: number): MaybePromise<boolean>
   saveConsent?(value: ConsentimientoWhatsApp): MaybePromise<void>
   getConsent?(tenantId: string, recipientType: TipoDestinatarioWhatsApp, recipientId: string): MaybePromise<ConsentimientoWhatsApp | null>
   saveTemplateMessage?(value: MensajePlantillaWhatsApp): MaybePromise<void>
@@ -277,6 +260,9 @@ export class InMemoryWhatsAppActionStore implements PuertoAlmacenAccionWhatsApp 
 }
 
 interface ClientePrismaWhatsApp {
+  contactoWhatsapp?: {
+    findFirst(input: { where: { waId: string } }): Promise<Record<string, unknown> | null>
+  }
   accionWhatsApp: {
     findUnique(input: { where: { tenantId_claveIdempotencia: { tenantId: string; claveIdempotencia: string } } }): Promise<Record<string, unknown> | null>
     findFirst(input: { where: { claveIdempotencia: string } }): Promise<Record<string, unknown> | null>
@@ -292,8 +278,8 @@ interface ClientePrismaWhatsApp {
     create(input: { data: Record<string, unknown> }): Promise<Record<string, unknown>>
   }
   consentimientoWhatsApp?: {
-    upsert(input: { where: { tenantId_destinatarioId: { tenantId: string; destinatarioId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
-    findUnique(input: { where: { tenantId_destinatarioId: { tenantId: string; destinatarioId: string } } }): Promise<Record<string, unknown> | null>
+    upsert(input: { where: { tenantId_tipoDestinatario_destinatarioId: { tenantId: string; tipoDestinatario: string; destinatarioId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
+    findUnique(input: { where: { tenantId_tipoDestinatario_destinatarioId: { tenantId: string; tipoDestinatario: string; destinatarioId: string } } }): Promise<Record<string, unknown> | null>
   }
   mensajeWhatsApp?: {
     upsert(input: { where: { tenantId_mensajeId: { tenantId: string; mensajeId: string } }; create: Record<string, unknown>; update: Record<string, unknown> }): Promise<Record<string, unknown>>
@@ -370,17 +356,25 @@ export class PrismaWhatsAppActionStore implements PuertoAlmacenAccionWhatsApp {
   async saveConsent(value: ConsentimientoWhatsApp): Promise<void> {
     if (!this.client.consentimientoWhatsApp) return
     await this.client.consentimientoWhatsApp.upsert({
-      where: { tenantId_destinatarioId: { tenantId: value.tenantId, destinatarioId: value.recipientId } },
+      where: { tenantId_tipoDestinatario_destinatarioId: { tenantId: value.tenantId, tipoDestinatario: value.recipientType, destinatarioId: value.recipientId } },
       create: { id: value.consentId, tenantId: value.tenantId, destinatarioId: value.recipientId, tipoDestinatario: value.recipientType, estado: value.status, origen: value.source, fechaOtorgamiento: new Date(value.grantedAt), fechaRevocacion: value.revokedAt ? new Date(value.revokedAt) : null, fechaCreacion: new Date(value.grantedAt), fechaActualizacion: new Date(value.updatedAt) },
       update: { tipoDestinatario: value.recipientType, estado: value.status, origen: value.source, fechaOtorgamiento: new Date(value.grantedAt), fechaRevocacion: value.revokedAt ? new Date(value.revokedAt) : null, fechaActualizacion: new Date(value.updatedAt) },
     })
   }
 
-  async getConsent(tenantId: string, _recipientType: TipoDestinatarioWhatsApp, recipientId: string): Promise<ConsentimientoWhatsApp | null> {
+  async getConsent(tenantId: string, recipientType: TipoDestinatarioWhatsApp, recipientId: string): Promise<ConsentimientoWhatsApp | null> {
     if (!this.client.consentimientoWhatsApp) return null
-    const row = await this.client.consentimientoWhatsApp.findUnique({ where: { tenantId_destinatarioId: { tenantId, destinatarioId: recipientId } } })
+    const row = await this.client.consentimientoWhatsApp.findUnique({ where: { tenantId_tipoDestinatario_destinatarioId: { tenantId, tipoDestinatario: recipientType, destinatarioId: recipientId } } })
     if (!row) return null
     return { consentId: String(row['id']), tenantId: String(row['tenantId']), recipientType: String(row['tipoDestinatario']) as TipoDestinatarioWhatsApp, recipientId: String(row['destinatarioId']), status: String(row['estado']) as EstadoConsentimientoWhatsApp, source: String(row['origen']), grantedAt: new Date(String(row['fechaOtorgamiento'])).toISOString(), revokedAt: row['fechaRevocacion'] ? new Date(String(row['fechaRevocacion'])).toISOString() : null, updatedAt: new Date(String(row['fechaActualizacion'])).toISOString(), retentionUntil: new Date(String(row['fechaActualizacion'])).toISOString() }
+  }
+
+  async isSenderAuthorized(tenantId: string, senderId: string, now: number): Promise<boolean> {
+    const contact = await this.client.contactoWhatsapp?.findFirst({ where: { waId: senderId } })
+    if (!contact || String(contact['tenantVinculadoId'] ?? '') !== tenantId || !contact['cuentaVinculadaId']) return false
+    if (contact['bloqueadoHasta'] === null || contact['bloqueadoHasta'] === undefined) return true
+    const blockedUntil = new Date(String(contact['bloqueadoHasta'])).getTime()
+    return Number.isFinite(blockedUntil) && blockedUntil <= now
   }
 
   async saveTemplateMessage(value: MensajePlantillaWhatsApp): Promise<void> {
@@ -473,7 +467,8 @@ export class TusWhatsAppService {
     input: { recipientType: TipoDestinatarioWhatsApp; recipientId: string; source: string; granted: boolean },
   ): Promise<ConsentimientoWhatsApp> {
     this.authorizeMessaging(context)
-    if (!esTipoDestinatario(input.recipientType) || !input.recipientId.trim() || !input.source.trim()) {
+    const source = normalizarOrigenConsentimiento(input.source)
+    if (!esTipoDestinatario(input.recipientType) || !input.recipientId.trim() || !source) {
       throw new WhatsAppActionError(400, 'INVALID_CONSENT', 'recipient type, recipient, and consent source are required')
     }
     const now = this.now()
@@ -484,7 +479,7 @@ export class TusWhatsAppService {
       recipientType: input.recipientType,
       recipientId: input.recipientId,
       status: input.granted ? WHATSAPP_CONSENT_STATUS.ACTIVE : WHATSAPP_CONSENT_STATUS.REVOKED,
-      source: redactText(input.source),
+      source,
       grantedAt: previous?.grantedAt ?? new Date(now).toISOString(),
       revokedAt: input.granted ? null : new Date(now).toISOString(),
       updatedAt: new Date(now).toISOString(),
@@ -499,7 +494,7 @@ export class TusWhatsAppService {
     context: TusAuthenticatedTenantContext,
     input: { recipientType: TipoDestinatarioWhatsApp; recipientId: string; source?: string },
   ): Promise<ConsentimientoWhatsApp> {
-    return this.recordConsent(context, { ...input, source: input.source ?? 'whatsapp-opt-out', granted: false })
+    return this.recordConsent(context, { ...input, source: input.source ?? WHATSAPP_CONSENT_ORIGINS.OPT_OUT, granted: false })
   }
 
   async sendTemplate(
@@ -509,7 +504,7 @@ export class TusWhatsAppService {
     this.authorizeMessaging(context)
     if (!this.providerEnabled) throw new WhatsAppActionError(503, 'PROVIDER_DISABLED', 'WhatsApp provider actions are disabled')
     const consent = await this.store.getConsent?.(context.tenantId, input.recipientType, input.recipientId)
-    if (!consent || consent.status !== WHATSAPP_CONSENT_STATUS.ACTIVE) throw new WhatsAppActionError(409, 'CONSENT_REQUIRED', 'current WhatsApp consent is required')
+    if (!consent || consent.status !== WHATSAPP_CONSENT_STATUS.ACTIVE || consent.source === WHATSAPP_CONSENT_ORIGINS.WHATSAPP_INBOUND) throw new WhatsAppActionError(409, 'CONSENT_REQUIRED', 'explicit WhatsApp consent is required for template messages')
     const template = this.templateAllowlist.get(`${input.template}:${input.templateVersion}`)
     if (!template) throw new WhatsAppActionError(409, 'TEMPLATE_NOT_ALLOWED', 'WhatsApp template is not allowlisted')
     if (!input.idempotencyKey.trim() || !input.requestHash.trim()) throw new WhatsAppActionError(400, 'INVALID_IDEMPOTENCY', 'template idempotency key and request hash are required')
@@ -575,7 +570,7 @@ export class TusWhatsAppService {
     this.sessions.set(input.sessionId, input.tenantId)
     if (input.action.tenantId !== input.tenantId) return this.handoff(input, 'tenant_boundary_denied')
     const storedConsent = await this.store.getConsent?.(input.tenantId, WHATSAPP_RECIPIENT_TYPES.CUSTOMER, input.senderId)
-    if (!input.consent || storedConsent?.status === WHATSAPP_CONSENT_STATUS.REVOKED) return this.handoff(input, 'messaging_consent_required')
+    if (!input.consent || storedConsent?.status !== WHATSAPP_CONSENT_STATUS.ACTIVE) return this.handoff(input, 'messaging_consent_required')
     if (!(await this.isSenderAuthorized(input.tenantId, input.senderId))) return this.handoff(input, 'sender_not_authorized')
     if (!SUPPORTED_ACTIONS.has(input.action.type as AccionWhatsApp['type'])) {
       return this.handoff(input, 'sensitive_action_requires_authenticated_handoff')
@@ -666,7 +661,8 @@ export class TusWhatsAppService {
   private async isSenderAuthorized(tenantId: string, senderId: string): Promise<boolean> {
     if (this.authorizeSender) return this.authorizeSender(tenantId, senderId)
     if (this.authorizedSenders) return this.authorizedSenders[tenantId]?.includes(senderId) ?? false
-    return true
+    if (this.store.isSenderAuthorized) return this.store.isSenderAuthorized(tenantId, senderId, this.now())
+    return false
   }
 
   private commitmentMutated(commitment: Record<string, unknown> | null): boolean {

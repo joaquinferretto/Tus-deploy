@@ -25,6 +25,7 @@ import {
 } from '../reporting/index.ts'
 import { SupportError } from '../support/index.ts'
 import { WhatsAppActionError } from '../whatsapp/index.ts'
+import { WHATSAPP_CONSENT_ORIGINS } from '../whatsapp/consent.ts'
 import { ErrorCalendario } from '../calendar/index.ts'
 import {
   HabilitacionBloqueadaError,
@@ -3056,7 +3057,7 @@ export function createTusHttpRouter({
           await requireWhatsApp(application).recordConsent(context, {
             recipientType: readString(body, 'recipientType') as 'tenant' | 'merchant' | 'customer',
             recipientId: readString(body, 'recipientId'),
-            source: readString(body, 'source'),
+            source: WHATSAPP_CONSENT_ORIGINS.OPERATOR_CONSOLE,
             granted: body['granted'] === true,
           })
         )

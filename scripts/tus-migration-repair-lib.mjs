@@ -613,6 +613,12 @@ export const REVIEWED_MIGRATION_STATEMENTS = Object.freeze([
     sha256: 'eddacfc3677b9ed32f2806f32afedc4df3670fe8145a4cb760bbdd831deb24b9',
     reason: 'ON DELETE CASCADE only from lineas_presupuesto (strict children of one budget version) to presupuestos, matching the Prisma relation; budget versions are never deleted by the application and are restricted by trabajos.',
   },
+  {
+    migration: '20261004100000_tus_whatsapp_consent_recipient_type',
+    classification: 'high_risk',
+    sha256: '89bac66ea323f6011bc1bfc689cea23e9d89b34693071323e3c9604a547498b0',
+    reason: 'Replaces the tenant-plus-recipient unique index with tenant-plus-recipient-type-plus-recipient; no rows are deleted and the change is required to keep customer, merchant, and tenant consent isolated.',
+  },
 ])
 
 export function normalizedStatementHash(sql) {

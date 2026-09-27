@@ -2054,7 +2054,7 @@ model ConsentimientoWhatsApp {
   fechaCreacion      DateTime  @map("fecha_creacion")
   fechaActualizacion DateTime  @map("fecha_actualizacion")
 
-  @@unique([tenantId, destinatarioId], map: "uq_consentimientos_whatsapp_tenant_destinatario")
+  @@unique([tenantId, tipoDestinatario, destinatarioId], map: "uq_consentimientos_whatsapp_tenant_tipo_destinatario")
   @@index([tenantId, estado], map: "idx_consentimientos_whatsapp_tenant_estado")
   @@map("consentimientos_whatsapp")
 }

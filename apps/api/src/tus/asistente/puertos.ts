@@ -8,6 +8,7 @@ import type {
   TokenVinculacion,
   TrabajoConversacion,
 } from './modelo.ts'
+import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
 
 export interface RepositoriosAsistente {
   contactos: {
@@ -58,6 +59,10 @@ export interface RepositoriosAsistente {
     actualizar(value: ConfirmacionAsistente, expectedStatus: ConfirmacionAsistente['status']): Promise<boolean>
   }
   auditoria: { registrar(event: EventoAuditoriaAsistente): Promise<void> }
+  consentimientosWhatsapp: {
+    buscar(tenantId: string, recipientType: ConsentimientoWhatsApp['recipientType'], recipientId: string): Promise<ConsentimientoWhatsApp | null>
+    guardar(value: ConsentimientoWhatsApp): Promise<void>
+  }
 }
 
 export interface PuertoTransaccionAsistente {

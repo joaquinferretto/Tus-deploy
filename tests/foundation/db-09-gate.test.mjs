@@ -62,15 +62,22 @@ test('DB-09-GATE accepts the WEB-08/WEB-09 chain only through explicit reasons',
     'destructive',
     'high_risk',
   ])
+  const historicalReviews = REVIEWED_MIGRATION_STATEMENTS.filter(
+    (entry) => entry.migration === '20260917100000_tus_work_budget'
+  )
+  assert.ok(historicalReviews.length > 0)
   assert.equal(
-    REVIEWED_MIGRATION_STATEMENTS.every(
-      (entry) =>
-        entry.migration === '20260917100000_tus_work_budget' &&
-        /^[a-f0-9]{64}$/u.test(entry.sha256) &&
-        entry.reason.length > 40
+    historicalReviews.every(
+      (entry) => /^[a-f0-9]{64}$/u.test(entry.sha256) && entry.reason.length > 40
     ),
     true
   )
+  const consentIndexReview = REVIEWED_MIGRATION_STATEMENTS.find(
+    (entry) => entry.migration === '20261004100000_tus_whatsapp_consent_recipient_type'
+  )
+  assert.ok(consentIndexReview)
+  assert.match(consentIndexReview.sha256, /^[a-f0-9]{64}$/u)
+  assert.ok(consentIndexReview.reason.length > 40)
   assert.equal(
     byName['20260923100000_tus_service_finance_identity'].statements.filter(
       (statement) => statement.classification === 'constraint_relaxation'

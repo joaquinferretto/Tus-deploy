@@ -50,9 +50,15 @@ import type { ServicioVerificacionIdentidad } from '../identidad/servicio.ts'
 import { crearServicioIdentidad } from '../identidad/composicion.ts'
 import { TransaccionIdentidadPrisma, type ClientePrismaIdentidad } from '../adapters/prisma-identidad.ts'
 
+export interface TusApplicationFactoryOptions
+  extends Pick<TusApplicationDependencies, 'now' | 'releasePolicy' | 'operationsTelemetry' | 'evaluadorHabilitacion' | 'perfilHabilitacion' | 'alcanceHabilitacion' | 'identity'> {
+  whatsappAuthorizedSenders?: Readonly<Record<string, readonly string[]>>
+  whatsappAuthorizeSender?: (tenantId: string, senderId: string) => boolean | Promise<boolean>
+}
+
 export function createTusApplication(
   // `identity` (optional here) turns on the IDENTITY-NOSIS provider gates in memory as well.
-  options: Pick<TusApplicationDependencies, 'now' | 'releasePolicy' | 'operationsTelemetry' | 'evaluadorHabilitacion' | 'perfilHabilitacion' | 'alcanceHabilitacion' | 'identity'> = {},
+  options: TusApplicationFactoryOptions = {},
 ): TusApplicationService {
   const identidadVerificada = options.identity ? (tenantId: string) => options.identity!.identidadVerificada(tenantId) : undefined
   const commitments = new InMemoryTusCommitmentStore()
@@ -93,7 +99,7 @@ export function createTusApplication(
   })
   const pos = new TusPosService({ store: new InMemoryPosStore(), now: options.now, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
   const support = new TusSupportService({ store: new InMemorySupportStore(), commitmentLookup, now: options.now, telemetry: options.operationsTelemetry, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
-  const whatsapp = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), now: options.now, telemetry: options.operationsTelemetry, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion })
+  const whatsapp = new TusWhatsAppService({ store: new InMemoryWhatsAppActionStore(), now: options.now, telemetry: options.operationsTelemetry, evaluadorHabilitacion: options.evaluadorHabilitacion, perfilHabilitacion: options.perfilHabilitacion, alcanceHabilitacion: options.alcanceHabilitacion, authorizedSenders: options.whatsappAuthorizedSenders, authorizeSender: options.whatsappAuthorizeSender })
   const reporting = new TusReportingService({ store: new InMemoryReportingStore(), now: options.now, telemetry: options.operationsTelemetry })
   const workIdempotency = new InMemoryTrabajoIdempotencyStore()
   const workOutbox = new InMemoryTrabajoOutboxStore()

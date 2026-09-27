@@ -8,6 +8,7 @@ import type {
   TrabajoConversacion,
 } from './modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
+import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
 
 // In-memory adapters with PostgreSQL semantics (unique wamid, one queued job per conversation,
 // conditional single-use tokens, serialized transactions with rollback).
@@ -19,6 +20,7 @@ export interface EstadoAsistenteEnMemoria {
   tokens: Map<string, TokenVinculacion>
   confirmaciones: Map<string, ConfirmacionAsistente>
   auditoria: EventoAuditoriaAsistente[]
+  consentimientosWhatsapp: Map<string, ConsentimientoWhatsApp>
 }
 
 const unique = () => Object.assign(new Error('unique violation'), { code: 'P2002' })
@@ -32,6 +34,7 @@ export class AlmacenAsistenteEnMemoria {
     tokens: new Map(),
     confirmaciones: new Map(),
     auditoria: [],
+    consentimientosWhatsapp: new Map(),
   }
 
   repositorios(): RepositoriosAsistente {
@@ -175,6 +178,16 @@ export class AlmacenAsistenteEnMemoria {
       auditoria: {
         registrar: async (event) => {
           s().auditoria.push(clone(event))
+        },
+      },
+      consentimientosWhatsapp: {
+        buscar: async (tenantId, recipientType, recipientId) =>
+          clone(s().consentimientosWhatsapp.get(`${tenantId}:${recipientType}:${recipientId}`) ?? null),
+        guardar: async (value) => {
+          s().consentimientosWhatsapp.set(
+            `${value.tenantId}:${value.recipientType}:${value.recipientId}`,
+            clone(value),
+          )
         },
       },
     }

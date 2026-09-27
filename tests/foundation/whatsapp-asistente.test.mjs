@@ -24,6 +24,10 @@ test('WHATSAPP linking: single-use short-lived token, last-4 digits, hash-only s
     out.replay = await codeOfLink(() => wa.vinculacion.confirmar(web('customer-user'), { token, lastDigits: '0101' }))
     const contact = await contactOf('5491155550101')
     out.linked = [contact.linkedAccountId, contact.linkedTenantId]
+    const activeConversation = await conversationOf('5491155550101')
+    await waTx.ejecutar(async (r) => r.conversaciones.actualizar({ ...activeConversation, status: 'closed', version: activeConversation.version + 1 }, activeConversation.version))
+    await say('5491155550101', 'retomo la conversación')
+    out.consentAfterLinkedInbound = [...waStore.state.consentimientosWhatsapp.values()].map((c) => [c.source, c.recipientId, c.status])
     // A second link for the same contact cannot move it to another account.
     const second = await wa.vinculacion.crearEnlace(contact.contactId, 'c')
     const token2 = second.url.split('#token=')[1]
@@ -43,9 +47,11 @@ test('WHATSAPP linking: single-use short-lived token, last-4 digits, hash-only s
     accounts.get('customer-user').status = 'disabled'
     const callsBefore = chat.calls.length
     await say('5491155550101', 'Quiero ver mis trabajos')
-    out.disabled = [lastSent().message.type, chat.calls.length === callsBefore]
-    out.audit = waStore.state.auditoria.map((e) => e.action).filter((a) => a.startsWith('whatsapp.link') || a === 'whatsapp.linked' || a === 'whatsapp.unlinked')
-    console.log(JSON.stringify(out))
+     out.disabled = [lastSent().message.type, chat.calls.length === callsBefore]
+     out.audit = waStore.state.auditoria.map((e) => e.action).filter((a) => a.startsWith('whatsapp.link') || a === 'whatsapp.linked' || a === 'whatsapp.unlinked')
+     out.consent = [...waStore.state.consentimientosWhatsapp.values()].map((c) => [c.source, c.recipientId, c.status])
+     out.consentAudit = waStore.state.auditoria.filter((e) => e.action === 'whatsapp.consent.recorded').map((e) => [e.metadata.origin, e.metadata.purpose])
+     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(result.cta, ['cta_url', 'Vincular cuenta', true, true])
   assert.equal(result.storedHashOnly, true)
@@ -70,11 +76,15 @@ test('WHATSAPP linking: single-use short-lived token, last-4 digits, hash-only s
     ['cta_url', true],
     'a disabled account is treated as unlinked without calling the model'
   )
-  assert.ok(
-    result.audit.includes('whatsapp.linked') &&
-      result.audit.includes('whatsapp.unlinked') &&
-      result.audit.includes('whatsapp.link_digits_mismatch')
-  )
+   assert.ok(
+     result.audit.includes('whatsapp.linked') &&
+       result.audit.includes('whatsapp.unlinked') &&
+       result.audit.includes('whatsapp.link_digits_mismatch')
+   )
+    assert.deepEqual(result.consent, [['web_linking', '5491155550101', 'active']])
+    assert.deepEqual(result.consentAfterLinkedInbound, [['web_linking', '5491155550101', 'active']])
+   assert.ok(result.consentAudit.some(([origin, purpose]) => origin === 'web_linking' && purpose === 'conversation'))
+   assert.ok(result.consentAudit.some(([origin, purpose]) => origin === 'whatsapp_inbound' && purpose === 'conversation'))
 })
 
 test('WHATSAPP tools: public search without link, private data needs link, users and providers only see their own data, strict schemas', () => {

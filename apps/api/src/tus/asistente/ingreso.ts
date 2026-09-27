@@ -9,6 +9,7 @@ import {
   type MensajeConversacion,
 } from './modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
+import { WHATSAPP_CONSENT_ORIGINS, crearConsentimientoWhatsApp } from '../whatsapp/consent.ts'
 
 export interface LimitesIngreso {
   maxInboundPerMinute: number
@@ -138,6 +139,33 @@ export class ServicioIngresoWhatsapp {
         version: 1,
       }
       await repositories.conversaciones.crear(conversation)
+      await this.auditar(
+        repositories,
+        'whatsapp.consent.recorded',
+        contact,
+        conversation,
+        correlationId,
+        { origin: WHATSAPP_CONSENT_ORIGINS.WHATSAPP_INBOUND, purpose: 'conversation' }
+      )
+      if (contact.linkedTenantId && contact.linkedAccountId) {
+        const existingConsent = await repositories.consentimientosWhatsapp.buscar(
+          contact.linkedTenantId,
+          'customer',
+          contact.waId,
+        )
+        // Do not downgrade an explicit web/operator consent or reactivate an opt-out.
+        if (!existingConsent) {
+          await repositories.consentimientosWhatsapp.guardar(
+            crearConsentimientoWhatsApp({
+              tenantId: contact.linkedTenantId,
+              recipientType: 'customer',
+              recipientId: contact.waId,
+              source: WHATSAPP_CONSENT_ORIGINS.WHATSAPP_INBOUND,
+              now: nowMs,
+            })
+          )
+        }
+      }
     }
     const recent = await repositories.mensajes.contarEntrantesDesde(
       contact.contactId,
