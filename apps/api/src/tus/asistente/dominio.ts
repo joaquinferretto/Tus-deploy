@@ -58,6 +58,45 @@ export interface PuertoDominioAsistente {
     context: TusAuthenticatedTenantContext,
     input: { providerId: string; title: string; description: string | null; zone: string; urgency: string; budgetMax: number | null }
   ): Promise<{ requestId: string; assignment: string; providerName: string | null }>
+  // Postulaciones a solicitudes públicas: mismas reglas que /prestador/solicitudes y Mis solicitudes.
+  solicitudesAbiertas(filter: { profession: string | null; zone: string | null }): Promise<SolicitudAbiertaResumen[]>
+  postularse(context: TusAuthenticatedTenantContext, input: { requestId: string; message: string | null }): Promise<{ applicationId: string; status: string; requestTitle: string }>
+  misSolicitudesTus(context: TusAuthenticatedTenantContext): Promise<SolicitudPropiaResumen[]>
+  postulantes(context: TusAuthenticatedTenantContext, requestId: string): Promise<PostulanteResumen[]>
+  elegirPostulante(context: TusAuthenticatedTenantContext, input: { requestId: string; applicationId: string }): Promise<{ requestId: string; assignment: string; providerName: string | null }>
+}
+
+// Lo que el asistente puede ver de una solicitud pública: sin cuenta, contacto ni coordenadas.
+export interface SolicitudAbiertaResumen {
+  requestId: string
+  profession: string
+  title: string
+  description: string | null
+  requesterName: string
+  approximateArea: string
+  budgetMax: number | null
+  urgency: string
+  createdAt: string
+}
+
+export interface SolicitudPropiaResumen {
+  requestId: string
+  title: string
+  profession: string
+  approximateArea: string
+  status: string
+  assignment: string | null
+  providerName: string | null
+  createdAt: string
+}
+
+export interface PostulanteResumen {
+  applicationId: string
+  providerName: string
+  profession: string
+  approximateArea: string
+  message: string | null
+  status: string
 }
 
 // Servicios compartidos con la Web. Sin ellos las herramientas de directorio fallan cerradas.
@@ -111,6 +150,63 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     )
     if (!result.ok) throw Object.assign(new Error('request rejected'), { status: 409, code: result.code })
     return { requestId: result.solicitud.id, assignment: result.solicitud.assignment ?? 'pendiente', providerName: result.solicitud.provider?.displayName ?? null }
+  }
+
+  async solicitudesAbiertas(filter: { profession: string | null; zone: string | null }): Promise<SolicitudAbiertaResumen[]> {
+    const publicas = await this.servicios.solicitudes.listarPublicas({ categoria: filter.profession ?? undefined })
+    return publicas
+      .filter((item) => !filter.zone || item.approximateLocation.label === filter.zone)
+      .slice(0, 8)
+      .map((item) => ({
+        requestId: item.id,
+        profession: item.category,
+        title: item.title,
+        description: item.description,
+        requesterName: item.requesterName,
+        approximateArea: item.approximateLocation.label,
+        budgetMax: item.budgetMax,
+        urgency: item.urgency,
+        createdAt: item.createdAt,
+      }))
+  }
+
+  async postularse(context: TusAuthenticatedTenantContext, input: { requestId: string; message: string | null }) {
+    const result = await this.servicios.solicitudes.postular({ tenantId: context.tenantId, cuentaId: context.subjectId }, input.requestId, { message: input.message })
+    if (!result.ok) throw Object.assign(new Error('application rejected'), { status: 409, code: result.code })
+    return { applicationId: result.postulacion.id, status: result.postulacion.status, requestTitle: result.postulacion.request.title }
+  }
+
+  async misSolicitudesTus(context: TusAuthenticatedTenantContext): Promise<SolicitudPropiaResumen[]> {
+    return (await this.servicios.solicitudes.mias(context.subjectId)).slice(0, 10).map((item) => ({
+      requestId: item.id,
+      title: item.title,
+      profession: item.category,
+      approximateArea: item.approximateLocation.label,
+      status: item.status,
+      assignment: item.assignment,
+      providerName: item.provider?.displayName ?? null,
+      createdAt: item.createdAt,
+    }))
+  }
+
+  async postulantes(context: TusAuthenticatedTenantContext, requestId: string): Promise<PostulanteResumen[]> {
+    // Solo la dueña de la solicitud: el servicio devuelve NOT_FOUND para cualquier otra cuenta.
+    const result = await this.servicios.solicitudes.postulantes(context.subjectId, requestId)
+    if (!result.ok) throw Object.assign(new Error('request not found'), { status: 404, code: result.code })
+    return result.items.map((item) => ({
+      applicationId: item.id,
+      providerName: item.provider.displayName,
+      profession: item.provider.profession,
+      approximateArea: item.provider.approximateArea,
+      message: item.message,
+      status: item.status,
+    }))
+  }
+
+  async elegirPostulante(context: TusAuthenticatedTenantContext, input: { requestId: string; applicationId: string }) {
+    const result = await this.servicios.solicitudes.elegirPostulante(context.subjectId, input.requestId, input.applicationId)
+    if (!result.ok) throw Object.assign(new Error('application not available'), { status: 409, code: result.code === 'NOT_FOUND' ? 'NOT_AVAILABLE' : result.code })
+    return { requestId: result.solicitud.id, assignment: result.solicitud.assignment ?? 'aceptada', providerName: result.solicitud.provider?.displayName ?? null }
   }
 
   private get marketplace() {

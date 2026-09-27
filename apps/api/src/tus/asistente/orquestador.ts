@@ -878,6 +878,12 @@ export function formatearResultadoAccion(
       NOT_FOUND: 'No encontré ese recurso en tu cuenta.',
       VERSION_CONFLICT: 'El estado cambió mientras tanto. Pedime que lo revise de nuevo.',
       PAYMENTS_DISABLED: 'El pago online todavía no está habilitado.',
+      PROVIDER_NOT_AVAILABLE:
+        'Ese prestador no está disponible. Si sos prestador, completá y publicá tu perfil público para postularte.',
+      SELF_REQUEST: 'No podés hacer eso con tu propia cuenta de prestador.',
+      ALREADY_APPLIED: 'Ya te postulaste a esa solicitud. El cliente decide.',
+      REQUEST_FULL: 'Esa solicitud ya no recibe más postulaciones.',
+      NOT_AVAILABLE: 'Esa solicitud o ese postulante ya no están disponibles. Pedime que lo revise de nuevo.',
     }
     return [
       {
@@ -908,6 +914,14 @@ export function formatearResultadoAccion(
         text: 'Listo, creé tu solicitud. El prestador la va a revisar y te avisamos por acá o en la Web.',
       },
     ]
+  if (tool === 'request_provider')
+    return [{ type: 'text', text: 'Listo, le envié tu solicitud. Queda pendiente hasta que el prestador la acepte.' }]
+  if (tool === 'apply_to_request')
+    return [{ type: 'text', text: 'Listo, te postulaste. El cliente ve tu perfil y tu mensaje y decide; te avisamos si te elige.' }]
+  if (tool === 'choose_applicant') {
+    const name = (data['result'] as { providerName?: string | null } | undefined)?.providerName
+    return [{ type: 'text', text: `Listo, quedó confirmado${name ? ` con ${name}` : ''}. Los demás postulantes quedan como no elegidos.` }]
+  }
   if (tool === 'accept_budget') return [{ type: 'text', text: 'Listo, aceptaste el presupuesto.' }]
   if (tool === 'reject_budget') return [{ type: 'text', text: 'Listo, rechazaste el presupuesto.' }]
   if (tool === 'cancel_work') return [{ type: 'text', text: 'Listo, el trabajo quedó cancelado.' }]

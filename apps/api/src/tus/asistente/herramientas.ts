@@ -218,6 +218,52 @@ Queda pendiente hasta que el prestador la acepte. ¿Confirmás?`,
     },
     execute: async (args, actor, domain) => ({ request: await domain.solicitarPrestador(actor.context!, args) }),
   }),
+  // ---- postulaciones a solicitudes públicas (TUS recomienda, el cliente elige) ----
+  herramienta({
+    name: 'search_open_requests',
+    description:
+      'Lista solicitudes públicas abiertas de clientes (del mapa de TUS), opcionalmente por oficio y barrio. Un prestador puede ofrecerse aunque no sea su rubro. Solo datos públicos: título, barrio aproximado, presupuesto y urgencia; nunca contacto ni dirección.',
+    audience: 'provider',
+    schema: z.strictObject({ profession: z.enum(OFICIOS_IDS).nullable(), zone: z.string().trim().min(2).max(60).nullable() }),
+    confirmation: null,
+    execute: async (args, _actor, domain) => ({ requests: await domain.solicitudesAbiertas(args) }),
+  }),
+  herramienta({
+    name: 'apply_to_request',
+    description: 'Prepara la postulación del prestador a una solicitud pública abierta, con un mensaje opcional para el cliente (requiere confirmación). Postularse no confirma nada: el cliente decide.',
+    audience: 'provider',
+    schema: z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9-]{8,64}$/u), message: z.string().trim().min(1).max(300).nullable() }),
+    confirmation: {
+      summarize: (args) => `Vas a postularte a esa solicitud${args.message ? ` con este mensaje:\n"${args.message}"` : ' sin mensaje'}.\nEl cliente decide a quién acepta. ¿Confirmás?`,
+    },
+    execute: async (args, actor, domain) => ({ application: await domain.postularse(actor.context!, { requestId: args.requestId, message: args.message }) }),
+  }),
+  herramienta({
+    name: 'list_my_open_requests',
+    description: 'Lista las solicitudes TUS del cliente (publicadas en el mapa o enviadas a un prestador) con su estado real.',
+    audience: 'linked',
+    schema: vacio,
+    confirmation: null,
+    execute: async (_args, actor, domain) => ({ requests: await domain.misSolicitudesTus(actor.context!) }),
+  }),
+  herramienta({
+    name: 'list_request_applicants',
+    description: 'Lista los prestadores que se ofrecieron para una solicitud del cliente (solo sus propias solicitudes), con perfil público y mensaje.',
+    audience: 'linked',
+    schema: z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9-]{8,64}$/u) }),
+    confirmation: null,
+    execute: async (args, actor, domain) => ({ applicants: await domain.postulantes(actor.context!, args.requestId) }),
+  }),
+  herramienta({
+    name: 'choose_applicant',
+    description: 'Prepara la elección de un postulante para una solicitud del cliente (requiere confirmación). Confirma el trabajo con ese prestador, saca la solicitud del mapa y rechaza al resto.',
+    audience: 'linked',
+    schema: z.strictObject({ requestId: z.string().regex(/^[A-Za-z0-9-]{8,64}$/u), applicationId: z.string().regex(/^[A-Za-z0-9-]{8,64}$/u) }),
+    confirmation: {
+      summarize: () => 'Vas a elegir a ese prestador para tu solicitud. Queda confirmado con él, la solicitud sale del mapa y los demás postulantes quedan como no elegidos. ¿Confirmás?',
+    },
+    execute: async (args, actor, domain) => ({ result: await domain.elegirPostulante(actor.context!, args) }),
+  }),
   herramienta({
     name: 'accept_budget',
     description: 'Prepara la aceptación de un presupuesto de un trabajo del cliente (requiere confirmación).',
@@ -281,13 +327,18 @@ export function definicionChat(tool: Herramienta): DefinicionHerramientaChat {
 
 // ---- intent router: a few tools per turn, never the whole catalog ---------------------------
 
-export type IntencionAsistente = 'buscar' | 'trabajos' | 'presupuesto' | 'reserva' | 'pago' | 'identidad' | 'conocimiento' | 'saludo' | 'otro'
+export type IntencionAsistente = 'buscar' | 'postulaciones' | 'trabajos' | 'presupuesto' | 'reserva' | 'pago' | 'identidad' | 'conocimiento' | 'saludo' | 'otro'
 
 const REGLAS: { intent: IntencionAsistente; pattern: RegExp }[] = [
   { intent: 'presupuesto', pattern: /presupuest|cotizaci/iu },
   { intent: 'pago', pattern: /\bpag(o|ar|u[eé])|link de pago|mercado ?pago|cobr(o|ar)/iu },
   { intent: 'identidad', pattern: /identidad|verificaci[oó]n de (mi )?(dni|identidad)|estoy verificad/iu },
   { intent: 'reserva', pattern: /reserv|turno|agenda|ma[nñ]ana a las|horario/iu },
+  // Antes que "trabajos": "trabajos de electricidad disponibles cerca mío", "¿quién se ofreció?".
+  {
+    intent: 'postulaciones',
+    pattern: /postul|qui[eé]n(es)? se (ofreci|postul)|(trabajos?|solicitud(es)?|pedidos?)\b.*\b(disponibles?|abiertas?|abiertos?|nuev[oa]s?|cerca)\b/iu,
+  },
   { intent: 'trabajos', pattern: /(mis |el |ese )?trabajos?|pedidos?|solicitud|qu[eé] pas[oó]|pendiente|terminad|cancel|complet/iu },
   { intent: 'conocimiento', pattern: /qu[eé] es tus|c[oó]mo funciona|c[oó]mo (me )?registr|pol[ií]tica|protecci[oó]n|c[oó]mo public|qu[eé] (datos|necesito)|t[eé]rminos|ayuda/iu },
   { intent: 'buscar', pattern: /necesito|busco|hay alg|servicio|prestador|electricist|plomer|gasist|aire acondicionado|pintor|cerrajer|arregl|repar|se me rompi|cerca|cu[aá]nto (sale|cuesta|puede costar)/iu },
@@ -301,7 +352,11 @@ export function detectarIntencion(text: string): IntencionAsistente {
 
 const HERRAMIENTAS_POR_INTENCION: Record<IntencionAsistente, { client: NombreHerramienta[]; provider: NombreHerramienta[] }> = {
   buscar: { client: ['search_providers', 'request_provider', 'search_services', 'get_service_details', 'create_service_request'], provider: [] },
-  trabajos: { client: ['list_my_works', 'get_my_work', 'list_my_requests'], provider: ['list_provider_jobs', 'get_provider_job', 'cancel_work', 'complete_work'] },
+  postulaciones: {
+    client: ['list_my_open_requests', 'list_request_applicants', 'choose_applicant'],
+    provider: ['search_open_requests', 'apply_to_request'],
+  },
+  trabajos: { client: ['list_my_works', 'get_my_work', 'list_my_requests', 'list_my_open_requests'], provider: ['list_provider_jobs', 'get_provider_job', 'cancel_work', 'complete_work'] },
   presupuesto: { client: ['list_my_works', 'get_my_budget', 'accept_budget', 'reject_budget'], provider: ['list_provider_jobs', 'get_provider_job'] },
   reserva: { client: ['list_my_reservations', 'search_services', 'get_service_details'], provider: ['list_provider_reservations'] },
   pago: { client: ['list_my_works', 'get_payment_status', 'get_payment_link'], provider: ['get_mercadopago_connection_status'] },
@@ -323,7 +378,7 @@ export function seleccionarHerramientas(intent: IntencionAsistente, actor: Actor
 
 // True when the intent needs private data the unlinked contact cannot access.
 export function intencionPrivada(intent: IntencionAsistente): boolean {
-  return ['trabajos', 'presupuesto', 'pago', 'identidad'].includes(intent)
+  return ['postulaciones', 'trabajos', 'presupuesto', 'pago', 'identidad'].includes(intent)
 }
 
 // ---- execution -----------------------------------------------------------------------------

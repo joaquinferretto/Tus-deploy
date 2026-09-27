@@ -69,6 +69,20 @@ La Web administrativa esta en `/tus/admin/whatsapp`.
   prestador elegido, con `origen = whatsapp`. Queda pendiente hasta que el prestador la acepta en `/prestador/solicitudes`.
 - No hay reglas propias de WhatsApp: ambas herramientas delegan en `ServicioDirectorio` y `ServicioSolicitudes`.
 
+### Postulaciones a solicitudes públicas (TUS recomienda, el cliente elige)
+
+- `search_open_requests` (prestador vinculado): solicitudes públicas abiertas del mapa, opcionalmente por oficio y barrio. El
+  prestador puede ofrecerse aunque no sea su rubro. Solo datos públicos (título, barrio aproximado, presupuesto, urgencia,
+  nombre reducido): nunca contacto, dirección, cuenta ni coordenadas.
+- `apply_to_request` (prestador vinculado, confirmación explícita): crea la misma postulación que `/prestador/solicitudes`.
+  Postularse no confirma nada; el cliente decide.
+- `list_my_open_requests` y `list_request_applicants` (cliente vinculado): sus solicitudes TUS y los postulantes de una
+  solicitud propia (perfil público y mensaje). Otra cuenta recibe `NOT_FOUND`.
+- `choose_applicant` (cliente vinculado, confirmación explícita): igual que "Aceptar" en Mis solicitudes; confirma con ese
+  prestador, saca la solicitud del mapa y rechaza al resto.
+- Intención `postulaciones` ("trabajos de electricidad disponibles cerca mío", "¿quién se postuló?"): requiere cuenta
+  vinculada; las tools de prestador solo aparecen si la cuenta es prestador.
+
 Las acciones HTTP de WhatsApp (`/tus/v1/whatsapp/actions`) fallan cerradas: el sender debe estar vinculado a una cuenta TUS
 activa dentro del tenant y debe existir un `ConsentimientoWhatsApp` persistido en estado `active`. El booleano `consent` de la
 request es una confirmación adicional, no reemplaza el consentimiento durable. Un sender sin política, sin vínculo, bloqueado,
