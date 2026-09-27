@@ -62,6 +62,7 @@ export function SeguridadAdmin(): ReactNode {
   return (
     <>
       <div className="tus-nav-links tus-session-actions">
+        <Link href={{ pathname: '/tus/admin/prestadores' }}>Cargar prestadores</Link>
         <Link href="/tus/admin/identidad">Identidad</Link>
         <Link href="/tus/admin/whatsapp">WhatsApp</Link>
       </div>

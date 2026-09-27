@@ -5,6 +5,7 @@ import type { TusWebSession } from '../../lib/tus-ui-contract'
 
 import type { PublicRequestDto } from '../home/requests-source'
 import type { CategoryId, UrgencyId } from '../home/types'
+import { authorizationHeader, fetchWithSession } from '../../lib/session-credentials'
 
 // Client for publishing service requests. Same Bearer session as the rest of TUS; the API
 // derives the account, public name and approximate point (never sent by the browser).
@@ -49,10 +50,10 @@ function apiBase(): string {
   })
 }
 
-export function createRequestsClient(session: TusWebSession, fetchImpl: typeof fetch = (...args) => fetch(...args)) {
+export function createRequestsClient(session: TusWebSession, fetchImpl: typeof fetch = fetchWithSession) {
   const headers = (json = false): Record<string, string> => ({
     Accept: 'application/json',
-    Authorization: `Bearer ${session.accessToken}`,
+    ...authorizationHeader(session.accessToken),
     'X-Correlation-Id': session.correlationId,
     ...(json ? { 'Content-Type': 'application/json' } : {}),
   })

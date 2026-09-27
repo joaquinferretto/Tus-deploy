@@ -47,7 +47,7 @@ export function LoginForm({
     const result = await createTusWebAuthClient().signIn({ email: email.trim(), password })
     if (result.status !== 'authenticated') {
       setSubmitting(false)
-      setMessage(signInErrorMessage(result.status))
+      setMessage(signInErrorMessage(result.status, result.code))
       return
     }
     if (onAuthenticated) await onAuthenticated()
@@ -83,8 +83,11 @@ export function LoginForm({
           value={password}
         />
         <div className={styles.linkRow}>
-          <Link className={styles.link} href="/recovery">
+          <Link className={styles.link} href="/olvide-contrasena">
             ¿Olvidaste tu contraseña?
+          </Link>
+          <Link className={styles.link} href="/verificar-email">
+            Reenviar email de verificación
           </Link>
         </div>
         {showGoogle ? (

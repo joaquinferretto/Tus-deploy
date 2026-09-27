@@ -23,7 +23,7 @@ const NAV = [
 type AuthView =
   { status: 'unknown' } | { status: 'guest' } | { status: 'signed-in'; initial: string }
 
-// The session lives in sessionStorage as a bearer credential; the header only shows "Ir a mi
+// The session token lives in an HttpOnly cookie (never in JS); the header only shows "Ir a mi
 // panel" after /auth/session confirms it with the server (restore), never from local data alone.
 function useAuthView(): AuthView {
   const [view, setView] = useState<AuthView>({ status: 'unknown' })

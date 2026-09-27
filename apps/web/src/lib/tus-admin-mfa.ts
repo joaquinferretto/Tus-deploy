@@ -1,4 +1,5 @@
 import { resolveWebApiBaseUrl } from './api-url'
+import { authorizationHeader } from './session-credentials'
 
 // Client of the API MFA routes for platform administration. The API decides everything (who is
 // an admin candidate, whether this session passed the second factor); the Web only renders.
@@ -41,10 +42,10 @@ async function call<T>(session: MfaSession, path: string, body?: Record<string, 
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${session.accessToken}`,
+      ...authorizationHeader(session.accessToken),
       'X-Correlation-Id': crypto.randomUUID(),
     },
-    credentials: 'omit',
+    credentials: 'include',
     cache: 'no-store',
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })

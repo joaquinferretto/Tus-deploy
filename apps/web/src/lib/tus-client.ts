@@ -22,6 +22,7 @@ import type {
 } from '@factory/contracts/tus'
 
 import { resolveWebApiBaseUrl } from './api-url.ts'
+import { authorizationHeader } from './session-credentials'
 
 export const TUS_API_VERSION = 'v1' as const
 
@@ -1606,14 +1607,14 @@ export function createTusWebFetchTransport(): TusWebTransport {
         typeof input.accessToken === 'string' &&
         input.accessToken.length > 0
       )
-        headers['Authorization'] = `Bearer ${input.accessToken}`
+        Object.assign(headers, authorizationHeader(input.accessToken))
       if (input.idempotencyKey !== undefined) headers['Idempotency-Key'] = input.idempotencyKey
 
       if (input.body !== undefined) headers['Content-Type'] = 'application/json'
       const response = await fetch(joinTusApiUrl(baseUrl, input.path), {
         method: input.method,
         headers,
-        credentials: 'omit',
+        credentials: 'include',
         ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
       })
       if (!response.ok) {

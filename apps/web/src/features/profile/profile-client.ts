@@ -1,5 +1,6 @@
 import { resolveWebApiBaseUrl } from '../../lib/api-url'
 import type { TusWebSession } from '../../lib/tus-ui-contract'
+import { authorizationHeader, fetchWithSession } from '../../lib/session-credentials'
 
 // "Mi perfil": the session's own account (GET /auth/account). The id always comes from the
 // server session; the Web only sends the Bearer credential.
@@ -21,10 +22,10 @@ function apiBase(): string {
   })
 }
 
-export function createProfileClient(session: TusWebSession, fetchImpl: typeof fetch = (...args) => fetch(...args)) {
+export function createProfileClient(session: TusWebSession, fetchImpl: typeof fetch = fetchWithSession) {
   const headers = (json = false): Record<string, string> => ({
     Accept: 'application/json',
-    Authorization: `Bearer ${session.accessToken}`,
+    ...authorizationHeader(session.accessToken),
     'X-Correlation-Id': session.correlationId,
     ...(json ? { 'Content-Type': 'application/json' } : {}),
   })

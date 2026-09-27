@@ -3,6 +3,7 @@ import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import { resolveWebApiBaseUrl } from './api-url'
 import { TUS_API_VERSION, TusRequestError, joinTusApiUrl } from './tus-client'
 import type { TusWebSession } from './tus-ui-contract'
+import { authorizationHeader, fetchWithSession } from './session-credentials'
 
 // IDENTITY-NOSIS web client. DNI images travel as raw bytes to the TUS API only; the browser
 // never receives external (Nosis) data beyond the masked summary the API returns.
@@ -119,7 +120,7 @@ function headers(
 ): Record<string, string> {
   return {
     Accept: 'application/json',
-    Authorization: `Bearer ${session.accessToken}`,
+    ...authorizationHeader(session.accessToken),
     'X-Tenant-Id': session.tenantId,
     'X-Actor-Id': session.actorId,
     'X-Correlation-Id': session.correlationId,
@@ -136,7 +137,7 @@ async function request<T>(
   body?: unknown,
   raw?: { bytes: Blob; contentType: string }
 ): Promise<T> {
-  const response = await fetch(joinTusApiUrl(baseUrl(), path), {
+  const response = await fetchWithSession(joinTusApiUrl(baseUrl(), path), {
     method,
     cache: 'no-store',
     headers: headers(
@@ -219,7 +220,7 @@ export const clienteIdentidad = {
     id: string,
     side: 'front' | 'back'
   ): Promise<Blob> => {
-    const response = await fetch(
+    const response = await fetchWithSession(
       joinTusApiUrl(baseUrl(), `${ADMIN_PATH}/${encodeURIComponent(id)}/documents/${side}`),
       {
         cache: 'no-store',

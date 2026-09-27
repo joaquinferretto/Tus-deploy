@@ -10,6 +10,7 @@ import type {
 
 import { resolveWebApiBaseUrl } from '../../lib/api-url'
 import type { TusWebSession } from '../../lib/tus-ui-contract'
+import { authorizationHeader, fetchWithSession } from '../../lib/session-credentials'
 
 // Client of the directory ("Buscar trabajador"), the assistant ("Buscar servicios") and the
 // provider inbox. Everything goes through the TUS API; the Web never talks to the database.
@@ -45,7 +46,7 @@ async function call<T>(fetchImpl: Fetch, path: string, init: RequestInit = {}, s
     headers: {
       Accept: 'application/json',
       ...(init.body && typeof init.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
-      ...(session ? { Authorization: `Bearer ${session.accessToken}`, 'X-Correlation-Id': session.correlationId } : {}),
+      ...(session ? { ...authorizationHeader(session.accessToken), 'X-Correlation-Id': session.correlationId } : {}),
       ...(init.headers as Record<string, string> | undefined),
     },
     ...(session ? { cache: 'no-store' as const } : {}),
@@ -84,7 +85,7 @@ export function directoryQuery(filters: DirectoryFilters): string {
   return query ? `?${query}` : ''
 }
 
-export function createDirectoryClient(fetchImpl: Fetch = (...args) => fetch(...args)) {
+export function createDirectoryClient(fetchImpl: Fetch = fetchWithSession) {
   return {
     catalog: () => call<CatalogoOficios>(fetchImpl, '/tus/v1/public/oficios'),
     list: (filters: DirectoryFilters) => call<PaginaDirectorio>(fetchImpl, `/tus/v1/public/prestadores${directoryQuery(filters)}`),
@@ -112,10 +113,10 @@ export function createDirectoryClient(fetchImpl: Fetch = (...args) => fetch(...a
 }
 
 // Private images (directed requests) need the Bearer header: fetched as a blob URL.
-export async function privateImageUrl(session: TusWebSession, path: string, fetchImpl: Fetch = (...args) => fetch(...args)): Promise<string | null> {
+export async function privateImageUrl(session: TusWebSession, path: string, fetchImpl: Fetch = fetchWithSession): Promise<string | null> {
   if (!path.startsWith('/tus/v1/solicitudes/')) return null
   try {
-    const response = await fetchImpl(`${apiBase()}${path}`, { headers: { Authorization: `Bearer ${session.accessToken}`, 'X-Correlation-Id': session.correlationId }, cache: 'no-store' })
+    const response = await fetchImpl(`${apiBase()}${path}`, { headers: { ...authorizationHeader(session.accessToken), 'X-Correlation-Id': session.correlationId }, cache: 'no-store' })
     if (!response.ok) return null
     return URL.createObjectURL(await response.blob())
   } catch {

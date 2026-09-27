@@ -81,7 +81,9 @@ test('web client covers existing auth, booking, payment, POS, delivery, and supp
   assert.equal(result[8].body.tenantId, undefined)
 })
 
-test('fetch transport uses explicit bearer security and never ambient cookies', () => {
+// The session token lives in an HttpOnly cookie set by the API: the transport sends it
+// (credentials: 'include'); a Bearer header only goes out for a real token, never for the marker.
+test('fetch transport sends the HttpOnly session cookie and a Bearer only for a real token', () => {
   const result = runTypeScriptScenario(`
     const { createTusWebFetchTransport } = (await import('./apps/web/src/lib/tus-client.ts')).default
     const originalFetch = globalThis.fetch
@@ -89,14 +91,18 @@ test('fetch transport uses explicit bearer security and never ambient cookies', 
     globalThis.fetch = async (url, options) => { call = { url, options }; return new Response(JSON.stringify({ ok: true }), { status: 200 }) }
     try {
       await createTusWebFetchTransport().request({ method: 'GET', path: '/tus/v1/delivery/tasks', tenantId: 'tenant-a', actorId: 'actor-a', correlationId: 'corr-a', accessToken: 'secret-token' })
-      console.log(JSON.stringify(call))
+      const bearer = call
+      await createTusWebFetchTransport().request({ method: 'GET', path: '/tus/v1/delivery/tasks', tenantId: 'tenant-a', actorId: 'actor-a', correlationId: 'corr-a', accessToken: 'cookie-session' })
+      console.log(JSON.stringify({ ...bearer, cookieMode: call }))
     } finally { globalThis.fetch = originalFetch }
   `, { NEXT_PUBLIC_API_URL: 'https://api.tusservicios.com', API_BASE_URL: '' })
 
   assert.equal(result.url, 'https://api.tusservicios.com/tus/v1/delivery/tasks')
-  assert.equal(result.options.credentials, 'omit')
+  assert.equal(result.options.credentials, 'include')
   assert.equal(result.options.headers.Authorization, 'Bearer secret-token')
-  assert.equal(result.options.headers.Cookie, undefined)
+  assert.equal(result.options.headers.Cookie, undefined, 'the browser attaches the cookie; JS never sees it')
+  assert.equal(result.cookieMode.options.credentials, 'include')
+  assert.equal(result.cookieMode.options.headers.Authorization, undefined, 'the marker is never sent as a token')
 })
 
 test('web surface exposes install/update/offline and recovery contracts without localhost production defaults', () => {

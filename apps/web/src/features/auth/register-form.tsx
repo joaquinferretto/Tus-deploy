@@ -47,7 +47,7 @@ export function RegisterForm(): React.ReactNode {
     })
     setSubmitting(false)
     if (result.status !== 'accepted') {
-      setMessage(registerErrorMessage())
+      setMessage(registerErrorMessage(result.code))
       return
     }
     try {
@@ -62,8 +62,12 @@ export function RegisterForm(): React.ReactNode {
     return (
       <div className={styles.form}>
         <p className={styles.success} role="status">
-          ¡Listo! Creamos tu cuenta. Te enviamos un correo a <strong>{values.email.trim()}</strong> para verificarla. Después
-          podés iniciar sesión.
+          Te enviamos un correo a <strong>{values.email.trim()}</strong> con un enlace para confirmar tu cuenta (vence en 24
+          horas). Después podés iniciar sesión con tu email y contraseña. ¿No llegó? Revisá spam o{' '}
+          <Link className={styles.link} href="/verificar-email">
+            pedí otro
+          </Link>
+          .
         </p>
         <Link className={styles.primary} href={withReturnTo('/sign-in', returnTo) as Route}>
           Ir a iniciar sesión

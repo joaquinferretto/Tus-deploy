@@ -13,6 +13,7 @@ import {
   type TusWebSession,
 } from './tus-ui-contract'
 import { resolveWebApiBaseUrl } from './api-url.ts'
+import { authorizationHeader } from './session-credentials'
 
 const DEFAULT_RETURN_TO = '/mi-perfil'
 
@@ -23,6 +24,8 @@ export interface TusWebAuthRequest {
     | '/auth/session'
     | '/auth/sign-out'
     | '/auth/register'
+    | '/auth/verify-email'
+    | '/auth/verify-email/resend'
     | '/auth/recovery/request'
     | '/auth/recovery/complete'
     | '/auth/oauth/providers'
@@ -56,6 +59,8 @@ export interface TusWebAuthClientOptions {
 export interface TusWebAuthClient {
   signIn(input: { email: string; password: string }): Promise<TusSessionState>
   register(input: { email: string; password: string; displayName: string }): Promise<TusAuthActionState>
+  verifyEmail(token: string): Promise<TusAuthActionState>
+  resendVerification(email: string): Promise<TusAuthActionState>
   requestRecovery(email: string): Promise<TusAuthActionState>
   completeRecovery(input: { token: string; newPassword: string }): Promise<TusAuthActionState>
   restore(returnTo?: string): Promise<TusSessionState>
@@ -103,6 +108,12 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
         path: '/auth/register',
         body: input,
       })
+    },
+    async verifyEmail(token) {
+      return authAction(transport, createCorrelationId, { method: 'POST', path: '/auth/verify-email', body: { token } })
+    },
+    async resendVerification(email) {
+      return authAction(transport, createCorrelationId, { method: 'POST', path: '/auth/verify-email/resend', body: { email } })
     },
     async requestRecovery(email) {
       return authAction(transport, createCorrelationId, {
@@ -270,11 +281,14 @@ export function createTusWebAuthFetchTransport(): TusWebAuthTransport {
   return {
     async request<TResponse>(input: TusWebAuthRequest) {
       const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Correlation-Id': input.correlationId }
-      if (input.accessToken !== undefined) headers['Authorization'] = `Bearer ${input.accessToken}`
-       const response = await fetch(`${baseUrl}${input.path}`, { method: input.method, headers, credentials: 'omit', ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }) })
+      Object.assign(headers, authorizationHeader(input.accessToken))
+       const response = await fetch(`${baseUrl}${input.path}`, { method: input.method, headers, credentials: 'include', ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }) })
       if (!response.ok) {
         const body = await response.json().catch(() => null) as Record<string, unknown> | null
-        throw new TusAuthError('The authentication service did not confirm this request.', response.status, typeof body?.['code'] === 'string' ? body['code'] : undefined)
+        // API errors are { error: { code } } (older routes: { code }).
+        const nested = body?.['error'] as Record<string, unknown> | undefined
+        const code = typeof nested?.['code'] === 'string' ? nested['code'] : typeof body?.['code'] === 'string' ? body['code'] : undefined
+        throw new TusAuthError('The authentication service did not confirm this request.', response.status, code)
       }
       if (response.status === 204) return undefined as TResponse
       return await response.json() as TResponse

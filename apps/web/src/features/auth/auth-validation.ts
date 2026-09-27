@@ -32,12 +32,16 @@ export function validateRegister(input: {
 }
 
 // Never reveals whether an email is registered (no account enumeration).
-export function signInErrorMessage(status: string): string {
-  return status === 'unavailable' ? 'No pudimos conectar con TUS. Probá de nuevo en unos minutos.' : 'El correo o la contraseña no son correctos.'
+export function signInErrorMessage(status: string, code?: string): string {
+  if (code === 'RATE_LIMITED') return 'Demasiados intentos con este email. Esperá 15 minutos o restablecé tu contraseña.'
+  return status === 'unavailable'
+    ? 'No pudimos conectar con TUS. Probá de nuevo en unos minutos.'
+    : 'El correo o la contraseña no son correctos, o todavía no confirmaste tu email.'
 }
 
-export function registerErrorMessage(): string {
-  return 'No pudimos crear la cuenta. Revisá los datos o, si ya tenés una cuenta, iniciá sesión.'
+export function registerErrorMessage(code?: string): string {
+  if (code === 'PASSWORD_BREACHED') return 'Esa contraseña apareció en filtraciones de datos conocidas. Elegí otra (una frase larga funciona bien).'
+  return 'No pudimos crear la cuenta. Revisá los datos e intentá de nuevo.'
 }
 
 const GOOGLE_ERRORS: Record<string, string> = {
