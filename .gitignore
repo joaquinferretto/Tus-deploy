@@ -32,3 +32,6 @@ packages/contracts/src/streams.js
 packages/contracts/src/streams.js.map
 packages/contracts/src/streams.d.ts
 packages/contracts/src/streams.d.ts.map
+
+# Artefactos locales de la herramienta de navegador (capturas, snapshots)
+.playwright-mcp/
