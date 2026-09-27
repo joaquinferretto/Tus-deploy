@@ -19,6 +19,7 @@ import { crearRouterSolicitudes } from './tus/solicitudes/http.ts'
 import type { ClientePrismaSolicitudes } from './tus/solicitudes/almacenes.ts'
 import { crearServicioDirectorio } from './tus/directorio/composicion.ts'
 import { crearRouterDirectorio } from './tus/directorio/http.ts'
+import { crearAltaPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import type { ClientePrismaDirectorio } from './tus/directorio/almacenes.ts'
 import type { ModuloWhatsapp } from './tus/asistente/composicion.ts'
@@ -34,6 +35,7 @@ import { createPrismaMfaService } from './auth-security/mfa/composition.ts'
 import type { PrismaMfaClient } from './auth-security/mfa/adapters/prisma-mfa-store.ts'
 import { MfaAdminSessionResolver } from './auth-security/mfa/admin-gate.ts'
 import { createMfaRouter } from './auth-security/mfa/http/mfa-router.ts'
+import { createSessionCookieMiddleware, readSessionCookieSettings } from './auth-security/http/session-cookie.ts'
 import type { PrismaIdentityClient } from './auth-security/adapters/postgres/prisma-identity-store.ts'
 import { createPrismaTenancyService } from './tenancy/composition.ts'
 import { createTenancyRouter } from './tenancy/http/tenancy-router.ts'
@@ -79,7 +81,7 @@ export interface CreateAppOptions {
   getReadiness?: () => Promise<ApiReadiness>
   tusRoutesEnabled?: boolean
   providerRoutesEnabled?: boolean
-  trustProxy?: number | false
+  trustProxy?: number | string[] | false
 }
 
 export function createApp(options: CreateAppOptions = {}): Application {
@@ -88,12 +90,18 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const prisma = getPrismaClient() as unknown as TusPrismaClient
   const auth = createPrismaAuthService(prisma as unknown as PrismaIdentityClient, {
     platformAdminEmails: leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS']),
+    env: process.env,
   })
   // Platform admin permissions are honored only for sessions that passed the second factor:
   // every router below resolves sessions through the MFA gate (see mfa/admin-gate.ts).
   const rawSessions = new DurableIdentitySessionResolver(auth.store)
   const mfa = createPrismaMfaService(prisma as unknown as PrismaMfaClient, process.env)
-  const sessions = new MfaAdminSessionResolver(rawSessions, mfa)
+  // Admin = allowlist (read live, removing an email ends access on the next request) + verified
+  // email + MFA elevation of this session. Google sessions never carry admin scope.
+  const sessions = new MfaAdminSessionResolver(rawSessions, mfa, auth.store, () =>
+    leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS'])
+  )
+  const sessionCookies = readSessionCookieSettings(process.env)
   // Google sign-in/sign-up: same account model and session type as password sign-in.
   const federated = createFederatedAuth({
     auth: auth.service,
@@ -118,6 +126,8 @@ export function createApp(options: CreateAppOptions = {}): Application {
   app.use(correlationMiddleware)
   app.use(helmetMiddleware)
   app.use(corsMiddleware)
+  // HttpOnly session cookie -> Authorization for every router, with CSRF origin checks.
+  app.use(createSessionCookieMiddleware(sessionCookies))
   app.use(rateLimitMiddleware)
   app.use([...WEBHOOK_PATH_PREFIXES], webhookRateLimitMiddleware)
   app.use(
@@ -131,6 +141,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
       '/auth/oauth/signup',
       '/auth/oauth/link',
       '/auth/mfa',
+      '/auth/verify-email/resend',
     ],
     authRateLimitMiddleware
   )
@@ -148,16 +159,20 @@ export function createApp(options: CreateAppOptions = {}): Application {
       : healthRouter
   )
   app.use(createVersionRouter())
-  app.use(createAuthRouter({ service: auth.service, sessions }))
+  app.use(createAuthRouter({ service: auth.service, sessions, cookies: sessionCookies }))
   app.use(
     createMfaRouter({
       service: mfa,
       sessions: rawSessions,
       accounts: auth.service,
       reauthenticate: (accountId, password) => auth.service.verifyCurrentPassword(accountId, password),
+      adminCandidate: (context) => sessions.isAdminCandidate(context),
+      rotate: (accessToken) => auth.service.rotateSession({ accessToken }),
+      cookies: sessionCookies,
+      notify: (accountId, kind) => auth.service.notifyAccount(accountId, kind),
     })
   )
-  app.use(createFederatedAuthRouter(federated.service, federated.webBaseUrl ?? process.env['TUS_WEB_BASE_URL'] ?? null))
+  app.use(createFederatedAuthRouter(federated.service, federated.webBaseUrl ?? process.env['TUS_WEB_BASE_URL'] ?? null, sessionCookies))
   app.use(createTenancyRouter({ service: tenancy.service, sessions }))
   const tusRoutesEnabled =
     options.tusRoutesEnabled ??
@@ -166,7 +181,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     options.providerRoutesEnabled ?? process.env['TUS_PROVIDER_ACTIONS_ENABLED'] === 'true'
   if (tusRoutesEnabled) {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
-    app.use(crearRouterDirectorio({ servicio: directorio, sessions }))
+    app.use(crearRouterDirectorio({ servicio: directorio, sessions, adminSave: crearAltaPrestadorAdmin({ accounts: auth.store, application, directorio }) }))
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
     app.use(tusRouter)
   }

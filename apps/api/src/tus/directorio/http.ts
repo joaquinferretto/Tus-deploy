@@ -14,8 +14,24 @@ import type { ServicioDirectorio } from './servicio.ts'
 // - PUT  /tus/v1/prestador/perfil-publico       crear/editar el perfil público.
 // - POST /tus/v1/asistente/interpretar          interpreta el texto (oficio, barrio, urgencia).
 // - POST /tus/v1/asistente/candidatos           prestadores compatibles (requiere sesión).
-export function crearRouterDirectorio({ servicio, sessions }: { servicio: ServicioDirectorio; sessions: TusSessionResolverPort }): Router {
+export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
+  servicio: ServicioDirectorio
+  sessions: TusSessionResolverPort
+  adminSave?: (context: TusAuthenticatedTenantContext, body: Record<string, unknown>) => Promise<{ status: number; code?: string; fields?: string[]; profile?: unknown }>
+}): Router {
   const router = express.Router()
+
+  router.post('/tus/v1/admin/prestadores', asyncHandler(async (request, response) => {
+    const context = await autenticar(request, response, sessions)
+    if (!context) return
+    if (!context.permissions.includes('tus:providers:admin')) {
+      enviarError(response, 403, 'FORBIDDEN', 'Administration requires an elevated admin session')
+      return
+    }
+    if (!adminSave) { enviarError(response, 503, 'UNAVAILABLE', 'Administration unavailable'); return }
+    const { status, ...result } = await adminSave(context, comoRegistro(request.body))
+    response.status(status).json(result)
+  }))
 
   router.get('/tus/v1/public/oficios', (_request: Request, response: Response) => {
     response.setHeader('cache-control', 'public, max-age=300')
