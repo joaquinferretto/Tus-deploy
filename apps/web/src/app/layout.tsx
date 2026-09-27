@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import { headers } from 'next/headers'
 import { QueryProvider } from '@/lib/query-client'
 import { resolveTusPublicOrigin, TUS_LOCALE } from '@/lib/tus-journeys'
 import './globals.css'
@@ -35,7 +36,10 @@ export const viewport: Viewport = {
   colorScheme: 'light',
 }
 
-export default function RootLayout({ children }: RootLayoutProps): React.ReactNode {
+// Reading the request headers renders every page per request: the CSP nonce set by the middleware
+// is fresh on each response (a prerendered page would carry no nonce and its scripts would be blocked).
+export default async function RootLayout({ children }: RootLayoutProps): Promise<React.ReactNode> {
+  await headers()
   return (
     <html lang={TUS_LOCALE}>
       <body>
