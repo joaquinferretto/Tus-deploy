@@ -1,14 +1,15 @@
 import { createHash } from 'node:crypto'
 
-import { IDS_OFICIOS, type OficioId } from '../directorio/oficios.ts'
+import { esOficio, type OficioId } from '../directorio/oficios.ts'
+import { barriosVigentes, buscarBarrio } from '../catalogo/vigente.ts'
 
 // Solicitudes de servicio: un cliente publica qué necesita y en qué barrio; los prestadores de la
 // zona las ven en el mapa público de la home. Privacidad por diseño: nunca se pide dirección,
 // teléfono ni ubicación exacta. Solo se guarda el barrio y un punto aproximado derivado de él.
 
-// Las categorías de solicitud son los oficios del catálogo canónico (directorio/oficios.ts).
-export const CATEGORIAS_SOLICITUD = IDS_OFICIOS
+// Las categorías de solicitud son los oficios vigentes del catálogo administrado.
 export type CategoriaSolicitud = OficioId
+export const esCategoriaSolicitud = esOficio
 
 export const URGENCIAS_SOLICITUD = ['urgente', 'hoy_manana', 'esta_semana', 'sin_apuro'] as const
 export type UrgenciaSolicitud = (typeof URGENCIAS_SOLICITUD)[number]
@@ -35,20 +36,11 @@ export type EstadoPostulacion = 'pendiente' | 'aceptada' | 'rechazada' | 'retira
 export const IMAGENES_POR_SOLICITUD = 2
 export const TAMANO_MAXIMO_IMAGEN = 3 * 1024 * 1024
 
-// Barrios de Corrientes Capital con su centro aproximado. La Web muestra la misma lista.
-export const ZONAS_CORRIENTES: ReadonlyArray<{ nombre: string; lat: number; lng: number }> = [
-  { nombre: 'Centro', lat: -27.4695, lng: -58.8295 },
-  { nombre: 'Camba Cuá', lat: -27.4765, lng: -58.8215 },
-  { nombre: 'La Rosada', lat: -27.4805, lng: -58.8345 },
-  { nombre: 'Barrio Sur', lat: -27.4755, lng: -58.8415 },
-  { nombre: 'San Gerónimo', lat: -27.4795, lng: -58.8155 },
-  { nombre: '1000 Viviendas', lat: -27.4855, lng: -58.829 },
-  { nombre: 'Libertad', lat: -27.4835, lng: -58.8005 },
-  { nombre: 'San Benito', lat: -27.4905, lng: -58.8165 },
-  { nombre: 'Laguna Seca', lat: -27.4945, lng: -58.7855 },
-  { nombre: 'Pirayuí', lat: -27.5035, lng: -58.7735 },
-  { nombre: 'Molina Punta', lat: -27.5135, lng: -58.7905 },
-]
+// Barrios con su centro aproximado: vienen del catálogo administrado (tabla barrios). Solo los
+// vigentes se ofrecen para nuevas solicitudes y se ubican en el mapa.
+export function zonasCorrientes(): { nombre: string; lat: number; lng: number }[] {
+  return barriosVigentes().map((barrio) => ({ nombre: barrio.nombre, lat: barrio.lat, lng: barrio.lng }))
+}
 
 export const LIMITES_SOLICITUD = {
   tituloMin: 5,
@@ -198,11 +190,11 @@ export function validarNuevaSolicitud(body: Record<string, unknown>): { ok: true
   const urgencia = body['urgency']
   const titulo = texto(body['title'])
   const descripcion = texto(body['description'])
-  const zona = ZONAS_CORRIENTES.find((item) => item.nombre === body['zone'])
+  const zona = zonasCorrientes().find((item) => item.nombre === body['zone'])
   const presupuestoCrudo = body['budgetMax']
   const presupuesto = presupuestoCrudo === null || presupuestoCrudo === undefined || presupuestoCrudo === '' ? null : presupuestoCrudo
 
-  if (typeof categoria !== 'string' || !(CATEGORIAS_SOLICITUD as readonly string[]).includes(categoria)) campos.push('category')
+  if (typeof categoria !== 'string' || !esOficio(categoria)) campos.push('category')
   if (titulo.length < LIMITES_SOLICITUD.tituloMin || titulo.length > LIMITES_SOLICITUD.tituloMax || contieneContacto(titulo)) campos.push('title')
   if (descripcion.length > LIMITES_SOLICITUD.descripcionMax || contieneContacto(descripcion)) campos.push('description')
   if (!zona) campos.push('zone')
@@ -249,7 +241,8 @@ export function nombrePublico(displayName: string): string {
 // Punto aproximado: centro del barrio + desplazamiento determinístico (±~300 m) derivado del id,
 // para que las solicitudes de un mismo barrio no se superpongan. Redondeado a 3 decimales.
 export function ubicacionAproximada(zona: string, id: string): { lat: number; lng: number } {
-  const centro = ZONAS_CORRIENTES.find((item) => item.nombre === zona) ?? ZONAS_CORRIENTES[0]!
+  const barrio = buscarBarrio(zona)
+  const centro = barrio && barrio.lat !== null && barrio.lng !== null ? { lat: barrio.lat, lng: barrio.lng } : (zonasCorrientes()[0] ?? { lat: -27.4695, lng: -58.8295 })
   const hash = createHash('sha256').update(id).digest()
   const desplazamiento = (byte: number) => ((byte / 255) * 2 - 1) * 0.003
   const redondear = (value: number) => Math.round(value * 1000) / 1000

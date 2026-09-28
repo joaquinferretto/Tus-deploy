@@ -38,6 +38,7 @@ import { ErrorIdentidad } from '../identidad/modelo.ts'
 import type { ModuloWhatsapp } from '../asistente/composicion.ts'
 import { leerAdminsPlataforma } from '../../auth-security/application/auth-service.ts'
 import { ErrorAsistente } from '../asistente/modelo.ts'
+import { paginaJson, paginacion } from '../admin/paginacion.ts'
 import {
   parsearWebhookMeta,
   verificarFirmaMeta,
@@ -1245,12 +1246,10 @@ export function createTusHttpRouter({
       const auth = await whatsappSupport(request, response)
       if (!auth) return
       try {
-        response.status(200).json({
-          conversations: await auth.module.soporte.listar({
-            mode: readQueryString(request.query['mode']) || undefined,
-            limit: readQueryString(request.query['limit']),
-          }),
-        })
+        const { pagina, tamano } = paginacion(request.query)
+        const page = await auth.module.soporte.pagina({ mode: readQueryString(request.query['mode']) || undefined, pagina, tamano })
+        const { items, ...meta } = paginaJson(page.items, pagina, tamano, page.total)
+        response.status(200).json({ conversations: items, ...meta })
       } catch (error) {
         sendAssistantError(response, error)
       }
@@ -1414,12 +1413,11 @@ export function createTusHttpRouter({
       const auth = await identityAdmin(request, response)
       if (!auth) return
       try {
-        response.status(200).json({
-          verifications: await auth.identity.listar({
-            status: readQueryString(request.query['status']) || undefined,
-            limit: Number(readQueryString(request.query['limit'])) || undefined,
-          }),
-        })
+        const { pagina, tamano } = paginacion(request.query)
+        const status = readQueryString(request.query['status']) || undefined
+        const page = await auth.identity.pagina({ ...(status ? { status } : {}), pagina, tamano })
+        const { items, ...meta } = paginaJson(page.items, pagina, tamano, page.total)
+        response.status(200).json({ verifications: items, ...meta })
       } catch (error) {
         sendIdentityError(response, error)
       }

@@ -75,9 +75,10 @@ export class AlmacenAsistenteEnMemoria {
         listar: async (filter) =>
           [...s().conversaciones.values()]
             .filter((c) => !filter.mode || c.mode === filter.mode)
-            .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
-            .slice(0, filter.limit ?? 100)
+            .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt) || b.conversationId.localeCompare(a.conversationId))
+            .slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 100))
             .map(clone),
+        contar: async (filter) => [...s().conversaciones.values()].filter((c) => !filter.mode || c.mode === filter.mode).length,
       },
       mensajes: {
         buscarPorWamid: async (wamid) => clone([...s().mensajes.values()].find((m) => m.wamid === wamid) ?? null),

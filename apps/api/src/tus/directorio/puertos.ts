@@ -11,6 +11,9 @@ export interface AlmacenPerfiles {
   visibles(input: { oficio?: OficioId; limite: number }): Promise<PerfilPublico[]>
   // Todos (visibles u ocultos), para la administración de la plataforma.
   todos(input: { limite: number }): Promise<PerfilPublico[]>
+  // Ids de tenant con perfil (distintos), sin traer perfiles.
+  tenants(): Promise<string[]>
+  paginaAdmin(input: { pagina: number; tamano: number; q: string; oficio: string; zona: string; visible: boolean | null; verificado: boolean | null }): Promise<{ items: PerfilPublico[]; total: number }>
 }
 
 // Hechos que el directorio lee de los módulos existentes (marketplace, identidad, trabajos).
@@ -19,4 +22,13 @@ export interface FuentesDirectorio {
   prestador(tenantId: string): Promise<{ prestadorId: string; aprobado: boolean } | null>
   hechos(tenantId: string): Promise<HechosPrestador>
   ubicacionIdentidadVerificada?(tenantId: string): Promise<AreaDomicilioFallback | null>
+  // Lo que la administración necesita de una página de perfiles, en lecturas por lote (una por
+  // fuente, nunca una por prestador).
+  resumenAdmin(tenantIds: readonly string[]): Promise<Map<string, ResumenAdminPrestador>>
+}
+
+export interface ResumenAdminPrestador {
+  prestador: { prestadorId: string; aprobado: boolean } | null
+  verificado: boolean
+  ubicacionVerificada: AreaDomicilioFallback | null
 }

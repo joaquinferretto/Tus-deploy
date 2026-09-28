@@ -25,12 +25,23 @@ export class ServicioSoporteWhatsapp {
     private readonly now: () => number = Date.now
   ) {}
 
-  async listar(filter: { mode?: unknown; limit?: unknown }) {
+  // One page of the inbox (LIMIT/OFFSET in the store) + the filtered total.
+  async pagina(filter: { mode?: unknown; pagina: number; tamano: number }) {
+    const mode = filter.mode === 'bot' || filter.mode === 'human' ? filter.mode : undefined
+    const [items, total] = await Promise.all([
+      this.listar({ ...(mode ? { mode } : {}), limit: filter.tamano, offset: (filter.pagina - 1) * filter.tamano }),
+      this.transaction.ejecutar((repositories) => repositories.conversaciones.contar(mode ? { mode } : {})),
+    ])
+    return { items, total }
+  }
+
+  async listar(filter: { mode?: unknown; limit?: unknown; offset?: number }) {
     const mode = filter.mode === 'bot' || filter.mode === 'human' ? filter.mode : undefined
     return this.transaction.ejecutar(async (repositories) => {
       const conversations = await repositories.conversaciones.listar({
         ...(mode ? { mode } : {}),
         limit: Math.min(Math.max(Number(filter.limit) || 50, 1), 200),
+        ...(filter.offset ? { offset: filter.offset } : {}),
       })
       const out = []
       for (const conversation of conversations) {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import { prepararImagenDocumento } from '../identidad/documentos.ts'
 import {
-  CATEGORIAS_SOLICITUD,
+  esCategoriaSolicitud,
   IMAGENES_POR_SOLICITUD,
   LIMITES_SOLICITUD,
   ORIGENES_SOLICITUD,
@@ -70,7 +70,7 @@ export class ServicioSolicitudes {
   }
 
   async listarPublicas(input: { categoria?: unknown } = {}): Promise<VistaPublicaSolicitud[]> {
-    const categoria = (CATEGORIAS_SOLICITUD as readonly unknown[]).includes(input.categoria) ? (input.categoria as CategoriaSolicitud) : undefined
+    const categoria = esCategoriaSolicitud(input.categoria) ? (input.categoria as CategoriaSolicitud) : undefined
     const solicitudes = await this.deps.almacen.listarAbiertas({
       ahora: this.now(),
       limite: LIMITES_SOLICITUD.listadoPublicoMax,
@@ -159,6 +159,26 @@ export class ServicioSolicitudes {
         postulantes: postulaciones.length,
       }
     }))
+  }
+
+  async paginaParaAdmin(input: { pagina: number; tamano: number; q: string; estado: string; categoria: string }) {
+    const ahora = this.now()
+    const resultado = await this.deps.almacen.listarAdmin({ ahora, ...input })
+    return {
+      total: resultado.total,
+      items: resultado.items.map(({ solicitud: item, postulantes }) => ({
+        id: item.id,
+        cliente: item.nombrePublico,
+        categoria: item.categoria,
+        titulo: item.titulo,
+        zona: item.zona,
+        origen: item.origen,
+        visibilidad: item.visibilidad,
+        estado: item.estado === 'cerrada' ? 'cerrada' as const : item.estadoAsignacion === 'aceptada' ? 'asignada' as const : item.expiraEn <= ahora ? 'vencida' as const : 'publicada' as const,
+        creadaEn: new Date(item.creadaEn).toISOString(),
+        postulantes,
+      })),
+    }
   }
 
   async mias(cuentaId: string): Promise<VistaPropiaSolicitud[]> {

@@ -1,6 +1,6 @@
 import * as z from 'zod/v4'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
-import { IDS_OFICIOS, type OficioId } from '../directorio/oficios.ts'
+import { esOficio, idsOficios } from '../directorio/oficios.ts'
 import type { PuertoDominioAsistente } from './dominio.ts'
 import type { DefinicionHerramientaChat } from './groq.ts'
 
@@ -20,8 +20,10 @@ export type AudienciaHerramienta = 'public' | 'linked' | 'provider'
 
 const ID = z.string().regex(/^[A-Za-z0-9._:-]{3,120}$/u, 'invalid id')
 const CATEGORIAS = ['beauty-personal-care', 'repairs-trades'] as const
-// Oficios del catálogo canónico (directorio/oficios.ts): los mismos que usa la Web.
-const OFICIOS_IDS = IDS_OFICIOS as unknown as [OficioId, ...OficioId[]]
+// Trade ids come from the administered catalog (the same the Web uses). The model sees the CURRENT
+// list: definicionChat() fills the enum on every call, so a trade created in the panel is usable
+// at once without a deploy.
+const OFICIO = z.string().refine((value) => esOficio(value), 'unknown trade')
 
 interface Herramienta<S extends z.ZodType = z.ZodType> {
   name: string
@@ -46,7 +48,7 @@ export const HERRAMIENTAS = [
     description: 'Conserva los datos que el usuario ya dio para buscar un prestador. Si falta oficio, problema o zona, formulá una pregunta natural SOLO sobre lo faltante. No incluyas resultados ni prestadores en la pregunta. Si cambia de necesidad, reemplazá los datos anteriores. Usá null para datos desconocidos; nunca los supongas.',
     audience: 'public',
     schema: z.strictObject({
-      profession: z.enum(OFICIOS_IDS).nullable(),
+      profession: OFICIO.nullable(),
       problem: z.string().trim().min(3).max(300).nullable(),
       zone: z.string().trim().min(2).max(60).nullable(),
       question: z.string().trim().min(5).max(500).nullable(),
@@ -69,7 +71,7 @@ export const HERRAMIENTAS = [
     audience: 'public',
     schema: z.strictObject({
       query: z.string().trim().min(3).max(300),
-      profession: z.enum(OFICIOS_IDS),
+      profession: OFICIO,
       zone: z.string().trim().min(2).max(60),
     }),
     confirmation: null,
@@ -237,7 +239,7 @@ Queda pendiente hasta que el prestador la acepte. ¿Confirmás?`,
     description:
       'Lista solicitudes públicas abiertas de clientes (del mapa de TUS), opcionalmente por oficio y barrio. Un prestador puede ofrecerse aunque no sea su rubro. Solo datos públicos: título, barrio aproximado, presupuesto y urgencia; nunca contacto ni dirección.',
     audience: 'provider',
-    schema: z.strictObject({ profession: z.enum(OFICIOS_IDS).nullable(), zone: z.string().trim().min(2).max(60).nullable() }),
+    schema: z.strictObject({ profession: OFICIO.nullable(), zone: z.string().trim().min(2).max(60).nullable() }),
     confirmation: null,
     execute: async (args, _actor, domain) => ({ requests: await domain.solicitudesAbiertas(args) }),
   }),
@@ -335,6 +337,13 @@ export function permitida(tool: Herramienta, actor: ActorAsistente): 'ok' | 'LIN
 export function definicionChat(tool: Herramienta): DefinicionHerramientaChat {
   const schema = z.toJSONSchema(tool.schema) as Record<string, unknown>
   delete schema['$schema']
+  const properties = schema['properties'] as Record<string, Record<string, unknown>> | undefined
+  const profession = properties?.['profession']
+  if (profession) {
+    const ids = idsOficios()
+    const nullable = Array.isArray(profession['anyOf'])
+    properties!['profession'] = nullable ? { anyOf: [{ type: 'string', enum: ids }, { type: 'null' }] } : { type: 'string', enum: ids }
+  }
   return { type: 'function', function: { name: tool.name, description: tool.description, parameters: schema } }
 }
 

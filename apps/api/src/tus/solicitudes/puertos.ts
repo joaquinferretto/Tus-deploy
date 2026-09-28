@@ -8,6 +8,7 @@ export interface AlmacenSolicitudes {
   listarDeCuenta(cuentaId: string): Promise<SolicitudServicio[]>
   // Las más recientes de todas las cuentas (administración de la plataforma).
   listarRecientes(limite: number): Promise<SolicitudServicio[]>
+  listarAdmin(input: { ahora: number; pagina: number; tamano: number; q: string; estado: string; categoria: string }): Promise<{ items: { solicitud: SolicitudServicio; postulantes: number }[]; total: number }>
   // Dirigidas al prestador del tenant, más recientes primero.
   listarDirigidasA(prestadorTenantId: string): Promise<SolicitudServicio[]>
   contarPublicadasDesde(cuentaId: string, desde: number): Promise<number>

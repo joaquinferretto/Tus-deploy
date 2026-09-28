@@ -1,59 +1,41 @@
 import { sinAcentos } from '../texto.ts'
+import { buscarOficio, esOficioVigente, oficiosVigentes } from '../catalogo/vigente.ts'
 
-// Catálogo canónico de oficios de TUS. Es la única fuente para: categorías de solicitudes, oficio
-// del perfil público del prestador, directorio "Buscar trabajador", asistente Web y WhatsApp.
-// Los ids están fijados por CHECK en PostgreSQL (solicitudes_servicio, perfiles_publicos_prestador):
-// agregar un oficio requiere una migración nueva.
+// Trades of TUS come from the administered catalog (tabla oficios_servicio, catalogo/vigente.ts):
+// requests, provider profiles, the directory, the interpreter and WhatsApp all read it. New
+// selections only accept current (active) trades; old records keep their trade id and label.
 
-export const OFICIOS = [
-  {
-    id: 'plomeria',
-    label: 'Plomería',
-    profesion: 'Plomero/a',
-    palabrasClave: 'plomero plomera plomeria caneria cano canilla agua perdida gotea pierde bacha sifon inodoro deposito termotanque calefon destapacion destapar cloaca desague griferia bomba',
-  },
-  {
-    id: 'electricidad',
-    label: 'Electricidad',
-    profesion: 'Electricista',
-    palabrasClave: 'electricista electricidad luz enchufe tomacorriente termica disyuntor tablero cable cortocircuito corto lampara instalacion electrica ventilador de techo',
-  },
-  {
-    id: 'aire',
-    label: 'Aire acondicionado',
-    profesion: 'Técnico/a de aire acondicionado',
-    palabrasClave: 'aire acondicionado split frio enfria calor calefaccion refrigeracion gas carga climatizacion equipo de aire',
-  },
-  {
-    id: 'pintura',
-    label: 'Pintura',
-    profesion: 'Pintor/a',
-    palabrasClave: 'pintor pintora pintura pintar pared paredes humedad revoque enduido techo fachada',
-  },
-  {
-    id: 'mecanica',
-    label: 'Mecánica',
-    profesion: 'Mecánico/a',
-    palabrasClave: 'mecanico mecanica auto moto freno frenos motor bateria cubierta aceite embrague arranca',
-  },
-  {
-    id: 'otros',
-    label: 'Otros oficios',
-    profesion: 'Oficios varios',
-    palabrasClave: 'carpintero carpinteria mueble placard armado albanil albanileria construccion obra cerrajero cerradura llave jardin jardinero mudanza tecnico reparacion porton',
-  },
-] as const
+export type OficioId = string
 
-export type OficioId = (typeof OFICIOS)[number]['id']
-
-export const IDS_OFICIOS: readonly OficioId[] = OFICIOS.map((oficio) => oficio.id)
-
-export function esOficio(value: unknown): value is OficioId {
-  return typeof value === 'string' && (IDS_OFICIOS as readonly string[]).includes(value)
+export interface InfoOficio {
+  id: string
+  label: string
+  profesion: string
+  icono: string
+  categoriaId: string | null
+  // Synonyms as one string (free-text directory search).
+  palabrasClave: string
 }
 
-export function oficio(id: OficioId) {
-  return OFICIOS.find((item) => item.id === id)!
+export function esOficio(value: unknown): value is OficioId {
+  return esOficioVigente(value)
+}
+
+export function idsOficios(): string[] {
+  return oficiosVigentes().map((item) => item.id)
+}
+
+// Label of any trade id, active or not (history), with a neutral fallback.
+export function oficio(id: OficioId): InfoOficio {
+  const item = buscarOficio(id)
+  return item
+    ? { id: item.id, label: item.nombre, profesion: item.profesion, icono: item.icono, categoriaId: item.categoriaId, palabrasClave: item.sinonimos.join(' ') }
+    : { id, label: 'Otro oficio', profesion: 'Oficio', icono: 'herramienta', categoriaId: null, palabrasClave: '' }
+}
+
+// Trades the interpreter can pick (active), with their synonyms.
+export function oficiosInterpretables() {
+  return oficiosVigentes()
 }
 
 export function normalizarTexto(value: string): string {
@@ -63,7 +45,7 @@ export function normalizarTexto(value: string): string {
     .trim()
 }
 
-// Vista pública del catálogo (GET /tus/v1/public/oficios).
+// Public view of the catalog (GET /tus/v1/public/oficios).
 export function catalogoPublico() {
-  return OFICIOS.map((item) => ({ id: item.id, label: item.label, profession: item.profesion }))
+  return oficiosVigentes().map((item) => ({ id: item.id, label: item.nombre, profession: item.profesion, icon: item.icono, categoryId: item.categoriaId }))
 }

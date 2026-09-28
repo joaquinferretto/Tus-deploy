@@ -54,6 +54,18 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
     return [...this.solicitudes.values()].sort((a, b) => b.creadaEn - a.creadaEn).slice(0, limite).map((item) => this.copia(item))
   }
 
+  async listarAdmin(input: { ahora: number; pagina: number; tamano: number; q: string; estado: string; categoria: string }) {
+    const estadoDe = (item: SolicitudServicio) => item.estado === 'cerrada' ? 'cerrada' : item.estadoAsignacion === 'aceptada' ? 'asignada' : item.expiraEn <= input.ahora ? 'vencida' : 'publicada'
+    const q = input.q.toLocaleLowerCase('es')
+    const filtradas = [...this.solicitudes.values()]
+      .filter((item) => !q || `${item.nombrePublico} ${item.titulo} ${item.zona}`.toLocaleLowerCase('es').includes(q))
+      .filter((item) => !input.estado || estadoDe(item) === input.estado)
+      .filter((item) => !input.categoria || item.categoria === input.categoria)
+      .sort((a, b) => b.creadaEn - a.creadaEn || b.id.localeCompare(a.id))
+    const pagina = filtradas.slice((input.pagina - 1) * input.tamano, input.pagina * input.tamano)
+    return { items: pagina.map((solicitud) => ({ solicitud: this.copia(solicitud), postulantes: [...this.postulaciones.values()].filter((item) => item.solicitudId === solicitud.id).length })), total: filtradas.length }
+  }
+
   async listarDirigidasA(prestadorTenantId: string) {
     return [...this.solicitudes.values()]
       .filter((item) => item.visibilidad === 'dirigida' && item.prestadorTenantId === prestadorTenantId)
@@ -157,7 +169,7 @@ type Fila = Record<string, unknown>
 interface DelegadoSolicitudes {
   create(input: { data: Fila }): Promise<Fila>
   findFirst(input: { where: Fila; include?: Fila }): Promise<Fila | null>
-  findMany(input: { where: Fila; orderBy?: Fila; take?: number; include?: Fila }): Promise<Fila[]>
+  findMany(input: { where: Fila; orderBy?: Fila | Fila[]; skip?: number; take?: number; include?: Fila }): Promise<Fila[]>
   count(input: { where: Fila }): Promise<number>
   updateMany(input: { where: Fila; data: Fila }): Promise<{ count: number }>
 }
@@ -278,6 +290,24 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
   async listarRecientes(limite: number) {
     const filas = await this.client.solicitudServicio.findMany({ where: {}, orderBy: { creadaEn: 'desc' }, take: limite, include: CON_IMAGENES })
     return filas.map(desdeFila)
+  }
+
+  async listarAdmin(input: { ahora: number; pagina: number; tamano: number; q: string; estado: string; categoria: string }) {
+    const now = aFecha(input.ahora)
+    const estado = input.estado === 'cerrada' ? { estado: 'cerrada' }
+      : input.estado === 'asignada' ? { estado: 'abierta', estadoAsignacion: 'aceptada' }
+        : input.estado === 'vencida' ? { estado: 'abierta', expiraEn: { lte: now }, NOT: { estadoAsignacion: 'aceptada' } }
+          : input.estado === 'publicada' ? { estado: 'abierta', expiraEn: { gt: now }, NOT: { estadoAsignacion: 'aceptada' } } : null
+    const where: Fila = { AND: [
+      ...(input.q ? [{ OR: [{ nombrePublico: { contains: input.q, mode: 'insensitive' } }, { titulo: { contains: input.q, mode: 'insensitive' } }, { zona: { contains: input.q, mode: 'insensitive' } }] }] : []),
+      ...(input.categoria ? [{ categoria: input.categoria }] : []),
+      ...(estado ? [estado] : []),
+    ] }
+    const [filas, total] = await Promise.all([
+      this.client.solicitudServicio.findMany({ where, orderBy: [{ creadaEn: 'desc' }, { id: 'desc' }], skip: (input.pagina - 1) * input.tamano, take: input.tamano, include: { ...CON_IMAGENES, _count: { select: { postulaciones: true } } } }),
+      this.client.solicitudServicio.count({ where }),
+    ])
+    return { items: filas.map((fila) => ({ solicitud: desdeFila(fila), postulantes: Number(((fila['_count'] as Fila | undefined)?.['postulaciones']) ?? 0) })), total }
   }
 
   async listarDirigidasA(prestadorTenantId: string) {

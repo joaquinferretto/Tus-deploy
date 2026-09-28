@@ -91,6 +91,33 @@ export class ServicioVerificacionIdentidad {
     })
   }
 
+  // Batch version of identidadVerificada + ubicacionPublicaVerificada for admin lists: one read
+  // for every tenant of the page. Same rules: verified if any verification is `verified`; the
+  // public area only comes from the latest one when it is `verified`.
+  async resumenDeTenants(
+    tenantIds: readonly string[]
+  ): Promise<Map<string, { verificado: boolean; area: AreaDomicilioVerificada | null }>> {
+    const unicos = [...new Set(tenantIds)]
+    const filas = unicos.length
+      ? await this.transaction.ejecutar((repositories) => repositories.verificaciones.deTenants(unicos))
+      : []
+    const resultado = new Map<string, { verificado: boolean; area: AreaDomicilioVerificada | null }>()
+    for (const tenantId of unicos) {
+      const propias = filas
+        .filter((item) => item.tenantId === tenantId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      const ultima = propias[0]
+      resultado.set(tenantId, {
+        verificado: propias.some((item) => item.status === 'verified'),
+        area:
+          ultima && ultima.status === 'verified'
+            ? sanitizarAreaDomicilio(ultima.externalSnapshot?.verifiedArea ?? null)
+            : null,
+      })
+    }
+    return resultado
+  }
+
   async estado(context: ContextoIdentidad): Promise<VistaVerificacionPrestador> {
     return this.transaction.ejecutar(async (repositories) => {
       const current = await repositories.verificaciones.ultimaDeTenant(context.tenantId)
@@ -271,12 +298,13 @@ export class ServicioVerificacionIdentidad {
 
   // ---- platform administration (callers verified the platform-admin authority) -------------
 
-  async listar(filter: { status?: string; limit?: number }) {
+  async listar(filter: { status?: string; limit?: number; offset?: number }) {
     return this.transaction.ejecutar(async (repositories) =>
       (
         await repositories.verificaciones.listar({
           status: filter.status as EstadoVerificacionIdentidad | undefined,
           limit: Math.min(Math.max(Number(filter.limit) || 50, 1), 200),
+          ...(filter.offset ? { offset: filter.offset } : {}),
         })
       ).map((item) => ({
         verificationId: item.verificationId,
@@ -292,6 +320,16 @@ export class ServicioVerificacionIdentidad {
         documentNumberMasked: item.documentNumber ? enmascararDni(item.documentNumber) : null,
       }))
     )
+  }
+
+  // One page of the admin list (LIMIT/OFFSET in the store) + the filtered total.
+  async pagina(filter: { status?: string; pagina: number; tamano: number }) {
+    const status = filter.status as EstadoVerificacionIdentidad | undefined
+    const [items, total] = await Promise.all([
+      this.listar({ ...(status ? { status } : {}), limit: filter.tamano, offset: (filter.pagina - 1) * filter.tamano }),
+      this.transaction.ejecutar((repositories) => repositories.verificaciones.contar(status ? { status } : {})),
+    ])
+    return { items, total }
   }
 
   async detalle(verificationId: string) {

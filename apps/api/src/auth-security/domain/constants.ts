@@ -15,6 +15,12 @@ export type CredentialStatus = (typeof CREDENTIAL_STATUS)[keyof typeof CREDENTIA
 export const AUTH_EVENT_KIND = {
   ACCOUNT_REGISTERED: 'account.registered',
   ACCOUNT_VERIFIED: 'account.verified',
+  // Changes made by a platform admin on someone else's account: actorId is the ADMIN and the
+  // metadata names the target account, the action and the changed fields.
+  ACCOUNT_ADMIN_CREATED: 'account.admin_created',
+  ACCOUNT_ADMIN_UPDATED: 'account.admin_updated',
+  ACCOUNT_ADMIN_SUSPENDED: 'account.admin_suspended',
+  ACCOUNT_ADMIN_REACTIVATED: 'account.admin_reactivated',
   AUTH_SIGNED_IN: 'auth.signed_in',
   AUTH_FAILED: 'auth.failed',
   CREDENTIAL_PASSWORD_CHANGED: 'credential.password_changed',

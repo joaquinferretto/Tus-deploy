@@ -18,6 +18,13 @@ import {
 } from './modelo.ts'
 import { esOficio, normalizarTexto, oficio, type OficioId } from './oficios.ts'
 import type { AlmacenPerfiles, FuentesDirectorio } from './puertos.ts'
+import { barriosDeUbicacion } from '../catalogo/vigente.ts'
+
+export interface FilaAdminPrestador {
+  id: string; tenantId: string; nombre: string; oficio: string; oficioLabel: string; zona: string | null; zonasCobertura: string[]
+  visible: boolean; aprobado: boolean; registrado: boolean; verificado: boolean; ubicaciones: number; enMapa: boolean
+  motivos: string[]; creadoEn: string; actualizadoEn: string
+}
 
 const PERFILES_MAXIMOS = 300
 export const TAMANO_PAGINA = 12
@@ -117,7 +124,11 @@ export class ServicioDirectorio {
         return terminos.every((termino) => texto.includes(termino))
       })
     }
-    if (zona) items = items.filter(({ ubicacion }) => ubicacion.serviceZones.some((item) => normalizarTexto(item) === normalizarTexto(zona)) || normalizarTexto(ubicacion.publicArea) === normalizarTexto(zona))
+    // A zone of the catalog ("Norte") covers its neighbourhoods; a neighbourhood covers itself.
+    if (zona) {
+      const lugares = barriosDeUbicacion(zona).map((item) => normalizarTexto(item))
+      items = items.filter(({ ubicacion }) => ubicacion.serviceZones.some((item) => lugares.includes(normalizarTexto(item))) || lugares.includes(normalizarTexto(ubicacion.publicArea)))
+    }
     if (filtros.verificados === true || filtros.verificados === 'true' || filtros.verificados === '1') items = items.filter((item) => item.publico.verified)
     if (filtros.atiendeHoy === true || filtros.atiendeHoy === 'true' || filtros.atiendeHoy === '1') items = items.filter((item) => item.publico.availability.status === 'atiende_hoy')
 
@@ -186,7 +197,7 @@ export class ServicioDirectorio {
     const normalizarZona = (value: string) => normalizarTexto(value).replace(/^barrio\s+/u, '')
     const visibles = await this.enriquecerVisibles(input.oficio as OficioId)
     const compatibles = input.exigirCobertura && zona
-      ? visibles.filter(item => item.ubicacion.serviceZones.some(value => normalizarZona(value) === normalizarZona(zona)))
+      ? visibles.filter(item => item.ubicacion.serviceZones.some(value => barriosDeUbicacion(zona).some((lugar) => normalizarZona(value) === normalizarZona(lugar))))
       : visibles
     const items = this.ordenar(compatibles, 'relevancia', zona).slice(0, limite)
     return {
@@ -213,22 +224,19 @@ export class ServicioDirectorio {
     return enriquecidos.filter((item): item is Enriquecido => item !== null)
   }
 
-  // Administración de la plataforma: todos los perfiles (visibles u ocultos) con el MOTIVO real
-  // por el que aparecen o no en el mapa. Mismas reglas que el directorio público.
-  async listarParaAdmin(): Promise<{
-    id: string; tenantId: string; nombre: string; oficio: string; oficioLabel: string; zona: string | null; zonasCobertura: string[]
-    visible: boolean; aprobado: boolean; registrado: boolean; verificado: boolean; ubicaciones: number; enMapa: boolean
-    motivos: string[]; creadoEn: string; actualizadoEn: string
-  }[]> {
-    const perfiles = await this.deps.perfiles.todos({ limite: 500 })
+  // Administración de la plataforma: perfiles (visibles u ocultos) con el MOTIVO real por el que
+  // aparecen o no en el mapa. Mismas reglas que el directorio público. Una lectura de perfiles +
+  // una lectura por lote de cada fuente (prestadores, identidad): nunca una consulta por perfil.
+  private async filasAdmin(perfiles: PerfilPublico[]): Promise<FilaAdminPrestador[]> {
     const now = this.now()
-    return Promise.all(perfiles.map(async (perfil) => {
-      const [prestador, hechos, fallback] = await Promise.all([
-        this.deps.fuentes.prestador(perfil.tenantId),
-        this.deps.fuentes.hechos(perfil.tenantId),
-        this.deps.fuentes.ubicacionIdentidadVerificada?.(perfil.tenantId) ?? Promise.resolve(null),
-      ])
-      const publico = proyectarPublico(perfil, hechos, now, resolverUbicacionDePerfil(perfil, fallback))
+    const resumenes = await this.deps.fuentes.resumenAdmin(perfiles.map((perfil) => perfil.tenantId))
+    return perfiles.map((perfil) => {
+      const resumen = resumenes.get(perfil.tenantId) ?? { prestador: null, verificado: false, ubicacionVerificada: null }
+      const prestador = resumen.prestador
+      // La fila de administración muestra oficio, presencia en el mapa y estados: precios, horarios
+      // y trabajos completados son del perfil público y no se leen acá.
+      const hechos: HechosPrestador = { aprobado: prestador?.aprobado ?? false, verificado: resumen.verificado, trabajosCompletados: 0, servicios: [] }
+      const publico = proyectarPublico(perfil, hechos, now, resolverUbicacionDePerfil(perfil, resumen.ubicacionVerificada))
       const motivos = [
         ...(perfil.visible ? [] : ['Perfil oculto']),
         ...(!prestador ? ['Sin alta como prestador'] : !hechos.aprobado ? ['Prestador no aprobado'] : []),
@@ -240,7 +248,21 @@ export class ServicioDirectorio {
         registrado: Boolean(prestador), verificado: hechos.verificado, ubicaciones: publico.mapLocations.length,
         enMapa: motivos.length === 0, motivos, creadoEn: new Date(perfil.creadoEn).toISOString(), actualizadoEn: new Date(perfil.actualizadoEn).toISOString(),
       }
-    }))
+    })
+  }
+
+  async listarParaAdmin(): Promise<FilaAdminPrestador[]> {
+    return this.filasAdmin(await this.deps.perfiles.todos({ limite: 500 }))
+  }
+
+  async paginaParaAdmin(input: { pagina: number; tamano: number; q: string; oficio: string; zona: string; visible: boolean | null; verificado: boolean | null }) {
+    const resultado = await this.deps.perfiles.paginaAdmin(input)
+    return { items: await this.filasAdmin(resultado.items), total: resultado.total }
+  }
+
+  // Tenants con perfil de prestador (rol "prestador" en Usuarios): una sola lectura de ids.
+  async tenantsConPerfil(): Promise<string[]> {
+    return this.deps.perfiles.tenants()
   }
 
   // Publicar u ocultar un perfil (única acción de estado que existe en el directorio).

@@ -2,8 +2,11 @@
 // solicitud TUS dirigida a un prestador. Son DTO explícitos: nunca entidades de base de datos ni
 // ids internos (tenant/prestador), direcciones, teléfonos, emails, documentos o coordenadas exactas.
 
+// Trades are administered in the database (the admin panel creates new ones): an id is a slug.
+// OFICIOS_TUS keeps the trades that existed before the administered catalog (compatibility).
 export const OFICIOS_TUS = ['plomeria', 'electricidad', 'aire', 'pintura', 'mecanica', 'otros'] as const
-export type OficioTus = (typeof OFICIOS_TUS)[number]
+export type OficioTus = string
+export const esIdOficioTus = (value: unknown): value is string => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/u.test(value)
 
 export const URGENCIAS_SOLICITUD_TUS = ['urgente', 'hoy_manana', 'esta_semana', 'sin_apuro'] as const
 export type UrgenciaSolicitudTus = (typeof URGENCIAS_SOLICITUD_TUS)[number]
@@ -20,11 +23,35 @@ export interface OficioPublico {
   id: OficioTus
   label: string
   profession: string
+  // Icon key chosen by the administration (the Web draws it; unknown keys use a generic icon).
+  icon?: string
+  categoryId?: string | null
+}
+
+export interface CategoriaPublica {
+  id: string
+  name: string
+}
+
+export interface BarrioPublico {
+  id: string
+  name: string
+  zoneId: string | null
+  lat: number
+  lng: number
+  polygon: { type: 'Polygon'; coordinates: [number, number][][] }
+}
+
+export interface UbicacionesPublicas {
+  localities: { id: string; name: string; province: string; zones: { id: string; name: string }[]; neighbourhoods: BarrioPublico[] }[]
 }
 
 export interface CatalogoOficios {
   items: OficioPublico[]
+  // Current neighbourhood names (compatibility with the pre-catalog clients).
   zones: string[]
+  categories?: CategoriaPublica[]
+  locations?: UbicacionesPublicas
 }
 
 export interface DisponibilidadPublica {
@@ -181,7 +208,7 @@ export function esPrestadorPublico(value: unknown): value is PrestadorPublico {
     typeof value['displayName'] === 'string' &&
     typeof value['initials'] === 'string' &&
     esRegistro(profession) &&
-    (OFICIOS_TUS as readonly unknown[]).includes(profession['id']) &&
+    esIdOficioTus(profession['id']) &&
     typeof value['approximateArea'] === 'string' &&
     typeof value['publicArea'] === 'string' &&
     Array.isArray(value['serviceZones']) && value['serviceZones'].every((zone) => typeof zone === 'string') &&

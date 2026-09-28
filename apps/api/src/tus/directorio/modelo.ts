@@ -1,7 +1,8 @@
 import type { CandidatoPrestador, DisponibilidadPublica, PerfilPrestadorPublico, PrestadorPublico } from '@factory/contracts'
 
-import { contieneContacto, ZONAS_CORRIENTES } from '../solicitudes/modelo.ts'
-import { OFICIOS, esOficio, normalizarTexto, oficio, type OficioId } from './oficios.ts'
+import { contieneContacto, zonasCorrientes } from '../solicitudes/modelo.ts'
+import { buscarBarrio, ubicacionesReconocibles } from '../catalogo/vigente.ts'
+import { esOficio, normalizarTexto, oficio, oficiosInterpretables, type OficioId } from './oficios.ts'
 import { resolverUbicacionPublicaPrestador, type AreaDomicilioFallback, type ResolucionUbicacionPublica } from './ubicacion.ts'
 
 // Directorio "Buscar trabajador" y búsqueda del asistente. Todo lo que sale de acá es público:
@@ -78,10 +79,10 @@ export function validarPerfil(body: Record<string, unknown>): { ok: true; valor:
   const nombre = texto(body['displayName'])
   const descripcion = texto(body['description'])
   const zonaInput = typeof body['zone'] === 'string' ? body['zone'].trim() : ''
-  const zona = ZONAS_CORRIENTES.find((item) => item.nombre === zonaInput)?.nombre ?? null
+  const zona = zonasCorrientes().find((item) => item.nombre === zonaInput)?.nombre ?? null
   const zonasInput = [zona, ...(Array.isArray(body['serviceZones']) ? body['serviceZones'] : [])]
   const zonasCobertura = [...new Set(zonasInput.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean))]
-  const zonasValidas = zonasCobertura.length <= 8 && zonasCobertura.every((value) => ZONAS_CORRIENTES.some((item) => item.nombre === value))
+  const zonasValidas = zonasCobertura.length <= 40 && zonasCobertura.every((value) => zonasCorrientes().some((item) => item.nombre === value))
   const modalidadCruda = body['serviceMode'] ?? 'domicilio'
   const modalidadAtencion = modalidadCruda === 'local' || modalidadCruda === 'domicilio' || modalidadCruda === 'mixto' ? modalidadCruda : null
   const radioCrudo = body['coverageRadiusKm']
@@ -198,9 +199,9 @@ export function resolverUbicacionDePerfil(perfil: PerfilPublico, identityFallbac
 // ---- distancia aproximada entre barrios ---------------------------------------------------------
 
 export function distanciaEntreZonas(a: string | null, b: string | null): number | null {
-  const origen = ZONAS_CORRIENTES.find((zona) => zona.nombre === a)
-  const destino = ZONAS_CORRIENTES.find((zona) => zona.nombre === b)
-  if (!origen || !destino) return null
+  const origen = buscarBarrio(a)
+  const destino = buscarBarrio(b)
+  if (!origen || !destino || origen.lat === null || origen.lng === null || destino.lat === null || destino.lng === null) return null
   const rad = (value: number) => (value * Math.PI) / 180
   const dLat = rad(destino.lat - origen.lat)
   const dLng = rad(destino.lng - origen.lng)
@@ -235,17 +236,23 @@ export function interpretarNecesidad(texto: string): Interpretacion {
   const todas = normalizado.split(' ').filter((palabra) => palabra.length >= 3)
   const ambiguas = todas.filter((palabra) => palabra in TERMINOS_AMBIGUOS)
   const palabras = todas.filter((palabra) => !(palabra in TERMINOS_AMBIGUOS))
-  const puntajes = OFICIOS.map((item) => {
-    const claves = normalizarTexto(`${item.palabrasClave} ${item.label} ${item.profesion}`).split(' ').filter((clave) => clave.length >= 3)
+  // Trades, synonyms and places come from the administered catalog (catalogo/vigente.ts).
+  // Single-word synonyms match words (and 5-letter stems); multi-word synonyms ("perdida de
+  // agua", "puerta trabada") match as phrases and weigh double.
+  const puntajes = oficiosInterpretables().map((item) => {
+    const terminos = [...item.sinonimos, item.nombre, item.profesion].map((termino) => normalizarTexto(termino)).filter(Boolean)
+    const claves = [...new Set(terminos.flatMap((termino) => (termino.includes(' ') ? [] : [termino])).filter((clave) => clave.length >= 3))]
+    const frases = terminos.filter((termino) => termino.includes(' '))
     const puntaje = palabras.reduce((total, palabra) => total + (claves.some((clave) => clave === palabra || (palabra.length >= 5 && clave.startsWith(palabra.slice(0, 5)))) ? 1 : 0), 0)
-    // "aire acondicionado" pesa como frase.
-    const frase = item.id === 'aire' && /\baire acondicionado\b|\bsplit\b/u.test(normalizado) ? 2 : 0
+    const frase = frases.reduce((total, termino) => total + (new RegExp(`\\b${termino}\\b`, 'u').test(normalizado) ? 2 : 0), 0)
     return { id: item.id, puntaje: puntaje + frase }
   }).filter((item) => item.puntaje > 0)
   const maximo = Math.max(0, ...puntajes.map((item) => item.puntaje))
   const mejores = puntajes.filter((item) => item.puntaje === maximo).map((item) => item.id)
 
-  const zona = ZONAS_CORRIENTES.find((item) => new RegExp(`\\b${normalizarTexto(item.nombre)}\\b`, 'u').test(normalizado))?.nombre ?? null
+  // Neighbourhoods first (more specific), then administered zones; longer names first.
+  const lugares = ubicacionesReconocibles().sort((a, b) => b.nombre.length - a.nombre.length)
+  const zona = lugares.find((item) => new RegExp(`\\b${normalizarTexto(item.nombre)}\\b`, 'u').test(normalizado))?.nombre ?? null
 
   const urgencia: UrgenciaInterpretada | null = /\b(urgente|urgencia|emergencia|ya mismo|inmediato|ahora mismo)\b/u.test(normalizado)
     ? 'urgente'

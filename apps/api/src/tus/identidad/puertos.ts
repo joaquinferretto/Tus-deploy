@@ -99,6 +99,7 @@ export interface EventoAuditoriaIdentidad {
 export interface FiltroVerificaciones {
   status?: EstadoVerificacionIdentidad
   limit?: number
+  offset?: number
 }
 
 export interface RepositoriosIdentidad {
@@ -106,8 +107,11 @@ export interface RepositoriosIdentidad {
     crear(value: VerificacionIdentidad): Promise<void>
     buscar(verificationId: string): Promise<VerificacionIdentidad | null>
     ultimaDeTenant(tenantId: string): Promise<VerificacionIdentidad | null>
+    // Every verification of these tenants in ONE read (admin lists: no query per provider).
+    deTenants(tenantIds: readonly string[]): Promise<VerificacionIdentidad[]>
     actualizar(value: VerificacionIdentidad, expectedVersion: number): Promise<boolean>
     listar(filter: FiltroVerificaciones): Promise<VerificacionIdentidad[]>
+    contar(filter: { status?: EstadoVerificacionIdentidad }): Promise<number>
     // Another tenant already verified with that DNI or CUIL.
     existeVerificadaDeOtro(input: {
       tenantId: string

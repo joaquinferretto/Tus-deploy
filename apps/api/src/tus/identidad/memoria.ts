@@ -49,6 +49,10 @@ export class AlmacenIdentidadEnMemoria {
               .filter((item) => item.tenantId === tenantId)
               .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null
           ),
+        deTenants: async (tenantIds) =>
+          [...state().verificaciones.values()]
+            .filter((item) => tenantIds.includes(item.tenantId))
+            .map((item) => clone(item)),
         actualizar: async (value, expectedVersion) => {
           const current = state().verificaciones.get(value.verificationId)
           if (!current || current.version !== expectedVersion) return false
@@ -69,9 +73,11 @@ export class AlmacenIdentidadEnMemoria {
         listar: async (filter) =>
           [...state().verificaciones.values()]
             .filter((item) => !filter.status || item.status === filter.status)
-            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-            .slice(0, filter.limit ?? 100)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.verificationId.localeCompare(a.verificationId))
+            .slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 100))
             .map(clone),
+        contar: async (filter) =>
+          [...state().verificaciones.values()].filter((item) => !filter.status || item.status === filter.status).length,
         existeVerificadaDeOtro: async (input) =>
           [...state().verificaciones.values()].some(
             (item) =>

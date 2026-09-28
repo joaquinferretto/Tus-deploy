@@ -1,5 +1,5 @@
 import { sinAcentos } from '../texto.ts'
-import { ZONAS_CORRIENTES } from '../solicitudes/modelo.ts'
+import { zonasCorrientes } from '../solicitudes/modelo.ts'
 
 import type {
   CoberturaPublicaPrestador,
@@ -79,7 +79,7 @@ function buildResolution(
     serviceZones: zones,
     primaryZone,
     mapLocations: zones.flatMap((zone) => {
-      const known = ZONAS_CORRIENTES.find((item) => item.nombre === zone)
+      const known = zonasCorrientes().find((item) => item.nombre === zone)
       return known
         ? [{ label: zone, lat: round(known.lat), lng: round(known.lng), precision: 'zone' as const }]
         : []
@@ -100,7 +100,7 @@ function uniqueZones(values: readonly (string | null | undefined)[]): string[] {
 function resolveKnownZone(value: string | null | undefined): string | null {
   if (typeof value !== 'string' || !value.trim()) return null
   const normalized = normalize(value)
-  return ZONAS_CORRIENTES.find((item) => normalize(item.nombre) === normalized)?.nombre ?? null
+  return zonasCorrientes().find((item) => normalize(item.nombre) === normalized)?.nombre ?? null
 }
 
 function publicAreaFromIdentity(value: AreaDomicilioFallback | null | undefined): string | null {

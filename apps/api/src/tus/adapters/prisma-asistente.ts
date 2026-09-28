@@ -298,10 +298,12 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
         (
           await client.conversacionWhatsapp.findMany({
             where: filter.mode ? { modo: filter.mode } : {},
-            orderBy: { ultimoMensajeEn: 'desc' },
+            orderBy: [{ ultimoMensajeEn: 'desc' }, { id: 'desc' }],
+            ...(filter.offset ? { skip: filter.offset } : {}),
             take: filter.limit ?? 100,
           })
         ).map(mapConversacion),
+      contar: async (filter) => client.conversacionWhatsapp.count({ where: filter.mode ? { modo: filter.mode } : {} }),
     },
     mensajes: {
       buscarPorWamid: async (wamid) => {

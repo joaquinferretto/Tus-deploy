@@ -1,7 +1,8 @@
 import type { TusApplicationService } from '../application/tus-application-service.ts'
 import type { HechosPrestador, PerfilPublico, ServicioResumen } from './modelo.ts'
 import type { OficioId } from './oficios.ts'
-import type { AlmacenPerfiles, FuentesDirectorio } from './puertos.ts'
+import type { AlmacenPerfiles, FuentesDirectorio, ResumenAdminPrestador } from './puertos.ts'
+import type { AreaDomicilioFallback } from './ubicacion.ts'
 
 // ---- en memoria (tests y composición local) -------------------------------------------------
 
@@ -34,6 +35,22 @@ export class AlmacenPerfilesEnMemoria implements AlmacenPerfiles {
   async todos(input: { limite: number }) {
     return [...this.perfiles.values()].sort((a, b) => b.actualizadoEn - a.actualizadoEn).slice(0, input.limite).map((perfil) => ({ ...perfil }))
   }
+
+  async tenants() {
+    return [...new Set([...this.perfiles.values()].map((perfil) => perfil.tenantId))]
+  }
+
+  async paginaAdmin(input: { pagina: number; tamano: number; q: string; oficio: string; zona: string; visible: boolean | null; verificado: boolean | null }) {
+    const q = input.q.toLocaleLowerCase('es')
+    const items = [...this.perfiles.values()]
+      .filter((item) => !q || item.nombrePublico.toLocaleLowerCase('es').includes(q))
+      .filter((item) => !input.oficio || item.oficio === input.oficio)
+      .filter((item) => !input.zona || item.zona === input.zona || item.zonasCobertura.includes(input.zona))
+      .filter((item) => input.visible === null || item.visible === input.visible)
+      .sort((a, b) => b.actualizadoEn - a.actualizadoEn || b.id.localeCompare(a.id))
+    const page = items.slice((input.pagina - 1) * input.tamano, input.pagina * input.tamano)
+    return { items: page.map((item) => ({ ...item })), total: items.length }
+  }
 }
 
 // ---- PostgreSQL (perfiles_publicos_prestador) ------------------------------------------------
@@ -42,13 +59,16 @@ type Fila = Record<string, unknown>
 
 interface DelegadoPerfiles {
   findFirst(input: { where: Fila }): Promise<Fila | null>
-  findMany(input: { where: Fila; orderBy?: Fila; take?: number }): Promise<Fila[]>
+  findMany(input: { where: Fila; orderBy?: Fila | Fila[]; skip?: number; take?: number; select?: Fila; distinct?: string[] }): Promise<Fila[]>
+  count(input: { where: Fila }): Promise<number>
   upsert(input: { where: Fila; create: Fila; update: Fila }): Promise<Fila>
 }
 
 export interface ClientePrismaDirectorio {
   perfilPublicoPrestador: DelegadoPerfiles
   trabajo: { count(input: { where: Fila }): Promise<number> }
+  // Real delegate of verificaciones_identidad (model VerificacionIdentidad); its approved state is 'verified'.
+  verificacionIdentidad?: { findMany(input: { where: Fila; select: Fila; distinct?: string[] }): Promise<Fila[]> }
 }
 
 const desdeFecha = (value: unknown) => (value instanceof Date ? value.getTime() : Number(value))
@@ -124,6 +144,31 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
     const filas = await this.client.perfilPublicoPrestador.findMany({ where: {}, orderBy: { fechaActualizacion: 'desc' }, take: input.limite })
     return filas.map(desdeFila)
   }
+
+  async tenants() {
+    const filas = await this.client.perfilPublicoPrestador.findMany({ where: {}, select: { tenantId: true }, distinct: ['tenantId'] })
+    return filas.map((fila) => String(fila['tenantId']))
+  }
+
+  async paginaAdmin(input: { pagina: number; tamano: number; q: string; oficio: string; zona: string; visible: boolean | null; verificado: boolean | null }) {
+    let tenantIds: string[] | null = null
+    if (input.verificado !== null && this.client.verificacionIdentidad) {
+      const verificadas = await this.client.verificacionIdentidad.findMany({ where: { estado: 'verified' }, select: { tenantId: true }, distinct: ['tenantId'] })
+      tenantIds = verificadas.map((item) => String(item['tenantId']))
+    }
+    const where: Fila = { AND: [
+      ...(input.q ? [{ nombrePublico: { contains: input.q, mode: 'insensitive' } }] : []),
+      ...(input.oficio ? [{ oficio: input.oficio }] : []),
+      ...(input.zona ? [{ OR: [{ zona: input.zona }, { zonasCobertura: { has: input.zona } }] }] : []),
+      ...(input.visible === null ? [] : [{ visible: input.visible }]),
+      ...(tenantIds === null ? [] : [{ tenantId: input.verificado ? { in: tenantIds } : { notIn: tenantIds } }]),
+    ] }
+    const [filas, total] = await Promise.all([
+      this.client.perfilPublicoPrestador.findMany({ where, orderBy: [{ fechaActualizacion: 'desc' }, { id: 'desc' }], skip: (input.pagina - 1) * input.tamano, take: input.tamano }),
+      this.client.perfilPublicoPrestador.count({ where }),
+    ])
+    return { items: filas.map(desdeFila), total }
+  }
 }
 
 // ---- hechos desde los módulos existentes ------------------------------------------------------
@@ -163,6 +208,34 @@ export class FuentesDirectorioTus implements FuentesDirectorio {
 
   async ubicacionIdentidadVerificada(tenantId: string) {
     return this.application.identity?.ubicacionPublicaVerificada?.(tenantId) ?? null
+  }
+
+  // Two batch reads for a whole admin page: merchants (prestadores WHERE tenant_id IN ...) and
+  // identity verifications (verificaciones_identidad WHERE tenant_id IN ...).
+  async resumenAdmin(tenantIds: readonly string[]): Promise<Map<string, ResumenAdminPrestador>> {
+    const unicos = [...new Set(tenantIds)]
+    const merchantStore = this.application.marketplace?.store.merchant
+    const [merchants, identidad] = await Promise.all([
+      !merchantStore || unicos.length === 0
+        ? Promise.resolve([])
+        : merchantStore.findMany
+          ? merchantStore.findMany(unicos)
+          // Test doubles without a batch read.
+          : Promise.all(unicos.map((tenantId) => merchantStore.find(tenantId))).then((items) => items.filter((item) => item !== null)),
+      this.application.identity
+        ? this.application.identity.resumenDeTenants(unicos).catch(() => new Map<string, { verificado: boolean; area: AreaDomicilioFallback | null }>())
+        : Promise.resolve(new Map<string, { verificado: boolean; area: AreaDomicilioFallback | null }>()),
+    ])
+    const porTenant = new Map(merchants.map((merchant) => [merchant.tenantId, merchant]))
+    return new Map(unicos.map((tenantId) => {
+      const merchant = porTenant.get(tenantId)
+      const verificacion = identidad.get(tenantId)
+      return [tenantId, {
+        prestador: merchant ? { prestadorId: merchant.merchantId, aprobado: merchant.status === 'approved' } : null,
+        verificado: verificacion?.verificado ?? false,
+        ubicacionVerificada: verificacion?.area ?? null,
+      }]
+    }))
   }
 }
 

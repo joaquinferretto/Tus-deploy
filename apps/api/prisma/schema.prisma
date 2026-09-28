@@ -2938,3 +2938,103 @@ model AuthRateLimit {
   @@index([updatedAt], map: "ix_auth_rate_limits_updated")
   @@map("auth_rate_limits")
 }
+
+// ---- Administered catalog (migration 20261007100000_tus_catalogo) ------------------------------
+// Categories, trades (with synonyms and icon), and locations (locality -> zone -> neighbourhood).
+// Managed from the admin panel; nothing is deleted physically (activo = false keeps history).
+model CategoriaServicio {
+  id            String           @id(map: "categorias_servicio_pkey") @map("id")
+  nombre        String           @map("nombre")
+  slug          String           @map("slug")
+  descripcion   String?          @map("descripcion")
+  activo        Boolean          @default(true) @map("activo")
+  orden         Int              @default(0) @map("orden")
+  creadoEn      DateTime         @map("creado_en")
+  actualizadoEn DateTime         @map("actualizado_en")
+  oficios       OficioServicio[]
+
+  @@unique([slug], map: "uq_categorias_servicio_slug")
+  @@map("categorias_servicio")
+}
+
+model OficioServicio {
+  id            String             @id(map: "oficios_servicio_pkey") @map("id")
+  categoriaId   String?            @map("categoria_id")
+  categoria     CategoriaServicio? @relation(fields: [categoriaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_oficios_servicio_categoria")
+  nombre        String             @map("nombre")
+  profesion     String             @map("profesion")
+  slug          String             @map("slug")
+  descripcion   String?            @map("descripcion")
+  icono         String             @map("icono")
+  activo        Boolean            @default(true) @map("activo")
+  orden         Int                @default(0) @map("orden")
+  creadoEn      DateTime           @map("creado_en")
+  actualizadoEn DateTime           @map("actualizado_en")
+  sinonimos     SinonimoOficio[]
+
+  @@unique([slug], map: "uq_oficios_servicio_slug")
+  @@index([categoriaId], map: "ix_oficios_servicio_categoria")
+  @@map("oficios_servicio")
+}
+
+model SinonimoOficio {
+  id       String         @id(map: "sinonimos_oficio_pkey") @map("id")
+  oficioId String         @map("oficio_id")
+  oficio   OficioServicio @relation(fields: [oficioId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_sinonimos_oficio_oficio")
+  termino  String         @map("termino")
+  activo   Boolean        @default(true) @map("activo")
+
+  @@unique([oficioId, termino], map: "uq_sinonimos_oficio_termino")
+  @@map("sinonimos_oficio")
+}
+
+model Localidad {
+  id            String          @id(map: "localidades_pkey") @map("id")
+  nombre        String          @map("nombre")
+  provincia     String          @map("provincia")
+  activo        Boolean         @default(true) @map("activo")
+  orden         Int             @default(0) @map("orden")
+  creadoEn      DateTime        @map("creado_en")
+  actualizadoEn DateTime        @map("actualizado_en")
+  zonas         ZonaUbicacion[]
+  barrios       Barrio[]
+
+  @@map("localidades")
+}
+
+model ZonaUbicacion {
+  id            String    @id(map: "zonas_ubicacion_pkey") @map("id")
+  localidadId   String    @map("localidad_id")
+  localidad     Localidad @relation(fields: [localidadId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_zonas_ubicacion_localidad")
+  nombre        String    @map("nombre")
+  slug          String    @map("slug")
+  activo        Boolean   @default(true) @map("activo")
+  orden         Int       @default(0) @map("orden")
+  creadoEn      DateTime  @map("creado_en")
+  actualizadoEn DateTime  @map("actualizado_en")
+  barrios       Barrio[]
+
+  @@index([localidadId], map: "ix_zonas_ubicacion_localidad")
+  @@map("zonas_ubicacion")
+}
+
+model Barrio {
+  id            String         @id(map: "barrios_pkey") @map("id")
+  localidadId   String         @map("localidad_id")
+  localidad     Localidad      @relation(fields: [localidadId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_barrios_localidad")
+  zonaId        String?        @map("zona_id")
+  zona          ZonaUbicacion? @relation(fields: [zonaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_barrios_zona")
+  nombre        String         @map("nombre")
+  slug          String         @map("slug")
+  latitud       Float?         @map("latitud")
+  longitud      Float?         @map("longitud")
+  poligono      Json           @map("poligono")
+  activo        Boolean        @default(true) @map("activo")
+  orden         Int            @default(0) @map("orden")
+  creadoEn      DateTime       @map("creado_en")
+  actualizadoEn DateTime       @map("actualizado_en")
+
+  @@index([localidadId], map: "ix_barrios_localidad")
+  @@index([zonaId], map: "ix_barrios_zona")
+  @@map("barrios")
+}

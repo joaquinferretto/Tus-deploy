@@ -20,7 +20,7 @@ import type {
   SecurityEvent,
   Session,
 } from '../domain/models.js'
-import { AUTH_EVENT_KIND, AUTH_RESULT_CODE, CREDENTIAL_STATUS } from '../domain/constants.js'
+import { ACCOUNT_STATUS, AUTH_EVENT_KIND, AUTH_RESULT_CODE, CREDENTIAL_STATUS } from '../domain/constants.js'
 import { failure, type AuthFailure } from '../domain/errors.js'
 import {
   GENERIC_AUTH_FAILURE_MESSAGE,
@@ -757,6 +757,99 @@ export class AuthService {
     changes: Record<string, unknown>
   }): Promise<AccountUpdateResult> {
     return this.runTransaction((store) => this.updateAccountWithinStore(input, store))
+  }
+
+  // Account created by a platform admin from the Users panel. Unlike public sign-up (which answers
+  // the same for new and existing emails and never reveals them), an existing email is an explicit
+  // CONFLICT here: the admin is authorized to know it, and nothing is sent to the existing owner.
+  // Always a client account: provider and admin authority have their own flows.
+  async createAccountAsAdmin(input: RegisterInput & { actorId: string }): Promise<{ ok: true; account: SafeAccount } | AuthFailure> {
+    const normalizedEmail = normalizeEmail(input.email)
+    if (!validateEmail(normalizedEmail) || !validatePassword(input.password) || input.displayName.trim().length < 2 || input.displayName.trim().length > 120)
+      return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Invalid account data')
+    if (await this.dependencies.store.findAccountByEmail(normalizedEmail))
+      return failure(AUTH_RESULT_CODE.CONFLICT, 'Email already registered')
+    if (await this.passwordIsBreached(input.password)) return failure(AUTH_RESULT_CODE.PASSWORD_BREACHED, 'Password appears in known data breaches')
+    let created: RegisterResult
+    try {
+      created = await this.runTransaction((store) => this.registerWithinStore(input, store))
+    } catch (error) {
+      // Two concurrent creations of the same email: the second one loses on the unique email.
+      if (error instanceof Error && (error.message === 'Account already exists' || (error as Error & { code?: unknown }).code === 'P2002'))
+        return failure(AUTH_RESULT_CODE.CONFLICT, 'Email already registered')
+      throw error
+    }
+    await this.recordAdminAction(input.actorId, created.account, AUTH_EVENT_KIND.ACCOUNT_ADMIN_CREATED, { action: 'created', changedFields: 'email,displayName,password' })
+    await this.deliver(created.account.id, created.account.tenantId, () =>
+      this.dependencies.email.sendVerification({ email: created.account.email, token: created.verificationToken })
+    )
+    return { ok: true, account: created.account }
+  }
+
+  async updateAccountAsAdmin(input: {
+    actorId: string
+    accountId: string
+    displayName?: unknown
+    status?: unknown
+    reason?: unknown
+  }): Promise<AccountUpdateResult> {
+    return this.runTransaction(async (store) => {
+      const account = await store.getAccount(input.accountId)
+      if (!account) return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Account not found')
+      const displayName = input.displayName
+      const status = input.status
+      if (displayName !== undefined && (typeof displayName !== 'string' || displayName.trim().length < 2 || displayName.trim().length > 120))
+        return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Display name is invalid')
+      if (status !== undefined && status !== ACCOUNT_STATUS.ACTIVE && status !== ACCOUNT_STATUS.SUSPENDED)
+        return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Account status is invalid')
+      if (input.reason !== undefined && (typeof input.reason !== 'string' || input.reason.trim().length > 200))
+        return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Reason is invalid')
+      if (input.actorId === account.id && status === ACCOUNT_STATUS.SUSPENDED)
+        return failure(AUTH_RESULT_CODE.FORBIDDEN, 'An administrator cannot suspend the current account')
+      const changedFields = [
+        ...(typeof displayName === 'string' && displayName.trim() !== account.displayName ? ['displayName'] : []),
+        ...(status !== undefined && status !== account.status ? ['status'] : []),
+      ]
+      const previousStatus = account.status
+      if (typeof displayName === 'string') account.displayName = displayName.trim()
+      if (status === ACCOUNT_STATUS.ACTIVE || status === ACCOUNT_STATUS.SUSPENDED) account.status = status
+      account.updatedAt = this.dependencies.clock.now()
+      await store.saveAccount(account)
+      if (status === ACCOUNT_STATUS.SUSPENDED) await store.revokeSessions(account.id, account.updatedAt)
+      const kind = previousStatus !== ACCOUNT_STATUS.SUSPENDED && account.status === ACCOUNT_STATUS.SUSPENDED
+        ? AUTH_EVENT_KIND.ACCOUNT_ADMIN_SUSPENDED
+        : previousStatus === ACCOUNT_STATUS.SUSPENDED && account.status === ACCOUNT_STATUS.ACTIVE
+          ? AUTH_EVENT_KIND.ACCOUNT_ADMIN_REACTIVATED
+          : AUTH_EVENT_KIND.ACCOUNT_ADMIN_UPDATED
+      const action = kind === AUTH_EVENT_KIND.ACCOUNT_ADMIN_SUSPENDED ? 'suspended' : kind === AUTH_EVENT_KIND.ACCOUNT_ADMIN_REACTIVATED ? 'reactivated' : 'updated'
+      await this.recordAdminAction(input.actorId, account, kind, {
+        action,
+        changedFields: changedFields.join(',') || 'none',
+        ...(typeof input.reason === 'string' && input.reason.trim() ? { reason: input.reason.trim() } : {}),
+        ...(kind === AUTH_EVENT_KIND.ACCOUNT_ADMIN_SUSPENDED ? { sessionsRevoked: true } : {}),
+      })
+      return { ok: true, account: this.safeAccount(account) }
+    })
+  }
+
+  // Existing audit sink (AuditEvent), with the ADMIN as actor and the modified account as target.
+  // Never the email, name or any secret in the metadata.
+  private async recordAdminAction(
+    actorId: string,
+    target: { id: string; tenantId: string },
+    kind: SecurityEvent['kind'],
+    details: Record<string, string | boolean>
+  ): Promise<void> {
+    await this.dependencies.audit.record({
+      contractVersion: CONTRACT_VERSION,
+      kind,
+      occurredAt: new Date(this.dependencies.clock.now()).toISOString(),
+      actorId,
+      tenantId: target.tenantId,
+      outcome: 'success',
+      correlationId: this.dependencies.ids.next(),
+      metadata: { actorType: 'platform_admin', targetType: 'account', targetAccountId: target.id, ...details },
+    })
   }
 
   private async updateAccountWithinStore(input: {

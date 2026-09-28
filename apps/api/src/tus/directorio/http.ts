@@ -2,7 +2,8 @@ import express, { type Request, type Response, type Router } from 'express'
 
 import { asyncHandler } from '../../presentation/middleware/error.ts'
 import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../ports/index.ts'
-import { ZONAS_CORRIENTES } from '../solicitudes/modelo.ts'
+import { catalogoUbicacionesPublico, categoriasPublicas } from '../catalogo/publico.ts'
+import { zonasCorrientes } from '../solicitudes/modelo.ts'
 import { catalogoPublico } from './oficios.ts'
 import type { ServicioDirectorio } from './servicio.ts'
 
@@ -34,8 +35,14 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
   }))
 
   router.get('/tus/v1/public/oficios', (_request: Request, response: Response) => {
-    response.setHeader('cache-control', 'public, max-age=300')
-    response.status(200).json({ items: catalogoPublico(), zones: ZONAS_CORRIENTES.map((zona) => zona.nombre) })
+    // Short cache: the administration can change the catalog at any time.
+    response.setHeader('cache-control', 'public, max-age=30')
+    response.status(200).json({
+      items: catalogoPublico(),
+      zones: zonasCorrientes().map((zona) => zona.nombre),
+      categories: categoriasPublicas(),
+      locations: catalogoUbicacionesPublico(),
+    })
   })
 
   router.get(

@@ -12,6 +12,10 @@
       "enum": [
         "account.registered",
         "account.verified",
+        "account.admin_created",
+        "account.admin_updated",
+        "account.admin_suspended",
+        "account.admin_reactivated",
         "auth.signed_in",
         "auth.failed",
         "credential.password_changed",

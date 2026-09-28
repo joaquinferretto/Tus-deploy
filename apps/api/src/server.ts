@@ -23,6 +23,11 @@ import { crearAltaPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import { crearRouterAdmin } from './tus/admin/http.ts'
 import { ActividadAdminPrisma, CuentasAdminPrisma } from './tus/admin/fuentes.ts'
+import { AlmacenCatalogoPrisma, type ClientePrismaCatalogo } from './tus/catalogo/almacen.ts'
+import { ConteosCatalogoPrisma, type ClientePrismaConteos } from './tus/admin/conteos.ts'
+import { ServicioCatalogo } from './tus/catalogo/servicio.ts'
+import { iniciarCatalogo } from './tus/catalogo/vigente.ts'
+import { randomUUID } from 'node:crypto'
 import type { ClientePrismaDirectorio } from './tus/directorio/almacenes.ts'
 import type { ModuloWhatsapp } from './tus/asistente/composicion.ts'
 import type { TusPrismaClient } from './tus/adapters/prisma.ts'
@@ -116,6 +121,10 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const application = createPrismaTusApplication(prisma)
   // "Buscar trabajador" (directorio) and the one TUS service request used by the home map, the
   // directory, the Web assistant and WhatsApp (same PostgreSQL, through Prisma).
+  // Administered catalog (trades, synonyms, locations): loaded from PostgreSQL now, refreshed
+  // every minute and right after each change made in the admin panel.
+  const almacenCatalogo = new AlmacenCatalogoPrisma(prisma as unknown as ClientePrismaCatalogo)
+  app.locals['tusCatalogo'] = almacenCatalogo
   const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio })
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes })
   const whatsapp = options.tusRouter
@@ -198,6 +207,8 @@ export function createApp(options: CreateAppOptions = {}): Application {
     app.use(crearRouterDirectorio({ servicio: directorio, sessions, adminSave: crearAltaPrestadorAdmin({ accounts: auth.store, application, directorio, createManagedAccount: (input) => auth.service.createManagedProviderAccount(input) }) }))
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
     // Platform administration panel (read views + publish/hide a profile), behind the MFA gate.
+    // Usage counts of the catalog lists come from aggregate queries (GROUP BY), never per row.
+    const conteos = new ConteosCatalogoPrisma(prisma as unknown as ClientePrismaConteos)
     app.use(
       crearRouterAdmin({
         sessions,
@@ -206,6 +217,18 @@ export function createApp(options: CreateAppOptions = {}): Application {
         cuentas: new CuentasAdminPrisma(prisma as unknown as ConstructorParameters<typeof CuentasAdminPrisma>[0]),
         actividad: new ActividadAdminPrisma(prisma as unknown as ConstructorParameters<typeof ActividadAdminPrisma>[0]),
         adminEmails: () => leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS']),
+        crearUsuario: (input) => auth.service.createAccountAsAdmin(input),
+        actualizarUsuario: (input) => auth.service.updateAccountAsAdmin(input),
+        conteos,
+        catalogo: new ServicioCatalogo({
+          almacen: almacenCatalogo,
+          auditar: async (evento) => {
+            await (prisma as unknown as { auditEvent?: { create(input: { data: Record<string, unknown> }): Promise<unknown> } }).auditEvent?.create({
+              data: { id: randomUUID(), tenantId: 'tus-platform', actorId: evento.actorId, correlationId: randomUUID(), eventType: `catalog.${evento.entidad}_${evento.accion}`, outcome: 'success', metadata: { id: evento.id, nombre: evento.nombre }, occurredAt: new Date() },
+            })
+          },
+          referenciasBarrio: (nombre) => conteos.referenciasBarrio(nombre),
+        }),
         ...(whatsapp ? { whatsappPendientes: async () => (await whatsapp.soporte.listar({ mode: 'human', limit: '100' })).length } : {}),
       })
     )
@@ -245,6 +268,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     )
 
     const app = options.app ?? createApp({ databaseLifecycle })
+    // The administered catalog is read once the database is connected (never during createApp,
+    // which tests build without a database).
+    const catalogo = app.locals['tusCatalogo'] as AlmacenCatalogoPrisma | undefined
+    if (catalogo) await iniciarCatalogo(catalogo)
     const whatsapp = readWhatsappAssistant(app)
     if (whatsapp?.config.enabled && whatsapp.config.problems.length > 0)
       throw Object.assign(new Error('WhatsApp configuration is invalid'), { reason: 'WHATSAPP_CONFIG_INVALID' })

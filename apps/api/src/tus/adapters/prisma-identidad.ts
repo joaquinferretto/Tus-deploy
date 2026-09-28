@@ -217,6 +217,15 @@ export function repositoriosIdentidadPrisma(client: ClientePrismaIdentidad): Rep
         })
         return row ? mapVerificacion(row) : null
       },
+      deTenants: async (tenantIds) =>
+        tenantIds.length === 0
+          ? []
+          : (
+              await client.verificacionIdentidad.findMany({
+                where: { tenantId: { in: [...tenantIds] } },
+                orderBy: { fechaCreacion: 'desc' },
+              })
+            ).map(mapVerificacion),
       actualizar: async (value, expectedVersion) => {
         const data = sinId(filaVerificacion(value))
         const result = await client.verificacionIdentidad.updateMany({
@@ -229,10 +238,13 @@ export function repositoriosIdentidadPrisma(client: ClientePrismaIdentidad): Rep
         (
           await client.verificacionIdentidad.findMany({
             where: filter.status ? { estado: filter.status } : {},
-            orderBy: { fechaCreacion: 'desc' },
+            orderBy: [{ fechaCreacion: 'desc' }, { id: 'desc' }],
+            ...(filter.offset ? { skip: filter.offset } : {}),
             take: filter.limit ?? 100,
           })
         ).map(mapVerificacion),
+      contar: async (filter) =>
+        client.verificacionIdentidad.count({ where: filter.status ? { estado: filter.status } : {} }),
       existeVerificadaDeOtro: async (input) => {
         const or: Fila[] = []
         if (input.documentNumber) or.push({ numeroDocumento: input.documentNumber })

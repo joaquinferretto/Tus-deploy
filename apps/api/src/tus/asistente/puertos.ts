@@ -23,7 +23,8 @@ export interface RepositoriosAsistente {
     buscar(conversationId: string): Promise<ConversacionWhatsapp | null>
     crear(value: ConversacionWhatsapp): Promise<void>
     actualizar(value: ConversacionWhatsapp, expectedVersion: number): Promise<boolean>
-    listar(filter: { mode?: ModoConversacion; limit?: number }): Promise<ConversacionWhatsapp[]>
+    listar(filter: { mode?: ModoConversacion; limit?: number; offset?: number }): Promise<ConversacionWhatsapp[]>
+    contar(filter: { mode?: ModoConversacion }): Promise<number>
   }
   mensajes: {
     buscarPorWamid(wamid: string): Promise<MensajeConversacion | null>
