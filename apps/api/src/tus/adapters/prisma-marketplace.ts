@@ -19,14 +19,26 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
   readonly merchant = {
     save: async (profile: PerfilPrestador) => {
       await this.client.prestador.upsert({
-        where: { tenantId: profile.tenantId },
+        // tenant_id alone is not unique in `prestadores` (uq is tenant + prestador); the row id is.
+        where: { id: profile.merchantId },
         create: merchantRow(profile),
         update: merchantRow(profile),
       })
     },
     find: async (tenantId: string) => {
-      const row = await this.client.prestador.findUnique({ where: { tenantId } })
+      const row = await this.client.prestador.findFirst({ where: { tenantId }, orderBy: { fechaCreacion: 'asc' } })
       return row ? toMerchant(row) : null
+    },
+    // One read for a page of tenants; like find(), the first registered provider of each wins.
+    findMany: async (tenantIds: readonly string[]) => {
+      if (tenantIds.length === 0) return []
+      const rows = await this.client.prestador.findMany({ where: { tenantId: { in: [...tenantIds] } }, orderBy: { fechaCreacion: 'asc' } })
+      const first = new Map<string, PerfilPrestador>()
+      for (const row of rows) {
+        const merchant = toMerchant(row)
+        if (!first.has(merchant.tenantId)) first.set(merchant.tenantId, merchant)
+      }
+      return [...first.values()]
     },
   }
 

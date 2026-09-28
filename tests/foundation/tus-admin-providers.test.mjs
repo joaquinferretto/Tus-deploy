@@ -53,3 +53,62 @@ test('manual provider administration requires elevated permission and verified e
   assert.equal(result.compatible, 1)
   assert.equal(result.elsewhere, 0)
 })
+
+test('manual directory registration does not bypass commercial publication readiness', () => {
+  const result = runTypeScriptScenario(`
+    const { createTusApplication } = await import('./apps/api/src/tus/composition/index.ts')
+    const { EvaluadorHabilitacion } = await import('./apps/api/src/tus/readiness/index.ts')
+    const { crearServicioDirectorio } = await import('./apps/api/src/tus/directorio/composicion.ts')
+    const { crearAltaPrestadorAdmin } = await import('./apps/api/src/tus/directorio/admin.ts')
+    const { createAuthService } = await import('./apps/api/src/auth-security/composition.ts')
+    const { InMemoryIdentityStore } = await import('./apps/api/src/auth-security/adapters/in-memory-identity-store.ts')
+    const identityStore = new InMemoryIdentityStore()
+    const auth = createAuthService({ store: identityStore })
+    const registered = await auth.service.register({ email: 'ready@example.test', password: 'una frase larga y segura 2026', displayName: 'Prestador Readiness' })
+    await auth.service.verifyEmail({ token: registered.verificationToken })
+    const account = await identityStore.findAccountByEmail('ready@example.test')
+    const application = createTusApplication({ evaluadorHabilitacion: new EvaluadorHabilitacion({ listEvidence: () => [] }) })
+    const directory = crearServicioDirectorio({ application })
+    const save = crearAltaPrestadorAdmin({ accounts: identityStore, application, directorio: directory })
+    const admin = { subjectId: 'admin', tenantId: 'platform', sessionId: 's', roles: ['owner'], permissions: ['tus:providers:admin'], correlationId: 'admin-readiness' }
+    const body = { email: 'ready@example.test', displayName: 'Prestador Readiness', profession: 'plomeria', zone: 'Centro', serviceZones: ['Centro'], serviceMode: 'domicilio', description: 'Reparación de pérdidas', visible: true }
+    const created = await save(admin, body)
+    let onboardCode = 'none'
+    try {
+      await application.marketplace.onboard({ ...admin, tenantId: account.tenantId, permissions: ['tus:marketplace:write'] }, { merchantId: 'commercial-id', locationId: 'commercial-location', cohort: 'repairs-trades', timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'], operatingPolicyVersion: 'commercial-v1' })
+    } catch (error) { onboardCode = error?.code ?? String(error) }
+    const merchant = await application.marketplace.store.merchant.find(account.tenantId)
+    const audits = await application.marketplace.store.audit.list(account.tenantId)
+    const outbox = await application.marketplace.store.outbox.list(account.tenantId)
+    console.log(JSON.stringify({ created: created.status, merchant: merchant?.status, onboardCode, actions: audits.map((item) => item.action), outbox: outbox.length }))
+  `)
+  assert.equal(result.created, 200)
+  assert.equal(result.merchant, 'approved')
+  assert.equal(result.onboardCode, 'TUS_READINESS_BLOCKED')
+  assert.deepEqual(result.actions, ['provider.profile.admin_saved'])
+  assert.equal(result.outbox, 0, 'directory registration must not emit commercial onboarding events')
+})
+
+test('manual directory registration keeps the provider business id immutable for later onboarding', () => {
+  const result = runTypeScriptScenario(`
+    const { createTusApplication } = await import('./apps/api/src/tus/composition/index.ts')
+    const { crearServicioDirectorio } = await import('./apps/api/src/tus/directorio/composicion.ts')
+    const { crearAltaPrestadorAdmin } = await import('./apps/api/src/tus/directorio/admin.ts')
+    const account = { id: 'stable-account', email: 'stable@example.test', normalizedEmail: 'stable@example.test', tenantId: 'stable-tenant', roles: ['owner'], status: 'active', emailVerifiedAt: 1 }
+    const application = createTusApplication()
+    const directory = crearServicioDirectorio({ application })
+    const save = crearAltaPrestadorAdmin({ accounts: { findAccountByEmail: async () => account }, application, directorio: directory })
+    const admin = { subjectId: 'admin', tenantId: 'platform', sessionId: 's', roles: ['owner'], permissions: ['tus:providers:admin'], correlationId: 'admin-stable-id' }
+    const body = { email: account.email, displayName: 'Prestador Stable', profession: 'plomeria', zone: 'Centro', serviceZones: ['Centro'], serviceMode: 'domicilio', visible: true }
+    await save(admin, body)
+    const before = await application.marketplace.store.merchant.find(account.tenantId)
+    let mismatch = 'none'
+    try {
+      await application.marketplace.onboard({ ...admin, tenantId: account.tenantId, permissions: ['tus:marketplace:write'] }, { merchantId: 'different-id', locationId: 'commercial-location', cohort: 'repairs-trades', timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'], operatingPolicyVersion: 'commercial-v1' })
+    } catch (error) { mismatch = error?.code ?? String(error) }
+    const after = await application.marketplace.store.merchant.find(account.tenantId)
+    console.log(JSON.stringify({ mismatch, before: before?.merchantId, after: after?.merchantId }))
+  `)
+  assert.equal(result.mismatch, 'MERCHANT_ID_MISMATCH')
+  assert.equal(result.after, result.before)
+})

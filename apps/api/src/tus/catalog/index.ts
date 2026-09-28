@@ -228,6 +228,8 @@ export interface MarketplaceStorePort {
   merchant: {
     save(profile: PerfilPrestador): Promise<void>
     find(tenantId: string): Promise<PerfilPrestador | null>
+    // Batch read for admin lists (one query for a page of tenants). Optional for test doubles.
+    findMany?(tenantIds: readonly string[]): Promise<PerfilPrestador[]>
   }
   listings: {
     save(listing: Publicacion): Promise<void>
@@ -311,6 +313,10 @@ export class InMemoryMarketplaceStore implements MarketplaceStorePort {
       this.merchantRecords.has(tenantId)
         ? structuredClone(this.merchantRecords.get(tenantId)!)
         : null,
+    findMany: async (tenantIds: readonly string[]) =>
+      tenantIds
+        .filter((tenantId) => this.merchantRecords.has(tenantId))
+        .map((tenantId) => structuredClone(this.merchantRecords.get(tenantId)!)),
   }
 
   readonly listings = {
@@ -521,11 +527,18 @@ export class TusMarketplaceService {
     assertPermission(context, 'tus:marketplace:write')
     assertMerchantRole(context)
     await this.requerirHabilitacion(context, 'publication')
+    const existing = await this.store.merchant.find(context.tenantId)
     if (input.tenantId !== undefined && input.tenantId !== context.tenantId)
       throw new MarketplaceError(
         403,
         'FORBIDDEN',
         'merchant tenant does not match authenticated session'
+      )
+    if (existing && input.merchantId !== existing.merchantId)
+      throw new MarketplaceError(
+        409,
+        'MERCHANT_ID_MISMATCH',
+        'merchant id is immutable after provider registration'
       )
     const cohort = input.cohort
     if (!esCohorteMercado(cohort) || !this.allowedCohorts.includes(cohort))

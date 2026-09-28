@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { IdentityStore } from '../../auth-security/ports/identity-store.ts'
 import type { TusApplicationService } from '../application/tus-application-service.ts'
+import type { PerfilPrestador } from '../catalog/index.ts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { validarPerfil } from './modelo.ts'
 import type { ServicioDirectorio } from './servicio.ts'
@@ -33,21 +34,36 @@ export function crearAltaPrestadorAdmin(deps: {
     if (!account || account.status !== 'active' || (!account.emailVerifiedAt && !managed)) return { status: 409, code: 'VERIFIED_ACCOUNT_REQUIRED' }
     const marketplace = deps.application.marketplace
     if (!marketplace) return { status: 503, code: 'UNAVAILABLE' }
-    // The admin is the audit actor; the target tenant is resolved from the account, never from input.
-    const target = { ...admin, tenantId: account.tenantId, roles: ['owner'], permissions: ['tus:marketplace:write'] }
-    const existing = await marketplace.store.merchant.find(account.tenantId)
-    if (existing && existing.status !== 'approved') return { status: 409, code: 'PROVIDER_NOT_APPROVED' }
-    if (!existing) await marketplace.onboard(target, {
-      merchantId: randomUUID(), locationId: randomUUID(), cohort: 'repairs-trades',
-      timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'],
-      operatingPolicyVersion: 'admin-manual-v1',
+    // Directory registration needs the prestador row for its FK, but is not commercial onboarding:
+    // creating a listing or publishing one still calls marketplace.onboard/readiness separately.
+    const prestador = await marketplace.store.transaction(async (store) => {
+      const existing = await store.merchant.find(account.tenantId)
+      if (existing) return existing
+      const now = new Date().toISOString()
+      const profile: PerfilPrestador = {
+        tenantId: account.tenantId,
+        merchantId: randomUUID(),
+        cohort: 'repairs-trades',
+        locationId: randomUUID(),
+        timezone: 'America/Argentina/Buenos_Aires',
+        staffRoles: ['owner'],
+        operatingPolicyVersion: 'admin-manual-v1',
+        status: 'approved',
+        createdAt: now,
+        updatedAt: now,
+      }
+      await store.merchant.save(profile)
+      return profile
     })
+    if (prestador.status !== 'approved') return { status: 409, code: 'PROVIDER_NOT_APPROVED' }
+    // The target tenant is resolved from the verified account, never from input.
+    const target = { ...admin, tenantId: account.tenantId, roles: ['owner'], permissions: ['tus:marketplace:write'] }
     const result = await deps.directorio.guardarPerfil(target, body)
     if (!result.ok) return { status: 422, code: result.code }
     await marketplace.store.audit.append([{
       auditId: randomUUID(), tenantId: account.tenantId, actorId: admin.subjectId,
       correlationId: admin.correlationId, action: 'provider.profile.admin_saved',
-      resourceType: 'merchant', resourceId: result.perfil.id, outcome: 'allowed',
+      resourceType: 'merchant', resourceId: prestador.merchantId, outcome: 'allowed',
       createdAt: new Date().toISOString(),
     }])
     return { status: 200, profile: result.perfil }
