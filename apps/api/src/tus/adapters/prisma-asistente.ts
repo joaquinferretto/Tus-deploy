@@ -258,6 +258,10 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
         const row = await client.contactoWhatsapp.findFirst({ where: { id } })
         return row ? mapContacto(row) : null
       },
+      buscarVarios: async (ids) =>
+        ids.length === 0
+          ? []
+          : (await client.contactoWhatsapp.findMany({ where: { id: { in: [...ids] } } })).map(mapContacto),
       crear: async (value) => {
         await client.contactoWhatsapp.create({ data: filaContacto(value) })
       },
@@ -345,6 +349,24 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
                 b.externalTimestamp ?? b.createdAt
               ) || a.createdAt.localeCompare(b.createdAt)
           ),
+      // DISTINCT ON walks ix_mensajes_conversacion_whatsapp_historial once per conversation: the
+      // newest non rate-limited message of each, like `ultimos(id, 1)`, in a single statement.
+      ultimoDeConversaciones: async (ids) =>
+        ids.length === 0
+          ? []
+          : (
+              await client.$queryRawUnsafe<Fila[]>(
+                `SELECT DISTINCT ON ("conversacion_id")
+                   "id", "conversacion_id" AS "conversacionId", "contacto_id" AS "contactoId", "wamid",
+                   "direccion", "tipo", "texto", "estado", "estado_en" AS "estadoEn",
+                   "fecha_externa" AS "fechaExterna", "responde_a_wamid" AS "respondeAWamid", "actor",
+                   "metadata", "correlacion_id" AS "correlacionId", "fecha_creacion" AS "fechaCreacion"
+                 FROM public."mensajes_conversacion_whatsapp"
+                 WHERE "conversacion_id" = ANY($1::text[]) AND "estado" <> 'rate_limited'
+                 ORDER BY "conversacion_id", "fecha_creacion" DESC`,
+                [...ids]
+              )
+            ).map(mapMensaje),
       contar: async (conversationId) =>
         client.mensajeConversacionWhatsapp.count({ where: { conversacionId: conversationId } }),
       contarEntrantesDesde: async (contactId, since) =>

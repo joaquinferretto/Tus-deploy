@@ -46,6 +46,7 @@ export class AlmacenAsistenteEnMemoria {
       contactos: {
         buscarPorWaId: async (waId) => clone([...s().contactos.values()].find((c) => c.waId === waId) ?? null),
         buscar: async (id) => clone(s().contactos.get(id) ?? null),
+        buscarVarios: async (ids) => ids.flatMap((id) => (s().contactos.has(id) ? [clone(s().contactos.get(id)!)] : [])),
         crear: async (value) => {
           if ([...s().contactos.values()].some((c) => c.waId === value.waId)) throw unique()
           s().contactos.set(value.contactId, clone(value))
@@ -103,6 +104,14 @@ export class AlmacenAsistenteEnMemoria {
             .sort(byTime)
             .slice(-limit)
             .map(clone),
+        ultimoDeConversaciones: async (ids) =>
+          ids.flatMap((id) => {
+            const last = [...s().mensajes.values()]
+              .filter((m) => m.conversationId === id && m.status !== 'rate_limited')
+              .sort(byTime)
+              .at(-1)
+            return last ? [clone(last)] : []
+          }),
         contar: async (conversationId) => [...s().mensajes.values()].filter((m) => m.conversationId === conversationId).length,
         contarEntrantesDesde: async (contactId, since) =>
           [...s().mensajes.values()].filter((m) => m.contactId === contactId && m.direction === 'inbound' && m.createdAt >= since).length,

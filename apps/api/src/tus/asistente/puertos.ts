@@ -14,6 +14,8 @@ export interface RepositoriosAsistente {
   contactos: {
     buscarPorWaId(waId: string): Promise<ContactoWhatsapp | null>
     buscar(contactId: string): Promise<ContactoWhatsapp | null>
+    // Batch read for the support inbox (one query per page, never one per conversation).
+    buscarVarios(contactIds: readonly string[]): Promise<ContactoWhatsapp[]>
     crear(value: ContactoWhatsapp): Promise<void>
     actualizar(value: ContactoWhatsapp, expectedVersion: number): Promise<boolean>
     vinculadosA(accountId: string): Promise<ContactoWhatsapp[]>
@@ -35,6 +37,8 @@ export interface RepositoriosAsistente {
     // Inbound messages not yet handled, oldest first.
     pendientes(conversationId: string): Promise<MensajeConversacion[]>
     ultimos(conversationId: string, limit: number): Promise<MensajeConversacion[]>
+    // The same message `ultimos(id, 1)` returns, for many conversations in one query.
+    ultimoDeConversaciones(conversationIds: readonly string[]): Promise<MensajeConversacion[]>
     contar(conversationId: string): Promise<number>
     contarEntrantesDesde(contactId: string, since: string): Promise<number>
   }

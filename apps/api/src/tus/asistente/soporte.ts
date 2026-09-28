@@ -43,10 +43,15 @@ export class ServicioSoporteWhatsapp {
         limit: Math.min(Math.max(Number(filter.limit) || 50, 1), 200),
         ...(filter.offset ? { offset: filter.offset } : {}),
       })
+      // Contacts and last messages of the whole page in two batch reads (no query per conversation).
+      const contacts = await repositories.contactos.buscarVarios([...new Set(conversations.map((c) => c.contactId))])
+      const lastMessages = await repositories.mensajes.ultimoDeConversaciones(conversations.map((c) => c.conversationId))
+      const contactById = new Map(contacts.map((contact) => [contact.contactId, contact]))
+      const lastByConversation = new Map(lastMessages.map((message) => [message.conversationId, message]))
       const out = []
       for (const conversation of conversations) {
-        const contact = await repositories.contactos.buscar(conversation.contactId)
-        const last = (await repositories.mensajes.ultimos(conversation.conversationId, 1))[0]
+        const contact = contactById.get(conversation.contactId)
+        const last = lastByConversation.get(conversation.conversationId)
         out.push({
           conversationId: conversation.conversationId,
           contact: {
