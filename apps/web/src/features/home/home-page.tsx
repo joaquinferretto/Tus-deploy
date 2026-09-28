@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { createDirectoryClient } from '../directory/directory-client'
 import { AssistantWidget } from './assistant-widget'
@@ -91,6 +91,17 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
       setSearching(false)
     }
   }
+
+  // "Ver en el mapa" from the assistant on another page arrives as /?buscar=...: same search.
+  const catalogReady = Boolean(catalog.data)
+  useEffect(() => {
+    if (!catalogReady) return
+    const pending = new URLSearchParams(window.location.search).get('buscar')
+    if (!pending) return
+    window.history.replaceState(null, '', window.location.pathname)
+    void runSearch(pending).catch(() => setSummary('No pudimos buscar ahora. Probá de nuevo en unos minutos.'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when the catalog is ready
+  }, [catalogReady])
 
   async function runCategory(id: string, zone: string | null): Promise<ServiceSearchOutcome> {
     return apply(await searchCategory(id, zone, searchDeps))

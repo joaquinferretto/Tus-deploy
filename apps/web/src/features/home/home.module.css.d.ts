@@ -1,6 +1,7 @@
 // Generated from the CSS module class names. Regenerate when classes change.
 declare const styles: {
   readonly assistantBot: string
+  readonly assistantChip: string
   readonly assistantClose: string
   readonly assistantFab: string
   readonly assistantForm: string

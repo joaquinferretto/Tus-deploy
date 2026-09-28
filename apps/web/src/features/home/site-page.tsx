@@ -1,3 +1,4 @@
+import { AssistantWidget } from './assistant-widget'
 import { PublicHeader } from './public-header'
 import { SiteFooter } from './site-footer'
 import styles from './home.module.css'
@@ -13,6 +14,8 @@ export function SitePage({ logo, children }: { logo: React.ReactNode; children: 
       <PublicHeader logo={logo} />
       <main className={styles.main} id="contenido">{children}</main>
       <SiteFooter />
+      {/* The assistant is on every public page; off the home its search opens the home map. */}
+      <AssistantWidget />
     </div>
   )
 }

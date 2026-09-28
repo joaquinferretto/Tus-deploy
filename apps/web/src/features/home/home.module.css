@@ -1023,6 +1023,17 @@
   padding: 4px 10px;
 }
 
+.assistantChip {
+  background: var(--tus-white);
+  border: 1px solid var(--tus-orange);
+  border-radius: 999px;
+  color: var(--tus-orange-strong) !important;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  text-decoration: none;
+}
+
 .assistantLink {
   color: var(--tus-orange) !important;
   display: inline-block;
