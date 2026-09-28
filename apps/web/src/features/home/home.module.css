@@ -122,6 +122,24 @@
   justify-self: end;
 }
 
+.sessionLoading {
+  background: #eef1f5;
+  border-radius: 10px;
+  color: var(--tus-ink-soft);
+  display: inline-flex;
+  min-height: 40px;
+  min-width: 128px;
+  padding: 10px 12px;
+}
+
+.sessionLoading:empty {
+  animation: sessionPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes sessionPulse {
+  50% { opacity: 0.55; }
+}
+
 .buttonPrimary,
 .buttonSecondary,
 .buttonGhost {
@@ -796,6 +814,11 @@
 @media (max-width: 768px) {
   .headerActions .buttonSecondary,
   .headerActions .buttonPrimary {
+    display: none;
+  }
+
+  .headerActions .buttonGhost,
+  .headerActions .sessionLoading {
     display: none;
   }
 

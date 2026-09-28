@@ -23,7 +23,9 @@ declare const styles: {
   readonly intentTitle: string
   readonly legend: string
   readonly link: string
+  readonly linkSubtle: string
   readonly linkRow: string
+  readonly loginLinks: string
   readonly notice: string
   readonly passwordWrap: string
   readonly pin: string

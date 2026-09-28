@@ -175,6 +175,20 @@
   margin-top: -6px;
 }
 
+.loginLinks {
+  align-items: flex-start;
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  margin-top: -6px;
+}
+
+.linkSubtle {
+  color: var(--tus-ink-soft) !important;
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
 .link {
   color: var(--tus-orange-strong) !important;
   font-weight: 600;

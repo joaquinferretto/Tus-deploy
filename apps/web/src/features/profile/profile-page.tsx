@@ -117,8 +117,8 @@ export function ProfilePage(): React.ReactNode {
         <section className={styles.card} style={{ marginTop: 16 }}>
           {role.capabilities.platformAdmin ? (
             <div className={styles.cardActions}>
-              <a className={homeStyles.buttonPrimary} href="/tus/admin">
-                Ir al panel administrativo
+              <a className={homeStyles.buttonSecondary} href="/tus/admin">
+                Ir al panel administrativo →
               </a>
             </div>
           ) : (

@@ -70,6 +70,7 @@ declare const styles: {
   readonly searchButton: string
   readonly searchDock: string
   readonly searchInput: string
+  readonly sessionLoading: string
   readonly section: string
   readonly sectionActions: string
   readonly sectionHeader: string

@@ -15,7 +15,8 @@ import {
 import { resolveWebApiBaseUrl } from './api-url.ts'
 import { authorizationHeader } from './session-credentials'
 
-const DEFAULT_RETURN_TO = '/mi-perfil'
+const DEFAULT_RETURN_TO = '/'
+const COOKIE_SESSION_LIFETIME_MS = 60 * 60 * 1000
 
 export interface TusWebAuthRequest {
   method: 'GET' | 'POST'
@@ -197,12 +198,19 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
           safeReturnTo
         )
       }
-      if (raw === null)
-        return state(
-          TUS_SESSION_STATUS.UNAUTHENTICATED,
-          'Sign in to enter your TUS workspace.',
-          safeReturnTo
-        )
+      if (raw === null) {
+        // The session cookie is HttpOnly and survives opening a new tab, while sessionStorage does
+        // not. Confirm the cookie with the server and recreate only the non-secret local marker.
+        try {
+          const context = await bootstrapContext(transport, undefined, createCorrelationId())
+          const session = createTusAuthenticatedSession({ accessToken: 'cookie-session', expiresAt: now() + COOKIE_SESSION_LIFETIME_MS, context })
+          storage.write(serializeCredential(session))
+          return authenticatedState(session, safeReturnTo)
+        } catch (error: unknown) {
+          if (statusOf(error) === 401) return state(TUS_SESSION_STATUS.UNAUTHENTICATED, 'Sign in to enter your TUS workspace.', safeReturnTo)
+          return authState(error, safeReturnTo, 'TUS could not restore the session. Try again.')
+        }
+      }
       let credential: StoredCredential
       try {
         credential = parseCredential(raw)
@@ -233,9 +241,8 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
 
     async capabilities() {
       const credential = readCredential(storage)
-      if (credential === null || credential.expiresAt <= now()) return null
       try {
-        const response = await transport.request<{ capabilities?: { platformAdmin?: unknown; provider?: unknown } }>({ method: 'GET', path: '/auth/session', correlationId: createCorrelationId(), accessToken: credential.accessToken })
+        const response = await transport.request<{ capabilities?: { platformAdmin?: unknown; provider?: unknown } }>({ method: 'GET', path: '/auth/session', correlationId: createCorrelationId(), ...(credential === null || credential.expiresAt <= now() ? {} : { accessToken: credential.accessToken }) })
         return { platformAdmin: response?.capabilities?.platformAdmin === true, provider: response?.capabilities?.provider === true }
       } catch {
         return null
@@ -245,7 +252,7 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
     async signOut() {
       const credential = readCredential(storage)
       try {
-        if (credential !== null) await transport.request({ method: 'POST', path: '/auth/sign-out', correlationId: createCorrelationId(), accessToken: credential.accessToken })
+        await transport.request({ method: 'POST', path: '/auth/sign-out', correlationId: createCorrelationId(), ...(credential === null ? {} : { accessToken: credential.accessToken }) })
       } finally {
         clearStorage(storage)
       }
@@ -271,11 +278,31 @@ export interface TusAccountCapabilities {
   provider: boolean
 }
 
+export type TusDefaultRoute = '/' | '/tus/admin' | '/prestador/solicitudes'
+
+export function getDefaultRouteForUser(capabilities: TusAccountCapabilities | null): TusDefaultRoute {
+  if (capabilities?.platformAdmin) return '/tus/admin'
+  if (capabilities?.provider) return '/prestador/solicitudes'
+  return '/'
+}
+
+export function canAccessReturnTo(path: string, capabilities: TusAccountCapabilities | null): boolean {
+  if (path === '/sign-in' || path.startsWith('/sign-in?') || path.startsWith('/auth/') || path.startsWith('/ingresar/')) return false
+  if (path === '/tus/admin' || path.startsWith('/tus/admin/')) return capabilities?.platformAdmin === true
+  if (path === '/prestador/solicitudes' || path.startsWith('/prestador/solicitudes/')) return capabilities?.provider === true
+  return true
+}
+
+export function resolvePostLoginRoute(capabilities: TusAccountCapabilities | null, requested?: string | null): string {
+  const safe = requested ? sanitizeTusReturnTo(requested, '') : ''
+  return safe && canAccessReturnTo(safe, capabilities) ? safe : getDefaultRouteForUser(capabilities)
+}
+
 // "Ir a mi panel" goes to the dashboard of the account's real role (decided by the API).
 export function panelFor(capabilities: TusAccountCapabilities | null): { href: '/tus/admin' | '/prestador/solicitudes' | '/mis-solicitudes'; label: string } {
   if (capabilities?.platformAdmin) return { href: '/tus/admin', label: 'Panel admin' }
-  if (capabilities?.provider) return { href: '/prestador/solicitudes', label: 'Ir a mi panel' }
-  return { href: '/mis-solicitudes', label: 'Ir a mi panel' }
+  if (capabilities?.provider) return { href: '/prestador/solicitudes', label: 'Panel prestador' }
+  return { href: '/mis-solicitudes', label: 'Mis solicitudes' }
 }
 
 export interface TusAuthActionState {
@@ -355,8 +382,8 @@ class TusAuthError extends Error {
   }
 }
 
-async function bootstrapContext(transport: TusWebAuthTransport, accessToken: string, correlationId: string) {
-  const response = await transport.request<unknown>({ method: 'GET', path: '/auth/session', correlationId, accessToken })
+async function bootstrapContext(transport: TusWebAuthTransport, accessToken: string | undefined, correlationId: string) {
+  const response = await transport.request<unknown>({ method: 'GET', path: '/auth/session', correlationId, ...(accessToken === undefined ? {} : { accessToken }) })
   return parseTusSessionContext(response)
 }
 

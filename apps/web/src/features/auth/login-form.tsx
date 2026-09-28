@@ -4,7 +4,7 @@ import type { Route } from 'next'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 
-import { createTusWebAuthClient, sanitizeTusReturnTo } from '@/lib/tus-auth-client'
+import { createTusWebAuthClient, resolvePostLoginRoute } from '@/lib/tus-auth-client'
 import { FormError, GoogleAuthButton, PasswordField, Separator, TextField } from './auth-fields'
 import { googleErrorMessage, rememberReturnTo, signInErrorMessage, takeReturnTo, validateLogin, withReturnTo, type FieldErrors } from './auth-validation'
 import styles from './auth.module.css'
@@ -25,16 +25,26 @@ export function LoginForm({
   const [errors, setErrors] = useState<FieldErrors>({})
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [returnTo, setReturnTo] = useState('/mi-perfil')
+  const [returnTo, setReturnTo] = useState<string | null>(null)
+  const [restoring, setRestoring] = useState(true)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const requested = params.get('returnTo')
-    setReturnTo(sanitizeTusReturnTo(requested ?? undefined))
+    setReturnTo(requested)
     // Also covers "Continuar con Google": the destination survives the round trip.
-    if (requested) rememberReturnTo(sanitizeTusReturnTo(requested))
+    rememberReturnTo(requested)
     const googleError = googleErrorMessage(params.get('error'))
     if (googleError) setMessage(googleError)
+    const client = createTusWebAuthClient()
+    void client.restore(requested ?? undefined).then(async (result) => {
+      if (result.status === 'authenticated') {
+        const capabilities = await client.capabilities()
+        window.location.replace(resolvePostLoginRoute(capabilities, requested))
+        return
+      }
+      setRestoring(false)
+    }).catch(() => setRestoring(false))
   }, [])
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -44,15 +54,21 @@ export function LoginForm({
     if (Object.keys(found).length > 0) return
     setSubmitting(true)
     setMessage('')
-    const result = await createTusWebAuthClient().signIn({ email: email.trim(), password })
+    const client = createTusWebAuthClient()
+    const result = await client.signIn({ email: email.trim(), password })
     if (result.status !== 'authenticated') {
       setSubmitting(false)
       setMessage(signInErrorMessage(result.status, result.code))
       return
     }
     if (onAuthenticated) await onAuthenticated()
-    else window.location.assign(takeReturnTo() ?? result.returnTo ?? returnTo)
+    else {
+      const capabilities = await client.capabilities()
+      window.location.assign(resolvePostLoginRoute(capabilities, takeReturnTo() ?? returnTo))
+    }
   }
+
+  if (restoring) return <p className={styles.notice} role="status">Comprobando tu sesión…</p>
 
   return (
     <>
@@ -82,19 +98,14 @@ export function LoginForm({
           onChange={(event) => setPassword(event.target.value)}
           value={password}
         />
-        <div className={styles.linkRow}>
+        <div className={styles.loginLinks}>
           <Link className={styles.link} href="/olvide-contrasena">
             ¿Olvidaste tu contraseña?
           </Link>
-          <Link className={styles.link} href="/verificar-email">
+          <Link className={`${styles.link} ${styles.linkSubtle}`} href="/verificar-email">
             Reenviar email de verificación
           </Link>
         </div>
-        {showGoogle ? (
-          <p className={styles.googleHint} style={{ marginTop: -8, textAlign: 'left' }}>
-            Si creaste tu cuenta con Google, no tenés contraseña: usá “Continuar con Google”.
-          </p>
-        ) : null}
         <button className={styles.primary} disabled={submitting} type="submit">
           {submitting ? 'Ingresando…' : 'Iniciar sesión'}
         </button>
@@ -102,7 +113,7 @@ export function LoginForm({
       {showRegisterLink ? (
         <p className={styles.footerText}>
           ¿No tenés cuenta?{' '}
-          <Link className={styles.link} href={withReturnTo('/registro', returnTo === '/mi-perfil' ? null : returnTo) as Route}>
+          <Link className={styles.link} href={withReturnTo('/registro', returnTo) as Route}>
             Registrate
           </Link>
         </p>

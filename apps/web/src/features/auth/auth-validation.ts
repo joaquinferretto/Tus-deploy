@@ -81,9 +81,9 @@ export function safeInternalPath(value: string | null | undefined): string | nul
 
 export function rememberReturnTo(value: string | null | undefined): void {
   const path = safeInternalPath(value)
-  if (!path) return
   try {
-    window.sessionStorage.setItem(RETURN_TO_KEY, path)
+    if (path) window.sessionStorage.setItem(RETURN_TO_KEY, path)
+    else window.sessionStorage.removeItem(RETURN_TO_KEY)
   } catch {
     // Solo una comodidad: sin storage se vuelve al panel.
   }

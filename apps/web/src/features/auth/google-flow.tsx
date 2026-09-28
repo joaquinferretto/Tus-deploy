@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 
-import { createTusWebAuthClient } from '@/lib/tus-auth-client'
+import { createTusWebAuthClient, resolvePostLoginRoute } from '@/lib/tus-auth-client'
 import { FormError, RoleIntentSelector, TextField } from './auth-fields'
 import { destinationFor, readFragmentParam, takeReturnTo, type RoleIntent } from './auth-validation'
 import { LoginForm } from './login-form'
@@ -30,8 +30,8 @@ export function GoogleSignInCompletion(): React.ReactNode {
     window.history.replaceState(null, '', window.location.pathname)
     const client = createTusWebAuthClient()
     if (code) {
-      void client.googleExchange(code).then((result) => {
-        if (result.status === 'authenticated') window.location.assign(takeReturnTo() ?? '/mi-perfil')
+      void client.googleExchange(code).then(async (result) => {
+        if (result.status === 'authenticated') window.location.assign(resolvePostLoginRoute(await client.capabilities(), takeReturnTo()))
         else setState({ kind: 'error', message: 'No pudimos completar el ingreso con Google. Probá de nuevo.' })
       }).catch(() => setState({ kind: 'error', message: 'No pudimos conectar. Volvé a ingresar con Google.' }))
       return
@@ -70,7 +70,10 @@ export function GoogleSignInCompletion(): React.ReactNode {
       <LoginForm
         onAuthenticated={async () => {
           const linked = await createTusWebAuthClient().googleLink(state.code)
-          if (linked.status === 'accepted') window.location.assign(takeReturnTo() ?? '/mi-perfil')
+          if (linked.status === 'accepted') {
+            const client = createTusWebAuthClient()
+            window.location.assign(resolvePostLoginRoute(await client.capabilities(), takeReturnTo()))
+          }
           else
             setState({
               kind: 'error',

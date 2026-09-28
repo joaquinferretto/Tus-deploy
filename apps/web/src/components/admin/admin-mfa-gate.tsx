@@ -88,7 +88,7 @@ function Enrolamiento({ session, onConfirmado }: { session: TusWebSession; onCon
 
   async function confirmar(event: FormEvent) {
     event.preventDefault()
-    if (!inscripcion) return
+    if (!inscripcion || enviando || !/^\d{6}$/u.test(codigo)) return
     setEnviando(true)
     setError('')
     try {
@@ -134,12 +134,12 @@ function Enrolamiento({ session, onConfirmado }: { session: TusWebSession; onCon
             id="mfa-enroll-code"
             inputMode="numeric"
             maxLength={6}
-            onChange={(event) => setCodigo(event.target.value)}
+            onChange={(event) => setCodigo(event.target.value.replace(/\D/gu, '').slice(0, 6))}
             pattern="[0-9]{6}"
             required
             value={codigo}
           />
-          <TusActionButton disabled={codigo.trim().length !== 6} loading={enviando} loadingLabel="Verificando…" type="submit">
+          <TusActionButton disabled={enviando || !/^\d{6}$/u.test(codigo)} loading={enviando} loadingLabel="Verificando…" type="submit">
             Activar
           </TusActionButton>
         </form>
@@ -157,6 +157,8 @@ function Desafio({ session, onVerificado }: { session: TusWebSession; onVerifica
 
   async function enviar(event: FormEvent) {
     event.preventDefault()
+    const valido = modoRecuperacion ? /^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$/u.test(codigo.trim()) : /^\d{6}$/u.test(codigo)
+    if (enviando || !valido) return
     setEnviando(true)
     setError('')
     try {
@@ -183,11 +185,12 @@ function Desafio({ session, onVerificado }: { session: TusWebSession; onVerifica
           id="mfa-code"
           inputMode={modoRecuperacion ? 'text' : 'numeric'}
           maxLength={modoRecuperacion ? 14 : 6}
-          onChange={(event) => setCodigo(event.target.value)}
+          onChange={(event) => setCodigo(modoRecuperacion ? event.target.value.toUpperCase().slice(0, 14) : event.target.value.replace(/\D/gu, '').slice(0, 6))}
+          pattern={modoRecuperacion ? '[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}' : '[0-9]{6}'}
           required
           value={codigo}
         />
-        <TusActionButton disabled={codigo.trim().length < 6} loading={enviando} loadingLabel="Verificando…" type="submit">
+        <TusActionButton disabled={enviando || (modoRecuperacion ? !/^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$/u.test(codigo.trim()) : !/^\d{6}$/u.test(codigo))} loading={enviando} loadingLabel="Verificando…" type="submit">
           Continuar
         </TusActionButton>
       </form>
@@ -200,7 +203,7 @@ function Desafio({ session, onVerificado }: { session: TusWebSession; onVerifica
         }}
         type="button"
       >
-        {modoRecuperacion ? 'Usar la app autenticadora' : 'No tengo el teléfono: usar un código de recuperación'}
+        {modoRecuperacion ? 'Usar la app autenticadora' : '¿No tenés acceso al teléfono? Usar código de recuperación'}
       </button>
       {error ? <p role="alert">{error}</p> : null}
     </section>

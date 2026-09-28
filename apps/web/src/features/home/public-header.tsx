@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 
+import { createTusWebAuthClient } from '@/lib/tus-auth-client'
 import { withReturnTo } from '../auth/auth-validation'
 
 import { useAccountView } from '../session/use-account-view'
@@ -36,15 +37,21 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
         ? 'page'
         : undefined
 
+  async function signOut() {
+    await createTusWebAuthClient().signOut().catch(() => undefined)
+    window.location.assign('/')
+  }
+
   const actions =
-    auth.status === 'signed-in' ? (
+    auth.status === 'unknown' ? (
+      <span aria-label="Comprobando sesión" className={styles.sessionLoading} role="status" />
+    ) : auth.status === 'signed-in' ? (
       <>
-        <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>
-          Mi perfil
-        </Link>
         <Link className={styles.buttonPrimary} href={auth.panel.href}>
           {auth.panel.label}
         </Link>
+        <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>Mi perfil</Link>
+        <button className={styles.buttonGhost} onClick={() => void signOut()} type="button">Cerrar sesión</button>
       </>
     ) : (
       <>
@@ -95,14 +102,13 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
               {item.label}
             </a>
           ))}
-          {auth.status === 'signed-in' ? (
+          {auth.status === 'unknown' ? <span className={styles.sessionLoading} role="status">Comprobando sesión…</span> : auth.status === 'signed-in' ? (
             <>
-              <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>
-                Mi perfil
-              </Link>
               <Link className={styles.buttonPrimary} href={auth.panel.href}>
                 {auth.panel.label}
               </Link>
+              <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>Mi perfil</Link>
+              <button className={styles.buttonGhost} onClick={() => void signOut()} type="button">Cerrar sesión</button>
             </>
           ) : (
             <>
