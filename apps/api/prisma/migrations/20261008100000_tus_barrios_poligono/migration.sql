@@ -11,7 +11,7 @@ SET "poligono" = jsonb_build_object(
     jsonb_build_array(COALESCE("longitud", -58.8295) + 0.003, COALESCE("latitud", -27.4695) + 0.003),
     jsonb_build_array(COALESCE("longitud", -58.8295) - 0.003, COALESCE("latitud", -27.4695) + 0.003),
     jsonb_build_array(COALESCE("longitud", -58.8295) - 0.003, COALESCE("latitud", -27.4695) - 0.003)
-  ));
+  )));
 
 ALTER TABLE "barrios" ALTER COLUMN "poligono" SET NOT NULL;
 ALTER TABLE "barrios" ADD CONSTRAINT "ck_barrios_poligono_geojson" CHECK (
