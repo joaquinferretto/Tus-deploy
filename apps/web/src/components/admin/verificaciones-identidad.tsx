@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 
 import { createTusWebAuthClient, toTusWebSession } from '@/lib/tus-auth-client'
@@ -106,9 +105,6 @@ export function VerificacionesIdentidadAdmin(): ReactNode {
 
   return (
     <>
-      <div className="tus-nav-links tus-session-actions">
-        <Link href="/tus/operations">Operaciones</Link>
-      </div>
       <header className="tus-workspace-header">
         <div>
           <p className="tus-kicker">Plataforma / identidad</p>

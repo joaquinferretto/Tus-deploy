@@ -1,10 +1,5 @@
-import { AdminMfaGate } from '@/components/admin/admin-mfa-gate'
-import { TusWhatsappAdminSurface } from './tus-whatsapp-admin'
+import { AdminWhatsapp } from '@/components/admin/admin-whatsapp'
 
-export default function TusWhatsappAdminPage() {
-  return (
-    <AdminMfaGate returnTo="/tus/admin/whatsapp">
-      <TusWhatsappAdminSurface />
-    </AdminMfaGate>
-  )
+export default function Page() {
+  return <AdminWhatsapp />
 }

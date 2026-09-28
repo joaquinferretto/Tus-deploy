@@ -171,7 +171,9 @@ test('PR3 gives the unresolved /tus session state its skip target and sole main 
     dashboard.indexOf('if (session === null)')
   )
 
-  assert.match(layout, /<TusAppShell>\{children\}<\/TusAppShell>/)
+  // /tus keeps the workspace shell; only /tus/admin has its own frame (TusSectionShell).
+  assert.match(layout, /<TusSectionShell>\{children\}<\/TusSectionShell>/)
+  assert.match(readFileSync(join(root, 'apps/web/src/components/layout/tus-section-shell.tsx'), 'utf8'), /return <TusAppShell>\{children\}<\/TusAppShell>/)
   assert.match(shell, /<a className="tus-skip-link" href="#tus-main-content">/)
   assert.match(shell, /<main[^>]+id="tus-main-content"/)
   assert.equal((shell.match(/id="tus-main-content"/g) ?? []).length, 1)

@@ -1,6 +1,5 @@
-import { AdminMfaGate } from '@/components/admin/admin-mfa-gate'
-import { PrestadoresAdmin } from '@/components/admin/prestadores-admin'
+import { AdminPrestadoresLista } from '@/components/admin/admin-prestadores-lista'
 
-export default function PrestadoresAdminPage() {
-  return <AdminMfaGate returnTo="/tus/admin/prestadores"><PrestadoresAdmin /></AdminMfaGate>
+export default function Page() {
+  return <AdminPrestadoresLista />
 }

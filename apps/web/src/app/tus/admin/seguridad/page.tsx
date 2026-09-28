@@ -1,10 +1,5 @@
-import { AdminMfaGate } from '@/components/admin/admin-mfa-gate'
-import { SeguridadAdmin } from '@/components/admin/seguridad-admin'
+import { AdminSeguridad } from '@/components/admin/admin-seguridad'
 
-export default function TusAdminSeguridadPage() {
-  return (
-    <AdminMfaGate returnTo="/tus/admin/seguridad">
-      <SeguridadAdmin />
-    </AdminMfaGate>
-  )
+export default function Page() {
+  return <AdminSeguridad />
 }

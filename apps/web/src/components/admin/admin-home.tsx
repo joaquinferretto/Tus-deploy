@@ -1,37 +1,66 @@
+'use client'
+
+import type { Route } from 'next'
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 
-// Platform administration home: only the admin surfaces that exist. Rendered behind AdminMfaGate;
-// every action is authorized again by the API (allowlist + verified email + MFA of this session).
-const SECTIONS = [
-  { href: '/tus/admin/prestadores', title: 'Prestadores', text: 'Cargar o editar prestadores del directorio.' },
-  { href: '/tus/admin/identidad', title: 'Verificación de identidad', text: 'Revisar las verificaciones pendientes.' },
-  { href: '/tus/admin/whatsapp', title: 'WhatsApp', text: 'Conversaciones del asistente de WhatsApp.' },
-  { href: '/tus/admin/seguridad', title: 'Seguridad', text: 'Segundo factor y códigos de recuperación.' },
-] as const
+import { adminApi, adminErrorMessage, eventoLabel, formatFecha, type AdminEvento, type AdminResumen } from '@/lib/tus-admin-api'
+import { AdminEmpty, AdminPageHeader } from './admin-layout'
+import styles from './admin.module.css'
 
-export function AdminHome() {
+// Dashboard: only counts the API computes from real data (no invented numbers).
+export function AdminHome(): React.ReactNode {
+  const [resumen, setResumen] = useState<AdminResumen | null>(null)
+  const [eventos, setEventos] = useState<AdminEvento[] | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    adminApi.resumen().then(setResumen).catch((cause) => setError(adminErrorMessage(cause)))
+    adminApi.actividad().then((result) => setEventos(result.items)).catch(() => setEventos([]))
+  }, [])
+
+  const cards = resumen
+    ? [
+        { label: 'Usuarios', value: resumen.usuarios, hint: 'Cuentas registradas', href: '/tus/admin/usuarios' },
+        { label: 'Prestadores', value: resumen.prestadores.total, hint: `${resumen.prestadores.enMapa} visibles en el mapa`, href: '/tus/admin/prestadores' },
+        { label: 'Solicitudes activas', value: resumen.solicitudes.publicadas, hint: 'Publicadas y vigentes', href: '/tus/admin/solicitudes' },
+        { label: 'Solicitudes pendientes', value: resumen.solicitudes.sinPostulantes, hint: 'Sin postulantes todavía', href: '/tus/admin/solicitudes' },
+        { label: 'WhatsApp pendientes', value: resumen.whatsappPendientes ?? '—', hint: resumen.whatsappPendientes === null ? 'Módulo no activo' : 'Esperan una persona', href: '/tus/admin/whatsapp' },
+      ]
+    : []
+
   return (
     <>
-      <div className="tus-nav-links tus-session-actions">
-        <Link href="/">Volver al inicio</Link>
-        <Link href="/mi-perfil">Mi perfil</Link>
-      </div>
-      <header className="tus-workspace-header">
-        <div>
-          <p className="tus-kicker">Administración</p>
-          <h1>Panel admin</h1>
-        </div>
-      </header>
-      <ul style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', listStyle: 'none', margin: 0, padding: 0 }}>
-        {SECTIONS.map((section) => (
-          <li className="tus-state-box" key={section.href}>
-            <Link href={section.href}>
-              <strong>{section.title}</strong>
-            </Link>
-            <p style={{ margin: '6px 0 0' }}>{section.text}</p>
-          </li>
+      <AdminPageHeader subtitle="Resumen general de TUS" title="Panel administrativo" />
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      {!resumen && !error ? <p className={styles.muted} role="status">Cargando el resumen…</p> : null}
+      <div className={styles.cards}>
+        {cards.map((card) => (
+          <Link className={styles.card} href={card.href as Route} key={card.label} style={{ color: 'inherit', textDecoration: 'none' }}>
+            <span className={styles.cardLabel}>{card.label}</span>
+            <strong className={styles.cardValue}>{card.value}</strong>
+            <span className={styles.cardHint}>{card.hint}</span>
+          </Link>
         ))}
-      </ul>
+      </div>
+      <section className={styles.section}>
+        <h2>Actividad reciente</h2>
+        {eventos === null ? <p className={styles.muted}>Cargando…</p> : eventos.length === 0 ? (
+          <AdminEmpty text="Todavía no hay actividad registrada." />
+        ) : (
+          <ul className={styles.list}>
+            {eventos.slice(0, 12).map((evento, index) => (
+              <li className={styles.listItem} key={`${evento.fecha}-${index}`}>
+                <span>{eventoLabel(evento.tipo)}</span>
+                <span className={styles.muted}>
+                  <span className={`${styles.badge} ${evento.resultado === 'denied' ? styles.badgeWarn : styles.badgeOk}`}>{evento.resultado === 'denied' ? 'Rechazado' : 'OK'}</span>{' '}
+                  {formatFecha(evento.fecha)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </>
   )
 }

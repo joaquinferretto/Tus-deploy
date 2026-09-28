@@ -80,7 +80,7 @@ test('ROLES: "Ir a mi panel" follows the server-side role; admin gets "Panel adm
   const profile = read('apps/web/src/features/profile/profile-page.tsx')
   assert.match(profile, /role\.capabilities\.platformAdmin \?/u, 'admin sees the admin panel, not client/provider tools')
   assert.match(profile, /role\.capabilities\.provider \?/u)
-  assert.match(read('apps/web/src/app/tus/admin/page.tsx'), /<AdminMfaGate returnTo="\/tus\/admin">/u, 'the admin panel stays behind the MFA gate')
+  assert.match(read('apps/web/src/components/admin/admin-layout.tsx'), /<AdminMfaGate returnTo=\{pathname\}>/u, 'the admin panel stays behind the MFA gate')
 })
 
 test('ROLES API: /auth/session returns server-resolved capabilities; admin candidate even before MFA, never for a client', () => {

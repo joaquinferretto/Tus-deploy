@@ -8,7 +8,7 @@ import { authorizationHeader } from '@/lib/session-credentials'
 import { apiBase, createDirectoryClient } from '@/features/directory/directory-client'
 import { TusActionButton } from '@/app/tus/tus-ui'
 
-export function PrestadoresAdmin() {
+export function PrestadoresAdmin({ onSaved }: { onSaved?: () => void } = {}) {
   const [catalog, setCatalog] = useState<CatalogoOficios | null>(null)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
@@ -46,13 +46,13 @@ export function PrestadoresAdmin() {
       }
       setMessage('Perfil guardado. La identidad y los trabajos completados se verifican por sus procesos habituales.')
       setProfileId(result.profile?.id ?? null)
+      onSaved?.()
     } catch { setMessage('No pudimos contactar al servidor. Intentá nuevamente.') }
     finally { setBusy(false) }
   }
 
   return <>
-    <nav className="tus-nav-links"><Link href="/tus/admin/seguridad">Seguridad y autenticador</Link><Link href="/tus/admin/identidad">Verificación de identidad</Link></nav>
-    <header className="tus-workspace-header"><div><p className="tus-kicker">Administración</p><h1>Cargar o editar un prestador</h1></div></header>
+    <h2 style={{ margin: '0 0 6px' }}>Cargar o editar un prestador</h2>
     <p>Si el email ya tiene una cuenta confirmada, se actualiza su perfil (su contraseña no cambia). Si no tiene cuenta, se crea un prestador administrado: sin contraseña y sin email para confirmar, nadie puede iniciar sesión con él; sirve para cargar prestadores a mano y probar la búsqueda.</p>
     <form className="tus-support-form" onSubmit={event => void save(event)}>
       <label htmlFor="provider-email">Email de la cuenta del prestador</label><input id="provider-email" name="email" type="email" maxLength={254} required autoComplete="off" />

@@ -331,10 +331,9 @@ test('MFA wiring: every API router resolves sessions through the MFA gate; only 
 })
 
 test('MFA Web: every admin page renders behind the MFA gate and the Web never grants admin', () => {
-  for (const page of ['identidad', 'whatsapp', 'seguridad']) {
-    const source = read(`apps/web/src/app/tus/admin/${page}/page.tsx`)
-    assert.match(source, new RegExp(`<AdminMfaGate returnTo="/tus/admin/${page}">`, 'u'), page)
-  }
+  // The admin layout wraps EVERY /tus/admin page in the gate (a Next.js layout covers all child routes).
+  assert.match(read('apps/web/src/app/tus/admin/layout.tsx'), /<AdminLayout>\{children\}<\/AdminLayout>/u)
+  assert.match(read('apps/web/src/components/admin/admin-layout.tsx'), /<AdminMfaGate returnTo=\{pathname\}>\{children\}<\/AdminMfaGate>/u)
   const gate = read('apps/web/src/components/admin/admin-mfa-gate.tsx')
   assert.match(gate, /adminMfa\.status\(current\)/u, 'the API status decides what is rendered')
   const client = read('apps/web/src/lib/tus-admin-mfa.ts')

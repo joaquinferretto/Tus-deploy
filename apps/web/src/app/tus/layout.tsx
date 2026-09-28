@@ -1,5 +1,5 @@
-import { TusAppShell } from '@/components/layout/tus-app-shell'
+import { TusSectionShell } from '@/components/layout/tus-section-shell'
 
 export default function TusLayout({ children }: { children: React.ReactNode }): React.ReactNode {
-  return <TusAppShell>{children}</TusAppShell>
+  return <TusSectionShell>{children}</TusSectionShell>
 }

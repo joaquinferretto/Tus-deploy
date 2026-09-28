@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 
 import { createTusWebAuthClient, toTusWebSession } from '@/lib/tus-auth-client'
@@ -61,17 +60,6 @@ export function SeguridadAdmin(): ReactNode {
 
   return (
     <>
-      <div className="tus-nav-links tus-session-actions">
-        <Link href={{ pathname: '/tus/admin/prestadores' }}>Cargar prestadores</Link>
-        <Link href="/tus/admin/identidad">Identidad</Link>
-        <Link href="/tus/admin/whatsapp">WhatsApp</Link>
-      </div>
-      <header className="tus-workspace-header">
-        <div>
-          <p className="tus-kicker">Plataforma / seguridad</p>
-          <h1>Segundo factor de administración</h1>
-        </div>
-      </header>
       {mensaje ? <p role="alert">{mensaje}</p> : null}
       <section aria-labelledby="mfa-regen-title" className="tus-state-box">
         <h2 id="mfa-regen-title">Códigos de recuperación</h2>
