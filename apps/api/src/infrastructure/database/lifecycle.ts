@@ -28,6 +28,9 @@ export interface SchemaReadiness {
 export interface DatabaseLifecycle {
   connect: () => Promise<void>
   checkSchema: () => Promise<SchemaReadiness>
+  // Minimal connectivity probe for /ready (SELECT 1 with a client-side query timeout). Optional so
+  // test doubles and older compositions keep working; startup never uses it.
+  checkConnection?: (timeoutMs: number) => Promise<boolean>
   close: () => Promise<void>
 }
 
@@ -81,6 +84,11 @@ export function createDatabaseLifecycle(options: DatabaseLifecycleOptions): Data
     async checkSchema() {
       if (!activePool) return incompatibleSchema('database-not-connected')
       return schemaChecker(activePool)
+    },
+    async checkConnection(timeoutMs: number) {
+      if (!activePool) return false
+      const result = await activePool.query({ text: 'SELECT 1 AS ok', query_timeout: Math.max(1, Math.trunc(timeoutMs)) })
+      return (result.rowCount ?? result.rows?.length ?? 0) === 1
     },
     async close() {
       if (!activePool && !connected) {
