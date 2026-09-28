@@ -124,7 +124,7 @@ test('PR3 gives public and recovery pages semantic landmarks and descriptive hea
 
   assert.match(page, /<HomePage\b/)
   assert.match(home, /href="#contenido"/)
-  assert.match(home, /<main id="contenido">/)
+  assert.match(home, /<main className=\{styles\.main\} id="contenido">/)
   assert.match(header, /<nav[^>]+aria-label=/)
   assert.match(home, /<h1[\s>]/)
   // One h1, then h2 sections and h3 items (no skipped levels).

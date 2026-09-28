@@ -1,12 +1,16 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
 import { createDirectoryClient } from '../directory/directory-client'
+import { AssistantWidget } from './assistant-widget'
 import { HeroSearch } from './hero-search'
 import { PublicHeader } from './public-header'
+import { getProvidersSource } from './providers-source'
+import { searchCategory, searchServices, type ServiceSearchDeps, type ServiceSearchOutcome } from './service-search'
+import { SiteFooter } from './site-footer'
 import { ProviderResults } from './provider-results'
 import { RecentRequests } from './recent-requests'
 import { EMPTY_FILTERS } from './types'
@@ -27,6 +31,9 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null)
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
   const [searchSignal, setSearchSignal] = useState(0)
+  const [searching, setSearching] = useState(false)
+  const [summary, setSummary] = useState<string | null>(null)
+  const queryClient = useQueryClient()
   const directory = createDirectoryClient()
   const catalog = useQuery({ queryKey: ['home-directory-catalog'], queryFn: () => directory.catalog(), staleTime: 5 * 60_000 })
   const providers = useHomeProviders(filters)
@@ -47,13 +54,55 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
     setSelectedProviderId(null)
   }
 
+  // Same cache as the map (useHomeProviders): the markers update without reloading the page.
+  const searchDeps: ServiceSearchDeps = {
+    interpret: (text) => directory.interpret(text),
+    providers: (next) =>
+      queryClient.fetchQuery({
+        queryKey: ['home-providers', next.profession, next.zone, next.query],
+        queryFn: () => getProvidersSource().list(next),
+        staleTime: 30_000,
+      }),
+    catalog: catalog.data?.items ?? [],
+  }
+
+  // Applies a result of the shared service search (search bar or assistant) to the map.
+  function apply(outcome: ServiceSearchOutcome): ServiceSearchOutcome {
+    if (outcome.kind === 'category' || outcome.kind === 'text') {
+      changeFilters(outcome.filters)
+      setSearchSignal((value) => value + 1)
+      const count = outcome.providers.length
+      setSummary(
+        outcome.kind === 'category'
+          ? count === 0
+            ? `No encontré profesionales de ${outcome.label.toLowerCase()}${outcome.zone ? ` en ${outcome.zone}` : ''} por ahora.`
+            : `${count} ${count === 1 ? 'profesional' : 'profesionales'} de ${outcome.label.toLowerCase()}${outcome.zone ? ` en ${outcome.zone}` : ''}`
+          : null
+      )
+    }
+    return outcome
+  }
+
+  async function runSearch(text: string): Promise<ServiceSearchOutcome> {
+    setSearching(true)
+    try {
+      return apply(await searchServices(text, searchDeps))
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  async function runCategory(id: string, zone: string | null): Promise<ServiceSearchOutcome> {
+    return apply(await searchCategory(id, zone, searchDeps))
+  }
+
   return (
     <div className={styles.page}>
       <a className={styles.skipLink} href="#contenido">
         Saltar al contenido
       </a>
       <PublicHeader logo={logo} />
-      <main id="contenido">
+      <main className={styles.main} id="contenido">
         <section aria-labelledby="home-titulo" className={styles.hero}>
           {/* The hero is only the map and the filters; the title stays for screen readers and SEO. */}
           <h1 className={styles.srOnly} id="home-titulo">
@@ -63,20 +112,14 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
             <ProviderMap onSelect={selectProvider} searchSignal={searchSignal} selectedId={selectedProviderId} workers={providerData} />
           </div>
           <div className={styles.searchDock}>
-            <HeroSearch
-              catalog={catalog.data?.items ?? []}
-              filters={filters}
-              onChange={changeFilters}
-              zones={catalog.data?.zones ?? []}
-              onSubmit={() => { setSelectedProviderId(null); setSearchSignal((value) => value + 1) }}
-            />
+            <HeroSearch busy={searching} onSearch={(text) => void runSearch(text).catch(() => setSummary('No pudimos buscar ahora. Probá de nuevo en unos minutos.'))} />
             <div className={styles.mapResults}>
               <span role="status" aria-live="polite">
-                {providerStatus === 'loading' ? 'Buscando prestadores en el mapa…' : providerStatus === 'error' ? 'No pudimos cargar el mapa de prestadores.' : providerData.length === 0 ? (filtered ? 'No hay prestadores con estos filtros.' : 'Todavía no hay prestadores publicados en TUS.') : `${providerData.length} ${providerData.length === 1 ? 'prestador en el mapa' : 'prestadores en el mapa'}`}
+                {providerStatus === 'loading' ? 'Buscando profesionales en el mapa…' : providerStatus === 'error' ? 'No pudimos cargar el mapa de profesionales.' : filtered && summary ? summary : providerData.length === 0 ? (filtered ? 'No encontré profesionales para esa búsqueda.' : 'Todavía no hay profesionales publicados en TUS.') : `${providerData.length} ${providerData.length === 1 ? 'profesional en el mapa' : 'profesionales en el mapa'}`}
               </span>
               {providerStatus === 'error' ? <button type="button" onClick={() => void providers.refetch()}>Reintentar</button> : null}
-              {filtered ? <button type="button" onClick={() => changeFilters({ query: '', profession: '', zone: '' })}>Limpiar filtros</button> : null}
-              <a href="#prestadores">Ver prestadores</a>
+              {filtered && providerStatus === 'success' && providerData.length === 0 ? <a href="/publicar">Publicar solicitud</a> : null}
+              {filtered ? <button type="button" onClick={() => { changeFilters({ query: '', profession: '', zone: '' }); setSummary(null) }}>Ver todos</button> : null}
             </div>
           </div>
         </section>
@@ -128,18 +171,8 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
           </div>
         </section>
       </main>
-      <footer className={styles.footer} id="ayuda">
-        <div className={styles.footerInner}>
-          <span>© TUS · Servicios cerca tuyo</span>
-          <nav aria-label="Ayuda" className={styles.footerLinks}>
-            {/* Preguntas sobre cómo funciona TUS: el asistente responde con el conocimiento público. */}
-            <a href="/asistente">Preguntas frecuentes</a>
-            <a href="/sign-in">Iniciar sesión</a>
-            <a href="/registro">Crear cuenta</a>
-            <a href="/recovery">Recuperar acceso</a>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter />
+      <AssistantWidget chooseCategory={runCategory} search={runSearch} />
     </div>
   )
 }

@@ -1,80 +1,44 @@
 'use client'
 
-import type { OficioPublico } from '@factory/contracts'
+import { useState } from 'react'
 
-import type { ProviderMapFilters } from './providers-source'
 import styles from './home.module.css'
 
-// Filters only (no data leaves the browser here): the search never submits a form to a server.
+// One field in plain words ("quiero un plomero", "no prende el aire", "plomero en Centro"). The
+// home interprets it with the shared service search (the same one the TUS assistant uses).
 export function HeroSearch({
-  filters,
-  catalog,
-  zones,
-  onChange,
-  onSubmit,
+  onSearch,
+  busy,
 }: {
-  filters: ProviderMapFilters
-  catalog: OficioPublico[]
-  zones: string[]
-  onChange: (next: ProviderMapFilters) => void
-  onSubmit: () => void
+  onSearch: (text: string) => void
+  busy: boolean
 }): React.ReactNode {
+  const [text, setText] = useState('')
   return (
     <form
-       aria-label="Buscar prestadores"
+      aria-label="Buscar servicios"
       className={styles.search}
       onSubmit={(event) => {
         event.preventDefault()
-        onSubmit()
+        onSearch(text)
       }}
       role="search"
     >
-      <div className={styles.field}>
-        <label htmlFor="busqueda-que">Qué profesional buscás</label>
-        <input
-          autoComplete="off"
-          id="busqueda-que"
-          maxLength={80}
-           onChange={(event) => onChange({ ...filters, query: event.target.value })}
-           placeholder="Ej. Juan, plomero o aire acondicionado"
-          type="search"
-          value={filters.query}
-        />
-      </div>
-      <div className={styles.field}>
-        <label htmlFor="busqueda-categoria">Oficio</label>
-        <select
-          id="busqueda-categoria"
-           onChange={(event) => onChange({ ...filters, profession: event.target.value })}
-           value={filters.profession}
-        >
-          <option value="">Todas</option>
-          {catalog.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className={styles.field}>
-        <label htmlFor="busqueda-ubicacion">Ubicación</label>
-        <input
-          autoComplete="off"
-          id="busqueda-ubicacion"
-          list="zonas"
-          maxLength={60}
-           onChange={(event) => onChange({ ...filters, zone: event.target.value })}
-          placeholder="Barrio o zona"
-          value={filters.zone}
-        />
-        <datalist id="zonas">
-           {zones.map((zone) => (
-            <option key={zone} value={zone} />
-          ))}
-        </datalist>
-      </div>
-      <button className={`${styles.buttonPrimary} ${styles.searchButton}`} type="submit">
-         Buscar prestadores
+      <label className={styles.srOnly} htmlFor="busqueda-servicio">
+        ¿Qué necesitás?
+      </label>
+      <input
+        autoComplete="off"
+        className={styles.searchInput}
+        id="busqueda-servicio"
+        maxLength={200}
+        onChange={(event) => setText(event.target.value)}
+        placeholder="¿Qué necesitás? Ej.: se rompió una canilla, electricista en Centro"
+        type="search"
+        value={text}
+      />
+      <button className={`${styles.buttonPrimary} ${styles.searchButton}`} disabled={busy} type="submit">
+        {busy ? 'Buscando…' : 'Buscar'}
       </button>
     </form>
   )

@@ -15,11 +15,14 @@ import { categoryMarkerSvg } from './category-icons'
 const TILE_URL = process.env['NEXT_PUBLIC_MAP_TILE_URL'] || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 const TILE_ATTRIBUTION = process.env['NEXT_PUBLIC_MAP_TILE_ATTRIBUTION'] || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 
+// Every marker uses the TUS orange; the icon inside tells the trade apart (no rainbow of colours).
+const MARKER_COLOR = '#ff5a00'
+
 function markerIcon(worker: PrestadorPublico, active: boolean) {
   const category = categoryOf(worker.profession.id)
   return L.divIcon({
     className: '',
-    html: `<span class="${styles.marker} ${active ? styles.markerActive : ''}" style="background:${category.color}">${categoryMarkerSvg(category.id)}</span>`,
+    html: `<span class="${styles.marker} ${active ? styles.markerActive : ''}" style="background:${MARKER_COLOR}">${categoryMarkerSvg(category.id)}</span>`,
     iconAnchor: [17, 17],
     iconSize: [34, 34],
     popupAnchor: [0, -18],
@@ -114,10 +117,13 @@ export default function ProviderMap({ workers, selectedId, onSelect, searchSigna
             >
               <Popup autoPanPaddingBottomRight={[40, 80]} autoPanPaddingTopLeft={[24, wide ? 190 : 24]}>
                 <div className={styles.popup}>
-                  <span className={styles.popupCategory} style={{ color: category.color }}>{category.label}</span>
+                  <span className={styles.popupCategory} style={{ color: MARKER_COLOR }}>{worker.profession.title || category.label}</span>
                   <p className={styles.popupTitle}>{worker.displayName}</p>
                   <p className={styles.popupMeta}>{location.label} · zona aproximada</p>
                   <p className={styles.popupMeta}>{worker.availability.label}</p>
+                  {/* Only real facts: TUS has no reviews yet (rating is always null) and no exact distance. */}
+                  {worker.completedJobs > 0 ? <p className={styles.popupMeta}>{worker.completedJobs} {worker.completedJobs === 1 ? 'trabajo completado' : 'trabajos completados'} en TUS</p> : null}
+                  {worker.verified ? <p className={styles.popupMeta}>Identidad verificada</p> : null}
                   <div className={styles.popupActions}>
                     <a className={styles.popupCta} href={`/trabajadores/${encodeURIComponent(worker.id)}`}>Ver perfil</a>
                     <a className={styles.popupCta} href={`/trabajadores/${encodeURIComponent(worker.id)}?solicitar=1`}>Solicitar servicio</a>

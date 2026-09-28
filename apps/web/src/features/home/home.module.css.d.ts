@@ -1,5 +1,16 @@
 // Generated from the CSS module class names. Regenerate when classes change.
 declare const styles: {
+  readonly assistantBot: string
+  readonly assistantClose: string
+  readonly assistantFab: string
+  readonly assistantForm: string
+  readonly assistantHeader: string
+  readonly assistantLink: string
+  readonly assistantMessages: string
+  readonly assistantOptions: string
+  readonly assistantPanel: string
+  readonly assistantTyping: string
+  readonly assistantUser: string
   readonly avatar: string
   readonly brandLink: string
   readonly buttonGhost: string
@@ -10,8 +21,11 @@ declare const styles: {
   readonly chevron: string
   readonly field: string
   readonly footer: string
-  readonly footerInner: string
-  readonly footerLinks: string
+  readonly footerBottom: string
+  readonly footerBrand: string
+  readonly footerColumn: string
+  readonly footerGrid: string
+  readonly footerTagline: string
   readonly header: string
   readonly headerActions: string
   readonly headerInner: string
@@ -20,6 +34,7 @@ declare const styles: {
   readonly hideTablet: string
   readonly label: string
   readonly list: string
+  readonly main: string
   readonly mapControls: string
   readonly mapLayer: string
   readonly mapNotice: string
@@ -33,17 +48,17 @@ declare const styles: {
   readonly page: string
   readonly person: string
   readonly popup: string
+  readonly popupActions: string
   readonly popupCategory: string
   readonly popupCta: string
   readonly popupImages: string
   readonly popupMeta: string
-  readonly popupActions: string
   readonly popupTitle: string
-  readonly providerGrid: string
-  readonly providerSelected: string
   readonly price: string
   readonly proBand: string
   readonly proTitle: string
+  readonly providerGrid: string
+  readonly providerSelected: string
   readonly row: string
   readonly rowActive: string
   readonly rowButton: string
@@ -53,6 +68,7 @@ declare const styles: {
   readonly search: string
   readonly searchButton: string
   readonly searchDock: string
+  readonly searchInput: string
   readonly section: string
   readonly sectionActions: string
   readonly sectionHeader: string
