@@ -47,7 +47,12 @@ export async function searchCategory(id: string, zone: string | null, deps: Serv
 // Short answer for the assistant, always from the real result.
 export function describeOutcome(outcome: ServiceSearchOutcome): string {
   if (outcome.kind === 'empty') return 'Contame qué necesitás, por ejemplo: "se rompió una canilla" o "busco un electricista".'
-  if (outcome.kind === 'choose') return `¿Qué necesitás: ${outcome.options.map((item) => item.label.toLowerCase()).join(' o ')}?`
+  if (outcome.kind === 'choose') {
+    const labels = outcome.options.map((item) => item.label.toLowerCase())
+    const last = labels.pop() ?? ''
+    // "u" before words starting with "o" ("aire acondicionado u otros oficios").
+    return `¿Qué necesitás: ${labels.length ? `${labels.join(', ')} ${/^h?o/u.test(last) ? 'u' : 'o'} ` : ''}${last}?`
+  }
   const where = outcome.kind === 'category' && outcome.zone ? ` en ${outcome.zone}` : ''
   const count = outcome.providers.length
   if (outcome.kind === 'category') {
