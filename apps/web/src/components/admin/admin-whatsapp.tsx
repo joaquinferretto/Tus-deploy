@@ -7,6 +7,7 @@ import { createTusWebClient, createTusWebFetchTransport, type TusWhatsappAdminCo
 import { formatFecha } from '@/lib/tus-admin-api'
 import type { TusWebSession } from '@/lib/tus-ui-contract'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
+import { AdminPagination } from './admin-pagination'
 import styles from './admin.module.css'
 
 // WhatsApp inbox: conversation list + selected chat. Same API and restrictions as before: numbers
@@ -27,7 +28,12 @@ export function AdminWhatsapp(): React.ReactNode {
   const [reply, setReply] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [filtro, setFiltro] = useState<'todas' | 'human'>('todas')
+  const [filtro, setFiltroState] = useState<'todas' | 'human'>('todas')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalPages, setTotalPages] = useState(1)
+  // Changing the filter goes back to the first page.
+  const setFiltro = (value: 'todas' | 'human') => { setFiltroState(value); setPage(1) }
 
   useEffect(() => {
     void createTusWebAuthClient().restore(window.location.pathname).then((result) => setSession(result.session ? toTusWebSession(result.session) : null))
@@ -35,14 +41,15 @@ export function AdminWhatsapp(): React.ReactNode {
 
   const loadList = useCallback(async (current: TusWebSession) => {
     try {
-      const result = await client().listWhatsappAdminConversations(current, filtro === 'human' ? 'human' : undefined)
+      const result = await client().listWhatsappAdminConversations(current, filtro === 'human' ? 'human' : undefined, page, pageSize)
       setItems(result.conversations)
+      setTotalPages(result.totalPages)
       setError('')
     } catch {
       setItems([])
       setError('No pudimos cargar las conversaciones de WhatsApp. Si el módulo no está activo en el servidor, esta sección queda vacía.')
     }
-  }, [filtro])
+  }, [filtro, page, pageSize])
 
   useEffect(() => {
     if (session) void loadList(session)
@@ -117,6 +124,7 @@ export function AdminWhatsapp(): React.ReactNode {
                 </button>
               </li>
             ))}
+            <li><AdminPagination onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1) }} page={page} pageSize={pageSize} totalPages={totalPages} /></li>
           </ul>
           <section aria-label="Conversación seleccionada" className={styles.chatPanel}>
             {!selectedId ? (

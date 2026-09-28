@@ -1,7 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
 import { createDirectoryClient } from '../directory/directory-client'
@@ -18,6 +18,7 @@ import { useRecentRequests } from './use-requests'
 import { useHomeProviders } from './use-providers'
 import type { ProviderMapFilters } from './providers-source'
 import styles from './home.module.css'
+import { useCatalog } from '../catalog/use-catalog'
 
 // Leaflet needs `window`: the map is loaded only in the browser; the rest of the home renders on
 // the server and a light skeleton keeps the hero stable while the map loads.
@@ -35,7 +36,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
   const [summary, setSummary] = useState<string | null>(null)
   const queryClient = useQueryClient()
   const directory = createDirectoryClient()
-  const catalog = useQuery({ queryKey: ['home-directory-catalog'], queryFn: () => directory.catalog(), staleTime: 5 * 60_000 })
+  const catalog = useCatalog()
   const providers = useHomeProviders(filters)
   const requests = useRecentRequests(EMPTY_FILTERS)
   const providerData = providers.data ?? []
@@ -120,7 +121,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
             Prestadores y zonas de atención cerca tuyo
           </h1>
           <div aria-label="Mapa de prestadores y zonas de atención" className={styles.mapLayer} role="region">
-            <ProviderMap onSelect={selectProvider} searchSignal={searchSignal} selectedId={selectedProviderId} workers={providerData} />
+            <ProviderMap catalog={catalog.data} onSelect={selectProvider} searchSignal={searchSignal} selectedId={selectedProviderId} workers={providerData} />
           </div>
           <div className={styles.searchDock}>
             <HeroSearch busy={searching} onSearch={(text) => void runSearch(text).catch(() => setSummary('No pudimos buscar ahora. Probá de nuevo en unos minutos.'))} />

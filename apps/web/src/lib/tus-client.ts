@@ -653,8 +653,10 @@ export interface TusWebClient {
   ): Promise<TusWhatsAppSupportHandoffResponse>
   listWhatsappAdminConversations(
     context: TusWebContext,
-    mode?: 'bot' | 'human'
-  ): Promise<{ conversations: readonly TusWhatsappAdminConversation[] }>
+    mode?: 'bot' | 'human',
+    page?: number,
+    pageSize?: number
+  ): Promise<TusWhatsappAdminConversationPage>
   getWhatsappAdminConversation(
     context: TusWebContext,
     conversationId: string
@@ -832,9 +834,15 @@ export function parseTusSupportCases(payload: unknown): TusSupportCasesResponse 
   return { cases }
 }
 
-export function parseTusWhatsappAdminConversations(payload: unknown): {
+export interface TusWhatsappAdminConversationPage {
   conversations: readonly TusWhatsappAdminConversation[]
-} {
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
+}
+
+export function parseTusWhatsappAdminConversations(payload: unknown): TusWhatsappAdminConversationPage {
   const record = asRecord(payload)
   const conversations = Array.isArray(record['conversations'])
     ? record['conversations'].flatMap((value) => {
@@ -885,7 +893,14 @@ export function parseTusWhatsappAdminConversations(payload: unknown): {
         ]
       })
     : []
-  return { conversations }
+  const numero = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback)
+  return {
+    conversations,
+    page: numero(record['page'], 1),
+    pageSize: numero(record['pageSize'], conversations.length || 25),
+    total: typeof record['total'] === 'number' ? record['total'] : conversations.length,
+    totalPages: numero(record['totalPages'], 1),
+  }
 }
 
 export function parseTusWhatsappAdminDetail(payload: unknown): TusWhatsappAdminDetail {
@@ -1147,11 +1162,11 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         path: '/tus/v1/whatsapp/support-handoff',
         body: { senderId, reason },
       }),
-    listWhatsappAdminConversations: async (context, mode) => {
+    listWhatsappAdminConversations: async (context, mode, page = 1, pageSize = 25) => {
       const response = await transport.request<unknown>({
         ...context,
         method: 'GET',
-        path: `/tus/v1/admin/whatsapp/conversations${mode ? `?mode=${encodeURIComponent(mode)}` : ''}`,
+        path: `/tus/v1/admin/whatsapp/conversations?${new URLSearchParams({ ...(mode ? { mode } : {}), page: String(page), pageSize: String(pageSize) }).toString()}`,
       })
       return parseTusWhatsappAdminConversations(response)
     },

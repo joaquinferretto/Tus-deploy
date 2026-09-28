@@ -11,7 +11,7 @@ import { createDirectoryClient } from '../directory/directory-client'
 import styles from '../directory/directory.module.css'
 import { WorkerCard } from '../directory/worker-card'
 import homeStyles from '../home/home.module.css'
-import { CORRIENTES_ZONES, URGENCIES, type CategoryId, type UrgencyId } from '../home/types'
+import { URGENCIES, type CategoryId, type UrgencyId } from '../home/types'
 import { RequestForm } from '../requests/request-form'
 import { useTusSession } from '../session/use-tus-session'
 
@@ -85,6 +85,7 @@ export function AssistantChat(): React.ReactNode {
   const [step, setStep] = useState<Step>('describe')
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [zones, setZones] = useState<string[]>([])
   const [candidates, setCandidates] = useState<CandidatoPrestador[]>([])
   const [chosen, setChosen] = useState<CandidatoPrestador | null>(null)
   const [restored, setRestored] = useState(false)
@@ -97,7 +98,10 @@ export function AssistantChat(): React.ReactNode {
   useEffect(() => {
     void client
       .catalog()
-      .then((value) => setCatalog(value.items))
+      .then((value) => {
+        setCatalog(value.items)
+        setZones(value.zones)
+      })
       .catch(() => setCatalog([]))
   }, [])
 
@@ -304,7 +308,7 @@ export function AssistantChat(): React.ReactNode {
 
           {step === 'zone' ? (
             <li className={styles.options}>
-              {CORRIENTES_ZONES.map((zone) => option(zone, () => update({ zone, zoneAsked: true }, zone)))}
+              {zones.map((zone) => option(zone, () => update({ zone, zoneAsked: true }, zone)))}
               {option('Prefiero no decirlo', () => update({ zone: null, zoneAsked: true }, 'Prefiero no decirlo'), 'sin-barrio')}
             </li>
           ) : null}

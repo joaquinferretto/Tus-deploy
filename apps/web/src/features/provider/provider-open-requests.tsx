@@ -9,9 +9,10 @@ import { DirectoryRequestError, createDirectoryClient } from '../directory/direc
 import styles from '../directory/directory.module.css'
 import homeStyles from '../home/home.module.css'
 import { budgetLabel, getRequestsSource, urgencyLabel } from '../home/requests-source'
-import { CATEGORIES, categoryOf, type CategoryId, type MapRequest } from '../home/types'
+import type { CategoryId, MapRequest } from '../home/types'
 import { useTusSession } from '../session/use-tus-session'
 import type { TusWebSession } from '../../lib/tus-ui-contract'
+import { tradeOf, useCatalog } from '../catalog/use-catalog'
 
 const client = createDirectoryClient()
 const RETURN_TO = '/prestador/solicitudes'
@@ -35,6 +36,7 @@ const APPLY_ERRORS: Record<string, string> = {
 // Public requests from the map. Any provider can offer to help, even outside their own trade; the
 // client sees who applied and decides. Applying confirms nothing.
 export function ProviderOpenRequests(): React.ReactNode {
+  const catalog = useCatalog()
   const session = useTusSession(RETURN_TO)
   const [category, setCategory] = useState<CategoryId | ''>('')
   const [requests, setRequests] = useState<MapRequest[] | null>(null)
@@ -77,7 +79,7 @@ export function ProviderOpenRequests(): React.ReactNode {
           <span className={styles.muted}>Rubro</span>
           <select className={styles.select} onChange={(event) => setCategory(event.target.value as CategoryId | '')} value={category}>
             <option value="">Todos los rubros</option>
-            {CATEGORIES.map((item) => (
+            {(catalog.data?.items ?? []).map((item) => (
               <option key={item.id} value={item.id}>
                 {item.label}
               </option>
@@ -94,7 +96,7 @@ export function ProviderOpenRequests(): React.ReactNode {
           </p>
         ) : requests.length === 0 ? (
           <div className={styles.state} role="status">
-            No hay solicitudes abiertas {category ? `de ${categoryOf(category).label}` : ''} en este momento.
+            No hay solicitudes abiertas {category ? `de ${tradeOf(catalog.data, category).label}` : ''} en este momento.
           </div>
         ) : (
           <ul className={styles.grid} style={{ gridTemplateColumns: '1fr' }}>
@@ -126,7 +128,7 @@ export function ProviderOpenRequests(): React.ReactNode {
                   <span className={application.status === 'aceptada' ? styles.available : styles.muted}>{STATUS[application.status]}</span>
                 </div>
                 <p className={styles.muted} style={{ fontSize: '0.9rem', margin: 0 }}>
-                  {categoryOf(application.request.category).label} · {application.request.requesterName} · {application.request.approximateArea} (zona aproximada) ·{' '}
+                  {tradeOf(catalog.data, application.request.category).label} · {application.request.requesterName} · {application.request.approximateArea} (zona aproximada) ·{' '}
                   {budgetLabel(application.request.budgetMax)} · {urgencyLabel(application.request.urgency)}
                 </p>
                 {application.message ? <p style={{ margin: 0 }}>Tu mensaje: “{application.message}”</p> : null}
@@ -169,11 +171,12 @@ function OpenRequest({
   session: TusWebSession | null
   onApplied: (application: PostulacionPrestador) => void
 }): React.ReactNode {
+  const catalog = useCatalog()
   const [open, setOpen] = useState(false)
   const [message, setMessage] = useState('')
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const category = categoryOf(request.category)
+  const category = tradeOf(catalog.data, request.category)
 
   async function apply() {
     if (!session) {
@@ -197,7 +200,7 @@ function OpenRequest({
     <li className={styles.card}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between' }}>
         <strong>{request.title}</strong>
-        <span style={{ color: category.color, fontWeight: 600 }}>{category.label}</span>
+        <span style={{ color: '#e64f00', fontWeight: 600 }}>{category.label}</span>
       </div>
       {request.description ? <p style={{ margin: 0 }}>{request.description}</p> : null}
       <p className={styles.muted} style={{ fontSize: '0.9rem', margin: 0 }}>

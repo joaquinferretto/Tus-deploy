@@ -1,16 +1,17 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { adminApi, adminErrorMessage, formatFecha, type AdminPrestador } from '@/lib/tus-admin-api'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
 import { PrestadoresAdmin } from './prestadores-admin'
+import { AdminPagination } from './admin-pagination'
+import { AdminConfirm, useConfirmacion } from './admin-confirm'
 import styles from './admin.module.css'
 
 const FILTROS = [
   ['todos', 'Todos'],
-  ['mapa', 'En el mapa'],
-  ['fuera', 'Fuera del mapa'],
+  ['publicados', 'Publicados'],
   ['ocultos', 'Ocultos'],
   ['identidad', 'Identidad pendiente'],
 ] as const
@@ -25,9 +26,22 @@ export function AdminPrestadoresLista(): React.ReactNode {
   const [filtro, setFiltro] = useState<Filtro>('todos')
   const [busy, setBusy] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  const [q, setQ] = useState('')
+  const [oficio, setOficio] = useState('')
+  const [zona, setZona] = useState('')
+  const [catalogo, setCatalogo] = useState<{ oficios: { id: string; nombre: string }[]; barrios: { nombre: string }[] }>({ oficios: [], barrios: [] })
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalPages, setTotalPages] = useState(1)
+  const [confirmacion, pedir, cerrar] = useConfirmacion()
 
-  const load = () => adminApi.prestadores().then((result) => { setItems(result.items); setError('') }).catch((cause) => setError(adminErrorMessage(cause)))
-  useEffect(() => { void load() }, [])
+  const load = useCallback(() => adminApi.prestadores({
+    q: q.trim(), oficio, zona,
+    visibilidad: filtro === 'publicados' ? 'visible' : filtro === 'ocultos' ? 'oculto' : '',
+    verificacion: filtro === 'identidad' ? 'pendiente' : '', page, pageSize,
+  }).then((result) => { setItems(result.items); setTotalPages(result.totalPages); setError('') }).catch((cause) => setError(adminErrorMessage(cause))), [q, oficio, zona, filtro, page, pageSize])
+  useEffect(() => { const timer = setTimeout(() => void load(), 400); return () => clearTimeout(timer) }, [load])
+  useEffect(() => { void adminApi.catalogo().then((result) => setCatalogo({ oficios: result.oficios.map(({ id, nombre }) => ({ id, nombre })), barrios: result.barrios.map(({ nombre }) => ({ nombre })) })).catch(() => undefined) }, [])
 
   async function toggle(item: AdminPrestador) {
     setBusy(item.id)
@@ -41,9 +55,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
     }
   }
 
-  const visibles = (items ?? []).filter((item) =>
-    filtro === 'mapa' ? item.enMapa : filtro === 'fuera' ? !item.enMapa : filtro === 'ocultos' ? !item.visible : filtro === 'identidad' ? !item.verificado : true
-  )
+  const visibles = items ?? []
 
   return (
     <>
@@ -58,9 +70,12 @@ export function AdminPrestadoresLista(): React.ReactNode {
         </section>
       ) : null}
       <div className={styles.toolbar}>
+        <input aria-label="Buscar prestadores" onChange={(event) => { setQ(event.target.value); setPage(1) }} placeholder="Buscar por nombre" type="search" value={q} />
+        <select aria-label="Servicio" onChange={(event) => { setOficio(event.target.value); setPage(1) }} value={oficio}><option value="">Todos los servicios</option>{catalogo.oficios.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select>
+        <select aria-label="Zona" onChange={(event) => { setZona(event.target.value); setPage(1) }} value={zona}><option value="">Todas las zonas</option>{catalogo.barrios.map((item) => <option key={item.nombre} value={item.nombre}>{item.nombre}</option>)}</select>
         <div className={styles.chips}>
           {FILTROS.map(([value, label]) => (
-            <button aria-pressed={filtro === value} key={value} onClick={() => setFiltro(value)} type="button">{label}</button>
+            <button aria-pressed={filtro === value} key={value} onClick={() => { setFiltro(value); setPage(1) }} type="button">{label}</button>
           ))}
         </div>
       </div>
@@ -94,7 +109,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
                 <td>
                   <div className={styles.chips}>
                     <a className={styles.buttonSecondary} href={`/trabajadores/${encodeURIComponent(item.id)}`}>Ver</a>
-                    <button className={styles.buttonSecondary} disabled={busy === item.id} onClick={() => void toggle(item)} type="button">
+                    <button className={styles.buttonSecondary} disabled={busy === item.id} onClick={() => item.visible ? pedir({ titulo: `¿Ocultar a ${item.nombre}?`, detalle: 'Deja de aparecer en el mapa, el buscador y el asistente. Sus trabajos y solicitudes existentes se conservan; podés volver a publicarlo.', confirmar: 'Ocultar', onConfirm: () => toggle(item) }) : void toggle(item)} type="button">
                       {item.visible ? 'Ocultar' : 'Publicar'}
                     </button>
                   </div>
@@ -104,6 +119,8 @@ export function AdminPrestadoresLista(): React.ReactNode {
           </tbody>
         </table>
       ) : null}
+      {items ? <AdminPagination onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1) }} page={page} pageSize={pageSize} totalPages={totalPages} /> : null}
+      <AdminConfirm onClose={cerrar} value={confirmacion} />
     </>
   )
 }

@@ -7,9 +7,12 @@ import Image from 'next/image'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap } from 'react-leaflet'
 
-import { DEFAULT_MAP_CENTER, categoryOf, type MapRequest } from './types'
+import { DEFAULT_MAP_CENTER, type MapRequest } from './types'
 import styles from './home.module.css'
 import { categoryMarkerSvg } from './category-icons'
+import type { CatalogoOficios } from '@factory/contracts'
+
+import { tradeOf, useCatalog } from '../catalog/use-catalog'
 
 // OpenStreetMap tiles by default (attribution required). For heavy production traffic configure
 // a tile provider in NEXT_PUBLIC_MAP_TILE_URL instead of the community OSM servers.
@@ -17,11 +20,11 @@ const TILE_URL = process.env['NEXT_PUBLIC_MAP_TILE_URL'] || 'https://tile.openst
 const TILE_ATTRIBUTION =
   process.env['NEXT_PUBLIC_MAP_TILE_ATTRIBUTION'] || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 
-function markerIcon(request: MapRequest, active: boolean) {
-  const category = categoryOf(request.category)
+function markerIcon(request: MapRequest, active: boolean, catalog: CatalogoOficios | undefined) {
+  const category = tradeOf(catalog, request.category)
   return L.divIcon({
     className: '',
-    html: `<span class="${styles.marker} ${active ? styles.markerActive : ''}" style="background:${category.color}">${categoryMarkerSvg(category.id)}</span>`,
+    html: `<span class="${styles.marker} ${active ? styles.markerActive : ''}" style="background:#ff5a00">${categoryMarkerSvg(category.icon)}</span>`,
     iconAnchor: [17, 17],
     iconSize: [34, 34],
     popupAnchor: [0, -18],
@@ -89,6 +92,7 @@ export default function RequestMap({
   onSelect: (id: string) => void
   searchSignal?: number
 }): React.ReactNode {
+  const catalog = useCatalog()
   const [touch] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches)
   const [interactive, setInteractive] = useState(!touch)
   const [wide] = useState(() => typeof window !== 'undefined' && window.innerWidth > 768)
@@ -116,12 +120,12 @@ export default function RequestMap({
         <ZoomControl position="bottomleft" zoomInTitle="Acercar" zoomOutTitle="Alejar" />
         <MapController interactive={interactive} recenterSignal={recenterSignal + searchSignal} requests={requests} selected={selected} />
         {requests.map((request) => {
-          const category = categoryOf(request.category)
+          const category = tradeOf(catalog.data, request.category)
           const active = request.id === selectedId || request.id === highlightedId
           return (
             <Marker
               eventHandlers={{ click: () => onSelect(request.id) }}
-              icon={markerIcon(request, active)}
+              icon={markerIcon(request, active, catalog.data)}
               key={request.id}
               keyboard
               position={[request.approximateLocation.lat, request.approximateLocation.lng]}
@@ -134,7 +138,7 @@ export default function RequestMap({
             >
               <Popup autoPanPaddingBottomRight={[40, 80]} autoPanPaddingTopLeft={[24, wide ? 190 : 24]}>
                 <div className={styles.popup}>
-                  <span className={styles.popupCategory} style={{ color: category.color }}>
+                  <span className={styles.popupCategory} style={{ color: '#ff5a00' }}>
                     {category.label}
                   </span>
                   <p className={styles.popupTitle}>{request.title}</p>

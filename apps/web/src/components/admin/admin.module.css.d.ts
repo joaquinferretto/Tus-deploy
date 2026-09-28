@@ -11,6 +11,7 @@ declare const styles: {
   readonly bubbleAdmin: string
   readonly bubbleBot: string
   readonly bubbleUser: string
+  readonly buttonDanger: string
   readonly buttonPrimary: string
   readonly buttonSecondary: string
   readonly card: string
@@ -27,9 +28,16 @@ declare const styles: {
   readonly chatPanel: string
   readonly chatPreview: string
   readonly chips: string
+  readonly confirmActions: string
+  readonly confirmDialog: string
   readonly content: string
   readonly empty: string
   readonly error: string
+  readonly filters: string
+  readonly form: string
+  readonly iconBadge: string
+  readonly iconPicker: string
+  readonly iconSelected: string
   readonly keywords: string
   readonly list: string
   readonly listItem: string
@@ -37,13 +45,17 @@ declare const styles: {
   readonly muted: string
   readonly overlay: string
   readonly pageHeader: string
+  readonly pagination: string
   readonly section: string
   readonly shell: string
   readonly sidebar: string
   readonly sidebarFooter: string
   readonly sidebarOpen: string
   readonly srOnlyLabel: string
+  readonly success: string
   readonly table: string
+  readonly tag: string
+  readonly tagEditor: string
   readonly toolbar: string
   readonly topActions: string
   readonly topbar: string

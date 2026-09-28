@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { adminMfa, type AdminMfaStatus } from '@/lib/tus-admin-mfa'
 import { adminApi, eventoLabel, formatFecha, type AdminEvento } from '@/lib/tus-admin-api'
 import { createTusWebAuthClient, toTusWebSession } from '@/lib/tus-auth-client'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
+import { AdminPagination } from './admin-pagination'
 import { SeguridadAdmin } from './seguridad-admin'
 import styles from './admin.module.css'
 
@@ -15,6 +16,16 @@ export function AdminSeguridad(): React.ReactNode {
   const [status, setStatus] = useState<AdminMfaStatus | null>(null)
   const [expiresAt, setExpiresAt] = useState<number | null>(null)
   const [eventos, setEventos] = useState<AdminEvento[] | null>(null)
+  const [tipo, setTipo] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalPages, setTotalPages] = useState(1)
+
+  // Audit log: paginated and filtered by the API. Changing the type goes back to page 1.
+  const loadEventos = useCallback(() => adminApi.actividad({ tipo, page, pageSize })
+    .then((result) => { setEventos(result.items); setTotalPages(result.totalPages) })
+    .catch(() => setEventos([])), [tipo, page, pageSize])
+  useEffect(() => { void loadEventos() }, [loadEventos])
 
   useEffect(() => {
     void createTusWebAuthClient().restore(window.location.pathname).then((result) => {
@@ -23,7 +34,6 @@ export function AdminSeguridad(): React.ReactNode {
       setExpiresAt(result.session.expiresAt)
       adminMfa.status(session).then(setStatus).catch(() => setStatus(null))
     })
-    adminApi.actividad().then((result) => setEventos(result.items)).catch(() => setEventos([]))
   }, [])
 
   return (
@@ -47,10 +57,18 @@ export function AdminSeguridad(): React.ReactNode {
         </div>
       </div>
       <section className={styles.section}>
-        <h2>Actividad de seguridad</h2>
+        <h2>Auditoría</h2>
+        <div className={styles.filters}>
+          <select aria-label="Tipo de evento" onChange={(event) => { setTipo(event.target.value); setPage(1) }} value={tipo}>
+            <option value="">Todos los eventos</option>
+            <option value="seguridad">Seguridad (ingresos, MFA, sesiones)</option>
+            <option value="usuarios">Cambios de usuarios por un admin</option>
+            <option value="catalogo">Cambios del catálogo</option>
+          </select>
+        </div>
         {eventos === null ? <p className={styles.muted}>Cargando…</p> : eventos.length === 0 ? <AdminEmpty text="Todavía no hay eventos registrados." /> : (
           <ul className={styles.list}>
-            {eventos.slice(0, 15).map((evento, index) => (
+            {eventos.map((evento, index) => (
               <li className={styles.listItem} key={`${evento.fecha}-${index}`}>
                 <span>{eventoLabel(evento.tipo)}</span>
                 <span className={styles.muted}>{evento.resultado === 'denied' ? 'Rechazado · ' : ''}{formatFecha(evento.fecha)}</span>
@@ -58,6 +76,7 @@ export function AdminSeguridad(): React.ReactNode {
             ))}
           </ul>
         )}
+        {eventos ? <AdminPagination onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1) }} page={page} pageSize={pageSize} totalPages={totalPages} /> : null}
       </section>
       <section className={styles.section}>
         <SeguridadAdmin />

@@ -10,10 +10,11 @@ import type { TusWebSession } from '../../lib/tus-ui-contract'
 import styles from '../auth/auth.module.css'
 import homeStyles from '../home/home.module.css'
 import { budgetLabel, timeAgoLabel, urgencyLabel } from '../home/requests-source'
-import { categoryOf } from '../home/types'
 import { APPLICATION_STATUS, createRequestsClient, requestStatusLabel, type OwnRequestDto } from './requests-client'
+import { tradeOf, useCatalog } from '../catalog/use-catalog'
 
 export function MyRequests({ session, refreshKey = 0 }: { session: TusWebSession; refreshKey?: number }): React.ReactNode {
+  const catalog = useCatalog()
   const [items, setItems] = useState<OwnRequestDto[] | null>(null)
   const [failed, setFailed] = useState(false)
 
@@ -56,7 +57,7 @@ export function MyRequests({ session, refreshKey = 0 }: { session: TusWebSession
         <li className={styles.notice} key={item.id} style={{ display: 'grid', gap: 4 }}>
           <strong>{item.title}</strong>
           <span>
-            {categoryOf(item.category).label} · {item.approximateLocation.label} · {budgetLabel(item.budgetMax)} · {urgencyLabel(item.urgency)} ·{' '}
+            {tradeOf(catalog.data, item.category).label} · {item.approximateLocation.label} · {budgetLabel(item.budgetMax)} · {urgencyLabel(item.urgency)} ·{' '}
             {timeAgoLabel(item.createdAt)}
             {item.images.length > 0 ? ` · ${item.images.length} ${item.images.length === 1 ? 'foto' : 'fotos'}` : ''}
           </span>
@@ -89,6 +90,7 @@ export function MyRequests({ session, refreshKey = 0 }: { session: TusWebSession
 // Providers (of any trade) who offered to help with a public request. The client decides: accepting
 // one confirms it with that provider, takes the request off the map and declines the rest.
 function Applicants({ request, session, onChosen }: { request: OwnRequestDto; session: TusWebSession; onChosen: (updated: OwnRequestDto) => void }): React.ReactNode {
+  const catalog = useCatalog()
   const [items, setItems] = useState<PostulanteSolicitud[] | null>(null)
   const [working, setWorking] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -135,7 +137,7 @@ function Applicants({ request, session, onChosen }: { request: OwnRequestDto; se
               <Link className={styles.link} href={`/trabajadores/${encodeURIComponent(applicant.provider.id)}` as Route}>
                 {applicant.provider.displayName}
               </Link>{' '}
-              · {categoryOf(applicant.provider.profession).label} · {applicant.provider.approximateArea} · {APPLICATION_STATUS[applicant.status]}
+              · {tradeOf(catalog.data, applicant.provider.profession).label} · {applicant.provider.approximateArea} · {APPLICATION_STATUS[applicant.status]}
             </span>
             {applicant.message ? <span>“{applicant.message}”</span> : null}
             {applicant.status === 'pendiente' ? (

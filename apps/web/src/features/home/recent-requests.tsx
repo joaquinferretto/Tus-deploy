@@ -2,8 +2,9 @@
 
 import Image from 'next/image'
 
-import { categoryOf, type MapRequest } from './types'
+import type { MapRequest } from './types'
 import styles from './home.module.css'
+import { tradeOf, useCatalog } from '../catalog/use-catalog'
 
 // Accessible equivalent of the map markers: every request on the map is a row here.
 export function RecentRequests({
@@ -82,7 +83,8 @@ function RecentRequestRow({
   onSelect: (id: string) => void
   onHover: (id: string | null) => void
 }): React.ReactNode {
-  const category = categoryOf(request.category)
+  const catalog = useCatalog()
+  const category = tradeOf(catalog.data, request.category)
   const images = (request.images ?? []).slice(0, 2)
   const initials = (request.requesterName ?? '?')
     .split(/\s+/u)
@@ -109,11 +111,11 @@ function RecentRequestRow({
       tabIndex={0}
     >
       <div className={styles.cellMain}>
-        <span aria-hidden="true" className={styles.categoryIcon} style={{ background: category.color }}>
+        <span aria-hidden="true" className={styles.categoryIcon} style={{ background: '#ff5a00' }}>
           {category.label[0]}
         </span>
         <div style={{ minWidth: 0 }}>
-          <p className={styles.rowCategory} style={{ color: category.color }}>
+          <p className={styles.rowCategory} style={{ color: '#ff5a00' }}>
             {category.label}
           </p>
           <p className={styles.rowTitle}>{request.title}</p>

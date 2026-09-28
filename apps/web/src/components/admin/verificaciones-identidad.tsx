@@ -15,6 +15,7 @@ import {
 } from '@/lib/tus-identidad'
 import { formatTusDate, type TusWebSession } from '@/lib/tus-ui-contract'
 import { TusActionButton, TusStateMessage } from '../../app/tus/tus-ui'
+import { AdminPagination } from './admin-pagination'
 
 // IDENTITY-NOSIS platform administration. The API enforces `tus:identity:admin` plus the
 // platform tenant; this page only renders what the API allows.
@@ -41,7 +42,12 @@ const WORKER_TEXTO: Record<EstadoWorkerWeb['status'], string> = {
 export function VerificacionesIdentidadAdmin(): ReactNode {
   const [session, setSession] = useState<TusWebSession | null | undefined>(undefined)
   const [authMessage, setAuthMessage] = useState('Restaurando la sesión.')
-  const [filter, setFilter] = useState('review_required')
+  const [filter, setFilterState] = useState('review_required')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalPages, setTotalPages] = useState(1)
+  // Changing the status filter goes back to the first page.
+  const setFilter = (value: string) => { setFilterState(value); setPage(1) }
   const [items, setItems] = useState<ItemVerificacionAdmin[] | null>(null)
   const [worker, setWorker] = useState<EstadoWorkerWeb | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -60,10 +66,11 @@ export function VerificacionesIdentidadAdmin(): ReactNode {
     if (!session) return
     try {
       const [list, status] = await Promise.all([
-        clienteIdentidad.listar(session, filter || undefined),
+        clienteIdentidad.listar(session, filter || undefined, page, pageSize),
         clienteIdentidad.estadoWorker(session),
       ])
       setItems(list.verifications)
+      setTotalPages(list.totalPages)
       setWorker(status)
       setError('')
     } catch (failure) {
@@ -73,7 +80,7 @@ export function VerificacionesIdentidadAdmin(): ReactNode {
           : 'No se pudo cargar la información. Reintentá.'
       )
     }
-  }, [filter, session])
+  }, [filter, page, pageSize, session])
 
   useEffect(() => {
     void load()
@@ -173,6 +180,7 @@ export function VerificacionesIdentidadAdmin(): ReactNode {
             ))}
           </ul>
         )}
+        {items ? <AdminPagination onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1) }} page={page} pageSize={pageSize} totalPages={totalPages} /> : null}
       </section>
       {selected ? (
         <DetalleVerificacion

@@ -1,6 +1,6 @@
 import { resolveWebApiBaseUrl } from '../../lib/api-url'
 
-import { CATEGORIES, URGENCIES, categoryOf, type CategoryId, type MapRequest, type RequestFilters, type RequestsSource } from './types'
+import { URGENCIES, type CategoryId, type MapRequest, type RequestFilters, type RequestsSource } from './types'
 
 // Privacy guard applied to whatever the API returns (defence in depth; the API already sends only
 // public fields): coordinates rounded to ~110 m (3 decimals), zone label only, at most two images.
@@ -40,10 +40,12 @@ const normalize = (value: string) =>
 export function matchesFilters(request: MapRequest, filters: RequestFilters): boolean {
   if (filters.category && request.category !== filters.category) return false
   if (filters.zone && !normalize(request.approximateLocation.label).includes(normalize(filters.zone))) return false
+  // The trade (and its administered synonyms) was already resolved by the API interpreter: when a
+  // trade is selected it decides, and the free text only narrows searches without a trade.
+  if (filters.category) return true
   const terms = normalize(filters.query).split(/\s+/u).filter((term) => term.length > 2)
   if (terms.length === 0) return true
-  const category = categoryOf(request.category)
-  const haystack = normalize(`${request.title} ${request.description ?? ''} ${category.label} ${category.keywords}`)
+  const haystack = normalize(`${request.title} ${request.description ?? ''} ${request.category}`)
   return terms.some((term) => haystack.includes(term.slice(0, Math.max(4, term.length - 2))))
 }
 
@@ -87,7 +89,7 @@ export function timeAgoLabel(createdAt: string, now = Date.now()): string {
 // resolved against the API origin; anything else is dropped.
 export function fromPublicDto(dto: PublicRequestDto, now = Date.now(), apiBase = ''): MapRequest | null {
   const location = dto?.approximateLocation
-  if (typeof dto?.id !== 'string' || !CATEGORIES.some((category) => category.id === dto.category)) return null
+  if (typeof dto?.id !== 'string' || typeof dto.category !== 'string' || !/^[a-z0-9][a-z0-9-]{0,59}$/u.test(dto.category)) return null
   if (!location || !Number.isFinite(location.lat) || !Number.isFinite(location.lng) || typeof location.label !== 'string') return null
   return toPublicRequest({
     id: dto.id,

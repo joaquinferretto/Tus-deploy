@@ -190,11 +190,12 @@ export const clienteIdentidad = {
       {}
     ),
 
-  listar: (session: TusWebSession, status?: string) =>
-    request<{ verifications: ItemVerificacionAdmin[] }>(
+  // Paginated by the API (10 / 25 / 50 per page).
+  listar: (session: TusWebSession, status?: string, page = 1, pageSize = 25) =>
+    request<{ verifications: ItemVerificacionAdmin[]; page: number; pageSize: number; total: number; totalPages: number }>(
       session,
       'GET',
-      `${ADMIN_PATH}${status ? `?status=${encodeURIComponent(status)}` : ''}`
+      `${ADMIN_PATH}?${new URLSearchParams({ ...(status ? { status } : {}), page: String(page), pageSize: String(pageSize) }).toString()}`
     ),
   detalle: (session: TusWebSession, id: string) =>
     request<DetalleVerificacionAdmin>(session, 'GET', `${ADMIN_PATH}/${encodeURIComponent(id)}`),

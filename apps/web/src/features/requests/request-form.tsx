@@ -5,8 +5,9 @@ import { useEffect, useState } from 'react'
 import type { TusWebSession } from '../../lib/tus-ui-contract'
 import { FieldError, FormError, TextField } from '../auth/auth-fields'
 import styles from '../auth/auth.module.css'
-import { CATEGORIES, CORRIENTES_ZONES, URGENCIES, categoryOf, type CategoryId, type UrgencyId } from '../home/types'
+import { URGENCIES, type CategoryId, type UrgencyId } from '../home/types'
 import { FIELD_MESSAGES, createRequestsClient, validateNewRequest, type NewRequestInput, type OwnRequestDto, type RequestField } from './requests-client'
+import { neighbourhoodGroups, tradeOf, useCatalog } from '../catalog/use-catalog'
 
 export interface RequestDraft {
   category: CategoryId | ''
@@ -51,6 +52,7 @@ export function RequestForm({
   submitLabel: string
   onSent: (request: OwnRequestDto, warning: string | null) => void
 }): React.ReactNode {
+  const catalog = useCatalog()
   const [draft, setDraft] = useState<RequestDraft>({ ...initial, ...(lockedCategory ? { category: lockedCategory } : {}) })
   const [images, setImages] = useState<{ file: File; url: string }[]>([])
   const [imageError, setImageError] = useState('')
@@ -139,14 +141,14 @@ export function RequestForm({
 
       {lockedCategory ? (
         <p className={styles.footerText} style={{ textAlign: 'left', margin: 0 }}>
-          Oficio: <strong>{categoryOf(lockedCategory).label}</strong>
+          Oficio: <strong>{tradeOf(catalog.data, lockedCategory).label}</strong>
         </p>
       ) : (
         <div className={styles.field}>
           <label htmlFor="solicitud-categoria">Categoría</label>
           <select {...selectProps('category', 'solicitud-categoria')} onChange={(event) => update('category', event.target.value as CategoryId | '')} value={draft.category}>
-            <option value="">Elegí una categoría</option>
-            {CATEGORIES.map((category) => (
+            <option value="">{catalog.isPending ? 'Cargando servicios…' : catalog.isError ? 'No pudimos cargar los servicios' : 'Elegí un servicio'}</option>
+            {(catalog.data?.items ?? []).map((category) => (
               <option key={category.id} value={category.id}>
                 {category.label}
               </option>
@@ -188,12 +190,24 @@ export function RequestForm({
         <div className={styles.field}>
           <label htmlFor="solicitud-barrio">Barrio</label>
           <select {...selectProps('zone', 'solicitud-barrio')} onChange={(event) => update('zone', event.target.value)} value={draft.zone}>
-            <option value="">Elegí tu barrio</option>
-            {CORRIENTES_ZONES.map((zone) => (
-              <option key={zone} value={zone}>
-                {zone}
-              </option>
-            ))}
+            <option value="">{catalog.isPending ? 'Cargando barrios…' : catalog.isError ? 'No pudimos cargar los barrios' : 'Elegí tu barrio'}</option>
+            {neighbourhoodGroups(catalog.data).map((group) =>
+              group.label ? (
+                <optgroup key={group.label} label={group.label}>
+                  {group.names.map((zone) => (
+                    <option key={zone} value={zone}>
+                      {zone}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : (
+                group.names.map((zone) => (
+                  <option key={zone} value={zone}>
+                    {zone}
+                  </option>
+                ))
+              )
+            )}
           </select>
           <FieldError id="solicitud-barrio-error" message={error('zone')} />
         </div>

@@ -8,7 +8,10 @@ import { MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap } from 'rea
 
 import type { PrestadorPublico } from '@factory/contracts'
 
-import { categoryOf, DEFAULT_MAP_CENTER } from './types'
+import type { CatalogoOficios } from '@factory/contracts'
+
+import { tradeOf } from '../catalog/use-catalog'
+import { DEFAULT_MAP_CENTER } from './types'
 import styles from './home.module.css'
 import { categoryMarkerSvg } from './category-icons'
 
@@ -18,11 +21,11 @@ const TILE_ATTRIBUTION = process.env['NEXT_PUBLIC_MAP_TILE_ATTRIBUTION'] || '&co
 // Every marker uses the TUS orange; the icon inside tells the trade apart (no rainbow of colours).
 const MARKER_COLOR = '#ff5a00'
 
-function markerIcon(worker: PrestadorPublico, active: boolean) {
-  const category = categoryOf(worker.profession.id)
+function markerIcon(worker: PrestadorPublico, active: boolean, catalog: CatalogoOficios | undefined) {
+  const category = tradeOf(catalog, worker.profession.id)
   return L.divIcon({
     className: '',
-    html: `<span class="${styles.marker} ${active ? styles.markerActive : ''}" style="background:${MARKER_COLOR}">${categoryMarkerSvg(category.id)}</span>`,
+    html: `<span class="${styles.marker} ${active ? styles.markerActive : ''}" style="background:${MARKER_COLOR}">${categoryMarkerSvg(category.icon)}</span>`,
     iconAnchor: [17, 17],
     iconSize: [34, 34],
     popupAnchor: [0, -18],
@@ -78,7 +81,7 @@ function MapInteractionController({ interactive }: { interactive: boolean }) {
   return null
 }
 
-export default function ProviderMap({ workers, selectedId, onSelect, searchSignal = 0 }: { workers: PrestadorPublico[]; selectedId: string | null; onSelect: (id: string) => void; searchSignal?: number }): React.ReactNode {
+export default function ProviderMap({ workers, selectedId, onSelect, searchSignal = 0, catalog }: { workers: PrestadorPublico[]; selectedId: string | null; onSelect: (id: string) => void; searchSignal?: number; catalog?: CatalogoOficios }): React.ReactNode {
   const [touch] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches)
   const [interactive, setInteractive] = useState(!touch)
   const [wide] = useState(() => typeof window !== 'undefined' && window.innerWidth > 768)
@@ -100,11 +103,11 @@ export default function ProviderMap({ workers, selectedId, onSelect, searchSigna
         {allLocations(workers).map(({ worker, location }, index) => {
           const markerKey = `${worker.id}:${index}`
           const active = worker.id === selectedId
-          const category = categoryOf(worker.profession.id)
+          const category = { label: worker.profession.label }
           return (
             <Marker
               eventHandlers={{ click: () => onSelect(worker.id) }}
-              icon={markerIcon(worker, active)}
+              icon={markerIcon(worker, active, catalog)}
               key={markerKey}
               keyboard
               position={[location.lat, location.lng]}

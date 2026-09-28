@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 
 import { adminApi, adminErrorMessage, formatFecha, type AdminSolicitud } from '@/lib/tus-admin-api'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
+import { AdminPagination } from './admin-pagination'
 import styles from './admin.module.css'
 
 // The request model has these states only (no "en proceso" / "cancelada"): shown as they are.
@@ -20,21 +21,36 @@ export function AdminSolicitudes(): React.ReactNode {
   const [items, setItems] = useState<AdminSolicitud[] | null>(null)
   const [error, setError] = useState('')
   const [filtro, setFiltro] = useState<(typeof FILTROS)[number][0]>('todas')
+  const [q, setQ] = useState('')
+  const [categoria, setCategoria] = useState('')
+  const [oficios, setOficios] = useState<{ id: string; nombre: string }[]>([])
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [totalPages, setTotalPages] = useState(1)
 
   useEffect(() => {
-    adminApi.solicitudes().then((result) => setItems(result.items)).catch((cause) => setError(adminErrorMessage(cause)))
-  }, [])
+    const timer = setTimeout(() => {
+      adminApi.solicitudes({ q: q.trim(), estado: filtro === 'todas' ? '' : filtro, categoria, page, pageSize })
+        .then((result) => { setItems(result.items); setTotalPages(result.totalPages); setError('') })
+        .catch((cause) => setError(adminErrorMessage(cause)))
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [q, filtro, categoria, page, pageSize])
+
+  useEffect(() => { void adminApi.catalogo().then((result) => setOficios(result.oficios.map(({ id, nombre }) => ({ id, nombre })))).catch(() => undefined) }, [])
 
   const tone = (value: 'ok' | 'brand' | 'off' | 'warn') => (value === 'ok' ? styles.badgeOk : value === 'brand' ? styles.badgeBrand : value === 'warn' ? styles.badgeWarn : styles.badgeOff)
-  const visibles = (items ?? []).filter((item) => filtro === 'todas' || item.estado === filtro)
+  const visibles = items ?? []
 
   return (
     <>
-      <AdminPageHeader subtitle="Solicitudes creadas por clientes (las 100 más recientes)" title="Solicitudes" />
+      <AdminPageHeader subtitle="Solicitudes creadas por clientes, ordenadas de la más reciente" title="Solicitudes" />
       <div className={styles.toolbar}>
+        <input aria-label="Buscar solicitudes" onChange={(event) => { setQ(event.target.value); setPage(1) }} placeholder="Buscar cliente, título o zona" type="search" value={q} />
+        <select aria-label="Servicio" onChange={(event) => { setCategoria(event.target.value); setPage(1) }} value={categoria}><option value="">Todos los servicios</option>{oficios.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select>
         <div className={styles.chips}>
           {FILTROS.map(([value, label]) => (
-            <button aria-pressed={filtro === value} key={value} onClick={() => setFiltro(value)} type="button">{label}</button>
+            <button aria-pressed={filtro === value} key={value} onClick={() => { setFiltro(value); setPage(1) }} type="button">{label}</button>
           ))}
         </div>
       </div>
@@ -60,6 +76,7 @@ export function AdminSolicitudes(): React.ReactNode {
           </tbody>
         </table>
       ) : null}
+      {items ? <AdminPagination onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1) }} page={page} pageSize={pageSize} totalPages={totalPages} /> : null}
     </>
   )
 }

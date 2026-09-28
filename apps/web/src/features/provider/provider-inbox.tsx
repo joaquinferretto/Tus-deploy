@@ -9,9 +9,9 @@ import { createDirectoryClient, privateImageUrl } from '../directory/directory-c
 import styles from '../directory/directory.module.css'
 import homeStyles from '../home/home.module.css'
 import { budgetLabel, timeAgoLabel, urgencyLabel } from '../home/requests-source'
-import { categoryOf } from '../home/types'
 import { useTusSession } from '../session/use-tus-session'
 import type { TusWebSession } from '../../lib/tus-ui-contract'
+import { tradeOf, useCatalog } from '../catalog/use-catalog'
 
 const client = createDirectoryClient()
 const RETURN_TO = '/prestador/solicitudes'
@@ -33,6 +33,7 @@ const ASSIGNMENT: Record<string, string> = {
 // Requests clients sent to this provider. Accepting confirms the relationship; nothing is
 // confirmed before that.
 export function ProviderInbox(): React.ReactNode {
+  const catalog = useCatalog()
   const session = useTusSession(RETURN_TO)
   const [items, setItems] = useState<SolicitudRecibidaPrestador[] | null>(null)
   const [failed, setFailed] = useState(false)
@@ -99,7 +100,7 @@ export function ProviderInbox(): React.ReactNode {
           </div>
           {item.description ? <p style={{ margin: 0 }}>{item.description}</p> : null}
           <p className={styles.muted} style={{ fontSize: '0.9rem', margin: 0 }}>
-            {categoryOf(item.category).label} · {item.requesterName} · {item.approximateArea} (zona aproximada) · {budgetLabel(item.budgetMax)} ·{' '}
+            {tradeOf(catalog.data, item.category).label} · {item.requesterName} · {item.approximateArea} (zona aproximada) · {budgetLabel(item.budgetMax)} ·{' '}
             {urgencyLabel(item.urgency)} · {timeAgoLabel(item.createdAt)} · vía {ORIGINS[item.origin] ?? item.origin}
           </p>
           {item.images.length > 0 ? <PrivateImages paths={item.images} session={session.session} /> : null}

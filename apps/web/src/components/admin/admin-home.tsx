@@ -16,7 +16,7 @@ export function AdminHome(): React.ReactNode {
 
   useEffect(() => {
     adminApi.resumen().then(setResumen).catch((cause) => setError(adminErrorMessage(cause)))
-    adminApi.actividad().then((result) => setEventos(result.items)).catch(() => setEventos([]))
+    adminApi.actividad({ tipo: '', page: 1, pageSize: 10 }).then((result) => setEventos(result.items)).catch(() => setEventos([]))
   }, [])
 
   const cards = resumen

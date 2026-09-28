@@ -19,21 +19,8 @@ export interface MapRequest {
   images?: string[]
 }
 
-// `keywords` let everyday words find the category ("cañería" -> Plomería).
-export const CATEGORIES = [
-  { id: 'plomeria', label: 'Plomería', color: '#2563eb', keywords: 'plomero plomeria cañeria caño cañerias agua perdida canilla inodoro termotanque destapacion' },
-  { id: 'electricidad', label: 'Electricidad', color: '#ca8a04', keywords: 'electricista electricidad luz enchufe termica tablero cable corto' },
-  { id: 'mecanica', label: 'Mecánica', color: '#16a34a', keywords: 'mecanico mecanica auto moto freno motor' },
-  { id: 'pintura', label: 'Pintura', color: '#db2777', keywords: 'pintor pintura pintar pared humedad' },
-  { id: 'aire', label: 'Aire acondicionado', color: '#0891b2', keywords: 'aire acondicionado split frio calor gas refrigeracion' },
-  { id: 'otros', label: 'Otros', color: '#ff5a00', keywords: 'armado mueble placard cerrajero cerradura mudanza jardin' },
-] as const
-
-export type CategoryId = (typeof CATEGORIES)[number]['id']
-
-export function categoryOf(id: string) {
-  return CATEGORIES.find((category) => category.id === id) ?? CATEGORIES[CATEGORIES.length - 1]!
-}
+// Trade ids come from the administered catalog (features/catalog/use-catalog.ts).
+export type CategoryId = string
 
 export interface RequestFilters {
   query: string
@@ -48,21 +35,6 @@ export interface RequestsSource {
   // and list, no refetch on every keystroke).
   list(input: { category: CategoryId | '' }): Promise<MapRequest[]>
 }
-
-// Barrios of Corrientes Capital: the API owns their approximate centres and rejects any other zone.
-export const CORRIENTES_ZONES = [
-  'Centro',
-  'Camba Cuá',
-  'La Rosada',
-  'Barrio Sur',
-  'San Gerónimo',
-  '1000 Viviendas',
-  'Libertad',
-  'San Benito',
-  'Laguna Seca',
-  'Pirayuí',
-  'Molina Punta',
-] as const
 
 export const URGENCIES = [
   { id: 'urgente', label: 'Urgente' },
