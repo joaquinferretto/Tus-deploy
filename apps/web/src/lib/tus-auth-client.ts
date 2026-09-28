@@ -66,6 +66,8 @@ export interface TusWebAuthClient {
   requestRecovery(email: string): Promise<TusAuthActionState>
   completeRecovery(input: { token: string; newPassword: string }): Promise<TusAuthActionState>
   restore(returnTo?: string): Promise<TusSessionState>
+  // Server-resolved capabilities of the signed-in account (null without a session).
+  capabilities(): Promise<TusAccountCapabilities | null>
   signOut(): Promise<void>
   clearLocalSession(): void
   // Google (OpenID Connect through the TUS API). The API validates Google and issues the SAME
@@ -229,6 +231,17 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
       }
     },
 
+    async capabilities() {
+      const credential = readCredential(storage)
+      if (credential === null || credential.expiresAt <= now()) return null
+      try {
+        const response = await transport.request<{ capabilities?: { platformAdmin?: unknown; provider?: unknown } }>({ method: 'GET', path: '/auth/session', correlationId: createCorrelationId(), accessToken: credential.accessToken })
+        return { platformAdmin: response?.capabilities?.platformAdmin === true, provider: response?.capabilities?.provider === true }
+      } catch {
+        return null
+      }
+    },
+
     async signOut() {
       const credential = readCredential(storage)
       try {
@@ -251,6 +264,18 @@ export function tusGoogleStartUrl(): string {
     nodeEnv: process.env['NODE_ENV'],
   })
   return `${baseUrl}/auth/oauth/google/start`
+}
+
+export interface TusAccountCapabilities {
+  platformAdmin: boolean
+  provider: boolean
+}
+
+// "Ir a mi panel" goes to the dashboard of the account's real role (decided by the API).
+export function panelFor(capabilities: TusAccountCapabilities | null): { href: '/tus/admin' | '/prestador/solicitudes' | '/mis-solicitudes'; label: string } {
+  if (capabilities?.platformAdmin) return { href: '/tus/admin', label: 'Panel admin' }
+  if (capabilities?.provider) return { href: '/prestador/solicitudes', label: 'Ir a mi panel' }
+  return { href: '/mis-solicitudes', label: 'Ir a mi panel' }
 }
 
 export interface TusAuthActionState {

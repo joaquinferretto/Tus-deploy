@@ -3,60 +3,26 @@
 import type { Route } from 'next'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import { withReturnTo } from '../auth/auth-validation'
 
-import { createTusWebAuthClient } from '@/lib/tus-auth-client'
+import { useAccountView } from '../session/use-account-view'
 import styles from './home.module.css'
 
-// Two ways to find help: the assistant ("no sé a quién necesito") and the directory ("quiero un
-// electricista"). Both end in the same TUS service request.
+// The home (map + service search + assistant) is where services are searched; the directory lists
+// workers; "Ayuda" is the assistant that answers questions about TUS. The logo always goes home.
 const NAV = [
-  { href: '/asistente', label: 'Buscar servicios' },
+  { href: '/', label: 'Buscar servicios' },
   { href: '/trabajadores', label: 'Buscar trabajador' },
   { href: '/#como-funciona', label: 'Cómo funciona' },
   { href: '/#profesionales', label: 'Para profesionales' },
-  { href: '/#ayuda', label: 'Ayuda' },
+  { href: '/asistente', label: 'Ayuda' },
 ] as const
 
-type AuthView =
-  { status: 'unknown' } | { status: 'guest' } | { status: 'signed-in'; initial: string }
-
-// The session token lives in an HttpOnly cookie (never in JS); the header only shows "Ir a mi
-// panel" after /auth/session confirms it with the server (restore), never from local data alone.
-function useAuthView(): AuthView {
-  const [view, setView] = useState<AuthView>({ status: 'unknown' })
-  useEffect(() => {
-    let cancelled = false
-    let client: ReturnType<typeof createTusWebAuthClient>
-    try {
-      client = createTusWebAuthClient()
-    } catch {
-      // Misconfigured API URL: the public home still works for guests.
-      setView({ status: 'guest' })
-      return
-    }
-    void client
-      .restore('/tus')
-      .then((result) => {
-        if (cancelled) return
-        if (result.status === 'authenticated' && result.session)
-          setView({ status: 'signed-in', initial: 'Yo' })
-        else setView({ status: 'guest' })
-      })
-      .catch(() => {
-        if (!cancelled) setView({ status: 'guest' })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-  return view
-}
-
 export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNode {
-  const auth = useAuthView()
+  // Session and REAL role come from the API; "Ir a mi panel" goes to that role's dashboard.
+  const auth = useAccountView()
   const [open, setOpen] = useState(false)
   const pathname = usePathname() ?? '/'
   // From the assistant or a worker profile, signing in comes back to the same screen.
@@ -64,9 +30,11 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
   const signInHref = withReturnTo('/sign-in', back) as Route
   const registerHref = withReturnTo('/registro', back) as Route
   const current = (href: string) =>
-    href !== '/' && !href.startsWith('/#') && (pathname === href || pathname.startsWith(`${href}/`))
-      ? 'page'
-      : undefined
+    href === '/'
+      ? pathname === '/' ? 'page' : undefined
+      : !href.startsWith('/#') && (pathname === href || pathname.startsWith(`${href}/`))
+        ? 'page'
+        : undefined
 
   const actions =
     auth.status === 'signed-in' ? (
@@ -74,11 +42,8 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
         <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>
           Mi perfil
         </Link>
-        <Link className={styles.buttonPrimary} href="/mi-perfil">
-          <span className={styles.avatar} aria-hidden="true">
-            {auth.initial}
-          </span>
-          Ir a mi panel
+        <Link className={styles.buttonPrimary} href={auth.panel.href}>
+          {auth.panel.label}
         </Link>
       </>
     ) : (
@@ -135,8 +100,8 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
               <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>
                 Mi perfil
               </Link>
-              <Link className={styles.buttonPrimary} href="/mi-perfil">
-                Ir a mi panel
+              <Link className={styles.buttonPrimary} href={auth.panel.href}>
+                {auth.panel.label}
               </Link>
             </>
           ) : (

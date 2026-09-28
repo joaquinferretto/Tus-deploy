@@ -160,7 +160,18 @@ export function createApp(options: CreateAppOptions = {}): Application {
       : healthRouter
   )
   app.use(createVersionRouter())
-  app.use(createAuthRouter({ service: auth.service, sessions, cookies: sessionCookies }))
+  app.use(
+    createAuthRouter({
+      service: auth.service,
+      sessions,
+      cookies: sessionCookies,
+      describeCapabilities: async (accessToken, correlationId, context) => {
+        const raw = await rawSessions.resolve(accessToken, correlationId)
+        const merchant = await application.marketplace?.store.merchant.find(context.tenantId).catch(() => null)
+        return { platformAdmin: raw ? await sessions.isAdminCandidate(raw) : false, provider: Boolean(merchant) }
+      },
+    })
+  )
   app.use(
     createMfaRouter({
       service: mfa,

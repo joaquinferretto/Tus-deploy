@@ -73,8 +73,9 @@ test('PR5 public home is the marketplace entry and the authenticated chain stays
     .map((file) => readFileSync(join(root, 'apps/web/src/features/home', file), 'utf8'))
     .join('\n')
 
-  assert.match(home, /href="\/sign-in"/)
-  assert.match(home, /href="\/registro"/)
+  // Sign-in and sign-up live in the shared header (with the return path).
+  assert.match(home, /withReturnTo\('\/sign-in', back\)/)
+  assert.match(home, /withReturnTo\('\/registro', back\)/)
   assert.match(home, /Solicitudes recientes/)
   assert.match(home, /href="\/registro\?intencion=prestador"/)
   // The customer, merchant, operations and POS chain lives behind sign-in (/tus).

@@ -5,16 +5,18 @@ import { useEffect, useState } from 'react'
 import authStyles from '../auth/auth.module.css'
 import styles from '../directory/directory.module.css'
 import homeStyles from '../home/home.module.css'
+import { useAccountView } from '../session/use-account-view'
 import { useTusSession } from '../session/use-tus-session'
 import { createTusWebAuthClient } from '../../lib/tus-auth-client'
 import { createProfileClient, validDisplayName, type OwnAccount } from './profile-client'
 
 const RETURN_TO = '/mi-perfil'
 
-// "Mi perfil": account data, the name other people see ("Laura M.") and shortcuts to what the
-// user does in TUS as a client and, if they offer services, as a provider.
+// "Mi perfil": only the personal account (data, name others see, sign out). The dashboards live
+// behind "Ir a mi panel"; the shortcuts below follow the REAL role returned by the API.
 export function ProfilePage(): React.ReactNode {
   const session = useTusSession(RETURN_TO)
+  const role = useAccountView()
   const [account, setAccount] = useState<OwnAccount | null>(null)
   const [failed, setFailed] = useState(false)
   const [name, setName] = useState('')
@@ -111,27 +113,46 @@ export function ProfilePage(): React.ReactNode {
         </form>
       </section>
 
-      <section className={styles.card} style={{ marginTop: 16 }}>
-        <strong>Como cliente</strong>
-        <div className={styles.cardActions}>
-          <a className={homeStyles.buttonSecondary} href="/mis-solicitudes">
-            Mis solicitudes y postulantes
-          </a>
-          <a className={homeStyles.buttonSecondary} href="/publicar">
-            Publicar una solicitud
-          </a>
-        </div>
-        <strong style={{ marginTop: 8 }}>Como prestador</strong>
-        <div className={styles.cardActions}>
-          <a className={homeStyles.buttonSecondary} href="/prestador/solicitudes">
-            Solicitudes y postulaciones
-          </a>
-          <a className={homeStyles.buttonSecondary} href="/prestador/perfil-publico">
-            Mi perfil público
-          </a>
-        </div>
-      </section>
-
+      {role.status === 'signed-in' ? (
+        <section className={styles.card} style={{ marginTop: 16 }}>
+          {role.capabilities.platformAdmin ? (
+            <div className={styles.cardActions}>
+              <a className={homeStyles.buttonPrimary} href="/tus/admin">
+                Ir al panel administrativo
+              </a>
+            </div>
+          ) : (
+            <>
+              <strong>Como cliente</strong>
+              <div className={styles.cardActions}>
+                <a className={homeStyles.buttonSecondary} href="/mis-solicitudes">
+                  Mis solicitudes y postulantes
+                </a>
+                <a className={homeStyles.buttonSecondary} href="/publicar">
+                  Publicar una solicitud
+                </a>
+              </div>
+              {role.capabilities.provider ? (
+                <>
+                  <strong style={{ marginTop: 8 }}>Como prestador</strong>
+                  <div className={styles.cardActions}>
+                    <a className={homeStyles.buttonSecondary} href="/prestador/solicitudes">
+                      Solicitudes y postulaciones
+                    </a>
+                    <a className={homeStyles.buttonSecondary} href="/prestador/perfil-publico">
+                      Mi perfil público
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <a className={styles.muted} href="/prestador/perfil-publico" style={{ marginTop: 8 }}>
+                  ¿Ofrecés servicios? Creá tu perfil de profesional
+                </a>
+              )}
+            </>
+          )}
+        </section>
+      ) : null}
       <div className={styles.cardActions} style={{ marginTop: 16 }}>
         <button className={homeStyles.buttonSecondary} onClick={() => void signOut()} type="button">
           Cerrar sesión

@@ -11,9 +11,18 @@ export interface AuthRouterDependencies {
   sessions: TusSessionResolverPort
   cookies?: SessionCookieSettings
   now?: () => number
+  // What the account can do, resolved on the server (never from the Web): platformAdmin = the
+  // allowlisted verified email of an email + password session (MFA still gates every admin
+  // request); provider = the account has a provider (merchant) in the marketplace.
+  describeCapabilities?: (accessToken: string, correlationId: string, context: TusAuthenticatedTenantContext) => Promise<SessionCapabilities>
 }
 
-export function createAuthRouter({ service, sessions, cookies = readSessionCookieSettings(), now = () => Date.now() }: AuthRouterDependencies): Router {
+export interface SessionCapabilities {
+  platformAdmin: boolean
+  provider: boolean
+}
+
+export function createAuthRouter({ service, sessions, cookies = readSessionCookieSettings(), now = () => Date.now(), describeCapabilities }: AuthRouterDependencies): Router {
   const router = express.Router()
 
   // Same answer for a new email and an already registered one (no account enumeration): the
@@ -70,7 +79,11 @@ export function createAuthRouter({ service, sessions, cookies = readSessionCooki
       response.status(401).json(createErrorEnvelope(new Error('authentication required'), getCorrelationId(request), 'UNAUTHORIZED'))
       return
     }
-    response.status(200).json({ context })
+    const capabilities: SessionCapabilities = describeCapabilities
+      ? await describeCapabilities(bearerToken(request), readHeader(request, 'x-correlation-id'), context).catch(() => ({ platformAdmin: false, provider: false }))
+      : { platformAdmin: false, provider: false }
+    response.setHeader('cache-control', 'no-store')
+    response.status(200).json({ context, capabilities })
   }))
 
   // Own account for "Mi perfil"; the id always comes from the session.

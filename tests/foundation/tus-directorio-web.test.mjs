@@ -16,7 +16,9 @@ function run(source) {
 
 test('NAV: header offers both paths and the pages exist', () => {
   const header = web('features/home/public-header.tsx')
-  assert.match(header, /href: '\/asistente', label: 'Buscar servicios'/)
+  // Services are searched on the home (map + search + assistant); "Ayuda" opens the assistant page.
+  assert.match(header, /href: '\/', label: 'Buscar servicios'/)
+  assert.match(header, /href: '\/asistente', label: 'Ayuda'/)
   assert.match(header, /href: '\/trabajadores', label: 'Buscar trabajador'/)
   assert.match(header, /aria-current=/)
   assert.match(header, /withReturnTo\('\/sign-in', back\)/)
