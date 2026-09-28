@@ -9,6 +9,8 @@ export interface AlmacenPerfiles {
   porId(id: string): Promise<PerfilPublico | null>
   // Visibles, opcionalmente de un oficio; como máximo `limite`.
   visibles(input: { oficio?: OficioId; limite: number }): Promise<PerfilPublico[]>
+  // Todos (visibles u ocultos), para la administración de la plataforma.
+  todos(input: { limite: number }): Promise<PerfilPublico[]>
 }
 
 // Hechos que el directorio lee de los módulos existentes (marketplace, identidad, trabajos).

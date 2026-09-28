@@ -21,6 +21,8 @@ import { crearServicioDirectorio } from './tus/directorio/composicion.ts'
 import { crearRouterDirectorio } from './tus/directorio/http.ts'
 import { crearAltaPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
+import { crearRouterAdmin } from './tus/admin/http.ts'
+import { ActividadAdminPrisma, CuentasAdminPrisma } from './tus/admin/fuentes.ts'
 import type { ClientePrismaDirectorio } from './tus/directorio/almacenes.ts'
 import type { ModuloWhatsapp } from './tus/asistente/composicion.ts'
 import type { TusPrismaClient } from './tus/adapters/prisma.ts'
@@ -195,6 +197,18 @@ export function createApp(options: CreateAppOptions = {}): Application {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
     app.use(crearRouterDirectorio({ servicio: directorio, sessions, adminSave: crearAltaPrestadorAdmin({ accounts: auth.store, application, directorio, createManagedAccount: (input) => auth.service.createManagedProviderAccount(input) }) }))
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
+    // Platform administration panel (read views + publish/hide a profile), behind the MFA gate.
+    app.use(
+      crearRouterAdmin({
+        sessions,
+        directorio,
+        solicitudes,
+        cuentas: new CuentasAdminPrisma(prisma as unknown as ConstructorParameters<typeof CuentasAdminPrisma>[0]),
+        actividad: new ActividadAdminPrisma(prisma as unknown as ConstructorParameters<typeof ActividadAdminPrisma>[0]),
+        adminEmails: () => leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS']),
+        ...(whatsapp ? { whatsappPendientes: async () => (await whatsapp.soporte.listar({ mode: 'human', limit: '100' })).length } : {}),
+      })
+    )
     app.use(tusRouter)
   }
   if (providerRoutesEnabled)

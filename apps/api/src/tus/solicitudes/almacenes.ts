@@ -50,6 +50,10 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
       .map((item) => this.copia(item))
   }
 
+  async listarRecientes(limite: number) {
+    return [...this.solicitudes.values()].sort((a, b) => b.creadaEn - a.creadaEn).slice(0, limite).map((item) => this.copia(item))
+  }
+
   async listarDirigidasA(prestadorTenantId: string) {
     return [...this.solicitudes.values()]
       .filter((item) => item.visibilidad === 'dirigida' && item.prestadorTenantId === prestadorTenantId)
@@ -268,6 +272,11 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
 
   async listarDeCuenta(cuentaId: string) {
     const filas = await this.client.solicitudServicio.findMany({ where: { cuentaId }, orderBy: { creadaEn: 'desc' }, take: 50, include: CON_IMAGENES })
+    return filas.map(desdeFila)
+  }
+
+  async listarRecientes(limite: number) {
+    const filas = await this.client.solicitudServicio.findMany({ where: {}, orderBy: { creadaEn: 'desc' }, take: limite, include: CON_IMAGENES })
     return filas.map(desdeFila)
   }
 

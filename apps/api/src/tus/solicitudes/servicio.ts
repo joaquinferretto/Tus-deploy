@@ -141,6 +141,26 @@ export class ServicioSolicitudes {
     return (ORIGENES_SOLICITUD as readonly unknown[]).includes(value)
   }
 
+  // Administración de la plataforma: las más recientes, con su estado real. No hay estados
+  // "en proceso" ni "cancelada" en el modelo: se informan abierta/asignada/vencida/cerrada.
+  async listarParaAdmin(limite = 100): Promise<{
+    id: string; cliente: string; categoria: string; titulo: string; zona: string; origen: string; visibilidad: string
+    estado: 'publicada' | 'asignada' | 'vencida' | 'cerrada'; creadaEn: string; postulantes: number
+  }[]> {
+    const ahora = this.now()
+    const solicitudes = await this.deps.almacen.listarRecientes(Math.min(Math.max(limite, 1), 200))
+    return Promise.all(solicitudes.map(async (item) => {
+      const postulaciones = await this.deps.almacen.postulacionesDe(item.id)
+      const asignada = item.estadoAsignacion === 'aceptada' || postulaciones.some((p) => p.estado === 'aceptada')
+      const estado = item.estado === 'cerrada' ? 'cerrada' : asignada ? 'asignada' : item.expiraEn <= ahora ? 'vencida' : 'publicada'
+      return {
+        id: item.id, cliente: item.nombrePublico, categoria: item.categoria, titulo: item.titulo, zona: item.zona,
+        origen: item.origen, visibilidad: item.visibilidad, estado, creadaEn: new Date(item.creadaEn).toISOString(),
+        postulantes: postulaciones.length,
+      }
+    }))
+  }
+
   async mias(cuentaId: string): Promise<VistaPropiaSolicitud[]> {
     const solicitudes = await this.deps.almacen.listarDeCuenta(cuentaId)
     const nombres = new Map<string, { id: string; displayName: string } | null>()

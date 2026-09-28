@@ -213,6 +213,44 @@ export class ServicioDirectorio {
     return enriquecidos.filter((item): item is Enriquecido => item !== null)
   }
 
+  // Administración de la plataforma: todos los perfiles (visibles u ocultos) con el MOTIVO real
+  // por el que aparecen o no en el mapa. Mismas reglas que el directorio público.
+  async listarParaAdmin(): Promise<{
+    id: string; tenantId: string; nombre: string; oficio: string; oficioLabel: string; zona: string | null; zonasCobertura: string[]
+    visible: boolean; aprobado: boolean; registrado: boolean; verificado: boolean; ubicaciones: number; enMapa: boolean
+    motivos: string[]; creadoEn: string; actualizadoEn: string
+  }[]> {
+    const perfiles = await this.deps.perfiles.todos({ limite: 500 })
+    const now = this.now()
+    return Promise.all(perfiles.map(async (perfil) => {
+      const [prestador, hechos, fallback] = await Promise.all([
+        this.deps.fuentes.prestador(perfil.tenantId),
+        this.deps.fuentes.hechos(perfil.tenantId),
+        this.deps.fuentes.ubicacionIdentidadVerificada?.(perfil.tenantId) ?? Promise.resolve(null),
+      ])
+      const publico = proyectarPublico(perfil, hechos, now, resolverUbicacionDePerfil(perfil, fallback))
+      const motivos = [
+        ...(perfil.visible ? [] : ['Perfil oculto']),
+        ...(!prestador ? ['Sin alta como prestador'] : !hechos.aprobado ? ['Prestador no aprobado'] : []),
+        ...(publico.mapLocations.length === 0 ? ['Sin zona reconocida para el mapa'] : []),
+      ]
+      return {
+        id: perfil.id, tenantId: perfil.tenantId, nombre: perfil.nombrePublico, oficio: perfil.oficio, oficioLabel: publico.profession.label,
+        zona: perfil.zona, zonasCobertura: perfil.zonasCobertura, visible: perfil.visible, aprobado: hechos.aprobado,
+        registrado: Boolean(prestador), verificado: hechos.verificado, ubicaciones: publico.mapLocations.length,
+        enMapa: motivos.length === 0, motivos, creadoEn: new Date(perfil.creadoEn).toISOString(), actualizadoEn: new Date(perfil.actualizadoEn).toISOString(),
+      }
+    }))
+  }
+
+  // Publicar u ocultar un perfil (única acción de estado que existe en el directorio).
+  async cambiarVisibilidadAdmin(id: string, visible: boolean): Promise<{ id: string; tenantId: string; visible: boolean } | null> {
+    const perfil = await this.deps.perfiles.porId(id)
+    if (!perfil) return null
+    await this.deps.perfiles.guardar({ ...perfil, visible, actualizadoEn: this.now() })
+    return { id: perfil.id, tenantId: perfil.tenantId, visible }
+  }
+
   // Relevancia: verificados primero, luego cercanía de barrio (si hay zona), trabajos completados,
   // quien atiende hoy y quien tiene servicios publicados. Todo sobre datos reales.
   private ordenar(items: Enriquecido[], orden: OrdenDirectorio, zona: string | null): Enriquecido[] {

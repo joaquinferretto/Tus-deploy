@@ -30,6 +30,10 @@ export class AlmacenPerfilesEnMemoria implements AlmacenPerfiles {
       .slice(0, input.limite)
       .map((perfil) => ({ ...perfil }))
   }
+
+  async todos(input: { limite: number }) {
+    return [...this.perfiles.values()].sort((a, b) => b.actualizadoEn - a.actualizadoEn).slice(0, input.limite).map((perfil) => ({ ...perfil }))
+  }
 }
 
 // ---- PostgreSQL (perfiles_publicos_prestador) ------------------------------------------------
@@ -113,6 +117,11 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
       orderBy: { fechaActualizacion: 'desc' },
       take: input.limite,
     })
+    return filas.map(desdeFila)
+  }
+
+  async todos(input: { limite: number }) {
+    const filas = await this.client.perfilPublicoPrestador.findMany({ where: {}, orderBy: { fechaActualizacion: 'desc' }, take: input.limite })
     return filas.map(desdeFila)
   }
 }
