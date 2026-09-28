@@ -709,6 +709,30 @@ Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales R
 
 `registros_operaciones` — métrica operativa; sin FK.
 
+### 7.13 Catálogo administrado (servicios y ubicaciones)
+
+Migraciones `20261007100000_tus_catalogo` (tablas y semilla) y `20261008100000_tus_barrios_poligono` (aditiva). La fuente de verdad es PostgreSQL; la API mantiene una copia vigente en memoria que se recarga al iniciar, después de cada cambio del panel y cada minuto. Nada se borra físicamente: `activo = false` saca el registro de los flujos nuevos y conserva el historial.
+
+- `categorias_servicio`: agrupa oficios (Hogar y reparaciones, Otros, ...). La agrupación "Otros" es solo visual: cada oficio es una fila propia administrable.
+- `oficios_servicio`: cada servicio/oficio (alta, edición, activación, desactivación). `profesion` es la etiqueta del profesional; `icono` es una clave de la interfaz; el `id` es estable porque `perfiles_publicos_prestador.oficio` y `solicitudes_servicio.categoria` lo guardan.
+- `sinonimos_oficio`: palabras clave de búsqueda del oficio, guardadas normalizadas (minúsculas, sin acentos, espacios simples; 2 a 40 caracteres, hasta 80 por oficio, sin duplicados). El intérprete de la búsqueda y del asistente compara con la misma normalización.
+- `localidades` → `zonas_ubicacion` → `barrios`: árbol de ubicaciones. Una zona agrupa barrios (buscar "Norte" cubre sus barrios). Un barrio se ofrece solo si él, su zona y su localidad están activos.
+
+| Columna | Tabla | Tipo lógico | Almacenamiento | Nulo | Propósito |
+|---|---|---|---|---|---|
+| `poligono` | `barrios` | GeoJSON `Polygon` (un anillo exterior cerrado, posiciones `[longitud, latitud]` WGS84) | `jsonb` | NOT NULL | Área de cobertura del barrio. La dibuja y edita el panel (Leaflet, editor de vértices); el catálogo público (`GET /tus/v1/public/oficios`, `locations.localities[].neighbourhoods[].polygon`) la expone para el mapa. |
+| `latitud`, `longitud` | `barrios` | punto aproximado | `double precision` | NULL (ambos o ninguno) | Centro del barrio (promedio de los vértices al guardar desde el panel). Ubica prestadores y solicitudes por barrio en el mapa y da la distancia aproximada entre barrios. Nunca una dirección exacta. |
+
+Reglas de `poligono`:
+
+- CHECK `ck_barrios_poligono_geojson`: `type = 'Polygon'`, exactamente un anillo, al menos 4 posiciones (3 vértices + cierre).
+- La API valida además: 3 a 200 vértices distintos, coordenadas en rango, anillo cerrado (lo cierra si falta) y sin autointersecciones. Un polígono inválido se rechaza con 422 y `campos: ['poligono']`.
+- La migración aditiva completó las filas existentes con un cuadrado de ±0,003° alrededor del punto (o del centro de Corrientes si no tenía punto) antes de pasar la columna a NOT NULL. No se usa PostGIS: GeoJSON + JSONB + Leaflet es la decisión vigente.
+
+Relación con búsqueda y mapa: los barrios y zonas activos son los lugares que reconoce el intérprete (`ubicacionesReconocibles`), los que aceptan las validaciones de solicitudes y perfiles (`zonasCorrientes`) y los que publica el catálogo público con su polígono. Un barrio desactivado deja de ofrecerse, pero `buscarBarrio` lo sigue resolviendo para los registros históricos. Renombrar un barrio usado por perfiles o solicitudes se rechaza (409 `IN_USE_RENAME`) porque esos registros guardan el nombre.
+
+Listados del panel: `GET /tus/v1/admin/catalogo/:entidad` pagina en PostgreSQL (`ORDER BY orden, nombre, id` + `LIMIT/OFFSET`; 10, 25 o 50 por página, nunca más de 50) y agrega los conteos de prestadores y solicitudes con consultas agregadas (`GROUP BY`, `unnest(zonas_cobertura)`), nunca una consulta por fila.
+
 ---
 
 ## 8. Deuda legacy documentada

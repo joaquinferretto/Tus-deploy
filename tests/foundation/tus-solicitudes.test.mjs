@@ -53,9 +53,9 @@ test('SOLICITUDES validation rejects bad fields, unknown zones and contact data 
 
 test('SOLICITUDES approximate location: Corrientes barrio centre, deterministic, 3 decimals, within ~300 m', () => {
   const result = runTypeScriptScenario(`${SETUP}
-    const zona = modelo.ZONAS_CORRIENTES.find((z) => z.nombre === 'Centro')
+    const zona = modelo.zonasCorrientes().find((z) => z.nombre === 'Centro')
     const puntos = ['a', 'b', 'c', 'd', 'e'].map((id) => modelo.ubicacionAproximada('Centro', id))
-    console.log(JSON.stringify({ zona, puntos, repetido: modelo.ubicacionAproximada('Centro', 'a'), zonas: modelo.ZONAS_CORRIENTES.map((z) => z.nombre) }))
+    console.log(JSON.stringify({ zona, puntos, repetido: modelo.ubicacionAproximada('Centro', 'a'), zonas: modelo.zonasCorrientes().map((z) => z.nombre) }))
   `)
   assert.deepEqual(result.repetido, result.puntos[0])
   for (const punto of result.puntos) {
@@ -63,9 +63,10 @@ test('SOLICITUDES approximate location: Corrientes barrio centre, deterministic,
     assert.equal(Math.round(punto.lat * 1000) / 1000, punto.lat)
     assert.equal(Math.round(punto.lng * 1000) / 1000, punto.lng)
   }
-  // The Web offers the same barrios as the API.
+  // The Web reads the neighbourhoods from the API catalog (no list of its own).
+  assert.ok(result.zonas.includes('Centro'))
   const webTypes = readFileSync(join(root, 'apps/web/src/features/home/types.ts'), 'utf8')
-  for (const zona of result.zonas) assert.match(webTypes, new RegExp(`'${zona}'`))
+  for (const zona of result.zonas) assert.doesNotMatch(webTypes, new RegExp(`'${zona}'`, 'u'))
 })
 
 test('SOLICITUDES publish: verified active accounts only, public view without personal data, limits, expiry and closing', () => {

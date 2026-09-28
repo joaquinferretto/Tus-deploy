@@ -49,21 +49,27 @@ const SETUP = `
   const valida = { category: 'plomeria', title: 'Pierde agua la canilla de la cocina', description: 'Gotea todo el día.', zone: 'Camba Cuá', budgetMax: 25000, urgency: 'hoy_manana' }
 `
 
-test('DIRECTORIO one canonical profession catalog shared by API, contracts, requests, WhatsApp and Web', () => {
+// The catalog is administered in PostgreSQL (catalogo/*); API, requests, WhatsApp and the Web read
+// the same current catalog. No client keeps its own list.
+test('DIRECTORIO one administered profession catalog shared by API, contracts, requests, WhatsApp and Web', () => {
   const result = runTypeScriptScenario(`${SETUP}
     const oficios = await import('./apps/api/src/tus/directorio/oficios.ts')
     const solicitudesModelo = await import('./apps/api/src/tus/solicitudes/modelo.ts')
-    console.log(JSON.stringify({ api: [...oficios.IDS_OFICIOS].sort(), contracts: [...contratos.OFICIOS_TUS].sort(), requests: [...solicitudesModelo.CATEGORIAS_SOLICITUD].sort(), catalog: oficios.catalogoPublico() }))
+    const { SEMILLA_CATALOGO } = await import('./apps/api/src/tus/catalogo/semilla.ts')
+    const api = oficios.idsOficios().sort()
+    console.log(JSON.stringify({ api, seed: SEMILLA_CATALOGO.oficios.map((o) => o.id).sort(), requests: api.filter((id) => solicitudesModelo.esCategoriaSolicitud(id)), catalog: oficios.catalogoPublico(), legacy: [...contratos.OFICIOS_TUS] }))
   `)
-  assert.deepEqual(result.api, result.contracts)
-  assert.deepEqual(result.api, result.requests)
-  assert.deepEqual(Object.keys(result.catalog[0]).sort(), ['id', 'label', 'profession'])
-  const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20261001100000_tus_directorio_prestadores/migration.sql'), 'utf8')
-  for (const id of result.api) assert.match(migration, new RegExp(`'${id}'`))
+  assert.deepEqual(result.api, result.seed)
+  assert.deepEqual(result.api, result.requests, 'requests accept exactly the current trades')
+  for (const id of result.legacy) assert.ok(result.api.includes(id), `pre-catalog trade ${id} keeps its id`)
+  assert.ok(result.api.includes('cerrajeria') && result.api.includes('albanileria'), 'split out of "Otros"')
+  assert.deepEqual(Object.keys(result.catalog[0]).sort(), ['categoryId', 'icon', 'id', 'label', 'profession'])
+  const migration = readFileSync(join(root, 'apps/api/prisma/migrations/20261007100000_tus_catalogo/migration.sql'), 'utf8')
+  for (const id of result.api) assert.match(migration, new RegExp(`INSERT INTO public."oficios_servicio" [^;]*VALUES \\('${id}'`, 'u'), id)
   const web = readFileSync(join(root, 'apps/web/src/features/home/types.ts'), 'utf8')
-  for (const id of result.api) assert.match(web, new RegExp(`id: '${id}'`))
+  assert.doesNotMatch(web, /id: 'plomeria'|'Camba Cuá'/u, 'the Web has no hardcoded catalog')
   const tools = readFileSync(join(root, 'apps/api/src/tus/asistente/herramientas.ts'), 'utf8')
-  assert.match(tools, /IDS_OFICIOS/)
+  assert.match(tools, /idsOficios\(\)/u, 'WhatsApp tools list the current trades on every call')
 })
 
 test('ASISTENTE interprets the need deterministically and never guesses when unsure', () => {
@@ -323,7 +329,7 @@ test('DIRECTORIO + SOLICITUDES HTTP: public reads without auth, private actions 
     } finally { server.close() }
   `)
   assert.equal(result.oficios[0], 200)
-  assert.equal(result.oficios[1].items.length, 6)
+  assert.equal(result.oficios[1].items.length, 8)
   assert.ok(result.oficios[1].zones.includes('Camba Cuá'))
   assert.equal(result.lista[0], 200)
   assert.equal(result.lista[1].items.length, 1)

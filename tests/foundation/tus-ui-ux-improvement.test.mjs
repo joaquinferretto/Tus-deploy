@@ -28,9 +28,10 @@ test('PR1 accepts only internal return paths and rejects external deep links', (
   `)
 
   assert.equal(result.internal, '/tus/pos?surface=staff')
-  assert.equal(result.external, '/mi-perfil')
-  assert.equal(result.protocolRelative, '/mi-perfil')
-  assert.equal(result.fallback, '/mi-perfil')
+  // A client without a safe returnTo lands on the home (role routes are resolved from capabilities).
+  assert.equal(result.external, '/')
+  assert.equal(result.protocolRelative, '/')
+  assert.equal(result.fallback, '/')
 })
 
 test('PR1 persists only the confirmed bearer credential in session-scoped storage', () => {
@@ -105,7 +106,8 @@ test('PR1 never fabricates web identity from malformed or client-authored sessio
 test('PR1 distinguishes missing credentials from unavailable storage without leaking failures', () => {
   const result = runTypeScriptScenario(`
     const { createTusWebAuthClient } = (await import('./apps/web/src/lib/tus-auth-client.ts')).default
-    const missing = createTusWebAuthClient({ storage: { read: () => null, write: () => undefined, clear: () => undefined }, transport: { request: async () => ({}) } })
+    // Without a local marker the client asks the API whether the HttpOnly cookie is valid: 401 = signed out.
+    const missing = createTusWebAuthClient({ storage: { read: () => null, write: () => undefined, clear: () => undefined }, transport: { request: async () => { throw Object.assign(new Error('unauthorized'), { status: 401 }) } } })
     const unavailable = createTusWebAuthClient({ storage: { read: () => { throw new Error('storage secret') }, write: () => undefined, clear: () => undefined }, transport: { request: async () => ({}) } })
     console.log(JSON.stringify({ missing: await missing.restore(), unavailable: await unavailable.restore() }))
   `)

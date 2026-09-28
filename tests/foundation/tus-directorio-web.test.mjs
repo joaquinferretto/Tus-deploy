@@ -70,7 +70,8 @@ test('RETURN: after sign-in or sign-up the user comes back to the assistant or t
   assert.equal(result.signIn, '/sign-in?returnTo=%2Ftrabajadores%2Fabc%3Fsolicitar%3D1')
   assert.equal(result.plain, '/registro')
   assert.match(web('features/auth/login-form.tsx'), /takeReturnTo\(\)/)
-  assert.match(web('features/auth/google-flow.tsx'), /takeReturnTo\(\) \?\? '\/mi-perfil'/)
+  // Google sign-in resolves the destination from real capabilities; returnTo is only a request.
+  assert.match(web('features/auth/google-flow.tsx'), /resolvePostLoginRoute\(await client\.capabilities\(\), takeReturnTo\(\)\)/)
   assert.match(web('features/auth/register-form.tsx'), /rememberReturnTo\(requested\)/)
 })
 

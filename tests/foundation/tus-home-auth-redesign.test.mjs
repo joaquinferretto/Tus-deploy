@@ -23,7 +23,7 @@ const FAKE_API = `
     dto('a', 'plomeria', 'Pierde agua la canilla', 'Camba Cuá', { budgetMax: 25000, images: ['/tus/v1/public/solicitudes/a/imagenes/1', '/tus/v1/public/solicitudes/a/imagenes/2', '/uno.jpg'], phone: '+5493794000000', address: 'Calle Falsa 123' }),
     dto('b', 'electricidad', 'Salta la térmica con el horno', 'Centro', { urgency: 'hoy_manana', images: ['/tus/v1/public/solicitudes/b/imagenes/1'] }),
     dto('c', 'pintura', 'Pintar un dormitorio', 'Libertad', { images: ['https://evil.example/x.png'] }),
-    dto('d', 'jardineria', 'Categoría desconocida', 'Centro'),
+    dto('d', '<b>Rubro</b>', 'Categoría malformada', 'Centro'),
     { id: 'e', category: 'plomeria', title: 'Sin ubicación' },
   ]
   const requested = []
@@ -73,7 +73,9 @@ test('HOME filters by everyday words and zone on the same list', () => {
     const all = await createApiRequestsSource(fakeFetch).list({ category: '' })
     const filter = (filters) => all.filter((request) => matchesFilters(request, { query: '', category: '', zone: '', ...filters }))
     console.log(JSON.stringify({
-      canieria: filter({ query: 'arreglo de cañería' }).map((r) => r.category),
+      // Everyday words -> trade is resolved by the API interpreter (search bar / assistant);
+      // the local filter matches the request's own text.
+      canieria: filter({ query: 'arreglar la canilla' }).map((r) => r.category),
       category: filter({ category: 'electricidad' }).map((r) => r.category),
       none: filter({ query: 'zzzzqqq' }),
       zone: filter({ zone: 'camba cua' }).map((r) => r.approximateLocation.label),

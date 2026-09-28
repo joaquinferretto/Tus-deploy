@@ -2282,3 +2282,90 @@ Table postulaciones_solicitud {
     (prestador_tenant_id, fecha_creacion) [name: 'ix_postulaciones_solicitud_prestador_fecha']
   }
 }
+
+// ============================================================
+// CATÁLOGO ADMINISTRADO (20261007100000_tus_catalogo, 20261008100000_tus_barrios_poligono)
+// ============================================================
+// Categorías, oficios (servicios) con sinónimos e ícono, y ubicaciones localidad -> zona -> barrio.
+// Se administran desde el panel (ABM); nunca se borran: activo = false conserva el historial.
+// Las FKs reemplazan los CHECK que fijaban los ids de oficio: un oficio nuevo no requiere migración.
+Table categorias_servicio {
+  id varchar [pk]
+  nombre varchar [note: 'CHECK 2..60; único sin distinguir mayúsculas (uq_categorias_servicio_nombre_ci)']
+  slug varchar [unique, note: "CHECK '^[a-z0-9][a-z0-9-]{0,59}$'"]
+  descripcion varchar [null]
+  activo boolean [default: true]
+  orden int [default: 0]
+  creado_en timestamp
+  actualizado_en timestamp
+}
+
+Table oficios_servicio {
+  id varchar [pk, note: 'id estable guardado por perfiles y solicitudes (plomeria, electricidad, ...)']
+  categoria_id varchar [null, ref: > categorias_servicio.id, note: 'RESTRICT']
+  nombre varchar [note: 'CHECK 2..60; único sin distinguir mayúsculas']
+  profesion varchar [note: 'etiqueta del profesional: Plomero/a, Cerrajero/a']
+  slug varchar [unique]
+  descripcion varchar [null]
+  icono varchar [note: 'clave de ícono de la interfaz (lista cerrada en la API)']
+  activo boolean [default: true, note: 'false: no se ofrece en nuevos flujos; los registros existentes lo siguen mostrando']
+  orden int [default: 0]
+  creado_en timestamp
+  actualizado_en timestamp
+  indexes {
+    categoria_id [name: 'ix_oficios_servicio_categoria']
+  }
+}
+
+Table sinonimos_oficio {
+  id varchar [pk]
+  oficio_id varchar [ref: > oficios_servicio.id, note: 'CASCADE (se reemplazan junto con el oficio)']
+  termino varchar [note: 'palabra clave normalizada (minúsculas, sin acentos); CHECK 2..40']
+  activo boolean [default: true]
+  indexes {
+    (oficio_id, termino) [unique, name: 'uq_sinonimos_oficio_termino']
+  }
+}
+
+Table localidades {
+  id varchar [pk]
+  nombre varchar [note: 'CHECK 2..60; único por (nombre, provincia) sin distinguir mayúsculas']
+  provincia varchar
+  activo boolean [default: true]
+  orden int [default: 0]
+  creado_en timestamp
+  actualizado_en timestamp
+}
+
+Table zonas_ubicacion {
+  id varchar [pk]
+  localidad_id varchar [ref: > localidades.id, note: 'RESTRICT']
+  nombre varchar [note: 'único por localidad sin distinguir mayúsculas (Norte, Sur, ...)']
+  slug varchar
+  activo boolean [default: true, note: 'false: sus barrios dejan de ofrecerse']
+  orden int [default: 0]
+  creado_en timestamp
+  actualizado_en timestamp
+  indexes {
+    localidad_id [name: 'ix_zonas_ubicacion_localidad']
+  }
+}
+
+Table barrios {
+  id varchar [pk]
+  localidad_id varchar [ref: > localidades.id, note: 'RESTRICT']
+  zona_id varchar [null, ref: > zonas_ubicacion.id, note: 'RESTRICT']
+  nombre varchar [note: 'único por localidad sin distinguir mayúsculas; perfiles y solicitudes guardan este nombre']
+  slug varchar
+  latitud float [null, note: 'centro aproximado del barrio (nunca una dirección); CHECK ck_barrios_punto']
+  longitud float [null]
+  poligono jsonb [not null, note: "GeoJSON Polygon (un anillo cerrado, [lng, lat] WGS84). CHECK ck_barrios_poligono_geojson: type = 'Polygon', 1 anillo, >= 4 posiciones. Área de cobertura para el mapa y el editor del panel (20261008100000)"]
+  activo boolean [default: true, note: 'false: no se ofrece en nuevas solicitudes, perfiles, búsqueda ni mapa; el historial lo conserva']
+  orden int [default: 0]
+  creado_en timestamp
+  actualizado_en timestamp
+  indexes {
+    (localidad_id) [name: 'ix_barrios_localidad']
+    (zona_id) [name: 'ix_barrios_zona']
+  }
+}

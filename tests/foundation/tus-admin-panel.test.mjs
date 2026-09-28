@@ -20,6 +20,8 @@ test('ADMIN PANEL API: permission required; providers with the real reason they 
     const { crearAltaPrestadorAdmin } = await import('./apps/api/src/tus/directorio/admin.ts')
     const { crearRouterAdmin } = await import('./apps/api/src/tus/admin/http.ts')
     const { CuentasAdminEnMemoria } = await import('./apps/api/src/tus/admin/fuentes.ts')
+    const { ServicioCatalogo } = await import('./apps/api/src/tus/catalogo/servicio.ts')
+    const { AlmacenCatalogoEnMemoria } = await import('./apps/api/src/tus/catalogo/almacen.ts')
     const identityStore = new InMemoryIdentityStore()
     const auth = { ...createAuthService({ store: identityStore }), store: identityStore }
     const password = 'una frase larga y segura 2026'
@@ -34,7 +36,7 @@ test('ADMIN PANEL API: permission required; providers with the real reason they 
     await save(admin, { ...body('p2@example.com', 'Plomería Oculta', 'Camba Cuá'), visible: false })
     const sessions = { resolve: async (token) => token === 'admin' ? admin : token === 'client' ? { ...admin, subjectId: 'x', permissions: ['tus:marketplace:write'] } : null }
     const app = express(); app.use(express.json())
-    app.use(crearRouterAdmin({ sessions, directorio: directory, solicitudes, cuentas: new CuentasAdminEnMemoria(identityStore), adminEmails: () => ['admin@example.com'], whatsappPendientes: async () => 2 }))
+    app.use(crearRouterAdmin({ sessions, directorio: directory, solicitudes, cuentas: new CuentasAdminEnMemoria(identityStore), adminEmails: () => ['admin@example.com'], whatsappPendientes: async () => 2, catalogo: new ServicioCatalogo({ almacen: new AlmacenCatalogoEnMemoria() }) }))
     const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)) })
     const call = async (path, token = 'admin', payload) => {
       const response = await fetch('http://127.0.0.1:' + server.address().port + path, { method: payload ? 'POST' : 'GET', headers: { authorization: 'Bearer ' + token, 'x-correlation-id': 'c', 'content-type': 'application/json' }, ...(payload ? { body: JSON.stringify(payload) } : {}) })
@@ -61,8 +63,8 @@ test('ADMIN PANEL API: permission required; providers with the real reason they 
       out.noSecrets = !JSON.stringify(users).match(/passwordHash|tokenDigest|secret/iu)
       const catalogo = (await call('/tus/v1/admin/catalogo')).body
       out.plomeria = catalogo.oficios.find((o) => o.id === 'plomeria')
-      out.otrosKeywords = catalogo.oficios.find((o) => o.id === 'otros').palabrasClave.includes('cerrajero')
-      out.centro = catalogo.zonas.find((z) => z.nombre === 'Centro')
+      out.cerrajeria = catalogo.oficios.find((o) => o.id === 'cerrajeria').sinonimos.includes('cerrajero')
+      out.centro = catalogo.barrios.find((z) => z.nombre === 'Centro')
       out.solicitudes = (await call('/tus/v1/admin/solicitudes')).body.items
       out.actividad = (await call('/tus/v1/admin/actividad')).body.items
     } finally { server.close() }
@@ -91,7 +93,7 @@ test('ADMIN PANEL API: permission required; providers with the real reason they 
   assert.equal(result.noSecrets, true)
   assert.equal(result.plomeria.prestadores, 2)
   assert.equal(result.plomeria.enMapa, 2)
-  assert.equal(result.otrosKeywords, true, 'cerrajero is grouped under "Otros" and the panel shows it')
+  assert.equal(result.cerrajeria, true, 'cerrajero is its own trade with synonyms')
   assert.equal(result.centro.prestadores, 1)
   assert.deepEqual(result.solicitudes, [])
   assert.deepEqual(result.actividad, [], 'no invented activity without an audit source')
