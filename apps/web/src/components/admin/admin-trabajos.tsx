@@ -228,6 +228,8 @@ export function AdminPagos(): React.ReactNode {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
   const [totalPages, setTotalPages] = useState(1)
+  const [estadoPagos, setEstadoPagos] = useState<Awaited<ReturnType<typeof adminApi.pagosEstado>> | null>(null)
+  useEffect(() => { void adminApi.pagosEstado().then(setEstadoPagos).catch(() => undefined) }, [])
   useEffect(() => {
     adminApi
       .pagos({ estado, page, pageSize })
@@ -237,6 +239,16 @@ export function AdminPagos(): React.ReactNode {
   return (
     <>
       <AdminPageHeader subtitle="Cobros de trabajos con Mercado Pago: monto, comisión TUS, neto del Prestador y estado" title="Pagos" />
+      {estadoPagos ? (
+        <section aria-label="Estado de los pagos online" className={styles.card}>
+          <p>
+            <strong>{estadoPagos.productEnabled && estadoPagos.blockers.length === 0 ? 'Pagos online habilitados' : 'Pagos online no disponibles'}</strong>
+            {' · '}entorno {estadoPagos.operational.environment} · comisión TUS {(estadoPagos.globalPolicy.rateBps / 100).toLocaleString('es-AR')}%
+            {estadoPagos.globalPolicy.persisted ? '' : ' (por defecto)'}
+          </p>
+          {estadoPagos.blockers.length ? <p className={styles.muted}>Falta: {estadoPagos.blockers.join(', ')}</p> : null}
+        </section>
+      ) : null}
       <div className={styles.toolbar}>
         <div className={styles.chips}>
           {FILTROS_PAGO.map(([value, label]) => (

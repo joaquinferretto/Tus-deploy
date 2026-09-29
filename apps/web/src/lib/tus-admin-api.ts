@@ -220,6 +220,8 @@ export const adminApi = {
   // FASE 10: end-to-end service operations (read-only, plus the support cancellation).
   trabajos: (input: { q: string; estado: string; page: number; pageSize: number }) => call<AdminPage<AdminTrabajo>>(`/tus/v1/admin/trabajos?${new URLSearchParams({ q: input.q, estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   trabajo: (id: string) => call<AdminTrabajoDetalle>(`/tus/v1/admin/trabajos/${encodeURIComponent(id)}`),
+  // Readiness of online payments: booleans and missing items only, never secret values.
+  pagosEstado: () => call<{ productEnabled: boolean; blockers: string[]; operational: { environment: string }; globalPolicy: { rateBps: number; persisted: boolean } }>('/tus/v1/admin/payments/status'),
   pagos: (input: { estado: string; page: number; pageSize: number }) => call<AdminPage<AdminPago>>(`/tus/v1/admin/pagos?${new URLSearchParams({ estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   cancelarTrabajo: (id: string, expectedVersion: number, reason: string, idempotencyKey: string) => call<{ status: string }>(`/tus/v1/admin/trabajos/${encodeURIComponent(id)}/cancelar`, { expectedVersion, reason }, 'POST', { 'Idempotency-Key': idempotencyKey }),
   // One page of an entity (server-side filters and pagination) with its usage counts.
