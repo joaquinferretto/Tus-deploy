@@ -1,4 +1,5 @@
 import { TUS_CONTRACT_VERSION } from '@factory/contracts/tus'
+import type { WorkSummary, WorkMessage } from '@factory/contracts'
 import type {
   ComprobantePOS,
   CasoSoporte,
@@ -681,6 +682,10 @@ export interface TusWebClient {
   ): Promise<{ authorizationUrl: string; expiresAt: string }>
   disconnectPaymentAccount(context: TusWebContext): Promise<TusPaymentAccount>
   listWork(context: TusWebContext): Promise<TusWorkListResponse>
+  listMyWorks(context: TusWebContext): Promise<{ items: WorkSummary[] }>
+  workSummary(context: TusWebContext, workId: string): Promise<WorkSummary>
+  workMessages(context: TusWebContext, workId: string, before?: string): Promise<{ items: WorkMessage[] }>
+  sendWorkMessage(context: TusWebContext, workId: string, text: string, clientMessageId: string): Promise<WorkMessage>
   workDetail(context: TusWebContext, workId: string): Promise<TusWorkDetail>
   acceptWorkCommitment(
     input: TusWorkAcceptCommitmentInput
@@ -1239,6 +1244,10 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         method: 'GET',
         path: '/tus/v1/work',
       }),
+    listMyWorks: (context) => transport.request({ ...context, method: 'GET', path: '/tus/v1/mis-trabajos' }),
+    workSummary: (context, workId) => transport.request({ ...context, method: 'GET', path: `/tus/v1/trabajos/${encodeURIComponent(workId)}/resumen` }),
+    workMessages: (context, workId, before) => transport.request({ ...context, method: 'GET', path: `/tus/v1/trabajos/${encodeURIComponent(workId)}/mensajes${before ? `?antesDe=${encodeURIComponent(before)}` : ''}` }),
+    sendWorkMessage: (context, workId, text, clientMessageId) => transport.request({ ...context, method: 'POST', path: `/tus/v1/trabajos/${encodeURIComponent(workId)}/mensajes`, body: { text, clientMessageId } }),
     workDetail: (context, workId) =>
       transport.request<TusWorkDetail>({
         ...context,

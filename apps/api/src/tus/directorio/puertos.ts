@@ -6,6 +6,7 @@ export interface AlmacenPerfiles {
   // Crea o reemplaza el perfil del prestador del tenant (uno por prestador).
   guardar(perfil: PerfilPublico): Promise<void>
   porTenant(tenantId: string): Promise<PerfilPublico | null>
+  porTenants(tenantIds: readonly string[]): Promise<PerfilPublico[]>
   porId(id: string): Promise<PerfilPublico | null>
   // Visibles, opcionalmente de un oficio; como máximo `limite`.
   visibles(input: { oficio?: OficioId; limite: number }): Promise<PerfilPublico[]>

@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import type { PostulanteSolicitud } from '@factory/contracts'
 
 import type { TusWebSession } from '../../lib/tus-ui-contract'
+import { TusRequestError } from '../../lib/tus-client'
 import styles from '../auth/auth.module.css'
 import homeStyles from '../home/home.module.css'
 import { budgetLabel, timeAgoLabel, urgencyLabel } from '../home/requests-source'
@@ -17,6 +18,7 @@ export function MyRequests({ session, refreshKey = 0 }: { session: TusWebSession
   const catalog = useCatalog()
   const [items, setItems] = useState<OwnRequestDto[] | null>(null)
   const [failed, setFailed] = useState(false)
+  const [closeError, setCloseError] = useState('')
 
   useEffect(() => {
     setFailed(false)
@@ -30,7 +32,14 @@ export function MyRequests({ session, refreshKey = 0 }: { session: TusWebSession
   }, [session, refreshKey])
 
   async function close(item: OwnRequestDto) {
-    if (!(await createRequestsClient(session).close(item.id))) return
+    setCloseError('')
+    try { await createRequestsClient(session).close(item.id) }
+    catch (error) {
+      setCloseError(error instanceof TusRequestError && error.code === 'WORK_ACTIVE' ? 'La solicitud ya tiene un trabajo. Abrí el trabajo para ver su estado y las acciones disponibles.' : 'No pudimos cancelar la solicitud. Volvé a intentar.')
+      const fresh = await createRequestsClient(session).mine().catch(() => null)
+      if (fresh) setItems(fresh)
+      return
+    }
     setItems((current) =>
       (current ?? []).map((existing) =>
         existing.id === item.id ? { ...existing, status: 'cerrada', assignment: existing.assignment === 'pendiente' ? 'cancelada' : existing.assignment } : existing
@@ -53,6 +62,7 @@ export function MyRequests({ session, refreshKey = 0 }: { session: TusWebSession
   if (items.length === 0) return <p className={styles.footerText}>Todavía no enviaste solicitudes.</p>
   return (
     <ul style={{ display: 'grid', gap: 10, listStyle: 'none', margin: '12px 0 0', padding: 0 }}>
+      {closeError ? <li role="alert">{closeError}</li> : null}
       {items.map((item) => (
         <li className={styles.notice} key={item.id} style={{ display: 'grid', gap: 4 }}>
           <strong>{item.title}</strong>
@@ -68,13 +78,14 @@ export function MyRequests({ session, refreshKey = 0 }: { session: TusWebSession
                 Ver perfil de {item.provider.displayName}
               </Link>
             ) : null}
-            {item.status === 'abierta' ? (
+            {item.workId ? <a href={`/trabajos/${encodeURIComponent(item.workId)}`}>Ver trabajo y mensajes</a> : null}
+            {item.status === 'abierta' && !item.workId && item.assignment !== 'aceptada' ? (
               <button className={styles.link} onClick={() => void close(item)} type="button">
                 {item.assignment === 'pendiente' ? 'Cancelar solicitud' : 'Cerrar solicitud'}
               </button>
             ) : null}
           </span>
-          {item.status === 'abierta' && !item.provider ? (
+          {item.status === 'abierta' && !item.provider && !item.workId && item.assignment !== 'aceptada' ? (
             <Applicants
               onChosen={(updated) => setItems((current) => (current ?? []).map((existing) => (existing.id === updated.id ? updated : existing)))}
               request={item}

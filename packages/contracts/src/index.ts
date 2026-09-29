@@ -106,6 +106,7 @@ export function createWorkflowJobFixture(): WorkflowJob {
 export * from './tus.ts'
 export * from './tus-ui.ts'
 export * from './tus-directorio.ts'
+export * from './tus-work-view.ts'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

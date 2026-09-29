@@ -3,6 +3,7 @@ import type { CategoriaSolicitud, EstadoAsignacion, ImagenSolicitud, Postulacion
 export interface AlmacenSolicitudes {
   guardar(solicitud: SolicitudServicio): Promise<void>
   obtener(id: string): Promise<SolicitudServicio | null>
+  obtenerMuchas(ids: readonly string[]): Promise<SolicitudServicio[]>
   // Públicas, abiertas y vigentes, más recientes primero (nunca las dirigidas).
   listarAbiertas(input: { ahora: number; categoria?: CategoriaSolicitud; limite: number }): Promise<SolicitudServicio[]>
   listarDeCuenta(cuentaId: string): Promise<SolicitudServicio[]>
@@ -68,6 +69,7 @@ export interface CuentasSolicitudes {
 
 // Resuelve el prestador elegido por el cliente (directorio). Solo visibles y aprobados.
 export interface DestinosSolicitud {
+  perfilesPorTenants?(tenantIds: readonly string[]): Promise<Map<string, { id: string; nombrePublico: string }>>
   destino(providerId: unknown): Promise<{ perfil: { id: string; tenantId: string; prestadorId: string; nombrePublico: string } } | null>
   perfilPorTenant(tenantId: string): Promise<{ id: string; nombrePublico: string } | null>
   // Prestador que puede postularse: perfil visible y prestador aprobado (de cualquier oficio).

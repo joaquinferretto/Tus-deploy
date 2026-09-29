@@ -126,6 +126,7 @@ export interface ResultadoCandidatos {
 }
 
 export interface SolicitudRecibidaPrestador {
+  workId?: string | null
   id: string
   category: OficioTus
   title: string
@@ -152,6 +153,7 @@ export interface PostulacionPrestador {
   status: EstadoPostulacionTus
   createdAt: string
   request: {
+    workId?: string | null
     id: string
     category: OficioTus
     title: string

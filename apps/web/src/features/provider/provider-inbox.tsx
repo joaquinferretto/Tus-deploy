@@ -104,6 +104,7 @@ export function ProviderInbox(): React.ReactNode {
             {urgencyLabel(item.urgency)} · {timeAgoLabel(item.createdAt)} · vía {ORIGINS[item.origin] ?? item.origin}
           </p>
           {item.images.length > 0 ? <PrivateImages paths={item.images} session={session.session} /> : null}
+          {item.workId ? <a href={`/trabajos/${encodeURIComponent(item.workId)}`}>Ver trabajo</a> : null}
           {item.assignment === 'pendiente' ? (
             <div className={styles.cardActions}>
               <button className={homeStyles.buttonPrimary} disabled={working === item.id} onClick={() => void answer(item, 'aceptar')} type="button">
@@ -121,12 +122,13 @@ export function ProviderInbox(): React.ReactNode {
 }
 
 // Photos of directed requests are private: fetched with the session and shown as blob URLs.
-function PrivateImages({ paths, session }: { paths: string[]; session: TusWebSession }): React.ReactNode {
+export function PrivateImages({ paths, session }: { paths: string[]; session: TusWebSession }): React.ReactNode {
   const [urls, setUrls] = useState<(string | null)[]>([])
   useEffect(() => {
     let active = true
     const created: string[] = []
     void Promise.all(paths.map((path) => privateImageUrl(session, path))).then((result) => {
+      if (!active) { result.forEach((url) => url && URL.revokeObjectURL(url)); return }
       result.forEach((url) => url && created.push(url))
       if (active) setUrls(result)
     })

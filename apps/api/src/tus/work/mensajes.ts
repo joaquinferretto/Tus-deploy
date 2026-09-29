@@ -1,4 +1,4 @@
-import type { Trabajo } from '@factory/contracts'
+import { WORK_MESSAGE_MAX_LENGTH, type Trabajo, type WorkMessage } from '@factory/contracts'
 
 // Private chat of a work between its client and its provider (after the match). It is NOT the
 // WhatsApp channel (that one is contact <-> TUS official number). Rules:
@@ -10,7 +10,7 @@ import type { Trabajo } from '@factory/contracts'
 // - append-only; a retry with the same client message id never duplicates a message;
 // - the text is never logged.
 
-export const LARGO_MAXIMO_MENSAJE = 2000
+export const LARGO_MAXIMO_MENSAJE = WORK_MESSAGE_MAX_LENGTH
 export const MENSAJES_POR_PAGINA = 100
 
 export type RolAutorMensaje = 'cliente' | 'prestador'
@@ -26,13 +26,7 @@ export interface MensajeTrabajo {
   creadoEn: string
 }
 
-export interface VistaMensajeTrabajo {
-  id: string
-  authorRole: RolAutorMensaje
-  mine: boolean
-  text: string
-  createdAt: string
-}
+export type VistaMensajeTrabajo = WorkMessage
 
 export interface ContextoMensajes {
   tenantId: string

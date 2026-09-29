@@ -19,6 +19,11 @@ export class AlmacenPerfilesEnMemoria implements AlmacenPerfiles {
     return found ? { ...found } : null
   }
 
+  async porTenants(tenantIds: readonly string[]) {
+    const wanted = new Set(tenantIds)
+    return [...this.perfiles.values()].filter((p) => wanted.has(p.tenantId)).map((p) => ({ ...p }))
+  }
+
   async porId(id: string) {
     const found = this.perfiles.get(id)
     return found ? { ...found } : null
@@ -124,6 +129,11 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
   async porTenant(tenantId: string) {
     const fila = await this.client.perfilPublicoPrestador.findFirst({ where: { tenantId } })
     return fila ? desdeFila(fila) : null
+  }
+
+  async porTenants(tenantIds: readonly string[]) {
+    if (!tenantIds.length) return []
+    return (await this.client.perfilPublicoPrestador.findMany({ where: { tenantId: { in: [...new Set(tenantIds)] } } })).map(desdeFila)
   }
 
   async porId(id: string) {

@@ -18,6 +18,7 @@ export function MyRequestsPage(): React.ReactNode {
   return (
     <div className={styles.narrow}>
       <h1 className={styles.title}>Mis solicitudes</h1>
+      <a href="/trabajos">Mis trabajos</a>
       <p className={styles.subtitle}>El estado real de cada pedido. Una solicitud enviada a un profesional queda pendiente hasta que la acepte.</p>
       <div className={styles.stateActions} style={{ justifyContent: 'flex-start', margin: '16px 0 8px' }}>
         <a className={homeStyles.buttonPrimary} href="/asistente">

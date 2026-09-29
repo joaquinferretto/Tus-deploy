@@ -168,6 +168,10 @@ export class ServicioDirectorio {
     return this.deps.perfiles.porTenant(tenantId)
   }
 
+  async perfilesPorTenants(tenantIds: readonly string[]): Promise<Map<string, { id: string; nombrePublico: string }>> {
+    return new Map((await this.deps.perfiles.porTenants(tenantIds)).map((p) => [p.tenantId, { id: p.id, nombrePublico: p.nombrePublico }]))
+  }
+
   // Quién puede postularse a una solicitud pública: mismo criterio que el directorio (perfil
   // visible y prestador aprobado), sin filtrar por oficio.
   async postulante(tenantId: string): Promise<{ perfil: PerfilPublico } | null> {

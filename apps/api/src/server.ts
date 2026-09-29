@@ -17,6 +17,8 @@ import { crearModuloWhatsappPrisma } from './tus/asistente/prisma-composicion.ts
 import { crearServicioSolicitudes } from './tus/solicitudes/composicion.ts'
 import { crearRouterSolicitudes } from './tus/solicitudes/http.ts'
 import { crearRouterMensajesTrabajo } from './tus/work/http-mensajes.ts'
+import { crearRouterResumenTrabajo } from './tus/work/http-resumen.ts'
+import { PrismaWorkSummarySource, ServicioResumenTrabajo } from './tus/work/resumen.ts'
 import { AlmacenMensajesTrabajoPrisma, ServicioMensajesTrabajo, type ClientePrismaMensajesTrabajo } from './tus/work/mensajes.ts'
 import { PrismaTrabajoStore } from './tus/adapters/prisma-work.ts'
 import type { ClientePrismaSolicitudes } from './tus/solicitudes/almacenes.ts'
@@ -211,6 +213,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
     // Private chat of each work (client <-> chosen provider), authorized against the work.
     const trabajosAccesibles = new PrismaTrabajoStore(prisma)
+    app.use(crearRouterResumenTrabajo({ sessions, servicio: new ServicioResumenTrabajo(trabajosAccesibles, new PrismaWorkSummarySource(prisma as unknown as ConstructorParameters<typeof PrismaWorkSummarySource>[0])) }))
     app.use(crearRouterMensajesTrabajo({
       sessions,
       servicio: new ServicioMensajesTrabajo({

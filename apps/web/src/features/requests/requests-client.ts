@@ -6,6 +6,7 @@ import type { TusWebSession } from '../../lib/tus-ui-contract'
 import type { PublicRequestDto } from '../home/requests-source'
 import type { CategoryId, UrgencyId } from '../home/types'
 import { authorizationHeader, fetchWithSession } from '../../lib/session-credentials'
+import { TusRequestError } from '../../lib/tus-client'
 
 // Client for publishing service requests. Same Bearer session as the rest of TUS; the API
 // derives the account, public name and approximate point (never sent by the browser).
@@ -25,6 +26,7 @@ export interface NewRequestInput {
 export type RequestAssignment = 'pendiente' | 'aceptada' | 'rechazada' | 'cancelada'
 
 export interface OwnRequestDto extends PublicRequestDto {
+  workId?: string | null
   status: 'abierta' | 'cerrada'
   expiresAt: string
   origin: string
@@ -146,7 +148,11 @@ export function createRequestsClient(session: TusWebSession, fetchImpl: typeof f
         headers: headers(true),
         body: '{}',
       })
-      return response.ok
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { code?: string }
+        throw new TusRequestError('No se pudo cancelar la solicitud', response.status, body.code)
+      }
+      return true
     },
   }
 }

@@ -51,6 +51,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
           {auth.panel.label}
         </Link>
         <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>Mi perfil</Link>
+        <Link className={styles.buttonSecondary} href={'/trabajos' as Route}>Mis trabajos</Link>
         <button className={styles.buttonGhost} onClick={() => void signOut()} type="button">Cerrar sesión</button>
       </>
     ) : (
@@ -108,6 +109,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
                 {auth.panel.label}
               </Link>
               <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>Mi perfil</Link>
+              <Link className={styles.buttonSecondary} href={'/trabajos' as Route}>Mis trabajos</Link>
               <button className={styles.buttonGhost} onClick={() => void signOut()} type="button">Cerrar sesión</button>
             </>
           ) : (

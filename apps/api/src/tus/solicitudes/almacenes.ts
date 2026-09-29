@@ -39,6 +39,11 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
     return found ? this.copia(found) : null
   }
 
+  async obtenerMuchas(ids: readonly string[]) {
+    const wanted = new Set(ids)
+    return [...this.solicitudes.values()].filter((s) => wanted.has(s.id)).map((s) => this.copia(s))
+  }
+
   async listarAbiertas(input: { ahora: number; categoria?: CategoriaSolicitud; limite: number }) {
     return [...this.solicitudes.values()]
       .filter((item) => item.visibilidad === 'publica' && item.estado === 'abierta' && item.expiraEn > input.ahora && (!input.categoria || item.categoria === input.categoria))
@@ -309,6 +314,11 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
   async obtener(id: string) {
     const fila = await this.client.solicitudServicio.findFirst({ where: { id }, include: CON_IMAGENES })
     return fila ? desdeFila(fila) : null
+  }
+
+  async obtenerMuchas(ids: readonly string[]) {
+    if (!ids.length) return []
+    return (await this.client.solicitudServicio.findMany({ where: { id: { in: [...new Set(ids)] } }, include: CON_IMAGENES })).map(desdeFila)
   }
 
   async listarAbiertas(input: { ahora: number; categoria?: CategoriaSolicitud; limite: number }) {

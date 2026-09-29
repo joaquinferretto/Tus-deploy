@@ -132,6 +132,7 @@ export function ProviderOpenRequests(): React.ReactNode {
                   {budgetLabel(application.request.budgetMax)} · {urgencyLabel(application.request.urgency)}
                 </p>
                 {application.message ? <p style={{ margin: 0 }}>Tu mensaje: “{application.message}”</p> : null}
+                {application.request.workId ? <a href={`/trabajos/${encodeURIComponent(application.request.workId)}`}>Ver trabajo</a> : null}
                 {application.status === 'aceptada' ? (
                   <p style={{ margin: 0 }}>Ya aparece en tus solicitudes recibidas como aceptada.</p>
                 ) : null}

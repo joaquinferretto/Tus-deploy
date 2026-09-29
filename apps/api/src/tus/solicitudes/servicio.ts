@@ -189,12 +189,8 @@ export class ServicioSolicitudes {
 
   async mias(cuentaId: string): Promise<VistaPropiaSolicitud[]> {
     const solicitudes = await this.deps.almacen.listarDeCuenta(cuentaId)
-    const nombres = new Map<string, { id: string; displayName: string } | null>()
-    for (const solicitud of solicitudes)
-      if (solicitud.prestadorTenantId && !nombres.has(solicitud.prestadorTenantId)) {
-        const perfil = await this.deps.destinos?.perfilPorTenant(solicitud.prestadorTenantId)
-        nombres.set(solicitud.prestadorTenantId, perfil ? { id: perfil.id, displayName: perfil.nombrePublico } : null)
-      }
+    const perfiles = await this.deps.destinos?.perfilesPorTenants?.(solicitudes.flatMap((s) => s.prestadorTenantId ? [s.prestadorTenantId] : [])) ?? new Map()
+    const nombres = new Map<string, { id: string; displayName: string }>([...perfiles].map(([tenantId, perfil]) => [tenantId, { id: perfil.id, displayName: perfil.nombrePublico }]))
     return solicitudes.map((solicitud) => vistaPropia(solicitud, solicitud.prestadorTenantId ? (nombres.get(solicitud.prestadorTenantId) ?? null) : null))
   }
 
@@ -297,12 +293,12 @@ export class ServicioSolicitudes {
   async misPostulaciones(prestadorTenantId: string): Promise<VistaPostulacionPropia[]> {
     const ahora = this.now()
     const postulaciones = await this.deps.almacen.postulacionesDePrestador(prestadorTenantId)
-    const vistas = await Promise.all(
-      postulaciones.map(async (postulacion) => {
-        const solicitud = await this.deps.almacen.obtener(postulacion.solicitudId)
+    const solicitudes = new Map((await this.deps.almacen.obtenerMuchas(postulaciones.map((p) => p.solicitudId))).map((s) => [s.id, s]))
+    const vistas =
+      postulaciones.map((postulacion) => {
+        const solicitud = solicitudes.get(postulacion.solicitudId)
         return solicitud ? vistaPostulacionPropia(postulacion, solicitud, ahora) : null
       })
-    )
     return vistas.filter((vista): vista is VistaPostulacionPropia => vista !== null)
   }
 
