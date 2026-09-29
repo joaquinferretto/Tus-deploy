@@ -270,12 +270,14 @@ export function TrabajoCliente({
                 <TusActionButton onClick={() => void loadDetail(work.trabajoId)} type="button">
                   Review work
                 </TusActionButton>
-                <Link
-                  className="tus-action-button tus-action-link"
-                  href={`/tus/compromisos/${encodeURIComponent(work.commitmentId)}`}
-                >
-                  View related commitment
-                </Link>
+                {work.commitmentId ? (
+                  <Link
+                    className="tus-action-button tus-action-link"
+                    href={`/tus/compromisos/${encodeURIComponent(work.commitmentId)}`}
+                  >
+                    View related commitment
+                  </Link>
+                ) : null}
               </div>
             </article>
           ))}

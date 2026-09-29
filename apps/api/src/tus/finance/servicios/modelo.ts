@@ -164,8 +164,9 @@ export function derivarObligacionServicio(input: {
     clienteId,
     prestadorTenantId: trabajo.prestadorTenantId,
     prestadorId: trabajo.prestadorId,
-    publicacionId: trabajo.publicacionId,
-    commitmentId: trabajo.commitmentId,
+    // Equal to the work's references (checked above); taken from the persisted chain.
+    publicacionId: publicacion.publicacionId,
+    commitmentId: compromiso.commitmentId,
     trabajoId: trabajo.trabajoId,
     status: ESTADOS_OBLIGACION_PAGO_SERVICIO.PENDIENTE_PAGO,
     version: 1,

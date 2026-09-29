@@ -132,14 +132,23 @@ export type FaseEvidenciaTrabajo = (typeof FASES_EVIDENCIA_TRABAJO)[keyof typeof
 
 export type DecisionPresupuesto = 'accepted' | 'rejected'
 
+export const ORIGENES_TRABAJO = ['marketplace', 'solicitud'] as const
+export type OrigenTrabajo = (typeof ORIGENES_TRABAJO)[number]
+
+// A work comes from a marketplace commitment (commitmentId + publicacionId) or from a directory
+// request where the client chose exactly one provider (solicitudId). The database enforces that
+// exactly one of both shapes is present (ck_trabajos_origen_coherente).
 export interface Trabajo {
   contractVersion: TusContractVersion
   trabajoId: string
   tenantId: string
   prestadorTenantId: string
-  commitmentId: string
+  // Absent in older payloads, which are always 'marketplace'.
+  origin?: OrigenTrabajo
+  commitmentId: string | null
   prestadorId: string
-  publicacionId: string
+  publicacionId: string | null
+  solicitudId?: string | null
   reservaId?: string | null
   clienteId?: string | null
   status: EstadoTrabajo
@@ -224,9 +233,16 @@ export interface EvidenciaTrabajo {
 export function validarTrabajo(value: unknown): Trabajo {
   if (!isRecord(value)) throw new ContractValidationError('tus-work', undefined, 'payload must be an object')
   assertTusVersion('tus-work', value['contractVersion'])
-  for (const field of ['trabajoId', 'tenantId', 'prestadorTenantId', 'commitmentId', 'prestadorId', 'publicacionId', 'createdAt', 'updatedAt']) {
+  for (const field of ['trabajoId', 'tenantId', 'prestadorTenantId', 'prestadorId', 'createdAt', 'updatedAt']) {
     if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-work', TUS_CONTRACT_VERSION, `${field} is required`)
   }
+  const origin = value['origin'] ?? 'marketplace'
+  if (!(ORIGENES_TRABAJO as readonly unknown[]).includes(origin)) throw new ContractValidationError('tus-work', TUS_CONTRACT_VERSION, 'origin is invalid')
+  const present = (field: string) => typeof value[field] === 'string' && (value[field] as string).trim().length > 0
+  const coherent = origin === 'marketplace'
+    ? present('commitmentId') && present('publicacionId') && !present('solicitudId')
+    : present('solicitudId') && !present('commitmentId') && !present('publicacionId')
+  if (!coherent) throw new ContractValidationError('tus-work', TUS_CONTRACT_VERSION, 'work origin fields are inconsistent')
   if (!Object.values(ESTADOS_TRABAJO).includes(value['status'] as EstadoTrabajo) || !Number.isInteger(value['version']) || Number(value['version']) < 1 || typeof value['budgetRequired'] !== 'boolean' || !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])) {
     throw new ContractValidationError('tus-work', TUS_CONTRACT_VERSION, 'work state is invalid')
   }
@@ -481,7 +497,8 @@ export interface VistaPreviaPagoServicio {
   contractVersion: TusContractVersion
   workId: string
   workStatus: EstadoTrabajo
-  publicacionId: string
+  // Null for request-born works (no marketplace listing).
+  publicacionId: string | null
   serviceName: string | null
   prestadorId: string
   budget: { budgetId: string; version: number; totalMinor: string; currency: string } | null

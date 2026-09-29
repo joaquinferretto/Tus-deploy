@@ -726,9 +726,12 @@ model Trabajo {
   trabajoId                  String   @map("trabajo_id")
   tenantId                   String   @map("tenant_id")
   prestadorTenantId          String   @map("prestador_tenant_id")
-  compromisoId               String   @map("compromiso_id")
+  // origen 'marketplace' (commitment + listing) or 'solicitud' (directory request); CHECK in SQL.
+  origen                     String   @default("marketplace") @map("origen")
+  compromisoId               String?  @map("compromiso_id")
   prestadorId                String   @map("prestador_id")
-  publicacionId              String   @map("publicacion_id")
+  publicacionId              String?  @map("publicacion_id")
+  solicitudId                String?  @map("solicitud_id")
   reservaTenantId            String?  @map("reserva_tenant_id")
   reservaId                  String?  @map("reserva_id")
   clienteId                  String?  @map("cliente_id")
@@ -740,9 +743,11 @@ model Trabajo {
   fechaCreacion              DateTime @map("fecha_creacion")
   fechaActualizacion         DateTime @map("fecha_actualizacion")
 
-  compromiso          CompromisoMercadoServicios @relation(fields: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_compromisos_ms")
+  compromiso          CompromisoMercadoServicios? @relation(fields: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_compromisos_ms")
   prestador           Prestador                  @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_prestadores")
-  publicacion         Publicacion                @relation(fields: [prestadorTenantId, publicacionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_publicaciones")
+  publicacion         Publicacion?               @relation(fields: [prestadorTenantId, publicacionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_publicaciones")
+  // Request-born work: bound to the request's assigned provider (same tenant + prestador).
+  solicitud           SolicitudServicio?         @relation(fields: [solicitudId, prestadorTenantId, prestadorId], references: [id, prestadorTenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_solicitud_asignada")
   reserva             Reserva?                   @relation(fields: [reservaTenantId, reservaId], references: [tenantId, reservaId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_reservas")
   presupuestoAceptado Presupuesto?               @relation("PresupuestoAceptadoTrabajo", fields: [tenantId, presupuestoAceptadoId, presupuestoAceptadoVersion], references: [tenantId, presupuestoId, version], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_presupuesto_aceptado")
   diagnosticos        Diagnostico[]
@@ -2796,6 +2801,10 @@ model SolicitudServicio {
   prestador          Prestador? @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_prestador")
   imagenes           ImagenSolicitud[]
   postulaciones      PostulacionSolicitud[]
+  // At most one (partial unique index uq_trabajos_solicitud on trabajos.solicitud_id).
+  trabajos           Trabajo[]
+
+  @@unique([id, prestadorTenantId, prestadorId], map: "uq_solicitudes_servicio_asignacion")
 
   @@index([estado, creadaEn(sort: Desc)], map: "ix_solicitudes_servicio_estado_fecha")
   @@index([cuentaId, creadaEn], map: "ix_solicitudes_servicio_cuenta_fecha")

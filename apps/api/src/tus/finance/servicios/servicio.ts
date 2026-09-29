@@ -473,10 +473,13 @@ export class ServicioFinanzasServicios {
     presupuesto: PresupuestoFinanciero | null
     publicacion: PublicacionServicioFinanciera | null
   }> {
-    const publicacion = await repositories.identidad.buscarPublicacion({
-      prestadorTenantId: trabajo.prestadorTenantId,
-      publicacionId: trabajo.publicacionId,
-    })
+    // Request-born works have no listing; their payment path is evaluated separately.
+    const publicacion = trabajo.publicacionId
+      ? await repositories.identidad.buscarPublicacion({
+          prestadorTenantId: trabajo.prestadorTenantId,
+          publicacionId: trabajo.publicacionId,
+        })
+      : null
     const presupuesto =
       trabajo.acceptedBudgetId && trabajo.acceptedBudgetVersion
         ? await repositories.identidad.buscarPresupuesto({
@@ -1695,6 +1698,12 @@ export class ServicioFinanzasServicios {
         )
       return existing
     }
+    if (!trabajo.commitmentId || !trabajo.publicacionId)
+      throw new ErrorFinanzasServicio(
+        409,
+        'INCONSISTENT_COMMERCIAL_CHAIN',
+        'work has no marketplace commitment'
+      )
     const compromiso = await repositories.identidad.buscarCompromiso({
       tenantId: trabajo.tenantId,
       commitmentId: trabajo.commitmentId,

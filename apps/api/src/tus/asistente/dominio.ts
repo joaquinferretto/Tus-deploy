@@ -288,7 +288,7 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     const mine = works.filter((work) => (role === 'client' ? work.tenantId === context.tenantId : work.prestadorTenantId === context.tenantId))
     const out: TrabajoResumen[] = []
     for (const work of mine.slice(-10).reverse()) {
-      const listing = await this.marketplace.store.listings.find(work.publicacionId)
+      const listing = work.publicacionId ? await this.marketplace.store.listings.find(work.publicacionId) : null
       out.push({
         workId: work.trabajoId,
         status: work.status,
@@ -304,7 +304,7 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
 
   async trabajo(context: TusAuthenticatedTenantContext, workId: string) {
     const detail = await this.work.getWork({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId }, workId)
-    const listing = await this.marketplace.store.listings.find(detail.work.publicacionId)
+    const listing = detail.work.publicacionId ? await this.marketplace.store.listings.find(detail.work.publicacionId) : null
     return {
       workId: detail.work.trabajoId,
       status: detail.work.status,

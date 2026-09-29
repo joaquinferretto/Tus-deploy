@@ -388,9 +388,11 @@ export class ServicioTrabajo {
         trabajoId: `trabajo-${input.commitment.tenantId}-${input.commitment.commitmentId}`,
         tenantId: input.commitment.tenantId,
         prestadorTenantId: input.tenantId,
+        origin: 'marketplace',
         commitmentId: input.commitment.commitmentId,
         prestadorId: input.commitment.merchantId,
         publicacionId: input.commitment.listingId,
+        solicitudId: null,
         ...(reservationId ? { reservaId: reservationId } : {}),
         clienteId: input.commitment.tenantId,
         status: ESTADOS_TRABAJO.SOLICITADO,
@@ -1174,7 +1176,9 @@ export class InMemoryTrabajoStore implements TrabajoStorePort {
     tenantId: string
     commitmentId: string
   }): Promise<Trabajo | null> {
-    const work = this.works.get(workKey(input.tenantId, input.commitmentId))
+    const work = [...this.works.values()].find(
+      (candidate) => candidate.tenantId === input.tenantId && candidate.commitmentId === input.commitmentId
+    )
     return work ? structuredClone(work) : null
   }
 
@@ -1197,9 +1201,13 @@ export class InMemoryTrabajoStore implements TrabajoStorePort {
   }
 
   async createWork(work: Trabajo): Promise<void> {
-    const key = workKey(work.tenantId, work.commitmentId)
-    if (this.works.has(key))
+    const key = workKey(work.tenantId, work.trabajoId)
+    if (this.works.has(key)) throw new TrabajoError(409, 'CONFLICT', 'work already exists')
+    // Mirrors of uq_trabajos_tenant_compromiso and uq_trabajos_solicitud.
+    if (work.commitmentId && (await this.findByCommitment({ tenantId: work.tenantId, commitmentId: work.commitmentId })))
       throw new TrabajoError(409, 'CONFLICT', 'work already exists for commitment')
+    if (work.solicitudId && [...this.works.values()].some((candidate) => candidate.solicitudId === work.solicitudId))
+      throw new TrabajoError(409, 'CONFLICT', 'work already exists for request')
     // Espejo de `uq_trabajos_reserva`: una reserva vincula como maximo un trabajo.
     if (
       work.reservaId &&
@@ -1223,7 +1231,7 @@ export class InMemoryTrabajoStore implements TrabajoStorePort {
         candidate.tenantId === input.tenantId && candidate.trabajoId === input.trabajoId
     )
     if (!current || current.version !== input.expectedVersion) return null
-    this.works.set(workKey(current.tenantId, current.commitmentId), structuredClone(input.work))
+    this.works.set(workKey(current.tenantId, current.trabajoId), structuredClone(input.work))
     return structuredClone(input.work)
   }
 
@@ -1722,8 +1730,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function workKey(tenantId: string, commitmentId: string): string {
-  return `${tenantId}:${commitmentId}`
+function workKey(tenantId: string, trabajoId: string): string {
+  return `${tenantId}:${trabajoId}`
 }
 function transitionKey(tenantId: string, trabajoId: string, version: number): string {
   return `${tenantId}:${trabajoId}:${version}`

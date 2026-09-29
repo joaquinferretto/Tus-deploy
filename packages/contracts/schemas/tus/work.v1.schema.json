@@ -10,9 +10,11 @@
     "trabajoId": { "type": "string", "minLength": 1 },
     "tenantId": { "type": "string", "minLength": 1 },
     "prestadorTenantId": { "type": "string", "minLength": 1 },
-    "commitmentId": { "type": "string", "minLength": 1 },
+    "origin": { "enum": ["marketplace", "solicitud"] },
+    "commitmentId": { "type": ["string", "null"], "minLength": 1 },
     "prestadorId": { "type": "string", "minLength": 1 },
-    "publicacionId": { "type": "string", "minLength": 1 },
+    "publicacionId": { "type": ["string", "null"], "minLength": 1 },
+    "solicitudId": { "type": ["string", "null"], "minLength": 1 },
     "reservaId": { "type": ["string", "null"], "minLength": 1 },
     "clienteId": { "type": ["string", "null"], "minLength": 1 },
     "status": { "enum": ["requested", "in_diagnosis", "budget_pending", "accepted", "in_progress", "completed", "cancelled"] },
@@ -22,5 +24,24 @@
     "acceptedBudgetVersion": { "type": ["integer", "null"], "minimum": 1 },
     "createdAt": { "type": "string", "minLength": 1 },
     "updatedAt": { "type": "string", "minLength": 1 }
-  }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "origin": { "const": "marketplace" },
+        "commitmentId": { "type": "string" },
+        "publicacionId": { "type": "string" },
+        "solicitudId": { "type": "null" }
+      }
+    },
+    {
+      "required": ["origin", "solicitudId"],
+      "properties": {
+        "origin": { "const": "solicitud" },
+        "commitmentId": { "type": "null" },
+        "publicacionId": { "type": "null" },
+        "solicitudId": { "type": "string" }
+      }
+    }
+  ]
 }

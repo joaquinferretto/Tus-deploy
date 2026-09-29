@@ -579,6 +579,12 @@ Canal gobernado; referencias externas a Meta (`remitente_id`, `destinatario_id`,
 
 ### 7.9 Trabajo y presupuesto WEB-08A/B
 
+- `trabajos.origen` (`20261009100000_tus_trabajo_desde_solicitud`): `marketplace` (con `compromiso_id` y
+  `publicacion_id`, como hasta ahora) o `solicitud` (con `solicitud_id`, sin compromiso ni publicación). El CHECK
+  `ck_trabajos_origen_coherente` exige una sola de las dos formas; `uq_trabajos_solicitud` (parcial) permite como máximo
+  un trabajo por solicitud y `fk_trabajos_solicitud_asignada` `(solicitud_id, prestador_tenant_id, prestador_id)` →
+  `solicitudes_servicio (id, prestador_tenant_id, prestador_id)` garantiza en la base que el prestador del trabajo es el
+  prestador que el cliente eligió (y bloquea cambiarlo o borrar la solicitud mientras exista el trabajo).
 - `trabajos` es el agregado de ejecución de un servicio. `tenant_id` es el tenant cliente del compromiso de marketplace;
   `prestador_tenant_id` es el tenant del prestador, publicación y reserva. La unicidad de negocio es `(tenant_id, trabajo_id)`
   y solo existe un trabajo por `(tenant_id, compromiso_id)`.
