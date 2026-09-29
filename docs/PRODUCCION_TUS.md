@@ -588,7 +588,7 @@ Si Mercado Pago rechaza la preferencia con `marketplace_fee` pidiendo el campo `
 
 ### Cómo conecta su cuenta un prestador
 
-`/tus/prestador` → "Cobros con Mercado Pago" → **Conectar Mercado Pago** (Conectando…) → login y autorización en Mercado
+`/prestador/pagos` (también desde el menú del Prestador) → **Conectar Mercado Pago** (Conectando…) → login y autorización en Mercado
 Pago → vuelve a TUS: **Conectado**. TUS guarda solo id de cuenta, scopes, vencimiento y los tokens cifrados. El token dura
 180 días y **se renueva automáticamente** 7 días antes de vencer, en el momento de usarlo. Si la renovación falla y el
 token ya venció, la cuenta pasa a **Requiere reconexión** y los pagos de ese prestador quedan no disponibles hasta que
@@ -676,7 +676,7 @@ adaptador esté configurado.
 ### Prueba sandbox de punta a punta (pendiente de credenciales)
 
 1. `node scripts/dev/mercado-pago-sandbox-check.mjs --oauth` → todo `OK`.
-2. Prestador (usuario vendedor de prueba): conectar Mercado Pago en `/tus/prestador`.
+2. Prestador (usuario vendedor de prueba): conectar Mercado Pago en `/prestador/pagos`.
 3. Flujo del trabajo hasta `completed` con presupuesto aceptado (por ejemplo $50.000).
 4. Cliente (usuario comprador de prueba): "Pagar con Mercado Pago" → pagar con tarjeta de prueba aprobada.
 5. Verificar: la Web muestra "Estamos confirmando tu pago" y luego **Pago confirmado** con el número de Mercado Pago; el

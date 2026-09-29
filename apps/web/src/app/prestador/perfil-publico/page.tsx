@@ -15,6 +15,7 @@ export default function Page(): React.ReactNode {
     <SitePage logo={<TusLogo variant="header" />}>
       <div className={styles.narrow}>
         <h1 className={styles.title}>Mi perfil público</h1>
+        <nav aria-label="Prestador"><a href="/prestador/solicitudes">Solicitudes</a> · <a href="/trabajos">Mis trabajos</a> · <a href="/prestador/pagos">Pagos</a></nav>
         <p className={styles.subtitle}>Cómo te encuentran los clientes en “Buscar trabajador” y en el asistente de TUS.</p>
         <div style={{ marginTop: 24 }}>
           <ProviderPublicProfile />

@@ -14,7 +14,7 @@ import { TusActionButton, TusStateMessage } from '../../app/tus/tus-ui'
 // WEB-09D: the provider links their own Mercado Pago account (OAuth). TUS never shows or
 // receives tokens in the browser; it only redirects to Mercado Pago's authorization page.
 
-const STATUS_COPY: Record<string, string> = {
+export const STATUS_COPY: Record<string, string> = {
   not_connected: 'No conectado',
   connected: 'Conectado',
   revoked: 'Desconectado',
@@ -22,7 +22,7 @@ const STATUS_COPY: Record<string, string> = {
   error: 'Error: la cuenta de Mercado Pago cambió; volvé a conectarla',
 }
 
-const CALLBACK_ERRORS: Record<string, string> = {
+export const CALLBACK_ERRORS: Record<string, string> = {
   INVALID_STATE: 'La autorización venció o ya fue usada. Iniciá la conexión otra vez.',
   PROVIDER_NOT_CONFIGURED: 'TUS todavía no tiene Mercado Pago configurado.',
   PROVIDER_OAUTH_FAILED: 'Mercado Pago no confirmó la autorización. Reintentá.',
@@ -172,7 +172,7 @@ export function CuentaCobro({
   )
 }
 
-function isMercadoPagoAuthorizationUrl(value: string): boolean {
+export function isMercadoPagoAuthorizationUrl(value: string): boolean {
   try {
     const url = new URL(value)
     return url.protocol === 'https:' && /(^|\.)mercadopago\.com(\.[a-z]{2})?$/u.test(url.hostname)

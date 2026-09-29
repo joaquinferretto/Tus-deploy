@@ -270,7 +270,7 @@ test('WEB-09D provider account linking uses single-use state, PKCE S256 and encr
   assert.equal(result.connected.status, 'connected')
   assert.equal(
     result.connected.redirectUrl,
-    'https://web.example.test/tus/prestador?mercadoPago=connected'
+    'https://web.example.test/prestador/pagos?mercadoPago=connected'
   )
   assert.equal(result.replayed.reason, 'INVALID_STATE')
   assert.equal(result.account.status, 'connected')

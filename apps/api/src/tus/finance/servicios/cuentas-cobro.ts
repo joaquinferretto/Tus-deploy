@@ -501,7 +501,7 @@ export class ServicioCuentasCobro {
       status,
       reason,
       redirectUrl: webBaseUrl
-        ? `${webBaseUrl.replace(/\/+$/u, '')}/tus/prestador?mercadoPago=${status}${reason ? `&reason=${encodeURIComponent(reason)}` : ''}`
+        ? `${webBaseUrl.replace(/\/+$/u, '')}/prestador/pagos?mercadoPago=${status}${reason ? `&reason=${encodeURIComponent(reason)}` : ''}`
         : '',
     })
     if (!this.disponible) return redirect('error', 'PROVIDER_NOT_CONFIGURED')
