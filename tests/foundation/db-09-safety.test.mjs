@@ -156,8 +156,9 @@ test('DB-09-SAFETY every logical uniqueness has a legacy and a service variant t
     InstantaneaComision: ['[tenantId, compromisoId]', '[tenantId, obligacionId]'],
     MovimientoContable: ['[tenantId, entradaId]'],
     LiquidacionServicio: ['[tenantId, obligacionId]'],
+    // W09-05: one obligation per work AND part (total | sena | saldo).
     ObligacionPagoServicio: [
-      '[tenantId, trabajoId]',
+      '[tenantId, trabajoId, tramo]',
       '[tenantId, obligacionId, prestadorTenantId, trabajoId]',
     ],
   }
