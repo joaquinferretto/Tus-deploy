@@ -2376,3 +2376,23 @@ Table barrios {
     (zona_id) [name: 'ix_barrios_zona']
   }
 }
+
+// ============================================================
+// CHAT PRIVADO DEL TRABAJO (20261011100000_tus_mensajes_trabajo)
+// ============================================================
+Table mensajes_trabajo {
+  id varchar [pk, note: 'mensaje-<trabajo>-<clientMessageId>: un reintento choca con la PK y no duplica']
+  tenant_id varchar [note: 'tenant cliente del trabajo']
+  trabajo_id varchar
+  prestador_tenant_id varchar [note: 'tenant del prestador del trabajo (FK compuesta)']
+  autor_cuenta_id varchar [note: 'FK "Account"(id); cuenta de la sesión que escribió']
+  autor_rol varchar [note: 'CHECK: cliente | prestador; derivado de la sesión, nunca del body']
+  texto varchar [note: 'CHECK: 1..2000 caracteres; se permiten datos de contacto (chat privado post-match); nunca se loguea']
+  fecha_creacion timestamp
+  indexes {
+    (tenant_id, trabajo_id, fecha_creacion, id) [name: 'ix_mensajes_trabajo_conversacion']
+  }
+  Note: 'Append-only: la aplicación nunca actualiza ni borra mensajes.'
+}
+Ref: mensajes_trabajo.(tenant_id, trabajo_id, prestador_tenant_id) > trabajos.(tenant_id, trabajo_id, prestador_tenant_id) // fk_mensajes_trabajo_trabajo (uq_trabajos_tenant_trabajo_prestador)
+Ref: mensajes_trabajo.autor_cuenta_id > "Account".id // fk_mensajes_trabajo_autor

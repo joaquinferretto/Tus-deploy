@@ -16,6 +16,9 @@ import { createPrismaTusApplication } from './tus/composition/index.ts'
 import { crearModuloWhatsappPrisma } from './tus/asistente/prisma-composicion.ts'
 import { crearServicioSolicitudes } from './tus/solicitudes/composicion.ts'
 import { crearRouterSolicitudes } from './tus/solicitudes/http.ts'
+import { crearRouterMensajesTrabajo } from './tus/work/http-mensajes.ts'
+import { AlmacenMensajesTrabajoPrisma, ServicioMensajesTrabajo, type ClientePrismaMensajesTrabajo } from './tus/work/mensajes.ts'
+import { PrismaTrabajoStore } from './tus/adapters/prisma-work.ts'
 import type { ClientePrismaSolicitudes } from './tus/solicitudes/almacenes.ts'
 import { crearServicioDirectorio } from './tus/directorio/composicion.ts'
 import { crearRouterDirectorio } from './tus/directorio/http.ts'
@@ -206,6 +209,15 @@ export function createApp(options: CreateAppOptions = {}): Application {
     options.providerRoutesEnabled ?? process.env['TUS_PROVIDER_ACTIONS_ENABLED'] === 'true'
   if (tusRoutesEnabled) {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
+    // Private chat of each work (client <-> chosen provider), authorized against the work.
+    const trabajosAccesibles = new PrismaTrabajoStore(prisma)
+    app.use(crearRouterMensajesTrabajo({
+      sessions,
+      servicio: new ServicioMensajesTrabajo({
+        mensajes: new AlmacenMensajesTrabajoPrisma(prisma as unknown as ClientePrismaMensajesTrabajo),
+        trabajos: { buscarAccesible: (input) => trabajosAccesibles.findAccessible(input) },
+      }),
+    }))
     app.use(crearRouterDirectorio({ servicio: directorio, sessions, adminSave: crearAltaPrestadorAdmin({ accounts: auth.store, application, directorio, createManagedAccount: (input) => auth.service.createManagedProviderAccount(input) }) }))
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
     // Platform administration panel (read views + publish/hide a profile), behind the MFA gate.

@@ -37,6 +37,7 @@ model Account {
   identidadesExternas IdentidadExterna[]
   solicitudesServicio SolicitudServicio[]
   mfaEnrollments     MfaEnrollment[]
+  mensajesTrabajo    MensajeTrabajo[]
 
   @@unique([userId, tenantId])
   @@index([tenantId])
@@ -756,8 +757,10 @@ model Trabajo {
   evidencias          EvidenciaTrabajo[]
   auditorias          AuditoriaTrabajo[]
   obligacionesPago    ObligacionPagoServicio[]
+  mensajes            MensajeTrabajo[]
 
   @@unique([tenantId, trabajoId], map: "uq_trabajos_tenant_trabajo")
+  @@unique([tenantId, trabajoId, prestadorTenantId], map: "uq_trabajos_tenant_trabajo_prestador")
   @@unique([tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], map: "uq_trabajos_identidad_financiera")
   @@unique([tenantId, compromisoId], map: "uq_trabajos_tenant_compromiso")
   @@unique([tenantId, presupuestoAceptadoId, presupuestoAceptadoVersion], map: "uq_trabajos_tenant_presupuesto_aceptado")
@@ -3049,4 +3052,23 @@ model Barrio {
   @@index([localidadId], map: "ix_barrios_localidad")
   @@index([zonaId], map: "ix_barrios_zona")
   @@map("barrios")
+}
+
+// Private chat of a work between its client and its provider (append-only).
+model MensajeTrabajo {
+  id                String   @id(map: "mensajes_trabajo_pkey")
+  tenantId          String   @map("tenant_id")
+  trabajoId         String   @map("trabajo_id")
+  prestadorTenantId String   @map("prestador_tenant_id")
+  autorCuentaId     String   @map("autor_cuenta_id")
+  // cliente | prestador (CHECK ck_mensajes_trabajo_rol); derived from the session, never the body.
+  autorRol          String   @map("autor_rol")
+  texto             String   @map("texto")
+  fechaCreacion     DateTime @map("fecha_creacion")
+
+  trabajo Trabajo @relation(fields: [tenantId, trabajoId, prestadorTenantId], references: [tenantId, trabajoId, prestadorTenantId], onDelete: Restrict, onUpdate: NoAction, map: "fk_mensajes_trabajo_trabajo")
+  autor   Account @relation(fields: [autorCuentaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_mensajes_trabajo_autor")
+
+  @@index([tenantId, trabajoId, fechaCreacion, id], map: "ix_mensajes_trabajo_conversacion")
+  @@map("mensajes_trabajo")
 }

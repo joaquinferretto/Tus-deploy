@@ -711,6 +711,17 @@ ser una operación del trabajo.
 
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
+### 7.9 bis Chat privado del trabajo
+
+- `mensajes_trabajo` (`20261011100000_tus_mensajes_trabajo`, aditiva): conversación privada entre el cliente y el
+  prestador de un trabajo, después del match. No es WhatsApp (que sigue siendo contacto ↔ número oficial de TUS).
+- La FK compuesta `(tenant_id, trabajo_id, prestador_tenant_id)` → `trabajos` (índice único
+  `uq_trabajos_tenant_trabajo_prestador`, superconjunto de `uq_trabajos_tenant_trabajo`) impide que un mensaje pertenezca a
+  la conversación de otro prestador; `autor_cuenta_id` es una cuenta real.
+- `autor_rol` (`cliente` | `prestador`) lo deriva la API del tenant de la sesión frente al trabajo; `texto` tiene entre 1 y
+  2000 caracteres y admite datos de contacto (las reglas anti-contacto de los textos públicos no aplican). Append-only;
+  el id incluye el `clientMessageId` del navegador para que un reintento no duplique el mensaje.
+
 ### 7.10 Facturación
 
 `facturas` (append-only) ← `lineas_factura` (FK física actual compuesta) ← `notas_credito` / `reintegros_facturacion` / `movimientos_contables_facturacion` (FKs físicas actuales RESTRICT). `suscripciones` (`plan_id` FK física actual, `cliente_id` externa). `perfiles_fiscales`/`cuentas_facturacion` (`parte_id` polimórfica). `gestion_mora` FK física actual a `suscripciones`. `secuencias_numeracion` 1:1 por tenant.
