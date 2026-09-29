@@ -213,7 +213,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
     // Private chat of each work (client <-> chosen provider), authorized against the work.
     const trabajosAccesibles = new PrismaTrabajoStore(prisma)
-    app.use(crearRouterResumenTrabajo({ sessions, servicio: new ServicioResumenTrabajo(trabajosAccesibles, new PrismaWorkSummarySource(prisma as unknown as ConstructorParameters<typeof PrismaWorkSummarySource>[0])) }))
+    app.use(crearRouterResumenTrabajo({ sessions, servicio: new ServicioResumenTrabajo(trabajosAccesibles, new PrismaWorkSummarySource(prisma as unknown as ConstructorParameters<typeof PrismaWorkSummarySource>[0]), Date.now, application.serviceFinance ?? null) }))
     app.use(crearRouterMensajesTrabajo({
       sessions,
       servicio: new ServicioMensajesTrabajo({

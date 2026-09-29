@@ -86,7 +86,11 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
     if (input.commissionMinor < 0n || input.commissionMinor > input.amountMinor)
       throw new ErrorProveedorPagos('PROVIDER_REJECTED', 'marketplace fee is outside the amount')
     const token = await this.tokenVendedor(input.prestadorTenantId)
-    const back = `${this.config.webBaseUrl.replace(/\/+$/u, '')}/tus/compromisos?pago=retorno&trabajo=${encodeURIComponent(input.trabajoId ?? '')}`
+    const path =
+      input.returnPath && /^\/[A-Za-z0-9/_.?=&%-]*$/u.test(input.returnPath) && !input.returnPath.startsWith('//')
+        ? input.returnPath
+        : `/tus/compromisos?pago=retorno&trabajo=${encodeURIComponent(input.trabajoId ?? '')}`
+    const back = `${this.config.webBaseUrl.replace(/\/+$/u, '')}${path}`
     const body = {
       items: [
         {

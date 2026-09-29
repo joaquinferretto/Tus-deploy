@@ -284,6 +284,13 @@ export interface TrabajoTransactionRepositories {
   reservations?: TrabajoReservaPort
 }
 
+// Online payments of a request-born work (deposit + balance, decision 2026-09-29). Null when the
+// work has no accepted budget or is not request-born. `online` = Mercado Pago available now.
+// `required`: platform payments enabled (deposit/balance mandatory); `online`: chargeable now.
+export interface PuertoPagosTrabajo {
+  estado(work: Trabajo): Promise<{ required: boolean; online: boolean; depositPaid: boolean } | null>
+}
+
 export interface TrabajoTransactionPort {
   run<TValue>(
     operation: (repositories: TrabajoTransactionRepositories) => Promise<TValue>
@@ -314,10 +321,21 @@ interface HuellaOperacion {
 export class ServicioTrabajo {
   private readonly transaction: TrabajoTransactionPort
   private readonly now: () => number
+  private pagos: PuertoPagosTrabajo | null = null
 
   constructor(transaction: TrabajoTransactionPort, now: () => number = () => Date.now()) {
     this.transaction = transaction
     this.now = now
+  }
+
+  // Wired after the finance module exists (it needs this service to complete works).
+  conPagos(pagos: PuertoPagosTrabajo): this {
+    this.pagos = pagos
+    return this
+  }
+
+  private async estadoPagos(work: Trabajo) {
+    return work.origin === 'solicitud' && this.pagos ? this.pagos.estado(work) : null
   }
 
   async acceptCommitment(
@@ -695,6 +713,9 @@ export class ServicioTrabajo {
       ensureProvider(work, input)
       if (!work.budgetRequired)
         throw new TrabajoError(409, 'BUDGET_NOT_REQUIRED', 'publication does not require a budget')
+      // Request-born works are paid in two halves (deposit + balance): both must be positive.
+      if (work.origin === 'solicitud' && BigInt(input.totalMinor) < 2n)
+        throw new TrabajoError(400, 'BUDGET_TOO_SMALL', 'the budget must allow a deposit and a balance')
       if (
         !hasWorkStatus(work.status, [
           ESTADOS_TRABAJO.SOLICITADO,
@@ -917,6 +938,17 @@ export class ServicioTrabajo {
         throw new TrabajoError(409, 'INVALID_STATE', 'work cannot start in the current state')
       if (work.version !== input.expectedVersion)
         throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
+      // With platform payments enabled a request-born work starts only after the deposit. A
+      // provider that cannot be paid (no Mercado Pago link) is blocked, never exempted.
+      const pagos = await this.estadoPagos(work)
+      if (pagos?.required && !pagos.depositPaid)
+        throw pagos.online
+          ? new TrabajoError(409, 'DEPOSIT_REQUIRED', 'the deposit must be paid before the work can start')
+          : new TrabajoError(
+              409,
+              'PROVIDER_PAYMENT_ACCOUNT_REQUIRED',
+              'the provider must link Mercado Pago before this work can be charged'
+            )
       const updated = await this.transition(
         repositories,
         input,
@@ -940,16 +972,74 @@ export class ServicioTrabajo {
         throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
       if (work.status !== ESTADOS_TRABAJO.EN_PROGRESO)
         throw new TrabajoError(409, 'INVALID_STATE', 'only active work can be completed')
+      if (work.finishedAt)
+        throw new TrabajoError(
+          409,
+          'ALREADY_FINISHED',
+          'the work is finished and waits for the final payment'
+        )
+      // With online payments available, finishing a request-born work waits for the balance:
+      // the approved balance completes it (completarPorPagoFinal).
+      const pagos = await this.estadoPagos(work)
+      if (pagos?.required) {
+        const finished: Trabajo = {
+          ...work,
+          finishedAt: input.createdAt,
+          version: work.version + 1,
+          updatedAt: input.createdAt,
+        }
+        const persisted = await repositories.work.updateWork({
+          tenantId: work.tenantId,
+          trabajoId: work.trabajoId,
+          expectedVersion: work.version,
+          work: finished,
+        })
+        if (!persisted) throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
+        await this.recordChange(repositories, input, persisted, 'work.finished', 'work', persisted.trabajoId, {
+          status: persisted.status,
+          awaiting: 'final_payment',
+        })
+        await this.publish(repositories, persisted, 'tus.work.finished', {})
+        return { work: persisted }
+      }
       const updated = await this.transition(
         repositories,
         input,
-        work,
+        { ...work, finishedAt: input.createdAt },
         ESTADOS_TRABAJO.COMPLETADO,
         'work.completed'
       )
       await this.publish(repositories, updated, 'tus.work.completed', {})
       return { work: updated }
     })
+  }
+
+  // System step inside the FINANCE transaction that approved the balance of a request-born work:
+  // the approved final payment completes it. Idempotent; never touches a cancelled work.
+  async completarPorPagoFinal(
+    repositories: Pick<TrabajoTransactionRepositories, 'work' | 'outbox'>,
+    input: { tenantId: string; trabajoId: string; paymentId: string; correlationId: string; createdAt: string }
+  ): Promise<'completed' | 'already_completed' | 'not_in_progress'> {
+    const work = await repositories.work.findAccessible({ tenantId: input.tenantId, trabajoId: input.trabajoId })
+    if (!work) return 'not_in_progress'
+    if (work.status === ESTADOS_TRABAJO.COMPLETADO) return 'already_completed'
+    if (work.status !== ESTADOS_TRABAJO.EN_PROGRESO) return 'not_in_progress'
+    const context = {
+      tenantId: work.tenantId,
+      actorId: 'system:mercado-pago',
+      correlationId: input.correlationId,
+      createdAt: input.createdAt,
+    }
+    const repos = repositories as TrabajoTransactionRepositories
+    const updated = await this.transition(
+      repos,
+      context,
+      { ...work, finishedAt: work.finishedAt ?? input.createdAt },
+      ESTADOS_TRABAJO.COMPLETADO,
+      'work.completed_after_final_payment'
+    )
+    await this.publish(repos, updated, 'tus.work.completed', { paymentId: input.paymentId })
+    return 'completed'
   }
 
   async cancelWork(input: ComandoTransicionTrabajo): TrabajoMutation<{ work: Trabajo }> {

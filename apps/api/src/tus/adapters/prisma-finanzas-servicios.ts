@@ -7,6 +7,7 @@ import {
   type EstadoObligacionPagoServicio,
   type EstadoPresupuesto,
   type OrigenImporteObligacionServicio,
+  type TramoPagoServicio,
   type Trabajo,
 } from '@factory/contracts'
 import {
@@ -42,6 +43,7 @@ import type {
   RegistroOutboxFinanciero,
   RepositoriosFinanzasServicio,
   ResultadoEventoProveedor,
+  PuertoCierreTrabajoPorPago,
 } from '../finance/servicios/servicio.ts'
 import { isSerializationFailure, isUniqueConstraint, mapTrabajo } from './prisma-work.ts'
 import { asegurarSujetoFinancieroUnico } from '../finance/sujeto.ts'
@@ -167,11 +169,22 @@ export class ObligacionesServicioPrisma implements PuertoObligacionesServicio {
   async buscarPorTrabajo(input: {
     tenantId: string
     trabajoId: string
+    part?: TramoPagoServicio
   }): Promise<ObligacionServicio | null> {
     const row = await this.client.obligacionPagoServicio.findFirst({
-      where: { tenantId: input.tenantId, trabajoId: input.trabajoId },
+      where: { tenantId: input.tenantId, trabajoId: input.trabajoId, tramo: input.part ?? 'total' },
     })
     return row ? mapearObligacion(row) : null
+  }
+
+  async listarPorTrabajo(input: {
+    tenantId: string
+    trabajoId: string
+  }): Promise<ObligacionServicio[]> {
+    const rows = await this.client.obligacionPagoServicio.findMany({
+      where: { tenantId: input.tenantId, trabajoId: input.trabajoId },
+    })
+    return rows.map(mapearObligacion)
   }
 
   async buscar(input: {
@@ -733,7 +746,11 @@ export class ConciliacionesServicioPrisma implements PuertoConciliacionesServici
 }
 
 export class TransaccionFinanzasServicioPrisma implements PuertoTransaccionFinanzasServicio {
-  constructor(protected readonly client: ClientePrismaFinanzasServicio) {}
+  constructor(
+    protected readonly client: ClientePrismaFinanzasServicio,
+    // Completes a request-born work with the same transactional client (balance approved).
+    protected readonly cierreTrabajo?: (client: ClientePrismaFinanzasServicio) => PuertoCierreTrabajoPorPago
+  ) {}
 
   async ejecutar<T>(
     operation: (repositories: RepositoriosFinanzasServicio) => Promise<T>
@@ -758,6 +775,7 @@ export class TransaccionFinanzasServicioPrisma implements PuertoTransaccionFinan
 
   protected repositorios(client: ClientePrismaFinanzasServicio): RepositoriosFinanzasServicio {
     return {
+      ...(this.cierreTrabajo ? { cierreTrabajo: this.cierreTrabajo(client) } : {}),
       identidad: new IdentidadServicioPrisma(client),
       obligaciones: new ObligacionesServicioPrisma(client),
       idempotencia: new IdempotenciaFinancieraPrisma(client),
@@ -786,6 +804,7 @@ export function filaObligacion(obligacion: ObligacionServicio): Fila {
     publicacionId: obligacion.publicacionId,
     compromisoId: obligacion.commitmentId,
     trabajoId: obligacion.trabajoId,
+    tramo: obligacion.part,
     origenImporte: obligacion.amountSource,
     presupuestoId: obligacion.budgetId,
     presupuestoVersion: obligacion.budgetVersion,
@@ -807,9 +826,10 @@ export function mapearObligacion(row: Fila): ObligacionServicio {
     clienteId: texto(row, 'clienteId'),
     prestadorTenantId: texto(row, 'prestadorTenantId'),
     prestadorId: texto(row, 'prestadorId'),
-    publicacionId: texto(row, 'publicacionId'),
-    commitmentId: texto(row, 'compromisoId'),
+    publicacionId: textoNullable(row, 'publicacionId'),
+    commitmentId: textoNullable(row, 'compromisoId'),
     trabajoId: texto(row, 'trabajoId'),
+    part: (textoNullable(row, 'tramo') ?? 'total') as TramoPagoServicio,
     amountSource: texto(row, 'origenImporte') as OrigenImporteObligacionServicio,
     budgetId: textoNullable(row, 'presupuestoId'),
     budgetVersion:

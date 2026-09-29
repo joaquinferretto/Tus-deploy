@@ -23,6 +23,7 @@ import type {
   RegistroEventoProveedor,
   RegistroOutboxFinanciero,
   PuertoIdempotenciaFinanciera,
+  PuertoCierreTrabajoPorPago,
   PuertoIdentidadServicio,
   PuertoObligacionesServicio,
   PuertoTransaccionFinanzasServicio,
@@ -148,9 +149,19 @@ export class AlmacenFinanzasServicioEnMemoria {
   }
 
   obligaciones(): PuertoObligacionesServicio {
+    // One obligation per work and part ('total' | 'sena' | 'saldo').
+    const claveTramo = (tenantId: string, trabajoId: string, part: string | undefined) =>
+      clave(tenantId, `${trabajoId}#${part ?? 'total'}`)
     return {
       buscarPorTrabajo: async (input) =>
-        clonar(this.state.obligaciones.get(clave(input.tenantId, input.trabajoId)) ?? null),
+        clonar(
+          this.state.obligaciones.get(claveTramo(input.tenantId, input.trabajoId, input.part)) ??
+            null
+        ),
+      listarPorTrabajo: async (input) =>
+        [...this.state.obligaciones.values()]
+          .filter((item) => item.tenantId === input.tenantId && item.trabajoId === input.trabajoId)
+          .map((item) => clonar(item)),
       buscar: async (input) =>
         clonar(
           [...this.state.obligaciones.values()].find(
@@ -160,13 +171,13 @@ export class AlmacenFinanzasServicioEnMemoria {
           ) ?? null
         ),
       crear: async (obligacion) => {
-        const key = clave(obligacion.tenantId, obligacion.trabajoId)
+        const key = claveTramo(obligacion.tenantId, obligacion.trabajoId, obligacion.part)
         if (this.state.obligaciones.has(key))
-          throw Object.assign(new Error('unique obligation per work'), { code: 'P2002' })
+          throw Object.assign(new Error('unique obligation per work and part'), { code: 'P2002' })
         this.state.obligaciones.set(key, clonar(obligacion))
       },
       actualizar: async ({ obligacion, expectedVersion }) => {
-        const key = clave(obligacion.tenantId, obligacion.trabajoId)
+        const key = claveTramo(obligacion.tenantId, obligacion.trabajoId, obligacion.part)
         const current = this.state.obligaciones.get(key)
         if (!current || current.version !== expectedVersion) return null
         this.state.obligaciones.set(key, clonar(obligacion))
@@ -382,7 +393,8 @@ export class TransaccionFinanzasServicioEnMemoria implements PuertoTransaccionFi
 
   constructor(
     private readonly store: AlmacenFinanzasServicioEnMemoria,
-    private readonly identidad: PuertoIdentidadServicio
+    private readonly identidad: PuertoIdentidadServicio,
+    private readonly cierreTrabajo?: PuertoCierreTrabajoPorPago
   ) {}
 
   async ejecutar<T>(
@@ -407,6 +419,7 @@ export class TransaccionFinanzasServicioEnMemoria implements PuertoTransaccionFi
 
   protected repositorios(): RepositoriosFinanzasServicio {
     return {
+      ...(this.cierreTrabajo ? { cierreTrabajo: this.cierreTrabajo } : {}),
       identidad: this.identidad,
       obligaciones: this.store.obligaciones(),
       idempotencia: this.store.idempotencia(),

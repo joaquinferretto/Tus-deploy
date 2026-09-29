@@ -270,8 +270,9 @@ test('WEB-09A migration is forward-only, additive and keeps a single finance sub
   }
   assert.match(migration, /"ck_obligaciones_pago_monto_no_negativo" CHECK \("monto" >= 0\)/u)
   assert.match(schema, /model ObligacionPagoServicio \{/u)
+  // W09-05 (20261012100000_tus_pago_sena_saldo): one obligation per work AND part (total | sena | saldo).
   assert.match(
     schema,
-    /@@unique\(\[tenantId, trabajoId\], map: "uq_obligaciones_pago_tenant_trabajo"\)/u
+    /@@unique\(\[tenantId, trabajoId, tramo\], map: "uq_obligaciones_pago_tenant_trabajo_tramo"\)/u
   )
 })

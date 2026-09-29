@@ -8,6 +8,7 @@ import type {
   MotivoNoCobrableServicio,
   ObligacionPagoServicio,
   ReembolsoServicio,
+  TramoPagoServicio,
   Trabajo,
   VistaPreviaPagoServicio,
 } from '@factory/contracts'
@@ -36,6 +37,8 @@ import {
 import {
   ErrorFinanzasServicio,
   derivarObligacionServicio,
+  derivarObligacionTramo,
+  montosSenaSaldo,
   huellaSolicitudFinanciera,
   proyectarObligacion,
   resolverIdempotenciaFinanciera,
@@ -83,10 +86,13 @@ export interface PuertoIdentidadServicio {
 }
 
 export interface PuertoObligacionesServicio {
+  // `part` defaults to 'total' (marketplace works).
   buscarPorTrabajo(input: {
     tenantId: string
     trabajoId: string
+    part?: TramoPagoServicio
   }): Promise<ObligacionServicio | null>
+  listarPorTrabajo(input: { tenantId: string; trabajoId: string }): Promise<ObligacionServicio[]>
   buscar(input: { tenantId: string; obligacionId: string }): Promise<ObligacionServicio | null>
   crear(obligacion: ObligacionServicio): Promise<void>
   actualizar(input: {
@@ -174,7 +180,7 @@ export interface RegistroAuditoriaFinanciera {
   tenantId: string
   prestadorTenantId: string
   obligacionId: string
-  resourceType: 'obligation' | 'payment' | 'provider_event' | 'settlement' | 'reconciliation'
+  resourceType: 'obligation' | 'payment' | 'provider_event' | 'settlement' | 'reconciliation' | 'work'
   resourceId: string
   action: string
   origin: 'customer' | 'provider_event' | 'system'
@@ -259,7 +265,42 @@ export interface PuertoConciliacionesServicio {
   registrar(result: ConciliacionServicio & { prestadorTenantId: string }): Promise<void>
 }
 
+// Completes a request-born work when its balance is approved, inside the SAME transaction as the
+// approval (Prisma: same transactional client). Idempotent: an already completed work is a no-op.
+export interface PuertoCierreTrabajoPorPago {
+  completarPorPagoFinal(input: {
+    tenantId: string
+    trabajoId: string
+    paymentId: string
+    correlationId: string
+    createdAt: string
+  }): Promise<'completed' | 'already_completed' | 'not_in_progress'>
+}
+
+// Deposit/balance state of a request-born work with an accepted budget (work summary and the
+// start/finish gates). `required` = the platform has online payments enabled, so the deposit and
+// the balance are mandatory; `online` = it can actually be charged now. A provider without a
+// linked Mercado Pago account (or unverified identity) is `required` but not `online`: the work
+// is BLOCKED, never free. Only a platform-wide switch off keeps the previous behaviour.
+export interface EstadoPagosTrabajoServicio {
+  required: boolean
+  online: boolean
+  unavailableReason: string | null
+  currency: string
+  totalMinor: bigint
+  deposit: { amountMinor: bigint; status: ObligacionServicio['status'] | 'not_created' }
+  balance: { amountMinor: bigint; status: ObligacionServicio['status'] | 'not_created' }
+}
+
+// Availability reasons that belong to ONE provider (the platform itself has payments enabled).
+export const MOTIVOS_PRESTADOR_SIN_COBRO: ReadonlySet<string> = new Set([
+  'PROVIDER_ACCOUNT_NOT_CONNECTED',
+  'PROVIDER_IDENTITY_NOT_VERIFIED',
+])
+
 export interface RepositoriosFinanzasServicio {
+  // Absent in compositions without request-born works (then an approved balance only books money).
+  cierreTrabajo?: PuertoCierreTrabajoPorPago
   identidad: PuertoIdentidadServicio
   obligaciones: PuertoObligacionesServicio
   idempotencia: PuertoIdempotenciaFinanciera
@@ -272,6 +313,15 @@ export interface RepositoriosFinanzasServicio {
   liquidaciones: PuertoLiquidacionesServicio
   conciliaciones: PuertoConciliacionesServicio
   reembolsos: PuertoReembolsosServicio
+}
+
+export interface ResultadoEvaluacionCobro {
+  reason: MotivoNoCobrableServicio | null
+  presupuesto: PresupuestoFinanciero | null
+  publicacion: PublicacionServicioFinanciera | null
+  // Part charged now and its amount (null when nothing can be charged).
+  part: TramoPagoServicio | null
+  amountMinor: bigint | null
 }
 
 // Implementations run the callback in one serializable transaction (Prisma) or one
@@ -313,8 +363,10 @@ export type ResultadoIngestaEvento =
 export interface ResumenFinancieroTrabajoServicio {
   trabajoId: string
   viewer: 'customer' | 'provider'
+  // Request-born works: the latest part (balance, else deposit); `parts` lists both.
   obligation: ObligacionPagoServicio | null
   payments: IntencionPagoServicio[]
+  parts?: { obligation: ObligacionPagoServicio; payments: IntencionPagoServicio[] }[]
   // Provider-only: commission and internal settlement. Customers never receive them.
   settlement?: LiquidacionServicio | null
   commission?: {
@@ -402,6 +454,7 @@ export class ServicioFinanzasServicios {
       const obligation = await repositories.obligaciones.buscarPorTrabajo({
         tenantId: trabajo.tenantId,
         trabajoId: trabajo.trabajoId,
+        part: cobro.part ?? 'total',
       })
       const intents = obligation
         ? await repositories.intenciones.listarPorObligacion({
@@ -441,8 +494,12 @@ export class ServicioFinanzasServicios {
               currency: budget.currency,
             }
           : null,
-        amountMinor: budget && !cobro.reason ? formatMinorUnits(budget.totalMinor) : null,
-        currency: budget && !cobro.reason ? budget.currency : null,
+        part: cobro.part,
+        amountMinor:
+          budget && !cobro.reason && cobro.amountMinor !== null
+            ? formatMinorUnits(cobro.amountMinor)
+            : null,
+        currency: budget && !cobro.reason && cobro.amountMinor !== null ? budget.currency : null,
         payable: notPayableReason === null,
         notPayableReason,
         obligation: obligation
@@ -468,11 +525,7 @@ export class ServicioFinanzasServicios {
   protected async evaluarCobro(
     repositories: RepositoriosFinanzasServicio,
     trabajo: Trabajo
-  ): Promise<{
-    reason: MotivoNoCobrableServicio | null
-    presupuesto: PresupuestoFinanciero | null
-    publicacion: PublicacionServicioFinanciera | null
-  }> {
+  ): Promise<ResultadoEvaluacionCobro> {
     // Request-born works have no listing; their payment path is evaluated separately.
     const publicacion = trabajo.publicacionId
       ? await repositories.identidad.buscarPublicacion({
@@ -489,10 +542,14 @@ export class ServicioFinanzasServicios {
             version: trabajo.acceptedBudgetVersion,
           })
         : null
-    const result = (reason: MotivoNoCobrableServicio | null) => ({
+    if (trabajo.origin === 'solicitud')
+      return this.evaluarCobroSolicitud(repositories, trabajo, presupuesto)
+    const result = (reason: MotivoNoCobrableServicio | null): ResultadoEvaluacionCobro => ({
       reason,
       presupuesto,
       publicacion,
+      part: 'total',
+      amountMinor: presupuesto?.totalMinor ?? null,
     })
     if (!publicacion || publicacion.prestadorId !== trabajo.prestadorId)
       return result('INCONSISTENT_COMMERCIAL_CHAIN')
@@ -512,12 +569,105 @@ export class ServicioFinanzasServicios {
     return result(null)
   }
 
+  // Request-born works (decision 2026-09-29, replaces W09-02 for them): 50% deposit payable once
+  // the budget is accepted; the balance once the deposit is paid and the provider finished.
+  protected async evaluarCobroSolicitud(
+    repositories: RepositoriosFinanzasServicio,
+    trabajo: Trabajo,
+    presupuesto: PresupuestoFinanciero | null
+  ): Promise<ResultadoEvaluacionCobro> {
+    const result = (
+      reason: MotivoNoCobrableServicio | null,
+      part: TramoPagoServicio | null = null,
+      amountMinor: bigint | null = null
+    ): ResultadoEvaluacionCobro => ({ reason, presupuesto, publicacion: null, part, amountMinor })
+    if (trabajo.status === ESTADOS_TRABAJO.CANCELADO) return result('WORK_CANCELLED')
+    if (!trabajo.acceptedBudgetId || !trabajo.acceptedBudgetVersion)
+      return result('BUDGET_REQUIRED')
+    if (
+      !presupuesto ||
+      presupuesto.status !== ESTADOS_PRESUPUESTO.ACEPTADO ||
+      presupuesto.prestadorTenantId !== trabajo.prestadorTenantId
+    )
+      return result('BUDGET_INCONSISTENT')
+    const amounts = montosSenaSaldo(presupuesto.totalMinor)
+    const scope = { tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId }
+    const sena = await repositories.obligaciones.buscarPorTrabajo({ ...scope, part: 'sena' })
+    if (!sena || sena.status === 'pending_payment')
+      return trabajo.status === ESTADOS_TRABAJO.COMPLETADO
+        ? result('OBLIGATION_CLOSED')
+        : result(null, 'sena', amounts.sena)
+    if (sena.status !== 'paid') return result('OBLIGATION_CLOSED')
+    const saldo = await repositories.obligaciones.buscarPorTrabajo({ ...scope, part: 'saldo' })
+    if (saldo?.status === 'paid') return result('ALREADY_PAID')
+    if (saldo && saldo.status !== 'pending_payment') return result('OBLIGATION_CLOSED')
+    if (trabajo.status === ESTADOS_TRABAJO.COMPLETADO) return result('OBLIGATION_CLOSED')
+    if (trabajo.status !== ESTADOS_TRABAJO.EN_PROGRESO || !trabajo.finishedAt)
+      return result('WORK_NOT_FINISHED', 'saldo', amounts.saldo)
+    return result(null, 'saldo', amounts.saldo)
+  }
+
+  // Deposit/balance state of a request-born work already authorized by the caller. Null for
+  // marketplace works and before a budget is accepted.
+  async estadoPagosTrabajo(trabajo: Trabajo): Promise<EstadoPagosTrabajoServicio | null> {
+    const budgetId = trabajo.acceptedBudgetId
+    const budgetVersion = trabajo.acceptedBudgetVersion
+    if (trabajo.origin !== 'solicitud' || !budgetId || !budgetVersion) return null
+    return this.transaction.ejecutar(async (repositories) => {
+      const presupuesto = await repositories.identidad.buscarPresupuesto({
+        tenantId: trabajo.tenantId,
+        trabajoId: trabajo.trabajoId,
+        presupuestoId: budgetId,
+        version: budgetVersion,
+      })
+      if (!presupuesto || presupuesto.status !== ESTADOS_PRESUPUESTO.ACEPTADO) return null
+      const amounts = montosSenaSaldo(presupuesto.totalMinor)
+      const obligations = await repositories.obligaciones.listarPorTrabajo({
+        tenantId: trabajo.tenantId,
+        trabajoId: trabajo.trabajoId,
+      })
+      const sena = obligations.find((item) => item.part === 'sena')
+      const saldo = obligations.find((item) => item.part === 'saldo')
+      const closed =
+        trabajo.status === ESTADOS_TRABAJO.CANCELADO ||
+        trabajo.status === ESTADOS_TRABAJO.COMPLETADO
+      const availability = closed
+        ? { available: false, reason: null }
+        : await this.politica.disponibilidad({
+            prestadorTenantId: trabajo.prestadorTenantId,
+            prestadorId: trabajo.prestadorId,
+            categoria: null,
+          })
+      return {
+        required:
+          availability.available ||
+          (availability.reason !== null && MOTIVOS_PRESTADOR_SIN_COBRO.has(availability.reason)),
+        online: availability.available,
+        unavailableReason: availability.available ? null : (availability.reason ?? null),
+        currency: presupuesto.currency,
+        totalMinor: presupuesto.totalMinor,
+        deposit: {
+          amountMinor: sena?.amountMinor ?? amounts.sena,
+          status: sena?.status ?? 'not_created',
+        },
+        balance: {
+          amountMinor: saldo?.amountMinor ?? amounts.saldo,
+          status: saldo?.status ?? 'not_created',
+        },
+      }
+    })
+  }
+
   // Throws when the work cannot be charged now; used before any financial write.
   protected async exigirCobroDisponible(
     repositories: RepositoriosFinanzasServicio,
     context: ContextoFinanzasServicio,
     trabajoId: string
-  ): Promise<{ publicacion: PublicacionServicioFinanciera | null; trabajo: Trabajo }> {
+  ): Promise<{
+    publicacion: PublicacionServicioFinanciera | null
+    trabajo: Trabajo
+    part: TramoPagoServicio
+  }> {
     const trabajo = await this.requerirTrabajo(repositories, context, trabajoId)
     if (trabajo.tenantId !== context.tenantId)
       throw new ErrorFinanzasServicio(
@@ -526,8 +676,12 @@ export class ServicioFinanzasServicios {
         'only the customer tenant can prepare the payment obligation'
       )
     const cobro = await this.evaluarCobro(repositories, trabajo)
-    if (cobro.reason)
-      throw new ErrorFinanzasServicio(409, cobro.reason, `work is not payable: ${cobro.reason}`)
+    if (cobro.reason || !cobro.part)
+      throw new ErrorFinanzasServicio(
+        409,
+        cobro.reason ?? 'OBLIGATION_CLOSED',
+        `work is not payable: ${cobro.reason ?? 'nothing due'}`
+      )
     const availability = await this.politica.disponibilidad({
       prestadorTenantId: trabajo.prestadorTenantId,
       prestadorId: trabajo.prestadorId,
@@ -539,7 +693,7 @@ export class ServicioFinanzasServicios {
         availability.reason ?? 'PAYMENTS_DISABLED',
         'online payment is not available yet'
       )
-    return { publicacion: cobro.publicacion, trabajo }
+    return { publicacion: cobro.publicacion, trabajo, part: cobro.part }
   }
 
   // Customer command: fixes the payable amount of a work from persisted commercial facts.
@@ -610,8 +764,18 @@ export class ServicioFinanzasServicios {
           status: 'replay',
           ...(idempotency.response as Omit<ResultadoIntencionPago, 'status'>),
         }
-      const { publicacion } = await this.exigirCobroDisponible(repositories, input, input.trabajoId)
-      const obligation = await this.asegurarObligacion(repositories, input, input.trabajoId, key)
+      const { publicacion, part } = await this.exigirCobroDisponible(
+        repositories,
+        input,
+        input.trabajoId
+      )
+      const obligation = await this.asegurarObligacion(
+        repositories,
+        input,
+        input.trabajoId,
+        key,
+        part
+      )
       if (obligation.status !== 'pending_payment')
         throw new ErrorFinanzasServicio(
           409,
@@ -694,6 +858,7 @@ export class ServicioFinanzasServicios {
           status: 'pending',
           metadata: {
             attempt,
+            part: obligation.part,
             amountMinor: intent.amountMinor.toString(10),
             currency: intent.currency,
           },
@@ -745,11 +910,19 @@ export class ServicioFinanzasServicios {
         intent.tenantId,
         intent.obligacionId
       )
-      const publicacion = await repositories.identidad.buscarPublicacion({
-        prestadorTenantId: obligation.prestadorTenantId,
-        publicacionId: obligation.publicacionId,
-      })
-      return { status: 'claimed' as const, intent: claimed, title: publicacion?.nombre ?? null }
+      const publicacion = obligation.publicacionId
+        ? await repositories.identidad.buscarPublicacion({
+            prestadorTenantId: obligation.prestadorTenantId,
+            publicacionId: obligation.publicacionId,
+          })
+        : null
+      const title =
+        obligation.part === 'sena'
+          ? 'Seña (50%) del trabajo TUS'
+          : obligation.part === 'saldo'
+            ? 'Saldo (50%) del trabajo TUS'
+            : (publicacion?.nombre ?? null)
+      return { status: 'claimed' as const, intent: claimed, title, part: obligation.part }
     })
     if (claim.status !== 'claimed')
       return { status: claim.status, payment: proyectarIntencionPago(claim.intent) }
@@ -766,6 +939,10 @@ export class ServicioFinanzasServicios {
         commissionMinor: intent.commission?.commissionMinor ?? null,
         title: claim.title ?? 'Servicio TUS',
         trabajoId: intent.trabajoId,
+        // Request-born works return to their page; the return never confirms a payment.
+        ...(claim.part === 'total'
+          ? {}
+          : { returnPath: `/trabajos/${encodeURIComponent(intent.trabajoId)}?pago=retorno` }),
       })
     } catch (error) {
       failure = error instanceof ErrorProveedorPagos ? error.code : 'PROVIDER_UNAVAILABLE'
@@ -1198,23 +1375,48 @@ export class ServicioFinanzasServicios {
     return this.transaction.ejecutar(async (repositories) => {
       const trabajo = await this.requerirTrabajo(repositories, input, input.trabajoId)
       const viewer = trabajo.tenantId === input.tenantId ? 'customer' : 'provider'
-      const obligation = await repositories.obligaciones.buscarPorTrabajo({
-        tenantId: trabajo.tenantId,
-        trabajoId: trabajo.trabajoId,
-      })
-      const payments = obligation
-        ? await repositories.intenciones.listarPorObligacion({
-            tenantId: obligation.tenantId,
-            obligacionId: obligation.obligacionId,
+      const listPayments = async (item: ObligacionServicio) =>
+        (
+          await repositories.intenciones.listarPorObligacion({
+            tenantId: item.tenantId,
+            obligacionId: item.obligacionId,
           })
-        : []
+        )
+          .sort((left, right) => left.attempt - right.attempt)
+          .map(proyectarIntencionPago)
+      const parts =
+        trabajo.origin === 'solicitud'
+          ? (
+              await repositories.obligaciones.listarPorTrabajo({
+                tenantId: trabajo.tenantId,
+                trabajoId: trabajo.trabajoId,
+              })
+            ).sort((left, right) => (left.part === 'sena' ? -1 : right.part === 'sena' ? 1 : 0))
+          : null
+      const obligation = parts
+        ? (parts.at(-1) ?? null)
+        : await repositories.obligaciones.buscarPorTrabajo({
+            tenantId: trabajo.tenantId,
+            trabajoId: trabajo.trabajoId,
+          })
+      const partViews = parts
+        ? await Promise.all(
+            parts.map(async (item) => ({
+              obligation: proyectarObligacion(item),
+              payments: await listPayments(item),
+            }))
+          )
+        : null
       const summary: ResumenFinancieroTrabajoServicio = {
         trabajoId: trabajo.trabajoId,
         viewer,
         obligation: obligation ? proyectarObligacion(obligation) : null,
-        payments: payments
-          .sort((left, right) => left.attempt - right.attempt)
-          .map(proyectarIntencionPago),
+        payments: partViews
+          ? partViews.flatMap((item) => item.payments)
+          : obligation
+            ? await listPayments(obligation)
+            : [],
+        ...(partViews ? { parts: partViews } : {}),
       }
       if (viewer === 'customer') return summary
       const settlement = obligation
@@ -1421,10 +1623,12 @@ export class ServicioFinanzasServicios {
         )
       // The rule in force when the approval is booked is frozen in the snapshot; later policy
       // changes never touch it.
-      const publicacion = await repositories.identidad.buscarPublicacion({
-        prestadorTenantId: obligation.prestadorTenantId,
-        publicacionId: obligation.publicacionId,
-      })
+      const publicacion = obligation.publicacionId
+        ? await repositories.identidad.buscarPublicacion({
+            prestadorTenantId: obligation.prestadorTenantId,
+            publicacionId: obligation.publicacionId,
+          })
+        : null
       // WEB-09E: an intent created with a checkout carries the commission already sent to the
       // provider; that frozen rule wins over the policy in force today.
       const rule = intent.commission
@@ -1477,6 +1681,28 @@ export class ServicioFinanzasServicios {
         },
       })
       await this.publicarLiquidacion(repositories, settlement, 'tus.service_settlement.held')
+      // The approved balance is what completes a request-born work (same transaction).
+      if (obligation.part === 'saldo' && repositories.cierreTrabajo) {
+        const closed = await repositories.cierreTrabajo.completarPorPagoFinal({
+          tenantId: obligation.tenantId,
+          trabajoId: obligation.trabajoId,
+          paymentId: intent.paymentId,
+          correlationId: `provider-event:${event.eventId}`,
+          createdAt: now,
+        })
+        await this.auditar(repositories, obligation, {
+          resourceType: 'work',
+          resourceId: obligation.trabajoId,
+          action: `work.final_payment_${closed}`,
+          origin: 'provider_event',
+          actorId: ACTOR_PROVEEDOR,
+          correlationId: `provider-event:${event.eventId}`,
+          idempotencyKey: event.eventId,
+          previousStatus: null,
+          status: closed,
+          metadata: { paymentId: intent.paymentId },
+        })
+      }
       return
     }
     if (intent.providerStatus !== 'refunded' && intent.providerStatus !== 'charged_back') return
@@ -1671,7 +1897,8 @@ export class ServicioFinanzasServicios {
     repositories: RepositoriosFinanzasServicio,
     context: ContextoFinanzasServicio,
     trabajoId: string,
-    idempotencyKey: string
+    idempotencyKey: string,
+    part: TramoPagoServicio = 'total'
   ): Promise<ObligacionServicio> {
     const trabajo = await this.requerirTrabajo(repositories, context, trabajoId)
     if (trabajo.tenantId !== context.tenantId)
@@ -1680,6 +1907,8 @@ export class ServicioFinanzasServicios {
         'FORBIDDEN',
         'only the customer tenant can prepare the payment obligation'
       )
+    if (part !== 'total')
+      return this.asegurarObligacionTramo(repositories, context, trabajo, idempotencyKey, part)
     const existing = await repositories.obligaciones.buscarPorTrabajo({
       tenantId: trabajo.tenantId,
       trabajoId: trabajo.trabajoId,
@@ -1749,6 +1978,69 @@ export class ServicioFinanzasServicios {
       metadata: {
         amountSource: obligation.amountSource,
         amountMinor: obligation.amountMinor.toString(10),
+        currency: obligation.currency,
+      },
+    })
+    return obligation
+  }
+
+  protected async asegurarObligacionTramo(
+    repositories: RepositoriosFinanzasServicio,
+    context: ContextoFinanzasServicio,
+    trabajo: Trabajo,
+    idempotencyKey: string,
+    part: 'sena' | 'saldo'
+  ): Promise<ObligacionServicio> {
+    const existing = await repositories.obligaciones.buscarPorTrabajo({
+      tenantId: trabajo.tenantId,
+      trabajoId: trabajo.trabajoId,
+      part,
+    })
+    if (existing) {
+      if (
+        existing.prestadorTenantId !== trabajo.prestadorTenantId ||
+        existing.budgetId !== (trabajo.acceptedBudgetId ?? null) ||
+        existing.budgetVersion !== (trabajo.acceptedBudgetVersion ?? null)
+      )
+        throw new ErrorFinanzasServicio(
+          409,
+          'OBLIGATION_STALE',
+          'payment obligation no longer matches the work'
+        )
+      return existing
+    }
+    const presupuesto =
+      trabajo.acceptedBudgetId && trabajo.acceptedBudgetVersion
+        ? await repositories.identidad.buscarPresupuesto({
+            tenantId: trabajo.tenantId,
+            trabajoId: trabajo.trabajoId,
+            presupuestoId: trabajo.acceptedBudgetId,
+            version: trabajo.acceptedBudgetVersion,
+          })
+        : null
+    const obligation = derivarObligacionTramo({
+      context,
+      trabajo,
+      presupuesto,
+      part,
+      now: this.isoNow(),
+    })
+    await repositories.obligaciones.crear(obligation)
+    await this.auditar(repositories, obligation, {
+      resourceType: 'obligation',
+      resourceId: obligation.obligacionId,
+      action: 'obligation.created',
+      origin: 'customer',
+      actorId: context.actorId,
+      correlationId: context.correlationId,
+      idempotencyKey,
+      previousStatus: null,
+      status: obligation.status,
+      metadata: {
+        part,
+        amountSource: obligation.amountSource,
+        amountMinor: obligation.amountMinor.toString(10),
+        budgetTotalMinor: presupuesto?.totalMinor.toString(10) ?? null,
         currency: obligation.currency,
       },
     })

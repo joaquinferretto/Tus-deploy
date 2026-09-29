@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client'
-import type { Trabajo, WorkActions, WorkSummary } from '@factory/contracts'
+import type { Trabajo, WorkActions, WorkPayment, WorkSummary } from '@factory/contracts'
 import { TrabajoError, type TrabajoStorePort } from './index.ts'
 
 export function accionesTrabajo(
@@ -7,7 +7,8 @@ export function accionesTrabajo(
   role: WorkSummary['role'],
   budget: WorkSummary['budget'],
   permissions: readonly string[],
-  now: number
+  now: number,
+  payment: WorkPayment | null = null
 ): WorkActions {
   const write = permissions.some((p) => ['tus:work:write', 'tus:marketplace:write'].includes(p))
   const provider = role === 'prestador' && write
@@ -17,12 +18,19 @@ export function accionesTrabajo(
     work.status === 'budget_pending' &&
     budget?.status === 'issued' &&
     (!budget.validUntil || Date.parse(budget.validUntil) > now)
+  // Online payments (request-born works): the deposit gates the start; after the provider finishes,
+  // the balance completes the work. Without online payments nothing is gated.
+  const online = payment?.online === true
+  const required = payment?.required === true
+  const depositPaid = payment?.deposit.status === 'paid'
+  const client = role === 'cliente' && permissions.some((p) => ['tus:checkout', 'tus:work:accept'].includes(p))
   return {
     canStart:
       provider &&
       ['requested', 'in_diagnosis', 'accepted'].includes(work.status) &&
-      (!work.budgetRequired || work.status === 'accepted'),
-    canComplete: provider && work.status === 'in_progress',
+      (!work.budgetRequired || work.status === 'accepted') &&
+      !(required && !depositPaid),
+    canComplete: provider && work.status === 'in_progress' && !work.finishedAt,
     // The existing mutation authorizes only the assigned provider, including active work.
     canCancel: provider && !['completed', 'cancelled'].includes(work.status),
     canCreateBudget:
@@ -32,7 +40,32 @@ export function accionesTrabajo(
     canAcceptBudget: Boolean(decide),
     canRejectBudget: Boolean(decide),
     canSendMessage: permissions.includes('tus:marketplace:write'),
+    canPayDeposit:
+      client &&
+      online &&
+      ['accepted', 'in_progress'].includes(work.status) &&
+      ['not_created', 'pending_payment'].includes(payment?.deposit.status ?? ''),
+    canPayBalance:
+      client &&
+      online &&
+      depositPaid &&
+      work.status === 'in_progress' &&
+      Boolean(work.finishedAt) &&
+      ['not_created', 'pending_payment'].includes(payment?.balance.status ?? ''),
   }
+}
+
+// Deposit/balance state from the finance module (request-born works, detail only).
+export interface PagosResumenTrabajo {
+  estadoPagosTrabajo(work: Trabajo): Promise<{
+    required: boolean
+    online: boolean
+    unavailableReason: string | null
+    currency: string
+    totalMinor: bigint
+    deposit: { amountMinor: bigint; status: WorkPayment['deposit']['status'] }
+    balance: { amountMinor: bigint; status: WorkPayment['balance']['status'] }
+  } | null>
 }
 
 export type WorkEnrichment = Pick<WorkSummary, 'request' | 'budget'> & {
@@ -144,7 +177,8 @@ export class ServicioResumenTrabajo {
   constructor(
     private readonly store: Pick<TrabajoStorePort, 'listAccessible' | 'findAccessible'>,
     private readonly source: WorkSummarySource,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly pagos: PagosResumenTrabajo | null = null
   ) {}
 
   async listar(
@@ -163,13 +197,26 @@ export class ServicioResumenTrabajo {
   ): Promise<WorkSummary> {
     const work = await this.store.findAccessible({ tenantId, trabajoId: id })
     if (!work) throw new TrabajoError(404, 'NOT_FOUND', 'work not found')
-    return (await this.project([work], tenantId, permissions))[0]!
+    const estado = this.pagos ? await this.pagos.estadoPagosTrabajo(work) : null
+    const payment: WorkPayment | null = estado
+      ? {
+          required: estado.required,
+          online: estado.online,
+          unavailableReason: estado.unavailableReason,
+          currency: estado.currency,
+          totalMinor: String(estado.totalMinor),
+          deposit: { amountMinor: String(estado.deposit.amountMinor), status: estado.deposit.status },
+          balance: { amountMinor: String(estado.balance.amountMinor), status: estado.balance.status },
+        }
+      : null
+    return (await this.project([work], tenantId, permissions, payment))[0]!
   }
 
   private async project(
     works: Trabajo[],
     tenantId: string,
-    permissions: readonly string[]
+    permissions: readonly string[],
+    payment: WorkPayment | null = null
   ): Promise<WorkSummary[]> {
     const accessible = works.filter(
       (w) => w.tenantId === tenantId || w.prestadorTenantId === tenantId
@@ -187,6 +234,7 @@ export class ServicioResumenTrabajo {
         status: w.status,
         version: w.version,
         budgetRequired: w.budgetRequired,
+        finishedAt: w.finishedAt ?? null,
         createdAt: w.createdAt,
         updatedAt: w.updatedAt,
         title: e?.request?.title ?? 'Trabajo de servicio',
@@ -197,7 +245,8 @@ export class ServicioResumenTrabajo {
             : { displayName: e?.customerName ?? 'Cliente', profession: null },
         request: e?.request ?? null,
         budget,
-        actions: accionesTrabajo(w, role, budget, permissions, this.now()),
+        payment,
+        actions: accionesTrabajo(w, role, budget, permissions, this.now(), payment),
       }
     })
   }

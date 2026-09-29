@@ -138,6 +138,8 @@ export interface SolicitudCheckout {
   commissionMinor?: bigint | null
   title?: string
   trabajoId?: string
+  // Web path the browser returns to (default: the marketplace workspace). Never a confirmation.
+  returnPath?: string
 }
 
 export interface ResultadoCheckout {

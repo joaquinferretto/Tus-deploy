@@ -289,6 +289,42 @@ test(
       await page.getByRole('button', { name: 'Crear presupuesto', exact: true }).click()
       await page.getByText('Esperando decisión del Cliente · Versión 1').waitFor()
       assert.equal(calls.find((c) => c.path.endsWith('/budgets')).body.totalMinor, '12050')
+      // FASE7: deposit/balance block. Provider never sees pay buttons; a provider without Mercado
+      // Pago is explained, not skipped; the client pays with an intent key and no amount.
+      const payment = { required: true, online: true, unavailableReason: null, currency: 'ARS', totalMinor: '100001', deposit: { amountMinor: '50001', status: 'not_created' }, balance: { amountMinor: '50000', status: 'not_created' } }
+      work = { ...work, role: 'prestador', status: 'accepted', budget: { ...work.budget, status: 'accepted' }, payment, actions: { ...noActions } }
+      await page.evaluate((w) => window.mount('detail', w), work)
+      await page.getByText('Podés iniciar el trabajo cuando se acredite la seña.').waitFor()
+      assert.equal(await page.getByRole('button', { name: /Pagar/u }).count(), 0)
+      work = { ...work, payment: { ...payment, online: false, unavailableReason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' } }
+      await page.evaluate((w) => window.mount('detail', w), { ...work, role: 'cliente' })
+      await page.getByText('El prestador debe conectar Mercado Pago antes de poder cobrar este trabajo.').waitFor()
+      await page.route('https://www.mercadopago.com.ar/**', (route) => route.fulfill({ contentType: 'text/html', body: '<p>checkout</p>' }))
+      const checkouts = []
+      await page.route('https://tus.test/tus/v1/work/**', (route) => {
+        checkouts.push({ body: route.request().postDataJSON(), key: route.request().headers()['idempotency-key'] })
+        return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ status: 'created', checkoutUrl: 'https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=x', payment: { paymentId: 'p1', providerStatus: 'pending', dispatchStatus: 'dispatched' } }) })
+      })
+      work = { ...work, role: 'cliente', payment, actions: { ...noActions, canPayDeposit: true } }
+      await page.evaluate((w) => window.mount('detail', w), work)
+      await page.getByText(/Seña: \$\s?500,01 · Pendiente/u).waitFor()
+      await page.getByRole('button', { name: 'Pagar seña con Mercado Pago', exact: true }).click()
+      await page.waitForURL('https://www.mercadopago.com.ar/**')
+      assert.equal(checkouts.length, 1)
+      assert.deepEqual(checkouts[0].body, {})
+      assert.match(checkouts[0].key, /^w1:deposit:/u)
+      // Back from Mercado Pago the page only observes; it never confirms the payment itself.
+      await page.goto('https://tus.test/?pago=retorno')
+      await page.addStyleTag({ content: output.outputFiles.find((f) => f.path.endsWith('.css')).text })
+      await page.addScriptTag({ content: output.outputFiles.find((f) => f.path.endsWith('.js')).text })
+      work = { ...work, actions: { ...noActions } }
+      await page.evaluate((w) => window.mount('detail', w), work)
+      await page.getByText('Estamos confirmando tu pago con Mercado Pago. Esta pantalla se actualiza sola.').waitFor()
+      assert.equal(checkouts.length, 1)
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+        true
+      )
       assert.equal(
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
         true

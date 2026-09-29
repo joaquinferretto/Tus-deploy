@@ -122,6 +122,7 @@ export class PrismaTrabajoStore implements TrabajoStorePort {
         version: input.work.version,
         presupuestoAceptadoId: input.work.acceptedBudgetId ?? null,
         presupuestoAceptadoVersion: input.work.acceptedBudgetVersion ?? null,
+        terminadoEn: input.work.finishedAt ? new Date(input.work.finishedAt) : null,
         fechaActualizacion: new Date(input.work.updatedAt),
       },
     })
@@ -635,6 +636,7 @@ export function mapTrabajo(row: Record<string, unknown>): Trabajo {
       row['presupuestoAceptadoVersion'] === null || row['presupuestoAceptadoVersion'] === undefined
         ? null
         : numberValue(row, 'presupuestoAceptadoVersion'),
+    finishedAt: row['terminadoEn'] ? dateValue(row, 'terminadoEn') : null,
     createdAt: dateValue(row, 'fechaCreacion'),
     updatedAt: dateValue(row, 'fechaActualizacion'),
   }

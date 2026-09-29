@@ -11,6 +11,7 @@ import {
   type EstadoPresupuesto,
   type ObligacionPagoServicio,
   type OrigenImporteObligacionServicio,
+  type TramoPagoServicio,
   type Trabajo,
 } from '@factory/contracts'
 
@@ -76,9 +77,11 @@ export interface ObligacionServicio {
   clienteId: string
   prestadorTenantId: string
   prestadorId: string
-  publicacionId: string
-  commitmentId: string
+  // Null for the deposit/balance of a request-born work (no marketplace chain).
+  publicacionId: string | null
+  commitmentId: string | null
   trabajoId: string
+  part: TramoPagoServicio
   amountSource: OrigenImporteObligacionServicio
   budgetId: string | null
   budgetVersion: number | null
@@ -108,8 +111,84 @@ const ESTADOS_TRABAJO_PRECIO_FIJO = new Set<string>([
   ESTADOS_TRABAJO.COMPLETADO,
 ])
 
-export function identificadorObligacion(trabajoId: string): string {
-  return `obligacion-${trabajoId}`
+export function identificadorObligacion(
+  trabajoId: string,
+  part: TramoPagoServicio = 'total'
+): string {
+  return part === 'total' ? `obligacion-${trabajoId}` : `obligacion-${trabajoId}-${part}`
+}
+
+// Deposit and balance of a request-born work: the deposit is half of the accepted budget rounded
+// up to the cent, the balance the exact rest, so both always add up to the total.
+export function montosSenaSaldo(totalMinor: bigint): { sena: bigint; saldo: bigint } {
+  if (totalMinor < 0n)
+    throw new ErrorFinanzasServicio(409, 'INVALID_AMOUNT', 'budget total cannot be negative')
+  const sena = (totalMinor + 1n) / 2n
+  return { sena, saldo: totalMinor - sena }
+}
+
+// Deposit ('sena') or balance ('saldo') obligation of a request-born work. The only monetary
+// authority is the accepted, versioned budget persisted for that work.
+export function derivarObligacionTramo(input: {
+  context: ContextoFinanzasServicio
+  trabajo: Trabajo
+  presupuesto: PresupuestoFinanciero | null
+  part: 'sena' | 'saldo'
+  now: string
+}): ObligacionServicio {
+  const { trabajo, presupuesto } = input
+  if (trabajo.origin !== 'solicitud' || !trabajo.solicitudId)
+    throw new ErrorFinanzasServicio(
+      409,
+      'INCONSISTENT_COMMERCIAL_CHAIN',
+      'deposit and balance only apply to request-born works'
+    )
+  if (trabajo.status === ESTADOS_TRABAJO.CANCELADO)
+    throw new ErrorFinanzasServicio(
+      409,
+      'WORK_CANCELLED',
+      'cancelled work cannot produce a payment obligation'
+    )
+  if (
+    !trabajo.acceptedBudgetId ||
+    !trabajo.acceptedBudgetVersion ||
+    !presupuesto ||
+    presupuesto.presupuestoId !== trabajo.acceptedBudgetId ||
+    presupuesto.version !== trabajo.acceptedBudgetVersion ||
+    presupuesto.trabajoId !== trabajo.trabajoId ||
+    presupuesto.tenantId !== trabajo.tenantId ||
+    presupuesto.prestadorTenantId !== trabajo.prestadorTenantId ||
+    presupuesto.status !== ESTADOS_PRESUPUESTO.ACEPTADO
+  )
+    throw new ErrorFinanzasServicio(
+      409,
+      'BUDGET_NOT_ACCEPTED',
+      'an accepted budget is required before a payment obligation exists'
+    )
+  const money = createNonNegativeMoney(presupuesto.currency, presupuesto.totalMinor)
+  const amounts = montosSenaSaldo(money.minor)
+  return {
+    obligacionId: identificadorObligacion(trabajo.trabajoId, input.part),
+    tenantId: trabajo.tenantId,
+    clienteId: trabajo.clienteId ?? trabajo.tenantId,
+    prestadorTenantId: trabajo.prestadorTenantId,
+    prestadorId: trabajo.prestadorId,
+    publicacionId: null,
+    commitmentId: null,
+    trabajoId: trabajo.trabajoId,
+    part: input.part,
+    amountSource: ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRESUPUESTO_ACEPTADO,
+    budgetId: presupuesto.presupuestoId,
+    budgetVersion: presupuesto.version,
+    amountMinor: input.part === 'sena' ? amounts.sena : amounts.saldo,
+    currency: money.currency,
+    status: ESTADOS_OBLIGACION_PAGO_SERVICIO.PENDIENTE_PAGO,
+    version: 1,
+    actorId: input.context.actorId,
+    correlationId: input.context.correlationId,
+    createdAt: input.now,
+    updatedAt: input.now,
+  }
 }
 
 // Validates the whole chain Publicacion -> CompromisoMercadoServicios -> Trabajo -> Presupuesto
@@ -168,6 +247,7 @@ export function derivarObligacionServicio(input: {
     publicacionId: publicacion.publicacionId,
     commitmentId: compromiso.commitmentId,
     trabajoId: trabajo.trabajoId,
+    part: 'total' as const,
     status: ESTADOS_OBLIGACION_PAGO_SERVICIO.PENDIENTE_PAGO,
     version: 1,
     actorId: input.context.actorId,
@@ -273,6 +353,7 @@ export function proyectarObligacion(obligacion: ObligacionServicio): ObligacionP
     publicacionId: obligacion.publicacionId,
     commitmentId: obligacion.commitmentId,
     trabajoId: obligacion.trabajoId,
+    part: obligacion.part,
     amountSource: obligacion.amountSource,
     budgetId: obligacion.budgetId,
     budgetVersion: obligacion.budgetVersion,

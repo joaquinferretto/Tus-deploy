@@ -743,6 +743,8 @@ model Trabajo {
   presupuestoAceptadoVersion Int?     @map("presupuesto_aceptado_version")
   fechaCreacion              DateTime @map("fecha_creacion")
   fechaActualizacion         DateTime @map("fecha_actualizacion")
+  // The provider finished; with online payments the work completes when the balance is approved.
+  terminadoEn                DateTime? @map("terminado_en")
 
   compromiso          CompromisoMercadoServicios? @relation(fields: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_compromisos_ms")
   prestador           Prestador                  @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_prestadores")
@@ -756,11 +758,13 @@ model Trabajo {
   transiciones        TransicionTrabajo[]
   evidencias          EvidenciaTrabajo[]
   auditorias          AuditoriaTrabajo[]
-  obligacionesPago    ObligacionPagoServicio[]
+  obligacionesPago    ObligacionPagoServicio[]   @relation("ObligacionTrabajoCadena")
+  obligacionesTramo   ObligacionPagoServicio[]   @relation("ObligacionTrabajoPrestador")
   mensajes            MensajeTrabajo[]
 
   @@unique([tenantId, trabajoId], map: "uq_trabajos_tenant_trabajo")
   @@unique([tenantId, trabajoId, prestadorTenantId], map: "uq_trabajos_tenant_trabajo_prestador")
+  @@unique([tenantId, trabajoId, prestadorTenantId, prestadorId], map: "uq_trabajos_tenant_trabajo_prestador_id")
   @@unique([tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], map: "uq_trabajos_identidad_financiera")
   @@unique([tenantId, compromisoId], map: "uq_trabajos_tenant_compromiso")
   @@unique([tenantId, presupuestoAceptadoId, presupuestoAceptadoVersion], map: "uq_trabajos_tenant_presupuesto_aceptado")
@@ -1016,9 +1020,11 @@ model ObligacionPagoServicio {
   clienteId          String   @map("cliente_id")
   prestadorTenantId  String   @map("prestador_tenant_id")
   prestadorId        String   @map("prestador_id")
-  publicacionId      String   @map("publicacion_id")
-  compromisoId       String   @map("compromiso_id")
+  publicacionId      String?  @map("publicacion_id")
+  compromisoId       String?  @map("compromiso_id")
   trabajoId          String   @map("trabajo_id")
+  // 'total' (marketplace) | 'sena' | 'saldo' (request-born work, 50% each); CHECK in SQL.
+  tramo              String   @default("total") @map("tramo")
   origenImporte      String   @map("origen_importe")
   presupuestoId      String?  @map("presupuesto_id")
   presupuestoVersion Int?     @map("presupuesto_version")
@@ -1031,7 +1037,8 @@ model ObligacionPagoServicio {
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
-  trabajo                  Trabajo                     @relation(fields: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_trabajos")
+  trabajo                  Trabajo?                    @relation("ObligacionTrabajoCadena", fields: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, trabajoId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_trabajos")
+  trabajoPrestador         Trabajo                     @relation("ObligacionTrabajoPrestador", fields: [tenantId, trabajoId, prestadorTenantId, prestadorId], references: [tenantId, trabajoId, prestadorTenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_trabajo_prestador")
   presupuesto              Presupuesto?                @relation(fields: [tenantId, presupuestoId, presupuestoVersion], references: [tenantId, presupuestoId, version], onDelete: Restrict, onUpdate: NoAction, map: "fk_obligaciones_pago_presupuestos")
   intencionesPago          IntencionPago[]             @relation("IntencionPagoObligacion")
   intencionesPagoIdentidad IntencionPago[]             @relation("IntencionPagoIdentidadObligacion")
@@ -1044,7 +1051,7 @@ model ObligacionPagoServicio {
   conciliaciones           ConciliacionServicio[]
 
   @@unique([tenantId, obligacionId], map: "uq_obligaciones_pago_tenant_obligacion")
-  @@unique([tenantId, trabajoId], map: "uq_obligaciones_pago_tenant_trabajo")
+  @@unique([tenantId, trabajoId, tramo], map: "uq_obligaciones_pago_tenant_trabajo_tramo")
   @@unique([tenantId, obligacionId, prestadorTenantId, trabajoId], map: "uq_obligaciones_pago_identidad_prestador")
   @@index([prestadorTenantId, prestadorId, estado], map: "idx_obligaciones_pago_prestador_estado")
   @@index([tenantId, estado], map: "idx_obligaciones_pago_tenant_estado")

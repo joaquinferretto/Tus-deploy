@@ -14,6 +14,7 @@ import { useTusSession } from '../session/use-tus-session'
 import { useAccountView } from '../session/use-account-view'
 import { tradeOf, useCatalog } from '../catalog/use-catalog'
 import { PrivateImages } from '../provider/provider-inbox'
+import { isMercadoPagoAuthorizationUrl } from '../../components/prestador/cuenta-cobro'
 import styles from './work.module.css'
 
 export const WORK_LABELS: Record<WorkSummary['status'], string> = {
@@ -303,7 +304,7 @@ export function WorkDetail({
                   {work.budget.validUntil ? (
                     <p>Válido hasta {date(work.budget.validUntil)}</p>
                   ) : null}
-                  {work.budget.status === 'accepted' ? <p>Pago pendiente de configuración.</p> : null}
+                  {work.budget.status === 'accepted' && !work.payment ? <p>Pago pendiente de configuración.</p> : null}
                 </>
               ) : (
                 <p>Esperando presupuesto del Prestador.</p>
@@ -361,6 +362,13 @@ export function WorkDetail({
               </label>
             ) : null}
           </section>
+          {work.payment ? (
+            <WorkPaymentSection
+              work={work}
+              session={session}
+              onRefresh={() => refresh().catch(() => undefined)}
+            />
+          ) : null}
           <WorkChat id={id} session={session} canSend={work.actions.canSendMessage} />
         </>
       )}
@@ -552,6 +560,145 @@ export function WorkChat({
           </button>
         </form>
       ) : null}
+    </section>
+  )
+}
+
+const PAYMENT_STATUS: Record<string, string> = {
+  not_created: 'Pendiente',
+  pending_payment: 'Pendiente',
+  paid: 'Pagado',
+  refunded: 'Reembolsado',
+  charged_back: 'Contracargo',
+}
+const UNAVAILABLE: Record<string, string> = {
+  PROVIDER_ACCOUNT_NOT_CONNECTED: 'El prestador debe conectar Mercado Pago antes de poder cobrar este trabajo.',
+  PROVIDER_IDENTITY_NOT_VERIFIED: 'El prestador debe verificar su identidad y conectar Mercado Pago antes de poder cobrar este trabajo.',
+}
+const money = (minor: string, currency: string) =>
+  new Intl.NumberFormat('es-AR', { style: 'currency', currency }).format(Number(minor) / 100)
+
+// Request-born works: 50% deposit before the start and 50% balance at the end, both through
+// Mercado Pago with the amounts computed by TUS. Returning from Mercado Pago never confirms a
+// payment: only the verified notification does, so the page re-reads the work for a while.
+export function WorkPaymentSection({
+  work,
+  session,
+  onRefresh,
+}: {
+  work: WorkSummary
+  session: TusWebSession
+  onRefresh: () => Promise<unknown>
+}): React.ReactNode {
+  const payment = work.payment!
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [returning, setReturning] = useState(false)
+  const keys = useRef<Record<string, string>>({})
+  const refreshRef = useRef(onRefresh)
+  refreshRef.current = onRefresh
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('pago') !== 'retorno') return
+    setReturning(true)
+    // At most 12 re-reads, one every 5 s (never faster).
+    let polls = 0
+    const timer = window.setInterval(() => {
+      polls += 1
+      void refreshRef.current()
+      if (polls >= 12) window.clearInterval(timer)
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  async function pay(part: 'deposit' | 'balance') {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      // Same key for repeated clicks on the same part: the server reuses the same checkout.
+      keys.current[part] ??= `${work.id}:${part}:${crypto.randomUUID()}`
+      const result = await createTusWebClient(createTusWebFetchTransport()).startWorkCheckout({
+        ...session,
+        workId: work.id,
+        idempotencyKey: keys.current[part]!,
+      })
+      if (!isMercadoPagoAuthorizationUrl(result.checkoutUrl)) {
+        setError('TUS devolvió una dirección de pago no válida.')
+        return
+      }
+      window.location.assign(result.checkoutUrl)
+    } catch (e) {
+      delete keys.current[part]
+      setError(
+        e instanceof TusRequestError && e.status === 409
+          ? 'El pago ya no corresponde al estado actual del trabajo. Actualizá el trabajo.'
+          : e instanceof TusRequestError && e.status === 503
+            ? 'El pago online no está disponible en este momento.'
+            : 'No pudimos abrir Mercado Pago. Volvé a intentar.'
+      )
+      void onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const client = work.role === 'cliente'
+  return (
+    <section className={styles.card} aria-labelledby="pago-trabajo">
+      <h2 id="pago-trabajo">Pago</h2>
+      <p>
+        Total {money(payment.totalMinor, payment.currency)}: seña del 50% antes de empezar y saldo del 50% al
+        terminar, con Mercado Pago.
+      </p>
+      <p>
+        Seña: {money(payment.deposit.amountMinor, payment.currency)} · {PAYMENT_STATUS[payment.deposit.status]}
+        <br />
+        Saldo: {money(payment.balance.amountMinor, payment.currency)} · {PAYMENT_STATUS[payment.balance.status]}
+      </p>
+      {returning && work.status !== 'completed' ? (
+        <p role="status">Estamos confirmando tu pago con Mercado Pago. Esta pantalla se actualiza sola.</p>
+      ) : null}
+      {work.finishedAt && work.status === 'in_progress' ? (
+        <p>
+          {client
+            ? 'El Prestador marcó el trabajo como terminado. Se completa cuando se acredita el saldo.'
+            : 'Marcaste el trabajo como terminado. Se completa cuando se acredita el saldo del Cliente.'}
+        </p>
+      ) : null}
+      {payment.required && !payment.online && work.status !== 'completed' && work.status !== 'cancelled' ? (
+        <p role="status">
+          {UNAVAILABLE[payment.unavailableReason ?? ''] ?? 'El pago online de este trabajo no está disponible.'}
+          {!client ? (
+            <>
+              {' '}
+              <a href="/prestador/pagos">Conectar Mercado Pago</a>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {!payment.required && work.status !== 'completed' && work.status !== 'cancelled' ? (
+        <p>Pago online no disponible todavía en TUS. El trabajo puede avanzar igual; coordinen el pago por el chat.</p>
+      ) : null}
+      {!client && payment.required && payment.deposit.status !== 'paid' && ['accepted', 'in_progress'].includes(work.status) ? (
+        <p>Podés iniciar el trabajo cuando se acredite la seña.</p>
+      ) : null}
+      {payment.deposit.status === 'paid' && work.status !== 'completed' ? <p>Seña pagada.</p> : null}
+      {work.status === 'completed' && payment.balance.status === 'paid' ? (
+        <p>Pago confirmado. Trabajo completado.</p>
+      ) : null}
+      {error ? <p role="alert">{error}</p> : null}
+      <div className={styles.actions}>
+        {work.actions.canPayDeposit ? (
+          <button disabled={busy} onClick={() => void pay('deposit')} type="button">
+            {busy ? 'Abriendo Mercado Pago…' : 'Pagar seña con Mercado Pago'}
+          </button>
+        ) : null}
+        {work.actions.canPayBalance ? (
+          <button disabled={busy} onClick={() => void pay('balance')} type="button">
+            {busy ? 'Abriendo Mercado Pago…' : 'Pagar saldo con Mercado Pago'}
+          </button>
+        ) : null}
+      </div>
     </section>
   )
 }

@@ -156,6 +156,9 @@ export interface Trabajo {
   budgetRequired: boolean
   acceptedBudgetId?: string | null
   acceptedBudgetVersion?: number | null
+  // The provider finished the job. With online payments a request-born work stays in progress
+  // until the balance is approved; then it becomes `completed`.
+  finishedAt?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -314,6 +317,11 @@ export const ORIGENES_IMPORTE_OBLIGACION_SERVICIO = {
 
 export type OrigenImporteObligacionServicio = (typeof ORIGENES_IMPORTE_OBLIGACION_SERVICIO)[keyof typeof ORIGENES_IMPORTE_OBLIGACION_SERVICIO]
 
+// A marketplace work is paid once ('total'). A request-born work is paid in two halves of its
+// accepted budget: the deposit ('sena') before it starts and the balance ('saldo') at the end.
+export const TRAMOS_PAGO_SERVICIO = ['total', 'sena', 'saldo'] as const
+export type TramoPagoServicio = (typeof TRAMOS_PAGO_SERVICIO)[number]
+
 export interface ObligacionPagoServicio {
   contractVersion: TusContractVersion
   obligacionId: string
@@ -321,8 +329,11 @@ export interface ObligacionPagoServicio {
   clienteId: string
   prestadorTenantId: string
   prestadorId: string
-  publicacionId: string
-  commitmentId: string
+  // Null for request-born works (no marketplace listing or commitment).
+  publicacionId: string | null
+  commitmentId: string | null
+  // Absent in older payloads, which are always 'total'.
+  part?: TramoPagoServicio
   trabajoId: string
   amountSource: OrigenImporteObligacionServicio
   budgetId: string | null
@@ -338,9 +349,14 @@ export interface ObligacionPagoServicio {
 export function validarObligacionPagoServicio(value: unknown): ObligacionPagoServicio {
   if (!isRecord(value)) throw new ContractValidationError('tus-service-payment-obligation', undefined, 'payload must be an object')
   assertTusVersion('tus-service-payment-obligation', value['contractVersion'])
-  for (const field of ['obligacionId', 'tenantId', 'clienteId', 'prestadorTenantId', 'prestadorId', 'publicacionId', 'commitmentId', 'trabajoId', 'currency', 'createdAt', 'updatedAt']) {
+  for (const field of ['obligacionId', 'tenantId', 'clienteId', 'prestadorTenantId', 'prestadorId', 'trabajoId', 'currency', 'createdAt', 'updatedAt']) {
     if (typeof value[field] !== 'string' || value[field].trim().length === 0) throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, `${field} is required`)
   }
+  const part = value['part'] ?? 'total'
+  const chain = ['publicacionId', 'commitmentId'].every((field) => typeof value[field] === 'string' && String(value[field]).trim().length > 0)
+  const noChain = value['publicacionId'] === null && value['commitmentId'] === null
+  if (!TRAMOS_PAGO_SERVICIO.includes(part as TramoPagoServicio) || (part === 'total' ? !chain : !noChain || value['amountSource'] !== ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRESUPUESTO_ACEPTADO))
+    throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, 'part is inconsistent with the commercial chain')
   if (!Object.values(ESTADOS_OBLIGACION_PAGO_SERVICIO).includes(value['status'] as EstadoObligacionPagoServicio) || !Number.isInteger(value['version']) || Number(value['version']) < 1 || !isMinorAmount(value['amountMinor']) || !/^[A-Z]{3}$/.test(String(value['currency'])) || !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])) {
     throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, 'obligation state is invalid')
   }
@@ -487,7 +503,9 @@ export interface ResumenFinancieroTrabajoServicio {
 
 // WEB-09D: a service is paid once the work is `completed`, and only for the accepted budget.
 // The preview is read-only and server-derived: the Web never sends an amount.
-export const MOTIVOS_NO_COBRABLE_SERVICIO = ['WORK_CANCELLED', 'WORK_NOT_COMPLETED', 'BUDGET_REQUIRED', 'BUDGET_INCONSISTENT', 'INCONSISTENT_COMMERCIAL_CHAIN', 'ALREADY_PAID', 'OBLIGATION_CLOSED'] as const
+// Request-born works: the deposit is payable once the budget is accepted; the balance once the
+// provider finished (WORK_NOT_FINISHED before that).
+export const MOTIVOS_NO_COBRABLE_SERVICIO = ['WORK_CANCELLED', 'WORK_NOT_COMPLETED', 'WORK_NOT_FINISHED', 'BUDGET_REQUIRED', 'BUDGET_INCONSISTENT', 'INCONSISTENT_COMMERCIAL_CHAIN', 'ALREADY_PAID', 'OBLIGATION_CLOSED'] as const
 export type MotivoNoCobrableServicio = (typeof MOTIVOS_NO_COBRABLE_SERVICIO)[number]
 export const MOTIVOS_PAGO_NO_DISPONIBLE = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PRODUCTION_NOT_AUTHORIZED', 'PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'PROVIDER_IDENTITY_NOT_VERIFIED'] as const
 export type MotivoPagoNoDisponible = (typeof MOTIVOS_PAGO_NO_DISPONIBLE)[number]
@@ -502,6 +520,8 @@ export interface VistaPreviaPagoServicio {
   serviceName: string | null
   prestadorId: string
   budget: { budgetId: string; version: number; totalMinor: string; currency: string } | null
+  // Which part this preview charges ('total' for marketplace works); null when nothing is due.
+  part?: TramoPagoServicio | null
   amountMinor: string | null
   currency: string | null
   payable: boolean

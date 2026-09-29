@@ -7,7 +7,7 @@ import {
   InMemoryTusSessionResolver,
   InMemoryTusTransaction,
 } from '../adapters/in-memory.ts'
-import { InMemoryTrabajoIdempotencyStore, InMemoryTrabajoOutboxStore, InMemoryTrabajoStore, InMemoryTrabajoTransaction, ReservasTrabajoEnMemoria, ServicioTrabajo } from '../work/index.ts'
+import { InMemoryTrabajoIdempotencyStore, InMemoryTrabajoOutboxStore, InMemoryTrabajoStore, InMemoryTrabajoTransaction, ReservasTrabajoEnMemoria, ServicioTrabajo, type PuertoPagosTrabajo } from '../work/index.ts'
 import { TusApplicationService, type TusApplicationDependencies } from '../application/tus-application-service.ts'
 import { InMemoryMarketplaceStore, TusMarketplaceService } from '../catalog/index.ts'
 import { InMemoryServiceCalendarStore, ServiceCalendarService } from '../calendar/index.ts'
@@ -113,12 +113,15 @@ export function createTusApplication(
   // injects its own module. The preview still works.
   const servicePayments = crearModuloPagosServicio({ env: {}, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: options.now, identidadVerificada })
   const serviceFinance = new ServicioFinanzasServicios(
-    new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore)),
+    new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore), {
+      completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: workStore, outbox: workOutbox }, input),
+    }),
     options.now,
     servicePayments.proveedor,
     undefined,
     servicePayments.politica
   )
+  work.conPagos(pagosTrabajo(serviceFinance))
   return new TusApplicationService({
     commitments,
     audits,
@@ -176,7 +179,17 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
   }
   const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient), produccionAutorizada, identidadVerificada })
   // The provider is Mercado Pago only when every variable is present; otherwise unavailable.
-  const serviceFinance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio), () => Date.now(), servicePayments.proveedor, undefined, servicePayments.politica)
+  // The approved balance of a request-born work completes it with the SAME transactional client.
+  const serviceFinance = new ServicioFinanzasServicios(
+    new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio, (tx) => ({
+      completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: new PrismaTrabajoStore(tx as unknown as TusPrismaClient), outbox: new PrismaTrabajoOutboxStore(tx as unknown as TusPrismaClient) }, input),
+    })),
+    () => Date.now(),
+    servicePayments.proveedor,
+    undefined,
+    servicePayments.politica
+  )
+  work.conPagos(pagosTrabajo(serviceFinance))
   return new TusApplicationService({
     commitments: commitmentStore,
     compensations: new PrismaTusCompensationStore(client),
@@ -205,6 +218,16 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
     perfilHabilitacion: 'native-local',
     alcanceHabilitacion: 'argentina-stage-1',
   })
+}
+
+// Deposit gate / finish mode of request-born works, read from the finance module.
+export function pagosTrabajo(finance: ServicioFinanzasServicios): PuertoPagosTrabajo {
+  return {
+    async estado(work) {
+      const estado = await finance.estadoPagosTrabajo(work)
+      return estado ? { required: estado.required, online: estado.online, depositPaid: estado.deposit.status === 'paid' } : null
+    },
+  }
 }
 
 export * from '../application/index.ts'

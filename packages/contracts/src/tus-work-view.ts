@@ -1,4 +1,4 @@
-import type { Trabajo, Presupuesto } from './tus.ts'
+import type { EstadoObligacionPagoServicio, Presupuesto, Trabajo } from './tus.ts'
 
 export interface WorkActions {
   canStart: boolean
@@ -8,6 +8,26 @@ export interface WorkActions {
   canAcceptBudget: boolean
   canRejectBudget: boolean
   canSendMessage: boolean
+  // Client: pay the deposit (before start) or the balance (after the provider finished).
+  canPayDeposit: boolean
+  canPayBalance: boolean
+}
+
+// Request-born works with an accepted budget: 50% deposit + 50% balance through Mercado Pago.
+// `required`: platform payments enabled (the deposit gates the start; the balance completes the
+// work). `online`: chargeable now; required && !online = the provider must link Mercado Pago.
+export interface WorkPaymentPart {
+  amountMinor: string
+  status: EstadoObligacionPagoServicio | 'not_created'
+}
+export interface WorkPayment {
+  required: boolean
+  online: boolean
+  unavailableReason: string | null
+  currency: string
+  totalMinor: string
+  deposit: WorkPaymentPart
+  balance: WorkPaymentPart
 }
 
 export interface WorkSummary {
@@ -17,6 +37,7 @@ export interface WorkSummary {
   status: Trabajo['status']
   version: number
   budgetRequired: boolean
+  finishedAt: string | null
   createdAt: string
   updatedAt: string
   title: string
@@ -33,6 +54,8 @@ export interface WorkSummary {
     Presupuesto,
     'presupuestoId' | 'version' | 'status' | 'currency' | 'totalMinor' | 'scope' | 'validUntil'
   > | null
+  // Only in the detail (null in the list, which never shows actions).
+  payment: WorkPayment | null
   actions: WorkActions
 }
 

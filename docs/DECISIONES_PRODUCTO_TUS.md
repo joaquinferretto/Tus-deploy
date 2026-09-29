@@ -334,6 +334,24 @@ La matriz de evidencia y los criterios para una futura activacion estan en `docs
   queda en revision manual y TUS no cubre su parte.
 - Dinero real permanece apagado hasta la prueba sandbox con credenciales y la habilitacion `settlement` por evidencia.
 
+### W09-05: Trabajos nacidos de una solicitud: seña 50% + saldo 50% (decisión del dueño, 2026-09-29)
+
+Reemplaza W09-02 **solo** para trabajos con `origen = 'solicitud'`; el marketplace viejo sigue con W09-02.
+
+- Monto: siempre el presupuesto aceptado guardado en backend. Seña = mitad redondeada hacia arriba al centavo; saldo = el
+  resto exacto (`seña + saldo = total`). Cada parte es una obligación (`tramo` `sena` / `saldo`, única por trabajo y parte)
+  con su propio checkout Split 1:1 y su comisión congelada (`marketplace_fee`) al crearse.
+- Seña: se puede pagar apenas se acepta el presupuesto. Con los pagos de TUS **habilitados** (configuración global
+  `paymentsEnabled` + proveedor operativo), iniciar exige la seña aprobada (`DEPOSIT_REQUIRED`). Si el Prestador no
+  conectó Mercado Pago o no verificó su identidad, el trabajo queda **bloqueado** (`PROVIDER_PAYMENT_ACCOUNT_REQUIRED`),
+  nunca gratis. Solo con los pagos de la plataforma apagados se conserva el comportamiento anterior (desarrollo y
+  migración hasta la activación).
+- Presupuesto mínimo de un trabajo de solicitud: 2 centavos (`BUDGET_TOO_SMALL`), para que seña y saldo sean positivos.
+- Saldo: se puede pagar cuando la seña está pagada y el Prestador marcó el trabajo como terminado (`terminado_en`); con pago
+  online el trabajo queda `in_progress` hasta que el webhook verificado aprueba el saldo, y esa aprobación lo pasa a
+  `completed` en la misma transacción. Sin pago online, "Marcar como terminado" completa directamente.
+- Un redirect de Mercado Pago nunca confirma; la Web vuelve a `/trabajos/<id>?pago=retorno` y relee el trabajo.
+
 ## WHATSAPP-01: consentimiento con procedencia verificable
 
 - La vinculación desde Web registra `web_linking` dentro de la confirmación autenticada y con tenant derivado de la sesión.
