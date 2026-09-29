@@ -121,7 +121,7 @@ export function WorkListContent({
   )
 }
 
-type Action = 'start' | 'complete' | 'cancel' | 'budget' | 'accept' | 'reject'
+type Action = 'start' | 'complete' | 'cancel' | 'request_cancellation' | 'budget' | 'accept' | 'reject'
 
 export function WorkDetail({
   id,
@@ -137,6 +137,7 @@ export function WorkDetail({
   const [scope, setScope] = useState('')
   const [amount, setAmount] = useState('')
   const [reason, setReason] = useState('')
+  const [cancelReason, setCancelReason] = useState('')
   const inFlight = useRef(false)
   const generation = useRef(0)
   const invalidate = useCallback(() => {
@@ -160,6 +161,11 @@ export function WorkDetail({
 
   async function act(action: Action) {
     if (!work || inFlight.current) return
+    const cancelling = action === 'cancel' || action === 'request_cancellation'
+    if (cancelling && work.origin === 'solicitud' && !cancelReason.trim()) {
+      setError('Escribí el motivo de la cancelación.')
+      return
+    }
     if (action === 'cancel' && !window.confirm('¿Querés cancelar este trabajo?')) return
     inFlight.current = true
     setBusy(true)
@@ -177,6 +183,7 @@ export function WorkDetail({
         scope,
         amount,
         reason,
+        cancelReason,
         budgetVersion: work.budget?.version,
       }
       const key = JSON.stringify([action, payload])
@@ -189,7 +196,13 @@ export function WorkDetail({
       if (action === 'start') await client.startWork({ ...input, expectedVersion: work.version })
       if (action === 'complete')
         await client.completeWork({ ...input, expectedVersion: work.version })
-      if (action === 'cancel') await client.cancelWork({ ...input, expectedVersion: work.version })
+      const cancelInput = {
+        ...input,
+        expectedVersion: work.version,
+        ...(cancelReason.trim() ? { reason: cancelReason.trim() } : {}),
+      }
+      if (action === 'cancel') await client.cancelWork(cancelInput)
+      if (action === 'request_cancellation') await client.requestWorkCancellation(cancelInput)
       if (action === 'budget')
         await client.createWorkBudget({
           ...input,
@@ -350,6 +363,40 @@ export function WorkDetail({
                 </button>
               </form>
             ) : null}
+            {work.actions.canCancel || work.actions.canRequestCancellation ? (
+              <label>
+                Motivo de la cancelación
+                <textarea
+                  maxLength={500}
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                />
+              </label>
+            ) : null}
+            {work.actions.canRequestCancellation ? (
+              <p>
+                El trabajo ya empezó: podés pedir la cancelación. La revisa el Prestador o el soporte de TUS; no se cancela
+                sola.
+              </p>
+            ) : null}
+            {work.cancellationRequest && work.status === 'in_progress' ? (
+              <p role="status">
+                {work.role === 'cliente' ? 'Pediste cancelar este trabajo' : 'El Cliente pidió cancelar este trabajo'}:
+                “{work.cancellationRequest.reason}”.
+              </p>
+            ) : null}
+            {work.cancellationNeedsSupport ? (
+              <p>
+                Este trabajo tiene un pago registrado. Para cancelarlo, contactá al soporte de TUS: el pago no se borra ni se
+                devuelve automáticamente.
+              </p>
+            ) : null}
+            {work.cancellation ? (
+              <p role="status">
+                Cancelado por {work.cancellation.byRole === 'admin' ? 'soporte de TUS' : work.cancellation.byRole === 'cliente' ? 'el Cliente' : 'el Prestador'}:
+                “{work.cancellation.reason}”.
+              </p>
+            ) : null}
             {work.actions.canRejectBudget ? (
               <label>
                 Motivo de rechazo
@@ -388,7 +435,8 @@ export function WorkActionButtons({
   const buttons = [
     ['canStart', 'start', 'Iniciar trabajo'],
     ['canComplete', 'complete', 'Marcar como terminado'],
-    ['canCancel', 'cancel', 'Cancelar'],
+    ['canCancel', 'cancel', 'Cancelar trabajo'],
+    ['canRequestCancellation', 'request_cancellation', 'Solicitar cancelación'],
     ['canAcceptBudget', 'accept', 'Aceptar presupuesto'],
     ['canRejectBudget', 'reject', 'Rechazar presupuesto'],
   ] as const

@@ -177,6 +177,8 @@ export type TusWorkEvidenceInput = TusWorkMutationInput & {
 
 export type TusWorkTransitionInput = TusWorkMutationInput & {
   expectedVersion: number
+  // Cancelling (or asking to cancel) a request-born work requires a reason.
+  reason?: string
 }
 
 export type TusWhatsAppHandoffInput = TusWebContext & {
@@ -719,6 +721,9 @@ export interface TusWebClient {
   startWork(input: TusWorkTransitionInput): Promise<TusWorkMutationResponse<{ work: TusWork }>>
   completeWork(input: TusWorkTransitionInput): Promise<TusWorkMutationResponse<{ work: TusWork }>>
   cancelWork(input: TusWorkTransitionInput): Promise<TusWorkMutationResponse<{ work: TusWork }>>
+  requestWorkCancellation(
+    input: TusWorkTransitionInput
+  ): Promise<TusWorkMutationResponse<{ work: TusWork }>>
 }
 
 export function createStableIdempotencyKey(scope: string, intentId: string): string {
@@ -1350,6 +1355,7 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
     startWork: (input) => transitionWork(transport, input, 'start'),
     completeWork: (input) => transitionWork(transport, input, 'complete'),
     cancelWork: (input) => transitionWork(transport, input, 'cancel'),
+    requestWorkCancellation: (input) => transitionWork(transport, input, 'cancellation-request'),
     merchantOperations: (context) =>
       transport.request<TusMerchantOperationsResponse>({
         ...context,
@@ -1599,15 +1605,15 @@ function decideWorkBudget(
 
 function transitionWork(
   transport: TusWebTransport,
-  { workId, expectedVersion, idempotencyKey, requestHash, ...context }: TusWorkTransitionInput,
-  action: 'start' | 'complete' | 'cancel'
+  { workId, expectedVersion, idempotencyKey, requestHash, reason, ...context }: TusWorkTransitionInput,
+  action: 'start' | 'complete' | 'cancel' | 'cancellation-request'
 ): Promise<TusWorkMutationResponse<{ work: TusWork }>> {
   return transport.request({
     ...context,
     idempotencyKey,
     method: 'POST',
     path: `/tus/v1/work/${encodeURIComponent(workId)}/${action}`,
-    body: { requestHash, expectedVersion },
+    body: { requestHash, expectedVersion, ...(reason ? { reason } : {}) },
   })
 }
 

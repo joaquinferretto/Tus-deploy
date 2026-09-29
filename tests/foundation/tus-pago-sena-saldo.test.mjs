@@ -34,7 +34,7 @@ const SENA_SETUP = `${SERVICE_SETUP}
     return created.trabajoId
   }
   const current = async (id) => (await work.getWork(provider, id)).work
-  const step = async (op, id) => { const w = await current(id); seq += 1; return work[op]({ ...provider, trabajoId: id, expectedVersion: w.version, idempotencyKey: op + '-' + id + '-' + seq, requestHash: 'h' + seq, createdAt: '2026-09-23T10:0' + (seq % 10) + ':00.000Z' }) }
+  const step = async (op, id) => { const w = await current(id); seq += 1; return work[op]({ ...provider, trabajoId: id, expectedVersion: w.version, idempotencyKey: op + '-' + id + '-' + seq, requestHash: 'h' + seq, createdAt: '2026-09-23T10:0' + (seq % 10) + ':00.000Z', reason: 'motivo de prueba' }) }
   let eventSeq = 0
   async function notify(paymentId, status, amount, overrides = {}) {
     eventSeq += 1

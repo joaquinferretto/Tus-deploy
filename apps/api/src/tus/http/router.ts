@@ -721,6 +721,17 @@ export function createTusHttpRouter({
     }
   )
 
+  // FASE 8: the client of a started request-born work asks to cancel it (never cancels by itself).
+  router.post(
+    [
+      '/tus/v1/trabajos/:workId/solicitar-cancelacion',
+      '/tus/v1/work/:workId/cancellation-request',
+    ],
+    async (request: Request, response: Response) => {
+      await workTransition(request, response, sessions, application, 'request_cancellation')
+    }
+  )
+
   // WEB-09B: the amount, currency, tenant and provider state are derived server-side from the
   // work's payment obligation; the payload can only carry the idempotency key.
   router.post(
@@ -3622,13 +3633,19 @@ async function workTransition(
   response: Response,
   sessions: TusSessionResolverPort,
   application: TusApplicationService,
-  action: 'start' | 'complete' | 'cancel'
+  action: 'start' | 'complete' | 'cancel' | 'request_cancellation'
 ): Promise<void> {
   const context = await authenticate(request, sessions)
   const body = asRecord(request.body)
+  // Start/complete are provider actions; cancelling a request-born work is also open to its
+  // client (the work service decides by the session tenant, never by a role in the body).
+  const permissions =
+    action === 'cancel' || action === 'request_cancellation'
+      ? ['tus:work:write', 'tus:marketplace:write', 'tus:checkout', 'tus:work:accept']
+      : ['tus:work:write', 'tus:marketplace:write']
   if (
     !context ||
-    !hasAnyPermission(context, ['tus:work:write', 'tus:marketplace:write']) ||
+    !hasAnyPermission(context, permissions) ||
     hasSpoofedAuthority(body, request, context) ||
     !application.work
   ) {
@@ -3652,6 +3669,7 @@ async function workTransition(
       correlationId: context.correlationId,
       trabajoId: request.params['workId'] ?? '',
       expectedVersion: readFiniteNumber(body, 'expectedVersion') ?? NaN,
+      ...(readString(body, 'reason') ? { reason: readString(body, 'reason') } : {}),
       ...mutation,
     }
     const result =
@@ -3659,7 +3677,9 @@ async function workTransition(
         ? await application.work.startWork(input)
         : action === 'complete'
           ? await application.work.completeWork(input)
-          : await application.work.cancelWork(input)
+          : action === 'request_cancellation'
+            ? await application.work.solicitarCancelacion(input)
+            : await application.work.cancelWork(input)
     response.status(200).json(result)
   } catch (error) {
     sendWorkError(response, error)

@@ -27,6 +27,7 @@ import { crearRouterDirectorio } from './tus/directorio/http.ts'
 import { crearAltaPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import { crearRouterAdmin } from './tus/admin/http.ts'
+import { crearRouterAdminTrabajos } from './tus/admin/trabajos.ts'
 import { ActividadAdminPrisma, CuentasAdminPrisma } from './tus/admin/fuentes.ts'
 import { AlmacenCatalogoPrisma, type ClientePrismaCatalogo } from './tus/catalogo/almacen.ts'
 import { ConteosCatalogoPrisma, type ClientePrismaConteos } from './tus/admin/conteos.ts'
@@ -225,6 +226,8 @@ export function createApp(options: CreateAppOptions = {}): Application {
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
     // Platform administration panel (read views + publish/hide a profile), behind the MFA gate.
     // Usage counts of the catalog lists come from aggregate queries (GROUP BY), never per row.
+    // Platform support over works (cancel with payments; never moves money).
+    if (application.work) app.use(crearRouterAdminTrabajos({ sessions, trabajos: application.work }))
     const conteos = new ConteosCatalogoPrisma(prisma as unknown as ClientePrismaConteos)
     app.use(
       crearRouterAdmin({

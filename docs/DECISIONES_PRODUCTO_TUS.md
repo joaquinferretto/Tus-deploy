@@ -352,6 +352,21 @@ Reemplaza W09-02 **solo** para trabajos con `origen = 'solicitud'`; el marketpla
   `completed` en la misma transacción. Sin pago online, "Marcar como terminado" completa directamente.
 - Un redirect de Mercado Pago nunca confirma; la Web vuelve a `/trabajos/<id>?pago=retorno` y relee el trabajo.
 
+### W09-06: Cancelación segura de trabajos nacidos de una solicitud (FASE 8)
+
+- Solicitud abierta sin Prestador elegido: la cancela su dueño (sale del mapa, rechaza postulaciones pendientes, no acepta
+  nuevas, registra quién y cuándo, sin DELETE). Con trabajo: `WORK_ACTIVE`; se gestiona desde el trabajo.
+- Trabajo antes de iniciar: Cliente o Prestador cancelan con **motivo obligatorio** (máx. 500). Se guardan rol y motivo en
+  el trabajo; actor, fecha y estado anterior en `transiciones_trabajo` y `auditoria_trabajo`.
+- Trabajo iniciado: el Cliente no cancela (`CLIENT_CANCEL_NOT_ALLOWED`); **solicita la cancelación** con motivo, que queda
+  registrada y visible, y nunca cancela sola. El Prestador puede cancelar si no hay pagos.
+- Con la seña pagada nadie cancela desde la app (`PAYMENT_REQUIRES_SUPPORT`): lo resuelve soporte con
+  `POST /tus/v1/admin/trabajos/:id/cancelar` (admin con MFA, motivo obligatorio). Cancelar **no** reembolsa ni borra
+  pagos; el reembolso es la operación administrativa aparte (`/tus/v1/admin/payments/refunds`).
+- Un pago aprobado después de una cancelación se registra (el dinero se movió) pero no reactiva el trabajo: caso de
+  soporte.
+- El marketplace viejo conserva su regla (solo el Prestador cancela, sin motivo obligatorio).
+
 ## WHATSAPP-01: consentimiento con procedencia verificable
 
 - La vinculación desde Web registra `web_linking` dentro de la confirmación autenticada y con tenant derivado de la sesión.

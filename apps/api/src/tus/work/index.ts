@@ -111,6 +111,23 @@ export interface ComandoTransicionTrabajo extends TrabajoContext {
   idempotencyKey: string
   requestHash: string
   createdAt: string
+  // Cancelling (or asking to cancel) a request-born work requires a reason.
+  reason?: string
+}
+
+export const LARGO_MAXIMO_MOTIVO_CANCELACION = 500
+
+// Platform support (MFA admin): the only way to cancel a work that already has a payment. It never
+// moves money; refunds stay a separate, explicit admin operation.
+export interface ComandoCancelacionSoporte {
+  actorId: string
+  correlationId: string
+  trabajoId: string
+  expectedVersion: number
+  reason: string
+  idempotencyKey: string
+  requestHash: string
+  createdAt: string
 }
 
 export interface TransicionTrabajo {
@@ -172,6 +189,8 @@ export interface TrabajoStorePort {
   // Request-born work (at most one per request: uq_trabajos_solicitud). Internal lookup: callers
   // authorize against the request owner/provider before exposing it.
   findBySolicitud(input: { solicitudId: string }): Promise<Trabajo | null>
+  // Platform support only (authorized by the admin gate before calling): any work by id.
+  findForSupport(input: { trabajoId: string }): Promise<Trabajo | null>
   findByReservation(input: {
     prestadorTenantId: string
     reservationId: string
@@ -1042,13 +1061,23 @@ export class ServicioTrabajo {
     return 'completed'
   }
 
+  // Request-born works (FASE 8): client or provider cancel before the start, with a reason; once
+  // started only the provider cancels (the client asks through solicitarCancelacion). A paid
+  // deposit locks the work: cancelling then is a platform-support case, never a button that makes
+  // the payment disappear. Marketplace works keep the provider-only rule.
   async cancelWork(input: ComandoTransicionTrabajo): TrabajoMutation<{ work: Trabajo }> {
     validateMutationContext(input)
     requirePositiveInteger(input.expectedVersion, 'expectedVersion')
-    const fingerprint = transitionFingerprint('work.cancel', input)
+    const reason = normalizarMotivo(input.reason)
+    const fingerprint = {
+      operation: 'work.cancel',
+      payload: { trabajoId: input.trabajoId, expectedVersion: input.expectedVersion, reason },
+    }
     return this.execute(input, fingerprint, async (repositories) => {
       const work = await this.requireWork(repositories.work, input)
-      ensureProvider(work, input)
+      const solicitud = work.origin === 'solicitud'
+      const role = work.prestadorTenantId === input.tenantId ? 'prestador' : 'cliente'
+      if (!solicitud) ensureProvider(work, input)
       if (work.version !== input.expectedVersion)
         throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
       if (hasWorkStatus(work.status, [ESTADOS_TRABAJO.COMPLETADO, ESTADOS_TRABAJO.CANCELADO]))
@@ -1057,18 +1086,116 @@ export class ServicioTrabajo {
           'INVALID_STATE',
           'work cannot be cancelled in the current state'
         )
+      if (solicitud && !reason)
+        throw new TrabajoError(400, 'REASON_REQUIRED', 'a cancellation reason is required')
+      if (role === 'cliente' && work.status === ESTADOS_TRABAJO.EN_PROGRESO)
+        throw new TrabajoError(
+          409,
+          'CLIENT_CANCEL_NOT_ALLOWED',
+          'a started work cannot be cancelled by the client; request the cancellation instead'
+        )
+      const pagos = await this.estadoPagos(work)
+      if (pagos?.depositPaid)
+        throw new TrabajoError(
+          409,
+          'PAYMENT_REQUIRES_SUPPORT',
+          'the work has a registered payment; platform support resolves its cancellation'
+        )
       const updated = await this.transition(
         repositories,
         input,
-        work,
+        solicitud ? { ...work, cancelledByRole: role, cancellationReason: reason } : work,
         ESTADOS_TRABAJO.CANCELADO,
-        'work.cancelled'
+        'work.cancelled',
+        solicitud ? { role, reason } : {}
       )
       // WEB-08I: el trabajo es la autoridad de la reserva vinculada; ambos se cancelan juntos.
       const reservation = work.reservaId
         ? await this.cancelLinkedReservation(repositories, input, updated, work.reservaId)
         : {}
       await this.publish(repositories, updated, 'tus.work.cancelled', reservation)
+      return { work: updated }
+    })
+  }
+
+  // Client of a started request-born work: records the request (with a reason) for the provider
+  // and support. It never cancels by itself.
+  async solicitarCancelacion(input: ComandoTransicionTrabajo): TrabajoMutation<{ work: Trabajo }> {
+    validateMutationContext(input)
+    requirePositiveInteger(input.expectedVersion, 'expectedVersion')
+    const reason = normalizarMotivo(input.reason)
+    const fingerprint = {
+      operation: 'work.cancellation_request',
+      payload: { trabajoId: input.trabajoId, expectedVersion: input.expectedVersion, reason },
+    }
+    return this.execute(input, fingerprint, async (repositories) => {
+      const work = await this.requireWork(repositories.work, input)
+      ensureCustomer(work, input)
+      if (work.origin !== 'solicitud')
+        throw new TrabajoError(409, 'INVALID_STATE', 'only request-born works accept cancellation requests')
+      if (!reason) throw new TrabajoError(400, 'REASON_REQUIRED', 'a cancellation reason is required')
+      if (work.version !== input.expectedVersion)
+        throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
+      if (work.status !== ESTADOS_TRABAJO.EN_PROGRESO)
+        throw new TrabajoError(409, 'INVALID_STATE', 'only a started work takes cancellation requests')
+      if (work.cancellationRequestedAt)
+        throw new TrabajoError(409, 'ALREADY_REQUESTED', 'the cancellation was already requested')
+      const requested: Trabajo = {
+        ...work,
+        cancellationRequestedAt: input.createdAt,
+        cancellationRequestReason: reason,
+        version: work.version + 1,
+        updatedAt: input.createdAt,
+      }
+      const persisted = await repositories.work.updateWork({
+        tenantId: work.tenantId,
+        trabajoId: work.trabajoId,
+        expectedVersion: work.version,
+        work: requested,
+      })
+      if (!persisted) throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
+      await this.recordChange(repositories, input, persisted, 'work.cancellation_requested', 'work', persisted.trabajoId, {
+        role: 'cliente',
+        reason,
+        status: persisted.status,
+      })
+      await this.publish(repositories, persisted, 'tus.work.cancellation_requested', {})
+      return { work: persisted }
+    })
+  }
+
+  // Platform support (MFA admin, authorized by the caller): cancels any non-terminal work, also
+  // with payments, recording the reason. Payments and refunds are NOT touched here.
+  async cancelarComoSoporte(input: ComandoCancelacionSoporte): TrabajoMutation<{ work: Trabajo }> {
+    const found = await this.transaction.run((repositories) =>
+      repositories.work.findForSupport({ trabajoId: input.trabajoId })
+    )
+    if (!found) throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
+    const context = { ...input, tenantId: found.tenantId }
+    validateMutationContext(context)
+    requirePositiveInteger(input.expectedVersion, 'expectedVersion')
+    const reason = normalizarMotivo(input.reason)
+    if (!reason) throw new TrabajoError(400, 'REASON_REQUIRED', 'a cancellation reason is required')
+    const fingerprint = {
+      operation: 'work.support_cancel',
+      payload: { trabajoId: input.trabajoId, expectedVersion: input.expectedVersion, reason },
+    }
+    return this.execute(context, fingerprint, async (repositories) => {
+      const work = await this.requireWork(repositories.work, context)
+      if (work.version !== input.expectedVersion)
+        throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
+      if (hasWorkStatus(work.status, [ESTADOS_TRABAJO.COMPLETADO, ESTADOS_TRABAJO.CANCELADO]))
+        throw new TrabajoError(409, 'INVALID_STATE', 'work cannot be cancelled in the current state')
+      const pagos = await this.estadoPagos(work)
+      const updated = await this.transition(
+        repositories,
+        context,
+        { ...work, cancelledByRole: 'admin', cancellationReason: reason },
+        ESTADOS_TRABAJO.CANCELADO,
+        'work.cancelled_by_support',
+        { role: 'admin', reason, depositPaid: pagos?.depositPaid ?? false }
+      )
+      await this.publish(repositories, updated, 'tus.work.cancelled', { role: 'admin' })
       return { work: updated }
     })
   }
@@ -1194,7 +1321,8 @@ export class ServicioTrabajo {
     input: TrabajoContext & { createdAt: string },
     work: Trabajo,
     status: EstadoTrabajo,
-    reason: string
+    reason: string,
+    details: Record<string, unknown> = {}
   ): Promise<Trabajo> {
     const updated: Trabajo = {
       ...work,
@@ -1224,6 +1352,7 @@ export class ServicioTrabajo {
     await this.recordChange(repositories, input, persisted, reason, 'work', persisted.trabajoId, {
       previousStatus: work.status,
       status,
+      ...details,
     })
     return persisted
   }
@@ -1332,6 +1461,11 @@ export class InMemoryTrabajoStore implements TrabajoStorePort {
         candidate.trabajoId === input.trabajoId &&
         (candidate.tenantId === input.tenantId || candidate.prestadorTenantId === input.tenantId)
     )
+    return work ? structuredClone(work) : null
+  }
+
+  async findForSupport(input: { trabajoId: string }): Promise<Trabajo | null> {
+    const work = [...this.works.values()].find((candidate) => candidate.trabajoId === input.trabajoId)
     return work ? structuredClone(work) : null
   }
 
@@ -1822,6 +1956,13 @@ function ensureProvider(work: Trabajo, context: TrabajoContext): void {
 function ensureCustomer(work: Trabajo, context: TrabajoContext): void {
   if (work.tenantId !== context.tenantId)
     throw new TrabajoError(403, 'FORBIDDEN', 'customer tenant does not own the work')
+}
+
+function normalizarMotivo(value: unknown): string {
+  const reason = typeof value === 'string' ? value.trim() : ''
+  if (reason.length > LARGO_MAXIMO_MOTIVO_CANCELACION)
+    throw new TrabajoError(400, 'INVALID', 'the cancellation reason is too long')
+  return reason
 }
 
 function validateContext(context: TrabajoContext): void {

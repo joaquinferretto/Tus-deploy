@@ -745,6 +745,12 @@ model Trabajo {
   fechaActualizacion         DateTime @map("fecha_actualizacion")
   // The provider finished; with online payments the work completes when the balance is approved.
   terminadoEn                DateTime? @map("terminado_en")
+  // Request-born works: who cancelled ('cliente' | 'prestador' | 'admin') and why; a client's
+  // request to cancel a started work (it never cancels by itself). CHECKs in SQL.
+  canceladoPorRol             String?   @map("cancelado_por_rol")
+  motivoCancelacion           String?   @map("motivo_cancelacion")
+  cancelacionSolicitadaEn     DateTime? @map("cancelacion_solicitada_en")
+  cancelacionSolicitadaMotivo String?   @map("cancelacion_solicitada_motivo")
 
   compromiso          CompromisoMercadoServicios? @relation(fields: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], references: [tenantId, compromisoId, prestadorTenantId, prestadorId, publicacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_compromisos_ms")
   prestador           Prestador                  @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_trabajos_prestadores")

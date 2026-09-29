@@ -45,6 +45,11 @@ export class PrismaTrabajoStore implements TrabajoStorePort {
     return row ? mapTrabajo(row) : null
   }
 
+  async findForSupport(input: { trabajoId: string }): Promise<Trabajo | null> {
+    const row = await this.client.trabajo.findFirst({ where: { trabajoId: input.trabajoId } })
+    return row ? mapTrabajo(row) : null
+  }
+
   async findByCommitment(input: {
     tenantId: string
     commitmentId: string
@@ -123,6 +128,12 @@ export class PrismaTrabajoStore implements TrabajoStorePort {
         presupuestoAceptadoId: input.work.acceptedBudgetId ?? null,
         presupuestoAceptadoVersion: input.work.acceptedBudgetVersion ?? null,
         terminadoEn: input.work.finishedAt ? new Date(input.work.finishedAt) : null,
+        canceladoPorRol: input.work.cancelledByRole ?? null,
+        motivoCancelacion: input.work.cancellationReason ?? null,
+        cancelacionSolicitadaEn: input.work.cancellationRequestedAt
+          ? new Date(input.work.cancellationRequestedAt)
+          : null,
+        cancelacionSolicitadaMotivo: input.work.cancellationRequestReason ?? null,
         fechaActualizacion: new Date(input.work.updatedAt),
       },
     })
@@ -637,6 +648,12 @@ export function mapTrabajo(row: Record<string, unknown>): Trabajo {
         ? null
         : numberValue(row, 'presupuestoAceptadoVersion'),
     finishedAt: row['terminadoEn'] ? dateValue(row, 'terminadoEn') : null,
+    cancelledByRole: (nullableStringValue(row, 'canceladoPorRol') ?? null) as Trabajo['cancelledByRole'],
+    cancellationReason: nullableStringValue(row, 'motivoCancelacion'),
+    cancellationRequestedAt: row['cancelacionSolicitadaEn']
+      ? dateValue(row, 'cancelacionSolicitadaEn')
+      : null,
+    cancellationRequestReason: nullableStringValue(row, 'cancelacionSolicitadaMotivo'),
     createdAt: dateValue(row, 'fechaCreacion'),
     updatedAt: dateValue(row, 'fechaActualizacion'),
   }

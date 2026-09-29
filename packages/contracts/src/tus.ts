@@ -159,6 +159,12 @@ export interface Trabajo {
   // The provider finished the job. With online payments a request-born work stays in progress
   // until the balance is approved; then it becomes `completed`.
   finishedAt?: string | null
+  // Request-born works: who cancelled ('cliente' | 'prestador' | 'admin') and why; a client's
+  // cancellation request on a started work (it never cancels by itself).
+  cancelledByRole?: 'cliente' | 'prestador' | 'admin' | null
+  cancellationReason?: string | null
+  cancellationRequestedAt?: string | null
+  cancellationRequestReason?: string | null
   createdAt: string
   updatedAt: string
 }

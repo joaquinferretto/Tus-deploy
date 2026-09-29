@@ -70,7 +70,8 @@ test('FASE5 list and summary authorize real participants, batch enrich and redac
   assert.match(r.client.items[0].counterpart.displayName, /^Juan/)
   assert.equal(r.detail.actions.canCreateBudget, true)
   assert.equal(r.detail.actions.canStart, false)
-  assert.equal(r.client.items[0].actions.canCancel, false)
+  // FASE 8: the client of a request-born work cancels it before the start (with a reason).
+  assert.equal(r.client.items[0].actions.canCancel, true)
   assert.doesNotMatch(JSON.stringify(r), /tenantId|actorId|correlationId|email|creadoPor/)
 })
 
@@ -121,7 +122,10 @@ test('FASE5 actions mirror transitions, budget expiry, role and session permissi
       p.canCreateBudget,
       ['requested', 'in_diagnosis', 'budget_pending'].includes(status)
     )
-    assert.equal(c.canStart || c.canComplete || c.canCancel || c.canCreateBudget, false)
+    assert.equal(c.canStart || c.canComplete || c.canCreateBudget, false)
+    // FASE 8: client cancels before the start; once started it can only request the cancellation.
+    assert.equal(c.canCancel, ['requested', 'in_diagnosis', 'budget_pending', 'accepted'].includes(status))
+    assert.equal(c.canRequestCancellation, status === 'in_progress')
     assert.equal(c.canAcceptBudget, status === 'budget_pending')
     assert.equal(c.canRejectBudget, c.canAcceptBudget)
     assert.equal(p.canAcceptBudget, false)

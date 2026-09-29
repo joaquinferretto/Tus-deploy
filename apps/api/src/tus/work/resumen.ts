@@ -24,6 +24,8 @@ export function accionesTrabajo(
   const required = payment?.required === true
   const depositPaid = payment?.deposit.status === 'paid'
   const client = role === 'cliente' && permissions.some((p) => ['tus:checkout', 'tus:work:accept'].includes(p))
+  const solicitud = work.origin === 'solicitud'
+  const open = !['completed', 'cancelled'].includes(work.status)
   return {
     canStart:
       provider &&
@@ -31,8 +33,13 @@ export function accionesTrabajo(
       (!work.budgetRequired || work.status === 'accepted') &&
       !(required && !depositPaid),
     canComplete: provider && work.status === 'in_progress' && !work.finishedAt,
-    // The existing mutation authorizes only the assigned provider, including active work.
-    canCancel: provider && !['completed', 'cancelled'].includes(work.status),
+    // Provider: any open work without a registered payment. Client (request-born works only):
+    // before the start. A paid deposit makes it a support case (cancellationNeedsSupport).
+    canCancel:
+      open &&
+      !depositPaid &&
+      (provider ||
+        (client && solicitud && ['requested', 'in_diagnosis', 'budget_pending', 'accepted'].includes(work.status))),
     canCreateBudget:
       provider &&
       work.budgetRequired &&
@@ -52,6 +59,8 @@ export function accionesTrabajo(
       work.status === 'in_progress' &&
       Boolean(work.finishedAt) &&
       ['not_created', 'pending_payment'].includes(payment?.balance.status ?? ''),
+    canRequestCancellation:
+      client && solicitud && work.status === 'in_progress' && !work.cancellationRequestedAt,
   }
 }
 
@@ -246,6 +255,16 @@ export class ServicioResumenTrabajo {
         request: e?.request ?? null,
         budget,
         payment,
+        cancellation:
+          w.cancelledByRole && w.cancellationReason
+            ? { byRole: w.cancelledByRole, reason: w.cancellationReason }
+            : null,
+        cancellationRequest:
+          w.cancellationRequestedAt && w.cancellationRequestReason
+            ? { requestedAt: w.cancellationRequestedAt, reason: w.cancellationRequestReason }
+            : null,
+        cancellationNeedsSupport:
+          payment?.deposit.status === 'paid' && !['completed', 'cancelled'].includes(w.status),
         actions: accionesTrabajo(w, role, budget, permissions, this.now(), payment),
       }
     })
