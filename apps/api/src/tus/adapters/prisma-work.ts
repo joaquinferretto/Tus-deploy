@@ -55,6 +55,11 @@ export class PrismaTrabajoStore implements TrabajoStorePort {
     return row ? mapTrabajo(row) : null
   }
 
+  async findBySolicitud(input: { solicitudId: string }): Promise<Trabajo | null> {
+    const row = await this.client.trabajo.findFirst({ where: { solicitudId: input.solicitudId } })
+    return row ? mapTrabajo(row) : null
+  }
+
   async findByReservation(input: {
     prestadorTenantId: string
     reservationId: string

@@ -37,6 +37,20 @@ export interface ComandoAceptarCompromisoTrabajo extends TrabajoContext {
   createdAt: string
 }
 
+// A client chose exactly one provider for a directory request. Every id comes from persisted
+// facts resolved by the server (request owner's tenant, accepted application's provider), never
+// from the HTTP body. `tenantId`/`actorId` are the client's (the actor who accepted).
+export interface ComandoCrearTrabajoDesdeSolicitud extends TrabajoContext {
+  solicitudId: string
+  prestadorTenantId: string
+  prestadorId: string
+  createdAt: string
+}
+
+export function identificadorTrabajoSolicitud(solicitudId: string): string {
+  return `trabajo-solicitud-${solicitudId}`
+}
+
 export interface ComandoDiagnostico extends TrabajoContext {
   trabajoId: string
   descripcionOriginal: string
@@ -155,6 +169,9 @@ export type TrabajoMutation<T extends Record<string, unknown>> = Promise<
 export interface TrabajoStorePort {
   findAccessible(input: { tenantId: string; trabajoId: string }): Promise<Trabajo | null>
   findByCommitment(input: { tenantId: string; commitmentId: string }): Promise<Trabajo | null>
+  // Request-born work (at most one per request: uq_trabajos_solicitud). Internal lookup: callers
+  // authorize against the request owner/provider before exposing it.
+  findBySolicitud(input: { solicitudId: string }): Promise<Trabajo | null>
   findByReservation(input: {
     prestadorTenantId: string
     reservationId: string
@@ -414,6 +431,62 @@ export class ServicioTrabajo {
       })
       return { work }
     })
+  }
+
+  // Creates the work of a request inside the CALLER's transaction (the one that assigns the request
+  // and accepts the application), so both commit or roll back together. Idempotent per request:
+  // the same request with the same provider returns the existing work; any other provider is a
+  // conflict (the database also enforces it: uq_trabajos_solicitud + fk_trabajos_solicitud_asignada).
+  // The agreed price is the accepted budget, so request-born work always requires one.
+  async crearDesdeSolicitud(
+    repositories: Pick<TrabajoTransactionRepositories, 'work' | 'outbox'>,
+    input: ComandoCrearTrabajoDesdeSolicitud
+  ): Promise<{ work: Trabajo; created: boolean }> {
+    validateContext(input)
+    for (const [field, value] of [['solicitudId', input.solicitudId], ['prestadorTenantId', input.prestadorTenantId], ['prestadorId', input.prestadorId]] as const)
+      requireText(value ?? '', field)
+    if (!isIsoTimestamp(input.createdAt)) throw new TrabajoError(400, 'INVALID', 'createdAt must be a valid timestamp')
+    if (input.prestadorTenantId === input.tenantId)
+      throw new TrabajoError(409, 'SELF_WORK', 'a client cannot hire its own provider tenant')
+    const existing = await repositories.work.findBySolicitud({ solicitudId: input.solicitudId })
+    if (existing) {
+      if (existing.tenantId !== input.tenantId || existing.prestadorTenantId !== input.prestadorTenantId || existing.prestadorId !== input.prestadorId)
+        throw new TrabajoError(409, 'CONFLICT', 'the request already has a work with another party')
+      return { work: existing, created: false }
+    }
+    const work: Trabajo = {
+      contractVersion: TUS_CONTRACT_VERSION,
+      trabajoId: identificadorTrabajoSolicitud(input.solicitudId),
+      tenantId: input.tenantId,
+      prestadorTenantId: input.prestadorTenantId,
+      origin: 'solicitud',
+      commitmentId: null,
+      prestadorId: input.prestadorId,
+      publicacionId: null,
+      solicitudId: input.solicitudId,
+      clienteId: input.tenantId,
+      status: ESTADOS_TRABAJO.SOLICITADO,
+      version: 1,
+      budgetRequired: true,
+      acceptedBudgetId: null,
+      acceptedBudgetVersion: null,
+      createdAt: input.createdAt,
+      updatedAt: input.createdAt,
+    }
+    const repos = repositories as TrabajoTransactionRepositories
+    await repositories.work.createWork(work)
+    await repositories.work.appendTransition({ ...initialTransition(work, input), reason: 'work.created_from_request' })
+    await this.recordChange(repos, input, work, 'work.created_from_request', 'work', work.trabajoId, {
+      solicitudId: input.solicitudId,
+      prestadorTenantId: input.prestadorTenantId,
+    })
+    await this.publish(repos, work, 'tus.work.created_from_request', { solicitudId: input.solicitudId })
+    return { work, created: true }
+  }
+
+  // Same operation in its own work transaction (in-memory compositions and tests).
+  async crearDesdeSolicitudEnTransaccion(input: ComandoCrearTrabajoDesdeSolicitud): Promise<{ work: Trabajo; created: boolean }> {
+    return this.transaction.run((repositories) => this.crearDesdeSolicitud(repositories, input))
   }
 
   async getWork(context: TrabajoContext, trabajoId: string): Promise<TrabajoDetalle> {
@@ -1179,6 +1252,11 @@ export class InMemoryTrabajoStore implements TrabajoStorePort {
     const work = [...this.works.values()].find(
       (candidate) => candidate.tenantId === input.tenantId && candidate.commitmentId === input.commitmentId
     )
+    return work ? structuredClone(work) : null
+  }
+
+  async findBySolicitud(input: { solicitudId: string }): Promise<Trabajo | null> {
+    const work = [...this.works.values()].find((candidate) => candidate.solicitudId === input.solicitudId)
     return work ? structuredClone(work) : null
   }
 
