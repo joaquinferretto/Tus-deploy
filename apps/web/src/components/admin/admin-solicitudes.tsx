@@ -60,7 +60,7 @@ export function AdminSolicitudes(): React.ReactNode {
       {visibles.length > 0 ? (
         <table className={styles.table}>
           <thead>
-            <tr><th>Cliente</th><th>Servicio</th><th>Zona</th><th>Estado</th><th>Fecha</th><th>Postulantes</th></tr>
+            <tr><th>Cliente</th><th>Servicio</th><th>Zona</th><th>Estado</th><th>Fecha</th><th>Postulantes</th><th>Trabajo</th></tr>
           </thead>
           <tbody>
             {visibles.map((item) => (
@@ -71,6 +71,7 @@ export function AdminSolicitudes(): React.ReactNode {
                 <td data-label="Estado"><span className={`${styles.badge} ${tone(ESTADO[item.estado].tone)}`}>{ESTADO[item.estado].label}</span></td>
                 <td className={styles.muted} data-label="Fecha">{formatFecha(item.creadaEn)}</td>
                 <td data-label="Postulantes">{item.postulantes}</td>
+                <td data-label="Trabajo">{item.trabajoId ? <a href={`/tus/admin/trabajos?id=${encodeURIComponent(item.trabajoId)}`}>Ver trabajo</a> : item.canceladaEn ? <span className={styles.muted}>Cancelada</span> : <span className={styles.muted}>Sin trabajo</span>}</td>
               </tr>
             ))}
           </tbody>

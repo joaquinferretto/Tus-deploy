@@ -24,6 +24,8 @@ export interface FilaAdminPrestador {
   id: string; tenantId: string; nombre: string; oficio: string; oficioLabel: string; zona: string | null; zonasCobertura: string[]
   visible: boolean; aprobado: boolean; registrado: boolean; verificado: boolean; ubicaciones: number; enMapa: boolean
   motivos: string[]; creadoEn: string; actualizadoEn: string
+  // FASE 10: Mercado Pago link status (never tokens), reputation and completed works.
+  mercadoPago: string; rating: { average: number; count: number } | null; trabajosCompletados: number
 }
 
 const PERFILES_MAXIMOS = 300
@@ -244,7 +246,12 @@ export class ServicioDirectorio {
   // una lectura por lote de cada fuente (prestadores, identidad): nunca una consulta por perfil.
   private async filasAdmin(perfiles: PerfilPublico[]): Promise<FilaAdminPrestador[]> {
     const now = this.now()
-    const resumenes = await this.deps.fuentes.resumenAdmin(perfiles.map((perfil) => perfil.tenantId))
+    const tenantIds = perfiles.map((perfil) => perfil.tenantId)
+    const [resumenes, calificaciones, operacion] = await Promise.all([
+      this.deps.fuentes.resumenAdmin(tenantIds),
+      this.deps.fuentes.calificaciones?.(tenantIds) ?? Promise.resolve(new Map<string, { average: number; count: number }>()),
+      this.deps.fuentes.operacionAdmin?.(tenantIds) ?? Promise.resolve(new Map<string, { mercadoPago: string; completados: number }>()),
+    ])
     return perfiles.map((perfil) => {
       const resumen = resumenes.get(perfil.tenantId) ?? { prestador: null, verificado: false, ubicacionVerificada: null }
       const prestador = resumen.prestador
@@ -262,6 +269,9 @@ export class ServicioDirectorio {
         zona: perfil.zona, zonasCobertura: perfil.zonasCobertura, visible: perfil.visible, aprobado: hechos.aprobado,
         registrado: Boolean(prestador), verificado: hechos.verificado, ubicaciones: publico.mapLocations.length,
         enMapa: motivos.length === 0, motivos, creadoEn: new Date(perfil.creadoEn).toISOString(), actualizadoEn: new Date(perfil.actualizadoEn).toISOString(),
+        mercadoPago: operacion.get(perfil.tenantId)?.mercadoPago ?? 'not_connected',
+        rating: calificaciones.get(perfil.tenantId) ?? null,
+        trabajosCompletados: operacion.get(perfil.tenantId)?.completados ?? 0,
       }
     })
   }

@@ -180,9 +180,12 @@ export class ServicioSolicitudes {
         zona: item.zona,
         origen: item.origen,
         visibilidad: item.visibilidad,
-        estado: item.estado === 'cerrada' ? 'cerrada' as const : item.estadoAsignacion === 'aceptada' ? 'asignada' as const : item.expiraEn <= ahora ? 'vencida' as const : 'publicada' as const,
+        estado: item.estado === 'cerrada' ? 'cerrada' as const : item.estadoAsignacion === 'aceptada' || item.trabajoId ? 'asignada' as const : item.expiraEn <= ahora ? 'vencida' as const : 'publicada' as const,
         creadaEn: new Date(item.creadaEn).toISOString(),
         postulantes,
+        // FASE 10: the work born from the match (link in the admin panel) and the cancellation date.
+        trabajoId: item.trabajoId ?? null,
+        canceladaEn: item.canceladaEn ? new Date(item.canceladaEn).toISOString() : null,
       })),
     }
   }

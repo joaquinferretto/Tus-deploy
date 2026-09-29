@@ -28,6 +28,8 @@ import { crearAltaPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import { crearRouterAdmin } from './tus/admin/http.ts'
 import { crearRouterAdminTrabajos } from './tus/admin/trabajos.ts'
+import { operacionAdminPrisma } from './tus/directorio/almacenes.ts'
+import { FuenteTrabajosAdminPrisma } from './tus/admin/trabajos-fuente.ts'
 import { AlmacenCalificacionesPrisma, ServicioCalificaciones, type ClientePrismaCalificaciones } from './tus/reputacion/calificaciones.ts'
 import { crearRouterCalificaciones } from './tus/reputacion/http.ts'
 import { ActividadAdminPrisma, CuentasAdminPrisma } from './tus/admin/fuentes.ts'
@@ -138,7 +140,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     almacen: new AlmacenCalificacionesPrisma(prisma as unknown as ClientePrismaCalificaciones),
     trabajos: { buscarAccesible: (input) => new PrismaTrabajoStore(prisma).findAccessible(input) },
   })
-  const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio, calificaciones: (tenantIds) => calificaciones.resumen(tenantIds) })
+  const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio, calificaciones: (tenantIds) => calificaciones.resumen(tenantIds), operacionAdmin: operacionAdminPrisma(prisma as unknown as Parameters<typeof operacionAdminPrisma>[0]) })
   // Every match (client picks an application / provider accepts a direct request) creates the
   // work in the same PostgreSQL transaction that assigns the request.
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
@@ -235,7 +237,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     // Platform administration panel (read views + publish/hide a profile), behind the MFA gate.
     // Usage counts of the catalog lists come from aggregate queries (GROUP BY), never per row.
     // Platform support over works (cancel with payments; never moves money).
-    if (application.work) app.use(crearRouterAdminTrabajos({ sessions, trabajos: application.work }))
+    if (application.work) app.use(crearRouterAdminTrabajos({ sessions, trabajos: application.work, fuente: new FuenteTrabajosAdminPrisma(prisma as unknown as ConstructorParameters<typeof FuenteTrabajosAdminPrisma>[0]) }))
     const conteos = new ConteosCatalogoPrisma(prisma as unknown as ClientePrismaConteos)
     app.use(
       crearRouterAdmin({

@@ -3,9 +3,16 @@ import express, { type Request, type Response, type Router } from 'express'
 import { asyncHandler } from '../../presentation/middleware/error.ts'
 import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../ports/index.ts'
 import { TrabajoError, type ServicioTrabajo } from '../work/index.ts'
+import type { FuenteTrabajosAdmin } from './trabajos-fuente.ts'
+import { paginaJson, paginacion } from './paginacion.ts'
 
 // Platform support over works (MFA-elevated admin session, same gate as the rest of the panel).
 //
+// - GET  /tus/v1/admin/trabajos?q=&estado=      works with request, provider, budget, deposit/balance,
+//                                                cancellation and rating (batched reads per page)
+// - GET  /tus/v1/admin/trabajos/:id              timeline, payments, settlements and rating (no chat)
+// - GET  /tus/v1/admin/pagos?estado=             service payments: amount, TUS commission, provider
+//                                                net, Mercado Pago fee, partial reference, errors
 // - POST /tus/v1/admin/trabajos/:id/cancelar   cancel any non-terminal work with a reason, also
 //   after a payment. It never moves money: a refund is a separate admin operation
 //   (POST /tus/v1/admin/payments/refunds) with its own idempotency and provider rules.
@@ -15,6 +22,7 @@ const SUPPORT = 'tus:payments:admin'
 export interface DependenciasAdminTrabajos {
   sessions: TusSessionResolverPort
   trabajos: ServicioTrabajo
+  fuente?: FuenteTrabajosAdmin
   now?: () => number
 }
 
@@ -40,6 +48,52 @@ export function crearRouterAdminTrabajos(deps: DependenciasAdminTrabajos): Route
     }
     return context
   }
+
+  router.get(
+    '/tus/v1/admin/trabajos',
+    asyncHandler(async (request, response) => {
+      if (!(await guard(request, response))) return
+      if (!deps.fuente) {
+        response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'work administration is not available' } })
+        return
+      }
+      const { pagina, tamano } = paginacion(request.query)
+      const resultado = await deps.fuente.pagina({
+        pagina,
+        tamano,
+        q: String(request.query['q'] ?? '').trim().slice(0, 120),
+        estado: String(request.query['estado'] ?? '').trim(),
+      })
+      response.status(200).json(paginaJson(resultado.items, pagina, tamano, resultado.total))
+    })
+  )
+
+  router.get(
+    '/tus/v1/admin/trabajos/:id',
+    asyncHandler(async (request, response) => {
+      if (!(await guard(request, response))) return
+      const detalle = deps.fuente ? await deps.fuente.detalle(String(request.params['id'] ?? '').slice(0, 200)) : null
+      if (!detalle) {
+        response.status(404).json({ error: { code: 'NOT_FOUND', message: 'work not found' } })
+        return
+      }
+      response.status(200).json(detalle)
+    })
+  )
+
+  router.get(
+    '/tus/v1/admin/pagos',
+    asyncHandler(async (request, response) => {
+      if (!(await guard(request, response))) return
+      if (!deps.fuente) {
+        response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'payment administration is not available' } })
+        return
+      }
+      const { pagina, tamano } = paginacion(request.query)
+      const resultado = await deps.fuente.pagos({ pagina, tamano, estado: String(request.query['estado'] ?? '').trim() })
+      response.status(200).json(paginaJson(resultado.items, pagina, tamano, resultado.total))
+    })
+  )
 
   router.post(
     '/tus/v1/admin/trabajos/:id/cancelar',

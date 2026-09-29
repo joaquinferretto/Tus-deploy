@@ -88,7 +88,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
       {visibles.length > 0 ? (
         <table className={styles.table}>
           <thead>
-            <tr><th>Nombre</th><th>Oficio</th><th>Zona</th><th>Mapa</th><th>Identidad</th><th>Alta</th><th /></tr>
+            <tr><th>Nombre</th><th>Oficio</th><th>Zona</th><th>Mapa</th><th>Identidad</th><th>Mercado Pago</th><th>Reputación</th><th>Alta</th><th /></tr>
           </thead>
           <tbody>
             {visibles.map((item) => (
@@ -105,6 +105,8 @@ export function AdminPrestadoresLista(): React.ReactNode {
                   )}
                 </td>
                 <td data-label="Identidad">{item.verificado ? <span className={`${styles.badge} ${styles.badgeOk}`}>Verificada</span> : <span className={`${styles.badge} ${styles.badgeOff}`}>Pendiente</span>}</td>
+                <td data-label="Mercado Pago">{item.mercadoPago === 'connected' ? <span className={`${styles.badge} ${styles.badgeOk}`}>Sí</span> : <span className={`${styles.badge} ${styles.badgeOff}`}>{item.mercadoPago === 'not_connected' ? 'No' : 'No (reconectar)'}</span>}</td>
+                <td data-label="Reputación">{item.rating ? `★ ${item.rating.average.toFixed(1).replace('.', ',')} (${item.rating.count})` : <span className={styles.muted}>Sin calificaciones</span>}<div className={styles.muted}>{item.trabajosCompletados} completados</div></td>
                 <td className={styles.muted} data-label="Alta">{formatFecha(item.creadoEn)}</td>
                 <td>
                   <div className={styles.chips}>

@@ -22,6 +22,9 @@ export interface FuentesDirectorio {
   // El prestador (merchant) del tenant: id y si está aprobado para operar.
   prestador(tenantId: string): Promise<{ prestadorId: string; aprobado: boolean } | null>
   hechos(tenantId: string): Promise<HechosPrestador>
+  // FASE 10 admin: Mercado Pago link status (never tokens) and completed works of many providers,
+  // one read per source.
+  operacionAdmin?(tenantIds: readonly string[]): Promise<Map<string, { mercadoPago: string; completados: number }>>
   // Ratings of many providers in ONE grouped read (never one per profile).
   calificaciones?(tenantIds: readonly string[]): Promise<Map<string, { average: number; count: number }>>
   ubicacionIdentidadVerificada?(tenantId: string): Promise<AreaDomicilioFallback | null>

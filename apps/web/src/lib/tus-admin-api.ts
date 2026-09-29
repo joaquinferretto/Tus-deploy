@@ -10,12 +10,12 @@ export class AdminApiError extends Error {
   }
 }
 
-async function call<T>(path: string, body?: unknown, method?: 'POST' | 'PATCH'): Promise<T> {
+async function call<T>(path: string, body?: unknown, method?: 'POST' | 'PATCH', extraHeaders: Record<string, string> = {}): Promise<T> {
   const baseUrl = resolveWebApiBaseUrl({ canonicalUrl: process.env['NEXT_PUBLIC_API_URL'], legacyUrl: process.env['API_BASE_URL'], nodeEnv: process.env['NODE_ENV'] })
   const response = await fetchWithSession(`${baseUrl}${path}`, {
     method: method ?? (body === undefined ? 'GET' : 'POST'),
     cache: 'no-store',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Correlation-Id': crypto.randomUUID() },
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Correlation-Id': crypto.randomUUID(), ...extraHeaders },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
   if (!response.ok) {
@@ -68,6 +68,10 @@ export interface AdminPrestador {
   motivos: string[]
   creadoEn: string
   actualizadoEn: string
+  // Mercado Pago link STATUS only (connected / not_connected / expired / revoked / error).
+  mercadoPago: string
+  rating: { average: number; count: number } | null
+  trabajosCompletados: number
 }
 
 export interface AdminSolicitud {
@@ -81,6 +85,49 @@ export interface AdminSolicitud {
   estado: 'publicada' | 'asignada' | 'vencida' | 'cerrada'
   creadaEn: string
   postulantes: number
+  trabajoId: string | null
+  canceladaEn: string | null
+}
+
+export interface AdminPagoParte { parte: 'total' | 'sena' | 'saldo'; montoMinor: string; moneda: string; estado: string }
+export interface AdminTrabajo {
+  id: string
+  origen: 'marketplace' | 'solicitud'
+  solicitudId: string | null
+  titulo: string
+  cliente: string
+  prestador: string
+  estado: string
+  version: number
+  presupuesto: { totalMinor: string; moneda: string } | null
+  pagos: AdminPagoParte[]
+  cancelacion: { rol: string; motivo: string } | null
+  cancelacionSolicitada: { fecha: string; motivo: string } | null
+  calificacion: number | null
+  terminadoEn: string | null
+  creadoEn: string
+  actualizadoEn: string
+}
+export interface AdminPago {
+  pagoId: string
+  trabajoId: string
+  parte: 'total' | 'sena' | 'saldo'
+  montoMinor: string
+  moneda: string
+  estado: string
+  comisionMinor: string | null
+  netoPrestadorMinor: string | null
+  feeMercadoPagoMinor: string | null
+  referencia: string | null
+  error: string | null
+  creadoEn: string
+  actualizadoEn: string
+}
+export interface AdminTrabajoDetalle extends AdminTrabajo {
+  transiciones: { de: string | null; a: string; motivo: string; fecha: string }[]
+  pagosDetalle: AdminPago[]
+  calificacionDetalle: { puntuacion: number; comentario: string | null; fecha: string } | null
+  liquidaciones: { parte: string; estado: string; brutoMinor: string; comisionMinor: string; netoMinor: string }[]
 }
 
 export interface AdminCategoria { id: string; nombre: string; slug: string; descripcion: string | null; activo: boolean; orden: number; oficios: number }
@@ -170,6 +217,11 @@ export const adminApi = {
   visibilidad: (id: string, visible: boolean) => call<{ id: string; visible: boolean }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/visibilidad`, { visible }),
   solicitudes: (input: { q: string; estado: string; categoria: string; page: number; pageSize: number }) => call<AdminPage<AdminSolicitud>>(`/tus/v1/admin/solicitudes?${new URLSearchParams({ q: input.q, estado: input.estado, categoria: input.categoria, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   catalogo: () => call<AdminCatalogo>('/tus/v1/admin/catalogo'),
+  // FASE 10: end-to-end service operations (read-only, plus the support cancellation).
+  trabajos: (input: { q: string; estado: string; page: number; pageSize: number }) => call<AdminPage<AdminTrabajo>>(`/tus/v1/admin/trabajos?${new URLSearchParams({ q: input.q, estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
+  trabajo: (id: string) => call<AdminTrabajoDetalle>(`/tus/v1/admin/trabajos/${encodeURIComponent(id)}`),
+  pagos: (input: { estado: string; page: number; pageSize: number }) => call<AdminPage<AdminPago>>(`/tus/v1/admin/pagos?${new URLSearchParams({ estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
+  cancelarTrabajo: (id: string, expectedVersion: number, reason: string, idempotencyKey: string) => call<{ status: string }>(`/tus/v1/admin/trabajos/${encodeURIComponent(id)}/cancelar`, { expectedVersion, reason }, 'POST', { 'Idempotency-Key': idempotencyKey }),
   // One page of an entity (server-side filters and pagination) with its usage counts.
   listaCatalogo: <E extends EntidadCatalogo>(entidad: E, input: FiltroCatalogo) =>
     call<AdminPage<ItemCatalogo[E]>>(`/tus/v1/admin/catalogo/${entidad}?${new URLSearchParams({ q: input.q, estado: input.estado, categoria: input.categoria ?? '', localidad: input.localidad ?? '', zona: input.zona ?? '', page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),

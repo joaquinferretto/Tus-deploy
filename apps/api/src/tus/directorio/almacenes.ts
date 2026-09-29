@@ -189,8 +189,15 @@ export class FuentesDirectorioTus implements FuentesDirectorio {
   constructor(
     private readonly application: TusApplicationService,
     private readonly contarCompletados: (tenantId: string) => Promise<number>,
-    private readonly resumenCalificaciones?: (tenantIds: readonly string[]) => Promise<Map<string, { average: number; count: number }>>
+    private readonly resumenCalificaciones?: (tenantIds: readonly string[]) => Promise<Map<string, { average: number; count: number }>>,
+    private readonly resumenOperacion?: (tenantIds: readonly string[]) => Promise<Map<string, { mercadoPago: string; completados: number }>>
   ) {}
+
+  async operacionAdmin(tenantIds: readonly string[]) {
+    return this.resumenOperacion && tenantIds.length
+      ? this.resumenOperacion(tenantIds)
+      : new Map<string, { mercadoPago: string; completados: number }>()
+  }
 
   async calificaciones(tenantIds: readonly string[]) {
     return this.resumenCalificaciones && tenantIds.length
@@ -253,6 +260,24 @@ export class FuentesDirectorioTus implements FuentesDirectorio {
         ubicacionVerificada: verificacion?.area ?? null,
       }]
     }))
+  }
+}
+
+// FASE 10 admin: two batched reads for a whole page (payment accounts + completed works GROUP BY).
+// Only the account STATUS leaves this function; tokens live encrypted in another table.
+export function operacionAdminPrisma(client: {
+  cuentaCobroPrestador: { findMany(input: { where: Record<string, unknown>; select: Record<string, boolean> }): Promise<Record<string, unknown>[]> }
+  trabajo: { groupBy(input: { by: string[]; where: Record<string, unknown>; _count: Record<string, boolean> }): Promise<Record<string, unknown>[]> }
+}) {
+  return async (tenantIds: readonly string[]) => {
+    const ids = [...new Set(tenantIds)]
+    const [cuentas, completados] = await Promise.all([
+      client.cuentaCobroPrestador.findMany({ where: { prestadorTenantId: { in: ids } }, select: { prestadorTenantId: true, estado: true } }),
+      client.trabajo.groupBy({ by: ['prestadorTenantId'], where: { prestadorTenantId: { in: ids }, estado: 'completed' }, _count: { _all: true } }),
+    ])
+    const estado = new Map(cuentas.map((fila) => [String(fila['prestadorTenantId']), String(fila['estado'])]))
+    const cuenta = new Map(completados.map((fila) => [String(fila['prestadorTenantId']), Number((fila['_count'] as Record<string, unknown>)['_all'])]))
+    return new Map(ids.map((id) => [id, { mercadoPago: estado.get(id) ?? 'not_connected', completados: cuenta.get(id) ?? 0 }]))
   }
 }
 
