@@ -10,7 +10,9 @@ import type { ServicioSolicitudes } from './servicio.ts'
 // - GET  /tus/v1/public/solicitudes/:id/imagenes/:orden     foto de una solicitud pública.
 // - GET  /tus/v1/solicitudes/mias                           solicitudes de la cuenta (con asignación).
 // - POST /tus/v1/solicitudes                                publicar; con `providerId` queda dirigida.
-// - POST /tus/v1/solicitudes/:id/cerrar                     cerrar (una dirigida pendiente se cancela).
+// - POST /tus/v1/solicitudes/:id/(cancelar|cerrar)          cancelar ANTES de elegir prestador (se
+//                                                           registra quién y cuándo). Con prestador
+//                                                           elegido / trabajo: 409 WORK_ACTIVE.
 // - POST /tus/v1/solicitudes/:id/imagenes                   subir foto (octet-stream, hasta 2).
 // - GET  /tus/v1/solicitudes/:id/imagenes/:orden            foto para la dueña o el prestador destino.
 // - GET  /tus/v1/prestador/solicitudes                      bandeja del prestador (dirigidas a él).
@@ -21,6 +23,7 @@ import type { ServicioSolicitudes } from './servicio.ts'
 // - POST /tus/v1/prestador/postulaciones/:id/retirar              se baja antes de la decisión.
 // - GET  /tus/v1/solicitudes/:id/postulaciones                    postulantes (solo la dueña).
 // - POST /tus/v1/solicitudes/:id/postulaciones/:pid/(aceptar|rechazar)
+//   Aceptar es el match: nace el trabajo en la misma transacción; la respuesta trae `workId`.
 export function crearRouterSolicitudes({ servicio, sessions }: { servicio: ServicioSolicitudes; sessions: TusSessionResolverPort }): Router {
   const router = express.Router()
 
@@ -97,12 +100,14 @@ export function crearRouterSolicitudes({ servicio, sessions }: { servicio: Servi
   )
 
   router.post(
-    '/tus/v1/solicitudes/:id/cerrar',
+    ['/tus/v1/solicitudes/:id/cancelar', '/tus/v1/solicitudes/:id/cerrar'],
     asyncHandler(async (request: Request, response: Response) => {
       const context = await autenticar(request, response, sessions)
       if (!context) return
-      const result = await servicio.cerrar(context.subjectId, request.params['id'])
-      if (result.ok) response.status(200).json({ status: 'cerrada' })
+      const result = await servicio.cancelar(context.subjectId, request.params['id'])
+      if (result.ok) response.status(200).json({ status: 'cancelada' })
+      else if (result.code === 'WORK_ACTIVE') enviarError(response, 409, result.code, 'A provider was already chosen: this request has a work; cancel the work instead')
+      else if (result.code === 'ALREADY_CLOSED') enviarError(response, 409, result.code, 'This request is already closed')
       else enviarError(response, 404, 'NOT_FOUND', 'Service request not found')
     })
   )
@@ -158,7 +163,7 @@ export function crearRouterSolicitudes({ servicio, sessions }: { servicio: Servi
         return
       }
       const decision = request.path.endsWith('/aceptar') ? 'aceptada' : 'rechazada'
-      const result = await servicio.responder(context.tenantId, request.params['id'], decision)
+      const result = await servicio.responder(context.tenantId, request.params['id'], decision, { actorId: context.subjectId, correlationId: context.correlationId })
       if (result.ok) response.status(200).json(result.solicitud)
       else enviarError(response, 404, 'NOT_FOUND', 'Pending request not found')
     })
@@ -231,8 +236,8 @@ export function crearRouterSolicitudes({ servicio, sessions }: { servicio: Servi
       const context = await autenticar(request, response, sessions)
       if (!context) return
       if (request.path.endsWith('/aceptar')) {
-        const result = await servicio.elegirPostulante(context.subjectId, request.params['id'], request.params['postulacionId'])
-        if (result.ok) response.status(200).json(result.solicitud)
+        const result = await servicio.elegirPostulante(context.subjectId, request.params['id'], request.params['postulacionId'], { correlationId: context.correlationId })
+        if (result.ok) response.status(200).json({ ...result.solicitud, workId: result.workId, replay: result.replay })
         else enviarError(response, 409, 'NOT_AVAILABLE', 'The request or the application is no longer pending')
         return
       }

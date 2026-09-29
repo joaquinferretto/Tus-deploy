@@ -99,7 +99,8 @@ test('ASISTENTE postulaciones: client lists only own applicants and chooses one 
   assert.equal(result.stillOpen, true)
   assert.equal(result.chosen.ok, true)
   assert.deepEqual(result.chosen.data.result, { requestId: result.chosen.data.result.requestId, assignment: 'aceptada', providerName: 'Ana Gómez' })
-  assert.deepEqual(result.twice, { ok: false, error: 'NOT_AVAILABLE' })
+  // Confirming the same choice twice is idempotent: same request, same provider, no second work.
+  assert.deepEqual(result.twice.data.result, result.chosen.data.result)
   assert.equal(result.closed, true)
 })
 

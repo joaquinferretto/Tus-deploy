@@ -10,7 +10,7 @@ import type {
   UrgenciaSolicitud,
   VisibilidadSolicitud,
 } from './modelo.ts'
-import type { AlmacenSolicitudes } from './puertos.ts'
+import type { AlmacenSolicitudes, ClienteDelMatch, CreadorTrabajoSolicitud } from './puertos.ts'
 
 const unique = () => Object.assign(new Error('unique violation'), { code: 'P2002' })
 
@@ -20,14 +20,18 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
   readonly solicitudes = new Map<string, SolicitudServicio>()
   readonly imagenes = new Map<string, ImagenSolicitud>()
   readonly postulaciones = new Map<string, PostulacionSolicitud>()
+  // Espejo de trabajos.solicitud_id (a lo sumo un trabajo por solicitud).
+  readonly trabajoPorSolicitud = new Map<string, string>()
+
+  constructor(private readonly trabajos: CreadorTrabajoSolicitud | null = null) {}
 
   private copia(solicitud: SolicitudServicio): SolicitudServicio {
     const imagenes = [...this.imagenes.values()].filter((imagen) => imagen.solicitudId === solicitud.id).map((imagen) => imagen.orden)
-    return { ...solicitud, imagenes }
+    return { ...solicitud, imagenes, trabajoId: this.trabajoPorSolicitud.get(solicitud.id) ?? null }
   }
 
   async guardar(solicitud: SolicitudServicio) {
-    this.solicitudes.set(solicitud.id, { ...solicitud, imagenes: [] })
+    this.solicitudes.set(solicitud.id, { ...solicitud, imagenes: [], trabajoId: null })
   }
 
   async obtener(id: string) {
@@ -81,26 +85,40 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
     return [...this.solicitudes.values()].filter((item) => item.cuentaId === cuentaId && item.estado === 'abierta' && item.expiraEn > ahora).length
   }
 
-  async cerrar(input: { id: string; cuentaId: string; ahora: number }) {
+  async cancelar(input: { id: string; cuentaId: string; ahora: number }) {
     const item = this.solicitudes.get(input.id)
-    if (!item || item.cuentaId !== input.cuentaId || item.estado !== 'abierta') return false
+    if (!item || item.cuentaId !== input.cuentaId) return 'no_encontrada' as const
+    if (item.estado !== 'abierta') return 'cerrada' as const
+    const sinMatch = !this.trabajoPorSolicitud.has(item.id) && (item.visibilidad === 'publica' || item.estadoAsignacion === 'pendiente')
+    if (!sinMatch) return 'con_trabajo' as const
     item.estado = 'cerrada'
     if (item.estadoAsignacion === 'pendiente') item.estadoAsignacion = 'cancelada'
+    item.canceladaEn = input.ahora
+    item.canceladaPor = input.cuentaId
     item.actualizadaEn = input.ahora
-    // Cerrar la solicitud responde a quienes seguían esperando.
+    // Cancelar responde a quienes seguían esperando.
     for (const postulacion of this.postulaciones.values())
       if (postulacion.solicitudId === item.id && postulacion.estado === 'pendiente') Object.assign(postulacion, { estado: 'rechazada', actualizadaEn: input.ahora })
-    return true
+    return 'cancelada' as const
   }
 
-  async responder(input: { id: string; prestadorTenantId: string; decision: 'aceptada' | 'rechazada'; ahora: number }) {
+  async responder(input: { id: string; prestadorTenantId: string; decision: 'aceptada' | 'rechazada'; ahora: number; cliente: ClienteDelMatch | null; correlationId: string; actorId: string }) {
     const item = this.solicitudes.get(input.id)
-    if (!item || item.prestadorTenantId !== input.prestadorTenantId || item.estadoAsignacion !== 'pendiente' || item.estado !== 'abierta') return false
+    if (!item || item.prestadorTenantId !== input.prestadorTenantId || item.estadoAsignacion !== 'pendiente' || item.estado !== 'abierta') return null
+    const antes = { ...item }
     item.estadoAsignacion = input.decision
     if (input.decision === 'rechazada') item.estado = 'cerrada'
     item.respondidaEn = input.ahora
     item.actualizadaEn = input.ahora
-    return true
+    if (input.decision !== 'aceptada' || !this.trabajos || !input.cliente) return { trabajoId: null }
+    try {
+      const { trabajoId } = await this.trabajos.crear(undefined, { solicitudId: item.id, cliente: input.cliente, actorId: input.actorId, prestadorTenantId: item.prestadorTenantId!, prestadorId: item.prestadorId!, correlationId: input.correlationId, ahora: input.ahora })
+      this.trabajoPorSolicitud.set(item.id, trabajoId)
+      return { trabajoId }
+    } catch (error) {
+      Object.assign(item, antes)
+      throw error
+    }
   }
 
   async guardarImagen(imagen: ImagenSolicitud) {
@@ -133,11 +151,13 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
       .map((item) => ({ ...item }))
   }
 
-  async aceptarPostulacion(input: { solicitudId: string; cuentaId: string; postulacionId: string; ahora: number }) {
+  async aceptarPostulacion(input: { solicitudId: string; cuentaId: string; postulacionId: string; ahora: number; cliente: ClienteDelMatch; correlationId: string }) {
     const solicitud = this.solicitudes.get(input.solicitudId)
     const elegida = this.postulaciones.get(input.postulacionId)
-    if (!solicitud || solicitud.cuentaId !== input.cuentaId || solicitud.visibilidad !== 'publica' || solicitud.estado !== 'abierta' || solicitud.expiraEn <= input.ahora) return false
-    if (!elegida || elegida.solicitudId !== solicitud.id || elegida.estado !== 'pendiente') return false
+    if (!solicitud || solicitud.cuentaId !== input.cuentaId || solicitud.visibilidad !== 'publica' || solicitud.estado !== 'abierta' || solicitud.expiraEn <= input.ahora) return null
+    if (!elegida || elegida.solicitudId !== solicitud.id || elegida.estado !== 'pendiente') return null
+    const antes = { ...solicitud }
+    const postulacionesAntes = [...this.postulaciones.values()].filter((item) => item.solicitudId === solicitud.id).map((item) => ({ ...item }))
     Object.assign(solicitud, {
       visibilidad: 'dirigida',
       prestadorTenantId: elegida.prestadorTenantId,
@@ -149,7 +169,17 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
     for (const postulacion of this.postulaciones.values())
       if (postulacion.solicitudId === solicitud.id && postulacion.estado === 'pendiente')
         Object.assign(postulacion, { estado: postulacion.id === elegida.id ? 'aceptada' : 'rechazada', actualizadaEn: input.ahora })
-    return true
+    if (!this.trabajos) return { trabajoId: null }
+    try {
+      const { trabajoId } = await this.trabajos.crear(undefined, { solicitudId: solicitud.id, cliente: input.cliente, actorId: input.cliente.actorId, prestadorTenantId: elegida.prestadorTenantId, prestadorId: elegida.prestadorId, correlationId: input.correlationId, ahora: input.ahora })
+      this.trabajoPorSolicitud.set(solicitud.id, trabajoId)
+      return { trabajoId }
+    } catch (error) {
+      // Mismo efecto que el rollback de PostgreSQL: nada queda aplicado.
+      Object.assign(solicitud, antes)
+      for (const previa of postulacionesAntes) this.postulaciones.set(previa.id, previa)
+      throw error
+    }
   }
 
   async cerrarPostulacion(input: { postulacionId: string; estado: 'rechazada' | 'retirada'; solicitudId?: string; prestadorTenantId?: string; ahora: number }) {
@@ -201,8 +231,8 @@ export interface ClientePrismaSolicitudes extends DelegadosSolicitudes {
 // Señal interna para revertir la transacción de aceptación cuando una condición no se cumple.
 class SinCambios extends Error {}
 
-// Solo el orden de las fotos, nunca los bytes, al listar solicitudes.
-const CON_IMAGENES = { imagenes: { select: { orden: true } } }
+// Solo el orden de las fotos (nunca los bytes) y el id del trabajo del match, al listar solicitudes.
+const CON_IMAGENES = { imagenes: { select: { orden: true } }, trabajos: { select: { trabajoId: true } } }
 
 const aFecha = (value: number) => new Date(value)
 const desdeFecha = (value: unknown) => (value instanceof Date ? value.getTime() : Number(value))
@@ -245,17 +275,25 @@ function desdeFila(fila: Fila): SolicitudServicio {
     prestadorId: (fila['prestadorId'] as string | null | undefined) ?? null,
     estadoAsignacion: (fila['estadoAsignacion'] as EstadoAsignacion | null | undefined) ?? null,
     respondidaEn: opcionalFecha(fila['respondidaEn']),
+    canceladaEn: opcionalFecha(fila['canceladaEn']),
+    canceladaPor: (fila['canceladaPor'] as string | null | undefined) ?? null,
     imagenes,
+    trabajoId: Array.isArray(fila['trabajos']) && fila['trabajos'].length > 0 ? String((fila['trabajos'] as Fila[])[0]!['trabajoId']) : null,
   }
 }
 
 export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
-  constructor(private readonly client: ClientePrismaSolicitudes) {}
+  // `trabajos` crea el trabajo del match dentro de la transacción (sin él, solo se asigna).
+  constructor(
+    private readonly client: ClientePrismaSolicitudes,
+    private readonly trabajos: CreadorTrabajoSolicitud | null = null
+  ) {}
 
   async guardar(solicitud: SolicitudServicio) {
     // `imagenes` is derived from imagenes_solicitud, never a column.
     const datos: Partial<SolicitudServicio> = { ...solicitud }
     delete datos.imagenes
+    delete datos.trabajoId
     await this.client.solicitudServicio.create({
       data: {
         ...datos,
@@ -263,6 +301,7 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
         actualizadaEn: aFecha(solicitud.actualizadaEn),
         expiraEn: aFecha(solicitud.expiraEn),
         respondidaEn: solicitud.respondidaEn === null ? null : aFecha(solicitud.respondidaEn),
+        canceladaEn: solicitud.canceladaEn === null ? null : aFecha(solicitud.canceladaEn),
       },
     })
   }
@@ -328,38 +367,65 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
     return this.client.solicitudServicio.count({ where: { cuentaId, estado: 'abierta', expiraEn: { gt: aFecha(ahora) } } })
   }
 
-  async cerrar(input: { id: string; cuentaId: string; ahora: number }) {
-    // Dos updates condicionales en una transacción: una dirigida pendiente queda 'cancelada'.
-    const [pendiente, resto] = await this.client.$transaction([
+  async cancelar(input: { id: string; cuentaId: string; ahora: number }) {
+    const ahora = aFecha(input.ahora)
+    // Una sola sentencia condicional por forma de solicitud: abierta, sin prestador elegido y sin
+    // trabajo. Un match concurrente actualiza la misma fila (visibilidad/asignación), así que la
+    // re-evaluación del WHERE bajo el lock de fila ya no la encuentra.
+    const cancelada = { estado: 'cerrada', canceladaEn: ahora, canceladaPor: input.cuentaId, actualizadaEn: ahora }
+    const [pendiente, publica] = await this.client.$transaction([
       this.client.solicitudServicio.updateMany({
-        where: { id: input.id, cuentaId: input.cuentaId, estado: 'abierta', estadoAsignacion: 'pendiente' },
-        data: { estado: 'cerrada', estadoAsignacion: 'cancelada', actualizadaEn: aFecha(input.ahora) },
+        where: { id: input.id, cuentaId: input.cuentaId, estado: 'abierta', visibilidad: 'dirigida', estadoAsignacion: 'pendiente', trabajos: { none: {} } },
+        data: { ...cancelada, estadoAsignacion: 'cancelada' },
       }),
       this.client.solicitudServicio.updateMany({
-        // Explícito: en SQL `NOT (x = 'pendiente')` excluiría las públicas (asignación NULL).
-        where: { id: input.id, cuentaId: input.cuentaId, estado: 'abierta', OR: [{ estadoAsignacion: null }, { estadoAsignacion: { in: ['aceptada', 'rechazada', 'cancelada'] } }] },
-        data: { estado: 'cerrada', actualizadaEn: aFecha(input.ahora) },
+        where: { id: input.id, cuentaId: input.cuentaId, estado: 'abierta', visibilidad: 'publica', trabajos: { none: {} } },
+        data: cancelada,
       }),
-      // Cerrar la solicitud responde a quienes seguían esperando (solo si es de la cuenta).
+      // Cancelar responde a quienes seguían esperando (solo si ESTA cancelación se aplicó).
       this.client.postulacionSolicitud.updateMany({
-        where: { solicitudId: input.id, estado: 'pendiente', solicitud: { cuentaId: input.cuentaId } },
-        data: { estado: 'rechazada', fechaActualizacion: aFecha(input.ahora) },
+        where: { solicitudId: input.id, estado: 'pendiente', solicitud: { cuentaId: input.cuentaId, canceladaEn: ahora } },
+        data: { estado: 'rechazada', fechaActualizacion: ahora },
       }),
     ])
-    return pendiente!.count + resto!.count === 1
+    if (pendiente!.count + publica!.count === 1) return 'cancelada' as const
+    const fila = await this.client.solicitudServicio.findFirst({ where: { id: input.id } })
+    if (!fila || fila['cuentaId'] !== input.cuentaId) return 'no_encontrada' as const
+    return fila['estado'] !== 'abierta' ? ('cerrada' as const) : ('con_trabajo' as const)
   }
 
-  async responder(input: { id: string; prestadorTenantId: string; decision: 'aceptada' | 'rechazada'; ahora: number }) {
-    const result = await this.client.solicitudServicio.updateMany({
-      where: { id: input.id, prestadorTenantId: input.prestadorTenantId, visibilidad: 'dirigida', estado: 'abierta', estadoAsignacion: 'pendiente' },
-      data: {
-        estadoAsignacion: input.decision,
-        respondidaEn: aFecha(input.ahora),
-        actualizadaEn: aFecha(input.ahora),
-        ...(input.decision === 'rechazada' ? { estado: 'cerrada' } : {}),
-      },
-    })
-    return result.count === 1
+  async responder(input: { id: string; prestadorTenantId: string; decision: 'aceptada' | 'rechazada'; ahora: number; cliente: ClienteDelMatch | null; correlationId: string; actorId: string }) {
+    try {
+      return await this.client.$transaction(async (tx) => {
+        const result = await tx.solicitudServicio.updateMany({
+          where: { id: input.id, prestadorTenantId: input.prestadorTenantId, visibilidad: 'dirigida', estado: 'abierta', estadoAsignacion: 'pendiente' },
+          data: {
+            estadoAsignacion: input.decision,
+            respondidaEn: aFecha(input.ahora),
+            actualizadaEn: aFecha(input.ahora),
+            ...(input.decision === 'rechazada' ? { estado: 'cerrada' } : {}),
+          },
+        })
+        if (result.count !== 1) return null
+        if (input.decision !== 'aceptada' || !this.trabajos || !input.cliente) return { trabajoId: null }
+        const fila = await tx.solicitudServicio.findFirst({ where: { id: input.id } })
+        if (!fila) throw new SinCambios()
+        // El match de una dirigida crea el trabajo en la misma transacción: todo o nada.
+        const { trabajoId } = await this.trabajos.crear(tx, {
+          solicitudId: input.id,
+          cliente: input.cliente,
+          actorId: input.actorId,
+          prestadorTenantId: String(fila['prestadorTenantId']),
+          prestadorId: String(fila['prestadorId']),
+          correlationId: input.correlationId,
+          ahora: input.ahora,
+        })
+        return { trabajoId }
+      })
+    } catch (error) {
+      if (error instanceof SinCambios) return null
+      throw error
+    }
   }
 
   async guardarImagen(imagen: ImagenSolicitud) {
@@ -417,10 +483,10 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
     return filas.map(desdeFilaPostulacion)
   }
 
-  async aceptarPostulacion(input: { solicitudId: string; cuentaId: string; postulacionId: string; ahora: number }) {
+  async aceptarPostulacion(input: { solicitudId: string; cuentaId: string; postulacionId: string; ahora: number; cliente: ClienteDelMatch; correlationId: string }) {
     const ahora = aFecha(input.ahora)
     try {
-      await this.client.$transaction(async (tx) => {
+      return await this.client.$transaction(async (tx) => {
         const elegida = await tx.postulacionSolicitud.findFirst({ where: { id: input.postulacionId, solicitudId: input.solicitudId, estado: 'pendiente' } })
         if (!elegida) throw new SinCambios()
         // El UPDATE condicional toma el lock de la fila: una segunda aceptación concurrente
@@ -440,12 +506,25 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
         const aceptada = await tx.postulacionSolicitud.updateMany({ where: { id: input.postulacionId, estado: 'pendiente' }, data: { estado: 'aceptada', fechaActualizacion: ahora } })
         if (aceptada.count !== 1) throw new SinCambios()
         await tx.postulacionSolicitud.updateMany({ where: { solicitudId: input.solicitudId, estado: 'pendiente' }, data: { estado: 'rechazada', fechaActualizacion: ahora } })
+        if (!this.trabajos) return { trabajoId: null }
+        // El trabajo nace en la MISMA transacción: si falla, la asignación y las postulaciones se
+        // revierten (nunca queda una solicitud asignada sin trabajo ni dos trabajos).
+        const { trabajoId } = await this.trabajos.crear(tx, {
+          solicitudId: input.solicitudId,
+          cliente: input.cliente,
+          actorId: input.cliente.actorId,
+          prestadorTenantId: String(elegida['prestadorTenantId']),
+          prestadorId: String(elegida['prestadorId']),
+          correlationId: input.correlationId,
+          ahora: input.ahora,
+        })
+        return { trabajoId }
       })
-      return true
     } catch (error) {
-      if (error instanceof SinCambios) return false
-      // El índice parcial de un solo aceptado cubre cualquier carrera que el WHERE no vea.
-      if ((error as { code?: unknown })?.code === 'P2002') return false
+      if (error instanceof SinCambios) return null
+      // Los índices únicos (un aceptado, un trabajo por solicitud) cubren cualquier carrera que el
+      // WHERE no vea: la transacción perdedora se revierte entera.
+      if ((error as { code?: unknown })?.code === 'P2002') return null
       throw error
     }
   }

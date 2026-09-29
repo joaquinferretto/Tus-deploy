@@ -42,6 +42,9 @@ export type CodigoErrorSolicitud =
   | 'IMAGE_LIMIT'
   | 'ALREADY_APPLIED'
   | 'REQUEST_FULL'
+  // Ya hay prestador elegido / trabajo: la solicitud no se cancela, se opera el trabajo.
+  | 'WORK_ACTIVE'
+  | 'ALREADY_CLOSED'
 
 export type ResultadoSolicitud<T> =
   | ({ ok: true } & T)
@@ -126,7 +129,10 @@ export class ServicioSolicitudes {
       prestadorId: destino?.perfil.prestadorId ?? null,
       estadoAsignacion: destino ? 'pendiente' : null,
       respondidaEn: null,
+      canceladaEn: null,
+      canceladaPor: null,
       imagenes: [],
+      trabajoId: null,
     }
     await this.deps.almacen.guardar(solicitud)
     return { ok: true, solicitud: vistaPropia(solicitud, destino ? { id: destino.perfil.id, displayName: destino.perfil.nombrePublico } : null) }
@@ -192,9 +198,19 @@ export class ServicioSolicitudes {
     return solicitudes.map((solicitud) => vistaPropia(solicitud, solicitud.prestadorTenantId ? (nombres.get(solicitud.prestadorTenantId) ?? null) : null))
   }
 
-  async cerrar(cuentaId: string, id: unknown): Promise<ResultadoSolicitud<object>> {
+  // Cancelación de la dueña (también la usa el viejo "cerrar"): solo mientras no eligió prestador.
+  // Después del match la solicitud queda atada al trabajo y responde WORK_ACTIVE.
+  async cancelar(cuentaId: string, id: unknown): Promise<ResultadoSolicitud<object>> {
     if (!idValido(id)) return { ok: false, code: 'NOT_FOUND' }
-    return (await this.deps.almacen.cerrar({ id, cuentaId, ahora: this.now() })) ? { ok: true } : { ok: false, code: 'NOT_FOUND' }
+    const resultado = await this.deps.almacen.cancelar({ id, cuentaId, ahora: this.now() })
+    if (resultado === 'cancelada') return { ok: true }
+    if (resultado === 'con_trabajo') return { ok: false, code: 'WORK_ACTIVE' }
+    if (resultado === 'cerrada') return { ok: false, code: 'ALREADY_CLOSED' }
+    return { ok: false, code: 'NOT_FOUND' }
+  }
+
+  async cerrar(cuentaId: string, id: unknown): Promise<ResultadoSolicitud<object>> {
+    return this.cancelar(cuentaId, id)
   }
 
   // ---- prestador destino ------------------------------------------------------------------------
@@ -203,13 +219,37 @@ export class ServicioSolicitudes {
     return (await this.deps.almacen.listarDirigidasA(prestadorTenantId)).map(vistaRecibida)
   }
 
-  // Aceptar confirma la relación con el cliente; rechazar la cierra. Solo desde 'pendiente'.
-  async responder(prestadorTenantId: string, id: unknown, decision: unknown): Promise<ResultadoSolicitud<{ solicitud: VistaSolicitudRecibida }>> {
+  // Aceptar confirma la relación con el cliente (es el match: nace el trabajo en la misma
+  // transacción); rechazar la cierra. Solo desde 'pendiente'.
+  async responder(
+    prestadorTenantId: string,
+    id: unknown,
+    decision: unknown,
+    contexto: { actorId?: string; correlationId?: string } = {}
+  ): Promise<ResultadoSolicitud<{ solicitud: VistaSolicitudRecibida }>> {
     if (!idValido(id) || (decision !== 'aceptada' && decision !== 'rechazada')) return { ok: false, code: 'NOT_FOUND' }
-    const actualizada = await this.deps.almacen.responder({ id, prestadorTenantId, decision, ahora: this.now() })
+    const previa = await this.deps.almacen.obtener(id)
+    if (!previa || previa.prestadorTenantId !== prestadorTenantId) return { ok: false, code: 'NOT_FOUND' }
+    const cliente = decision === 'aceptada' ? await this.clienteDelMatch(previa.cuentaId) : null
+    if (decision === 'aceptada' && !cliente) return { ok: false, code: 'NOT_FOUND' }
+    const actualizada = await this.deps.almacen.responder({
+      id,
+      prestadorTenantId,
+      decision,
+      ahora: this.now(),
+      cliente,
+      correlationId: contexto.correlationId ?? this.newId(),
+      actorId: contexto.actorId ?? `prestador:${prestadorTenantId}`,
+    })
     if (!actualizada) return { ok: false, code: 'NOT_FOUND' }
     const solicitud = await this.deps.almacen.obtener(id)
     return solicitud ? { ok: true, solicitud: vistaRecibida(solicitud) } : { ok: false, code: 'NOT_FOUND' }
+  }
+
+  // El cliente del match se resuelve en servidor desde la cuenta dueña de la solicitud.
+  private async clienteDelMatch(cuentaId: string) {
+    const cuenta = await this.deps.cuentas.getAccount(cuentaId)
+    return cuenta?.tenantId ? { tenantId: cuenta.tenantId, actorId: cuentaId } : null
   }
 
   // ---- postulaciones a solicitudes públicas -----------------------------------------------------
@@ -295,15 +335,43 @@ export class ServicioSolicitudes {
     return { ok: true, items: items.filter((item): item is VistaPostulante => item !== null) }
   }
 
-  // El cliente acepta a un postulante: la solicitud sale del mapa y queda confirmada con él.
-  async elegirPostulante(cuentaId: string, id: unknown, postulacionId: unknown): Promise<ResultadoSolicitud<{ solicitud: VistaPropiaSolicitud }>> {
+  // El cliente acepta a UN postulante: la solicitud sale del mapa, queda confirmada con él, el
+  // resto se rechaza y nace EL trabajo, todo en una transacción. Repetir la misma aceptación
+  // (doble click, reintento, otra pestaña) devuelve el mismo resultado; aceptar a otro, NOT_FOUND.
+  async elegirPostulante(
+    cuentaId: string,
+    id: unknown,
+    postulacionId: unknown,
+    contexto: { correlationId?: string } = {}
+  ): Promise<ResultadoSolicitud<{ solicitud: VistaPropiaSolicitud; workId: string | null; replay: boolean }>> {
     if (!idValido(id) || !idValido(postulacionId)) return { ok: false, code: 'NOT_FOUND' }
-    const aceptada = await this.deps.almacen.aceptarPostulacion({ solicitudId: id, cuentaId, postulacionId, ahora: this.now() })
-    if (!aceptada) return { ok: false, code: 'NOT_FOUND' }
+    const cliente = await this.clienteDelMatch(cuentaId)
+    if (!cliente) return { ok: false, code: 'NOT_FOUND' }
+    const resultado = await this.deps.almacen.aceptarPostulacion({
+      solicitudId: id,
+      cuentaId,
+      postulacionId,
+      ahora: this.now(),
+      cliente,
+      correlationId: contexto.correlationId ?? this.newId(),
+    })
     const solicitud = await this.deps.almacen.obtener(id)
-    if (!solicitud) return { ok: false, code: 'NOT_FOUND' }
+    if (!solicitud || solicitud.cuentaId !== cuentaId) return { ok: false, code: 'NOT_FOUND' }
+    let replay = false
+    if (!resultado) {
+      // ¿Es la MISMA aceptación ya aplicada? Solo entonces es un reintento exitoso.
+      const elegida = (await this.deps.almacen.postulacionesDe(id)).find((item) => item.id === postulacionId)
+      const mismaAceptacion = elegida?.estado === 'aceptada' && solicitud.estadoAsignacion === 'aceptada' && solicitud.prestadorTenantId === elegida.prestadorTenantId
+      if (!mismaAceptacion) return { ok: false, code: 'NOT_FOUND' }
+      replay = true
+    }
     const perfil = solicitud.prestadorTenantId ? await this.deps.destinos?.perfilPorTenant(solicitud.prestadorTenantId) : null
-    return { ok: true, solicitud: vistaPropia(solicitud, perfil ? { id: perfil.id, displayName: perfil.nombrePublico } : null) }
+    return {
+      ok: true,
+      solicitud: vistaPropia(solicitud, perfil ? { id: perfil.id, displayName: perfil.nombrePublico } : null),
+      workId: resultado?.trabajoId ?? solicitud.trabajoId,
+      replay,
+    }
   }
 
   async rechazarPostulante(cuentaId: string, id: unknown, postulacionId: unknown): Promise<ResultadoSolicitud<object>> {

@@ -194,7 +194,8 @@ test('POSTULACIONES HTTP: provider routes need the provider permission; client r
   assert.equal(result.eligeAjena, 409)
   assert.equal(result.elige[0], 200)
   assert.equal(result.elige[1].assignment, 'aceptada')
-  assert.equal(result.otraVez, 409)
+  // Repeating the SAME acceptance (double click / retry) is an idempotent success.
+  assert.equal(result.otraVez, 200)
 })
 
 test('POSTULACIONES migration: additive, one application per provider, a single accepted applicant', () => {

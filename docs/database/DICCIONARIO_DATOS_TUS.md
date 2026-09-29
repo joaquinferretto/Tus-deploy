@@ -701,6 +701,14 @@ aceptaciones concurrentes. El cliente también puede rechazar a un postulante; e
 mientras siga pendiente, y cerrar la solicitud rechaza a los pendientes. FKs RESTRICT a `solicitudes_servicio` y a
 `prestadores (tenant_id, prestador_id)`.
 
+**MATCH Y CANCELACIÓN.** Elegir un postulante (o que el prestador acepte una solicitud dirigida) es el match: en la MISMA
+transacción se asigna la solicitud, se acepta esa postulación, se rechazan las pendientes y nace el trabajo
+(`trabajos.origen = 'solicitud'`). `20261010100000_tus_solicitud_cancelacion` (aditiva): `cancelada_en` y
+`cancelada_por` registran la cancelación de la dueña, que solo procede antes del match (abierta, pública o dirigida
+pendiente, sin trabajo); una solicitud cancelada queda `cerrada` y nunca se borra
+(`ck_solicitudes_servicio_cancelacion`). Con prestador elegido la API responde `409 WORK_ACTIVE`: la cancelación pasa a
+ser una operación del trabajo.
+
 Filas legacy: todas referencian `compromiso_id` mediante FKs físicas actuales RESTRICT, mayormente 1:1. Referencias externas: `proveedor`, `referencia_proveedor`, `estado_proveedor`, `evento_proveedor_id`, `firma`. Ledger append-only con trigger; `entrada_vinculada_id` auto-referencia lógica. `tasa_puntos_base` (ex `rateBps`): decisión de españolizar el identificador; el valor numérico (basis points) conserva su semántica financiera.
 
 ### 7.10 Facturación

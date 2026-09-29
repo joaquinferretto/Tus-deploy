@@ -126,7 +126,9 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const almacenCatalogo = new AlmacenCatalogoPrisma(prisma as unknown as ClientePrismaCatalogo)
   app.locals['tusCatalogo'] = almacenCatalogo
   const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio })
-  const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes })
+  // Every match (client picks an application / provider accepts a direct request) creates the
+  // work in the same PostgreSQL transaction that assigns the request.
+  const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
   const whatsapp = options.tusRouter
     ? undefined
     : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes })

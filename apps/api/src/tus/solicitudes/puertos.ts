@@ -13,11 +13,13 @@ export interface AlmacenSolicitudes {
   listarDirigidasA(prestadorTenantId: string): Promise<SolicitudServicio[]>
   contarPublicadasDesde(cuentaId: string, desde: number): Promise<number>
   contarAbiertas(cuentaId: string, ahora: number): Promise<number>
-  // Solo la dueña puede cerrar; una dirigida pendiente pasa a 'cancelada'. false si no existe,
-  // no es suya o ya estaba cerrada.
-  cerrar(input: { id: string; cuentaId: string; ahora: number }): Promise<boolean>
-  // Transición condicional pendiente -> aceptada|rechazada, solo del prestador destino.
-  responder(input: { id: string; prestadorTenantId: string; decision: Extract<EstadoAsignacion, 'aceptada' | 'rechazada'>; ahora: number }): Promise<boolean>
+  // Cancelación de la dueña, en UNA sentencia condicional: solo abierta, sin prestador elegido
+  // (pública, o dirigida todavía pendiente) y sin trabajo. Registra cuándo y quién; las
+  // postulaciones pendientes pasan a 'rechazada'. Nunca borra. 'con_trabajo' = ya hubo match.
+  cancelar(input: { id: string; cuentaId: string; ahora: number }): Promise<'cancelada' | 'no_encontrada' | 'cerrada' | 'con_trabajo'>
+  // Transición condicional pendiente -> aceptada|rechazada, solo del prestador destino. Aceptar es
+  // el match: en la MISMA transacción crea el trabajo (si hay creador). null = sin cambios.
+  responder(input: { id: string; prestadorTenantId: string; decision: Extract<EstadoAsignacion, 'aceptada' | 'rechazada'>; ahora: number; cliente: ClienteDelMatch | null; correlationId: string; actorId: string }): Promise<{ trabajoId: string | null } | null>
   // Lanza { code: 'P2002' } si ese orden ya existe.
   guardarImagen(imagen: ImagenSolicitud): Promise<void>
   imagen(solicitudId: string, orden: number): Promise<ImagenSolicitud | null>
@@ -28,12 +30,36 @@ export interface AlmacenSolicitudes {
   postulacionesDe(solicitudId: string): Promise<PostulacionSolicitud[]>
   postulacionesDePrestador(prestadorTenantId: string): Promise<PostulacionSolicitud[]>
   // Atómico: la solicitud (de la cuenta, pública, abierta y vigente) pasa a dirigida y 'aceptada'
-  // para el postulante; esa postulación pendiente queda 'aceptada' y el resto de las pendientes
-  // 'rechazada'. false (sin cambios) si alguna condición no se cumple.
-  aceptarPostulacion(input: { solicitudId: string; cuentaId: string; postulacionId: string; ahora: number }): Promise<boolean>
+  // para el postulante; esa postulación pendiente queda 'aceptada', el resto de las pendientes
+  // 'rechazada' y se crea EL trabajo (si hay creador). Si algo falla, nada queda aplicado.
+  // null (sin cambios) si alguna condición no se cumple.
+  aceptarPostulacion(input: { solicitudId: string; cuentaId: string; postulacionId: string; ahora: number; cliente: ClienteDelMatch; correlationId: string }): Promise<{ trabajoId: string | null } | null>
   // Transición condicional pendiente -> rechazada|retirada. `prestadorTenantId` limita al dueño
   // de la postulación (retirar); `solicitudId` a la solicitud del cliente (rechazar).
   cerrarPostulacion(input: { postulacionId: string; estado: 'rechazada' | 'retirada'; solicitudId?: string; prestadorTenantId?: string; ahora: number }): Promise<boolean>
+}
+
+// Cliente del match, resuelto en servidor desde la cuenta dueña de la solicitud (nunca del body).
+export interface ClienteDelMatch {
+  tenantId: string
+  actorId: string
+}
+
+export interface DatosTrabajoDeSolicitud {
+  solicitudId: string
+  cliente: ClienteDelMatch
+  // Quién produjo el match (el cliente al elegir, o el prestador al aceptar una dirigida).
+  actorId: string
+  prestadorTenantId: string
+  prestadorId: string
+  correlationId: string
+  ahora: number
+}
+
+// Crea el trabajo del match DENTRO de la transacción del almacén (`tx`: cliente transaccional de
+// Prisma; undefined en memoria). Debe lanzar si no puede: el almacén revierte todo.
+export interface CreadorTrabajoSolicitud {
+  crear(tx: unknown, datos: DatosTrabajoDeSolicitud): Promise<{ trabajoId: string }>
 }
 
 export interface CuentasSolicitudes {

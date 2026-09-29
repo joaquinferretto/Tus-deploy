@@ -78,8 +78,13 @@ export interface SolicitudServicio {
   prestadorId: string | null
   estadoAsignacion: EstadoAsignacion | null
   respondidaEn: number | null
+  // Cancelada por su dueña (estado 'cerrada' + cuándo y quién); null en las demás.
+  canceladaEn: number | null
+  canceladaPor: string | null
   // Órdenes (1, 2) de las fotos guardadas; derivado de imagenes_solicitud.
   imagenes: number[]
+  // Trabajo nacido del match (a lo sumo uno); derivado de trabajos.solicitud_id, nunca una columna.
+  trabajoId: string | null
 }
 
 export interface PostulacionSolicitud {
@@ -126,6 +131,10 @@ export interface VistaPropiaSolicitud extends VistaPublicaSolicitud {
   provider: { id: string; displayName: string } | null
   assignment: EstadoAsignacion | null
   respondedAt: string | null
+  // Trabajo creado al elegir prestador (null si todavía no hay match).
+  workId: string | null
+  // Cancelada por la dueña (antes de elegir prestador).
+  cancelledAt: string | null
 }
 
 // Lo que ve el prestador destino: sin cuenta, email ni teléfono del cliente.
@@ -143,6 +152,8 @@ export interface VistaSolicitudRecibida {
   assignment: EstadoAsignacion
   respondedAt: string | null
   images: string[]
+  // Trabajo creado cuando este prestador aceptó (null antes).
+  workId: string | null
 }
 
 // Lo que ve el cliente de cada postulante: solo el perfil público (nunca tenant ni contacto).
@@ -169,6 +180,8 @@ export interface VistaPostulacionPropia {
     budgetMax: number | null
     urgency: UrgenciaSolicitud
     open: boolean
+    // Solo si ESTA postulación fue la elegida (nunca el trabajo de otro prestador).
+    workId: string | null
   }
 }
 
@@ -280,6 +293,8 @@ export function vistaPropia(solicitud: SolicitudServicio, prestador: { id: strin
     provider: solicitud.visibilidad === 'dirigida' ? prestador : null,
     assignment: solicitud.estadoAsignacion,
     respondedAt: solicitud.respondidaEn === null ? null : new Date(solicitud.respondidaEn).toISOString(),
+    workId: solicitud.trabajoId,
+    cancelledAt: solicitud.canceladaEn === null ? null : new Date(solicitud.canceladaEn).toISOString(),
   }
 }
 
@@ -298,6 +313,7 @@ export function vistaRecibida(solicitud: SolicitudServicio): VistaSolicitudRecib
     assignment: solicitud.estadoAsignacion ?? 'pendiente',
     respondedAt: solicitud.respondidaEn === null ? null : new Date(solicitud.respondidaEn).toISOString(),
     images: urlImagenes(solicitud, 'private'),
+    workId: solicitud.trabajoId,
   }
 }
 
@@ -316,6 +332,7 @@ export function vistaPostulacionPropia(postulacion: PostulacionSolicitud, solici
       budgetMax: solicitud.presupuestoMaximo,
       urgency: solicitud.urgencia,
       open: solicitud.estado === 'abierta' && solicitud.expiraEn > ahora,
+      workId: postulacion.estado === 'aceptada' && solicitud.prestadorTenantId === postulacion.prestadorTenantId ? solicitud.trabajoId : null,
     },
   }
 }

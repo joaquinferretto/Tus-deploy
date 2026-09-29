@@ -111,7 +111,7 @@ test('SOLICITUDES publish: verified active accounts only, public view without pe
   assert.equal(result.limite.code, 'RATE_LIMITED')
   assert.equal(result.cerrarAjena.code, 'NOT_FOUND')
   assert.equal(result.cerrarPropia.ok, true)
-  assert.equal(result.cerrarDeNuevo.code, 'NOT_FOUND')
+  assert.equal(result.cerrarDeNuevo.code, 'ALREADY_CLOSED')
   assert.ok(!result.trasCerrar.includes(result.publicada.solicitud.id))
   assert.ok(result.mias.includes('cerrada'))
   assert.deepEqual(result.vencidas, [])

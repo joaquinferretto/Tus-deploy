@@ -2797,6 +2797,9 @@ model SolicitudServicio {
   prestadorId        String?   @map("prestador_id")
   estadoAsignacion   String?   @map("estado_asignacion")
   respondidaEn       DateTime? @map("respondida_en")
+  // Cancelled by its owner (estado 'cerrada' + who/when); CHECK ck_solicitudes_servicio_cancelacion.
+  canceladaEn        DateTime? @map("cancelada_en")
+  canceladaPor       String?   @map("cancelada_por")
   cuenta             Account  @relation(fields: [cuentaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_cuenta")
   prestador          Prestador? @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_prestador")
   imagenes           ImagenSolicitud[]

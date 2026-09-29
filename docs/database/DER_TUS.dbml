@@ -2226,9 +2226,12 @@ Table solicitudes_servicio {
   prestador_id varchar [null]
   estado_asignacion varchar [null, note: 'CHECK: pendiente | aceptada | rechazada | cancelada']
   respondida_en timestamp [null]
+  cancelada_en timestamp [null, note: 'cancelada por la dueña antes del match (ck_solicitudes_servicio_cancelacion: solo con estado cerrada)']
+  cancelada_por varchar [null, note: 'cuenta que canceló; NULL <=> cancelada_en NULL']
   indexes {
     (estado, fecha_creacion) [name: 'ix_solicitudes_servicio_estado_fecha']
     (cuenta_id, fecha_creacion) [name: 'ix_solicitudes_servicio_cuenta_fecha']
+    (id, prestador_tenant_id, prestador_id) [unique, name: 'uq_solicitudes_servicio_asignacion', note: 'destino de fk_trabajos_solicitud_asignada']
   }
 }
 
