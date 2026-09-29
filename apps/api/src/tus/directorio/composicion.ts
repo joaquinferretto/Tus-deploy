@@ -14,13 +14,15 @@ export function crearServicioDirectorio(input: {
   application: TusApplicationService
   prisma?: ClientePrismaDirectorio
   contarCompletados?: (tenantId: string) => Promise<number>
+  // Ratings in one grouped read (reputation module).
+  calificaciones?: (tenantIds: readonly string[]) => Promise<Map<string, { average: number; count: number }>>
   now?: () => number
   newId?: () => string
 }): ServicioDirectorio {
   const contar = input.contarCompletados ?? (input.prisma ? contarCompletadosPrisma(input.prisma) : async () => 0)
   return new ServicioDirectorio({
     perfiles: input.prisma ? new AlmacenPerfilesPrisma(input.prisma) : new AlmacenPerfilesEnMemoria(),
-    fuentes: new FuentesDirectorioTus(input.application, contar),
+    fuentes: new FuentesDirectorioTus(input.application, contar, input.calificaciones),
     ...(input.now ? { now: input.now } : {}),
     ...(input.newId ? { newId: input.newId } : {}),
   })

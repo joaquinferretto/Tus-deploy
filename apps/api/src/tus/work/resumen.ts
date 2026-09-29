@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client'
-import type { Trabajo, WorkActions, WorkPayment, WorkSummary } from '@factory/contracts'
+import type { Trabajo, WorkActions, WorkPayment, WorkRating, WorkSummary } from '@factory/contracts'
 import { TrabajoError, type TrabajoStorePort } from './index.ts'
 
 export function accionesTrabajo(
@@ -8,7 +8,8 @@ export function accionesTrabajo(
   budget: WorkSummary['budget'],
   permissions: readonly string[],
   now: number,
-  payment: WorkPayment | null = null
+  payment: WorkPayment | null = null,
+  rating: WorkRating | null = null
 ): WorkActions {
   const write = permissions.some((p) => ['tus:work:write', 'tus:marketplace:write'].includes(p))
   const provider = role === 'prestador' && write
@@ -61,6 +62,7 @@ export function accionesTrabajo(
       ['not_created', 'pending_payment'].includes(payment?.balance.status ?? ''),
     canRequestCancellation:
       client && solicitud && work.status === 'in_progress' && !work.cancellationRequestedAt,
+    canRate: client && work.status === 'completed' && !rating,
   }
 }
 
@@ -187,7 +189,8 @@ export class ServicioResumenTrabajo {
     private readonly store: Pick<TrabajoStorePort, 'listAccessible' | 'findAccessible'>,
     private readonly source: WorkSummarySource,
     private readonly now: () => number = Date.now,
-    private readonly pagos: PagosResumenTrabajo | null = null
+    private readonly pagos: PagosResumenTrabajo | null = null,
+    private readonly calificaciones: { deTrabajo(work: Trabajo): Promise<WorkRating | null> } | null = null
   ) {}
 
   async listar(
@@ -218,14 +221,16 @@ export class ServicioResumenTrabajo {
           balance: { amountMinor: String(estado.balance.amountMinor), status: estado.balance.status },
         }
       : null
-    return (await this.project([work], tenantId, permissions, payment))[0]!
+    const rating = this.calificaciones && work.status === 'completed' ? await this.calificaciones.deTrabajo(work) : null
+    return (await this.project([work], tenantId, permissions, payment, rating))[0]!
   }
 
   private async project(
     works: Trabajo[],
     tenantId: string,
     permissions: readonly string[],
-    payment: WorkPayment | null = null
+    payment: WorkPayment | null = null,
+    rating: WorkRating | null = null
   ): Promise<WorkSummary[]> {
     const accessible = works.filter(
       (w) => w.tenantId === tenantId || w.prestadorTenantId === tenantId
@@ -265,7 +270,8 @@ export class ServicioResumenTrabajo {
             : null,
         cancellationNeedsSupport:
           payment?.deposit.status === 'paid' && !['completed', 'cancelled'].includes(w.status),
-        actions: accionesTrabajo(w, role, budget, permissions, this.now(), payment),
+        rating,
+        actions: accionesTrabajo(w, role, budget, permissions, this.now(), payment, rating),
       }
     })
   }

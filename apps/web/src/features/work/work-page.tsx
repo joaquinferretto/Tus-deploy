@@ -409,6 +409,9 @@ export function WorkDetail({
               </label>
             ) : null}
           </section>
+          {work.status === 'completed' && (work.rating || work.actions.canRate) ? (
+            <WorkRatingSection work={work} session={session} onRated={() => refresh().catch(() => undefined)} />
+          ) : null}
           {work.payment ? (
             <WorkPaymentSection
               work={work}
@@ -747,6 +750,88 @@ export function WorkPaymentSection({
           </button>
         ) : null}
       </div>
+    </section>
+  )
+}
+
+// FASE 9: the client of a completed work rates the provider once (the API enforces every rule).
+export function WorkRatingSection({
+  work,
+  session,
+  onRated,
+}: {
+  work: WorkSummary
+  session: TusWebSession
+  onRated: () => Promise<unknown>
+}): React.ReactNode {
+  const [score, setScore] = useState(0)
+  const [comment, setComment] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  async function rate() {
+    if (busy) return
+    if (score < 1 || score > 5) {
+      setError('Elegí de 1 a 5 estrellas.')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await createTusWebClient(createTusWebFetchTransport()).rateWork(session, work.id, score, comment)
+      await onRated()
+    } catch (e) {
+      setError(
+        e instanceof TusRequestError && e.code === 'ALREADY_RATED'
+          ? 'Este trabajo ya tiene tu calificación.'
+          : 'No pudimos guardar la calificación. Volvé a intentar.'
+      )
+      void onRated()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className={styles.card} aria-labelledby="calificacion-trabajo">
+      <h2 id="calificacion-trabajo">Calificación</h2>
+      {work.rating ? (
+        <p>
+          {work.role === 'cliente' ? 'Tu calificación' : 'Calificación del Cliente'}: {'★'.repeat(work.rating.score)}
+          {'☆'.repeat(5 - work.rating.score)} ({work.rating.score}/5)
+          {work.rating.comment ? ` · “${work.rating.comment}”` : ''}
+        </p>
+      ) : (
+        <form
+          className={styles.form}
+          onSubmit={(e) => {
+            e.preventDefault()
+            void rate()
+          }}
+        >
+          <fieldset>
+            <legend>¿Cómo fue el trabajo de {work.counterpart.displayName}?</legend>
+            {[1, 2, 3, 4, 5].map((value) => (
+              <label key={value}>
+                <input
+                  checked={score === value}
+                  name="puntuacion"
+                  onChange={() => setScore(value)}
+                  type="radio"
+                  value={value}
+                />{' '}
+                {value} {value === 1 ? 'estrella' : 'estrellas'}
+              </label>
+            ))}
+          </fieldset>
+          <label>
+            Comentario (opcional)
+            <textarea maxLength={500} value={comment} onChange={(e) => setComment(e.target.value)} />
+          </label>
+          {error ? <p role="alert">{error}</p> : null}
+          <button disabled={busy} type="submit">
+            {busy ? 'Guardando…' : 'Calificar Prestador'}
+          </button>
+        </form>
+      )}
     </section>
   )
 }

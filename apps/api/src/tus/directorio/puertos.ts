@@ -22,6 +22,8 @@ export interface FuentesDirectorio {
   // El prestador (merchant) del tenant: id y si está aprobado para operar.
   prestador(tenantId: string): Promise<{ prestadorId: string; aprobado: boolean } | null>
   hechos(tenantId: string): Promise<HechosPrestador>
+  // Ratings of many providers in ONE grouped read (never one per profile).
+  calificaciones?(tenantIds: readonly string[]): Promise<Map<string, { average: number; count: number }>>
   ubicacionIdentidadVerificada?(tenantId: string): Promise<AreaDomicilioFallback | null>
   // Lo que la administración necesita de una página de perfiles, en lecturas por lote (una por
   // fuente, nunca una por prestador).

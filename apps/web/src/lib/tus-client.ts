@@ -1,5 +1,5 @@
 import { TUS_CONTRACT_VERSION } from '@factory/contracts/tus'
-import type { WorkSummary, WorkMessage } from '@factory/contracts'
+import type { WorkSummary, WorkMessage, WorkRating } from '@factory/contracts'
 import type {
   ComprobantePOS,
   CasoSoporte,
@@ -688,6 +688,7 @@ export interface TusWebClient {
   workSummary(context: TusWebContext, workId: string): Promise<WorkSummary>
   workMessages(context: TusWebContext, workId: string, before?: string): Promise<{ items: WorkMessage[] }>
   sendWorkMessage(context: TusWebContext, workId: string, text: string, clientMessageId: string): Promise<WorkMessage>
+  rateWork(context: TusWebContext, workId: string, score: number, comment: string): Promise<WorkRating>
   workDetail(context: TusWebContext, workId: string): Promise<TusWorkDetail>
   acceptWorkCommitment(
     input: TusWorkAcceptCommitmentInput
@@ -1253,6 +1254,7 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
     workSummary: (context, workId) => transport.request({ ...context, method: 'GET', path: `/tus/v1/trabajos/${encodeURIComponent(workId)}/resumen` }),
     workMessages: (context, workId, before) => transport.request({ ...context, method: 'GET', path: `/tus/v1/trabajos/${encodeURIComponent(workId)}/mensajes${before ? `?antesDe=${encodeURIComponent(before)}` : ''}` }),
     sendWorkMessage: (context, workId, text, clientMessageId) => transport.request({ ...context, method: 'POST', path: `/tus/v1/trabajos/${encodeURIComponent(workId)}/mensajes`, body: { text, clientMessageId } }),
+    rateWork: (context, workId, score, comment) => transport.request({ ...context, method: 'POST', path: `/tus/v1/trabajos/${encodeURIComponent(workId)}/calificacion`, body: { score, ...(comment.trim() ? { comment: comment.trim() } : {}) } }),
     workDetail: (context, workId) =>
       transport.request<TusWorkDetail>({
         ...context,

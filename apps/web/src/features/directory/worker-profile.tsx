@@ -11,6 +11,7 @@ import { RequestForm } from '../requests/request-form'
 import { useTusSession } from '../session/use-tus-session'
 import { DAY_NAMES, DirectoryRequestError, createDirectoryClient } from './directory-client'
 import styles from './directory.module.css'
+import { ratingLabel } from './rating-label'
 
 const client = createDirectoryClient()
 const PESOS = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
@@ -124,7 +125,7 @@ export function WorkerProfile({ id }: { id: string }): React.ReactNode {
             <li>{worker.completedJobs > 0 ? `${worker.completedJobs} trabajos realizados en TUS` : 'Todavía sin trabajos en TUS'}</li>
             {worker.yearsOfExperience !== null ? <li>{worker.yearsOfExperience} años de experiencia (declarados)</li> : null}
             <li className={worker.availability.status === 'atiende_hoy' ? styles.available : styles.muted}>{worker.availability.label}</li>
-            <li className={styles.muted}>Sin reseñas todavía</li>
+            <li className={worker.rating ? undefined : styles.muted}>{ratingLabel(worker.rating) ?? 'Sin calificaciones todavía'}</li>
           </ul>
           {sent ? (
             <p className={styles.notice} role="status">

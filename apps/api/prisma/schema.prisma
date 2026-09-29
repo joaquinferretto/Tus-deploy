@@ -38,6 +38,7 @@ model Account {
   solicitudesServicio SolicitudServicio[]
   mfaEnrollments     MfaEnrollment[]
   mensajesTrabajo    MensajeTrabajo[]
+  calificacionesTrabajo CalificacionTrabajo[]
 
   @@unique([userId, tenantId])
   @@index([tenantId])
@@ -767,6 +768,7 @@ model Trabajo {
   obligacionesPago    ObligacionPagoServicio[]   @relation("ObligacionTrabajoCadena")
   obligacionesTramo   ObligacionPagoServicio[]   @relation("ObligacionTrabajoPrestador")
   mensajes            MensajeTrabajo[]
+  calificaciones      CalificacionTrabajo[]
 
   @@unique([tenantId, trabajoId], map: "uq_trabajos_tenant_trabajo")
   @@unique([tenantId, trabajoId, prestadorTenantId], map: "uq_trabajos_tenant_trabajo_prestador")
@@ -3084,4 +3086,25 @@ model MensajeTrabajo {
 
   @@index([tenantId, trabajoId, fechaCreacion, id], map: "ix_mensajes_trabajo_conversacion")
   @@map("mensajes_trabajo")
+}
+
+// FASE 9: the client of a COMPLETED work rates its provider once (append-only; DB triggers refuse
+// updates, deletes and ratings of works that are not completed).
+model CalificacionTrabajo {
+  id                String   @id(map: "calificaciones_trabajo_pkey")
+  tenantId          String   @map("tenant_id")
+  trabajoId         String   @map("trabajo_id")
+  prestadorTenantId String   @map("prestador_tenant_id")
+  prestadorId       String   @map("prestador_id")
+  autorCuentaId     String   @map("autor_cuenta_id")
+  puntuacion        Int      @map("puntuacion") @db.SmallInt
+  comentario        String?  @map("comentario")
+  fechaCreacion     DateTime @map("fecha_creacion")
+
+  trabajo Trabajo @relation(fields: [tenantId, trabajoId, prestadorTenantId, prestadorId], references: [tenantId, trabajoId, prestadorTenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_calificaciones_trabajo_trabajo")
+  autor   Account @relation(fields: [autorCuentaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_calificaciones_trabajo_autor")
+
+  @@unique([tenantId, trabajoId], map: "uq_calificaciones_trabajo_tenant_trabajo")
+  @@index([prestadorTenantId, prestadorId], map: "idx_calificaciones_trabajo_prestador")
+  @@map("calificaciones_trabajo")
 }

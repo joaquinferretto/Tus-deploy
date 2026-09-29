@@ -14,6 +14,7 @@ import { tradeOf } from '../catalog/use-catalog'
 import { DEFAULT_MAP_CENTER } from './types'
 import styles from './home.module.css'
 import { categoryMarkerSvg } from './category-icons'
+import { ratingLabel } from '../directory/rating-label'
 
 const TILE_URL = process.env['NEXT_PUBLIC_MAP_TILE_URL'] || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 const TILE_ATTRIBUTION = process.env['NEXT_PUBLIC_MAP_TILE_ATTRIBUTION'] || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -124,7 +125,8 @@ export default function ProviderMap({ workers, selectedId, onSelect, searchSigna
                   <p className={styles.popupTitle}>{worker.displayName}</p>
                   <p className={styles.popupMeta}>{location.label} · zona aproximada</p>
                   <p className={styles.popupMeta}>{worker.availability.label}</p>
-                  {/* Only real facts: TUS has no reviews yet (rating is always null) and no exact distance. */}
+                  {/* Only real facts: ratings of completed works (or nothing) and no exact distance. */}
+                  {ratingLabel(worker.rating) ? <p className={styles.popupMeta}>{ratingLabel(worker.rating)}</p> : null}
                   {worker.completedJobs > 0 ? <p className={styles.popupMeta}>{worker.completedJobs} {worker.completedJobs === 1 ? 'trabajo completado' : 'trabajos completados'} en TUS</p> : null}
                   {worker.verified ? <p className={styles.popupMeta}>Identidad verificada</p> : null}
                   <div className={styles.popupActions}>

@@ -13,6 +13,14 @@ export interface WorkActions {
   canPayBalance: boolean
   // Client of a started request-born work: ask the provider/support to cancel (never cancels).
   canRequestCancellation: boolean
+  // Client of a completed work that was not rated yet.
+  canRate: boolean
+}
+
+export interface WorkRating {
+  score: number
+  comment: string | null
+  createdAt: string
 }
 
 // Request-born works with an accepted budget: 50% deposit + 50% balance through Mercado Pago.
@@ -62,6 +70,8 @@ export interface WorkSummary {
   cancellationRequest: { requestedAt: string; reason: string } | null
   // A registered payment locks the work: cancelling it is a platform-support case.
   cancellationNeedsSupport: boolean
+  // The client's rating of the provider (detail only; null in the list or when not rated).
+  rating: WorkRating | null
   actions: WorkActions
 }
 

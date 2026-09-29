@@ -28,6 +28,8 @@ import { crearAltaPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import { crearRouterAdmin } from './tus/admin/http.ts'
 import { crearRouterAdminTrabajos } from './tus/admin/trabajos.ts'
+import { AlmacenCalificacionesPrisma, ServicioCalificaciones, type ClientePrismaCalificaciones } from './tus/reputacion/calificaciones.ts'
+import { crearRouterCalificaciones } from './tus/reputacion/http.ts'
 import { ActividadAdminPrisma, CuentasAdminPrisma } from './tus/admin/fuentes.ts'
 import { AlmacenCatalogoPrisma, type ClientePrismaCatalogo } from './tus/catalogo/almacen.ts'
 import { ConteosCatalogoPrisma, type ClientePrismaConteos } from './tus/admin/conteos.ts'
@@ -131,7 +133,12 @@ export function createApp(options: CreateAppOptions = {}): Application {
   // every minute and right after each change made in the admin panel.
   const almacenCatalogo = new AlmacenCatalogoPrisma(prisma as unknown as ClientePrismaCatalogo)
   app.locals['tusCatalogo'] = almacenCatalogo
-  const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio })
+  // FASE 9: provider ratings (client of a completed work, once); averages in one grouped read.
+  const calificaciones = new ServicioCalificaciones({
+    almacen: new AlmacenCalificacionesPrisma(prisma as unknown as ClientePrismaCalificaciones),
+    trabajos: { buscarAccesible: (input) => new PrismaTrabajoStore(prisma).findAccessible(input) },
+  })
+  const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio, calificaciones: (tenantIds) => calificaciones.resumen(tenantIds) })
   // Every match (client picks an application / provider accepts a direct request) creates the
   // work in the same PostgreSQL transaction that assigns the request.
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
@@ -214,7 +221,8 @@ export function createApp(options: CreateAppOptions = {}): Application {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
     // Private chat of each work (client <-> chosen provider), authorized against the work.
     const trabajosAccesibles = new PrismaTrabajoStore(prisma)
-    app.use(crearRouterResumenTrabajo({ sessions, servicio: new ServicioResumenTrabajo(trabajosAccesibles, new PrismaWorkSummarySource(prisma as unknown as ConstructorParameters<typeof PrismaWorkSummarySource>[0]), Date.now, application.serviceFinance ?? null) }))
+    app.use(crearRouterResumenTrabajo({ sessions, servicio: new ServicioResumenTrabajo(trabajosAccesibles, new PrismaWorkSummarySource(prisma as unknown as ConstructorParameters<typeof PrismaWorkSummarySource>[0]), Date.now, application.serviceFinance ?? null, calificaciones) }))
+    app.use(crearRouterCalificaciones({ servicio: calificaciones, sessions }))
     app.use(crearRouterMensajesTrabajo({
       sessions,
       servicio: new ServicioMensajesTrabajo({

@@ -367,6 +367,16 @@ Reemplaza W09-02 **solo** para trabajos con `origen = 'solicitud'`; el marketpla
   soporte.
 - El marketplace viejo conserva su regla (solo el Prestador cancela, sin motivo obligatorio).
 
+### W09-07: Calificación del Prestador (FASE 9)
+
+- Solo el Cliente del trabajo (tenant de la sesión) califica, una vez, y solo con el trabajo `completed` (con pagos
+  online eso ocurre recién con el saldo aprobado). Nunca el Prestador, un tercero, un trabajo cancelado o en curso.
+- Puntuación entera 1–5 y comentario opcional (máx. 500). Prestador e ids salen del trabajo persistido.
+- `calificaciones_trabajo` es append-only (trigger), única por trabajo y ligada por FK al trabajo y a su Prestador; un
+  trigger rechaza calificar un trabajo que no está `completed`.
+- El perfil público muestra promedio (1 decimal) y cantidad; sin calificaciones, `rating: null`. Se calculan en el
+  servidor con una lectura agrupada (GROUP BY) para toda la página del directorio.
+
 ## WHATSAPP-01: consentimiento con procedencia verificable
 
 - La vinculación desde Web registra `web_linking` dentro de la confirmación autenticada y con tenant derivado de la sesión.

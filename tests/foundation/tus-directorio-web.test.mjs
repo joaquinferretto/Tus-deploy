@@ -145,5 +145,7 @@ test('DIRECTORY UI: list first, chips from the API catalog, honest cards, profil
   assert.match(profile, /Solicitar servicio/)
   assert.match(profile, /solicitar=1/)
   assert.match(profile, /origin="web_directory"/)
-  assert.match(profile, /Sin reseñas todavía/)
+  // FASE 9: only the real average/count computed by the API, or an honest "none yet".
+  assert.match(profile, /ratingLabel\(worker\.rating\) \?\? 'Sin calificaciones todavía'/)
+  assert.match(card, /ratingLabel\(worker\.rating\)/)
 })

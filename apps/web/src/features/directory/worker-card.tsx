@@ -5,6 +5,7 @@ import type { CandidatoPrestador, PrestadorPublico } from '@factory/contracts'
 
 import homeStyles from '../home/home.module.css'
 import styles from './directory.module.css'
+import { ratingLabel } from './rating-label'
 
 const PESOS = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
 
@@ -44,6 +45,7 @@ export function WorkerCard({
             ? `${worker.completedJobs} ${worker.completedJobs === 1 ? 'trabajo realizado' : 'trabajos realizados'} en TUS`
             : 'Todavía sin trabajos en TUS'}
         </li>
+        {ratingLabel(worker.rating) ? <li>{ratingLabel(worker.rating)}</li> : null}
         <li>
           {worker.publicArea} · zona aproximada
           {worker.serviceZones.length > 1 ? ` · ${worker.serviceZones.length} zonas` : ''}

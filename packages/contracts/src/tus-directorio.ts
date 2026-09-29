@@ -89,8 +89,9 @@ export interface PrestadorPublico {
   coverage: CoberturaPublicaPrestador
   verified: boolean
   completedJobs: number
-  // TUS todavía no tiene reseñas: siempre null (nunca una valoración inventada).
-  rating: null
+  // Promedio (1 decimal) y cantidad de calificaciones reales de trabajos completados; null sin
+  // calificaciones (nunca una valoración inventada).
+  rating: { average: number; count: number } | null
   availability: DisponibilidadPublica
   yearsOfExperience: number | null
   startingPrice: { amount: number; currency: string } | null
@@ -224,7 +225,13 @@ export function esPrestadorPublico(value: unknown): value is PrestadorPublico {
     (value['coverage']['radiusKm'] === null || Number.isInteger(value['coverage']['radiusKm'])) &&
     typeof value['verified'] === 'boolean' &&
     Number.isInteger(value['completedJobs']) &&
-    value['rating'] === null &&
+    (value['rating'] === null ||
+      (esRegistro(value['rating']) &&
+        typeof value['rating']['average'] === 'number' &&
+        value['rating']['average'] >= 1 &&
+        value['rating']['average'] <= 5 &&
+        Number.isInteger(value['rating']['count']) &&
+        Number(value['rating']['count']) >= 1)) &&
     esRegistro(availability) &&
     ['atiende_hoy', 'otros_dias', 'sin_agenda'].includes(String(availability['status'])) &&
     (value['yearsOfExperience'] === null || Number.isInteger(value['yearsOfExperience']))

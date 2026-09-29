@@ -48,6 +48,8 @@ export interface HechosPrestador {
   verificado: boolean
   trabajosCompletados: number
   servicios: ServicioResumen[]
+  // Real ratings of completed works (FASE 9); absent or count 0 means no rating yet.
+  calificacion?: { average: number; count: number } | null
 }
 
 export type EstadoDisponibilidad = Disponibilidad['status']
@@ -164,7 +166,7 @@ export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador,
     coverage: resolved.coverage,
     verified: hechos.verificado,
     completedJobs: hechos.trabajosCompletados,
-    rating: null,
+    rating: hechos.calificacion && hechos.calificacion.count > 0 ? hechos.calificacion : null,
     availability: disponibilidad(hechos.servicios, now),
     yearsOfExperience: perfil.aniosExperiencia,
     startingPrice: minimo ? { amount: minimo.precio!, currency: minimo.moneda } : null,

@@ -188,8 +188,15 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
 export class FuentesDirectorioTus implements FuentesDirectorio {
   constructor(
     private readonly application: TusApplicationService,
-    private readonly contarCompletados: (tenantId: string) => Promise<number>
+    private readonly contarCompletados: (tenantId: string) => Promise<number>,
+    private readonly resumenCalificaciones?: (tenantIds: readonly string[]) => Promise<Map<string, { average: number; count: number }>>
   ) {}
+
+  async calificaciones(tenantIds: readonly string[]) {
+    return this.resumenCalificaciones && tenantIds.length
+      ? this.resumenCalificaciones(tenantIds).catch(() => new Map<string, { average: number; count: number }>())
+      : new Map<string, { average: number; count: number }>()
+  }
 
   async prestador(tenantId: string) {
     const merchant = await this.application.marketplace?.store.merchant.find(tenantId)

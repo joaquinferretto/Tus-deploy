@@ -74,7 +74,7 @@ export class ServicioDirectorio {
     const perfil = await this.deps.perfiles.porTenant(context.tenantId)
     if (!perfil) return null
     const [hechos, fallback] = await Promise.all([
-      this.deps.fuentes.hechos(context.tenantId),
+      this.hechosConCalificacion(context.tenantId),
       this.deps.fuentes.ubicacionIdentidadVerificada?.(context.tenantId) ?? Promise.resolve(null),
     ])
     return { ...proyectarPerfil(perfil, hechos, this.now(), resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible }
@@ -97,7 +97,7 @@ export class ServicioDirectorio {
     }
     await this.deps.perfiles.guardar(perfil)
     const [hechos, fallback] = await Promise.all([
-      this.deps.fuentes.hechos(context.tenantId),
+      this.hechosConCalificacion(context.tenantId),
       this.deps.fuentes.ubicacionIdentidadVerificada?.(context.tenantId) ?? Promise.resolve(null),
     ])
     return { ok: true, perfil: { ...proyectarPerfil(perfil, hechos, ahora, resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible } }
@@ -147,7 +147,7 @@ export class ServicioDirectorio {
     const perfil = await this.deps.perfiles.porId(id)
     if (!perfil || !perfil.visible) return null
     const [hechos, fallback] = await Promise.all([
-      this.deps.fuentes.hechos(perfil.tenantId),
+      this.hechosConCalificacion(perfil.tenantId),
       this.deps.fuentes.ubicacionIdentidadVerificada?.(perfil.tenantId) ?? Promise.resolve(null),
     ])
     if (!hechos.aprobado) return null
@@ -212,13 +212,24 @@ export class ServicioDirectorio {
 
   // ---- internos -------------------------------------------------------------------------------
 
+  private async hechosConCalificacion(tenantId: string): Promise<HechosPrestador> {
+    const [hechos, calificaciones] = await Promise.all([
+      this.deps.fuentes.hechos(tenantId),
+      this.deps.fuentes.calificaciones?.([tenantId]) ?? Promise.resolve(new Map<string, { average: number; count: number }>()),
+    ])
+    return { ...hechos, calificacion: calificaciones.get(tenantId) ?? null }
+  }
+
   private async enriquecerVisibles(oficioFiltro?: OficioId): Promise<Enriquecido[]> {
     const perfiles = await this.deps.perfiles.visibles({ ...(oficioFiltro ? { oficio: oficioFiltro } : {}), limite: PERFILES_MAXIMOS })
     const now = this.now()
+    // Ratings of the whole page in ONE grouped read.
+    const calificaciones: Map<string, { average: number; count: number }> =
+      (await this.deps.fuentes.calificaciones?.(perfiles.map((perfil) => perfil.tenantId))) ?? new Map()
     const enriquecidos = await Promise.all(
       perfiles.map(async (perfil) => {
         const [hechos, fallback] = await Promise.all([
-          this.deps.fuentes.hechos(perfil.tenantId),
+          this.deps.fuentes.hechos(perfil.tenantId).then((item): HechosPrestador => ({ ...item, calificacion: calificaciones.get(perfil.tenantId) ?? null })),
           this.deps.fuentes.ubicacionIdentidadVerificada?.(perfil.tenantId) ?? Promise.resolve(null),
         ])
         const ubicacion = resolverUbicacionDePerfil(perfil, fallback)
