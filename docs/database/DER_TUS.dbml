@@ -2248,14 +2248,34 @@ Table perfiles_publicos_prestador {
   descripcion varchar [null, note: 'CHECK <= 600']
   anios_experiencia int [null, note: 'CHECK 0..70; declarado por el prestador']
   visible boolean [default: true]
+  latitud float [null, note: 'pin del prestador (20261016100000); ambos o ninguno; solo se publica si mostrar_ubicacion_exacta']
+  longitud float [null]
+  mostrar_ubicacion_exacta boolean [default: false]
+  barrio_id varchar [null, ref: > barrios.id, note: 'RESTRICT; barrio asociado al guardar el punto']
+  zona_id varchar [null, ref: > zonas_ubicacion.id, note: 'RESTRICT; zona asociada']
+  ubicacion_asociacion varchar [null, note: 'CHECK poligono_barrio | poligono_zona | geocodificador | manual | sin_asociar']
   fecha_creacion timestamp
   fecha_actualizacion timestamp
   indexes {
     (tenant_id, prestador_id) [unique, name: 'uq_perfiles_publicos_prestador_prestador']
     (visible, oficio) [name: 'ix_perfiles_publicos_prestador_oficio']
   }
+  Note: 'oficio = servicio principal; FK compuesta diferida fk_perfiles_servicio_principal (id, oficio) -> perfil_servicios'
 }
 Ref: perfiles_publicos_prestador.(tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id) [delete: restrict]
+
+// Prestador N:M Servicio (20261015100000_tus_perfil_servicios)
+Table perfil_servicios {
+  perfil_id varchar [ref: > perfiles_publicos_prestador.id, note: 'ON DELETE CASCADE']
+  oficio_id varchar [ref: > oficios_servicio.id, note: 'RESTRICT']
+  orden int [note: '0 = principal; CHECK 0..99']
+  fecha_creacion timestamp
+  indexes {
+    (perfil_id, oficio_id) [pk]
+    oficio_id [name: 'ix_perfil_servicios_oficio']
+  }
+}
+Ref: perfiles_publicos_prestador.(id, oficio) - perfil_servicios.(perfil_id, oficio_id) [note: 'fk_perfiles_servicio_principal DEFERRABLE INITIALLY DEFERRED']
 Ref: solicitudes_servicio.(prestador_tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id) [delete: restrict]
 
 Table imagenes_solicitud {
@@ -2351,6 +2371,9 @@ Table zonas_ubicacion {
   slug varchar
   activo boolean [default: true, note: 'false: sus barrios dejan de ofrecerse']
   orden int [default: 0]
+  poligono jsonb [null, note: "GeoJSON Polygon opcional (20261016100000). CHECK ck_zonas_ubicacion_poligono_geojson"]
+  latitud float [null, note: 'punto de referencia (ambos o ninguno)']
+  longitud float [null]
   creado_en timestamp
   actualizado_en timestamp
   indexes {
@@ -2366,7 +2389,7 @@ Table barrios {
   slug varchar
   latitud float [null, note: 'centro aproximado del barrio (nunca una dirección); CHECK ck_barrios_punto']
   longitud float [null]
-  poligono jsonb [not null, note: "GeoJSON Polygon (un anillo cerrado, [lng, lat] WGS84). CHECK ck_barrios_poligono_geojson: type = 'Polygon', 1 anillo, >= 4 posiciones. Área de cobertura para el mapa y el editor del panel (20261008100000)"]
+  poligono jsonb [null, note: "GeoJSON Polygon (un anillo cerrado, [lng, lat] WGS84). CHECK ck_barrios_poligono_geojson: NULL o type = 'Polygon', 1 anillo, >= 4 posiciones. Opcional desde 20261016100000 (el admin puede quitarlo; el punto queda de fallback)"]
   activo boolean [default: true, note: 'false: no se ofrece en nuevas solicitudes, perfiles, búsqueda ni mapa; el historial lo conserva']
   orden int [default: 0]
   creado_en timestamp

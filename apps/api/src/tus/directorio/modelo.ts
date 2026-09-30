@@ -29,7 +29,7 @@ export interface PerfilPublico {
   visible: boolean
   creadoEn: number
   actualizadoEn: number
-  // Geography (DIR-04). Exact point chosen on the map: stored for TUS, published only when
+  // Geography (DIR-06). Exact point chosen on the map: stored for TUS, published only when
   // mostrarUbicacionExacta. barrioId/zonaId: internal area associated (polygon, geocoder or admin).
   latitud: number | null
   longitud: number | null
@@ -187,7 +187,7 @@ export function disponibilidad(servicios: ServicioResumen[], now: number): Dispo
 export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador, now: number, ubicacion?: ResolucionUbicacionPublica): PrestadorPublico {
   const info = oficio(perfil.oficio)
   const resolved = ubicacion ?? resolverUbicacionPublicaPrestador({ zone: perfil.zona, serviceZones: perfil.zonasCobertura, mode: perfil.modalidadAtencion, radiusKm: perfil.radioCoberturaKm })
-  // ONE point per provider (DIR-04 priority). The exact point only when the provider allows it.
+  // ONE point per provider (DIR-06 priority). The exact point only when the provider allows it.
   const punto = resolverPuntoMapa(catalogoVigente(), {
     latitud: perfil.latitud ?? null,
     longitud: perfil.longitud ?? null,

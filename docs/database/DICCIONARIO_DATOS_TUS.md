@@ -745,16 +745,46 @@ Migraciones `20261007100000_tus_catalogo` (tablas y semilla) y `20261008100000_t
 
 | Columna | Tabla | Tipo lógico | Almacenamiento | Nulo | Propósito |
 |---|---|---|---|---|---|
-| `poligono` | `barrios` | GeoJSON `Polygon` (un anillo exterior cerrado, posiciones `[longitud, latitud]` WGS84) | `jsonb` | NOT NULL | Área de cobertura del barrio. La dibuja y edita el panel (Leaflet, editor de vértices); el catálogo público (`GET /tus/v1/public/oficios`, `locations.localities[].neighbourhoods[].polygon`) la expone para el mapa. |
-| `latitud`, `longitud` | `barrios` | punto aproximado | `double precision` | NULL (ambos o ninguno) | Centro del barrio (promedio de los vértices al guardar desde el panel). Ubica prestadores y solicitudes por barrio en el mapa y da la distancia aproximada entre barrios. Nunca una dirección exacta. |
+| `poligono` | `barrios` | GeoJSON `Polygon` (un anillo exterior cerrado, posiciones `[longitud, latitud]` WGS84) | `jsonb` | NULL (desde `20261016100000`) | Área del barrio. La dibuja, edita y puede quitar el panel (Leaflet, editor de vértices); el catálogo público (`GET /tus/v1/public/oficios`, `locations.localities[].neighbourhoods[].polygon`) la expone (o `null`). Sin polígono, el punto es el fallback. |
+| `latitud`, `longitud` | `barrios` | punto de referencia | `double precision` | NULL (ambos o ninguno) | Punto de referencia del barrio, obligatorio en la API (fallback cuando no hay polígono). Ubica solicitudes por barrio y da la distancia aproximada entre barrios. Nunca una dirección exacta. |
+| `poligono` | `zonas_ubicacion` | GeoJSON `Polygon` (mismo formato que `barrios.poligono`) | `jsonb` | NULL | Área de la zona (p. ej. "Alta Gracia"). CHECK `ck_zonas_ubicacion_poligono_geojson`. Autoridad para asociar puntos que no caen en ningún barrio. |
+| `latitud`, `longitud` | `zonas_ubicacion` | punto de referencia | `double precision` | NULL (ambos o ninguno) | Punto de referencia de la zona (CHECK de rango y de ambos-o-ninguno). Fallback cuando no hay polígono. |
 
-Reglas de `poligono`:
+Reglas de `poligono` (barrios y zonas):
 
-- CHECK `ck_barrios_poligono_geojson`: `type = 'Polygon'`, exactamente un anillo, al menos 4 posiciones (3 vértices + cierre).
-- La API valida además: 3 a 200 vértices distintos, coordenadas en rango, anillo cerrado (lo cierra si falta) y sin autointersecciones. Un polígono inválido se rechaza con 422 y `campos: ['poligono']`.
+- CHECK `ck_barrios_poligono_geojson` / `ck_zonas_ubicacion_poligono_geojson`: NULL o `type = 'Polygon'`, exactamente un anillo, al menos 4 posiciones (3 vértices + cierre).
+- La API valida además: 3 a 200 vértices distintos, coordenadas en rango, anillo cerrado (lo cierra si falta), sin autointersecciones y con superficie (vértices colineales se rechazan); un vértice repetido consecutivo (doble clic) se descarta. Un polígono inválido se rechaza con 422 y `campos: ['poligono']`.
+- Auditoría: `poligono_creado`, `poligono_modificado`, `poligono_eliminado` y `punto_modificado` (evento `catalog.<entidad>_<accion>`).
 - La migración aditiva completó las filas existentes con un cuadrado de ±0,003° alrededor del punto (o del centro de Corrientes si no tenía punto) antes de pasar la columna a NOT NULL. No se usa PostGIS: GeoJSON + JSONB + Leaflet es la decisión vigente.
 
 Relación con búsqueda y mapa: los barrios y zonas activos son los lugares que reconoce el intérprete (`ubicacionesReconocibles`), los que aceptan las validaciones de solicitudes y perfiles (`zonasCorrientes`) y los que publica el catálogo público con su polígono. Un barrio desactivado deja de ofrecerse, pero `buscarBarrio` lo sigue resolviendo para los registros históricos. Renombrar un barrio usado por perfiles o solicitudes se rechaza (409 `IN_USE_RENAME`) porque esos registros guardan el nombre.
+
+#### 7.13 bis Servicios del prestador y ubicación en el mapa (`20261015100000`, `20261016100000`)
+
+`perfil_servicios` (Prestador N:M Servicio; decisión DIR-05):
+
+| Columna | Tipo | Nulo | Propósito |
+|---|---|---|---|
+| `perfil_id` | `text` | NOT NULL | FK a `perfiles_publicos_prestador.id` ON DELETE CASCADE. PK (`perfil_id`, `oficio_id`). |
+| `oficio_id` | `text` | NOT NULL | FK a `oficios_servicio.id` RESTRICT. Índice `ix_perfil_servicios_oficio` para filtrar por servicio/categoría. |
+| `orden` | `integer` | NOT NULL | 0 = principal; CHECK 0..99. |
+| `fecha_creacion` | `timestamp(3)` | NOT NULL | Alta del servicio en el perfil (backfill: la del perfil). |
+
+`perfiles_publicos_prestador.oficio` es el servicio principal: FK compuesta `fk_perfiles_servicio_principal (id, oficio) → perfil_servicios (perfil_id, oficio_id)` `DEFERRABLE INITIALLY DEFERRED` (la aplicación escribe perfil y servicios en una transacción).
+
+Ubicación del prestador en `perfiles_publicos_prestador` (DIR-06/DIR-07):
+
+| Columna | Tipo | Nulo | Propósito |
+|---|---|---|---|
+| `latitud`, `longitud` | `double precision` | NULL (ambos o ninguno; CHECK de rango) | Pin elegido en el mapa por el prestador o el admin. Se guarda para TUS; solo se publica si `mostrar_ubicacion_exacta`. |
+| `mostrar_ubicacion_exacta` | `boolean` | NOT NULL, default `false` | Privacidad: sin permiso el mapa muestra el barrio o la zona. |
+| `barrio_id` | `text` | NULL | FK `fk_perfiles_publicos_prestador_barrio` a `barrios` (RESTRICT; los barrios no se borran, se desactivan). Barrio asociado al guardar el punto. |
+| `zona_id` | `text` | NULL | FK `fk_perfiles_publicos_prestador_zona` a `zonas_ubicacion` (RESTRICT). Zona asociada. |
+| `ubicacion_asociacion` | `text` | NULL | CHECK `poligono_barrio | poligono_zona | geocodificador | manual | sin_asociar`: cómo se asoció el punto. |
+
+Ninguna de estas columnas sale como tal en el DTO público: la API publica un único `mapPoint` (`exact | barrio | zona | reference`) calculado con la prioridad de DIR-06.
+
+`prestadores.estado` admite `approved` y, desde la edición del admin (DIR-09), `suspended` (sale del directorio; sin CHECK en la base).
 
 Listados del panel: `GET /tus/v1/admin/catalogo/:entidad` pagina en PostgreSQL (`ORDER BY orden, nombre, id` + `LIMIT/OFFSET`; 10, 25 o 50 por página, nunca más de 50) y agrega los conteos de prestadores y solicitudes con consultas agregadas (`GROUP BY`, `unnest(zonas_cobertura)`), nunca una consulta por fila.
 

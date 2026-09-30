@@ -408,6 +408,9 @@ Reemplaza W09-02 **solo** para trabajos con `origen = 'solicitud'`; el marketpla
 
 ### DIR-03: ubicación aproximada determinista
 
+> Reemplazada en el punto de mapa por DIR-06 (2026-09-29): el pin ya no es el centro de cada zona de cobertura sino un único
+> punto por prestador resuelto con la geografía administrada. Las reglas de privacidad del DTO de esta sección siguen vigentes.
+
 - Cada pin usa el centro de una zona canónica de Corrientes, redondeado a 3 decimales y marcado `precision: zone`.
 - El perfil público expone origen de ubicación, zonas, modalidad y radio, pero no calle, altura, DNI, CUIL, email, teléfono ni
   campos de autoridad. La migración `20261003100000_tus_directorio_ubicaciones` es aditiva y backfillea las zonas existentes.
@@ -416,6 +419,72 @@ Reemplaza W09-02 **solo** para trabajos con `origen = 'solicitud'`; el marketpla
 
 - Las rutas Web desconocidas vuelven a `/` mediante el `not-found.tsx` raíz; el segmento `/tus` conserva el mismo fallback.
 - Una entidad pública inexistente mantiene su UX específica cuando la ruta existe; una API inexistente sigue respondiendo 404 JSON.
+
+### DIR-05: Categoría → Servicio y prestador con varios servicios (2026-09-29)
+
+- Jerarquía: `categorias_servicio` → `oficios_servicio` (se reutilizan; no se creó otra tabla de servicios).
+- Prestador N:M Servicio: `perfil_servicios (perfil_id, oficio_id, orden)`, PK compuesta (sin duplicados), hasta 20 servicios,
+  FK a `oficios_servicio` RESTRICT (un servicio usado no se borra; se desactiva). Es la única fuente de verdad de los servicios.
+- `perfiles_publicos_prestador.oficio` es el servicio **principal** y siempre pertenece al conjunto: FK compuesta diferida
+  `fk_perfiles_servicio_principal (id, oficio) → perfil_servicios`. La migración `20261015100000_tus_perfil_servicios` hizo el
+  backfill del oficio vigente de cada perfil (orden 0) sin cambiar ids ni borrar datos.
+- Filtros: por servicio, prestadores que lo ofrecen; por categoría, prestadores con **cualquier** servicio de ella. Cada prestador
+  aparece una sola vez. La búsqueda de texto mira todos sus servicios.
+
+### DIR-06: geografía administrada y punto de mapa determinista (2026-09-29)
+
+- Los polígonos guardados en TUS son la autoridad geográfica. Zona: polígono opcional + punto de referencia opcional
+  (`zonas_ubicacion.poligono`, `latitud`, `longitud`). Barrio: polígono **opcional** (se puede quitar) + punto obligatorio.
+  Mismo formato GeoJSON `Polygon` que `barrios.poligono` (un anillo, `[lng, lat]` WGS84). Sin PostGIS.
+- Validación (API): 3 a 200 vértices distintos, coordenadas en rango, anillo cerrado (se cierra si falta), sin autointersecciones,
+  con superficie (vértices colineales se rechazan) y un vértice repetido consecutivo (doble clic) se descarta.
+- Un prestador tiene **un** punto en el mapa (nunca uno por servicio o por zona de cobertura). Prioridad:
+  1. pin exacto, solo si el prestador eligió "Mostrar ubicación exacta" (`mostrar_ubicacion_exacta`, por defecto no);
+  2. polígono de su barrio (punto interior del polígono, no el centroide: siempre cae dentro, también en formas cóncavas);
+  3. polígono de su zona;
+  4. punto de referencia (del barrio o de la zona);
+  5. ninguno: no aparece en el mapa y el panel muestra "Sin ubicación geográfica".
+- El pin exacto se guarda para TUS aunque no se publique; sin permiso el mapa muestra solo el área.
+
+### DIR-07: asociación de un punto a barrio/zona (2026-09-29)
+
+- Al guardar un punto (prestador o admin): barrio cuyo polígono lo contiene (el más chico), si no zona cuyo polígono lo contiene;
+  solo si ningún polígono lo contiene se consulta un geocodificador inverso externo, cuyo resultado se **compara por nombre** con
+  barrios, zonas y localidades existentes (p. ej. "Alta Gracia"). La API nunca crea, reemplaza ni modifica áreas por esto.
+- Sin coincidencia el punto se conserva como `sin_asociar` y el panel lo indica. `ubicacion_asociacion` registra el origen:
+  `poligono_barrio | poligono_zona | geocodificador | manual | sin_asociar`.
+- Geocodificador: solo al guardar (nunca al cargar el mapa), solo coordenadas con 6 decimales, límite de 4 s sobre pedido y
+  cuerpo, cualquier falla = sin nombres. `TUS_REVERSE_GEOCODER=off` lo desactiva; `TUS_REVERSE_GEOCODER_URL` acepta solo HTTPS.
+
+### DIR-08: comportamiento del mapa público (2026-09-29)
+
+- Un marcador por prestador. Agrupamiento propio (sin dependencias) y determinista: prestadores en el **mismo punto** forman
+  siempre un grupo con lista ("N prestadores en esta ubicación": nombre, servicios, calificación, Ver perfil); puntos cercanos
+  (48 px) forman un cluster que al tocarlo acerca el mapa; desde zoom 17 solo se agrupan puntos idénticos.
+- Texto de popups como texto (React), nunca HTML de perfiles; el HTML de los íconos lleva solo un número acotado o un ícono fijo.
+- Filtros de la home: Categoría → Servicio. La API ya filtra por `categoria` y `oficio`.
+- Sin N+1: el directorio lee perfiles, prestadores, publicaciones, identidad, trabajos completados y calificaciones en lotes; la
+  cantidad de consultas es la misma para 1 y para 40 prestadores (medido en PostgreSQL 16).
+
+### DIR-09: edición total desde la administración (2026-09-29)
+
+- El admin puede ver y cambiar todo atributo de negocio de un usuario y de un prestador. Nunca edita ni ve secretos: hash de
+  contraseña, tokens, secretos MFA/OAuth/Mercado Pago, ids internos, tenant ni auditoría histórica.
+- Operaciones seguras en lugar de secretos: cerrar todas las sesiones y forzar cambio de contraseña (cierra sesiones y envía
+  el email de recuperación al titular; el admin nunca recibe el token).
+- Cambiar el email lo normaliza, exige que sea único (409), lo deja sin confirmar y cierra las sesiones.
+- Sin escalada: la autoridad de administrador es la allowlist del servidor (`TUS_PLATFORM_ADMIN_EMAILS`). No se puede asignar un
+  email de la allowlist a otra cuenta ni editar email/verificación de una cuenta admin ni de la propia cuenta del admin.
+- Prestador: datos públicos, servicios (N:M), cobertura, visibilidad, aprobación (`approved | suspended`) y ubicación. Todo cambio
+  sensible pide confirmación en el panel y queda auditado (sin email ni nombre en la metadata).
+
+| Entidad | Editable por el admin | Solo lectura | Nunca expuesto |
+|---|---|---|---|
+| Usuario | nombre, email, estado, email confirmado (acción), sesiones (cerrar), contraseña (forzar recuperación) | roles derivados (admin por allowlist, prestador por perfil), alta, contraseña configurada sí/no | hash, tokens, MFA, tenant, id interno |
+| Prestador | nombre público, descripción, años, servicios y principal, zona principal, zonas de cobertura, modalidad, radio, visible, aprobación, pin/privacidad | cuenta titular (se edita en Usuario), asociación geográfica calculada | tenant, prestador_id, id del perfil, tokens de Mercado Pago |
+| Categoría | nombre, descripción, orden, activa | servicios y conteos | borrado físico (no existe) |
+| Servicio | nombre, profesión, descripción, ícono, orden, categoría (mover), sinónimos, activo | prestadores que lo ofrecen / en el mapa | id (estable) |
+| Zona / Barrio | nombre, polígono (dibujar, mover, borrar), punto de referencia, zona del barrio, orden, activo | conteos | borrado físico (no existe) |
 
 ## Alcance de la Build
 

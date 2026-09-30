@@ -73,7 +73,7 @@ export interface UbicacionMapaPrestador {
   precision: 'zone' | 'exact'
 }
 
-// The ONE point that places a provider on the map (DIR-04): exact (only if allowed), inside its
+// The ONE point that places a provider on the map (DIR-06): exact (only if allowed), inside its
 // neighbourhood polygon, inside its zone polygon, or the reference point of either.
 export interface PuntoMapaPrestador {
   lat: number

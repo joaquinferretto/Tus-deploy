@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { root, runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
 
-// Editable geography (DIR-04). Stored polygons are the authority; the map places each provider at
+// Editable geography (DIR-06). Stored polygons are the authority; the map places each provider at
 // ONE point: exact (only if allowed) > inside neighbourhood polygon > inside zone polygon >
 // reference point > nothing. The reverse geocoder only matches existing names.
 const GEO = `

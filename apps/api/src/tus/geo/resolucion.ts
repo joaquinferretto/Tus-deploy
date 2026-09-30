@@ -55,7 +55,7 @@ function zonaDe(catalogo: CatalogoTus, geo: GeografiaPerfil, barrio: BarrioCatal
 
 const interior = (poligono: PoligonoGeoJson | null | undefined) => (poligono ? puntoInterior(poligono.coordinates[0]!) : null)
 
-// Deterministic priority (docs/DECISIONES_PRODUCTO_TUS.md, DIR-04):
+// Deterministic priority (docs/DECISIONES_PRODUCTO_TUS.md, DIR-06):
 //   1. exact point, only when the provider allows showing it;
 //   2. a point inside the neighbourhood polygon;
 //   3. a point inside the zone polygon;
