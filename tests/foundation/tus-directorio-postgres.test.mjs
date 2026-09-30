@@ -58,3 +58,36 @@ test(
     assert.ok(r.listQueries <= 2, `queries: ${r.listQueries}`)
   }
 )
+
+test(
+  'GEO PostgreSQL: zone and neighbourhood polygons saved and removed with the real catalog adapter; provider pin and association persisted',
+  { skip: !url && 'TUS_DIRECTORIO_PG_URL not set (disposable PostgreSQL only)', timeout: 120000 },
+  () => {
+    const r = runTypeScriptScenario(`${PRISMA}
+      const { AlmacenCatalogoPrisma } = await import('./apps/api/src/tus/catalogo/almacen.ts')
+      const { AlmacenPerfilesPrisma } = await import('./apps/api/src/tus/directorio/almacenes.ts')
+      try {
+        const catalogo = new AlmacenCatalogoPrisma(prisma)
+        const poligono = { type: 'Polygon', coordinates: [[[-58.72, -27.42], [-58.68, -27.42], [-58.68, -27.38], [-58.72, -27.38], [-58.72, -27.42]]] }
+        const zona = { id: T('zona'), localidadId: 'corrientes-capital', nombre: 'Zona ' + run, slug: 'zona-' + run, activo: true, orden: 1, poligono, lat: -27.40, lng: -58.70 }
+        await catalogo.guardarZona(zona)
+        const conPoligono = (await catalogo.cargar()).zonas.find((z) => z.id === zona.id)
+        await catalogo.guardarZona({ ...zona, poligono: null })
+        const sinPoligono = (await catalogo.cargar()).zonas.find((z) => z.id === zona.id)
+        const barrio = { id: T('barrio'), localidadId: 'corrientes-capital', zonaId: zona.id, nombre: 'Barrio ' + run, slug: 'barrio-' + run, lat: -27.40, lng: -58.70, poligono, activo: true, orden: 1 }
+        await catalogo.guardarBarrio(barrio)
+        await catalogo.guardarBarrio({ ...barrio, poligono: null })
+        const barrioSin = (await catalogo.cargar()).barrios.find((b) => b.id === barrio.id)
+        const p = await provider('geo')
+        const store = new AlmacenPerfilesPrisma(prisma)
+        await store.guardar({ id: T('perfil-geo'), tenantId: p.tenantId, prestadorId: p.prestadorId, nombrePublico: 'Geo', oficio: 'plomeria', oficios: ['plomeria'], zona: null, zonasCobertura: [], modalidadAtencion: 'domicilio', radioCoberturaKm: null, descripcion: null, aniosExperiencia: null, visible: true, creadoEn: Date.now(), actualizadoEn: Date.now(), latitud: -27.401, longitud: -58.701, mostrarUbicacionExacta: true, barrioId: barrio.id, zonaId: zona.id, ubicacionAsociacion: 'poligono_barrio' })
+        const perfil = await store.porTenant(p.tenantId)
+        console.log(JSON.stringify({ conPoligono: [conPoligono.poligono?.coordinates[0].length, conPoligono.lat], sinPoligono: [sinPoligono.poligono, sinPoligono.lat], barrioSin: [barrioSin.poligono, barrioSin.lat], perfil: [perfil.latitud, perfil.longitud, perfil.mostrarUbicacionExacta, perfil.barrioId === barrio.id, perfil.zonaId === zona.id, perfil.ubicacionAsociacion] }))
+      } finally { await prisma.$disconnect() }
+    `)
+    assert.deepEqual(r.conPoligono, [5, -27.4])
+    assert.deepEqual(r.sinPoligono, [null, -27.4])
+    assert.deepEqual(r.barrioSin, [null, -27.4])
+    assert.deepEqual(r.perfil, [-27.401, -58.701, true, true, true, 'poligono_barrio'])
+  }
+)

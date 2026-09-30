@@ -1,7 +1,8 @@
 import type { CandidatoPrestador, DisponibilidadPublica, PerfilPrestadorPublico, PrestadorPublico } from '@factory/contracts'
 
 import { contieneContacto, zonasCorrientes } from '../solicitudes/modelo.ts'
-import { buscarBarrio, ubicacionesReconocibles } from '../catalogo/vigente.ts'
+import { buscarBarrio, catalogoVigente, ubicacionesReconocibles } from '../catalogo/vigente.ts'
+import { resolverPuntoMapa } from '../geo/resolucion.ts'
 import { esOficio, normalizarTexto, oficio, oficiosInterpretables, type OficioId } from './oficios.ts'
 import { resolverUbicacionPublicaPrestador, type AreaDomicilioFallback, type ResolucionUbicacionPublica } from './ubicacion.ts'
 
@@ -28,7 +29,24 @@ export interface PerfilPublico {
   visible: boolean
   creadoEn: number
   actualizadoEn: number
+  // Geography (DIR-04). Exact point chosen on the map: stored for TUS, published only when
+  // mostrarUbicacionExacta. barrioId/zonaId: internal area associated (polygon, geocoder or admin).
+  latitud: number | null
+  longitud: number | null
+  mostrarUbicacionExacta: boolean
+  barrioId: string | null
+  zonaId: string | null
+  ubicacionAsociacion: 'poligono_barrio' | 'poligono_zona' | 'geocodificador' | 'manual' | 'sin_asociar' | null
 }
+
+export const GEOGRAFIA_VACIA = {
+  latitud: null,
+  longitud: null,
+  mostrarUbicacionExacta: false,
+  barrioId: null,
+  zonaId: null,
+  ubicacionAsociacion: null,
+} as const satisfies Pick<PerfilPublico, 'latitud' | 'longitud' | 'mostrarUbicacionExacta' | 'barrioId' | 'zonaId' | 'ubicacionAsociacion'>
 
 export const SERVICIOS_MAXIMOS_POR_PERFIL = 20
 
@@ -169,6 +187,17 @@ export function disponibilidad(servicios: ServicioResumen[], now: number): Dispo
 export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador, now: number, ubicacion?: ResolucionUbicacionPublica): PrestadorPublico {
   const info = oficio(perfil.oficio)
   const resolved = ubicacion ?? resolverUbicacionPublicaPrestador({ zone: perfil.zona, serviceZones: perfil.zonasCobertura, mode: perfil.modalidadAtencion, radiusKm: perfil.radioCoberturaKm })
+  // ONE point per provider (DIR-04 priority). The exact point only when the provider allows it.
+  const punto = resolverPuntoMapa(catalogoVigente(), {
+    latitud: perfil.latitud ?? null,
+    longitud: perfil.longitud ?? null,
+    mostrarUbicacionExacta: perfil.mostrarUbicacionExacta ?? false,
+    barrioId: perfil.barrioId ?? null,
+    zonaId: perfil.zonaId ?? null,
+    zona: perfil.zona,
+    zonasCobertura: perfil.zonasCobertura,
+    barrioIdentidad: resolved.source === 'identity_fallback' ? resolved.primaryZone : null,
+  })
   const precios = hechos.servicios.filter((servicio) => servicio.precio !== null && servicio.precio > 0)
   const minimo = precios.sort((a, b) => a.precio! - b.precio!)[0]
   return {
@@ -185,7 +214,9 @@ export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador,
     publicArea: resolved.publicArea,
     serviceZones: resolved.serviceZones,
     locationSource: resolved.source,
-    mapLocations: resolved.mapLocations,
+    // Legacy clients read mapLocations: now exactly the resolved point (never one per zone).
+    mapLocations: punto ? [{ label: punto.label, lat: punto.lat, lng: punto.lng, precision: punto.precision === 'exact' ? 'exact' : 'zone' }] : [],
+    mapPoint: punto,
     coverage: resolved.coverage,
     verified: hechos.verificado,
     completedJobs: hechos.trabajosCompletados,
@@ -212,8 +243,10 @@ export function proyectarPerfil(perfil: PerfilPublico, hechos: HechosPrestador, 
 }
 
 export function resolverUbicacionDePerfil(perfil: PerfilPublico, identityFallback?: AreaDomicilioFallback | null): ResolucionUbicacionPublica {
+  // A neighbourhood associated by id (polygon / admin) counts as the main zone when none is named.
+  const barrioAsociado = perfil.barrioId ? catalogoVigente().barrios.find((item) => item.id === perfil.barrioId)?.nombre ?? null : null
   return resolverUbicacionPublicaPrestador({
-    zone: perfil.zona,
+    zone: perfil.zona ?? barrioAsociado,
     serviceZones: perfil.zonasCobertura,
     mode: perfil.modalidadAtencion,
     radiusKm: perfil.radioCoberturaKm,

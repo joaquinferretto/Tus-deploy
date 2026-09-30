@@ -348,13 +348,19 @@ export function AdminServicios(): React.ReactNode {
 // ---- Ubicaciones: localidades, zonas y barrios -----------------------------------------------------
 
 type Punto = { lat: number; lng: number }
-type BarrioForm = { id: string | null; nombre: string; localidadId: string; zonaId: string; puntos: Punto[]; orden: string }
+type BarrioForm = { id: string | null; nombre: string; localidadId: string; zonaId: string; puntos: Punto[]; punto: Punto | null; orden: string }
+type ZonaForm = { id: string | null; nombre: string; localidadId: string; puntos: Punto[]; punto: Punto | null }
 
-const puntosDePoligono = (poligono: { coordinates: [number, number][][] }): Punto[] => {
+const puntosDePoligono = (poligono: { coordinates: [number, number][][] } | null): Punto[] => {
+  if (!poligono) return []
   const ring = poligono.coordinates[0] ?? []
   const abierto = ring.length > 1 && ring[0]?.[0] === ring.at(-1)?.[0] && ring[0]?.[1] === ring.at(-1)?.[1] ? ring.slice(0, -1) : ring
   return abierto.map(([lng, lat]) => ({ lat, lng }))
 }
+
+const centroDe = (puntos: Punto[]): Punto | null => (puntos.length ? { lat: Math.round((puntos.reduce((sum, item) => sum + item.lat, 0) / puntos.length) * 1e6) / 1e6, lng: Math.round((puntos.reduce((sum, item) => sum + item.lng, 0) / puntos.length) * 1e6) / 1e6 } : null)
+// Label of the geography of a zone / neighbourhood in the lists.
+const geografia = (item: { poligono: unknown; lat: number | null }) => (item.poligono ? 'Polígono' : item.lat !== null ? 'Punto de referencia' : 'Sin geografía')
 
 const geoJson = (puntos: Punto[]) => ({ type: 'Polygon' as const, coordinates: [[...puntos.map(({ lat, lng }) => [lng, lat] as [number, number]), ...(puntos[0] ? [[puntos[0].lng, puntos[0].lat] as [number, number]] : [])]] })
 
@@ -365,7 +371,7 @@ export function AdminZonas(): React.ReactNode {
   const { busy, guardar, aviso } = useGuardar(async () => { await Promise.all([zonas.load(), barrios.load(), referencias.load()]) })
   const [confirmacion, pedir, cerrar] = useConfirmacion()
   const [localidad, setLocalidad] = useState<{ id: string | null; nombre: string; provincia: string } | null>(null)
-  const [zona, setZona] = useState<{ id: string | null; nombre: string; localidadId: string } | null>(null)
+  const [zona, setZona] = useState<ZonaForm | null>(null)
   const [barrio, setBarrio] = useState<BarrioForm | null>(null)
   const data = referencias.data
 
@@ -380,8 +386,8 @@ export function AdminZonas(): React.ReactNode {
       <AdminPageHeader subtitle="Localidades, zonas y barrios que usan el mapa, la búsqueda y los formularios" title="Zonas y barrios">
         <div className={styles.chips}>
           <button className={styles.buttonSecondary} onClick={() => setLocalidad({ id: null, nombre: '', provincia: '' })} type="button">Nueva localidad</button>
-          <button className={styles.buttonSecondary} disabled={!primeraLocalidad} onClick={() => setZona({ id: null, nombre: '', localidadId: primeraLocalidad })} type="button">Nueva zona</button>
-          <button className={styles.buttonPrimary} disabled={!primeraLocalidad} onClick={() => setBarrio({ id: null, nombre: '', localidadId: primeraLocalidad, zonaId: '', puntos: [], orden: '0' })} type="button">Nuevo barrio</button>
+          <button className={styles.buttonSecondary} disabled={!primeraLocalidad} onClick={() => setZona({ id: null, nombre: '', localidadId: primeraLocalidad, puntos: [], punto: null })} type="button">Nueva zona</button>
+          <button className={styles.buttonPrimary} disabled={!primeraLocalidad} onClick={() => setBarrio({ id: null, nombre: '', localidadId: primeraLocalidad, zonaId: '', puntos: [], punto: null, orden: '0' })} type="button">Nuevo barrio</button>
         </div>
       </AdminPageHeader>
       {aviso}
@@ -396,27 +402,31 @@ export function AdminZonas(): React.ReactNode {
       ) : null}
 
       {zona ? (
-        <form className={`${styles.card} ${styles.form}`} onSubmit={async (event) => { event.preventDefault(); if (await guardar('zonas', zona.id, { nombre: zona.nombre, localidadId: zona.localidadId }, 'Zona guardada.')) setZona(null) }}>
+        <form className={`${styles.card} ${styles.form}`} onSubmit={async (event) => { event.preventDefault(); if (await guardar('zonas', zona.id, { nombre: zona.nombre, localidadId: zona.localidadId, poligono: zona.puntos.length >= 3 ? geoJson(zona.puntos) : null, lat: zona.punto?.lat ?? null, lng: zona.punto?.lng ?? null }, 'Zona guardada: su geografía ya ubica a los prestadores en el mapa.')) setZona(null) }}>
           <h2>{zona.id ? 'Editar zona' : 'Nueva zona'}</h2>
           <label>Nombre<input maxLength={60} onChange={(event) => setZona({ ...zona, nombre: event.target.value })} placeholder="Ej.: Norte" required value={zona.nombre} /></label>
           <label>Localidad<select onChange={(event) => setZona({ ...zona, localidadId: event.target.value })} value={zona.localidadId}>{data?.localidades.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label>
-          <div className={styles.chips}><button className={styles.buttonPrimary} disabled={busy} type="submit">Guardar</button><button className={styles.buttonSecondary} onClick={() => setZona(null)} type="button">Cancelar</button></div>
+          <div>
+            <span className={styles.cardLabel}>Geografía (opcional): dibujá el polígono de la zona o, si no, marcá un punto de referencia</span>
+            <PuntoMapa barrios={data?.barrios ?? []} onChange={(puntos) => setZona({ ...zona, puntos })} onPoint={(punto) => setZona({ ...zona, punto })} point={zona.punto} value={zona.puntos} />
+          </div>
+          <div className={styles.chips}><button className={styles.buttonPrimary} disabled={busy || (zona.puntos.length > 0 && zona.puntos.length < 3)} type="submit">Guardar</button><button className={styles.buttonSecondary} onClick={() => setZona(null)} type="button">Cancelar</button></div>
         </form>
       ) : null}
 
       {barrio ? (
-        <form className={`${styles.card} ${styles.form}`} onSubmit={async (event) => { event.preventDefault(); const centro = barrio.puntos.length ? { lat: barrio.puntos.reduce((sum, item) => sum + item.lat, 0) / barrio.puntos.length, lng: barrio.puntos.reduce((sum, item) => sum + item.lng, 0) / barrio.puntos.length } : null; if (await guardar('barrios', barrio.id, { nombre: barrio.nombre, localidadId: barrio.localidadId, zonaId: barrio.zonaId || null, lat: centro?.lat ?? null, lng: centro?.lng ?? null, poligono: geoJson(barrio.puntos), orden: Number(barrio.orden || 0) }, 'Barrio guardado: ya se reconoce en la búsqueda, el mapa y los formularios.')) setBarrio(null) }}>
+        <form className={`${styles.card} ${styles.form}`} onSubmit={async (event) => { event.preventDefault(); const referencia = barrio.punto ?? centroDe(barrio.puntos); if (await guardar('barrios', barrio.id, { nombre: barrio.nombre, localidadId: barrio.localidadId, zonaId: barrio.zonaId || null, lat: referencia?.lat ?? null, lng: referencia?.lng ?? null, poligono: barrio.puntos.length >= 3 ? geoJson(barrio.puntos) : null, orden: Number(barrio.orden || 0) }, 'Barrio guardado: ya se reconoce en la búsqueda, el mapa y los formularios.')) setBarrio(null) }}>
           <h2>{barrio.id ? 'Editar barrio' : 'Nuevo barrio'}</h2>
           <label>Nombre<input maxLength={60} onChange={(event) => setBarrio({ ...barrio, nombre: event.target.value })} placeholder="Ej.: Ponce" required value={barrio.nombre} /></label>
           <label>Localidad<select onChange={(event) => setBarrio({ ...barrio, localidadId: event.target.value, zonaId: '' })} value={barrio.localidadId}>{data?.localidades.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label>
           <label>Zona<select onChange={(event) => setBarrio({ ...barrio, zonaId: event.target.value })} value={barrio.zonaId}><option value="">Sin zona</option>{data?.zonas.filter((item) => item.localidadId === barrio.localidadId).map((item) => <option key={item.id} value={item.id}>{item.nombre}{item.activo ? '' : ' (inactiva)'}</option>)}</select></label>
           <div>
-            <span className={styles.cardLabel}>Área de cobertura: tocá el mapa para agregar al menos 3 vértices; arrastralos para ajustar</span>
-            <PuntoMapa barrios={(data?.barrios ?? []).filter((item) => item.id !== barrio.id)} onChange={(puntos) => setBarrio({ ...barrio, puntos })} value={barrio.puntos} />
-            <span className={styles.muted}>{barrio.puntos.length >= 3 ? 'Polígono listo para guardar.' : 'Faltan puntos para formar el polígono.'}</span>
+            <span className={styles.cardLabel}>Geografía: polígono del barrio (opcional) y punto de referencia (si no lo marcás, se usa el centro del polígono)</span>
+            <PuntoMapa barrios={(data?.barrios ?? []).filter((item) => item.id !== barrio.id)} onChange={(puntos) => setBarrio({ ...barrio, puntos })} onPoint={(punto) => setBarrio({ ...barrio, punto })} point={barrio.punto} value={barrio.puntos} />
+            <span className={styles.muted}>{barrio.puntos.length >= 3 ? 'Polígono listo para guardar.' : barrio.puntos.length ? 'Faltan vértices para formar el polígono.' : barrio.punto ? 'Sin polígono: se usa el punto de referencia.' : 'Marcá al menos un punto de referencia o dibujá el polígono.'}</span>
           </div>
           <label>Orden<input max={999} min={0} onChange={(event) => setBarrio({ ...barrio, orden: event.target.value })} type="number" value={barrio.orden} /></label>
-          <div className={styles.chips}><button className={styles.buttonPrimary} disabled={busy || barrio.puntos.length < 3 || barrio.nombre.trim().length < 2} type="submit">{busy ? 'Guardando…' : 'Guardar'}</button><button className={styles.buttonSecondary} onClick={() => setBarrio(null)} type="button">Cancelar</button></div>
+          <div className={styles.chips}><button className={styles.buttonPrimary} disabled={busy || (barrio.puntos.length > 0 && barrio.puntos.length < 3) || (!barrio.punto && barrio.puntos.length < 3) || barrio.nombre.trim().length < 2} type="submit">{busy ? 'Guardando…' : 'Guardar'}</button><button className={styles.buttonSecondary} onClick={() => setBarrio(null)} type="button">Cancelar</button></div>
         </form>
       ) : null}
 
@@ -458,17 +468,18 @@ export function AdminZonas(): React.ReactNode {
         {listaZonas && listaZonas.length === 0 ? <AdminEmpty text={zonas.filtros.q || zonas.filtros.estado || zonas.filtros.localidad ? 'No hay zonas con esos filtros.' : 'Todavía no definiste zonas. Creá una (por ejemplo Norte) y asignale barrios.'} /> : null}
         {listaZonas && listaZonas.length > 0 ? (
           <table className={styles.table}>
-            <thead><tr><th>Zona</th><th>Localidad</th><th>Barrios</th><th>Prestadores</th><th>Estado</th><th /></tr></thead>
+            <thead><tr><th>Zona</th><th>Localidad</th><th>Geografía</th><th>Barrios</th><th>Prestadores</th><th>Estado</th><th /></tr></thead>
             <tbody>
               {listaZonas.map((item) => (
                 <tr key={item.id}>
                   <td data-label="Zona"><strong>{item.nombre}</strong></td>
                   <td data-label="Localidad">{nombreLocalidad(item.localidadId)}</td>
+                  <td data-label="Geografía">{geografia(item)}</td>
                   <td data-label="Barrios">{item.barrios}</td>
                   <td data-label="Prestadores" title="Prestadores aprobados y visibles que atienden algún barrio de la zona">{item.prestadores}</td>
                   <td data-label="Estado"><Estado activo={item.activo} /></td>
                   <td><div className={styles.chips}>
-                    <button className={styles.buttonSecondary} onClick={() => setZona({ id: item.id, nombre: item.nombre, localidadId: item.localidadId })} type="button">Editar</button>
+                    <button className={styles.buttonSecondary} onClick={() => setZona({ id: item.id, nombre: item.nombre, localidadId: item.localidadId, puntos: puntosDePoligono(item.poligono), punto: item.lat !== null && item.lng !== null ? { lat: item.lat, lng: item.lng } : null })} type="button">Editar</button>
                     <BotonEstado
                       activo={item.activo}
                       busy={busy}
@@ -504,17 +515,18 @@ export function AdminZonas(): React.ReactNode {
         {listaBarrios && listaBarrios.length === 0 ? <AdminEmpty text={barrios.filtros.q || barrios.filtros.estado || barrios.filtros.localidad || barrios.filtros.zona ? 'No hay barrios con esos filtros.' : 'No hay barrios.'} /> : null}
         {listaBarrios && listaBarrios.length > 0 ? (
           <table className={styles.table}>
-            <thead><tr><th>Barrio</th><th>Zona</th><th>Prestadores</th><th>Solicitudes</th><th>Estado</th><th /></tr></thead>
+            <thead><tr><th>Barrio</th><th>Zona</th><th>Geografía</th><th>Prestadores</th><th>Solicitudes</th><th>Estado</th><th /></tr></thead>
             <tbody>
               {listaBarrios.map((item) => (
                 <tr key={item.id}>
                   <td data-label="Barrio"><strong>{item.nombre}</strong><div className={styles.muted}>{nombreLocalidad(item.localidadId)}</div></td>
                   <td data-label="Zona">{nombreZona(item.zonaId)}</td>
+                  <td data-label="Geografía">{geografia(item)}</td>
                   <td data-label="Prestadores" title="Prestadores aprobados y visibles que atienden el barrio">{item.prestadores}</td>
                   <td data-label="Solicitudes">{item.solicitudes}</td>
                   <td data-label="Estado"><Estado activo={item.activo} /></td>
                   <td><div className={styles.chips}>
-                    <button className={styles.buttonSecondary} onClick={() => setBarrio({ id: item.id, nombre: item.nombre, localidadId: item.localidadId, zonaId: item.zonaId ?? '', puntos: puntosDePoligono(item.poligono), orden: String(item.orden) })} type="button">Editar</button>
+                    <button className={styles.buttonSecondary} onClick={() => setBarrio({ id: item.id, nombre: item.nombre, localidadId: item.localidadId, zonaId: item.zonaId ?? '', puntos: puntosDePoligono(item.poligono), punto: item.lat !== null && item.lng !== null ? { lat: item.lat, lng: item.lng } : null, orden: String(item.orden) })} type="button">Editar</button>
                     <BotonEstado
                       activo={item.activo}
                       busy={busy}

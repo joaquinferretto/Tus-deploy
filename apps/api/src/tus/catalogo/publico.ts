@@ -21,7 +21,7 @@ export function catalogoUbicacionesPublico() {
         id: localidad.id,
         name: localidad.nombre,
         province: localidad.provincia,
-        zones: zonas.filter((zona) => zona.localidadId === localidad.id).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre)).map((zona) => ({ id: zona.id, name: zona.nombre })),
+        zones: zonas.filter((zona) => zona.localidadId === localidad.id).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre)).map((zona) => ({ id: zona.id, name: zona.nombre, lat: zona.lat, lng: zona.lng, polygon: zona.poligono })),
         neighbourhoods: barrios.filter((barrio) => barrio.localidadId === localidad.id).map((barrio) => ({ id: barrio.id, name: barrio.nombre, zoneId: barrio.zonaId, lat: barrio.lat, lng: barrio.lng, polygon: barrio.poligono })),
       })),
   }

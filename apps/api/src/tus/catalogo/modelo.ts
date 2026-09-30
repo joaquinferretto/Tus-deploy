@@ -40,6 +40,10 @@ export interface ZonaCatalogo {
   slug: string
   activo: boolean
   orden: number
+  // Optional drawn polygon and reference point (fallback when there is no polygon).
+  poligono: PoligonoGeoJson | null
+  lat: number | null
+  lng: number | null
 }
 
 export interface BarrioCatalogo {
@@ -48,10 +52,11 @@ export interface BarrioCatalogo {
   zonaId: string | null
   nombre: string
   slug: string
-  // Punto aproximado que ubica el barrio en el mapa (nunca una dirección).
+  // Punto aproximado que ubica el barrio en el mapa (nunca una dirección): el fallback.
   lat: number | null
   lng: number | null
-  poligono: PoligonoGeoJson
+  // Optional drawn polygon (null after an administrator removes it).
+  poligono: PoligonoGeoJson | null
   activo: boolean
   orden: number
 }

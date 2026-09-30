@@ -16,7 +16,7 @@ export default function Page(): React.ReactNode {
     <SitePage logo={<TusLogo variant="header" />}>
       <div className={styles.narrow}>
         <h1 className={styles.title}>Solicitudes recibidas</h1>
-        <nav aria-label="Prestador"><a href="/prestador/solicitudes">Solicitudes</a> · <a href="#postulaciones-titulo">Mis postulaciones</a> · <a href="/trabajos">Mis trabajos</a> · <a href="/prestador/pagos">Pagos</a></nav>
+        <nav aria-label="Prestador"><a href="/prestador/solicitudes">Solicitudes</a> · <a href="#postulaciones-titulo">Mis postulaciones</a> · <a href="/trabajos">Mis trabajos</a> · <a href="/prestador/pagos">Pagos</a> · <a href="/prestador/ubicacion">Ubicación</a></nav>
         <p className={styles.subtitle}>Clientes que te eligieron. Nada queda confirmado hasta que aceptes.</p>
         <div style={{ marginTop: 24 }}>
           <ProviderInbox />

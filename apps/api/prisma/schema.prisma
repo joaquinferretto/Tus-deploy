@@ -2850,6 +2850,16 @@ model PerfilPublicoPrestador {
   visible            Boolean  @default(true) @map("visible")
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
+  // Exact point chosen on the map; published only when mostrarUbicacionExacta (CHECKs in SQL).
+  latitud                Float?   @map("latitud")
+  longitud               Float?   @map("longitud")
+  mostrarUbicacionExacta Boolean  @default(false) @map("mostrar_ubicacion_exacta")
+  // Internal geography the provider is associated with (polygon, geocoder name match or manual).
+  barrioId               String?  @map("barrio_id")
+  zonaId                 String?  @map("zona_id")
+  ubicacionAsociacion    String?  @map("ubicacion_asociacion")
+  barrio             Barrio?        @relation(fields: [barrioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_barrio")
+  zonaUbicacion      ZonaUbicacion? @relation(fields: [zonaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_zona")
   prestador          Prestador @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_prestador")
   // Every service the provider offers (N:M). `oficio` is the principal one and always belongs to
   // this set (deferred FK fk_perfiles_servicio_principal, defined in SQL).
@@ -2858,6 +2868,8 @@ model PerfilPublicoPrestador {
   @@unique([tenantId, prestadorId], map: "uq_perfiles_publicos_prestador_prestador")
   @@index([visible, oficio], map: "ix_perfiles_publicos_prestador_oficio")
   @@index([visible, modalidadAtencion], map: "ix_perfiles_publicos_prestador_modalidad")
+  @@index([barrioId], map: "ix_perfiles_publicos_prestador_barrio")
+  @@index([zonaId], map: "ix_perfiles_publicos_prestador_zona")
   @@map("perfiles_publicos_prestador")
 }
 
@@ -3061,7 +3073,12 @@ model ZonaUbicacion {
   orden         Int       @default(0) @map("orden")
   creadoEn      DateTime  @map("creado_en")
   actualizadoEn DateTime  @map("actualizado_en")
+  // Optional GeoJSON Polygon (same format as barrios.poligono) and reference point (fallback).
+  poligono      Json?     @map("poligono")
+  latitud       Float?    @map("latitud")
+  longitud      Float?    @map("longitud")
   barrios       Barrio[]
+  perfiles      PerfilPublicoPrestador[]
 
   @@index([localidadId], map: "ix_zonas_ubicacion_localidad")
   @@map("zonas_ubicacion")
@@ -3077,13 +3094,16 @@ model Barrio {
   slug          String         @map("slug")
   latitud       Float?         @map("latitud")
   longitud      Float?         @map("longitud")
-  poligono      Json           @map("poligono")
+  // Optional GeoJSON Polygon; the reference point (latitud/longitud) is the fallback.
+  poligono      Json?          @map("poligono")
   activo        Boolean        @default(true) @map("activo")
   orden         Int            @default(0) @map("orden")
   creadoEn      DateTime       @map("creado_en")
   actualizadoEn DateTime       @map("actualizado_en")
 
   @@index([localidadId], map: "ix_barrios_localidad")
+  perfiles      PerfilPublicoPrestador[]
+
   @@index([zonaId], map: "ix_barrios_zona")
   @@map("barrios")
 }

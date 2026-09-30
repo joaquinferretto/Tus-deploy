@@ -133,8 +133,9 @@ export interface AdminTrabajoDetalle extends AdminTrabajo {
 export interface AdminCategoria { id: string; nombre: string; slug: string; descripcion: string | null; activo: boolean; orden: number; oficios: number }
 export interface AdminOficio { id: string; categoriaId: string | null; nombre: string; profesion: string; slug: string; descripcion: string | null; icono: string; activo: boolean; orden: number; sinonimos: string[]; prestadores: number; enMapa: number }
 export interface AdminLocalidad { id: string; nombre: string; provincia: string; activo: boolean; orden: number }
-export interface AdminZona { id: string; localidadId: string; nombre: string; slug: string; activo: boolean; orden: number; barrios: number; prestadores: number }
-export interface AdminBarrio { id: string; localidadId: string; zonaId: string | null; nombre: string; slug: string; lat: number | null; lng: number | null; poligono: { type: 'Polygon'; coordinates: [number, number][][] }; activo: boolean; orden: number; prestadores: number; solicitudes: number }
+export type AdminPoligono = { type: 'Polygon'; coordinates: [number, number][][] }
+export interface AdminZona { id: string; localidadId: string; nombre: string; slug: string; activo: boolean; orden: number; barrios: number; prestadores: number; poligono: AdminPoligono | null; lat: number | null; lng: number | null }
+export interface AdminBarrio { id: string; localidadId: string; zonaId: string | null; nombre: string; slug: string; lat: number | null; lng: number | null; poligono: AdminPoligono | null; activo: boolean; orden: number; prestadores: number; solicitudes: number }
 
 export interface AdminCatalogo {
   categorias: AdminCategoria[]

@@ -32,6 +32,16 @@ const texto = (value: unknown, max: number) => (typeof value === 'string' ? valu
 const orden = (value: unknown) => (value === undefined || value === null || value === '' ? 0 : Number(value))
 const booleano = (value: unknown, defecto: boolean) => (value === undefined ? defecto : value)
 
+// Reference point of a zone: {lat, lng} numbers (both) or null to remove it; undefined keeps it.
+function leerPunto(body: Record<string, unknown>, actual: { lat: number | null; lng: number | null } | null): { lat: number | null; lng: number | null } | null {
+  if (body['lat'] === undefined && body['lng'] === undefined) return { lat: actual?.lat ?? null, lng: actual?.lng ?? null }
+  if (body['lat'] === null && body['lng'] === null) return { lat: null, lng: null }
+  const lat = Number(body['lat'])
+  const lng = Number(body['lng'])
+  if (typeof body['lat'] !== 'number' || typeof body['lng'] !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null
+  return { lat, lng }
+}
+
 export class ServicioCatalogo {
   constructor(private readonly deps: DependenciasCatalogo) {}
 
@@ -141,18 +151,25 @@ export class ServicioCatalogo {
     const localidadId = body['localidadId'] === undefined && actual ? actual.localidadId : String(body['localidadId'] ?? '')
     const valorOrden = body['orden'] === undefined && actual ? actual.orden : orden(body['orden'])
     const activo = booleano(body['activo'], actual?.activo ?? true)
+    // Geography (all optional): drawn polygon (null removes it) and reference point (null removes it).
+    const poligonoCrudo = body['poligono']
+    const poligono = poligonoCrudo === undefined ? (actual?.poligono ?? null) : poligonoCrudo === null ? null : validarPoligono(poligonoCrudo)
+    const punto = leerPunto(body, actual ?? null)
     const campos: string[] = []
     if (nombre.length < 2 || nombre.length > 60) campos.push('nombre')
     if (!catalogo.localidades.some((item) => item.id === localidadId)) campos.push('localidadId')
     if (!Number.isInteger(valorOrden) || valorOrden < 0 || valorOrden > 999) campos.push('orden')
     if (typeof activo !== 'boolean') campos.push('activo')
+    if (poligonoCrudo !== undefined && poligonoCrudo !== null && !poligono) campos.push('poligono')
+    if (!punto) campos.push('ubicacion')
     // Moving a zone to another locality would leave its neighbourhoods in a different one.
     if (actual && localidadId !== actual.localidadId && catalogo.barrios.some((barrio) => barrio.zonaId === actual.id)) campos.push('localidadId')
     if (campos.length) return { ok: false, code: 'INVALID', campos }
     if (catalogo.zonas.some((item) => item.id !== actual?.id && item.localidadId === localidadId && clave(item.nombre) === clave(nombre))) return { ok: false, code: 'DUPLICATE', campos: ['nombre'] }
-    const valor: ZonaCatalogo = { id: actual?.id ?? `zona-${slugificar(nombre)}-${randomUUID().slice(0, 6)}`, localidadId, nombre, slug: slugificar(nombre), activo: activo as boolean, orden: valorOrden }
+    const valor: ZonaCatalogo = { id: actual?.id ?? `zona-${slugificar(nombre)}-${randomUUID().slice(0, 6)}`, localidadId, nombre, slug: slugificar(nombre), activo: activo as boolean, orden: valorOrden, poligono, lat: punto!.lat, lng: punto!.lng }
     await this.deps.almacen.guardarZona(valor)
-    await this.aplicar({ accion: !actual ? 'creada' : actual.activo !== valor.activo ? (valor.activo ? 'activada' : 'desactivada') : 'modificada', entidad: 'zona', id: valor.id, nombre }, actorId)
+    const geografia = actual && JSON.stringify([actual.poligono, actual.lat, actual.lng]) !== JSON.stringify([valor.poligono, valor.lat, valor.lng])
+    await this.aplicar({ accion: !actual ? 'creada' : actual.activo !== valor.activo ? (valor.activo ? 'activada' : 'desactivada') : geografia ? (valor.poligono ? (actual.poligono ? 'poligono_modificado' : 'poligono_creado') : actual.poligono ? 'poligono_eliminado' : 'punto_modificado') : 'modificada', entidad: 'zona', id: valor.id, nombre }, actorId)
     return { ok: true, valor }
   }
 
@@ -165,7 +182,9 @@ export class ServicioCatalogo {
     const zonaId = body['zonaId'] === undefined ? (actual?.zonaId ?? null) : body['zonaId'] === null || body['zonaId'] === '' ? null : String(body['zonaId'])
     const lat = body['lat'] === undefined ? (actual?.lat ?? null) : body['lat'] === null ? null : Number(body['lat'])
     const lng = body['lng'] === undefined ? (actual?.lng ?? null) : body['lng'] === null ? null : Number(body['lng'])
-    const poligono = body['poligono'] === undefined && actual ? actual.poligono : validarPoligono(body['poligono'])
+    // Optional polygon: undefined keeps it, null removes it (the reference point stays as fallback).
+    const poligonoCrudo = body['poligono']
+    const poligono = poligonoCrudo === undefined ? (actual?.poligono ?? null) : poligonoCrudo === null ? null : validarPoligono(poligonoCrudo)
     const valorOrden = body['orden'] === undefined && actual ? actual.orden : orden(body['orden'])
     const activo = booleano(body['activo'], actual?.activo ?? true)
     const campos: string[] = []
@@ -175,7 +194,7 @@ export class ServicioCatalogo {
     if (zonaId && (!zona || zona.localidadId !== localidadId)) campos.push('zonaId')
     // A neighbourhood needs its approximate point to be placed on the map.
     if (lat === null || lng === null || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) campos.push('ubicacion')
-    if (!poligono) campos.push('poligono')
+    if (poligonoCrudo !== undefined && poligonoCrudo !== null && !poligono) campos.push('poligono')
     if (!Number.isInteger(valorOrden) || valorOrden < 0 || valorOrden > 999) campos.push('orden')
     if (typeof activo !== 'boolean') campos.push('activo')
     if (campos.length) return { ok: false, code: 'INVALID', campos }
@@ -183,9 +202,10 @@ export class ServicioCatalogo {
     // Profiles and requests store the neighbourhood name: renaming one in use would orphan them.
     if (actual && clave(actual.nombre) !== clave(nombre) && this.deps.referenciasBarrio && (await this.deps.referenciasBarrio(actual.nombre)) > 0)
       return { ok: false, code: 'IN_USE_RENAME', campos: ['nombre'] }
-    const valor: BarrioCatalogo = { id: actual?.id ?? `barrio-${slugificar(nombre)}-${randomUUID().slice(0, 6)}`, localidadId, zonaId, nombre, slug: slugificar(nombre), lat, lng, poligono: poligono!, activo: activo as boolean, orden: valorOrden }
+    const valor: BarrioCatalogo = { id: actual?.id ?? `barrio-${slugificar(nombre)}-${randomUUID().slice(0, 6)}`, localidadId, zonaId, nombre, slug: slugificar(nombre), lat, lng, poligono, activo: activo as boolean, orden: valorOrden }
     await this.deps.almacen.guardarBarrio(valor)
-    const accion = !actual ? 'creado' : actual.activo !== valor.activo ? (valor.activo ? 'activado' : 'desactivado') : actual.zonaId !== valor.zonaId ? 'movido_de_zona' : 'modificado'
+    const poligonoCambio = actual && JSON.stringify(actual.poligono) !== JSON.stringify(valor.poligono)
+    const accion = !actual ? 'creado' : actual.activo !== valor.activo ? (valor.activo ? 'activado' : 'desactivado') : actual.zonaId !== valor.zonaId ? 'movido_de_zona' : poligonoCambio ? (valor.poligono ? (actual.poligono ? 'poligono_modificado' : 'poligono_creado') : 'poligono_eliminado') : 'modificado'
     await this.aplicar({ accion, entidad: 'barrio', id: valor.id, nombre }, actorId)
     return { ok: true, valor }
   }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import {
+  GEOGRAFIA_VACIA,
   distanciaEntreZonas,
   interpretarNecesidad,
   proyectarPerfil,
@@ -17,8 +18,10 @@ import {
   type PrestadorPublico,
 } from './modelo.ts'
 import { esOficio, normalizarTexto, oficio, type OficioId } from './oficios.ts'
+import { asociarPunto, resolverPuntoMapa, type GeocodificadorInverso, type PuntoMapa } from '../geo/resolucion.ts'
+import { coordenadasValidas } from '../geo/geometria.ts'
 import type { AlmacenPerfiles, FuentesDirectorio } from './puertos.ts'
-import { barriosDeUbicacion, oficiosVigentes } from '../catalogo/vigente.ts'
+import { barriosDeUbicacion, catalogoVigente, oficiosVigentes } from '../catalogo/vigente.ts'
 
 export interface FilaAdminPrestador {
   id: string; tenantId: string; nombre: string; oficio: string; oficioLabel: string; zona: string | null; zonasCobertura: string[]
@@ -60,20 +63,46 @@ interface Enriquecido {
   publico: PrestadorPublico
 }
 
-// Caso de uso compartido por el directorio Web ("Buscar trabajador"), el asistente Web ("Buscar
-// servicios") y las herramientas del asistente de WhatsApp. Solo lee datos reales: si un prestador
-// no está aprobado o no tiene perfil visible, no aparece; nunca se completan datos faltantes.
 // Current services of a category (catalog snapshot, no query).
 function idsOficiosDeCategoria(categoriaId: string): OficioId[] {
   return oficiosVigentes().filter((item) => item.categoriaId === categoriaId).map((item) => item.id)
 }
 
+// Input of a location change: an exact point (and whether it may be published) or its removal.
+export type EntradaUbicacion = { quitar: true } | { lat: unknown; lng: unknown; mostrarExacta?: unknown }
+
+export type ResultadoUbicacion =
+  | { ok: true; ubicacion: UbicacionPrestador }
+  | { ok: false; code: 'NOT_FOUND' | 'INVALID_LOCATION' }
+
+// What the provider / admin sees about the location (never published as such).
+export interface UbicacionPrestador {
+  lat: number | null
+  lng: number | null
+  showExact: boolean
+  association: PerfilPublico['ubicacionAsociacion']
+  barrio: { id: string; name: string } | null
+  zone: { id: string; name: string } | null
+  // Where the public map places the provider now (null = not on the map, "Sin ubicación").
+  mapPoint: PuntoMapa | null
+}
+
+// Caso de uso compartido por el directorio Web ("Buscar trabajador"), el asistente Web ("Buscar
+// servicios") y las herramientas del asistente de WhatsApp. Solo lee datos reales: si un prestador
+// no está aprobado o no tiene perfil visible, no aparece; nunca se completan datos faltantes.
 export class ServicioDirectorio {
   private readonly now: () => number
   private readonly newId: () => string
 
   constructor(
-    private readonly deps: { perfiles: AlmacenPerfiles; fuentes: FuentesDirectorio; now?: () => number; newId?: () => string }
+    private readonly deps: {
+      perfiles: AlmacenPerfiles
+      fuentes: FuentesDirectorio
+      now?: () => number
+      newId?: () => string
+      // Reverse geocoder: only to MATCH existing areas when no polygon contains a saved point.
+      geocodificador?: GeocodificadorInverso | null
+    }
   ) {
     this.now = deps.now ?? Date.now
     this.newId = deps.newId ?? randomUUID
@@ -102,6 +131,9 @@ export class ServicioDirectorio {
       id: actual?.id ?? this.newId(),
       tenantId: context.tenantId,
       prestadorId: prestador.prestadorId,
+      // Editing the profile never touches its map location (a separate, explicit operation).
+      ...GEOGRAFIA_VACIA,
+      ...(actual ? pickGeografia(actual) : {}),
       ...validacion.valor,
       creadoEn: actual?.creadoEn ?? ahora,
       actualizadoEn: ahora,
@@ -112,6 +144,61 @@ export class ServicioDirectorio {
       this.deps.fuentes.ubicacionIdentidadVerificada?.(context.tenantId) ?? Promise.resolve(null),
     ])
     return { ok: true, perfil: { ...proyectarPerfil(perfil, hechos, ahora, resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible } }
+  }
+
+  // ---- ubicación en el mapa (el prestador desde su sesión, el admin por id) --------------------
+
+  // The provider's own location: the tenant ALWAYS comes from the session, never from the body.
+  async miUbicacion(tenantId: string): Promise<UbicacionPrestador | null> {
+    const perfil = await this.deps.perfiles.porTenant(tenantId)
+    return perfil ? vistaUbicacion(perfil) : null
+  }
+
+  async guardarMiUbicacion(tenantId: string, entrada: EntradaUbicacion): Promise<ResultadoUbicacion> {
+    const perfil = await this.deps.perfiles.porTenant(tenantId)
+    return perfil ? this.aplicarUbicacion(perfil, entrada) : { ok: false, code: 'NOT_FOUND' }
+  }
+
+  // Platform administration (authorized by the admin gate): any profile by its public id.
+  async ubicacionDePerfil(perfilId: string): Promise<UbicacionPrestador | null> {
+    const perfil = await this.deps.perfiles.porId(perfilId)
+    return perfil ? vistaUbicacion(perfil) : null
+  }
+
+  async guardarUbicacionDePerfil(perfilId: string, entrada: EntradaUbicacion): Promise<ResultadoUbicacion> {
+    const perfil = await this.deps.perfiles.porId(perfilId)
+    return perfil ? this.aplicarUbicacion(perfil, entrada) : { ok: false, code: 'NOT_FOUND' }
+  }
+
+  private async aplicarUbicacion(perfil: PerfilPublico, entrada: EntradaUbicacion): Promise<ResultadoUbicacion> {
+    if ('quitar' in entrada && entrada.quitar === true) {
+      // Removing the pin keeps the area the provider belongs to (it is not an address).
+      const siguiente: PerfilPublico = { ...perfil, latitud: null, longitud: null, mostrarUbicacionExacta: false, actualizadoEn: this.now() }
+      await this.deps.perfiles.guardar(siguiente)
+      return { ok: true, ubicacion: vistaUbicacion(siguiente) }
+    }
+    const { lat, lng } = entrada as { lat: unknown; lng: unknown; mostrarExacta?: unknown }
+    const mostrar = (entrada as { mostrarExacta?: unknown }).mostrarExacta
+    if (!coordenadasValidas(lat, lng) || (mostrar !== undefined && typeof mostrar !== 'boolean')) return { ok: false, code: 'INVALID_LOCATION' }
+    const punto = { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round((lng as number) * 1e6) / 1e6 }
+    // Stored polygons first; the geocoder only matches existing names (never creates areas).
+    const asociacion = await asociarPunto(catalogoVigente(), punto.lat, punto.lng, this.deps.geocodificador ?? null)
+    const barrio = asociacion.barrio
+    const siguiente: PerfilPublico = {
+      ...perfil,
+      latitud: punto.lat,
+      longitud: punto.lng,
+      mostrarUbicacionExacta: typeof mostrar === 'boolean' ? mostrar : perfil.mostrarUbicacionExacta,
+      barrioId: barrio?.id ?? null,
+      zonaId: asociacion.zona?.id ?? null,
+      ubicacionAsociacion: asociacion.origen,
+      // A profile without a named zone adopts the neighbourhood that contains its point.
+      zona: perfil.zona ?? barrio?.nombre ?? null,
+      zonasCobertura: perfil.zonasCobertura.length || !barrio ? perfil.zonasCobertura : [barrio.nombre],
+      actualizadoEn: this.now(),
+    }
+    await this.deps.perfiles.guardar(siguiente)
+    return { ok: true, ubicacion: vistaUbicacion(siguiente) }
   }
 
   // ---- lectura pública ------------------------------------------------------------------------
@@ -330,5 +417,31 @@ export class ServicioDirectorio {
         a.perfil.nombrePublico.localeCompare(b.perfil.nombrePublico, 'es')
       )
     })
+  }
+}
+
+function pickGeografia(perfil: PerfilPublico) {
+  return {
+    latitud: perfil.latitud,
+    longitud: perfil.longitud,
+    mostrarUbicacionExacta: perfil.mostrarUbicacionExacta,
+    barrioId: perfil.barrioId,
+    zonaId: perfil.zonaId,
+    ubicacionAsociacion: perfil.ubicacionAsociacion,
+  }
+}
+
+function vistaUbicacion(perfil: PerfilPublico): UbicacionPrestador {
+  const catalogo = catalogoVigente()
+  const barrio = perfil.barrioId ? catalogo.barrios.find((item) => item.id === perfil.barrioId) : undefined
+  const zona = perfil.zonaId ? catalogo.zonas.find((item) => item.id === perfil.zonaId) : undefined
+  return {
+    lat: perfil.latitud,
+    lng: perfil.longitud,
+    showExact: perfil.mostrarUbicacionExacta,
+    association: perfil.ubicacionAsociacion,
+    barrio: barrio ? { id: barrio.id, name: barrio.nombre } : null,
+    zone: zona ? { id: zona.id, name: zona.nombre } : null,
+    mapPoint: resolverPuntoMapa(catalogo, { ...perfil, zonasCobertura: perfil.zonasCobertura }),
   }
 }

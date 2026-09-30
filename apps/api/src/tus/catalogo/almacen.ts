@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { sinAcentos } from '../texto.ts'
 import { slugificar, validarPoligono, type BarrioCatalogo, type CatalogoTus, type CategoriaCatalogo, type LocalidadCatalogo, type OficioCatalogo, type ZonaCatalogo } from './modelo.ts'
 import { SEMILLA_CATALOGO } from './semilla.ts'
@@ -105,7 +106,17 @@ const MAPEOS = {
     sinonimos: ((fila['sinonimos'] as Fila[] | undefined) ?? []).filter((item) => item['activo'] !== false).map((item) => String(item['termino'])),
   }),
   localidades: (fila: Fila): LocalidadCatalogo => ({ id: String(fila['id']), nombre: String(fila['nombre']), provincia: String(fila['provincia']), activo: Boolean(fila['activo']), orden: Number(fila['orden']) }),
-  zonas: (fila: Fila): ZonaCatalogo => ({ id: String(fila['id']), localidadId: String(fila['localidadId']), nombre: String(fila['nombre']), slug: String(fila['slug']), activo: Boolean(fila['activo']), orden: Number(fila['orden']) }),
+  zonas: (fila: Fila): ZonaCatalogo => ({
+    id: String(fila['id']),
+    localidadId: String(fila['localidadId']),
+    nombre: String(fila['nombre']),
+    slug: String(fila['slug']),
+    activo: Boolean(fila['activo']),
+    orden: Number(fila['orden']),
+    poligono: fila['poligono'] ? validarPoligono(fila['poligono']) : null,
+    lat: typeof fila['latitud'] === 'number' ? fila['latitud'] : null,
+    lng: typeof fila['longitud'] === 'number' ? fila['longitud'] : null,
+  }),
   barrios: (fila: Fila): BarrioCatalogo => ({
     id: String(fila['id']),
     localidadId: String(fila['localidadId']),
@@ -114,8 +125,8 @@ const MAPEOS = {
     slug: String(fila['slug']),
     lat: typeof fila['latitud'] === 'number' ? fila['latitud'] : null,
     lng: typeof fila['longitud'] === 'number' ? fila['longitud'] : null,
-    // NOT NULL + CHECK in SQL (20261008100000); validated again on every write.
-    poligono: validarPoligono(fila['poligono'])!,
+    // Optional since 20261016100000 (CHECK in SQL); validated again on every write.
+    poligono: fila['poligono'] ? validarPoligono(fila['poligono']) : null,
     activo: Boolean(fila['activo']),
     orden: Number(fila['orden']),
   }),
@@ -200,12 +211,12 @@ export class AlmacenCatalogoPrisma implements AlmacenCatalogo {
   }
 
   async guardarZona(item: ZonaCatalogo) {
-    const datos = { localidadId: item.localidadId, nombre: item.nombre, slug: item.slug, activo: item.activo, orden: item.orden, actualizadoEn: ahora() }
+    const datos = { localidadId: item.localidadId, nombre: item.nombre, slug: item.slug, poligono: item.poligono ?? Prisma.DbNull, latitud: item.lat, longitud: item.lng, activo: item.activo, orden: item.orden, actualizadoEn: ahora() }
     await this.client.zonaUbicacion.upsert({ where: { id: item.id }, create: { id: item.id, ...datos, creadoEn: ahora() }, update: datos })
   }
 
   async guardarBarrio(item: BarrioCatalogo) {
-    const datos = { localidadId: item.localidadId, zonaId: item.zonaId, nombre: item.nombre, slug: item.slug, latitud: item.lat, longitud: item.lng, poligono: item.poligono, activo: item.activo, orden: item.orden, actualizadoEn: ahora() }
+    const datos = { localidadId: item.localidadId, zonaId: item.zonaId, nombre: item.nombre, slug: item.slug, latitud: item.lat, longitud: item.lng, poligono: item.poligono ?? Prisma.DbNull, activo: item.activo, orden: item.orden, actualizadoEn: ahora() }
     await this.client.barrio.upsert({ where: { id: item.id }, create: { id: item.id, ...datos, creadoEn: ahora() }, update: datos })
   }
 }

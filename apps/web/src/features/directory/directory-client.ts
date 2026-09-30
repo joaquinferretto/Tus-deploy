@@ -85,6 +85,17 @@ export function directoryQuery(filters: DirectoryFilters): string {
   return query ? `?${query}` : ''
 }
 
+// Location of a provider as the provider / admin sees it (never published as such).
+export interface UbicacionPrestadorWeb {
+  lat: number | null
+  lng: number | null
+  showExact: boolean
+  association: 'poligono_barrio' | 'poligono_zona' | 'geocodificador' | 'manual' | 'sin_asociar' | null
+  barrio: { id: string; name: string } | null
+  zone: { id: string; name: string } | null
+  mapPoint: { lat: number; lng: number; precision: 'exact' | 'barrio' | 'zona' | 'reference'; label: string } | null
+}
+
 export function createDirectoryClient(fetchImpl: Fetch = fetchWithSession) {
   return {
     catalog: () => call<CatalogoOficios>(fetchImpl, '/tus/v1/public/oficios'),
@@ -100,6 +111,11 @@ export function createDirectoryClient(fetchImpl: Fetch = fetchWithSession) {
     myProfile: (session: TusWebSession) => call<{ profile: (PerfilPrestadorPublico & { visible: boolean }) | null }>(fetchImpl, '/tus/v1/prestador/perfil-publico', {}, session),
     saveProfile: (session: TusWebSession, input: { displayName: string; profession: string; professions?: string[]; zone: string; serviceZones: string[]; serviceMode: 'local' | 'domicilio' | 'mixto'; coverageRadiusKm: number | null; description: string; yearsOfExperience: number | null; visible: boolean }) =>
       call<{ profile: PerfilPrestadorPublico & { visible: boolean } }>(fetchImpl, '/tus/v1/prestador/perfil-publico', { method: 'PUT', body: JSON.stringify(input) }, session),
+    // Own map location (the API takes the provider from the session, never from the body).
+    myLocation: (session: TusWebSession) => call<{ location: UbicacionPrestadorWeb | null }>(fetchImpl, '/tus/v1/prestador/ubicacion', {}, session),
+    saveMyLocation: (session: TusWebSession, input: { lat: number; lng: number; showExact: boolean }) =>
+      call<{ location: UbicacionPrestadorWeb }>(fetchImpl, '/tus/v1/prestador/ubicacion', { method: 'PUT', body: JSON.stringify(input) }, session),
+    removeMyLocation: (session: TusWebSession) => call<{ location: UbicacionPrestadorWeb }>(fetchImpl, '/tus/v1/prestador/ubicacion', { method: 'DELETE' }, session),
     inbox: (session: TusWebSession) => call<{ items: SolicitudRecibidaPrestador[] }>(fetchImpl, '/tus/v1/prestador/solicitudes', {}, session),
     answer: (session: TusWebSession, id: string, decision: 'aceptar' | 'rechazar') =>
       call<SolicitudRecibidaPrestador>(fetchImpl, `/tus/v1/prestador/solicitudes/${encodeURIComponent(id)}/${decision}`, { method: 'POST', body: '{}' }, session),

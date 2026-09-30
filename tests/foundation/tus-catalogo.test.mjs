@@ -102,7 +102,8 @@ test('CATALOG ABM: categories, trades with synonyms, localities, zones and neigh
   assert.equal(result.zonaDuplicate, 409)
   assert.deepEqual(result.zonaBadLocality, ['localidadId'])
   assert.deepEqual(result.ponce, [201, true])
-  assert.deepEqual(result.barrioNoPoint, ['ubicacion', 'poligono'], 'a neighbourhood needs its map point and polygon')
+  // DIR-04: the polygon is optional (it can be removed); the reference point stays mandatory.
+  assert.deepEqual(result.barrioNoPoint, ['ubicacion'], 'a neighbourhood needs its map point')
   assert.equal(result.barrioDuplicate, 409)
   assert.equal(result.renameInUse, 'IN_USE_RENAME', 'renaming a neighbourhood in use would orphan profiles/requests')
   assert.equal(result.moveBarrio, true, 'a neighbourhood can move between zones')

@@ -39,11 +39,12 @@ export interface BarrioPublico {
   zoneId: string | null
   lat: number
   lng: number
-  polygon: { type: 'Polygon'; coordinates: [number, number][][] }
+  // Null when the administration removed the drawn polygon (the point is the fallback).
+  polygon: { type: 'Polygon'; coordinates: [number, number][][] } | null
 }
 
 export interface UbicacionesPublicas {
-  localities: { id: string; name: string; province: string; zones: { id: string; name: string }[]; neighbourhoods: BarrioPublico[] }[]
+  localities: { id: string; name: string; province: string; zones: { id: string; name: string; lat?: number | null; lng?: number | null; polygon?: BarrioPublico['polygon'] }[]; neighbourhoods: BarrioPublico[] }[]
 }
 
 export interface CatalogoOficios {
@@ -68,7 +69,17 @@ export interface UbicacionMapaPrestador {
   label: string
   lat: number
   lng: number
-  precision: 'zone'
+  // 'exact' only when the provider chose to show its exact point on the map.
+  precision: 'zone' | 'exact'
+}
+
+// The ONE point that places a provider on the map (DIR-04): exact (only if allowed), inside its
+// neighbourhood polygon, inside its zone polygon, or the reference point of either.
+export interface PuntoMapaPrestador {
+  lat: number
+  lng: number
+  precision: 'exact' | 'barrio' | 'zona' | 'reference'
+  label: string
 }
 
 export interface CoberturaPublicaPrestador {
@@ -95,6 +106,8 @@ export interface PrestadorPublico {
   serviceZones: string[]
   locationSource: FuenteUbicacionPublica
   mapLocations: UbicacionMapaPrestador[]
+  // Absent in older payloads; null = not placed on the map.
+  mapPoint?: PuntoMapaPrestador | null
   coverage: CoberturaPublicaPrestador
   verified: boolean
   completedJobs: number
@@ -227,7 +240,7 @@ export function esPrestadorPublico(value: unknown): value is PrestadorPublico {
     ['configured', 'identity_fallback', 'none'].includes(String(value['locationSource'])) &&
     Array.isArray(value['mapLocations']) && value['mapLocations'].every((location) => {
       if (!esRegistro(location)) return false
-      return typeof location['label'] === 'string' && Number.isFinite(location['lat']) && Number.isFinite(location['lng']) && location['precision'] === 'zone'
+      return typeof location['label'] === 'string' && Number.isFinite(location['lat']) && Number.isFinite(location['lng']) && (location['precision'] === 'zone' || location['precision'] === 'exact')
     }) &&
     esRegistro(value['coverage']) &&
     ['local', 'domicilio', 'mixto'].includes(String(value['coverage']['mode'])) &&

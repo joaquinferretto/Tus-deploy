@@ -13,6 +13,8 @@ import type { ServicioDirectorio } from './servicio.ts'
 // - GET  /tus/v1/public/prestadores/:id         perfil público.
 // - GET  /tus/v1/prestador/perfil-publico       perfil del prestador autenticado.
 // - PUT  /tus/v1/prestador/perfil-publico       crear/editar el perfil público.
+// - GET|PUT|DELETE /tus/v1/prestador/ubicacion  pin del prestador (su sesión) y si se muestra exacto.
+// - GET|PUT|DELETE /tus/v1/admin/prestadores/:id/ubicacion  lo mismo para cualquier perfil (admin).
 // - POST /tus/v1/asistente/interpretar          interpreta el texto (oficio, barrio, urgencia).
 // - POST /tus/v1/asistente/candidatos           prestadores compatibles (requiere sesión).
 export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
@@ -75,6 +77,56 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
       response.status(200).json(perfil)
     })
   )
+
+  // ---- ubicación en el mapa ----------------------------------------------------------------------
+  // Provider: ALWAYS its own profile (tenant from the session); authority fields in the body are
+  // refused. Admin: any profile by its public id, behind the elevated admin permission.
+  const CLAVES_AUTORIDAD = ['tenantId', 'prestadorId', 'merchantId', 'perfilId', 'profileId', 'id']
+  const responderUbicacion = (response: Response, result: Awaited<ReturnType<ServicioDirectorio['guardarMiUbicacion']>>) => {
+    if (result.ok) response.status(200).json({ location: result.ubicacion })
+    else if (result.code === 'INVALID_LOCATION') enviarError(response, 422, result.code, 'Latitude must be between -90 and 90 and longitude between -180 and 180')
+    else enviarError(response, 404, result.code, 'Provider profile not found')
+  }
+  router.get('/tus/v1/prestador/ubicacion', asyncHandler(async (request: Request, response: Response) => {
+    const context = await autenticar(request, response, sessions)
+    if (!context) return
+    if (!context.permissions.includes('tus:marketplace:write')) { enviarError(response, 403, 'FORBIDDEN', 'Provider session required'); return }
+    response.status(200).json({ location: await servicio.miUbicacion(context.tenantId) })
+  }))
+  router.put('/tus/v1/prestador/ubicacion', asyncHandler(async (request: Request, response: Response) => {
+    const context = await autenticar(request, response, sessions)
+    if (!context) return
+    const body = comoRegistro(request.body)
+    if (!context.permissions.includes('tus:marketplace:write') || CLAVES_AUTORIDAD.some((key) => key in body)) { enviarError(response, 403, 'FORBIDDEN', 'Only your own location can be changed'); return }
+    responderUbicacion(response, await servicio.guardarMiUbicacion(context.tenantId, { lat: body['lat'], lng: body['lng'], mostrarExacta: body['showExact'] }))
+  }))
+  router.delete('/tus/v1/prestador/ubicacion', asyncHandler(async (request: Request, response: Response) => {
+    const context = await autenticar(request, response, sessions)
+    if (!context) return
+    if (!context.permissions.includes('tus:marketplace:write')) { enviarError(response, 403, 'FORBIDDEN', 'Provider session required'); return }
+    responderUbicacion(response, await servicio.guardarMiUbicacion(context.tenantId, { quitar: true }))
+  }))
+  const admin = async (request: Request, response: Response) => {
+    const context = await autenticar(request, response, sessions)
+    if (!context) return null
+    if (!context.permissions.includes('tus:providers:admin')) { enviarError(response, 403, 'FORBIDDEN', 'Administration requires an elevated admin session'); return null }
+    return context
+  }
+  router.get('/tus/v1/admin/prestadores/:id/ubicacion', asyncHandler(async (request: Request, response: Response) => {
+    if (!(await admin(request, response))) return
+    const location = await servicio.ubicacionDePerfil(String(request.params['id'] ?? ''))
+    if (!location) { enviarError(response, 404, 'NOT_FOUND', 'Provider profile not found'); return }
+    response.status(200).json({ location })
+  }))
+  router.put('/tus/v1/admin/prestadores/:id/ubicacion', asyncHandler(async (request: Request, response: Response) => {
+    if (!(await admin(request, response))) return
+    const body = comoRegistro(request.body)
+    responderUbicacion(response, await servicio.guardarUbicacionDePerfil(String(request.params['id'] ?? ''), { lat: body['lat'], lng: body['lng'], mostrarExacta: body['showExact'] }))
+  }))
+  router.delete('/tus/v1/admin/prestadores/:id/ubicacion', asyncHandler(async (request: Request, response: Response) => {
+    if (!(await admin(request, response))) return
+    responderUbicacion(response, await servicio.guardarUbicacionDePerfil(String(request.params['id'] ?? ''), { quitar: true }))
+  }))
 
   router.get(
     '/tus/v1/prestador/perfil-publico',

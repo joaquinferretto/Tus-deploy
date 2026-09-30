@@ -1,5 +1,5 @@
 import type { TusApplicationService } from '../application/tus-application-service.ts'
-import type { HechosPrestador, PerfilPublico, ServicioResumen } from './modelo.ts'
+import { GEOGRAFIA_VACIA, type HechosPrestador, type PerfilPublico, type ServicioResumen } from './modelo.ts'
 import type { OficioId } from './oficios.ts'
 import type { AlmacenPerfiles, FuentesDirectorio, ResumenAdminPrestador } from './puertos.ts'
 import type { AreaDomicilioFallback } from './ubicacion.ts'
@@ -9,7 +9,7 @@ import type { AreaDomicilioFallback } from './ubicacion.ts'
 // Principal first, unique: the same invariant the database enforces.
 export function copiaPerfil(perfil: PerfilPublico): PerfilPublico {
   const oficios = [...new Set([perfil.oficio, ...(perfil.oficios ?? [])])]
-  return { ...perfil, oficio: oficios[0]!, oficios, zonasCobertura: [...perfil.zonasCobertura] }
+  return { ...GEOGRAFIA_VACIA, ...perfil, oficio: oficios[0]!, oficios, zonasCobertura: [...perfil.zonasCobertura] }
 }
 
 function filtroOficios(input: { oficio?: OficioId; oficios?: readonly OficioId[] }): OficioId[] | null {
@@ -122,6 +122,12 @@ function desdeFila(fila: Fila): PerfilPublico {
     nombrePublico: String(fila['nombrePublico']),
     oficio: fila['oficio'] as OficioId,
     oficios: oficiosDeFila(fila),
+    latitud: typeof fila['latitud'] === 'number' ? fila['latitud'] : null,
+    longitud: typeof fila['longitud'] === 'number' ? fila['longitud'] : null,
+    mostrarUbicacionExacta: fila['mostrarUbicacionExacta'] === true,
+    barrioId: (fila['barrioId'] as string | null | undefined) ?? null,
+    zonaId: (fila['zonaId'] as string | null | undefined) ?? null,
+    ubicacionAsociacion: (fila['ubicacionAsociacion'] as PerfilPublico['ubicacionAsociacion'] | undefined) ?? null,
     zona,
     zonasCobertura,
     modalidadAtencion: fila['modalidadAtencion'] === 'local' || fila['modalidadAtencion'] === 'mixto' ? fila['modalidadAtencion'] : 'domicilio',
@@ -148,6 +154,12 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
       descripcion: perfil.descripcion,
       aniosExperiencia: perfil.aniosExperiencia,
       visible: perfil.visible,
+      latitud: perfil.latitud ?? null,
+      longitud: perfil.longitud ?? null,
+      mostrarUbicacionExacta: perfil.mostrarUbicacionExacta ?? false,
+      barrioId: perfil.barrioId ?? null,
+      zonaId: perfil.zonaId ?? null,
+      ubicacionAsociacion: perfil.ubicacionAsociacion ?? null,
       fechaActualizacion: new Date(perfil.actualizadoEn),
     }
     const oficios = [...new Set([perfil.oficio, ...perfil.oficios])]

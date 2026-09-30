@@ -29,6 +29,7 @@ import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import { crearRouterAdmin } from './tus/admin/http.ts'
 import { crearRouterAdminTrabajos } from './tus/admin/trabajos.ts'
 import { operacionAdminPrisma } from './tus/directorio/almacenes.ts'
+import { crearGeocodificador } from './tus/geo/geocodificador.ts'
 import { FuenteTrabajosAdminPrisma } from './tus/admin/trabajos-fuente.ts'
 import { AlmacenCalificacionesPrisma, ServicioCalificaciones, type ClientePrismaCalificaciones } from './tus/reputacion/calificaciones.ts'
 import { crearRouterCalificaciones } from './tus/reputacion/http.ts'
@@ -140,7 +141,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     almacen: new AlmacenCalificacionesPrisma(prisma as unknown as ClientePrismaCalificaciones),
     trabajos: { buscarAccesible: (input) => new PrismaTrabajoStore(prisma).findAccessible(input) },
   })
-  const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio, calificaciones: (tenantIds) => calificaciones.resumen(tenantIds), operacionAdmin: operacionAdminPrisma(prisma as unknown as Parameters<typeof operacionAdminPrisma>[0]) })
+  const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio, calificaciones: (tenantIds) => calificaciones.resumen(tenantIds), operacionAdmin: operacionAdminPrisma(prisma as unknown as Parameters<typeof operacionAdminPrisma>[0]), geocodificador: crearGeocodificador(process.env) })
   // Every match (client picks an application / provider accepts a direct request) creates the
   // work in the same PostgreSQL transaction that assigns the request.
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
