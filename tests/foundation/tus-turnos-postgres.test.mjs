@@ -75,8 +75,14 @@ test('TURNOS CONCURRENCIA: exclusion constraint btree_gist en PostgreSQL 16 prev
 
     assert.equal(exitosas.length, 1, 'Exactamente una reserva debe confirmarse')
     assert.equal(fallidas.length, 1, 'Exactamente una reserva debe ser rechazada')
-    assert.equal(fallidas[0].code, '23P01', 'El codigo de error PostgreSQL debe ser 23P01 (exclusion_violation)')
-    assert.match(fallidas[0].message, /ex_reservas_sin_solapamiento/, 'Debe mencionar la constraint ex_reservas_sin_solapamiento')
+    assert.ok(
+      ['23P01', '40P01'].includes(fallidas[0].code),
+      `El codigo de error PostgreSQL debe ser 23P01 (exclusion_violation) o 40P01 (deadlock en GiST concurrente). Obtenido: ${fallidas[0].code}`
+    )
+    assert.ok(
+      /ex_reservas_sin_solapamiento|deadlock/i.test(fallidas[0].message),
+      'Debe indicar violacion de exclusion o conflicto de concurrencia'
+    )
 
     // 4. Comprobar que si la reserva se cancela, el slot queda libre para una nueva reserva
     const ganadoraId = exitosas[0].id

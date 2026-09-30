@@ -340,6 +340,7 @@ export class ServicioTurnos {
       if (
         errStr.includes('ex_reservas_sin_solapamiento') ||
         errStr.includes('23P01') ||
+        errStr.includes('40P01') ||
         errStr.includes('P2002')
       ) {
         throw new ErrorCalendario(
@@ -453,6 +454,7 @@ export class ServicioTurnos {
       if (
         errStr.includes('ex_reservas_sin_solapamiento') ||
         errStr.includes('23P01') ||
+        errStr.includes('40P01') ||
         errStr.includes('P2002')
       ) {
         throw new ErrorCalendario(

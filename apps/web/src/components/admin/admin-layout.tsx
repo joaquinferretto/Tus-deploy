@@ -13,6 +13,7 @@ const NAV = [
   { href: '/tus/admin', label: 'Inicio' },
   { href: '/tus/admin/usuarios', label: 'Usuarios' },
   { href: '/tus/admin/prestadores', label: 'Prestadores' },
+  { href: '/tus/admin/turnos', label: 'Turnos' },
   { href: '/tus/admin/solicitudes', label: 'Solicitudes' },
   { href: '/tus/admin/trabajos', label: 'Trabajos' },
   { href: '/tus/admin/pagos', label: 'Pagos' },

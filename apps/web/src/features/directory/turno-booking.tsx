@@ -63,8 +63,8 @@ export function TurnoBooking({
         if (!active) return
         setSlots(data.slots || [])
         setTarifas(data.tarifas || [])
-        if (data.tarifas && data.tarifas.length > 0 && !selectedTarifaId) {
-          setSelectedTarifaId(data.tarifas[0].id)
+        if (data.tarifas && data.tarifas.length > 0) {
+          setSelectedTarifaId((prev) => prev || data.tarifas[0].id)
         }
         setSlotMessage(data.mensaje || null)
         setLoadingSlots(false)

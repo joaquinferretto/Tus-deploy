@@ -77,16 +77,20 @@
 }
 
 .chip {
+  align-items: center;
   background: var(--tus-white);
   border: 1px solid var(--tus-line);
   border-radius: 999px;
   color: var(--tus-ink);
   cursor: pointer;
+  display: inline-flex;
   font: inherit;
   font-size: 0.9rem;
   font-weight: 500;
-  min-height: 38px;
-  padding: 6px 14px;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 16px;
+  touch-action: manipulation;
 }
 
 .chip:hover {
