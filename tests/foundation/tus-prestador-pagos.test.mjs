@@ -15,8 +15,8 @@ test('FASE6 HTTP: OAuth callback returns to /prestador/pagos; linking needs the 
     const { crearModuloPagosServicio } = await import('./apps/api/src/tus/finance/servicios/composicion-pagos.ts')
     const { createTusHttpRouter } = await import('./apps/api/src/tus/http/router.ts')
     const { createApp } = (await import('./apps/api/src/server.ts')).default
-    const env = { TUS_MERCADOPAGO_ENABLED: 'true', MERCADO_PAGO_ENVIRONMENT: 'sandbox', MERCADO_PAGO_CLIENT_ID: 'app-id', MERCADO_PAGO_CLIENT_SECRET: 'client-secret-value', MERCADO_PAGO_WEBHOOK_SECRET: 'webhook-secret-value', MERCADO_PAGO_OAUTH_REDIRECT_URI: 'https://api.example.test/tus/v1/integrations/mercado-pago/oauth/callback', TUS_PAYMENT_CREDENTIALS_KEY: Buffer.alloc(32, 7).toString('base64'), TUS_WEB_BASE_URL: 'https://web.example.test', MERCADO_PAGO_NOTIFICATION_URL: 'https://api.example.test/tus/v1/integrations/mercado-pago/webhooks' }
-    const oauth = { intercambiarCodigo: async () => ({ accessToken: 'APP_USR-seller-access-token', refreshToken: 'TG-refresh', publicKey: null, userId: '987654321', scopes: ['offline_access', 'read', 'write'], liveMode: false, expiresInSeconds: 15552000 }), renovarToken: async () => { throw new Error('unused') } }
+    const env = { TUS_MERCADOPAGO_ENABLED: 'true', MERCADO_PAGO_ENVIRONMENT: 'sandbox', MERCADO_PAGO_CLIENT_ID: 'app-id', MERCADO_PAGO_CLIENT_SECRET: 'fictitious-client-secret', MERCADO_PAGO_WEBHOOK_SECRET: 'webhook-secret-value', MERCADO_PAGO_OAUTH_REDIRECT_URI: 'https://api.example.test/tus/v1/integrations/mercado-pago/oauth/callback', TUS_PAYMENT_CREDENTIALS_KEY: Buffer.alloc(32, 7).toString('base64'), TUS_WEB_BASE_URL: 'https://web.example.test', MERCADO_PAGO_NOTIFICATION_URL: 'https://api.example.test/tus/v1/integrations/mercado-pago/webhooks' }
+    const oauth = { intercambiarCodigo: async () => ({ accessToken: 'fictitious-mp-access-token', refreshToken: 'TG-refresh', publicKey: null, userId: '987654321', scopes: ['offline_access', 'read', 'write'], liveMode: false, expiresInSeconds: 15552000 }), renovarToken: async () => { throw new Error('unused') } }
     const cuentas = new AlmacenCuentasCobroEnMemoria()
     const payments = crearModuloPagosServicio({ env, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas, oauth, identidadVerificada: async () => true })
     const sessions = new InMemoryTusSessionResolver()
@@ -55,7 +55,7 @@ test('FASE6 HTTP: OAuth callback returns to /prestador/pagos; linking needs the 
   const account = JSON.parse(result.status.text)
   assert.equal(account.status, 'connected')
   assert.equal(account.connectAvailable, true)
-  assert.doesNotMatch(result.status.text, /APP_USR|TG-refresh|accessToken|refreshToken|access_token|secret/iu)
+  assert.doesNotMatch(result.status.text, /fictitious-mp-access-token|APP_USR|TG-refresh|accessToken|refreshToken|access_token|secret/iu)
   assert.equal(result.customerStatus, 403)
 })
 
