@@ -10,8 +10,9 @@ import type {
 
 const API_BASE = process.env['NEXT_PUBLIC_API_URL'] || ''
 
-async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE}/api/alojamientos${endpoint}`
+async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  // `path` is the full API path (/api/alojamientos/...), never a Web route.
+  const url = `${API_BASE}${path}`
   const res = await fetch(url, {
     ...options,
     headers: {
@@ -35,7 +36,7 @@ async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise
 }
 
 export async function listarTiposAlojamiento(): Promise<TipoAlojamientoDTO[]> {
-  const data = await apiFetch<{ items: TipoAlojamientoDTO[] }>('/tipos')
+  const data = await apiFetch<{ items: TipoAlojamientoDTO[] }>('/api/alojamientos/tipos')
   return data.items
 }
 
@@ -53,7 +54,7 @@ export async function buscarAlojamientos(
   if (filtros.precioMax) params.set('precioMax', String(filtros.precioMax))
 
   const qs = params.toString() ? `?${params.toString()}` : ''
-  const data = await apiFetch<{ items: AlojamientoPublicoDTO[] }>(`/${qs}`)
+  const data = await apiFetch<{ items: AlojamientoPublicoDTO[] }>(`/api/alojamientos/${qs}`)
   return data.items
 }
 
@@ -68,11 +69,11 @@ export async function obtenerDetalleAlojamiento(
   if (opciones.horas) params.set('horas', String(opciones.horas))
 
   const qs = params.toString() ? `?${params.toString()}` : ''
-  return apiFetch<DetalleAlojamientoPublicoDTO>(`/${idOrSlug}${qs}`)
+  return apiFetch<DetalleAlojamientoPublicoDTO>(`/api/alojamientos/${idOrSlug}${qs}`)
 }
 
 export async function crearHoldReserva(input: CrearHoldReservaInput): Promise<ReservaAlojamientoDTO> {
-  return apiFetch<ReservaAlojamientoDTO>('/reservas/hold', {
+  return apiFetch<ReservaAlojamientoDTO>('/api/alojamientos/reservas/hold', {
     method: 'POST',
     body: JSON.stringify(input),
   })
@@ -83,19 +84,19 @@ export async function obtenerPreferenciaCheckout(reservaId: string): Promise<{
   initPoint: string
   sandboxInitPoint: string
 }> {
-  return apiFetch(`/reservas/${reservaId}/checkout-preference`, {
+  return apiFetch(`/api/alojamientos/reservas/${reservaId}/checkout-preference`, {
     method: 'POST',
   })
 }
 
 export async function simularPagoReserva(reservaId: string): Promise<{ ok: boolean; reserva: ReservaAlojamientoDTO }> {
-  return apiFetch(`/reservas/${reservaId}/simular-pago`, {
+  return apiFetch(`/api/alojamientos/reservas/${reservaId}/simular-pago`, {
     method: 'POST',
   })
 }
 
 export async function calificarAlojamiento(input: CalificarAlojamientoInput): Promise<{ ok: boolean }> {
-  return apiFetch('/calificar', {
+  return apiFetch('/api/alojamientos/calificar', {
     method: 'POST',
     body: JSON.stringify(input),
   })
@@ -117,7 +118,7 @@ export async function adminCrearAlojamiento(input: {
   politicas?: string
   comodidades?: string[]
 }): Promise<{ id: string; slug: string }> {
-  return apiFetch<{ id: string; slug: string }>('/', {
+  return apiFetch<{ id: string; slug: string }>('/api/alojamientos/', {
     method: 'POST',
     body: JSON.stringify(input),
   })
@@ -134,7 +135,7 @@ export async function adminCrearUnidad(
     comodidades?: string[]
   }
 ): Promise<{ id: string }> {
-  return apiFetch<{ id: string }>(`/${alojamientoId}/unidades`, {
+  return apiFetch<{ id: string }>(`/api/alojamientos/${alojamientoId}/unidades`, {
     method: 'POST',
     body: JSON.stringify(input),
   })
@@ -152,7 +153,7 @@ export async function adminCrearTarifa(
     maximoEstadia?: number
   }
 ): Promise<{ id: string }> {
-  return apiFetch<{ id: string }>(`/unidades/${unidadId}/tarifas`, {
+  return apiFetch<{ id: string }>(`/api/alojamientos/unidades/${unidadId}/tarifas`, {
     method: 'POST',
     body: JSON.stringify(input),
   })
@@ -166,13 +167,13 @@ export async function adminCrearBloqueo(
     motivo: string
   }
 ): Promise<{ id: string }> {
-  return apiFetch<{ id: string }>(`/unidades/${unidadId}/bloquear`, {
+  return apiFetch<{ id: string }>(`/api/alojamientos/unidades/${unidadId}/bloquear`, {
     method: 'POST',
     body: JSON.stringify(input),
   })
 }
 
 export async function adminListarReservas(alojamientoId: string): Promise<ReservaAlojamientoDTO[]> {
-  const data = await apiFetch<{ items: ReservaAlojamientoDTO[] }>(`/${alojamientoId}/reservas`)
+  const data = await apiFetch<{ items: ReservaAlojamientoDTO[] }>(`/api/alojamientos/${alojamientoId}/reservas`)
   return data.items
 }
