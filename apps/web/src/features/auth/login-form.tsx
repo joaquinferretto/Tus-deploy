@@ -84,10 +84,9 @@ export function LoginForm({
           autoComplete="username"
           error={errors.email}
           id="login-email"
-          inputMode="email"
-          label="Correo electrónico"
+          label="Correo o celular"
           onChange={(event) => setEmail(event.target.value)}
-          type="email"
+          type="text"
           value={email}
         />
         <PasswordField
@@ -101,6 +100,9 @@ export function LoginForm({
         <div className={styles.loginLinks}>
           <Link className={styles.link} href="/olvide-contrasena">
             ¿Olvidaste tu contraseña?
+          </Link>
+          <Link className={`${styles.link} ${styles.linkSubtle}`} href={'/verificar-telefono' as Route}>
+            Verificar mi número por WhatsApp
           </Link>
           <Link className={`${styles.link} ${styles.linkSubtle}`} href="/verificar-email">
             Reenviar email de verificación

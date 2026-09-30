@@ -1,6 +1,7 @@
 // Generated from the CSS module class names. Regenerate when classes change.
 declare const styles: {
   readonly checkbox: string
+  readonly codeBox: string
   readonly counter: string
   readonly field: string
   readonly fieldError: string
@@ -14,6 +15,7 @@ declare const styles: {
   readonly formWrap: string
   readonly google: string
   readonly googleHint: string
+  readonly inlineButton: string
   readonly input: string
   readonly inputInvalid: string
   readonly intent: string
@@ -23,14 +25,15 @@ declare const styles: {
   readonly intentTitle: string
   readonly legend: string
   readonly link: string
-  readonly linkSubtle: string
   readonly linkRow: string
+  readonly linkSubtle: string
   readonly loginLinks: string
   readonly notice: string
   readonly passwordWrap: string
   readonly pin: string
   readonly primary: string
   readonly row2: string
+  readonly secondaryButton: string
   readonly separator: string
   readonly shell: string
   readonly subtitle: string
@@ -40,10 +43,16 @@ declare const styles: {
   readonly topBar: string
   readonly topBarBack: string
   readonly topBarBrand: string
+  readonly verifiedText: string
+  readonly verifiedTitle: string
   readonly visualContent: string
   readonly visualGrid: string
   readonly visualList: string
   readonly visualSide: string
   readonly visualTitle: string
+  readonly waiting: string
+  readonly whatsappBox: string
+  readonly whatsappText: string
+  readonly whatsappTitle: string
 }
 export default styles

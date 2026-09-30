@@ -1,14 +1,21 @@
 // Client-side checks only improve UX; the API repeats every validation and remains the authority.
 
+import { normalizarTelefono } from '@factory/contracts'
+
 export const MIN_PASSWORD_LENGTH = 12 // Same rule as the API (auth-security validatePassword).
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
 
-export type FieldErrors = Partial<Record<'email' | 'password' | 'confirmation' | 'firstName' | 'lastName' | 'terms', string>>
+export type FieldErrors = Partial<Record<'email' | 'password' | 'confirmation' | 'firstName' | 'lastName' | 'terms' | 'phone', string>>
+
+// Same normalizer as the API (contracts): an "email or phone" field accepts either.
+export const telefonoValido = (value: string) => normalizarTelefono(value).ok
+export const MENSAJE_TELEFONO = 'Escribí tu celular con característica, por ejemplo 379 412-3456.'
 
 export function validateLogin(input: { email: string; password: string }): FieldErrors {
   const errors: FieldErrors = {}
-  if (!EMAIL.test(input.email.trim())) errors.email = 'Ingresá un correo válido.'
+  const identifier = input.email.trim()
+  if (!EMAIL.test(identifier) && (identifier.includes('@') || !telefonoValido(identifier))) errors.email = 'Ingresá tu correo o tu celular.'
   if (!input.password) errors.password = 'Ingresá tu contraseña.'
   return errors
 }
@@ -17,6 +24,7 @@ export function validateRegister(input: {
   firstName: string
   lastName: string
   email: string
+  phone?: string
   password: string
   confirmation: string
   acceptedTerms: boolean
@@ -25,6 +33,7 @@ export function validateRegister(input: {
   if (!input.firstName.trim()) errors.firstName = 'Ingresá tu nombre.'
   if (!input.lastName.trim()) errors.lastName = 'Ingresá tu apellido.'
   if (!EMAIL.test(input.email.trim())) errors.email = 'Ingresá un correo válido.'
+  if (input.phone !== undefined && !telefonoValido(input.phone)) errors.phone = MENSAJE_TELEFONO
   if (input.password.length < MIN_PASSWORD_LENGTH) errors.password = `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`
   if (input.confirmation !== input.password) errors.confirmation = 'Las contraseñas no coinciden.'
   if (!input.acceptedTerms) errors.terms = 'Tenés que aceptar los términos para continuar.'
@@ -36,7 +45,7 @@ export function signInErrorMessage(status: string, code?: string): string {
   if (code === 'RATE_LIMITED') return 'Demasiados intentos con este email. Esperá 15 minutos o restablecé tu contraseña.'
   return status === 'unavailable'
     ? 'No pudimos conectar con TUS. Probá de nuevo en unos minutos.'
-    : 'El correo o la contraseña no son correctos, o todavía no confirmaste tu email.'
+    : 'El correo o la contraseña no son correctos (también podés ingresar con tu celular), o todavía no verificaste tu número o tu email.'
 }
 
 export function registerErrorMessage(code?: string): string {

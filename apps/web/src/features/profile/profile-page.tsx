@@ -9,6 +9,7 @@ import { useAccountView } from '../session/use-account-view'
 import { useTusSession } from '../session/use-tus-session'
 import { createTusWebAuthClient } from '../../lib/tus-auth-client'
 import { createProfileClient, validDisplayName, type OwnAccount } from './profile-client'
+import { PhoneSection } from './phone-section'
 
 const RETURN_TO = '/mi-perfil'
 
@@ -112,6 +113,8 @@ export function ProfilePage(): React.ReactNode {
           </div>
         </form>
       </section>
+
+      <PhoneSection />
 
       {role.status === 'signed-in' ? (
         <section className={styles.card} style={{ marginTop: 16 }}>

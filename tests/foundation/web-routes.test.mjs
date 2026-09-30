@@ -48,7 +48,7 @@ function webPathReferences() {
       const raw = match[2] ?? ''
       if (!raw.startsWith('/')) continue
       const candidate = raw.split('${')[0].split(/[?#]/u)[0].replace(/\\`/gu, '')
-      if (!candidate || candidate === '/...' || candidate.startsWith('/tus/v1/') || candidate.startsWith('/api/alojamientos/') || candidate.startsWith('/auth/oauth/') || candidate.startsWith('/auth/session') || candidate.startsWith('/auth/sign-out') || candidate.startsWith('/auth/register') || candidate.startsWith('/auth/recovery/') || candidate.startsWith('/auth/mfa/') || candidate.startsWith('/auth/verify-email') || candidate.startsWith('/auth/admin/') || candidate.startsWith('/((') || candidate.startsWith('/tus/pos/manual-operations') || candidate.startsWith('/brand/') || /^\/(?:manifest\.webmanifest|icon-\d+\.svg)$/u.test(candidate)) continue
+      if (!candidate || candidate === '/...' || candidate.startsWith('/tus/v1/') || candidate.startsWith('/api/alojamientos/') || candidate.startsWith('/auth/oauth/') || candidate.startsWith('/auth/session') || candidate.startsWith('/auth/sign-out') || candidate.startsWith('/auth/register') || candidate.startsWith('/auth/phone') || candidate.startsWith('/auth/recovery/') || candidate.startsWith('/auth/mfa/') || candidate.startsWith('/auth/verify-email') || candidate.startsWith('/auth/admin/') || candidate.startsWith('/((') || candidate.startsWith('/tus/pos/manual-operations') || candidate.startsWith('/brand/') || /^\/(?:manifest\.webmanifest|icon-\d+\.svg)$/u.test(candidate)) continue
       references.push({ path: relative(process.cwd(), path), candidate })
     }
   }

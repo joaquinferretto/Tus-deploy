@@ -1,5 +1,7 @@
 'use client'
 
+import type { Route } from 'next'
+
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 
@@ -133,6 +135,7 @@ export function ForgotPasswordForm(): React.ReactNode {
       <button className={styles.primary} disabled={submitting} type="submit">
         {submitting ? 'Enviando…' : 'Enviarme el enlace'}
       </button>
+      <Link className={styles.link} href={'/recuperar-por-whatsapp' as Route}>Prefiero recuperar por WhatsApp</Link>
     </form>
   )
 }
