@@ -6,7 +6,7 @@
   --tus-ink: #14213d;
   --tus-ink-soft: #475467;
   --tus-muted: #667085;
-  --tus-line: #e7e9ef;
+  --tus-line: #d9dde4;
   --tus-surface: #f5f7fa;
   --tus-success: #15803d;
   --tus-danger: #c81e1e;
@@ -53,7 +53,7 @@
 .menuButton {
   background: #ffffff;
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   cursor: pointer;
   display: none;
   font: inherit;
@@ -62,7 +62,7 @@
 
 .accountLink {
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   color: var(--tus-ink);
   font-size: 0.9rem;
   font-weight: 600;
@@ -84,7 +84,7 @@
 }
 
 .sidebar a {
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   color: var(--tus-ink-soft);
   font-size: 0.93rem;
   font-weight: 500;
@@ -138,7 +138,7 @@
 .card {
   background: #ffffff;
   border: 1px solid var(--tus-line);
-  border-radius: 14px;
+  border-radius: var(--tus-form-radius);
   box-shadow: 0 1px 3px rgba(20, 33, 61, 0.05);
   padding: 14px 16px;
 }
@@ -181,7 +181,7 @@
 .toolbar input {
   background: #ffffff;
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   font: inherit;
   min-width: 240px;
   padding: 8px 12px;
@@ -215,7 +215,7 @@
   background: #ffffff;
   border: 1px solid var(--tus-line);
   border-collapse: separate;
-  border-radius: 14px;
+  border-radius: var(--tus-form-radius);
   border-spacing: 0;
   font-size: 0.9rem;
   overflow: hidden;
@@ -290,7 +290,7 @@
 
 .buttonPrimary,
 .buttonSecondary {
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   cursor: pointer;
   display: inline-block;
   font: inherit;
@@ -321,7 +321,7 @@
 .empty {
   background: #ffffff;
   border: 1px dashed var(--tus-line);
-  border-radius: 14px;
+  border-radius: var(--tus-form-radius);
   color: var(--tus-ink-soft);
   padding: 22px;
   text-align: center;
@@ -333,14 +333,16 @@
 
 .success {
   background: #e8f5ec;
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   color: var(--tus-success);
   padding: 10px 12px;
 }
 
 .form {
   display: grid;
-  gap: 10px;
+  gap: 18px;
+  min-width: 0;
+  width: 100%;
   margin-bottom: 16px;
   max-width: 640px;
 }
@@ -363,7 +365,7 @@
 .form textarea {
   background: #ffffff;
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   color: var(--tus-ink);
   font: inherit;
   font-weight: 400;
@@ -379,7 +381,7 @@
 
 .iconPicker {
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -395,7 +397,7 @@
 
 .iconPicker label {
   border: 2px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   cursor: pointer;
   display: inline-flex;
   padding: 2px;
@@ -414,7 +416,7 @@
 
 .error {
   background: #fdecec;
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   color: var(--tus-danger);
   padding: 10px 12px;
 }
@@ -464,7 +466,7 @@
 .chatList {
   background: #ffffff;
   border: 1px solid var(--tus-line);
-  border-radius: 14px;
+  border-radius: var(--tus-form-radius);
   list-style: none;
   margin: 0;
   overflow-y: auto;
@@ -474,7 +476,7 @@
 .chatList button {
   background: transparent;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   cursor: pointer;
   display: grid;
   font: inherit;
@@ -507,7 +509,7 @@
 .chatPanel {
   background: #ffffff;
   border: 1px solid var(--tus-line);
-  border-radius: 14px;
+  border-radius: var(--tus-form-radius);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -574,7 +576,7 @@
 
 .chatForm input {
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   flex: 1;
   font: inherit;
   min-width: 0;
@@ -620,7 +622,7 @@
 .content :global(.tus-state-box) {
   background: #ffffff;
   border: 1px solid var(--tus-line);
-  border-radius: 14px;
+  border-radius: var(--tus-form-radius);
   box-shadow: 0 1px 3px rgba(20, 33, 61, 0.05);
   font-family: inherit;
   margin: 0 0 12px;
@@ -634,7 +636,7 @@
 .content :global(.tus-action-button) {
   background: var(--tus-orange);
   border: 1px solid var(--tus-orange);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   color: #ffffff;
   font-family: inherit;
   font-size: 0.88rem;
@@ -665,7 +667,7 @@
 .content :global(select) {
   background: #ffffff;
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   font: inherit;
   padding: 6px 10px;
 }
@@ -680,7 +682,7 @@
 .content :global(.tus-support-form select),
 .content :global(.tus-support-form textarea) {
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   font: inherit;
   padding: 8px 10px;
 }
@@ -705,8 +707,10 @@
 /* Confirmation of sensitive admin actions (native <dialog>: focus trap and Esc for free). */
 .confirmDialog {
   border: 1px solid var(--tus-line);
-  border-radius: 14px;
-  box-shadow: 0 18px 50px rgba(20, 33, 61, 0.22);
+  border-radius: var(--tus-form-radius);
+  box-shadow: 0 4px 16px rgba(20, 33, 61, 0.12);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
   color: var(--tus-ink);
   max-width: min(440px, calc(100vw - 32px));
   padding: 20px;
@@ -737,7 +741,7 @@
 .buttonDanger {
   background: var(--tus-danger);
   border: 1px solid var(--tus-danger);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   color: #ffffff;
   cursor: pointer;
   font: inherit;
@@ -755,7 +759,7 @@
 .tagEditor {
   align-items: center;
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -805,7 +809,7 @@
 .filters input,
 .filters select {
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   font: inherit;
   max-width: 100%;
   min-height: 38px;
@@ -887,3 +891,34 @@
     font-weight: 700;
   }
 }
+
+/* Shared admin forms and filters: one control scale, preserved native semantics. */
+.form.card { padding: 24px; box-shadow: none; }
+.form :is(input:not([type='checkbox']):not([type='radio']):not([type='hidden']), select, textarea),
+.filters :is(input, select), .toolbar input {
+  min-height: 48px; min-width: 0; max-width: 100%; font-size: 1rem;
+}
+.form :is(input:not([type='checkbox']):not([type='radio']):not([type='hidden']), select, textarea) { width: 100%; }
+.form textarea { min-height: 112px; resize: vertical; }
+.form :is(input, select, textarea):focus-visible,
+.filters :is(input, select):focus-visible, .toolbar input:focus-visible {
+  border-color: var(--tus-orange); box-shadow: var(--tus-control-focus);
+  outline: 2px solid var(--tus-orange); outline-offset: 2px;
+}
+.form :is(input, textarea)::placeholder { color: var(--tus-muted); opacity: 1; }
+.form [aria-invalid='true'] { border-color: var(--tus-danger); }
+.form > :is(.error, .success) { background: transparent; padding: 0; }
+.buttonPrimary, .buttonSecondary, .buttonDanger {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; text-align: center;
+}
+.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 18px; }
+.formGrid > * { min-width: 0; }
+.formGrid > :has(textarea) { grid-column: 1 / -1; }
+@media (max-width: 600px) {
+  .form.card { padding: 16px; }
+  .formGrid { grid-template-columns: minmax(0, 1fr); }
+  .form :is(.buttonPrimary, .buttonSecondary), .confirmActions > button { width: 100%; }
+  .toolbar input { width: 100%; }
+}
+.form .formGrid { margin-bottom: 0; }

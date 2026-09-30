@@ -9,6 +9,7 @@ import {
   adminCrearUnidad,
   adminCrearTarifa,
 } from '@/features/alojamientos/alojamientos-client'
+import styles from './admin.module.css'
 
 export function AdminAlojamientosView(): React.ReactNode {
   const [alojamientos, setAlojamientos] = useState<AlojamientoPublicoDTO[]>([])
@@ -130,135 +131,49 @@ export function AdminAlojamientosView(): React.ReactNode {
 
       {/* Formulario de creación */}
       {creando && (
-        <form
-          onSubmit={handleCrear}
-          style={{
-            background: '#ffffff',
-            borderRadius: 12,
-            border: '1px solid #e5e7eb',
-            padding: '1.5rem',
-            marginBottom: '2rem',
-            boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
-          }}
-        >
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '1rem' }}>
-            Alta de Alojamiento (Ficticio para pruebas o Real)
-          </h2>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: 4 }}>
-                Nombre del establecimiento *
-              </label>
-              <input
-                type="text"
-                required
-                style={{ width: '100%', minHeight: 44, padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: 6 }}
-                value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
-                placeholder="Ej. Cabañas Sol y Luna"
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: 4 }}>
-                Tipo de alojamiento *
-              </label>
-              <select
-                style={{ width: '100%', minHeight: 44, padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff' }}
-                value={tipoId}
-                onChange={(e) => setTipoId(e.target.value)}
-              >
+        <form className={`${styles.card} ${styles.form}`} onSubmit={handleCrear}>
+          <h2>Alta de Alojamiento (Ficticio para pruebas o Real)</h2>
+          <div className={styles.formGrid}>
+            <label>
+              Nombre del establecimiento *
+              <input onChange={(e) => setNombre(e.target.value)} placeholder="Ej. Cabañas Sol y Luna" required type="text" value={nombre} />
+            </label>
+            <label>
+              Tipo de alojamiento *
+              <select onChange={(e) => setTipoId(e.target.value)} value={tipoId}>
                 {tipos.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.nombre}
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: 4 }}>
-                Dirección física *
-              </label>
-              <input
-                type="text"
-                required
-                style={{ width: '100%', minHeight: 44, padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: 6 }}
-                value={direccion}
-                onChange={(e) => setDireccion(e.target.value)}
-                placeholder="Ej. Av. Los Quebrachos 120"
-              />
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: 4 }}>
-                Latitud (Pin mapa)
-              </label>
-              <input
-                type="number"
-                step="any"
-                style={{ width: '100%', minHeight: 44, padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: 6 }}
-                value={latitud}
-                onChange={(e) => setLatitud(Number(e.target.value))}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: 4 }}>
-                Longitud (Pin mapa)
-              </label>
-              <input
-                type="number"
-                step="any"
-                style={{ width: '100%', minHeight: 44, padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: 6 }}
-                value={longitud}
-                onChange={(e) => setLongitud(Number(e.target.value))}
-              />
-            </div>
-          </div>
-
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: 4 }}>
-              Comodidades (separadas por coma)
             </label>
-            <input
-              type="text"
-              style={{ width: '100%', minHeight: 44, padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: 6 }}
-              value={comodidades}
-              onChange={(e) => setComodidades(e.target.value)}
-            />
-          </div>
-
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: 4 }}>
-              Descripción general
+            <label>
+              Dirección física *
+              <input onChange={(e) => setDireccion(e.target.value)} placeholder="Ej. Av. Los Quebrachos 120" required type="text" value={direccion} />
             </label>
-            <textarea
-              style={{ width: '100%', minHeight: 70, padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: 6 }}
-              value={descripcion}
-              onChange={(e) => setDescripcion(e.target.value)}
-              placeholder="Descripción del alojamiento..."
-            />
+            <label>
+              Latitud (Pin mapa)
+              <input onChange={(e) => setLatitud(Number(e.target.value))} step="any" type="number" value={latitud} />
+            </label>
+            <label>
+              Longitud (Pin mapa)
+              <input onChange={(e) => setLongitud(Number(e.target.value))} step="any" type="number" value={longitud} />
+            </label>
           </div>
-
-          <button
-            type="submit"
-            style={{
-              minHeight: 44,
-              padding: '0.5rem 1.5rem',
-              backgroundColor: '#111827',
-              color: '#fff',
-              fontWeight: 600,
-              border: 'none',
-              borderRadius: 6,
-              cursor: 'pointer',
-            }}
-          >
-            Guardar Alojamiento Ficticio
-          </button>
+          <label>
+            Comodidades (separadas por coma)
+            <input onChange={(e) => setComodidades(e.target.value)} type="text" value={comodidades} />
+          </label>
+          <label>
+            Descripción general
+            <textarea onChange={(e) => setDescripcion(e.target.value)} placeholder="Descripción del alojamiento..." value={descripcion} />
+          </label>
+          <div>
+            <button className={styles.buttonPrimary} type="submit">
+              Guardar Alojamiento Ficticio
+            </button>
+          </div>
         </form>
       )}
 

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { DetalleTurno } from '@factory/contracts'
+import styles from './admin.module.css'
 
 const PESOS = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
 
@@ -169,22 +170,14 @@ export function AdminTurnos(): React.ReactNode {
             setModalForzar(true)
             setErrorForzado(null)
           }}
-          style={{
-            background: 'var(--tus-orange)',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: 8,
-            padding: '10px 18px',
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
+          className={styles.buttonPrimary}
         >
           + Forzar turno fuera de horario
         </button>
       </div>
 
       {/* Barra de filtros */}
-      <div style={{ background: '#ffffff', border: '1px solid var(--tus-line)', borderRadius: 12, padding: 16, marginBottom: 20, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className={`${styles.card} ${styles.filters}`} style={{ marginBottom: 20 }}>
         <div>
           <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: 4 }}>Estado</label>
           <select
@@ -193,7 +186,6 @@ export function AdminTurnos(): React.ReactNode {
               setFiltroEstado(e.target.value)
               setPagina(1)
             }}
-            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
           >
             <option value="">Todos los estados</option>
             <option value="confirmed">Confirmados</option>
@@ -212,7 +204,6 @@ export function AdminTurnos(): React.ReactNode {
               setFiltroDesde(e.target.value)
               setPagina(1)
             }}
-            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
           />
         </div>
 
@@ -225,7 +216,6 @@ export function AdminTurnos(): React.ReactNode {
               setFiltroHasta(e.target.value)
               setPagina(1)
             }}
-            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
           />
         </div>
 
@@ -238,7 +228,7 @@ export function AdminTurnos(): React.ReactNode {
               setFiltroHasta('')
               setPagina(1)
             }}
-            style={{ marginTop: 20, background: 'none', border: 'none', color: 'var(--tus-orange)', fontWeight: 600, cursor: 'pointer' }}
+            className={styles.buttonSecondary}
           >
             Limpiar filtros
           </button>
@@ -381,52 +371,50 @@ export function AdminTurnos(): React.ReactNode {
 
       {/* Modal modificar precio */}
       {turnoAEditar && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
-          <div style={{ background: '#ffffff', borderRadius: 12, padding: 24, maxWidth: 460, width: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20, 33, 61, 0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
+          <div className={styles.card} style={{ maxWidth: 460, width: '100%', padding: 24, boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 12px 0' }}>Modificar precio de turno</h2>
             <p style={{ margin: '0 0 16px 0', fontSize: '0.9rem', color: 'var(--tus-muted)' }}>
               Prestador: <strong>{turnoAEditar.prestadorNombre}</strong> · Cliente: <strong>{turnoAEditar.clienteNombre}</strong>
             </p>
 
-            <form onSubmit={handleGuardarPrecio} style={{ display: 'grid', gap: 14 }}>
+            <form className={styles.form} onSubmit={handleGuardarPrecio}>
               <div>
-                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Precio final ($ ARS) *</label>
+                <label>Precio final ($ ARS) *</label>
                 <input
                   type="number"
                   required
                   min="0"
                   value={nuevoPrecio}
                   onChange={(e) => setNuevoPrecio(e.target.value)}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Motivo obligatorio de modificación *</label>
+                <label>Motivo obligatorio de modificación *</label>
                 <textarea
                   required
                   rows={3}
                   value={motivoPrecio}
                   onChange={(e) => setMotivoPrecio(e.target.value)}
                   placeholder="Justificá el motivo por el cual se modifica el precio del turno..."
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
                 />
               </div>
 
-              {errorPrecio && <div role="alert" style={{ color: '#dc2626', fontSize: '0.85rem' }}>{errorPrecio}</div>}
+              {errorPrecio && <p className={styles.error} role="alert">{errorPrecio}</p>}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
                 <button
                   type="button"
                   onClick={() => setTurnoAEditar(null)}
-                  style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid var(--tus-line)', background: '#fff', cursor: 'pointer' }}
+                  className={styles.buttonSecondary}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={guardandoPrecio}
-                  style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'var(--tus-orange)', color: '#fff', fontWeight: 600, cursor: 'pointer' }}
+                  className={styles.buttonPrimary}
                 >
                   {guardandoPrecio ? 'Guardando...' : 'Guardar y auditar'}
                 </button>
@@ -438,100 +426,94 @@ export function AdminTurnos(): React.ReactNode {
 
       {/* Modal forzar turno fuera de horario */}
       {modalForzar && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
-          <div style={{ background: '#ffffff', borderRadius: 12, padding: 24, maxWidth: 500, width: '100%', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(20, 33, 61, 0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
+          <div className={styles.card} style={{ maxWidth: 500, width: '100%', padding: 24, boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 8px 0' }}>Forzar turno fuera de horario</h2>
             <p style={{ margin: '0 0 16px 0', fontSize: '0.88rem', color: 'var(--tus-muted)' }}>
               Permite agendar un turno especial fuera de la jornada regular. Requiere motivo de auditoría.
             </p>
 
-            <form onSubmit={handleGuardarForzado} style={{ display: 'grid', gap: 12 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <form className={styles.form} onSubmit={handleGuardarForzado}>
+              <div className={styles.formGrid}>
                 <div>
-                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>ID Prestador *</label>
+                  <label>ID Prestador *</label>
                   <input
                     type="text"
                     required
                     value={forzarPrestadorId}
                     onChange={(e) => setForzarPrestadorId(e.target.value)}
                     placeholder="ID de perfil o prestador"
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>ID Oficio/Servicio *</label>
+                  <label>ID Oficio/Servicio *</label>
                   <input
                     type="text"
                     required
                     value={forzarOficioId}
                     onChange={(e) => setForzarOficioId(e.target.value)}
                     placeholder="ej. masajes, mecanica"
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
                   />
                 </div>
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Fecha y hora de inicio *</label>
+                <label>Fecha y hora de inicio *</label>
                 <input
                   type="datetime-local"
                   required
                   value={forzarInicio}
                   onChange={(e) => setForzarInicio(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div className={styles.formGrid}>
                 <div>
-                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Nombre Cliente *</label>
+                  <label>Nombre Cliente *</label>
                   <input
                     type="text"
                     required
                     value={forzarCliente}
                     onChange={(e) => setForzarCliente(e.target.value)}
                     placeholder="Nombre y apellido"
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Teléfono</label>
+                  <label>Teléfono</label>
                   <input
                     type="tel"
                     value={forzarTelefono}
                     onChange={(e) => setForzarTelefono(e.target.value)}
                     placeholder="3794..."
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
                   />
                 </div>
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Motivo obligatorio de forzado *</label>
+                <label>Motivo obligatorio de forzado *</label>
                 <textarea
                   required
                   rows={2}
                   value={forzarMotivo}
                   onChange={(e) => setForzarMotivo(e.target.value)}
                   placeholder="Motivo de urgencia o autorización de excepción..."
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--tus-line)' }}
                 />
               </div>
 
-              {errorForzado && <div role="alert" style={{ color: '#dc2626', fontSize: '0.85rem' }}>{errorForzado}</div>}
+              {errorForzado && <p className={styles.error} role="alert">{errorForzado}</p>}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
                 <button
                   type="button"
                   onClick={() => setModalForzar(false)}
-                  style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid var(--tus-line)', background: '#fff', cursor: 'pointer' }}
+                  className={styles.buttonSecondary}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={guardandoForzado}
-                  style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: 'var(--tus-orange)', color: '#fff', fontWeight: 600, cursor: 'pointer' }}
+                  className={styles.buttonPrimary}
                 >
                   {guardandoForzado ? 'Forzando...' : 'Confirmar forzado'}
                 </button>

@@ -527,3 +527,115 @@
   white-space: nowrap;
   width: 1px;
 }
+
+/* Bound only pages containing editable forms; directory listings keep their width. */
+.narrow:has(form) { max-width: 680px; }
+.narrow form :is(input:not([type='checkbox']):not([type='radio']), select, textarea) {
+  min-width: 0; max-width: 100%; min-height: 48px; font-size: 1rem;
+}
+.narrow form :is(input, select, textarea):focus-visible { border-color: var(--tus-orange); box-shadow: var(--tus-control-focus); }
+.narrow .card:has(form) { border-radius: var(--tus-form-radius); box-shadow: none; }
+.narrow .card .card:has(form) { border: 0; padding: 0; }
+@media (max-width: 600px) {
+  .narrow { padding: 24px 16px 40px; }
+  .narrow .card:has(form) { padding: 16px; }
+  .narrow form button[type='submit'] { width: 100%; min-height: 48px; border-radius: var(--tus-control-radius); }
+}
+
+/* Booking forms and modals */
+.bookingForm {
+  display: grid;
+  gap: 16px;
+  max-width: 680px;
+}
+
+.bookingRow2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .bookingRow2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.bookingControl {
+  background: #ffffff;
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-control-radius);
+  color: var(--tus-ink);
+  font: inherit;
+  min-height: 48px;
+  padding: 8px 12px;
+  width: 100%;
+}
+
+.bookingControl:focus-visible {
+  border-color: var(--tus-orange);
+  box-shadow: var(--tus-control-focus);
+  outline: 2px solid var(--tus-orange);
+  outline-offset: 2px;
+}
+
+.tarifaCard {
+  background: #ffffff;
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-control-radius);
+  color: var(--tus-ink);
+  cursor: pointer;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.tarifaCardActive {
+  background: #fff7ed;
+  border: 2px solid var(--tus-orange);
+}
+
+.slotGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(85px, 1fr));
+}
+
+.slotBtn {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-control-radius);
+  color: var(--tus-ink);
+  cursor: pointer;
+  display: flex;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 44px;
+}
+
+.slotBtnActive {
+  background: var(--tus-orange);
+  border: 2px solid var(--tus-orange);
+  color: #ffffff;
+}
+
+.modalBackdrop {
+  align-items: center;
+  background: rgba(20, 33, 61, 0.35);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 16px;
+  position: fixed;
+  z-index: 50;
+}
+
+.modalCard {
+  background: #ffffff;
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-form-radius);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  max-width: 480px;
+  padding: 24px;
+  width: 100%;
+}

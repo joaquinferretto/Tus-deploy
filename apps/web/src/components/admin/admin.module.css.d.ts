@@ -34,6 +34,7 @@ declare const styles: {
   readonly empty: string
   readonly error: string
   readonly filters: string
+  readonly formGrid: string
   readonly form: string
   readonly iconBadge: string
   readonly iconPicker: string

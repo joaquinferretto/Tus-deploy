@@ -1,4 +1,17 @@
 :root {
+  --tus-orange: #ff5a00;
+  --tus-orange-strong: #e64f00;
+  --tus-ink: #14213d;
+  --tus-ink-soft: #475467;
+  --tus-muted: #667085;
+  --tus-line: #d9dde4;
+  --tus-surface: #f5f7fa;
+  --tus-danger: #c81e1e;
+  --tus-success: #15803d;
+  --tus-form-radius: 16px;
+  --tus-control-radius: 10px;
+  --tus-control-focus: 0 0 0 3px color-mix(in srgb, var(--tus-orange) 20%, transparent);
+
   --ink: #17211b;
   --paper: #f4f0e7;
   --moss: #344b36;
@@ -1775,4 +1788,30 @@ a {
   .tus-journey-card {
     animation: none;
   }
+}
+
+/* Shared legacy forms: visual controls only, no validation or behavior changes. */
+:is(.tus-auth-form, .tus-prestador-form, .tus-support-form) {
+  width: 100%; max-width: 680px; min-width: 0; gap: 18px;
+}
+:is(.tus-auth-form, .tus-prestador-form, .tus-support-form) label {
+  font-size: 0.875rem; font-weight: 600; gap: 6px;
+  letter-spacing: normal; text-transform: none;
+}
+:is(.tus-auth-form, .tus-prestador-form, .tus-support-form) :is(input:not([type='checkbox']):not([type='radio']):not([type='hidden']), select, textarea) {
+  background: white; border: 1px solid var(--tus-line);
+  border-radius: var(--tus-control-radius); color: var(--tus-ink);
+  font: inherit; font-size: 1rem; min-height: 48px; min-width: 0;
+  max-width: 100%; width: 100%; padding: 10px 12px;
+}
+:is(.tus-auth-form, .tus-prestador-form, .tus-support-form) textarea { min-height: 112px; resize: vertical; }
+:is(.tus-auth-form, .tus-prestador-form, .tus-support-form) :is(input, select, textarea):focus-visible {
+  border-color: var(--tus-orange); box-shadow: var(--tus-control-focus); outline: 2px solid var(--tus-orange); outline-offset: 2px;
+}
+:is(.tus-auth-form, .tus-prestador-form, .tus-support-form) .tus-action-button {
+  border-radius: var(--tus-control-radius); min-height: 48px;
+  background: var(--tus-orange); color: white; letter-spacing: normal; text-transform: none;
+}
+@media (max-width: 600px) {
+  :is(.tus-auth-form, .tus-prestador-form, .tus-support-form) .tus-action-button { width: 100%; }
 }

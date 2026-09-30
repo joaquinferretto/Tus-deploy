@@ -51,13 +51,16 @@
 }
 .form {
   display: grid;
-  gap: 12px;
+  gap: 18px;
   margin-top: 18px;
+  max-width: 680px;
 }
 .page label {
   display: grid;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-top: 0;
 }
 .page input,
 .page textarea {
@@ -66,10 +69,10 @@
   font: inherit;
   padding: 12px;
   border: 1px solid #aabbb7;
-  border-radius: 8px;
+  border-radius: var(--tus-control-radius);
 }
 .page textarea {
-  min-height: 90px;
+  min-height: 112px;
   resize: vertical;
 }
 .chat {
@@ -111,3 +114,9 @@
     max-width: 92%;
   }
 }
+
+.form :is(input, select, textarea) { min-width: 0; min-height: 48px; font-size: 1rem; border: 1px solid var(--tus-line); width: 100%; }
+.form :is(input, select, textarea):focus-visible { border-color: var(--tus-orange); box-shadow: var(--tus-control-focus); outline: 2px solid var(--tus-orange); outline-offset: 2px; }
+.form button { min-height: 48px; background: white; border-color: var(--tus-line); color: var(--tus-ink); }
+.form button[type='submit'] { background: var(--tus-orange); border-color: var(--tus-orange); color: white; }
+@media (max-width: 600px) { .form button { width: 100%; } }

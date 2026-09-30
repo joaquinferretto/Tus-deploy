@@ -8,11 +8,11 @@
   --tus-line: #d9dde4;
   --tus-danger: #c81e1e;
   --tus-success: #15803d;
-  background: #ffffff;
+  background: var(--tus-surface);
   color: var(--tus-ink);
   display: grid;
   font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr;
   min-height: 100dvh;
 }
@@ -61,15 +61,20 @@
 
 .formWrap {
   margin: auto;
-  max-width: 420px;
+  max-width: 560px;
   width: 100%;
+  min-width: 0;
+  background: white;
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-form-radius);
+  padding: 28px;
 }
 
 .title {
   font-size: 2rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  margin: 20px 0 6px;
+  margin: 0 0 8px;
 }
 
 .subtitle {
@@ -84,11 +89,12 @@
 
 .row2 {
   display: grid;
-  gap: 12px;
-  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .field {
+  min-width: 0;
   display: grid;
   gap: 6px;
 }
@@ -101,7 +107,7 @@
 
 .input {
   border: 1px solid var(--tus-line);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   color: var(--tus-ink);
   font: inherit;
   min-height: 48px;
@@ -111,11 +117,12 @@
 
 .input:focus {
   border-color: var(--tus-orange);
-  box-shadow: 0 0 0 3px rgba(255, 90, 0, 0.2);
+  box-shadow: var(--tus-control-focus);
   outline: none;
 }
 
-.inputInvalid {
+.inputInvalid,
+.input[aria-invalid="true"] {
   border-color: var(--tus-danger);
 }
 
@@ -145,28 +152,28 @@
 }
 
 .formError {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--tus-control-radius);
   color: var(--tus-danger);
   margin: 0;
-  padding: 12px 14px;
+  padding: 0;
 }
 
 .notice {
-  background: var(--tus-orange-soft);
-  border-radius: 10px;
+  color: var(--tus-ink-soft);
   margin: 0;
-  padding: 12px 14px;
+  line-height: 1.5;
+  padding: 0;
 }
 
 .success {
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--tus-control-radius);
   color: var(--tus-success);
   margin: 0;
-  padding: 12px 14px;
+  padding: 0;
 }
 
 .linkRow {
@@ -198,14 +205,14 @@
 .primary,
 .google {
   align-items: center;
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   cursor: pointer;
   display: inline-flex;
   font: inherit;
   font-weight: 700;
   gap: 10px;
   justify-content: center;
-  min-height: 50px;
+  min-height: 48px;
   padding: 0 18px;
   text-decoration: none;
   width: 100%;
@@ -451,11 +458,11 @@ button.link {
 
 /* ---- WhatsApp phone verification (user-initiated) ---------------------------------------- */
 .whatsappBox {
-  border: 1px solid var(--tus-line, #e7e9ef);
-  border-radius: 12px;
+  border: 0;
+  min-width: 0;
   display: grid;
-  gap: 12px;
-  padding: 16px;
+  gap: 16px;
+  padding: 0;
 }
 
 .whatsappTitle {
@@ -471,13 +478,13 @@ button.link {
 
 .codeBox {
   align-items: center;
-  background: var(--tus-orange-soft, #fff4ec);
-  border-radius: 10px;
+  border-top: 1px solid var(--tus-line);
+  border-radius: var(--tus-control-radius);
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px 0 0;
 }
 
 .codeBox strong {
@@ -490,7 +497,7 @@ button.link {
 .secondaryButton {
   background: #ffffff;
   border: 1px solid var(--tus-line, #d5d9e2);
-  border-radius: 10px;
+  border-radius: var(--tus-control-radius);
   color: inherit;
   cursor: pointer;
   font: inherit;
@@ -518,4 +525,20 @@ button.link {
   font-size: 1.2rem;
   font-weight: 700;
   margin: 0 0 4px;
+}
+
+/* A single central form; the previous brand illustration is decorative. */
+.visualSide { display: none; }
+.input { background: white; min-width: 0; font-size: 1rem; }
+.input::placeholder { color: var(--tus-muted); opacity: 1; }
+textarea.input { min-height: 112px; padding: 12px 14px; resize: vertical; }
+.toggle { min-height: 44px; min-width: 44px; }
+.row2:has(#registro-nombre) { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 600px) {
+  .formSide { padding: 24px 16px; }
+  .formWrap { padding: 20px 16px; }
+  .row2 { grid-template-columns: minmax(0, 1fr); }
+  .topBar { gap: 8px; }
+  .topBarBack { max-width: 100%; }
+  .topBar a { font-size: 0.8rem; }
 }

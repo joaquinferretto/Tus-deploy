@@ -174,7 +174,7 @@ export function ProviderTurnos(): React.ReactNode {
           <select
             value={filtroEstado}
             onChange={(e) => setFiltroEstado(e.target.value)}
-            style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+            style={{ padding: '6px 10px', borderRadius: 'var(--tus-control-radius)', border: '1px solid #d1d5db', minHeight: 40 }}
           >
             <option value="">Todos</option>
             <option value="confirmed">Confirmados</option>
@@ -211,7 +211,7 @@ export function ProviderTurnos(): React.ReactNode {
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>Cargando agenda de turnos...</div>
       ) : error ? (
-        <div role="alert" style={{ background: '#fee2e2', color: '#dc2626', padding: 16, borderRadius: 8 }}>{error}</div>
+        <div role="alert" style={{ background: '#fee2e2', color: '#dc2626', padding: 16, borderRadius: 'var(--tus-control-radius)' }}>{error}</div>
       ) : turnos.length === 0 ? (
         <div className={styles.panel} style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>
           No tenés turnos registrados con este filtro. Podés agendar uno manualmente o esperar reservas de clientes.
@@ -242,7 +242,7 @@ export function ProviderTurnos(): React.ReactNode {
                   <span
                     style={{
                       padding: '4px 8px',
-                      borderRadius: 6,
+                      borderRadius: 'var(--tus-control-radius)',
                       fontSize: '0.8rem',
                       fontWeight: 600,
                       background: t.estado === 'confirmed' ? '#dcfce7' : t.estado === 'completed' ? '#e0e7ff' : '#fee2e2',
@@ -257,14 +257,14 @@ export function ProviderTurnos(): React.ReactNode {
                       <button
                         type="button"
                         onClick={() => cambiarEstado(t.id, 'completed')}
-                        style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #22c55e', background: '#f0fdf4', color: '#15803d', fontSize: '0.85rem', cursor: 'pointer' }}
+                        style={{ padding: '6px 10px', borderRadius: 'var(--tus-control-radius)', border: '1px solid #22c55e', background: '#f0fdf4', color: '#15803d', fontSize: '0.85rem', cursor: 'pointer' }}
                       >
                         ✓ Completado
                       </button>
                       <button
                         type="button"
                         onClick={() => cambiarEstado(t.id, 'cancelled')}
-                        style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ef4444', background: '#fef2f2', color: '#b91c1c', fontSize: '0.85rem', cursor: 'pointer' }}
+                        style={{ padding: '6px 10px', borderRadius: 'var(--tus-control-radius)', border: '1px solid #ef4444', background: '#fef2f2', color: '#b91c1c', fontSize: '0.85rem', cursor: 'pointer' }}
                       >
                         Cancelar
                       </button>
@@ -279,8 +279,8 @@ export function ProviderTurnos(): React.ReactNode {
 
       {/* Modal turno manual */}
       {modalManual && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
-          <div style={{ background: '#ffffff', borderRadius: 12, padding: 24, maxWidth: 440, width: '100%' }}>
+        <div className={styles.modalBackdrop}>
+          <div className={styles.modalCard}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 12px 0' }}>Nuevo turno manual</h2>
             <form onSubmit={handleCrearManual} style={{ display: 'grid', gap: 12 }}>
               <div>
@@ -291,7 +291,7 @@ export function ProviderTurnos(): React.ReactNode {
                   value={manualOficio}
                   onChange={(e) => setManualOficio(e.target.value)}
                   placeholder="ej. masajes, electricidad"
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                  className={styles.bookingControl}
                 />
               </div>
 
@@ -302,7 +302,7 @@ export function ProviderTurnos(): React.ReactNode {
                   required
                   value={manualInicio}
                   onChange={(e) => setManualInicio(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                  className={styles.bookingControl}
                 />
               </div>
 
@@ -314,7 +314,7 @@ export function ProviderTurnos(): React.ReactNode {
                   value={manualCliente}
                   onChange={(e) => setManualCliente(e.target.value)}
                   placeholder="Nombre y apellido"
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                  className={styles.bookingControl}
                 />
               </div>
 
@@ -325,7 +325,7 @@ export function ProviderTurnos(): React.ReactNode {
                   value={manualTelefono}
                   onChange={(e) => setManualTelefono(e.target.value)}
                   placeholder="3794..."
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                  className={styles.bookingControl}
                 />
               </div>
 
@@ -337,28 +337,43 @@ export function ProviderTurnos(): React.ReactNode {
                   value={manualPrecio}
                   onChange={(e) => setManualPrecio(e.target.value)}
                   placeholder="ej. 25000"
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                  className={styles.bookingControl}
                 />
               </div>
 
-                            <div>
+              <div>
                 <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Notas / Observaciones</label>
                 <textarea
                   rows={2}
                   value={manualNotas}
                   onChange={(e) => setManualNotas(e.target.value)}
                   placeholder="Detalles sobre el turno o trabajo..."
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                  className={styles.bookingControl}
+                  style={{ minHeight: 80, resize: 'vertical' }}
                 />
               </div>
 
-              {errorManual && <div role="alert" style={{ color: '#dc2626', fontSize: '0.85rem' }}>{errorManual}</div>}
+              {errorManual && (
+                <div role="alert" style={{ color: '#dc2626', fontSize: '0.85rem', background: '#fee2e2', padding: '8px 12px', borderRadius: 'var(--tus-control-radius)' }}>
+                  {errorManual}
+                </div>
+              )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
-                <button type="button" onClick={() => setModalManual(false)} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>
+                <button
+                  type="button"
+                  onClick={() => setModalManual(false)}
+                  className={homeStyles.buttonSecondary}
+                  style={{ minHeight: 44, borderRadius: 'var(--tus-control-radius)' }}
+                >
                   Cancelar
                 </button>
-                <button type="submit" disabled={guardandoManual} className={homeStyles.buttonPrimary}>
+                <button
+                  type="submit"
+                  disabled={guardandoManual}
+                  className={homeStyles.buttonPrimary}
+                  style={{ minHeight: 44, borderRadius: 'var(--tus-control-radius)' }}
+                >
                   {guardandoManual ? 'Guardando...' : 'Crear turno'}
                 </button>
               </div>
@@ -369,8 +384,8 @@ export function ProviderTurnos(): React.ReactNode {
 
       {/* Modal bloqueo */}
       {modalBloqueo && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
-          <div style={{ background: '#ffffff', borderRadius: 12, padding: 24, maxWidth: 440, width: '100%' }}>
+        <div className={styles.modalBackdrop}>
+          <div className={styles.modalCard}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 12px 0' }}>Bloquear horario / Vacaciones</h2>
             <form onSubmit={handleBloquear} style={{ display: 'grid', gap: 12 }}>
               <div>
@@ -380,7 +395,7 @@ export function ProviderTurnos(): React.ReactNode {
                   required
                   value={bloqueoInicio}
                   onChange={(e) => setBloqueoInicio(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                  className={styles.bookingControl}
                 />
               </div>
 
@@ -391,7 +406,7 @@ export function ProviderTurnos(): React.ReactNode {
                   required
                   value={bloqueoFin}
                   onChange={(e) => setBloqueoFin(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                  className={styles.bookingControl}
                 />
               </div>
 
@@ -402,17 +417,31 @@ export function ProviderTurnos(): React.ReactNode {
                   value={bloqueoMotivo}
                   onChange={(e) => setBloqueoMotivo(e.target.value)}
                   placeholder="ej. Médico, Trámites, Vacaciones"
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                  className={styles.bookingControl}
                 />
               </div>
 
-              {errorBloqueo && <div role="alert" style={{ color: '#dc2626', fontSize: '0.85rem' }}>{errorBloqueo}</div>}
+              {errorBloqueo && (
+                <div role="alert" style={{ color: '#dc2626', fontSize: '0.85rem', background: '#fee2e2', padding: '8px 12px', borderRadius: 'var(--tus-control-radius)' }}>
+                  {errorBloqueo}
+                </div>
+              )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
-                <button type="button" onClick={() => setModalBloqueo(false)} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>
+                <button
+                  type="button"
+                  onClick={() => setModalBloqueo(false)}
+                  className={homeStyles.buttonSecondary}
+                  style={{ minHeight: 44, borderRadius: 'var(--tus-control-radius)' }}
+                >
                   Cancelar
                 </button>
-                <button type="submit" disabled={guardandoBloqueo} className={homeStyles.buttonPrimary}>
+                <button
+                  type="submit"
+                  disabled={guardandoBloqueo}
+                  className={homeStyles.buttonPrimary}
+                  style={{ minHeight: 44, borderRadius: 'var(--tus-control-radius)' }}
+                >
                   {guardandoBloqueo ? 'Bloqueando...' : 'Confirmar bloqueo'}
                 </button>
               </div>

@@ -173,7 +173,7 @@ export function TurnoBooking({
         Reservar turno con {worker.displayName}
       </h2>
 
-      <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 16 }}>
+      <form onSubmit={handleSubmit} className={styles.bookingForm}>
         {/* Selector de servicio / oficio si tiene varios */}
         {(worker.professions?.length ?? 0) > 1 && (
           <div>
@@ -184,7 +184,7 @@ export function TurnoBooking({
               id="turno-oficio"
               value={selectedOficio}
               onChange={(e) => setSelectedOficio(e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db' }}
+              className={styles.bookingControl}
             >
               {worker.professions?.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -207,14 +207,7 @@ export function TurnoBooking({
                   key={t.id}
                   type="button"
                   onClick={() => setSelectedTarifaId(t.id)}
-                  style={{
-                    padding: '8px 14px',
-                    borderRadius: 8,
-                    border: selectedTarifaId === t.id ? '2px solid #ff5a00' : '1px solid #d1d5db',
-                    background: selectedTarifaId === t.id ? '#fff7ed' : '#ffffff',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                  }}
+                  className={`${styles.tarifaCard} ${selectedTarifaId === t.id ? styles.tarifaCardActive : ''}`}
                 >
                   <div style={{ fontWeight: 600 }}>{t.nombre}</div>
                   <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>
@@ -237,14 +230,8 @@ export function TurnoBooking({
             min={new Date().toISOString().slice(0, 10)}
             value={fecha}
             onChange={(e) => setFecha(e.target.value)}
-            style={{
-              padding: '8px 12px',
-              borderRadius: 6,
-              border: '1px solid #d1d5db',
-              fontSize: '1rem',
-              width: '100%',
-              maxWidth: 240,
-            }}
+            className={styles.bookingControl}
+            style={{ maxWidth: 240 }}
           />
         </div>
 
@@ -260,7 +247,7 @@ export function TurnoBooking({
           ) : slots.length === 0 ? (
             <p className={styles.muted}>No hay turnos disponibles para esta fecha. Elegí otro día.</p>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(85px, 1fr))', gap: 8 }}>
+            <div className={styles.slotGrid}>
               {slots.map((slot) => {
                 const hora = new Date(slot.inicio).toLocaleTimeString('es-AR', {
                   hour: '2-digit',
@@ -272,16 +259,7 @@ export function TurnoBooking({
                     key={slot.inicio}
                     type="button"
                     onClick={() => setSelectedSlot(slot)}
-                    style={{
-                      padding: '10px 8px',
-                      borderRadius: 6,
-                      border: isSelected ? '2px solid #ff5a00' : '1px solid #e5e7eb',
-                      background: isSelected ? '#ff5a00' : '#f9fafb',
-                      color: isSelected ? '#ffffff' : '#111827',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      textAlign: 'center',
-                    }}
+                    className={`${styles.slotBtn} ${isSelected ? styles.slotBtnActive : ''}`}
                   >
                     {hora}
                   </button>
@@ -304,16 +282,11 @@ export function TurnoBooking({
               value={clienteNombre}
               onChange={(e) => setClienteNombre(e.target.value)}
               placeholder="Ej. Juan Pérez"
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 6,
-                border: '1px solid #d1d5db',
-              }}
+              className={styles.bookingControl}
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className={styles.bookingRow2}>
             <div>
               <label htmlFor="turno-tel" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
                 Teléfono
@@ -324,12 +297,7 @@ export function TurnoBooking({
                 value={clienteTelefono}
                 onChange={(e) => setClienteTelefono(e.target.value)}
                 placeholder="Ej. 3794 123456"
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: '1px solid #d1d5db',
-                }}
+                className={styles.bookingControl}
               />
             </div>
             <div>
@@ -342,12 +310,7 @@ export function TurnoBooking({
                 value={clienteEmail}
                 onChange={(e) => setClienteEmail(e.target.value)}
                 placeholder="tu@email.com"
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: '1px solid #d1d5db',
-                }}
+                className={styles.bookingControl}
               />
             </div>
           </div>
@@ -362,18 +325,14 @@ export function TurnoBooking({
               value={notas}
               onChange={(e) => setNotas(e.target.value)}
               placeholder="Detalle o consulta sobre la atención..."
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 6,
-                border: '1px solid #d1d5db',
-              }}
+              className={styles.bookingControl}
+              style={{ minHeight: 80, resize: 'vertical' }}
             />
           </div>
         </div>
 
         {errorMsg && (
-          <div role="alert" style={{ color: '#dc2626', background: '#fee2e2', padding: '8px 12px', borderRadius: 6 }}>
+          <div role="alert" style={{ color: '#dc2626', background: '#fee2e2', padding: '8px 12px', borderRadius: 'var(--tus-control-radius)' }}>
             {errorMsg}
           </div>
         )}

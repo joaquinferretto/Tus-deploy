@@ -4,6 +4,9 @@ declare const styles: {
   readonly avatar: string
   readonly avatarLarge: string
   readonly back: string
+  readonly bookingControl: string
+  readonly bookingForm: string
+  readonly bookingRow2: string
   readonly bubble: string
   readonly candidates: string
   readonly card: string
@@ -23,6 +26,8 @@ declare const styles: {
   readonly fromUser: string
   readonly grid: string
   readonly messages: string
+  readonly modalBackdrop: string
+  readonly modalCard: string
   readonly moreRow: string
   readonly muted: string
   readonly name: string
@@ -41,10 +46,15 @@ declare const styles: {
   readonly service: string
   readonly services: string
   readonly skeleton: string
+  readonly slotBtn: string
+  readonly slotBtnActive: string
+  readonly slotGrid: string
   readonly srOnlyLabel: string
   readonly state: string
   readonly stateActions: string
   readonly subtitle: string
+  readonly tarifaCard: string
+  readonly tarifaCardActive: string
   readonly title: string
   readonly verified: string
 }
