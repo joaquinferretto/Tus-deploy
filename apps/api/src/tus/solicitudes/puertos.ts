@@ -64,7 +64,7 @@ export interface CreadorTrabajoSolicitud {
 }
 
 export interface CuentasSolicitudes {
-  getAccount(accountId: string): Promise<{ displayName: string; status: string; emailVerifiedAt: number | null; tenantId: string } | undefined>
+  getAccount(accountId: string): Promise<{ displayName: string; status: string; emailVerifiedAt: number | null; phoneVerifiedAt?: number | null; tenantId: string } | undefined>
 }
 
 // Resuelve el prestador elegido por el cliente (directorio). Solo visibles y aprobados.

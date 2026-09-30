@@ -15,6 +15,8 @@ export interface IdentityStore {
   readonly sessions?: Map<string, Session>
   readonly devices?: Map<string, Device>
   findAccountByEmail(normalizedEmail: string): Promise<Account | undefined>
+  // Account whose VERIFIED identity phone (E.164) is `phone` (phone + password sign-in).
+  findAccountIdByPhone?(phone: string): Promise<string | null>
   getAccount(accountId: string): Promise<Account | undefined>
   hasActiveMembership(accountId: string, tenantId: string): Promise<boolean>
   saveAccount(account: Account, options?: { bootstrapTenant?: boolean }): Promise<void>

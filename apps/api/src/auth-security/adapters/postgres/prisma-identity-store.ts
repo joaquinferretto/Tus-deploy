@@ -39,7 +39,7 @@ interface UserWithAccounts extends UserRow {
 
 interface UserDelegate {
   findUnique(args: {
-    where: { normalizedEmail: string }
+    where: { normalizedEmail: string } | { phoneNumber: string }
     include: { accounts: { take: number } }
   }): Promise<UserWithAccounts | null>
   create(args: { data: UserCreateData }): Promise<UserRow>
@@ -220,6 +220,11 @@ export class PrismaIdentityStore implements IdentityStore {
     })
     const account = user?.accounts[0]
     return account ? mapAccountRow({ ...account, user }) : undefined
+  }
+
+  async findAccountIdByPhone(phone: string): Promise<string | null> {
+    const user = await this.client.user.findUnique({ where: { phoneNumber: phone }, include: { accounts: { take: 1 } } })
+    return user?.accounts[0]?.id ?? null
   }
 
   async getAccount(accountId: string): Promise<Account | undefined> {

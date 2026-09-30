@@ -92,7 +92,8 @@ export class ServicioSolicitudes {
     const validacion = validarNuevaSolicitud(body)
     if (!validacion.ok) return { ok: false, code: 'INVALID_REQUEST', fields: validacion.campos }
     const cuenta = await this.deps.cuentas.getAccount(cuentaId)
-    if (!cuenta || cuenta.status !== 'active' || !cuenta.emailVerifiedAt) return { ok: false, code: 'ACCOUNT_NOT_ALLOWED' }
+    // Verified by email or by the WhatsApp phone (phone-first accounts).
+    if (!cuenta || cuenta.status !== 'active' || (!cuenta.emailVerifiedAt && !cuenta.phoneVerifiedAt)) return { ok: false, code: 'ACCOUNT_NOT_ALLOWED' }
 
     const providerId = body['providerId']
     let destino: Awaited<ReturnType<DestinosSolicitud['destino']>> = null

@@ -94,6 +94,10 @@ export class InMemoryIdentityStore implements IdentityStore {
     )
   }
 
+  async findAccountIdByPhone(phone: string): Promise<string | null> {
+    return [...this.accounts.values()].find((account) => account.phoneNumber === phone)?.id ?? null
+  }
+
   async getAccount(accountId: string): Promise<Account | undefined> {
     return this.accounts.get(accountId)
   }

@@ -12,6 +12,9 @@ interface UserIdentityRow {
   email: string
   normalizedEmail: string
   displayName: string
+  phoneNumber?: string | null
+  phoneVerifiedAt?: Date | null
+  phonePending?: string | null
 }
 
 export interface AccountRow {
@@ -68,6 +71,14 @@ export function mapAccountRow(row: AccountRow): Account {
     emailVerifiedAt: row.emailVerifiedAt?.getTime() ?? null,
     createdAt: row.createdAt.getTime(),
     updatedAt: row.updatedAt.getTime(),
+    // Present whenever the User row carries the phone columns (every Prisma read does).
+    ...('phoneNumber' in row.user
+      ? {
+          phoneNumber: row.user.phoneNumber ?? null,
+          phoneVerifiedAt: row.user.phoneVerifiedAt?.getTime() ?? null,
+          phonePending: row.user.phonePending ?? null,
+        }
+      : {}),
   }
 }
 

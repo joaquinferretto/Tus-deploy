@@ -11,6 +11,16 @@ export interface Account {
   emailVerifiedAt: number | null
   createdAt: number
   updatedAt: number
+  // Identity phone of the person (E.164), written only by the phone verification module once a
+  // user-initiated WhatsApp challenge proves it. Optional so every existing account keeps working.
+  phoneNumber?: string | null
+  phoneVerifiedAt?: number | null
+  phonePending?: string | null
+}
+
+// An account is verified when its email OR its identity phone was proved (phone-first sign-up).
+export function cuentaVerificada(account: Pick<Account, 'emailVerifiedAt' | 'phoneVerifiedAt'>): boolean {
+  return Boolean(account.emailVerifiedAt) || Boolean(account.phoneVerifiedAt)
 }
 
 export interface PasswordCredential {

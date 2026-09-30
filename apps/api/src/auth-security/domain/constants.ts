@@ -32,6 +32,15 @@ export const AUTH_EVENT_KIND = {
   SESSION_ROTATED: 'session.rotated',
   VERIFICATION_RESENT: 'verification.resent',
   EMAIL_DELIVERY_FAILED: 'email.delivery_failed',
+  // Phone identity (user-initiated WhatsApp challenge). Metadata carries masked numbers only.
+  PHONE_CHALLENGE_CREATED: 'phone.challenge_created',
+  PHONE_VERIFIED: 'phone.verified',
+  PHONE_CHANGED: 'phone.changed',
+  PHONE_VERIFICATION_FAILED: 'phone.verification_failed',
+  PHONE_RECOVERY_VERIFIED: 'phone.recovery_verified',
+  PHONE_CONFIRMATION_FAILED: 'phone.confirmation_failed',
+  PHONE_ADMIN_PENDING_SET: 'phone.admin_pending_set',
+  PHONE_ADMIN_CLEARED: 'phone.admin_cleared',
 } as const
 
 export type AuthEventKind = (typeof AUTH_EVENT_KIND)[keyof typeof AUTH_EVENT_KIND]

@@ -30,8 +30,9 @@ export function crearAltaPrestadorAdmin(deps: {
     }
     // An existing account must be verified, unless it is a managed one (no password credential):
     // an admin never takes over somebody else's pending sign-up.
-    const managed = account && !account.emailVerifiedAt ? !(await deps.accounts.findPasswordCredential(account.id)) : false
-    if (!account || account.status !== 'active' || (!account.emailVerifiedAt && !managed)) return { status: 409, code: 'VERIFIED_ACCOUNT_REQUIRED' }
+    const verified = Boolean(account?.emailVerifiedAt || account?.phoneVerifiedAt)
+    const managed = account && !verified ? !(await deps.accounts.findPasswordCredential(account.id)) : false
+    if (!account || account.status !== 'active' || (!verified && !managed)) return { status: 409, code: 'VERIFIED_ACCOUNT_REQUIRED' }
     const marketplace = deps.application.marketplace
     if (!marketplace) return { status: 503, code: 'UNAVAILABLE' }
     // Directory registration needs the prestador row for its FK, but is not commercial onboarding:

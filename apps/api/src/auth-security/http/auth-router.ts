@@ -5,6 +5,8 @@ import { clearSessionCookie, deliverSession, readSessionCookieSettings, type Ses
 import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../../tus/ports/index.ts'
 import { asyncHandler, createErrorEnvelope } from '../../presentation/middleware/error.ts'
 import { getCorrelationId } from '../../presentation/middleware/correlation.ts'
+import { normalizarTelefono } from '@factory/contracts'
+import { vistaDesafio, type ServicioVerificacionTelefono } from '../phone/servicio.ts'
 
 export interface AuthRouterDependencies {
   service: AuthService
@@ -15,6 +17,8 @@ export interface AuthRouterDependencies {
   // allowlisted verified email of an email + password session (MFA still gates every admin
   // request); provider = the account has a provider (merchant) in the marketplace.
   describeCapabilities?: (accessToken: string, correlationId: string, context: TusAuthenticatedTenantContext) => Promise<SessionCapabilities>
+  // Phone-first sign-up: an optional phone starts the WhatsApp verification right away.
+  phones?: ServicioVerificacionTelefono
 }
 
 export interface SessionCapabilities {
@@ -22,20 +26,42 @@ export interface SessionCapabilities {
   provider: boolean
 }
 
-export function createAuthRouter({ service, sessions, cookies = readSessionCookieSettings(), now = () => Date.now(), describeCapabilities }: AuthRouterDependencies): Router {
+export function createAuthRouter({ service, sessions, cookies = readSessionCookieSettings(), now = () => Date.now(), describeCapabilities, phones }: AuthRouterDependencies): Router {
   const router = express.Router()
 
   // Same answer for a new email and an already registered one (no account enumeration): the
   // person is told to check the inbox. No session is issued before the email is verified.
+  // With a phone, the answer also carries the WhatsApp verification (code, wa.me link, poll
+  // secret): a real challenge for a new account, an identical-looking one that verifies nothing
+  // for an email already registered.
   router.post('/auth/register', asyncHandler(async (request: Request, response: Response) => {
     const body = asRecord(request.body)
+    let phone: string | null = null
+    if (phones && typeof body['phone'] === 'string' && body['phone'].trim()) {
+      const normalized = normalizarTelefono(body['phone'])
+      if (!normalized.ok) {
+        response.status(422).json({ error: { code: 'INVALID_PHONE', reason: normalized.motivo, message: 'phone number is not valid' } })
+        return
+      }
+      phone = normalized.e164
+      if (!(await phones.permitirRegistro(phone, request.ip))) {
+        response.status(429).json({ error: { code: 'RATE_LIMITED', message: 'too many attempts, try again later' } })
+        return
+      }
+    }
     try {
-      await service.registerAccount({
+      const outcome = await service.registerAccount({
         email: readString(body, 'email'),
         password: readString(body, 'password'),
         displayName: readString(body, 'displayName'),
       })
-      response.status(201).json({ status: 'pending_verification' })
+      let phoneVerification: Record<string, unknown> | undefined
+      if (phones && phone) {
+        const created = outcome.created ? await phones.iniciarRegistro(outcome.created.account.id, phone) : null
+        const challenge = created?.ok ? created : phones.ficticio(phone, 'verificar_telefono')
+        phoneVerification = vistaDesafio(challenge)
+      }
+      response.status(201).json({ status: 'pending_verification', ...(phoneVerification ? { phoneVerification } : {}) })
     } catch (error) {
       const code = error instanceof PasswordPolicyError && error.code === 'PASSWORD_BREACHED' ? 'PASSWORD_BREACHED' : 'INVALID_REQUEST'
       response.status(400).json(createErrorEnvelope(error, getCorrelationId(request), code))

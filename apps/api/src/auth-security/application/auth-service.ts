@@ -21,6 +21,8 @@ import type {
   Session,
 } from '../domain/models.js'
 import { ACCOUNT_STATUS, AUTH_EVENT_KIND, AUTH_RESULT_CODE, CREDENTIAL_STATUS } from '../domain/constants.js'
+import { cuentaVerificada } from '../domain/models.js'
+import { normalizarTelefono } from '@factory/contracts'
 import { failure, type AuthFailure } from '../domain/errors.js'
 import {
   GENERIC_AUTH_FAILURE_MESSAGE,
@@ -83,6 +85,7 @@ export class PasswordPolicyError extends Error {
 }
 
 export interface SignInInput {
+  // Email, or the identity phone once verified by WhatsApp (any written form: it is normalized).
   email: string
   password: string
   device?: { deviceId?: string; label?: string }
@@ -309,7 +312,7 @@ export class AuthService {
     // Same limit for existing and unknown emails (no enumeration); it slows password guessing on
     // one account without locking the whole site.
     const limiter = this.dependencies.signInRateLimiter
-    if (limiter && !(await limiter.allow(normalizeEmail(input.email), this.dependencies.clock.now()))) {
+    if (limiter && !(await limiter.allow(this.signInKey(input.email), this.dependencies.clock.now()))) {
       await this.record(undefined, AUTH_EVENT_KIND.AUTH_FAILED, 'denied', 'rate_limited')
       return failure(AUTH_RESULT_CODE.RATE_LIMITED, 'Too many attempts, try again later')
     }
@@ -324,7 +327,7 @@ export class AuthService {
       const digest = this.dependencies.tokens.digest(input.accessToken)
       const current = await store.findSessionByAccessTokenDigest(digest)
       const account = current ? await store.getAccount(current.accountId) : undefined
-      if (!current || current.revokedAt !== null || current.expiresAt <= now || !account || account.status !== 'active' || !account.emailVerifiedAt) {
+      if (!current || current.revokedAt !== null || current.expiresAt <= now || !account || account.status !== 'active' || !cuentaVerificada(account)) {
         return failure(AUTH_RESULT_CODE.INVALID_TOKEN, 'Invalid or expired session')
       }
       await store.revokeSession(digest, now)
@@ -336,9 +339,24 @@ export class AuthService {
     })
   }
 
+  // "a@b.com" is an email; anything without "@" that normalizes as a phone is a phone. One key per
+  // identity for the attempt limiter, whatever the written form.
+  private signInKey(identifier: string): string {
+    if (identifier.includes('@')) return normalizeEmail(identifier)
+    const phone = normalizarTelefono(identifier)
+    return phone.ok ? `phone:${phone.e164}` : normalizeEmail(identifier)
+  }
+
+  private async findSignInAccount(identifier: string, store: IdentityStore): Promise<Account | undefined> {
+    if (identifier.includes('@') || !store.findAccountIdByPhone) return store.findAccountByEmail(normalizeEmail(identifier))
+    const phone = normalizarTelefono(identifier)
+    if (!phone.ok) return undefined
+    const accountId = await store.findAccountIdByPhone(phone.e164)
+    return accountId ? store.getAccount(accountId) : undefined
+  }
+
   private async signInWithinStore(input: SignInInput, store: IdentityStore): Promise<SignInResult> {
-    const normalizedEmail = normalizeEmail(input.email)
-    const account = await store.findAccountByEmail(normalizedEmail)
+    const account = await this.findSignInAccount(input.email, store)
     const credential = account
       ? await store.findPasswordCredential(account.id)
       : undefined
@@ -350,7 +368,8 @@ export class AuthService {
       !credential ||
       credential.status !== CREDENTIAL_STATUS.ACTIVE ||
       account.status !== 'active' ||
-      !account.emailVerifiedAt ||
+      // Verified by email OR by the phone (WhatsApp): phone-first accounts can sign in.
+      !cuentaVerificada(account) ||
       !passwordMatches
     ) {
       await this.record(account, AUTH_EVENT_KIND.AUTH_FAILED, 'denied', 'invalid_credentials')
@@ -506,6 +525,25 @@ export class AuthService {
     return { ok: true }
   }
 
+  // Password recovery proved through WhatsApp (phone module): the same single-use recovery token
+  // as the email flow, completed by completePasswordRecovery (sessions revoked, MFA kept).
+  async issueRecoveryTokenForAccount(accountId: string): Promise<string> {
+    return this.runTransaction(async (store) => {
+      const account = await store.getAccount(accountId)
+      if (!account || account.status !== 'active') throw new Error('Account not allowed')
+      const recoveryToken = this.dependencies.tokens.issue()
+      await store.saveRecoveryToken({
+        id: this.dependencies.ids.next(),
+        accountId: account.id,
+        tokenDigest: this.dependencies.tokens.digest(recoveryToken),
+        expiresAt: this.dependencies.clock.now() + RECOVERY_TTL_MS,
+        consumedAt: null,
+      })
+      await this.record(account, AUTH_EVENT_KIND.RECOVERY_REQUESTED, 'accepted', 'phone_verified')
+      return recoveryToken
+    })
+  }
+
   async requestPasswordRecovery(input: { email: string }): Promise<RecoveryRequestResult> {
     const result = await this.runTransaction((store) => this.requestPasswordRecoveryWithinStore(input, store))
     if (result.recoveryToken && result.recipient) {
@@ -606,6 +644,20 @@ export class AuthService {
 
   // Re-authentication for sensitive actions (e.g. turning MFA off): 'ok' only when the current
   // password matches an active password credential. Constant work when there is none.
+  // A registered account that never verified (neither email nor phone) proves it is its owner
+  // with the password to restart the phone verification. Same limiter, timing and generic
+  // failure as sign-in: it reveals nothing that sign-in does not.
+  async accountPendingVerification(identifier: string, password: string): Promise<{ id: string } | null> {
+    const limiter = this.dependencies.signInRateLimiter
+    if (limiter && !(await limiter.allow(this.signInKey(identifier), this.dependencies.clock.now()))) return null
+    const store = this.dependencies.store
+    const account = await this.findSignInAccount(identifier, store)
+    const credential = account ? await store.findPasswordCredential(account.id) : undefined
+    const matches = await this.dependencies.passwordHasher.verify(password, credential?.status === CREDENTIAL_STATUS.ACTIVE ? credential.passwordHash : this.dependencies.passwordHasher.dummyHash)
+    if (!account || !credential || credential.status !== CREDENTIAL_STATUS.ACTIVE || account.status !== 'active' || cuentaVerificada(account) || !matches) return null
+    return { id: account.id }
+  }
+
   async verifyCurrentPassword(accountId: string, password: string): Promise<'ok' | 'mismatch' | 'no_password'> {
     const account = await this.dependencies.store.getAccount(accountId)
     const credential = account ? await this.dependencies.store.findPasswordCredential(account.id) : undefined

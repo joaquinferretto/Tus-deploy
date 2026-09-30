@@ -13,6 +13,13 @@ model User {
   email           String       @unique
   normalizedEmail String       @unique
   displayName     String
+  // Identity phone (E.164) of the PERSON: only once verified by a user-initiated WhatsApp
+  // challenge (20261019100000_tus_identidad_telefono). UNIQUE (many NULLs allowed). A number
+  // waiting for verification lives in phonePending. CHECKs: E.164 format; phoneNumber and
+  // phoneVerifiedAt are both set or both NULL.
+  phoneNumber     String?      @unique
+  phoneVerifiedAt DateTime?
+  phonePending    String?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   accounts        Account[]
@@ -37,11 +44,39 @@ model Account {
   identidadesExternas IdentidadExterna[]
   solicitudesServicio SolicitudServicio[]
   mfaEnrollments     MfaEnrollment[]
+  desafiosTelefono   DesafioTelefono[]
   mensajesTrabajo    MensajeTrabajo[]
   calificacionesTrabajo CalificacionTrabajo[]
 
   @@unique([userId, tenantId])
   @@index([tenantId])
+}
+
+// Single-use phone challenges (hash only, never the code). Partial unique index
+// uq_desafios_telefono_activo (cuenta_id, proposito) WHERE usado_en IS NULL AND invalidado_en IS NULL
+// lives in SQL. proposito: verificar_telefono | cambiar_telefono | recuperar_contrasena.
+model DesafioTelefono {
+  id                    String    @id(map: "desafios_telefono_pkey") @map("id")
+  cuentaId              String    @map("cuenta_id")
+  telefono              String    @map("telefono")
+  proposito             String    @map("proposito")
+  hashDesafio           String    @map("hash_desafio")
+  hashSecretoConsulta   String?   @map("hash_secreto_consulta")
+  expiraEn              DateTime  @map("expira_en")
+  usadoEn               DateTime? @map("usado_en")
+  invalidadoEn          DateTime? @map("invalidado_en")
+  motivoInvalidacion    String?   @map("motivo_invalidacion")
+  intentosFallidos      Int       @default(0) @map("intentos_fallidos")
+  wamidVerificacion     String?   @map("wamid_verificacion")
+  entregadoEn           DateTime? @map("entregado_en")
+  confirmacionEnviadaEn DateTime? @map("confirmacion_enviada_en")
+  confirmacionError     String?   @map("confirmacion_error")
+  creadoEn              DateTime  @map("creado_en")
+  cuenta                Account   @relation(fields: [cuentaId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_desafios_telefono_cuenta")
+
+  @@unique([hashDesafio], map: "uq_desafios_telefono_hash")
+  @@index([telefono, creadoEn], map: "ix_desafios_telefono_telefono")
+  @@map("desafios_telefono")
 }
 
 model PasswordCredential {
