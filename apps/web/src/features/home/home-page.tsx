@@ -47,7 +47,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
   // Sin filtros, una lista vacía significa que todavía no hay prestadores publicados (no "con estos filtros").
   const filtered = Boolean(filters.query || filters.profession || filters.zone || filters.category)
 
-  function selectProvider(id: string) {
+  function selectProvider(id: string | null) {
     setSelectedProviderId(id)
   }
 
@@ -124,7 +124,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
           <div aria-label="Mapa de prestadores y zonas de atención" className={styles.mapLayer} role="region">
             <ProviderMap catalog={catalog.data} onSelect={selectProvider} searchSignal={searchSignal} selectedId={selectedProviderId} workers={providerData} />
           </div>
-          <div className={styles.searchDock}>
+          <div className={styles.searchDock} data-map-overlay="search-dock">
             <HeroSearch busy={searching} onSearch={(text) => void runSearch(text).catch(() => setSummary('No pudimos buscar ahora. Probá de nuevo en unos minutos.'))} />
             <MapFilters
               catalog={catalog.data}

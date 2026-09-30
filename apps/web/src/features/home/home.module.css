@@ -64,12 +64,12 @@
 
 .headerInner {
   align-items: center;
-  /* Logo siempre al centro: menú a la izquierda, acciones a la derecha, columnas laterales iguales. */
-  display: grid;
-  gap: 24px;
-  grid-template-areas: 'nav brand actions';
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  display: flex;
+  justify-content: space-between;
+  gap: clamp(12px, 1.8vw, 24px);
   height: 64px;
+  max-width: 1600px;
+  margin: 0 auto;
   padding: 0 clamp(16px, 2.5vw, 40px);
   width: 100%;
 }
@@ -77,27 +77,27 @@
 .brandLink {
   align-items: center;
   display: inline-flex;
-  grid-area: brand;
-  justify-self: center;
+  flex-shrink: 0;
   text-decoration: none;
 }
 
 .nav {
+  align-items: center;
   display: flex;
-  gap: 2px;
-  grid-area: nav;
-  justify-self: start;
+  flex: 1 1 auto;
+  gap: clamp(2px, 0.6vw, 8px);
+  justify-content: center;
   min-width: 0;
 }
 
 .nav a {
-  white-space: nowrap;
   border-radius: 8px;
   color: var(--tus-ink-soft);
-  font-size: 0.95rem;
+  font-size: clamp(0.84rem, 0.9vw, 0.95rem);
   font-weight: 500;
-  padding: 8px 10px;
+  padding: 8px clamp(5px, 0.65vw, 10px);
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .nav a:hover {
@@ -117,9 +117,8 @@
 .headerActions {
   align-items: center;
   display: flex;
+  flex-shrink: 0;
   gap: 10px;
-  grid-area: actions;
-  justify-self: end;
 }
 
 .sessionLoading {
@@ -845,9 +844,7 @@
 }
 
 /* ---- responsive ---------------------------------------------------------------------------- */
-/* Con el logo centrado, cada lado tiene media barra: los cinco destinos necesitan ~1400px; debajo
-   el menú toma su lugar y el logo sigue en el centro (la columna izquierda queda vacía). */
-@media (max-width: 1400px) {
+@media (max-width: 1024px) {
   .nav {
     display: none;
   }
@@ -855,9 +852,7 @@
   .headerActions .menuButton {
     display: inline-flex;
   }
-}
 
-@media (max-width: 1024px) {
   .row {
     grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) 24px;
   }

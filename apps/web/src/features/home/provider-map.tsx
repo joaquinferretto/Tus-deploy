@@ -49,7 +49,7 @@ function groupIcon(count: number, active: boolean) {
 
 function overlayPadding(map: L.Map) {
   const wide = map.getSize().x > 768
-  return wide ? { topLeft: L.point(40, 230), bottomRight: L.point(40, 80) } : { topLeft: L.point(24, 24), bottomRight: L.point(24, 24) }
+  return wide ? { topLeft: L.point(40, 290), bottomRight: L.point(40, 80) } : { topLeft: L.point(24, 24), bottomRight: L.point(24, 24) }
 }
 
 // ONE point per provider (not one per service): mapPoint, or the first public location of older
@@ -78,21 +78,184 @@ function fitProviders(map: L.Map, workers: PrestadorPublico[]) {
   map.fitBounds(bounds, { paddingTopLeft: padding.topLeft, paddingBottomRight: padding.bottomRight, maxZoom: 15 })
 }
 
-function MapController({ workers, selected, recenterSignal }: { workers: PrestadorPublico[]; selected: PrestadorPublico | null; recenterSignal: number }) {
+function ensurePopupVisible(map: L.Map, popup: L.Popup) {
+  requestAnimationFrame(() => {
+    const popupEl = popup.getElement()
+    const mapEl = map.getContainer()
+    if (!popupEl || !mapEl) return
+
+    const popupRect = popupEl.getBoundingClientRect()
+    const mapRect = mapEl.getBoundingClientRect()
+    const dockEl = document.querySelector('[data-map-overlay="search-dock"]')
+    const dockRect = dockEl?.getBoundingClientRect()
+    const headerEl = document.querySelector('header')
+    const headerRect = headerEl?.getBoundingClientRect()
+
+    const MARGIN = 16
+    let safeTop = mapRect.top + MARGIN
+    let safeBottom = mapRect.bottom - MARGIN
+    let safeLeft = mapRect.left + MARGIN
+    let safeRight = mapRect.right - MARGIN
+
+    if (headerRect && headerRect.bottom > mapRect.top) {
+      safeTop = Math.max(safeTop, headerRect.bottom + MARGIN)
+    }
+
+    if (dockRect) {
+      const dockOverlapsX = dockRect.left < mapRect.right && dockRect.right > mapRect.left
+      const dockOverlapsY = dockRect.top < mapRect.bottom && dockRect.bottom > mapRect.top
+      if (dockOverlapsX && dockOverlapsY) {
+        safeTop = Math.max(safeTop, dockRect.bottom + MARGIN)
+      }
+    }
+
+    safeTop = Math.max(safeTop, MARGIN)
+    safeBottom = Math.min(safeBottom, window.innerHeight - MARGIN)
+    safeLeft = Math.max(safeLeft, MARGIN)
+    safeRight = Math.min(safeRight, window.innerWidth - MARGIN)
+
+    let dx = 0
+    let dy = 0
+
+    if (popupRect.top < safeTop) {
+      dy = -(safeTop - popupRect.top)
+    } else if (popupRect.bottom > safeBottom) {
+      dy = popupRect.bottom - safeBottom
+    }
+
+    if (popupRect.left < safeLeft) {
+      dx = -(safeLeft - popupRect.left)
+    } else if (popupRect.right > safeRight) {
+      dx = popupRect.right - safeRight
+    }
+
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+      map.panBy([dx, dy], { animate: true, duration: 0.25 })
+    }
+  })
+}
+
+function MapController({
+  workers,
+  selected,
+  recenterSignal,
+  activePopupRef,
+}: {
+  workers: PrestadorPublico[]
+  selected: PrestadorPublico | null
+  recenterSignal: number
+  activePopupRef: React.MutableRefObject<L.Popup | null>
+}) {
   const map = useMap()
-  const workerKey = workers.map((worker) => `${worker.id}:${workerPoint(worker)?.label ?? ''}`).join('|')
+  const initialFitDone = useRef(false)
+  const prevRecenterSignal = useRef(recenterSignal)
+
   useEffect(() => {
-    fitProviders(map, workers)
-  }, [map, workerKey, recenterSignal, workers])
+    if (!initialFitDone.current && workers.length > 0) {
+      fitProviders(map, workers)
+      initialFitDone.current = true
+      return
+    }
+    if (recenterSignal !== prevRecenterSignal.current) {
+      prevRecenterSignal.current = recenterSignal
+      fitProviders(map, workers)
+    }
+  }, [map, recenterSignal, workers])
+
+  const prevSelectedId = useRef<string | null>(null)
   useEffect(() => {
-    const location = selected ? workerPoint(selected) : null
+    if (!selected) {
+      prevSelectedId.current = null
+      return
+    }
+    if (selected.id === prevSelectedId.current) return
+    prevSelectedId.current = selected.id
+
+    const location = workerPoint(selected)
     if (!location) return
-    const padding = overlayPadding(map)
     const zoom = Math.max(map.getZoom(), 14)
-    const shift = L.point((padding.topLeft.x - padding.bottomRight.x) / 2, (padding.topLeft.y - padding.bottomRight.y) / 2)
-    const target = map.unproject(map.project([location.lat, location.lng], zoom).subtract(shift), zoom)
-    map.flyTo(target, zoom, { duration: 0.6 })
-  }, [map, selected])
+
+    // Compute dynamic safe target center based on measured obstructions
+    const mapEl = map.getContainer()
+    const mapRect = mapEl.getBoundingClientRect()
+    const dockEl = document.querySelector('[data-map-overlay="search-dock"]')
+    const dockRect = dockEl?.getBoundingClientRect()
+    const headerEl = document.querySelector('header')
+    const headerRect = headerEl?.getBoundingClientRect()
+
+    let topObstruction = 0
+    if (headerRect && headerRect.bottom > mapRect.top) {
+      topObstruction = Math.max(topObstruction, headerRect.bottom - mapRect.top)
+    }
+    if (dockRect) {
+      const overlapsX = dockRect.left < mapRect.right && dockRect.right > mapRect.left
+      const overlapsY = dockRect.top < mapRect.bottom && dockRect.bottom > mapRect.top
+      if (overlapsX && overlapsY) {
+        topObstruction = Math.max(topObstruction, dockRect.bottom - mapRect.top)
+      }
+    }
+
+    // Shift target north (subtract Y in projected space) so marker renders south of center,
+    // allowing the popup (~260px) to sit cleanly below top obstructions.
+    let shiftY = 0
+    if (topObstruction > 0) {
+      shiftY = Math.round(topObstruction + 50)
+    } else {
+      // On mobile where dock is static above mapLayer, shift down so popup is inside mapLayer
+      shiftY = Math.min(120, Math.round(mapRect.height * 0.22))
+    }
+
+    const projected = map.project([location.lat, location.lng], zoom)
+    const targetPoint = L.point(projected.x, projected.y - shiftY)
+    const target = map.unproject(targetPoint, zoom)
+
+    let done = false
+    const onFlyEnd = () => {
+      if (done) return
+      done = true
+      map.off('moveend', onFlyEnd)
+      if (activePopupRef.current && activePopupRef.current.isOpen()) {
+        ensurePopupVisible(map, activePopupRef.current)
+      }
+    }
+
+    map.flyTo(target, zoom, { duration: 0.5 })
+    const moveTimer = setTimeout(() => {
+      map.once('moveend', onFlyEnd)
+    }, 150)
+    const fallbackTimer = setTimeout(onFlyEnd, 550)
+
+    return () => {
+      map.off('moveend', onFlyEnd)
+      clearTimeout(moveTimer)
+      clearTimeout(fallbackTimer)
+    }
+  }, [activePopupRef, map, selected])
+  return null
+}
+
+function MapEventsHandler({
+  onPopupClose,
+  onPopupOpen,
+  mapRef,
+}: {
+  onPopupClose: () => void
+  onPopupOpen: (popup: L.Popup) => void
+  mapRef: React.MutableRefObject<L.Map | null>
+}) {
+  const map = useMapEvents({
+    popupclose: () => {
+      onPopupClose()
+    },
+    popupopen: (e) => {
+      onPopupOpen(e.popup)
+    },
+  })
+
+  useEffect(() => {
+    mapRef.current = map
+  }, [map, mapRef])
+
   return null
 }
 
@@ -158,7 +321,7 @@ function GroupPopupBody({ group }: { group: MapGroup<PrestadorPublico> }) {
 
 // A cluster of distinct points zooms in on click; a same-point group (or any group at the maximum
 // clustering zoom) opens the list, since zooming could never separate them.
-function ClusterMarker({ group, active, showList, markerRef, popupPadding }: { group: MapGroup<PrestadorPublico>; active: boolean; showList: boolean; markerRef: (instance: L.Marker | null) => void; popupPadding: { autoPanPaddingBottomRight: [number, number]; autoPanPaddingTopLeft: [number, number] } }) {
+function ClusterMarker({ group, active, showList, markerRef, popupPadding }: { group: MapGroup<PrestadorPublico>; active: boolean; showList: boolean; markerRef: (instance: L.Marker | null) => void; popupPadding: { autoPan: boolean; autoPanPadding: [number, number] } }) {
   const map = useMap()
   return (
     <Marker
@@ -185,12 +348,25 @@ function ClusterMarker({ group, active, showList, markerRef, popupPadding }: { g
   )
 }
 
-export default function ProviderMap({ workers, selectedId, onSelect, searchSignal = 0, catalog }: { workers: PrestadorPublico[]; selectedId: string | null; onSelect: (id: string) => void; searchSignal?: number; catalog?: CatalogoOficios }): React.ReactNode {
+export default function ProviderMap({
+  workers,
+  selectedId,
+  onSelect,
+  searchSignal = 0,
+  catalog,
+}: {
+  workers: PrestadorPublico[]
+  selectedId: string | null
+  onSelect: (id: string | null) => void
+  searchSignal?: number
+  catalog?: CatalogoOficios
+}): React.ReactNode {
   const [touch] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches)
   const [interactive, setInteractive] = useState(!touch)
-  const [wide] = useState(() => typeof window !== 'undefined' && window.innerWidth > 768)
   const [recenterSignal, setRecenterSignal] = useState(0)
   const [zoom, setZoom] = useState(DEFAULT_MAP_CENTER.zoom)
+  const activePopupRef = useRef<L.Popup | null>(null)
+  const mapRef = useRef<L.Map | null>(null)
   const markers = useRef(new Map<string, L.Marker>())
   const selected = useMemo(() => workers.find((worker) => worker.id === selectedId) ?? null, [selectedId, workers])
   const groups = useMemo(
@@ -198,11 +374,56 @@ export default function ProviderMap({ workers, selectedId, onSelect, searchSigna
     [workers, zoom]
   )
   const groupOf = useMemo(() => new Map(groups.flatMap((group) => group.items.map((worker) => [worker.id, group.key] as const))), [groups])
-  const popupPadding = { autoPanPaddingBottomRight: [40, 80] as [number, number], autoPanPaddingTopLeft: [24, wide ? 230 : 24] as [number, number] }
+  const popupPadding = { autoPan: true, autoPanPadding: [16, 16] as [number, number] }
+
+  const justSelectedRef = useRef(false)
+  const prevOpenedIdRef = useRef<string | null>(null)
+
+  const handleSelect = (id: string | null) => {
+    if (id) {
+      justSelectedRef.current = true
+      setTimeout(() => {
+        justSelectedRef.current = false
+      }, 700)
+    }
+    onSelect(id)
+  }
+
+  const handlePopupOpen = (popup: L.Popup) => {
+    activePopupRef.current = popup
+    setTimeout(() => {
+      if (!justSelectedRef.current && mapRef.current) {
+        ensurePopupVisible(mapRef.current, popup)
+      }
+    }, 120)
+  }
+
+  const handlePopupClose = () => {
+    activePopupRef.current = null
+    if (!justSelectedRef.current) {
+      prevOpenedIdRef.current = null
+      onSelect(null)
+    }
+  }
 
   useEffect(() => {
-    const key = selectedId ? groupOf.get(selectedId) : undefined
-    if (key) markers.current.get(key)?.openPopup()
+    const onResize = () => {
+      if (mapRef.current && activePopupRef.current && activePopupRef.current.isOpen()) {
+        ensurePopupVisible(mapRef.current, activePopupRef.current)
+      }
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  useEffect(() => {
+    if (selectedId && selectedId !== prevOpenedIdRef.current) {
+      prevOpenedIdRef.current = selectedId
+      const key = groupOf.get(selectedId)
+      if (key) markers.current.get(key)?.openPopup()
+    } else if (!selectedId) {
+      prevOpenedIdRef.current = null
+    }
   }, [groupOf, selectedId])
 
   const register = (key: string) => (instance: L.Marker | null) => {
@@ -212,12 +433,13 @@ export default function ProviderMap({ workers, selectedId, onSelect, searchSigna
 
   return (
     <>
-      <MapContainer center={[DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng]} dragging={interactive} scrollWheelZoom={interactive} style={{ height: '100%', width: '100%' }} zoom={DEFAULT_MAP_CENTER.zoom} zoomControl={false}>
+      <MapContainer center={[DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng]} dragging={interactive} ref={mapRef} scrollWheelZoom={interactive} style={{ height: '100%', width: '100%' }} zoom={DEFAULT_MAP_CENTER.zoom} zoomControl={false}>
         <TileLayer attribution={TILE_ATTRIBUTION} url={TILE_URL} />
         <ZoomControl position="bottomleft" zoomInTitle="Acercar" zoomOutTitle="Alejar" />
         <ZoomWatcher onZoom={setZoom} />
         <MapInteractionController interactive={interactive} />
-        <MapController recenterSignal={recenterSignal + searchSignal} selected={selected} workers={workers} />
+        <MapController activePopupRef={activePopupRef} recenterSignal={recenterSignal + searchSignal} selected={selected} workers={workers} />
+        <MapEventsHandler mapRef={mapRef} onPopupClose={handlePopupClose} onPopupOpen={handlePopupOpen} />
         {groups.map((group) => {
           const active = Boolean(selectedId && group.items.some((worker) => worker.id === selectedId))
           if (group.items.length === 1) {
@@ -225,7 +447,7 @@ export default function ProviderMap({ workers, selectedId, onSelect, searchSigna
             const location = workerPoint(worker)!
             return (
               <Marker
-                eventHandlers={{ click: () => onSelect(worker.id) }}
+                eventHandlers={{ click: () => handleSelect(worker.id) }}
                 icon={markerIcon(worker, active, catalog)}
                 key={group.key}
                 keyboard
