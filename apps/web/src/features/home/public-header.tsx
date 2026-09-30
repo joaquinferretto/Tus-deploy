@@ -15,6 +15,7 @@ import styles from './home.module.css'
 // workers; "Ayuda" is the assistant that answers questions about TUS. The logo always goes home.
 const NAV = [
   { href: '/', label: 'Buscar servicios' },
+  { href: '/alojamientos', label: 'Alojamientos' },
   { href: '/trabajadores', label: 'Buscar trabajador' },
   { href: '/#como-funciona', label: 'Cómo funciona' },
   { href: '/#profesionales', label: 'Para profesionales' },

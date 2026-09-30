@@ -3126,6 +3126,7 @@ model ZonaUbicacion {
   longitud      Float?    @map("longitud")
   barrios       Barrio[]
   perfiles      PerfilPublicoPrestador[]
+  alojamientos  Alojamiento[]
 
   @@index([localidadId], map: "ix_zonas_ubicacion_localidad")
   @@map("zonas_ubicacion")
@@ -3150,6 +3151,7 @@ model Barrio {
 
   @@index([localidadId], map: "ix_barrios_localidad")
   perfiles      PerfilPublicoPrestador[]
+  alojamientos  Alojamiento[]
 
   @@index([zonaId], map: "ix_barrios_zona")
   @@map("barrios")
@@ -3193,4 +3195,197 @@ model CalificacionTrabajo {
   @@unique([tenantId, trabajoId], map: "uq_calificaciones_trabajo_tenant_trabajo")
   @@index([prestadorTenantId, prestadorId], map: "idx_calificaciones_trabajo_prestador")
   @@map("calificaciones_trabajo")
+}
+
+// -----------------------------------------------------------------------------
+// FASE 4: MÓDULO DE ALOJAMIENTOS
+// -----------------------------------------------------------------------------
+
+model TipoAlojamiento {
+  id            String        @id(map: "tipos_alojamiento_pkey") @map("id")
+  slug          String        @unique(map: "uq_tipos_alojamiento_slug") @map("slug")
+  nombre        String        @map("nombre")
+  descripcion   String?       @map("descripcion")
+  icono         String?       @map("icono")
+  orden         Int           @default(0) @map("orden")
+  activo        Boolean       @default(true) @map("activo")
+  creadoEn      DateTime      @default(now()) @map("creado_en")
+  actualizadoEn DateTime      @updatedAt @map("actualizado_en")
+  alojamientos  Alojamiento[]
+
+  @@map("tipos_alojamiento")
+}
+
+model Alojamiento {
+  id             String                    @id(map: "alojamientos_pkey") @map("id")
+  propietarioId  String?                   @map("propietario_id")
+  tipoId         String                    @map("tipo_id")
+  tipo           TipoAlojamiento           @relation(fields: [tipoId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_alojamiento_tipo")
+  nombre         String                    @map("nombre")
+  slug           String                    @map("slug")
+  descripcion    String?                   @map("descripcion")
+  direccion      String                    @map("direccion")
+  latitud        Float                     @map("latitud")
+  longitud       Float                     @map("longitud")
+  barrioId       String?                   @map("barrio_id")
+  barrio         Barrio?                   @relation(fields: [barrioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_alojamiento_barrio")
+  zonaId         String?                   @map("zona_id")
+  zona           ZonaUbicacion?            @relation(fields: [zonaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_alojamiento_zona")
+  checkInHora    String                    @default("14:00") @map("check_in_hora")
+  checkOutHora   String                    @default("10:00") @map("check_out_hora")
+  politicas      String?                   @map("politicas")
+  comodidades    String[]                  @default([]) @map("comodidades")
+  estado         String                    @default("publicado") @map("estado")
+  publicado      Boolean                   @default(true) @map("publicado")
+  ratingPromedio Float?                    @map("rating_promedio")
+  ratingCantidad Int                       @default(0) @map("rating_cantidad")
+  creadoEn       DateTime                  @default(now()) @map("creado_en")
+  actualizadoEn  DateTime                  @updatedAt @map("actualizado_en")
+  imagenes       ImagenAlojamiento[]
+  unidades       UnidadAlojamiento[]
+  reservas       ReservaAlojamiento[]
+  calificaciones CalificacionAlojamiento[]
+
+  @@index([tipoId], map: "ix_alojamientos_tipo")
+  @@index([zonaId], map: "ix_alojamientos_zona")
+  @@index([barrioId], map: "ix_alojamientos_barrio")
+  @@index([propietarioId], map: "ix_alojamientos_propietario")
+  @@index([publicado, estado], map: "ix_alojamientos_publicado")
+  @@map("alojamientos")
+}
+
+model ImagenAlojamiento {
+  id            String      @id(map: "imagenes_alojamiento_pkey") @map("id")
+  alojamientoId String      @map("alojamiento_id")
+  alojamiento   Alojamiento @relation(fields: [alojamientoId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_imagenes_alojamiento_alojamiento")
+  url           String      @map("url")
+  alt           String?     @map("alt")
+  categoria     String      @default("general") @map("categoria")
+  orden         Int         @default(0) @map("orden")
+  esPrincipal   Boolean     @default(false) @map("es_principal")
+  creadoEn      DateTime    @default(now()) @map("creado_en")
+
+  @@index([alojamientoId, orden], map: "ix_imagenes_alojamiento_orden")
+  @@map("imagenes_alojamiento")
+}
+
+model UnidadAlojamiento {
+  id                String                     @id(map: "unidades_alojamiento_pkey") @map("id")
+  alojamientoId     String                     @map("alojamiento_id")
+  alojamiento       Alojamiento                @relation(fields: [alojamientoId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_unidades_alojamiento_alojamiento")
+  nombre            String                     @map("nombre")
+  descripcion       String?                    @map("descripcion")
+  capacidadPersonas Int                        @default(2) @map("capacidad_personas")
+  camasDetalle      String?                    @map("camas_detalle")
+  banosCantidad     Int                        @default(1) @map("banos_cantidad")
+  comodidades       String[]                   @default([]) @map("comodidades")
+  estado            String                     @default("activa") @map("estado")
+  orden             Int                        @default(0) @map("orden")
+  creadoEn          DateTime                   @default(now()) @map("creado_en")
+  actualizadoEn     DateTime                   @updatedAt @map("actualizado_en")
+  imagenes          ImagenUnidadAlojamiento[]
+  tarifas           TarifaAlojamiento[]
+  reservas          ReservaAlojamiento[]
+  bloqueos          BloqueoUnidadAlojamiento[]
+
+  @@index([alojamientoId, orden], map: "ix_unidades_alojamiento_orden")
+  @@map("unidades_alojamiento")
+}
+
+model ImagenUnidadAlojamiento {
+  id          String            @id(map: "imagenes_unidad_alojamiento_pkey") @map("id")
+  unidadId    String            @map("unidad_id")
+  unidad      UnidadAlojamiento @relation(fields: [unidadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_imagenes_unidad_unidad")
+  url         String            @map("url")
+  alt         String?           @map("alt")
+  orden       Int               @default(0) @map("orden")
+  esPrincipal Boolean           @default(false) @map("es_principal")
+  creadoEn    DateTime          @default(now()) @map("creado_en")
+
+  @@index([unidadId, orden], map: "ix_imagenes_unidad_orden")
+  @@map("imagenes_unidad_alojamiento")
+}
+
+model TarifaAlojamiento {
+  id            String            @id(map: "tarifas_alojamiento_pkey") @map("id")
+  unidadId      String            @map("unidad_id")
+  unidad        UnidadAlojamiento @relation(fields: [unidadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tarifas_alojamiento_unidad")
+  modalidad     String            @default("noche") @map("modalidad")
+  duracionHoras Int?              @map("duracion_horas")
+  precio        BigInt            @map("precio")
+  moneda        String            @default("ARS") @map("moneda")
+  diasSemana    Int[]             @default([0, 1, 2, 3, 4, 5, 6]) @map("dias_semana")
+  temporada     String?           @map("temporada")
+  minimoEstadia Int               @default(1) @map("minimo_estadia")
+  maximoEstadia Int?              @map("maximo_estadia")
+  activa        Boolean           @default(true) @map("activa")
+  creadoEn      DateTime          @default(now()) @map("creado_en")
+  actualizadoEn DateTime          @updatedAt @map("actualizado_en")
+
+  @@index([unidadId, activa], map: "ix_tarifas_alojamiento_unidad")
+  @@map("tarifas_alojamiento")
+}
+
+model BloqueoUnidadAlojamiento {
+  id                 String            @id(map: "bloqueos_unidad_alojamiento_pkey") @map("id")
+  unidadId           String            @map("unidad_id")
+  unidad             UnidadAlojamiento @relation(fields: [unidadId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_bloqueos_unidad_alojamiento_unidad")
+  fechaInicio        DateTime          @map("fecha_inicio")
+  fechaFin           DateTime          @map("fecha_fin")
+  motivo             String            @map("motivo")
+  creadoPorUsuarioId String?           @map("creado_por_usuario_id")
+  creadoEn           DateTime          @default(now()) @map("creado_en")
+
+  @@index([unidadId, fechaInicio, fechaFin], map: "ix_bloqueos_unidad_rango")
+  @@map("bloqueos_unidad_alojamiento")
+}
+
+model ReservaAlojamiento {
+  id                  String                   @id(map: "reservas_alojamiento_pkey") @map("id")
+  unidadId            String                   @map("unidad_id")
+  unidad              UnidadAlojamiento        @relation(fields: [unidadId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_alojamiento_unidad")
+  alojamientoId       String                   @map("alojamiento_id")
+  alojamiento         Alojamiento              @relation(fields: [alojamientoId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_alojamiento_alojamiento")
+  clienteId           String?                  @map("cliente_id")
+  clienteNombre       String                   @map("cliente_nombre")
+  clienteEmail        String?                  @map("cliente_email")
+  clienteTelefono     String?                  @map("cliente_telefono")
+  esInvitado          Boolean                  @default(false) @map("es_invitado")
+  fechaInicio         DateTime                 @map("fecha_inicio")
+  fechaFin            DateTime                 @map("fecha_fin")
+  modalidad           String                   @map("modalidad")
+  cantidadPersonas    Int                      @default(1) @map("cantidad_personas")
+  tarifaId            String?                  @map("tarifa_id")
+  precioListaSnapshot BigInt                   @map("precio_lista_snapshot")
+  precioFinalSnapshot BigInt                   @map("precio_final_snapshot")
+  moneda              String                   @default("ARS") @map("moneda")
+  estado              String                   @default("pending_payment") @map("estado")
+  holdExpiracion      DateTime?                @map("hold_expiracion")
+  paymentId           String?                  @map("payment_id")
+  preferenceId        String?                  @map("preference_id")
+  metodoPago          String?                  @map("metodo_pago")
+  notas               String?                  @map("notas")
+  creadoEn            DateTime                 @default(now()) @map("creado_en")
+  actualizadoEn       DateTime                 @updatedAt @map("actualizado_en")
+  calificacion        CalificacionAlojamiento?
+
+  @@index([alojamientoId, fechaInicio], map: "ix_reservas_alojamiento_alojamiento")
+  @@index([unidadId, fechaInicio, fechaFin], map: "ix_reservas_alojamiento_unidad_rango")
+  @@index([estado, holdExpiracion], map: "ix_reservas_alojamiento_hold")
+  @@map("reservas_alojamiento")
+}
+
+model CalificacionAlojamiento {
+  id            String             @id(map: "calificaciones_alojamiento_pkey") @map("id")
+  reservaId     String             @unique(map: "uq_calificaciones_alojamiento_reserva") @map("reserva_id")
+  reserva       ReservaAlojamiento @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_calificaciones_alojamiento_reserva")
+  alojamientoId String             @map("alojamiento_id")
+  alojamiento   Alojamiento        @relation(fields: [alojamientoId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_calificaciones_alojamiento_alojamiento")
+  clienteId     String?            @map("cliente_id")
+  puntuacion    Int                @map("puntuacion") @db.SmallInt
+  comentario    String?            @map("comentario")
+  fechaCreacion DateTime           @default(now()) @map("fecha_creacion")
+
+  @@index([alojamientoId], map: "ix_calificaciones_alojamiento_alojamiento")
+  @@map("calificaciones_alojamiento")
 }
