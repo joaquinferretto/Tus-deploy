@@ -2419,3 +2419,30 @@ Table mensajes_trabajo {
 }
 Ref: mensajes_trabajo.(tenant_id, trabajo_id, prestador_tenant_id) > trabajos.(tenant_id, trabajo_id, prestador_tenant_id) // fk_mensajes_trabajo_trabajo (uq_trabajos_tenant_trabajo_prestador)
 Ref: mensajes_trabajo.autor_cuenta_id > "Account".id // fk_mensajes_trabajo_autor
+
+// ============================================================
+// IDENTIDAD POR TELÉFONO (20261019100000_tus_identidad_telefono)
+// "User" gana "phoneNumber" (E.164, UNIQUE, solo verificado), "phoneVerifiedAt" y "phonePending".
+// ============================================================
+Table desafios_telefono {
+  id varchar [pk]
+  cuenta_id varchar [note: 'FK "Account"(id) ON DELETE CASCADE']
+  telefono varchar [note: 'E.164 esperado; solo el remitente wa_id de Meta puede verificarlo']
+  proposito varchar [note: 'CHECK verificar_telefono | cambiar_telefono | recuperar_contrasena']
+  hash_desafio varchar [unique, note: 'SHA-256 del código; el código nunca se guarda']
+  hash_secreto_consulta varchar [null]
+  expira_en timestamp
+  usado_en timestamp [null]
+  invalidado_en timestamp [null]
+  motivo_invalidacion varchar [null, note: 'CHECK reemplazado | intentos | conflicto']
+  intentos_fallidos int [default: 0]
+  wamid_verificacion varchar [null, note: 'idempotencia de webhooks repetidos']
+  entregado_en timestamp [null]
+  confirmacion_enviada_en timestamp [null]
+  confirmacion_error varchar [null]
+  creado_en timestamp
+  indexes {
+    (cuenta_id, proposito) [name: 'uq_desafios_telefono_activo', note: 'UNIQUE parcial: WHERE usado_en IS NULL AND invalidado_en IS NULL']
+    (telefono, creado_en) [name: 'ix_desafios_telefono_telefono']
+  }
+}

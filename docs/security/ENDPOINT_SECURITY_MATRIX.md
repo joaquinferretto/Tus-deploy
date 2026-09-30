@@ -42,6 +42,15 @@ Fecha de corte baseline: 2026-09-30 (Auditoría previa a Fases Turnos / UX-UI / 
 | `POST` | `/auth/verify-email/resend` | Public | Cualquiera | No | Rate-limited | Zod | Auth / Sensitive | Reenvío de confirmación con ventana de enfriamiento. |
 | `POST` | `/auth/recovery/request` | Public | Cualquiera | No | N/A | Zod | Auth / Sensitive | Solicitud de reset de password. Respuesta ciega contra enumeración. |
 | `POST` | `/auth/recovery/complete` | Public | Cualquiera | No | Token acotado | Zod | Auth / Sensitive | Consumo de token de recuperación de un solo uso. |
+| `POST` | `/auth/register` (con `phone`) | Public | Cualquiera | No | Crea nuevo Tenant | Normalizador único | Teléfono + IP (antes de saber si el email existe) | Devuelve el desafío de WhatsApp; un email ya registrado recibe uno de forma idéntica que no verifica nada (sin enumeración). Teléfono inválido: 422 sin crear cuenta. |
+| `GET` | `/auth/phone/config` | Public | Cualquiera | No | N/A | None | Cache 5 min | Solo el número oficial PÚBLICO de WhatsApp (`TUS_WHATSAPP_PUBLIC_NUMBER`), nunca tokens. |
+| `GET` | `/auth/phone` | Bearer / Cookie | Cualquiera | No | Cuenta de la sesión | None | Global | Teléfono de identidad propio, enmascarado. |
+| `POST` | `/auth/phone/challenges` | Bearer / Cookie | Cualquiera | No | Cuenta de la sesión (nunca del body) | Normalizador único | Cuenta 5/15 min, teléfono 5/h, IP 30/15 min | Verificar o cambiar el número; la identidad actual sigue hasta probar el nuevo desde SU WhatsApp. |
+| `GET` | `/auth/phone/challenges/:id` | Bearer / Cookie | Cualquiera | No | Solo desafíos propios (404 ajenos) | None | Global | Estado del desafío. |
+| `POST` | `/auth/phone/challenges/:id/status` | Public | Cualquiera | No | Secreto de consulta (hash) | None | Global | Solo `pending`/`verified` y sin datos: un desafío falso o desconocido es indistinguible. |
+| `POST` | `/auth/phone/challenges/:id/renew` | Public | Cualquiera | No | Secreto de consulta | None | Teléfono + IP | Código nuevo del mismo flujo; desconocido -> falso. |
+| `POST` | `/auth/phone/pending` | Public | Cualquiera | No | Prueba de contraseña (mismo limitador y fallo genérico que el ingreso) | Normalizador único | Ingreso + teléfono + IP | Retoma la verificación de una cuenta que nunca verificó. |
+| `POST` | `/auth/recovery/whatsapp` | Public | Cualquiera | No | N/A | Normalizador único | Teléfono 3/15 min + IP | Recuperación por WhatsApp; misma respuesta para teléfonos desconocidos; el token de recuperación normal se entrega una sola vez por el estado. |
 | `GET` | `/auth/oauth/providers` | Public | Cualquiera | No | N/A | None | Global | Lista proveedores OAuth activos (Google). |
 | `GET` | `/auth/oauth/google/start` | Public | Cualquiera | No | N/A | State / Nonce | Auth / Sensitive | Inicio de flujo OAuth con CSRF state mitigado. |
 | `GET` | `/auth/oauth/google/callback` | Public | Cualquiera | No | N/A | State verificado | Auth / Sensitive | Redirección con código de un solo uso. |
@@ -148,6 +157,7 @@ Fecha de corte baseline: 2026-09-30 (Auditoría previa a Fases Turnos / UX-UI / 
 | Method | Route | Auth | Role | MFA | Tenant / Owner | Input Validation | Rate Limit | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `GET` | `/auth/mfa/status` | Bearer / Cookie | Admin | No | Sesión actual | None | Auth / Sensitive | Estado de enrolamiento de segundo factor TOTP. |
+| `POST` | `/tus/v1/admin/usuarios/:id/telefono` | Bearer / Cookie | Admin (`tus:identity:admin`) | Sí | Cualquier cuenta | Normalizador único | Global | `pendiente`: carga un número a verificar (nunca lo marca verificado); `quitar`: libera el teléfono verificado. Auditado (`phone.admin_*`, enmascarado). |
 | `POST` | `/auth/mfa/enroll` | Bearer / Cookie | Admin | No | Sesión actual | None | Auth / Sensitive | Generación de secreto TOTP cifrado con AES-256-GCM. |
 | `POST` | `/auth/mfa/enroll/confirm` | Bearer / Cookie | Admin | No | Sesión actual | Zod (TOTP 6 dígitos) | Auth / Sensitive | Confirmación inicial de enrolamiento. |
 | `POST` | `/auth/mfa/verify` | Bearer / Cookie | Admin | No | Sesión actual | Zod (TOTP 6 dígitos) | Auth / Sensitive | Verificación para elevar sesión administrativa. |

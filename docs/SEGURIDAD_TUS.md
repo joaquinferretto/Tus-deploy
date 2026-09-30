@@ -246,6 +246,19 @@ no es la fuente del mapa principal.
   `default-src 'none'` y `cross-origin-resource-policy: cross-origin` (la Web está en otro dominio). Las de solicitudes
   dirigidas se sirven solo con sesión (dueña o prestador destino) y `no-store`.
 
+## Identidad por teléfono (WhatsApp iniciado por el usuario)
+
+- El único número que verifica es el remitente (`wa_id`) del webhook oficial, después de validar la firma de Meta; la
+  Web nunca lo aporta. El desafío se reconoce antes del asistente: nunca llega a Groq, a herramientas ni a búsquedas.
+- Código de 8 símbolos con `crypto.randomInt`, solo hash en la base, 10 minutos, un solo uso (UPDATE condicional),
+  invalidado tras 5 envíos desde un número equivocado; el texto entrante se guarda redactado. Consumir el desafío y
+  fijar el teléfono ocurren en una transacción; el UNIQUE de PostgreSQL decide si el número ya es de otra persona.
+- Sin enumeración: registro con email existente, recuperación con teléfono desconocido y estado por secreto de consulta
+  responden igual que un caso real; los límites de registro se evalúan antes de saber si la cuenta existe.
+- Webhooks repetidos (`wamid`) no producen efectos ni respuestas duplicadas; un fallo de Meta al responder no revierte la
+  identidad.
+- Auditoría (`phone.*`) con números enmascarados. El admin nunca marca un teléfono como verificado.
+
 ## Gate obligatorio antes de staging
 
 - [ ] Working tree esperado y commit/release ID registrados; `opencode.json` fuera del cambio.

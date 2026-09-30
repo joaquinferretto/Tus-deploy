@@ -486,6 +486,79 @@ Reemplaza W09-02 **solo** para trabajos con `origen = 'solicitud'`; el marketpla
 | Servicio | nombre, profesión, descripción, ícono, orden, categoría (mover), sinónimos, activo | prestadores que lo ofrecen / en el mapa | id (estable) |
 | Zona / Barrio | nombre, polígono (dibujar, mover, borrar), punto de referencia, zona del barrio, orden, activo | conteos | borrado físico (no existe) |
 
+## IDN: identidad por teléfono y WhatsApp (2026-09-30)
+
+**Estado:** implementado y probado en local (API, Web, admin, PostgreSQL 16). Producción pendiente del despliegue.
+
+### IDN-01: una cuenta, una persona, un teléfono
+
+- La cuenta representa a la persona; puede ser cliente, prestador, propietario de alojamiento o lo que venga, con UN
+  teléfono de identidad. El teléfono vive en la persona (`"User"."phoneNumber"`), no en un rol ni en un perfil.
+- UNIQUE real en PostgreSQL: dos personas no comparten teléfono de identidad (muchos NULL permitidos: las cuentas
+  históricas no tienen). Se guarda solo verificado; un número a verificar es `phonePending`.
+- El teléfono COMERCIAL que publique un prestador o un alojamiento es otro dato, sin UNIQUE global, y no tiene por qué
+  coincidir. No se aplica UNIQUE a teléfonos de contacto (reservas, alojamientos).
+
+### IDN-02: verificación iniciada por el usuario (costo mínimo)
+
+- TUS no manda OTP. Crea un desafío y la Web abre WhatsApp con `VERIFICAR TUS <código>` escrito; la persona toca Enviar.
+- El webhook oficial (firma `X-Hub-Signature-256` validada primero) lo reconoce ANTES del asistente, lo verifica contra
+  el `wa_id` que informa Meta (nunca un número enviado por la Web) y responde con texto fijo: "✅ Tu número quedó
+  verificado correctamente en TUS. Ya podés volver a la aplicación." Sin IA, sin Groq, sin herramientas.
+- La respuesta va dentro de la conversación que abrió el usuario; no se usan plantillas de autenticación ni mensajes
+  proactivos como flujo principal. El costo final depende de las políticas y precios vigentes de Meta.
+- La verificación no depende de la entrega de la respuesta: si Meta falla, el teléfono queda verificado igual y el error
+  de transporte se registra en el desafío (`confirmacion_error`) y en la auditoría.
+
+### IDN-03: desafío
+
+- 8 símbolos de un alfabeto sin confusiones (sin 0/O/1/I/L), `crypto.randomInt`: ≈ 39,6 bits. Vence en 10 minutos, se
+  guarda solo el hash (el mensaje entrante se almacena como `VERIFICAR TUS ********`), un solo uso (UPDATE condicional),
+  uno vivo por cuenta y propósito (un desafío nuevo reemplaza al anterior), 5 envíos desde un número equivocado lo
+  invalidan. Propósitos: `verificar_telefono`, `cambiar_telefono`, `recuperar_contrasena`.
+- Idempotencia: el mismo mensaje de Meta (`wamid`) reentregado no verifica dos veces ni responde dos veces; un
+  procesamiento que se cayó antes de registrar el resultado se completa en el reintento.
+- Límites (tabla `auth_rate_limits`): crear 5/15 min por cuenta, 5/h por teléfono, 30/15 min por IP; recuperación
+  3/15 min por teléfono. El límite de mensajes entrantes de WhatsApp sigue vigente.
+
+### IDN-04: email y cuentas históricas
+
+- El email no se elimina: login, recuperación por email, Google y los avisos de seguridad siguen igual. Email verificado
+  y teléfono verificado son estados distintos que conviven.
+- Una cuenta queda verificada por email O por teléfono: con cualquiera de los dos puede ingresar, crear solicitudes y
+  darse de alta como prestador. La autoridad de administrador sigue exigiendo email verificado (allowlist + MFA).
+- El registro pide el teléfono y muestra la verificación por WhatsApp; "Prefiero verificar por email" sigue disponible.
+  El email todavía es obligatorio en el modelo (`"User".email` NOT NULL UNIQUE; login, recuperación y avisos lo usan):
+  hacerlo opcional es una fase aparte.
+- Cuentas históricas: siguen ingresando; "Mi perfil" les propone verificar el número. Hoy ninguna operación exige
+  teléfono verificado. Candidatas para exigirlo cuando haya adopción: publicar el perfil de prestador, cobrar con
+  Mercado Pago y operar alojamientos. Los prestadores de prueba creados por el admin quedan exentos.
+
+### IDN-05: ingreso, cambio de número y recuperación
+
+- Ingreso con email o celular + contraseña (mismo limitador y mismo error genérico).
+- Cambiar el número: se verifica el nuevo desde SU WhatsApp; el anterior sigue siendo la identidad hasta entonces y
+  después queda libre. Un número de otra persona se rechaza al verificar (la transacción se revierte y el desafío queda
+  invalidado por `conflicto`) sin revelarlo al crear el desafío.
+- Recuperación por WhatsApp: el teléfono se prueba enviando el mensaje y la página recibe UNA vez el token de
+  recuperación normal (la misma tabla y el mismo cierre que la recuperación por email: sesiones revocadas, MFA intacto).
+  Un teléfono desconocido recibe la misma respuesta.
+- Cuenta creada y nunca verificada: `/verificar-telefono` la retoma probando la contraseña.
+
+### IDN-06: administración
+
+- El admin ve el teléfono enmascarado, su fecha y el pendiente, y filtra por verificado / pendiente / sin teléfono.
+- Puede cargar un número como PENDIENTE (la persona lo verifica desde WhatsApp) o liberar un teléfono verificado (por
+  ejemplo, si el número cambió de dueño). No existe forma de marcarlo como verificado desde el panel. Todo auditado.
+- Nunca se muestran códigos, hashes ni números completos en listados.
+
+### IDN-07: pendiente de producción
+
+- `TUS_WHATSAPP_PUBLIC_NUMBER` (número oficial, público) en Hostinger.
+- No hay adopción automática de números de contactos de WhatsApp ya vinculados (`contactos_whatsapp`): no existía un
+  teléfono de identidad del que copiar y no se eligen ganadores ante duplicados. Si se quisiera, sería una campaña
+  consciente con auditoría previa de duplicados.
+
 ## Alcance de la Build
 
 Incluido:

@@ -658,6 +658,19 @@ session_required/circuit_open con versión). `sesiones_navegador_proveedor` (est
 `auditoria_identidad` (append-only, DNI/CUIL enmascarados). Relaciones lógicas sin FK: `verificacion_id` y `tenant_id`.
 
 **GOOGLE SIGN-IN.** `20260929100000_tus_google_federated_auth` (aditiva, solo tablas nuevas):
+**IDENTIDAD POR TELÉFONO.** `20261019100000_tus_identidad_telefono` (aditiva). En `"User"` (la persona):
+`"phoneNumber"` (E.164, UNIQUE `User_phoneNumber_key`, NULL en cuentas sin teléfono; CHECK `ck_user_phone_e164`),
+`"phoneVerifiedAt"` (CHECK `ck_user_phone_verified_pair`: ambos o ninguno) y `"phonePending"` (número a verificar, CHECK
+E.164, sin UNIQUE). El teléfono se escribe solo al verificarlo desde WhatsApp. `desafios_telefono`: `id`, `cuenta_id`
+(FK `"Account"(id)` ON DELETE CASCADE), `telefono` (E.164 esperado), `proposito` (CHECK `verificar_telefono |
+cambiar_telefono | recuperar_contrasena`), `hash_desafio` (SHA-256, UNIQUE; el código nunca se guarda),
+`hash_secreto_consulta` (flujos sin sesión), `expira_en` (10 min), `usado_en`, `invalidado_en` + `motivo_invalidacion`
+(CHECK `reemplazado | intentos | conflicto`), `intentos_fallidos` (desde un número equivocado; 5 invalidan),
+`wamid_verificacion` (idempotencia), `entregado_en` (autorización de recuperación entregada una vez),
+`confirmacion_enviada_en` / `confirmacion_error` (resultado del transporte, nunca revierte la identidad), `creado_en`.
+Índice parcial único `uq_desafios_telefono_activo (cuenta_id, proposito) WHERE usado_en IS NULL AND invalidado_en IS
+NULL`: un desafío vivo por cuenta y propósito.
+
 `identidades_externas` (identidad federada permanente `(proveedor, emisor, sujeto)` única; FK física a `"Account"(id)`
 ON DELETE RESTRICT / ON UPDATE NO ACTION; `proveedor` con CHECK `google`; el email es solo informativo y nunca identifica).
 `transacciones_oauth` (state/nonce/PKCE de cada intento; solo el sha256 del `state`, único; consumo atómico de un solo uso;
