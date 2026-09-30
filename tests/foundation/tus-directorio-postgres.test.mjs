@@ -91,3 +91,38 @@ test(
     assert.deepEqual(r.perfil, [-27.401, -58.701, true, true, true, 'poligono_barrio'])
   }
 )
+
+test(
+  'MAP N+1 PostgreSQL: the public map runs the same number of SQL queries for 1 and for 40 providers (real Prisma adapters)',
+  { skip: !url && 'TUS_DIRECTORIO_PG_URL not set (disposable PostgreSQL only)', timeout: 180000 },
+  () => {
+    const r = runTypeScriptScenario(`${PRISMA}
+      const { crearServicioDirectorio } = await import('./apps/api/src/tus/directorio/composicion.ts')
+      const { PrismaMarketplaceStore } = await import('./apps/api/src/tus/adapters/prisma-marketplace.ts')
+      try {
+        const directorio = crearServicioDirectorio({ application: { marketplace: { store: new PrismaMarketplaceStore(prisma) } }, prisma })
+        const ctx = (tenantId) => ({ tenantId, subjectId: 'a-' + tenantId, sessionId: 's', roles: ['merchant'], permissions: ['tus:marketplace:write'], correlationId: 'c' })
+        async function add(i) {
+          const p = await provider('m' + i)
+          const saved = await directorio.guardarPerfil(ctx(p.tenantId), { displayName: 'Mapa ' + i, profession: 'plomeria', professions: ['plomeria', 'electricidad'], zone: 'Centro' })
+          if (!saved.ok) throw new Error('profile ' + JSON.stringify(saved))
+        }
+        await add(0)
+        queries = 0
+        const one = await directorio.listar({ q: 'Mapa' })
+        const withOne = queries
+        for (let i = 1; i < 40; i++) await add(i)
+        queries = 0
+        const forty = await directorio.listar({ q: 'Mapa' })
+        const withForty = queries
+        const mine = (page) => page.items.filter((w) => w.displayName.startsWith('Mapa ')).length
+        console.log(JSON.stringify({ withOne, withForty, one: one.total >= 1, forty: forty.total >= 40, pageMine: mine(forty) > 0 }))
+      } finally { await prisma.$disconnect() }
+    `)
+    assert.equal(r.one, true)
+    assert.equal(r.forty, true)
+    assert.equal(r.pageMine, true)
+    assert.equal(r.withForty, r.withOne, `1 provider: ${r.withOne} queries, 40 providers: ${r.withForty}`)
+    assert.ok(r.withOne <= 6, `queries: ${r.withOne}`)
+  }
+)

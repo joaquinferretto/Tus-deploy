@@ -64,6 +64,7 @@ async function call<T>(fetchImpl: Fetch, path: string, init: RequestInit = {}, s
 
 export interface DirectoryFilters {
   oficio?: string
+  categoria?: string
   zona?: string
   q?: string
   verificados?: boolean
@@ -75,6 +76,7 @@ export interface DirectoryFilters {
 export function directoryQuery(filters: DirectoryFilters): string {
   const params = new URLSearchParams()
   if (filters.oficio) params.set('oficio', filters.oficio)
+  if (filters.categoria) params.set('categoria', filters.categoria)
   if (filters.zona) params.set('zona', filters.zona)
   if (filters.q?.trim()) params.set('q', filters.q.trim())
   if (filters.verificados) params.set('verificados', '1')

@@ -236,6 +236,8 @@ export interface MarketplaceStorePort {
     find(listingId: string): Promise<Publicacion | null>
     published(): Promise<Publicacion[]>
     forTenant(tenantId: string): Promise<Publicacion[]>
+    // Batch read for the public directory (one query for every provider of the map). Optional.
+    forTenants?(tenantIds: readonly string[]): Promise<Publicacion[]>
     reserveProduct(input: {
       tenantId: string
       listingId: string
@@ -335,6 +337,12 @@ export class InMemoryMarketplaceStore implements MarketplaceStorePort {
       [...this.listingRecords.values()]
         .filter((listing) => listing.tenantId === tenantId)
         .map((listing) => structuredClone(listing)),
+    forTenants: async (tenantIds: readonly string[]) => {
+      const ids = new Set(tenantIds)
+      return [...this.listingRecords.values()]
+        .filter((listing) => ids.has(listing.tenantId))
+        .map((listing) => structuredClone(listing))
+    },
     reserveProduct: async ({
       tenantId,
       listingId,

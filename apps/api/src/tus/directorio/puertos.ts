@@ -29,6 +29,9 @@ export interface FuentesDirectorio {
   // Ratings of many providers in ONE grouped read (never one per profile).
   calificaciones?(tenantIds: readonly string[]): Promise<Map<string, { average: number; count: number }>>
   ubicacionIdentidadVerificada?(tenantId: string): Promise<AreaDomicilioFallback | null>
+  // Public map/list: the facts of MANY providers in a fixed number of batched reads (merchants,
+  // listings, identity, completed works), whatever the number of profiles.
+  hechosLote?(tenantIds: readonly string[]): Promise<Map<string, { hechos: HechosPrestador; ubicacionVerificada: AreaDomicilioFallback | null }>>
   // Lo que la administración necesita de una página de perfiles, en lecturas por lote (una por
   // fuente, nunca una por prestador).
   resumenAdmin(tenantIds: readonly string[]): Promise<Map<string, ResumenAdminPrestador>>

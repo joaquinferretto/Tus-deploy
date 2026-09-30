@@ -37,12 +37,15 @@ declare const styles: {
   readonly list: string
   readonly main: string
   readonly mapControls: string
+  readonly mapFilter: string
+  readonly mapFilters: string
   readonly mapLayer: string
   readonly mapNotice: string
   readonly mapResults: string
   readonly mapSkeleton: string
   readonly marker: string
   readonly markerActive: string
+  readonly markerCount: string
   readonly menuButton: string
   readonly mobileMenu: string
   readonly nav: string
@@ -53,6 +56,8 @@ declare const styles: {
   readonly popupCategory: string
   readonly popupCta: string
   readonly popupImages: string
+  readonly popupList: string
+  readonly popupListItem: string
   readonly popupMeta: string
   readonly popupTitle: string
   readonly price: string
@@ -70,13 +75,13 @@ declare const styles: {
   readonly searchButton: string
   readonly searchDock: string
   readonly searchInput: string
-  readonly sessionLoading: string
   readonly section: string
   readonly sectionActions: string
   readonly sectionHeader: string
   readonly sectionSubtitle: string
   readonly sectionTitle: string
   readonly seeAll: string
+  readonly sessionLoading: string
   readonly skeletonRow: string
   readonly skipLink: string
   readonly srOnly: string

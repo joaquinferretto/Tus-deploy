@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { createDirectoryClient } from '../directory/directory-client'
 import { AssistantWidget } from './assistant-widget'
 import { HeroSearch } from './hero-search'
+import { MapFilters } from './map-filters'
 import { PublicHeader } from './public-header'
 import { getProvidersSource } from './providers-source'
 import { searchCategory, searchServices, type ServiceSearchDeps, type ServiceSearchOutcome } from './service-search'
@@ -28,7 +29,7 @@ const ProviderMap = dynamic(() => import('./provider-map'), {
 })
 
 export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
-  const [filters, setFilters] = useState<ProviderMapFilters>({ query: '', profession: '', zone: '' })
+  const [filters, setFilters] = useState<ProviderMapFilters>({ query: '', profession: '', zone: '', category: '' })
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null)
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
   const [searchSignal, setSearchSignal] = useState(0)
@@ -44,7 +45,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
   const requestData = requests.data ?? []
   const requestStatus = requests.isPending ? 'loading' : requests.isError ? 'error' : 'success'
   // Sin filtros, una lista vacía significa que todavía no hay prestadores publicados (no "con estos filtros").
-  const filtered = Boolean(filters.query || filters.profession || filters.zone)
+  const filtered = Boolean(filters.query || filters.profession || filters.zone || filters.category)
 
   function selectProvider(id: string) {
     setSelectedProviderId(id)
@@ -60,7 +61,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
     interpret: (text) => directory.interpret(text),
     providers: (next) =>
       queryClient.fetchQuery({
-        queryKey: ['home-providers', next.profession, next.zone, next.query],
+        queryKey: ['home-providers', next.category ?? '', next.profession, next.zone, next.query],
         queryFn: () => getProvidersSource().list(next),
         staleTime: 30_000,
       }),
@@ -125,13 +126,19 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
           </div>
           <div className={styles.searchDock}>
             <HeroSearch busy={searching} onSearch={(text) => void runSearch(text).catch(() => setSummary('No pudimos buscar ahora. Probá de nuevo en unos minutos.'))} />
+            <MapFilters
+              catalog={catalog.data}
+              category={filters.category ?? ''}
+              onChange={(next) => { changeFilters({ query: '', zone: filters.zone, ...next }); setSummary(null) }}
+              service={filters.profession}
+            />
             <div className={styles.mapResults}>
               <span role="status" aria-live="polite">
                 {providerStatus === 'loading' ? 'Buscando profesionales en el mapa…' : providerStatus === 'error' ? 'No pudimos cargar el mapa de profesionales.' : filtered && summary ? summary : providerData.length === 0 ? (filtered ? 'No encontré profesionales para esa búsqueda.' : 'Todavía no hay profesionales publicados en TUS.') : `${providerData.length} ${providerData.length === 1 ? 'profesional en el mapa' : 'profesionales en el mapa'}`}
               </span>
               {providerStatus === 'error' ? <button type="button" onClick={() => void providers.refetch()}>Reintentar</button> : null}
               {filtered && providerStatus === 'success' && providerData.length === 0 ? <a href="/publicar">Publicar solicitud</a> : null}
-              {filtered ? <button type="button" onClick={() => { changeFilters({ query: '', profession: '', zone: '' }); setSummary(null) }}>Ver todos</button> : null}
+              {filtered ? <button type="button" onClick={() => { changeFilters({ query: '', profession: '', zone: '', category: '' }); setSummary(null) }}>Ver todos</button> : null}
             </div>
           </div>
         </section>

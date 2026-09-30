@@ -327,8 +327,22 @@ export class ServicioDirectorio {
     const perfiles = await this.deps.perfiles.visibles({ ...(oficiosFiltro?.length ? { oficios: oficiosFiltro } : {}), limite: PERFILES_MAXIMOS })
     const now = this.now()
     // Ratings of the whole page in ONE grouped read.
-    const calificaciones: Map<string, { average: number; count: number }> =
-      (await this.deps.fuentes.calificaciones?.(perfiles.map((perfil) => perfil.tenantId))) ?? new Map()
+    const tenantIds = perfiles.map((perfil) => perfil.tenantId)
+    const [calificacionesLeidas, lote] = await Promise.all([
+      this.deps.fuentes.calificaciones?.(tenantIds),
+      this.deps.fuentes.hechosLote?.(tenantIds),
+    ])
+    const calificaciones: Map<string, { average: number; count: number }> = calificacionesLeidas ?? new Map()
+    if (lote) {
+      // Fixed number of reads for the whole map (no per-provider query).
+      return perfiles.flatMap((perfil) => {
+        const item = lote.get(perfil.tenantId)
+        if (!item?.hechos.aprobado) return []
+        const hechos: HechosPrestador = { ...item.hechos, calificacion: calificaciones.get(perfil.tenantId) ?? null }
+        const ubicacion = resolverUbicacionDePerfil(perfil, item.ubicacionVerificada)
+        return [{ perfil, hechos, ubicacion, publico: proyectarPublico(perfil, hechos, now, ubicacion) }]
+      })
+    }
     const enriquecidos = await Promise.all(
       perfiles.map(async (perfil) => {
         const [hechos, fallback] = await Promise.all([

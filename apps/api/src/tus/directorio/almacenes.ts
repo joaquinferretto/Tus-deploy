@@ -1,4 +1,5 @@
 import type { TusApplicationService } from '../application/tus-application-service.ts'
+import type { Publicacion } from '../catalog/index.ts'
 import { GEOGRAFIA_VACIA, type HechosPrestador, type PerfilPublico, type ServicioResumen } from './modelo.ts'
 import type { OficioId } from './oficios.ts'
 import type { AlmacenPerfiles, FuentesDirectorio, ResumenAdminPrestador } from './puertos.ts'
@@ -90,7 +91,7 @@ export interface ClientePrismaDirectorio {
     upsert(input: { where: Fila; create: Fila; update: Fila }): Promise<Fila>
   }
   $transaction?<T>(operation: (client: ClientePrismaDirectorio) => Promise<T>): Promise<T>
-  trabajo: { count(input: { where: Fila }): Promise<number> }
+  trabajo: { count(input: { where: Fila }): Promise<number>; groupBy?(input: { by: string[]; where: Fila; _count: Fila }): Promise<Fila[]> }
   // Real delegate of verificaciones_identidad (model VerificacionIdentidad); its approved state is 'verified'.
   verificacionIdentidad?: { findMany(input: { where: Fila; select: Fila; distinct?: string[] }): Promise<Fila[]> }
 }
@@ -252,7 +253,8 @@ export class FuentesDirectorioTus implements FuentesDirectorio {
     private readonly application: TusApplicationService,
     private readonly contarCompletados: (tenantId: string) => Promise<number>,
     private readonly resumenCalificaciones?: (tenantIds: readonly string[]) => Promise<Map<string, { average: number; count: number }>>,
-    private readonly resumenOperacion?: (tenantIds: readonly string[]) => Promise<Map<string, { mercadoPago: string; completados: number }>>
+    private readonly resumenOperacion?: (tenantIds: readonly string[]) => Promise<Map<string, { mercadoPago: string; completados: number }>>,
+    private readonly contarCompletadosLote?: (tenantIds: readonly string[]) => Promise<Map<string, number>>
   ) {}
 
   async operacionAdmin(tenantIds: readonly string[]) {
@@ -279,21 +281,61 @@ export class FuentesDirectorioTus implements FuentesDirectorio {
       this.application.identity ? this.application.identity.identidadVerificada(tenantId).catch(() => false) : Promise.resolve(false),
       this.contarCompletados(tenantId).catch(() => 0),
     ])
-    const servicios: ServicioResumen[] = publicaciones
-      .filter((publicacion) => publicacion.published && publicacion.kind === 'service')
-      .map((publicacion) => ({
-        listingId: publicacion.listingId,
-        nombre: publicacion.name,
-        precio: Number.isFinite(publicacion.price) ? publicacion.price : null,
-        moneda: publicacion.currency,
-        modalidadPrecio: publicacion.priceMode ?? null,
-        horario: publicacion.workingHours.map((item) => ({ day: item.day, start: item.start, end: item.end })),
-      }))
-    return { aprobado: prestador?.aprobado ?? false, verificado, trabajosCompletados, servicios }
+    return { aprobado: prestador?.aprobado ?? false, verificado, trabajosCompletados, servicios: serviciosPublicados(publicaciones) }
+  }
+
+  // Same facts as hechos(), for a whole page: merchants, listings, identity and completed works,
+  // each in ONE read. Test doubles without batch reads fall back to per-tenant reads.
+  async hechosLote(tenantIds: readonly string[]) {
+    const unicos = [...new Set(tenantIds)]
+    const resultado = new Map<string, { hechos: HechosPrestador; ubicacionVerificada: AreaDomicilioFallback | null }>()
+    if (unicos.length === 0) return resultado
+    const listings = this.application.marketplace?.store.listings
+    const [resumen, publicaciones, completados] = await Promise.all([
+      this.resumenAdmin(unicos),
+      !listings
+        ? Promise.resolve(new Map<string, Publicacion[]>())
+        : listings.forTenants
+          ? listings.forTenants(unicos).then((items) => {
+            const porTenant = new Map<string, Publicacion[]>()
+            for (const publicacion of items) porTenant.set(publicacion.tenantId, [...(porTenant.get(publicacion.tenantId) ?? []), publicacion])
+            return porTenant
+          })
+          // Test doubles without the batch read (keyed by the tenant asked for).
+          : Promise.all(unicos.map(async (tenantId) => [tenantId, await listings.forTenant(tenantId)] as const)).then((items) => new Map(items)),
+      this.contarCompletadosLote
+        ? this.contarCompletadosLote(unicos).catch(() => new Map<string, number>())
+        : Promise.all(unicos.map(async (tenantId) => [tenantId, await this.contarCompletados(tenantId).catch(() => 0)] as const)).then((items) => new Map(items)),
+    ])
+    for (const tenantId of unicos) {
+      const item = resumen.get(tenantId)
+      resultado.set(tenantId, {
+        hechos: {
+          aprobado: item?.prestador?.aprobado ?? false,
+          verificado: item?.verificado ?? false,
+          trabajosCompletados: completados.get(tenantId) ?? 0,
+          servicios: serviciosPublicados(publicaciones.get(tenantId) ?? []),
+        },
+        ubicacionVerificada: item?.ubicacionVerificada ?? null,
+      })
+    }
+    return resultado
   }
 
   async ubicacionIdentidadVerificada(tenantId: string) {
     return this.application.identity?.ubicacionPublicaVerificada?.(tenantId) ?? null
+  }
+
+  private async resumenIdentidad(tenantIds: string[]): Promise<Map<string, { verificado: boolean; area: AreaDomicilioFallback | null }>> {
+    const identity = this.application.identity
+    const vacio = new Map<string, { verificado: boolean; area: AreaDomicilioFallback | null }>()
+    if (!identity || tenantIds.length === 0) return vacio
+    if (typeof identity.resumenDeTenants === 'function') return identity.resumenDeTenants(tenantIds).catch(() => vacio)
+    // Test doubles without the batch read.
+    return new Map(await Promise.all(tenantIds.map(async (tenantId) => [tenantId, {
+      verificado: await identity.identidadVerificada(tenantId).catch(() => false),
+      area: (await identity.ubicacionPublicaVerificada?.(tenantId).catch(() => null)) ?? null,
+    }] as const)))
   }
 
   // Two batch reads for a whole admin page: merchants (prestadores WHERE tenant_id IN ...) and
@@ -306,11 +348,9 @@ export class FuentesDirectorioTus implements FuentesDirectorio {
         ? Promise.resolve([])
         : merchantStore.findMany
           ? merchantStore.findMany(unicos)
-          // Test doubles without a batch read.
-          : Promise.all(unicos.map((tenantId) => merchantStore.find(tenantId))).then((items) => items.filter((item) => item !== null)),
-      this.application.identity
-        ? this.application.identity.resumenDeTenants(unicos).catch(() => new Map<string, { verificado: boolean; area: AreaDomicilioFallback | null }>())
-        : Promise.resolve(new Map<string, { verificado: boolean; area: AreaDomicilioFallback | null }>()),
+          // Test doubles without a batch read (keyed by the tenant asked for).
+          : Promise.all(unicos.map(async (tenantId) => { const item = await merchantStore.find(tenantId); return item ? { ...item, tenantId } : null })).then((items) => items.filter((item) => item !== null)),
+      this.resumenIdentidad(unicos),
     ])
     const porTenant = new Map(merchants.map((merchant) => [merchant.tenantId, merchant]))
     return new Map(unicos.map((tenantId) => {
@@ -345,4 +385,27 @@ export function operacionAdminPrisma(client: {
 
 export function contarCompletadosPrisma(client: ClientePrismaDirectorio) {
   return (tenantId: string) => client.trabajo.count({ where: { prestadorTenantId: tenantId, estado: 'completed' } })
+}
+
+// Completed works of many providers: one GROUP BY.
+export function contarCompletadosLotePrisma(client: ClientePrismaDirectorio) {
+  return async (tenantIds: readonly string[]) => {
+    const ids = [...new Set(tenantIds)]
+    if (!ids.length || !client.trabajo.groupBy) return new Map<string, number>()
+    const filas = await client.trabajo.groupBy({ by: ['prestadorTenantId'], where: { prestadorTenantId: { in: ids }, estado: 'completed' }, _count: { _all: true } })
+    return new Map(filas.map((fila) => [String(fila['prestadorTenantId']), Number((fila['_count'] as Record<string, unknown>)['_all'])]))
+  }
+}
+
+function serviciosPublicados(publicaciones: readonly Publicacion[]): ServicioResumen[] {
+  return publicaciones
+    .filter((publicacion) => publicacion.published && publicacion.kind === 'service')
+    .map((publicacion) => ({
+      listingId: publicacion.listingId,
+      nombre: publicacion.name,
+      precio: Number.isFinite(publicacion.price) ? publicacion.price : null,
+      moneda: publicacion.currency,
+      modalidadPrecio: publicacion.priceMode ?? null,
+      horario: publicacion.workingHours.map((item) => ({ day: item.day, start: item.start, end: item.end })),
+    }))
 }

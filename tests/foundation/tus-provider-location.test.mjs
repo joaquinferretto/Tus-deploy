@@ -46,7 +46,9 @@ test('provider location priority uses configured zones, identity fallback, then 
   assert.equal(result.configured.locationSource, 'configured')
   assert.equal(result.configured.publicArea, 'Centro')
   assert.deepEqual(result.configured.serviceZones, ['Centro', 'Camba Cuá'])
-  assert.equal(result.configured.mapLocations.length, 2)
+  // Coverage keeps both zones, but the map draws ONE point per provider (DIR-04).
+  assert.equal(result.configured.mapLocations.length, 1)
+  assert.equal(result.configured.mapPoint.label, result.configured.mapLocations[0].label)
   assert.deepEqual(result.configured.coverage, { mode: 'mixto', radiusKm: 10 })
   assert.equal(result.fallback.locationSource, 'identity_fallback')
   assert.equal(result.fallback.publicArea, 'Camba Cuá')

@@ -58,6 +58,10 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
       (await this.client.publicacion.findMany({ where: { publicada: true } })).map(toListing),
     forTenant: async (tenantId: string) =>
       (await this.client.publicacion.findMany({ where: { tenantId } })).map(toListing),
+    forTenants: async (tenantIds: readonly string[]) =>
+      tenantIds.length
+        ? (await this.client.publicacion.findMany({ where: { tenantId: { in: [...new Set(tenantIds)] } } })).map(toListing)
+        : [],
     reserveProduct: async ({
       tenantId,
       listingId,
