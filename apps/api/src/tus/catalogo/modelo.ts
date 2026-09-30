@@ -78,12 +78,18 @@ export function validarPoligono(value: unknown): PoligonoGeoJson | null {
   if (!Array.isArray(rings) || rings.length !== 1 || !Array.isArray(rings[0])) return null
   const points = rings[0].map((point) => Array.isArray(point) && point.length === 2 ? [Number(point[0]), Number(point[1])] as [number, number] : null)
   if (points.some((point) => point === null)) return null
-  const valid = points as [number, number][]
-  if (valid.length < 3 || valid.length > 200 || valid.some(([lng, lat]) => !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180)) return null
+  if (points.length > 200) return null
+  // A repeated consecutive vertex (a double click on the map) is dropped, not an error.
+  const valid = (points as [number, number][]).filter((point, index, all) => index === 0 || point[0] !== all[index - 1]![0] || point[1] !== all[index - 1]![1])
+  if (valid.length < 3 || valid.some(([lng, lat]) => !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180)) return null
   if (new Set(valid.map(([lng, lat]) => `${lng.toFixed(7)}:${lat.toFixed(7)}`)).size < 3) return null
   const first = valid[0]!
   const last = valid.at(-1)!
   const closed = first[0] === last[0] && first[1] === last[1] ? valid : [...valid, first]
+  // Collinear vertices enclose no surface (about 1 m2 minimum): not an area.
+  let doble = 0
+  for (let index = 0; index < closed.length - 1; index += 1) doble += closed[index]![0] * closed[index + 1]![1] - closed[index + 1]![0] * closed[index]![1]
+  if (Math.abs(doble) / 2 < 1e-10) return null
   for (let left = 0; left < closed.length - 1; left += 1)
     for (let right = left + 2; right < closed.length - 1; right += 1) {
       if (left === 0 && right === closed.length - 2) continue

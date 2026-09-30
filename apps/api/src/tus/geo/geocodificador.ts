@@ -16,11 +16,26 @@ export class GeocodificadorNominatim implements GeocodificadorInverso {
     private readonly timeoutMs = 4000
   ) {}
 
+  // The limit covers the request AND reading the body, even if the fetch implementation ignores
+  // the abort signal: whichever finishes first wins, and the request is aborted on timeout.
   async nombres(lat: number, lng: number): Promise<string[]> {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const limite = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { controller.abort(); reject(new Error('reverse geocoder timeout')) }, this.timeoutMs)
+    })
+    try {
+      return await Promise.race([this.consultar(lat, lng, controller.signal), limite])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private async consultar(lat: number, lng: number, signal: AbortSignal): Promise<string[]> {
     const url = `${this.baseUrl.replace(/\/+$/u, '')}/reverse?format=jsonv2&zoom=16&addressdetails=1&accept-language=es&lat=${encodeURIComponent(lat.toFixed(6))}&lon=${encodeURIComponent(lng.toFixed(6))}`
     const response = await this.fetchImpl(url, {
       headers: { 'user-agent': 'TUS/1.0 (https://tusservicios.shop)', accept: 'application/json' },
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal,
     })
     if (!response.ok) return []
     const body = (await response.json()) as { address?: Record<string, unknown> }
