@@ -160,7 +160,8 @@ test(
     assert.match(r.email, /^d[a-z0-9]+-nueva@example\.com$/)
     assert.equal(r.normalized, r.email)
     assert.equal(r.verificado, null)
-    assert.deepEqual(r.detalle, ['createdAt', 'displayName', 'email', 'emailVerifiedAt', 'hasPassword', 'id', 'platformAdmin', 'roles', 'status', 'tenantId', 'updatedAt'])
+    // Phone identity fields are raw here; the admin router masks them (IDN-06).
+    assert.deepEqual(r.detalle, ['createdAt', 'displayName', 'email', 'emailVerifiedAt', 'hasPassword', 'id', 'phoneNumber', 'phonePending', 'phoneVerifiedAt', 'platformAdmin', 'roles', 'status', 'tenantId', 'updatedAt'])
     assert.equal(r.verificar, true)
     assert.equal(r.verificadoDespues, true)
   }
