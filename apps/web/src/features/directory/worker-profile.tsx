@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import homeStyles from '../home/home.module.css'
 import type { CategoryId } from '../home/types'
 import { RequestForm } from '../requests/request-form'
+import { TurnoBooking } from './turno-booking'
 import { useTusSession } from '../session/use-tus-session'
 import { DAY_NAMES, DirectoryRequestError, createDirectoryClient } from './directory-client'
 import styles from './directory.module.css'
@@ -25,10 +26,15 @@ export function WorkerProfile({ id }: { id: string }): React.ReactNode {
   const session = useTusSession(path)
   const [requesting, setRequesting] = useState(false)
   const [sent, setSent] = useState<{ warning: string | null } | null>(null)
+  const [bookingTurno, setBookingTurno] = useState(false)
   const profile = useQuery({ queryKey: ['trabajador', id], queryFn: () => client.profile(id), retry: (count, error) => !(error instanceof DirectoryRequestError && error.status === 404) && count < 2 })
 
   // Back from sign-in with ?solicitar=1: reopen the request form without losing the worker.
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('turno') === '1') {
+      setBookingTurno(true)
+      setRequesting(false)
+    }
     if (session.status === 'authenticated' && new URLSearchParams(window.location.search).get('solicitar') === '1') {
       setRequesting(true)
       window.history.replaceState(null, '', path)
@@ -136,14 +142,45 @@ export function WorkerProfile({ id }: { id: string }): React.ReactNode {
               Enviamos tu solicitud a {worker.displayName}. Queda pendiente hasta que la acepte. Seguí el estado en{' '}
               <Link href={'/mis-solicitudes' as Route}>Mis solicitudes</Link>.{sent.warning ? ` ${sent.warning}` : ''}
             </p>
-          ) : !requesting ? (
-            <button className={homeStyles.buttonPrimary} onClick={request} type="button">
-              Solicitar servicio
-            </button>
-          ) : null}
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {worker.aceptaTurnos !== false && !bookingTurno ? (
+                <button
+                  className={homeStyles.buttonPrimary}
+                  onClick={() => {
+                    setBookingTurno(true)
+                    setRequesting(false)
+                  }}
+                  type="button"
+                >
+                  Reservar turno
+                </button>
+              ) : null}
+              {worker.aceptaSolicitudes !== false && !requesting ? (
+                <button
+                  className={worker.aceptaTurnos !== false ? homeStyles.buttonSecondary : homeStyles.buttonPrimary}
+                  onClick={() => {
+                    request()
+                    setBookingTurno(false)
+                  }}
+                  type="button"
+                >
+                  Solicitar servicio
+                </button>
+              ) : null}
+            </div>
+          )}
           {session.status === 'guest' && !requesting ? <p className={`${styles.muted}`} style={{ fontSize: '0.85rem', margin: 0 }}>Te vamos a pedir que inicies sesión y volvés acá.</p> : null}
         </aside>
       </div>
+
+      {bookingTurno ? (
+        <TurnoBooking
+          worker={worker}
+          authenticatedName={undefined}
+          onConfirmed={() => {}}
+        />
+      ) : null}
 
       {requesting && !sent && session.status === 'authenticated' ? (
         <section aria-labelledby="solicitar" className={styles.panel} style={{ marginTop: 24 }}>

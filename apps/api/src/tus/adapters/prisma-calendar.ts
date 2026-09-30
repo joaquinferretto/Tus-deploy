@@ -278,6 +278,21 @@ function bookingRow(booking: Reserva): Record<string, unknown> {
     fechaFin: new Date(booking.endsAt),
     estado: booking.status,
     version: booking.version,
+    tarifaId: booking.tarifaId ?? null,
+    tarifaNombre: booking.tarifaNombre ?? null,
+    duracionMinutos: booking.duracionMinutos ?? null,
+    precioLista: booking.precioLista ?? null,
+    precioFinal: booking.precioFinal ?? null,
+    moneda: booking.moneda ?? 'ARS',
+    clienteNombre: booking.clienteNombre ?? null,
+    clienteTelefono: booking.clienteTelefono ?? null,
+    clienteEmail: booking.clienteEmail ?? null,
+    esInvitado: booking.esInvitado ?? false,
+    modificadoPorAdminId: booking.modificadoPorAdminId ?? null,
+    motivoModificacionPrecio: booking.motivoModificacionPrecio ?? null,
+    forzadoFueraHorario: booking.forzadoFueraHorario ?? false,
+    motivoForzado: booking.motivoForzado ?? null,
+    notas: booking.notas ?? null,
     fechaCreacion: new Date(booking.createdAt),
     fechaActualizacion: new Date(booking.updatedAt),
   }
@@ -352,6 +367,21 @@ function toBooking(row: Record<string, unknown>): Reserva {
     status: row['estado'] as Reserva['status'],
     version: Number(row['version']),
     policyVersion: 'calendar-policy-1',
+    tarifaId: row['tarifaId'] ? String(row['tarifaId']) : undefined,
+    tarifaNombre: row['tarifaNombre'] ? String(row['tarifaNombre']) : undefined,
+    duracionMinutos: row['duracionMinutos'] != null ? Number(row['duracionMinutos']) : undefined,
+    precioLista: row['precioLista'] != null ? BigInt(row['precioLista'] as string | number | bigint) : undefined,
+    precioFinal: row['precioFinal'] != null ? BigInt(row['precioFinal'] as string | number | bigint) : undefined,
+    moneda: row['moneda'] ? String(row['moneda']) : 'ARS',
+    clienteNombre: row['clienteNombre'] ? String(row['clienteNombre']) : undefined,
+    clienteTelefono: row['clienteTelefono'] ? String(row['clienteTelefono']) : undefined,
+    clienteEmail: row['clienteEmail'] ? String(row['clienteEmail']) : undefined,
+    esInvitado: Boolean(row['esInvitado']),
+    modificadoPorAdminId: row['modificadoPorAdminId'] ? String(row['modificadoPorAdminId']) : undefined,
+    motivoModificacionPrecio: row['motivoModificacionPrecio'] ? String(row['motivoModificacionPrecio']) : undefined,
+    forzadoFueraHorario: Boolean(row['forzadoFueraHorario']),
+    motivoForzado: row['motivoForzado'] ? String(row['motivoForzado']) : undefined,
+    notas: row['notas'] ? String(row['notas']) : undefined,
     createdAt: new Date(String(row['fechaCreacion'])).toISOString(),
     updatedAt: new Date(String(row['fechaActualizacion'])).toISOString(),
   }
@@ -365,7 +395,7 @@ function decodeResult(
   value: unknown
 ): Reserva | { status: 'replay'; booking: Reserva } | { status: 'rejected'; reason: 'capacity' } {
   return JSON.parse(JSON.stringify(value), (key, item) =>
-    key === 'minor' && typeof item === 'string' && /^\d+n$/u.test(item)
+    (key === 'minor' || key === 'precioLista' || key === 'precioFinal') && typeof item === 'string' && /^\d+n$/u.test(item)
       ? BigInt(item.slice(0, -1))
       : item
   ) as Reserva | { status: 'replay'; booking: Reserva } | { status: 'rejected'; reason: 'capacity' }

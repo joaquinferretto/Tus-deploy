@@ -24,6 +24,9 @@ import { PrismaTrabajoStore } from './tus/adapters/prisma-work.ts'
 import type { ClientePrismaSolicitudes } from './tus/solicitudes/almacenes.ts'
 import { crearServicioDirectorio } from './tus/directorio/composicion.ts'
 import { crearRouterDirectorio } from './tus/directorio/http.ts'
+import { ServicioTurnos } from './tus/calendar/turnos-service.ts'
+import { crearRouterTurnos } from './tus/calendar/turnos-http.ts'
+import type { PrismaClient } from '@prisma/client'
 import { crearAltaPrestadorAdmin, crearEdicionPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import { crearRouterAdmin } from './tus/admin/http.ts'
@@ -235,6 +238,8 @@ export function createApp(options: CreateAppOptions = {}): Application {
     }))
     app.use(crearRouterDirectorio({ servicio: directorio, sessions, adminSave: crearAltaPrestadorAdmin({ accounts: auth.store, application, directorio, createManagedAccount: (input) => auth.service.createManagedProviderAccount(input) }) }))
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
+    const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient)
+    app.use(crearRouterTurnos({ servicio: servicioTurnos, sessions }))
     // Platform administration panel (read views + publish/hide a profile), behind the MFA gate.
     // Usage counts of the catalog lists come from aggregate queries (GROUP BY), never per row.
     // Platform support over works (cancel with payments; never moves money).

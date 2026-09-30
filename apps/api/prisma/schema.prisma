@@ -2028,6 +2028,22 @@ model Reserva {
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 
+  tarifaId                 String?  @map("tarifa_id")
+  tarifaNombre             String?  @map("tarifa_nombre")
+  duracionMinutos          Int?     @map("duracion_minutos")
+  precioLista              BigInt?  @map("precio_lista")
+  precioFinal              BigInt?  @map("precio_final")
+  moneda                   String?  @default("ARS") @map("moneda")
+  clienteNombre            String?  @map("cliente_nombre")
+  clienteTelefono          String?  @map("cliente_telefono")
+  clienteEmail             String?  @map("cliente_email")
+  esInvitado               Boolean  @default(false) @map("es_invitado")
+  modificadoPorAdminId     String?  @map("modificado_por_admin_id")
+  motivoModificacionPrecio String?  @map("motivo_modificacion_precio")
+  forzadoFueraHorario      Boolean  @default(false) @map("forzado_fuera_horario")
+  motivoForzado            String?  @map("motivo_forzado")
+  notas                    String?  @map("notas")
+
   calendario  Calendario   @relation(fields: [tenantId, calendarioId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_calendarios")
   publicacion Publicacion? @relation(fields: [tenantId, publicacionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_publicaciones")
   trabajos    Trabajo[]
@@ -2861,9 +2877,13 @@ model PerfilPublicoPrestador {
   barrio             Barrio?        @relation(fields: [barrioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_barrio")
   zonaUbicacion      ZonaUbicacion? @relation(fields: [zonaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_zona")
   prestador          Prestador @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_prestador")
+  // Switches de modalidades
+  aceptaTurnos           Boolean  @default(true) @map("acepta_turnos")
+  aceptaSolicitudes      Boolean  @default(true) @map("acepta_solicitudes")
   // Every service the provider offers (N:M). `oficio` is the principal one and always belongs to
   // this set (deferred FK fk_perfiles_servicio_principal, defined in SQL).
   servicios          PerfilServicio[]
+  tarifas            TarifaServicioPrestador[]
 
   @@unique([tenantId, prestadorId], map: "uq_perfiles_publicos_prestador_prestador")
   @@index([visible, oficio], map: "ix_perfiles_publicos_prestador_oficio")
@@ -3017,6 +3037,7 @@ model OficioServicio {
   actualizadoEn DateTime           @map("actualizado_en")
   sinonimos     SinonimoOficio[]
   perfiles      PerfilServicio[]
+  tarifas       TarifaServicioPrestador[]
 
   @@unique([slug], map: "uq_oficios_servicio_slug")
   @@index([categoriaId], map: "ix_oficios_servicio_categoria")
@@ -3026,16 +3047,42 @@ model OficioServicio {
 // Provider profile <-> service (oficio) many-to-many. One row per pair (primary key), ordered;
 // orden 0 is the principal service shown first.
 model PerfilServicio {
-  perfilId  String                 @map("perfil_id")
-  oficioId  String                 @map("oficio_id")
-  orden     Int                    @default(0) @map("orden")
-  creadoEn  DateTime               @default(now()) @map("creado_en")
-  perfil    PerfilPublicoPrestador @relation(fields: [perfilId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_perfil_servicios_perfil")
-  oficio    OficioServicio         @relation(fields: [oficioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfil_servicios_oficio")
+  perfilId               String                 @map("perfil_id")
+  oficioId               String                 @map("oficio_id")
+  orden                  Int                    @default(0) @map("orden")
+  creadoEn               DateTime               @default(now()) @map("creado_en")
+  turnosHabilitados      Boolean                @default(true) @map("turnos_habilitados")
+  solicitudesHabilitadas Boolean                @default(true) @map("solicitudes_habilitadas")
+  precioBase             BigInt?                @map("precio_base")
+  duracionMinutos        Int                    @default(60) @map("duracion_minutos")
+  bufferMinutos          Int                    @default(0) @map("buffer_minutos")
+  modalidad              String                 @default("presencial") @map("modalidad")
+  perfil                 PerfilPublicoPrestador @relation(fields: [perfilId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_perfil_servicios_perfil")
+  oficio                 OficioServicio         @relation(fields: [oficioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfil_servicios_oficio")
 
   @@id([perfilId, oficioId], map: "perfil_servicios_pkey")
   @@index([oficioId], map: "ix_perfil_servicios_oficio")
   @@map("perfil_servicios")
+}
+
+model TarifaServicioPrestador {
+  id                 String                 @id(map: "tarifas_servicio_prestador_pkey")
+  tenantId           String                 @map("tenant_id")
+  perfilId           String                 @map("perfil_id")
+  oficioId           String                 @map("oficio_id")
+  nombre             String                 @map("nombre")
+  duracionMinutos    Int                    @map("duracion_minutos")
+  precio             BigInt                 @map("precio")
+  activo             Boolean                @default(true) @map("activo")
+  orden              Int                    @default(0) @map("orden")
+  fechaCreacion      DateTime               @default(now()) @map("fecha_creacion")
+  fechaActualizacion DateTime               @updatedAt @map("fecha_actualizacion")
+
+  perfil             PerfilPublicoPrestador @relation(fields: [perfilId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tarifas_servicio_perfil")
+  oficio             OficioServicio         @relation(fields: [oficioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_tarifas_servicio_oficio")
+
+  @@index([perfilId, oficioId], map: "ix_tarifas_servicio_perfil_oficio")
+  @@map("tarifas_servicio_prestador")
 }
 
 model SinonimoOficio {

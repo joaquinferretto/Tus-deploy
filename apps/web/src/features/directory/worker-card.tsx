@@ -60,6 +60,11 @@ export function WorkerCard({
         <Link className={homeStyles.buttonSecondary} href={profileHref(worker.id)}>
           Ver perfil
         </Link>
+        {worker.aceptaTurnos !== false && !onChoose ? (
+          <Link className={homeStyles.buttonPrimary} href={`${profileHref(worker.id)}?turno=1` as Route}>
+            Reservar turno
+          </Link>
+        ) : null}
         {onChoose ? (
           <button className={homeStyles.buttonPrimary} onClick={onChoose} type="button">
             {chooseLabel}

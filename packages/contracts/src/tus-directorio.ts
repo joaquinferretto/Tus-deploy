@@ -87,11 +87,26 @@ export interface CoberturaPublicaPrestador {
   radiusKm: number | null
 }
 
+export interface TarifaServicioPublica {
+  id: string
+  nombre: string
+  duracionMinutos: number
+  precio: number
+  moneda: string
+}
+
 export interface ServicioPrestadorPublico {
   id: OficioTus
   label: string
   title: string
   categoryId: string | null
+  turnosHabilitados?: boolean
+  solicitudesHabilitadas?: boolean
+  precioBase?: number | null
+  duracionMinutos?: number
+  bufferMinutos?: number
+  modalidad?: string
+  tarifas?: TarifaServicioPublica[]
 }
 
 export interface PrestadorPublico {
@@ -101,6 +116,9 @@ export interface PrestadorPublico {
   profession: { id: OficioTus; label: string; title: string }
   // Every service the provider offers (principal first). Absent in older payloads.
   professions?: ServicioPrestadorPublico[]
+  // Switches de atención
+  aceptaTurnos?: boolean
+  aceptaSolicitudes?: boolean
   approximateArea: string
   publicArea: string
   serviceZones: string[]
@@ -119,9 +137,56 @@ export interface PrestadorPublico {
   startingPrice: { amount: number; currency: string } | null
 }
 
+export interface SlotDisponible {
+  inicio: string
+  fin: string
+  duracionMinutos: number
+  disponible: boolean
+}
+
+export interface SolicitudReservaTurno {
+  oficioId: string
+  tarifaId?: string
+  inicio: string
+  clienteNombre?: string
+  clienteTelefono?: string
+  clienteEmail?: string
+  notas?: string
+}
+
+export interface DetalleTurno {
+  id: string
+  reservaId: string
+  tenantId: string
+  prestadorId: string
+  prestadorNombre: string
+  oficioId: string
+  oficioNombre?: string
+  tarifaId?: string | null
+  tarifaNombre?: string | null
+  inicio: string
+  fin: string
+  duracionMinutos: number
+  precioLista: number | null
+  precioFinal: number | null
+  moneda: string
+  estado: 'confirmed' | 'cancelled' | 'cancelled-late' | 'no-show' | string
+  clienteNombre?: string | null
+  clienteTelefono?: string | null
+  clienteEmail?: string | null
+  esInvitado: boolean
+  modificadoPorAdminId?: string | null
+  motivoModificacionPrecio?: string | null
+  forzadoFueraHorario?: boolean
+  motivoForzado?: string | null
+  notas?: string | null
+  fechaCreacion: string
+}
+
 export interface PerfilPrestadorPublico extends PrestadorPublico {
   description: string | null
   services: { listingId: string; name: string; price: number | null; currency: string; priceMode: string | null; days: number[] }[]
+  tarifas?: TarifaServicioPublica[]
 }
 
 export interface CandidatoPrestador extends PrestadorPublico {

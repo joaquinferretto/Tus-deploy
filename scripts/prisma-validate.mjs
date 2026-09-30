@@ -13,15 +13,16 @@ if (!existsSync(envPath) || !existsSync(prismaCliPath)) {
   process.exit(1)
 }
 
-const databaseUrl = readRootDatabaseUrl(envPath)
+const databaseUrl = readRootEnvVar(envPath, 'DATABASE_URL')
 if (!databaseUrl) {
   console.error('Prisma validation unavailable: canonical root DATABASE_URL is missing')
   process.exit(1)
 }
+const directUrl = readRootEnvVar(envPath, 'DIRECT_URL') || databaseUrl
 
 const result = spawnSync(process.execPath, [prismaCliPath, 'validate', '--schema', schemaPath], {
   cwd: root,
-  env: { ...process.env, DATABASE_URL: databaseUrl },
+  env: { ...process.env, DATABASE_URL: databaseUrl, DIRECT_URL: directUrl },
   stdio: 'inherit',
 })
 
@@ -32,9 +33,9 @@ if (result.error) {
 
 process.exit(result.status ?? 1)
 
-function readRootDatabaseUrl(path) {
+function readRootEnvVar(path, key) {
   for (const line of readFileSync(path, 'utf8').split(/\r?\n/u)) {
-    const match = line.match(/^\s*DATABASE_URL\s*=\s*(.*?)\s*$/u)
+    const match = line.match(new RegExp(`^\\s*${key}\\s*=\\s*(.*?)\\s*$`, 'u'))
     if (!match) continue
     const value = (match[1] ?? '').replace(/^(['"])(.*)\1$/u, '$2').trim()
     return value || undefined

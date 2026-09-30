@@ -36,6 +36,21 @@ export interface Reserva {
   version: number
   priceSnapshot?: MoneySnapshot
   policyVersion: string
+  tarifaId?: string
+  tarifaNombre?: string
+  duracionMinutos?: number
+  precioLista?: bigint
+  precioFinal?: bigint
+  moneda?: string
+  clienteNombre?: string
+  clienteTelefono?: string
+  clienteEmail?: string
+  esInvitado?: boolean
+  modificadoPorAdminId?: string
+  motivoModificacionPrecio?: string
+  forzadoFueraHorario?: boolean
+  motivoForzado?: string
+  notas?: string
   createdAt: string
   updatedAt: string
 }
