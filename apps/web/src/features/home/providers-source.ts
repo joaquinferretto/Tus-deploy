@@ -19,6 +19,7 @@ export function toProviderFilters(filters: ProviderMapFilters): DirectoryFilters
     q: filters.query,
     oficio: filters.profession,
     ...(filters.category && !filters.profession ? { categoria: filters.category } : {}),
+    mapa: true,
     zona: filters.zone,
   }
 }

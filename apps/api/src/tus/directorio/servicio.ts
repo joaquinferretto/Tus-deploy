@@ -43,6 +43,9 @@ export interface FiltrosDirectorio {
   // A service: providers offering it. A category: providers offering ANY of its services.
   oficio?: unknown
   categoria?: unknown
+  // Public map: every visible provider that matches (up to PERFILES_MAXIMOS) in one page, so the
+  // map can draw and cluster all of them; the list keeps its pages of TAMANO_PAGINA.
+  mapa?: unknown
   zona?: unknown
   q?: unknown
   verificados?: unknown
@@ -210,7 +213,9 @@ export class ServicioDirectorio {
     const zona = typeof filtros.zona === 'string' && filtros.zona.trim() ? filtros.zona.trim() : null
     const q = typeof filtros.q === 'string' ? normalizarTexto(filtros.q.slice(0, 80)) : ''
     const orden: OrdenDirectorio = filtros.orden === 'trabajos' || filtros.orden === 'cercania' ? filtros.orden : 'relevancia'
-    const pagina = Math.max(1, Math.min(50, Number.parseInt(String(filtros.pagina ?? '1'), 10) || 1))
+    const mapa = filtros.mapa === true || filtros.mapa === 'true' || filtros.mapa === '1'
+    const tamano = mapa ? PERFILES_MAXIMOS : TAMANO_PAGINA
+    const pagina = mapa ? 1 : Math.max(1, Math.min(50, Number.parseInt(String(filtros.pagina ?? '1'), 10) || 1))
     // Si el texto nombra un oficio ("electricista"), se usa como filtro de oficio.
     const oficioTexto = !oficioFiltro && q ? interpretarNecesidad(q).category : null
 
@@ -236,12 +241,12 @@ export class ServicioDirectorio {
     if (filtros.atiendeHoy === true || filtros.atiendeHoy === 'true' || filtros.atiendeHoy === '1') items = items.filter((item) => item.publico.availability.status === 'atiende_hoy')
 
     const ordenados = this.ordenar(items, orden, zona)
-    const inicio = (pagina - 1) * TAMANO_PAGINA
+    const inicio = (pagina - 1) * tamano
     return {
-      items: ordenados.slice(inicio, inicio + TAMANO_PAGINA).map((item) => item.publico),
+      items: ordenados.slice(inicio, inicio + tamano).map((item) => item.publico),
       total: ordenados.length,
       page: pagina,
-      hasMore: inicio + TAMANO_PAGINA < ordenados.length,
+      hasMore: inicio + tamano < ordenados.length,
     }
   }
 

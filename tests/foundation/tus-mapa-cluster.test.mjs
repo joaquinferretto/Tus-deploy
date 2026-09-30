@@ -120,10 +120,15 @@ test('NO N+1: the public map reads a fixed number of batches for 1 and for 40 pr
     for (const k of Object.keys(calls)) delete calls[k]
     const forty = await directorio.listar({ categoria: 'hogar' })
     const withForty = { ...calls }
-    console.log(JSON.stringify({ withOne, withForty, n1: one.items.length, n40: forty.total, verified: forty.items.every((w) => w.verified), price: forty.items[0].startingPrice }))
+    const mapa = await directorio.listar({ mapa: '1', pagina: '3' })
+    const lista = await directorio.listar({})
+    console.log(JSON.stringify({ mapa: [mapa.items.length, mapa.page, mapa.hasMore], lista: [lista.items.length, lista.hasMore], withOne, withForty, n1: one.items.length, n40: forty.total, verified: forty.items.every((w) => w.verified), price: forty.items[0].startingPrice }))
   `)
   assert.equal(r.n1, 1)
   assert.equal(r.n40, 40)
+  // The map gets every provider in one response; the directory list keeps pages of 12.
+  assert.deepEqual(r.mapa, [40, 1, false])
+  assert.deepEqual(r.lista, [12, true])
   assert.equal(r.verified, true)
   // Listings were read in the batch: the starting price comes from them.
   assert.equal(r.price?.amount, 1000)
@@ -142,9 +147,10 @@ test('FILTERS: Categoría -> Servicio in the home; the service wins over the cat
       none: directoryQuery(toProviderFilters({ query: '', profession: '', zone: '' })),
     }))
   `)
-  assert.equal(r.category, '?categoria=hogar')
-  assert.equal(r.service, '?oficio=plomeria')
-  assert.equal(r.none, '')
+  // The home map asks for every matching provider at once (mapa=1), not the 12 of a list page.
+  assert.equal(r.category, '?categoria=hogar&mapa=1')
+  assert.equal(r.service, '?oficio=plomeria&mapa=1')
+  assert.equal(r.none, '?mapa=1')
   const home = read('apps/web/src/features/home/home-page.tsx')
   assert.match(home, /<MapFilters/)
   const filters = read('apps/web/src/features/home/map-filters.tsx')

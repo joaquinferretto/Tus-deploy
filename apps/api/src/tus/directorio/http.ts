@@ -53,6 +53,7 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
       const resultado = await servicio.listar({
         oficio: request.query['oficio'],
         categoria: request.query['categoria'],
+        mapa: request.query['mapa'],
         zona: request.query['zona'],
         q: request.query['q'],
         verificados: request.query['verificados'],

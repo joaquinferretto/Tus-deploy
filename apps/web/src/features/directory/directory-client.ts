@@ -65,6 +65,8 @@ async function call<T>(fetchImpl: Fetch, path: string, init: RequestInit = {}, s
 export interface DirectoryFilters {
   oficio?: string
   categoria?: string
+  // Home map: every matching provider in one response (the directory list keeps its pages).
+  mapa?: boolean
   zona?: string
   q?: string
   verificados?: boolean
@@ -83,6 +85,7 @@ export function directoryQuery(filters: DirectoryFilters): string {
   if (filters.hoy) params.set('hoy', '1')
   if (filters.orden && filters.orden !== 'relevancia') params.set('orden', filters.orden)
   if (filters.pagina && filters.pagina > 1) params.set('pagina', String(filters.pagina))
+  if (filters.mapa) params.set('mapa', '1')
   const query = params.toString()
   return query ? `?${query}` : ''
 }
