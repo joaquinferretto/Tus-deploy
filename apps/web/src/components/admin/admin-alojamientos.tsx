@@ -272,7 +272,7 @@ export function AdminAlojamientosView(): React.ReactNode {
           <div style={{ padding: '2rem', textAlign: 'center', color: '#6b7280' }}>Cargando datos...</div>
         ) : alojamientos.length === 0 ? (
           <div style={{ padding: '2rem', textAlign: 'center', color: '#6b7280' }}>
-            No hay alojamientos registrados aún. Hacé clic en "+ Nuevo Alojamiento" para crear datos de prueba.
+            No hay alojamientos registrados aún. Hacé clic en &quot;+ Nuevo Alojamiento&quot; para crear datos de prueba.
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>

@@ -11,7 +11,7 @@ interface PageProps {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { id } = await params
   return {
-    title: `Alojamiento | TUS`,
+    title: `Alojamiento ${id} | TUS`,
     description: `Detalles, disponibilidad y reservas para alojamiento en TUS.`,
   }
 }
