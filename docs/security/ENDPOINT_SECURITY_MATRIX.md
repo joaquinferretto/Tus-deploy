@@ -194,3 +194,40 @@ Fecha de corte baseline: 2026-09-30 (Auditoría previa a Fases Turnos / UX-UI / 
 | `POST` | `/tus/v1/admin/identity-verifications/:verificationId/decision` | MFA Elevated | Admin | Sí | Plataforma | Zod (`aprobado`, `rechazado`) | Global | Dictamen administrativo sobre verificación de identidad. |
 | `GET` | `/tus/v1/admin/identity-worker` | MFA Elevated | Admin | Sí | Plataforma | None | Global | Estado del worker de Nosis e identidad. |
 | `POST` | `/tus/v1/admin/identity-worker/:action` | MFA Elevated | Admin | Sí | Plataforma | Zod | Global | Control operativo de reintentos del worker. |
+
+---
+
+## 10. Turnos Avanzados y Concurrencia (Fase 1)
+
+| Method | Route | Auth | Role | MFA | Tenant / Owner | Input Validation | Rate Limit | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/turnos/disponibilidad` | Public | Cualquiera | No | N/A | Query (prestadorId, oficioId, fecha) | Global | Slots disponibles y tarifas activas calculadas en Argentina time. |
+| `POST` | `/api/turnos/reservar` | Public / Cliente | Invitado / Cliente | No | N/A | Zod / Schema | Global | Reserva física protegida por exclusion constraint `btree_gist` en PostgreSQL 16. Captura 23P01/40P01. |
+| `GET` | `/api/turnos/prestador/mis-turnos` | Bearer / Cookie | Prestador | No | `tenantId` de sesión | Query filtros | Global | Listado de turnos de la agenda del prestador autenticado. |
+| `POST` | `/api/turnos/prestador/manual` | Bearer / Cookie | Prestador | No | `tenantId` de sesión | Schema entrada manual | Global | Alta de turno presencial/telefónico ingresado por el prestador. |
+| `POST` | `/api/turnos/admin/forzar` | MFA Elevated | Admin | Sí | Plataforma | Motivo obligatorio | Global | Forzado administrativo de turno fuera de horario con auditoría. |
+| `PATCH` | `/api/turnos/admin/:id/precio` | MFA Elevated | Admin | Sí | Plataforma | Motivo obligatorio | Global | Modificación administrativa de snapshot de precio final con auditoría. |
+| `PUT` | `/api/turnos/prestador/horarios` | Bearer / Cookie | Prestador / Admin | No | Dueño de agenda | Reglas semanales | Global | Configuración de rangos horarios semanales por día. |
+| `POST` | `/api/turnos/prestador/excepciones` | Bearer / Cookie | Prestador / Admin | No | Dueño de agenda | Rango fecha + motivo | Global | Bloqueos por vacaciones, feriados o indisponibilidad. |
+
+---
+
+## 11. Alojamientos y Reservas (Fase 4)
+
+| Method | Route | Auth | Role | MFA | Tenant / Owner | Input Validation | Rate Limit | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/alojamientos/tipos` | Public | Cualquiera | No | N/A | None | Global | Catálogo administrable de tipos (Hotel, Cabaña, Departamento, Motel, etc.). |
+| `GET` | `/api/alojamientos` | Public | Cualquiera | No | N/A | Query filtros | Global | Búsqueda pública por zona, fechas, personas, precio. Calcula precio real o "Desde $X". |
+| `GET` | `/api/alojamientos/:idOrSlug` | Public | Cualquiera | No | N/A | Param ID/Slug | Global | Detalle de alojamiento y unidades. Aplica jerarquía de fotos con fallback a fotos generales. |
+| `POST` | `/api/alojamientos/reservas/hold` | Public / Cliente | Invitado / Cliente | No | N/A | Schema validado | Global | Creación de hold temporal (15m). Exclusión física PostgreSQL 16 `btree_gist` contra solapamiento. |
+| `POST` | `/api/alojamientos/reservas/:id/checkout-preference` | Public / Cliente | Titular / Invitado | No | N/A | Param ID | Global | Preferencia de checkout Mercado Pago (soporte sandbox / local). |
+| `POST` | `/api/alojamientos/reservas/:id/simular-pago` | Public / Cliente | Titular / Invitado | No | N/A | Param ID | Global | Confirmación de pago simulado para testing local continuo sin bloqueador externo. |
+| `POST` | `/api/alojamientos/calificar` | Bearer / Cookie | Cliente | No | Titular de reserva | Puntuación 1-5 | Global | Calificación de alojamiento exclusiva para reservas `completed`. 1:1 único por reserva. |
+| `POST` | `/api/alojamientos` | Bearer / Cookie | Admin / Propietario | No | Propietario o Admin | Schema comercial | Global | Creación de alojamiento (soporta fixtures ficticios de test sin usuario registrado). |
+| `POST` | `/api/alojamientos/:id/unidades` | Bearer / Cookie | Admin / Propietario | No | Dueño de alojamiento | Schema unidad | Global | Alta de unidad (habitación, cabaña, depto) con capacidad y amenities. |
+| `POST` | `/api/alojamientos/unidades/:unidadId/tarifas` | Bearer / Cookie | Admin / Propietario | No | Dueño de unidad | Modalidad y precio | Global | Tarifas por hora, bloque de horas, noche, día o semana con estadía mínima. |
+| `POST` | `/api/alojamientos/:id/imagenes` | Bearer / Cookie | Admin / Propietario | No | Dueño de alojamiento | URL y categoría | Global | Carga de fotos generales (fachada, recepción, piscina, etc.). |
+| `POST` | `/api/alojamientos/unidades/:unidadId/imagenes` | Bearer / Cookie | Admin / Propietario | No | Dueño de unidad | URL y orden | Global | Carga de fotos propias de una unidad específica. |
+| `POST` | `/api/alojamientos/unidades/:unidadId/bloquear` | Bearer / Cookie | Admin / Propietario | No | Dueño de unidad | Rango y motivo | Global | Bloqueo manual por mantenimiento o uso propio. |
+| `GET` | `/api/alojamientos/:id/reservas` | Bearer / Cookie | Admin / Propietario | No | Dueño de alojamiento | Param ID | Global | Listado de reservas, huéspedes y estados comerciales. |
+| `PATCH` | `/api/alojamientos/reservas/:id/estado` | Bearer / Cookie | Admin / Propietario | No | Dueño de alojamiento | Estado objetivo | Global | Transiciones operativas (`checked_in`, `completed`, `cancelled`). |
