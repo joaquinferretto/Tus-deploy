@@ -32,7 +32,7 @@ import {
   type ResolutorCuentaAsistente,
 } from './orquestador.ts'
 import { WhatsappTemplateService } from './plantillas.ts'
-import type { PuertoTransaccionAsistente } from './puertos.ts'
+import type { PuertoTransaccionAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
 import { ServicioSoporteWhatsapp } from './soporte.ts'
 import { ServicioVinculacionWhatsapp } from './vinculacion.ts'
 import { WorkerConversacionesWhatsapp } from './worker.ts'
@@ -131,6 +131,8 @@ export function crearModuloWhatsapp(input: {
   now?: () => number
   metric?: Metrica
   log?: (event: string, fields: Record<string, unknown>) => void
+  // Phone identity verification (auth-security/phone): intercepted before the assistant.
+  verificadorTelefono?: VerificadorTelefonoWhatsapp | null
 }): ModuloWhatsapp {
   const env = input.env
   const config = leerConfiguracionWhatsapp(env)
@@ -195,11 +197,12 @@ export function crearModuloWhatsapp(input: {
     limits: limits.asistente,
     now,
     ...(input.metric ? { metric: input.metric } : {}),
+    verificadorTelefono: input.verificadorTelefono ?? null,
   })
   return {
     config,
     whatsapp,
-    ingreso: new ServicioIngresoWhatsapp(input.transaction, limits.ingreso, now, input.log),
+    ingreso: new ServicioIngresoWhatsapp(input.transaction, limits.ingreso, now, input.log, input.verificadorTelefono ?? null),
     vinculacion,
     soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now),
     plantillas: WhatsappTemplateService.desdeEnv(env),

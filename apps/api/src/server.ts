@@ -48,6 +48,10 @@ import type { ModuloWhatsapp } from './tus/asistente/composicion.ts'
 import type { TusPrismaClient } from './tus/adapters/prisma.ts'
 import { getPrismaClient } from './infrastructure/database/prisma/client.ts'
 import { createPrismaAuthService } from './auth-security/composition.ts'
+import { AlmacenTelefonosPrisma, type ClientePrismaTelefonos } from './auth-security/phone/almacenes.ts'
+import { crearServicioTelefono } from './auth-security/phone/composicion.ts'
+import { crearRouterTelefono } from './auth-security/phone/http.ts'
+import type { RawQueryClient } from './auth-security/adapters/postgres/postgres-rate-limiter.ts'
 import { leerAdminsPlataforma } from './auth-security/application/auth-service.ts'
 import { createAuthRouter } from './auth-security/http/auth-router.ts'
 import { createFederatedAuth, createFederatedAuthRouter, readGoogleAuthSettings } from './auth-security/federated/composition.ts'
@@ -132,6 +136,13 @@ export function createApp(options: CreateAppOptions = {}): Application {
     settings: readGoogleAuthSettings(process.env),
     prisma: prisma as unknown as FederatedPrismaClient,
   })
+  // Phone-first identity: challenges verified by a user-initiated WhatsApp message (webhook).
+  const telefonos = crearServicioTelefono({
+    auth,
+    telefonos: new AlmacenTelefonosPrisma(prisma as unknown as ClientePrismaTelefonos),
+    env: process.env,
+    raw: prisma as unknown as RawQueryClient,
+  })
   const tenancy = createPrismaTenancyService(prisma as unknown as TenantPrismaClient)
   const application = createPrismaTusApplication(prisma)
   // "Buscar trabajador" (directorio) and the one TUS service request used by the home map, the
@@ -152,7 +163,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient)
   const whatsapp = options.tusRouter
     ? undefined
-    : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes, turnos: servicioTurnos })
+    : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes, turnos: servicioTurnos }, telefonos)
   const tusRouter = options.tusRouter ?? createTusHttpRouter({ application, sessions, whatsapp })
   if (whatsapp) app.locals['tusWhatsappAssistant'] = whatsapp
 
@@ -198,6 +209,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     createAuthRouter({
       service: auth.service,
       sessions,
+      phones: telefonos,
       cookies: sessionCookies,
       describeCapabilities: async (accessToken, correlationId, context) => {
         const raw = await rawSessions.resolve(accessToken, correlationId)
@@ -218,6 +230,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
       notify: (accountId, kind) => auth.service.notifyAccount(accountId, kind),
     })
   )
+  app.use(crearRouterTelefono({ servicio: telefonos, sessions, auth: auth.service }))
   app.use(createFederatedAuthRouter(federated.service, federated.webBaseUrl ?? process.env['TUS_WEB_BASE_URL'] ?? null, sessionCookies))
   app.use(createTenancyRouter({ service: tenancy.service, sessions }))
   const tusRoutesEnabled =

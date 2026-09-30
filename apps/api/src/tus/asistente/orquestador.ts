@@ -28,7 +28,7 @@ import {
   type ConversacionWhatsapp,
   type MensajeConversacion,
 } from './modelo.ts'
-import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
+import type { PuertoTransaccionAsistente, RepositoriosAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
 import type { ServicioVinculacionWhatsapp } from './vinculacion.ts'
 
 export const VERSION_PROMPT_SISTEMA = 'tus-whatsapp-v2'
@@ -96,6 +96,8 @@ export interface DependenciasOrquestador {
   limits?: Partial<LimitesAsistente>
   now?: () => number
   metric?: Metrica
+  // Phone verification messages: answered here with fixed text, never with the model.
+  verificadorTelefono?: VerificadorTelefonoWhatsapp | null
 }
 
 type Turno = {
@@ -138,6 +140,15 @@ export class OrquestadorConversacion {
       }
     )
     if (!turn || turn.pending.length === 0) return 'nothing'
+    // Phone verification messages leave the turn BEFORE the model (and before the human-mode
+    // check: a verification is answered even while an operator owns the chat). Their answer is
+    // fixed text; a message whose verification is still being recorded is left for later.
+    const verificaciones = turn.pending.filter((message) => message.metadata['verificacionTelefono'] !== undefined)
+    if (verificaciones.length > 0) {
+      await this.responderVerificaciones(turn, verificaciones, correlationId)
+      turn.pending = turn.pending.filter((message) => message.metadata['verificacionTelefono'] === undefined)
+      if (turn.pending.length === 0) return 'processed'
+    }
     if (turn.conversation.mode === 'human') {
       await this.marcarProcesados(turn.pending, 'processed')
       return 'human'
@@ -803,6 +814,39 @@ export class OrquestadorConversacion {
       now: this.now,
     })
     this.metric('whatsapp.outbound', { type: message.type })
+  }
+
+  private async responderVerificaciones(turn: Turno, messages: MensajeConversacion[], correlationId: string) {
+    const listos = messages.filter((message) => (message.metadata['verificacionTelefono'] as { resultado?: string } | undefined)?.resultado)
+    if (listos.length === 0) return
+    const recientes = await this.deps.transaction.ejecutar((repositories) => repositories.mensajes.ultimos(turn.conversation.conversationId, 50))
+    for (const message of listos) {
+      const verificacion = message.metadata['verificacionTelefono'] as { resultado: string; desafioId: string | null; respuesta: string | null }
+      // Crash safety: a confirmation already recorded for this message is never sent again.
+      const yaEnviado = recientes.some((item) => item.direction === 'outbound' && Array.isArray(item.metadata['inReplyTo']) && (item.metadata['inReplyTo'] as string[]).includes(message.messageId))
+      if (verificacion.respuesta && !yaEnviado) {
+        const enviado = await enviarMensajeSaliente({
+          transaction: this.deps.transaction,
+          whatsapp: this.deps.whatsapp,
+          conversationId: turn.conversation.conversationId,
+          contact: turn.contact,
+          message: { type: 'text', text: verificacion.respuesta },
+          actor: 'phone-verification',
+          correlationId,
+          inReplyTo: [message.messageId],
+          replyToWamid: undefined,
+          now: this.now,
+        })
+        // The transport result is recorded; it never reverts the verification.
+        if (verificacion.desafioId && (verificacion.resultado === 'verificado' || verificacion.resultado === 'recuperacion'))
+          await this.deps.verificadorTelefono?.registrarConfirmacion(
+            verificacion.desafioId,
+            enviado.status === 'sent' ? { ok: true } : { ok: false, error: String(enviado.metadata['errorCode'] ?? 'SEND_FAILED') }
+          ).catch(() => undefined)
+        this.metric('whatsapp.phone_verification_reply', { sent: enviado.status === 'sent' })
+      }
+    }
+    await this.marcarProcesados(listos, 'processed')
   }
 
   private async marcarProcesados(messages: MensajeConversacion[], status: 'processed') {

@@ -8,7 +8,7 @@ import {
   type ConversacionWhatsapp,
   type MensajeConversacion,
 } from './modelo.ts'
-import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
+import type { PuertoTransaccionAsistente, RepositoriosAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
 import { WHATSAPP_CONSENT_ORIGINS, crearConsentimientoWhatsApp } from '../whatsapp/consent.ts'
 
 export interface LimitesIngreso {
@@ -41,8 +41,45 @@ export class ServicioIngresoWhatsapp {
     private readonly transaction: PuertoTransaccionAsistente,
     private readonly limits: LimitesIngreso = LIMITES_INGRESO_POR_DEFECTO,
     private readonly now: () => number = Date.now,
-    private readonly log: (event: string, fields: Record<string, unknown>) => void = () => undefined
+    private readonly log: (event: string, fields: Record<string, unknown>) => void = () => undefined,
+    private readonly verificador: VerificadorTelefonoWhatsapp | null = null
   ) {}
+
+  private esVerificacion(event: MensajeEntranteMeta): boolean {
+    return Boolean(this.verificador && event.type === 'text' && this.verificador.esMensajeVerificacion(event.text))
+  }
+
+  // Deterministic phone verification of an already persisted inbound message. Idempotent: the
+  // identity module ignores a wamid it already used, and the outcome is written once, so a
+  // redelivered webhook neither verifies twice nor queues a second confirmation.
+  private async verificarTelefono(event: MensajeEntranteMeta, correlationId: string): Promise<void> {
+    const pendiente = await this.transaction.ejecutar(async (repositories) => {
+      const message = await repositories.mensajes.buscarPorWamid(event.wamid)
+      return message && message.status !== 'rate_limited' && !(message.metadata['verificacionTelefono'] as { resultado?: string } | undefined)?.resultado ? message : null
+    })
+    if (!pendiente || !this.verificador) return
+    const verificacion = await this.verificador.verificarDesdeWhatsapp({ waId: event.waId, texto: event.text ?? '', wamid: event.wamid })
+    const nowIso = new Date(this.now()).toISOString()
+    await this.transaction.ejecutar(async (repositories) => {
+      const current = await repositories.mensajes.buscar(pendiente.messageId)
+      if (!current || (current.metadata['verificacionTelefono'] as { resultado?: string } | undefined)?.resultado) return
+      await repositories.mensajes.actualizar({
+        ...current,
+        // Nothing for the assistant to do: marked processed unless a confirmation must be sent.
+        status: verificacion.respuesta ? 'received' : 'processed',
+        metadata: { ...current.metadata, verificacionTelefono: { resultado: verificacion.resultado, desafioId: verificacion.desafioId, respuesta: verificacion.respuesta } },
+      })
+      if (verificacion.respuesta)
+        await repositories.cola.encolar({
+          jobId: `trabajo-conversacion-${randomUUID()}`,
+          conversationId: current.conversationId,
+          availableAt: nowIso,
+          correlationId,
+          now: nowIso,
+        })
+    })
+    this.log('whatsapp.phone_verification', { outcome: verificacion.resultado, correlationId })
+  }
 
   async procesar(events: EventoWebhookMeta[], correlationId: string): Promise<ResultadoIngreso> {
     const result: ResultadoIngreso = {
@@ -76,9 +113,10 @@ export class ServicioIngresoWhatsapp {
         else result.statusesIgnored += 1
         continue
       }
+      const verificacion = this.esVerificacion(event)
       try {
         const outcome = await this.transaction.ejecutar((repositories) =>
-          this.registrarEntrante(repositories, event, correlationId)
+          this.registrarEntrante(repositories, event, correlationId, verificacion)
         )
         if (outcome === 'duplicate') result.duplicates += 1
         else if (outcome === 'rate_limited') result.rateLimited += 1
@@ -88,6 +126,8 @@ export class ServicioIngresoWhatsapp {
         if ((error as { code?: string })?.code === 'P2002') result.duplicates += 1
         else throw error
       }
+      // Also on a duplicate: a delivery that crashed before recording the outcome is completed now.
+      if (verificacion) await this.verificarTelefono(event, correlationId)
     }
     this.log('whatsapp.webhook_processed', { ...result, correlationId })
     return result
@@ -96,7 +136,8 @@ export class ServicioIngresoWhatsapp {
   private async registrarEntrante(
     repositories: RepositoriosAsistente,
     event: MensajeEntranteMeta,
-    correlationId: string
+    correlationId: string,
+    verificacion = false
   ): Promise<'accepted' | 'duplicate' | 'rate_limited'> {
     if (await repositories.mensajes.buscarPorWamid(event.wamid)) return 'duplicate'
     const nowMs = this.now()
@@ -180,7 +221,8 @@ export class ServicioIngresoWhatsapp {
       wamid: event.wamid,
       direction: 'inbound',
       type: event.type,
-      text: event.text ? event.text.slice(0, 4096) : null,
+      // A verification code is never stored (single-use or not): only the fact that one arrived.
+      text: verificacion ? 'VERIFICAR TUS ********' : event.text ? event.text.slice(0, 4096) : null,
       status: rateLimited ? 'rate_limited' : 'received',
       statusAt: null,
       externalTimestamp: new Date(event.timestamp).toISOString(),
@@ -190,6 +232,7 @@ export class ServicioIngresoWhatsapp {
         ...(event.replyId ? { replyId: event.replyId.slice(0, 256) } : {}),
         ...(event.media ? { media: { id: event.media.id, mimeType: event.media.mimeType } } : {}),
         ...(event.location ? { location: event.location } : {}),
+        ...(verificacion ? { verificacionTelefono: {} } : {}),
       },
       correlationId,
       createdAt: nowIso,
@@ -235,8 +278,9 @@ export class ServicioIngresoWhatsapp {
     }
     await repositories.conversaciones.actualizar(updatedConversation, conversation.version)
     if (rateLimited) return 'rate_limited'
-    // Human mode: the operator answers; the assistant is not scheduled.
-    if (updatedConversation.mode === 'bot')
+    // Human mode: the operator answers; the assistant is not scheduled. A verification message
+    // is never handed to the assistant (its confirmation is queued after the verification).
+    if (updatedConversation.mode === 'bot' && !verificacion)
       await repositories.cola.encolar({
         jobId: `trabajo-conversacion-${randomUUID()}`,
         conversationId: conversation.conversationId,

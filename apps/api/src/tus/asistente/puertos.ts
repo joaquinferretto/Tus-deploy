@@ -10,6 +10,15 @@ import type {
 } from './modelo.ts'
 import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
 
+// Phone identity verification by user-initiated WhatsApp message ("VERIFICAR TUS <code>"),
+// implemented by the identity module (auth-security/phone). Messages it recognizes never reach the
+// assistant (no Groq, no tools, no search): they are verified here and answered with fixed text.
+export interface VerificadorTelefonoWhatsapp {
+  esMensajeVerificacion(texto: unknown): boolean
+  verificarDesdeWhatsapp(entrada: { waId: string; texto: string; wamid: string }): Promise<{ resultado: string; desafioId: string | null; respuesta: string | null }>
+  registrarConfirmacion(desafioId: string, resultado: { ok: true } | { ok: false; error: string }): Promise<void>
+}
+
 export interface RepositoriosAsistente {
   contactos: {
     buscarPorWaId(waId: string): Promise<ContactoWhatsapp | null>
