@@ -16,7 +16,7 @@ export default function Page(): React.ReactNode {
       <main style={{ minHeight: '85vh', backgroundColor: '#f9fafb' }}>
         <PropietarioAlojamientosView />
       </main>
-      <SiteFooter />
+      <SiteFooter logo={<TusLogo variant="header" />} />
     </>
   )
 }

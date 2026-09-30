@@ -26,6 +26,9 @@ declare const styles: {
   readonly footerBrand: string
   readonly footerColumn: string
   readonly footerGrid: string
+  readonly footerLeft: string
+  readonly footerLogoLink: string
+  readonly footerRight: string
   readonly footerTagline: string
   readonly header: string
   readonly headerActions: string

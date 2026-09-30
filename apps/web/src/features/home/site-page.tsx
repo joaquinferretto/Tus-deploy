@@ -13,7 +13,7 @@ export function SitePage({ logo, children }: { logo: React.ReactNode; children: 
       </a>
       <PublicHeader logo={logo} />
       <main className={styles.main} id="contenido">{children}</main>
-      <SiteFooter />
+      <SiteFooter logo={logo} />
       {/* The assistant is on every public page; off the home its search opens the home map. */}
       <AssistantWidget />
     </div>

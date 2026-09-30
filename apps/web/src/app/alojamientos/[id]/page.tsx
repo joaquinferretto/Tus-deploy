@@ -24,7 +24,7 @@ export default async function Page({ params }: PageProps): Promise<React.ReactNo
       <main style={{ minHeight: '80vh', backgroundColor: '#f9fafb', paddingBottom: '3rem' }}>
         <AlojamientoDetail idOrSlug={id} />
       </main>
-      <SiteFooter />
+      <SiteFooter logo={<TusLogo variant="header" />} />
     </>
   )
 }

@@ -69,9 +69,6 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
   return (
     <header className={styles.header}>
       <div className={styles.headerInner}>
-        <Link aria-label="TUS, inicio" className={styles.brandLink} href="/">
-          {logo}
-        </Link>
         <nav aria-label="Navegación principal" className={styles.nav}>
           {NAV.map((item) => (
             <a aria-current={current(item.href)} href={item.href} key={item.href}>
@@ -79,6 +76,9 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
             </a>
           ))}
         </nav>
+        <Link aria-label="TUS, inicio" className={styles.brandLink} href="/">
+          {logo}
+        </Link>
         <div className={styles.headerActions}>
           {actions}
           <button

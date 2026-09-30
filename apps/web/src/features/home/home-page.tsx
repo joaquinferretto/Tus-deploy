@@ -190,7 +190,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
           </div>
         </section>
       </main>
-      <SiteFooter />
+      <SiteFooter logo={logo} />
       <AssistantWidget chooseCategory={runCategory} search={runSearch} />
     </div>
   )
