@@ -35,3 +35,5 @@ packages/contracts/src/streams.d.ts.map
 
 # Artefactos locales de la herramienta de navegador (capturas, snapshots)
 .playwright-mcp/
+# Local AI runtime state
+.atl/

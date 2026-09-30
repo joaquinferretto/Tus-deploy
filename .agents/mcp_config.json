@@ -8,6 +8,11 @@
       "args": [
         "mcp",
         "--tools=agent"
+      ],
+      "cwd": "C:\\Users\\juaqu\\Desktop\\Tus",
+      "disabledTools": [
+        "mem_capture_passive",
+        "mem_save_prompt"
       ]
     },
     "fetch": {
@@ -15,7 +20,8 @@
       "args": [
         "-m",
         "mcp_server_fetch"
-      ]
+      ],
+      "cwd": "C:\\Users\\juaqu\\Desktop\\Tus"
     },
     "filesystem": {
       "command": "cmd",
@@ -23,9 +29,10 @@
         "/c",
         "npx",
         "-y",
-        "@modelcontextprotocol/server-filesystem",
+        "@modelcontextprotocol/server-filesystem@2026.8.31",
         "C:\\Users\\juaqu\\Desktop\\Tus"
-      ]
+      ],
+      "cwd": "C:\\Users\\juaqu\\Desktop\\Tus"
     },
     "gh_grep": {
       "serverUrl": "https://mcp.grep.app"
@@ -37,6 +44,14 @@
         "mcp_server_git",
         "--repository",
         "C:\\Users\\juaqu\\Desktop\\Tus"
+      ],
+      "cwd": "C:\\Users\\juaqu\\Desktop\\Tus",
+      "disabledTools": [
+        "git_add",
+        "git_commit",
+        "git_reset",
+        "git_create_branch",
+        "git_checkout"
       ]
     },
     "memory": {
@@ -45,8 +60,12 @@
         "/c",
         "npx",
         "-y",
-        "@modelcontextprotocol/server-memory"
-      ]
+        "@modelcontextprotocol/server-memory@2026.8.31"
+      ],
+      "cwd": "C:\\Users\\juaqu\\Desktop\\Tus",
+      "env": {
+        "MEMORY_FILE_PATH": "C:\\Users\\juaqu\\AppData\\Local\\tus-ai-tooling\\tus-memory.jsonl"
+      }
     },
     "playwright": {
       "command": "cmd",
@@ -54,8 +73,13 @@
         "/c",
         "npx",
         "-y",
-        "@playwright/mcp@latest"
-      ]
+        "@playwright/mcp@0.0.83",
+        "--headless",
+        "--isolated",
+        "--output-dir",
+        "C:\\Users\\juaqu\\AppData\\Local\\tus-ai-tooling\\playwright-output"
+      ],
+      "cwd": "C:\\Users\\juaqu\\Desktop\\Tus"
     },
     "sequential_thinking": {
       "command": "cmd",
@@ -63,15 +87,22 @@
         "/c",
         "npx",
         "-y",
-        "@modelcontextprotocol/server-sequential-thinking"
-      ]
+        "@modelcontextprotocol/server-sequential-thinking@2026.8.31"
+      ],
+      "cwd": "C:\\Users\\juaqu\\Desktop\\Tus",
+      "env": {
+        "DISABLE_THOUGHT_LOGGING": "true"
+      }
     },
     "time": {
       "command": "C:\\WINDOWS\\py.exe",
       "args": [
         "-m",
-        "mcp_server_time"
-      ]
+        "mcp_server_time",
+        "--local-timezone",
+        "America/Argentina/Cordoba"
+      ],
+      "cwd": "C:\\Users\\juaqu\\Desktop\\Tus"
     }
   }
 }
