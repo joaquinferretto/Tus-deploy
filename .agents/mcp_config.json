@@ -1,0 +1,77 @@
+{
+  "mcpServers": {
+    "context7": {
+      "serverUrl": "https://mcp.context7.com/mcp"
+    },
+    "engram": {
+      "command": "C:\\Users\\juaqu\\bin\\engram.exe",
+      "args": [
+        "mcp",
+        "--tools=agent"
+      ]
+    },
+    "fetch": {
+      "command": "C:\\WINDOWS\\py.exe",
+      "args": [
+        "-m",
+        "mcp_server_fetch"
+      ]
+    },
+    "filesystem": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\juaqu\\Desktop\\Tus"
+      ]
+    },
+    "gh_grep": {
+      "serverUrl": "https://mcp.grep.app"
+    },
+    "git": {
+      "command": "C:\\WINDOWS\\py.exe",
+      "args": [
+        "-m",
+        "mcp_server_git",
+        "--repository",
+        "C:\\Users\\juaqu\\Desktop\\Tus"
+      ]
+    },
+    "memory": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ]
+    },
+    "playwright": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@playwright/mcp@latest"
+      ]
+    },
+    "sequential_thinking": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "time": {
+      "command": "C:\\WINDOWS\\py.exe",
+      "args": [
+        "-m",
+        "mcp_server_time"
+      ]
+    }
+  }
+}
