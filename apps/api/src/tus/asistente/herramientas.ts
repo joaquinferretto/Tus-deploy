@@ -94,6 +94,59 @@ export const HERRAMIENTAS = [
     },
   }),
   herramienta({
+    name: 'get_available_slots',
+    description:
+      'Consulta los turnos y horarios disponibles de un prestador para una fecha (YYYY-MM-DD) y oficio. Devuelve las franjas horarias y tarifas.',
+    audience: 'public',
+    schema: z.strictObject({
+      providerId: z.string().min(3),
+      profession: OFICIO,
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'formato de fecha debe ser YYYY-MM-DD'),
+    }),
+    confirmation: null,
+    execute: async (args, _actor, domain) => {
+      const res = await domain.turnosDisponibles(args.providerId, args.profession, args.date)
+      return {
+        date: args.date,
+        slots: res.slots
+          .filter((s) => s.disponible)
+          .map((s) => ({ inicio: s.inicio, fin: s.fin, duracionMinutos: s.duracionMinutos })),
+        tariffs: res.tarifas.map((t) => ({ id: t.id, name: t.nombre, durationMinutes: t.duracionMinutos, price: t.precio })),
+        message: res.mensaje ?? null,
+      }
+    },
+  }),
+  herramienta({
+    name: 'book_appointment',
+    description:
+      'Prepara la reserva de un turno con un prestador en un horario disponible (requiere confirmación explícita del usuario antes de confirmarse).',
+    audience: 'public',
+    schema: z.strictObject({
+      providerId: z.string().min(3),
+      profession: OFICIO,
+      startsAt: z.string().min(10),
+      tariffId: z.string().optional(),
+      clientName: z.string().trim().min(2).max(100),
+      clientPhone: z.string().trim().min(6).max(30).optional(),
+      notes: z.string().trim().max(300).optional(),
+    }),
+    confirmation: {
+      summarize: (args) =>
+        `Voy a reservar tu turno:\nPrestador: ${args.providerId}\nServicio: ${args.profession}\nHorario: ${args.startsAt}\nA nombre de: ${args.clientName}${args.notes ? `\nNota: ${args.notes}` : ''}\n¿Confirmás?`,
+    },
+    execute: async (args, actor, domain) => ({
+      appointment: await domain.reservarTurno(actor.context, {
+        providerId: args.providerId,
+        oficioId: args.profession,
+        inicio: args.startsAt,
+        tarifaId: args.tariffId,
+        clienteNombre: args.clientName,
+        clienteTelefono: args.clientPhone,
+        notas: args.notes,
+      }),
+    }),
+  }),
+  herramienta({
     name: 'get_service_details',
     description: 'Detalle público de un servicio publicado por su listingId.',
     audience: 'public',
@@ -373,14 +426,14 @@ export function detectarIntencion(text: string): IntencionAsistente {
 }
 
 const HERRAMIENTAS_POR_INTENCION: Record<IntencionAsistente, { client: NombreHerramienta[]; provider: NombreHerramienta[] }> = {
-  buscar: { client: ['collect_service_request', 'search_providers', 'request_provider', 'search_services', 'get_service_details', 'create_service_request'], provider: [] },
+  buscar: { client: ['collect_service_request', 'search_providers', 'get_available_slots', 'book_appointment', 'request_provider', 'search_services'], provider: [] },
   postulaciones: {
     client: ['list_my_open_requests', 'list_request_applicants', 'choose_applicant'],
     provider: ['search_open_requests', 'apply_to_request'],
   },
   trabajos: { client: ['list_my_works', 'get_my_work', 'list_my_requests', 'list_my_open_requests'], provider: ['list_provider_jobs', 'get_provider_job', 'cancel_work', 'complete_work'] },
   presupuesto: { client: ['list_my_works', 'get_my_budget', 'accept_budget', 'reject_budget'], provider: ['list_provider_jobs', 'get_provider_job'] },
-  reserva: { client: ['list_my_reservations', 'search_services', 'get_service_details'], provider: ['list_provider_reservations'] },
+  reserva: { client: ['get_available_slots', 'book_appointment', 'collect_service_request', 'search_providers', 'list_my_reservations', 'get_service_details'], provider: ['list_provider_reservations'] },
   pago: { client: ['list_my_works', 'get_payment_status', 'get_payment_link'], provider: ['get_mercadopago_connection_status'] },
   identidad: { client: [], provider: ['get_identity_status'] },
   conocimiento: { client: [], provider: [] },

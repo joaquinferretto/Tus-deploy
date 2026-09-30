@@ -5,6 +5,7 @@ import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import type { CandidatoPrestador } from '../directorio/modelo.ts'
 import type { ServicioDirectorio } from '../directorio/servicio.ts'
 import type { ServicioSolicitudes } from '../solicitudes/servicio.ts'
+import type { ServicioTurnos } from '../calendar/turnos-service.ts'
 
 // The assistant reaches TUS only through this port. The adapter below delegates to the SAME
 // application services used by the Web/API routes (marketplace, work, finance, identity), so
@@ -65,6 +66,22 @@ export interface PuertoDominioAsistente {
   misSolicitudesTus(context: TusAuthenticatedTenantContext): Promise<SolicitudPropiaResumen[]>
   postulantes(context: TusAuthenticatedTenantContext, requestId: string): Promise<PostulanteResumen[]>
   elegirPostulante(context: TusAuthenticatedTenantContext, input: { requestId: string; applicationId: string }): Promise<{ requestId: string; assignment: string; providerName: string | null }>
+  // Turnos y agenda: mismos contratos y servicios que la Web (/prestador/turnos y perfil del prestador)
+  turnosDisponibles(providerId: string, oficioId: string, fecha: string): Promise<{
+    slots: { inicio: string; fin: string; duracionMinutos: number; disponible: boolean }[]
+    tarifas: { id: string; nombre: string; duracionMinutos: number; precio: number }[]
+    mensaje?: string | null
+  }>
+  reservarTurno(context: TusAuthenticatedTenantContext | null, input: {
+    providerId: string
+    oficioId: string
+    inicio: string
+    tarifaId?: string
+    clienteNombre?: string
+    clienteTelefono?: string
+    clienteEmail?: string
+    notas?: string
+  }): Promise<{ id: string; prestadorNombre: string; inicio: string; fin: string; precioFinal: number | null }>
 }
 
 // Lo que el asistente puede ver de una solicitud pública: sin cuenta, contacto ni coordenadas.
@@ -104,6 +121,7 @@ export interface PostulanteResumen {
 export interface ServiciosCompartidosAsistente {
   directorio: ServicioDirectorio
   solicitudes: ServicioSolicitudes
+  turnos?: ServicioTurnos
 }
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -208,6 +226,61 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     const result = await this.servicios.solicitudes.elegirPostulante(context.subjectId, input.requestId, input.applicationId)
     if (!result.ok) throw Object.assign(new Error('application not available'), { status: 409, code: result.code === 'NOT_FOUND' ? 'NOT_AVAILABLE' : result.code })
     return { requestId: result.solicitud.id, assignment: result.solicitud.assignment ?? 'aceptada', providerName: result.solicitud.provider?.displayName ?? null }
+  }
+
+  async turnosDisponibles(providerId: string, oficioId: string, fecha: string) {
+    if (!this.compartidos?.turnos) return { slots: [], tarifas: [] }
+    const resultado = await this.compartidos.turnos.disponibilidadPublica({ prestadorId: providerId, oficioId, fecha })
+    return {
+      slots: resultado.slots.map((s) => ({
+        inicio: s.inicio,
+        fin: s.fin,
+        duracionMinutos: s.duracionMinutos,
+        disponible: s.disponible,
+      })),
+      tarifas: resultado.tarifas.map((t) => ({
+        id: t.id,
+        nombre: t.nombre,
+        duracionMinutos: t.duracionMinutos,
+        precio: t.precio,
+      })),
+      mensaje: resultado.mensaje ?? null,
+    }
+  }
+
+  async reservarTurno(
+    context: TusAuthenticatedTenantContext | null,
+    input: {
+      providerId: string
+      oficioId: string
+      inicio: string
+      tarifaId?: string
+      clienteNombre?: string
+      clienteTelefono?: string
+      clienteEmail?: string
+      notas?: string
+    }
+  ) {
+    if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    const turno = await this.compartidos.turnos.reservarTurno({
+      prestadorId: input.providerId,
+      oficioId: input.oficioId,
+      tarifaId: input.tarifaId,
+      inicio: input.inicio,
+      clienteId: context?.subjectId,
+      clienteTenantId: context?.tenantId,
+      clienteNombre: input.clienteNombre,
+      clienteTelefono: input.clienteTelefono,
+      clienteEmail: input.clienteEmail,
+      notas: input.notas,
+    })
+    return {
+      id: turno.id,
+      prestadorNombre: turno.prestadorNombre,
+      inicio: turno.inicio,
+      fin: turno.fin,
+      precioFinal: turno.precioFinal,
+    }
   }
 
   private get marketplace() {

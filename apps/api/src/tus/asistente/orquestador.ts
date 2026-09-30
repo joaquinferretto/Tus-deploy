@@ -48,6 +48,7 @@ export const PROMPT_SISTEMA = [
   '8. No podés modificar montos, comisiones, pagos ni aprobar pagos.',
   '9. Antes de buscar prestadores necesitás oficio, descripción breve del problema y barrio/zona. Usá el historial y el borrador: no vuelvas a preguntar datos conocidos. Guardalos con collect_service_request; si falta algo, su question debe ser una pregunta natural sobre lo faltante, sin resultados ni afirmaciones sobre prestadores. No uses un cuestionario fijo.',
   '10. Con los tres datos confirmados usá search_providers (query describe el problema). Si el usuario ya dio todo, no hagas preguntas adicionales. Nunca digas que no encontraste prestadores antes de ejecutar esa búsqueda. Los horarios publicados no son disponibilidad confirmada.',
+  '11. Si el usuario pide un turno o consultar horarios de un prestador, usá get_available_slots con su ID, oficio y fecha (YYYY-MM-DD). Para reservar un turno confirmado usá book_appointment (requiere confirmación).',
 ].join('\n')
 
 export interface LimitesAsistente {
@@ -419,7 +420,7 @@ export class OrquestadorConversacion {
         })
         const call = answer.toolCalls[0]!
         const started2 = this.now()
-        const searchWithoutNeed = ['search_providers', 'search_services'].includes(call.function.name) && intent === 'buscar' && !(draft?.profession && draft.problem && draft.zone)
+        const searchWithoutNeed = call.function.name === 'search_providers' && intent === 'buscar' && !(draft?.profession && draft.problem && draft.zone)
         const result = searchWithoutNeed ? { ok: false as const, error: 'MISSING_SERVICE_NEED: call collect_service_request with known facts; ask only for missing profession, problem or zone' } : await validarYEjecutar({
           name: call.function.name,
           rawArguments: call.function.name === 'search_providers' && draft?.profession && draft.problem && draft.zone
@@ -444,7 +445,7 @@ export class OrquestadorConversacion {
             ...(sameNeed && draft?.candidates ? { candidates: draft.candidates } : {}),
           }
           await this.actualizarEstado(turn.conversation.conversationId, { draft, currentIntent: 'buscar', lowConfidenceCount: 0 })
-          if (!(need.profession && need.problem && need.zone) && need.question?.includes('?') && !pideHumano(need.question)) {
+          if (!(need.profession && need.problem && need.zone) && need.question && !pideHumano(need.question)) {
             return [{ type: 'text', text: need.question }]
           }
         }
@@ -458,6 +459,20 @@ export class OrquestadorConversacion {
           return [{ type: 'text', text: data.providers.length
             ? `Encontré estos prestadores compatibles:\n${data.providers.map((p, index) => `${index + 1}. ${p.name} — ${p.profession}, ${p.area}. Horarios publicados: ${p.availability}.`).join('\n')}\nLa disponibilidad para tu trabajo queda por confirmar. ¿Con cuál querés continuar?`
             : 'No encontré prestadores compatibles con esta búsqueda. ¿Querés probar otra zona, servicio o ajustar los detalles?' }]
+        }
+        if (result.ok && 'data' in result && call.function.name === 'get_available_slots') {
+          const data = result.data as { date: string; slots: { inicio: string; fin: string; duracionMinutos: number }[]; tariffs: { id: string; name: string; durationMinutes: number; price: number }[]; message: string | null }
+          if (data.slots.length === 0) {
+            return [{ type: 'text', text: data.message || `No hay turnos disponibles para esa fecha (${data.date}). Podés consultar otra fecha u otro prestador.` }]
+          }
+          const horariosTexto = data.slots.map((s) => {
+            const h = new Date(s.inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' })
+            return `• ${h} hs (${s.duracionMinutos} min)`
+          }).join('\n')
+          const tarifasTexto = data.tariffs.length > 0
+            ? `\nTarifas:\n${data.tariffs.map((t) => `• ${t.name}: ${t.price} (${t.durationMinutes} min)`).join('\n')}`
+            : ''
+          return [{ type: 'text', text: `Turnos disponibles para el ${data.date}:\n${horariosTexto}${tarifasTexto}\n¿En qué horario te gustaría reservar?` }]
         }
         if (result.ok && 'data' in result && call.function.name === 'search_services' && intent === 'buscar') {
           const data = result.data as { services: { name: string }[] }
