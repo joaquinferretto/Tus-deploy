@@ -1,5 +1,7 @@
 import express, { type Request, type Response, type Router } from 'express'
 
+import { enmascararTelefono } from '@factory/contracts'
+
 import { asyncHandler } from '../../presentation/middleware/error.ts'
 import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../ports/index.ts'
 import type { ServicioDirectorio } from '../directorio/servicio.ts'
@@ -43,12 +45,14 @@ export interface CuentaAdmin {
   verificado: boolean
   conContrasena: boolean
   creadaEn: string
+  // Identity phone (masked). Optional for older test doubles.
+  telefono?: { verificado: boolean; numero: string | null; verificadoEn: string | null; pendiente: string | null }
 }
 
 export interface FuenteCuentasAdmin {
   // Owner account of a tenant (provider detail -> account). Optional for older doubles.
   porTenant?(tenantId: string): Promise<CuentaAdmin | null>
-  listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[] }): Promise<{ items: CuentaAdmin[]; total: number }>
+  listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[]; telefono?: string }): Promise<{ items: CuentaAdmin[]; total: number }>
   contar(): Promise<number>
 }
 
@@ -82,7 +86,13 @@ export interface DependenciasAdmin {
   crearUsuario?: (input: { actorId: string; email: string; password: string; displayName: string }) => Promise<{ ok: boolean; code?: string }>
   actualizarUsuario?: (input: { actorId: string; accountId: string; displayName?: unknown; status?: unknown; reason?: unknown; email?: unknown; emailVerified?: unknown }) => Promise<{ ok: boolean; code?: string }>
   // AuthService.getAccountAsAdmin: business fields only (never hashes, tokens or MFA secrets).
-  leerUsuario?: (accountId: string) => Promise<{ id: string; email: string; displayName: string; tenantId: string; status: string; emailVerifiedAt: number | null; hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean } | null>
+  leerUsuario?: (accountId: string) => Promise<{ id: string; email: string; displayName: string; tenantId: string; status: string; emailVerifiedAt: number | null; hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean; phoneNumber?: string | null; phoneVerifiedAt?: number | null; phonePending?: string | null } | null>
+  // Phone identity administration (auth-security/phone): sets a PENDING number or frees a verified
+  // one. There is no way to mark a phone as verified from the panel.
+  telefonoAdmin?: {
+    fijarPendientePorAdmin(adminId: string, accountId: string, telefono: unknown): Promise<{ ok: boolean; code?: string; motivo?: string }>
+    quitarVerificadoPorAdmin(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string }>
+  }
   accionUsuario?: (input: { actorId: string; accountId: string; action: unknown }) => Promise<{ ok: boolean; code?: string }>
   // Provider edition (directorio/admin.ts crearEdicionPrestadorAdmin).
   prestadorAdmin?: {
@@ -144,10 +154,11 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     const q = String(request.query['q'] ?? '').trim().slice(0, 120)
     const rol = String(request.query['rol'] ?? '')
     const estado = ['active', 'suspended'].includes(String(request.query['estado'] ?? '')) ? String(request.query['estado']) : ''
+    const telefono = ['verificado', 'pendiente', 'sin'].includes(String(request.query['telefono'] ?? '')) ? String(request.query['telefono']) : ''
     const { pagina, tamano } = paginacion(request.query)
     const admins = deps.adminEmails()
     const prestadorTenants = await deps.directorio.tenantsConPerfil()
-    const resultado = await deps.cuentas.listar({ q, pagina, tamano, estado, rol, adminEmails: admins, prestadorTenants })
+    const resultado = await deps.cuentas.listar({ q, pagina, tamano, estado, rol, adminEmails: admins, prestadorTenants, telefono })
     const prestadores = new Set(prestadorTenants)
     const items = resultado.items.map((cuenta) => {
       const roles = [
@@ -159,6 +170,7 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
         id: cuenta.id, nombre: cuenta.nombre, email: cuenta.email, estado: cuenta.estado, verificado: cuenta.verificado,
         // A managed provider (loaded by an admin) has no password: nobody signs in with it.
         administrada: !cuenta.conContrasena && !cuenta.verificado, roles, creadaEn: cuenta.creadaEn,
+        telefono: cuenta.telefono ?? { verificado: false, numero: null, verificadoEn: null, pendiente: null },
       }
     })
     response.status(200).json(paginaJson(items, pagina, tamano, resultado.total))
@@ -198,7 +210,30 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
       roles: [...(cuenta.platformAdmin ? ['admin'] : []), ...(prestador ? ['prestador'] : []), 'cliente'],
       administradorPlataforma: cuenta.platformAdmin,
       prestador,
+      telefono: {
+        verificado: Boolean(cuenta.phoneNumber),
+        numero: cuenta.phoneNumber ? enmascararTelefono(cuenta.phoneNumber) : null,
+        verificadoEn: cuenta.phoneVerifiedAt ? new Date(cuenta.phoneVerifiedAt).toISOString() : null,
+        pendiente: cuenta.phonePending ? enmascararTelefono(cuenta.phonePending) : null,
+      },
     })
+  }))
+
+  // Phone identity: { accion: 'pendiente', telefono } leaves the number PENDING (the person
+  // verifies it from WhatsApp); { accion: 'quitar' } frees the verified number. Audited.
+  router.post('/tus/v1/admin/usuarios/:id/telefono', asyncHandler(async (request, response) => {
+    const context = await guard(request, response, IDENTITY_ADMIN)
+    if (!context) return
+    if (!deps.telefonoAdmin) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'phone administration unavailable' } })
+    const body = cuerpo(request)
+    const accountId = String(request.params['id'] ?? '')
+    const resultado = body['accion'] === 'pendiente'
+      ? await deps.telefonoAdmin.fijarPendientePorAdmin(context.subjectId, accountId, body['telefono'])
+      : body['accion'] === 'quitar'
+        ? await deps.telefonoAdmin.quitarVerificadoPorAdmin(context.subjectId, accountId)
+        : { ok: false, code: 'INVALID_ACTION' }
+    if (!resultado.ok) return void response.status(resultado.code === 'NOT_FOUND' ? 404 : 422).json({ error: { code: resultado.code ?? 'INVALID_ACTION', ...('motivo' in resultado && resultado.motivo ? { reason: resultado.motivo } : {}), message: 'phone change rejected' } })
+    response.status(200).json({ done: true })
   }))
 
   router.patch('/tus/v1/admin/usuarios/:id', asyncHandler(async (request, response) => {
@@ -236,7 +271,7 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     return {
       perfil: leido.perfil,
       prestador: leido.prestador,
-      cuenta: cuenta ? { id: cuenta.id, nombre: cuenta.nombre, email: cuenta.email, estado: cuenta.estado, verificado: cuenta.verificado } : null,
+      cuenta: cuenta ? { id: cuenta.id, nombre: cuenta.nombre, email: cuenta.email, estado: cuenta.estado, verificado: cuenta.verificado, telefonoVerificado: cuenta.telefono?.verificado ?? false, telefono: cuenta.telefono?.numero ?? null } : null,
       ubicacion,
     }
   }

@@ -124,7 +124,7 @@ export function AdminPrestadorDetallePage({ id }: { id: string }): React.ReactNo
         {detalle.cuenta ? (
           <>
             <p>{detalle.cuenta.nombre} · {detalle.cuenta.email}</p>
-            <p>Estado de la cuenta: {detalle.cuenta.estado === 'active' ? 'activa' : 'suspendida'} · Email {detalle.cuenta.verificado ? 'confirmado' : 'sin confirmar'}</p>
+            <p>Estado de la cuenta: {detalle.cuenta.estado === 'active' ? 'activa' : 'suspendida'} · Email {detalle.cuenta.verificado ? 'confirmado' : 'sin confirmar'} · Teléfono {detalle.cuenta.telefonoVerificado ? `verificado (${detalle.cuenta.telefono ?? ''})` : 'sin verificar'}</p>
             <a className={styles.buttonSecondary} href={`/tus/admin/usuarios/${encodeURIComponent(detalle.cuenta.id)}`}>Editar nombre, email, estado y accesos de la cuenta</a>
           </>
         ) : <p className={styles.muted}>No encontramos la cuenta titular.</p>}

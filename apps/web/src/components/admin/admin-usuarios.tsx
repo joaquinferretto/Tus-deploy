@@ -22,6 +22,7 @@ export function AdminUsuarios(): React.ReactNode {
   const [q, setQ] = useState('')
   const [rol, setRol] = useState('')
   const [estado, setEstado] = useState('')
+  const [telefono, setTelefono] = useState('')
   const [items, setItems] = useState<AdminUsuario[] | null>(null)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
@@ -33,9 +34,9 @@ export function AdminUsuarios(): React.ReactNode {
   const [notice, setNotice] = useState('')
   const [confirmacion, pedir, cerrar] = useConfirmacion()
 
-  const load = useCallback(() => adminApi.usuarios({ q: q.trim(), rol, estado, page, pageSize }).then((result) => {
+  const load = useCallback(() => adminApi.usuarios({ q: q.trim(), rol, estado, telefono, page, pageSize }).then((result) => {
     setItems(result.items); setTotalPages(result.totalPages); setError('')
-  }).catch((cause) => setError(adminErrorMessage(cause))), [q, rol, estado, page, pageSize])
+  }).catch((cause) => setError(adminErrorMessage(cause))), [q, rol, estado, telefono, page, pageSize])
 
   useEffect(() => {
     const timer = setTimeout(() => void load(), 400)
@@ -100,6 +101,7 @@ export function AdminUsuarios(): React.ReactNode {
           ))}
         </div>
         <select aria-label="Estado" onChange={(event) => { setEstado(event.target.value); resetPage() }} value={estado}><option value="">Todos los estados</option><option value="active">Activos</option><option value="suspended">Suspendidos</option></select>
+        <select aria-label="Teléfono" onChange={(event) => { setTelefono(event.target.value); resetPage() }} value={telefono}><option value="">Todos los teléfonos</option><option value="verificado">Teléfono verificado</option><option value="pendiente">Teléfono pendiente</option><option value="sin">Sin teléfono</option></select>
       </div>
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {items === null && !error ? <p className={styles.muted} role="status">Cargando usuarios…</p> : null}
@@ -107,7 +109,7 @@ export function AdminUsuarios(): React.ReactNode {
       {items && items.length > 0 ? (
         <table className={styles.table}>
           <thead>
-            <tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Estado</th><th>Verificado</th><th>Registro</th><th /></tr>
+            <tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Estado</th><th>Email</th><th>Teléfono</th><th>Registro</th><th /></tr>
           </thead>
           <tbody>
             {items.map((item) => (
@@ -116,7 +118,8 @@ export function AdminUsuarios(): React.ReactNode {
                 <td data-label="Email">{item.email}</td>
                 <td data-label="Rol">{item.roles.filter((role) => role !== 'cliente' || item.roles.length === 1).map((role) => <span className={`${styles.badge} ${role === 'admin' ? styles.badgeBrand : styles.badgeOff}`} key={role} style={{ marginRight: 4 }}>{ROL[role]}</span>)}</td>
                 <td data-label="Estado"><span className={`${styles.badge} ${item.estado === 'active' ? styles.badgeOk : styles.badgeWarn}`}>{item.estado === 'active' ? 'Activa' : 'Suspendida'}</span></td>
-                <td data-label="Verificado">{item.administrada ? <span className={styles.muted}>Administrada (sin login)</span> : item.verificado ? 'Sí' : <span className={styles.muted}>Pendiente</span>}</td>
+                <td data-label="Email">{item.administrada ? <span className={styles.muted}>Administrada (sin login)</span> : item.verificado ? 'Verificado' : <span className={styles.muted}>Sin verificar</span>}</td>
+                <td data-label="Teléfono">{item.telefono.verificado ? <>{item.telefono.numero} <span className={styles.muted}>· verificado</span></> : item.telefono.pendiente ? <span className={styles.muted}>{item.telefono.pendiente} · pendiente</span> : <span className={styles.muted}>Sin teléfono</span>}</td>
                 <td data-label="Registro" className={styles.muted}>{formatFecha(item.creadaEn)}</td>
                 <td>
                   <div className={styles.chips}>

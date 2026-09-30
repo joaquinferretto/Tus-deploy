@@ -44,6 +44,15 @@ export interface AdminUsuario {
   administrada: boolean
   roles: ('admin' | 'prestador' | 'cliente')[]
   creadaEn: string
+  telefono: AdminTelefono
+}
+
+// Identity phone as the panel shows it: masked numbers and dates (never codes or hashes).
+export interface AdminTelefono {
+  verificado: boolean
+  numero: string | null
+  verificadoEn: string | null
+  pendiente: string | null
 }
 
 // One account in the admin detail: business fields only (never hashes, tokens or MFA data).
@@ -61,6 +70,7 @@ export interface AdminUsuarioDetalle {
   // Admin authority comes from the server allowlist: not editable from the panel.
   administradorPlataforma: boolean
   prestador: { id: string; displayName: string; visible: boolean } | null
+  telefono: AdminTelefono
 }
 
 // Same view the provider sees on its own location page.
@@ -83,7 +93,7 @@ export interface AdminPrestadorDetalle {
     updatedAt: string
   }
   prestador: { estado: string; aprobado: boolean } | null
-  cuenta: { id: string; nombre: string; email: string; estado: string; verificado: boolean } | null
+  cuenta: { id: string; nombre: string; email: string; estado: string; verificado: boolean; telefonoVerificado?: boolean; telefono?: string | null } | null
   ubicacion: AdminUbicacionPrestador | null
 }
 
@@ -257,7 +267,8 @@ export interface AdminEvento {
 
 export const adminApi = {
   resumen: () => call<AdminResumen>('/tus/v1/admin/resumen'),
-  usuarios: (input: { q: string; rol: string; estado: string; page: number; pageSize: number }) => call<AdminPage<AdminUsuario>>(`/tus/v1/admin/usuarios?${new URLSearchParams({ q: input.q, rol: input.rol, estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
+  usuarios: (input: { q: string; rol: string; estado: string; telefono?: string; page: number; pageSize: number }) => call<AdminPage<AdminUsuario>>(`/tus/v1/admin/usuarios?${new URLSearchParams({ q: input.q, rol: input.rol, estado: input.estado, telefono: input.telefono ?? '', page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
+  telefonoUsuario: (id: string, body: { accion: 'pendiente'; telefono: string } | { accion: 'quitar' }) => call<{ done: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/telefono`, body),
   crearUsuario: (body: { displayName: string; email: string; password: string; role: 'cliente' }) => call<{ created: true }>('/tus/v1/admin/usuarios', body),
   actualizarUsuario: (id: string, body: { displayName?: string; status?: 'active' | 'suspended'; reason?: string; email?: string; emailVerified?: boolean }) => call<{ updated: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`, body, 'PATCH'),
   usuario: (id: string) => call<AdminUsuarioDetalle>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`),

@@ -13,6 +13,7 @@ function errorEdicion(cause: unknown): string {
   if (cause instanceof AdminApiError) {
     if (cause.status === 409) return 'Ese email ya pertenece a otra cuenta.'
     if (cause.status === 403) return 'Esa cuenta es de administración o es tu propia cuenta: su email y verificación se gestionan desde la configuración y Seguridad.'
+    if (cause.status === 422 && cause.code === 'INVALID_PHONE') return 'Revisá el número: con característica, por ejemplo 379 412-3456.'
     if (cause.status === 422) return 'Revisá los datos: nombre de 2 a 120 caracteres y un email válido.'
   }
   return adminErrorMessage(cause)
@@ -28,6 +29,7 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState({ nombre: '', email: '', estado: 'active' as 'active' | 'suspended', motivo: '' })
   const [confirmacion, pedir, cerrar] = useConfirmacion()
+  const [telefono, setTelefono] = useState('')
 
   const cargar = useCallback(() => adminApi.usuario(id).then((value) => {
     setCuenta(value)
@@ -89,6 +91,7 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
         <p>Roles: {cuenta.roles.map((rol) => ROL[rol]).join(', ')}</p>
         <p>Estado: <span className={`${styles.badge} ${cuenta.estado === 'active' ? styles.badgeOk : styles.badgeWarn}`}>{cuenta.estado === 'active' ? 'Activa' : 'Suspendida'}</span></p>
         <p>Email confirmado: {cuenta.verificado ? `sí (${cuenta.verificadoEn ? formatFecha(cuenta.verificadoEn) : ''})` : 'no'}</p>
+        <p>Teléfono: {cuenta.telefono.verificado ? `${cuenta.telefono.numero} · verificado${cuenta.telefono.verificadoEn ? ` (${formatFecha(cuenta.telefono.verificadoEn)})` : ''}` : cuenta.telefono.pendiente ? `${cuenta.telefono.pendiente} · pendiente de verificación` : 'sin teléfono'}</p>
         <p>Contraseña: {cuenta.conContrasena ? 'configurada (no se muestra ni se edita)' : 'sin contraseña (cuenta administrada)'}</p>
         <p className={styles.muted}>Alta {formatFecha(cuenta.creadaEn)} · Última modificación {formatFecha(cuenta.actualizadaEn)}</p>
         {cuenta.prestador ? (
@@ -110,6 +113,24 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
         <label>Motivo (opcional, queda en la auditoría)<input maxLength={200} onChange={(event) => setForm({ ...form, motivo: event.target.value })} placeholder="Ej.: pedido del titular" value={form.motivo} /></label>
         <div className={styles.chips}><button className={styles.buttonPrimary} disabled={busy} type="submit">{busy ? 'Guardando…' : 'Guardar cambios'}</button></div>
       </form>
+
+      <section className={styles.card} aria-labelledby="usuario-telefono">
+        <h2 id="usuario-telefono">Teléfono de identidad</h2>
+        <p className={styles.muted}>El número queda pendiente hasta que la persona lo verifique enviando el mensaje por WhatsApp desde ese teléfono. Desde el panel nunca se marca como verificado.</p>
+        <form className={styles.form} onSubmit={(event) => {
+          event.preventDefault()
+          if (!telefono.trim()) return
+          void ejecutar(() => adminApi.telefonoUsuario(cuenta.id, { accion: 'pendiente', telefono: telefono.trim() }), 'Teléfono cargado como pendiente de verificación.').then(() => setTelefono(''))
+        }}>
+          <label>Número a verificar<input inputMode="tel" maxLength={32} onChange={(event) => setTelefono(event.target.value)} placeholder="379 412-3456" type="tel" value={telefono} /></label>
+          <div className={styles.chips}>
+            <button className={styles.buttonPrimary} disabled={busy || !telefono.trim()} type="submit">Cargar como pendiente</button>
+            {cuenta.telefono.verificado ? (
+              <button className={styles.buttonSecondary} disabled={busy} onClick={() => pedir({ titulo: '¿Liberar el teléfono verificado?', detalle: 'La cuenta queda sin teléfono de identidad y ese número podrá verificarse en otra cuenta. Usalo si el número cambió de dueño. Queda auditado.', confirmar: 'Liberar teléfono', onConfirm: () => ejecutar(() => adminApi.telefonoUsuario(cuenta.id, { accion: 'quitar' }), 'Teléfono liberado.') })} type="button">Liberar teléfono verificado</button>
+            ) : null}
+          </div>
+        </form>
+      </section>
 
       <section className={styles.card} aria-labelledby="usuario-acciones">
         <h2 id="usuario-acciones">Acciones seguras</h2>

@@ -839,7 +839,7 @@ export class AuthService {
   }
 
   // Admin detail of one account: business fields only (never a hash, token or MFA secret).
-  async getAccountAsAdmin(accountId: string): Promise<(SafeAccount & { hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean }) | null> {
+  async getAccountAsAdmin(accountId: string): Promise<(SafeAccount & { hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean; phoneNumber: string | null; phoneVerifiedAt: number | null; phonePending: string | null }) | null> {
     const account = await this.dependencies.store.getAccount(accountId)
     if (!account) return null
     const credential = await this.dependencies.store.findPasswordCredential(account.id)
@@ -849,6 +849,9 @@ export class AuthService {
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
       platformAdmin: this.isPlatformAdminEmail(account.normalizedEmail ?? account.email),
+      phoneNumber: account.phoneNumber ?? null,
+      phoneVerifiedAt: account.phoneVerifiedAt ?? null,
+      phonePending: account.phonePending ?? null,
     }
   }
 

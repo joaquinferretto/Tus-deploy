@@ -1,3 +1,5 @@
+import { enmascararTelefono } from '@factory/contracts'
+
 import type { IdentityStore } from '../../auth-security/ports/identity-store.ts'
 import type { CuentaAdmin, EventoActividad, FuenteActividadAdmin, FuenteCuentasAdmin } from './http.ts'
 
@@ -28,14 +30,34 @@ function desdeFila(fila: Fila): CuentaAdmin {
     verificado: fila['emailVerifiedAt'] != null,
     conContrasena: credentials.some((credential) => credential['status'] === 'active'),
     creadaEn: iso(fila['createdAt']),
+    telefono: vistaTelefono(user['phoneNumber'] as string | null | undefined, user['phoneVerifiedAt'], user['phonePending'] as string | null | undefined),
   }
+}
+
+// Phone identity as the admin sees it: masked numbers and dates only (never challenges or hashes).
+function vistaTelefono(numero: string | null | undefined, verificadoEn: unknown, pendiente: string | null | undefined): CuentaAdmin['telefono'] {
+  return {
+    verificado: Boolean(numero),
+    numero: numero ? enmascararTelefono(numero) : null,
+    verificadoEn: verificadoEn instanceof Date ? verificadoEn.toISOString() : typeof verificadoEn === 'number' ? new Date(verificadoEn).toISOString() : null,
+    pendiente: pendiente ? enmascararTelefono(pendiente) : null,
+  }
+}
+
+// telefono filter: verificado | pendiente (a number waiting, none verified) | sin (no number at all).
+function filtroTelefono(telefono: string): Fila | null {
+  if (telefono === 'verificado') return { user: { phoneNumber: { not: null } } }
+  if (telefono === 'pendiente') return { user: { phoneNumber: null, phonePending: { not: null } } }
+  if (telefono === 'sin') return { user: { phoneNumber: null, phonePending: null } }
+  return null
 }
 
 export class CuentasAdminPrisma implements FuenteCuentasAdmin {
   constructor(private readonly client: ClienteCuentas) {}
 
-  async listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[] }): Promise<{ items: CuentaAdmin[]; total: number }> {
+  async listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[]; telefono?: string }): Promise<{ items: CuentaAdmin[]; total: number }> {
     const q = input.q
+    const telefonoWhere = filtroTelefono(input.telefono ?? '')
     const rolWhere = input.rol === 'admin' ? { user: { email: { in: [...input.adminEmails] } } }
       : input.rol === 'prestador' ? { tenantId: { in: [...input.prestadorTenants] } }
         : input.rol === 'cliente' ? { tenantId: { notIn: [...input.prestadorTenants] }, user: { email: { notIn: [...input.adminEmails] } } } : null
@@ -43,6 +65,7 @@ export class CuentasAdminPrisma implements FuenteCuentasAdmin {
       ...(q ? [{ user: { OR: [{ email: { contains: q, mode: 'insensitive' } }, { displayName: { contains: q, mode: 'insensitive' } }] } }] : []),
       ...(input.estado ? [{ status: input.estado }] : []),
       ...(rolWhere ? [rolWhere] : []),
+      ...(telefonoWhere ? [telefonoWhere] : []),
     ] }
     const total = await this.client.account.count({ where })
     const filas = await this.client.account.findMany({
@@ -71,7 +94,7 @@ export class CuentasAdminPrisma implements FuenteCuentasAdmin {
 export class CuentasAdminEnMemoria implements FuenteCuentasAdmin {
   constructor(private readonly store: IdentityStore) {}
 
-  async listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[] }): Promise<{ items: CuentaAdmin[]; total: number }> {
+  async listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[]; telefono?: string }): Promise<{ items: CuentaAdmin[]; total: number }> {
     const q = input.q.toLowerCase()
     const cuentas = [...(this.store.accounts?.values() ?? [])]
       .filter((cuenta) => !q || cuenta.normalizedEmail.includes(q) || cuenta.displayName.toLowerCase().includes(q))
@@ -79,6 +102,9 @@ export class CuentasAdminEnMemoria implements FuenteCuentasAdmin {
       .filter((cuenta) => input.rol === 'admin' ? input.adminEmails.includes(cuenta.normalizedEmail)
         : input.rol === 'prestador' ? input.prestadorTenants.includes(cuenta.tenantId)
           : input.rol === 'cliente' ? !input.adminEmails.includes(cuenta.normalizedEmail) && !input.prestadorTenants.includes(cuenta.tenantId) : true)
+      .filter((cuenta) => input.telefono === 'verificado' ? Boolean(cuenta.phoneNumber)
+        : input.telefono === 'pendiente' ? !cuenta.phoneNumber && Boolean(cuenta.phonePending)
+          : input.telefono === 'sin' ? !cuenta.phoneNumber && !cuenta.phonePending : true)
       .sort((a, b) => b.createdAt - a.createdAt)
     const pagina = cuentas.slice((input.pagina - 1) * input.tamano, input.pagina * input.tamano)
     const items = await Promise.all(pagina.map((cuenta) => this.vista(cuenta)))
@@ -90,7 +116,7 @@ export class CuentasAdminEnMemoria implements FuenteCuentasAdmin {
     return cuenta ? this.vista(cuenta) : null
   }
 
-  private async vista(cuenta: { id: string; tenantId: string; displayName: string; email: string; status: string; emailVerifiedAt: number | null; createdAt: number }): Promise<CuentaAdmin> {
+  private async vista(cuenta: { id: string; tenantId: string; displayName: string; email: string; status: string; emailVerifiedAt: number | null; createdAt: number; phoneNumber?: string | null; phoneVerifiedAt?: number | null; phonePending?: string | null }): Promise<CuentaAdmin> {
     return {
       id: cuenta.id,
       tenantId: cuenta.tenantId,
@@ -100,6 +126,7 @@ export class CuentasAdminEnMemoria implements FuenteCuentasAdmin {
       verificado: cuenta.emailVerifiedAt !== null,
       conContrasena: (await this.store.findPasswordCredential(cuenta.id))?.status === 'active',
       creadaEn: new Date(cuenta.createdAt).toISOString(),
+      telefono: vistaTelefono(cuenta.phoneNumber, cuenta.phoneVerifiedAt ?? null, cuenta.phonePending),
     }
   }
 

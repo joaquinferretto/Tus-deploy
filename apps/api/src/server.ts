@@ -272,6 +272,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
         actualizarUsuario: (input) => auth.service.updateAccountAsAdmin(input),
         leerUsuario: (accountId) => auth.service.getAccountAsAdmin(accountId),
         accionUsuario: (input) => auth.service.adminAccountAction(input),
+        telefonoAdmin: telefonos,
         prestadorAdmin: crearEdicionPrestadorAdmin({ application, directorio }),
         conteos,
         catalogo: new ServicioCatalogo({
