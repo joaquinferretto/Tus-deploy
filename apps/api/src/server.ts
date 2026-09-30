@@ -24,7 +24,7 @@ import { PrismaTrabajoStore } from './tus/adapters/prisma-work.ts'
 import type { ClientePrismaSolicitudes } from './tus/solicitudes/almacenes.ts'
 import { crearServicioDirectorio } from './tus/directorio/composicion.ts'
 import { crearRouterDirectorio } from './tus/directorio/http.ts'
-import { crearAltaPrestadorAdmin } from './tus/directorio/admin.ts'
+import { crearAltaPrestadorAdmin, crearEdicionPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import { crearRouterAdmin } from './tus/admin/http.ts'
 import { crearRouterAdminTrabajos } from './tus/admin/trabajos.ts'
@@ -250,6 +250,9 @@ export function createApp(options: CreateAppOptions = {}): Application {
         adminEmails: () => leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS']),
         crearUsuario: (input) => auth.service.createAccountAsAdmin(input),
         actualizarUsuario: (input) => auth.service.updateAccountAsAdmin(input),
+        leerUsuario: (accountId) => auth.service.getAccountAsAdmin(accountId),
+        accionUsuario: (input) => auth.service.adminAccountAction(input),
+        prestadorAdmin: crearEdicionPrestadorAdmin({ application, directorio }),
         conteos,
         catalogo: new ServicioCatalogo({
           almacen: almacenCatalogo,

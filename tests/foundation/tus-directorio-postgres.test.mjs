@@ -126,3 +126,42 @@ test(
     assert.ok(r.withOne <= 6, `queries: ${r.withOne}`)
   }
 )
+
+test(
+  'ADMIN USUARIO PostgreSQL: the admin email change persists normalized, resets verification, and the unique email decides conflicts',
+  { skip: !url && 'TUS_DIRECTORIO_PG_URL not set (disposable PostgreSQL only)', timeout: 120000 },
+  () => {
+    const r = runTypeScriptScenario(`${PRISMA}
+      const { createPrismaAuthService } = await import('./apps/api/src/auth-security/composition.ts')
+      try {
+        const auth = createPrismaAuthService(prisma, { platformAdminEmails: [run + '-admin@example.com'] })
+        const PASSWORD = 'una frase larga y segura 2026'
+        const a = await auth.service.register({ email: run + '-a@example.com', password: PASSWORD, displayName: 'Cuenta A' })
+        await auth.service.register({ email: run + '-b@example.com', password: PASSWORD, displayName: 'Cuenta B' })
+        await auth.service.verifyEmail({ token: a.verificationToken })
+        const actor = 'admin-actor'
+        const conflicto = await auth.service.updateAccountAsAdmin({ actorId: actor, accountId: a.account.id, email: run.toUpperCase() + '-B@example.com' })
+        const escalada = await auth.service.updateAccountAsAdmin({ actorId: actor, accountId: a.account.id, email: run + '-admin@example.com' })
+        const cambio = await auth.service.updateAccountAsAdmin({ actorId: actor, accountId: a.account.id, email: '  ' + run.toUpperCase() + '-Nueva@Example.com ' })
+        const fila = await prisma.account.findUnique({ where: { id: a.account.id }, include: { user: true } })
+        const detalle = await auth.service.getAccountAsAdmin(a.account.id)
+        const verificar = await auth.service.updateAccountAsAdmin({ actorId: actor, accountId: a.account.id, emailVerified: true })
+        const filaVerificada = await prisma.account.findUnique({ where: { id: a.account.id } })
+        console.log(JSON.stringify({
+          conflicto: conflicto.ok ? 'ok' : conflicto.code, escalada: escalada.ok ? 'ok' : escalada.code, cambio: cambio.ok,
+          email: fila.user.email, normalized: fila.user.normalizedEmail, verificado: fila.emailVerifiedAt, detalle: Object.keys(detalle).sort(),
+          verificar: verificar.ok, verificadoDespues: filaVerificada.emailVerifiedAt !== null,
+        }))
+      } finally { await prisma.$disconnect() }
+    `)
+    assert.equal(r.conflicto, 'CONFLICT')
+    assert.equal(r.escalada, 'FORBIDDEN')
+    assert.equal(r.cambio, true)
+    assert.match(r.email, /^d[a-z0-9]+-nueva@example\.com$/)
+    assert.equal(r.normalized, r.email)
+    assert.equal(r.verificado, null)
+    assert.deepEqual(r.detalle, ['createdAt', 'displayName', 'email', 'emailVerifiedAt', 'hasPassword', 'id', 'platformAdmin', 'roles', 'status', 'tenantId', 'updatedAt'])
+    assert.equal(r.verificar, true)
+    assert.equal(r.verificadoDespues, true)
+  }
+)

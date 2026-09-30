@@ -118,7 +118,12 @@ export function AdminUsuarios(): React.ReactNode {
                 <td data-label="Estado"><span className={`${styles.badge} ${item.estado === 'active' ? styles.badgeOk : styles.badgeWarn}`}>{item.estado === 'active' ? 'Activa' : 'Suspendida'}</span></td>
                 <td data-label="Verificado">{item.administrada ? <span className={styles.muted}>Administrada (sin login)</span> : item.verificado ? 'Sí' : <span className={styles.muted}>Pendiente</span>}</td>
                 <td data-label="Registro" className={styles.muted}>{formatFecha(item.creadaEn)}</td>
-                <td><button className={styles.buttonSecondary} onClick={() => { setSelected(item); setCreating(false) }} type="button">Editar</button></td>
+                <td>
+                  <div className={styles.chips}>
+                    <a className={styles.buttonPrimary} href={`/tus/admin/usuarios/${encodeURIComponent(item.id)}`}>Ficha</a>
+                    <button className={styles.buttonSecondary} onClick={() => { setSelected(item); setCreating(false) }} type="button">Edición rápida</button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>

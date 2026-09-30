@@ -29,7 +29,9 @@ export const MARKETPLACE_PRICE_MODES = {
 export type MarketplacePriceMode =
   (typeof MARKETPLACE_PRICE_MODES)[keyof typeof MARKETPLACE_PRICE_MODES]
 export type MarketplaceAvailabilityStatus = 'configured' | 'not_configured'
-export const MARKETPLACE_MERCHANT_STATUSES = { APPROVED: 'approved' } as const
+// 'suspended': set by the platform administration; the provider leaves the directory and cannot
+// operate until approved again.
+export const MARKETPLACE_MERCHANT_STATUSES = { APPROVED: 'approved', SUSPENDED: 'suspended' } as const
 export type MarketplaceMerchantStatus =
   (typeof MARKETPLACE_MERCHANT_STATUSES)[keyof typeof MARKETPLACE_MERCHANT_STATUSES]
 export const MARKETPLACE_OUTBOX_EVENT_TYPES = {

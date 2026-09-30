@@ -116,11 +116,55 @@ function useGuardar(onSaved: () => Promise<unknown>) {
 
 // ---- Categorías -----------------------------------------------------------------------------
 
+// Detail of a category: its services with provider counts; a service can be moved to another
+// category from here (the history and the providers that offer it are kept).
+function ServiciosDeCategoria({ categoria, categorias, onCambio }: { categoria: AdminCatalogo['categorias'][number]; categorias: AdminCatalogo['categorias']; onCambio: () => Promise<unknown> }) {
+  const [items, setItems] = useState<AdminOficio[] | null>(null)
+  const [error, setError] = useState('')
+  const cargar = useCallback(() => adminApi.listaCatalogo('oficios', { q: '', estado: '', categoria: categoria.id, page: 1, pageSize: 50 })
+    .then((value) => { setItems(value.items); setError('') })
+    .catch((cause) => setError(adminErrorMessage(cause))), [categoria.id])
+  useEffect(() => { void cargar() }, [cargar])
+  const { busy, guardar, aviso } = useGuardar(async () => { await cargar(); await onCambio() })
+  return (
+    <section aria-label={`Servicios de ${categoria.nombre}`} className={styles.card}>
+      <h2>Servicios de {categoria.nombre}</h2>
+      {aviso}
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      {!items && !error ? <p className={styles.muted} role="status">Cargando servicios…</p> : null}
+      {items && items.length === 0 ? <p className={styles.muted}>Esta categoría todavía no tiene servicios. Creálos o movelos desde Servicios.</p> : null}
+      {items && items.length > 0 ? (
+        <table className={styles.table}>
+          <thead><tr><th>Servicio</th><th>Prestadores</th><th>Estado</th><th>Mover a</th></tr></thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.id}>
+                <td data-label="Servicio"><strong>{item.nombre}</strong></td>
+                <td data-label="Prestadores">{item.prestadores} <span className={styles.muted}>· {item.enMapa} en el mapa</span></td>
+                <td data-label="Estado"><Estado activo={item.activo} /></td>
+                <td data-label="Mover a">
+                  <select aria-label={`Mover ${item.nombre} a otra categoría`} disabled={busy} onChange={(event) => void guardar('oficios', item.id, { categoriaId: event.target.value || null }, `${item.nombre} se movió de categoría.`)} value={item.categoriaId ?? ''}>
+                    <option value="">Sin categoría</option>
+                    {categorias.filter((otra) => otra.activo || otra.id === item.categoriaId).map((otra) => <option key={otra.id} value={otra.id}>{otra.nombre}</option>)}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      <a className={styles.buttonSecondary} href="/tus/admin/servicios">Crear o editar servicios</a>
+    </section>
+  )
+}
+
 export function AdminCategorias(): React.ReactNode {
   const lista = useLista('categorias', { q: '', estado: '' })
   const { busy, guardar, aviso } = useGuardar(lista.load)
   const [confirmacion, pedir, cerrar] = useConfirmacion()
   const [edit, setEdit] = useState<{ id: string | null; nombre: string; descripcion: string; orden: string } | null>(null)
+  const [abierta, setAbierta] = useState<string | null>(null)
+  const referencias = useReferencias()
 
   async function enviar(event: FormEvent) {
     event.preventDefault()
@@ -168,6 +212,7 @@ export function AdminCategorias(): React.ReactNode {
                 <td data-label="Orden">{item.orden}</td>
                 <td>
                   <div className={styles.chips}>
+                    <button aria-expanded={abierta === item.id} className={styles.buttonSecondary} onClick={() => setAbierta(abierta === item.id ? null : item.id)} type="button">{abierta === item.id ? 'Ocultar servicios' : 'Ver servicios'}</button>
                     <button className={styles.buttonSecondary} onClick={() => setEdit({ id: item.id, nombre: item.nombre, descripcion: item.descripcion ?? '', orden: String(item.orden) })} type="button">Editar</button>
                     <BotonEstado
                       activo={item.activo}
@@ -184,6 +229,10 @@ export function AdminCategorias(): React.ReactNode {
         </table>
       ) : null}
       {lista.paginacion}
+      {abierta && referencias.data ? (() => {
+        const categoria = referencias.data.categorias.find((item) => item.id === abierta)
+        return categoria ? <ServiciosDeCategoria categoria={categoria} categorias={referencias.data.categorias} key={categoria.id} onCambio={async () => { await lista.load(); await referencias.load() }} /> : null
+      })() : null}
       <AdminConfirm onClose={cerrar} value={confirmacion} />
     </>
   )

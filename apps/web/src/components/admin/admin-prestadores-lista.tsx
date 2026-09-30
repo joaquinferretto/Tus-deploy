@@ -110,6 +110,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
                 <td className={styles.muted} data-label="Alta">{formatFecha(item.creadoEn)}</td>
                 <td>
                   <div className={styles.chips}>
+                    <a className={styles.buttonPrimary} href={`/tus/admin/prestadores/${encodeURIComponent(item.id)}`}>Editar</a>
                     <a className={styles.buttonSecondary} href={`/trabajadores/${encodeURIComponent(item.id)}`}>Ver</a>
                     <button className={styles.buttonSecondary} disabled={busy === item.id} onClick={() => item.visible ? pedir({ titulo: `¿Ocultar a ${item.nombre}?`, detalle: 'Deja de aparecer en el mapa, el buscador y el asistente. Sus trabajos y solicitudes existentes se conservan; podés volver a publicarlo.', confirmar: 'Ocultar', onConfirm: () => toggle(item) }) : void toggle(item)} type="button">
                       {item.visible ? 'Ocultar' : 'Publicar'}

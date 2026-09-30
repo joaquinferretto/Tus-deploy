@@ -786,12 +786,36 @@ export class AuthService {
     return { ok: true, account: created.account }
   }
 
+  // Admin detail of one account: business fields only (never a hash, token or MFA secret).
+  async getAccountAsAdmin(accountId: string): Promise<(SafeAccount & { hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean }) | null> {
+    const account = await this.dependencies.store.getAccount(accountId)
+    if (!account) return null
+    const credential = await this.dependencies.store.findPasswordCredential(account.id)
+    return {
+      ...this.safeAccount(account),
+      hasPassword: Boolean(credential && credential.status === 'active'),
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+      platformAdmin: this.isPlatformAdminEmail(account.normalizedEmail ?? account.email),
+    }
+  }
+
+  private isPlatformAdminEmail(email: string): boolean {
+    return (this.dependencies.platformAdminEmails ?? []).map((item) => item.trim().toLowerCase()).includes(email.trim().toLowerCase())
+  }
+
+  // Admin edition of an account. Platform admin authority is the environment allowlist, so an
+  // admin can never create it from here: an allowlisted account's email/verification is not
+  // editable, and no account may receive an allowlisted email. Changing the email resets its
+  // verification and revokes the sessions. Every change is audited without personal data.
   async updateAccountAsAdmin(input: {
     actorId: string
     accountId: string
     displayName?: unknown
     status?: unknown
     reason?: unknown
+    email?: unknown
+    emailVerified?: unknown
   }): Promise<AccountUpdateResult> {
     return this.runTransaction(async (store) => {
       const account = await store.getAccount(input.accountId)
@@ -804,18 +828,53 @@ export class AuthService {
         return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Account status is invalid')
       if (input.reason !== undefined && (typeof input.reason !== 'string' || input.reason.trim().length > 200))
         return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Reason is invalid')
+      if (input.emailVerified !== undefined && typeof input.emailVerified !== 'boolean')
+        return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Email verification is invalid')
       if (input.actorId === account.id && status === ACCOUNT_STATUS.SUSPENDED)
         return failure(AUTH_RESULT_CODE.FORBIDDEN, 'An administrator cannot suspend the current account')
+      const currentEmail = account.normalizedEmail ?? normalizeEmail(account.email)
+      let nextEmail: string | null = null
+      if (input.email !== undefined) {
+        if (typeof input.email !== 'string') return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Email is invalid')
+        const normalized = normalizeEmail(input.email)
+        if (!validateEmail(normalized)) return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Email is invalid')
+        if (normalized !== currentEmail) nextEmail = normalized
+      }
+      const touchesIdentity = nextEmail !== null || input.emailVerified !== undefined
+      // No privilege escalation: never an allowlisted email, never the admin's own identity.
+      if (touchesIdentity && (input.actorId === account.id || this.isPlatformAdminEmail(currentEmail) || (nextEmail !== null && this.isPlatformAdminEmail(nextEmail))))
+        return failure(AUTH_RESULT_CODE.FORBIDDEN, 'Platform administrator identities are managed by configuration')
+      if (nextEmail !== null) {
+        const owner = await store.findAccountByEmail(nextEmail)
+        if (owner && owner.id !== account.id) return failure(AUTH_RESULT_CODE.CONFLICT, 'Email already registered')
+      }
+      const verifiedChange = nextEmail === null && typeof input.emailVerified === 'boolean' && input.emailVerified !== Boolean(account.emailVerifiedAt)
       const changedFields = [
         ...(typeof displayName === 'string' && displayName.trim() !== account.displayName ? ['displayName'] : []),
         ...(status !== undefined && status !== account.status ? ['status'] : []),
+        ...(nextEmail !== null ? ['email', 'emailVerified'] : []),
+        ...(verifiedChange ? ['emailVerified'] : []),
       ]
       const previousStatus = account.status
       if (typeof displayName === 'string') account.displayName = displayName.trim()
       if (status === ACCOUNT_STATUS.ACTIVE || status === ACCOUNT_STATUS.SUSPENDED) account.status = status
       account.updatedAt = this.dependencies.clock.now()
-      await store.saveAccount(account)
-      if (status === ACCOUNT_STATUS.SUSPENDED) await store.revokeSessions(account.id, account.updatedAt)
+      if (nextEmail !== null) {
+        account.email = nextEmail
+        account.normalizedEmail = nextEmail
+        account.emailVerifiedAt = null
+      } else if (verifiedChange) {
+        account.emailVerifiedAt = input.emailVerified === true ? account.updatedAt : null
+      }
+      try {
+        await store.saveAccount(account)
+      } catch (error) {
+        // Two admins giving the same email at once: the unique email decides.
+        if ((error as Error & { code?: unknown }).code === 'P2002') return failure(AUTH_RESULT_CODE.CONFLICT, 'Email already registered')
+        throw error
+      }
+      const revoke = status === ACCOUNT_STATUS.SUSPENDED || nextEmail !== null
+      if (revoke) await store.revokeSessions(account.id, account.updatedAt)
       const kind = previousStatus !== ACCOUNT_STATUS.SUSPENDED && account.status === ACCOUNT_STATUS.SUSPENDED
         ? AUTH_EVENT_KIND.ACCOUNT_ADMIN_SUSPENDED
         : previousStatus === ACCOUNT_STATUS.SUSPENDED && account.status === ACCOUNT_STATUS.ACTIVE
@@ -826,10 +885,35 @@ export class AuthService {
         action,
         changedFields: changedFields.join(',') || 'none',
         ...(typeof input.reason === 'string' && input.reason.trim() ? { reason: input.reason.trim() } : {}),
-        ...(kind === AUTH_EVENT_KIND.ACCOUNT_ADMIN_SUSPENDED ? { sessionsRevoked: true } : {}),
+        ...(revoke ? { sessionsRevoked: true } : {}),
+        ...(nextEmail !== null ? { emailChanged: true } : {}),
+        ...(verifiedChange ? { emailVerified: input.emailVerified === true } : {}),
       })
       return { ok: true, account: this.safeAccount(account) }
     })
+  }
+
+  // Safe admin actions instead of editing secrets: close every session, or close them and send
+  // the owner a password recovery email (the admin never sees or sets the password).
+  async adminAccountAction(input: { actorId: string; accountId: string; action: unknown }): Promise<{ ok: true } | AuthFailure> {
+    if (input.action !== 'revoke_sessions' && input.action !== 'password_reset') return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Unknown action')
+    const account = await this.dependencies.store.getAccount(input.accountId)
+    if (!account) return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Account not found')
+    if (input.actorId === account.id) return failure(AUTH_RESULT_CODE.FORBIDDEN, 'Use the security page for the current account')
+    const now = this.dependencies.clock.now()
+    await this.runTransaction((store) => store.revokeSessions(account.id, now))
+    let resetSent = false
+    if (input.action === 'password_reset' && account.status === ACCOUNT_STATUS.ACTIVE) {
+      const result = await this.requestPasswordRecovery({ email: account.email })
+      resetSent = Boolean(result.recoveryToken)
+    }
+    await this.recordAdminAction(input.actorId, account, AUTH_EVENT_KIND.ACCOUNT_ADMIN_UPDATED, {
+      action: input.action === 'password_reset' ? 'password_reset_requested' : 'sessions_revoked',
+      changedFields: 'none',
+      sessionsRevoked: true,
+      ...(input.action === 'password_reset' ? { recoveryEmailSent: resetSent } : {}),
+    })
+    return { ok: true }
   }
 
   // Existing audit sink (AuditEvent), with the ADMIN as actor and the modified account as target.

@@ -1,16 +1,18 @@
 import { resolveWebApiBaseUrl } from './api-url'
+import type { UbicacionPrestadorWeb } from '@/features/directory/directory-client'
+
 import { fetchWithSession } from './session-credentials'
 
 // Client of the platform administration read views (/tus/v1/admin/*). The HttpOnly session cookie
 // authenticates; the API authorizes every call (allowlist + verified email + MFA of this session).
 
 export class AdminApiError extends Error {
-  constructor(readonly status: number, readonly code: string) {
+  constructor(readonly status: number, readonly code: string, readonly fields: string[] = []) {
     super(code)
   }
 }
 
-async function call<T>(path: string, body?: unknown, method?: 'POST' | 'PATCH', extraHeaders: Record<string, string> = {}): Promise<T> {
+async function call<T>(path: string, body?: unknown, method?: 'POST' | 'PATCH' | 'PUT' | 'DELETE', extraHeaders: Record<string, string> = {}): Promise<T> {
   const baseUrl = resolveWebApiBaseUrl({ canonicalUrl: process.env['NEXT_PUBLIC_API_URL'], legacyUrl: process.env['API_BASE_URL'], nodeEnv: process.env['NODE_ENV'] })
   const response = await fetchWithSession(`${baseUrl}${path}`, {
     method: method ?? (body === undefined ? 'GET' : 'POST'),
@@ -19,8 +21,9 @@ async function call<T>(path: string, body?: unknown, method?: 'POST' | 'PATCH', 
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: { code?: unknown } } | null
-    throw new AdminApiError(response.status, typeof payload?.error?.code === 'string' ? payload.error.code : 'ERROR')
+    const payload = (await response.json().catch(() => null)) as { error?: { code?: unknown; fields?: unknown } } | null
+    const fields = Array.isArray(payload?.error?.fields) ? payload.error.fields.filter((item): item is string => typeof item === 'string') : []
+    throw new AdminApiError(response.status, typeof payload?.error?.code === 'string' ? payload.error.code : 'ERROR', fields)
   }
   return (await response.json()) as T
 }
@@ -42,6 +45,49 @@ export interface AdminUsuario {
   roles: ('admin' | 'prestador' | 'cliente')[]
   creadaEn: string
 }
+
+// One account in the admin detail: business fields only (never hashes, tokens or MFA data).
+export interface AdminUsuarioDetalle {
+  id: string
+  nombre: string
+  email: string
+  estado: 'active' | 'suspended'
+  verificado: boolean
+  verificadoEn: string | null
+  conContrasena: boolean
+  creadaEn: string
+  actualizadaEn: string
+  roles: ('admin' | 'prestador' | 'cliente')[]
+  // Admin authority comes from the server allowlist: not editable from the panel.
+  administradorPlataforma: boolean
+  prestador: { id: string; displayName: string; visible: boolean } | null
+}
+
+// Same view the provider sees on its own location page.
+export type AdminUbicacionPrestador = UbicacionPrestadorWeb
+
+export interface AdminPrestadorDetalle {
+  perfil: {
+    id: string
+    displayName: string
+    profession: string
+    professions: string[]
+    zone: string | null
+    serviceZones: string[]
+    serviceMode: 'local' | 'domicilio' | 'mixto'
+    coverageRadiusKm: number | null
+    description: string | null
+    yearsOfExperience: number | null
+    visible: boolean
+    createdAt: string
+    updatedAt: string
+  }
+  prestador: { estado: string; aprobado: boolean } | null
+  cuenta: { id: string; nombre: string; email: string; estado: string; verificado: boolean } | null
+  ubicacion: AdminUbicacionPrestador | null
+}
+
+export type CambiosPrestador = Partial<Omit<AdminPrestadorDetalle['perfil'], 'id' | 'createdAt' | 'updatedAt'>> & { providerStatus?: 'approved' | 'suspended' }
 
 export interface AdminPage<T> {
   items: T[]
@@ -213,7 +259,14 @@ export const adminApi = {
   resumen: () => call<AdminResumen>('/tus/v1/admin/resumen'),
   usuarios: (input: { q: string; rol: string; estado: string; page: number; pageSize: number }) => call<AdminPage<AdminUsuario>>(`/tus/v1/admin/usuarios?${new URLSearchParams({ q: input.q, rol: input.rol, estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   crearUsuario: (body: { displayName: string; email: string; password: string; role: 'cliente' }) => call<{ created: true }>('/tus/v1/admin/usuarios', body),
-  actualizarUsuario: (id: string, body: { displayName: string; status: 'active' | 'suspended'; reason?: string }) => call<{ updated: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`, body, 'PATCH'),
+  actualizarUsuario: (id: string, body: { displayName?: string; status?: 'active' | 'suspended'; reason?: string; email?: string; emailVerified?: boolean }) => call<{ updated: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`, body, 'PATCH'),
+  usuario: (id: string) => call<AdminUsuarioDetalle>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`),
+  accionUsuario: (id: string, action: 'revoke_sessions' | 'password_reset') => call<{ done: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/acciones`, { action }),
+  prestador: (id: string) => call<AdminPrestadorDetalle>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}`),
+  editarPrestador: (id: string, body: CambiosPrestador) => call<AdminPrestadorDetalle>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}`, body, 'PUT'),
+  ubicacionPrestador: (id: string) => call<{ location: AdminUbicacionPrestador }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/ubicacion`),
+  guardarUbicacionPrestador: (id: string, input: { lat: number; lng: number; showExact: boolean }) => call<{ location: AdminUbicacionPrestador }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/ubicacion`, input, 'PUT'),
+  quitarUbicacionPrestador: (id: string) => call<{ location: AdminUbicacionPrestador }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/ubicacion`, undefined, 'DELETE'),
   prestadores: (input: { q: string; oficio: string; zona: string; visibilidad: string; verificacion: string; page: number; pageSize: number }) => call<AdminPage<AdminPrestador>>(`/tus/v1/admin/prestadores?${new URLSearchParams({ q: input.q, oficio: input.oficio, zona: input.zona, visibilidad: input.visibilidad, verificacion: input.verificacion, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   visibilidad: (id: string, visible: boolean) => call<{ id: string; visible: boolean }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/visibilidad`, { visible }),
   solicitudes: (input: { q: string; estado: string; categoria: string; page: number; pageSize: number }) => call<AdminPage<AdminSolicitud>>(`/tus/v1/admin/solicitudes?${new URLSearchParams({ q: input.q, estado: input.estado, categoria: input.categoria, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),

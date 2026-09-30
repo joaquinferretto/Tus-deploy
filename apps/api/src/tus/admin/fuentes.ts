@@ -9,11 +9,27 @@ type Fila = Record<string, unknown>
 interface ClienteCuentas {
   account: {
     findMany(input: { where?: Fila; include?: Fila; orderBy?: Fila | Fila[]; skip?: number; take?: number }): Promise<Fila[]>
+    findFirst?(input: { where?: Fila; include?: Fila; orderBy?: Fila | Fila[] }): Promise<Fila | null>
     count(input?: { where?: Fila }): Promise<number>
   }
 }
 
 const iso = (value: unknown) => (value instanceof Date ? value.toISOString() : typeof value === 'number' ? new Date(value).toISOString() : '')
+
+function desdeFila(fila: Fila): CuentaAdmin {
+  const user = (fila['user'] ?? {}) as Fila
+  const credentials = (fila['credentials'] ?? []) as Fila[]
+  return {
+    id: String(fila['id']),
+    tenantId: String(fila['tenantId']),
+    nombre: String(user['displayName'] ?? ''),
+    email: String(user['email'] ?? ''),
+    estado: String(fila['status'] ?? ''),
+    verificado: fila['emailVerifiedAt'] != null,
+    conContrasena: credentials.some((credential) => credential['status'] === 'active'),
+    creadaEn: iso(fila['createdAt']),
+  }
+}
 
 export class CuentasAdminPrisma implements FuenteCuentasAdmin {
   constructor(private readonly client: ClienteCuentas) {}
@@ -36,21 +52,14 @@ export class CuentasAdminPrisma implements FuenteCuentasAdmin {
       skip: (input.pagina - 1) * input.tamano,
       take: input.tamano,
     })
-    const items = filas.map((fila) => {
-      const user = (fila['user'] ?? {}) as Fila
-      const credentials = (fila['credentials'] ?? []) as Fila[]
-      return {
-        id: String(fila['id']),
-        tenantId: String(fila['tenantId']),
-        nombre: String(user['displayName'] ?? ''),
-        email: String(user['email'] ?? ''),
-        estado: String(fila['status'] ?? ''),
-        verificado: fila['emailVerifiedAt'] != null,
-        conContrasena: credentials.some((credential) => credential['status'] === 'active'),
-        creadaEn: iso(fila['createdAt']),
-      }
-    })
-    return { items, total }
+    return { items: filas.map(desdeFila), total }
+  }
+
+  // The first account of the tenant (its owner): one read.
+  async porTenant(tenantId: string): Promise<CuentaAdmin | null> {
+    if (!this.client.account.findFirst) return null
+    const fila = await this.client.account.findFirst({ where: { tenantId }, include: { user: true, credentials: { select: { status: true } } }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })
+    return fila ? desdeFila(fila) : null
   }
 
   async contar(): Promise<number> {
@@ -72,7 +81,17 @@ export class CuentasAdminEnMemoria implements FuenteCuentasAdmin {
           : input.rol === 'cliente' ? !input.adminEmails.includes(cuenta.normalizedEmail) && !input.prestadorTenants.includes(cuenta.tenantId) : true)
       .sort((a, b) => b.createdAt - a.createdAt)
     const pagina = cuentas.slice((input.pagina - 1) * input.tamano, input.pagina * input.tamano)
-    const items = await Promise.all(pagina.map(async (cuenta) => ({
+    const items = await Promise.all(pagina.map((cuenta) => this.vista(cuenta)))
+    return { items, total: cuentas.length }
+  }
+
+  async porTenant(tenantId: string): Promise<CuentaAdmin | null> {
+    const cuenta = [...(this.store.accounts?.values() ?? [])].filter((item) => item.tenantId === tenantId).sort((a, b) => a.createdAt - b.createdAt)[0]
+    return cuenta ? this.vista(cuenta) : null
+  }
+
+  private async vista(cuenta: { id: string; tenantId: string; displayName: string; email: string; status: string; emailVerifiedAt: number | null; createdAt: number }): Promise<CuentaAdmin> {
+    return {
       id: cuenta.id,
       tenantId: cuenta.tenantId,
       nombre: cuenta.displayName,
@@ -81,8 +100,7 @@ export class CuentasAdminEnMemoria implements FuenteCuentasAdmin {
       verificado: cuenta.emailVerifiedAt !== null,
       conContrasena: (await this.store.findPasswordCredential(cuenta.id))?.status === 'active',
       creadaEn: new Date(cuenta.createdAt).toISOString(),
-    })))
-    return { items, total: cuentas.length }
+    }
   }
 
   async contar(): Promise<number> {

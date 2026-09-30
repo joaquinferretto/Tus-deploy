@@ -17,6 +17,11 @@ import { paginaJson, paginacion } from './paginacion.ts'
 // - GET  /tus/v1/admin/usuarios?q=&rol=&estado=      registered accounts (no secrets)
 // - GET  /tus/v1/admin/prestadores?q=&oficio=&zona=&visibilidad=&verificacion=
 //                                                    profiles + why each is (not) on the map
+// - GET  /tus/v1/admin/usuarios/:id                  one account (business fields, roles, provider link)
+// - PATCH /tus/v1/admin/usuarios/:id                 name, email (resets verification), status, email verification
+// - POST /tus/v1/admin/usuarios/:id/acciones         revoke_sessions | password_reset (safe actions)
+// - GET  /tus/v1/admin/prestadores/:id               every editable field of a provider + account + location
+// - PUT  /tus/v1/admin/prestadores/:id               profile, services, coverage, approval
 // - POST /tus/v1/admin/prestadores/:id/visibilidad   publish / hide a profile
 // - GET  /tus/v1/admin/solicitudes?q=&estado=&categoria=   service requests
 // - GET  /tus/v1/admin/catalogo                      whole catalog (selectors, map context) + usage
@@ -41,6 +46,8 @@ export interface CuentaAdmin {
 }
 
 export interface FuenteCuentasAdmin {
+  // Owner account of a tenant (provider detail -> account). Optional for older doubles.
+  porTenant?(tenantId: string): Promise<CuentaAdmin | null>
   listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[] }): Promise<{ items: CuentaAdmin[]; total: number }>
   contar(): Promise<number>
 }
@@ -73,7 +80,15 @@ export interface DependenciasAdmin {
   // Admin creation (AuthService.createAccountAsAdmin): an existing email is an explicit CONFLICT,
   // unlike public sign-up, which never reveals it.
   crearUsuario?: (input: { actorId: string; email: string; password: string; displayName: string }) => Promise<{ ok: boolean; code?: string }>
-  actualizarUsuario?: (input: { actorId: string; accountId: string; displayName?: unknown; status?: unknown; reason?: unknown }) => Promise<{ ok: boolean; code?: string }>
+  actualizarUsuario?: (input: { actorId: string; accountId: string; displayName?: unknown; status?: unknown; reason?: unknown; email?: unknown; emailVerified?: unknown }) => Promise<{ ok: boolean; code?: string }>
+  // AuthService.getAccountAsAdmin: business fields only (never hashes, tokens or MFA secrets).
+  leerUsuario?: (accountId: string) => Promise<{ id: string; email: string; displayName: string; tenantId: string; status: string; emailVerifiedAt: number | null; hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean } | null>
+  accionUsuario?: (input: { actorId: string; accountId: string; action: unknown }) => Promise<{ ok: boolean; code?: string }>
+  // Provider edition (directorio/admin.ts crearEdicionPrestadorAdmin).
+  prestadorAdmin?: {
+    leer(id: string): Promise<{ perfil: Record<string, unknown>; tenantId: string; prestador: { estado: string; aprobado: boolean } | null } | null>
+    guardar(admin: TusAuthenticatedTenantContext, id: string, body: Record<string, unknown>): Promise<{ status: number; code?: string; fields?: string[] } & Record<string, unknown>>
+  }
   now?: () => number
 }
 
@@ -161,15 +176,87 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     response.status(422).json({ error: { code: result.code === 'PASSWORD_BREACHED' ? 'PASSWORD_BREACHED' : 'INVALID_USER', message: 'user creation rejected' } })
   }))
 
+  const cuerpo = (request: Request) => (typeof request.body === 'object' && request.body !== null && !Array.isArray(request.body) ? request.body as Record<string, unknown> : {})
+
+  router.get('/tus/v1/admin/usuarios/:id', asyncHandler(async (request, response) => {
+    if (!(await guard(request, response, IDENTITY_ADMIN))) return
+    if (!deps.leerUsuario) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'user detail unavailable' } })
+    const cuenta = await deps.leerUsuario(String(request.params['id'] ?? ''))
+    if (!cuenta) return void response.status(404).json({ error: { code: 'NOT_FOUND', message: 'account not found' } })
+    const prestador = await deps.directorio.perfilDeTenantAdmin(cuenta.tenantId)
+    response.status(200).json({
+      id: cuenta.id,
+      nombre: cuenta.displayName,
+      email: cuenta.email,
+      estado: cuenta.status,
+      verificado: cuenta.emailVerifiedAt !== null,
+      verificadoEn: cuenta.emailVerifiedAt === null ? null : new Date(cuenta.emailVerifiedAt).toISOString(),
+      conContrasena: cuenta.hasPassword,
+      creadaEn: new Date(cuenta.createdAt).toISOString(),
+      actualizadaEn: new Date(cuenta.updatedAt).toISOString(),
+      // Admin authority is the environment allowlist (not editable here); cliente is everyone.
+      roles: [...(cuenta.platformAdmin ? ['admin'] : []), ...(prestador ? ['prestador'] : []), 'cliente'],
+      administradorPlataforma: cuenta.platformAdmin,
+      prestador,
+    })
+  }))
+
   router.patch('/tus/v1/admin/usuarios/:id', asyncHandler(async (request, response) => {
     const context = await guard(request, response, IDENTITY_ADMIN)
     if (!context) return
     if (!deps.actualizarUsuario) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'user update unavailable' } })
-    const body = typeof request.body === 'object' && request.body !== null ? request.body as Record<string, unknown> : {}
-    if ('role' in body || 'roles' in body || 'emailVerifiedAt' in body || 'mfa' in body) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'authority and verification require dedicated operations' } })
-    const result = await deps.actualizarUsuario({ actorId: context.subjectId, accountId: String(request.params['id'] ?? ''), displayName: body['displayName'], status: body['status'], reason: body['reason'] })
-    if (!result.ok) return void response.status(result.code === 'FORBIDDEN' ? 403 : 422).json({ error: { code: result.code ?? 'INVALID_USER', message: 'user update rejected' } })
+    const body = cuerpo(request)
+    // Authority, secrets and internal ids are never written from here.
+    const permitidos = new Set(['displayName', 'status', 'reason', 'email', 'emailVerified'])
+    if (Object.keys(body).some((key) => !permitidos.has(key))) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'authority, secrets and internal fields require dedicated operations' } })
+    const result = await deps.actualizarUsuario({ actorId: context.subjectId, accountId: String(request.params['id'] ?? ''), displayName: body['displayName'], status: body['status'], reason: body['reason'], email: body['email'], emailVerified: body['emailVerified'] })
+    if (!result.ok) {
+      const status = result.code === 'FORBIDDEN' ? 403 : result.code === 'CONFLICT' ? 409 : 422
+      return void response.status(status).json({ error: { code: result.code === 'CONFLICT' ? 'EMAIL_ALREADY_REGISTERED' : result.code ?? 'INVALID_USER', message: 'user update rejected' } })
+    }
     response.status(200).json({ updated: true })
+  }))
+
+  router.post('/tus/v1/admin/usuarios/:id/acciones', asyncHandler(async (request, response) => {
+    const context = await guard(request, response, IDENTITY_ADMIN)
+    if (!context) return
+    if (!deps.accionUsuario) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'account actions unavailable' } })
+    const result = await deps.accionUsuario({ actorId: context.subjectId, accountId: String(request.params['id'] ?? ''), action: cuerpo(request)['action'] })
+    if (!result.ok) return void response.status(result.code === 'FORBIDDEN' ? 403 : 422).json({ error: { code: result.code ?? 'INVALID_ACTION', message: 'account action rejected' } })
+    response.status(200).json({ done: true })
+  }))
+
+  const detallePrestador = async (id: string) => {
+    const leido = await deps.prestadorAdmin?.leer(id)
+    if (!leido) return null
+    const [cuenta, ubicacion] = await Promise.all([
+      deps.cuentas.porTenant ? deps.cuentas.porTenant(leido.tenantId) : Promise.resolve(null),
+      deps.directorio.ubicacionDePerfil(id),
+    ])
+    return {
+      perfil: leido.perfil,
+      prestador: leido.prestador,
+      cuenta: cuenta ? { id: cuenta.id, nombre: cuenta.nombre, email: cuenta.email, estado: cuenta.estado, verificado: cuenta.verificado } : null,
+      ubicacion,
+    }
+  }
+
+  router.get('/tus/v1/admin/prestadores/:id', asyncHandler(async (request, response) => {
+    if (!(await guard(request, response))) return
+    if (!deps.prestadorAdmin) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'provider edition unavailable' } })
+    const detalle = await detallePrestador(String(request.params['id'] ?? ''))
+    if (!detalle) return void response.status(404).json({ error: { code: 'NOT_FOUND', message: 'profile not found' } })
+    response.status(200).json(detalle)
+  }))
+
+  router.put('/tus/v1/admin/prestadores/:id', asyncHandler(async (request, response) => {
+    const context = await guard(request, response)
+    if (!context) return
+    if (!deps.prestadorAdmin) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'provider edition unavailable' } })
+    const id = String(request.params['id'] ?? '')
+    const result = await deps.prestadorAdmin.guardar(context, id, cuerpo(request))
+    if (result.status !== 200) return void response.status(result.status).json({ error: { code: result.code ?? 'INVALID_PROFILE', message: 'provider update rejected', ...(result.fields ? { fields: result.fields } : {}) } })
+    response.status(200).json(await detallePrestador(id))
   }))
 
   router.get('/tus/v1/admin/prestadores', asyncHandler(async (request, response) => {

@@ -407,6 +407,26 @@ export class ServicioDirectorio {
   }
 
   // Publicar u ocultar un perfil (única acción de estado que existe en el directorio).
+  // Link from an account (admin user detail) to its provider profile, if any.
+  async perfilDeTenantAdmin(tenantId: string): Promise<{ id: string; displayName: string; visible: boolean } | null> {
+    const perfil = await this.deps.perfiles.porTenant(tenantId)
+    return perfil ? { id: perfil.id, displayName: perfil.nombrePublico, visible: perfil.visible } : null
+  }
+
+  // Platform administration: the stored profile (every editable business field) of any provider.
+  async perfilParaAdmin(id: string): Promise<PerfilPublico | null> {
+    return this.deps.perfiles.porId(id)
+  }
+
+  // Same validation and invariants as the provider's own edit (principal service in the set,
+  // contact data refused, geography untouched); the tenant comes from the stored profile.
+  async guardarPerfilAdmin(id: string, body: Record<string, unknown>): Promise<ResultadoPerfil | { ok: false; code: 'NOT_FOUND' }> {
+    const perfil = await this.deps.perfiles.porId(id)
+    if (!perfil) return { ok: false, code: 'NOT_FOUND' }
+    const context = { tenantId: perfil.tenantId, subjectId: 'platform-admin', sessionId: 'admin', roles: ['owner'], permissions: ['tus:marketplace:write'], correlationId: 'admin' }
+    return this.guardarPerfil(context, body)
+  }
+
   async cambiarVisibilidadAdmin(id: string, visible: boolean): Promise<{ id: string; tenantId: string; visible: boolean } | null> {
     const perfil = await this.deps.perfiles.porId(id)
     if (!perfil) return null
