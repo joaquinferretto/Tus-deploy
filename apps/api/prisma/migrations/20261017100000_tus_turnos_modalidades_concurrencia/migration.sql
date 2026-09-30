@@ -56,6 +56,9 @@ ALTER TABLE public."reservas"
   ADD COLUMN IF NOT EXISTS "notas" text;
 
 -- 5. Extensión btree_gist y exclusión física contra solapamiento de reservas en el mismo calendario
+-- reservas.fecha_inicio/fecha_fin son timestamp WITHOUT time zone: el rango debe ser tsrange.
+-- tstzrange forzaría una conversión dependiente de TimeZone (STABLE) y PostgreSQL rechaza la
+-- expresión de índice con 42P17 (falló así en producción el 2026-09-30).
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 DO $$
@@ -67,7 +70,7 @@ BEGIN
       ADD CONSTRAINT "ex_reservas_sin_solapamiento"
       EXCLUDE USING gist (
         "calendario_id" WITH =,
-        tstzrange("fecha_inicio", "fecha_fin", '[)') WITH &&
+        tsrange("fecha_inicio", "fecha_fin", '[)') WITH &&
       )
       WHERE ("estado" NOT IN ('cancelled', 'cancelled-late', 'no-show'));
   END IF;

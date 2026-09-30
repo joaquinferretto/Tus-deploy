@@ -22,20 +22,21 @@ test('TURNOS CONCURRENCIA: exclusion constraint btree_gist en PostgreSQL 16 prev
     await client.query(`CREATE SCHEMA ${schemaName}`)
     await client.query(`CREATE EXTENSION IF NOT EXISTS btree_gist`)
 
-    // 2. Crear tabla reservas con la constraint de exclusion exacta de la migracion
+    // 2. Crear tabla reservas con la constraint de exclusion exacta de la migracion: las columnas
+    //    reales son timestamp SIN zona horaria, por eso tsrange (tstzrange falla con 42P17).
     await client.query(`
       CREATE TABLE ${schemaName}."reservas" (
         "id" text NOT NULL PRIMARY KEY,
         "calendario_id" text NOT NULL,
-        "fecha_inicio" timestamptz(3) NOT NULL,
-        "fecha_fin" timestamptz(3) NOT NULL,
+        "fecha_inicio" timestamp(3) NOT NULL,
+        "fecha_fin" timestamp(3) NOT NULL,
         "estado" text NOT NULL,
         "precio_final" bigint,
         "cliente_nombre" text,
         CONSTRAINT "ex_reservas_sin_solapamiento"
         EXCLUDE USING gist (
           "calendario_id" WITH =,
-          tstzrange("fecha_inicio", "fecha_fin", '[)') WITH &&
+          tsrange("fecha_inicio", "fecha_fin", '[)') WITH &&
         )
         WHERE ("estado" NOT IN ('cancelled', 'cancelled-late', 'no-show'))
       );
