@@ -12,6 +12,7 @@ import { useTusSession } from '../session/use-tus-session'
 import { DAY_NAMES, DirectoryRequestError, createDirectoryClient } from './directory-client'
 import styles from './directory.module.css'
 import { ratingLabel } from './rating-label'
+import { servicesLabel } from './services-label'
 
 const client = createDirectoryClient()
 const PESOS = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
@@ -78,6 +79,9 @@ export function WorkerProfile({ id }: { id: string }): React.ReactNode {
           <h1 className={styles.title}>{worker.displayName}</h1>
           <p className={styles.profession}>
             {worker.profession.title} · {worker.publicArea} (zona aproximada)
+          </p>
+          <p className={styles.muted}>
+            Servicios: {servicesLabel(worker)}
           </p>
         </div>
       </div>

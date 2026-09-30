@@ -15,7 +15,10 @@ export interface PerfilPublico {
   tenantId: string
   prestadorId: string
   nombrePublico: string
+  // Principal service (shown first); always the first element of `oficios`.
   oficio: OficioId
+  // Every service the provider offers (perfil_servicios, N:M), principal first, no duplicates.
+  oficios: OficioId[]
   zona: string | null
   zonasCobertura: string[]
   modalidadAtencion: 'local' | 'domicilio' | 'mixto'
@@ -25,6 +28,17 @@ export interface PerfilPublico {
   visible: boolean
   creadoEn: number
   actualizadoEn: number
+}
+
+export const SERVICIOS_MAXIMOS_POR_PERFIL = 20
+
+// Principal first, unique, only current services. Legacy callers send one `profession`.
+export function normalizarOficios(principal: unknown, lista: unknown): OficioId[] | null {
+  const crudos = Array.isArray(lista) ? lista : lista === undefined || lista === null ? [] : null
+  if (crudos === null) return null
+  const ids = [...new Set([principal, ...crudos].filter((value): value is string => typeof value === 'string' && value.length > 0))]
+  if (ids.length === 0 || ids.length > SERVICIOS_MAXIMOS_POR_PERFIL || !ids.every((id) => esOficio(id))) return null
+  return ids
 }
 
 export interface HorarioServicio {
@@ -66,6 +80,7 @@ export type CampoPerfil = 'displayName' | 'profession' | 'zone' | 'serviceZones'
 export interface EntradaPerfil {
   nombrePublico: string
   oficio: OficioId
+  oficios: OficioId[]
   zona: string | null
   zonasCobertura: string[]
   modalidadAtencion: 'local' | 'domicilio' | 'mixto'
@@ -94,7 +109,9 @@ export function validarPerfil(body: Record<string, unknown>): { ok: true; valor:
   const visible = body['visible'] === undefined ? true : body['visible']
 
   if (nombre.length < 2 || nombre.length > 60 || contieneContacto(nombre) || /\d{3,}/u.test(nombre)) campos.push('displayName')
-  if (!esOficio(body['profession'])) campos.push('profession')
+  // `professions` lists every service; `profession` is the principal one (defaults to the first).
+  const oficios = normalizarOficios(body['profession'] ?? (Array.isArray(body['professions']) ? body['professions'][0] : undefined), body['professions'])
+  if (!oficios) campos.push('profession')
   if (body['zone'] !== undefined && body['zone'] !== null && zonaInput && !zona) campos.push('zone')
   if (!zonasValidas) campos.push('serviceZones')
   if (!modalidadAtencion) campos.push('serviceMode')
@@ -107,7 +124,8 @@ export function validarPerfil(body: Record<string, unknown>): { ok: true; valor:
     ok: true,
     valor: {
       nombrePublico: nombre,
-      oficio: body['profession'] as OficioId,
+      oficio: oficios![0]!,
+      oficios: oficios!,
       zona,
       zonasCobertura: zonasCobertura.length > 0 ? zonasCobertura : zona ? [zona] : [],
       modalidadAtencion: modalidadAtencion!,
@@ -158,6 +176,11 @@ export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador,
     displayName: perfil.nombrePublico,
     initials: iniciales(perfil.nombrePublico),
     profession: { id: info.id, label: info.label, title: info.profesion },
+    // Every service of the provider (principal first): one provider, one marker, many services.
+    professions: perfil.oficios.map((id) => {
+      const item = oficio(id)
+      return { id: item.id, label: item.label, title: item.profesion, categoryId: item.categoriaId ?? null }
+    }),
     approximateArea: resolved.publicArea,
     publicArea: resolved.publicArea,
     serviceZones: resolved.serviceZones,

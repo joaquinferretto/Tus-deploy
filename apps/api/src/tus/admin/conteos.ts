@@ -3,7 +3,8 @@
 // queries (GROUP BY), never one query per trade, zone or neighbourhood.
 //
 // Criteria (same in memory and in PostgreSQL):
-// - trade `prestadores`: profiles of that trade whose provider (prestadores.estado) is approved;
+// - trade `prestadores`: profiles OFFERING that trade (perfil_servicios, N:M) whose provider
+//   (prestadores.estado) is approved;
 //   `enMapa`: of those, the visible ones with at least one zone (what the map can place).
 // - neighbourhood / zone `prestadores`: visible profiles of approved providers whose zone or
 //   coverage includes the neighbourhood (for a zone: any of its neighbourhoods, counted once).
@@ -38,7 +39,6 @@ export interface ClientePrismaConteos {
   $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>
 }
 
-const APROBADO = { prestador: { estado: 'approved' } }
 const total = (fila: Fila) => Number((fila['_count'] as { _all?: number } | undefined)?._all ?? 0)
 
 // Place of a profile = its zone + its coverage (unnest), joined to its approved provider.
@@ -52,20 +52,25 @@ const lugaresVisibles = (joins = '') => `
 export class ConteosCatalogoPrisma implements ConteosCatalogo {
   constructor(private readonly client: ClientePrismaConteos) {}
 
+  // A provider counts in EVERY service it offers (perfil_servicios, N:M): one grouped query.
   async porOficio(ids: readonly string[]) {
     const resultado = new Map(ids.map((id) => [id, { prestadores: 0, enMapa: 0 }]))
     if (ids.length === 0) return resultado
-    const oficio = { in: [...ids] }
-    const [todos, enMapa] = await Promise.all([
-      this.client.perfilPublicoPrestador.groupBy({ by: ['oficio'], where: { oficio, ...APROBADO }, _count: { _all: true } }),
-      this.client.perfilPublicoPrestador.groupBy({
-        by: ['oficio'],
-        where: { oficio, ...APROBADO, visible: true, OR: [{ zona: { not: null } }, { NOT: { zonasCobertura: { isEmpty: true } } }] },
-        _count: { _all: true },
-      }),
-    ])
-    for (const fila of todos) resultado.get(String(fila['oficio']))!.prestadores = total(fila)
-    for (const fila of enMapa) resultado.get(String(fila['oficio']))!.enMapa = total(fila)
+    const filas = await this.client.$queryRawUnsafe<{ id: string; prestadores: number; en_mapa: number }[]>(
+      `SELECT s."oficio_id" AS id,
+              count(DISTINCT p."id")::int AS prestadores,
+              (count(DISTINCT p."id") FILTER (WHERE p."visible" AND (p."zona" IS NOT NULL OR cardinality(p."zonas_cobertura") > 0)))::int AS en_mapa
+         FROM public."perfil_servicios" s
+         JOIN public."perfiles_publicos_prestador" p ON p."id" = s."perfil_id"
+         JOIN public."prestadores" m ON m."tenant_id" = p."tenant_id" AND m."prestador_id" = p."prestador_id" AND m."estado" = 'approved'
+        WHERE s."oficio_id" = ANY($1::text[])
+        GROUP BY s."oficio_id"`,
+      [...ids]
+    )
+    for (const fila of filas) {
+      const actual = resultado.get(String(fila.id))
+      if (actual) Object.assign(actual, { prestadores: Number(fila.prestadores), enMapa: Number(fila.en_mapa) })
+    }
     return resultado
   }
 
@@ -140,7 +145,7 @@ export class ConteosCatalogoEnMemoria implements ConteosCatalogo {
   async porOficio(ids: readonly string[]) {
     const perfiles = await this.perfiles()
     return new Map(ids.map((id) => {
-      const propios = perfiles.filter((perfil) => perfil.oficio === id)
+      const propios = perfiles.filter((perfil) => perfil.oficios.some((item) => item.id === id))
       return [id, { prestadores: propios.length, enMapa: propios.filter((perfil) => perfil.visible && (perfil.zona !== null || perfil.zonasCobertura.length > 0)).length }]
     }))
   }

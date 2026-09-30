@@ -50,6 +50,7 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
     asyncHandler(async (request: Request, response: Response) => {
       const resultado = await servicio.listar({
         oficio: request.query['oficio'],
+        categoria: request.query['categoria'],
         zona: request.query['zona'],
         q: request.query['q'],
         verificados: request.query['verificados'],

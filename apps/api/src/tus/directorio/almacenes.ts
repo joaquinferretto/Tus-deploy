@@ -6,39 +6,51 @@ import type { AreaDomicilioFallback } from './ubicacion.ts'
 
 // ---- en memoria (tests y composición local) -------------------------------------------------
 
+// Principal first, unique: the same invariant the database enforces.
+export function copiaPerfil(perfil: PerfilPublico): PerfilPublico {
+  const oficios = [...new Set([perfil.oficio, ...(perfil.oficios ?? [])])]
+  return { ...perfil, oficio: oficios[0]!, oficios, zonasCobertura: [...perfil.zonasCobertura] }
+}
+
+function filtroOficios(input: { oficio?: OficioId; oficios?: readonly OficioId[] }): OficioId[] | null {
+  const ids = [...(input.oficios ?? []), ...(input.oficio ? [input.oficio] : [])]
+  return ids.length ? [...new Set(ids)] : null
+}
+
 export class AlmacenPerfilesEnMemoria implements AlmacenPerfiles {
   readonly perfiles = new Map<string, PerfilPublico>()
 
   async guardar(perfil: PerfilPublico) {
     for (const [id, actual] of this.perfiles) if (actual.tenantId === perfil.tenantId && id !== perfil.id) this.perfiles.delete(id)
-    this.perfiles.set(perfil.id, { ...perfil })
+    this.perfiles.set(perfil.id, copiaPerfil(perfil))
   }
 
   async porTenant(tenantId: string) {
     const found = [...this.perfiles.values()].find((perfil) => perfil.tenantId === tenantId)
-    return found ? { ...found } : null
+    return found ? copiaPerfil(found) : null
   }
 
   async porTenants(tenantIds: readonly string[]) {
     const wanted = new Set(tenantIds)
-    return [...this.perfiles.values()].filter((p) => wanted.has(p.tenantId)).map((p) => ({ ...p }))
+    return [...this.perfiles.values()].filter((p) => wanted.has(p.tenantId)).map(copiaPerfil)
   }
 
   async porId(id: string) {
     const found = this.perfiles.get(id)
-    return found ? { ...found } : null
+    return found ? copiaPerfil(found) : null
   }
 
-  async visibles(input: { oficio?: OficioId; limite: number }) {
+  async visibles(input: { oficio?: OficioId; oficios?: readonly OficioId[]; limite: number }) {
+    const buscados = filtroOficios(input)
     return [...this.perfiles.values()]
-      .filter((perfil) => perfil.visible && (!input.oficio || perfil.oficio === input.oficio))
+      .filter((perfil) => perfil.visible && (!buscados || perfil.oficios.some((id) => buscados.includes(id))))
       .sort((a, b) => b.actualizadoEn - a.actualizadoEn)
       .slice(0, input.limite)
-      .map((perfil) => ({ ...perfil }))
+      .map(copiaPerfil)
   }
 
   async todos(input: { limite: number }) {
-    return [...this.perfiles.values()].sort((a, b) => b.actualizadoEn - a.actualizadoEn).slice(0, input.limite).map((perfil) => ({ ...perfil }))
+    return [...this.perfiles.values()].sort((a, b) => b.actualizadoEn - a.actualizadoEn).slice(0, input.limite).map(copiaPerfil)
   }
 
   async tenants() {
@@ -49,12 +61,12 @@ export class AlmacenPerfilesEnMemoria implements AlmacenPerfiles {
     const q = input.q.toLocaleLowerCase('es')
     const items = [...this.perfiles.values()]
       .filter((item) => !q || item.nombrePublico.toLocaleLowerCase('es').includes(q))
-      .filter((item) => !input.oficio || item.oficio === input.oficio)
+      .filter((item) => !input.oficio || item.oficios.includes(input.oficio))
       .filter((item) => !input.zona || item.zona === input.zona || item.zonasCobertura.includes(input.zona))
       .filter((item) => input.visible === null || item.visible === input.visible)
       .sort((a, b) => b.actualizadoEn - a.actualizadoEn || b.id.localeCompare(a.id))
     const page = items.slice((input.pagina - 1) * input.tamano, input.pagina * input.tamano)
-    return { items: page.map((item) => ({ ...item })), total: items.length }
+    return { items: page.map(copiaPerfil), total: items.length }
   }
 }
 
@@ -63,20 +75,38 @@ export class AlmacenPerfilesEnMemoria implements AlmacenPerfiles {
 type Fila = Record<string, unknown>
 
 interface DelegadoPerfiles {
-  findFirst(input: { where: Fila }): Promise<Fila | null>
-  findMany(input: { where: Fila; orderBy?: Fila | Fila[]; skip?: number; take?: number; select?: Fila; distinct?: string[] }): Promise<Fila[]>
+  findFirst(input: { where: Fila; include?: Fila }): Promise<Fila | null>
+  findMany(input: { where: Fila; orderBy?: Fila | Fila[]; skip?: number; take?: number; select?: Fila; distinct?: string[]; include?: Fila }): Promise<Fila[]>
   count(input: { where: Fila }): Promise<number>
   upsert(input: { where: Fila; create: Fila; update: Fila }): Promise<Fila>
 }
 
 export interface ClientePrismaDirectorio {
   perfilPublicoPrestador: DelegadoPerfiles
+  // perfil_servicios (N:M). Optional only for legacy doubles; the Prisma client always has it.
+  perfilServicio?: {
+    deleteMany(input: { where: Fila }): Promise<{ count: number }>
+    createMany(input: { data: Fila[]; skipDuplicates?: boolean }): Promise<{ count: number }>
+    upsert(input: { where: Fila; create: Fila; update: Fila }): Promise<Fila>
+  }
+  $transaction?<T>(operation: (client: ClientePrismaDirectorio) => Promise<T>): Promise<T>
   trabajo: { count(input: { where: Fila }): Promise<number> }
   // Real delegate of verificaciones_identidad (model VerificacionIdentidad); its approved state is 'verified'.
   verificacionIdentidad?: { findMany(input: { where: Fila; select: Fila; distinct?: string[] }): Promise<Fila[]> }
 }
 
 const desdeFecha = (value: unknown) => (value instanceof Date ? value.getTime() : Number(value))
+
+// Every profile read brings its services in the same query plan (one batched relation read).
+const CON_SERVICIOS = { servicios: { select: { oficioId: true, orden: true }, orderBy: [{ orden: 'asc' }, { oficioId: 'asc' }] } }
+
+function oficiosDeFila(fila: Fila): OficioId[] {
+  const principal = String(fila['oficio'])
+  const servicios = Array.isArray(fila['servicios'])
+    ? (fila['servicios'] as Fila[]).map((item) => String(item['oficioId']))
+    : []
+  return [...new Set([principal, ...servicios])]
+}
 
 function desdeFila(fila: Fila): PerfilPublico {
   const zona = fila['zona'] === null || fila['zona'] === undefined ? null : String(fila['zona'])
@@ -91,6 +121,7 @@ function desdeFila(fila: Fila): PerfilPublico {
     prestadorId: String(fila['prestadorId']),
     nombrePublico: String(fila['nombrePublico']),
     oficio: fila['oficio'] as OficioId,
+    oficios: oficiosDeFila(fila),
     zona,
     zonasCobertura,
     modalidadAtencion: fila['modalidadAtencion'] === 'local' || fila['modalidadAtencion'] === 'mixto' ? fila['modalidadAtencion'] : 'domicilio',
@@ -119,39 +150,58 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
       visible: perfil.visible,
       fechaActualizacion: new Date(perfil.actualizadoEn),
     }
-    await this.client.perfilPublicoPrestador.upsert({
-      where: { tenantId_prestadorId: { tenantId: perfil.tenantId, prestadorId: perfil.prestadorId } },
-      create: { id: perfil.id, tenantId: perfil.tenantId, prestadorId: perfil.prestadorId, ...datos, fechaCreacion: new Date(perfil.creadoEn) },
-      update: datos,
-    })
+    const oficios = [...new Set([perfil.oficio, ...perfil.oficios])]
+    // Profile + its service set in ONE transaction: the deferred FK checks at commit that the
+    // principal service belongs to the set; PK (perfil_id, oficio_id) forbids duplicates.
+    const escribir = async (client: ClientePrismaDirectorio) => {
+      const fila = await client.perfilPublicoPrestador.upsert({
+        where: { tenantId_prestadorId: { tenantId: perfil.tenantId, prestadorId: perfil.prestadorId } },
+        create: { id: perfil.id, tenantId: perfil.tenantId, prestadorId: perfil.prestadorId, ...datos, fechaCreacion: new Date(perfil.creadoEn) },
+        update: datos,
+      })
+      if (!client.perfilServicio) return
+      const perfilId = String(fila['id'])
+      await client.perfilServicio.deleteMany({ where: { perfilId, oficioId: { notIn: oficios } } })
+      for (const [orden, oficioId] of oficios.entries())
+        await client.perfilServicio.upsert({
+          where: { perfilId_oficioId: { perfilId, oficioId } },
+          create: { perfilId, oficioId, orden },
+          update: { orden },
+        })
+    }
+    if (this.client.$transaction) await this.client.$transaction((tx) => escribir(tx))
+    else await escribir(this.client)
   }
 
   async porTenant(tenantId: string) {
-    const fila = await this.client.perfilPublicoPrestador.findFirst({ where: { tenantId } })
+    const fila = await this.client.perfilPublicoPrestador.findFirst({ where: { tenantId }, include: CON_SERVICIOS })
     return fila ? desdeFila(fila) : null
   }
 
   async porTenants(tenantIds: readonly string[]) {
     if (!tenantIds.length) return []
-    return (await this.client.perfilPublicoPrestador.findMany({ where: { tenantId: { in: [...new Set(tenantIds)] } } })).map(desdeFila)
+    return (await this.client.perfilPublicoPrestador.findMany({ where: { tenantId: { in: [...new Set(tenantIds)] } }, include: CON_SERVICIOS })).map(desdeFila)
   }
 
   async porId(id: string) {
-    const fila = await this.client.perfilPublicoPrestador.findFirst({ where: { id } })
+    const fila = await this.client.perfilPublicoPrestador.findFirst({ where: { id }, include: CON_SERVICIOS })
     return fila ? desdeFila(fila) : null
   }
 
-  async visibles(input: { oficio?: OficioId; limite: number }) {
+  async visibles(input: { oficio?: OficioId; oficios?: readonly OficioId[]; limite: number }) {
+    const buscados = filtroOficios(input)
     const filas = await this.client.perfilPublicoPrestador.findMany({
-      where: { visible: true, ...(input.oficio ? { oficio: input.oficio } : {}) },
+      // A provider matches when ANY of its services is requested (one row per provider).
+      where: { visible: true, ...(buscados ? { servicios: { some: { oficioId: { in: buscados } } } } : {}) },
       orderBy: { fechaActualizacion: 'desc' },
       take: input.limite,
+      include: CON_SERVICIOS,
     })
     return filas.map(desdeFila)
   }
 
   async todos(input: { limite: number }) {
-    const filas = await this.client.perfilPublicoPrestador.findMany({ where: {}, orderBy: { fechaActualizacion: 'desc' }, take: input.limite })
+    const filas = await this.client.perfilPublicoPrestador.findMany({ where: {}, orderBy: { fechaActualizacion: 'desc' }, take: input.limite, include: CON_SERVICIOS })
     return filas.map(desdeFila)
   }
 
@@ -168,13 +218,13 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
     }
     const where: Fila = { AND: [
       ...(input.q ? [{ nombrePublico: { contains: input.q, mode: 'insensitive' } }] : []),
-      ...(input.oficio ? [{ oficio: input.oficio }] : []),
+      ...(input.oficio ? [{ servicios: { some: { oficioId: input.oficio } } }] : []),
       ...(input.zona ? [{ OR: [{ zona: input.zona }, { zonasCobertura: { has: input.zona } }] }] : []),
       ...(input.visible === null ? [] : [{ visible: input.visible }]),
       ...(tenantIds === null ? [] : [{ tenantId: input.verificado ? { in: tenantIds } : { notIn: tenantIds } }]),
     ] }
     const [filas, total] = await Promise.all([
-      this.client.perfilPublicoPrestador.findMany({ where, orderBy: [{ fechaActualizacion: 'desc' }, { id: 'desc' }], skip: (input.pagina - 1) * input.tamano, take: input.tamano }),
+      this.client.perfilPublicoPrestador.findMany({ where, orderBy: [{ fechaActualizacion: 'desc' }, { id: 'desc' }], skip: (input.pagina - 1) * input.tamano, take: input.tamano, include: CON_SERVICIOS }),
       this.client.perfilPublicoPrestador.count({ where }),
     ])
     return { items: filas.map(desdeFila), total }

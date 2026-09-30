@@ -18,10 +18,12 @@ import {
 } from './modelo.ts'
 import { esOficio, normalizarTexto, oficio, type OficioId } from './oficios.ts'
 import type { AlmacenPerfiles, FuentesDirectorio } from './puertos.ts'
-import { barriosDeUbicacion } from '../catalogo/vigente.ts'
+import { barriosDeUbicacion, oficiosVigentes } from '../catalogo/vigente.ts'
 
 export interface FilaAdminPrestador {
   id: string; tenantId: string; nombre: string; oficio: string; oficioLabel: string; zona: string | null; zonasCobertura: string[]
+  // Every service of the provider (N:M), principal first.
+  oficios: { id: string; label: string }[]
   visible: boolean; aprobado: boolean; registrado: boolean; verificado: boolean; ubicaciones: number; enMapa: boolean
   motivos: string[]; creadoEn: string; actualizadoEn: string
   // FASE 10: Mercado Pago link status (never tokens), reputation and completed works.
@@ -35,7 +37,9 @@ export const CANDIDATOS_MAXIMOS = 5
 export type OrdenDirectorio = 'relevancia' | 'trabajos' | 'cercania'
 
 export interface FiltrosDirectorio {
+  // A service: providers offering it. A category: providers offering ANY of its services.
   oficio?: unknown
+  categoria?: unknown
   zona?: unknown
   q?: unknown
   verificados?: unknown
@@ -59,6 +63,11 @@ interface Enriquecido {
 // Caso de uso compartido por el directorio Web ("Buscar trabajador"), el asistente Web ("Buscar
 // servicios") y las herramientas del asistente de WhatsApp. Solo lee datos reales: si un prestador
 // no está aprobado o no tiene perfil visible, no aparece; nunca se completan datos faltantes.
+// Current services of a category (catalog snapshot, no query).
+function idsOficiosDeCategoria(categoriaId: string): OficioId[] {
+  return oficiosVigentes().filter((item) => item.categoriaId === categoriaId).map((item) => item.id)
+}
+
 export class ServicioDirectorio {
   private readonly now: () => number
   private readonly newId: () => string
@@ -109,6 +118,8 @@ export class ServicioDirectorio {
 
   async listar(filtros: FiltrosDirectorio = {}): Promise<{ items: PrestadorPublico[]; total: number; page: number; hasMore: boolean }> {
     const oficioFiltro = esOficio(filtros.oficio) ? filtros.oficio : undefined
+    const categoriaFiltro = typeof filtros.categoria === 'string' && filtros.categoria.trim() ? filtros.categoria.trim() : null
+    const deCategoria = categoriaFiltro ? idsOficiosDeCategoria(categoriaFiltro) : null
     const zona = typeof filtros.zona === 'string' && filtros.zona.trim() ? filtros.zona.trim() : null
     const q = typeof filtros.q === 'string' ? normalizarTexto(filtros.q.slice(0, 80)) : ''
     const orden: OrdenDirectorio = filtros.orden === 'trabajos' || filtros.orden === 'cercania' ? filtros.orden : 'relevancia'
@@ -116,13 +127,16 @@ export class ServicioDirectorio {
     // Si el texto nombra un oficio ("electricista"), se usa como filtro de oficio.
     const oficioTexto = !oficioFiltro && q ? interpretarNecesidad(q).category : null
 
-    let items = await this.enriquecerVisibles(oficioFiltro ?? oficioTexto ?? undefined)
+    // An unknown category yields no provider (never "all of them").
+    if (deCategoria && deCategoria.length === 0) return { items: [], total: 0, page: pagina, hasMore: false }
+    let items = await this.enriquecerVisibles(oficioFiltro ? [oficioFiltro] : oficioTexto ? [oficioTexto] : undefined)
+    if (deCategoria) items = items.filter(({ perfil }) => perfil.oficios.some((id) => deCategoria.includes(id)))
     if (q) {
       const terminos = q.split(' ').filter((termino) => termino.length >= 3)
       items = items.filter(({ perfil, hechos, ubicacion }) => {
-        if (oficioTexto && perfil.oficio === oficioTexto) return true
-        const info = oficio(perfil.oficio)
-        const texto = normalizarTexto(`${perfil.nombrePublico} ${info.label} ${info.profesion} ${info.palabrasClave} ${perfil.descripcion ?? ''} ${ubicacion.serviceZones.join(' ')} ${ubicacion.publicArea} ${hechos.servicios.map((servicio) => servicio.nombre).join(' ')}`)
+        if (oficioTexto && perfil.oficios.includes(oficioTexto)) return true
+        const servicios = perfil.oficios.map((id) => oficio(id)).map((info) => `${info.label} ${info.profesion} ${info.palabrasClave}`).join(' ')
+        const texto = normalizarTexto(`${perfil.nombrePublico} ${servicios} ${perfil.descripcion ?? ''} ${ubicacion.serviceZones.join(' ')} ${ubicacion.publicArea} ${hechos.servicios.map((servicio) => servicio.nombre).join(' ')}`)
         return terminos.every((termino) => texto.includes(termino))
       })
     }
@@ -201,7 +215,7 @@ export class ServicioDirectorio {
     const zona = typeof input.zona === 'string' && input.zona.trim() ? input.zona.trim() : null
     const limite = Math.max(1, Math.min(CANDIDATOS_MAXIMOS, input.limite ?? CANDIDATOS_MAXIMOS))
     const normalizarZona = (value: string) => normalizarTexto(value).replace(/^barrio\s+/u, '')
-    const visibles = await this.enriquecerVisibles(input.oficio as OficioId)
+    const visibles = await this.enriquecerVisibles([input.oficio as OficioId])
     const compatibles = input.exigirCobertura && zona
       ? visibles.filter(item => item.ubicacion.serviceZones.some(value => barriosDeUbicacion(zona).some((lugar) => normalizarZona(value) === normalizarZona(lugar))))
       : visibles
@@ -222,8 +236,8 @@ export class ServicioDirectorio {
     return { ...hechos, calificacion: calificaciones.get(tenantId) ?? null }
   }
 
-  private async enriquecerVisibles(oficioFiltro?: OficioId): Promise<Enriquecido[]> {
-    const perfiles = await this.deps.perfiles.visibles({ ...(oficioFiltro ? { oficio: oficioFiltro } : {}), limite: PERFILES_MAXIMOS })
+  private async enriquecerVisibles(oficiosFiltro?: readonly OficioId[]): Promise<Enriquecido[]> {
+    const perfiles = await this.deps.perfiles.visibles({ ...(oficiosFiltro?.length ? { oficios: oficiosFiltro } : {}), limite: PERFILES_MAXIMOS })
     const now = this.now()
     // Ratings of the whole page in ONE grouped read.
     const calificaciones: Map<string, { average: number; count: number }> =
@@ -266,6 +280,7 @@ export class ServicioDirectorio {
       ]
       return {
         id: perfil.id, tenantId: perfil.tenantId, nombre: perfil.nombrePublico, oficio: perfil.oficio, oficioLabel: publico.profession.label,
+        oficios: perfil.oficios.map((id) => ({ id, label: oficio(id).label })),
         zona: perfil.zona, zonasCobertura: perfil.zonasCobertura, visible: perfil.visible, aprobado: hechos.aprobado,
         registrado: Boolean(prestador), verificado: hechos.verificado, ubicaciones: publico.mapLocations.length,
         enMapa: motivos.length === 0, motivos, creadoEn: new Date(perfil.creadoEn).toISOString(), actualizadoEn: new Date(perfil.actualizadoEn).toISOString(),

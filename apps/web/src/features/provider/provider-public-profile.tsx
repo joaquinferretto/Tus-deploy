@@ -4,20 +4,21 @@ import type { Route } from 'next'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 
-import type { OficioPublico } from '@factory/contracts'
+import type { CategoriaPublica, OficioPublico } from '@factory/contracts'
 
 import { FieldError, FormError, TextField } from '../auth/auth-fields'
 import authStyles from '../auth/auth.module.css'
 import { DirectoryRequestError, createDirectoryClient } from '../directory/directory-client'
 import styles from '../directory/directory.module.css'
 import { useTusSession } from '../session/use-tus-session'
+import { ServicePicker } from '../catalog/service-picker'
 
 const client = createDirectoryClient()
 const RETURN_TO = '/prestador/perfil-publico'
 
 const FIELD_MESSAGES: Record<string, string> = {
   displayName: 'Usá tu nombre o el de tu negocio (2 a 60 caracteres, sin teléfonos ni emails).',
-  profession: 'Elegí tu oficio.',
+  profession: 'Elegí al menos un servicio válido (hasta 20).',
   zone: 'Elegí un barrio válido.',
   serviceZones: 'Elegí hasta 8 zonas válidas.',
   serviceMode: 'Elegí cómo atendés.',
@@ -30,8 +31,8 @@ const FIELD_MESSAGES: Record<string, string> = {
 // computed by TUS and cannot be edited here.
 export function ProviderPublicProfile(): React.ReactNode {
   const session = useTusSession(RETURN_TO)
-  const [catalog, setCatalog] = useState<{ items: OficioPublico[]; zones: string[] }>({ items: [], zones: [] })
-  const [values, setValues] = useState({ displayName: '', profession: '', zone: '', serviceZones: [] as string[], serviceMode: 'domicilio' as 'local' | 'domicilio' | 'mixto', coverageRadiusKm: '', description: '', years: '', visible: true })
+  const [catalog, setCatalog] = useState<{ items: OficioPublico[]; zones: string[]; categories?: CategoriaPublica[] }>({ items: [], zones: [] })
+  const [values, setValues] = useState({ displayName: '', professions: [] as string[], zone: '', serviceZones: [] as string[], serviceMode: 'domicilio' as 'local' | 'domicilio' | 'mixto', coverageRadiusKm: '', description: '', years: '', visible: true })
   const [status, setStatus] = useState<'loading' | 'ready' | 'saving' | 'saved' | 'not_provider' | 'error'>('loading')
   const [fields, setFields] = useState<string[]>([])
   const [message, setMessage] = useState('')
@@ -47,7 +48,7 @@ export function ProviderPublicProfile(): React.ReactNode {
           setPublicId(mine.profile.id)
           setValues({
             displayName: mine.profile.displayName,
-            profession: mine.profile.profession.id,
+            professions: mine.profile.professions?.map((item) => item.id) ?? [mine.profile.profession.id],
             zone: mine.profile.serviceZones[0] ?? '',
             serviceZones: mine.profile.serviceZones,
             serviceMode: mine.profile.coverage.mode,
@@ -73,7 +74,8 @@ export function ProviderPublicProfile(): React.ReactNode {
       const coverageRadiusKm = values.coverageRadiusKm.trim() === '' ? null : Number(values.coverageRadiusKm)
       const result = await client.saveProfile(session.session, {
         displayName: values.displayName.trim(),
-        profession: values.profession,
+        profession: values.professions[0] ?? '',
+        professions: values.professions,
         zone: values.zone,
         serviceZones: values.serviceZones,
         serviceMode: values.serviceMode,
@@ -134,19 +136,18 @@ export function ProviderPublicProfile(): React.ReactNode {
         onChange={(event) => setValues((current) => ({ ...current, displayName: event.target.value }))}
         value={values.displayName}
       />
+      <fieldset className={authStyles.field}>
+        <legend>Servicios que ofrecés</legend>
+        <ServicePicker
+          categories={catalog.categories ?? []}
+          idPrefix="perfil-servicio"
+          onChange={(professions) => setValues((current) => ({ ...current, professions }))}
+          services={catalog.items}
+          value={values.professions}
+        />
+        <FieldError id="perfil-oficio-error" message={error('profession')} />
+      </fieldset>
       <div className={authStyles.row2}>
-        <div className={authStyles.field}>
-          <label htmlFor="perfil-oficio">Oficio</label>
-          <select className={authStyles.input} id="perfil-oficio" onChange={(event) => setValues((current) => ({ ...current, profession: event.target.value }))} value={values.profession}>
-            <option value="">Elegí tu oficio</option>
-            {catalog.items.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-          <FieldError id="perfil-oficio-error" message={error('profession')} />
-        </div>
         <div className={authStyles.field}>
           <label htmlFor="perfil-barrio">Zona principal (opcional)</label>
           <select className={authStyles.input} id="perfil-barrio" onChange={(event) => setValues((current) => ({ ...current, zone: event.target.value }))} value={values.zone}>

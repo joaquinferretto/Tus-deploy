@@ -2851,6 +2851,9 @@ model PerfilPublicoPrestador {
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
   prestador          Prestador @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_prestador")
+  // Every service the provider offers (N:M). `oficio` is the principal one and always belongs to
+  // this set (deferred FK fk_perfiles_servicio_principal, defined in SQL).
+  servicios          PerfilServicio[]
 
   @@unique([tenantId, prestadorId], map: "uq_perfiles_publicos_prestador_prestador")
   @@index([visible, oficio], map: "ix_perfiles_publicos_prestador_oficio")
@@ -3001,10 +3004,26 @@ model OficioServicio {
   creadoEn      DateTime           @map("creado_en")
   actualizadoEn DateTime           @map("actualizado_en")
   sinonimos     SinonimoOficio[]
+  perfiles      PerfilServicio[]
 
   @@unique([slug], map: "uq_oficios_servicio_slug")
   @@index([categoriaId], map: "ix_oficios_servicio_categoria")
   @@map("oficios_servicio")
+}
+
+// Provider profile <-> service (oficio) many-to-many. One row per pair (primary key), ordered;
+// orden 0 is the principal service shown first.
+model PerfilServicio {
+  perfilId  String                 @map("perfil_id")
+  oficioId  String                 @map("oficio_id")
+  orden     Int                    @default(0) @map("orden")
+  creadoEn  DateTime               @default(now()) @map("creado_en")
+  perfil    PerfilPublicoPrestador @relation(fields: [perfilId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_perfil_servicios_perfil")
+  oficio    OficioServicio         @relation(fields: [oficioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfil_servicios_oficio")
+
+  @@id([perfilId, oficioId], map: "perfil_servicios_pkey")
+  @@index([oficioId], map: "ix_perfil_servicios_oficio")
+  @@map("perfil_servicios")
 }
 
 model SinonimoOficio {

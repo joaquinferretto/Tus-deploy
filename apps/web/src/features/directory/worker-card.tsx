@@ -6,6 +6,7 @@ import type { CandidatoPrestador, PrestadorPublico } from '@factory/contracts'
 import homeStyles from '../home/home.module.css'
 import styles from './directory.module.css'
 import { ratingLabel } from './rating-label'
+import { servicesLabel } from './services-label'
 
 const PESOS = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
 
@@ -36,6 +37,7 @@ export function WorkerCard({
             {worker.displayName}
           </h3>
           <p className={styles.profession}>{worker.profession.title}</p>
+          {(worker.professions?.length ?? 0) > 1 ? <p className={styles.muted}>{servicesLabel(worker)}</p> : null}
         </div>
       </div>
       <ul className={styles.facts}>

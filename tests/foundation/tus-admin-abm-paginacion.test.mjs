@@ -329,7 +329,7 @@ test('PROVIDERS: the admin page reads merchants and identity in one batch each (
   assert.deepEqual(result.identityQuery.where, { estado: 'verified' }, 'the real VerificacionIdentidad state is "verified"')
   assert.deepEqual(result.identityQuery.distinct, ['tenantId'])
   assert.deepEqual(result.profilesQuery, { skip: 100, take: 50, orderBy: [{ fechaActualizacion: 'desc' }, { id: 'desc' }] })
-  assert.equal(result.countQueries, 7, 'counts for 50 rows: 7 aggregate queries in total (2 trade, 2 neighbourhood, 2 zone, 1 category)')
+  assert.equal(result.countQueries, 6, 'counts for 50 rows: 6 aggregate queries in total (1 trade over perfil_servicios, 2 neighbourhood, 2 zone, 1 category)')
   assert.deepEqual(result.catalogQuery.orderBy, [{ orden: 'asc' }, { nombre: 'asc' }, { id: 'asc' }])
   assert.equal(result.catalogQuery.skip, 50)
   assert.equal(result.catalogQuery.take, 50)

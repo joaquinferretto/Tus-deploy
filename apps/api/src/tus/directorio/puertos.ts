@@ -9,7 +9,8 @@ export interface AlmacenPerfiles {
   porTenants(tenantIds: readonly string[]): Promise<PerfilPublico[]>
   porId(id: string): Promise<PerfilPublico | null>
   // Visibles, opcionalmente de un oficio; como máximo `limite`.
-  visibles(input: { oficio?: OficioId; limite: number }): Promise<PerfilPublico[]>
+  // `oficios`: providers offering ANY of them (a category filter passes all its services).
+  visibles(input: { oficio?: OficioId; oficios?: readonly OficioId[]; limite: number }): Promise<PerfilPublico[]>
   // Todos (visibles u ocultos), para la administración de la plataforma.
   todos(input: { limite: number }): Promise<PerfilPublico[]>
   // Ids de tenant con perfil (distintos), sin traer perfiles.

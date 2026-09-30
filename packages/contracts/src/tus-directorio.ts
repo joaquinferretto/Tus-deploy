@@ -76,11 +76,20 @@ export interface CoberturaPublicaPrestador {
   radiusKm: number | null
 }
 
+export interface ServicioPrestadorPublico {
+  id: OficioTus
+  label: string
+  title: string
+  categoryId: string | null
+}
+
 export interface PrestadorPublico {
   id: string
   displayName: string
   initials: string
   profession: { id: OficioTus; label: string; title: string }
+  // Every service the provider offers (principal first). Absent in older payloads.
+  professions?: ServicioPrestadorPublico[]
   approximateArea: string
   publicArea: string
   serviceZones: string[]
