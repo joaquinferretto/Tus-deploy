@@ -419,7 +419,7 @@ export function AdminZonas(): React.ReactNode {
   const barrios = useLista('barrios', { q: '', estado: '', localidad: '', zona: '' })
   const { busy, guardar, aviso } = useGuardar(async () => { await Promise.all([zonas.load(), barrios.load(), referencias.load()]) })
   const [confirmacion, pedir, cerrar] = useConfirmacion()
-  const [localidad, setLocalidad] = useState<{ id: string | null; nombre: string; provincia: string } | null>(null)
+  const [localidad, setLocalidad] = useState<{ id: string | null; nombre: string; provincia: string; lat: string; lng: string } | null>(null)
   const [zona, setZona] = useState<ZonaForm | null>(null)
   const [barrio, setBarrio] = useState<BarrioForm | null>(null)
   const data = referencias.data
@@ -434,7 +434,7 @@ export function AdminZonas(): React.ReactNode {
     <>
       <AdminPageHeader subtitle="Localidades, zonas y barrios que usan el mapa, la búsqueda y los formularios" title="Zonas y barrios">
         <div className={styles.chips}>
-          <button className={styles.buttonSecondary} onClick={() => setLocalidad({ id: null, nombre: '', provincia: '' })} type="button">Nueva localidad</button>
+          <button className={styles.buttonSecondary} onClick={() => setLocalidad({ id: null, nombre: '', provincia: '', lat: '', lng: '' })} type="button">Nueva localidad</button>
           <button className={styles.buttonSecondary} disabled={!primeraLocalidad} onClick={() => setZona({ id: null, nombre: '', localidadId: primeraLocalidad, puntos: [], punto: null })} type="button">Nueva zona</button>
           <button className={styles.buttonPrimary} disabled={!primeraLocalidad} onClick={() => setBarrio({ id: null, nombre: '', localidadId: primeraLocalidad, zonaId: '', puntos: [], punto: null, orden: '0' })} type="button">Nuevo barrio</button>
         </div>
@@ -442,10 +442,13 @@ export function AdminZonas(): React.ReactNode {
       {aviso}
 
       {localidad ? (
-        <form className={`${styles.card} ${styles.form}`} onSubmit={async (event) => { event.preventDefault(); if (await guardar('localidades', localidad.id, { nombre: localidad.nombre, provincia: localidad.provincia }, 'Localidad guardada.')) setLocalidad(null) }}>
+        <form className={`${styles.card} ${styles.form}`} onSubmit={async (event) => { event.preventDefault(); if (await guardar('localidades', localidad.id, { nombre: localidad.nombre, provincia: localidad.provincia, lat: localidad.lat.trim() === '' ? null : Number(localidad.lat), lng: localidad.lng.trim() === '' ? null : Number(localidad.lng) }, 'Localidad guardada.')) setLocalidad(null) }}>
           <h2>{localidad.id ? 'Editar localidad' : 'Nueva localidad'}</h2>
           <label>Nombre<input maxLength={60} onChange={(event) => setLocalidad({ ...localidad, nombre: event.target.value })} placeholder="Ej.: Corrientes Capital" required value={localidad.nombre} /></label>
           <label>Provincia<input maxLength={60} onChange={(event) => setLocalidad({ ...localidad, provincia: event.target.value })} placeholder="Ej.: Corrientes" required value={localidad.provincia} /></label>
+          <label>Latitud del centro (opcional)<input inputMode="decimal" onChange={(event) => setLocalidad({ ...localidad, lat: event.target.value })} placeholder="-27.4692" value={localidad.lat} /></label>
+          <label>Longitud del centro (opcional)<input inputMode="decimal" onChange={(event) => setLocalidad({ ...localidad, lng: event.target.value })} placeholder="-58.8306" value={localidad.lng} /></label>
+          <p className={styles.muted}>El centro ubica el mapa de las personas que viven en la localidad. La provincia se asocia por nombre al listado de provincias.</p>
           <div className={styles.chips}><button className={styles.buttonPrimary} disabled={busy} type="submit">Guardar</button><button className={styles.buttonSecondary} onClick={() => setLocalidad(null)} type="button">Cancelar</button></div>
         </form>
       ) : null}
@@ -487,7 +490,7 @@ export function AdminZonas(): React.ReactNode {
               <li className={styles.listItem} key={item.id}>
                 <span><strong>{item.nombre}</strong> <span className={styles.muted}>· {item.provincia}</span> <Estado activo={item.activo} /></span>
                 <span className={styles.chips}>
-                  <button className={styles.buttonSecondary} onClick={() => setLocalidad({ id: item.id, nombre: item.nombre, provincia: item.provincia })} type="button">Editar</button>
+                  <button className={styles.buttonSecondary} onClick={() => setLocalidad({ id: item.id, nombre: item.nombre, provincia: item.provincia, lat: item.lat == null ? '' : String(item.lat), lng: item.lng == null ? '' : String(item.lng) })} type="button">Editar</button>
                   <BotonEstado
                     activo={item.activo}
                     busy={busy}

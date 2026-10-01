@@ -1,4 +1,5 @@
 import { resolveWebApiBaseUrl } from './api-url'
+import type { FiltrosUsuariosAdmin, PaginaUsuariosAdmin, PerfilUsuarioAdminDTO, UsuarioAdminDTO } from '@factory/contracts'
 import type { UbicacionPrestadorWeb } from '@/features/directory/directory-client'
 
 import { fetchWithSession } from './session-credentials'
@@ -35,17 +36,8 @@ export interface AdminResumen {
   whatsappPendientes: number | null
 }
 
-export interface AdminUsuario {
-  id: string
-  nombre: string
-  email: string
-  estado: string
-  verificado: boolean
-  administrada: boolean
-  roles: ('admin' | 'prestador' | 'cliente')[]
-  creadaEn: string
-  telefono: AdminTelefono
-}
+// One row of the users list (shared contract with the API).
+export type AdminUsuario = UsuarioAdminDTO
 
 // Identity phone as the panel shows it: masked numbers and dates (never codes or hashes).
 export interface AdminTelefono {
@@ -71,6 +63,8 @@ export interface AdminUsuarioDetalle {
   administradorPlataforma: boolean
   prestador: { id: string; displayName: string; visible: boolean } | null
   telefono: AdminTelefono
+  // Personal profile (names, document, residence): private data, admin only.
+  perfil: PerfilUsuarioAdminDTO | null
 }
 
 // Same view the provider sees on its own location page.
@@ -188,7 +182,7 @@ export interface AdminTrabajoDetalle extends AdminTrabajo {
 
 export interface AdminCategoria { id: string; nombre: string; slug: string; descripcion: string | null; activo: boolean; orden: number; oficios: number }
 export interface AdminOficio { id: string; categoriaId: string | null; nombre: string; profesion: string; slug: string; descripcion: string | null; icono: string; activo: boolean; orden: number; sinonimos: string[]; prestadores: number; enMapa: number }
-export interface AdminLocalidad { id: string; nombre: string; provincia: string; activo: boolean; orden: number }
+export interface AdminLocalidad { id: string; nombre: string; provincia: string; activo: boolean; orden: number; lat?: number | null; lng?: number | null }
 export type AdminPoligono = { type: 'Polygon'; coordinates: [number, number][][] }
 export interface AdminZona { id: string; localidadId: string; nombre: string; slug: string; activo: boolean; orden: number; barrios: number; prestadores: number; poligono: AdminPoligono | null; lat: number | null; lng: number | null }
 export interface AdminBarrio { id: string; localidadId: string; zonaId: string | null; nombre: string; slug: string; lat: number | null; lng: number | null; poligono: AdminPoligono | null; activo: boolean; orden: number; prestadores: number; solicitudes: number }
@@ -267,7 +261,12 @@ export interface AdminEvento {
 
 export const adminApi = {
   resumen: () => call<AdminResumen>('/tus/v1/admin/resumen'),
-  usuarios: (input: { q: string; rol: string; estado: string; telefono?: string; page: number; pageSize: number }) => call<AdminPage<AdminUsuario>>(`/tus/v1/admin/usuarios?${new URLSearchParams({ q: input.q, rol: input.rol, estado: input.estado, telefono: input.telefono ?? '', page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
+  // Search, filters and pagination run in the API (never over a downloaded list).
+  usuarios: (input: FiltrosUsuariosAdmin) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(input)) if (value !== undefined && value !== '') params.set(key, String(value))
+    return call<PaginaUsuariosAdmin>(`/tus/v1/admin/usuarios?${params.toString()}`)
+  },
   telefonoUsuario: (id: string, body: { accion: 'pendiente'; telefono: string } | { accion: 'quitar' }) => call<{ done: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/telefono`, body),
   crearUsuario: (body: { displayName: string; email: string; password: string; role: 'cliente' }) => call<{ created: true }>('/tus/v1/admin/usuarios', body),
   actualizarUsuario: (id: string, body: { displayName?: string; status?: 'active' | 'suspended'; reason?: string; email?: string; emailVerified?: boolean }) => call<{ updated: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`, body, 'PATCH'),

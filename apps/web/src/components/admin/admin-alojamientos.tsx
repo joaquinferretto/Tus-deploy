@@ -9,6 +9,7 @@ import {
   adminCrearUnidad,
   adminCrearTarifa,
 } from '@/features/alojamientos/alojamientos-client'
+import { DEFAULT_MAP_CENTER } from '@/features/home/types'
 import styles from './admin.module.css'
 
 export function AdminAlojamientosView(): React.ReactNode {
@@ -21,8 +22,9 @@ export function AdminAlojamientosView(): React.ReactNode {
   const [nombre, setNombre] = useState('')
   const [tipoId, setTipoId] = useState('')
   const [direccion, setDireccion] = useState('')
-  const [latitud, setLatitud] = useState(-34.6037)
-  const [longitud, setLongitud] = useState(-58.3816)
+  // Starting point of a new lodging: the same default as every TUS map (Corrientes Capital).
+  const [latitud, setLatitud] = useState(DEFAULT_MAP_CENTER.lat)
+  const [longitud, setLongitud] = useState(DEFAULT_MAP_CENTER.lng)
   const [descripcion, setDescripcion] = useState('')
   const [comodidades, setComodidades] = useState('WiFi, Estacionamiento, Desayuno')
   const [mensaje, setMensaje] = useState<string | null>(null)

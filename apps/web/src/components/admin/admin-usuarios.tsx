@@ -1,156 +1,350 @@
 'use client'
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 
+import { ETIQUETA_TIPO_DOCUMENTO, formatearDocumento, type FiltrosUsuariosAdmin, type LocalidadDTO, type PaisDTO, type ProvinciaDTO } from '@factory/contracts'
+
+import { createGeographyClient } from '@/features/profile/profile-client'
 import { AdminApiError, adminApi, adminErrorMessage, formatFecha, type AdminUsuario } from '@/lib/tus-admin-api'
-import { AdminConfirm, useConfirmacion } from './admin-confirm'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
 import { AdminPagination } from './admin-pagination'
-import styles from './admin.module.css'
-
-const FILTROS = [
-  ['', 'Todos'],
-  ['cliente', 'Clientes'],
-  ['prestador', 'Prestadores'],
-  ['admin', 'Administradores'],
-] as const
+import styles from './admin-usuarios.module.css'
 
 const ROL: Record<string, string> = { admin: 'Admin', prestador: 'Prestador', cliente: 'Cliente' }
+// Filter of the list only (the form below never offers a role: it creates clients).
+const FILTRO_ROL = [['', 'Todos'], ['cliente', 'Clientes'], ['prestador', 'Prestadores'], ['admin', 'Administradores']] as const
 
-// Registered accounts. Only what the admin needs (no ids of other tables, no password data).
+interface Filtros {
+  q: string
+  rol: NonNullable<FiltrosUsuariosAdmin['rol']>
+  estado: NonNullable<FiltrosUsuariosAdmin['estado']>
+  telefono: NonNullable<FiltrosUsuariosAdmin['telefono']>
+  perfil: NonNullable<FiltrosUsuariosAdmin['perfil']>
+  paisId: string
+  provinciaId: string
+  localidadId: string
+}
+
+const SIN_FILTROS: Filtros = { q: '', rol: '', estado: '', telefono: '', perfil: '', paisId: '', provinciaId: '', localidadId: '' }
+
+// Registered accounts. The API searches, filters and paginates: this screen only holds the page
+// it is showing. Document, phone and residence are private data shown here to an authorized
+// platform administrator only.
 export function AdminUsuarios(): React.ReactNode {
-  const [q, setQ] = useState('')
-  const [rol, setRol] = useState('')
-  const [estado, setEstado] = useState('')
-  const [telefono, setTelefono] = useState('')
+  const geografia = useMemo(() => createGeographyClient(), [])
+  const [filtros, setFiltros] = useState<Filtros>(SIN_FILTROS)
   const [items, setItems] = useState<AdminUsuario[] | null>(null)
+  const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
   const [totalPages, setTotalPages] = useState(1)
   const [error, setError] = useState('')
-  const [selected, setSelected] = useState<AdminUsuario | null>(null)
   const [creating, setCreating] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
-  const [confirmacion, pedir, cerrar] = useConfirmacion()
+  const [paises, setPaises] = useState<PaisDTO[]>([])
+  const [provincias, setProvincias] = useState<ProvinciaDTO[]>([])
+  const [localidades, setLocalidades] = useState<LocalidadDTO[]>([])
 
-  const load = useCallback(() => adminApi.usuarios({ q: q.trim(), rol, estado, telefono, page, pageSize }).then((result) => {
-    setItems(result.items); setTotalPages(result.totalPages); setError('')
-  }).catch((cause) => setError(adminErrorMessage(cause))), [q, rol, estado, telefono, page, pageSize])
+  const load = useCallback(
+    () =>
+      adminApi
+        .usuarios({ ...filtros, q: filtros.q.trim(), page, pageSize })
+        .then((result) => {
+          setItems(result.items)
+          setTotal(result.total)
+          setTotalPages(result.totalPages)
+          setError('')
+        })
+        .catch((cause) => setError(adminErrorMessage(cause))),
+    [filtros, page, pageSize]
+  )
 
+  // Typing waits a moment before asking the API; every other filter applies with the same delay.
   useEffect(() => {
-    const timer = setTimeout(() => void load(), 400)
+    const timer = setTimeout(() => void load(), 350)
     return () => clearTimeout(timer)
   }, [load])
 
-  const resetPage = () => setPage(1)
+  useEffect(() => {
+    void geografia.countries().then(setPaises).catch(() => setPaises([]))
+  }, [geografia])
+  useEffect(() => {
+    if (!filtros.paisId) return setProvincias([])
+    void geografia.provinces(filtros.paisId).then(setProvincias).catch(() => setProvincias([]))
+  }, [geografia, filtros.paisId])
+  useEffect(() => {
+    if (!filtros.provinciaId) return setLocalidades([])
+    void geografia.localities(filtros.provinciaId).then(setLocalidades).catch(() => setLocalidades([]))
+  }, [geografia, filtros.provinciaId])
+
+  const cambiar = (patch: Partial<Filtros>) => {
+    setFiltros((actual) => ({ ...actual, ...patch }))
+    setPage(1)
+  }
+  const activos = Object.values(filtros).filter(Boolean).length
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
-    setBusy(true); setError(''); setNotice('')
+    setBusy(true)
+    setError('')
+    setNotice('')
     try {
       await adminApi.crearUsuario({ displayName: String(data.get('displayName') ?? '').trim(), email: String(data.get('email') ?? '').trim(), password: String(data.get('password') ?? ''), role: 'cliente' })
-      setCreating(false); setNotice('Usuario creado. Debe verificar su email antes de ingresar.'); setPage(1); await load()
-    } catch (cause) { setError(crearErrorMessage(cause)) } finally { setBusy(false) }
-  }
-
-  async function update(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!selected) return
-    const data = new FormData(event.currentTarget)
-    const status = data.get('status') === 'suspended' ? 'suspended' : 'active'
-    const reason = String(data.get('reason') ?? '').trim()
-    const body = { displayName: String(data.get('displayName') ?? '').trim(), status, ...(reason ? { reason } : {}) } as const
-    const target = selected
-    const aplicar = async () => {
-      setBusy(true); setError(''); setNotice('')
-      try {
-        await adminApi.actualizarUsuario(target.id, body)
-        setSelected(null); setNotice(status === 'suspended' && target.estado !== 'suspended' ? 'Usuario suspendido y sesiones revocadas.' : 'Usuario actualizado.'); await load()
-      } catch (cause) { setError(adminErrorMessage(cause)) } finally { setBusy(false) }
+      setCreating(false)
+      setNotice('Usuario creado. Debe verificar su email antes de ingresar.')
+      setPage(1)
+      await load()
+    } catch (cause) {
+      setError(crearErrorMessage(cause))
+    } finally {
+      setBusy(false)
     }
-    // Suspending is sensitive: it ends every session of the account. Ask first.
-    if (status === 'suspended' && target.estado !== 'suspended')
-      pedir({ titulo: `¿Suspender a ${target.nombre || target.email}?`, detalle: 'Se cerrarán todas sus sesiones y no podrá volver a ingresar hasta que lo reactives. Su historial se conserva.', confirmar: 'Suspender', onConfirm: aplicar })
-    else await aplicar()
   }
 
   return (
     <>
       <AdminPageHeader subtitle="Cuentas registradas en TUS" title="Usuarios">
-        <button className={styles.buttonPrimary} onClick={() => { setCreating(true); setSelected(null) }} type="button">+ Nuevo usuario</button>
+        <button className={styles.buttonPrimary} onClick={() => setCreating(true)} type="button">
+          + Nuevo usuario
+        </button>
       </AdminPageHeader>
-      {notice ? <p className={styles.success} role="status">{notice}</p> : null}
+      {notice ? (
+        <p className={styles.alertOk} role="status">
+          {notice}
+        </p>
+      ) : null}
+
       {creating ? (
-        <form className={`${styles.card} ${styles.form}`} onSubmit={(event) => void create(event)}>
+        <form className={styles.panel} onSubmit={(event) => void create(event)}>
           <h2>Nuevo usuario</h2>
-          <label>Nombre<input maxLength={120} minLength={2} name="displayName" required /></label>
-          <label>Email<input autoComplete="email" name="email" required type="email" /></label>
-          <label>Contraseña inicial<input autoComplete="new-password" minLength={12} name="password" required type="password" /></label>
-          <p className={styles.muted}>Se crea como cliente. Prestador y administrador requieren sus flujos específicos; el email debe verificarse.</p>
-          <div className={styles.chips}><button className={styles.buttonPrimary} disabled={busy} type="submit">{busy ? 'Creando…' : 'Crear usuario'}</button><button className={styles.buttonSecondary} onClick={() => setCreating(false)} type="button">Cancelar</button></div>
-        </form>
-      ) : null}
-      <div className={styles.toolbar}>
-        <label className={styles.srOnlyLabel} htmlFor="admin-usuarios-q">Buscar</label>
-        <input id="admin-usuarios-q" onChange={(event) => { setQ(event.target.value); resetPage() }} placeholder="Buscar por nombre o email" type="search" value={q} />
-        <div className={styles.chips}>
-          {FILTROS.map(([value, label]) => (
-            <button aria-pressed={rol === value} key={value} onClick={() => { setRol(value); resetPage() }} type="button">{label}</button>
-          ))}
-        </div>
-        <select aria-label="Estado" onChange={(event) => { setEstado(event.target.value); resetPage() }} value={estado}><option value="">Todos los estados</option><option value="active">Activos</option><option value="suspended">Suspendidos</option></select>
-        <select aria-label="Teléfono" onChange={(event) => { setTelefono(event.target.value); resetPage() }} value={telefono}><option value="">Todos los teléfonos</option><option value="verificado">Teléfono verificado</option><option value="pendiente">Teléfono pendiente</option><option value="sin">Sin teléfono</option></select>
-      </div>
-      {error ? <p className={styles.error} role="alert">{error}</p> : null}
-      {items === null && !error ? <p className={styles.muted} role="status">Cargando usuarios…</p> : null}
-      {items && items.length === 0 ? <AdminEmpty text={q || rol ? 'No hay usuarios con esos filtros.' : 'Todavía no hay usuarios registrados.'} /> : null}
-      {items && items.length > 0 ? (
-        <table className={styles.table}>
-          <thead>
-            <tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Estado</th><th>Email</th><th>Teléfono</th><th>Registro</th><th /></tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id}>
-                <td data-label="Nombre"><strong>{item.nombre || '—'}</strong></td>
-                <td data-label="Email">{item.email}</td>
-                <td data-label="Rol">{item.roles.filter((role) => role !== 'cliente' || item.roles.length === 1).map((role) => <span className={`${styles.badge} ${role === 'admin' ? styles.badgeBrand : styles.badgeOff}`} key={role} style={{ marginRight: 4 }}>{ROL[role]}</span>)}</td>
-                <td data-label="Estado"><span className={`${styles.badge} ${item.estado === 'active' ? styles.badgeOk : styles.badgeWarn}`}>{item.estado === 'active' ? 'Activa' : 'Suspendida'}</span></td>
-                <td data-label="Email">{item.administrada ? <span className={styles.muted}>Administrada (sin login)</span> : item.verificado ? 'Verificado' : <span className={styles.muted}>Sin verificar</span>}</td>
-                <td data-label="Teléfono">{item.telefono.verificado ? <>{item.telefono.numero} <span className={styles.muted}>· verificado</span></> : item.telefono.pendiente ? <span className={styles.muted}>{item.telefono.pendiente} · pendiente</span> : <span className={styles.muted}>Sin teléfono</span>}</td>
-                <td data-label="Registro" className={styles.muted}>{formatFecha(item.creadaEn)}</td>
-                <td>
-                  <div className={styles.chips}>
-                    <a className={styles.buttonPrimary} href={`/tus/admin/usuarios/${encodeURIComponent(item.id)}`}>Ficha</a>
-                    <button className={styles.buttonSecondary} onClick={() => { setSelected(item); setCreating(false) }} type="button">Edición rápida</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
-      {items ? <AdminPagination onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1) }} page={page} pageSize={pageSize} totalPages={totalPages} /> : null}
-      {selected ? (
-        <form aria-label="Editar usuario" className={`${styles.card} ${styles.form}`} onSubmit={(event) => void update(event)}>
-          <div className={styles.toolbar} style={{ justifyContent: 'space-between' }}>
-            <h2 style={{ margin: 0 }}>Información de la cuenta</h2>
-            <button className={styles.buttonSecondary} onClick={() => setSelected(null)} type="button">Cerrar</button>
+          <div className={styles.formGrid}>
+            <label className={styles.field}>
+              <span>Nombre</span>
+              <input maxLength={120} minLength={2} name="displayName" required />
+            </label>
+            <label className={styles.field}>
+              <span>Email</span>
+              <input autoComplete="email" name="email" required type="email" />
+            </label>
+            <label className={styles.field}>
+              <span>Contraseña inicial</span>
+              <input autoComplete="new-password" minLength={12} name="password" required type="password" />
+            </label>
           </div>
-          <label>Nombre<input defaultValue={selected.nombre} maxLength={120} minLength={2} name="displayName" required /></label>
-          <label>Email<input disabled value={selected.email} /></label>
-          <p>Roles: {selected.roles.map((role) => ROL[role]).join(', ')}</p>
-          <p>Email confirmado: {selected.verificado ? 'sí' : 'no'}{selected.administrada ? ' · prestador cargado por un admin, sin contraseña' : ''}</p>
-          <label>Estado<select defaultValue={selected.estado} name="status"><option value="active">Activo</option><option value="suspended">Suspendido</option></select></label>
-          {selected.estado === 'active' ? <p className={styles.muted}>Suspender revoca sus sesiones e impide nuevos ingresos. El historial se conserva.</p> : null}
-          <label>Motivo (opcional, queda en la auditoría)<input maxLength={200} name="reason" placeholder="Ej.: pedido del titular" /></label>
-          <p className={styles.muted}>Alta: {formatFecha(selected.creadaEn)}</p>
-          <div className={styles.chips}><button className={styles.buttonPrimary} disabled={busy} type="submit">{busy ? 'Guardando…' : 'Guardar cambios'}</button><button className={styles.buttonSecondary} onClick={() => setSelected(null)} type="button">Cancelar</button></div>
+          <p className={styles.muted}>Se crea como cliente. Prestador y administrador requieren sus flujos específicos; el email debe verificarse.</p>
+          <div className={styles.actions}>
+            <button className={styles.buttonPrimary} disabled={busy} type="submit">
+              {busy ? 'Creando…' : 'Crear usuario'}
+            </button>
+            <button className={styles.buttonSecondary} onClick={() => setCreating(false)} type="button">
+              Cancelar
+            </button>
+          </div>
         </form>
       ) : null}
-      <AdminConfirm onClose={cerrar} value={confirmacion} />
+
+      <section aria-label="Buscar y filtrar usuarios" className={styles.panel}>
+        <label className={styles.field}>
+          <span>Buscar</span>
+          <input
+            id="admin-usuarios-q"
+            onChange={(event) => cambiar({ q: event.target.value })}
+            placeholder="Nombre, email, DNI o teléfono"
+            type="search"
+            value={filtros.q}
+          />
+        </label>
+        <div className={styles.filterGrid}>
+          <label className={styles.field}>
+            <span>Rol</span>
+            <select onChange={(event) => cambiar({ rol: event.target.value as Filtros['rol'] })} value={filtros.rol}>
+              {FILTRO_ROL.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.field}>
+            <span>Estado</span>
+            <select onChange={(event) => cambiar({ estado: event.target.value as Filtros['estado'] })} value={filtros.estado}>
+              <option value="">Todos</option>
+              <option value="active">Activos</option>
+              <option value="suspended">Suspendidos</option>
+            </select>
+          </label>
+          <label className={styles.field}>
+            <span>Teléfono</span>
+            <select onChange={(event) => cambiar({ telefono: event.target.value as Filtros['telefono'] })} value={filtros.telefono}>
+              <option value="">Todos</option>
+              <option value="verificado">Teléfono verificado</option>
+              <option value="pendiente">Teléfono pendiente</option>
+              <option value="sin">Sin teléfono</option>
+            </select>
+          </label>
+          <label className={styles.field}>
+            <span>Perfil</span>
+            <select onChange={(event) => cambiar({ perfil: event.target.value as Filtros['perfil'] })} value={filtros.perfil}>
+              <option value="">Todos</option>
+              <option value="completo">Completo</option>
+              <option value="incompleto">Incompleto</option>
+            </select>
+          </label>
+          <label className={styles.field}>
+            <span>País</span>
+            <select onChange={(event) => cambiar({ paisId: event.target.value, provinciaId: '', localidadId: '' })} value={filtros.paisId}>
+              <option value="">Todos</option>
+              {paises.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.field}>
+            <span>Provincia</span>
+            <select disabled={!filtros.paisId} onChange={(event) => cambiar({ provinciaId: event.target.value, localidadId: '' })} value={filtros.provinciaId}>
+              <option value="">{filtros.paisId ? 'Todas' : 'Elegí un país'}</option>
+              {provincias.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.field}>
+            <span>Localidad</span>
+            <select disabled={!filtros.provinciaId} onChange={(event) => cambiar({ localidadId: event.target.value })} value={filtros.localidadId}>
+              <option value="">{filtros.provinciaId ? 'Todas' : 'Elegí una provincia'}</option>
+              {localidades.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className={styles.resultBar}>
+          <span aria-live="polite" role="status">
+            {items === null ? 'Buscando…' : `${total} ${total === 1 ? 'usuario' : 'usuarios'}`}
+          </span>
+          {activos > 0 ? (
+            <button className={styles.linkButton} onClick={() => cambiar(SIN_FILTROS)} type="button">
+              Limpiar filtros
+            </button>
+          ) : null}
+        </div>
+      </section>
+
+      {error ? (
+        <p className={styles.alertError} role="alert">
+          {error}
+        </p>
+      ) : null}
+      {items && items.length === 0 ? <AdminEmpty text={activos > 0 ? 'No hay usuarios con esos filtros.' : 'Todavía no hay usuarios registrados.'} /> : null}
+      {items && items.length > 0 ? (
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Usuario</th>
+                <th>Documento</th>
+                <th>Teléfono</th>
+                <th>Localidad</th>
+                <th>Rol</th>
+                <th>Estado</th>
+                <th>Alta</th>
+                <th>
+                  <span className={styles.srOnly}>Acciones</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td data-label="Usuario">
+                    <strong>{item.nombre || '—'}</strong>
+                    <span className={styles.sub}>{item.email}</span>
+                    {item.administrada ? <span className={styles.sub}>Administrada (sin login)</span> : !item.verificado ? <span className={styles.badgeWarn}>Email sin verificar</span> : null}
+                  </td>
+                  <td data-label="Documento">
+                    {item.documento ? (
+                      <>
+                        {formatearDocumento(item.documento.tipo, item.documento.numero)}
+                        <span className={styles.sub}>{ETIQUETA_TIPO_DOCUMENTO[item.documento.tipo]}</span>
+                      </>
+                    ) : (
+                      <span className={styles.muted}>Sin cargar</span>
+                    )}
+                  </td>
+                  <td data-label="Teléfono">
+                    {item.telefono.verificado ? (
+                      <>
+                        {item.telefono.numero} <span className={styles.badgeOk}>Verificado</span>
+                      </>
+                    ) : item.telefono.pendiente ? (
+                      <>
+                        {item.telefono.pendiente} <span className={styles.badgeWarn}>Pendiente</span>
+                      </>
+                    ) : (
+                      <span className={styles.muted}>Sin teléfono</span>
+                    )}
+                  </td>
+                  <td data-label="Localidad">
+                    {item.ubicacion ? (
+                      <>
+                        {item.ubicacion.localidad}
+                        <span className={styles.sub}>{item.ubicacion.provincia}</span>
+                      </>
+                    ) : (
+                      <span className={styles.muted}>Sin cargar</span>
+                    )}
+                  </td>
+                  <td data-label="Rol">
+                    <span className={styles.badges}>
+                      {item.roles
+                        .filter((role) => role !== 'cliente' || item.roles.length === 1)
+                        .map((role) => (
+                          <span className={role === 'admin' ? styles.badgeBrand : styles.badgeNeutral} key={role}>
+                            {ROL[role]}
+                          </span>
+                        ))}
+                    </span>
+                  </td>
+                  <td data-label="Estado">
+                    <span className={styles.badges}>
+                      <span className={item.estado === 'active' ? styles.badgeOk : styles.badgeDanger}>{item.estado === 'active' ? 'Activa' : 'Suspendida'}</span>
+                      <span className={item.perfilCompleto ? styles.badgeOk : styles.badgeWarn}>{item.perfilCompleto ? 'Perfil completo' : 'Perfil incompleto'}</span>
+                    </span>
+                  </td>
+                  <td className={styles.muted} data-label="Alta">
+                    {formatFecha(item.creadaEn)}
+                  </td>
+                  <td>
+                    <a className={styles.buttonSecondary} href={`/tus/admin/usuarios/${encodeURIComponent(item.id)}`}>
+                      Ver ficha
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {items ? (
+        <AdminPagination
+          onPage={setPage}
+          onPageSize={(size) => {
+            setPageSize(size)
+            setPage(1)
+          }}
+          page={page}
+          pageSize={pageSize}
+          totalPages={totalPages}
+        />
+      ) : null}
     </>
   )
 }

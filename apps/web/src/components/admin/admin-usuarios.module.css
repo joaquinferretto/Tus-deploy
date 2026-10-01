@@ -1,0 +1,560 @@
+/* Users administration (list, filters and account sheet) and the admin forms built on it (turnos).
+   TUS tokens: orange as the only accent, clearly visible borders, semantic green / amber / red
+   for states, no decorative shadows. */
+.panel,
+.sheetCard {
+  --u-line: #c4cad5;
+  background: #fff;
+  border: 1px solid var(--u-line);
+  border-radius: 14px;
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+  min-width: 0;
+  padding: 18px;
+}
+
+.panel h2,
+.sheetCard h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.field {
+  color: var(--tus-ink, #14213d);
+  display: grid;
+  font-size: 0.85rem;
+  font-weight: 600;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field input,
+.field select,
+.field textarea {
+  background: #fff;
+  border: 1px solid #c4cad5;
+  border-radius: 10px;
+  color: var(--tus-ink, #14213d);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 400;
+  min-height: 44px;
+  min-width: 0;
+  padding: 9px 12px;
+  width: 100%;
+}
+
+.field textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.field input:hover,
+.field select:hover:not(:disabled),
+.field textarea:hover {
+  border-color: #98a2b3;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--tus-orange, #ff5a00);
+  box-shadow: 0 0 0 3px rgba(255, 90, 0, 0.2);
+  outline: none;
+}
+
+.field select:disabled,
+.field input:disabled {
+  background: var(--tus-surface, #f5f7fa);
+  color: var(--tus-muted, #667085);
+}
+
+.field input[aria-invalid='true'],
+.field select[aria-invalid='true'],
+.field textarea[aria-invalid='true'] {
+  border-color: var(--tus-danger, #c81e1e);
+}
+
+.fieldError {
+  color: var(--tus-danger, #c81e1e);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.hint {
+  color: var(--tus-muted, #667085);
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.filterGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+}
+
+.formGrid {
+  display: grid;
+  gap: 14px 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.resultBar {
+  align-items: center;
+  border-top: 1px solid #e1e5ec;
+  color: var(--tus-ink-soft, #475467);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  gap: 8px 16px;
+  justify-content: space-between;
+  padding-top: 12px;
+}
+
+.linkButton {
+  background: none;
+  border: 0;
+  color: var(--tus-orange-strong, #e64f00);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  min-height: 32px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.tableWrap {
+  border: 1px solid #c4cad5;
+  border-radius: 14px;
+  margin-bottom: 14px;
+  overflow-x: auto;
+}
+
+.table {
+  background: #fff;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  width: 100%;
+}
+
+.table th {
+  background: var(--tus-surface, #f5f7fa);
+  border-bottom: 1px solid #c4cad5;
+  color: var(--tus-ink-soft, #475467);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 10px 12px;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.table td {
+  border-bottom: 1px solid #e1e5ec;
+  padding: 12px;
+  vertical-align: top;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr:hover {
+  background: #fffaf5;
+}
+
+.sub {
+  color: var(--tus-muted, #667085);
+  display: block;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--tus-muted, #667085);
+  font-size: 0.88rem;
+  margin: 0;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.badgeOk,
+.badgeWarn,
+.badgeDanger,
+.badgeNeutral,
+.badgeBrand {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 1px 9px;
+  white-space: nowrap;
+}
+
+.badgeOk {
+  background: #ecfdf3;
+  border-color: var(--tus-success, #15803d);
+  color: var(--tus-success, #15803d);
+}
+
+.badgeWarn {
+  background: #fffbeb;
+  border-color: #b45309;
+  color: #92400e;
+}
+
+.badgeDanger {
+  background: #fef2f2;
+  border-color: var(--tus-danger, #c81e1e);
+  color: var(--tus-danger, #c81e1e);
+}
+
+.badgeNeutral {
+  background: var(--tus-surface, #f5f7fa);
+  border-color: #98a2b3;
+  color: var(--tus-ink-soft, #475467);
+}
+
+.badgeBrand {
+  background: #fff1e8;
+  border-color: var(--tus-orange, #ff5a00);
+  color: var(--tus-orange-strong, #e64f00);
+}
+
+.alertOk,
+.alertWarn,
+.alertError {
+  border-radius: 10px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+}
+
+.alertOk {
+  background: #ecfdf3;
+  border: 1px solid var(--tus-success, #15803d);
+  color: #14532d;
+}
+
+.alertWarn {
+  background: #fffbeb;
+  border: 1px solid #b45309;
+  color: #78350f;
+}
+
+.alertError {
+  background: #fef2f2;
+  border: 1px solid var(--tus-danger, #c81e1e);
+  color: #991b1b;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.buttonPrimary,
+.buttonSecondary,
+.buttonDanger {
+  align-items: center;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 40px;
+  padding: 7px 14px;
+  text-decoration: none;
+  touch-action: manipulation;
+  white-space: nowrap;
+}
+
+.buttonPrimary {
+  background: var(--tus-orange, #ff5a00);
+  border: 1px solid var(--tus-orange, #ff5a00);
+  color: #fff;
+}
+
+.buttonPrimary:hover:not(:disabled) {
+  background: var(--tus-orange-strong, #e64f00);
+}
+
+.buttonSecondary {
+  background: #fff;
+  border: 1px solid #c4cad5;
+  color: var(--tus-ink, #14213d);
+}
+
+.buttonSecondary:hover:not(:disabled) {
+  border-color: var(--tus-orange, #ff5a00);
+}
+
+.buttonDanger {
+  background: #fff;
+  border: 1px solid var(--tus-danger, #c81e1e);
+  color: var(--tus-danger, #c81e1e);
+}
+
+.buttonPrimary:disabled,
+.buttonSecondary:disabled,
+.buttonDanger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.buttonPrimary:focus-visible,
+.buttonSecondary:focus-visible,
+.buttonDanger:focus-visible,
+.linkButton:focus-visible {
+  box-shadow: 0 0 0 3px rgba(255, 90, 0, 0.3);
+  outline: none;
+}
+
+.srOnly {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+/* ---- account sheet ---------------------------------------------------------------------------- */
+.sheet {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sheet .sheetCard {
+  align-content: start;
+  margin-bottom: 0;
+}
+
+.sheetWide {
+  grid-column: 1 / -1;
+}
+
+.facts {
+  display: grid;
+  gap: 10px 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--tus-muted, #667085);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.facts dd {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- combobox (search a provider or a client by name) ------------------------------------------ */
+.combo {
+  position: relative;
+}
+
+.comboList {
+  background: #fff;
+  border: 1px solid #98a2b3;
+  border-radius: 10px;
+  left: 0;
+  list-style: none;
+  margin: 4px 0 0;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+}
+
+.comboOption {
+  border-radius: 8px;
+  cursor: pointer;
+  display: grid;
+  font-weight: 400;
+  gap: 2px;
+  padding: 8px 10px;
+}
+
+.comboOption[aria-selected='true'],
+.comboOption:hover {
+  background: #fff1e8;
+}
+
+.comboEmpty {
+  color: var(--tus-muted, #667085);
+  font-weight: 400;
+  padding: 8px 10px;
+}
+
+.chosen {
+  align-items: center;
+  background: #fff1e8;
+  border: 1px solid var(--tus-orange, #ff5a00);
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  font-weight: 400;
+  gap: 6px 12px;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 8px 12px;
+}
+
+.segmented {
+  border: 1px solid #c4cad5;
+  border-radius: 10px;
+  display: inline-flex;
+  flex-wrap: wrap;
+  overflow: hidden;
+}
+
+.segmented button {
+  background: #fff;
+  border: 0;
+  border-right: 1px solid #c4cad5;
+  color: var(--tus-ink-soft, #475467);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  min-height: 40px;
+  padding: 6px 14px;
+}
+
+.segmented button:last-child {
+  border-right: 0;
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--tus-orange, #ff5a00);
+  color: #fff;
+}
+
+.slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.slot {
+  background: #fff;
+  border: 1px solid #c4cad5;
+  border-radius: 10px;
+  color: var(--tus-ink, #14213d);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  min-height: 42px;
+  min-width: 74px;
+  padding: 4px 10px;
+}
+
+.slot:hover:not(:disabled) {
+  border-color: var(--tus-orange, #ff5a00);
+}
+
+.slot[aria-pressed='true'] {
+  background: var(--tus-orange, #ff5a00);
+  border-color: var(--tus-orange, #ff5a00);
+  color: #fff;
+}
+
+.slot:disabled {
+  background: var(--tus-surface, #f5f7fa);
+  color: #98a2b3;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+
+@media (max-width: 900px) {
+  .sheet {
+    grid-template-columns: 1fr;
+  }
+
+  /* The table becomes one card per account: nothing scrolls sideways on a phone. */
+  .tableWrap {
+    border: 0;
+    overflow: visible;
+  }
+
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table tr {
+    border: 1px solid #c4cad5;
+    border-radius: 14px;
+    margin-bottom: 10px;
+    padding: 6px 4px;
+  }
+
+  .table td {
+    border-bottom: 0;
+    padding: 6px 12px;
+  }
+
+  .table td[data-label]::before {
+    color: var(--tus-muted, #667085);
+    content: attr(data-label);
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+}
+
+@media (max-width: 640px) {
+  .panel,
+  .sheetCard {
+    padding: 14px;
+  }
+
+  .formGrid,
+  .facts {
+    grid-template-columns: 1fr;
+  }
+
+  .actions > * {
+    flex: 1 1 auto;
+  }
+}
