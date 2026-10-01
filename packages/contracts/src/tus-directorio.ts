@@ -179,6 +179,10 @@ export interface DetalleTurno {
   motivoModificacionPrecio?: string | null
   forzadoFueraHorario?: boolean
   motivoForzado?: string | null
+  // Administrator that created the turno (general or forced); null for a client or a provider.
+  creadoPorAdminId?: string | null
+  // Account of the client when it is a registered one (null for a guest).
+  clienteCuentaId?: string | null
   notas?: string | null
   fechaCreacion: string
 }

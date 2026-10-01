@@ -109,6 +109,9 @@ export * from './tus-directorio.ts'
 export * from './tus-work-view.ts'
 export * from './tus-alojamientos.ts'
 export * from './tus-telefono.ts'
+export * from './tus-asistente.ts'
+export * from './tus-perfil.ts'
+export * from './tus-turnos.ts'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
