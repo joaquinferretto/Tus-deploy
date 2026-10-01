@@ -8,18 +8,21 @@ import type {
   CalificarAlojamientoInput,
 } from '@factory/contracts'
 
-const API_BASE = process.env['NEXT_PUBLIC_API_URL'] || ''
+import { resolveWebApiBaseUrl } from '../../lib/api-url'
+import { fetchWithSession } from '../../lib/session-credentials'
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   // `path` is the full API path (/api/alojamientos/...), never a Web route.
-  const url = `${API_BASE}${path}`
-  const res = await fetch(url, {
+  const baseUrl = resolveWebApiBaseUrl({ canonicalUrl: process.env['NEXT_PUBLIC_API_URL'], legacyUrl: process.env['API_BASE_URL'], nodeEnv: process.env['NODE_ENV'] })
+  // The HttpOnly session cookie authenticates; the API requires X-Correlation-Id to resolve it.
+  const res = await fetchWithSession(`${baseUrl}${path}`, {
     ...options,
     headers: {
+      Accept: 'application/json',
       'Content-Type': 'application/json',
+      'X-Correlation-Id': crypto.randomUUID(),
       ...options.headers,
     },
-    credentials: 'include',
   })
 
   if (!res.ok) {

@@ -254,7 +254,12 @@ export function createApp(options: CreateAppOptions = {}): Application {
     app.use(crearRouterDirectorio({ servicio: directorio, sessions, adminSave: crearAltaPrestadorAdmin({ accounts: auth.store, application, directorio, createManagedAccount: (input) => auth.service.createManagedProviderAccount(input) }) }))
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
     app.use(crearRouterTurnos({ servicio: servicioTurnos, sessions }))
-    app.use('/api/alojamientos', crearRutasAlojamientos(prisma as unknown as PrismaClient))
+    // Simulated payment confirms a booking without money: only when the runtime is explicitly
+    // development or test. Production (or an unset NODE_ENV) never has it.
+    app.use('/api/alojamientos', crearRutasAlojamientos(prisma as unknown as PrismaClient, {
+      sessions,
+      pagoSimuladoHabilitado: process.env['NODE_ENV'] === 'development' || process.env['NODE_ENV'] === 'test',
+    }))
     // Platform administration panel (read views + publish/hide a profile), behind the MFA gate.
     // Usage counts of the catalog lists come from aggregate queries (GROUP BY), never per row.
     // Platform support over works (cancel with payments; never moves money).

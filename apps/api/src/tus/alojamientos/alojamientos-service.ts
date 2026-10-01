@@ -803,6 +803,37 @@ export class AlojamientosService {
   }
 
   /**
+   * Autoridad sobre un alojamiento, una unidad o una reserva: quién es el propietario registrado
+   * y, en la reserva, quién es el cliente titular. La capa HTTP autoriza con estos datos; nunca
+   * con un id de propietario o de cliente enviado por el navegador. null = el recurso no existe.
+   */
+  async propietarioDeAlojamiento(alojamientoId: string): Promise<{ propietarioId: string | null } | null> {
+    const fila = await this.prisma.alojamiento.findUnique({
+      where: { id: alojamientoId },
+      select: { propietarioId: true },
+    })
+    return fila ? { propietarioId: fila.propietarioId } : null
+  }
+
+  async propietarioDeUnidad(unidadId: string): Promise<{ propietarioId: string | null } | null> {
+    const fila = await this.prisma.unidadAlojamiento.findUnique({
+      where: { id: unidadId },
+      select: { alojamiento: { select: { propietarioId: true } } },
+    })
+    return fila ? { propietarioId: fila.alojamiento.propietarioId } : null
+  }
+
+  async titularidadDeReserva(
+    reservaId: string
+  ): Promise<{ clienteId: string | null; propietarioId: string | null } | null> {
+    const fila = await this.prisma.reservaAlojamiento.findUnique({
+      where: { id: reservaId },
+      select: { clienteId: true, alojamiento: { select: { propietarioId: true } } },
+    })
+    return fila ? { clienteId: fila.clienteId, propietarioId: fila.alojamiento.propietarioId } : null
+  }
+
+  /**
    * Bloqueo manual de unidad (Admin o Propietario).
    */
   async crearBloqueoUnidad(input: BloqueoUnidadInput): Promise<{ id: string }> {

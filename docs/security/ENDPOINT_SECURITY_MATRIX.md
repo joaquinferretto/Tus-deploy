@@ -229,11 +229,11 @@ Fecha de corte baseline: 2026-09-30 (Auditoría previa a Fases Turnos / UX-UI / 
 | `GET` | `/api/alojamientos/tipos` | Public | Cualquiera | No | N/A | None | Global | Catálogo administrable de tipos (Hotel, Cabaña, Departamento, Motel, etc.). |
 | `GET` | `/api/alojamientos` | Public | Cualquiera | No | N/A | Query filtros | Global | Búsqueda pública por zona, fechas, personas, precio. Calcula precio real o "Desde $X". |
 | `GET` | `/api/alojamientos/:idOrSlug` | Public | Cualquiera | No | N/A | Param ID/Slug | Global | Detalle de alojamiento y unidades. Aplica jerarquía de fotos con fallback a fotos generales. |
-| `POST` | `/api/alojamientos/reservas/hold` | Public / Cliente | Invitado / Cliente | No | N/A | Schema validado | Global | Creación de hold temporal (15m). Exclusión física PostgreSQL 16 `btree_gist` contra solapamiento. |
-| `POST` | `/api/alojamientos/reservas/:id/checkout-preference` | Public / Cliente | Titular / Invitado | No | N/A | Param ID | Global | Preferencia de checkout Mercado Pago (soporte sandbox / local). |
-| `POST` | `/api/alojamientos/reservas/:id/simular-pago` | Public / Cliente | Titular / Invitado | No | N/A | Param ID | Global | Confirmación de pago simulado para testing local continuo sin bloqueador externo. |
-| `POST` | `/api/alojamientos/calificar` | Bearer / Cookie | Cliente | No | Titular de reserva | Puntuación 1-5 | Global | Calificación de alojamiento exclusiva para reservas `completed`. 1:1 único por reserva. |
-| `POST` | `/api/alojamientos` | Bearer / Cookie | Admin / Propietario | No | Propietario o Admin | Schema comercial | Global | Creación de alojamiento (soporta fixtures ficticios de test sin usuario registrado). |
+| `POST` | `/api/alojamientos/reservas/hold` | Public / Cliente | Invitado / Cliente | No | `clienteId` = cuenta de la sesión (el del body se ignora) | Schema validado | Global | Creación de hold temporal (15m). Exclusión física PostgreSQL 16 `btree_gist` contra solapamiento. |
+| `POST` | `/api/alojamientos/reservas/:id/checkout-preference` | Public / Cliente | Titular / Invitado | No | Reserva con cuenta: solo su titular (o admin). Reserva de invitado: por id de reserva | Param ID | Global | Preferencia de checkout Mercado Pago (soporte sandbox / local). |
+| `POST` | `/api/alojamientos/reservas/:id/simular-pago` | Deshabilitado en producción | Titular / Invitado (solo dev/test) | No | Igual que checkout-preference | Param ID | Global | Confirma una reserva sin pago real. Solo existe con `NODE_ENV=development` o `test`; en cualquier otro entorno responde 403 `PAYMENT_SIMULATION_DISABLED`. |
+| `POST` | `/api/alojamientos/calificar` | Bearer / Cookie | Cliente | No | Titular de reserva (cuenta de la sesión; el `clienteId` del body no se lee) | Puntuación 1-5 | Global | Calificación de alojamiento exclusiva para reservas `completed`. 1:1 único por reserva. Una reserva de invitado no se califica por API. |
+| `POST` | `/api/alojamientos` | Bearer / Cookie | Admin | Sí | Admin asigna `propietarioId` | Schema comercial | Global | Creación de alojamiento (soporta fixtures ficticios de test sin propietario). No hay alta por autoservicio: el propietario es la cuenta que asigna el admin. |
 | `POST` | `/api/alojamientos/:id/unidades` | Bearer / Cookie | Admin / Propietario | No | Dueño de alojamiento | Schema unidad | Global | Alta de unidad (habitación, cabaña, depto) con capacidad y amenities. |
 | `POST` | `/api/alojamientos/unidades/:unidadId/tarifas` | Bearer / Cookie | Admin / Propietario | No | Dueño de unidad | Modalidad y precio | Global | Tarifas por hora, bloque de horas, noche, día o semana con estadía mínima. |
 | `POST` | `/api/alojamientos/:id/imagenes` | Bearer / Cookie | Admin / Propietario | No | Dueño de alojamiento | URL y categoría | Global | Carga de fotos generales (fachada, recepción, piscina, etc.). |
@@ -241,3 +241,9 @@ Fecha de corte baseline: 2026-09-30 (Auditoría previa a Fases Turnos / UX-UI / 
 | `POST` | `/api/alojamientos/unidades/:unidadId/bloquear` | Bearer / Cookie | Admin / Propietario | No | Dueño de unidad | Rango y motivo | Global | Bloqueo manual por mantenimiento o uso propio. |
 | `GET` | `/api/alojamientos/:id/reservas` | Bearer / Cookie | Admin / Propietario | No | Dueño de alojamiento | Param ID | Global | Listado de reservas, huéspedes y estados comerciales. |
 | `PATCH` | `/api/alojamientos/reservas/:id/estado` | Bearer / Cookie | Admin / Propietario | No | Dueño de alojamiento | Estado objetivo | Global | Transiciones operativas (`checked_in`, `completed`, `cancelled`). |
+
+Reglas de las rutas "Admin / Propietario" (`apps/api/src/tus/alojamientos/alojamientos-routes.ts`, tests en
+`tests/foundation/tus-alojamientos-http.test.mjs`): la sesión es la misma del resto de TUS (Bearer o cookie +
+`X-Correlation-Id`). Admin = permiso `tus:providers:admin` (sesión con MFA elevado). Propietario = la cuenta de la sesión
+coincide con `alojamientos.propietario_id` del alojamiento (o del alojamiento de la unidad / de la reserva), leído de la
+base. Sin sesión: 401. Con sesión sin permiso sobre el recurso: 403, también si el id no existe (no revela ids).
