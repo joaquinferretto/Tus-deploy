@@ -169,6 +169,20 @@ function crearMockPrisma() {
         const r = reservas.find(res => res.id === where.id)
         if (r) Object.assign(r, data)
         return reservaCompleta(r)
+      },
+      // Conditional update: by id and/or unit, by state (one or a list) and by expired hold.
+      updateMany: async ({ where, data }) => {
+        let count = 0
+        const estados = typeof where.estado === 'string' ? [where.estado] : where.estado?.in
+        for (const r of reservas) {
+          if (where.id !== undefined && r.id !== where.id) continue
+          if (where.unidadId !== undefined && r.unidadId !== where.unidadId) continue
+          if (estados && !estados.includes(r.estado)) continue
+          if (where.holdExpiracion?.lt && !(r.holdExpiracion && r.holdExpiracion < where.holdExpiracion.lt)) continue
+          Object.assign(r, data)
+          count++
+        }
+        return { count }
       }
     },
     calificacionAlojamiento: {
@@ -180,6 +194,8 @@ function crearMockPrisma() {
     },
   }
   db.$transaction = async (fn) => fn(db)
+  // SELECT ... FOR UPDATE (row locks): nothing to serialize in a single-threaded double.
+  db.$queryRaw = async () => [{ ok: 1 }]
   return { db, alojamientos, reservas, calificaciones, bloqueos, tarifas, imagenes }
 }
 
@@ -470,4 +486,16 @@ test('SEGURIDAD ALOJAMIENTOS: el cliente Web envía la sesión y X-Correlation-I
   assert.match(cliente, /'X-Correlation-Id': crypto\.randomUUID\(\)/)
   assert.match(cliente, /resolveWebApiBaseUrl\(/)
   assert.doesNotMatch(cliente, /clienteId/, 'el cliente Web nunca envía un id de cliente')
+})
+
+test('SEGURIDAD ALOJAMIENTOS: los pagos en revisión solo los ve la administración de plataforma', async () => {
+  const mock = crearMockPrisma()
+  await conServidor(crearAppTest(mock.db), async (base) => {
+    const ruta = '/reservas/pagos-en-revision'
+    assert.equal((await pedir(base, 'GET', ruta, null)).status, 401)
+    assert.equal((await pedir(base, 'GET', ruta, 'tok-cliente')).status, 403)
+    const admin = await pedir(base, 'GET', ruta, 'tok-admin')
+    assert.equal(admin.status, 200)
+    assert.ok(Array.isArray((await admin.json()).items))
+  })
 })

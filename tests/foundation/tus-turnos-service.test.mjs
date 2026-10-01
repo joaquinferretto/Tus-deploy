@@ -174,7 +174,19 @@ test('TURNOS: snapshot historico de precio y auditoria admin obligatoria', () =>
       calendario: {
         findUnique: async () => calendario
       },
+      // A booking is only accepted inside the real availability (TURNOS-ADMIN-01), so the agenda
+      // of the provider is part of the fixture: Monday 9 to 18, no blocks, no other turnos.
+      reglaCalendario: {
+        findMany: async () => [{ diaSemana: 1, horaInicio: '09:00', horaFin: '18:00' }]
+      },
+      // A booking runs with the agenda locked (transaction + SELECT ... FOR UPDATE on its calendar).
+      $transaction: async (operation) => operation(mockPrisma),
+      $queryRaw: async () => [{ ok: 1 }],
+      excepcionCalendario: {
+        findMany: async () => []
+      },
       reserva: {
+        findMany: async () => [],
         create: async ({ data }) => {
           reservaCreada = { ...data, id: data.id }
           return reservaCreada

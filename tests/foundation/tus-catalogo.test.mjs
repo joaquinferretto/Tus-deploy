@@ -121,7 +121,6 @@ test('CATALOG SEARCH: synonyms and places from the catalog; new trade and neighb
     const { crearAltaPrestadorAdmin } = await import('./apps/api/src/tus/directorio/admin.ts')
     const { createAuthService } = await import('./apps/api/src/auth-security/composition.ts')
     const { searchServices } = await import('./apps/web/src/features/home/service-search.ts')
-    const { respond } = await import('./apps/web/src/features/home/assistant-service.ts')
     const { definicionChat, HERRAMIENTAS } = await import('./apps/api/src/tus/asistente/herramientas.ts')
     const i = (text) => interpretarNecesidad(text)
     const out = {}
@@ -141,7 +140,9 @@ test('CATALOG SEARCH: synonyms and places from the catalog; new trade and neighb
       const deps = { catalog: [{ id: 'albanileria', label: 'Albañilería' }], interpret: async (text) => directorio.interpretar(text), providers: async (filters) => (await directorio.listar({ oficio: filters.profession, zona: filters.zone, q: filters.query })).items }
       const found = async (text) => { const o = await searchServices(text, deps); return o.kind === 'category' ? o.providers.map((p) => p.displayName) : o.kind }
       out.searches = [await found('necesito un albañil'), await found('necesito hacer un revoque'), await found('albañil en Ponce'), await found('albañil en Norte')]
-      out.assistant = (await respond('necesito un albañil en Ponce', { role: 'guest', name: null, returnTo: '/', search: (text) => searchServices(text, deps) })).text
+      // The Web assistant no longer answers in the browser (it is the shared orchestrator: see
+      // tus-asistente-web.test.mjs). The same catalog-driven search is what the search bar runs.
+      out.assistant = await found('necesito un albañil en Ponce')
       out.candidates = (await directorio.buscarCandidatos({ oficio: 'albanileria', zona: 'Ponce', exigirCobertura: true })).items.map((p) => p.displayName)
       out.mapPoint = (await directorio.listar({ oficio: 'albanileria' })).items[0].mapLocations[0]
       // A trade created in the panel is recognised at once (web, WhatsApp tools).
@@ -171,7 +172,7 @@ test('CATALOG SEARCH: synonyms and places from the catalog; new trade and neighb
   assert.equal(result.zoneWord, 'Norte', 'administered zones are recognised too')
   assert.equal(result.alta, 200)
   assert.deepEqual(result.searches, [['Albañil de Ponce'], ['Albañil de Ponce'], ['Albañil de Ponce'], ['Albañil de Ponce']], 'albañil / revoque / en Ponce / en zona Norte find the same provider')
-  assert.equal(result.assistant, 'Parece que necesitás albañilería. Te muestro 1 profesional disponible en Ponce en el mapa.')
+  assert.deepEqual(result.assistant, ['Albañil de Ponce'], 'a neighbourhood created in the panel is searchable with no code change')
   assert.deepEqual(result.candidates, ['Albañil de Ponce'])
   assert.equal(result.mapPoint.label, 'Ponce', 'the map places the provider at the new neighbourhood')
   assert.equal(result.newTrade, 'reparacion-de-electrodomesticos', 'a new trade + synonyms is interpreted without code changes')

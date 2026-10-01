@@ -247,3 +247,30 @@ Reglas de las rutas "Admin / Propietario" (`apps/api/src/tus/alojamientos/alojam
 `X-Correlation-Id`). Admin = permiso `tus:providers:admin` (sesión con MFA elevado). Propietario = la cuenta de la sesión
 coincide con `alojamientos.propietario_id` del alojamiento (o del alojamiento de la unidad / de la reserva), leído de la
 base. Sin sesión: 401. Con sesión sin permiso sobre el recurso: 403, también si el id no existe (no revela ids).
+
+---
+
+## 12. Asistente Web, Perfil Personal, Geografía y Turnos de Administración
+
+| Method | Route | Auth | Role | MFA | Tenant / Owner | Input Validation | Rate Limit | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/tus/v1/asistente/mensajes` | Public / Session opcional | Cualquiera | No | Cuenta = sesión; sin sesión, `visitorId` aleatorio (solo continuidad) | Allowlist de campos (422), texto 1..1000, `replyId` con patrón | 30/min por IP + 12/min por conversación | Mismo orquestador que WhatsApp. Visitante: solo herramientas públicas. Escrituras: confirmación ligada a conversación y cuenta. `private, no-store`. |
+| `GET` | `/tus/v1/asistente/historial` | Public / Session opcional | Cualquiera | No | Conversación de la cuenta o del `visitorId` | Patrón de `visitorId` | Global | Solo la conversación propia. |
+| `POST` | `/tus/v1/asistente/reiniciar` | Public / Session opcional | Cualquiera | No | Idem | Patrón de `visitorId` | 30/min por IP | Cierra la conversación activa. |
+| `GET` | `/tus/v1/geografia/paises`, `/provincias`, `/localidades` | Public | Cualquiera | No | N/A | Patrón de ids | Global | Datos de referencia. `private, max-age=300` (nunca `public`). |
+| `GET` | `/tus/v1/perfil` | Session / Bearer | Cualquiera | No | Cuenta de la sesión (no hay ruta por id) | N/A | Global | Datos personales privados del titular. `no-store`. |
+| `PUT` | `/tus/v1/perfil` | Session / Bearer | Cualquiera | No | Cuenta de la sesión | Contrato compartido `validarPerfilPersonal`; campos desconocidos 422 | Global | Documento único por persona (409). Localidad del catálogo. |
+| `GET` | `/tus/v1/admin/usuarios` | MFA Elevated | Admin (`tus:identity:admin`) | Sí | Plataforma | Allowlist de filtros | Global | Búsqueda por nombre, email, documento o teléfono y filtros resueltos en SQL; paginado. |
+| `GET` | `/tus/v1/admin/usuarios/:id` | MFA Elevated | Admin (`tus:identity:admin`) | Sí | Plataforma | Id | Global | Incluye documento y residencia (datos privados). |
+| `GET` | `/tus/v1/admin/turnos/prestadores`, `/prestadores/:id/servicios`, `/clientes`, `/disponibilidad` | MFA Elevated | Admin (`tus:providers:admin`) | Sí | Plataforma | Query | Global | Búsquedas por nombre para el formulario de turnos; teléfono de clientes enmascarado. |
+| `POST` | `/tus/v1/admin/turnos` | MFA Elevated | Admin (`tus:providers:admin`) | Sí | Plataforma; el administrador es la sesión | Allowlist de campos (422) | Global | `general`: solo una franja de la disponibilidad real. `forzado`: motivo obligatorio, auditado. Solapamiento: 409 `SLOT_OCCUPIED`. |
+| `GET`/`PUT` | `/tus/v1/prestador/turnos/horarios` | Session / Bearer | Prestador | No | `tenantId` de sesión | `validarHorariosSemanales` + `esIntervaloTurno`; campos desconocidos 422 | Global | Disponibilidad semanal de la propia agenda: intervalo general y, por día, horarios e intervalo propio. |
+| `GET` | `/tus/v1/public/prestadores/:id/turnos/agenda` | Pública | — | No | Solo perfiles visibles (404 si no) | `oficioId`, `desde` (YYYY-MM-DD, entre hoy−7 y hoy+180), `tarifaId` del servicio | Global | Agenda semanal: inicios posibles y su estado (disponible, ocupado, bloqueado, pasado). Sin datos del cliente ni motivo del bloqueo. `private, no-store`. |
+| `GET` | `/tus/v1/prestador/turnos/agenda` | Session / Bearer | Prestador | No | Perfil del `tenantId` de sesión | Query | Global | La misma agenda, también con el perfil oculto. |
+| `GET` | `/api/alojamientos/reservas/pagos-en-revision` | Session / Bearer | Admin de plataforma | Sí | Plataforma | — | Global | Pagos recibidos para reservas que ya no tenían sus fechas; se concilian a mano, nunca se confirman solos. |
+| `POST` | `/api/alojamientos/reservas/:id/checkout-preference` | Session / Bearer | Titular de la reserva | No | Cuenta titular | Id | Global | Mercado Pago de alojamientos NO IMPLEMENTADO: con credenciales reales responde 503 `CHECKOUT_NOT_AVAILABLE`. |
+| `GET`/`DELETE` | `/tus/v1/prestador/turnos/bloqueos`, `/bloqueos/:id` | Session / Bearer | Prestador | No | `tenantId` de sesión (un bloqueo ajeno responde 404) | Id | Global | Bloqueos vigentes de la propia agenda; quitar uno no toca la configuración semanal. |
+| `GET` | `/tus/v1/prestador/turnos/servicios`, `/disponibilidad` | Session / Bearer | Prestador | No | `tenantId` de sesión | Query | Global | Servicios y disponibilidad propios. |
+| `PUT` | `/tus/v1/prestador/servicios/:oficioId/turnos-config`, `/tarifas` | Session / Bearer | Prestador | No | Perfil del `tenantId` de sesión (el `perfilId` del body se ignora) | Body | Global | Corregido IDOR: antes el perfil se tomaba del body. |
+
+Las rutas de administración de turnos exigen `tus:providers:admin` (ya no aceptan `tus:calendar:write`).

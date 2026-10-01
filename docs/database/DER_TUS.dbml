@@ -260,6 +260,7 @@ Table reglas_calendario {
   hora_inicio varchar [note: 'ex startsAt (time string)']
   hora_fin varchar [note: 'ex endsAt (time string)']
   capacidad int [note: 'ex capacity']
+  intervalo_minutos int [null, note: 'TURNOS-AGENDA-01: intervalo propio del día; NULL = calendarios.granularidad_minutos (general). CHECK ck_reglas_calendario_intervalo: NULL o 15/30/60/90/120']
   fecha_creacion timestamp [note: 'ex createdAt']
   fecha_actualizacion timestamp [note: 'ex updatedAt']
 
@@ -2354,10 +2355,35 @@ Table sinonimos_oficio {
   }
 }
 
+Table paises {
+  id varchar [pk]
+  nombre varchar
+  codigo_iso varchar [unique, note: 'ISO 3166-1 alfa-2']
+  activo boolean [default: true]
+  orden int [default: 0]
+  creado_en timestamp
+  actualizado_en timestamp
+}
+
+Table provincias {
+  id varchar [pk]
+  pais_id varchar [ref: > paises.id, note: 'RESTRICT']
+  nombre varchar [note: 'único por país sin distinguir mayúsculas']
+  codigo varchar [note: 'ISO 3166-2, opcional']
+  activo boolean [default: true]
+  orden int [default: 0]
+  creado_en timestamp
+  actualizado_en timestamp
+}
+
 Table localidades {
   id varchar [pk]
   nombre varchar [note: 'CHECK 2..60; único por (nombre, provincia) sin distinguir mayúsculas']
-  provincia varchar
+  provincia varchar [note: 'nombre de la provincia (texto histórico). Derivado: el trigger tr_localidades_provincia_derivada copia el nombre de la provincia de provincia_id; no puede contradecirla']
+  provincia_id varchar [ref: > provincias.id, note: 'RESTRICT; NULL solo en filas históricas sin provincia reconocible']
+  latitud float [note: 'punto de referencia de la localidad (centro del mapa); nunca una dirección']
+  longitud float
+  cobertura boolean [default: false, note: 'true: TUS opera ahí (catálogo de servicio: zonas, barrios). false: solo geografía de residencia']
   activo boolean [default: true]
   orden int [default: 0]
   creado_en timestamp
@@ -2378,6 +2404,7 @@ Table zonas_ubicacion {
   actualizado_en timestamp
   indexes {
     localidad_id [name: 'ix_zonas_ubicacion_localidad']
+    (id, localidad_id) [unique, name: 'uq_zonas_ubicacion_id_localidad', note: 'destino de fk_barrios_zona_localidad (NOT VALID): un barrio y su zona son de la misma localidad']
   }
 }
 

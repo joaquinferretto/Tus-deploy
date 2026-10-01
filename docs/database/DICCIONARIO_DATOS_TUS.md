@@ -852,3 +852,88 @@ queda alineado con el DER: faltantes antes `15`, faltantes después `0`.
 | `plan_id`   | semántica clara y sin traducción natural necesaria (plan de suscripción) |
 
 Los **valores** almacenados en columnas como `tipo_evento`, `resultado_habilitacion`, `requisitos_fallidos`, `tipo_agregado`, `proveedor`, enums contractuales y payloads externos **permanecen congelados** en su forma original.
+
+### 7.14 Perfil personal y geografía (PERFIL-GEO-01, `20261021100000_tus_perfil_geografia`)
+
+- `paises` → `provincias` → `localidades`: geografía normalizada. `localidades` ya existía como catálogo de servicio
+  (de ella cuelgan zonas y barrios); gana `provincia_id` (FK), `latitud`/`longitud` (punto de referencia para centrar
+  el mapa) y `cobertura`. Solo las localidades con `cobertura = true` forman el catálogo de servicio; el resto es
+  geografía para la residencia de las personas. La columna de texto `provincia` se conserva (índice único histórico).
+  Semilla: Argentina, 24 jurisdicciones y 88 localidades (capitales, provincia de Corrientes y ciudades principales);
+  las coordenadas son el centro aproximado de cada localidad.
+- `"User"` (la persona) gana el perfil personal: `firstName`, `lastName`, `documentType` (`DNI`, `LC`, `LE`,
+  `PASAPORTE`), `documentNumber` (normalizado: solo dígitos, o alfanumérico en mayúsculas para pasaporte), `localidadId`
+  (FK RESTRICT), `addressStreet`, `addressNumber`, `addressUnit` (opcional), `postalCode`, `profileComplete` y
+  `profileUpdatedAt`. Son datos **privados**: solo los ve su titular (`/tus/v1/perfil`) y la administración de
+  plataforma. Invariantes en la base: `ck_user_documento` (tipo y número juntos y con el formato del tipo),
+  `uq_user_documento` (una persona por documento, índice único parcial), `ck_user_perfil_completo` (el indicador solo
+  puede ser verdadero con todos los campos obligatorios presentes). Los usuarios existentes quedan con
+  `profileComplete = false` y sin ningún dato inventado.
+
+### 7.15 Canal del asistente (ASISTENTE-WEB-01, `20261020100000_tus_asistente_canal_web`)
+
+- `contactos_whatsapp.canal` y `conversaciones_whatsapp.canal`: `whatsapp` (por defecto, todas las filas previas) o
+  `web`. Un contacto Web guarda en `wa_id` la clave `web:acct:<cuenta>` o `web:anon:<id del navegador>`
+  (`ck_contactos_whatsapp_wa_id` valida el formato por canal) y nunca está vinculado a una cuenta
+  (`ck_contactos_whatsapp_web_sin_vinculo`): su autoridad es la sesión de cada petición.
+
+### 7.16 Turnos de la administración (TURNOS-ADMIN-01, `20261022100000_tus_turnos_admin`)
+
+- Un turno es una fila de `reservas` (no hay tabla paralela). `calendarios.servicio_id` pasa a ser opcional (la agenda
+  es del prestador). `reservas.creado_por_admin_id`: administrador que creó el turno (general o forzado).
+  `ck_reservas_forzado_auditado` (NOT VALID): un turno forzado siempre tiene motivo (≥ 5 caracteres) y autor. El
+  forzado ignora los horarios publicados pero no la exclusión `ex_reservas_sin_solapamiento`; además se registra el
+  evento de auditoría `turnos.turno_forzado` en la misma transacción.
+
+### 7.17 Disponibilidad semanal y agenda de turnos (TURNOS-AGENDA-01, `20261023100000_tus_turnos_intervalo_dia`)
+
+La disponibilidad de un prestador vive en el dominio existente de calendario; no hay tablas nuevas.
+
+- **Intervalo general**: `calendarios.granularidad_minutos` (ya existía). Cada cuánto puede EMPEZAR un turno en toda la semana.
+- **Intervalo propio de un día**: `reglas_calendario.intervalo_minutos` (columna nueva, nullable). `NULL` = usar el general. `ck_reglas_calendario_intervalo`: `NULL` o uno de 15, 30, 60, 90, 120. Todas las franjas de un mismo día llevan el mismo valor (lo valida `validarHorariosSemanales`).
+- **Días y horarios**: filas de `reglas_calendario` (`dia_semana`, `hora_inicio`, `hora_fin`). Un día sin filas es un día no laboral.
+- **Excepciones** (feriado, vacaciones, bloqueo manual, horario reducido): `excepciones_calendario` con `estado = 'active'`. Quitar un bloqueo lo deja en `cancelled` (historial); nunca reescribe las reglas semanales.
+- **Duración**: es del servicio (`perfil_servicios.duracion_minutos`) o de la tarifa elegida. Un inicio existe solo si `inicio + duración <= hora_fin`.
+- **Generación**: una sola función (`agendaDelDia`, `apps/api/src/tus/calendar/agenda.ts`) decide cada inicio y su estado (`disponible`, `ocupado`, `bloqueado`, `pasado`). La usan la vista de un día, la agenda semanal y la validación de una reserva.
+- **Concurrencia**: sin cambios. `ex_reservas_sin_solapamiento` impide dos reservas solapadas en un calendario; el perdedor recibe 409 `SLOT_OCCUPIED`.
+
+### 7.18 Integridad tras la auditoría de la base (INTEGRIDAD-01, `20261024100000` y `20261025100000`)
+
+Clasificación de hallazgos, plan y consultas de verificación: `docs/database/AUDITORIA_INTEGRIDAD_2026-10.md`.
+Sin tablas nuevas; una sola columna nueva (`reservas_alojamiento.pago_en_revision_desde`). Las constraints nuevas son NOT VALID (aplican a toda fila nueva o
+modificada; las históricas se validan después de verificar producción en modo lectura).
+
+**Alojamientos**
+
+| Tabla | Regla | Objeto |
+|---|---|---|
+| `alojamientos` | Un alojamiento por slug | `uq_alojamientos_slug` (duplicados previos resueltos con sufijo del id) |
+| `alojamientos` | Punto válido, estado del catálogo, rating 1–5, horas HH:MM | `ck_alojamientos_punto`, `_estado`, `_rating`, `_horas` |
+| `alojamientos` | El propietario es una cuenta real (NULL = administrado por la plataforma) | `fk_alojamientos_propietario` → `"Account".id`, RESTRICT |
+| `reservas_alojamiento` | Pago recibido cuando la reserva ya no tenía sus fechas: pendiente de conciliación | `pago_en_revision_desde` (columna nueva, nullable) + índice parcial `ix_reservas_alojamiento_pago_en_revision` |
+| `unidades_alojamiento` | Capacidad ≥ 1, baños ≥ 0, estado del catálogo | `ck_unidades_alojamiento_capacidad`, `_estado` |
+| `tarifas_alojamiento` | Precio ≥ 0, modalidad del catálogo, duración ≥ 1, estadía mín ≤ máx, moneda ISO, días 0–6 | `ck_tarifas_alojamiento_*` |
+| `bloqueos_unidad_alojamiento` | fin > inicio | `ck_bloqueos_unidad_alojamiento_rango` |
+| `reservas_alojamiento` | fin > inicio, estado y modalidad del catálogo, personas ≥ 1, precios ≥ 0, moneda ISO, hold con vencimiento | `ck_reservas_alojamiento_*` |
+| `reservas_alojamiento` | La unidad pertenece al alojamiento de la reserva | `fk_reservas_alojamiento_unidad_alojamiento` → `unidades_alojamiento(id, alojamiento_id)` |
+| `calificaciones_alojamiento` | La calificación cuenta para el alojamiento de su reserva | `fk_calificaciones_alojamiento_reserva_alojamiento` → `reservas_alojamiento(id, alojamiento_id)` |
+
+Reglas que quedan en el servicio (no son invariantes de fila): capacidad de la unidad contra la
+reserva, estadía mínima, transiciones de estado, y que una reserva y un bloqueo manual no se
+superpongan (ambas operaciones toman `FOR UPDATE` sobre la fila de la unidad). Un hold vencido se
+marca `expired` en la misma transacción que vuelve a usar sus fechas. El precio de una estadía sale
+de una sola función (`apps/api/src/tus/alojamientos/cotizacion.ts`): noche por noche con la tarifa
+cuyo `dias_semana` incluye ese día; una tarifa con `temporada` no se aplica (no hay fechas de
+temporada en el modelo).
+
+**Tarifas de prestadores**: `fk_tarifas_servicio_perfil_servicio` (`(perfil_id, oficio_id)` →
+`perfil_servicios`, ON DELETE NO ACTION: el directorio borra las tarifas junto con el servicio),
+`ck_tarifas_servicio_prestador_duracion`, `ck_tarifas_servicio_prestador_precio`. El reemplazo de
+tarifas es una transacción con `FOR UPDATE` sobre la fila de `perfil_servicios`.
+
+**Turnos**: sin cambios de esquema. Toda escritura de una agenda toma `FOR UPDATE` sobre la fila de
+`calendarios`; el descanso (`buffer_minutos`) se respeta antes y después de cada reserva.
+
+**Geografía**: `localidades.provincia` es derivado de `provincia_id`
+(`tr_localidades_provincia_derivada`, `tr_provincias_renombrada`); `fk_barrios_zona_localidad`
+(`(zona_id, localidad_id)` → `zonas_ubicacion`, vía `uq_zonas_ubicacion_id_localidad`).

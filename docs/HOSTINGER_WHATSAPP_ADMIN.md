@@ -101,6 +101,8 @@ CDN debe cachear ese dominio. No se cambió ninguna configuración de Hostinger.
   mediante la herramienta `collect_service_request`. La IA redacta la pregunta por lo faltante.
 - `search_providers` pasa por `DominioAsistenteTus` y el directorio PostgreSQL compartido. El backend
   exige una necesidad completa y utiliza sus filtros guardados. RAG no es fuente de prestadores.
+- Desde ASISTENTE-CONV-01 la necesidad completa es oficio + día (la zona y la descripción son opcionales) y la
+  búsqueda con turnos reales la hace `find_appointments`; ver "Conversación, no formulario" en `WHATSAPP_IA_TUS.md`.
 - Los resultados se presentan directamente desde los datos devueltos, sin una reescritura del modelo
   que agregue nombres/precios/calificaciones. Los IDs de candidatos quedan en el contexto para continuar.
 - La búsqueda de WhatsApp exige cobertura declarada de zona. La Web conserva su ordenamiento existente.

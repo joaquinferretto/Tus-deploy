@@ -354,7 +354,12 @@ test('ADMIN WEB: lists use server pagination, filters reset to page 1, sensitive
   for (const source of [whatsapp, identidad, seguridad]) assert.match(source, /setPage\(1\)/)
   assert.match(catalogo, /¿Desactivar \$\{item\.nombre\}\?/)
   assert.match(catalogo, /El historial existente se conservará/)
-  assert.match(usuarios, /¿Suspender a/)
+  // Suspending an account lives in the account sheet since the users screen was rebuilt
+  // (list = search and filters, sheet = edit); it still asks in the shared modal.
+  const usuarioDetalle = read('apps/web/src/components/admin/admin-usuario-detalle.tsx')
+  assert.match(usuarioDetalle, /¿Suspender a/)
+  assert.ok(usuarioDetalle.includes('<AdminConfirm onClose={cerrar} value={confirmacion} />'))
+  assert.doesNotMatch(usuarioDetalle, /window\.confirm|\bconfirm\(/)
   assert.match(prestadores, /¿Ocultar a/)
   assert.match(confirm, /showModal\(\)/)
   for (const source of [catalogo, usuarios, prestadores, confirm]) assert.doesNotMatch(source, /window\.confirm|\bconfirm\(/)

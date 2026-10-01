@@ -209,14 +209,17 @@ function crearPrismaAlojamientosMock() {
         }
         return { ...r, unidad: uFound }
       },
+      // Conditional update: by id and/or unit, by state (one or a list) and by expired hold.
       updateMany: async ({ where, data }) => {
         let count = 0
-        const ahora = new Date()
+        const estados = typeof where.estado === 'string' ? [where.estado] : where.estado?.in
         for (const r of reservas) {
-          if (r.estado === where.estado && r.holdExpiracion < ahora) {
-            Object.assign(r, data)
-            count++
-          }
+          if (where.id !== undefined && r.id !== where.id) continue
+          if (where.unidadId !== undefined && r.unidadId !== where.unidadId) continue
+          if (estados && !estados.includes(r.estado)) continue
+          if (where.holdExpiracion?.lt && !(r.holdExpiracion && r.holdExpiracion < where.holdExpiracion.lt)) continue
+          Object.assign(r, data)
+          count++
         }
         return { count }
       },
@@ -241,7 +244,9 @@ function crearPrismaAlojamientosMock() {
         return data
       }
     },
-    $transaction: async (fn) => fn(mockPrisma)
+    $transaction: async (fn) => fn(mockPrisma),
+    // SELECT ... FOR UPDATE (row locks): nothing to serialize in a single-threaded double.
+    $queryRaw: async () => [{ ok: 1 }]
   }
 
   return { mockPrisma, alojamientos, reservas, bloqueos, calificaciones }

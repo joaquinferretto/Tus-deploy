@@ -106,7 +106,90 @@ Con `TUS_WHATSAPP_ENABLED=true` y configuracion valida, `startServer()` crea el 
 
 La cola usa un job por conversacion, debounce, leases de 120 segundos y hasta tres intentos. Un fallo agotado deriva la conversacion a humano.
 
+## Conversación, no formulario (ASISTENTE-CONV-01)
+
+El asistente no pide los datos de a uno con botones. De cada mensaje se toma **todo** lo que trae y
+se busca apenas alcanza:
+
+```
+MENSAJE -> extracción de datos -> estado de la conversación -> qué falta -> BÚSQUEDA REAL -> respuesta
+```
+
+- **Extracción** (`asistente/necesidad.ts`, función pura): oficio (catálogo administrado, con
+  tolerancia a errores de tipeo), día, horario, zona, "cualquier zona", si la persona se traslada,
+  urgencia y presupuesto. Las fechas relativas (hoy, mañana, pasado mañana, este viernes, el próximo
+  lunes, este fin de semana, dd/mm) y los horarios (a las 18, después de las 17, antes de las 12,
+  entre las 10 y las 14, a la mañana/mediodía/tarde/noche) se resuelven con el reloj del servidor en
+  hora de Argentina. Una hora exacta nunca se convierte en un rango.
+- **Estado** (`estado_conversacional.need`): los datos se acumulan entre mensajes y no se vuelven a
+  preguntar. Un oficio distinto es una necesidad nueva. Lo dicho hace más de 30 minutos, o para un
+  día que ya pasó, no se arrastra.
+- **Qué hace falta para buscar**: oficio y día. **La zona nunca es obligatoria**: sin zona se busca
+  en todos los prestadores del oficio; "no me importa la zona", "me da igual dónde", "cualquier
+  barrio", "voy yo", "me traslado" la dejan indiferente y no se pregunta.
+- **Búsqueda real** (`PuertoDominioAsistente.buscarDisponibilidad`): prestadores del directorio
+  para el oficio (y la zona, si la hay) con sus turnos libres del día pedido, calculados por el
+  mismo generador de agenda con el que se reserva. La duración sale del servicio o de su tarifa; el
+  modelo nunca la inventa.
+- **Resultado**, sin confundir casos: hay turnos a la hora pedida; no hay a esa hora pero sí cerca
+  (se muestran los más cercanos); hay prestadores sin turnos libres ese día; hay prestadores que no
+  toman turnos online (se coordina por solicitud); no hay prestadores del oficio. Si la búsqueda
+  falla se dice que no se pudo consultar: nunca se reemplaza por una suposición.
+- **Elegir**: "el segundo", un nombre o una hora en texto libre eligen entre lo mostrado. Con un
+  solo horario posible se prepara la reserva (`book_appointment`, confirmación explícita ligada a la
+  cuenta); con varios se pregunta solo la hora. Sin cuenta se ofrece iniciar sesión (Web) o vincular
+  (WhatsApp).
+
+El modelo y las reglas se reparten así:
+
+| | Con modelo | Sin modelo (caído o sin clave) |
+|---|---|---|
+| Mensaje con oficio y día | El backend busca directamente (sin llamada de enrutado). En la Web el modelo redacta la respuesta a partir del resultado; en WhatsApp el backend la arma con los datos reales | El backend busca y arma la respuesta con los datos reales |
+| Falta algo | El modelo pregunta SOLO eso, con lo conocido en su contexto. Puede entender lo que las reglas no cubren y pasarlo con `find_appointments` (`when` en texto: el servidor resuelve la fecha) | Pregunta fija, solo sobre lo que falta |
+
+Una respuesta libre del modelo en una búsqueda sin datos de herramienta solo se acepta si es una
+pregunta corta sin nombres, números, precios ni disponibilidad; cualquier otra cosa vuelve a las
+herramientas. Los botones y tarjetas son atajos: el texto libre siempre hace lo mismo.
+
+WhatsApp recibe exactamente el mismo tipo de mensaje libre y produce la misma consulta que la Web.
+La verificación telefónica (`VERIFICAR TUS <código>`) sigue separada: se resuelve antes del
+asistente y nunca pasa por el modelo.
+
+## Canal Web: el mismo asistente (ASISTENTE-WEB-01)
+
+El asistente de la Web (`/asistente` y la ventana flotante) no es otro asistente: es un **canal** del mismo `OrquestadorConversacion`. Modelo, herramientas (`herramientas.ts`), base de conocimiento (`RecuperadorConocimiento`), confirmaciones, memoria (`conversaciones_whatsapp` / `mensajes_conversacion_whatsapp`, con `canal = 'web'`) y permisos son el mismo codigo. Lo unico propio del canal vive en `asistente/web.ts` (quien habla, guardar el mensaje, devolver la respuesta en vez de enviarla por Meta) y en `CanalTurno`.
+
+```text
+Web -> POST /tus/v1/asistente/mensajes -> ServicioAsistenteWeb -> OrquestadorConversacion.responder()
+    -> modelo (enruta y conversa) -> RAG / herramientas -> servicios de dominio / PostgreSQL -> modelo -> respuesta
+```
+
+| | WhatsApp | Web |
+| --- | --- | --- |
+| Identidad | numero vinculado a una cuenta (link de un solo uso) | sesion de la peticion (cookie HttpOnly); sin sesion: visitante con herramientas publicas |
+| Enrutado de la intencion | patrones (por defecto; `WHATSAPP_AI_ROUTING=model` lo pasa al modelo) | siempre el modelo (`PROMPT_ENRUTADOR`); los patrones solo son respaldo si esa llamada falla |
+| Resultados de busqueda y turnos | texto armado por el backend (`conversacional: false`) | el modelo redacta a partir del resultado de la herramienta; los datos reales viajan como adjunto (`providers`, `slots`, `sources`) armado por el backend |
+| Area privada sin cuenta | link de vinculacion | el modelo explica que hay que iniciar sesion (sin herramientas privadas) + adjunto `sign_in` |
+| Confirmaciones | botones de WhatsApp | botones `reply` con el mismo `confirm:<id>`; ligadas a conversacion + cuenta |
+| Entrega | cola + worker + Meta | respuesta HTTP (JSON o NDJSON con el progreso real: enrutado, conocimiento, cada herramienta) |
+| Modelo caido | texto fijo | pregunta sobre TUS: ayuda extractiva (`ServicioAyudaPublica`) marcada `fallback`; el resto: texto fijo, sin datos |
+| Operador humano | no hay | no hay; las conversaciones Web no aparecen en la bandeja de soporte |
+
+Rutas del canal Web (sesion opcional; `visitorId` es un id aleatorio del navegador, nunca una identidad):
+
+| Metodo | Ruta | Uso |
+| --- | --- | --- |
+| POST | `/tus/v1/asistente/mensajes` | `{ text }` o `{ replyId }` (+ `visitorId`). `Accept: application/x-ndjson` transmite `accepted`, `activity`, `message`, `done`. Campos desconocidos: 422. |
+| GET | `/tus/v1/asistente/historial` | mensajes de la conversacion activa |
+| POST | `/tus/v1/asistente/reiniciar` | cierra la conversacion (memoria nueva) |
+
+Limites: 12 mensajes por minuto por conversacion (`WHATSAPP_INBOUND_MAX_PER_MINUTE`) y 30 por minuto por IP. No hay streaming token a token: el orquestador valida el texto del modelo antes de liberarlo. Al iniciar sesion, la conversacion que la persona tenia como visitante pasa a su cuenta.
+
+Tests: `tests/foundation/tus-asistente-web.test.mjs`.
+
 ## Migracion
+
+`20261020100000_tus_asistente_canal_web` agrega `canal` a `contactos_whatsapp` y `conversaciones_whatsapp` (las filas existentes son `whatsapp`).
 
 La migracion aditiva es `apps/api/prisma/migrations/20260928100000_tus_whatsapp_assistant`. Reutiliza `RagEmbedding.vector vector(1024)` y no crea otra base vectorial. Aplicar con `pnpm --filter @factory/api prisma:migrate:deploy` solo en un entorno controlado.
 
