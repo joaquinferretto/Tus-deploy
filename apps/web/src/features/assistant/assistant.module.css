@@ -1,0 +1,423 @@
+/* Conversation with the TUS assistant (full page and floating window). TUS tokens only: orange as
+   the single accent, visible borders, no shadows, green only for a verified state. */
+.conversation {
+  --a-line: #c9ced8;
+  background: #fff;
+  border: 1px solid var(--a-line);
+  border-radius: 16px;
+  color: var(--tus-ink, #14213d);
+  display: flex;
+  flex-direction: column;
+  /* Fixed height: messages scroll inside and the composer stays visible (dvh: mobile keyboard). */
+  height: clamp(440px, 68dvh, 760px);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.compact {
+  border: 0;
+  border-radius: 0;
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.messages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px;
+}
+
+.rowUser,
+.rowAssistant {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rowUser {
+  align-items: flex-end;
+}
+
+.rowAssistant {
+  align-items: flex-start;
+}
+
+.bubble {
+  border-radius: 14px;
+  line-height: 1.45;
+  max-width: min(85%, 620px);
+  overflow-wrap: anywhere;
+  padding: 10px 14px;
+  white-space: pre-line;
+}
+
+.fromAssistant {
+  background: var(--tus-surface, #f5f7fa);
+  border: 1px solid var(--a-line);
+  border-bottom-left-radius: 4px;
+}
+
+.fromUser {
+  background: var(--tus-orange, #ff5a00);
+  border-bottom-right-radius: 4px;
+  color: #fff;
+}
+
+/* The model was unavailable: the text is the safe fallback, marked as such. */
+.fallback {
+  background: #fffbeb;
+  border-color: #d97706;
+}
+
+.empty {
+  color: var(--tus-ink-soft, #475467);
+  display: grid;
+  gap: 12px;
+}
+
+.empty p {
+  line-height: 1.5;
+  margin: 0;
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  background: #fff;
+  border: 1px solid var(--a-line);
+  border-radius: 999px;
+  color: var(--tus-ink, #14213d);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  min-height: 40px;
+  padding: 6px 14px;
+  touch-action: manipulation;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--tus-orange, #ff5a00);
+  color: var(--tus-orange-strong, #e64f00);
+}
+
+.status {
+  align-items: center;
+  color: var(--tus-muted, #667085);
+  display: flex;
+  font-size: 0.9rem;
+  gap: 8px;
+}
+
+.dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.dots i {
+  animation: pulse 1.1s infinite ease-in-out;
+  background: var(--tus-orange, #ff5a00);
+  border-radius: 50%;
+  height: 6px;
+  width: 6px;
+}
+
+.dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dots i {
+    animation: none;
+  }
+}
+
+.error {
+  background: #fef2f2;
+  border: 1px solid var(--tus-danger, #c81e1e);
+  border-radius: 10px;
+  color: var(--tus-danger, #c81e1e);
+  font-size: 0.9rem;
+  padding: 8px 12px;
+}
+
+.cards {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--a-line);
+  border-radius: 12px;
+  display: grid;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 12px;
+}
+
+.cardHead {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  justify-content: space-between;
+}
+
+.cardMeta {
+  color: var(--tus-ink-soft, #475467);
+  font-size: 0.88rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.badgeOk {
+  background: #ecfdf3;
+  border: 1px solid var(--tus-success, #15803d);
+  border-radius: 999px;
+  color: var(--tus-success, #15803d);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.cardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.buttonPrimary,
+.buttonSecondary {
+  align-items: center;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 40px;
+  padding: 6px 14px;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+
+.buttonPrimary {
+  background: var(--tus-orange, #ff5a00);
+  border: 1px solid var(--tus-orange, #ff5a00);
+  color: #fff;
+}
+
+.buttonPrimary:hover:not(:disabled) {
+  background: var(--tus-orange-strong, #e64f00);
+}
+
+.buttonSecondary {
+  background: #fff;
+  border: 1px solid var(--a-line);
+  color: var(--tus-ink, #14213d);
+}
+
+.buttonSecondary:hover:not(:disabled) {
+  border-color: var(--tus-orange, #ff5a00);
+}
+
+.buttonPrimary:disabled,
+.buttonSecondary:disabled,
+.chip:disabled,
+.slot:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.buttonPrimary:focus-visible,
+.buttonSecondary:focus-visible,
+.chip:focus-visible,
+.slot:focus-visible,
+.composer textarea:focus-visible {
+  box-shadow: 0 0 0 3px rgba(255, 90, 0, 0.3);
+  outline: none;
+}
+
+.slotsTitle {
+  font-size: 0.95rem;
+}
+
+.slotsTitle::first-letter {
+  text-transform: uppercase;
+}
+
+.slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.slot {
+  background: #fff;
+  border: 1px solid var(--tus-orange, #ff5a00);
+  border-radius: 10px;
+  color: var(--tus-orange-strong, #e64f00);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  font-weight: 700;
+  justify-items: center;
+  min-height: 44px;
+  min-width: 72px;
+  padding: 4px 10px;
+  touch-action: manipulation;
+}
+
+.slot small {
+  color: var(--tus-muted, #667085);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.slot:hover:not(:disabled) {
+  background: var(--tus-orange, #ff5a00);
+  color: #fff;
+}
+
+.slot:hover:not(:disabled) small {
+  color: #fff;
+}
+
+.tariffs {
+  color: var(--tus-ink-soft, #475467);
+  font-size: 0.85rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sources {
+  color: var(--tus-muted, #667085);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.composer {
+  background: #fff;
+  border-top: 1px solid var(--a-line);
+  display: flex;
+  flex: none;
+  gap: 8px;
+  padding: 10px;
+}
+
+.composer textarea {
+  background: #fff;
+  border: 1px solid var(--a-line);
+  border-radius: 10px;
+  color: var(--tus-ink, #14213d);
+  flex: 1;
+  font: inherit;
+  /* 16px: iOS does not zoom the page when the field takes focus. */
+  font-size: 16px;
+  max-height: 120px;
+  min-height: 44px;
+  min-width: 0;
+  padding: 10px 12px;
+  resize: none;
+}
+
+.composer textarea:focus {
+  border-color: var(--tus-orange, #ff5a00);
+}
+
+.srOnly {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  margin: 16px 0 10px;
+}
+
+.toolbar p {
+  color: var(--tus-muted, #667085);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.linkButton {
+  background: none;
+  border: 0;
+  color: var(--tus-orange-strong, #e64f00);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-height: 32px;
+  padding: 0 4px;
+  text-decoration: underline;
+}
+
+.linkButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (max-width: 640px) {
+  .conversation:not(.compact) {
+    height: clamp(420px, 72dvh, 720px);
+  }
+
+  .messages {
+    padding: 12px;
+  }
+
+  .bubble {
+    max-width: 92%;
+  }
+}

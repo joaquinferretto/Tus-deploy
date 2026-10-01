@@ -10,7 +10,7 @@ import { HeroSearch } from './hero-search'
 import { MapFilters } from './map-filters'
 import { PublicHeader } from './public-header'
 import { getProvidersSource } from './providers-source'
-import { searchCategory, searchServices, type ServiceSearchDeps, type ServiceSearchOutcome } from './service-search'
+import { searchServices, type ServiceSearchDeps, type ServiceSearchOutcome } from './service-search'
 import { SiteFooter } from './site-footer'
 import { ProviderResults } from './provider-results'
 import { RecentRequests } from './recent-requests'
@@ -68,7 +68,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
     catalog: catalog.data?.items ?? [],
   }
 
-  // Applies a result of the shared service search (search bar or assistant) to the map.
+  // Applies a result of the service search (search bar) to the map.
   function apply(outcome: ServiceSearchOutcome): ServiceSearchOutcome {
     if (outcome.kind === 'category' || outcome.kind === 'text') {
       changeFilters(outcome.filters)
@@ -94,7 +94,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
     }
   }
 
-  // "Ver en el mapa" from the assistant on another page arrives as /?buscar=...: same search.
+  // A search started on another page arrives as /?buscar=...: same search.
   const catalogReady = Boolean(catalog.data)
   useEffect(() => {
     if (!catalogReady) return
@@ -105,9 +105,6 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when the catalog is ready
   }, [catalogReady])
 
-  async function runCategory(id: string, zone: string | null): Promise<ServiceSearchOutcome> {
-    return apply(await searchCategory(id, zone, searchDeps))
-  }
 
   return (
     <div className={styles.page}>
@@ -191,7 +188,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
         </section>
       </main>
       <SiteFooter logo={logo} />
-      <AssistantWidget chooseCategory={runCategory} search={runSearch} />
+      <AssistantWidget />
     </div>
   )
 }

@@ -99,8 +99,12 @@ test('AYUDA wiring: mounted with the TUS routes, knowledge indexed on Hostinger 
   const ingest = postinstall.indexOf("'apps/api/src/tus/asistente/cli.ts', 'ingest'")
   assert.ok(migrate > 0 && ingest > migrate, 'knowledge is indexed after migrations')
   assert.doesNotMatch(postinstall.slice(ingest), /process\.exit\(ingest/u, 'a failed ingest does not stop the deploy (optional dependency)')
-  const chat = readFileSync(join(root, 'apps/web/src/features/assistant/assistant-chat.tsx'), 'utf8')
-  assert.match(chat, /client\.help\(question\)/u)
-  assert.match(chat, /No tengo suficiente información confiable para responder eso/u)
-  assert.doesNotMatch(chat, /dangerouslySetInnerHTML/u)
+  // The extractive help is no longer called by the browser: it is the assistant's safe fallback
+  // in the API when the model is unavailable (ASISTENTE-WEB-01).
+  assert.match(server, /app\.use\(crearRouterAsistenteWeb\(\{ servicio: whatsapp\?\.asistenteWeb \?\? null, sessions \}\)\)/u)
+  const asistenteWeb = readFileSync(join(root, 'apps/api/src/tus/asistente/web.ts'), 'utf8')
+  assert.match(asistenteWeb, /this\.deps\.ayuda\.responder\(text\)/u)
+  assert.match(asistenteWeb, /help\.status !== 'answered'/u, 'only a confident extract is shown')
+  const conversation = readFileSync(join(root, 'apps/web/src/features/assistant/assistant-conversation.tsx'), 'utf8')
+  assert.doesNotMatch(conversation, /dangerouslySetInnerHTML/u, 'replies are rendered as plain text')
 })
