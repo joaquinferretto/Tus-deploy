@@ -7,9 +7,9 @@ import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet'
 import Link from 'next/link'
 import type { Route } from 'next'
 import type { AlojamientoPublicoDTO } from '@factory/contracts'
+import { DEFAULT_MAP_CENTER } from '../home/types'
+import { useMapHome, type MapHome } from '../home/use-map-home'
 import styles from './alojamientos.module.css'
-
-const DEFAULT_CENTER = { lat: -34.6037, lng: -58.3816, zoom: 12 }
 const TILE_URL = process.env['NEXT_PUBLIC_MAP_TILE_URL'] || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 const TILE_ATTRIBUTION = process.env['NEXT_PUBLIC_MAP_TILE_ATTRIBUTION'] || '&copy; OpenStreetMap contributors'
 
@@ -31,16 +31,21 @@ function createPriceIcon(priceLabel: string, active: boolean) {
   })
 }
 
-function MapBoundsWatcher({ alojamientos }: { alojamientos: AlojamientoPublicoDTO[] }) {
+// With results the map frames them; without results it stays on the person's locality (or the
+// documented default for a visitor), and follows it when the locality changes.
+function MapBoundsWatcher({ alojamientos, home }: { alojamientos: AlojamientoPublicoDTO[]; home: MapHome }) {
   const map = useMap()
 
   useEffect(() => {
-    if (alojamientos.length === 0) return
+    if (alojamientos.length === 0) {
+      map.setView([home.lat, home.lng], home.zoom)
+      return
+    }
     const bounds = L.latLngBounds(
       alojamientos.map((a) => [a.latitud, a.longitud] as [number, number])
     )
     map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 })
-  }, [map, alojamientos])
+  }, [map, alojamientos, home])
 
   return null
 }
@@ -56,16 +61,17 @@ export default function AlojamientosMap({
   selectedId,
   onSelect,
 }: AlojamientosMapProps): React.ReactNode {
+  const home = useMapHome()
   return (
     <div className={styles.mapContainer}>
       <MapContainer
-        center={[DEFAULT_CENTER.lat, DEFAULT_CENTER.lng]}
-        zoom={DEFAULT_CENTER.zoom}
+        center={[DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng]}
+        zoom={DEFAULT_MAP_CENTER.zoom}
         style={{ height: '100%', width: '100%' }}
         scrollWheelZoom={false}
       >
         <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} />
-        <MapBoundsWatcher alojamientos={alojamientos} />
+        <MapBoundsWatcher alojamientos={alojamientos} home={home} />
 
         {alojamientos.map((a) => {
           const priceLabel = a.precioDesde

@@ -12,6 +12,7 @@ import type { CatalogoOficios } from '@factory/contracts'
 
 import { tradeOf } from '../catalog/use-catalog'
 import { DEFAULT_MAP_CENTER } from './types'
+import { useMapHome, type MapHome } from './use-map-home'
 import styles from './home.module.css'
 import { categoryMarkerSvg } from './category-icons'
 import { ratingLabel } from '../directory/rating-label'
@@ -67,15 +68,26 @@ function allLocations(workers: PrestadorPublico[]) {
   })
 }
 
-function fitProviders(map: L.Map, workers: PrestadorPublico[]) {
+function fitProviders(map: L.Map, workers: PrestadorPublico[], home: MapHome, animate = true) {
   const locations = allLocations(workers)
   if (locations.length === 0) {
-    map.setView([DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng], DEFAULT_MAP_CENTER.zoom)
+    map.setView([home.lat, home.lng], home.zoom, { animate })
     return
   }
   const padding = overlayPadding(map)
   const bounds = L.latLngBounds(locations.map(({ location }) => [location.lat, location.lng] as [number, number]))
-  map.fitBounds(bounds, { paddingTopLeft: padding.topLeft, paddingBottomRight: padding.bottomRight, maxZoom: 15 })
+  map.fitBounds(bounds, { paddingTopLeft: padding.topLeft, paddingBottomRight: padding.bottomRight, maxZoom: 15, animate })
+}
+
+// Leaflet ignores setView while a zoom animation is running (a fit that started a moment before),
+// so the person's locality is applied without animation and, if a running animation swallowed it,
+// once more when that animation ends.
+function goHome(map: L.Map, home: MapHome) {
+  const apply = () => map.setView([home.lat, home.lng], home.zoom, { animate: false })
+  apply()
+  map.once('moveend', () => {
+    if (map.getCenter().distanceTo([home.lat, home.lng]) > 100) apply()
+  })
 }
 
 function ensurePopupVisible(map: L.Map, popup: L.Popup) {
@@ -140,27 +152,43 @@ function MapController({
   selected,
   recenterSignal,
   activePopupRef,
+  home,
 }: {
   workers: PrestadorPublico[]
   selected: PrestadorPublico | null
   recenterSignal: number
   activePopupRef: React.MutableRefObject<L.Popup | null>
+  home: MapHome
 }) {
   const map = useMap()
   const initialFitDone = useRef(false)
   const prevRecenterSignal = useRef(recenterSignal)
+  const appliedHome = useRef('')
 
   useEffect(() => {
+    // The person's own locality is where the map starts (and where it goes again when they
+    // change it in their profile). A search or "Recentrar" still frames the results.
+    const homeKey = home.personal ? `${home.lat},${home.lng}` : ''
+    if (homeKey !== appliedHome.current) {
+      appliedHome.current = homeKey
+      if (homeKey) {
+        initialFitDone.current = true
+        prevRecenterSignal.current = recenterSignal
+        goHome(map, home)
+        return
+      }
+    }
     if (!initialFitDone.current && workers.length > 0) {
-      fitProviders(map, workers)
+      // The first framing is not animated: the map simply starts there.
+      fitProviders(map, workers, home, false)
       initialFitDone.current = true
       return
     }
     if (recenterSignal !== prevRecenterSignal.current) {
       prevRecenterSignal.current = recenterSignal
-      fitProviders(map, workers)
+      fitProviders(map, workers, home)
     }
-  }, [map, recenterSignal, workers])
+  }, [home, map, recenterSignal, workers])
 
   const prevSelectedId = useRef<string | null>(null)
   useEffect(() => {
@@ -365,6 +393,7 @@ export default function ProviderMap({
   const [interactive, setInteractive] = useState(!touch)
   const [recenterSignal, setRecenterSignal] = useState(0)
   const [zoom, setZoom] = useState(DEFAULT_MAP_CENTER.zoom)
+  const home = useMapHome()
   const activePopupRef = useRef<L.Popup | null>(null)
   const mapRef = useRef<L.Map | null>(null)
   const markers = useRef(new Map<string, L.Marker>())
@@ -438,7 +467,7 @@ export default function ProviderMap({
         <ZoomControl position="bottomleft" zoomInTitle="Acercar" zoomOutTitle="Alejar" />
         <ZoomWatcher onZoom={setZoom} />
         <MapInteractionController interactive={interactive} />
-        <MapController activePopupRef={activePopupRef} recenterSignal={recenterSignal + searchSignal} selected={selected} workers={workers} />
+        <MapController activePopupRef={activePopupRef} home={home} recenterSignal={recenterSignal + searchSignal} selected={selected} workers={workers} />
         <MapEventsHandler mapRef={mapRef} onPopupClose={handlePopupClose} onPopupOpen={handlePopupOpen} />
         {groups.map((group) => {
           const active = Boolean(selectedId && group.items.some((worker) => worker.id === selectedId))

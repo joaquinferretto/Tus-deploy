@@ -126,17 +126,26 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
             <MapFilters
               catalog={catalog.data}
               category={filters.category ?? ''}
-              onChange={(next) => { changeFilters({ query: '', zone: filters.zone, ...next }); setSummary(null) }}
+              // "Todas" with no service is the way back to every professional: it also drops the
+              // zone a text search may have set (there is no separate "Ver todos" over the map).
+              onChange={(next) => { changeFilters({ query: '', zone: next.category || next.profession ? filters.zone : '', ...next }); setSummary(null) }}
               service={filters.profession}
             />
-            <div className={styles.mapResults}>
-              <span role="status" aria-live="polite">
-                {providerStatus === 'loading' ? 'Buscando profesionales en el mapa…' : providerStatus === 'error' ? 'No pudimos cargar el mapa de profesionales.' : filtered && summary ? summary : providerData.length === 0 ? (filtered ? 'No encontré profesionales para esa búsqueda.' : 'Todavía no hay profesionales publicados en TUS.') : `${providerData.length} ${providerData.length === 1 ? 'profesional en el mapa' : 'profesionales en el mapa'}`}
-              </span>
-              {providerStatus === 'error' ? <button type="button" onClick={() => void providers.refetch()}>Reintentar</button> : null}
-              {filtered && providerStatus === 'success' && providerData.length === 0 ? <a href="/publicar">Publicar solicitud</a> : null}
-              {filtered ? <button type="button" onClick={() => { changeFilters({ query: '', profession: '', zone: '', category: '' }); setSummary(null) }}>Ver todos</button> : null}
-            </div>
+            {/* No counter over the map: with results, the markers are the answer. A message appears
+                only when there is nothing to show (load error, or no professional for the search). */}
+            <span aria-live="polite" className={styles.srOnly} role="status">
+              {providerStatus === 'loading' ? 'Buscando profesionales en el mapa…' : providerStatus === 'success' && providerData.length > 0 ? 'Mapa de profesionales actualizado.' : ''}
+            </span>
+            {providerStatus === 'error' || (providerStatus === 'success' && providerData.length === 0) ? (
+              <div className={styles.mapResults}>
+                <span role="status">
+                  {providerStatus === 'error' ? 'No pudimos cargar el mapa de profesionales.' : filtered && summary ? summary : filtered ? 'No encontré profesionales para esa búsqueda.' : 'Todavía no hay profesionales publicados en TUS.'}
+                </span>
+                {providerStatus === 'error' ? <button type="button" onClick={() => void providers.refetch()}>Reintentar</button> : null}
+                {filtered && providerStatus === 'success' ? <a href="/publicar">Publicar solicitud</a> : null}
+                {filtered ? <button type="button" onClick={() => { changeFilters({ query: '', profession: '', zone: '', category: '' }); setSummary(null) }}>Ver todos</button> : null}
+              </div>
+            ) : null}
           </div>
         </section>
 

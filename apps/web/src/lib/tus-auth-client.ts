@@ -3,6 +3,7 @@ import {
   parseTusServerSession,
   parseTusSessionContext,
   TUS_SESSION_STATUS,
+  type CentroMapaDTO,
   type TusAuthenticatedSession,
   type TusSessionState,
 } from '@factory/contracts'
@@ -242,8 +243,19 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
     async capabilities() {
       const credential = readCredential(storage)
       try {
-        const response = await transport.request<{ capabilities?: { platformAdmin?: unknown; provider?: unknown } }>({ method: 'GET', path: '/auth/session', correlationId: createCorrelationId(), ...(credential === null || credential.expiresAt <= now() ? {} : { accessToken: credential.accessToken }) })
-        return { platformAdmin: response?.capabilities?.platformAdmin === true, provider: response?.capabilities?.provider === true }
+        const response = await transport.request<{ capabilities?: { platformAdmin?: unknown; provider?: unknown; profileComplete?: unknown; profileRequired?: unknown; mapCenter?: unknown } }>({ method: 'GET', path: '/auth/session', correlationId: createCorrelationId(), ...(credential === null || credential.expiresAt <= now() ? {} : { accessToken: credential.accessToken }) })
+        const raw = response?.capabilities
+        const center = raw?.mapCenter as Partial<CentroMapaDTO> | undefined
+        return {
+          platformAdmin: raw?.platformAdmin === true,
+          provider: raw?.provider === true,
+          // An API without the profile module never forces onboarding.
+          ...(typeof raw?.profileComplete === 'boolean' ? { profileComplete: raw.profileComplete } : {}),
+          ...(typeof raw?.profileRequired === 'boolean' ? { profileRequired: raw.profileRequired } : {}),
+          ...(center && typeof center.latitud === 'number' && typeof center.longitud === 'number'
+            ? { mapCenter: { latitud: center.latitud, longitud: center.longitud, origen: center.origen === 'localidad' ? 'localidad' as const : 'predeterminado' as const, etiqueta: String(center.etiqueta ?? '') } }
+            : {}),
+        }
       } catch {
         return null
       }
@@ -276,6 +288,51 @@ export function tusGoogleStartUrl(): string {
 export interface TusAccountCapabilities {
   platformAdmin: boolean
   provider: boolean
+  // Personal profile (onboarding) and map centre of the person's locality, decided by the API.
+  profileComplete?: boolean
+  profileRequired?: boolean
+  mapCenter?: CentroMapaDTO
+}
+
+// Onboarding: a required personal profile that is still incomplete.
+export function needsProfile(capabilities: TusAccountCapabilities | null): boolean {
+  return capabilities?.profileRequired === true && capabilities.profileComplete === false
+}
+
+export const PROFILE_ROUTE = '/mi-perfil'
+const PROFILE_EXEMPT = ['/mi-perfil', '/sign-in', '/registro', '/auth', '/ingresar', '/activar-admin', '/olvide-contrasena', '/recovery', '/recuperar-por-whatsapp', '/restablecer-contrasena', '/verificar-email', '/verificar-telefono', '/tus/admin']
+
+// Routes an account with an incomplete profile may still open: the profile itself, the auth
+// screens (sign-in, sign-out, verification) and the platform administration panel.
+export function exemptFromProfile(path: string): boolean {
+  return PROFILE_EXEMPT.some((prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`))
+}
+
+// Where to send the person to complete the profile, keeping the destination they wanted.
+export function profileRoute(destination: string): string {
+  const safe = sanitizeTusReturnTo(destination, '')
+  return safe && !exemptFromProfile(safe) ? `${PROFILE_ROUTE}?returnTo=${encodeURIComponent(safe)}` : PROFILE_ROUTE
+}
+
+// A platform administration account that is not a provider has no work of its own.
+export function isPlatformOnly(capabilities: TusAccountCapabilities | null): boolean {
+  return capabilities?.platformAdmin === true && capabilities.provider !== true
+}
+
+export interface AccountLink {
+  href: '/tus/admin' | '/prestador/solicitudes' | '/mis-solicitudes' | '/mi-perfil' | '/trabajos'
+  label: string
+  primary?: boolean
+}
+
+// Account links of the header, the mobile menu and the footer: ONE list derived from the real
+// capabilities. "Mis trabajos" exists only for accounts that can have works (clients, providers).
+export function accountLinks(capabilities: TusAccountCapabilities | null): AccountLink[] {
+  return [
+    { ...panelFor(capabilities), primary: true },
+    { href: '/mi-perfil', label: 'Mi perfil' },
+    ...(isPlatformOnly(capabilities) ? [] : [{ href: '/trabajos' as const, label: 'Mis trabajos' }]),
+  ]
 }
 
 export type TusDefaultRoute = '/' | '/tus/admin' | '/prestador/solicitudes'
@@ -295,7 +352,9 @@ export function canAccessReturnTo(path: string, capabilities: TusAccountCapabili
 
 export function resolvePostLoginRoute(capabilities: TusAccountCapabilities | null, requested?: string | null): string {
   const safe = requested ? sanitizeTusReturnTo(requested, '') : ''
-  return safe && canAccessReturnTo(safe, capabilities) ? safe : getDefaultRouteForUser(capabilities)
+  const destination = safe && canAccessReturnTo(safe, capabilities) ? safe : getDefaultRouteForUser(capabilities)
+  // Incomplete personal profile: complete it first, then continue to the destination.
+  return needsProfile(capabilities) && !exemptFromProfile(destination) ? profileRoute(destination) : destination
 }
 
 // "Ir a mi panel" goes to the dashboard of the account's real role (decided by the API).

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import { headers } from 'next/headers'
+import { ProfileGate } from '@/features/profile/profile-gate'
 import { QueryProvider } from '@/lib/query-client'
 import { resolveTusPublicOrigin, TUS_LOCALE } from '@/lib/tus-journeys'
 import './globals.css'
@@ -43,7 +44,10 @@ export default async function RootLayout({ children }: RootLayoutProps): Promise
   return (
     <html lang={TUS_LOCALE}>
       <body>
-        <QueryProvider>{children}</QueryProvider>
+        <QueryProvider>
+          <ProfileGate />
+          {children}
+        </QueryProvider>
       </body>
     </html>
   )

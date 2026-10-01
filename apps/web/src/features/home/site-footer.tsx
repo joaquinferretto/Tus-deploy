@@ -3,6 +3,10 @@
 import Image from 'next/image'
 import Link from 'next/link'
 
+import type { Route } from 'next'
+
+import { accountLinks } from '@/lib/tus-auth-client'
+
 import { useAccountView } from '../session/use-account-view'
 import styles from './home.module.css'
 
@@ -46,8 +50,11 @@ export function SiteFooter({ logo }: { logo?: React.ReactNode } = {}): React.Rea
           {account.status === 'signed-in' ? (
             <nav aria-label="Cuenta" className={styles.footerColumn}>
               <h2>Cuenta</h2>
-              <Link href="/mi-perfil">Mi perfil</Link>
-              <Link href={account.panel.href}>{account.capabilities.platformAdmin ? 'Panel admin' : 'Mi panel'}</Link>
+              {accountLinks(account.capabilities).map((link) => (
+                <Link href={link.href as Route} key={link.href}>
+                  {link.label}
+                </Link>
+              ))}
             </nav>
           ) : null}
         </div>

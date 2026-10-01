@@ -1,55 +1,182 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-import authStyles from '../auth/auth.module.css'
-import styles from '../directory/directory.module.css'
-import homeStyles from '../home/home.module.css'
-import { useAccountView } from '../session/use-account-view'
+import {
+  ETIQUETA_TIPO_DOCUMENTO,
+  TIPOS_DOCUMENTO,
+  validarPerfilPersonal,
+  type ErroresPerfil,
+  type LocalidadDTO,
+  type PaisDTO,
+  type PerfilPersonalDTO,
+  type ProvinciaDTO,
+  type TipoDocumento,
+} from '@factory/contracts'
+
+import { refreshAccountView, useAccountView } from '../session/use-account-view'
 import { useTusSession } from '../session/use-tus-session'
-import { createTusWebAuthClient } from '../../lib/tus-auth-client'
-import { createProfileClient, validDisplayName, type OwnAccount } from './profile-client'
+import { createTusWebAuthClient, exemptFromProfile, sanitizeTusReturnTo } from '../../lib/tus-auth-client'
 import { PhoneSection } from './phone-section'
+import { createGeographyClient, createProfileClient } from './profile-client'
+import styles from './profile.module.css'
 
 const RETURN_TO = '/mi-perfil'
 
-// "Mi perfil": only the personal account (data, name others see, sign out). The dashboards live
-// behind "Ir a mi panel"; the shortcuts below follow the REAL role returned by the API.
+interface Form {
+  nombre: string
+  apellido: string
+  tipoDocumento: TipoDocumento
+  numeroDocumento: string
+  paisId: string
+  provinciaId: string
+  localidadId: string
+  calle: string
+  numero: string
+  pisoDepto: string
+  codigoPostal: string
+}
+
+const EMPTY: Form = { nombre: '', apellido: '', tipoDocumento: 'DNI', numeroDocumento: '', paisId: '', provinciaId: '', localidadId: '', calle: '', numero: '', pisoDepto: '', codigoPostal: '' }
+
+// The registration name is offered as a starting point for first and last name; the person
+// confirms or corrects it before anything is saved.
+function fromProfile(perfil: PerfilPersonalDTO): Form {
+  const [first = '', ...rest] = perfil.nombreVisible.trim().split(/\s+/u)
+  return {
+    nombre: perfil.nombre ?? first,
+    apellido: perfil.apellido ?? rest.join(' '),
+    tipoDocumento: perfil.tipoDocumento ?? 'DNI',
+    numeroDocumento: perfil.numeroDocumento ?? '',
+    paisId: perfil.ubicacion?.paisId ?? '',
+    provinciaId: perfil.ubicacion?.provinciaId ?? '',
+    localidadId: perfil.ubicacion?.localidadId ?? '',
+    calle: perfil.residencia?.calle ?? '',
+    numero: perfil.residencia?.numero ?? '',
+    pisoDepto: perfil.residencia?.pisoDepto ?? '',
+    codigoPostal: perfil.residencia?.codigoPostal ?? '',
+  }
+}
+
+// "Mi perfil": the PERSONAL data of the account (identity and residence, private) and, apart, the
+// way into the professional profile. When the profile was required to continue somewhere
+// (?returnTo=), saving a complete profile goes back there.
 export function ProfilePage(): React.ReactNode {
   const session = useTusSession(RETURN_TO)
   const role = useAccountView()
-  const [account, setAccount] = useState<OwnAccount | null>(null)
+  const geography = useMemo(() => createGeographyClient(), [])
+  const [perfil, setPerfil] = useState<PerfilPersonalDTO | null>(null)
   const [failed, setFailed] = useState(false)
-  const [name, setName] = useState('')
+  const [form, setForm] = useState<Form>(EMPTY)
+  const [errors, setErrors] = useState<ErroresPerfil>({})
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+  const [countries, setCountries] = useState<PaisDTO[]>([])
+  const [provinces, setProvinces] = useState<ProvinciaDTO[]>([])
+  const [localities, setLocalities] = useState<LocalidadDTO[]>([])
+  const [returnTo, setReturnTo] = useState('')
+
+  useEffect(() => {
+    const requested = sanitizeTusReturnTo(new URLSearchParams(window.location.search).get('returnTo') ?? undefined, '')
+    setReturnTo(requested && !exemptFromProfile(requested) ? requested : '')
+  }, [])
 
   useEffect(() => {
     if (session.status === 'guest') window.location.replace(`/sign-in?returnTo=${encodeURIComponent(RETURN_TO)}`)
     if (session.status !== 'authenticated') return
     createProfileClient(session.session)
-      .account()
+      .profile()
       .then((result) => {
-        setAccount(result)
-        setName(result.displayName)
+        setPerfil(result)
+        setForm(fromProfile(result))
       })
       .catch(() => setFailed(true))
   }, [session])
 
+  // Dependent selectors: each level is loaded from the API when its parent changes.
+  useEffect(() => {
+    void geography
+      .countries()
+      .then(setCountries)
+      .catch(() => setCountries([]))
+  }, [geography])
+
+  // One country in the catalog: it is the choice (whichever of profile and catalog loads last).
+  const onlyCountry = countries.length === 1 ? countries[0]!.id : ''
+  useEffect(() => {
+    if (onlyCountry && perfil && !form.paisId) setForm((current) => (current.paisId ? current : { ...current, paisId: onlyCountry }))
+  }, [onlyCountry, perfil, form.paisId])
+
+  useEffect(() => {
+    if (!form.paisId) return setProvinces([])
+    let cancelled = false
+    void geography
+      .provinces(form.paisId)
+      .then((items) => {
+        if (!cancelled) setProvinces(items)
+      })
+      .catch(() => {
+        if (!cancelled) setProvinces([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [geography, form.paisId])
+
+  useEffect(() => {
+    if (!form.provinciaId) return setLocalities([])
+    let cancelled = false
+    void geography
+      .localities(form.provinciaId)
+      .then((items) => {
+        if (!cancelled) setLocalities(items)
+      })
+      .catch(() => {
+        if (!cancelled) setLocalities([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [geography, form.provinciaId])
+
+  const set = <K extends keyof Form>(key: K, value: Form[K]) => {
+    setForm((current) => ({ ...current, [key]: value }))
+    setNotice(null)
+  }
+
   async function save(event: React.FormEvent) {
     event.preventDefault()
-    if (session.status !== 'authenticated' || !account) return
-    if (!validDisplayName(name)) {
-      setNotice({ kind: 'error', text: 'Escribí tu nombre (entre 2 y 60 caracteres).' })
+    if (session.status !== 'authenticated') return
+    // Same validation as the API (shared contract); the API repeats it and is the authority.
+    const validated = validarPerfilPersonal({ ...form })
+    if (!validated.ok) {
+      setErrors(validated.errores)
+      setNotice({ kind: 'error', text: 'Revisá los campos marcados.' })
       return
     }
+    setErrors({})
     setSaving(true)
-    const updated = await createProfileClient(session.session).rename(account.id, name.trim())
+    const result = await createProfileClient(session.session).saveProfile(validated.valor)
     setSaving(false)
-    if (updated) {
-      setAccount(updated)
-      setNotice({ kind: 'ok', text: 'Guardamos tu nombre.' })
-    } else setNotice({ kind: 'error', text: 'No pudimos guardar el cambio. Probá de nuevo en unos minutos.' })
+    if (!result.ok) {
+      if (result.code === 'INVALID_PROFILE') {
+        setErrors(result.errores)
+        setNotice({ kind: 'error', text: 'Revisá los campos marcados.' })
+      } else if (result.code === 'DOCUMENT_ALREADY_REGISTERED') {
+        setErrors({ numeroDocumento: 'Ese documento ya está registrado en otra cuenta.' })
+        setNotice({ kind: 'error', text: 'No pudimos guardar: el documento ya está registrado en otra cuenta.' })
+      } else setNotice({ kind: 'error', text: 'No pudimos guardar tus datos. Probá de nuevo en unos minutos.' })
+      return
+    }
+    setPerfil(result.perfil)
+    setForm(fromProfile(result.perfil))
+    // Header, onboarding and map centre read the capabilities: refreshed without reloading.
+    await refreshAccountView()
+    if (returnTo) {
+      window.location.assign(returnTo)
+      return
+    }
+    setNotice({ kind: 'ok', text: 'Guardamos tus datos.' })
   }
 
   async function signOut() {
@@ -61,113 +188,222 @@ export function ProfilePage(): React.ReactNode {
 
   if (failed || session.status === 'unavailable')
     return (
-      <div className={styles.narrow}>
-        <p className={authStyles.formError} role="alert">
+      <div className={styles.page}>
+        <p className={styles.alertError} role="alert">
           No pudimos cargar tu perfil. Probá de nuevo en unos minutos.
         </p>
+        <button className={styles.buttonSecondary} onClick={() => void signOut()} type="button">
+          Cerrar sesión
+        </button>
       </div>
     )
-  if (!account)
+  if (!perfil)
     return (
-      <div className={styles.narrow}>
-        <p aria-busy="true" className={styles.resultCount} role="status">
+      <div className={styles.page}>
+        <p aria-busy="true" className={styles.muted} role="status">
           Cargando tu perfil…
         </p>
       </div>
     )
 
-  const publicName = shortName(account.displayName)
-  return (
-    <div className={styles.narrow}>
-      <h1 className={styles.title}>Mi perfil</h1>
-      <p className={styles.subtitle}>Tus datos de cuenta. Tu email nunca se muestra a otros usuarios.</p>
+  const field = (id: keyof ErroresPerfil) => ({ 'aria-invalid': errors[id] ? true : undefined, 'aria-describedby': errors[id] ? `perfil-${id}-error` : undefined })
+  const error = (id: keyof ErroresPerfil) =>
+    errors[id] ? (
+      <span className={styles.fieldError} id={`perfil-${id}-error`} role="alert">
+        {errors[id]}
+      </span>
+    ) : null
 
-      <section className={styles.card} style={{ marginTop: 20 }}>
-        <p style={{ margin: 0 }}>
-          <strong>Email:</strong> {account.email}{' '}
-          <span className={account.emailVerifiedAt ? styles.available : styles.muted}>{account.emailVerifiedAt ? '· verificado' : '· sin verificar'}</span>
+  return (
+    <div className={styles.page}>
+      <header className={styles.head}>
+        <h1>Mi perfil</h1>
+        <span className={perfil.perfilCompleto ? styles.badgeOk : styles.badgeWarn}>{perfil.perfilCompleto ? 'Perfil completo' : 'Perfil incompleto'}</span>
+      </header>
+      <p className={styles.lead}>Tus datos personales son privados: no se muestran a otros usuarios ni en tu perfil profesional.</p>
+
+      {!perfil.perfilCompleto ? (
+        <p className={styles.alertWarn} role="status">
+          Completá tus datos personales y tu domicilio para seguir usando TUS.{returnTo ? ' Cuando guardes, volvés a donde estabas.' : ''}
         </p>
-        <form onSubmit={(event) => void save(event)} style={{ display: 'grid', gap: 8 }}>
-          <label style={{ display: 'grid', gap: 4 }}>
-            <strong>Nombre</strong>
-            <input
-              autoComplete="name"
-              maxLength={60}
-              onChange={(event) => setName(event.target.value)}
-              style={{ border: '1px solid #d9dde4', borderRadius: 10, font: 'inherit', padding: 10 }}
-              value={name}
-            />
-          </label>
-          <span className={styles.muted} style={{ fontSize: '0.9rem' }}>
-            En tus solicitudes otros ven: <strong>{publicName}</strong>
-          </span>
-          {notice ? (
-            <p className={notice.kind === 'ok' ? styles.available : authStyles.formError} role={notice.kind === 'ok' ? 'status' : 'alert'} style={{ margin: 0 }}>
-              {notice.text}
-            </p>
-          ) : null}
-          <div className={styles.cardActions}>
-            <button className={homeStyles.buttonPrimary} disabled={saving || name.trim() === account.displayName} type="submit">
-              {saving ? 'Guardando…' : 'Guardar'}
-            </button>
+      ) : null}
+
+      <form className={styles.form} noValidate onSubmit={(event) => void save(event)}>
+        <section aria-labelledby="perfil-datos" className={styles.card}>
+          <h2 id="perfil-datos">Datos personales</h2>
+          <div className={styles.grid}>
+            <label className={styles.field}>
+              <span>Nombre</span>
+              <input autoComplete="given-name" maxLength={60} onChange={(event) => set('nombre', event.target.value)} value={form.nombre} {...field('nombre')} />
+              {error('nombre')}
+            </label>
+            <label className={styles.field}>
+              <span>Apellido</span>
+              <input autoComplete="family-name" maxLength={60} onChange={(event) => set('apellido', event.target.value)} value={form.apellido} {...field('apellido')} />
+              {error('apellido')}
+            </label>
+            <label className={styles.field}>
+              <span>Tipo de documento</span>
+              <select onChange={(event) => set('tipoDocumento', event.target.value as TipoDocumento)} value={form.tipoDocumento} {...field('tipoDocumento')}>
+                {TIPOS_DOCUMENTO.map((tipo) => (
+                  <option key={tipo} value={tipo}>
+                    {ETIQUETA_TIPO_DOCUMENTO[tipo]}
+                  </option>
+                ))}
+              </select>
+              {error('tipoDocumento')}
+            </label>
+            <label className={styles.field}>
+              <span>Número de documento</span>
+              <input
+                autoComplete="off"
+                inputMode={form.tipoDocumento === 'PASAPORTE' ? 'text' : 'numeric'}
+                maxLength={14}
+                onChange={(event) => set('numeroDocumento', event.target.value)}
+                placeholder={form.tipoDocumento === 'PASAPORTE' ? 'AAA123456' : '12.345.678'}
+                value={form.numeroDocumento}
+                {...field('numeroDocumento')}
+              />
+              {error('numeroDocumento')}
+            </label>
           </div>
-        </form>
-      </section>
+          <dl className={styles.facts}>
+            <div>
+              <dt>Email</dt>
+              <dd>
+                {perfil.email} <span className={perfil.emailVerificado ? styles.badgeOk : styles.badgeWarn}>{perfil.emailVerificado ? 'Verificado' : 'Sin verificar'}</span>
+              </dd>
+            </div>
+            <div>
+              <dt>Celular</dt>
+              <dd>
+                {perfil.telefono.numero ?? perfil.telefono.pendiente ?? 'Sin cargar'}{' '}
+                <span className={perfil.telefono.verificado ? styles.badgeOk : styles.badgeWarn}>{perfil.telefono.verificado ? 'Verificado' : perfil.telefono.pendiente ? 'Pendiente de verificar' : 'Sin verificar'}</span>
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section aria-labelledby="perfil-residencia" className={styles.card}>
+          <h2 id="perfil-residencia">Residencia</h2>
+          <p className={styles.muted}>Usamos tu localidad para centrar el mapa donde vivís. Tu domicilio exacto nunca se publica.</p>
+          <div className={styles.grid}>
+            <label className={styles.field}>
+              <span>País</span>
+              <select onChange={(event) => setForm((current) => ({ ...current, paisId: event.target.value, provinciaId: '', localidadId: '' }))} value={form.paisId}>
+                <option value="">Elegí un país</option>
+                {countries.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.nombre}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span>Provincia</span>
+              <select disabled={!form.paisId} onChange={(event) => setForm((current) => ({ ...current, provinciaId: event.target.value, localidadId: '' }))} value={form.provinciaId}>
+                <option value="">{form.paisId ? 'Elegí una provincia' : 'Primero elegí el país'}</option>
+                {provinces.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.nombre}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span>Localidad</span>
+              <select disabled={!form.provinciaId} onChange={(event) => set('localidadId', event.target.value)} value={form.localidadId} {...field('localidadId')}>
+                <option value="">{form.provinciaId ? 'Elegí una localidad' : 'Primero elegí la provincia'}</option>
+                {localities.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.nombre}
+                  </option>
+                ))}
+              </select>
+              {error('localidadId')}
+            </label>
+            <label className={styles.field}>
+              <span>Código postal</span>
+              <input autoComplete="postal-code" maxLength={8} onChange={(event) => set('codigoPostal', event.target.value)} placeholder="3400" value={form.codigoPostal} {...field('codigoPostal')} />
+              {error('codigoPostal')}
+            </label>
+            <label className={`${styles.field} ${styles.wide}`}>
+              <span>Calle</span>
+              <input autoComplete="address-line1" maxLength={120} onChange={(event) => set('calle', event.target.value)} value={form.calle} {...field('calle')} />
+              {error('calle')}
+            </label>
+            <label className={styles.field}>
+              <span>Número</span>
+              <input autoComplete="off" maxLength={7} onChange={(event) => set('numero', event.target.value)} placeholder="1234 o S/N" value={form.numero} {...field('numero')} />
+              {error('numero')}
+            </label>
+            <label className={styles.field}>
+              <span>
+                Piso / departamento <small>(opcional)</small>
+              </span>
+              <input autoComplete="address-line2" maxLength={30} onChange={(event) => set('pisoDepto', event.target.value)} placeholder="2° B" value={form.pisoDepto} {...field('pisoDepto')} />
+              {error('pisoDepto')}
+            </label>
+          </div>
+        </section>
+
+        {notice ? (
+          <p className={notice.kind === 'ok' ? styles.alertOk : styles.alertError} role={notice.kind === 'ok' ? 'status' : 'alert'}>
+            {notice.text}
+          </p>
+        ) : null}
+        <div className={styles.actions}>
+          <button className={styles.buttonPrimary} disabled={saving} type="submit">
+            {saving ? 'Guardando…' : returnTo && !perfil.perfilCompleto ? 'Guardar y continuar' : 'Guardar'}
+          </button>
+        </div>
+      </form>
 
       <PhoneSection />
 
       {role.status === 'signed-in' ? (
-        <section className={styles.card} style={{ marginTop: 16 }}>
+        <section aria-labelledby="perfil-profesional" className={styles.card}>
+          <h2 id="perfil-profesional">{role.capabilities.platformAdmin && !role.capabilities.provider ? 'Administración' : 'Perfil profesional'}</h2>
           {role.capabilities.platformAdmin ? (
-            <div className={styles.cardActions}>
-              <a className={homeStyles.buttonSecondary} href="/tus/admin">
-                Ir al panel administrativo →
+            <div className={styles.actions}>
+              <a className={styles.buttonSecondary} href="/tus/admin">
+                Ir al panel administrativo
               </a>
             </div>
-          ) : (
+          ) : null}
+          {role.capabilities.provider ? (
             <>
-              <strong>Como cliente</strong>
-              <div className={styles.cardActions}>
-                <a className={homeStyles.buttonSecondary} href="/mis-solicitudes">
-                  Mis solicitudes y postulantes
+              <p className={styles.muted}>Tu perfil profesional es lo que ven los clientes: oficio, zona de trabajo y servicios. Es independiente de tus datos personales.</p>
+              <div className={styles.actions}>
+                <a className={styles.buttonSecondary} href="/prestador/perfil-publico">
+                  Editar perfil profesional
                 </a>
-                <a className={homeStyles.buttonSecondary} href="/publicar">
-                  Publicar una solicitud
+                <a className={styles.buttonSecondary} href="/prestador/solicitudes">
+                  Solicitudes y postulaciones
                 </a>
               </div>
-              {role.capabilities.provider ? (
-                <>
-                  <strong style={{ marginTop: 8 }}>Como prestador</strong>
-                  <div className={styles.cardActions}>
-                    <a className={homeStyles.buttonSecondary} href="/prestador/solicitudes">
-                      Solicitudes y postulaciones
-                    </a>
-                    <a className={homeStyles.buttonSecondary} href="/prestador/perfil-publico">
-                      Mi perfil público
-                    </a>
-                  </div>
-                </>
-              ) : (
-                <a className={styles.muted} href="/prestador/perfil-publico" style={{ marginTop: 8 }}>
-                  ¿Ofrecés servicios? Creá tu perfil de profesional
-                </a>
-              )}
             </>
-          )}
+          ) : !role.capabilities.platformAdmin ? (
+            <>
+              <p className={styles.muted}>¿Ofrecés servicios? Creá tu perfil profesional: es independiente de tus datos personales.</p>
+              <div className={styles.actions}>
+                <a className={styles.buttonSecondary} href="/prestador/perfil-publico">
+                  Crear perfil profesional
+                </a>
+                <a className={styles.buttonSecondary} href="/mis-solicitudes">
+                  Mis solicitudes
+                </a>
+              </div>
+            </>
+          ) : null}
         </section>
       ) : null}
-      <div className={styles.cardActions} style={{ marginTop: 16 }}>
-        <button className={homeStyles.buttonSecondary} onClick={() => void signOut()} type="button">
+
+      <div className={styles.actions}>
+        <button className={styles.buttonSecondary} onClick={() => void signOut()} type="button">
           Cerrar sesión
         </button>
       </div>
     </div>
   )
-}
-
-// Mirrors the API's public name ("Laura Martínez" -> "Laura M.").
-function shortName(displayName: string): string {
-  const [first = '', last = ''] = displayName.trim().split(/\s+/u)
-  if (!first) return 'Vecino/a'
-  return last ? `${first.slice(0, 20)} ${last[0]!.toUpperCase()}.` : first.slice(0, 20)
 }

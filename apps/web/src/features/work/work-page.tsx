@@ -12,6 +12,7 @@ import { createWorkIntent } from '../../lib/tus-work-intent'
 import type { TusWebSession } from '../../lib/tus-ui-contract'
 import { useTusSession } from '../session/use-tus-session'
 import { useAccountView } from '../session/use-account-view'
+import { isPlatformOnly } from '../../lib/tus-auth-client'
 import { tradeOf, useCatalog } from '../catalog/use-catalog'
 import { PrivateImages } from '../provider/provider-inbox'
 import { isMercadoPagoAuthorizationUrl } from '../../components/prestador/cuenta-cobro'
@@ -31,13 +32,23 @@ const date = (value: string) => new Date(value).toLocaleString('es-AR')
 export function WorkPage({ id }: { id?: string }): React.ReactNode {
   const path = id ? `/trabajos/${encodeURIComponent(id)}` : '/trabajos'
   const auth = useTusSession(path)
+  const account = useAccountView()
+  // A platform administration account has no works of its own: the route says so (it is not
+  // only hidden from the menu) and points to the administration of works.
+  const platformOnly = account.status === 'signed-in' && isPlatformOnly(account.capabilities)
   useEffect(() => {
     if (auth.status === 'guest')
       window.location.replace(`/sign-in?returnTo=${encodeURIComponent(path)}`)
   }, [auth.status, path])
   return (
     <div className={styles.page}>
-      {auth.status === 'authenticated' ? (
+      {auth.status === 'authenticated' && platformOnly && !id ? (
+        <section>
+          <h1>Mis trabajos</h1>
+          <p role="status">Esta es una cuenta de administración de TUS: no tiene trabajos propios como cliente ni como prestador.</p>
+          <a href="/tus/admin/trabajos">Ir a la administración de trabajos</a>
+        </section>
+      ) : auth.status === 'authenticated' ? (
         id ? (
           <WorkDetail key={id} id={id} session={auth.session} />
         ) : (

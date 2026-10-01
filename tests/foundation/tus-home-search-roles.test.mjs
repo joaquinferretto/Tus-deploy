@@ -59,7 +59,10 @@ test('ROLES: "Ir a mi panel" follows the server-side role; admin gets "Panel adm
     process.env.NEXT_PUBLIC_API_URL = 'https://api.tusservicios.shop'
     const mod = await import('./apps/web/src/lib/tus-auth-client.ts')
     const { panelFor } = mod.default ?? mod
+    const { accountLinks } = mod.default ?? mod
+    const hrefs = (capabilities) => accountLinks(capabilities).map((link) => link.href)
     console.log(JSON.stringify({
+      links: { platformOnly: hrefs({ platformAdmin: true, provider: false }), adminProvider: hrefs({ platformAdmin: true, provider: true }), provider: hrefs({ platformAdmin: false, provider: true }), client: hrefs({ platformAdmin: false, provider: false }) },
       admin: panelFor({ platformAdmin: true, provider: true }),
       provider: panelFor({ platformAdmin: false, provider: true }),
       client: panelFor({ platformAdmin: false, provider: false }),
@@ -70,9 +73,17 @@ test('ROLES: "Ir a mi panel" follows the server-side role; admin gets "Panel adm
   assert.deepEqual(result.provider, { href: '/prestador/solicitudes', label: 'Panel prestador' })
   assert.deepEqual(result.client, { href: '/mis-solicitudes', label: 'Mis solicitudes' })
   assert.deepEqual(result.unknown, { href: '/mis-solicitudes', label: 'Mis solicitudes' })
+  // Navigation follows real capabilities: a platform administration account has no works.
+  assert.deepEqual(result.links.platformOnly, ['/tus/admin', '/mi-perfil'])
+  assert.deepEqual(result.links.adminProvider, ['/tus/admin', '/mi-perfil', '/trabajos'])
+  assert.deepEqual(result.links.provider, ['/prestador/solicitudes', '/mi-perfil', '/trabajos'])
+  assert.deepEqual(result.links.client, ['/mis-solicitudes', '/mi-perfil', '/trabajos'])
   const header = read('apps/web/src/features/home/public-header.tsx')
   assert.doesNotMatch(header, /href="\/mi-perfil">\s*(?:<span[^]*?<\/span>\s*)?Ir a mi panel/u, 'the panel is not /mi-perfil')
-  assert.match(header, /href=\{auth\.panel\.href\}/u)
+  // The header builds its account links from ONE capability-based list (accountLinks), whose first
+  // entry is the panel of the server-side role.
+  assert.match(header, /accountLinks\(auth\.capabilities\)/u)
+  assert.doesNotMatch(header, /href=\{'\/trabajos' as Route\}/u, '"Mis trabajos" is not hard-coded for every account')
   assert.match(header, /useAccountView\(\)/u)
   // Role never decided from emails or local data.
   for (const file of ['apps/web/src/features/session/use-account-view.ts', 'apps/web/src/features/home/public-header.tsx', 'apps/web/src/features/profile/profile-page.tsx', 'apps/web/src/features/home/site-footer.tsx'])
@@ -128,8 +139,9 @@ test('ROLES API: /auth/session returns server-resolved capabilities; admin candi
 test('HOME layout: map first, one search field, floating assistant, orange markers, shared footer', () => {
   const home = read('apps/web/src/features/home/home-page.tsx')
   assert.match(home, /<ProviderMap /u)
-  assert.match(home, /<AssistantWidget chooseCategory=\{runCategory\} search=\{runSearch\} \/>/u)
-  assert.match(home, /searchServices\(text, searchDeps\)/u, 'the search bar and the assistant share runSearch')
+  // The floating assistant is the shared orchestrator of the API (it no longer runs the Web search).
+  assert.match(home, /<AssistantWidget \/>/u)
+  assert.match(home, /searchServices\(text, searchDeps\)/u, 'the search bar interprets natural text with the API interpreter')
   assert.equal((home.match(/searchServices\(/gu) ?? []).length, 1)
   const hero = read('apps/web/src/features/home/hero-search.tsx')
   assert.doesNotMatch(hero, /<select|busqueda-ubicacion|busqueda-categoria/u, 'a single natural-language field')
@@ -140,6 +152,7 @@ test('HOME layout: map first, one search field, floating assistant, orange marke
   const footer = read('apps/web/src/features/home/site-footer.tsx')
   for (const href of ['/trabajadores', '/publicar', '/#como-funciona', '/#profesionales', '/asistente']) assert.ok(footer.includes(`href="${href}"`), href)
   assert.doesNotMatch(footer, /terminos|privacidad/iu, 'no links to pages that do not exist')
-  assert.match(read('apps/web/src/features/home/site-page.tsx'), /<SiteFooter \/>/u)
+  // The shared footer receives the page logo since the centred branding was unified (c3407dc).
+  assert.match(read('apps/web/src/features/home/site-page.tsx'), /<SiteFooter logo=\{logo\} \/>/u)
   assert.match(read('apps/web/src/features/home/home.module.css'), /flex-direction: column;[\s\S]*\.main \{\s*flex: 1 0 auto;/u)
 })

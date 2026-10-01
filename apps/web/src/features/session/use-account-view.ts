@@ -27,16 +27,32 @@ async function loadAccountView(): Promise<AccountView> {
   return { status: 'signed-in', capabilities, panel: panelFor(capabilities) }
 }
 
+const listeners = new Set<(view: AccountView) => void>()
+
+// After the person changes something the API reports in the capabilities (profile completed,
+// locality changed): every mounted consumer gets the fresh view, with no page reload.
+export function refreshAccountView(): Promise<AccountView> {
+  pending = loadAccountView()
+  const current = pending
+  void current.then((result) => {
+    if (pending === current) for (const listener of listeners) listener(result)
+  })
+  return current
+}
+
 export function useAccountView(): AccountView {
   const [view, setView] = useState<AccountView>({ status: 'unknown' })
   useEffect(() => {
     let cancelled = false
-    pending ??= loadAccountView()
-    void pending.then((result) => {
+    const listener = (result: AccountView) => {
       if (!cancelled) setView(result)
-    })
+    }
+    listeners.add(listener)
+    pending ??= loadAccountView()
+    void pending.then(listener)
     return () => {
       cancelled = true
+      listeners.delete(listener)
     }
   }, [])
   return view

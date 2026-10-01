@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 
-import { createTusWebAuthClient } from '@/lib/tus-auth-client'
+import { accountLinks, createTusWebAuthClient } from '@/lib/tus-auth-client'
 import { withReturnTo } from '../auth/auth-validation'
 
 import { useAccountView } from '../session/use-account-view'
@@ -43,16 +43,20 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
     window.location.assign('/')
   }
 
+  // Account links follow the REAL capabilities (a platform administration account has no
+  // "Mis trabajos"): the same list for the desktop header and the mobile menu.
+  const links = auth.status === 'signed-in' ? accountLinks(auth.capabilities) : []
+
   const actions =
     auth.status === 'unknown' ? (
       <span aria-label="Comprobando sesión" className={styles.sessionLoading} role="status" />
     ) : auth.status === 'signed-in' ? (
       <>
-        <Link className={styles.buttonPrimary} href={auth.panel.href}>
-          {auth.panel.label}
-        </Link>
-        <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>Mi perfil</Link>
-        <Link className={styles.buttonSecondary} href={'/trabajos' as Route}>Mis trabajos</Link>
+        {links.map((link) => (
+          <Link className={link.primary ? styles.buttonPrimary : styles.buttonSecondary} href={link.href as Route} key={link.href}>
+            {link.label}
+          </Link>
+        ))}
         <button className={styles.buttonGhost} onClick={() => void signOut()} type="button">Cerrar sesión</button>
       </>
     ) : (
@@ -106,11 +110,11 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
           ))}
           {auth.status === 'unknown' ? <span className={styles.sessionLoading} role="status">Comprobando sesión…</span> : auth.status === 'signed-in' ? (
             <>
-              <Link className={styles.buttonPrimary} href={auth.panel.href}>
-                {auth.panel.label}
-              </Link>
-              <Link className={styles.buttonSecondary} href={'/mi-perfil' as Route}>Mi perfil</Link>
-              <Link className={styles.buttonSecondary} href={'/trabajos' as Route}>Mis trabajos</Link>
+              {links.map((link) => (
+                <Link className={link.primary ? styles.buttonPrimary : styles.buttonSecondary} href={link.href as Route} key={link.href}>
+                  {link.label}
+                </Link>
+              ))}
               <button className={styles.buttonGhost} onClick={() => void signOut()} type="button">Cerrar sesión</button>
             </>
           ) : (

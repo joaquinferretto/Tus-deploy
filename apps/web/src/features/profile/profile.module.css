@@ -1,0 +1,265 @@
+/* "Mi perfil". TUS tokens: orange as the only accent, visible borders, semantic green / amber /
+   red for states, no shadows. */
+.page {
+  --p-line: #c9ced8;
+  color: var(--tus-ink, #14213d);
+  display: grid;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 860px;
+  padding: 28px 20px 56px;
+}
+
+.head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.head h1 {
+  font-size: clamp(1.6rem, 3vw, 2.1rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.lead,
+.muted {
+  color: var(--tus-ink-soft, #475467);
+  margin: 0;
+}
+
+.muted {
+  font-size: 0.92rem;
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--p-line);
+  border-radius: 14px;
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.card h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.grid {
+  display: grid;
+  gap: 14px 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.field {
+  display: grid;
+  font-size: 0.92rem;
+  font-weight: 600;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field small {
+  color: var(--tus-muted, #667085);
+  font-weight: 400;
+}
+
+.field input,
+.field select {
+  background: #fff;
+  border: 1px solid var(--p-line);
+  border-radius: 10px;
+  color: var(--tus-ink, #14213d);
+  font: inherit;
+  /* 16px: iOS does not zoom the page on focus. */
+  font-size: 16px;
+  font-weight: 400;
+  min-height: 46px;
+  min-width: 0;
+  padding: 10px 12px;
+  width: 100%;
+}
+
+.field select:disabled {
+  background: var(--tus-surface, #f5f7fa);
+  color: var(--tus-muted, #667085);
+}
+
+.field input:hover,
+.field select:hover:not(:disabled) {
+  border-color: #98a2b3;
+}
+
+.field input:focus,
+.field select:focus {
+  border-color: var(--tus-orange, #ff5a00);
+  box-shadow: 0 0 0 3px rgba(255, 90, 0, 0.2);
+  outline: none;
+}
+
+.field input[aria-invalid='true'],
+.field select[aria-invalid='true'] {
+  border-color: var(--tus-danger, #c81e1e);
+}
+
+.fieldError {
+  color: var(--tus-danger, #c81e1e);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.facts {
+  border-top: 1px solid var(--p-line);
+  display: grid;
+  gap: 10px 24px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  padding-top: 14px;
+}
+
+.facts dt {
+  color: var(--tus-muted, #667085);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.facts dd {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.badgeOk,
+.badgeWarn {
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.badgeOk {
+  background: #ecfdf3;
+  border: 1px solid var(--tus-success, #15803d);
+  color: var(--tus-success, #15803d);
+}
+
+.badgeWarn {
+  background: #fffbeb;
+  border: 1px solid #b45309;
+  color: #92400e;
+}
+
+.alertOk,
+.alertWarn,
+.alertError {
+  border-radius: 10px;
+  margin: 0;
+  padding: 10px 14px;
+}
+
+.alertOk {
+  background: #ecfdf3;
+  border: 1px solid var(--tus-success, #15803d);
+  color: #14532d;
+}
+
+.alertWarn {
+  background: #fffbeb;
+  border: 1px solid #b45309;
+  color: #78350f;
+}
+
+.alertError {
+  background: #fef2f2;
+  border: 1px solid var(--tus-danger, #c81e1e);
+  color: #991b1b;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.buttonPrimary,
+.buttonSecondary {
+  align-items: center;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 46px;
+  padding: 10px 18px;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+
+.buttonPrimary {
+  background: var(--tus-orange, #ff5a00);
+  border: 1px solid var(--tus-orange, #ff5a00);
+  color: #fff;
+}
+
+.buttonPrimary:hover:not(:disabled) {
+  background: var(--tus-orange-strong, #e64f00);
+}
+
+.buttonSecondary {
+  background: #fff;
+  border: 1px solid var(--p-line);
+  color: var(--tus-ink, #14213d);
+}
+
+.buttonSecondary:hover {
+  border-color: var(--tus-orange, #ff5a00);
+}
+
+.buttonPrimary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.buttonPrimary:focus-visible,
+.buttonSecondary:focus-visible {
+  box-shadow: 0 0 0 3px rgba(255, 90, 0, 0.3);
+  outline: none;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 20px 14px 48px;
+  }
+
+  .card {
+    padding: 16px;
+  }
+
+  .grid,
+  .facts {
+    grid-template-columns: 1fr;
+  }
+
+  .actions > * {
+    flex: 1 1 100%;
+  }
+}

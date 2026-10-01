@@ -50,7 +50,10 @@ test('MI PERFIL: GET /auth/account returns only the session account in its safe 
 test('MI PERFIL Web: page exists, header links to it when signed in', () => {
   assert.ok(existsSync(join(root, 'apps/web/src/app/mi-perfil/page.tsx')))
   const header = readFileSync(join(root, 'apps/web/src/features/home/public-header.tsx'), 'utf8')
-  assert.match(header, /href=\{'\/mi-perfil' as Route\}/)
+  // The header renders the capability-based account links (accountLinks), which always include
+  // "Mi perfil" for a signed-in account.
+  assert.match(header, /accountLinks\(auth\.capabilities\)/)
+  assert.match(readFileSync(join(root, 'apps/web/src/lib/tus-auth-client.ts'), 'utf8'), /\{ href: '\/mi-perfil', label: 'Mi perfil' \}/)
   const client = readFileSync(join(root, 'apps/web/src/features/profile/profile-client.ts'), 'utf8')
   assert.match(client, /\/auth\/account`/)
 })
