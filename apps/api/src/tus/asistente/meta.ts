@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import type { AdjuntoAsistente } from '@factory/contracts'
 
 // WHATSAPP-AI-01: official Meta WhatsApp Business Platform (Cloud API) boundary. Every Graph API
 // call goes through `MetaWhatsappCloudProvider`; nothing else calls graph.facebook.com.
@@ -278,8 +279,14 @@ export interface BotonRespuesta {
   title: string
 }
 
+// Structured result of a tool (real providers, real slots) attached to the text that describes
+// it. The text is always complete on its own: WhatsApp sends only the text; the Web also renders
+// the attachment as cards. It never carries anything the tool did not return.
+// (Shape shared with the Web client: packages/contracts/src/tus-asistente.ts.)
+export type { AdjuntoAsistente } from '@factory/contracts'
+
 export type MensajeSaliente =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; attachment?: AdjuntoAsistente }
   | { type: 'buttons'; text: string; buttons: BotonRespuesta[] }
   | { type: 'cta_url'; text: string; label: string; url: string }
   | { type: 'template'; name: string; language: string; parameters: string[] }

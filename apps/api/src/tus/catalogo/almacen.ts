@@ -26,7 +26,9 @@ export interface AlmacenCatalogo {
   pagina<E extends EntidadListable>(entidad: E, filtro: FiltroCatalogo): Promise<{ items: ItemDe<E>[]; total: number }>
   guardarCategoria(item: CategoriaCatalogo): Promise<void>
   guardarOficio(item: OficioCatalogo): Promise<void>
-  guardarLocalidad(item: LocalidadCatalogo): Promise<void>
+  // Returns the id the locality was stored under (an existing row of the country-wide geography
+  // is promoted to the service catalog instead of being duplicated).
+  guardarLocalidad(item: LocalidadCatalogo): Promise<string>
   guardarZona(item: ZonaCatalogo): Promise<void>
   guardarBarrio(item: BarrioCatalogo): Promise<void>
 }
@@ -66,7 +68,7 @@ export class AlmacenCatalogoEnMemoria implements AlmacenCatalogo {
 
   async guardarCategoria(item: CategoriaCatalogo) { this.upsert(this.datos.categorias, item) }
   async guardarOficio(item: OficioCatalogo) { this.upsert(this.datos.oficios, item) }
-  async guardarLocalidad(item: LocalidadCatalogo) { this.upsert(this.datos.localidades, item) }
+  async guardarLocalidad(item: LocalidadCatalogo) { this.upsert(this.datos.localidades, item); return item.id }
   async guardarZona(item: ZonaCatalogo) { this.upsert(this.datos.zonas, item) }
   async guardarBarrio(item: BarrioCatalogo) { this.upsert(this.datos.barrios, item) }
 }
@@ -83,7 +85,8 @@ export interface ClientePrismaCatalogo {
   categoriaServicio: Delegado
   oficioServicio: Delegado
   sinonimoOficio: Delegado & { deleteMany(input: { where: Fila }): Promise<unknown>; createMany(input: { data: Fila[] }): Promise<unknown> }
-  localidad: Delegado
+  localidad: Delegado & { findFirst?(input: { where: Fila }): Promise<Fila | null> }
+  provincia?: { findFirst(input: { where: Fila }): Promise<Fila | null> }
   zonaUbicacion: Delegado
   barrio: Delegado
   $transaction<T>(fn: (tx: ClientePrismaCatalogo) => Promise<T>): Promise<T>
@@ -105,7 +108,15 @@ const MAPEOS = {
     orden: Number(fila['orden']),
     sinonimos: ((fila['sinonimos'] as Fila[] | undefined) ?? []).filter((item) => item['activo'] !== false).map((item) => String(item['termino'])),
   }),
-  localidades: (fila: Fila): LocalidadCatalogo => ({ id: String(fila['id']), nombre: String(fila['nombre']), provincia: String(fila['provincia']), activo: Boolean(fila['activo']), orden: Number(fila['orden']) }),
+  localidades: (fila: Fila): LocalidadCatalogo => ({
+    id: String(fila['id']),
+    nombre: String(fila['nombre']),
+    provincia: String(fila['provincia']),
+    activo: Boolean(fila['activo']),
+    orden: Number(fila['orden']),
+    lat: typeof fila['latitud'] === 'number' ? fila['latitud'] : null,
+    lng: typeof fila['longitud'] === 'number' ? fila['longitud'] : null,
+  }),
   zonas: (fila: Fila): ZonaCatalogo => ({
     id: String(fila['id']),
     localidadId: String(fila['localidadId']),
@@ -139,7 +150,9 @@ export class AlmacenCatalogoPrisma implements AlmacenCatalogo {
     const [categorias, oficios, localidades, zonas, barrios] = await Promise.all([
       this.client.categoriaServicio.findMany({}),
       this.client.oficioServicio.findMany({ include: { sinonimos: true } }),
-      this.client.localidad.findMany({}),
+      // Only the localities where TUS operates (cobertura): the country-wide geography used for
+      // residences shares the table and never enters the service catalog.
+      this.client.localidad.findMany({ where: { cobertura: true } }),
       this.client.zonaUbicacion.findMany({}),
       this.client.barrio.findMany({}),
     ])
@@ -165,6 +178,7 @@ export class AlmacenCatalogoPrisma implements AlmacenCatalogo {
         ]
       : []
     const where: Fila = { AND: [
+      ...(entidad === 'localidades' ? [{ cobertura: true }] : []),
       ...(busqueda.length ? [{ OR: busqueda }] : []),
       ...(filtro.activo === null ? [] : [{ activo: filtro.activo }]),
       ...(filtro.categoriaId && entidad === 'oficios' ? [{ categoriaId: filtro.categoriaId }] : []),
@@ -206,8 +220,14 @@ export class AlmacenCatalogoPrisma implements AlmacenCatalogo {
   }
 
   async guardarLocalidad(item: LocalidadCatalogo) {
-    const datos = { nombre: item.nombre, provincia: item.provincia, activo: item.activo, orden: item.orden, actualizadoEn: ahora() }
-    await this.client.localidad.upsert({ where: { id: item.id }, create: { id: item.id, ...datos, creadoEn: ahora() }, update: datos })
+    // The normalized province (PERFIL-GEO-01) is resolved from the name typed by the admin.
+    const provincia = await this.client.provincia?.findFirst({ where: { nombre: { equals: item.provincia, mode: 'insensitive' } } })
+    const datos = { nombre: item.nombre, provincia: provincia ? String(provincia['nombre']) : item.provincia, ...(provincia ? { provinciaId: String(provincia['id']) } : {}), cobertura: true, activo: item.activo, orden: item.orden, ...(item.lat !== undefined ? { latitud: item.lat, longitud: item.lng ?? null } : {}), actualizadoEn: ahora() }
+    // The same town may already exist in the country-wide geography: it joins the service catalog.
+    const existente = await this.client.localidad.findFirst?.({ where: { id: { not: item.id }, nombre: { equals: item.nombre, mode: 'insensitive' }, provincia: { equals: datos.provincia, mode: 'insensitive' } } })
+    const id = existente ? String(existente['id']) : item.id
+    await this.client.localidad.upsert({ where: { id }, create: { id, ...datos, creadoEn: ahora() }, update: datos })
+    return id
   }
 
   async guardarZona(item: ZonaCatalogo) {

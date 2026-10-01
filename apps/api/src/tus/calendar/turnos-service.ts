@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
-import type {
-  DetalleTurno,
-  SlotDisponible,
-  TarifaServicioPublica,
+import {
+  enmascararTelefono,
+  validarHorariosSemanales,
+  type ClienteTurnoAdmin,
+  type ClienteTurnosDTO,
+  type DetalleTurno,
+  type HorarioSemanalDTO,
+  type PrestadorTurnosDTO,
+  type ServicioTurnosDTO,
+  type SlotDisponible,
+  type TarifaServicioPublica,
 } from '@factory/contracts'
 import { ErrorCalendario } from './bookings.ts'
 import { toMinutes } from './rules.ts'
@@ -20,6 +27,8 @@ export interface EntradaReservaTurno {
   clienteTelefono?: string
   clienteEmail?: string
   notas?: string
+  // Set only by the administration when it books a general turno for a client.
+  creadoPorAdminId?: string
 }
 
 export interface EntradaTurnoManual {
@@ -43,13 +52,42 @@ export interface EntradaAdminForzarTurno {
   fin?: string
   duracionMinutos?: number
   precioFinal?: bigint
-  clienteNombre: string
+  clienteNombre?: string
   clienteTelefono?: string
   clienteEmail?: string
+  // Registered client or explicit guest (takes precedence over the loose clienteNombre fields).
+  cliente?: ClienteTurnoAdmin
   motivoForzado: string
+  adminId: string
+  correlationId?: string
+  notas?: string
+}
+
+// "Turno general" created by the administration for a client: only inside the provider's real
+// availability, exactly like a client booking it.
+export interface EntradaAdminTurnoGeneral {
+  prestadorId: string
+  oficioId: string
+  tarifaId?: string
+  inicio: string
+  cliente: ClienteTurnoAdmin
   adminId: string
   notas?: string
 }
+
+const ESTADOS_LIBERAN = ['cancelled', 'cancelled-late', 'no-show']
+
+// reservas.fecha_inicio is a timestamp without time zone holding UTC; the agenda is in Argentina
+// time (UTC-3, no daylight saving).
+const fechaLocal = (instante: Date): string => new Date(instante.getTime() - 3 * 60 * 60_000).toISOString().slice(0, 10)
+
+// Exclusion constraint ex_reservas_sin_solapamiento (23P01) or a lost race on a unique key.
+function esSolapamiento(error: unknown): boolean {
+  const texto = String(error)
+  return texto.includes('ex_reservas_sin_solapamiento') || texto.includes('23P01') || texto.includes('40P01') || texto.includes('P2002')
+}
+
+const horarioOcupado = (mensaje = 'El horario seleccionado ya fue reservado. Por favor elegí otro horario.') => new ErrorCalendario(409, 'SLOT_OCCUPIED', mensaje)
 
 export interface ReglaHorarioInput {
   diaSemana: number
@@ -119,6 +157,8 @@ export class ServicioTurnos {
     oficioId: string
     fecha: string // YYYY-MM-DD
     duracionMinutos?: number
+    // Own agenda of the provider and administration: also when the profile is hidden.
+    incluirNoVisible?: boolean
   }): Promise<{
     slots: SlotDisponible[]
     duracionMinutos: number
@@ -135,7 +175,7 @@ export class ServicioTurnos {
       },
     })
 
-    if (!perfil || !perfil.visible) {
+    if (!perfil || (!perfil.visible && !input.incluirNoVisible)) {
       throw new ErrorCalendario(404, 'NOT_FOUND', 'Prestador no encontrado o no disponible')
     }
 
@@ -149,7 +189,11 @@ export class ServicioTurnos {
     }
 
     const servicioConfig = perfil.servicios[0]
-    if (servicioConfig && !servicioConfig.turnosHabilitados) {
+    // Only services the provider really offers have turnos.
+    if (!servicioConfig) {
+      return { slots: [], duracionMinutos: 0, tarifas: [], mensaje: 'Este profesional no ofrece ese servicio.' }
+    }
+    if (!servicioConfig.turnosHabilitados) {
       return {
         slots: [],
         duracionMinutos: 0,
@@ -172,8 +216,34 @@ export class ServicioTurnos {
       servicioConfig?.duracionMinutos ??
       60
 
-    const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(input.fecha) || Number.isNaN(new Date(`${input.fecha}T12:00:00.000Z`).getTime())) {
+      throw new ErrorCalendario(400, 'INVALID_DATE', 'La fecha debe tener el formato YYYY-MM-DD')
+    }
+    if (!Number.isInteger(duracion) || duracion < 5 || duracion > 24 * 60) {
+      throw new ErrorCalendario(400, 'INVALID_PARAMS', 'La duración no es válida')
+    }
 
+    const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
+    const slots = await this.slotsLibres(calendario, input.fecha, duracion, servicioConfig?.bufferMinutos ?? calendario.bufferMinutos ?? 0)
+
+    return {
+      slots,
+      duracionMinutos: duracion,
+      tarifas: tarifasPublicas,
+    }
+  }
+
+  /**
+   * Franjas libres de un calendario en una fecha: reglas semanales menos bloqueos y reservas
+   * vigentes. Es la ÚNICA fuente de horarios ofrecidos (Web, asistente y administración).
+   */
+  private async slotsLibres(
+    calendario: { id: string; granularidadMinutos: number; bufferMinutos: number },
+    fecha: string,
+    duracion: number,
+    buffer: number
+  ): Promise<SlotDisponible[]> {
+    const input = { fecha }
     // Día de la semana en zona horaria local de Argentina (0=Domingo..6=Sábado)
     const [y, m, d] = input.fecha.split('-').map(Number)
     const fechaObj = new Date(Date.UTC(y!, m! - 1, d!, 12, 0, 0))
@@ -184,7 +254,7 @@ export class ServicioTurnos {
     })
 
     if (reglas.length === 0) {
-      return { slots: [], duracionMinutos: duracion, tarifas: tarifasPublicas }
+      return []
     }
 
     const inicioDia = new Date(`${input.fecha}T00:00:00.000-03:00`)
@@ -204,7 +274,7 @@ export class ServicioTurnos {
     const reservasExistentes = await this.prisma.reserva.findMany({
       where: {
         calendarioId: calendario.id,
-        estado: { notIn: ['cancelled', 'cancelled-late', 'no-show'] },
+        estado: { notIn: ESTADOS_LIBERAN },
         fechaInicio: { lte: finDia },
         fechaFin: { gte: inicioDia },
       },
@@ -213,7 +283,6 @@ export class ServicioTurnos {
     const now = Date.now()
     const slots: SlotDisponible[] = []
     const step = calendario.granularidadMinutos || 15
-    const buffer = servicioConfig?.bufferMinutos ?? calendario.bufferMinutos ?? 0
 
     for (const regla of reglas) {
       const minInicio = toMinutes(regla.horaInicio)
@@ -250,11 +319,31 @@ export class ServicioTurnos {
       }
     }
 
-    return {
-      slots,
-      duracionMinutos: duracion,
-      tarifas: tarifasPublicas,
+    return slots.sort((a, b) => a.inicio.localeCompare(b.inicio))
+  }
+
+  /**
+   * Un turno general solo existe dentro de la disponibilidad real: el inicio pedido debe ser una
+   * de las franjas libres que el backend ofrece para ese día. Nunca se acepta un horario armado
+   * por el cliente, el asistente o el panel.
+   */
+  private async exigirDisponible(
+    calendario: { id: string; granularidadMinutos: number; bufferMinutos: number },
+    inicio: Date,
+    duracion: number,
+    buffer: number
+  ): Promise<void> {
+    if (inicio.getTime() <= Date.now()) {
+      throw new ErrorCalendario(400, 'PAST_DATE', 'El horario elegido ya pasó.')
     }
+    const libres = await this.slotsLibres(calendario, fechaLocal(inicio), duracion, buffer)
+    if (libres.some((slot) => slot.inicio === inicio.toISOString())) return
+    const fin = new Date(inicio.getTime() + duracion * 60_000)
+    const ocupado = await this.prisma.reserva.findFirst({
+      where: { calendarioId: calendario.id, estado: { notIn: ESTADOS_LIBERAN }, fechaInicio: { lt: fin }, fechaFin: { gt: inicio } },
+    })
+    if (ocupado) throw horarioOcupado()
+    throw new ErrorCalendario(409, 'SLOT_NOT_AVAILABLE', 'Ese horario no está dentro de la disponibilidad del profesional.')
   }
 
   /**
@@ -271,8 +360,12 @@ export class ServicioTurnos {
       },
     })
 
-    if (!perfil || !perfil.visible) {
+    // A hidden profile takes no public bookings; the administration may still book for a client.
+    if (!perfil || (!perfil.visible && !input.creadoPorAdminId)) {
       throw new ErrorCalendario(404, 'NOT_FOUND', 'Prestador no encontrado o no visible')
+    }
+    if (perfil.servicios.length === 0) {
+      throw new ErrorCalendario(404, 'NOT_FOUND', 'Ese prestador no ofrece ese servicio')
     }
 
     if (!perfil.aceptaTurnos) {
@@ -299,6 +392,7 @@ export class ServicioTurnos {
     const fin = new Date(inicio.getTime() + duracion * 60_000)
 
     const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
+    await this.exigirDisponible(calendario, inicio, duracion, servicioConfig?.bufferMinutos ?? calendario.bufferMinutos ?? 0)
 
     const reservaId = `res-${randomUUID()}`
     const now = new Date()
@@ -308,6 +402,7 @@ export class ServicioTurnos {
         data: {
           id: reservaId,
           tenantId: perfil.tenantId,
+          creadoPorAdminId: input.creadoPorAdminId ?? null,
           clienteTenantId: input.clienteTenantId ?? null,
           reservaId,
           servicioId: input.oficioId,
@@ -335,20 +430,7 @@ export class ServicioTurnos {
 
       return this.mapearDetalleTurno(row, perfil.nombrePublico)
     } catch (error: unknown) {
-      const errStr = String(error)
-      // Captura de violación de exclusión física PostgreSQL o unique key
-      if (
-        errStr.includes('ex_reservas_sin_solapamiento') ||
-        errStr.includes('23P01') ||
-        errStr.includes('40P01') ||
-        errStr.includes('P2002')
-      ) {
-        throw new ErrorCalendario(
-          409,
-          'SLOT_OCCUPIED',
-          'El horario seleccionado ya fue reservado. Por favor elegí otro horario.'
-        )
-      }
+      if (esSolapamiento(error)) throw horarioOcupado('El horario seleccionado ya fue reservado. Por favor elegí otro horario.')
       throw error
     }
   }
@@ -450,19 +532,7 @@ export class ServicioTurnos {
 
       return this.mapearDetalleTurno(row, perfil.nombrePublico)
     } catch (error: unknown) {
-      const errStr = String(error)
-      if (
-        errStr.includes('ex_reservas_sin_solapamiento') ||
-        errStr.includes('23P01') ||
-        errStr.includes('40P01') ||
-        errStr.includes('P2002')
-      ) {
-        throw new ErrorCalendario(
-          409,
-          'SLOT_OCCUPIED',
-          'El horario seleccionado se solapa con otro turno ya existente.'
-        )
-      }
+      if (esSolapamiento(error)) throw horarioOcupado('El horario seleccionado se solapa con otro turno ya existente.')
       throw error
     }
   }
@@ -576,7 +646,53 @@ export class ServicioTurnos {
   }
 
   /**
-   * ADMIN: Forzar turno fuera de horario normal con motivo obligatorio.
+   * Resuelve el cliente de un turno creado por la administración. Registrado: la cuenta se lee de
+   * la base (nombre y contacto salen de ahí, nunca del formulario). Invitado: explícito, con nombre.
+   */
+  private async clienteDeAdmin(cliente: ClienteTurnoAdmin | undefined, suelto: { nombre?: string; telefono?: string; email?: string }) {
+    if (cliente?.tipo === 'registrado') {
+      const cuenta = await this.prisma.account.findFirst({ where: { id: cliente.cuentaId, status: 'active' }, include: { user: true } })
+      if (!cuenta) throw new ErrorCalendario(404, 'NOT_FOUND', 'Cliente no encontrado')
+      return {
+        clienteId: cuenta.id,
+        clienteTenantId: cuenta.tenantId,
+        clienteNombre: cuenta.user.displayName,
+        clienteTelefono: cuenta.user.phoneNumber ?? null,
+        clienteEmail: cuenta.user.email,
+        esInvitado: false,
+      }
+    }
+    const nombre = (cliente?.tipo === 'invitado' ? cliente.nombre : suelto.nombre ?? '').trim()
+    if (nombre.length < 2 || nombre.length > 120) throw new ErrorCalendario(400, 'CLIENT_REQUIRED', 'Elegí un cliente registrado o cargá el nombre del invitado.')
+    const telefono = (cliente?.tipo === 'invitado' ? cliente.telefono : suelto.telefono)?.trim()
+    const email = (cliente?.tipo === 'invitado' ? cliente.email : suelto.email)?.trim()
+    return { clienteId: null, clienteTenantId: null, clienteNombre: nombre, clienteTelefono: telefono || null, clienteEmail: email || null, esInvitado: true }
+  }
+
+  /**
+   * ADMIN: turno general para un cliente. Mismas reglas que una reserva del cliente: solo una
+   * franja de la disponibilidad real del prestador, sin solapamientos.
+   */
+  async adminReservarTurno(input: EntradaAdminTurnoGeneral): Promise<DetalleTurno> {
+    const cliente = await this.clienteDeAdmin(input.cliente, {})
+    return this.reservarTurno({
+      prestadorId: input.prestadorId,
+      oficioId: input.oficioId,
+      tarifaId: input.tarifaId,
+      inicio: input.inicio,
+      ...(cliente.clienteId ? { clienteId: cliente.clienteId, clienteTenantId: cliente.clienteTenantId ?? undefined } : {}),
+      clienteNombre: cliente.clienteNombre,
+      clienteTelefono: cliente.clienteTelefono ?? undefined,
+      clienteEmail: cliente.clienteEmail ?? undefined,
+      notas: input.notas,
+      creadoPorAdminId: input.adminId,
+    })
+  }
+
+  /**
+   * ADMIN: Forzar turno fuera de horario normal con motivo obligatorio. Ignora la disponibilidad
+   * publicada, pero NO puede solaparse con otra reserva (lo impide PostgreSQL). El motivo y el
+   * administrador quedan en la reserva y en la auditoría.
    */
   async adminForzarTurno(input: EntradaAdminForzarTurno): Promise<DetalleTurno> {
     if (!input.motivoForzado || input.motivoForzado.trim().length < 5) {
@@ -599,46 +715,204 @@ export class ServicioTurnos {
     if (!perfil) {
       throw new ErrorCalendario(404, 'NOT_FOUND', 'Prestador no encontrado')
     }
-
-    const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
+    // The service must be one the provider really offers (never an arbitrary id).
+    if (perfil.servicios.length === 0) {
+      throw new ErrorCalendario(404, 'NOT_FOUND', 'Ese prestador no ofrece ese servicio')
+    }
 
     const duracion = input.duracionMinutos ?? perfil.servicios[0]?.duracionMinutos ?? 60
     const inicio = new Date(input.inicio)
+    if (Number.isNaN(inicio.getTime())) throw new ErrorCalendario(400, 'INVALID_DATE', 'Fecha de inicio inválida')
+    if (inicio.getTime() <= Date.now()) throw new ErrorCalendario(400, 'PAST_DATE', 'El horario elegido ya pasó.')
     const fin = input.fin ? new Date(input.fin) : new Date(inicio.getTime() + duracion * 60_000)
+    if (Number.isNaN(fin.getTime()) || fin <= inicio) throw new ErrorCalendario(400, 'INVALID_DATE', 'El fin del turno debe ser posterior al inicio')
+    const cliente = await this.clienteDeAdmin(input.cliente, { nombre: input.clienteNombre, telefono: input.clienteTelefono, email: input.clienteEmail })
+
+    const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
     const precio = input.precioFinal ?? perfil.servicios[0]?.precioBase ?? 0n
     const reservaId = `res-${randomUUID()}`
     const now = new Date()
+    const motivo = input.motivoForzado.trim()
 
-    const row = await this.prisma.reserva.create({
-      data: {
-        id: reservaId,
-        tenantId: perfil.tenantId,
-        reservaId,
-        servicioId: input.oficioId,
-        calendarioId: calendario.id,
-        clienteId: 'admin-forzado',
-        fechaInicio: inicio,
-        fechaFin: fin,
-        estado: 'confirmed',
-        version: 1,
-        fechaCreacion: now,
-        fechaActualizacion: now,
-        duracionMinutos: duracion,
-        precioLista: precio,
-        precioFinal: precio,
-        moneda: 'ARS',
-        clienteNombre: input.clienteNombre,
-        clienteTelefono: input.clienteTelefono ?? null,
-        clienteEmail: input.clienteEmail ?? null,
-        esInvitado: true,
-        forzadoFueraHorario: true,
-        motivoForzado: input.motivoForzado.trim(),
-        modificadoPorAdminId: input.adminId,
-        notas: input.notas ?? null,
+    try {
+      const row = await this.prisma.$transaction(async (tx) => {
+        const creada = await tx.reserva.create({
+          data: {
+            id: reservaId,
+            tenantId: perfil.tenantId,
+            clienteTenantId: cliente.clienteTenantId,
+            reservaId,
+            servicioId: input.oficioId,
+            calendarioId: calendario.id,
+            clienteId: cliente.clienteId ?? 'admin-forzado',
+            fechaInicio: inicio,
+            fechaFin: fin,
+            estado: 'confirmed',
+            version: 1,
+            fechaCreacion: now,
+            fechaActualizacion: now,
+            duracionMinutos: Math.round((fin.getTime() - inicio.getTime()) / 60_000),
+            precioLista: precio,
+            precioFinal: precio,
+            moneda: 'ARS',
+            clienteNombre: cliente.clienteNombre,
+            clienteTelefono: cliente.clienteTelefono,
+            clienteEmail: cliente.clienteEmail,
+            esInvitado: cliente.esInvitado,
+            forzadoFueraHorario: true,
+            motivoForzado: motivo,
+            creadoPorAdminId: input.adminId,
+            notas: input.notas ?? null,
+          },
+        })
+        // Audit trail of the exception, in the same transaction as the reservation: who forced
+        // it, for which provider and why (no personal data of the client).
+        await tx.auditEvent.create({
+          data: {
+            id: randomUUID(),
+            tenantId: perfil.tenantId,
+            actorId: input.adminId,
+            correlationId: input.correlationId || randomUUID(),
+            eventType: 'turnos.turno_forzado',
+            outcome: 'success',
+            metadata: { reservaId, perfilId: perfil.id, oficioId: input.oficioId, inicio: inicio.toISOString(), fin: fin.toISOString(), motivo, clienteRegistrado: !cliente.esInvitado },
+            occurredAt: now,
+          },
+        })
+        return creada
+      })
+
+      return this.mapearDetalleTurno(row, perfil.nombrePublico)
+    } catch (error: unknown) {
+      if (esSolapamiento(error)) throw horarioOcupado('Ese horario se superpone con otro turno del profesional. Elegí otro.')
+      throw error
+    }
+  }
+
+  /**
+   * ADMIN: prestadores por nombre (combobox del formulario de turnos). Sin IDs en la UI.
+   */
+  async adminBuscarPrestadores(q: string): Promise<PrestadorTurnosDTO[]> {
+    const termino = q.trim().slice(0, 80)
+    const perfiles = await this.prisma.perfilPublicoPrestador.findMany({
+      where: termino ? { nombrePublico: { contains: termino, mode: 'insensitive' } } : {},
+      orderBy: [{ nombrePublico: 'asc' }, { id: 'asc' }],
+      take: 10,
+    })
+    return perfiles.map((perfil) => ({
+      id: perfil.id,
+      nombre: perfil.nombrePublico,
+      oficioPrincipal: perfil.oficio,
+      zona: perfil.zona,
+      aceptaTurnos: perfil.aceptaTurnos,
+      visible: perfil.visible,
+    }))
+  }
+
+  /**
+   * Servicios que el prestador realmente ofrece (con su configuración de turnos y tarifas).
+   */
+  async serviciosDePrestador(filtro: { perfilId: string } | { tenantId: string }): Promise<ServicioTurnosDTO[]> {
+    const perfil = await this.prisma.perfilPublicoPrestador.findFirst({
+      where: 'perfilId' in filtro ? { OR: [{ id: filtro.perfilId }, { prestadorId: filtro.perfilId }] } : { tenantId: filtro.tenantId },
+      include: {
+        servicios: { include: { oficio: true }, orderBy: { orden: 'asc' } },
+        tarifas: { where: { activo: true }, orderBy: { orden: 'asc' } },
       },
     })
+    if (!perfil) throw new ErrorCalendario(404, 'NOT_FOUND', 'Prestador no encontrado')
+    return perfil.servicios.map((servicio) => ({
+      oficioId: servicio.oficioId,
+      nombre: servicio.oficio.nombre,
+      turnosHabilitados: perfil.aceptaTurnos && servicio.turnosHabilitados,
+      duracionMinutos: servicio.duracionMinutos,
+      precioBase: servicio.precioBase === null ? null : Number(servicio.precioBase),
+      tarifas: perfil.tarifas
+        .filter((tarifa) => tarifa.oficioId === servicio.oficioId)
+        .map((tarifa) => ({ id: tarifa.id, nombre: tarifa.nombre, duracionMinutos: tarifa.duracionMinutos, precio: Number(tarifa.precio), moneda: 'ARS' })),
+    }))
+  }
 
-    return this.mapearDetalleTurno(row, perfil.nombrePublico)
+  /**
+   * ADMIN: clientes registrados por nombre, email, documento o teléfono (combobox). Solo cuentas
+   * activas; el contacto se devuelve enmascarado.
+   */
+  async adminBuscarClientes(q: string): Promise<ClienteTurnosDTO[]> {
+    const termino = q.trim().slice(0, 80)
+    if (termino.length < 2) return []
+    const digitos = termino.replace(/\D/gu, '')
+    const cuentas = await this.prisma.account.findMany({
+      where: {
+        status: 'active',
+        user: {
+          OR: [
+            { displayName: { contains: termino, mode: 'insensitive' } },
+            { email: { contains: termino, mode: 'insensitive' } },
+            ...(digitos.length >= 4 ? [{ phoneNumber: { contains: digitos } }, { documentNumber: { startsWith: digitos } }] : []),
+          ],
+        },
+      },
+      include: { user: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 10,
+    })
+    return cuentas.map((cuenta) => ({
+      cuentaId: cuenta.id,
+      nombre: cuenta.user.displayName,
+      email: cuenta.user.email,
+      telefono: cuenta.user.phoneNumber ? enmascararTelefono(cuenta.user.phoneNumber) : null,
+    }))
+  }
+
+  /**
+   * Horarios semanales de atención del prestador (reglas de su calendario).
+   */
+  async horariosPrestador(tenantId: string): Promise<HorarioSemanalDTO[]> {
+    const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId } })
+    if (!perfil) throw new ErrorCalendario(404, 'NOT_FOUND', 'Perfil de prestador no encontrado')
+    const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
+    const reglas = await this.prisma.reglaCalendario.findMany({ where: { calendarioId: calendario.id }, orderBy: [{ diaSemana: 'asc' }, { horaInicio: 'asc' }] })
+    return reglas.map((regla) => ({ diaSemana: regla.diaSemana, horaInicio: regla.horaInicio, horaFin: regla.horaFin }))
+  }
+
+  /**
+   * Reemplaza los horarios semanales del prestador. No toca las reservas ya tomadas: solo cambia
+   * qué franjas se ofrecen de ahora en más.
+   */
+  async guardarHorariosPrestador(tenantId: string, horarios: unknown): Promise<HorarioSemanalDTO[]> {
+    const validado = validarHorariosSemanales(horarios)
+    if (!validado.ok) throw new ErrorCalendario(400, 'INVALID_PARAMS', `Horarios inválidos (${validado.motivo})`)
+    const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId } })
+    if (!perfil) throw new ErrorCalendario(404, 'NOT_FOUND', 'Perfil de prestador no encontrado')
+    const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
+    const now = new Date()
+    await this.prisma.$transaction(async (tx) => {
+      await tx.reglaCalendario.deleteMany({ where: { calendarioId: calendario.id } })
+      if (validado.valor.length > 0)
+        await tx.reglaCalendario.createMany({
+          data: validado.valor.map((regla) => ({
+            id: `reg-${randomUUID()}`,
+            tenantId: perfil.tenantId,
+            calendarioId: calendario.id,
+            diaSemana: regla.diaSemana,
+            horaInicio: regla.horaInicio,
+            horaFin: regla.horaFin,
+            capacidad: 1,
+            fechaCreacion: now,
+            fechaActualizacion: now,
+          })),
+        })
+    })
+    return validado.valor
+  }
+
+  /**
+   * Perfil del prestador dueño de la sesión (los endpoints del prestador nunca aceptan un perfil
+   * enviado por el cliente).
+   */
+  async perfilDeTenant(tenantId: string): Promise<{ id: string } | null> {
+    const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId } })
+    return perfil ? { id: perfil.id } : null
   }
 
   /**
@@ -660,17 +934,16 @@ export class ServicioTurnos {
       const perfil = await this.prisma.perfilPublicoPrestador.findFirst({
         where: { OR: [{ id: input.prestadorId }, { prestadorId: input.prestadorId }] },
       })
-      if (perfil) {
-        where['tenantId'] = perfil.tenantId
-      }
+      // An unknown provider matches nothing (never "all the turnos").
+      where['tenantId'] = perfil ? perfil.tenantId : '__sin_prestador__'
     }
     if (input.estado) {
       where['estado'] = input.estado
     }
     if (input.desde || input.hasta) {
       const f: Record<string, unknown> = {}
-      if (input.desde) f['gte'] = new Date(input.desde)
-      if (input.hasta) f['lte'] = new Date(input.hasta)
+      if (input.desde) f['gte'] = new Date(`${input.desde.slice(0, 10)}T00:00:00.000-03:00`)
+      if (input.hasta) f['lte'] = new Date(`${input.hasta.slice(0, 10)}T23:59:59.999-03:00`)
       where['fechaInicio'] = f
     }
 
@@ -684,11 +957,28 @@ export class ServicioTurnos {
       }),
     ])
 
+    // Names of the page in two batch reads (provider and service), never one query per row.
+    const tenants = [...new Set(rows.map((row) => row.tenantId))]
+    const oficios = [...new Set(rows.flatMap((row) => (row.servicioId ? [row.servicioId] : [])))]
+    const [perfiles, nombresOficio] = await Promise.all([
+      tenants.length ? this.prisma.perfilPublicoPrestador.findMany({ where: { tenantId: { in: tenants } } }) : Promise.resolve([]),
+      oficios.length ? this.prisma.oficioServicio.findMany({ where: { id: { in: oficios } } }) : Promise.resolve([]),
+    ])
+    const perfilDe = new Map(perfiles.map((perfil) => [perfil.tenantId, perfil]))
+    const oficioDe = new Map(nombresOficio.map((oficio) => [oficio.id, oficio.nombre]))
+
     return {
-      items: rows.map((r) => this.mapearDetalleTurno(r, 'Prestador')),
+      items: rows.map((r) => {
+        const perfil = perfilDe.get(r.tenantId)
+        return {
+          ...this.mapearDetalleTurno(r, perfil?.nombrePublico ?? 'Prestador'),
+          ...(perfil ? { prestadorId: perfil.id } : {}),
+          ...(r.servicioId && oficioDe.has(r.servicioId) ? { oficioNombre: oficioDe.get(r.servicioId)! } : {}),
+        }
+      }),
       total,
       pagina,
-      totalPaginas: Math.ceil(total / tamano),
+      totalPaginas: Math.max(1, Math.ceil(total / tamano)),
     }
   }
 
@@ -805,6 +1095,8 @@ export class ServicioTurnos {
       clienteEmail: r['clienteEmail'] ? String(r['clienteEmail']) : null,
       esInvitado: Boolean(r['esInvitado']),
       modificadoPorAdminId: r['modificadoPorAdminId'] ? String(r['modificadoPorAdminId']) : null,
+      creadoPorAdminId: r['creadoPorAdminId'] ? String(r['creadoPorAdminId']) : null,
+      clienteCuentaId: r['esInvitado'] ? null : String(r['clienteId'] ?? '') || null,
       motivoModificacionPrecio: r['motivoModificacionPrecio']
         ? String(r['motivoModificacionPrecio'])
         : null,

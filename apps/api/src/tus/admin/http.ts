@@ -10,13 +10,16 @@ import type { ServicioCatalogo } from '../catalogo/servicio.ts'
 import type { EntidadListable } from '../catalogo/almacen.ts'
 import { ConteosCatalogoEnMemoria, type ConteosCatalogo } from './conteos.ts'
 import { paginaJson, paginacion } from './paginacion.ts'
+import type { PerfilUsuarioAdminDTO, TipoDocumento } from '@factory/contracts'
 
 // Read-mostly views of the platform administration panel. Every route resolves the session
 // through the MFA gate (MfaAdminSessionResolver): the platform permissions only exist for an
 // allowlisted, verified, email + password session that passed the second factor.
 //
 // - GET  /tus/v1/admin/resumen                       real counts for the dashboard
-// - GET  /tus/v1/admin/usuarios?q=&rol=&estado=      registered accounts (no secrets)
+// - GET  /tus/v1/admin/usuarios?q=&rol=&estado=&telefono=&perfil=&paisId=&provinciaId=&localidadId=
+//                                                    registered accounts (no secrets); q matches name,
+//                                                    email, document number or phone digits
 // - GET  /tus/v1/admin/prestadores?q=&oficio=&zona=&visibilidad=&verificacion=
 //                                                    profiles + why each is (not) on the map
 // - GET  /tus/v1/admin/usuarios/:id                  one account (business fields, roles, provider link)
@@ -47,12 +50,32 @@ export interface CuentaAdmin {
   creadaEn: string
   // Identity phone (masked). Optional for older test doubles.
   telefono?: { verificado: boolean; numero: string | null; verificadoEn: string | null; pendiente: string | null }
+  // Personal profile (PERFIL-GEO-01). Optional for older test doubles.
+  documento?: { tipo: TipoDocumento; numero: string } | null
+  perfilCompleto?: boolean
+  ubicacion?: { localidad: string; provincia: string } | null
+}
+
+export interface FiltroCuentasAdmin {
+  // Name, email, document number or phone digits.
+  q: string
+  pagina: number
+  tamano: number
+  estado: string
+  rol: string
+  adminEmails: readonly string[]
+  prestadorTenants: readonly string[]
+  telefono?: string
+  perfil?: string
+  paisId?: string
+  provinciaId?: string
+  localidadId?: string
 }
 
 export interface FuenteCuentasAdmin {
   // Owner account of a tenant (provider detail -> account). Optional for older doubles.
   porTenant?(tenantId: string): Promise<CuentaAdmin | null>
-  listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[]; telefono?: string }): Promise<{ items: CuentaAdmin[]; total: number }>
+  listar(input: FiltroCuentasAdmin): Promise<{ items: CuentaAdmin[]; total: number }>
   contar(): Promise<number>
 }
 
@@ -87,6 +110,8 @@ export interface DependenciasAdmin {
   actualizarUsuario?: (input: { actorId: string; accountId: string; displayName?: unknown; status?: unknown; reason?: unknown; email?: unknown; emailVerified?: unknown }) => Promise<{ ok: boolean; code?: string }>
   // AuthService.getAccountAsAdmin: business fields only (never hashes, tokens or MFA secrets).
   leerUsuario?: (accountId: string) => Promise<{ id: string; email: string; displayName: string; tenantId: string; status: string; emailVerifiedAt: number | null; hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean; phoneNumber?: string | null; phoneVerifiedAt?: number | null; phonePending?: string | null } | null>
+  // Personal profile of an account (tus/perfil): names, document and residence, for the admin.
+  perfilUsuario?: (accountId: string) => Promise<PerfilUsuarioAdminDTO | null>
   // Phone identity administration (auth-security/phone): sets a PENDING number or frees a verified
   // one. There is no way to mark a phone as verified from the panel.
   telefonoAdmin?: {
@@ -155,10 +180,15 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     const rol = String(request.query['rol'] ?? '')
     const estado = ['active', 'suspended'].includes(String(request.query['estado'] ?? '')) ? String(request.query['estado']) : ''
     const telefono = ['verificado', 'pendiente', 'sin'].includes(String(request.query['telefono'] ?? '')) ? String(request.query['telefono']) : ''
+    const perfil = ['completo', 'incompleto'].includes(String(request.query['perfil'] ?? '')) ? String(request.query['perfil']) : ''
+    const geo = (name: string) => {
+      const value = String(request.query[name] ?? '').trim()
+      return /^[A-Za-z0-9._:-]{1,120}$/u.test(value) ? value : ''
+    }
     const { pagina, tamano } = paginacion(request.query)
     const admins = deps.adminEmails()
     const prestadorTenants = await deps.directorio.tenantsConPerfil()
-    const resultado = await deps.cuentas.listar({ q, pagina, tamano, estado, rol, adminEmails: admins, prestadorTenants, telefono })
+    const resultado = await deps.cuentas.listar({ q, pagina, tamano, estado, rol, adminEmails: admins, prestadorTenants, telefono, perfil, paisId: geo('paisId'), provinciaId: geo('provinciaId'), localidadId: geo('localidadId') })
     const prestadores = new Set(prestadorTenants)
     const items = resultado.items.map((cuenta) => {
       const roles = [
@@ -171,6 +201,9 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
         // A managed provider (loaded by an admin) has no password: nobody signs in with it.
         administrada: !cuenta.conContrasena && !cuenta.verificado, roles, creadaEn: cuenta.creadaEn,
         telefono: cuenta.telefono ?? { verificado: false, numero: null, verificadoEn: null, pendiente: null },
+        documento: cuenta.documento ?? null,
+        perfilCompleto: cuenta.perfilCompleto ?? false,
+        ubicacion: cuenta.ubicacion ?? null,
       }
     })
     response.status(200).json(paginaJson(items, pagina, tamano, resultado.total))
@@ -196,7 +229,10 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     const cuenta = await deps.leerUsuario(String(request.params['id'] ?? ''))
     if (!cuenta) return void response.status(404).json({ error: { code: 'NOT_FOUND', message: 'account not found' } })
     const prestador = await deps.directorio.perfilDeTenantAdmin(cuenta.tenantId)
+    const perfil = deps.perfilUsuario ? await deps.perfilUsuario(cuenta.id) : null
     response.status(200).json({
+      // Personal data (document, residence): only here, behind the identity-admin permission.
+      perfil,
       id: cuenta.id,
       nombre: cuenta.displayName,
       email: cuenta.email,

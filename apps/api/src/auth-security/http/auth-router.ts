@@ -21,9 +21,14 @@ export interface AuthRouterDependencies {
   phones?: ServicioVerificacionTelefono
 }
 
+// Role capabilities plus the state of the personal profile (onboarding) and the map centre of the
+// person's locality. The profile part is optional for compositions without the profile module.
 export interface SessionCapabilities {
   platformAdmin: boolean
   provider: boolean
+  profileComplete?: boolean
+  profileRequired?: boolean
+  mapCenter?: { latitud: number; longitud: number; origen: 'localidad' | 'predeterminado'; etiqueta: string }
 }
 
 export function createAuthRouter({ service, sessions, cookies = readSessionCookieSettings(), now = () => Date.now(), describeCapabilities, phones }: AuthRouterDependencies): Router {

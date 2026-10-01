@@ -13,10 +13,25 @@ export class ErrorAsistente extends Error {
   }
 }
 
+// Channel of a conversation. WhatsApp and the Web are two interfaces over the SAME assistant
+// (orchestrator, tools, knowledge, confirmations and memory); only delivery differs.
+export const CANALES_CONVERSACION = ['whatsapp', 'web'] as const
+export type CanalConversacion = (typeof CANALES_CONVERSACION)[number]
+
+// Rows created before the Web channel existed have no channel: they are WhatsApp.
+export const canalDe = (value: { channel?: CanalConversacion }): CanalConversacion => value.channel ?? 'whatsapp'
+
+// External key of a Web conversation (stored where WhatsApp stores the wa_id). The account id
+// comes from the authenticated session; the anonymous id is a random browser id that only gives
+// continuity to a public conversation and never any authority.
+export const claveContactoWeb = (input: { accountId: string } | { anonymousId: string }): string =>
+  'accountId' in input ? `web:acct:${input.accountId}` : `web:anon:${input.anonymousId}`
+
 export interface ContactoWhatsapp {
   contactId: string
-  // `wa_id` exactly as delivered by Meta: the only external identity. The profile name is
-  // informative and never used to link an account.
+  channel?: CanalConversacion
+  // WhatsApp: `wa_id` exactly as delivered by Meta, the only external identity (the profile name
+  // is informative and never used to link an account). Web: claveContactoWeb().
   waId: string
   displayName: string | null
   linkedAccountId: string | null
@@ -45,6 +60,9 @@ export interface EstadoConversacional {
     zone: string | null
     urgency: string | null
   } | null
+  // Last availability shown (provider, trade, date): lets "a las 10" on the next turn refer to
+  // it. Never authoritative: booking re-reads the real availability.
+  slots?: { providerId: string; profession: string; date: string; starts: string[] } | null
   lowConfidenceCount: number
 }
 
@@ -60,6 +78,7 @@ export const ESTADO_CONVERSACIONAL_INICIAL: EstadoConversacional = {
 export interface ConversacionWhatsapp {
   conversationId: string
   contactId: string
+  channel?: CanalConversacion
   status: 'active' | 'closed'
   mode: ModoConversacion
   handoffReason: string | null

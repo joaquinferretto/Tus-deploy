@@ -31,6 +31,9 @@ export interface LocalidadCatalogo {
   provincia: string
   activo: boolean
   orden: number
+  // Reference point of the town (map centre of the people who live there). Optional.
+  lat?: number | null
+  lng?: number | null
 }
 
 export interface ZonaCatalogo {

@@ -1,4 +1,5 @@
 import type {
+  CanalConversacion,
   ConfirmacionAsistente,
   ContactoWhatsapp,
   ConversacionWhatsapp,
@@ -34,8 +35,10 @@ export interface RepositoriosAsistente {
     buscar(conversationId: string): Promise<ConversacionWhatsapp | null>
     crear(value: ConversacionWhatsapp): Promise<void>
     actualizar(value: ConversacionWhatsapp, expectedVersion: number): Promise<boolean>
-    listar(filter: { mode?: ModoConversacion; limit?: number; offset?: number }): Promise<ConversacionWhatsapp[]>
-    contar(filter: { mode?: ModoConversacion }): Promise<number>
+    // `channel` keeps the WhatsApp support inbox free of Web conversations (there is no operator
+    // nor Meta window on the Web).
+    listar(filter: { mode?: ModoConversacion; channel?: CanalConversacion; limit?: number; offset?: number }): Promise<ConversacionWhatsapp[]>
+    contar(filter: { mode?: ModoConversacion; channel?: CanalConversacion }): Promise<number>
   }
   mensajes: {
     buscarPorWamid(wamid: string): Promise<MensajeConversacion | null>

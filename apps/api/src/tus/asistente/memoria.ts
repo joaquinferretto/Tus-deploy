@@ -1,11 +1,12 @@
-import type {
-  ConfirmacionAsistente,
-  ContactoWhatsapp,
-  ConversacionWhatsapp,
-  EventoAuditoriaAsistente,
-  MensajeConversacion,
-  TokenVinculacion,
-  TrabajoConversacion,
+import {
+  canalDe,
+  type ConfirmacionAsistente,
+  type ContactoWhatsapp,
+  type ConversacionWhatsapp,
+  type EventoAuditoriaAsistente,
+  type MensajeConversacion,
+  type TokenVinculacion,
+  type TrabajoConversacion,
 } from './modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
 import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
@@ -75,11 +76,12 @@ export class AlmacenAsistenteEnMemoria {
         },
         listar: async (filter) =>
           [...s().conversaciones.values()]
-            .filter((c) => !filter.mode || c.mode === filter.mode)
+            .filter((c) => (!filter.mode || c.mode === filter.mode) && (!filter.channel || canalDe(c) === filter.channel))
             .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt) || b.conversationId.localeCompare(a.conversationId))
             .slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 100))
             .map(clone),
-        contar: async (filter) => [...s().conversaciones.values()].filter((c) => !filter.mode || c.mode === filter.mode).length,
+        contar: async (filter) =>
+          [...s().conversaciones.values()].filter((c) => (!filter.mode || c.mode === filter.mode) && (!filter.channel || canalDe(c) === filter.channel)).length,
       },
       mensajes: {
         buscarPorWamid: async (wamid) => clone([...s().mensajes.values()].find((m) => m.wamid === wamid) ?? null),

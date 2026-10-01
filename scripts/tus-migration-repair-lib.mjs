@@ -619,6 +619,54 @@ export const REVIEWED_MIGRATION_STATEMENTS = Object.freeze([
     sha256: '89bac66ea323f6011bc1bfc689cea23e9d89b34693071323e3c9604a547498b0',
     reason: 'Replaces the tenant-plus-recipient unique index with tenant-plus-recipient-type-plus-recipient; no rows are deleted and the change is required to keep customer, merchant, and tenant consent isolated.',
   },
+  {
+    migration: '20261020100000_tus_asistente_canal_web',
+    classification: 'high_risk',
+    sha256: 'a4a2eab8f94354371a0d4f65adfb9396ed5a97f9c75fd8f78f4c182b445cc139',
+    reason: 'Drops the CHECK ck_contactos_whatsapp_wa_id only to re-add it in the next statement as a per-channel rule: the exact previous pattern for canal = whatsapp (the default of every existing row) plus the web:(acct|anon) pattern for canal = web. No row is deleted or rewritten.',
+  },
+  {
+    migration: '20261021100000_tus_perfil_geografia',
+    classification: 'ambiguous',
+    sha256: 'b0486026244ec699031e8014b051e5f053c1ef810b114b45eed05142b66f5825',
+    reason: 'Marks every locality that existed before this migration as a service-coverage locality (cobertura = true) on the column added one statement earlier; the country-wide rows are inserted afterwards with the default false, so the service catalog keeps exactly its previous content.',
+  },
+  {
+    migration: '20261021100000_tus_perfil_geografia',
+    classification: 'ambiguous',
+    sha256: 'db1769dd6bd508e5f506e8af37c8ab9d5606df2de24ff7147d4310677ef67dc9',
+    reason: 'Reference data: inserts the single country row (Argentina) into the table created by this same migration.',
+  },
+  {
+    migration: '20261021100000_tus_perfil_geografia',
+    classification: 'ambiguous',
+    sha256: '9e3daa7b3181a10f9368c536deb6c0a60e4bf75066c082ab158f72fdaaa6537c',
+    reason: 'Reference data: inserts the 24 Argentine jurisdictions into the table created by this same migration.',
+  },
+  {
+    migration: '20261021100000_tus_perfil_geografia',
+    classification: 'ambiguous',
+    sha256: 'ddaa6ac4110f467296aa9e46e4f0856d6570e76ef198a9f9e48a9db2c8816277',
+    reason: 'Deterministic backfill of the new nullable localidades.provincia_id by exact case-insensitive match of the existing province name against the seeded provinces; unmatched rows stay NULL, nothing is guessed.',
+  },
+  {
+    migration: '20261021100000_tus_perfil_geografia',
+    classification: 'ambiguous',
+    sha256: '8e2aaf64ba798a623b58b810622393bc8a6835a189db55d964b49e697de02584',
+    reason: 'Sets the reference point of the pre-existing locality corrientes-capital only when it has none (the coordinates the Web already used as its default map centre).',
+  },
+  {
+    migration: '20261021100000_tus_perfil_geografia',
+    classification: 'ambiguous',
+    sha256: '9adc5cb2b9f39842a158b95858a0b39ea683d0090950a2fac064558de27669c5',
+    reason: 'Reference data: inserts localities (provincial capitals, Corrientes province and main cities) with ON CONFLICT DO NOTHING, so a locality an administrator already created with the same name and province is kept as it is.',
+  },
+  {
+    migration: '20261022100000_tus_turnos_admin',
+    classification: 'ambiguous',
+    sha256: '1d0babeaa6542125036a4702719ff0b62d07fff960c7d78c5ab24d5872c25fd4',
+    reason: 'Deterministic backfill of the new reservas.creado_por_admin_id for existing forced turnos from the administrator already recorded in modificado_por_admin_id (the only author column the previous code wrote).',
+  },
 ])
 
 export function normalizedStatementHash(sql) {

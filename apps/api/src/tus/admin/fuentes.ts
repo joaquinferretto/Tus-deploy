@@ -1,7 +1,7 @@
 import { enmascararTelefono } from '@factory/contracts'
 
 import type { IdentityStore } from '../../auth-security/ports/identity-store.ts'
-import type { CuentaAdmin, EventoActividad, FuenteActividadAdmin, FuenteCuentasAdmin } from './http.ts'
+import type { CuentaAdmin, EventoActividad, FiltroCuentasAdmin, FuenteActividadAdmin, FuenteCuentasAdmin } from './http.ts'
 
 // Accounts for the admin panel, read from the existing identity tables (Account + User +
 // PasswordCredential). Never the password hash, tokens or sessions.
@@ -31,8 +31,38 @@ function desdeFila(fila: Fila): CuentaAdmin {
     conContrasena: credentials.some((credential) => credential['status'] === 'active'),
     creadaEn: iso(fila['createdAt']),
     telefono: vistaTelefono(user['phoneNumber'] as string | null | undefined, user['phoneVerifiedAt'], user['phonePending'] as string | null | undefined),
+    documento: user['documentType'] && user['documentNumber'] ? { tipo: String(user['documentType']) as NonNullable<CuentaAdmin['documento']>['tipo'], numero: String(user['documentNumber']) } : null,
+    perfilCompleto: user['profileComplete'] === true,
+    ubicacion: localidadDe(user['localidad'] as Fila | null | undefined),
   }
 }
+
+function localidadDe(localidad: Fila | null | undefined): CuentaAdmin['ubicacion'] {
+  return localidad ? { localidad: String(localidad['nombre'] ?? ''), provincia: String(localidad['provincia'] ?? '') } : null
+}
+
+// Free text of the admin search: name and email as written; a document or a phone are matched by
+// their digits ("12.345.678" finds 12345678; "379 412" finds +549379412...).
+function filtroBusqueda(q: string): Fila {
+  const digitos = q.replace(/\D/gu, '')
+  return { user: { OR: [
+    { email: { contains: q, mode: 'insensitive' } },
+    { displayName: { contains: q, mode: 'insensitive' } },
+    { documentNumber: { equals: q.replace(/[\s.-]/gu, '').toUpperCase() } },
+    ...(digitos.length >= 4 ? [{ documentNumber: { startsWith: digitos } }, { phoneNumber: { contains: digitos } }, { phonePending: { contains: digitos } }] : []),
+  ] } }
+}
+
+function filtroPerfil(input: FiltroCuentasAdmin): Fila[] {
+  return [
+    ...(input.perfil === 'completo' ? [{ user: { profileComplete: true } }] : input.perfil === 'incompleto' ? [{ user: { profileComplete: false } }] : []),
+    ...(input.localidadId ? [{ user: { localidadId: input.localidadId } }]
+      : input.provinciaId ? [{ user: { localidad: { provinciaId: input.provinciaId } } }]
+        : input.paisId ? [{ user: { localidad: { provinciaRef: { paisId: input.paisId } } } }] : []),
+  ]
+}
+
+const INCLUIR = { user: { include: { localidad: true } }, credentials: { select: { status: true } } }
 
 // Phone identity as the admin sees it: masked numbers and dates only (never challenges or hashes).
 function vistaTelefono(numero: string | null | undefined, verificadoEn: unknown, pendiente: string | null | undefined): CuentaAdmin['telefono'] {
@@ -55,14 +85,15 @@ function filtroTelefono(telefono: string): Fila | null {
 export class CuentasAdminPrisma implements FuenteCuentasAdmin {
   constructor(private readonly client: ClienteCuentas) {}
 
-  async listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[]; telefono?: string }): Promise<{ items: CuentaAdmin[]; total: number }> {
+  async listar(input: FiltroCuentasAdmin): Promise<{ items: CuentaAdmin[]; total: number }> {
     const q = input.q
     const telefonoWhere = filtroTelefono(input.telefono ?? '')
     const rolWhere = input.rol === 'admin' ? { user: { email: { in: [...input.adminEmails] } } }
       : input.rol === 'prestador' ? { tenantId: { in: [...input.prestadorTenants] } }
         : input.rol === 'cliente' ? { tenantId: { notIn: [...input.prestadorTenants] }, user: { email: { notIn: [...input.adminEmails] } } } : null
     const where: Fila = { AND: [
-      ...(q ? [{ user: { OR: [{ email: { contains: q, mode: 'insensitive' } }, { displayName: { contains: q, mode: 'insensitive' } }] } }] : []),
+      ...(q ? [filtroBusqueda(q)] : []),
+      ...filtroPerfil(input),
       ...(input.estado ? [{ status: input.estado }] : []),
       ...(rolWhere ? [rolWhere] : []),
       ...(telefonoWhere ? [telefonoWhere] : []),
@@ -70,7 +101,7 @@ export class CuentasAdminPrisma implements FuenteCuentasAdmin {
     const total = await this.client.account.count({ where })
     const filas = await this.client.account.findMany({
       where,
-      include: { user: true, credentials: { select: { status: true } } },
+      include: INCLUIR,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: (input.pagina - 1) * input.tamano,
       take: input.tamano,
@@ -81,7 +112,7 @@ export class CuentasAdminPrisma implements FuenteCuentasAdmin {
   // The first account of the tenant (its owner): one read.
   async porTenant(tenantId: string): Promise<CuentaAdmin | null> {
     if (!this.client.account.findFirst) return null
-    const fila = await this.client.account.findFirst({ where: { tenantId }, include: { user: true, credentials: { select: { status: true } } }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })
+    const fila = await this.client.account.findFirst({ where: { tenantId }, include: INCLUIR, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })
     return fila ? desdeFila(fila) : null
   }
 
@@ -94,7 +125,7 @@ export class CuentasAdminPrisma implements FuenteCuentasAdmin {
 export class CuentasAdminEnMemoria implements FuenteCuentasAdmin {
   constructor(private readonly store: IdentityStore) {}
 
-  async listar(input: { q: string; pagina: number; tamano: number; estado: string; rol: string; adminEmails: readonly string[]; prestadorTenants: readonly string[]; telefono?: string }): Promise<{ items: CuentaAdmin[]; total: number }> {
+  async listar(input: FiltroCuentasAdmin): Promise<{ items: CuentaAdmin[]; total: number }> {
     const q = input.q.toLowerCase()
     const cuentas = [...(this.store.accounts?.values() ?? [])]
       .filter((cuenta) => !q || cuenta.normalizedEmail.includes(q) || cuenta.displayName.toLowerCase().includes(q))

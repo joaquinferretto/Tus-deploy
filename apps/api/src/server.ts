@@ -30,6 +30,10 @@ import { crearRutasAlojamientos } from './tus/alojamientos/alojamientos-routes.t
 import type { PrismaClient } from '@prisma/client'
 import { crearAltaPrestadorAdmin, crearEdicionPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
+import { AlmacenPerfilPrisma, type ClientePrismaPerfil } from './tus/perfil/almacen.ts'
+import { crearRouterPerfil } from './tus/perfil/http.ts'
+import { ServicioPerfil } from './tus/perfil/servicio.ts'
+import { crearRouterAsistenteWeb } from './tus/asistente/http-web.ts'
 import { crearRouterAdmin } from './tus/admin/http.ts'
 import { crearRouterAdminTrabajos } from './tus/admin/trabajos.ts'
 import { operacionAdminPrisma } from './tus/directorio/almacenes.ts'
@@ -161,6 +165,8 @@ export function createApp(options: CreateAppOptions = {}): Application {
   // work in the same PostgreSQL transaction that assigns the request.
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
   const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient)
+  // Personal profile (names, document, residence) and normalized geography.
+  const perfiles = new ServicioPerfil(new AlmacenPerfilPrisma(prisma as unknown as ClientePrismaPerfil))
   const whatsapp = options.tusRouter
     ? undefined
     : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes, turnos: servicioTurnos }, telefonos)
@@ -214,7 +220,11 @@ export function createApp(options: CreateAppOptions = {}): Application {
       describeCapabilities: async (accessToken, correlationId, context) => {
         const raw = await rawSessions.resolve(accessToken, correlationId)
         const merchant = await application.marketplace?.store.merchant.find(context.tenantId).catch(() => null)
-        return { platformAdmin: raw ? await sessions.isAdminCandidate(raw) : false, provider: Boolean(merchant) }
+        const platformAdmin = raw ? await sessions.isAdminCandidate(raw) : false
+        const provider = Boolean(merchant)
+        const perfil = await perfiles.estado(context.subjectId)
+        // A platform administration account that is not a provider is never sent to onboarding.
+        return { platformAdmin, provider, profileComplete: perfil.profileComplete, profileRequired: !(platformAdmin && !provider), mapCenter: perfil.mapCenter }
       },
     })
   )
@@ -231,6 +241,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     })
   )
   app.use(crearRouterTelefono({ servicio: telefonos, sessions, auth: auth.service }))
+  app.use(crearRouterPerfil({ servicio: perfiles, sessions }))
   app.use(createFederatedAuthRouter(federated.service, federated.webBaseUrl ?? process.env['TUS_WEB_BASE_URL'] ?? null, sessionCookies))
   app.use(createTenancyRouter({ service: tenancy.service, sessions }))
   const tusRoutesEnabled =
@@ -253,6 +264,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     }))
     app.use(crearRouterDirectorio({ servicio: directorio, sessions, adminSave: crearAltaPrestadorAdmin({ accounts: auth.store, application, directorio, createManagedAccount: (input) => auth.service.createManagedProviderAccount(input) }) }))
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
+    app.use(crearRouterAsistenteWeb({ servicio: whatsapp?.asistenteWeb ?? null, sessions }))
     app.use(crearRouterTurnos({ servicio: servicioTurnos, sessions }))
     // Simulated payment confirms a booking without money: only when the runtime is explicitly
     // development or test. Production (or an unset NODE_ENV) never has it.
@@ -276,6 +288,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
         crearUsuario: (input) => auth.service.createAccountAsAdmin(input),
         actualizarUsuario: (input) => auth.service.updateAccountAsAdmin(input),
         leerUsuario: (accountId) => auth.service.getAccountAsAdmin(accountId),
+        perfilUsuario: (accountId) => perfiles.perfilAdmin(accountId),
         accionUsuario: (input) => auth.service.adminAccountAction(input),
         telefonoAdmin: telefonos,
         prestadorAdmin: crearEdicionPrestadorAdmin({ application, directorio }),

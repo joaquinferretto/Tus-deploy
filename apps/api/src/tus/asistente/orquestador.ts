@@ -5,16 +5,18 @@ import type { PuertoDominioAsistente } from './dominio.ts'
 import { ErrorChat, type ChatProvider, type MensajeChat, type Transcriptor } from './groq.ts'
 import {
   HERRAMIENTAS,
+  PROMPT_ENRUTADOR,
   buscarHerramienta,
   definicionChat,
   detectarIntencion,
   intencionPrivada,
+  interpretarEtiquetaIntencion,
   seleccionarHerramientas,
   validarYEjecutar,
   type ActorAsistente,
   type IntencionAsistente,
 } from './herramientas.ts'
-import { ErrorMetaWhatsapp, type MensajeSaliente, type WhatsappProvider } from './meta.ts'
+import { ErrorMetaWhatsapp, type AdjuntoAsistente, type MensajeSaliente, type WhatsappProvider } from './meta.ts'
 import {
   MENSAJES,
   enmascararWaId,
@@ -23,6 +25,7 @@ import {
   pideVincular,
   redactarPii,
   respuestaConfirmacion,
+  type CanalConversacion,
   type ConfirmacionAsistente,
   type ContactoWhatsapp,
   type ConversacionWhatsapp,
@@ -31,10 +34,65 @@ import {
 import type { PuertoTransaccionAsistente, RepositoriosAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
 import type { ServicioVinculacionWhatsapp } from './vinculacion.ts'
 
-export const VERSION_PROMPT_SISTEMA = 'tus-whatsapp-v2'
+export const VERSION_PROMPT_SISTEMA = 'tus-asistente-v3'
 
-export const PROMPT_SISTEMA = [
-  'Sos el asistente de TUS por WhatsApp. Soy un asistente automático, no una persona: nunca digas que sos humano.',
+// Why the assistant needs an account before going on. Each channel asks in its own way
+// (WhatsApp: single-use link to bind the number; Web: sign in).
+export type MotivoCuenta = 'explicit' | 'private' | 'choose_provider'
+
+// Progress of a turn, for channels that can show it while the answer is being prepared. It is
+// emitted from what the backend is really doing (a tool running, the knowledge base being read).
+export type EventoTurno =
+  | { type: 'routing'; intent: IntencionAsistente }
+  | { type: 'knowledge'; phase: 'start' | 'end' }
+  | { type: 'tool'; tool: string; phase: 'start' | 'end'; ok?: boolean }
+
+// What differs between channels. Everything else (model, tools, knowledge, confirmations,
+// memory, permissions) is the same code for WhatsApp and the Web.
+export interface CanalTurno {
+  id: CanalConversacion
+  pedirCuenta(motivo: MotivoCuenta): Promise<MensajeSaliente[]>
+  // true: the channel renders tool results as structured attachments (cards), so the MODEL writes
+  // every conversational reply from the tool result. false: text is the only carrier of live data
+  // (WhatsApp), so providers and slots are rendered by the backend and cannot be embellished.
+  conversacional: boolean
+  // How the area of the message (and with it the tool subset) is decided. 'modelo': the LLM reads
+  // the message and names it (patterns only as fallback). 'patrones': the deterministic router,
+  // with no model call before the gates (WhatsApp default: an unlinked contact asking for private
+  // data is answered without spending a model call, and each turn costs one call less).
+  enrutado: 'modelo' | 'patrones'
+  evento?: (evento: EventoTurno) => void
+}
+
+const PRESENTACION_CANAL: Record<CanalConversacion, string> = {
+  whatsapp: 'Sos el asistente de TUS por WhatsApp. Soy un asistente automático, no una persona: nunca digas que sos humano.',
+  web: 'Sos el asistente de TUS en su sitio Web. Soy un asistente automático, no una persona: nunca digas que sos humano.',
+}
+
+const SIN_OPERADOR: Record<CanalConversacion, string> = {
+  whatsapp: MENSAJES.handoff,
+  web: 'Soy un asistente automático; no hay un operador humano conectado.',
+}
+
+const INSTRUCCION_SIN_CUENTA =
+  'El usuario NO inició sesión y pregunta por datos o acciones de una cuenta (trabajos, presupuestos, pagos, identidad, postulaciones). No tenés herramientas para eso sin sesión: explicale con naturalidad que para verlo o hacerlo tiene que iniciar sesión en TUS, y qué va a poder hacer después. No inventes ningún dato de cuenta.'
+
+const INSTRUCCION_ELEGIR_SIN_CUENTA =
+  'El usuario NO inició sesión. Puede ver los turnos de un prestador ya mostrado (get_available_slots), pero para reservar un turno o enviarle una solicitud tiene que iniciar sesión en TUS. Si pide horarios usá la herramienta; si quiere reservar o contratar, explicale que primero debe iniciar sesión. No inventes datos.'
+
+const CON_CUENTA: Record<CanalConversacion, string> = {
+  whatsapp: 'cuenta TUS vinculada',
+  web: 'sesión iniciada en TUS',
+}
+
+const SIN_CUENTA: Record<CanalConversacion, string> = {
+  whatsapp: 'contacto NO vinculado (solo información pública; para datos privados debe escribir "vincular mi cuenta")',
+  web: 'visitante SIN sesión iniciada (solo información pública; para datos de su cuenta, reservar o enviar solicitudes debe iniciar sesión en TUS)',
+}
+
+export const promptSistema = (canal: CanalConversacion): string => [PRESENTACION_CANAL[canal], ...REGLAS_PROMPT_SISTEMA].join('\n')
+
+const REGLAS_PROMPT_SISTEMA = [
   'TUS es una plataforma argentina que conecta clientes con prestadores de servicios (reparaciones, oficios, cuidado personal).',
   'Estilo: español rioplatense natural, claro, breve (máximo 5 oraciones o una lista corta), amable y sin sonar robótico.',
   'Reglas obligatorias:',
@@ -48,8 +106,13 @@ export const PROMPT_SISTEMA = [
   '8. No podés modificar montos, comisiones, pagos ni aprobar pagos.',
   '9. Antes de buscar prestadores necesitás oficio, descripción breve del problema y barrio/zona. Usá el historial y el borrador: no vuelvas a preguntar datos conocidos. Guardalos con collect_service_request; si falta algo, su question debe ser una pregunta natural sobre lo faltante, sin resultados ni afirmaciones sobre prestadores. No uses un cuestionario fijo.',
   '10. Con los tres datos confirmados usá search_providers (query describe el problema). Si el usuario ya dio todo, no hagas preguntas adicionales. Nunca digas que no encontraste prestadores antes de ejecutar esa búsqueda. Los horarios publicados no son disponibilidad confirmada.',
-  '11. Si el usuario pide un turno o consultar horarios de un prestador, usá get_available_slots con su ID, oficio y fecha (YYYY-MM-DD). Para reservar un turno confirmado usá book_appointment (requiere confirmación).',
-].join('\n')
+  '11. Si el usuario pide un turno o consultar horarios de un prestador, usá get_available_slots con su ID, oficio y fecha (YYYY-MM-DD). Para reservar un turno confirmado usá book_appointment (requiere confirmación). Nunca propongas un horario que no haya devuelto get_available_slots.',
+  '12. Deducí el oficio del problema aunque el usuario no lo nombre (una pérdida de agua es plomería; un aire que no enfría es aire acondicionado). Preguntá solo lo que falte y de a una cosa.',
+  '13. Si el usuario elige a uno de los prestadores ya mostrados ("el segundo", "ese", por nombre), es el de esa posición o nombre en "candidates" del borrador: usá su providerId. Si hay varios posibles, preguntá cuál.',
+]
+
+// The WhatsApp prompt (kept as a named export for documentation and evaluations).
+export const PROMPT_SISTEMA = promptSistema('whatsapp')
 
 export interface LimitesAsistente {
   maxToolCalls: number
@@ -60,6 +123,8 @@ export interface LimitesAsistente {
   toolTimeoutMs: number
   lowConfidenceHandoff: number
   ragEnabled: boolean
+  // Intent routing of the WhatsApp channel (the Web channel always routes with the model).
+  whatsappRouting: 'modelo' | 'patrones'
 }
 
 export const LIMITES_ASISTENTE_POR_DEFECTO: LimitesAsistente = {
@@ -71,6 +136,7 @@ export const LIMITES_ASISTENTE_POR_DEFECTO: LimitesAsistente = {
   toolTimeoutMs: 8_000,
   lowConfidenceHandoff: 2,
   ragEnabled: true,
+  whatsappRouting: 'patrones',
 }
 
 export interface ResolutorCuentaAsistente {
@@ -104,7 +170,14 @@ type Turno = {
   conversation: ConversacionWhatsapp
   contact: ContactoWhatsapp
   pending: MensajeConversacion[]
+  canal: CanalTurno
+  // The model could not answer this turn (provider down, unusable output): the reply is the
+  // fixed fallback text, and the channel may offer a degraded alternative.
+  degradado?: boolean
+  intencion?: IntencionAsistente
 }
+
+type TurnoCargado = Omit<Turno, 'canal'>
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
@@ -126,20 +199,9 @@ export class OrquestadorConversacion {
     conversationId: string,
     correlationId: string
   ): Promise<'processed' | 'nothing' | 'human' | 'already_answered'> {
-    const turn = await this.deps.transaction.ejecutar(
-      async (repositories): Promise<Turno | null> => {
-        const conversation = await repositories.conversaciones.buscar(conversationId)
-        if (!conversation) return null
-        const contact = await repositories.contactos.buscar(conversation.contactId)
-        if (!contact) return null
-        return {
-          conversation,
-          contact,
-          pending: await repositories.mensajes.pendientes(conversationId),
-        }
-      }
-    )
-    if (!turn || turn.pending.length === 0) return 'nothing'
+    const loaded = await this.cargarTurno(conversationId)
+    if (!loaded || loaded.pending.length === 0) return 'nothing'
+    const turn: Turno = { ...loaded, canal: this.canalWhatsapp(loaded, correlationId) }
     // Phone verification messages leave the turn BEFORE the model (and before the human-mode
     // check: a verification is answered even while an operator owns the chat). Their answer is
     // fixed text; a message whose verification is still being recorded is left for later.
@@ -169,6 +231,56 @@ export class OrquestadorConversacion {
     await this.marcarProcesados(turn.pending, 'processed')
     await this.resumirSiCorresponde(turn.conversation.conversationId)
     return 'processed'
+  }
+
+  // Same turn for a channel that answers in the request (the Web): the pending inbound messages
+  // of the conversation go through the SAME decision (model, tools, knowledge, confirmations) and
+  // the reply is returned to the caller instead of being sent through Meta. The authority is the
+  // context of the authenticated session resolved by the caller on this request; null is a visitor
+  // (public tools only). Nothing in the conversation or in the model's output can change it.
+  async responder(input: {
+    conversationId: string
+    correlationId: string
+    context: TusAuthenticatedTenantContext | null
+    canal: CanalTurno
+  }): Promise<{ messages: MensajeSaliente[]; degraded: boolean; text: string; intent: IntencionAsistente | null } | null> {
+    const loaded = await this.cargarTurno(input.conversationId)
+    if (!loaded || loaded.pending.length === 0) return null
+    const turn: Turno = { ...loaded, canal: input.canal }
+    this.metric('assistant.inbound_turn', { channel: input.canal.id, messages: turn.pending.length })
+    const text = await this.textoDelTurno(turn)
+    const base = { contactId: turn.contact.contactId, conversationId: turn.conversation.conversationId }
+    let isProvider = false
+    if (input.context) isProvider = await this.deps.domain.esPrestador(input.context).catch(() => false)
+    const actor: ActorAsistente = { ...base, context: input.context, isProvider }
+    const reply = await this.decidir(turn, actor, text, input.correlationId)
+    await this.marcarProcesados(turn.pending, 'processed')
+    await this.resumirSiCorresponde(turn.conversation.conversationId)
+    return { messages: reply, degraded: turn.degradado === true, text: text.text, intent: turn.intencion ?? null }
+  }
+
+  private async cargarTurno(conversationId: string): Promise<TurnoCargado | null> {
+    return this.deps.transaction.ejecutar(async (repositories): Promise<TurnoCargado | null> => {
+      const conversation = await repositories.conversaciones.buscar(conversationId)
+      if (!conversation) return null
+      const contact = await repositories.contactos.buscar(conversation.contactId)
+      if (!contact) return null
+      return { conversation, contact, pending: await repositories.mensajes.pendientes(conversationId) }
+    })
+  }
+
+  private canalWhatsapp(turn: TurnoCargado, correlationId: string): CanalTurno {
+    const textos: Record<MotivoCuenta, string> = {
+      explicit: 'Para vincular tu cuenta abrí este link, iniciá sesión en TUS y confirmá.',
+      private: `${MENSAJES.linkRequired} Abrí este link, iniciá sesión y confirmá.`,
+      choose_provider: MENSAJES.linkRequired,
+    }
+    return {
+      id: 'whatsapp',
+      conversacional: false,
+      enrutado: this.limits.whatsappRouting,
+      pedirCuenta: (motivo) => this.ofrecerVinculacion(turn, correlationId, textos[motivo]),
+    }
   }
 
   // ---- turn preparation ---------------------------------------------------------------------
@@ -261,10 +373,12 @@ export class OrquestadorConversacion {
     const text = input.text
     if (!text) return input.notices.map((notice) => ({ type: 'text', text: notice }))
 
+    // Fixed answers only for commands the model must never own: there is no human operator to
+    // hand off to, and binding or unbinding a WhatsApp number is an account-security operation.
     if (pideHumano(text)) {
-      return [{ type: 'text', text: MENSAJES.handoff }]
+      return [{ type: 'text', text: SIN_OPERADOR[turn.canal.id] }]
     }
-    if (pideDesvincular(text)) {
+    if (turn.canal.id === 'whatsapp' && pideDesvincular(text)) {
       await this.deps.linking.desvincular({
         contactId: turn.contact.contactId,
         actorId: 'whatsapp-contact',
@@ -272,26 +386,17 @@ export class OrquestadorConversacion {
       })
       return [{ type: 'text', text: MENSAJES.unlinked }]
     }
-    if (pideVincular(text))
-      return this.ofrecerVinculacion(
-        turn,
-        correlationId,
-        'Para vincular tu cuenta abrí este link, iniciá sesión en TUS y confirmá.'
-      )
+    if (turn.canal.id === 'whatsapp' && pideVincular(text)) return turn.canal.pedirCuenta('explicit')
 
     const confirmation = respuestaConfirmacion(text, input.replyId)
     const pendingId = confirmation?.confirmationId ?? turn.conversation.state.pendingConfirmationId
     if (confirmation && pendingId)
       return this.resolverConfirmacion(turn, actor, pendingId, confirmation.decision, correlationId)
 
-    const detected = detectarIntencion(text)
-    const intent = detected === 'otro' && turn.conversation.state.currentIntent === 'buscar' ? 'buscar' : detected
-    if (intencionPrivada(intent) && !actor.context)
-      return this.ofrecerVinculacion(
-        turn,
-        correlationId,
-        `${MENSAJES.linkRequired} Abrí este link, iniciá sesión y confirmá.`
-      )
+    const intent = await this.enrutar(turn, text)
+    turn.intencion = intent
+    // Private areas need an account: decided by the backend from the session/link, never by the model.
+    if (intencionPrivada(intent) && !actor.context && !turn.canal.conversacional) return turn.canal.pedirCuenta('private')
 
     const response = await this.conversar(turn, actor, text, intent, correlationId)
     return [
@@ -300,8 +405,53 @@ export class OrquestadorConversacion {
     ]
   }
 
+  // Names the area of TUS the message is about; the backend then offers only that area's tools.
+  // Channel policy (CanalTurno.enrutado): with 'modelo' the MODEL reads the message and decides,
+  // and the patterns of detectarIntencion() are only the fallback for a failed or unusable routing
+  // answer (a provider outage degrades instead of breaking); with 'patrones' they decide directly.
+  private async enrutar(turn: Turno, text: string): Promise<IntencionAsistente> {
+    const state = turn.conversation.state
+    const respaldo = (): IntencionAsistente => {
+      const detected = detectarIntencion(text)
+      return detected === 'otro' && state.currentIntent === 'buscar' ? 'buscar' : detected
+    }
+    let intent: IntencionAsistente | null = null
+    if (turn.canal.enrutado === 'patrones') {
+      intent = respaldo()
+      turn.canal.evento?.({ type: 'routing', intent })
+      return intent
+    }
+    if (this.deps.chat) {
+      try {
+        const started = this.now()
+        const answer = await this.deps.chat.chat({
+          messages: [
+            { role: 'system', content: PROMPT_ENRUTADOR },
+            {
+              role: 'system',
+              content: `Tema en curso: ${state.currentIntent ?? 'ninguno'}. Prestadores ya mostrados en la conversación: ${state.draft?.candidates?.length ?? 0}. Confirmación pendiente: ${state.pendingConfirmationId ? 'sí' : 'no'}.`,
+            },
+            { role: 'user', content: redactarPii(text).slice(0, 600) },
+          ],
+          maxTokens: 256,
+          temperature: 0,
+        })
+        this.metric('assistant.routing_call', { channel: turn.canal.id, ms: answer.latencyMs || this.now() - started })
+        intent = interpretarEtiquetaIntencion(answer.content)
+      } catch (error) {
+        this.metric('assistant.routing_error', { code: error instanceof ErrorChat ? error.code : 'UNKNOWN' })
+      }
+    }
+    if (!intent) {
+      intent = respaldo()
+      this.metric('assistant.routing_fallback', { channel: turn.canal.id, intent })
+    }
+    turn.canal.evento?.({ type: 'routing', intent })
+    return intent
+  }
+
   private async ofrecerVinculacion(
-    turn: Turno,
+    turn: TurnoCargado,
     correlationId: string,
     text: string
   ): Promise<MensajeSaliente[]> {
@@ -332,45 +482,58 @@ export class OrquestadorConversacion {
     intent: IntencionAsistente,
     correlationId: string
   ): Promise<MensajeSaliente[]> {
-    if (!this.deps.chat) return [{ type: 'text', text: MENSAJES.aiUnavailable }]
+    if (!this.deps.chat) {
+      turn.degradado = true
+      return [{ type: 'text', text: MENSAJES.aiUnavailable }]
+    }
+    // Private area without an account, on a channel where the model writes the replies: it gets
+    // no private tool (seleccionarHerramientas) and is told to say what signing in unlocks.
+    const sinCuenta = intencionPrivada(intent) && !actor.context
     let knowledge = ''
+    // The knowledge base has nothing reliable about a knowledge question.
+    let sinDocumentos = false
     const sources: { documentId: string; version: string; chunkId: string }[] = []
+    const fuentes = new Map<string, string>()
     if (
       this.limits.ragEnabled &&
       this.deps.knowledge &&
       (intent === 'conocimiento' || intent === 'otro')
     ) {
       const started = this.now()
+      turn.canal.evento?.({ type: 'knowledge', phase: 'start' })
       const retrieved = await this.deps.knowledge.buscar(redactarPii(text), {
         linked: Boolean(actor.context),
         isProvider: actor.isProvider,
       }).catch(() => null)
+      turn.canal.evento?.({ type: 'knowledge', phase: 'end' })
       if (!retrieved) return this.bajaConfianza(turn, correlationId)
       this.metric('whatsapp.rag_retrieval', {
         ms: this.now() - started,
         results: retrieved.results.length,
         confidence: retrieved.confidence,
       })
-      // A knowledge question without supporting documents is not improvised.
-      if (intent === 'conocimiento' && retrieved.confidence === 'low')
-        return [
-          {
-            type: 'text',
-            text: MENSAJES.noInfo,
-          },
-        ]
-      knowledge = formatearFragmentosParaPrompt(retrieved.results)
-      for (const result of retrieved.results)
-        sources.push({
-          documentId: result.chunk.documentId,
-          version: result.chunk.documentVersion,
-          chunkId: result.chunk.chunkId,
-        })
+      // A knowledge question without supporting documents is not improvised. Where text is the
+      // only carrier the answer is fixed; a conversational channel lets the model say it, with
+      // the explicit instruction below and no document to lean on.
+      if (intent === 'conocimiento' && retrieved.confidence === 'low') {
+        if (!turn.canal.conversacional) return [{ type: 'text', text: MENSAJES.noInfo }]
+        sinDocumentos = true
+      } else {
+        knowledge = formatearFragmentosParaPrompt(retrieved.results)
+        for (const result of retrieved.results) {
+          sources.push({
+            documentId: result.chunk.documentId,
+            version: result.chunk.documentVersion,
+            chunkId: result.chunk.chunkId,
+          })
+          if (retrieved.confidence !== 'low') fuentes.set(result.chunk.documentId, result.documentTitle)
+        }
+      }
     }
     const tools = seleccionarHerramientas(intent, actor)
     const allowed = new Set(tools.map((tool) => tool.name))
     const messages: MensajeChat[] = [
-      { role: 'system', content: PROMPT_SISTEMA },
+      { role: 'system', content: promptSistema(turn.canal.id) },
       { role: 'system', content: await this.contextoActor(turn, actor) },
       ...(knowledge
         ? [
@@ -380,6 +543,16 @@ export class OrquestadorConversacion {
             },
           ]
         : []),
+      ...(sinDocumentos
+        ? [
+            {
+              role: 'system' as const,
+              content:
+                'La base de conocimiento de TUS no tiene información confiable sobre esta pregunta. Decí con claridad que no tenés información suficiente para asegurarlo; no la respondas de memoria ni la completes con suposiciones. Podés ofrecer lo que sí podés hacer (buscar un profesional, consultar turnos).',
+            },
+          ]
+        : []),
+      ...(sinCuenta ? [{ role: 'system' as const, content: INSTRUCCION_SIN_CUENTA }] : []),
       ...(turn.conversation.summary
         ? [
             {
@@ -393,6 +566,11 @@ export class OrquestadorConversacion {
     ]
     const toolsUsed: string[] = []
     let draft = turn.conversation.state.draft
+    // Conversational channels: live data returned by a tool in this turn. The model writes the
+    // reply from the tool result; the data itself travels as an attachment built by the backend.
+    let adjunto: AdjuntoAsistente | null = sinCuenta ? { kind: 'sign_in' } : null
+    let datosEnTurno = false
+    let reencauzado = false
     try {
       for (let round = 0; round <= this.limits.maxToolCalls; round += 1) {
         const started = this.now()
@@ -409,9 +587,18 @@ export class OrquestadorConversacion {
         if (answer.toolCalls.length === 0) {
           const content = (answer.content ?? '').replace(/<think>[\s\S]*?<\/think>/gu, '').trim()
           if (!content) break
-          if (intent === 'buscar') {
+          // A search answered without any tool result in this turn cannot be trusted: the model
+          // is sent back to the tools. Once a tool returned data, its reply is the answer.
+          // A conversational channel accepts a plain reply about providers ALREADY shown (which one
+          // suits, what comes next) after one redirection; without candidates it never does.
+          const sobreMostrados = turn.canal.conversacional && reencauzado && Boolean(draft?.candidates?.length)
+          if (intent === 'buscar' && !datosEnTurno && !sobreMostrados) {
+            reencauzado = true
             if (draft?.candidates?.length && !actor.context) {
-              return this.ofrecerVinculacion(turn, correlationId, MENSAJES.linkRequired)
+              if (!turn.canal.conversacional) return turn.canal.pedirCuenta('choose_provider')
+              adjunto = { kind: 'sign_in' }
+              messages.push({ role: 'system', content: INSTRUCCION_ELEGIR_SIN_CUENTA })
+              continue
             }
             messages.push({ role: 'system', content: 'Para esta solicitud usá collect_service_request para preguntar lo faltante o search_providers después de guardar oficio, problema y zona. No respondas con resultados sin la herramienta.' })
             continue
@@ -422,7 +609,9 @@ export class OrquestadorConversacion {
             currentIntent: intent,
             lowConfidenceCount: 0,
           })
-          return [{ type: 'text', text: content }]
+          const attachment: AdjuntoAsistente | null =
+            adjunto ?? (fuentes.size > 0 ? { kind: 'sources', sources: [...fuentes].map(([documentId, title]) => ({ documentId, title })) } : null)
+          return [{ type: 'text', text: content, ...(attachment ? { attachment } : {}) }]
         }
         messages.push({
           role: 'assistant',
@@ -432,6 +621,7 @@ export class OrquestadorConversacion {
         const call = answer.toolCalls[0]!
         const started2 = this.now()
         const searchWithoutNeed = call.function.name === 'search_providers' && intent === 'buscar' && !(draft?.profession && draft.problem && draft.zone)
+        turn.canal.evento?.({ type: 'tool', tool: call.function.name, phase: 'start' })
         const result = searchWithoutNeed ? { ok: false as const, error: 'MISSING_SERVICE_NEED: call collect_service_request with known facts; ask only for missing profession, problem or zone' } : await validarYEjecutar({
           name: call.function.name,
           rawArguments: call.function.name === 'search_providers' && draft?.profession && draft.problem && draft.zone
@@ -447,6 +637,7 @@ export class OrquestadorConversacion {
           ms: this.now() - started2,
           ok: result.ok,
         })
+        turn.canal.evento?.({ type: 'tool', tool: call.function.name, phase: 'end', ok: result.ok })
         toolsUsed.push(call.function.name)
         await this.registrarUsoHerramientas(turn, toolsUsed, sources, correlationId)
         if (result.ok && 'data' in result && call.function.name === 'collect_service_request') {
@@ -461,23 +652,56 @@ export class OrquestadorConversacion {
           }
         }
         if (result.ok && 'data' in result && call.function.name === 'search_providers') {
-          // Render live results directly: an LLM cannot add fictitious people, prices or ratings.
-          const data = result.data as { providers: { providerId: string; name: string; profession: string; area: string; availability: string }[] }
-          await this.actualizarEstado(turn.conversation.conversationId, {
-            currentIntent: 'buscar', lowConfidenceCount: 0,
-            draft: draft ? { ...draft, candidates: data.providers.map(({ providerId, name }) => ({ providerId, name })) } : null,
-          })
-          return [{ type: 'text', text: data.providers.length
-            ? `Encontré estos prestadores compatibles:\n${data.providers.map((p, index) => `${index + 1}. ${p.name} — ${p.profession}, ${p.area}. Horarios publicados: ${p.availability}.`).join('\n')}\nLa disponibilidad para tu trabajo queda por confirmar. ¿Con cuál querés continuar?`
-            : 'No encontré prestadores compatibles con esta búsqueda. ¿Querés probar otra zona, servicio o ajustar los detalles?' }]
+          const data = result.data as { providers: { providerId: string; name: string; profession: string; area: string; verified: boolean; completedJobs: number; availability: string }[] }
+          draft = draft ? { ...draft, candidates: data.providers.map(({ providerId, name }) => ({ providerId, name })) } : null
+          await this.actualizarEstado(turn.conversation.conversationId, { currentIntent: 'buscar', lowConfidenceCount: 0, draft })
+          // Text-only channel: render live results directly, so an LLM cannot add fictitious
+          // people, prices or ratings. Conversational channel: the same results travel as cards
+          // built here and the model writes the reply from the tool result (appended below).
+          if (!turn.canal.conversacional)
+            return [{ type: 'text', text: data.providers.length
+              ? `Encontré estos prestadores compatibles:\n${data.providers.map((p, index) => `${index + 1}. ${p.name} — ${p.profession}, ${p.area}. Horarios publicados: ${p.availability}.`).join('\n')}\nLa disponibilidad para tu trabajo queda por confirmar. ¿Con cuál querés continuar?`
+              : 'No encontré prestadores compatibles con esta búsqueda. ¿Querés probar otra zona, servicio o ajustar los detalles?' }]
+          adjunto = data.providers.length > 0
+            ? { kind: 'providers', providers: data.providers.map(({ providerId, name, profession, area, verified, completedJobs, availability }) => ({ providerId, name, profession, area, verified, completedJobs, availability })) }
+            : null
+          datosEnTurno = true
         }
         if (result.ok && 'data' in result && call.function.name === 'get_available_slots') {
+          const args = argumentosSeguros(call.function.arguments)
+          await this.actualizarEstado(turn.conversation.conversationId, {
+            slots: {
+              providerId: String(args['providerId'] ?? ''),
+              profession: String(args['profession'] ?? ''),
+              date: String(args['date'] ?? ''),
+              starts: (result.data as { slots: { inicio: string }[] }).slots.slice(0, 30).map((slot) => slot.inicio),
+            },
+          })
+        }
+        if (result.ok && 'data' in result && call.function.name === 'get_available_slots' && turn.canal.conversacional) {
+          const data = result.data as { date: string; slots: { inicio: string; fin: string; duracionMinutos: number }[]; tariffs: { id: string; name: string; durationMinutes: number; price: number }[] }
+          const args = argumentosSeguros(call.function.arguments)
+          adjunto = data.slots.length > 0
+            ? {
+                kind: 'slots',
+                providerId: String(args['providerId'] ?? ''),
+                profession: String(args['profession'] ?? ''),
+                date: data.date,
+                slots: data.slots.map((slot) => ({ startsAt: slot.inicio, endsAt: slot.fin, durationMinutes: slot.duracionMinutos })),
+                tariffs: data.tariffs,
+              }
+            : null
+          datosEnTurno = true
+          await this.actualizarEstado(turn.conversation.conversationId, { currentIntent: 'reserva', lowConfidenceCount: 0 })
+        }
+        if (result.ok && 'data' in result && call.function.name === 'search_services' && turn.canal.conversacional) datosEnTurno = true
+        if (result.ok && 'data' in result && call.function.name === 'get_available_slots' && !turn.canal.conversacional) {
           const data = result.data as { date: string; slots: { inicio: string; fin: string; duracionMinutos: number }[]; tariffs: { id: string; name: string; durationMinutes: number; price: number }[]; message: string | null }
           if (data.slots.length === 0) {
             return [{ type: 'text', text: data.message || `No hay turnos disponibles para esa fecha (${data.date}). Podés consultar otra fecha u otro prestador.` }]
           }
           const horariosTexto = data.slots.map((s) => {
-            const h = new Date(s.inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' })
+            const h = new Date(s.inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Argentina/Buenos_Aires' })
             return `• ${h} hs (${s.duracionMinutos} min)`
           }).join('\n')
           const tarifasTexto = data.tariffs.length > 0
@@ -485,25 +709,28 @@ export class OrquestadorConversacion {
             : ''
           return [{ type: 'text', text: `Turnos disponibles para el ${data.date}:\n${horariosTexto}${tarifasTexto}\n¿En qué horario te gustaría reservar?` }]
         }
-        if (result.ok && 'data' in result && call.function.name === 'search_services' && intent === 'buscar') {
+        if (result.ok && 'data' in result && call.function.name === 'search_services' && intent === 'buscar' && !turn.canal.conversacional) {
           const data = result.data as { services: { name: string }[] }
           return [{ type: 'text', text: data.services.length
             ? `Servicios publicados:\n${data.services.map(service => service.name).join('\n')}\nEsto no confirma disponibilidad para tu trabajo.`
             : 'La consulta no encontró servicios publicados con esos filtros. Podemos ajustar la búsqueda.' }]
         }
         if (result.ok && 'confirmationRequired' in result) {
+          // A write is bound to an account: without one there is nobody to confirm it for.
+          if (!actor.context) return turn.canal.pedirCuenta('private')
+          const summary = resumenConfirmacion(call.function.name, result.arguments, result.summary, draft?.candidates ?? [])
           const pending = await this.crearConfirmacion(
             turn,
             actor,
             call.function.name,
             result.arguments,
-            result.summary,
+            summary,
             correlationId
           )
           return [
             {
               type: 'buttons',
-              text: result.summary,
+              text: summary,
               buttons: [
                 { id: `confirm:${pending.confirmationId}`, title: 'Confirmar' },
                 { id: `cancel:${pending.confirmationId}`, title: 'Cancelar' },
@@ -529,18 +756,20 @@ export class OrquestadorConversacion {
   private async bajaConfianza(turn: Turno, correlationId: string): Promise<MensajeSaliente[]> {
     const count = turn.conversation.state.lowConfidenceCount + 1
     await this.actualizarEstado(turn.conversation.conversationId, { lowConfidenceCount: count })
+    turn.degradado = true
     return [{ type: 'text', text: MENSAJES.aiUnavailable }]
   }
 
   private async contextoActor(turn: Turno, actor: ActorAsistente): Promise<string> {
     const state = turn.conversation.state
     return [
-      `Contexto del usuario (no incluye datos personales): ${actor.context ? 'cuenta TUS vinculada' : 'contacto NO vinculado (solo información pública; para datos privados debe escribir "vincular mi cuenta")'}.`,
+      `Contexto del usuario (no incluye datos personales): ${actor.context ? CON_CUENTA[turn.canal.id] : SIN_CUENTA[turn.canal.id]}.`,
       actor.context
         ? `Rol actual según TUS: ${actor.isProvider ? 'cliente y prestador' : 'cliente'}.`
         : '',
       state.activeWorkId ? `Trabajo activo en la conversación: ${state.activeWorkId}.` : '',
       state.draft ? `Borrador de solicitud en curso: ${JSON.stringify(state.draft)}.` : '',
+      state.slots ? `Últimos turnos consultados (para reservar usá ese providerId y oficio, y como startsAt EXACTAMENTE uno de los valores de "starts"): ${JSON.stringify(state.slots)}.` : '',
       `Fecha actual: ${new Date(this.now()).toISOString().slice(0, 10)}.`,
     ]
       .filter(Boolean)
@@ -666,7 +895,7 @@ export class OrquestadorConversacion {
       domain: this.deps.domain,
       allowed: new Set(HERRAMIENTAS.filter((tool) => tool.confirmation).map((tool) => tool.name)),
       timeoutMs: this.limits.toolTimeoutMs,
-      confirmed: { idempotencyKey: `whatsapp-${loaded.confirmationId}` },
+      confirmed: { idempotencyKey: `${turn.canal.id}-${loaded.confirmationId}` },
     })
     const data =
       result.ok && 'data' in result
@@ -946,13 +1175,50 @@ export class OrquestadorConversacion {
       actorId: 'assistant',
       correlationId,
       metadata: {
-        waId: enmascararWaId(turn.contact.waId),
+        // Web contacts have no phone: their key holds an account or browser id and is not logged.
+        ...(turn.canal.id === 'whatsapp' ? { waId: enmascararWaId(turn.contact.waId) } : {}),
+        channel: turn.canal.id,
         promptVersion: VERSION_PROMPT_SISTEMA,
         ...metadata,
       },
       createdAt: new Date(this.now()).toISOString(),
     })
   }
+}
+
+function argumentosSeguros(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
+const ZONA_HORARIA = 'America/Argentina/Buenos_Aires'
+
+// The confirmation card states exactly what will be executed (validated arguments, never model
+// prose). A booking names the provider as it was shown to the user and the time in local terms.
+function resumenConfirmacion(
+  tool: string,
+  args: Record<string, unknown>,
+  summary: string,
+  candidates: { providerId: string; name: string }[]
+): string {
+  if (tool !== 'book_appointment') return summary
+  const provider = candidates.find((candidate) => candidate.providerId === args['providerId'])?.name
+  const startsAt = new Date(String(args['startsAt']))
+  if (!provider || Number.isNaN(startsAt.getTime())) return summary
+  const day = startsAt.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: ZONA_HORARIA })
+  const hour = startsAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: ZONA_HORARIA })
+  return [
+    'Voy a reservar tu turno:',
+    `Prestador: ${provider}`,
+    `Horario: ${day}, ${hour} hs`,
+    ...(typeof args['clientName'] === 'string' ? [`A nombre de: ${args['clientName']}`] : []),
+    ...(typeof args['notes'] === 'string' && args['notes'] ? [`Nota: ${args['notes']}`] : []),
+    '¿Confirmás?',
+  ].join('\n')
 }
 
 // Deterministic confirmation outcome (no LLM involved: nothing can be embellished).
@@ -977,6 +1243,8 @@ export function formatearResultadoAccion(
       SELF_REQUEST: 'No podés hacer eso con tu propia cuenta de prestador.',
       ALREADY_APPLIED: 'Ya te postulaste a esa solicitud. El cliente decide.',
       REQUEST_FULL: 'Esa solicitud ya no recibe más postulaciones.',
+      SLOT_OCCUPIED: 'Ese horario acaba de ser ocupado. Elegí otro.',
+      SLOT_NOT_AVAILABLE: 'Ese horario ya no está disponible. Elegí otro.',
       NOT_AVAILABLE: 'Esa solicitud o ese postulante ya no están disponibles. Pedime que lo revise de nuevo.',
     }
     return [
@@ -1015,6 +1283,14 @@ export function formatearResultadoAccion(
   if (tool === 'choose_applicant') {
     const name = (data['result'] as { providerName?: string | null } | undefined)?.providerName
     return [{ type: 'text', text: `Listo, quedó confirmado${name ? ` con ${name}` : ''}. Los demás postulantes quedan como no elegidos.` }]
+  }
+  if (tool === 'book_appointment') {
+    const inicio = (data['appointment'] as { inicio?: string } | undefined)?.inicio
+    const at = inicio ? new Date(inicio) : null
+    const when = at && !Number.isNaN(at.getTime())
+      ? ` para el ${at.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: ZONA_HORARIA })} a las ${at.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: ZONA_HORARIA })} hs`
+      : ''
+    return [{ type: 'text', text: `Listo, tu turno quedó reservado${when}.` }]
   }
   if (tool === 'accept_budget') return [{ type: 'text', text: 'Listo, aceptaste el presupuesto.' }]
   if (tool === 'reject_budget') return [{ type: 'text', text: 'Listo, rechazaste el presupuesto.' }]

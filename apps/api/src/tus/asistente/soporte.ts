@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { WhatsappProvider } from './meta.ts'
 import {
   ErrorAsistente,
+  canalDe,
   enmascararWaId,
   ventanaServicioAbierta,
   type ConversacionWhatsapp,
@@ -30,7 +31,7 @@ export class ServicioSoporteWhatsapp {
     const mode = filter.mode === 'bot' || filter.mode === 'human' ? filter.mode : undefined
     const [items, total] = await Promise.all([
       this.listar({ ...(mode ? { mode } : {}), limit: filter.tamano, offset: (filter.pagina - 1) * filter.tamano }),
-      this.transaction.ejecutar((repositories) => repositories.conversaciones.contar(mode ? { mode } : {})),
+      this.transaction.ejecutar((repositories) => repositories.conversaciones.contar({ channel: 'whatsapp', ...(mode ? { mode } : {}) })),
     ])
     return { items, total }
   }
@@ -39,6 +40,8 @@ export class ServicioSoporteWhatsapp {
     const mode = filter.mode === 'bot' || filter.mode === 'human' ? filter.mode : undefined
     return this.transaction.ejecutar(async (repositories) => {
       const conversations = await repositories.conversaciones.listar({
+        // The inbox is the WhatsApp line: Web conversations have no operator and no Meta window.
+        channel: 'whatsapp',
         ...(mode ? { mode } : {}),
         limit: Math.min(Math.max(Number(filter.limit) || 50, 1), 200),
         ...(filter.offset ? { offset: filter.offset } : {}),
@@ -253,7 +256,7 @@ export class ServicioSoporteWhatsapp {
 
   private async requerir(repositories: RepositoriosAsistente, conversationId: string) {
     const conversation = await repositories.conversaciones.buscar(conversationId)
-    if (!conversation) throw new ErrorAsistente(404, 'NOT_FOUND', 'conversation was not found')
+    if (!conversation || canalDe(conversation) !== 'whatsapp') throw new ErrorAsistente(404, 'NOT_FOUND', 'conversation was not found')
     return conversation
   }
 

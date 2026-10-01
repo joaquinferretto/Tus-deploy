@@ -20,10 +20,30 @@ model User {
   phoneNumber     String?      @unique
   phoneVerifiedAt DateTime?
   phonePending    String?
+  // PERFIL-GEO-01 (20261021100000_tus_perfil_geografia): personal profile of the PERSON. Private:
+  // never served by public endpoints. CHECKs in the migration: document format per type, names
+  // and address lengths, and profileComplete only with every required field present.
+  // uq_user_documento (documentType, documentNumber) WHERE documentNumber IS NOT NULL is a partial
+  // unique index kept in SQL.
+  firstName        String?
+  lastName         String?
+  documentType     String?
+  documentNumber   String?
+  localidadId      String?
+  localidad        Localidad?   @relation(fields: [localidadId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_user_localidad")
+  addressStreet    String?
+  addressNumber    String?
+  addressUnit      String?
+  postalCode       String?
+  profileComplete  Boolean      @default(false)
+  profileUpdatedAt DateTime?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   accounts        Account[]
   memberships     Membership[]
+
+  @@index([localidadId], map: "ix_user_localidad")
+  @@index([profileComplete], map: "ix_user_perfil_completo")
 }
 
 model Account {
@@ -2077,6 +2097,9 @@ model Reserva {
   motivoModificacionPrecio String?  @map("motivo_modificacion_precio")
   forzadoFueraHorario      Boolean  @default(false) @map("forzado_fuera_horario")
   motivoForzado            String?  @map("motivo_forzado")
+  // TURNOS-ADMIN-01: administrator that created the turno (general or forced).
+  // ck_reservas_forzado_auditado (SQL): a forced turno always has its reason and its author.
+  creadoPorAdminId         String?  @map("creado_por_admin_id")
   notas                    String?  @map("notas")
 
   calendario  Calendario   @relation(fields: [tenantId, calendarioId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_calendarios")
@@ -2087,6 +2110,7 @@ model Reserva {
   @@index([tenantId, calendarioId, fechaInicio, fechaFin], map: "idx_reservas_tenant_calendario_franja")
   @@index([tenantId, publicacionId, fechaInicio, fechaFin], map: "idx_reservas_tenant_publicacion_franja")
   @@index([tenantId, clienteId, estado], map: "idx_reservas_tenant_cliente_estado")
+  @@index([clienteId, fechaInicio], map: "idx_reservas_cliente_inicio")
   @@map("reservas")
 }
 
@@ -2638,6 +2662,8 @@ model AuditoriaIdentidad {
 // WHATSAPP-AI-01: WhatsApp Cloud API contacts. `wa_id` exactly as Meta delivers it.
 model ContactoWhatsapp {
   id                String    @id(map: "contactos_whatsapp_pkey")
+  // 'whatsapp' | 'web' (CHECK in the migration). Web: wa_id holds web:acct:<cuenta> / web:anon:<id>.
+  canal             String    @default("whatsapp") @map("canal")
   waId              String    @map("wa_id")
   nombrePerfil      String?   @map("nombre_perfil")
   cuentaVinculadaId String?   @map("cuenta_vinculada_id")
@@ -2657,6 +2683,7 @@ model ContactoWhatsapp {
 model ConversacionWhatsapp {
   id                   String    @id(map: "conversaciones_whatsapp_pkey")
   contactoId           String    @map("contacto_id")
+  canal                String    @default("whatsapp") @map("canal")
   estado               String    @map("estado")
   modo                 String    @map("modo")
   motivoDerivacion     String?   @map("motivo_derivacion")
@@ -2672,6 +2699,7 @@ model ConversacionWhatsapp {
   version              Int       @default(1) @map("version")
 
   @@index([modo, ultimoMensajeEn], map: "ix_conversaciones_whatsapp_panel")
+  @@index([canal, modo, ultimoMensajeEn], map: "ix_conversaciones_whatsapp_canal_panel")
   @@map("conversaciones_whatsapp")
 }
 
@@ -3131,10 +3159,50 @@ model SinonimoOficio {
   @@map("sinonimos_oficio")
 }
 
+// PERFIL-GEO-01: País -> Provincia -> Localidad. uq_provincias_pais_nombre_ci (pais_id,
+// lower(nombre)) is an expression index kept in SQL.
+model Pais {
+  id            String      @id(map: "paises_pkey") @map("id")
+  nombre        String      @map("nombre")
+  codigoIso     String      @map("codigo_iso")
+  activo        Boolean     @default(true) @map("activo")
+  orden         Int         @default(0) @map("orden")
+  creadoEn      DateTime    @map("creado_en")
+  actualizadoEn DateTime    @map("actualizado_en")
+  provincias    Provincia[]
+
+  @@unique([codigoIso], map: "uq_paises_codigo_iso")
+  @@map("paises")
+}
+
+model Provincia {
+  id            String      @id(map: "provincias_pkey") @map("id")
+  paisId        String      @map("pais_id")
+  pais          Pais        @relation(fields: [paisId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_provincias_pais")
+  nombre        String      @map("nombre")
+  codigo        String?     @map("codigo")
+  activo        Boolean     @default(true) @map("activo")
+  orden         Int         @default(0) @map("orden")
+  creadoEn      DateTime    @map("creado_en")
+  actualizadoEn DateTime    @map("actualizado_en")
+  localidades   Localidad[]
+
+  @@index([paisId], map: "ix_provincias_pais")
+  @@map("provincias")
+}
+
 model Localidad {
   id            String          @id(map: "localidades_pkey") @map("id")
   nombre        String          @map("nombre")
   provincia     String          @map("provincia")
+  provinciaId   String?         @map("provincia_id")
+  provinciaRef  Provincia?      @relation(fields: [provinciaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_localidades_provincia")
+  // Reference point of the town (map centring). Never an address.
+  latitud       Float?          @map("latitud")
+  longitud      Float?          @map("longitud")
+  // true: TUS operates here (service catalog: zonas, barrios, directory). false: geography only.
+  cobertura     Boolean         @default(false) @map("cobertura")
+  usuarios      User[]
   activo        Boolean         @default(true) @map("activo")
   orden         Int             @default(0) @map("orden")
   creadoEn      DateTime        @map("creado_en")
@@ -3142,6 +3210,7 @@ model Localidad {
   zonas         ZonaUbicacion[]
   barrios       Barrio[]
 
+  @@index([provinciaId, nombre], map: "ix_localidades_provincia")
   @@map("localidades")
 }
 

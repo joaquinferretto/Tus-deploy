@@ -35,6 +35,7 @@ import { WhatsappTemplateService } from './plantillas.ts'
 import type { PuertoTransaccionAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
 import { ServicioSoporteWhatsapp } from './soporte.ts'
 import { ServicioVinculacionWhatsapp } from './vinculacion.ts'
+import { ServicioAsistenteWeb } from './web.ts'
 import { WorkerConversacionesWhatsapp } from './worker.ts'
 
 const numero = (value: string | undefined, fallback: number, min: number, max: number) => {
@@ -57,6 +58,8 @@ export function leerLimites(env: Record<string, string | undefined>): {
       summaryThreshold: numero(env['WHATSAPP_AI_SUMMARY_THRESHOLD'], 24, 8, 200),
       toolTimeoutMs: numero(env['WHATSAPP_AI_TOOL_TIMEOUT_MS'], 8_000, 1_000, 30_000),
       ragEnabled: env['RAG_ENABLED']?.trim() !== 'false',
+      // WHATSAPP_AI_ROUTING=model: the model also routes WhatsApp turns (one more call per turn).
+      whatsappRouting: env['WHATSAPP_AI_ROUTING']?.trim() === 'model' ? 'modelo' : 'patrones',
     },
     ingreso: {
       ...LIMITES_INGRESO_POR_DEFECTO,
@@ -108,6 +111,8 @@ export interface ModuloWhatsapp {
   orquestador: OrquestadorConversacion
   // Ayuda pública de la Web: mismo índice y mismo recuperador (filtrado por visibilidad) que WhatsApp.
   ayuda: ServicioAyudaPublica
+  // Canal Web del asistente: el MISMO orquestador (modelo, tools, RAG, memoria) que WhatsApp.
+  asistenteWeb: ServicioAsistenteWeb
   platformAdminTenantId: string | null
   crearWorker(options?: {
     owner?: string
@@ -199,6 +204,7 @@ export function crearModuloWhatsapp(input: {
     ...(input.metric ? { metric: input.metric } : {}),
     verificadorTelefono: input.verificadorTelefono ?? null,
   })
+  const ayuda = new ServicioAyudaPublica(knowledge, input.metric)
   return {
     config,
     whatsapp,
@@ -207,7 +213,15 @@ export function crearModuloWhatsapp(input: {
     soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now),
     plantillas: WhatsappTemplateService.desdeEnv(env),
     orquestador,
-    ayuda: new ServicioAyudaPublica(knowledge, input.metric),
+    ayuda,
+    asistenteWeb: new ServicioAsistenteWeb({
+      transaction: input.transaction,
+      orquestador,
+      ayuda,
+      limits: { maxInboundPerMinute: limits.ingreso.maxInboundPerMinute },
+      now,
+      ...(input.metric ? { metric: input.metric } : {}),
+    }),
     platformAdminTenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null,
     crearWorker: (options = {}) =>
       new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, ...options }),

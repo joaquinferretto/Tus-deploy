@@ -17,6 +17,8 @@ import {
 import {
   ErrorAsistente,
   ESTADO_CONVERSACIONAL_INICIAL,
+  canalDe,
+  type CanalConversacion,
   type ConfirmacionAsistente,
   type ContactoWhatsapp,
   type ConversacionWhatsapp,
@@ -74,8 +76,16 @@ const sinId = (row: Fila) => {
   return copy
 }
 
+// Rows written before the Web channel existed (and the column default) are WhatsApp.
+const canal = (value: unknown): CanalConversacion => (value === 'web' ? 'web' : 'whatsapp')
+const filtroPanel = (filter: { mode?: string; channel?: CanalConversacion }): Fila => ({
+  ...(filter.mode ? { modo: filter.mode } : {}),
+  ...(filter.channel ? { canal: filter.channel } : {}),
+})
+
 const filaContacto = (value: ContactoWhatsapp): Fila => ({
   id: value.contactId,
+  canal: canalDe(value),
   waId: value.waId,
   nombrePerfil: value.displayName,
   cuentaVinculadaId: value.linkedAccountId,
@@ -90,6 +100,7 @@ const filaContacto = (value: ContactoWhatsapp): Fila => ({
 
 const mapContacto = (row: Fila): ContactoWhatsapp => ({
   contactId: String(row['id']),
+  channel: canal(row['canal']),
   waId: String(row['waId']),
   displayName: texto(row['nombrePerfil']),
   linkedAccountId: texto(row['cuentaVinculadaId']),
@@ -105,6 +116,7 @@ const mapContacto = (row: Fila): ContactoWhatsapp => ({
 const filaConversacion = (value: ConversacionWhatsapp): Fila => ({
   id: value.conversationId,
   contactoId: value.contactId,
+  canal: canalDe(value),
   estado: value.status,
   modo: value.mode,
   motivoDerivacion: value.handoffReason,
@@ -123,6 +135,7 @@ const filaConversacion = (value: ConversacionWhatsapp): Fila => ({
 const mapConversacion = (row: Fila): ConversacionWhatsapp => ({
   conversationId: String(row['id']),
   contactId: String(row['contactoId']),
+  channel: canal(row['canal']),
   status: String(row['estado']) as ConversacionWhatsapp['status'],
   mode: String(row['modo']) as ConversacionWhatsapp['mode'],
   handoffReason: texto(row['motivoDerivacion']),
@@ -301,13 +314,13 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
       listar: async (filter) =>
         (
           await client.conversacionWhatsapp.findMany({
-            where: filter.mode ? { modo: filter.mode } : {},
+            where: filtroPanel(filter),
             orderBy: [{ ultimoMensajeEn: 'desc' }, { id: 'desc' }],
             ...(filter.offset ? { skip: filter.offset } : {}),
             take: filter.limit ?? 100,
           })
         ).map(mapConversacion),
-      contar: async (filter) => client.conversacionWhatsapp.count({ where: filter.mode ? { modo: filter.mode } : {} }),
+      contar: async (filter) => client.conversacionWhatsapp.count({ where: filtroPanel(filter) }),
     },
     mensajes: {
       buscarPorWamid: async (wamid) => {

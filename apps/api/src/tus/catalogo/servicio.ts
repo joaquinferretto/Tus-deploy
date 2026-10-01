@@ -135,10 +135,21 @@ export class ServicioCatalogo {
     if (provincia.length < 2 || provincia.length > 60) campos.push('provincia')
     if (!Number.isInteger(valorOrden) || valorOrden < 0 || valorOrden > 999) campos.push('orden')
     if (typeof activo !== 'boolean') campos.push('activo')
-    if (campos.length) return { ok: false, code: 'INVALID', campos }
+    // Optional reference point: both coordinates or none.
+    const coordenada = (campo: 'lat' | 'lng', limite: number): number | null | undefined => {
+      if (body[campo] === undefined) return actual ? actual[campo] : undefined
+      if (body[campo] === null || body[campo] === '') return null
+      const numero = Number(body[campo])
+      if (!Number.isFinite(numero) || Math.abs(numero) > limite) campos.push(campo)
+      return numero
+    }
+    const lat = coordenada('lat', 90)
+    const lng = coordenada('lng', 180)
+    if ((lat === null) !== (lng === null) && lat !== undefined && lng !== undefined) campos.push('lat', 'lng')
+    if (campos.length) return { ok: false, code: 'INVALID', campos: [...new Set(campos)] }
     if (catalogo.localidades.some((item) => item.id !== actual?.id && clave(item.nombre) === clave(nombre) && clave(item.provincia) === clave(provincia))) return { ok: false, code: 'DUPLICATE', campos: ['nombre'] }
-    const valor: LocalidadCatalogo = { id: actual?.id ?? `${slugificar(nombre)}-${randomUUID().slice(0, 6)}`, nombre, provincia, activo: activo as boolean, orden: valorOrden }
-    await this.deps.almacen.guardarLocalidad(valor)
+    const valor: LocalidadCatalogo = { id: actual?.id ?? `${slugificar(nombre)}-${randomUUID().slice(0, 6)}`, nombre, provincia, activo: activo as boolean, orden: valorOrden, ...(lat !== undefined && lng !== undefined ? { lat, lng } : {}) }
+    valor.id = await this.deps.almacen.guardarLocalidad(valor)
     await this.aplicar({ accion: !actual ? 'creada' : actual.activo !== valor.activo ? (valor.activo ? 'activada' : 'desactivada') : 'modificada', entidad: 'localidad', id: valor.id, nombre }, actorId)
     return { ok: true, valor }
   }
