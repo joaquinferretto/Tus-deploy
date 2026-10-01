@@ -110,21 +110,28 @@ test('REQUESTS client: directed request carries only the chosen provider and ori
   assert.equal(result.publica, 'Publicada en el mapa')
 })
 
-test('ASSISTANT: guided chat, auth gate before searching, client chooses, same request workflow, no invented data', () => {
+// Contract change (ASISTENTE-WEB-01): /asistente was a guided step machine in the browser
+// (describe -> profession -> auth -> zone -> urgency -> budget -> results). It is now a free
+// conversation with the shared assistant of the API; the guarantees that still belong to the Web
+// are below, and the behaviour is tested in tus-asistente-web.test.mjs.
+test('ASSISTANT: free conversation with the shared assistant, sign-in keeps the context, the client chooses, no invented data', () => {
   const chat = web('features/assistant/assistant-chat.tsx')
-  // The greeting also invites questions: they are answered from public knowledge (/tus/v1/asistente/ayuda).
-  assert.match(chat, /Hola, soy el asistente de TUS\. Contame qué necesitás resolver o preguntame cómo funciona TUS\./)
-  assert.match(chat, /Para buscar prestadores disponibles y guardar tu solicitud necesitás iniciar sesión o crear una cuenta\./)
-  assert.match(chat, /No encontré prestadores disponibles para esa búsqueda en este momento\./)
-  assert.match(chat, /withReturnTo\('\/sign-in', RETURN_TO\)/)
-  assert.match(chat, /withReturnTo\('\/registro', RETURN_TO\)/)
-  // Context survives the sign-in round trip.
-  assert.match(chat, /sessionStorage\.setItem\(STORAGE_KEY/)
-  // The AI never picks: candidates are shown and the client presses "Elegir".
-  assert.match(chat, /onChoose=\{\(\) => choose\(candidate\)\}/)
-  assert.match(chat, /origin="web_assistant"/)
-  assert.match(chat, /Cambiar barrio[\s\S]*Cambiar oficio[\s\S]*Cambiar urgencia/)
-  assert.doesNotMatch(chat, /alert\(|confirm\(/)
+  const conversation = web('features/assistant/assistant-conversation.tsx')
+  const client = web('features/assistant/assistant-client.ts')
+  assert.doesNotMatch(chat + conversation, /type Step|setStep\(/, 'no step machine')
+  assert.match(chat, /useAssistant\(/)
+  // Signing in comes back to the same screen, and the conversation survives the round trip: it is
+  // stored by the API (the visitor's conversation becomes the account's).
+  assert.match(conversation, /withReturnTo\('\/sign-in', pathname\)/)
+  assert.match(conversation, /withReturnTo\('\/registro', pathname\)/)
+  assert.match(client, /\/tus\/v1\/asistente\/historial/)
+  assert.match(client, /visitorId/)
+  // The AI never picks: real providers are shown as cards and the client presses "Elegir".
+  assert.match(conversation, /value\.providers\.map\(/)
+  assert.match(conversation, /Elegir/)
+  // Only the newest reply is actionable (an old confirmation card cannot be pressed again).
+  assert.match(conversation, /message\.id !== lastAssistant/)
+  assert.doesNotMatch(chat + conversation, /alert\(|confirm\(/)
 })
 
 test('DIRECTORY UI: list first, chips from the API catalog, honest cards, profile requests keep context', () => {

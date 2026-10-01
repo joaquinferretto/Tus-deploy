@@ -1,8 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import type { PerfilPrestadorPublico, SlotDisponible, TarifaServicioPublica, DetalleTurno } from '@factory/contracts'
+import { useState } from 'react'
+import type { FranjaAgenda, PerfilPrestadorPublico, TarifaServicioPublica, DetalleTurno } from '@factory/contracts'
+import { CODIGO_HORARIO_NO_DISPONIBLE, CODIGO_HORARIO_OCUPADO } from '@factory/contracts'
 import homeStyles from '../home/home.module.css'
+import { AgendaSemanal } from '../turnos/agenda-semanal'
+import { TurnosError, fechaTurno, horaTurno, turnosErrorDe, turnosFetch } from '../../lib/tus-turnos-client'
 import styles from './directory.module.css'
 
 const PESOS = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
@@ -17,16 +20,14 @@ export function TurnoBooking({
   onConfirmed?: (turno: DetalleTurno) => void
 }): React.ReactNode {
   const [selectedOficio, setSelectedOficio] = useState<string>(worker.profession.id)
-  const [fecha, setFecha] = useState<string>(() => {
-    const d = new Date()
-    return d.toISOString().slice(0, 10)
-  })
+  // Bumped to ask the API for the agenda again (after someone else took the time).
+  const [refresh, setRefresh] = useState(0)
   const [tarifas, setTarifas] = useState<TarifaServicioPublica[]>([])
-  const [selectedTarifaId, setSelectedTarifaId] = useState<string>('')
-  const [slots, setSlots] = useState<SlotDisponible[]>([])
-  const [selectedSlot, setSelectedSlot] = useState<SlotDisponible | null>(null)
-  const [loadingSlots, setLoadingSlots] = useState(false)
-  const [slotMessage, setSlotMessage] = useState<string | null>(null)
+  // The tarifa the client picked; without a pick the first one applies (API and Web alike).
+  const [tarifaElegida, setTarifaElegida] = useState<string>('')
+  const selectedTarifaId = tarifaElegida || tarifas[0]?.id || ''
+  const [duracion, setDuracion] = useState(0)
+  const [selectedSlot, setSelectedSlot] = useState<FranjaAgenda | null>(null)
 
   // Datos de contacto
   const [clienteNombre, setClienteNombre] = useState(authenticatedName ?? '')
@@ -39,47 +40,20 @@ export function TurnoBooking({
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [confirmedTurno, setConfirmedTurno] = useState<DetalleTurno | null>(null)
 
-  // Cargar disponibilidad y tarifas cuando cambia fecha u oficio
-  useEffect(() => {
-    let active = true
-    setLoadingSlots(true)
-    setErrorMsg(null)
+  // The service or the tarifa (its duration) changed: the chosen time belongs to another agenda.
+  function cambiarServicio(oficioId: string) {
+    setSelectedOficio(oficioId)
+    setTarifaElegida('')
+    setTarifas([])
     setSelectedSlot(null)
+    setErrorMsg(null)
+  }
 
-    const params = new URLSearchParams({
-      oficioId: selectedOficio,
-      fecha,
-    })
-
-    fetch(`/tus/v1/public/prestadores/${encodeURIComponent(worker.id)}/turnos/disponibilidad?${params.toString()}`)
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
-          throw new Error(body.error || 'No se pudo consultar la disponibilidad')
-        }
-        return res.json()
-      })
-      .then((data) => {
-        if (!active) return
-        setSlots(data.slots || [])
-        setTarifas(data.tarifas || [])
-        if (data.tarifas && data.tarifas.length > 0) {
-          setSelectedTarifaId((prev) => prev || data.tarifas[0].id)
-        }
-        setSlotMessage(data.mensaje || null)
-        setLoadingSlots(false)
-      })
-      .catch((err) => {
-        if (!active) return
-        setSlots([])
-        setSlotMessage(err.message)
-        setLoadingSlots(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [worker.id, selectedOficio, fecha])
+  function cambiarTarifa(tarifaId: string) {
+    setTarifaElegida(tarifaId)
+    setSelectedSlot(null)
+    setErrorMsg(null)
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -96,12 +70,8 @@ export function TurnoBooking({
     setErrorMsg(null)
 
     try {
-      const res = await fetch(`/tus/v1/public/prestadores/${encodeURIComponent(worker.id)}/turnos/reservar`, {
+      const res = await turnosFetch(`/tus/v1/public/prestadores/${encodeURIComponent(worker.id)}/turnos/reservar`, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-correlation-id': `turno-${Date.now()}`,
-        },
         body: JSON.stringify({
           oficioId: selectedOficio,
           tarifaId: selectedTarifaId || undefined,
@@ -113,15 +83,15 @@ export function TurnoBooking({
         }),
       })
 
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data.error || 'No se pudo confirmar el turno. Probá con otro horario.')
-      }
+      if (!res.ok) throw await turnosErrorDe(res, 'No se pudo confirmar el turno. Probá con otro horario.')
+      const data = (await res.json()) as DetalleTurno
 
       setConfirmedTurno(data)
       onConfirmed?.(data)
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Error inesperado al reservar el turno')
+      // Someone took the slot (409): show the real availability again so another one is chosen.
+      if (err instanceof TurnosError && (err.code === CODIGO_HORARIO_OCUPADO || err.code === CODIGO_HORARIO_NO_DISPONIBLE)) setRefresh((value) => value + 1)
     } finally {
       setSubmitting(false)
     }
@@ -134,10 +104,7 @@ export function TurnoBooking({
       day: 'numeric',
       month: 'long',
     })
-    const horaFormateada = inicioDate.toLocaleTimeString('es-AR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })
+    const horaFormateada = horaTurno(confirmedTurno.inicio)
 
     return (
       <section aria-labelledby="turno-confirmado" className={styles.panel} style={{ marginTop: 24, border: '2px solid #22c55e' }}>
@@ -183,7 +150,7 @@ export function TurnoBooking({
             <select
               id="turno-oficio"
               value={selectedOficio}
-              onChange={(e) => setSelectedOficio(e.target.value)}
+              onChange={(e) => cambiarServicio(e.target.value)}
               className={styles.bookingControl}
             >
               {worker.professions?.map((p) => (
@@ -206,7 +173,8 @@ export function TurnoBooking({
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setSelectedTarifaId(t.id)}
+                  aria-pressed={selectedTarifaId === t.id}
+                  onClick={() => cambiarTarifa(t.id)}
                   className={`${styles.tarifaCard} ${selectedTarifaId === t.id ? styles.tarifaCardActive : ''}`}
                 >
                   <div style={{ fontWeight: 600 }}>{t.nombre}</div>
@@ -219,54 +187,25 @@ export function TurnoBooking({
           </div>
         )}
 
-        {/* Selector de fecha */}
-        <div>
-          <label htmlFor="turno-fecha" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
-            Fecha
-          </label>
-          <input
-            id="turno-fecha"
-            type="date"
-            min={new Date().toISOString().slice(0, 10)}
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-            className={styles.bookingControl}
-            style={{ maxWidth: 240 }}
+        {/* Agenda semanal: every time and its state come from the API, for the real duration of
+            the chosen service. The Web never builds a time on its own. */}
+        <div aria-labelledby="turno-agenda-titulo" role="group">
+          <p id="turno-agenda-titulo" style={{ fontWeight: 600, margin: '0 0 6px' }}>
+            Elegí día y horario{duracion > 0 ? <span className={styles.muted} style={{ fontWeight: 400 }}>{` · turnos de ${duracion} min`}</span> : null}
+          </p>
+          <AgendaSemanal
+            onAgenda={(agenda) => {
+              setTarifas(agenda.tarifas)
+              setDuracion(agenda.duracionMinutos)
+            }}
+            onSeleccion={(franja) => {
+              setSelectedSlot(franja)
+              if (franja) setErrorMsg(null)
+            }}
+            origen={{ tipo: 'publica', prestadorId: worker.id, oficioId: selectedOficio, ...(tarifaElegida ? { tarifaId: tarifaElegida } : {}) }}
+            seleccion={selectedSlot?.inicio ?? null}
+            version={refresh}
           />
-        </div>
-
-        {/* Grilla de horarios disponibles */}
-        <div>
-          <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>
-            Horario disponible
-          </label>
-          {loadingSlots ? (
-            <p className={styles.muted}>Consultando disponibilidad en agenda...</p>
-          ) : slotMessage ? (
-            <p className={styles.muted} style={{ color: '#b45309' }}>{slotMessage}</p>
-          ) : slots.length === 0 ? (
-            <p className={styles.muted}>No hay turnos disponibles para esta fecha. Elegí otro día.</p>
-          ) : (
-            <div className={styles.slotGrid}>
-              {slots.map((slot) => {
-                const hora = new Date(slot.inicio).toLocaleTimeString('es-AR', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
-                const isSelected = selectedSlot?.inicio === slot.inicio
-                return (
-                  <button
-                    key={slot.inicio}
-                    type="button"
-                    onClick={() => setSelectedSlot(slot)}
-                    className={`${styles.slotBtn} ${isSelected ? styles.slotBtnActive : ''}`}
-                  >
-                    {hora}
-                  </button>
-                )
-              })}
-            </div>
-          )}
         </div>
 
         {/* Datos de contacto */}
@@ -338,11 +277,11 @@ export function TurnoBooking({
         )}
 
         {/* Resumen y botón de confirmación */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-          <div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+          <div aria-live="polite">
             {selectedSlot ? (
-              <span style={{ fontSize: '0.95rem' }}>
-                Seleccionado: <strong>{new Date(selectedSlot.inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} hs</strong>
+              <span data-turno-elegido style={{ fontSize: '0.95rem' }}>
+                Elegiste: <strong>{fechaTurno(selectedSlot.inicio)}, {horaTurno(selectedSlot.inicio)} hs</strong>
                 {selectedTarifa ? ` · $${PESOS.format(selectedTarifa.precio)}` : ''}
               </span>
             ) : null}

@@ -46,9 +46,6 @@ declare const styles: {
   readonly service: string
   readonly services: string
   readonly skeleton: string
-  readonly slotBtn: string
-  readonly slotBtnActive: string
-  readonly slotGrid: string
   readonly srOnlyLabel: string
   readonly state: string
   readonly stateActions: string

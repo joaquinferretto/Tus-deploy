@@ -530,6 +530,8 @@
 
 /* Bound only pages containing editable forms; directory listings keep their width. */
 .narrow:has(form) { max-width: 680px; }
+/* The weekly agenda needs room for seven days across. */
+.narrow:has([data-agenda]) { max-width: 880px; }
 .narrow form :is(input:not([type='checkbox']):not([type='radio']), select, textarea) {
   min-width: 0; max-width: 100%; min-height: 48px; font-size: 1rem;
 }
@@ -538,6 +540,7 @@
 .narrow .card .card:has(form) { border: 0; padding: 0; }
 @media (max-width: 600px) {
   .narrow { padding: 24px 16px 40px; }
+  .panel { padding: 16px; }
   .narrow .card:has(form) { padding: 16px; }
   .narrow form button[type='submit'] { width: 100%; min-height: 48px; border-radius: var(--tus-control-radius); }
 }
@@ -546,7 +549,7 @@
 .bookingForm {
   display: grid;
   gap: 16px;
-  max-width: 680px;
+  max-width: 760px;
 }
 
 .bookingRow2 {
@@ -592,31 +595,6 @@
 .tarifaCardActive {
   background: #fff7ed;
   border: 2px solid var(--tus-orange);
-}
-
-.slotGrid {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fill, minmax(85px, 1fr));
-}
-
-.slotBtn {
-  align-items: center;
-  background: #ffffff;
-  border: 1px solid var(--tus-line);
-  border-radius: var(--tus-control-radius);
-  color: var(--tus-ink);
-  cursor: pointer;
-  display: flex;
-  font-weight: 600;
-  justify-content: center;
-  min-height: 44px;
-}
-
-.slotBtnActive {
-  background: var(--tus-orange);
-  border: 2px solid var(--tus-orange);
-  color: #ffffff;
 }
 
 .modalBackdrop {

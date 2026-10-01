@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import type { DetalleTurno } from '@factory/contracts'
+import type { DetalleTurno, ServicioTurnosDTO } from '@factory/contracts'
+import { horaTurno, turnosApi, turnosErrorDe, turnosFetch } from '../../lib/tus-turnos-client'
+import { ProviderAvailability } from './provider-availability'
 import homeStyles from '../home/home.module.css'
 import styles from '../directory/directory.module.css'
 
@@ -31,6 +33,13 @@ export function ProviderTurnos(): React.ReactNode {
   const [bloqueoMotivo, setBloqueoMotivo] = useState('')
   const [guardandoBloqueo, setGuardandoBloqueo] = useState(false)
   const [errorBloqueo, setErrorBloqueo] = useState<string | null>(null)
+  // Own services (from the API): the manual turno picks one of them, never a typed id.
+  const [servicios, setServicios] = useState<ServicioTurnosDTO[]>([])
+  // Bumped when a turno or a block changes: the weekly agenda above is asked again.
+  const [versionAgenda, setVersionAgenda] = useState(0)
+  useEffect(() => {
+    void turnosApi.misServicios().then(setServicios).catch(() => setServicios([]))
+  }, [])
 
   const cargarTurnos = useCallback(() => {
     setLoading(true)
@@ -39,17 +48,9 @@ export function ProviderTurnos(): React.ReactNode {
     const params = new URLSearchParams()
     if (filtroEstado) params.set('estado', filtroEstado)
 
-    fetch(`/tus/v1/prestador/turnos?${params.toString()}`, {
-      headers: {
-        Accept: 'application/json',
-        'x-correlation-id': `pres-turnos-${Date.now()}`,
-      },
-    })
+    turnosFetch(`/tus/v1/prestador/turnos?${params.toString()}`)
       .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
-          throw new Error(body.error || 'No se pudieron cargar tus turnos')
-        }
+        if (!res.ok) throw await turnosErrorDe(res, 'No se pudieron cargar tus turnos')
         return res.json()
       })
       .then((data) => {
@@ -68,21 +69,15 @@ export function ProviderTurnos(): React.ReactNode {
 
   async function cambiarEstado(id: string, nuevoEstado: string) {
     try {
-      const res = await fetch(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/estado`, {
+      const res = await turnosFetch(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/estado`, {
         method: 'PATCH',
-        headers: {
-          'content-type': 'application/json',
-          'x-correlation-id': `pres-estado-${Date.now()}`,
-        },
         body: JSON.stringify({ estado: nuevoEstado }),
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error || 'Error al cambiar estado')
-      }
+      if (!res.ok) throw await turnosErrorDe(res, 'No pudimos actualizar el turno.')
       cargarTurnos()
+      setVersionAgenda((value) => value + 1)
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Error al actualizar turno')
+      setError(err instanceof Error ? err.message : 'No pudimos actualizar el turno.')
     }
   }
 
@@ -97,15 +92,12 @@ export function ProviderTurnos(): React.ReactNode {
     setErrorManual(null)
 
     try {
-      const res = await fetch('/tus/v1/prestador/turnos/manual', {
+      const res = await turnosFetch('/tus/v1/prestador/turnos/manual', {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-correlation-id': `pres-man-${Date.now()}`,
-        },
         body: JSON.stringify({
           oficioId: manualOficio.trim(),
-          inicio: manualInicio,
+          // The field is Argentina local time; the API stores the instant.
+          inicio: new Date(`${manualInicio}:00.000-03:00`).toISOString(),
           clienteNombre: manualCliente.trim(),
           clienteTelefono: manualTelefono.trim() || undefined,
           precioFinal: manualPrecio ? Number(manualPrecio) : undefined,
@@ -113,13 +105,11 @@ export function ProviderTurnos(): React.ReactNode {
         }),
       })
 
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data.error || 'No se pudo crear el turno manual')
-      }
+      if (!res.ok) throw await turnosErrorDe(res, 'No se pudo crear el turno manual')
 
       setModalManual(false)
       cargarTurnos()
+      setVersionAgenda((value) => value + 1)
     } catch (err: unknown) {
       setErrorManual(err instanceof Error ? err.message : 'Error inesperado')
     } finally {
@@ -138,26 +128,20 @@ export function ProviderTurnos(): React.ReactNode {
     setErrorBloqueo(null)
 
     try {
-      const res = await fetch('/tus/v1/prestador/turnos/bloquear', {
+      const res = await turnosFetch('/tus/v1/prestador/turnos/bloquear', {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-correlation-id': `pres-bloq-${Date.now()}`,
-        },
         body: JSON.stringify({
-          inicio: bloqueoInicio,
-          fin: bloqueoFin,
+          inicio: new Date(`${bloqueoInicio}:00.000-03:00`).toISOString(),
+          fin: new Date(`${bloqueoFin}:00.000-03:00`).toISOString(),
           motivo: bloqueoMotivo.trim() || 'Bloqueo manual de horario',
         }),
       })
 
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data.error || 'No se pudo registrar el bloqueo')
-      }
+      if (!res.ok) throw await turnosErrorDe(res, 'No se pudo registrar el bloqueo')
 
       setModalBloqueo(false)
       cargarTurnos()
+      setVersionAgenda((value) => value + 1)
     } catch (err: unknown) {
       setErrorBloqueo(err instanceof Error ? err.message : 'Error inesperado')
     } finally {
@@ -167,6 +151,9 @@ export function ProviderTurnos(): React.ReactNode {
 
   return (
     <div style={{ display: 'grid', gap: 20 }}>
+      {/* Disponibilidad semanal (intervalo, días y horarios) y la agenda que ven los clientes */}
+      <ProviderAvailability servicios={servicios} version={versionAgenda} />
+
       {/* Botones de acción principales */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -220,8 +207,8 @@ export function ProviderTurnos(): React.ReactNode {
         <div style={{ display: 'grid', gap: 12 }}>
           {turnos.map((t) => {
             const fecha = new Date(t.inicio).toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' })
-            const horaInicio = new Date(t.inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
-            const horaFin = new Date(t.fin).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+            const horaInicio = horaTurno(t.inicio)
+            const horaFin = horaTurno(t.fin)
 
             return (
               <div key={t.id} className={styles.panel} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
@@ -285,14 +272,14 @@ export function ProviderTurnos(): React.ReactNode {
             <form onSubmit={handleCrearManual} style={{ display: 'grid', gap: 12 }}>
               <div>
                 <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Oficio / Servicio *</label>
-                <input
-                  type="text"
-                  required
-                  value={manualOficio}
-                  onChange={(e) => setManualOficio(e.target.value)}
-                  placeholder="ej. masajes, electricidad"
-                  className={styles.bookingControl}
-                />
+                <select className={styles.bookingControl} onChange={(e) => setManualOficio(e.target.value)} required value={manualOficio}>
+                  <option value="">Elegí uno de tus servicios</option>
+                  {servicios.map((item) => (
+                    <option key={item.oficioId} value={item.oficioId}>
+                      {item.nombre}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
