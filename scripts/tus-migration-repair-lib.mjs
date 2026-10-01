@@ -667,6 +667,42 @@ export const REVIEWED_MIGRATION_STATEMENTS = Object.freeze([
     sha256: '1d0babeaa6542125036a4702719ff0b62d07fff960c7d78c5ab24d5872c25fd4',
     reason: 'Deterministic backfill of the new reservas.creado_por_admin_id for existing forced turnos from the administrator already recorded in modificado_por_admin_id (the only author column the previous code wrote).',
   },
+  {
+    migration: '20261024100000_tus_alojamientos_integridad',
+    classification: 'ambiguous',
+    sha256: '8a7b8e0364c120b792e64f376745fb7f7126e87742d26c259cee9d52eb721460',
+    reason: 'Deterministic resolution of duplicated alojamientos.slug before uq_alojamientos_slug: the oldest row of each slug keeps it, the others get a suffix taken from their own id. No row is deleted; rows with a unique slug are not touched.',
+  },
+  {
+    migration: '20261025100000_tus_tarifas_geografia_integridad',
+    classification: 'ambiguous',
+    sha256: '3cfedd9139fe974a548f216b76fe058591541d4c7025e7dce9f2d0b75db8ec4b',
+    reason: 'Trigger function tus_localidad_provincia_derivada: sets localidades.provincia (legacy text) to the name of the province referenced by provincia_id. It only writes the row being inserted or updated and reads provincias.',
+  },
+  {
+    migration: '20261025100000_tus_tarifas_geografia_integridad',
+    classification: 'ambiguous',
+    sha256: 'f18097b3e27fb66bf0af8c35017059019dbecfd099317d5f9c3c2d050085355f',
+    reason: 'BEFORE INSERT OR UPDATE OF provincia, provincia_id trigger on localidades that runs tus_localidad_provincia_derivada, so the text can no longer contradict the reference.',
+  },
+  {
+    migration: '20261025100000_tus_tarifas_geografia_integridad',
+    classification: 'ambiguous',
+    sha256: 'e6744581ff95a3e890d53c86df20497e105465b18d3a64c3bbe79968d8a5834d',
+    reason: 'Trigger function tus_provincia_renombrada: when a province is renamed, copies the new name to the provincia text of its own localities (provincia_id = the renamed province) and to no other row.',
+  },
+  {
+    migration: '20261025100000_tus_tarifas_geografia_integridad',
+    classification: 'ambiguous',
+    sha256: '16caf3bfddea63c98e20e9107cabe80b594359bf486e268de27018e24a6f7e70',
+    reason: 'AFTER UPDATE OF nombre trigger on provincias (only when the name really changes) that runs tus_provincia_renombrada.',
+  },
+  {
+    migration: '20261025100000_tus_tarifas_geografia_integridad',
+    classification: 'ambiguous',
+    sha256: '21a77907ef9b6fe386a09ed803b257ed2fdfc9ec8f8f49cd300d67628e63df76',
+    reason: 'Deterministic backfill: localities whose provincia text differs from the name of the province they reference take that name. Localities without provincia_id are not touched.',
+  },
 ])
 
 export function normalizedStatementHash(sql) {

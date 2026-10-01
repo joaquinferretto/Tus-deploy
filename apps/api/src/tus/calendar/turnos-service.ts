@@ -1135,28 +1135,52 @@ export class ServicioTurnos {
       orden?: number
     }>
   }): Promise<TarifaServicioPublica[]> {
-    // Reemplaza o upsert de tarifas
-    await this.prisma.tarifaServicioPrestador.deleteMany({
-      where: { perfilId: input.perfilId, oficioId: input.oficioId },
+    if (!Array.isArray(input.tarifas) || input.tarifas.length > 20) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Tarifas inválidas')
+    const limpias = input.tarifas.map((tarifa, indice) => {
+      const nombre = String(tarifa.nombre ?? '').trim()
+      const valida =
+        nombre.length >= 1 &&
+        nombre.length <= 80 &&
+        Number.isInteger(tarifa.duracionMinutos) &&
+        tarifa.duracionMinutos >= 5 &&
+        tarifa.duracionMinutos <= 24 * 60 &&
+        typeof tarifa.precio === 'bigint' &&
+        tarifa.precio >= 0n &&
+        tarifa.precio <= BigInt(Number.MAX_SAFE_INTEGER)
+      if (!valida) throw new ErrorCalendario(400, 'INVALID_PARAMS', `La tarifa ${indice + 1} no es válida`)
+      return { id: tarifa.id, nombre, duracionMinutos: tarifa.duracionMinutos, precio: tarifa.precio, orden: Number.isInteger(tarifa.orden) ? tarifa.orden! : indice }
     })
 
-    const rows = input.tarifas.map((t, idx) => ({
-      id: t.id ?? `tar-${randomUUID()}`,
-      tenantId: input.tenantId,
-      perfilId: input.perfilId,
-      oficioId: input.oficioId,
-      nombre: t.nombre,
-      duracionMinutos: t.duracionMinutos,
-      precio: t.precio,
-      activo: true,
-      orden: t.orden ?? idx,
-      fechaCreacion: new Date(),
-      fechaActualizacion: new Date(),
-    }))
-
-    if (rows.length > 0) {
-      await this.prisma.tarifaServicioPrestador.createMany({ data: rows })
-    }
+    // Reemplazo atómico: o quedan las tarifas nuevas o quedan las anteriores, nunca ninguna ni una
+    // mezcla. La fila del servicio del perfil se toma con FOR UPDATE: dos guardados simultáneos
+    // corren de a uno, y un servicio que el perfil no ofrece no tiene tarifas.
+    const rows = await this.prisma.$transaction(async (tx) => {
+      const ofrecido = await tx.$queryRaw<{ ok: number }[]>`SELECT 1 AS ok FROM public."perfil_servicios" WHERE "perfil_id" = ${input.perfilId} AND "oficio_id" = ${input.oficioId} FOR UPDATE`
+      if (ofrecido.length === 0) throw new ErrorCalendario(404, 'NOT_FOUND', 'Ese prestador no ofrece ese servicio')
+      // An edited tarifa keeps its id (reservations keep a snapshot of it); any other id is new.
+      const previas = await tx.tarifaServicioPrestador.findMany({ where: { perfilId: input.perfilId, oficioId: input.oficioId }, select: { id: true } })
+      const propias = new Set(previas.map((previa) => previa.id))
+      await tx.tarifaServicioPrestador.deleteMany({ where: { perfilId: input.perfilId, oficioId: input.oficioId } })
+      const ahora = new Date()
+      const nuevas = limpias.map((tarifa) => {
+        const conserva = tarifa.id !== undefined && propias.delete(tarifa.id)
+        return {
+          id: conserva ? tarifa.id! : `tar-${randomUUID()}`,
+          tenantId: input.tenantId,
+          perfilId: input.perfilId,
+          oficioId: input.oficioId,
+          nombre: tarifa.nombre,
+          duracionMinutos: tarifa.duracionMinutos,
+          precio: tarifa.precio,
+          activo: true,
+          orden: tarifa.orden,
+          fechaCreacion: ahora,
+          fechaActualizacion: ahora,
+        }
+      })
+      if (nuevas.length > 0) await tx.tarifaServicioPrestador.createMany({ data: nuevas })
+      return nuevas
+    })
 
     return rows.map((r) => ({
       id: r.id,

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import type {
   AlojamientoPublicoDTO,
   BloqueoUnidadInput,
@@ -14,6 +14,7 @@ import type {
   TipoAlojamientoDTO,
   UnidadDisponibleDTO,
 } from '@factory/contracts'
+import { cotizarEstadia, mejorCotizacion } from './cotizacion.ts'
 
 export class ErrorAlojamiento extends Error {
   readonly statusCode: number
@@ -27,11 +28,52 @@ export class ErrorAlojamiento extends Error {
   }
 }
 
+// Unique index violated (Prisma reports it as code P2002; the text of the error may not say so).
+const esUnicoViolado = (error: unknown, indice: string): boolean =>
+  (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002') || String(error).includes(indice)
+
+// A reservation in one of these states keeps its dates (the same list as the exclusion
+// constraint ex_reservas_alojamiento_sin_solapamiento).
+const ESTADOS_QUE_OCUPAN = ['pending_payment', 'confirmed', 'checked_in']
+
+// Life of a reservation: which states may move to each one. A finished reservation (completed,
+// cancelled, expired) never comes back to life: its dates may already belong to someone else.
+// The administration may advance a reservation that was paid at the place (no online payment).
+const ORIGENES_DE_ESTADO: Record<'checked_in' | 'completed' | 'cancelled', string[]> = {
+  checked_in: ['pending_payment', 'confirmed'],
+  completed: ['pending_payment', 'confirmed', 'checked_in'],
+  cancelled: ['pending_payment', 'confirmed', 'checked_in'],
+}
+
 export class AlojamientosService {
   private readonly prisma: PrismaClient
 
   constructor(prisma: PrismaClient) {
     this.prisma = prisma
+  }
+
+  /**
+   * Reservas y bloqueos de una unidad corren de a uno: cada operación toma la fila de la unidad y
+   * decide con el estado que dejó la anterior. Así una reserva y un bloqueo manual no pueden
+   * quedar superpuestos (dos tablas distintas: una exclusión no lo cubre).
+   */
+  private async conUnidadBloqueada<T>(unidadId: string, operacion: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 AS ok FROM public."unidades_alojamiento" WHERE "id" = ${unidadId} FOR UPDATE`
+      return operacion(tx)
+    })
+  }
+
+  /**
+   * Un hold vencido ya no guarda sus fechas: se marca expirado en la misma transacción que las
+   * vuelve a usar. La disponibilidad que se muestra y la que se puede reservar son la misma, sin
+   * depender de un proceso de limpieza.
+   */
+  private async expirarHoldsVencidos(tx: Prisma.TransactionClient, unidadId: string, inicio: Date, fin: Date, ahora: Date): Promise<void> {
+    await tx.reservaAlojamiento.updateMany({
+      where: { unidadId, estado: 'pending_payment', holdExpiracion: { lt: ahora }, fechaInicio: { lt: fin }, fechaFin: { gt: inicio } },
+      data: { estado: 'expired' },
+    })
   }
 
   /**
@@ -360,62 +402,16 @@ export class AlojamientosService {
       // Cálculo de precio
       let precioCalculado: UnidadDisponibleDTO['precioCalculado'] = null
       if (checkInDate && checkOutDate) {
-        const diffMs = checkOutDate.getTime() - checkInDate.getTime()
-        const diffHoras = Math.max(1, Math.round(diffMs / (1000 * 60 * 60)))
-        const diffNoches = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)))
-
-        let mejorTarifa: {
-          total: number
-          precioPorUnidad: number
-          modalidad: ModalidadTarifaAlojamiento
-          duracionHoras?: number
-          cantidadPeriodos: number
-        } | null = null
-
-        for (const t of u.tarifas) {
-          if (t.modalidad === 'por_hora' || t.modalidad === 'bloque_horas') {
-            const horasTarifa = t.duracionHoras ?? 1
-            const periodos = Math.ceil(diffHoras / horasTarifa)
-            const total = Number(t.precio) * periodos
-            if (!mejorTarifa || total < mejorTarifa.total) {
-              mejorTarifa = {
-                total,
-                precioPorUnidad: Number(t.precio),
-                modalidad: t.modalidad as ModalidadTarifaAlojamiento,
-                duracionHoras: horasTarifa,
-                cantidadPeriodos: periodos,
-              }
-            }
-          } else if (t.modalidad === 'noche' || t.modalidad === 'dia') {
-            if (diffNoches < t.minimoEstadia) continue
-            if (t.maximoEstadia && diffNoches > t.maximoEstadia) continue
-            const total = Number(t.precio) * diffNoches
-            if (!mejorTarifa || total < mejorTarifa.total) {
-              mejorTarifa = {
-                total,
-                precioPorUnidad: Number(t.precio),
-                modalidad: t.modalidad as ModalidadTarifaAlojamiento,
-                cantidadPeriodos: diffNoches,
-              }
-            }
-          } else if (t.modalidad === 'semana') {
-            const semanas = Math.ceil(diffNoches / 7)
-            const total = Number(t.precio) * semanas
-            if (!mejorTarifa || total < mejorTarifa.total) {
-              mejorTarifa = {
-                total,
-                precioPorUnidad: Number(t.precio),
-                modalidad: 'semana',
-                cantidadPeriodos: semanas,
-              }
-            }
-          }
-        }
-
-        if (mejorTarifa) {
+        // La misma cotización que usa la reserva (días de semana de cada tarifa incluidos).
+        const mejor = mejorCotizacion(u.tarifas, checkInDate, checkOutDate)
+        if (mejor) {
           precioCalculado = {
-            ...mejorTarifa,
-            moneda: 'ARS',
+            total: mejor.total,
+            precioPorUnidad: mejor.precioPorUnidad,
+            modalidad: mejor.modalidad,
+            ...(mejor.duracionHoras !== undefined ? { duracionHoras: mejor.duracionHoras } : {}),
+            cantidadPeriodos: mejor.cantidadPeriodos,
+            moneda: mejor.moneda,
           }
         }
       }
@@ -499,94 +495,79 @@ export class AlojamientosService {
       throw new ErrorAlojamiento(404, 'NOT_FOUND', 'Unidad no encontrada o inactiva')
     }
 
-    // Verificar si hay bloqueo manual
-    const bloqueosSolapados = await this.prisma.bloqueoUnidadAlojamiento.findMany({
-      where: {
-        unidadId: input.unidadId,
-        fechaInicio: { lt: fin },
-        fechaFin: { gt: inicio },
-      },
-    })
-
-    if (bloqueosSolapados.length > 0) {
-      throw new ErrorAlojamiento(409, 'UNIT_BLOCKED', 'La unidad se encuentra bloqueada por mantenimiento o administración')
+    const personas = input.cantidadPersonas ?? 1
+    if (!Number.isInteger(personas) || personas < 1) {
+      throw new ErrorAlojamiento(400, 'BAD_REQUEST', 'La cantidad de personas no es válida')
+    }
+    if (personas > unidad.capacidadPersonas) {
+      throw new ErrorAlojamiento(400, 'CAPACITY_EXCEEDED', `Esta unidad admite hasta ${unidad.capacidadPersonas} persona(s)`)
     }
 
-    // Calcular precio y tarifa aplicable
-    const diffMs = fin.getTime() - inicio.getTime()
-    const diffHoras = Math.max(1, Math.round(diffMs / (1000 * 60 * 60)))
-    const diffNoches = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)))
-
-    let tarifaSeleccionada = unidad.tarifas.find((t) => t.id === input.tarifaId)
-    if (!tarifaSeleccionada) {
-      // Buscar la tarifa más adecuada por modalidad
-      if (input.modalidad) {
-        tarifaSeleccionada = unidad.tarifas.find((t) => t.modalidad === input.modalidad)
-      } else {
-        tarifaSeleccionada = unidad.tarifas[0]
+    // Precio y tarifa: una sola regla (cotizacion.ts). Una estadía por noche se cotiza noche por
+    // noche, cada una con la tarifa de su día de la semana.
+    const cotizacion = cotizarEstadia(unidad.tarifas, inicio, fin, { tarifaId: input.tarifaId, modalidad: input.modalidad })
+    if (!cotizacion.ok) {
+      if (cotizacion.motivo === 'estadia_minima') {
+        throw new ErrorAlojamiento(400, 'MIN_STAY_NOT_MET', `La estadía mínima para esta tarifa es de ${cotizacion.limite} noche(s)`)
       }
-    }
-
-    if (!tarifaSeleccionada) {
+      if (cotizacion.motivo === 'estadia_maxima') {
+        throw new ErrorAlojamiento(400, 'MAX_STAY_EXCEEDED', `La estadía máxima para esta tarifa es de ${cotizacion.limite} noche(s)`)
+      }
+      if (cotizacion.motivo === 'sin_tarifa_para_fecha') {
+        throw new ErrorAlojamiento(400, 'NO_TARIFF_FOR_DATE', 'No hay una tarifa para alguno de los días elegidos')
+      }
+      if (cotizacion.motivo === 'monedas_mixtas') {
+        throw new ErrorAlojamiento(400, 'MIXED_CURRENCIES', 'Las tarifas de esos días están en monedas distintas')
+      }
       throw new ErrorAlojamiento(400, 'NO_TARIFF', 'No hay tarifas disponibles para esta unidad')
     }
-
-    let precioCalculado = 0
-    const mod = tarifaSeleccionada.modalidad as ModalidadTarifaAlojamiento
-
-    if (mod === 'por_hora' || mod === 'bloque_horas') {
-      const cantHoras = tarifaSeleccionada.duracionHoras ?? 1
-      const bloques = Math.ceil(diffHoras / cantHoras)
-      precioCalculado = Number(tarifaSeleccionada.precio) * bloques
-    } else if (mod === 'dia' || mod === 'noche') {
-      if (diffNoches < tarifaSeleccionada.minimoEstadia) {
-        throw new ErrorAlojamiento(
-          400,
-          'MIN_STAY_NOT_MET',
-          `La estadía mínima para esta tarifa es de ${tarifaSeleccionada.minimoEstadia} noche(s)`
-        )
-      }
-      if (tarifaSeleccionada.maximoEstadia && diffNoches > tarifaSeleccionada.maximoEstadia) {
-        throw new ErrorAlojamiento(
-          400,
-          'MAX_STAY_EXCEEDED',
-          `La estadía máxima para esta tarifa es de ${tarifaSeleccionada.maximoEstadia} noche(s)`
-        )
-      }
-      precioCalculado = Number(tarifaSeleccionada.precio) * diffNoches
-    } else if (mod === 'semana') {
-      const semanas = Math.ceil(diffNoches / 7)
-      precioCalculado = Number(tarifaSeleccionada.precio) * semanas
-    }
+    const precioCalculado = cotizacion.total
+    const mod = cotizacion.modalidad
 
     const reservaId = `res-aloj-${randomUUID()}`
     const holdExpiracion = new Date(ahora.getTime() + 15 * 60 * 1000) // 15 minutos de hold
 
+    const tarifa = { id: cotizacion.tarifaId, moneda: cotizacion.moneda }
     try {
-      const reserva = await this.prisma.reservaAlojamiento.create({
-        data: {
-          id: reservaId,
-          unidadId: input.unidadId,
-          alojamientoId: unidad.alojamientoId,
-          clienteId: input.clienteId ?? null,
-          clienteNombre: input.clienteNombre,
-          clienteEmail: input.clienteEmail ?? null,
-          clienteTelefono: input.clienteTelefono ?? null,
-          esInvitado: !input.clienteId,
-          fechaInicio: inicio,
-          fechaFin: fin,
-          modalidad: mod,
-          cantidadPersonas: input.cantidadPersonas ?? 1,
-          tarifaId: tarifaSeleccionada.id,
-          precioListaSnapshot: BigInt(precioCalculado),
-          precioFinalSnapshot: BigInt(precioCalculado),
-          moneda: 'ARS',
-          estado: 'pending_payment',
-          holdExpiracion,
-          notas: input.notas ?? null,
-          creadoEn: ahora,
-          actualizadoEn: ahora,
-        },
+      const reserva = await this.conUnidadBloqueada(input.unidadId, async (tx) => {
+        await this.expirarHoldsVencidos(tx, input.unidadId, inicio, fin, ahora)
+        // Bloqueo manual: se verifica con la unidad tomada, junto con la reserva que se crea.
+        const bloqueosSolapados = await tx.bloqueoUnidadAlojamiento.findMany({
+          where: {
+            unidadId: input.unidadId,
+            fechaInicio: { lt: fin },
+            fechaFin: { gt: inicio },
+          },
+        })
+        if (bloqueosSolapados.length > 0) {
+          throw new ErrorAlojamiento(409, 'UNIT_BLOCKED', 'La unidad se encuentra bloqueada por mantenimiento o administración')
+        }
+        return tx.reservaAlojamiento.create({
+          data: {
+            id: reservaId,
+            unidadId: input.unidadId,
+            alojamientoId: unidad.alojamientoId,
+            clienteId: input.clienteId ?? null,
+            clienteNombre: input.clienteNombre,
+            clienteEmail: input.clienteEmail ?? null,
+            clienteTelefono: input.clienteTelefono ?? null,
+            esInvitado: !input.clienteId,
+            fechaInicio: inicio,
+            fechaFin: fin,
+            modalidad: mod,
+            cantidadPersonas: personas,
+            tarifaId: tarifa.id,
+            precioListaSnapshot: BigInt(precioCalculado),
+            precioFinalSnapshot: BigInt(precioCalculado),
+            // The amount is in the currency of the tarifa it was computed from.
+            moneda: tarifa.moneda,
+            estado: 'pending_payment',
+            holdExpiracion,
+            notas: input.notas ?? null,
+            creadoEn: ahora,
+            actualizadoEn: ahora,
+          },
+        })
       })
 
       return {
@@ -617,6 +598,7 @@ export class AlojamientosService {
         createdAt: (reserva.creadoEn ?? ahora).toISOString(),
       }
     } catch (error: unknown) {
+      if (error instanceof ErrorAlojamiento) throw error
       const errStr = String(error)
       // Captura física de violación de exclusión GiST o deadlock
       if (
@@ -639,7 +621,20 @@ export class AlojamientosService {
    * Confirma una reserva de alojamiento tras procesar pago.
    */
   async confirmarReserva(input: ConfirmarReservaInput): Promise<ReservaAlojamientoDTO> {
-    const reserva = await this.prisma.reservaAlojamiento.findUnique({
+    // Con la fila de la reserva tomada: una confirmación y un vencimiento (o dos confirmaciones)
+    // no se pisan. Un hold vencido cuyas fechas nadie tomó sigue pendiente y se puede confirmar;
+    // uno que ya perdió sus fechas está "expired" y no se confirma.
+    const resultado = await this.prisma.$transaction((tx) => this.confirmarReservaEn(tx, input))
+    if (resultado === 'en_revision') {
+      // Thrown after the transaction committed: the payment stays recorded for reconciliation.
+      throw new ErrorAlojamiento(409, 'PAYMENT_REQUIRES_REVIEW', 'El pago llegó cuando la reserva ya no tenía sus fechas. Queda en revisión; no se asignó ninguna reserva.')
+    }
+    return resultado
+  }
+
+  private async confirmarReservaEn(tx: Prisma.TransactionClient, input: ConfirmarReservaInput): Promise<ReservaAlojamientoDTO | 'en_revision'> {
+    await tx.$queryRaw`SELECT 1 AS ok FROM public."reservas_alojamiento" WHERE "id" = ${input.reservaId} FOR UPDATE`
+    const reserva = await tx.reservaAlojamiento.findUnique({
       where: { id: input.reservaId },
       include: { unidad: { include: { alojamiento: true } } },
     })
@@ -648,8 +643,9 @@ export class AlojamientosService {
       throw new ErrorAlojamiento(404, 'NOT_FOUND', 'Reserva no encontrada')
     }
 
-    if (reserva.estado === 'confirmed') {
-      // Idempotencia: ya confirmada
+    const yaPagada = reserva.estado === 'confirmed' || (['checked_in', 'completed'].includes(reserva.estado) && reserva.paymentId === input.paymentId)
+    if (yaPagada) {
+      // Idempotencia: ya confirmada (o el aviso repetido de un pago ya aplicado)
       return {
         id: reserva.id,
         unidadId: reserva.unidadId,
@@ -679,11 +675,26 @@ export class AlojamientosService {
       }
     }
 
-    if (reserva.estado !== 'pending_payment') {
-      throw new ErrorAlojamiento(400, 'INVALID_STATE', `No se puede confirmar una reserva en estado ${reserva.estado}`)
+    // Un pago para una reserva que ya no guarda sus fechas (vencida, cancelada, o con el hold
+    // vencido aunque nadie las haya tomado todavía) NO se confirma ni se le asignan fechas: queda
+    // registrado para conciliación / revisión manual. Nunca puede generar una doble reserva.
+    const ahora = new Date()
+    const holdVencido = reserva.estado === 'pending_payment' && reserva.holdExpiracion !== null && reserva.holdExpiracion < ahora
+    if (reserva.estado !== 'pending_payment' || holdVencido) {
+      await tx.reservaAlojamiento.update({
+        where: { id: input.reservaId },
+        data: {
+          ...(holdVencido ? { estado: 'expired' } : {}),
+          paymentId: reserva.paymentId ?? input.paymentId,
+          preferenceId: reserva.preferenceId ?? input.preferenceId ?? null,
+          metodoPago: reserva.metodoPago ?? input.metodoPago ?? 'mercadopago',
+          pagoEnRevisionDesde: reserva.pagoEnRevisionDesde ?? ahora,
+        },
+      })
+      return 'en_revision'
     }
 
-    const updated = await this.prisma.reservaAlojamiento.update({
+    const updated = await tx.reservaAlojamiento.update({
       where: { id: input.reservaId },
       data: {
         estado: 'confirmed',
@@ -722,6 +733,28 @@ export class AlojamientosService {
       notas: updated.notas,
       createdAt: (updated.creadoEn ?? new Date()).toISOString(),
     }
+  }
+
+  /**
+   * Pagos recibidos para reservas que ya no tenían sus fechas: pendientes de conciliación.
+   */
+  async pagosEnRevision(): Promise<Array<{ reservaId: string; alojamientoId: string; unidadId: string; estado: string; paymentId: string | null; metodoPago: string | null; monto: number; moneda: string; enRevisionDesde: string }>> {
+    const filas = await this.prisma.reservaAlojamiento.findMany({
+      where: { pagoEnRevisionDesde: { not: null } },
+      orderBy: { pagoEnRevisionDesde: 'asc' },
+      take: 200,
+    })
+    return filas.map((fila) => ({
+      reservaId: fila.id,
+      alojamientoId: fila.alojamientoId,
+      unidadId: fila.unidadId,
+      estado: fila.estado,
+      paymentId: fila.paymentId,
+      metodoPago: fila.metodoPago,
+      monto: Number(fila.precioFinalSnapshot),
+      moneda: fila.moneda,
+      enRevisionDesde: fila.pagoEnRevisionDesde!.toISOString(),
+    }))
   }
 
   /**
@@ -770,36 +803,48 @@ export class AlojamientosService {
       throw new ErrorAlojamiento(400, 'ALREADY_RATED', 'Esta reserva ya fue calificada previamente')
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.calificacionAlojamiento.create({
-        data: {
-          id: `calif-${randomUUID()}`,
-          reservaId: input.reservaId,
-          alojamientoId: reserva.alojamientoId,
-          clienteId: input.clienteId ?? reserva.clienteId,
-          puntuacion: input.puntuacion,
-          comentario: input.comentario ?? null,
-        },
-      })
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // Las calificaciones de un alojamiento se guardan de a una: cada una recalcula el agregado
+        // viendo todas las anteriores (sin la fila tomada, dos simultáneas no se ven entre sí y la
+        // última pisa el promedio con un valor viejo).
+        await tx.$queryRaw`SELECT 1 AS ok FROM public."alojamientos" WHERE "id" = ${reserva.alojamientoId} FOR UPDATE`
+        await tx.calificacionAlojamiento.create({
+          data: {
+            id: `calif-${randomUUID()}`,
+            reservaId: input.reservaId,
+            alojamientoId: reserva.alojamientoId,
+            clienteId: input.clienteId ?? reserva.clienteId,
+            puntuacion: input.puntuacion,
+            comentario: input.comentario ?? null,
+          },
+        })
 
-      // Recalcular promedio y cantidad
-      const calificaciones = await tx.calificacionAlojamiento.findMany({
-        where: { alojamientoId: reserva.alojamientoId },
-        select: { puntuacion: true },
-      })
+        // Recalcular promedio y cantidad
+        const calificaciones = await tx.calificacionAlojamiento.findMany({
+          where: { alojamientoId: reserva.alojamientoId },
+          select: { puntuacion: true },
+        })
 
-      const cantidad = calificaciones.length
-      const suma = calificaciones.reduce((acc, c) => acc + c.puntuacion, 0)
-      const promedio = cantidad > 0 ? suma / cantidad : null
+        const cantidad = calificaciones.length
+        const suma = calificaciones.reduce((acc, c) => acc + c.puntuacion, 0)
+        const promedio = cantidad > 0 ? suma / cantidad : null
 
-      await tx.alojamiento.update({
-        where: { id: reserva.alojamientoId },
-        data: {
-          ratingPromedio: promedio,
-          ratingCantidad: cantidad,
-        },
+        await tx.alojamiento.update({
+          where: { id: reserva.alojamientoId },
+          data: {
+            ratingPromedio: promedio,
+            ratingCantidad: cantidad,
+          },
+        })
       })
-    })
+    } catch (error: unknown) {
+      // uq_calificaciones_alojamiento_reserva: another request rated this reservation first.
+      if (esUnicoViolado(error, 'uq_calificaciones_alojamiento_reserva')) {
+        throw new ErrorAlojamiento(400, 'ALREADY_RATED', 'Esta reserva ya fue calificada previamente')
+      }
+      throw error
+    }
   }
 
   /**
@@ -839,16 +884,32 @@ export class AlojamientosService {
   async crearBloqueoUnidad(input: BloqueoUnidadInput): Promise<{ id: string }> {
     const inicio = new Date(input.fechaInicio)
     const fin = new Date(input.fechaFin)
+    const motivo = String(input.motivo ?? '').trim().slice(0, 200)
+    if (isNaN(inicio.getTime()) || isNaN(fin.getTime()) || inicio >= fin || !motivo) {
+      throw new ErrorAlojamiento(400, 'BAD_REQUEST', 'El bloqueo necesita un rango de fechas válido y un motivo')
+    }
 
-    const bloqueo = await this.prisma.bloqueoUnidadAlojamiento.create({
-      data: {
-        id: `blk-${randomUUID()}`,
-        unidadId: input.unidadId,
-        fechaInicio: inicio,
-        fechaFin: fin,
-        motivo: input.motivo,
-        creadoPorUsuarioId: input.creadoPorUsuarioId ?? null,
-      },
+    const bloqueo = await this.conUnidadBloqueada(input.unidadId, async (tx) => {
+      await this.expirarHoldsVencidos(tx, input.unidadId, inicio, fin, new Date())
+      // Un bloqueo nunca tapa una reserva vigente: primero se cancela la reserva.
+      const reservasVigentes = await tx.reservaAlojamiento.findMany({
+        where: { unidadId: input.unidadId, estado: { in: ESTADOS_QUE_OCUPAN }, fechaInicio: { lt: fin }, fechaFin: { gt: inicio } },
+        select: { id: true },
+        take: 1,
+      })
+      if (reservasVigentes.length > 0) {
+        throw new ErrorAlojamiento(409, 'UNIT_HAS_RESERVATIONS', 'Hay reservas vigentes en esas fechas. Cancelalas antes de bloquear la unidad.')
+      }
+      return tx.bloqueoUnidadAlojamiento.create({
+        data: {
+          id: `blk-${randomUUID()}`,
+          unidadId: input.unidadId,
+          fechaInicio: inicio,
+          fechaFin: fin,
+          motivo,
+          creadoPorUsuarioId: input.creadoPorUsuarioId ?? null,
+        },
+      })
     })
 
     return { id: bloqueo.id }
@@ -900,10 +961,17 @@ export class AlojamientosService {
     reservaId: string,
     nuevoEstado: 'checked_in' | 'completed' | 'cancelled'
   ): Promise<void> {
-    await this.prisma.reservaAlojamiento.update({
-      where: { id: reservaId },
+    // Condicional sobre el estado actual: una reserva cancelada o vencida no vuelve a ocupar
+    // fechas, y dos cambios simultáneos no se pisan.
+    const { count } = await this.prisma.reservaAlojamiento.updateMany({
+      where: { id: reservaId, estado: { in: ORIGENES_DE_ESTADO[nuevoEstado] } },
       data: { estado: nuevoEstado },
     })
+    if (count === 0) {
+      const actual = await this.prisma.reservaAlojamiento.findUnique({ where: { id: reservaId }, select: { estado: true } })
+      if (!actual) throw new ErrorAlojamiento(404, 'NOT_FOUND', 'Reserva no encontrada')
+      throw new ErrorAlojamiento(409, 'INVALID_STATE', `Una reserva en estado ${actual.estado} no puede pasar a ${nuevoEstado}`)
+    }
   }
 
   /**
@@ -927,6 +995,9 @@ export class AlojamientosService {
     publicado?: boolean
   }): Promise<{ id: string; slug: string }> {
     const id = `aloj-${randomUUID()}`
+    if (!Number.isFinite(input.latitud) || !Number.isFinite(input.longitud) || Math.abs(input.latitud) > 90 || Math.abs(input.longitud) > 180) {
+      throw new ErrorAlojamiento(400, 'BAD_REQUEST', 'La ubicación del alojamiento no es válida')
+    }
     const nuevo = await this.prisma.alojamiento.create({
       data: {
         id,
@@ -947,6 +1018,16 @@ export class AlojamientosService {
         publicado: input.publicado ?? true,
         estado: 'publicado',
       },
+    }).catch((error: unknown) => {
+      // fk_alojamientos_propietario: the owner is a real account.
+      if (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2003') {
+        throw new ErrorAlojamiento(400, 'OWNER_NOT_FOUND', 'La cuenta propietaria no existe')
+      }
+      // uq_alojamientos_slug: the public address identifies one alojamiento.
+      if (esUnicoViolado(error, 'uq_alojamientos_slug')) {
+        throw new ErrorAlojamiento(409, 'SLUG_TAKEN', 'Ya existe un alojamiento con esa dirección pública (slug)')
+      }
+      throw error
     })
 
     return { id: nuevo.id, slug: nuevo.slug }

@@ -38,9 +38,11 @@ export function createErrorHandler(): ErrorRequestHandler {
   const logger = createSafeLogger()
   return (error, request, response, _next) => {
     const correlationId = getCorrelationId(request)
-    const status = error?.status === 413 || error?.type === 'entity.too.large' ? 413 : error?.code === 'CORS_ORIGIN_DENIED' ? 403 : 500
-    const code = status === 413 ? 'REQUEST_TOO_LARGE' : status === 403 ? 'ORIGIN_NOT_ALLOWED' : 'INTERNAL_ERROR'
-    logger.error('request failed', { correlationId, details: error })
+    // A body that is not valid JSON is the client's mistake (400), not a failure of the server.
+    const cuerpoInvalido = error?.type === 'entity.parse.failed'
+    const status = error?.status === 413 || error?.type === 'entity.too.large' ? 413 : error?.code === 'CORS_ORIGIN_DENIED' ? 403 : cuerpoInvalido ? 400 : 500
+    const code = status === 413 ? 'REQUEST_TOO_LARGE' : status === 403 ? 'ORIGIN_NOT_ALLOWED' : status === 400 ? 'INVALID_REQUEST' : 'INTERNAL_ERROR'
+    if (status !== 400) logger.error('request failed', { correlationId, details: error })
     response.status(status).json(createErrorEnvelope(error, correlationId, code))
   }
 }

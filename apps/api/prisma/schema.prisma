@@ -3147,6 +3147,9 @@ model TarifaServicioPrestador {
   perfil             PerfilPublicoPrestador @relation(fields: [perfilId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tarifas_servicio_perfil")
   oficio             OficioServicio         @relation(fields: [oficioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_tarifas_servicio_oficio")
 
+  // INTEGRIDAD-01 (SQL, NOT VALID): fk_tarifas_servicio_perfil_servicio (perfil_id, oficio_id) ->
+  // perfil_servicios: a tarifa belongs to a service the profile really offers;
+  // ck_tarifas_servicio_prestador_duracion, ck_tarifas_servicio_prestador_precio.
   @@index([perfilId, oficioId], map: "ix_tarifas_servicio_perfil_oficio")
   @@map("tarifas_servicio_prestador")
 }
@@ -3197,6 +3200,8 @@ model Provincia {
 model Localidad {
   id            String          @id(map: "localidades_pkey") @map("id")
   nombre        String          @map("nombre")
+  // Province name (legacy text). Derived: tr_localidades_provincia_derivada (SQL) copies the name
+  // of the province referenced by provinciaId, so the two can never contradict each other.
   provincia     String          @map("provincia")
   provinciaId   String?         @map("provincia_id")
   provinciaRef  Provincia?      @relation(fields: [provinciaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_localidades_provincia")
@@ -3235,6 +3240,9 @@ model ZonaUbicacion {
   perfiles      PerfilPublicoPrestador[]
   alojamientos  Alojamiento[]
 
+  // (id, localidad_id) is the target of fk_barrios_zona_localidad (SQL, NOT VALID): a barrio and
+  // its zona belong to the same locality.
+  @@unique([id, localidadId], map: "uq_zonas_ubicacion_id_localidad")
   @@index([localidadId], map: "ix_zonas_ubicacion_localidad")
   @@map("zonas_ubicacion")
 }
@@ -3357,6 +3365,10 @@ model Alojamiento {
   @@index([zonaId], map: "ix_alojamientos_zona")
   @@index([barrioId], map: "ix_alojamientos_barrio")
   @@index([propietarioId], map: "ix_alojamientos_propietario")
+  // INTEGRIDAD-01 (SQL, NOT VALID): ck_alojamientos_punto, ck_alojamientos_estado,
+  // ck_alojamientos_rating, ck_alojamientos_horas; fk_alojamientos_propietario (propietario_id ->
+  // "Account".id, RESTRICT): the owner is a real account, NULL = managed by the platform.
+  @@unique([slug], map: "uq_alojamientos_slug")
   @@index([publicado, estado], map: "ix_alojamientos_publicado")
   @@map("alojamientos")
 }
@@ -3395,6 +3407,9 @@ model UnidadAlojamiento {
   reservas          ReservaAlojamiento[]
   bloqueos          BloqueoUnidadAlojamiento[]
 
+  // INTEGRIDAD-01 (SQL, NOT VALID): ck_unidades_alojamiento_capacidad, ck_unidades_alojamiento_estado.
+  // (id, alojamiento_id) is the target of fk_reservas_alojamiento_unidad_alojamiento.
+  @@unique([id, alojamientoId], map: "uq_unidades_alojamiento_id_alojamiento")
   @@index([alojamientoId, orden], map: "ix_unidades_alojamiento_orden")
   @@map("unidades_alojamiento")
 }
@@ -3429,6 +3444,8 @@ model TarifaAlojamiento {
   creadoEn      DateTime          @default(now()) @map("creado_en")
   actualizadoEn DateTime          @updatedAt @map("actualizado_en")
 
+  // INTEGRIDAD-01 (SQL, NOT VALID): ck_tarifas_alojamiento_precio, _modalidad, _duracion, _estadia,
+  // _moneda, _dias_semana.
   @@index([unidadId, activa], map: "ix_tarifas_alojamiento_unidad")
   @@map("tarifas_alojamiento")
 }
@@ -3468,6 +3485,10 @@ model ReservaAlojamiento {
   moneda              String                   @default("ARS") @map("moneda")
   estado              String                   @default("pending_payment") @map("estado")
   holdExpiracion      DateTime?                @map("hold_expiracion") @db.Timestamptz(3)
+  // INTEGRIDAD-01: a payment arrived when the reservation no longer held its dates. It is never
+  // confirmed automatically; it waits for reconciliation since this moment. Partial index
+  // ix_reservas_alojamiento_pago_en_revision (SQL).
+  pagoEnRevisionDesde DateTime?                @map("pago_en_revision_desde") @db.Timestamptz(3)
   paymentId           String?                  @map("payment_id")
   preferenceId        String?                  @map("preference_id")
   metodoPago          String?                  @map("metodo_pago")
@@ -3476,6 +3497,11 @@ model ReservaAlojamiento {
   actualizadoEn       DateTime                 @updatedAt @map("actualizado_en")
   calificacion        CalificacionAlojamiento?
 
+  // INTEGRIDAD-01 (SQL, NOT VALID): ck_reservas_alojamiento_rango, _estado, _modalidad, _personas,
+  // _precios, _moneda, _hold; fk_reservas_alojamiento_unidad_alojamiento (unidad_id, alojamiento_id)
+  // -> unidades_alojamiento: the unit of a reservation belongs to its alojamiento.
+  // ex_reservas_alojamiento_sin_solapamiento (SQL): no two live reservations of a unit overlap.
+  @@unique([id, alojamientoId], map: "uq_reservas_alojamiento_id_alojamiento")
   @@index([alojamientoId, fechaInicio], map: "ix_reservas_alojamiento_alojamiento")
   @@index([unidadId, fechaInicio, fechaFin], map: "ix_reservas_alojamiento_unidad_rango")
   @@index([estado, holdExpiracion], map: "ix_reservas_alojamiento_hold")

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { AlojamientosService } from './alojamientos-service.ts'
+import { ErrorAlojamiento, type AlojamientosService } from './alojamientos-service.ts'
 
 export interface CheckoutPreferenceResult {
   preferenceId: string
@@ -18,18 +18,20 @@ export class CheckoutAlojamientosService {
   }
 
   /**
-   * Crea una preferencia de pago para la reserva de alojamiento en estado pending_payment.
-   * Utiliza el adaptador de Mercado Pago si está configurado en el entorno;
-   * de lo contrario, provee preferencia sandbox simulada para desarrollo local y tests sin bloqueos.
+   * Preferencia de pago SIMULADA para desarrollo local y tests. El cobro real de alojamientos con
+   * Mercado Pago todavía no está integrado: con credenciales reales esta operación falla cerrada
+   * (nunca devuelve un enlace de Mercado Pago con una preferencia que no existe).
    */
   async crearPreferenciaCheckout(reservaId: string): Promise<CheckoutPreferenceResult> {
     const preferenceId = `pref-aloj-${randomUUID().slice(0, 8)}`
     const isMock = !process.env['MP_ACCESS_TOKEN'] || process.env['MP_ACCESS_TOKEN'].includes('fake')
 
+    if (!isMock) {
+      throw new ErrorAlojamiento(503, 'CHECKOUT_NOT_AVAILABLE', 'El pago online de alojamientos todavía no está disponible')
+    }
+
     const host = process.env['NEXT_PUBLIC_APP_URL'] || 'http://localhost:3000'
-    const initPoint = isMock
-      ? `${host}/checkout/alojamiento/mock?preference_id=${preferenceId}&reserva_id=${reservaId}`
-      : `https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=${preferenceId}`
+    const initPoint = `${host}/checkout/alojamiento/mock?preference_id=${preferenceId}&reserva_id=${reservaId}`
 
     return {
       preferenceId,

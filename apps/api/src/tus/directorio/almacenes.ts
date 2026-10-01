@@ -90,6 +90,8 @@ export interface ClientePrismaDirectorio {
     createMany(input: { data: Fila[]; skipDuplicates?: boolean }): Promise<{ count: number }>
     upsert(input: { where: Fila; create: Fila; update: Fila }): Promise<Fila>
   }
+  // tarifas_servicio_prestador: the tarifas of a service leave with it. Optional for legacy doubles.
+  tarifaServicioPrestador?: { deleteMany(input: { where: Fila }): Promise<{ count: number }> }
   $transaction?<T>(operation: (client: ClientePrismaDirectorio) => Promise<T>): Promise<T>
   trabajo: { count(input: { where: Fila }): Promise<number>; groupBy?(input: { by: string[]; where: Fila; _count: Fila }): Promise<Fila[]> }
   // Real delegate of verificaciones_identidad (model VerificacionIdentidad); its approved state is 'verified'.
@@ -174,6 +176,9 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
       })
       if (!client.perfilServicio) return
       const perfilId = String(fila['id'])
+      // A service the provider no longer offers takes its tarifas with it, explicitly and in this
+      // transaction (fk_tarifas_servicio_perfil_servicio refuses a tarifa without its service).
+      await client.tarifaServicioPrestador?.deleteMany({ where: { perfilId, oficioId: { notIn: oficios } } })
       await client.perfilServicio.deleteMany({ where: { perfilId, oficioId: { notIn: oficios } } })
       for (const [orden, oficioId] of oficios.entries())
         await client.perfilServicio.upsert({

@@ -402,13 +402,19 @@ export function crearRouterTurnos({
       const perfilId = perfil.id
       const tarifasRaw = Array.isArray(body['tarifas']) ? body['tarifas'] : []
 
-      const tarifas = tarifasRaw.map((t: Record<string, unknown>, idx: number) => ({
-        id: t['id'] ? String(t['id']) : undefined,
-        nombre: String(t['nombre'] ?? 'Tarifa'),
-        duracionMinutos: Number(t['duracionMinutos'] ?? 60),
-        precio: BigInt(t['precio'] as number | string),
-        orden: t['orden'] != null ? Number(t['orden']) : idx,
-      }))
+      let tarifas
+      try {
+        tarifas = tarifasRaw.map((t: Record<string, unknown>, idx: number) => ({
+          id: t['id'] ? String(t['id']) : undefined,
+          nombre: String(t['nombre'] ?? 'Tarifa'),
+          duracionMinutos: Number(t['duracionMinutos'] ?? 60),
+          precio: BigInt(t['precio'] as number | string),
+          orden: t['orden'] != null ? Number(t['orden']) : idx,
+        }))
+      } catch {
+        // BigInt of something that is not an integer amount.
+        return void enviarError(response, 400, 'INVALID_PARAMS', 'El precio de cada tarifa debe ser un número entero')
+      }
 
       try {
         const guardadas = await servicio.guardarTarifasPrestador({

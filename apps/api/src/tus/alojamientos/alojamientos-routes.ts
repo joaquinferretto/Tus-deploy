@@ -244,6 +244,17 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     }
   })
 
+  // 6b. Pagos en revisión (solo admin): pagos que llegaron para reservas que ya no tenían sus
+  // fechas. No se confirman solos; se concilian a mano.
+  router.get('/reservas/pagos-en-revision', async (req: Request, res: Response) => {
+    try {
+      if (!(await soloAdmin(req, res))) return
+      return res.json({ items: await alojamientosService.pagosEnRevision() })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
   // 7. Calificar alojamiento (solo completed). Califica la cuenta titular de la reserva: el
   // cliente sale de la sesión y un clienteId del body no se lee.
   router.post('/calificar', async (req: Request, res: Response) => {
