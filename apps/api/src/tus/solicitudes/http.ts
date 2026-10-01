@@ -31,8 +31,10 @@ export function crearRouterSolicitudes({ servicio, sessions }: { servicio: Servi
     '/tus/v1/public/solicitudes',
     asyncHandler(async (request: Request, response: Response) => {
       const solicitudes = await servicio.listarPublicas({ categoria: request.query['categoria'] })
-      // Datos públicos y sin PII; un cache corto alivia la home sin demorar las nuevas.
-      response.setHeader('cache-control', 'public, max-age=30')
+      // Datos públicos y sin PII, pero nunca `public`: la respuesta lleva cabeceras propias de cada
+      // petición (CORS del Origin que llama, X-Correlation-Id, rate limit) y una caché compartida
+      // delante de la API la reprodujo a otros clientes ignorando `Vary: Origin`.
+      response.setHeader('cache-control', 'private, no-store')
       response.status(200).json({ items: solicitudes })
     })
   )
@@ -45,7 +47,9 @@ export function crearRouterSolicitudes({ servicio, sessions }: { servicio: Servi
         enviarError(response, 404, 'NOT_FOUND', 'Image not found')
         return
       }
-      enviarImagen(response, imagen, 'public, max-age=300')
+      // Solo la caché del navegador: una foto deja de ser pública cuando la solicitud se dirige a
+      // un prestador o se cierra, y una caché compartida la seguiría sirviendo.
+      enviarImagen(response, imagen, 'private, max-age=300')
     })
   )
 

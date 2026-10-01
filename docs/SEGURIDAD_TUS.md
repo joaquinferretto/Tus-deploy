@@ -221,7 +221,9 @@ no es la fuente del mapa principal.
 
 - `GET /tus/v1/public/solicitudes` es público y solo devuelve: categoría, título, descripción, nombre + inicial, barrio,
   punto aproximado (centro del barrio ±~300 m, 3 decimales), presupuesto máximo, urgencia y fecha. Nunca el id de cuenta,
-  email, teléfono ni dirección (no existen columnas para eso). `cache-control: public, max-age=30`.
+  email, teléfono ni dirección (no existen columnas para eso). `cache-control: private, no-store`: nunca `public`, porque
+  una caché compartida delante de la API reprodujo estas respuestas entre orígenes (ver
+  `docs/HOSTINGER_WHATSAPP_ADMIN.md`, "Caché de Hostinger delante de la API").
 - Publicar (`POST /tus/v1/solicitudes`) exige sesión TUS de una cuenta activa con email verificado. La cuenta, el nombre
   público y las coordenadas los decide la API: si el cliente manda `accountId`, `lat`, `lng`, `status`, `requesterName` o un
   `tenantId`/`actorId` ajeno se responde 403.

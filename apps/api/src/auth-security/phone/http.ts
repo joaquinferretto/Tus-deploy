@@ -37,7 +37,9 @@ export function crearRouterTelefono({ servicio, sessions, auth }: { servicio: Se
   }
 
   router.get('/auth/phone/config', (_request: Request, response: Response) => {
-    response.setHeader('cache-control', 'public, max-age=300')
+    // Public value, but never `public`: a shared cache would store the whole response, including
+    // the CORS header of whoever asked first and its per-request headers.
+    response.setHeader('cache-control', 'private, no-store')
     response.status(200).json({ whatsappNumber: servicio.numeroOficial })
   })
 

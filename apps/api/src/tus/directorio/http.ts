@@ -37,8 +37,10 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
   }))
 
   router.get('/tus/v1/public/oficios', (_request: Request, response: Response) => {
-    // Short cache: the administration can change the catalog at any time.
-    response.setHeader('cache-control', 'public, max-age=30')
+    // Never `public`: the response carries per-request headers (CORS for the caller's Origin,
+    // X-Correlation-Id, rate limit) and a shared cache in front of the API replayed it to other
+    // callers ignoring `Vary: Origin`. The administration can also change the catalog at any time.
+    response.setHeader('cache-control', 'private, no-store')
     response.status(200).json({
       items: catalogoPublico(),
       zones: zonasCorrientes().map((zona) => zona.nombre),
@@ -61,7 +63,7 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
         orden: request.query['orden'],
         pagina: request.query['pagina'],
       })
-      response.setHeader('cache-control', 'public, max-age=30')
+      response.setHeader('cache-control', 'private, no-store')
       response.status(200).json(resultado)
     })
   )
@@ -74,7 +76,7 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
         enviarError(response, 404, 'NOT_FOUND', 'Provider not found')
         return
       }
-      response.setHeader('cache-control', 'public, max-age=30')
+      response.setHeader('cache-control', 'private, no-store')
       response.status(200).json(perfil)
     })
   )

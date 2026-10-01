@@ -37,7 +37,9 @@ export function crearRouterTurnos({
           fecha,
           duracionMinutos: duracion,
         })
-        response.setHeader('cache-control', 'public, max-age=15')
+        // Availability changes with every booking and the response carries per-request headers
+        // (CORS, X-Correlation-Id, rate limit): never storable by a shared cache.
+        response.setHeader('cache-control', 'private, no-store')
         response.status(200).json(resultado)
       } catch (error) {
         manejarError(response, error)

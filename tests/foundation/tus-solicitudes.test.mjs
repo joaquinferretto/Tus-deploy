@@ -159,7 +159,8 @@ test('SOLICITUDES HTTP: public list without auth or PII; publishing needs a sess
   assert.equal(result.invalid[0], 422)
   assert.deepEqual(result.invalid[1].fields, ['urgency'])
   assert.deepEqual(result.created, [201, 'Laura M.', 'no-store'])
-  assert.deepEqual(result.list, [200, 'public, max-age=30', 1])
+  // Never `public`: a shared cache in front of the API replayed this response across Origins.
+  assert.deepEqual(result.list, [200, 'private, no-store', 1])
   assert.doesNotMatch(result.listText, /laura@example\.com|Martínez|accessToken/)
   assert.deepEqual(result.mine, [200, 1])
   assert.equal(result.mineAnon, 401)

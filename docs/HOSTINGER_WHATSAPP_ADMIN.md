@@ -6,6 +6,11 @@ Implementación local; este documento no acredita un despliegue ni una medición
 El usuario confirmó Node.js Web Apps de hPanel, sin Hostinger CDN ni Cloudflare. No hay una sesión de
 hPanel conectada a esta ejecución. No se cambiaron variables del panel ni credenciales.
 
+> **Corrección (medido en producción el 2026-10-01):** `api.tusservicios.shop` sí responde a través de
+> Hostinger CDN: las respuestas traen `server: hcdn`, `x-hcdn-cache-status`, `platform: hostinger` y
+> `panel: hpanel`. La afirmación "sin Hostinger CDN" de arriba ya no describe la producción actual; ver
+> "Caché de Hostinger delante de la API" más abajo. No hay evidencia de Cloudflare.
+
 ## Proxy en Hostinger
 
 Para la ruta hPanel → Node, la configuración propuesta es:
@@ -20,6 +25,8 @@ toma la entrada derecha de X-Forwarded-For; no acepta ciegamente la entrada izqu
 Es segura **solo si Node no es accesible directamente y el proxy inmediato agrega o sobrescribe
 la IP del cliente**. La confirmación de hPanel sin CDN elimina dos capas posibles, pero no demuestra
 cuántas capas internas conserva Hostinger en X-Forwarded-For. Hay que medir antes de cerrar el incidente.
+Con el CDN de Hostinger detectado delante de la API (corrección de arriba), esa premisa "sin CDN" no
+vale: la cantidad de saltos tiene que medirse con el CDN incluido.
 
 La API mantiene `false` por defecto en entornos no configurados. No se añadió confianza global por
 estar en producción. Como alternativa a los saltos, `TRUST_PROXY_ADDRESSES` acepta IPs/CIDRs de proxies
@@ -55,6 +62,34 @@ mostrando una etiqueta de stream, pero los eventos informativos ya no se emiten 
 Fuentes: [Express behind proxies](https://expressjs.com/en/guide/behind-proxies/).
 La [documentación de Hostinger CDN](https://www.hostinger.com/support/hostinger-cdn-visitor-ip-addresses-in-logs-and-analytics/)
 describe otro escenario y no prueba el número de proxies internos de Node.js Web Apps.
+
+## Caché de Hostinger delante de la API
+
+Medido el 2026-10-01 con peticiones GET contra `https://api.tusservicios.shop` (sin acceso a hPanel):
+
+- La API está detrás de Hostinger CDN (`server: hcdn`, `x-hcdn-cache-status: HIT | DYNAMIC`). Node no
+  comprime: `Content-Encoding: br/gzip` lo agrega esa capa.
+- Esa caché guardó las respuestas que la API marcaba `cache-control: public`. No respetó `Vary: Origin`
+  ni `max-age=30` (se observaron objetos servidos 49 minutos después) y guardó la respuesta completa,
+  incluidos `X-Correlation-Id` y `RateLimit-Remaining` de la petición original. También se vieron
+  respuestas viejas con `x-hcdn-cache-status: DYNAMIC`.
+- Efecto: una respuesta generada para una petición sin `Origin` (sin `Access-Control-Allow-Origin`) se
+  reprodujo a los navegadores de la Web y la home falló de forma intermitente con "No
+  'Access-Control-Allow-Origin' header is present". Las respuestas sin `cache-control: public`
+  (`no-store` o sin cabecera) no se cachearon en ninguna de las pruebas.
+
+Reglas que quedan en la aplicación:
+
+- Las respuestas dinámicas de la API no usan caché pública: `cache-control: private, no-store` (o
+  `private, max-age=N` solo para binarios que el navegador puede guardar). Lo fija
+  `tests/foundation/tus-cache-compartida.test.mjs`, que además falla si algún handler vuelve a declarar
+  `public`.
+- CORS sigue respondiendo `Access-Control-Allow-Origin` con el origen permitido y `Vary: Origin`; no se
+  resuelve este problema tocando CORS.
+- Al probar la API de producción, enviar siempre `Origin: https://tusservicios.shop`.
+
+Pendiente fuera del código (hPanel): purgar la caché del CDN para el dominio de la API y decidir si el
+CDN debe cachear ese dominio. No se cambió ninguna configuración de Hostinger.
 
 ## Asistente de WhatsApp
 
