@@ -2041,6 +2041,9 @@ model ReglaCalendario {
   horaInicio         String   @map("hora_inicio")
   horaFin            String   @map("hora_fin")
   capacidad          Int      @map("capacidad")
+  // TURNOS-AGENDA-01: own interval of the day; NULL = calendarios.granularidad_minutos (general).
+  // ck_reglas_calendario_intervalo (SQL): NULL or one of 15, 30, 60, 90, 120.
+  intervaloMinutos   Int?     @map("intervalo_minutos")
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
 

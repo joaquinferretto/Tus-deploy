@@ -48,6 +48,25 @@ export function crearRouterTurnos({
     })
   )
 
+  // Weekly agenda of a provider for a service: every possible start with its real state
+  // (available, taken, blocked). Same generator the booking is validated with.
+  router.get(
+    '/tus/v1/public/prestadores/:id/turnos/agenda',
+    asyncHandler(async (request: Request, response: Response) => {
+      const prestadorId = String(request.params['id'] ?? '')
+      const oficioId = String(request.query['oficioId'] ?? '')
+      const desde = String(request.query['desde'] ?? '')
+      if (!oficioId || !desde) return void enviarError(response, 400, 'INVALID_PARAMS', 'oficioId y desde (YYYY-MM-DD) son requeridos')
+      try {
+        const agenda = await servicio.agendaSemanal({ prestadorId, oficioId, desde, tarifaId: request.query['tarifaId'] ? String(request.query['tarifaId']) : undefined })
+        response.setHeader('cache-control', 'private, no-store')
+        response.status(200).json(agenda)
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
   router.post(
     '/tus/v1/public/prestadores/:id/turnos/reservar',
     asyncHandler(async (request: Request, response: Response) => {
@@ -195,6 +214,33 @@ export function crearRouterTurnos({
     })
   )
 
+  router.get(
+    '/tus/v1/prestador/turnos/bloqueos',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      try {
+        response.status(200).json({ items: await servicio.bloqueosPrestador(context.tenantId) })
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
+  // Only a block of the session's own tenant can be removed.
+  router.delete(
+    '/tus/v1/prestador/turnos/bloqueos/:id',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      try {
+        response.status(200).json(await servicio.quitarBloqueo(context.tenantId, String(request.params['id'] ?? '')))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
   router.patch(
     '/tus/v1/prestador/turnos/:id/estado',
     asyncHandler(async (request: Request, response: Response) => {
@@ -246,7 +292,8 @@ export function crearRouterTurnos({
       const context = await autenticar(request, response, sessions)
       if (!context) return
       try {
-        response.status(200).json({ items: await servicio.horariosPrestador(context.tenantId) })
+        const disponibilidad = await servicio.disponibilidadSemanal(context.tenantId)
+        response.status(200).json({ items: disponibilidad.horarios, intervaloGeneral: disponibilidad.intervaloGeneral })
       } catch (error) {
         manejarError(response, error)
       }
@@ -258,8 +305,14 @@ export function crearRouterTurnos({
     asyncHandler(async (request: Request, response: Response) => {
       const context = await autenticar(request, response, sessions)
       if (!context) return
+      const body = comoRegistro(request.body)
+      const desconocidos = Object.keys(body).filter((key) => key !== 'horarios' && key !== 'intervaloGeneral')
+      if (desconocidos.length > 0) return void enviarError(response, 422, 'INVALID_PARAMS', `Campos desconocidos: ${desconocidos.join(', ')}`)
       try {
-        response.status(200).json({ items: await servicio.guardarHorariosPrestador(context.tenantId, comoRegistro(request.body)['horarios']) })
+        // Without a general interval only the hours change (the agenda keeps the one it has).
+        if (body['intervaloGeneral'] === undefined) return void response.status(200).json({ items: await servicio.guardarHorariosPrestador(context.tenantId, body['horarios']) })
+        const guardada = await servicio.guardarDisponibilidadSemanal(context.tenantId, { intervaloGeneral: body['intervaloGeneral'], horarios: body['horarios'] })
+        response.status(200).json({ items: guardada.horarios, intervaloGeneral: guardada.intervaloGeneral })
       } catch (error) {
         manejarError(response, error)
       }
@@ -279,6 +332,25 @@ export function crearRouterTurnos({
       if (!oficioId || !fecha) return void enviarError(response, 400, 'INVALID_PARAMS', 'oficioId y fecha (YYYY-MM-DD) son requeridos')
       try {
         response.status(200).json(await servicio.disponibilidadPublica({ prestadorId: perfil.id, oficioId, fecha, incluirNoVisible: true }))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
+  // Weekly agenda of the own calendar for a service (also when the profile is hidden).
+  router.get(
+    '/tus/v1/prestador/turnos/agenda',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      const perfil = await servicio.perfilDeTenant(context.tenantId)
+      if (!perfil) return void enviarError(response, 404, 'NOT_FOUND', 'Perfil de prestador no encontrado')
+      const oficioId = String(request.query['oficioId'] ?? '')
+      const desde = String(request.query['desde'] ?? '')
+      if (!oficioId || !desde) return void enviarError(response, 400, 'INVALID_PARAMS', 'oficioId y desde (YYYY-MM-DD) son requeridos')
+      try {
+        response.status(200).json(await servicio.agendaSemanal({ prestadorId: perfil.id, oficioId, desde, incluirNoVisible: true }))
       } catch (error) {
         manejarError(response, error)
       }
