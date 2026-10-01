@@ -33,7 +33,51 @@ export interface TrabajoResumen {
   updatedAt: string
 }
 
+// A provider of the trade with what it can really offer for the asked day and time. Starts come
+// from the agenda of the provider (the same generator the Web books with); nothing is invented.
+export interface OfertaTurnos {
+  providerId: string
+  name: string
+  profession: string
+  area: string
+  verified: boolean
+  completedJobs: number
+  // false: this provider does not take turnos online for the trade (it works by request).
+  takesAppointments: boolean
+  // Duration the starts were computed for (the service or its first tarifa).
+  durationMinutes: number | null
+  tariffs: { id: string; name: string; durationMinutes: number; price: number }[]
+  // Starts (ISO) inside the asked window.
+  matches: string[]
+  // Closest free starts of the asked day(s) when nothing fits the window.
+  nearby: string[]
+}
+
+// matches: at least one provider fits. nearby: nobody fits the time, but there are other starts
+// those days. no_availability: providers take turnos but have nothing free those days.
+// no_appointments: there are providers, none takes turnos online. no_providers: nobody offers
+// the trade (in that zone, when zoneRelaxed is false).
+export type ResultadoDisponibilidad = 'matches' | 'nearby' | 'no_availability' | 'no_appointments' | 'no_providers'
+
+export interface DisponibilidadNecesidad {
+  profession: string
+  outcome: ResultadoDisponibilidad
+  // The asked zone had nobody: the providers listed are from other zones.
+  zoneRelaxed: boolean
+  providers: OfertaTurnos[]
+}
+
+export interface ConsultaDisponibilidad {
+  profession: string
+  day: string
+  dayTo: string | null
+  time: { kind: 'exact' | 'from' | 'until' | 'between'; from: string | null; to: string | null } | null
+  zone: string | null
+}
+
 export interface PuertoDominioAsistente {
+  // Providers of a trade with their REAL free turnos for a day (or two) and a time window.
+  buscarDisponibilidad(consulta: ConsultaDisponibilidad): Promise<DisponibilidadNecesidad>
   buscarServicios(filter: { query: string | null; category: string | null }): Promise<ServicioPublico[]>
   servicio(listingId: string): Promise<ServicioPublico | null>
   esPrestador(context: TusAuthenticatedTenantContext): Promise<boolean>
@@ -146,6 +190,73 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     const zone = filter.zone ?? interpretado?.zone ?? null
     const result = await this.servicios.directorio.buscarCandidatos({ oficio: profession, zona: zone, exigirCobertura: true })
     return { profession, providers: result.items }
+  }
+
+  async buscarDisponibilidad(consulta: ConsultaDisponibilidad): Promise<DisponibilidadNecesidad> {
+    const enZona = consulta.zone ? await this.servicios.directorio.buscarCandidatos({ oficio: consulta.profession, zona: consulta.zone, exigirCobertura: true }) : null
+    // Nobody covers the asked zone: the search is not a dead end, it shows who offers the trade.
+    const zoneRelaxed = Boolean(enZona && enZona.items.length === 0)
+    const candidatos = enZona && !zoneRelaxed ? enZona.items : (await this.servicios.directorio.buscarCandidatos({ oficio: consulta.profession })).items
+    const dias = [consulta.day, ...(consulta.dayTo && consulta.dayTo !== consulta.day ? [consulta.dayTo] : [])]
+    const horaLocal = (iso: string) => new Date(Date.parse(iso) - 3 * 3_600_000).toISOString().slice(11, 16)
+    const minutos = (hora: string) => Number(hora.slice(0, 2)) * 60 + Number(hora.slice(3, 5))
+    const cabe = (hora: string) => {
+      const ventana = consulta.time
+      if (!ventana) return true
+      if (ventana.kind === 'exact') return hora === ventana.from
+      if (ventana.kind === 'from') return hora >= ventana.from!
+      if (ventana.kind === 'until') return hora < ventana.to!
+      return hora >= ventana.from! && hora < ventana.to!
+    }
+    const objetivo = consulta.time ? minutos(consulta.time.from ?? consulta.time.to ?? '12:00') : null
+
+    const providers: OfertaTurnos[] = []
+    for (const candidato of candidatos) {
+      const oferta: OfertaTurnos = {
+        providerId: candidato.id,
+        name: candidato.displayName,
+        profession: candidato.profession.title,
+        area: candidato.approximateArea,
+        verified: candidato.verified,
+        completedJobs: candidato.completedJobs,
+        takesAppointments: false,
+        durationMinutes: null,
+        tariffs: [],
+        matches: [],
+        nearby: [],
+      }
+      const libres: string[] = []
+      for (const fecha of dias) {
+        // A provider that cannot be read (hidden meanwhile, turnos off) simply offers no turno.
+        const turnos = await this.turnosDisponibles(candidato.id, consulta.profession, fecha).catch(() => null)
+        if (!turnos || turnos.mensaje) continue
+        oferta.takesAppointments = true
+        oferta.tariffs = turnos.tarifas.map((tarifa) => ({ id: tarifa.id, name: tarifa.nombre, durationMinutes: tarifa.duracionMinutos, price: tarifa.precio }))
+        for (const slot of turnos.slots) {
+          if (!slot.disponible) continue
+          oferta.durationMinutes = slot.duracionMinutos
+          libres.push(slot.inicio)
+        }
+      }
+      oferta.matches = libres.filter((inicio) => cabe(horaLocal(inicio))).slice(0, 8)
+      if (oferta.matches.length === 0 && objetivo !== null)
+        oferta.nearby = [...libres].sort((a, b) => Math.abs(minutos(horaLocal(a)) - objetivo) - Math.abs(minutos(horaLocal(b)) - objetivo) || a.localeCompare(b)).slice(0, 3).sort()
+      providers.push(oferta)
+    }
+
+    const outcome: ResultadoDisponibilidad =
+      providers.length === 0
+        ? 'no_providers'
+        : providers.some((item) => item.matches.length > 0)
+          ? 'matches'
+          : providers.some((item) => item.nearby.length > 0)
+            ? 'nearby'
+            : providers.some((item) => item.takesAppointments)
+              ? 'no_availability'
+              : 'no_appointments'
+    // Who can be booked comes first; inside each group the order of the directory is kept.
+    const peso = (item: OfertaTurnos) => (item.matches.length > 0 ? 0 : item.nearby.length > 0 ? 1 : item.takesAppointments ? 2 : 3)
+    return { profession: consulta.profession, outcome, zoneRelaxed, providers: providers.map((item, indice) => ({ item, indice })).sort((a, b) => peso(a.item) - peso(b.item) || a.indice - b.indice).map(({ item }) => item) }
   }
 
   async solicitarPrestador(

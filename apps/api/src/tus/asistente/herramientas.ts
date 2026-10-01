@@ -44,8 +44,23 @@ const conTrabajo = z.strictObject({ workId: ID })
 
 export const HERRAMIENTAS = [
   herramienta({
+    name: 'find_appointments',
+    description:
+      'Busca profesionales REALES con turno disponible para lo que el usuario pidió. Alcanza con el oficio y el día; la zona es opcional. Pasá todo lo que el usuario dijo, aunque sea en un solo mensaje: profession (oficio), when (día y hora TAL COMO los dijo: "mañana a las 18", "el sábado a la tarde", "hoy después de las 17"; el servidor resuelve la fecha, no la calcules), zone (barrio si lo nombró) y anyZone = true si dijo que la zona no importa o que se traslada. Usá null para lo que no dijo: lo ya conocido se conserva. Devuelve los profesionales, sus horarios reales y qué falta si no se puede buscar todavía.',
+    audience: 'public',
+    schema: z.strictObject({
+      profession: OFICIO.nullable(),
+      when: z.string().trim().max(120).nullable(),
+      zone: z.string().trim().min(2).max(60).nullable(),
+      anyZone: z.boolean().nullable(),
+    }),
+    confirmation: null,
+    // The orchestrator merges these facts into the need of the conversation and runs the search.
+    execute: async (args) => args,
+  }),
+  herramienta({
     name: 'collect_service_request',
-    description: 'Conserva los datos que el usuario ya dio para buscar un prestador. Si falta oficio, problema o zona, formulá una pregunta natural SOLO sobre lo faltante. No incluyas resultados ni prestadores en la pregunta. Si cambia de necesidad, reemplazá los datos anteriores. Usá null para datos desconocidos; nunca los supongas.',
+    description: 'Conserva los datos que el usuario ya dio para pedir un servicio que NO es por turno (una solicitud a un prestador). Solo el oficio es necesario; problema y zona son opcionales. Si falta el oficio, formulá una pregunta natural SOLO sobre eso. No incluyas resultados ni prestadores en la pregunta. Si cambia de necesidad, reemplazá los datos anteriores. Usá null para datos desconocidos; nunca los supongas.',
     audience: 'public',
     schema: z.strictObject({
       profession: OFICIO.nullable(),
@@ -69,14 +84,15 @@ export const HERRAMIENTAS = [
     description:
       'Busca prestadores reales del directorio TUS compatibles con la necesidad (oficio y barrio de Corrientes). Devuelve hasta 5 con datos públicos: nombre público, oficio, barrio aproximado, verificación, trabajos completados y horarios publicados. Nunca inventes prestadores, valoraciones ni disponibilidad.',
     audience: 'public',
+    // The zone is optional: without one the search covers every provider of the trade.
     schema: z.strictObject({
-      query: z.string().trim().min(3).max(300),
+      query: z.string().trim().min(3).max(300).nullable().optional(),
       profession: OFICIO,
-      zone: z.string().trim().min(2).max(60),
+      zone: z.string().trim().min(2).max(60).nullable().optional(),
     }),
     confirmation: null,
     execute: async (args, _actor, domain) => {
-      const result = await domain.buscarPrestadores({ query: args.query, profession: args.profession, zone: args.zone })
+      const result = await domain.buscarPrestadores({ query: args.query ?? null, profession: args.profession, zone: args.zone ?? null })
       return {
         profession: result.profession,
         providers: result.providers.map((item) => ({
@@ -470,14 +486,14 @@ export function interpretarEtiquetaIntencion(content: string | null): IntencionA
 }
 
 const HERRAMIENTAS_POR_INTENCION: Record<IntencionAsistente, { client: NombreHerramienta[]; provider: NombreHerramienta[] }> = {
-  buscar: { client: ['collect_service_request', 'search_providers', 'get_available_slots', 'book_appointment', 'request_provider', 'search_services'], provider: [] },
+  buscar: { client: ['find_appointments', 'collect_service_request', 'search_providers', 'get_available_slots', 'book_appointment', 'request_provider', 'search_services'], provider: [] },
   postulaciones: {
     client: ['list_my_open_requests', 'list_request_applicants', 'choose_applicant'],
     provider: ['search_open_requests', 'apply_to_request'],
   },
   trabajos: { client: ['list_my_works', 'get_my_work', 'list_my_requests', 'list_my_open_requests'], provider: ['list_provider_jobs', 'get_provider_job', 'cancel_work', 'complete_work'] },
   presupuesto: { client: ['list_my_works', 'get_my_budget', 'accept_budget', 'reject_budget'], provider: ['list_provider_jobs', 'get_provider_job'] },
-  reserva: { client: ['get_available_slots', 'book_appointment', 'collect_service_request', 'search_providers', 'list_my_reservations', 'get_service_details'], provider: ['list_provider_reservations'] },
+  reserva: { client: ['find_appointments', 'get_available_slots', 'book_appointment', 'collect_service_request', 'search_providers', 'list_my_reservations', 'get_service_details'], provider: ['list_provider_reservations'] },
   pago: { client: ['list_my_works', 'get_payment_status', 'get_payment_link'], provider: ['get_mercadopago_connection_status'] },
   identidad: { client: [], provider: ['get_identity_status'] },
   conocimiento: { client: [], provider: [] },
@@ -485,7 +501,7 @@ const HERRAMIENTAS_POR_INTENCION: Record<IntencionAsistente, { client: NombreHer
   otro: { client: ['search_services'], provider: [] },
 }
 
-export const MAX_HERRAMIENTAS_POR_TURNO = 6
+export const MAX_HERRAMIENTAS_POR_TURNO = 7
 
 export function seleccionarHerramientas(intent: IntencionAsistente, actor: ActorAsistente): Herramienta[] {
   const names = [...HERRAMIENTAS_POR_INTENCION[intent].client, ...(actor.isProvider ? HERRAMIENTAS_POR_INTENCION[intent].provider : [])]

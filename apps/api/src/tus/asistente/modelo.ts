@@ -63,6 +63,15 @@ export interface EstadoConversacional {
   // Last availability shown (provider, trade, date): lets "a las 10" on the next turn refer to
   // it. Never authoritative: booking re-reads the real availability.
   slots?: { providerId: string; profession: string; date: string; starts: string[] } | null
+  // What the person needs, accumulated across messages (trade, day, time, zone or "any zone").
+  // Every fact a message carries is kept here, so it is never asked again.
+  need?: import('./necesidad.ts').NecesidadTurno | null
+  // When the need was last said (ms). An old need is not carried into a new conversation.
+  needAt?: number | null
+  // Providers and real starts of the last availability search, in the order they were shown
+  // ("el segundo", a name or a time on the next message refer to them). Never authoritative:
+  // booking re-reads the real availability.
+  offers?: { profession: string; items: { providerId: string; name: string; starts: string[] }[] } | null
   lowConfidenceCount: number
 }
 
