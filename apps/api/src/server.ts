@@ -30,6 +30,7 @@ import { crearRutasAlojamientos } from './tus/alojamientos/alojamientos-routes.t
 import type { PrismaClient } from '@prisma/client'
 import { crearAltaPrestadorAdmin, crearEdicionPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
+import { NotificadorTurnosEmail } from './tus/calendar/turnos-notificaciones.ts'
 import { AlmacenPerfilPrisma, type ClientePrismaPerfil } from './tus/perfil/almacen.ts'
 import { crearRouterPerfil } from './tus/perfil/http.ts'
 import { ServicioPerfil } from './tus/perfil/servicio.ts'
@@ -164,7 +165,8 @@ export function createApp(options: CreateAppOptions = {}): Application {
   // Every match (client picks an application / provider accepts a direct request) creates the
   // work in the same PostgreSQL transaction that assigns the request.
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
-  const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient)
+  // Turno requests notify by email through the transport of the account emails (when configured).
+  const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient, NotificadorTurnosEmail.desdeEnv(prisma as unknown as PrismaClient, process.env))
   // Personal profile (names, document, residence) and normalized geography.
   const perfiles = new ServicioPerfil(new AlmacenPerfilPrisma(prisma as unknown as ClientePrismaPerfil))
   const whatsapp = options.tusRouter

@@ -2081,10 +2081,17 @@ model Reserva {
   clienteId          String   @map("cliente_id")
   fechaInicio        DateTime @map("fecha_inicio")
   fechaFin           DateTime @map("fecha_fin")
+  // TURNOS-SOLICITUD-01: pending (requested by the client, waiting for the provider) | confirmed |
+  // rejected | expired | cancelled | cancelled-late | no-show | completed. ck_reservas_estado (SQL,
+  // NOT VALID). ex_reservas_sin_solapamiento (SQL): no two rows of a calendar overlap unless their
+  // state released the time (cancelled, cancelled-late, no-show, rejected, expired).
   estado             String   @map("estado")
   version            Int
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
+  // Until when a pending request holds its time. ck_reservas_solicitud_vigencia (SQL): a pending
+  // row always has it. Partial index ix_reservas_solicitudes_pendientes (SQL).
+  solicitudExpiraEn  DateTime? @map("solicitud_expira_en")
 
   tarifaId                 String?  @map("tarifa_id")
   tarifaNombre             String?  @map("tarifa_nombre")
@@ -2092,6 +2099,9 @@ model Reserva {
   precioLista              BigInt?  @map("precio_lista")
   precioFinal              BigInt?  @map("precio_final")
   moneda                   String?  @default("ARS") @map("moneda")
+  // Contact of a client WITHOUT an account (guest of the administration, manual turno of the
+  // provider). A request of a registered client stores none of them: its name and contact are
+  // read from the account in clienteId.
   clienteNombre            String?  @map("cliente_nombre")
   clienteTelefono          String?  @map("cliente_telefono")
   clienteEmail             String?  @map("cliente_email")

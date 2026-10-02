@@ -81,7 +81,7 @@ export function textoDisponibilidad(need: NecesidadTurno, resultado: Disponibili
     return `${otraZona}No encontré turnos de ${label} ${cuando}. Lo más cercano ${dia}:\n${ofertas.map((item, indice) => linea(item, indice, item.nearby)).join('\n')}${duraciones}\n¿Te sirve alguno?`
 
   const unoSolo = ofertas.every((item) => iniciosDe(item).length === 1)
-  return `${otraZona}Encontré ${cuantos(ofertas.length)} de ${label} con turno ${cuando}:\n${ofertas.map((item, indice) => linea(item, indice, iniciosDe(item))).join('\n')}${duraciones}\n${unoSolo ? '¿Con cuál querés reservar?' : 'Decime con quién y a qué hora y te preparo la reserva.'}`
+  return `${otraZona}Encontré ${cuantos(ofertas.length)} de ${label} con turno ${cuando}:\n${ofertas.map((item, indice) => linea(item, indice, iniciosDe(item))).join('\n')}${duraciones}\n${unoSolo ? '¿Con cuál querés solicitar el turno?' : 'Decime con quién y a qué hora y te preparo la solicitud.'}`
 }
 
 // The ONE thing still missing to search (never the zone).

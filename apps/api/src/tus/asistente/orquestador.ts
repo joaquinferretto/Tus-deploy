@@ -80,7 +80,7 @@ const INSTRUCCION_SIN_CUENTA =
   'El usuario NO inició sesión y pregunta por datos o acciones de una cuenta (trabajos, presupuestos, pagos, identidad, postulaciones). No tenés herramientas para eso sin sesión: explicale con naturalidad que para verlo o hacerlo tiene que iniciar sesión en TUS, y qué va a poder hacer después. No inventes ningún dato de cuenta.'
 
 const INSTRUCCION_ELEGIR_SIN_CUENTA =
-  'El usuario NO inició sesión. Puede ver los turnos de un prestador ya mostrado (get_available_slots), pero para reservar un turno o enviarle una solicitud tiene que iniciar sesión en TUS. Si pide horarios usá la herramienta; si quiere reservar o contratar, explicale que primero debe iniciar sesión. No inventes datos.'
+  'El usuario NO inició sesión. Puede ver los turnos de un prestador ya mostrado (get_available_slots), pero para solicitar un turno o enviarle una solicitud tiene que iniciar sesión en TUS. Si pide horarios usá la herramienta; si quiere solicitar un turno o contratar, explicale que primero debe iniciar sesión. No inventes datos.'
 
 const CON_CUENTA: Record<CanalConversacion, string> = {
   whatsapp: 'cuenta TUS vinculada',
@@ -89,7 +89,7 @@ const CON_CUENTA: Record<CanalConversacion, string> = {
 
 const SIN_CUENTA: Record<CanalConversacion, string> = {
   whatsapp: 'contacto NO vinculado (solo información pública; para datos privados debe escribir "vincular mi cuenta")',
-  web: 'visitante SIN sesión iniciada (solo información pública; para datos de su cuenta, reservar o enviar solicitudes debe iniciar sesión en TUS)',
+  web: 'visitante SIN sesión iniciada (solo información pública; para datos de su cuenta, solicitar turnos o enviar solicitudes debe iniciar sesión en TUS)',
 }
 
 export const promptSistema = (canal: CanalConversacion): string => [PRESENTACION_CANAL[canal], ...REGLAS_PROMPT_SISTEMA].join('\n')
@@ -110,7 +110,7 @@ const REGLAS_PROMPT_SISTEMA = [
   '10. Para buscar profesionales con turno usá find_appointments. Alcanza con el oficio y el día: la zona es OPCIONAL (si no la dijo, o dijo que le da igual o que se traslada, buscá sin zona y no la preguntes). Pasá en "when" el día y la hora tal como los dijo; el servidor resuelve la fecha con el calendario de Argentina: no calcules ni inventes fechas. Si falta un dato necesario, preguntá SOLO ese dato, de a uno.',
   '11. Explicá el resultado tal cual es: si hay turnos a la hora pedida, cuáles; si no hay exactamente a esa hora, cuáles son los más cercanos; si hay profesionales pero sin turnos ese día, o que no toman turnos online (se coordina por solicitud), decilo así. No digas solo "no encontré".',
   '12. La duración de un turno sale del servicio o de su tarifa: no la inventes ni la preguntes, salvo que el resultado traiga varias duraciones.',
-  '13. Para ver los horarios de un prestador puntual usá get_available_slots (fecha YYYY-MM-DD). Para reservar usá book_appointment (requiere confirmación) con un horario que haya devuelto una herramienta. Nunca propongas un horario que no salió de una herramienta.',
+  '13. Para ver los horarios de un prestador puntual usá get_available_slots (fecha YYYY-MM-DD). Para pedir un turno usá book_appointment con un horario que haya devuelto una herramienta: eso envía una SOLICITUD de reserva. Un turno solicitado NO está confirmado: queda pendiente hasta que el prestador lo acepte, y solo el estado que devuelve list_my_reservations dice si ya se confirmó. Nunca digas "reserva confirmada" ni "turno reservado" por algo que el usuario pidió; ofrecé "¿Querés solicitar ese turno?". Nunca propongas un horario que no salió de una herramienta.',
   '14. Deducí el oficio del problema aunque el usuario no lo nombre (una pérdida de agua es plomería; un aire que no enfría es aire acondicionado). Para un servicio que no es por turno (una solicitud a un prestador) usá collect_service_request y search_providers: solo el oficio es necesario.',
   '15. Si el usuario elige a uno de los profesionales ya mostrados ("el segundo", "ese", por nombre), es el de esa posición o nombre en "Profesionales mostrados": usá su providerId. Si hay varios posibles, preguntá cuál.',
 ]
@@ -589,7 +589,7 @@ export class OrquestadorConversacion {
         type: 'buttons',
         text: summary,
         buttons: [
-          { id: `confirm:${pending.confirmationId}`, title: 'Confirmar' },
+          { id: `confirm:${pending.confirmationId}`, title: tituloConfirmar(tool) },
           { id: `cancel:${pending.confirmationId}`, title: 'Cancelar' },
         ],
       },
@@ -951,7 +951,7 @@ export class OrquestadorConversacion {
           const tarifasTexto = data.tariffs.length > 0
             ? `\nTarifas:\n${data.tariffs.map((t) => `• ${t.name}: ${t.price} (${t.durationMinutes} min)`).join('\n')}`
             : ''
-          return [{ type: 'text', text: `Turnos disponibles para el ${data.date}:\n${horariosTexto}${tarifasTexto}\n¿En qué horario te gustaría reservar?` }]
+          return [{ type: 'text', text: `Turnos disponibles para el ${data.date}:\n${horariosTexto}${tarifasTexto}\n¿Qué horario querés solicitar?` }]
         }
         if (result.ok && 'data' in result && call.function.name === 'search_services' && intent === 'buscar' && !turn.canal.conversacional) {
           const data = result.data as { services: { name: string }[] }
@@ -976,7 +976,7 @@ export class OrquestadorConversacion {
               type: 'buttons',
               text: summary,
               buttons: [
-                { id: `confirm:${pending.confirmationId}`, title: 'Confirmar' },
+                { id: `confirm:${pending.confirmationId}`, title: tituloConfirmar(call.function.name) },
                 { id: `cancel:${pending.confirmationId}`, title: 'Cancelar' },
               ],
             },
@@ -1465,6 +1465,10 @@ const ZONA_HORARIA = 'America/Argentina/Buenos_Aires'
 
 // The confirmation card states exactly what will be executed (validated arguments, never model
 // prose). A booking names the provider as it was shown to the user and the time in local terms.
+// Label of the button that executes a prepared action. A turno is requested, never confirmed by
+// its client.
+const tituloConfirmar = (tool: string): string => (tool === 'book_appointment' ? 'Solicitar turno' : 'Confirmar')
+
 function resumenConfirmacion(
   tool: string,
   args: Record<string, unknown>,
@@ -1478,12 +1482,12 @@ function resumenConfirmacion(
   const day = startsAt.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: ZONA_HORARIA })
   const hour = startsAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: ZONA_HORARIA })
   return [
-    'Voy a reservar tu turno:',
+    'Voy a enviar tu solicitud de turno:',
     `Prestador: ${provider}`,
     `Horario: ${day}, ${hour} hs`,
-    ...(typeof args['clientName'] === 'string' ? [`A nombre de: ${args['clientName']}`] : []),
     ...(typeof args['notes'] === 'string' && args['notes'] ? [`Nota: ${args['notes']}`] : []),
-    '¿Confirmás?',
+    'El turno queda pendiente hasta que el prestador confirme.',
+    '¿Querés solicitar ese turno?',
   ].join('\n')
 }
 
@@ -1511,6 +1515,8 @@ export function formatearResultadoAccion(
       REQUEST_FULL: 'Esa solicitud ya no recibe más postulaciones.',
       SLOT_OCCUPIED: 'Ese horario acaba de ser ocupado. Elegí otro.',
       SLOT_NOT_AVAILABLE: 'Ese horario ya no está disponible. Elegí otro.',
+      TOO_MANY_PENDING_REQUESTS: 'Ya tenés varias solicitudes pendientes con ese profesional. Esperá su respuesta o retirá alguna desde "Mis turnos".',
+      LOGIN_REQUIRED: 'Para solicitar un turno tenés que iniciar sesión en TUS.',
       NOT_AVAILABLE: 'Esa solicitud o ese postulante ya no están disponibles. Pedime que lo revise de nuevo.',
     }
     return [
@@ -1556,7 +1562,8 @@ export function formatearResultadoAccion(
     const when = at && !Number.isNaN(at.getTime())
       ? ` para el ${at.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: ZONA_HORARIA })} a las ${at.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: ZONA_HORARIA })} hs`
       : ''
-    return [{ type: 'text', text: `Listo, tu turno quedó reservado${when}.` }]
+    // A request, never a confirmed reservation: only the provider confirms it.
+    return [{ type: 'text', text: `Listo, envié tu solicitud de turno${when}. Queda pendiente hasta que el prestador la confirme; podés ver el estado en "Mis turnos".` }]
   }
   if (tool === 'accept_budget') return [{ type: 'text', text: 'Listo, aceptaste el presupuesto.' }]
   if (tool === 'reject_budget') return [{ type: 'text', text: 'Listo, rechazaste el presupuesto.' }]

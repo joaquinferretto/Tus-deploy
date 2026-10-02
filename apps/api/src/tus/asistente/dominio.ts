@@ -6,6 +6,7 @@ import type { CandidatoPrestador } from '../directorio/modelo.ts'
 import type { ServicioDirectorio } from '../directorio/servicio.ts'
 import type { ServicioSolicitudes } from '../solicitudes/servicio.ts'
 import type { ServicioTurnos } from '../calendar/turnos-service.ts'
+import { etiquetaEstadoTurno } from '@factory/contracts'
 
 // The assistant reaches TUS only through this port. The adapter below delegates to the SAME
 // application services used by the Web/API routes (marketplace, work, finance, identity), so
@@ -116,16 +117,18 @@ export interface PuertoDominioAsistente {
     tarifas: { id: string; nombre: string; duracionMinutos: number; precio: number }[]
     mensaje?: string | null
   }>
+  // SOLICITUD de turno (TURNOS-SOLICITUD-01): queda pendiente hasta que el prestador la acepte.
+  // El cliente es la cuenta de la sesión; el asistente no puede reservar a nombre de otro ni
+  // confirmar nada.
   reservarTurno(context: TusAuthenticatedTenantContext | null, input: {
     providerId: string
     oficioId: string
     inicio: string
     tarifaId?: string
-    clienteNombre?: string
-    clienteTelefono?: string
-    clienteEmail?: string
     notas?: string
-  }): Promise<{ id: string; prestadorNombre: string; inicio: string; fin: string; precioFinal: number | null }>
+  }): Promise<{ id: string; prestadorNombre: string; inicio: string; fin: string; precioFinal: number | null; estado: string }>
+  // Turnos del cliente de la sesión con su estado real (pendiente, confirmada, rechazada...).
+  misTurnos(context: TusAuthenticatedTenantContext): Promise<{ id: string; providerName: string; service: string | null; startsAt: string; status: string; statusLabel: string }[]>
 }
 
 // Lo que el asistente puede ver de una solicitud pública: sin cuenta, contacto ni coordenadas.
@@ -366,23 +369,19 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
       oficioId: string
       inicio: string
       tarifaId?: string
-      clienteNombre?: string
-      clienteTelefono?: string
-      clienteEmail?: string
       notas?: string
     }
   ) {
     if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
-    const turno = await this.compartidos.turnos.reservarTurno({
+    // A request belongs to an account: without a session there is nobody to request for.
+    if (!context) throw Object.assign(new Error('sign-in required'), { status: 401, code: 'LOGIN_REQUIRED' })
+    const turno = await this.compartidos.turnos.solicitarTurno({
       prestadorId: input.providerId,
       oficioId: input.oficioId,
       tarifaId: input.tarifaId,
       inicio: input.inicio,
-      clienteId: context?.subjectId,
-      clienteTenantId: context?.tenantId,
-      clienteNombre: input.clienteNombre,
-      clienteTelefono: input.clienteTelefono,
-      clienteEmail: input.clienteEmail,
+      clienteId: context.subjectId,
+      clienteTenantId: context.tenantId,
       notas: input.notas,
     })
     return {
@@ -391,7 +390,21 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
       inicio: turno.inicio,
       fin: turno.fin,
       precioFinal: turno.precioFinal,
+      estado: turno.estado,
     }
+  }
+
+  async misTurnos(context: TusAuthenticatedTenantContext) {
+    if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    const turnos = await this.compartidos.turnos.turnosCliente(context.subjectId)
+    return turnos.slice(0, 20).map((turno) => ({
+      id: turno.id,
+      providerName: turno.prestadorNombre,
+      service: turno.oficioNombre ?? turno.tarifaNombre ?? null,
+      startsAt: turno.inicio,
+      status: turno.estado,
+      statusLabel: etiquetaEstadoTurno(turno.estado),
+    }))
   }
 
   private get marketplace() {

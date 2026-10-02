@@ -2,13 +2,25 @@ import { randomUUID } from 'node:crypto'
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import {
+  CODIGO_DEMASIADAS_SOLICITUDES,
+  CODIGO_SOLICITUD_NO_PENDIENTE,
+  CODIGO_SOLICITUD_SIN_HORARIO,
+  CODIGO_SOLICITUD_VENCIDA,
+  CODIGO_TRANSICION_INVALIDA,
   DIAS_AGENDA,
+  ESTADOS_TURNO_LIBERAN,
+  HORAS_VIGENCIA_SOLICITUD_TURNO,
   INTERVALO_TURNO_PREDETERMINADO,
   MAXIMO_DIAS_ADELANTE_AGENDA,
+  MAXIMO_SOLICITUDES_PENDIENTES_POR_AGENDA,
+  TRANSICIONES_TURNO,
   enmascararTelefono,
+  esEstadoTurno,
   esIntervaloTurno,
   sumarDias,
   validarHorariosSemanales,
+  type EstadoTurno,
+  type SolicitanteTurnoDTO,
   type AgendaSemanal,
   type BloqueoAgendaDTO,
   type ClienteTurnoAdmin,
@@ -25,7 +37,21 @@ import {
 import { agendaDelDia } from './agenda.ts'
 import { ErrorCalendario } from './bookings.ts'
 import { dateWeekday } from './rules.ts'
+import { SIN_NOTIFICADOR_TURNOS, type NotificadorTurnos } from './turnos-notificaciones.ts'
 
+// A turno a client REQUESTS. The client is the account of the session (never a value of the
+// request body) and its name and contact are read from that account, not copied here.
+export interface EntradaSolicitudTurno {
+  prestadorId: string
+  oficioId: string
+  tarifaId?: string
+  inicio: string
+  clienteId: string
+  clienteTenantId: string
+  notas?: string
+}
+
+// A turno stored already confirmed: only the administration books one for a client.
 export interface EntradaReservaTurno {
   prestadorId: string
   oficioId: string
@@ -85,7 +111,30 @@ export interface EntradaAdminTurnoGeneral {
   notas?: string
 }
 
-const ESTADOS_LIBERAN = ['cancelled', 'cancelled-late', 'no-show']
+const ESTADOS_LIBERAN: string[] = [...ESTADOS_TURNO_LIBERAN]
+
+// Reservations that still hold their time: not released, and not a request whose validity ran
+// out (the next write of its agenda marks it `expired`; until then every read already ignores it).
+const queOcupan = (ahora: Date) => ({ estado: { notIn: ESTADOS_LIBERAN }, NOT: { estado: 'pending', solicitudExpiraEn: { lte: ahora } } })
+
+// Filter of a list by the state each row is SHOWN with: a request whose validity ran out reads as
+// expired even before a write marks it, so it is listed under "expired" and never under "pending".
+function filtroPorEstado(estado: string): Record<string, unknown> {
+  const ahora = new Date()
+  if (estado === 'pending') return { estado: 'pending', solicitudExpiraEn: { gt: ahora } }
+  if (estado === 'expired') return { OR: [{ estado: 'expired' }, { estado: 'pending', solicitudExpiraEn: { lte: ahora } }] }
+  return { estado }
+}
+
+// Name and contact of a registered client, read from its account.
+interface DatosCliente {
+  nombre: string
+  telefono: string | null
+  email: string
+}
+
+const nombreDeUsuario = (user: { displayName: string; firstName?: string | null; lastName?: string | null }): string =>
+  user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.displayName
 
 // reservas.fecha_inicio is a timestamp without time zone holding UTC; the agenda is in Argentina
 // time (UTC-3, no daylight saving).
@@ -117,9 +166,18 @@ export interface ExcepcionHorarioInput {
 // Reads of the agenda run on the client or, inside a write, on its transaction.
 type ClienteAgenda = PrismaClient | Prisma.TransactionClient
 type CalendarioAgenda = { id: string; granularidadMinutos: number; bufferMinutos: number }
+type FilaReserva = Prisma.ReservaGetPayload<object>
 
 export class ServicioTurnos {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly notificador: NotificadorTurnos = SIN_NOTIFICADOR_TURNOS
+  ) {}
+
+  // Outbound notices never decide anything: they run after the commit and a failure is ignored.
+  private avisar(envio: () => Promise<void>): void {
+    void envio().catch(() => undefined)
+  }
 
   /**
    * Toda escritura de una agenda (reserva, turno manual o forzado, bloqueo, cambio de
@@ -131,6 +189,12 @@ export class ServicioTurnos {
   private async conAgendaBloqueada<T>(calendario: CalendarioAgenda, operacion: (tx: Prisma.TransactionClient, agenda: CalendarioAgenda) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 AS ok FROM public."calendarios" WHERE "id" = ${calendario.id} FOR UPDATE`
+      // Requests nobody answered in time give their time back before anything else is decided.
+      const ahora = new Date()
+      await tx.reserva.updateMany({
+        where: { calendarioId: calendario.id, estado: 'pending', solicitudExpiraEn: { lte: ahora } },
+        data: { estado: 'expired', version: { increment: 1 }, fechaActualizacion: ahora },
+      })
       // The interval may have changed while waiting for the lock.
       const agenda = (await tx.calendario.findUnique({ where: { id: calendario.id } })) ?? calendario
       return operacion(tx, agenda)
@@ -346,7 +410,7 @@ export class ServicioTurnos {
     const reservasExistentes = await db.reserva.findMany({
       where: {
         calendarioId: calendario.id,
-        estado: { notIn: ESTADOS_LIBERAN },
+        ...queOcupan(new Date(ahora)),
         fechaInicio: { lte: new Date(finRango.getTime() + descanso) },
         fechaFin: { gte: new Date(inicioRango.getTime() - descanso) },
       },
@@ -377,16 +441,49 @@ export class ServicioTurnos {
     const descanso = buffer * 60_000
     const fin = new Date(inicio.getTime() + duracion * 60_000 + descanso)
     const ocupado = await db.reserva.findFirst({
-      where: { calendarioId: calendario.id, estado: { notIn: ESTADOS_LIBERAN }, fechaInicio: { lt: fin }, fechaFin: { gt: new Date(inicio.getTime() - descanso) } },
+      where: { calendarioId: calendario.id, ...queOcupan(new Date()), fechaInicio: { lt: fin }, fechaFin: { gt: new Date(inicio.getTime() - descanso) } },
     })
     if (ocupado) throw horarioOcupado()
     throw new ErrorCalendario(409, 'SLOT_NOT_AVAILABLE', 'Ese horario no está dentro de la disponibilidad del profesional.')
   }
 
   /**
-   * Reserva un turno con snapshot de tarifa y protección de concurrencia física.
+   * SOLICITUD de reserva de un cliente con cuenta. No confirma nada: crea la reserva en estado
+   * `pending`, que retiene el horario hasta que el prestador responda o venza su vigencia
+   * (HORAS_VIGENCIA_SOLICITUD_TURNO, nunca más allá del inicio del turno). La disponibilidad se
+   * vuelve a decidir acá, con la agenda bloqueada: lo que el cliente vio en pantalla no garantiza
+   * nada. Solo el prestador la convierte en `confirmed` (aceptarSolicitud).
+   */
+  async solicitarTurno(input: EntradaSolicitudTurno): Promise<DetalleTurno> {
+    const turno = await this.crearTurno({ ...input }, true)
+    const expiraEn = turno.expiraEn ? new Date(turno.expiraEn) : new Date(turno.inicio)
+    this.avisar(async () =>
+      this.notificador.solicitudRecibida({
+        reservaId: turno.id,
+        prestadorTenantId: turno.tenantId,
+        clienteNombre: turno.clienteNombre ?? 'Un cliente',
+        servicio: turno.oficioNombre ?? turno.tarifaNombre ?? 'un servicio',
+        inicio: new Date(turno.inicio),
+        duracionMinutos: turno.duracionMinutos,
+        expiraEn,
+      })
+    )
+    return turno
+  }
+
+  /**
+   * Turno ya confirmado: solo lo crea la administración para un cliente (turno general). Mismas
+   * reglas de disponibilidad y de concurrencia que una solicitud.
    */
   async reservarTurno(input: EntradaReservaTurno): Promise<DetalleTurno> {
+    return this.crearTurno(input, false)
+  }
+
+  /**
+   * Crea la reserva con snapshot de tarifa y protección de concurrencia física. `solicitud`:
+   * nace pendiente de la confirmación del prestador; si no, nace confirmada.
+   */
+  private async crearTurno(input: EntradaReservaTurno, solicitud: boolean): Promise<DetalleTurno> {
     const perfil = await this.prisma.perfilPublicoPrestador.findFirst({
       where: {
         OR: [{ id: input.prestadorId }, { prestadorId: input.prestadorId }],
@@ -433,11 +530,18 @@ export class ServicioTurnos {
 
     const reservaId = `res-${randomUUID()}`
     const now = new Date()
+    // A request waits for the provider for a limited time, and never beyond the turno itself.
+    const expiraEn = solicitud ? new Date(Math.min(now.getTime() + HORAS_VIGENCIA_SOLICITUD_TURNO * 3_600_000, inicio.getTime())) : null
 
     try {
       const row = await this.conAgendaBloqueada(calendario, async (tx, agenda) => {
         // Decided with the agenda locked: nobody takes, blocks or reschedules this time meanwhile.
         await this.exigirDisponible(agenda, inicio, duracion, descanso, tx)
+        if (solicitud) {
+          // One person cannot keep an agenda waiting with many open requests.
+          const abiertas = await tx.reserva.count({ where: { calendarioId: calendario.id, clienteId: input.clienteId, esInvitado: false, estado: 'pending' } })
+          if (abiertas >= MAXIMO_SOLICITUDES_PENDIENTES_POR_AGENDA) throw new ErrorCalendario(409, CODIGO_DEMASIADAS_SOLICITUDES, 'Ya tenés varias solicitudes pendientes con este profesional.')
+        }
         return tx.reserva.create({
           data: {
             id: reservaId,
@@ -450,7 +554,8 @@ export class ServicioTurnos {
             clienteId: input.clienteId ?? 'invitado',
             fechaInicio: inicio,
             fechaFin: fin,
-            estado: 'confirmed',
+            estado: solicitud ? 'pending' : 'confirmed',
+            solicitudExpiraEn: expiraEn,
             version: 1,
             fechaCreacion: now,
             fechaActualizacion: now,
@@ -460,16 +565,18 @@ export class ServicioTurnos {
             precioLista: precio,
             precioFinal: precio,
             moneda: 'ARS',
-            clienteNombre: input.clienteNombre ?? null,
-            clienteTelefono: input.clienteTelefono ?? null,
-            clienteEmail: input.clienteEmail ?? null,
+            // A request stores no copy of the person: name and contact are those of the account.
+            clienteNombre: solicitud ? null : input.clienteNombre ?? null,
+            clienteTelefono: solicitud ? null : input.clienteTelefono ?? null,
+            clienteEmail: solicitud ? null : input.clienteEmail ?? null,
             esInvitado: !input.clienteId,
-            notas: input.notas ?? null,
+            notas: input.notas?.trim().slice(0, 500) || null,
           },
         })
       })
 
-      return this.mapearDetalleTurno(row, perfil.nombrePublico)
+      const [clientes, oficios] = await Promise.all([this.clientesDe([row]), this.nombresDeOficio([row])])
+      return this.mapearDetalleTurno(row, perfil.nombrePublico, { cliente: clientes.get(row.clienteId) ?? null, contacto: 'siempre', oficioNombre: oficios.get(input.oficioId) })
     } catch (error: unknown) {
       if (esSolapamiento(error)) throw horarioOcupado('El horario seleccionado ya fue reservado. Por favor elegí otro horario.')
       throw error
@@ -493,9 +600,7 @@ export class ServicioTurnos {
       tenantId: input.prestadorTenantId,
     }
 
-    if (input.estado) {
-      where['estado'] = input.estado
-    }
+    if (input.estado) Object.assign(where, filtroPorEstado(input.estado))
     if (input.desde || input.hasta) {
       const fechaFilter: Record<string, unknown> = {}
       if (input.desde) fechaFilter['gte'] = new Date(input.desde)
@@ -508,7 +613,173 @@ export class ServicioTurnos {
       orderBy: { fechaInicio: 'asc' },
     })
 
-    return rows.map((r) => this.mapearDetalleTurno(r, perfil?.nombrePublico ?? 'Prestador'))
+    return this.detallesPrestador(rows, perfil?.nombrePublico ?? 'Prestador')
+  }
+
+  // Reservations as their provider sees them: the client's name always, its contact only once the
+  // turno is confirmed.
+  private async detallesPrestador(rows: FilaReserva[], prestadorNombre: string): Promise<DetalleTurno[]> {
+    const [clientes, oficios] = await Promise.all([this.clientesDe(rows), this.nombresDeOficio(rows)])
+    return rows.map((row) => this.mapearDetalleTurno(row, prestadorNombre, { cliente: clientes.get(row.clienteId) ?? null, contacto: 'confirmado', oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined }))
+  }
+
+  // Name and contact of the registered clients of some reservations, read from their accounts in
+  // one query. Guests and manual turnos keep the contact written on the reservation.
+  private async clientesDe(rows: FilaReserva[]): Promise<Map<string, DatosCliente>> {
+    const ids = [...new Set(rows.filter((row) => !row.esInvitado && !row.clienteNombre).map((row) => row.clienteId))]
+    if (ids.length === 0) return new Map()
+    const cuentas = await this.prisma.account.findMany({ where: { id: { in: ids } }, include: { user: true } })
+    return new Map(cuentas.map((cuenta) => [cuenta.id, { nombre: nombreDeUsuario(cuenta.user), telefono: cuenta.user.phoneNumber ?? null, email: cuenta.user.email }]))
+  }
+
+  private async nombresDeOficio(rows: FilaReserva[]): Promise<Map<string, string>> {
+    const ids = [...new Set(rows.flatMap((row) => (row.servicioId ? [row.servicioId] : [])))]
+    if (ids.length === 0) return new Map()
+    const oficios = await this.prisma.oficioServicio.findMany({ where: { id: { in: ids } } })
+    return new Map(oficios.map((oficio) => [oficio.id, oficio.nombre]))
+  }
+
+  /**
+   * Solicitudes de reserva que esperan la respuesta del prestador (las vencidas no cuentan).
+   */
+  async solicitudesPrestador(prestadorTenantId: string): Promise<DetalleTurno[]> {
+    const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: prestadorTenantId } })
+    const rows = await this.prisma.reserva.findMany({
+      where: { tenantId: prestadorTenantId, estado: 'pending', solicitudExpiraEn: { gt: new Date() } },
+      orderBy: { fechaCreacion: 'asc' },
+      take: 100,
+    })
+    return this.detallesPrestador(rows, perfil?.nombrePublico ?? 'Prestador')
+  }
+
+  /**
+   * El prestador ACEPTA una solicitud: recién ahí la reserva queda confirmada. Se decide con la
+   * agenda bloqueada y volviendo a mirar el horario: si mientras tanto quedó bloqueado u ocupado,
+   * no se confirma y la solicitud queda rechazada.
+   */
+  async aceptarSolicitud(input: { prestadorTenantId: string; reservaId: string }): Promise<DetalleTurno> {
+    return this.responderSolicitud({ ...input, aceptar: true })
+  }
+
+  /**
+   * El prestador RECHAZA una solicitud: el horario vuelve a ofrecerse.
+   */
+  async rechazarSolicitud(input: { prestadorTenantId: string; reservaId: string }): Promise<DetalleTurno> {
+    return this.responderSolicitud({ ...input, aceptar: false })
+  }
+
+  private async responderSolicitud(input: { prestadorTenantId: string; reservaId: string; aceptar: boolean }): Promise<DetalleTurno> {
+    // Only a request of the session's own agenda (another provider's answers 404).
+    const reserva = await this.prisma.reserva.findFirst({
+      where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], tenantId: input.prestadorTenantId },
+    })
+    const calendario = reserva ? await this.prisma.calendario.findUnique({ where: { id: reserva.calendarioId } }) : null
+    if (!reserva || !calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Solicitud no encontrada')
+    const destino: EstadoTurno = input.aceptar ? 'confirmed' : 'rejected'
+
+    const resultado = await this.conAgendaBloqueada(calendario, async (tx) => {
+      const ahora = new Date()
+      // Read again with the agenda locked: overdue requests were just expired, and no other
+      // answer, booking or block of this agenda can run until this one finishes.
+      const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
+      if (!actual) return { tipo: 'respondida' as const }
+      // The same answer twice (double click, two tabs) is the same result, not an error.
+      if (actual.estado === destino) return { tipo: 'repetida' as const, row: actual }
+      if (actual.estado === 'expired') return { tipo: 'vencida' as const }
+      if (actual.estado !== 'pending') return { tipo: 'respondida' as const }
+      const pasar = (estado: EstadoTurno) => tx.reserva.update({ where: { id: actual.id }, data: { estado, version: { increment: 1 }, fechaActualizacion: ahora } })
+      if (!input.aceptar) return { tipo: 'hecha' as const, row: await pasar('rejected') }
+      if (actual.fechaInicio.getTime() <= ahora.getTime()) {
+        await pasar('expired')
+        return { tipo: 'vencida' as const }
+      }
+      // Still free? The request held its time against other turnos (PostgreSQL), but the provider
+      // may have blocked it since. Both are looked at again here; nothing is confirmed on trust.
+      const bloqueo = await tx.excepcionCalendario.findFirst({
+        where: { calendarioId: actual.calendarioId, estado: 'active', fechaInicio: { lt: actual.fechaFin }, fechaFin: { gt: actual.fechaInicio } },
+      })
+      const otro = await tx.reserva.findFirst({
+        where: { calendarioId: actual.calendarioId, id: { not: actual.id }, ...queOcupan(ahora), fechaInicio: { lt: actual.fechaFin }, fechaFin: { gt: actual.fechaInicio } },
+      })
+      if (bloqueo || otro) return { tipo: 'ocupada' as const, row: await pasar('rejected') }
+      return { tipo: 'hecha' as const, row: await pasar('confirmed') }
+    })
+
+    if (resultado.tipo === 'vencida') throw new ErrorCalendario(409, CODIGO_SOLICITUD_VENCIDA, 'La solicitud venció antes de ser respondida.')
+    if (resultado.tipo === 'respondida') throw new ErrorCalendario(409, CODIGO_SOLICITUD_NO_PENDIENTE, 'Esa solicitud ya fue respondida.')
+    const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: input.prestadorTenantId } })
+    const [turno] = await this.detallesPrestador([resultado.row], perfil?.nombrePublico ?? 'Prestador')
+    if (resultado.tipo !== 'repetida' && !resultado.row.esInvitado) {
+      const fila = resultado.row
+      this.avisar(async () =>
+        this.notificador.solicitudRespondida({
+          reservaId: fila.id,
+          clienteCuentaId: fila.clienteId,
+          resultado: fila.estado === 'confirmed' ? 'confirmed' : 'rejected',
+          prestadorNombre: perfil?.nombrePublico ?? 'El profesional',
+          servicio: turno!.oficioNombre ?? turno!.tarifaNombre ?? 'el servicio',
+          inicio: fila.fechaInicio,
+        })
+      )
+    }
+    // Stored as rejected (committed above); the provider is told why it could not be confirmed.
+    if (resultado.tipo === 'ocupada') throw new ErrorCalendario(409, CODIGO_SOLICITUD_SIN_HORARIO, 'Ese horario ya no está libre en tu agenda: la solicitud quedó rechazada.')
+    return turno!
+  }
+
+  /**
+   * Turnos del cliente de la sesión (solicitudes pendientes, confirmados e historial), con el
+   * nombre del prestador y del servicio.
+   */
+  async turnosCliente(clienteId: string): Promise<DetalleTurno[]> {
+    const rows = await this.prisma.reserva.findMany({ where: { clienteId, esInvitado: false }, orderBy: { fechaInicio: 'desc' }, take: 100 })
+    const tenants = [...new Set(rows.map((row) => row.tenantId))]
+    const [perfiles, oficios] = await Promise.all([
+      tenants.length ? this.prisma.perfilPublicoPrestador.findMany({ where: { tenantId: { in: tenants } } }) : Promise.resolve([]),
+      this.nombresDeOficio(rows),
+    ])
+    const perfilDe = new Map(perfiles.map((perfil) => [perfil.tenantId, perfil]))
+    return rows.map((row) => {
+      const perfil = perfilDe.get(row.tenantId)
+      return {
+        ...this.mapearDetalleTurno(row, perfil?.nombrePublico ?? 'Prestador', { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined }),
+        // Public profile id: the link back to the professional.
+        ...(perfil ? { prestadorId: perfil.id } : {}),
+      }
+    })
+  }
+
+  /**
+   * El cliente retira su solicitud o cancela su turno confirmado (solo el propio y antes de que
+   * empiece). El horario vuelve a ofrecerse.
+   */
+  async cancelarTurnoCliente(input: { clienteId: string; reservaId: string }): Promise<DetalleTurno> {
+    const reserva = await this.prisma.reserva.findFirst({
+      where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false },
+    })
+    const calendario = reserva ? await this.prisma.calendario.findUnique({ where: { id: reserva.calendarioId } }) : null
+    if (!reserva || !calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+    const row = await this.conAgendaBloqueada(calendario, async (tx) => {
+      const ahora = new Date()
+      const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
+      if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+      if (actual.estado === 'cancelled') return actual
+      if ((actual.estado !== 'pending' && actual.estado !== 'confirmed') || actual.fechaInicio.getTime() <= ahora.getTime())
+        throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no se puede cancelar.')
+      return tx.reserva.update({ where: { id: actual.id }, data: { estado: 'cancelled', version: { increment: 1 }, fechaActualizacion: ahora } })
+    })
+    const [perfil, oficios] = await Promise.all([this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: row.tenantId } }), this.nombresDeOficio([row])])
+    return this.mapearDetalleTurno(row, perfil?.nombrePublico ?? 'Prestador', { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined })
+  }
+
+  /**
+   * Datos con los que la persona de la sesión solicita un turno (los de su cuenta, con el
+   * teléfono enmascarado). Es lo que la Web muestra en lugar de pedirlos otra vez.
+   */
+  async solicitante(clienteId: string): Promise<SolicitanteTurnoDTO> {
+    const cuenta = await this.prisma.account.findFirst({ where: { id: clienteId, status: 'active' }, include: { user: true } })
+    if (!cuenta) throw new ErrorCalendario(404, 'NOT_FOUND', 'Cuenta no encontrada')
+    return { nombre: nombreDeUsuario(cuenta.user), email: cuenta.user.email, telefono: cuenta.user.phoneNumber ? enmascararTelefono(cuenta.user.phoneNumber) : null }
   }
 
   /**
@@ -664,17 +935,33 @@ export class ServicioTurnos {
     if (!reserva) {
       throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
     }
+    const nuevo = input.nuevoEstado
+    if (!esEstadoTurno(nuevo)) throw new ErrorCalendario(400, 'INVALID_STATUS', 'Estado no reconocido')
+    const calendario = await this.prisma.calendario.findUnique({ where: { id: reserva.calendarioId } })
+    if (!calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
 
-    const updated = await this.prisma.reserva.update({
-      where: { id: reserva.id },
-      data: {
-        estado: input.nuevoEstado,
-        notas: input.motivo ? `${reserva.notas ?? ''} [Estado: ${input.nuevoEstado} - ${input.motivo}]`.trim() : reserva.notas,
-        fechaActualizacion: new Date(),
-      },
+    const updated = await this.conAgendaBloqueada(calendario, async (tx) => {
+      const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
+      if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+      if (actual.estado === nuevo) return actual
+      // Nothing leaves a final state, and a request is never confirmed from here: only its
+      // provider accepts it (aceptarSolicitud re-checks the time). Expiry is the system's.
+      const permitidos: readonly string[] = esEstadoTurno(actual.estado) ? TRANSICIONES_TURNO[actual.estado] : []
+      if (!permitidos.includes(nuevo) || nuevo === 'expired' || (actual.estado === 'pending' && nuevo === 'confirmed'))
+        throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no admite ese cambio de estado.')
+      return tx.reserva.update({
+        where: { id: actual.id },
+        data: {
+          estado: nuevo,
+          version: { increment: 1 },
+          notas: input.motivo ? `${actual.notas ?? ''} [Estado: ${nuevo} - ${input.motivo}]`.trim() : actual.notas,
+          fechaActualizacion: new Date(),
+        },
+      })
     })
 
-    return this.mapearDetalleTurno(updated, 'Prestador')
+    const [turno] = await this.detallesPrestador([updated], 'Prestador')
+    return turno!
   }
 
   /**
@@ -1031,9 +1318,7 @@ export class ServicioTurnos {
       // An unknown provider matches nothing (never "all the turnos").
       where['tenantId'] = perfil ? perfil.tenantId : '__sin_prestador__'
     }
-    if (input.estado) {
-      where['estado'] = input.estado
-    }
+    if (input.estado) Object.assign(where, filtroPorEstado(input.estado))
     if (input.desde || input.hasta) {
       const f: Record<string, unknown> = {}
       if (input.desde) f['gte'] = new Date(`${input.desde.slice(0, 10)}T00:00:00.000-03:00`)
@@ -1054,9 +1339,10 @@ export class ServicioTurnos {
     // Names of the page in two batch reads (provider and service), never one query per row.
     const tenants = [...new Set(rows.map((row) => row.tenantId))]
     const oficios = [...new Set(rows.flatMap((row) => (row.servicioId ? [row.servicioId] : [])))]
-    const [perfiles, nombresOficio] = await Promise.all([
+    const [perfiles, nombresOficio, clientes] = await Promise.all([
       tenants.length ? this.prisma.perfilPublicoPrestador.findMany({ where: { tenantId: { in: tenants } } }) : Promise.resolve([]),
       oficios.length ? this.prisma.oficioServicio.findMany({ where: { id: { in: oficios } } }) : Promise.resolve([]),
+      this.clientesDe(rows),
     ])
     const perfilDe = new Map(perfiles.map((perfil) => [perfil.tenantId, perfil]))
     const oficioDe = new Map(nombresOficio.map((oficio) => [oficio.id, oficio.nombre]))
@@ -1065,7 +1351,7 @@ export class ServicioTurnos {
       items: rows.map((r) => {
         const perfil = perfilDe.get(r.tenantId)
         return {
-          ...this.mapearDetalleTurno(r, perfil?.nombrePublico ?? 'Prestador'),
+          ...this.mapearDetalleTurno(r, perfil?.nombrePublico ?? 'Prestador', { cliente: clientes.get(r.clienteId) ?? null, contacto: 'siempre' }),
           ...(perfil ? { prestadorId: perfil.id } : {}),
           ...(r.servicioId && oficioDe.has(r.servicioId) ? { oficioNombre: oficioDe.get(r.servicioId)! } : {}),
         }
@@ -1191,7 +1477,18 @@ export class ServicioTurnos {
     }))
   }
 
-  private mapearDetalleTurno(r: Record<string, unknown>, prestadorNombre: string): DetalleTurno {
+  private mapearDetalleTurno(
+    r: Record<string, unknown>,
+    prestadorNombre: string,
+    // cliente: the registered client read from its account. contacto: who is looking — the
+    // provider gets the phone and email only once the turno is confirmed.
+    extra: { cliente?: DatosCliente | null; contacto?: 'siempre' | 'confirmado'; oficioNombre?: string } = {}
+  ): DetalleTurno {
+    const vence = r['solicitudExpiraEn'] ? new Date(String(r['solicitudExpiraEn'])) : null
+    // A request whose validity ran out reads as expired even before a write marks it.
+    const estado = r['estado'] === 'pending' && vence && vence.getTime() <= Date.now() ? 'expired' : String(r['estado'])
+    const verContacto = extra.contacto !== 'confirmado' || estado === 'confirmed' || estado === 'completed'
+    const cliente = extra.cliente ?? null
     return {
       id: String(r['id']),
       reservaId: String(r['reservaId']),
@@ -1203,14 +1500,16 @@ export class ServicioTurnos {
       tarifaNombre: r['tarifaNombre'] ? String(r['tarifaNombre']) : null,
       inicio: new Date(String(r['fechaInicio'])).toISOString(),
       fin: new Date(String(r['fechaFin'])).toISOString(),
-      duracionMinutos: Number(r['duracionMinutos'] ?? 60),
+      duracionMinutos: r['duracionMinutos'] != null ? Number(r['duracionMinutos']) : Math.max(1, Math.round((new Date(String(r['fechaFin'])).getTime() - new Date(String(r['fechaInicio'])).getTime()) / 60_000)),
       precioLista: r['precioLista'] != null ? Number(r['precioLista']) : null,
       precioFinal: r['precioFinal'] != null ? Number(r['precioFinal']) : null,
       moneda: String(r['moneda'] ?? 'ARS'),
-      estado: String(r['estado']),
-      clienteNombre: r['clienteNombre'] ? String(r['clienteNombre']) : null,
-      clienteTelefono: r['clienteTelefono'] ? String(r['clienteTelefono']) : null,
-      clienteEmail: r['clienteEmail'] ? String(r['clienteEmail']) : null,
+      estado,
+      expiraEn: estado === 'pending' && vence ? vence.toISOString() : null,
+      ...(extra.oficioNombre ? { oficioNombre: extra.oficioNombre } : {}),
+      clienteNombre: cliente ? cliente.nombre : r['clienteNombre'] ? String(r['clienteNombre']) : null,
+      clienteTelefono: !verContacto ? null : cliente ? cliente.telefono : r['clienteTelefono'] ? String(r['clienteTelefono']) : null,
+      clienteEmail: !verContacto ? null : cliente ? cliente.email : r['clienteEmail'] ? String(r['clienteEmail']) : null,
       esInvitado: Boolean(r['esInvitado']),
       modificadoPorAdminId: r['modificadoPorAdminId'] ? String(r['modificadoPorAdminId']) : null,
       creadoPorAdminId: r['creadoPorAdminId'] ? String(r['creadoPorAdminId']) : null,

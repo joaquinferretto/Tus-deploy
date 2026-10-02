@@ -25,6 +25,11 @@ export interface EmailTransport {
 const escapeHtml = (value: string) =>
   value.replace(/[&<>"']/gu, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
 
+// Shared look of every TUS email (also used by the notices of other modules).
+export function emailLayout(title: string, paragraphs: string[], action?: { label: string; url: string }): { text: string; html: string } {
+  return layout(title, paragraphs, action)
+}
+
 function layout(title: string, paragraphs: string[], action?: { label: string; url: string }): { text: string; html: string } {
   const text = [title, '', ...paragraphs, ...(action ? ['', `${action.label}: ${action.url}`] : []), '', 'TUS · tusservicios.shop'].join('\n')
   const html = `<!doctype html><html lang="es"><body style="font-family:Arial,sans-serif;color:#1f1d1a;max-width:560px;margin:0 auto;padding:24px">
@@ -115,13 +120,19 @@ export interface EmailSettings {
   sender: EmailSender
 }
 
+// The configured transport, or null when email delivery is not configured. Never logs the key.
+export function createEmailTransportFromEnv(env: Record<string, string | undefined>, fetchImpl: typeof fetch = fetch): EmailTransport | null {
+  const apiKey = env['RESEND_API_KEY']?.trim()
+  const from = env['EMAIL_FROM']?.trim()
+  return env['EMAIL_PROVIDER']?.trim() === 'resend' && apiKey && from ? new ResendEmailTransport(apiKey, from, fetchImpl) : null
+}
+
 // Production selection. Never logs the key.
 export function createEmailSenderFromEnv(env: Record<string, string | undefined>, fetchImpl: typeof fetch = fetch): EmailSettings {
   const webBaseUrl = env['TUS_WEB_BASE_URL']?.trim() || 'https://tusservicios.shop'
-  const apiKey = env['RESEND_API_KEY']?.trim()
-  const from = env['EMAIL_FROM']?.trim()
-  if (env['EMAIL_PROVIDER']?.trim() === 'resend' && apiKey && from) {
-    return { provider: 'resend', sender: new TemplatedEmailSender(new ResendEmailTransport(apiKey, from, fetchImpl), webBaseUrl) }
+  const transport = createEmailTransportFromEnv(env, fetchImpl)
+  if (transport) {
+    return { provider: 'resend', sender: new TemplatedEmailSender(transport, webBaseUrl) }
   }
   return { provider: 'unavailable', sender: new TemplatedEmailSender(new UnavailableEmailTransport(), webBaseUrl) }
 }

@@ -135,21 +135,22 @@ export const HERRAMIENTAS = [
   herramienta({
     name: 'book_appointment',
     description:
-      'Prepara la reserva de un turno con un prestador en un horario disponible (requiere confirmación explícita del usuario antes de confirmarse).',
+      'Prepara la SOLICITUD de un turno con un prestador en un horario disponible. El usuario tiene que aceptar enviarla; aun enviada NO es una reserva confirmada: queda pendiente hasta que el prestador la acepte.',
     audience: 'public',
     schema: z.strictObject({
       providerId: z.string().min(3),
       profession: OFICIO,
       startsAt: z.string().min(10),
       tariffId: z.string().optional(),
-      // Contact label only. The client is the authenticated account (decided by the backend).
+      // Accepted for compatibility and ignored: the client is the account of the session and its
+      // name and contact are read from it by the backend, never taken from the conversation.
       clientName: z.string().trim().min(2).max(100).optional(),
       clientPhone: z.string().trim().min(6).max(30).optional(),
       notes: z.string().trim().max(300).optional(),
     }),
     confirmation: {
       summarize: (args) =>
-        `Voy a reservar tu turno:\nPrestador: ${args.providerId}\nServicio: ${args.profession}\nHorario: ${args.startsAt}${args.clientName ? `\nA nombre de: ${args.clientName}` : ''}${args.notes ? `\nNota: ${args.notes}` : ''}\n¿Confirmás?`,
+        `Voy a enviar tu solicitud de turno:\nPrestador: ${args.providerId}\nServicio: ${args.profession}\nHorario: ${args.startsAt}${args.notes ? `\nNota: ${args.notes}` : ''}\nEl turno queda pendiente hasta que el prestador confirme.\n¿Querés solicitar ese turno?`,
     },
     execute: async (args, actor, domain) => ({
       appointment: await domain.reservarTurno(actor.context, {
@@ -157,8 +158,6 @@ export const HERRAMIENTAS = [
         oficioId: args.profession,
         inicio: args.startsAt,
         tarifaId: args.tariffId,
-        clienteNombre: args.clientName,
-        clienteTelefono: args.clientPhone,
         notas: args.notes,
       }),
     }),
@@ -181,11 +180,11 @@ export const HERRAMIENTAS = [
   }),
   herramienta({
     name: 'list_my_reservations',
-    description: 'Lista las reservas (solicitudes con horario) del cliente vinculado.',
+    description: 'Lista los turnos del cliente con su estado real (pendiente de confirmación, confirmada, rechazada, cancelada, vencida) y sus solicitudes con horario.',
     audience: 'linked',
     schema: vacio,
     confirmation: null,
-    execute: async (_args, actor, domain) => ({ reservations: (await domain.solicitudes(actor.context!)).filter((item) => item.slotStart) }),
+    execute: async (_args, actor, domain) => ({ appointments: await domain.misTurnos(actor.context!), reservations: (await domain.solicitudes(actor.context!)).filter((item) => item.slotStart) }),
   }),
   herramienta({
     name: 'list_my_works',

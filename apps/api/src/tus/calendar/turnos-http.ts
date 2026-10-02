@@ -3,7 +3,7 @@ import { asyncHandler } from '../../presentation/middleware/error.ts'
 import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../ports/index.ts'
 import { ServicioTurnos } from './turnos-service.ts'
 import { ErrorCalendario } from './bookings.ts'
-import type { ClienteTurnoAdmin } from '@factory/contracts'
+import { CODIGO_SESION_REQUERIDA, type ClienteTurnoAdmin } from '@factory/contracts'
 
 export function crearRouterTurnos({
   servicio,
@@ -15,7 +15,7 @@ export function crearRouterTurnos({
   const router = express.Router()
 
   // -----------------------------------------------------------------------------------------------
-  // 1. PUBLIC ENDPOINTS (Buscar trabajador -> Reservar turno)
+  // 1. PUBLIC ENDPOINTS (Buscar trabajador -> agenda) y la solicitud de turno del cliente
   // -----------------------------------------------------------------------------------------------
 
   router.get(
@@ -67,51 +67,77 @@ export function crearRouterTurnos({
     })
   )
 
-  router.post(
-    '/tus/v1/public/prestadores/:id/turnos/reservar',
+  // A client REQUESTS a turno; nothing is confirmed here. The client is the account of the
+  // session: identity fields of the body (a client id, a name, a phone, an email) are never read.
+  // Without a session there is nobody to request for: 401 LOGIN_REQUIRED and the Web sends the
+  // person to sign in and back to this turno. The old path stays as an alias of the same rule.
+  const solicitar = asyncHandler(async (request: Request, response: Response) => {
+    const prestadorId = String(request.params['id'] ?? '')
+    const body = comoRegistro(request.body)
+    const oficioId = String(body['oficioId'] ?? '')
+    const inicio = String(body['inicio'] ?? '')
+    response.setHeader('cache-control', 'private, no-store')
+    if (!oficioId || !inicio) return void enviarError(response, 400, 'INVALID_PARAMS', 'oficioId e inicio son requeridos')
+    const context = await intentarAutenticar(request, sessions)
+    if (!context) return void enviarError(response, 401, CODIGO_SESION_REQUERIDA, 'Iniciá sesión para solicitar el turno.')
+    try {
+      const turno = await servicio.solicitarTurno({
+        prestadorId,
+        oficioId,
+        tarifaId: body['tarifaId'] ? String(body['tarifaId']) : undefined,
+        inicio,
+        clienteId: context.subjectId,
+        clienteTenantId: context.tenantId,
+        notas: body['notas'] ? String(body['notas']) : undefined,
+      })
+      response.status(201).json(turno)
+    } catch (error) {
+      manejarError(response, error)
+    }
+  })
+  router.post('/tus/v1/prestadores/:id/turnos/solicitudes', solicitar)
+  router.post('/tus/v1/public/prestadores/:id/turnos/reservar', solicitar)
+
+  // -----------------------------------------------------------------------------------------------
+  // 1b. CLIENTE (sus propios turnos: solicitudes pendientes, confirmados e historial)
+  // -----------------------------------------------------------------------------------------------
+
+  // Who the request is made as: the data of the session's account (phone masked), shown by the
+  // Web instead of asking for it again.
+  router.get(
+    '/tus/v1/cliente/turnos/solicitante',
     asyncHandler(async (request: Request, response: Response) => {
-      const prestadorId = String(request.params['id'] ?? '')
-      const body = comoRegistro(request.body)
-      const oficioId = String(body['oficioId'] ?? '')
-      const inicio = String(body['inicio'] ?? '')
-
-      if (!oficioId || !inicio) {
-        enviarError(response, 400, 'INVALID_PARAMS', 'oficioId e inicio son requeridos')
-        return
-      }
-
-      // Soporta tanto cliente con sesión como invitado
-      const context = await intentarAutenticar(request, sessions)
-      const clienteNombre = String(body['clienteNombre'] ?? body['nombre'] ?? '').trim()
-      const clienteTelefono = String(body['clienteTelefono'] ?? body['telefono'] ?? '').trim()
-      const clienteEmail = String(body['clienteEmail'] ?? body['email'] ?? '').trim()
-
-      if (!context && !clienteNombre) {
-        enviarError(
-          response,
-          400,
-          'CLIENTE_REQUERIDO',
-          'Para reservar como invitado se requiere nombre de contacto'
-        )
-        return
-      }
-
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
       try {
-        const turno = await servicio.reservarTurno({
-          prestadorId,
-          oficioId,
-          tarifaId: body['tarifaId'] ? String(body['tarifaId']) : undefined,
-          inicio,
-          clienteId: context?.subjectId,
-          clienteTenantId: context?.tenantId,
-          clienteNombre: clienteNombre || undefined,
-          clienteTelefono: clienteTelefono || undefined,
-          clienteEmail: clienteEmail || undefined,
-          notas: body['notas'] ? String(body['notas']) : undefined,
-        })
+        response.status(200).json(await servicio.solicitante(context.subjectId))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
 
-        response.setHeader('cache-control', 'private, no-store')
-        response.status(201).json(turno)
+  router.get(
+    '/tus/v1/cliente/turnos',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      try {
+        response.status(200).json({ items: await servicio.turnosCliente(context.subjectId) })
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
+  // Only a turno of the session's own account (another person's answers 404).
+  router.post(
+    '/tus/v1/cliente/turnos/:id/cancelar',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      try {
+        response.status(200).json(await servicio.cancelarTurnoCliente({ clienteId: context.subjectId, reservaId: String(request.params['id'] ?? '') }))
       } catch (error) {
         manejarError(response, error)
       }
@@ -141,6 +167,39 @@ export function crearRouterTurnos({
       }
     })
   )
+
+  // Requests waiting for this provider's answer. Their count is the notice of the panel.
+  router.get(
+    '/tus/v1/prestador/turnos/solicitudes',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      try {
+        const items = await servicio.solicitudesPrestador(context.tenantId)
+        response.status(200).json({ items, pendientes: items.length })
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
+  // The provider answers a request of its own agenda. Accepting is what confirms the reservation
+  // (the time is checked again inside the transaction); rejecting gives the time back.
+  for (const [accion, aceptar] of [['aceptar', true], ['rechazar', false]] as const) {
+    router.post(
+      `/tus/v1/prestador/turnos/:id/${accion}`,
+      asyncHandler(async (request: Request, response: Response) => {
+        const context = await autenticar(request, response, sessions)
+        if (!context) return
+        const entrada = { prestadorTenantId: context.tenantId, reservaId: String(request.params['id'] ?? '') }
+        try {
+          response.status(200).json(aceptar ? await servicio.aceptarSolicitud(entrada) : await servicio.rechazarSolicitud(entrada))
+        } catch (error) {
+          manejarError(response, error)
+        }
+      })
+    )
+  }
 
   router.post(
     '/tus/v1/prestador/turnos/manual',
@@ -252,7 +311,7 @@ export function crearRouterTurnos({
       const nuevoEstado = String(body['estado'] ?? '')
       const motivo = body['motivo'] ? String(body['motivo']) : undefined
 
-      if (!['confirmed', 'cancelled', 'completed', 'no-show'].includes(nuevoEstado)) {
+      if (!['cancelled', 'completed', 'no-show'].includes(nuevoEstado)) {
         enviarError(response, 400, 'INVALID_STATUS', 'Estado no reconocido')
         return
       }

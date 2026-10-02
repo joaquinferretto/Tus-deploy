@@ -703,6 +703,12 @@ export const REVIEWED_MIGRATION_STATEMENTS = Object.freeze([
     sha256: '21a77907ef9b6fe386a09ed803b257ed2fdfc9ec8f8f49cd300d67628e63df76',
     reason: 'Deterministic backfill: localities whose provincia text differs from the name of the province they reference take that name. Localities without provincia_id are not touched.',
   },
+  {
+    migration: '20261026100000_tus_turnos_solicitud_reserva',
+    classification: 'high_risk',
+    sha256: '8e58c83894e125db682d6f1407582025e1f58f84ce19e7e938fa3f7302e9cfc3',
+    reason: 'Drops the exclusion constraint ex_reservas_sin_solapamiento only to re-create it in the next statement with the same columns and operators and a predicate that also leaves out the two new states rejected and expired. No existing row is in either state, so the rows it protects are exactly the same and the re-creation cannot fail; both statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted or rewritten.',
+  },
 ])
 
 export function normalizedStatementHash(sql) {
