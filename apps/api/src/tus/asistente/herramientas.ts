@@ -14,6 +14,16 @@ export interface ActorAsistente {
   // Current authority resolved from the linked account on EVERY turn (never cached roles).
   context: TusAuthenticatedTenantContext | null
   isProvider: boolean
+  // TURNOS-SENA-01: account this conversation identified by full name + document (a channel
+  // without a TUS session). It is NOT a linked account: it only lets the person request a turno
+  // and pay its deposit; every private tool keeps requiring the link (`context`).
+  identificada?: TusAuthenticatedTenantContext | null
+}
+
+// Who a turno is requested (or its deposit paid) for: the session / linked account, or the
+// account the backend identified by name + document. Never a value of the model or the message.
+export function cuentaDeSolicitud(actor: ActorAsistente): TusAuthenticatedTenantContext | null {
+  return actor.context ?? actor.identificada ?? null
 }
 
 export type AudienciaHerramienta = 'public' | 'linked' | 'provider'
@@ -148,12 +158,13 @@ export const HERRAMIENTAS = [
       clientPhone: z.string().trim().min(6).max(30).optional(),
       notes: z.string().trim().max(300).optional(),
     }),
+    // The card the person confirms is built by the orchestrator from backend data (provider name,
+    // service, real price and deposit); this fallback never carries an internal id.
     confirmation: {
-      summarize: (args) =>
-        `Voy a enviar tu solicitud de turno:\nPrestador: ${args.providerId}\nServicio: ${args.profession}\nHorario: ${args.startsAt}${args.notes ? `\nNota: ${args.notes}` : ''}\nEl turno queda pendiente hasta que el prestador confirme.\n¿Querés solicitar ese turno?`,
+      summarize: (args) => `Vas a solicitar un turno${args.notes ? ` (nota: ${args.notes})` : ''}. Queda pendiente hasta que el prestador lo confirme. ¿Querés solicitar este turno?`,
     },
     execute: async (args, actor, domain) => ({
-      appointment: await domain.reservarTurno(actor.context, {
+      appointment: await domain.reservarTurno(cuentaDeSolicitud(actor), {
         providerId: args.providerId,
         oficioId: args.profession,
         inicio: args.startsAt,
@@ -274,7 +285,7 @@ export const HERRAMIENTAS = [
     }),
     confirmation: {
       summarize: (args) =>
-        `Voy a crear una solicitud:\nServicio: ${args.listingId}\nProblema: ${args.problem}${args.zone ? `\nZona: ${args.zone}` : ''}${args.urgency ? `\nUrgencia: ${args.urgency.replace('_', ' ')}` : ''}\n¿Confirmás?`,
+        `Voy a crear una solicitud:\nProblema: ${args.problem}${args.zone ? `\nZona: ${args.zone}` : ''}${args.urgency ? `\nUrgencia: ${args.urgency.replace('_', ' ')}` : ''}\n¿Confirmás?`,
     },
     execute: async (args, actor, domain, extra) => ({ request: await domain.crearSolicitud(actor.context!, { listingId: args.listingId, idempotencyKey: extra.idempotencyKey }) }),
   }),
@@ -353,7 +364,7 @@ Queda pendiente hasta que el prestador la acepte. ¿Confirmás?`,
     description: 'Prepara la aceptación de un presupuesto de un trabajo del cliente (requiere confirmación).',
     audience: 'linked',
     schema: z.strictObject({ workId: ID, budgetId: ID }),
-    confirmation: { summarize: (args) => `Vas a aceptar el presupuesto ${args.budgetId} del trabajo ${args.workId}. ¿Confirmás?` },
+    confirmation: { summarize: () => 'Vas a aceptar ese presupuesto. ¿Confirmás?' },
     execute: async (args, actor, domain, extra) => ({ result: await domain.decidirPresupuesto(actor.context!, { ...args, decision: 'accepted', idempotencyKey: extra.idempotencyKey }) }),
   }),
   herramienta({
@@ -361,7 +372,7 @@ Queda pendiente hasta que el prestador la acepte. ¿Confirmás?`,
     description: 'Prepara el rechazo de un presupuesto con un motivo (requiere confirmación).',
     audience: 'linked',
     schema: z.strictObject({ workId: ID, budgetId: ID, reason: z.string().trim().min(3).max(300) }),
-    confirmation: { summarize: (args) => `Vas a rechazar el presupuesto ${args.budgetId} (motivo: ${args.reason}). ¿Confirmás?` },
+    confirmation: { summarize: (args) => `Vas a rechazar ese presupuesto (motivo: ${args.reason}). ¿Confirmás?` },
     execute: async (args, actor, domain, extra) => ({ result: await domain.decidirPresupuesto(actor.context!, { ...args, decision: 'rejected', idempotencyKey: extra.idempotencyKey }) }),
   }),
   herramienta({
@@ -369,7 +380,7 @@ Queda pendiente hasta que el prestador la acepte. ¿Confirmás?`,
     description: 'Prepara el link seguro de pago con Mercado Pago de un trabajo listo para pagar (requiere confirmación). Nunca modifica montos.',
     audience: 'linked',
     schema: conTrabajo,
-    confirmation: { summarize: (args) => `Te genero el link de pago del trabajo ${args.workId}. ¿Confirmás?` },
+    confirmation: { summarize: () => 'Te genero el link de pago de ese trabajo. ¿Confirmás?' },
     execute: async (args, actor, domain, extra) => ({ payment: await domain.linkPago(actor.context!, args.workId, extra.idempotencyKey) }),
   }),
   herramienta({
@@ -377,7 +388,7 @@ Queda pendiente hasta que el prestador la acepte. ¿Confirmás?`,
     description: 'Prepara la cancelación de un trabajo por el prestador (requiere confirmación).',
     audience: 'provider',
     schema: conTrabajo,
-    confirmation: { summarize: (args) => `Vas a cancelar el trabajo ${args.workId}. Esta acción no se puede deshacer. ¿Confirmás?` },
+    confirmation: { summarize: () => 'Vas a cancelar ese trabajo. Esta acción no se puede deshacer. ¿Confirmás?' },
     execute: async (args, actor, domain, extra) => ({ result: await domain.transicionTrabajo(actor.context!, { workId: args.workId, action: 'cancel', idempotencyKey: extra.idempotencyKey }) }),
   }),
   herramienta({
@@ -385,7 +396,7 @@ Queda pendiente hasta que el prestador la acepte. ¿Confirmás?`,
     description: 'Prepara marcar como completado un trabajo del prestador (requiere confirmación).',
     audience: 'provider',
     schema: conTrabajo,
-    confirmation: { summarize: (args) => `Vas a marcar como completado el trabajo ${args.workId}. ¿Confirmás?` },
+    confirmation: { summarize: () => 'Vas a marcar ese trabajo como completado. ¿Confirmás?' },
     execute: async (args, actor, domain, extra) => ({ result: await domain.transicionTrabajo(actor.context!, { workId: args.workId, action: 'complete', idempotencyKey: extra.idempotencyKey }) }),
   }),
 ] as const

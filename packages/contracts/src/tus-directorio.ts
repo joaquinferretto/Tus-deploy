@@ -171,8 +171,8 @@ export interface DetalleTurno {
   precioFinal: number | null
   moneda: string
   // One of ESTADOS_TURNO (tus-turnos.ts). `pending`: requested by the client, waiting for the provider.
-  estado: 'pending' | 'confirmed' | 'rejected' | 'expired' | 'cancelled' | 'cancelled-late' | 'no-show' | 'completed' | string
-  // Until when a pending request holds its time (null once it is no longer a request).
+  estado: 'pending' | 'awaiting_payment' | 'confirmed' | 'rejected' | 'expired' | 'cancelled' | 'cancelled-late' | 'no-show' | 'completed' | string
+  // Until when a pending or awaiting-payment request holds its time.
   expiraEn?: string | null
   // Name of a registered client comes from the account (never a copy typed in a form).
   clienteNombre?: string | null
@@ -189,6 +189,8 @@ export interface DetalleTurno {
   clienteCuentaId?: string | null
   notas?: string | null
   fechaCreacion: string
+  // Deposit of the turno (tus-turnos.ts): derived by the backend, never stored on the reservation.
+  sena?: { monto: number; moneda: string; estado: string } | null
 }
 
 export interface PerfilPrestadorPublico extends PrestadorPublico {

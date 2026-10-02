@@ -367,6 +367,54 @@ Reemplaza W09-02 **solo** para trabajos con `origen = 'solicitud'`; el marketpla
   soporte.
 - El marketplace viejo conserva su regla (solo el Prestador cancela, sin motivo obligatorio).
 
+### W09-08: Turnos del directorio: seña 50% que confirma el turno (TURNOS-SENA-01, 2026-10-02)
+
+Aplica a los turnos que un cliente solicita a un prestador del directorio (Web, asistente Web y
+WhatsApp). No cambia W09-02 (marketplace) ni W09-05 (trabajos de solicitud).
+
+- Estados: `pending` (solicitada) → `awaiting_payment` (el prestador aceptó; falta la seña) → `confirmed`
+  (seña aprobada). El prestador **acepta**, no confirma. El único camino automático a `confirmed` es el
+  webhook verificado de Mercado Pago, dentro de la transacción financiera.
+- Monto: seña = 50% del precio guardado en la reserva (`reservas.precio_final`, el de la variante elegida
+  en `tarifas_servicio_prestador` o el precio base del servicio), redondeado hacia arriba al centavo. Lo
+  calcula el backend con la misma regla de W09-05 (`montosSenaSaldo`); ni la Web, ni WhatsApp, ni el modelo
+  lo envían o lo calculan. No se guarda ningún monto de seña en la reserva.
+- Ventana de pago: 24 horas desde la aceptación y nunca más allá del inicio. Mientras dura, el turno
+  retiene su horario. Vencida, el turno pasa a `expired` y el horario se libera.
+- Donde TUS **puede cobrar** (pagos online activos y, en producción, `service-payments` habilitado): un
+  prestador sin Mercado Pago conectado o sin identidad verificada no puede aceptar
+  (`PROVIDER_PAYMENT_ACCOUNT_REQUIRED`), y un servicio sin precio no admite solicitudes
+  (`SERVICE_PRICE_REQUIRED`). Con los pagos online **apagados** en toda la plataforma (o un turno sin
+  precio) no hay seña: aceptar confirma, como antes.
+- En producción cobrar exige además la habilitación por evidencia de la capacidad `service-payments` (legal,
+  fiscal, KYC, KYB, Mercado Pago y runtime). `settlement` **no** es el gate de las señas. Decisión del dueño
+  (2026-10-02): con los pagos online activos (`paymentsEnabled = true`) y **sin** esa habilitación, un turno con
+  precio **no se puede aceptar** (`SERVICE_PAYMENTS_NOT_AUTHORIZED`): la solicitud queda pendiente y nunca se
+  confirma sin su seña. Un turno sin precio no tiene seña y aceptar lo confirma, como siempre. En sandbox la
+  habilitación no se exige y el circuito completo se puede probar.
+- Si la habilitación se pierde con un turno ya en `awaiting_payment`, no se entrega checkout
+  (`PAYMENT_NOT_AVAILABLE`) y el turno **no** se confirma: vence con su ventana. Si no se puede determinar
+  qué significa aceptar (la verificación falla), aceptar responde error; nunca se confirma por descarte.
+- Pago: se reutiliza la cadena de WEB-09 (obligación, intención idempotente, Checkout Pro con split,
+  webhook firmado, ledger). La orden de pago es un `trabajos.origen = 'turno'` ligado 1:1 a la reserva; no
+  es un trabajo visible para las partes. Pedir el link dos veces devuelve el mismo pago.
+- Un redirect de Mercado Pago nunca confirma; la Web vuelve a `/mis-turnos?pago=retorno` y relee.
+- Pago aprobado fuera de término (la ventana venció o el turno se canceló): se registra, no confirma nada
+  y queda para reintegro por la plataforma. Cancelar un turno con la seña paga no reintegra solo.
+- QR: TUS no genera un QR propio; el Checkout Pro de Mercado Pago ofrece pagar con QR en su pantalla.
+- Identificación del cliente: en la Web es la sesión. En WhatsApp (sin sesión) el asistente pide nombre
+  completo y DNI y **el backend** busca la cuenta por documento (`uq_user_documento`) y verifica el nombre;
+  si no existe o no coincide responde lo mismo en ambos casos y ofrece el link real de registro
+  (`/registro?returnTo=…` al mismo profesional, servicio y horario). Nunca crea cuentas ni reservas para
+  un desconocido, y ningún identificador interno se muestra al usuario.
+
+Pendiente de decisión del dueño: (a) si el marketplace de publicaciones debe pasar también a cobrar una
+seña previa (hoy sigue W09-02); (b) política de reintegro al cancelar con la seña paga; (c) si el
+prestador debe poder confirmar un turno cuya seña se cobró fuera de TUS; (d) qué documento acredita `kyb`
+para un prestador individual y cómo se modela (ver `docs/activation-gates.md`); (e) si los trabajos de
+solicitud (W09-05) deben bloquearse igual que los turnos cuando falta `service-payments` (hoy siguen sin
+seña en ese caso).
+
 ### W09-07: Calificación del Prestador (FASE 9)
 
 - Solo el Cliente del trabajo (tenant de la sesión) califica, una vez, y solo con el trabajo `completed` (con pagos

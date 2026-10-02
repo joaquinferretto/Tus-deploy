@@ -3,6 +3,7 @@ import {
   type AgendaSemanal,
   type BloqueoAgendaDTO,
   type ClienteTurnosDTO,
+  type CheckoutSenaTurnoDTO,
   type CrearTurnoAdmin,
   type DetalleTurno,
   type DisponibilidadSemanalDTO,
@@ -80,8 +81,7 @@ export const turnosApi = {
   miAgenda: (oficioId: string, desde: string) => json<AgendaSemanal>(`/tus/v1/prestador/turnos/agenda?${query({ oficioId, desde })}`, undefined, 'No pudimos consultar la agenda.'),
   misBloqueos: () => json<{ items: BloqueoAgendaDTO[] }>('/tus/v1/prestador/turnos/bloqueos').then((result) => result.items),
   quitarBloqueo: (id: string) => json<{ ok: true }>(`/tus/v1/prestador/turnos/bloqueos/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'No pudimos quitar el bloqueo.'),
-  // Requests waiting for this provider's answer, and the answer itself. Accepting is what
-  // confirms a reservation; the API decides the time again.
+  // Requests waiting for this provider's answer. Acceptance opens the deposit payment step.
   misSolicitudes: () => json<{ items: DetalleTurno[]; pendientes: number }>('/tus/v1/prestador/turnos/solicitudes', undefined, 'No pudimos cargar las solicitudes de reserva.'),
   aceptarSolicitud: (id: string) => json<DetalleTurno>(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/aceptar`, { method: 'POST' }, 'No pudimos aceptar la solicitud.'),
   rechazarSolicitud: (id: string) => json<DetalleTurno>(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/rechazar`, { method: 'POST' }, 'No pudimos rechazar la solicitud.'),
@@ -93,6 +93,7 @@ export const turnosApi = {
     json<DetalleTurno>(`/tus/v1/prestadores/${encodeURIComponent(prestadorId)}/turnos/solicitudes`, { method: 'POST', body: JSON.stringify(input) }, 'No pudimos enviar la solicitud. Probá con otro horario.'),
   misTurnos: () => json<{ items: DetalleTurno[] }>('/tus/v1/cliente/turnos', undefined, 'No pudimos cargar tus turnos.').then((result) => result.items),
   cancelarMiTurno: (id: string) => json<DetalleTurno>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/cancelar`, { method: 'POST' }, 'No pudimos cancelar el turno.'),
+  pagarSena: (id: string) => json<CheckoutSenaTurnoDTO>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/sena/checkout`, { method: 'POST' }, 'No pudimos preparar el pago de la seña.'),
   // ---- public (booking) ----
   agendaPublica: (prestadorId: string, oficioId: string, desde: string, tarifaId?: string) =>
     json<AgendaSemanal>(`/tus/v1/public/prestadores/${encodeURIComponent(prestadorId)}/turnos/agenda?${query({ oficioId, desde, tarifaId })}`, undefined, 'No pudimos consultar la agenda.'),

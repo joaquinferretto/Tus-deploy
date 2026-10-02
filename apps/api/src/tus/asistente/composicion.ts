@@ -10,7 +10,9 @@ import {
   type EmbeddingProvider,
   type PuertoIndiceConocimiento,
 } from './conocimiento.ts'
+import { NotificadorTurnosWhatsapp } from './avisos-turnos.ts'
 import { DominioAsistenteTus, type PuertoDominioAsistente, type ServiciosCompartidosAsistente } from './dominio.ts'
+import { ServicioIdentificacionCliente, type PuertoCuentasPorDocumento } from './identificacion.ts'
 import { GroqChatProvider, TranscriptorGroq, type ChatProvider, type Transcriptor } from './groq.ts'
 import {
   LIMITES_INGRESO_POR_DEFECTO,
@@ -113,6 +115,9 @@ export interface ModuloWhatsapp {
   ayuda: ServicioAyudaPublica
   // Canal Web del asistente: el MISMO orquestador (modelo, tools, RAG, memoria) que WhatsApp.
   asistenteWeb: ServicioAsistenteWeb
+  // Aviso al cliente por WhatsApp cuando el prestador responde su solicitud de turno (con el link
+  // de pago de la seña si fue aceptada).
+  avisosTurnos: NotificadorTurnosWhatsapp
   platformAdminTenantId: string | null
   crearWorker(options?: {
     owner?: string
@@ -138,6 +143,9 @@ export function crearModuloWhatsapp(input: {
   log?: (event: string, fields: Record<string, unknown>) => void
   // Phone identity verification (auth-security/phone): intercepted before the assistant.
   verificadorTelefono?: VerificadorTelefonoWhatsapp | null
+  // TURNOS-SENA-01: accounts by document, to identify a client by full name + document on a
+  // channel without a TUS session. Absent: that channel asks for the account link instead.
+  identidades?: PuertoCuentasPorDocumento | null
 }): ModuloWhatsapp {
   const env = input.env
   const config = leerConfiguracionWhatsapp(env)
@@ -203,6 +211,8 @@ export function crearModuloWhatsapp(input: {
     now,
     ...(input.metric ? { metric: input.metric } : {}),
     verificadorTelefono: input.verificadorTelefono ?? null,
+    identidades: input.identidades ? new ServicioIdentificacionCliente(input.identidades) : null,
+    webBaseUrl: env['TUS_WEB_BASE_URL']?.trim() || null,
   })
   const ayuda = new ServicioAyudaPublica(knowledge, input.metric)
   return {
@@ -222,6 +232,7 @@ export function crearModuloWhatsapp(input: {
       now,
       ...(input.metric ? { metric: input.metric } : {}),
     }),
+    avisosTurnos: new NotificadorTurnosWhatsapp(input.transaction, whatsapp, now, input.metric),
     platformAdminTenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null,
     crearWorker: (options = {}) =>
       new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, ...options }),
@@ -256,5 +267,11 @@ export class ResolutorCuentaIdentidad implements ResolutorCuentaAsistente {
       correlationId,
       ...this.scope(account.roles),
     }
+  }
+
+  // An account identified by name + document: its tenant is its own (read here, never supplied).
+  async contextoDeCuenta(accountId: string, correlationId: string): Promise<TusAuthenticatedTenantContext | null> {
+    const account = await this.store.getAccount(accountId)
+    return account ? this.contexto(account.id, account.tenantId, correlationId) : null
   }
 }

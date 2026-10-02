@@ -26,6 +26,7 @@ import {
   type TokenVinculacion,
   type TrabajoConversacion,
 } from '../asistente/modelo.ts'
+import type { CuentaPorDocumento, PuertoCuentasPorDocumento } from '../asistente/identificacion.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from '../asistente/puertos.ts'
 import { isSerializationFailure } from './prisma-work.ts'
 import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
@@ -130,6 +131,8 @@ const filaConversacion = (value: ConversacionWhatsapp): Fila => ({
   mensajesResumidos: value.summaryMessageCount,
   estadoConversacional: value.state,
   version: value.version,
+  cuentaIdentificadaId: value.identifiedAccountId ?? null,
+  identificadaEn: fecha(value.identifiedAt ?? null),
 })
 
 const mapConversacion = (row: Fila): ConversacionWhatsapp => ({
@@ -149,6 +152,8 @@ const mapConversacion = (row: Fila): ConversacionWhatsapp => ({
   summaryMessageCount: Number(row['mensajesResumidos']),
   state: { ...ESTADO_CONVERSACIONAL_INICIAL, ...(row['estadoConversacional'] as object) },
   version: Number(row['version']),
+  identifiedAccountId: texto(row['cuentaIdentificadaId']),
+  identifiedAt: iso(row['identificadaEn']),
 })
 
 const filaMensaje = (value: MensajeConversacion): Fila => ({
@@ -321,6 +326,8 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
           })
         ).map(mapConversacion),
       contar: async (filter) => client.conversacionWhatsapp.count({ where: filtroPanel(filter) }),
+      identificadasPor: async (accountId) =>
+        (await client.conversacionWhatsapp.findMany({ where: { cuentaIdentificadaId: accountId, estado: 'active' } })).map(mapConversacion),
     },
     mensajes: {
       buscarPorWamid: async (wamid) => {
@@ -529,6 +536,8 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
           },
         })
       },
+      contarDesde: async (input) =>
+        client.auditoriaAsistente.count({ where: { conversacionId: input.conversationId, accion: input.action, fechaCreacion: { gte: new Date(input.since) } } }),
     },
     consentimientosWhatsapp: {
       buscar: async (tenantId, recipientType, recipientId) => {
@@ -588,6 +597,33 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
         })
       },
     },
+  }
+}
+
+// Account of a person by its document (TURNOS-SENA-01). The document is unique per person in
+// the database (uq_user_documento); among the accounts of that person the oldest active one is
+// the person's own. Read-only.
+export class CuentasPorDocumentoPrisma implements PuertoCuentasPorDocumento {
+  constructor(
+    private readonly client: {
+      user: { findFirst(input: { where: Fila; include: Fila }): Promise<Fila | null> }
+    }
+  ) {}
+
+  async buscarPorDocumento(tipo: string, numero: string): Promise<CuentaPorDocumento | null> {
+    const persona = await this.client.user.findFirst({
+      where: { documentType: tipo, documentNumber: numero },
+      include: { accounts: { where: { status: 'active' }, orderBy: { createdAt: 'asc' }, take: 1 } },
+    })
+    const cuenta = (persona?.['accounts'] as Fila[] | undefined)?.[0]
+    if (!persona || !cuenta) return null
+    return {
+      accountId: String(cuenta['id']),
+      tenantId: String(cuenta['tenantId']),
+      firstName: texto(persona['firstName']),
+      lastName: texto(persona['lastName']),
+      displayName: String(persona['displayName'] ?? ''),
+    }
   }
 }
 

@@ -132,12 +132,14 @@ export type FaseEvidenciaTrabajo = (typeof FASES_EVIDENCIA_TRABAJO)[keyof typeof
 
 export type DecisionPresupuesto = 'accepted' | 'rejected'
 
-export const ORIGENES_TRABAJO = ['marketplace', 'solicitud'] as const
+export const ORIGENES_TRABAJO = ['marketplace', 'solicitud', 'turno'] as const
 export type OrigenTrabajo = (typeof ORIGENES_TRABAJO)[number]
 
-// A work comes from a marketplace commitment (commitmentId + publicacionId) or from a directory
-// request where the client chose exactly one provider (solicitudId). The database enforces that
-// exactly one of both shapes is present (ck_trabajos_origen_coherente).
+// A work comes from a marketplace commitment (commitmentId + publicacionId), from a directory
+// request where the client chose exactly one provider (solicitudId), or it is the payment order of
+// an accepted turno awaiting its deposit (reservaId; TURNOS-SENA-01): money always hangs from a work, and the life of
+// that turno stays in its reservation. The database enforces that exactly one of the shapes is
+// present (ck_trabajos_origen_coherente).
 export interface Trabajo {
   contractVersion: TusContractVersion
   trabajoId: string
@@ -250,7 +252,9 @@ export function validarTrabajo(value: unknown): Trabajo {
   const present = (field: string) => typeof value[field] === 'string' && (value[field] as string).trim().length > 0
   const coherent = origin === 'marketplace'
     ? present('commitmentId') && present('publicacionId') && !present('solicitudId')
-    : present('solicitudId') && !present('commitmentId') && !present('publicacionId')
+    : origin === 'turno'
+      ? present('reservaId') && !present('solicitudId') && !present('commitmentId') && !present('publicacionId')
+      : present('solicitudId') && !present('commitmentId') && !present('publicacionId')
   if (!coherent) throw new ContractValidationError('tus-work', TUS_CONTRACT_VERSION, 'work origin fields are inconsistent')
   if (!Object.values(ESTADOS_TRABAJO).includes(value['status'] as EstadoTrabajo) || !Number.isInteger(value['version']) || Number(value['version']) < 1 || typeof value['budgetRequired'] !== 'boolean' || !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])) {
     throw new ContractValidationError('tus-work', TUS_CONTRACT_VERSION, 'work state is invalid')
@@ -319,12 +323,15 @@ export type EstadoObligacionPagoServicio = (typeof ESTADOS_OBLIGACION_PAGO_SERVI
 export const ORIGENES_IMPORTE_OBLIGACION_SERVICIO = {
   PRESUPUESTO_ACEPTADO: 'accepted_budget',
   PRECIO_FIJO_COMPROMISO: 'fixed_price_commitment',
+  // Deposit of an accepted turno awaiting payment: half of the price stored on its reservation.
+  PRECIO_RESERVA: 'booked_price',
 } as const
 
 export type OrigenImporteObligacionServicio = (typeof ORIGENES_IMPORTE_OBLIGACION_SERVICIO)[keyof typeof ORIGENES_IMPORTE_OBLIGACION_SERVICIO]
 
 // A marketplace work is paid once ('total'). A request-born work is paid in two halves of its
 // accepted budget: the deposit ('sena') before it starts and the balance ('saldo') at the end.
+// The order of a turno only has the deposit ('sena'): the rest is settled with the provider.
 export const TRAMOS_PAGO_SERVICIO = ['total', 'sena', 'saldo'] as const
 export type TramoPagoServicio = (typeof TRAMOS_PAGO_SERVICIO)[number]
 
@@ -361,7 +368,8 @@ export function validarObligacionPagoServicio(value: unknown): ObligacionPagoSer
   const part = value['part'] ?? 'total'
   const chain = ['publicacionId', 'commitmentId'].every((field) => typeof value[field] === 'string' && String(value[field]).trim().length > 0)
   const noChain = value['publicacionId'] === null && value['commitmentId'] === null
-  if (!TRAMOS_PAGO_SERVICIO.includes(part as TramoPagoServicio) || (part === 'total' ? !chain : !noChain || value['amountSource'] !== ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRESUPUESTO_ACEPTADO))
+  const bookedPrice = value['amountSource'] === ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRECIO_RESERVA
+  if (!TRAMOS_PAGO_SERVICIO.includes(part as TramoPagoServicio) || (part === 'total' ? !chain || bookedPrice : !noChain || !(value['amountSource'] === ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRESUPUESTO_ACEPTADO || (part === 'sena' && bookedPrice))))
     throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, 'part is inconsistent with the commercial chain')
   if (!Object.values(ESTADOS_OBLIGACION_PAGO_SERVICIO).includes(value['status'] as EstadoObligacionPagoServicio) || !Number.isInteger(value['version']) || Number(value['version']) < 1 || !isMinorAmount(value['amountMinor']) || !/^[A-Z]{3}$/.test(String(value['currency'])) || !isIsoTimestamp(value['createdAt']) || !isIsoTimestamp(value['updatedAt'])) {
     throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, 'obligation state is invalid')
@@ -370,7 +378,7 @@ export function validarObligacionPagoServicio(value: unknown): ObligacionPagoSer
   const fixedPrice = value['amountSource'] === ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRECIO_FIJO_COMPROMISO
   const hasBudget = typeof value['budgetId'] === 'string' && value['budgetId'].length > 0 && Number.isInteger(value['budgetVersion']) && Number(value['budgetVersion']) > 0
   const withoutBudget = value['budgetId'] === null && value['budgetVersion'] === null
-  if (!(budgetBacked && hasBudget) && !(fixedPrice && withoutBudget)) throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, 'amount source is inconsistent with the budget reference')
+  if (!(budgetBacked && hasBudget) && !((fixedPrice || bookedPrice) && withoutBudget)) throw new ContractValidationError('tus-service-payment-obligation', TUS_CONTRACT_VERSION, 'amount source is inconsistent with the budget reference')
   return value as unknown as ObligacionPagoServicio
 }
 
@@ -511,7 +519,9 @@ export interface ResumenFinancieroTrabajoServicio {
 // The preview is read-only and server-derived: the Web never sends an amount.
 // Request-born works: the deposit is payable once the budget is accepted; the balance once the
 // provider finished (WORK_NOT_FINISHED before that).
-export const MOTIVOS_NO_COBRABLE_SERVICIO = ['WORK_CANCELLED', 'WORK_NOT_COMPLETED', 'WORK_NOT_FINISHED', 'BUDGET_REQUIRED', 'BUDGET_INCONSISTENT', 'INCONSISTENT_COMMERCIAL_CHAIN', 'ALREADY_PAID', 'OBLIGATION_CLOSED'] as const
+// Order of a turno: its deposit is payable while the turno is awaiting payment and has not started
+// (APPOINTMENT_NOT_PAYABLE otherwise: still pending, already started, expired, or without a price).
+export const MOTIVOS_NO_COBRABLE_SERVICIO = ['WORK_CANCELLED', 'WORK_NOT_COMPLETED', 'WORK_NOT_FINISHED', 'BUDGET_REQUIRED', 'BUDGET_INCONSISTENT', 'INCONSISTENT_COMMERCIAL_CHAIN', 'ALREADY_PAID', 'OBLIGATION_CLOSED', 'APPOINTMENT_NOT_PAYABLE'] as const
 export type MotivoNoCobrableServicio = (typeof MOTIVOS_NO_COBRABLE_SERVICIO)[number]
 export const MOTIVOS_PAGO_NO_DISPONIBLE = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PRODUCTION_NOT_AUTHORIZED', 'PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'PROVIDER_IDENTITY_NOT_VERIFIED'] as const
 export type MotivoPagoNoDisponible = (typeof MOTIVOS_PAGO_NO_DISPONIBLE)[number]
@@ -1083,12 +1093,20 @@ export const CLAVES_REQUISITOS_HABILITACION = [
 
 export type ClaveRequisitoHabilitacion = (typeof CLAVES_REQUISITOS_HABILITACION)[number]
 
-export type CapacidadHabilitacion =
-  | 'publication'
-  | 'provider-actions'
-  | 'settlement'
-  | 'fleet'
-  | 'release-jobs'
+// `settlement` is the money gate of the general marketplace (products, delivery, POS).
+// `service-payments` is the money gate of service payments (deposit of a turno, deposit and
+// balance of a request-born work) charged through Mercado Pago Split 1:1: its own evidence,
+// never the one recorded for `settlement`.
+export const CAPACIDADES_HABILITACION = [
+  'publication',
+  'provider-actions',
+  'settlement',
+  'service-payments',
+  'fleet',
+  'release-jobs',
+] as const
+
+export type CapacidadHabilitacion = (typeof CAPACIDADES_HABILITACION)[number]
 
 export type FuenteEvidenciaHabilitacion =
   | 'authorized-external'
@@ -1451,7 +1469,7 @@ function esClaveRequisitoHabilitacion(value: unknown): value is ClaveRequisitoHa
 }
 
 function esCapacidadHabilitacion(value: unknown): value is CapacidadHabilitacion {
-  return ['publication', 'provider-actions', 'settlement', 'fleet', 'release-jobs'].includes(String(value))
+  return CAPACIDADES_HABILITACION.includes(value as CapacidadHabilitacion)
 }
 
 function esMotivoFallaHabilitacion(value: unknown): value is MotivoFallaHabilitacion {

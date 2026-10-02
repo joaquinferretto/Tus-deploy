@@ -4,6 +4,7 @@ import {
   leerEstadoOperativoPagos,
   oauthConfigurado,
   proveedorOperativo,
+  type EstadoHabilitacionesPagos,
   type EstadoOperativoPagos,
   type PuertoConfiguracionPagos,
 } from './configuracion.ts'
@@ -40,8 +41,11 @@ export function crearModuloPagosServicio(input: {
   now?: () => number
   oauth?: PuertoOAuthMercadoPago
   realProviderAdapterAvailable?: boolean
-  // Evidence-based readiness for real money (production only). Defaults to "not authorized".
+  // Evidence-based readiness of the `service-payments` capability for real money (production
+  // only). Defaults to "not authorized".
   produccionAutorizada?: () => Promise<boolean>
+  // The same decision with its detail, next to the `settlement` gate, for the admin status.
+  habilitaciones?: () => Promise<EstadoHabilitacionesPagos>
   // IDENTITY-NOSIS gate (provider identity verified). Absent only in isolated unit compositions.
   identidadVerificada?: (tenantId: string) => Promise<boolean>
   // Tests inject a fake HTTP transport for the Mercado Pago API.
@@ -109,7 +113,8 @@ export function crearModuloPagosServicio(input: {
       input.configuracion,
       operativo,
       now,
-      produccionAutorizada
+      produccionAutorizada,
+      input.habilitaciones ?? null
     ),
     cuentas,
     politica: new PoliticaCobroPersistida(

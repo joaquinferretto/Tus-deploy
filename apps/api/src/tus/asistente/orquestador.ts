@@ -1,14 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './conocimiento.ts'
-import { adjuntoDisponibilidad, elegirOferta, horaLocal, ofertasDeResultado, preguntaFaltante, resumenParaModelo, textoDisponibilidad } from './busqueda.ts'
+import { adjuntoDisponibilidad, elegirOferta, horaLocal, ofertasDeResultado, preguntaFaltante, preguntaHora, resumenParaModelo, textoDisponibilidad, type OfertasMostradas } from './busqueda.ts'
+import { formatearPesos } from '@factory/contracts'
 import type { DisponibilidadNecesidad, PuertoDominioAsistente } from './dominio.ts'
+import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
+import { BOTONES_SOLICITUD, elegirServicio, elegirServicioPorNombre, enlaceRegistro, fechaLarga, horaCorta, preguntaServicio, resumenSolicitud, retornoDeSolicitud, sinIdentificadores, textoPrecio, type OpcionServicio } from './solicitud-turno.ts'
 import { ErrorChat, type ChatProvider, type MensajeChat, type Transcriptor } from './groq.ts'
-import { combinarNecesidad, extraerNecesidad, faltantes, horaArgentina, hoyArgentina, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
+import { combinarNecesidad, extraerNecesidad, faltantes, horaArgentina, hoyArgentina, pareceHora, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
 import {
   HERRAMIENTAS,
   PROMPT_ENRUTADOR,
   buscarHerramienta,
+  cuentaDeSolicitud,
   definicionChat,
   detectarIntencion,
   intencionPrivada,
@@ -21,6 +25,7 @@ import {
 import { ErrorMetaWhatsapp, type AdjuntoAsistente, type MensajeSaliente, type WhatsappProvider } from './meta.ts'
 import {
   MENSAJES,
+  VIGENCIA_IDENTIFICACION_MS,
   enmascararWaId,
   pideDesvincular,
   pideHumano,
@@ -32,11 +37,12 @@ import {
   type ContactoWhatsapp,
   type ConversacionWhatsapp,
   type MensajeConversacion,
+  type SolicitudEnCurso,
 } from './modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
 import type { ServicioVinculacionWhatsapp } from './vinculacion.ts'
 
-export const VERSION_PROMPT_SISTEMA = 'tus-asistente-v4'
+export const VERSION_PROMPT_SISTEMA = 'tus-asistente-v5'
 
 // Why the assistant needs an account before going on. Each channel asks in its own way
 // (WhatsApp: single-use link to bind the number; Web: sign in).
@@ -53,7 +59,8 @@ export type EventoTurno =
 // memory, permissions) is the same code for WhatsApp and the Web.
 export interface CanalTurno {
   id: CanalConversacion
-  pedirCuenta(motivo: MotivoCuenta): Promise<MensajeSaliente[]>
+  // returnTo: internal path of the Web the person comes back to after signing in or registering.
+  pedirCuenta(motivo: MotivoCuenta, opciones?: { returnTo?: string }): Promise<MensajeSaliente[]>
   // true: the channel renders tool results as structured attachments (cards), so the MODEL writes
   // every conversational reply from the tool result. false: text is the only carrier of live data
   // (WhatsApp), so providers and slots are rendered by the backend and cannot be embellished.
@@ -110,9 +117,11 @@ const REGLAS_PROMPT_SISTEMA = [
   '10. Para buscar profesionales con turno usá find_appointments. Alcanza con el oficio y el día: la zona es OPCIONAL (si no la dijo, o dijo que le da igual o que se traslada, buscá sin zona y no la preguntes). Pasá en "when" el día y la hora tal como los dijo; el servidor resuelve la fecha con el calendario de Argentina: no calcules ni inventes fechas. Si falta un dato necesario, preguntá SOLO ese dato, de a uno.',
   '11. Explicá el resultado tal cual es: si hay turnos a la hora pedida, cuáles; si no hay exactamente a esa hora, cuáles son los más cercanos; si hay profesionales pero sin turnos ese día, o que no toman turnos online (se coordina por solicitud), decilo así. No digas solo "no encontré".',
   '12. La duración de un turno sale del servicio o de su tarifa: no la inventes ni la preguntes, salvo que el resultado traiga varias duraciones.',
-  '13. Para ver los horarios de un prestador puntual usá get_available_slots (fecha YYYY-MM-DD). Para pedir un turno usá book_appointment con un horario que haya devuelto una herramienta: eso envía una SOLICITUD de reserva. Un turno solicitado NO está confirmado: queda pendiente hasta que el prestador lo acepte, y solo el estado que devuelve list_my_reservations dice si ya se confirmó. Nunca digas "reserva confirmada" ni "turno reservado" por algo que el usuario pidió; ofrecé "¿Querés solicitar ese turno?". Nunca propongas un horario que no salió de una herramienta.',
+  '13. Para ver los horarios de un prestador puntual usá get_available_slots (fecha YYYY-MM-DD). Para pedir un turno usá book_appointment con un horario que haya devuelto una herramienta: eso envía una SOLICITUD. La solicitud queda pending; cuando el prestador acepta pasa a awaiting_payment, y solo el webhook verificado del pago de la seña la deja confirmed. Nunca digas "reserva confirmada" ni "turno reservado" por una solicitud o una aceptación; ofrecé "¿Querés solicitar ese turno?". Nunca propongas un horario que no salió de una herramienta.',
   '14. Deducí el oficio del problema aunque el usuario no lo nombre (una pérdida de agua es plomería; un aire que no enfría es aire acondicionado). Para un servicio que no es por turno (una solicitud a un prestador) usá collect_service_request y search_providers: solo el oficio es necesario.',
   '15. Si el usuario elige a uno de los profesionales ya mostrados ("el segundo", "ese", por nombre), es el de esa posición o nombre en "Profesionales mostrados": usá su providerId. Si hay varios posibles, preguntá cuál.',
+  '16. Los identificadores (providerId, ids de trabajos, presupuestos, turnos, tarifas o cuentas) son SOLO para llamar herramientas: nunca los escribas en tu respuesta. Nombrá a las personas, los servicios, las fechas y los horarios.',
+  '17. El precio de un servicio y su seña los informa el backend al preparar la solicitud de turno: no los calcules, no los estimes y no los cambies. La seña se abona recién cuando el prestador acepta el turno; nunca digas que un pago está hecho si una herramienta no lo confirmó.',
 ]
 
 // The WhatsApp prompt (kept as a named export for documentation and evaluations).
@@ -150,6 +159,9 @@ export interface ResolutorCuentaAsistente {
     tenantId: string,
     correlationId: string
   ): Promise<TusAuthenticatedTenantContext | null>
+  // Current authority of an account identified by name + document: the tenant is the account's
+  // own (read from the identity store, never supplied by the conversation).
+  contextoDeCuenta?(accountId: string, correlationId: string): Promise<TusAuthenticatedTenantContext | null>
 }
 
 export type Metrica = (name: string, fields: Record<string, number | string | boolean>) => void
@@ -168,6 +180,11 @@ export interface DependenciasOrquestador {
   metric?: Metrica
   // Phone verification messages: answered here with fixed text, never with the model.
   verificadorTelefono?: VerificadorTelefonoWhatsapp | null
+  // TURNOS-SENA-01: looks a client up by full name + document (channels without a TUS session).
+  // Absent: such a channel keeps asking for the account link instead.
+  identidades?: ServicioIdentificacionCliente | null
+  // Public address of the Web (real registration and sign-in routes).
+  webBaseUrl?: string | null
 }
 
 type Turno = {
@@ -188,6 +205,14 @@ type Turno = {
 // "quiero ver mis trabajos" is not: the verb has to ask for a person or a service.
 const PIDE_SERVICIO = /\b(?:nece[sc]ito|ne[sc]e[sc]ito|busco|buscando|quiero|kiero|quisiera|preciso|me hace falta|hay|consigo|conseguir|recomend\w*|conoces)\s+(?:a\s+)?(?:un|una|unos|unas|alg[uú]n|alguna|alguien|el|la)\b/iu
 const NECESIDAD_VIGENTE_MS = 30 * 60_000
+// A request of a turno left half way (waiting for the service or for the client) is resumed for
+// this long; after that the person starts again from a fresh search.
+const SOLICITUD_VIGENTE_MS = 30 * 60_000
+// Failed identifications by name + document a conversation may make in an hour.
+const MAXIMO_IDENTIFICACIONES_FALLIDAS = 5
+const VENTANA_IDENTIFICACIONES_MS = 60 * 60_000
+// "quiero pagar la seña", "¿cómo abono la seña?", "pasame el link de la seña".
+const PIDE_PAGAR_SENA = (text: string): boolean => /\bse[ñn]as?\b/iu.test(text) && /\b(?:pag\w*|abon\w*|link|enlace|c[oó]mo|quiero|transfer\w*)\b/iu.test(text)
 const DISPONIBILIDAD_NO_CONSULTADA = 'No pude consultar la disponibilidad en este momento. Probá de nuevo en unos minutos.'
 
 type TurnoCargado = Omit<Turno, 'canal'>
@@ -296,6 +321,14 @@ export class OrquestadorConversacion {
     }
   }
 
+  // Account this conversation identified by name + document, while that identification is still
+  // honoured. Its authority is resolved again on every turn (a disabled account is nobody).
+  private async identificada(conversation: ConversacionWhatsapp, correlationId: string): Promise<TusAuthenticatedTenantContext | null> {
+    if (!conversation.identifiedAccountId || !conversation.identifiedAt || !this.deps.accounts.contextoDeCuenta) return null
+    if (this.now() - Date.parse(conversation.identifiedAt) > VIGENCIA_IDENTIFICACION_MS) return null
+    return this.deps.accounts.contextoDeCuenta(conversation.identifiedAccountId, correlationId).catch(() => null)
+  }
+
   // ---- turn preparation ---------------------------------------------------------------------
 
   private async textoDelTurno(
@@ -359,13 +392,13 @@ export class OrquestadorConversacion {
       conversationId: turn.conversation.conversationId,
     }
     if (!turn.contact.linkedAccountId || !turn.contact.linkedTenantId)
-      return { ...base, context: null, isProvider: false }
+      return { ...base, context: null, isProvider: false, identificada: await this.identificada(turn.conversation, correlationId) }
     const context = await this.deps.accounts.contexto(
       turn.contact.linkedAccountId,
       turn.contact.linkedTenantId,
       correlationId
     )
-    if (!context) return { ...base, context: null, isProvider: false }
+    if (!context) return { ...base, context: null, isProvider: false, identificada: await this.identificada(turn.conversation, correlationId) }
     let isProvider = false
     try {
       isProvider = await this.deps.domain.esPrestador(context)
@@ -407,6 +440,10 @@ export class OrquestadorConversacion {
       return this.resolverConfirmacion(turn, actor, pendingId, confirmation.decision, correlationId)
 
     const avisos = input.notices.map((notice) => ({ type: 'text' as const, text: notice }))
+    // A turno being requested (which service, who the client is) and the payment link of a deposit
+    // are steps the BACKEND owns: the answer is read here, never by the model.
+    const paso = (await this.pasoDeSolicitud(turn, actor, text, correlationId)) ?? (await this.pedidoDeSena(turn, actor, text, correlationId))
+    if (paso) return [...avisos, ...paso]
     // MESSAGE -> facts -> conversation state -> what is still needed -> REAL search -> reply.
     // Every fact of the message is kept before anything else; when the need is complete the
     // backend searches at once (no question, no button), on every channel, with or without model.
@@ -434,7 +471,7 @@ export class OrquestadorConversacion {
     // Choosing one of the professionals already shown ("el segundo", a name, a time).
     const eleccion = elegirOferta(text, datos, state.offers)
     if (eleccion) {
-      const reply = await this.reservarEleccion(turn, actor, eleccion, state.offers!.profession, correlationId)
+      const reply = await this.reservarEleccion(turn, actor, eleccion, state.offers!.profession, correlationId, text)
       if (reply) {
         turn.intencion = 'reserva'
         turn.canal.evento?.({ type: 'routing', intent: 'reserva' })
@@ -458,6 +495,15 @@ export class OrquestadorConversacion {
     // "mañana a las 18" as a first message: a day or a time for something still to be said.
     const soloCuando = !enCurso && Boolean(datos.day || datos.time) && (detectada === 'reserva' || detectada === 'otro' || detectada === 'buscar')
     const esBusqueda = (nombraOficio && (PIDE_SERVICIO.test(text) || !otraArea)) || ((sigueBusqueda || soloCuando) && !otraArea)
+    // Waiting for the time of one professional and the message tries to say one that cannot be
+    // read ("9 y 70", "25"): its real times again. Decided here, never by the model.
+    const pendiente = esperaHoraDe(state)
+    if (pendiente && !esBusqueda && !otraArea && pareceHora(text)) {
+      turn.intencion = 'reserva'
+      turn.canal.evento?.({ type: 'routing', intent: 'reserva' })
+      await this.actualizarEstado(turn.conversation.conversationId, { lowConfidenceCount: 0 })
+      return [{ type: 'text', text: preguntaHora(pendiente) }]
+    }
     if (!esBusqueda) return null
 
     const previa = vigente ?? (state.draft?.profession ? combinarNecesidad(null, { profession: state.draft.profession, ...(state.draft.zone ? { zone: state.draft.zone } : {}) }) : null)
@@ -469,6 +515,8 @@ export class OrquestadorConversacion {
       needAt: this.now(),
       currentIntent: 'buscar',
       lowConfidenceCount: 0,
+      // A search is something else than the turno that was being requested.
+      booking: null,
       ...(cambio ? { offers: null, slots: null, draft: { listingId: null, urgency: null, problem: null, profession: need.profession, zone: need.zone } } : {}),
     })
     turn.busqueda = { need }
@@ -548,7 +596,7 @@ export class OrquestadorConversacion {
         maxTokens: this.limits.maxCompletionTokens,
       })
       this.metric('whatsapp.llm_call', { ms: answer.latencyMs || 0, promptTokens: answer.usage?.promptTokens ?? 0, completionTokens: answer.usage?.completionTokens ?? 0 })
-      const content = (answer.content ?? '').replace(/<think>[\s\S]*?<\/think>/gu, '').trim()
+      const content = sinIdentificadores((answer.content ?? '').replace(/<think>[\s\S]*?<\/think>/gu, '').trim(), resultado.providers.map((provider) => provider.providerId))
       return content && !pideHumano(content) ? content : null
     } catch (error) {
       this.metric('whatsapp.llm_error', { code: error instanceof ErrorChat ? error.code : 'UNKNOWN' })
@@ -559,7 +607,7 @@ export class OrquestadorConversacion {
   // The person chose a professional (and maybe a time) among the ones shown. One start left:
   // the booking is prepared (bound confirmation). Several: only the time is asked. null: the
   // choice cannot be resolved here and the normal flow handles the message.
-  private async reservarEleccion(turn: Turno, actor: ActorAsistente, eleccion: NonNullable<ReturnType<typeof elegirOferta>>, profession: string, correlationId: string): Promise<MensajeSaliente[] | null> {
+  private async reservarEleccion(turn: Turno, actor: ActorAsistente, eleccion: NonNullable<ReturnType<typeof elegirOferta>>, profession: string, correlationId: string, mensaje = ''): Promise<MensajeSaliente[] | null> {
     const { item, starts } = eleccion
     if (starts.length === 0) {
       if (item.starts.length === 0) return null
@@ -567,33 +615,271 @@ export class OrquestadorConversacion {
     }
     if (starts.length > 1) {
       // From now on a time alone refers to this professional.
-      await this.actualizarEstado(turn.conversation.conversationId, { offers: { profession, items: [item] }, currentIntent: 'reserva' })
+      await this.actualizarEstado(turn.conversation.conversationId, { offers: { profession, items: [item], esperaHora: true }, currentIntent: 'reserva', booking: null })
       return [{ type: 'text', text: `¿A qué hora con ${item.name}? Tiene: ${starts.slice(0, 6).map(horaLocal).join(', ')}.` }]
     }
-    // A booking is bound to an account: without one the channel offers its way in.
-    if (!actor.context) return turn.canal.pedirCuenta('choose_provider')
+    // The time was given: the conversation is no longer waiting for one.
+    if (turn.conversation.state.offers?.esperaHora) await this.actualizarEstado(turn.conversation.conversationId, { offers: { ...turn.conversation.state.offers, esperaHora: false } })
+    // Professional and time are chosen: what is left is the service (if there are several), the
+    // client and the confirmation.
+    return this.continuarSolicitud(turn, actor, { providerId: item.providerId, providerName: item.name, profession, startsAt: starts[0]!, tariffId: null }, correlationId, { mensaje })
+  }
+
+  // ---- requesting a turno: service, client, confirmation (TURNOS-SENA-01) ------------------------
+
+  // Asks for the ONE thing still missing or, when nothing is, shows the card the person confirms.
+  // Service, variants, prices and the deposit are read from the backend on every call: the state
+  // of the conversation only remembers what was chosen. null: the request cannot be prepared.
+  private async continuarSolicitud(
+    turn: Turno,
+    actor: ActorAsistente,
+    pedido: Omit<SolicitudEnCurso, 'step' | 'at'>,
+    correlationId: string,
+    extra: { mensaje?: string; notes?: string | null } = {}
+  ): Promise<MensajeSaliente[] | null> {
+    const conversationId = turn.conversation.conversationId
+    const servicio = typeof this.deps.domain.servicioDeTurno === 'function' ? await this.deps.domain.servicioDeTurno(pedido.providerId, pedido.profession).catch(() => null) : null
+    let opcion: OpcionServicio | null = null
+    let tariffId = pedido.tariffId
+    if (servicio) {
+      opcion =
+        (tariffId ? servicio.options.find((item) => item.tariffId === tariffId) : null) ??
+        // The person may have named the service along with the professional and the time.
+        (servicio.options.length > 1 && extra.mensaje ? elegirServicioPorNombre(extra.mensaje, servicio.options, servicio.serviceName) : null) ??
+        (servicio.options.length === 1 ? servicio.options[0]! : null)
+      if (!opcion) {
+        await this.actualizarEstado(conversationId, { booking: { ...pedido, tariffId: null, step: 'service', at: this.now() }, currentIntent: 'reserva', lowConfidenceCount: 0 })
+        return [{ type: 'text', text: preguntaServicio(pedido.providerName, servicio.options) }]
+      }
+      if (opcion.price === null || opcion.price <= 0 || opcion.deposit === null) {
+        await this.actualizarEstado(conversationId, { booking: null })
+        return [{ type: 'text', text: `El servicio ${opcion.name} todavía no tiene un precio publicado. Para solicitar un turno con seña, el prestador debe configurar el precio.` }]
+      }
+      tariffId = opcion.tariffId
+    }
+
+    const cuenta = cuentaDeSolicitud(actor)
+    if (!cuenta) {
+      const booking: SolicitudEnCurso = { ...pedido, tariffId, step: 'identity', at: this.now() }
+      const precio = textoPrecio(opcion)
+      // No TUS session on this channel: the person says who it is and the backend looks it up.
+      if (turn.canal.id === 'whatsapp' && this.deps.identidades) {
+        await this.actualizarEstado(conversationId, { booking, currentIntent: 'reserva', lowConfidenceCount: 0 })
+        return [{ type: 'text', text: [precio, MENSAJES.identityNeeded].filter(Boolean).join('\n') }]
+      }
+      // The Web: sign in (or register) and come back to this very turno. The request is kept so
+      // the conversation goes on once the person has an account.
+      if (turn.canal.id === 'web') await this.actualizarEstado(conversationId, { booking, currentIntent: 'reserva', lowConfidenceCount: 0 })
+      const reply = await turn.canal.pedirCuenta('choose_provider', { returnTo: retornoDeSolicitud(booking) })
+      const primero = reply[0]
+      return precio && primero?.type === 'text' ? [{ ...primero, text: `${precio}\n${primero.text}` }, ...reply.slice(1)] : reply
+    }
+
     const tool = 'book_appointment'
     const result = await validarYEjecutar({
       name: tool,
-      rawArguments: JSON.stringify({ providerId: item.providerId, profession, startsAt: starts[0] }),
+      rawArguments: JSON.stringify({ providerId: pedido.providerId, profession: pedido.profession, startsAt: pedido.startsAt, ...(tariffId ? { tariffId } : {}), ...(extra.notes ? { notes: extra.notes } : {}) }),
       actor,
       domain: this.deps.domain,
       allowed: new Set([tool]),
       timeoutMs: this.limits.toolTimeoutMs,
     })
     if (!result.ok || !('confirmationRequired' in result)) return null
-    const summary = resumenConfirmacion(tool, result.arguments, result.summary, [{ providerId: item.providerId, name: item.name }])
-    const pending = await this.crearConfirmacion(turn, actor, tool, result.arguments, summary, correlationId)
+    const summary = resumenSolicitud({ providerName: pedido.providerName, startsAt: pedido.startsAt, servicio: servicio?.serviceName ?? null, opcion, notes: extra.notes ?? null })
+    const pending = await this.crearConfirmacion(turn, cuenta, tool, result.arguments, summary, correlationId)
+    await this.actualizarEstado(conversationId, { booking: null, currentIntent: 'reserva', lowConfidenceCount: 0 })
     return [
       {
         type: 'buttons',
         text: summary,
         buttons: [
-          { id: `confirm:${pending.confirmationId}`, title: tituloConfirmar(tool) },
-          { id: `cancel:${pending.confirmationId}`, title: 'Cancelar' },
+          { id: `confirm:${pending.confirmationId}`, title: BOTONES_SOLICITUD.si },
+          { id: `cancel:${pending.confirmationId}`, title: BOTONES_SOLICITUD.no },
         ],
       },
     ]
+  }
+
+  // The answer to the step a request is waiting at. null: there is no request in progress (or the
+  // message is about something else) and the normal flow handles the message.
+  private async pasoDeSolicitud(turn: Turno, actor: ActorAsistente, text: string, correlationId: string): Promise<MensajeSaliente[] | null> {
+    const booking = turn.conversation.state.booking
+    if (!booking) return null
+    const conversationId = turn.conversation.conversationId
+    const soltar = () => this.actualizarEstado(conversationId, { booking: null })
+    // What was left half an hour ago, or a time that already passed, is not resumed.
+    if (this.now() - booking.at > SOLICITUD_VIGENTE_MS || Date.parse(booking.startsAt) <= this.now()) {
+      await soltar()
+      return null
+    }
+    const marcar = () => {
+      turn.intencion = 'reserva'
+      turn.canal.evento?.({ type: 'routing', intent: 'reserva' })
+    }
+    if (respuestaConfirmacion(text, null)?.decision === 'no') {
+      await soltar()
+      marcar()
+      return [{ type: 'text', text: MENSAJES.confirmationCancelled }]
+    }
+    const pedido = { providerId: booking.providerId, providerName: booking.providerName, profession: booking.profession, startsAt: booking.startsAt, tariffId: booking.tariffId }
+    // Asking for somebody ("necesito un plomero...") is a new search, not an answer to this step.
+    const nuevaBusqueda = PIDE_SERVICIO.test(text) && Boolean(extraerNecesidad(text, this.now()).profession)
+
+    if (booking.step === 'service') {
+      const servicio = typeof this.deps.domain.servicioDeTurno === 'function' ? await this.deps.domain.servicioDeTurno(booking.providerId, booking.profession).catch(() => null) : null
+      if (!servicio) {
+        await soltar()
+        return null
+      }
+      const elegida = elegirServicio(text, servicio.options, servicio.serviceName)
+      if (!elegida) {
+        if (nuevaBusqueda) {
+          await soltar()
+          return null
+        }
+        marcar()
+        await this.actualizarEstado(conversationId, { lowConfidenceCount: 0 })
+        return [{ type: 'text', text: `No encontré ese servicio. ${preguntaServicio(booking.providerName, servicio.options)}` }]
+      }
+      marcar()
+      return (await this.continuarSolicitud(turn, actor, { ...pedido, tariffId: elegida.tariffId }, correlationId)) ?? [{ type: 'text', text: MENSAJES.aiUnavailable }]
+    }
+
+    // step 'identity': who the client is.
+    if (cuentaDeSolicitud(actor)) {
+      // The person signed in (or linked the account) meanwhile: the request goes on by itself.
+      marcar()
+      return (await this.continuarSolicitud(turn, actor, pedido, correlationId)) ?? [{ type: 'text', text: MENSAJES.aiUnavailable }]
+    }
+    // On the Web the way in is the session: until then the conversation goes on normally.
+    if (turn.canal.id !== 'whatsapp' || !this.deps.identidades) return null
+    if (nuevaBusqueda) {
+      await soltar()
+      return null
+    }
+    marcar()
+    const identidad = await this.identificar(turn, text, correlationId, retornoDeSolicitud(booking))
+    if (identidad.estado === 'respuesta') return identidad.mensajes
+    const reply = await this.continuarSolicitud(turn, { ...actor, identificada: identidad.contexto }, pedido, correlationId)
+    if (!reply) return [{ type: 'text', text: MENSAJES.aiUnavailable }]
+    const primero = reply[0]!
+    return primero.type === 'template' ? reply : [{ ...primero, text: `${MENSAJES.identityFound}\n\n${primero.text}` }, ...reply.slice(1)]
+  }
+
+  // Looks the client up by the full name and the document of the message. The BACKEND decides
+  // who it is: the account must exist for that document and carry that name. Neither value goes
+  // to the model, to a log or to the audit, and the stored message keeps no document. A document
+  // of somebody else answers exactly like an unknown one, and attempts are limited.
+  private async identificar(
+    turn: Turno,
+    text: string,
+    correlationId: string,
+    returnTo: string
+  ): Promise<{ estado: 'identificada'; contexto: TusAuthenticatedTenantContext } | { estado: 'respuesta'; mensajes: MensajeSaliente[] }> {
+    const conversationId = turn.conversation.conversationId
+    const respuesta = (mensajes: MensajeSaliente[]) => ({ estado: 'respuesta' as const, mensajes })
+    await this.ocultarDocumento(turn)
+    const desde = new Date(this.now() - VENTANA_IDENTIFICACIONES_MS).toISOString()
+    const fallidas = await this.deps.transaction.ejecutar((repositories) => repositories.auditoria.contarDesde({ action: 'assistant.identity_failed', conversationId, since: desde }))
+    if (fallidas >= MAXIMO_IDENTIFICACIONES_FALLIDAS) {
+      this.metric('assistant.identity_blocked', { channel: turn.canal.id })
+      return respuesta([{ type: 'text', text: MENSAJES.identityBlocked }])
+    }
+    const resultado = await this.deps.identidades!.identificar(text).catch(() => null)
+    if (!resultado) return respuesta([{ type: 'text', text: 'No pude verificar tus datos en este momento. Probá de nuevo en unos minutos.' }])
+    if (!resultado.ok && resultado.motivo === 'datos_incompletos')
+      return respuesta([{ type: 'text', text: resultado.detalle === 'sin_nombre' ? 'Me falta tu nombre completo (nombre y apellido), junto con tu DNI.' : `${MENSAJES.identityNeeded} Por ejemplo: "Juan Pérez, 12345678".` }])
+    const contexto = resultado.ok && this.deps.accounts.contextoDeCuenta ? await this.deps.accounts.contextoDeCuenta(resultado.cuenta.accountId, correlationId).catch(() => null) : null
+    if (!resultado.ok || !contexto) {
+      await this.deps.transaction.ejecutar((repositories) =>
+        // Why it failed stays in the audit; the person is told the same thing in every case.
+        this.auditar(repositories, 'assistant.identity_failed', turn, correlationId, { reason: resultado.ok ? 'cuenta_no_disponible' : resultado.detalle })
+      )
+      this.metric('assistant.identity_failed', { channel: turn.canal.id })
+      const cierre = 'Cuando termines, escribime de nuevo tu nombre completo y DNI y seguimos desde acá.'
+      return respuesta([
+        this.deps.webBaseUrl
+          ? { type: 'cta_url', text: `${MENSAJES.identityNotFound} ${cierre}`, label: 'Registrarme', url: enlaceRegistro(this.deps.webBaseUrl, returnTo) }
+          : { type: 'text', text: `${MENSAJES.identityNotFound} Podés hacerlo en la Web de TUS. ${cierre}` },
+      ])
+    }
+    const ahora = new Date(this.now()).toISOString()
+    await this.deps.transaction.ejecutar(async (repositories) => {
+      const conversation = await repositories.conversaciones.buscar(conversationId)
+      if (conversation) await repositories.conversaciones.actualizar({ ...conversation, identifiedAccountId: contexto.subjectId, identifiedAt: ahora, version: conversation.version + 1 }, conversation.version)
+      await repositories.auditoria.registrar({
+        eventId: `auditoria-asistente-${randomUUID()}`,
+        action: 'assistant.identity_verified',
+        contactId: turn.contact.contactId,
+        conversationId,
+        // The account is the actor of the event; it is never part of a reply.
+        actorId: contexto.subjectId,
+        correlationId,
+        metadata: { channel: turn.canal.id, method: 'name_and_document', ...(turn.canal.id === 'whatsapp' ? { waId: enmascararWaId(turn.contact.waId) } : {}) },
+        createdAt: ahora,
+      })
+    })
+    this.metric('assistant.identity_verified', { channel: turn.canal.id })
+    return { estado: 'identificada', contexto }
+  }
+
+  // The inbound messages of this turn are kept as the memory of the conversation without the
+  // document they carried.
+  private async ocultarDocumento(turn: Turno) {
+    await this.deps.transaction.ejecutar(async (repositories) => {
+      for (const message of turn.pending) {
+        const current = await repositories.mensajes.buscar(message.messageId)
+        if (!current?.text) continue
+        const limpio = sinDocumento(current.text)
+        if (limpio !== current.text) await repositories.mensajes.actualizar({ ...current, text: limpio })
+      }
+    })
+  }
+
+  // "Quiero pagar la seña": the checkout of the deposits the client can pay now. The turnos, the
+  // amounts and the links come from the backend; nothing is paid by sending a link.
+  private async pedidoDeSena(turn: Turno, actor: ActorAsistente, text: string, correlationId: string): Promise<MensajeSaliente[] | null> {
+    const state = turn.conversation.state
+    const conversationId = turn.conversation.conversationId
+    const esperando = state.identityFor?.purpose === 'deposit' && this.now() - state.identityFor.at <= SOLICITUD_VIGENTE_MS
+    if (!esperando && !PIDE_PAGAR_SENA(text)) return null
+    if (typeof this.deps.domain.senasPendientes !== 'function') return null
+    turn.intencion = 'pago'
+    turn.canal.evento?.({ type: 'routing', intent: 'pago' })
+    let cuenta = cuentaDeSolicitud(actor)
+    let encontrada = false
+    if (!cuenta) {
+      if (turn.canal.id !== 'whatsapp' || !this.deps.identidades) return turn.canal.pedirCuenta('private', { returnTo: '/mis-turnos' })
+      if (!esperando) {
+        await this.actualizarEstado(conversationId, { identityFor: { purpose: 'deposit', at: this.now() }, lowConfidenceCount: 0 })
+        return [{ type: 'text', text: 'Para pasarte el link de pago de tu seña necesito tu nombre completo y DNI.' }]
+      }
+      if (respuestaConfirmacion(text, null)?.decision === 'no') {
+        await this.actualizarEstado(conversationId, { identityFor: null })
+        return [{ type: 'text', text: MENSAJES.confirmationCancelled }]
+      }
+      const identidad = await this.identificar(turn, text, correlationId, '/mis-turnos')
+      if (identidad.estado === 'respuesta') return identidad.mensajes
+      cuenta = identidad.contexto
+      encontrada = true
+    }
+    if (state.identityFor) await this.actualizarEstado(conversationId, { identityFor: null, lowConfidenceCount: 0 })
+    const saludo: MensajeSaliente[] = encontrada ? [{ type: 'text', text: MENSAJES.identityFound }] : []
+    const senas = await this.deps.domain.senasPendientes(cuenta).catch(() => null)
+    if (!senas) return [...saludo, { type: 'text', text: 'No pude consultar tus turnos en este momento. Probá de nuevo en unos minutos.' }]
+    if (senas.length === 0) return [...saludo, { type: 'text', text: 'No tenés señas pendientes de pago. La seña se puede abonar cuando el prestador acepta el turno.' }]
+    const mensajes: MensajeSaliente[] = [...saludo]
+    for (const sena of senas.slice(0, 3)) {
+      const inicio = new Date(sena.startsAt)
+      const turno = `tu turno con ${sena.providerName}${sena.service ? ` (${sena.service})` : ''} del ${fechaLarga(inicio)} a las ${horaCorta(inicio)}`
+      try {
+        const pago = await this.deps.domain.pagarSena(cuenta, sena.ref)
+        mensajes.push({ type: 'cta_url', text: `Seña de ${turno}: ${formatearPesos(pago.amount)}. El pago se acredita cuando Mercado Pago lo aprueba.`, label: 'Pagar seña', url: pago.url })
+      } catch {
+        mensajes.push({ type: 'text', text: `No pude generar ahora el link de pago de la seña de ${turno}. Probá de nuevo en unos minutos.` })
+      }
+    }
+    return mensajes
   }
 
   // Names the area of TUS the message is about; the backend then offers only that area's tools.
@@ -604,7 +890,11 @@ export class OrquestadorConversacion {
     const state = turn.conversation.state
     const respaldo = (): IntencionAsistente => {
       const detected = detectarIntencion(text)
-      return detected === 'otro' && state.currentIntent === 'buscar' ? 'buscar' : detected
+      if (detected !== 'otro') return detected
+      // An unlabelled message belongs to what is in progress: the search, or the time being
+      // chosen for a professional (the booking tools stay offered; never only search_services).
+      if (state.currentIntent === 'buscar') return 'buscar'
+      return esperaHoraDe(state) ? 'reserva' : detected
     }
     let intent: IntencionAsistente | null = null
     if (turn.canal.enrutado === 'patrones') {
@@ -782,7 +1072,11 @@ export class OrquestadorConversacion {
           completionTokens: answer.usage?.completionTokens ?? 0,
         })
         if (answer.toolCalls.length === 0) {
-          const content = (answer.content ?? '').replace(/<think>[\s\S]*?<\/think>/gu, '').trim()
+          const content = sinIdentificadores((answer.content ?? '').replace(/<think>[\s\S]*?<\/think>/gu, '').trim(), [
+            ...(turn.conversation.state.offers?.items ?? []).map((item) => item.providerId),
+            ...(draft?.candidates ?? []).map((item) => item.providerId),
+            ...(turn.conversation.state.activeWorkId ? [turn.conversation.state.activeWorkId] : []),
+          ])
           if (!content) break
           // A search answered without any tool result in this turn cannot be trusted: the model
           // is sent back to the tools. Once a tool returned data, its reply is the answer.
@@ -959,13 +1253,23 @@ export class OrquestadorConversacion {
             ? `Servicios publicados:\n${data.services.map(service => service.name).join('\n')}\nEsto no confirma disponibilidad para tu trabajo.`
             : 'La consulta no encontró servicios publicados con esos filtros. Podemos ajustar la búsqueda.' }]
         }
+        if (result.ok && 'confirmationRequired' in result && call.function.name === 'book_appointment') {
+          // The model only says WHICH professional and time: the service, its price, the deposit,
+          // the client and the card are the backend's (the same steps as a choice in free text).
+          const args = result.arguments as { providerId: string; profession: string; startsAt: string; tariffId?: string; notes?: string }
+          const mostrado = [...(turn.conversation.state.offers?.items ?? []), ...(draft?.candidates ?? [])].find((item) => item.providerId === args.providerId)?.name
+          const nombre = mostrado ?? (typeof this.deps.domain.nombrePrestador === 'function' ? await this.deps.domain.nombrePrestador(args.providerId).catch(() => null) : null)
+          const reply = await this.continuarSolicitud(turn, actor, { providerId: args.providerId, providerName: nombre ?? 'el profesional elegido', profession: args.profession, startsAt: args.startsAt, tariffId: args.tariffId ?? null }, correlationId, { mensaje: text, notes: args.notes ?? null })
+          if (reply) return reply
+          break
+        }
         if (result.ok && 'confirmationRequired' in result) {
           // A write is bound to an account: without one there is nobody to confirm it for.
           if (!actor.context) return turn.canal.pedirCuenta('private')
-          const summary = resumenConfirmacion(call.function.name, result.arguments, result.summary, draft?.candidates ?? [])
+          const summary = result.summary
           const pending = await this.crearConfirmacion(
             turn,
-            actor,
+            actor.context,
             call.function.name,
             result.arguments,
             summary,
@@ -998,6 +1302,8 @@ export class OrquestadorConversacion {
     // The model gave nothing usable for a search whose trade is known: the one question that is
     // missing is still a better answer than an error.
     if (intent === 'buscar' && !datosEnTurno && need?.profession && faltantes(need).length > 0) return [{ type: 'text', text: preguntaFaltante(need) }]
+    const pendiente = esperaHoraDe(turn.conversation.state)
+    if (pendiente) return [{ type: 'text', text: preguntaHora(pendiente) }]
     return this.bajaConfianza(turn, correlationId)
   }
 
@@ -1050,7 +1356,8 @@ export class OrquestadorConversacion {
 
   private async crearConfirmacion(
     turn: Turno,
-    actor: ActorAsistente,
+    // The account the action is prepared for (session, link or identification).
+    cuenta: TusAuthenticatedTenantContext,
     tool: string,
     args: Record<string, unknown>,
     summary: string,
@@ -1061,8 +1368,8 @@ export class OrquestadorConversacion {
       confirmationId: `conf${randomUUID().replaceAll('-', '')}`,
       conversationId: turn.conversation.conversationId,
       contactId: turn.contact.contactId,
-      accountId: actor.context!.subjectId,
-      tenantId: actor.context!.tenantId,
+      accountId: cuenta.subjectId,
+      tenantId: cuenta.tenantId,
       tool,
       arguments: args,
       argumentsHash: hash({ tool, args }),
@@ -1109,14 +1416,16 @@ export class OrquestadorConversacion {
     const loaded = await this.deps.transaction.ejecutar((repositories) =>
       repositories.confirmaciones.buscar(confirmationId)
     )
-    // Bound to this conversation, contact and CURRENT linked account; otherwise it does not exist.
+    // Bound to this conversation, contact and CURRENT account (the linked one; for the request of
+    // a turno, also the one identified by name + document); otherwise it does not exist.
+    const cuenta = loaded?.tool === 'book_appointment' ? cuentaDeSolicitud(actor) : actor.context
     if (
       !loaded ||
       loaded.conversationId !== turn.conversation.conversationId ||
       loaded.contactId !== turn.contact.contactId ||
-      !actor.context ||
-      loaded.accountId !== actor.context.subjectId ||
-      loaded.tenantId !== actor.context.tenantId
+      !cuenta ||
+      loaded.accountId !== cuenta.subjectId ||
+      loaded.tenantId !== cuenta.tenantId
     )
       return [{ type: 'text', text: 'No encontré una acción pendiente para confirmar.' }]
     if (loaded.status === 'executed' || loaded.status === 'failed' || loaded.status === 'confirmed')
@@ -1465,31 +1774,16 @@ const ZONA_HORARIA = 'America/Argentina/Buenos_Aires'
 
 // The confirmation card states exactly what will be executed (validated arguments, never model
 // prose). A booking names the provider as it was shown to the user and the time in local terms.
-// Label of the button that executes a prepared action. A turno is requested, never confirmed by
-// its client.
-const tituloConfirmar = (tool: string): string => (tool === 'book_appointment' ? 'Solicitar turno' : 'Confirmar')
-
-function resumenConfirmacion(
-  tool: string,
-  args: Record<string, unknown>,
-  summary: string,
-  candidates: { providerId: string; name: string }[]
-): string {
-  if (tool !== 'book_appointment') return summary
-  const provider = candidates.find((candidate) => candidate.providerId === args['providerId'])?.name
-  const startsAt = new Date(String(args['startsAt']))
-  if (!provider || Number.isNaN(startsAt.getTime())) return summary
-  const day = startsAt.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: ZONA_HORARIA })
-  const hour = startsAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: ZONA_HORARIA })
-  return [
-    'Voy a enviar tu solicitud de turno:',
-    `Prestador: ${provider}`,
-    `Horario: ${day}, ${hour} hs`,
-    ...(typeof args['notes'] === 'string' && args['notes'] ? [`Nota: ${args['notes']}`] : []),
-    'El turno queda pendiente hasta que el prestador confirme.',
-    '¿Querés solicitar ese turno?',
-  ].join('\n')
+// The one professional the conversation asked a time for ("¿A qué hora con Ana?"), while that
+// step is in progress; null otherwise.
+function esperaHoraDe(state: { offers?: OfertasMostradas | null; currentIntent: string | null }): OfertasMostradas['items'][number] | null {
+  const offers = state.offers
+  return offers?.esperaHora && offers.items.length === 1 && state.currentIntent === 'reserva' && offers.items[0]!.starts.length > 0 ? offers.items[0]! : null
 }
+
+// Label of the button that executes a prepared action. The request of a turno has its own card
+// and buttons (BOTONES_SOLICITUD): it is requested, never confirmed by its client.
+const tituloConfirmar = (_tool: string): string => 'Confirmar'
 
 // Deterministic confirmation outcome (no LLM involved: nothing can be embellished).
 export function formatearResultadoAccion(
@@ -1517,6 +1811,9 @@ export function formatearResultadoAccion(
       SLOT_NOT_AVAILABLE: 'Ese horario ya no está disponible. Elegí otro.',
       TOO_MANY_PENDING_REQUESTS: 'Ya tenés varias solicitudes pendientes con ese profesional. Esperá su respuesta o retirá alguna desde "Mis turnos".',
       LOGIN_REQUIRED: 'Para solicitar un turno tenés que iniciar sesión en TUS.',
+      INVALID_PARAMS: 'Ese servicio ya no está disponible con ese profesional. Buscá de nuevo y elegí otro.',
+      TURNOS_DISABLED: 'Ese profesional ya no toma turnos online.',
+      SERVICE_TURNOS_DISABLED: 'Ese servicio ya no se atiende por turno.',
       NOT_AVAILABLE: 'Esa solicitud o ese postulante ya no están disponibles. Pedime que lo revise de nuevo.',
     }
     return [
@@ -1562,8 +1859,11 @@ export function formatearResultadoAccion(
     const when = at && !Number.isNaN(at.getTime())
       ? ` para el ${at.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: ZONA_HORARIA })} a las ${at.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: ZONA_HORARIA })} hs`
       : ''
-    // A request, never a confirmed reservation: only the provider confirms it.
-    return [{ type: 'text', text: `Listo, envié tu solicitud de turno${when}. Queda pendiente hasta que el prestador la confirme; podés ver el estado en "Mis turnos".` }]
+    // A request, never a confirmed reservation: provider acceptance only opens payment. The
+    // backend-computed deposit is paid after acceptance; its verified webhook confirms the turno.
+    const sena = (data['appointment'] as { sena?: { monto?: number } | null } | undefined)?.sena
+    const deSena = typeof sena?.monto === 'number' && sena.monto > 0 ? ` La seña es de ${formatearPesos(sena.monto)} y se abona recién cuando el prestador acepte.` : ''
+    return [{ type: 'text', text: `Solicitud enviada${when}. Queda pendiente hasta que el prestador la acepte; podés ver el estado en "Mis turnos".${deSena}` }]
   }
   if (tool === 'accept_budget') return [{ type: 'text', text: 'Listo, aceptaste el presupuesto.' }]
   if (tool === 'reject_budget') return [{ type: 'text', text: 'Listo, rechazaste el presupuesto.' }]

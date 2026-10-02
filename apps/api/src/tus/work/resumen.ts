@@ -208,7 +208,8 @@ export class ServicioResumenTrabajo {
     permissions: readonly string[]
   ): Promise<WorkSummary> {
     const work = await this.store.findAccessible({ tenantId, trabajoId: id })
-    if (!work) throw new TrabajoError(404, 'NOT_FOUND', 'work not found')
+    // The payment order of a turno is not a work of the parties (it is seen as a turno).
+    if (!work || work.origin === 'turno') throw new TrabajoError(404, 'NOT_FOUND', 'work not found')
     const estado = this.pagos ? await this.pagos.estadoPagosTrabajo(work) : null
     const payment: WorkPayment | null = estado
       ? {
@@ -233,7 +234,7 @@ export class ServicioResumenTrabajo {
     rating: WorkRating | null = null
   ): Promise<WorkSummary[]> {
     const accessible = works.filter(
-      (w) => w.tenantId === tenantId || w.prestadorTenantId === tenantId
+      (w) => (w.tenantId === tenantId || w.prestadorTenantId === tenantId) && w.origin !== 'turno'
     )
     const extra = await this.source.batch(accessible)
     return accessible.map((w) => {
@@ -243,7 +244,7 @@ export class ServicioResumenTrabajo {
         e?.budget && (role === 'prestador' || e.budget.status !== 'draft') ? e.budget : null
       return {
         id: w.trabajoId,
-        origin: w.origin ?? 'marketplace',
+        origin: w.origin === 'solicitud' ? 'solicitud' : 'marketplace',
         solicitudId: w.solicitudId ?? null,
         status: w.status,
         version: w.version,

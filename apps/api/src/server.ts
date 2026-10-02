@@ -31,6 +31,7 @@ import type { PrismaClient } from '@prisma/client'
 import { crearAltaPrestadorAdmin, crearEdicionPrestadorAdmin } from './tus/directorio/admin.ts'
 import { crearRouterAyuda } from './tus/asistente/http-ayuda.ts'
 import { NotificadorTurnosEmail } from './tus/calendar/turnos-notificaciones.ts'
+import { ServicioSenaTurnos, pagosSenaDeAplicacion } from './tus/calendar/turnos-sena.ts'
 import { AlmacenPerfilPrisma, type ClientePrismaPerfil } from './tus/perfil/almacen.ts'
 import { crearRouterPerfil } from './tus/perfil/http.ts'
 import { ServicioPerfil } from './tus/perfil/servicio.ts'
@@ -167,13 +168,19 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
   // Turno requests notify by email through the transport of the account emails (when configured).
   const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient, NotificadorTurnosEmail.desdeEnv(prisma as unknown as PrismaClient, process.env))
+  // TURNOS-SENA-01: the deposit of an accepted turno awaiting payment is charged through the same work and finance
+  // services as every other payment (no parallel Mercado Pago integration).
+  servicioTurnos.conSenas(new ServicioSenaTurnos(prisma as unknown as PrismaClient, pagosSenaDeAplicacion(application)))
   // Personal profile (names, document, residence) and normalized geography.
   const perfiles = new ServicioPerfil(new AlmacenPerfilPrisma(prisma as unknown as ClientePrismaPerfil))
   const whatsapp = options.tusRouter
     ? undefined
     : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes, turnos: servicioTurnos }, telefonos)
-  const tusRouter = options.tusRouter ?? createTusHttpRouter({ application, sessions, whatsapp })
+  const tusRouter = options.tusRouter ?? createTusHttpRouter({ application, sessions, whatsapp, onTurnoConfirmed: (trabajoId) => servicioTurnos.avisarTurnoConfirmado(trabajoId) })
   if (whatsapp) app.locals['tusWhatsappAssistant'] = whatsapp
+  // The client that asked for a turno from WhatsApp hears the provider's answer there too (with
+  // the payment link of the deposit once accepted), besides the email and "Mis turnos".
+  if (whatsapp) servicioTurnos.agregarNotificador(whatsapp.avisosTurnos)
 
   // Security middleware
   app.use(correlationMiddleware)

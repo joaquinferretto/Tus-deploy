@@ -32,6 +32,7 @@ import {
   type EvaluadorHabilitacion,
   type PerfilHabilitacion,
 } from '../readiness/index.ts'
+import { ErrorEvidenciaHabilitacion } from '../readiness/evidencias-admin.ts'
 import { TrabajoError } from '../work/index.ts'
 import { ErrorFinanzasServicio } from '../finance/servicios/modelo.ts'
 import { ErrorIdentidad } from '../identidad/modelo.ts'
@@ -56,6 +57,7 @@ export interface TusHttpRouterDependencies {
   evaluadorHabilitacion?: EvaluadorHabilitacion
   // WHATSAPP-AI-01: WhatsApp Cloud API webhook, account linking and human support.
   whatsapp?: ModuloWhatsapp
+  onTurnoConfirmed?: (trabajoId: string) => Promise<void>
 }
 
 export interface TusAuthorizationDeniedEvent {
@@ -98,6 +100,7 @@ export function createTusHttpRouter({
   onAuthorizationDenied,
   evaluadorHabilitacion,
   whatsapp,
+  onTurnoConfirmed,
 }: TusHttpRouterDependencies): Router {
   const router = express.Router()
   const guard = evaluadorHabilitacion ?? application.evaluadorHabilitacion
@@ -895,6 +898,8 @@ export function createTusHttpRouter({
           dataId: dataId || undefined,
           receivedAt: new Date(now()).toISOString(),
         })
+        if (result.status === 'recorded' && result.result === 'applied' && result.obligation.amountSource === 'booked_price' && result.payment.providerStatus === 'approved')
+          await onTurnoConfirmed?.(result.obligation.trabajoId).catch(() => undefined)
         if (result.status === 'invalid') {
           if (['INVALID_SIGNATURE', 'EXPIRED_SIGNATURE'].includes(result.reason)) {
             sendError(response, 401, result.reason, 'notification signature rejected')
@@ -1568,6 +1573,64 @@ export function createTusHttpRouter({
       }
     }
   )
+
+  // Readiness evidence of the platform tenant (`service-payments`, `settlement`). Same authority
+  // as the rest of the payment administration: `tus:payments:admin`, honored only on an
+  // MFA-elevated session of an allowlisted account (session resolver) and, when configured, the
+  // platform tenant. Tenant, actor, scope, source and status never come from the request.
+  router.get(['/tus/v1/admin/payments/readiness/evidence'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!isPlatformPaymentsAdmin(context, application)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized')
+      return
+    }
+    if (!application.readinessEvidence) {
+      sendError(response, 503, 'UNAVAILABLE', 'readiness evidence registry is not available')
+      return
+    }
+    try {
+      response.setHeader('cache-control', 'no-store')
+      response.status(200).json(await application.readinessEvidence.listar())
+    } catch (error) {
+      enviarErrorEvidencia(response, error)
+    }
+  })
+
+  router.post(['/tus/v1/admin/payments/readiness/evidence'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!isPlatformPaymentsAdmin(context, application) || hasSpoofedAuthority(asRecord(request.body), request, context!)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized')
+      return
+    }
+    if (!application.readinessEvidence) {
+      sendError(response, 503, 'UNAVAILABLE', 'readiness evidence registry is not available')
+      return
+    }
+    try {
+      response.setHeader('cache-control', 'no-store')
+      response.status(201).json({ evidence: await application.readinessEvidence.registrar({ actorId: context!.subjectId, correlationId: context!.correlationId }, asRecord(request.body)) })
+    } catch (error) {
+      enviarErrorEvidencia(response, error)
+    }
+  })
+
+  router.post(['/tus/v1/admin/payments/readiness/evidence/:evidenceId/revoke'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!isPlatformPaymentsAdmin(context, application) || hasSpoofedAuthority(asRecord(request.body), request, context!)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized')
+      return
+    }
+    if (!application.readinessEvidence) {
+      sendError(response, 503, 'UNAVAILABLE', 'readiness evidence registry is not available')
+      return
+    }
+    try {
+      response.setHeader('cache-control', 'no-store')
+      response.status(200).json({ evidence: await application.readinessEvidence.revocar({ actorId: context!.subjectId, correlationId: context!.correlationId }, String(request.params['evidenceId'] ?? ''), asRecord(request.body)) })
+    } catch (error) {
+      enviarErrorEvidencia(response, error)
+    }
+  })
 
   router.get(
     ['/tus/v1/admin/payments/commission-policies'],
@@ -3864,6 +3927,15 @@ function sendServiceFinanceError(response: Response, error: unknown): void {
     return
   }
   sendError(response, 500, 'UNAVAILABLE', 'TUS service finance operation was not committed')
+}
+
+// Field NAMES only: a refused value is never echoed back.
+function enviarErrorEvidencia(response: Response, error: unknown): void {
+  if (error instanceof ErrorEvidenciaHabilitacion) {
+    response.status(error.status).json({ code: error.code, error: error.message, ...(error.fields.length > 0 ? { fields: error.fields } : {}) })
+    return
+  }
+  sendError(response, 500, 'UNAVAILABLE', 'readiness evidence was not recorded')
 }
 
 function sendAssistantError(response: Response, error: unknown): void {

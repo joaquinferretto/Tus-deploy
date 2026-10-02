@@ -105,7 +105,7 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
     expireOverdue: async (input: { calendarId: string; now: string }) => {
       const now = new Date(input.now)
       await this.client.reserva.updateMany({
-        where: { calendarioId: input.calendarId, estado: 'pending', solicitudExpiraEn: { lte: now } },
+        where: { calendarioId: input.calendarId, estado: { in: ['pending', 'awaiting_payment'] }, solicitudExpiraEn: { lte: now } },
         data: { estado: 'expired', version: { increment: 1 }, fechaActualizacion: now },
       })
     },

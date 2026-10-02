@@ -4,7 +4,7 @@ import type { Route } from 'next'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import type { AgendaSemanal as Agenda, DetalleTurno, FranjaAgenda, PerfilPrestadorPublico, SolicitanteTurnoDTO, TarifaServicioPublica } from '@factory/contracts'
-import { CODIGO_HORARIO_NO_DISPONIBLE, CODIGO_HORARIO_OCUPADO, CODIGO_SESION_REQUERIDA, etiquetaEstadoTurno } from '@factory/contracts'
+import { CODIGO_HORARIO_NO_DISPONIBLE, CODIGO_HORARIO_OCUPADO, CODIGO_SESION_REQUERIDA, etiquetaEstadoTurno, formatearPesos } from '@factory/contracts'
 import homeStyles from '../home/home.module.css'
 import { AgendaSemanal } from '../turnos/agenda-semanal'
 import { TurnosError, diaTurno, fechaTurno, horaTurno, turnosApi } from '../../lib/tus-turnos-client'
@@ -48,6 +48,8 @@ export function TurnoBooking({
   const [tarifaElegida, setTarifaElegida] = useState<string>(inicial?.tarifaId ?? '')
   const selectedTarifaId = tarifaElegida || tarifas[0]?.id || ''
   const [duracion, setDuracion] = useState(0)
+  // Price and deposit of the selection, exactly as the API computed them (never derived here).
+  const [cobro, setCobro] = useState<{ precio: number | null; sena: number | null }>({ precio: null, sena: null })
   const [selectedSlot, setSelectedSlot] = useState<FranjaAgenda | null>(null)
   // The time chosen before signing in, until the agenda says whether it is still available.
   const [pendienteDeElegir, setPendienteDeElegir] = useState<string | null>(inicial?.inicio ?? null)
@@ -95,6 +97,7 @@ export function TurnoBooking({
   function agendaRecibida(agenda: Agenda) {
     setTarifas(agenda.tarifas)
     setDuracion(agenda.duracionMinutos)
+    setCobro({ precio: agenda.precio ?? null, sena: agenda.sena ?? null })
     if (!pendienteDeElegir) return
     // Back from sign-in: the time is chosen again only if the API still offers it.
     const franja = agenda.dias.flatMap((dia) => dia.franjas).find((item) => item.inicio === pendienteDeElegir && item.estado === 'disponible')
@@ -158,12 +161,12 @@ export function TurnoBooking({
           Solicitud enviada
         </h2>
         <p style={{ lineHeight: 1.5, margin: 0 }}>
-          Le enviamos la solicitud a <strong>{worker.displayName}</strong>. El turno quedará confirmado cuando la acepte.
+          Solicitud enviada a <strong>{worker.displayName}</strong>. {solicitado.sena ? 'Queda pendiente hasta que el prestador la acepte; después deberás pagar la seña para confirmar el turno.' : 'Queda pendiente hasta que el prestador la acepte.'}
         </p>
         <ul className={styles.requestFacts}>
           {solicitado.oficioNombre || solicitado.tarifaNombre ? (
             <li>
-              <strong>Servicio:</strong> {solicitado.oficioNombre ?? solicitado.tarifaNombre}
+              <strong>Servicio:</strong> {[solicitado.oficioNombre, solicitado.tarifaNombre].filter((nombre, indice, lista) => nombre && lista.indexOf(nombre) === indice).join(' · ')}
             </li>
           ) : null}
           <li>
@@ -174,7 +177,12 @@ export function TurnoBooking({
           </li>
           {solicitado.precioFinal != null && solicitado.precioFinal > 0 ? (
             <li>
-              <strong>Precio:</strong> ${PESOS.format(solicitado.precioFinal)}
+              <strong>Precio:</strong> {formatearPesos(solicitado.precioFinal)}
+            </li>
+          ) : null}
+          {solicitado.sena ? (
+            <li>
+              <strong>Seña:</strong> {formatearPesos(solicitado.sena.monto)} (se abona cuando el prestador acepte)
             </li>
           ) : null}
         </ul>
@@ -303,7 +311,18 @@ export function TurnoBooking({
             {selectedSlot ? (
               <span data-turno-elegido style={{ fontSize: '0.95rem' }}>
                 Elegiste: <strong>{fechaTurno(selectedSlot.inicio)}, {horaTurno(selectedSlot.inicio)} hs</strong>
-                {selectedTarifa ? ` · $${PESOS.format(selectedTarifa.precio)}` : ''}
+                {selectedTarifa ? ` · ${selectedTarifa.nombre}` : ''}
+              </span>
+            ) : null}
+            {cobro.precio !== null ? (
+              <span data-turno-precio style={{ display: 'block', fontSize: '0.95rem' }}>
+                Precio: <strong>{formatearPesos(cobro.precio)}</strong>
+                {cobro.sena !== null ? (
+                  <>
+                    {' '}
+                    · Seña: <strong>{formatearPesos(cobro.sena)}</strong> (se abona cuando el prestador acepte)
+                  </>
+                ) : null}
               </span>
             ) : null}
           </div>
@@ -312,7 +331,7 @@ export function TurnoBooking({
             {submitting ? 'Enviando solicitud...' : autenticado === false ? 'Iniciar sesión para solicitar' : 'Solicitar reserva'}
           </button>
         </div>
-        <p className={styles.submitHint}>El turno queda pendiente hasta que el prestador confirme.</p>
+        <p className={styles.submitHint}>La solicitud queda pendiente hasta que el prestador acepte.{cobro.sena !== null ? ' El turno se confirma cuando se acredite la seña.' : ''}</p>
       </form>
     </section>
   )

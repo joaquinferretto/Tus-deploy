@@ -16,8 +16,22 @@ const REQUISITOS_POR_CAPACIDAD: Record<CapacidadHabilitacionContrato, readonly C
   publication: ['legal', 'kyb', 'tax', 'runtimeProvider'],
   'provider-actions': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'aws', 'groqMigration', 'runtimeProvider'],
   settlement: REQUISITOS_HABILITACION_REQUERIDOS,
+  // Service payments (deposit of a turno, deposit and balance of a request-born work) through
+  // Mercado Pago Split 1:1. No POS, no AWS target and no Groq migration take part in that money
+  // flow, so those gates belong to `settlement` and are not asked here.
+  'service-payments': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'],
   fleet: ['legal', 'kyc', 'kyb', 'tax', 'posPilot', 'runtimeProvider'],
   'release-jobs': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'posPilot', 'runtimeProvider'],
+}
+
+// Capabilities whose evidence is recorded and renewed through the administrative registry
+// (evidencias-admin.ts). `settlement` and the rest are deliberately not here.
+const CAPACIDADES_RENOVABLES: ReadonlySet<CapacidadHabilitacionContrato> = new Set(['service-payments'])
+
+export function requisitosDeCapacidad(
+  capability: CapacidadHabilitacionContrato,
+): readonly ClaveRequisitoHabilitacionContrato[] {
+  return REQUISITOS_POR_CAPACIDAD[capability]
 }
 
 const CLAVES_REQUISITO_LEGACY = [
@@ -169,6 +183,24 @@ export function evaluarHabilitacion(input: EntradaEvaluarHabilitacion): Decision
       failures.push({ gate, reason: 'evidence_conflict' })
       continue
     }
+
+    // Renewal, only for the capabilities that opted in: a revoked or expired record is history.
+    // Exactly one current authorized record, with nothing else beside it but that history,
+    // satisfies the gate. Any other record next to it (deterministic, deferred, not yet valid)
+    // still fails below. Every other capability keeps the original rule: any revoked or expired
+    // record of a gate blocks it.
+    const [vigente] = currentCandidates
+    if (
+      CAPACIDADES_RENOVABLES.has(input.capability) &&
+      vigente &&
+      scopedCandidates.every(
+        (candidate) =>
+          candidate === vigente ||
+          candidate.revoked ||
+          (candidate.expiresAt !== null && Date.parse(candidate.expiresAt) <= now),
+      )
+    )
+      continue
 
     if (scopedCandidates.some(({ revoked }) => revoked)) {
       failures.push({ gate, reason: 'evidence_revoked' })

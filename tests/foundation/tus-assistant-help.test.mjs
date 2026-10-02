@@ -54,7 +54,7 @@ test('ASSISTANT UI: on the home and public pages, real session, no human support
   assert.doesNotMatch(conversation + hook, /'[^']*https?:\/\/[^']*'/u, 'links are buttons built from API data, never raw URLs in a text')
   assert.match(widget, /useAccountView\(\)/u, 'session from the API')
   assert.match(conversation, /placeholder="Escribí tu consulta…"/u)
-  assert.match(conversation, /withReturnTo\('\/sign-in', pathname\)/u, 'signing in comes back to the same screen')
+  assert.match(conversation, /withReturnTo\('\/sign-in', \(value\.kind === 'sign_in' && value\.returnTo\) \|\| pathname\)/u, 'signing in comes back to the same screen, or to the turno being requested when the API names it')
   assert.match(read('apps/web/src/features/home/site-page.tsx'), /<AssistantWidget \/>/u)
   assert.match(read('apps/web/src/features/home/home-page.tsx'), /<AssistantWidget \/>/u)
   assert.match(read('apps/web/src/features/home/home-page.tsx'), /get\('buscar'\)/u)

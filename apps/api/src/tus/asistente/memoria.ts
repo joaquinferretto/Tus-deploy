@@ -82,6 +82,7 @@ export class AlmacenAsistenteEnMemoria {
             .map(clone),
         contar: async (filter) =>
           [...s().conversaciones.values()].filter((c) => (!filter.mode || c.mode === filter.mode) && (!filter.channel || canalDe(c) === filter.channel)).length,
+        identificadasPor: async (accountId) => [...s().conversaciones.values()].filter((c) => c.status === 'active' && c.identifiedAccountId === accountId).map(clone),
       },
       mensajes: {
         buscarPorWamid: async (wamid) => clone([...s().mensajes.values()].find((m) => m.wamid === wamid) ?? null),
@@ -191,6 +192,7 @@ export class AlmacenAsistenteEnMemoria {
         registrar: async (event) => {
           s().auditoria.push(clone(event))
         },
+        contarDesde: async (input) => s().auditoria.filter((event) => event.action === input.action && event.conversationId === input.conversationId && event.createdAt >= input.since).length,
       },
       consentimientosWhatsapp: {
         buscar: async (tenantId, recipientType, recipientId) =>

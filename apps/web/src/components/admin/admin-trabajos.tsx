@@ -11,6 +11,7 @@ import {
   type AdminTrabajoDetalle,
 } from '@/lib/tus-admin-api'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
+import { AdminEvidencias } from './admin-evidencias'
 import { AdminPagination } from './admin-pagination'
 import styles from './admin.module.css'
 
@@ -229,7 +230,8 @@ export function AdminPagos(): React.ReactNode {
   const [pageSize, setPageSize] = useState(25)
   const [totalPages, setTotalPages] = useState(1)
   const [estadoPagos, setEstadoPagos] = useState<Awaited<ReturnType<typeof adminApi.pagosEstado>> | null>(null)
-  useEffect(() => { void adminApi.pagosEstado().then(setEstadoPagos).catch(() => undefined) }, [])
+  const cargarEstadoPagos = useCallback(() => { void adminApi.pagosEstado().then(setEstadoPagos).catch(() => undefined) }, [])
+  useEffect(() => { cargarEstadoPagos() }, [cargarEstadoPagos])
   useEffect(() => {
     adminApi
       .pagos({ estado, page, pageSize })
@@ -247,8 +249,19 @@ export function AdminPagos(): React.ReactNode {
             {estadoPagos.globalPolicy.persisted ? '' : ' (por defecto)'}
           </p>
           {estadoPagos.blockers.length ? <p className={styles.muted}>Falta: {estadoPagos.blockers.join(', ')}</p> : null}
+          {estadoPagos.readiness && !estadoPagos.readiness.servicePayments.authorized ? (
+            <p className={styles.muted}>
+              Habilitación de pagos de servicios{estadoPagos.readiness.requiredNow ? '' : ' (no se exige en sandbox)'}: falta evidencia de {estadoPagos.readiness.servicePayments.blockers.join(', ')}
+            </p>
+          ) : null}
+          {estadoPagos.readiness ? (
+            <p className={styles.muted}>
+              Marketplace general (settlement): {estadoPagos.readiness.settlement.authorized ? 'habilitado' : `sin habilitar (${estadoPagos.readiness.settlement.blockers.join(', ')})`}. No es el gate de las señas.
+            </p>
+          ) : null}
         </section>
       ) : null}
+      {estadoPagos?.readiness ? <AdminEvidencias onChange={cargarEstadoPagos} /> : null}
       <div className={styles.toolbar}>
         <div className={styles.chips}>
           {FILTROS_PAGO.map(([value, label]) => (

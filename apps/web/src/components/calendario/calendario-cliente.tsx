@@ -257,7 +257,7 @@ export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNod
         </div>
       )}
       {bookingState.status === 'requested' ? (
-        <TusStateMessage state={{ status: 'ready', message: `Solicitud de reserva enviada (${bookingState.reserva.bookingId}). Queda pendiente hasta que el prestador la confirme.` }} />
+        <TusStateMessage state={{ status: 'ready', message: `Solicitud de reserva enviada (${bookingState.reserva.bookingId}). Queda pendiente hasta que el prestador la acepte; después deberás pagar para confirmar.` }} />
       ) : bookingState.status === 'loading' ? (
         <TusStateMessage state={{ status: 'loading', message: 'Enviando la solicitud de reserva a TUS…' }} />
       ) : bookingState.status === 'conflict' ? (
@@ -280,7 +280,7 @@ interface SlotState {
 
 type BookingState =
   | { status: 'idle' | 'loading' }
-  // Sent as a request: it stays pending until the provider confirms it.
+  // Sent as a request: it stays pending until the provider accepts and opens payment.
   | { status: 'requested'; reserva: TusCalendarBooking }
   | { status: 'conflict' | 'error'; message?: string }
 

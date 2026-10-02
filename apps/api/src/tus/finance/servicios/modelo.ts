@@ -7,6 +7,7 @@ import {
   TUS_CONTRACT_VERSION,
   createNonNegativeMoney,
   formatMinorUnits,
+  majorDecimalToMinorUnits,
   type EstadoObligacionPagoServicio,
   type EstadoPresupuesto,
   type ObligacionPagoServicio,
@@ -71,6 +72,20 @@ export interface PresupuestoFinanciero {
   totalMinor: bigint
 }
 
+// A turno as finance needs it (TURNOS-SENA-01): persisted facts of its reservation. The price is
+// the one stored on the reservation, in whole units of the currency (pesos).
+export interface ReservaTurnoFinanciera {
+  prestadorTenantId: string
+  reservaId: string
+  clienteTenantId: string | null
+  esInvitado: boolean
+  status: string
+  startsAt: string
+  expiresAt?: string | null
+  priceMajor: bigint | null
+  currency: string
+}
+
 export interface ObligacionServicio {
   obligacionId: string
   tenantId: string
@@ -125,6 +140,68 @@ export function montosSenaSaldo(totalMinor: bigint): { sena: bigint; saldo: bigi
     throw new ErrorFinanzasServicio(409, 'INVALID_AMOUNT', 'budget total cannot be negative')
   const sena = (totalMinor + 1n) / 2n
   return { sena, saldo: totalMinor - sena }
+}
+
+// Deposit of a turno: the SAME 50% rule applied to the price booked on its reservation (stored in
+// whole pesos). The one place a turno's deposit amount is computed: obligations, the turno views
+// and the assistant all read it from here.
+export function montoSenaReserva(priceMajor: bigint, currency: string): bigint {
+  if (priceMajor < 0n) throw new ErrorFinanzasServicio(409, 'INVALID_AMOUNT', 'price cannot be negative')
+  return montosSenaSaldo(majorDecimalToMinorUnits(priceMajor.toString(10), currency)).sena
+}
+
+// Deposit obligation of the order of a turno. The only monetary authority is the price persisted
+// on its reservation; the reservation must be the one of the order, of its client and awaiting payment.
+export function derivarObligacionSenaTurno(input: {
+  context: ContextoFinanzasServicio
+  trabajo: Trabajo
+  reserva: ReservaTurnoFinanciera | null
+  now: string
+}): ObligacionServicio {
+  const { trabajo, reserva } = input
+  if (
+    trabajo.origin !== 'turno' ||
+    !trabajo.reservaId ||
+    !reserva ||
+    reserva.reservaId !== trabajo.reservaId ||
+    reserva.prestadorTenantId !== trabajo.prestadorTenantId ||
+    reserva.esInvitado ||
+    reserva.clienteTenantId !== trabajo.tenantId
+  )
+    throw new ErrorFinanzasServicio(
+      409,
+      'INCONSISTENT_COMMERCIAL_CHAIN',
+      'the order does not match the reservation of its turno'
+    )
+  if (reserva.status !== 'awaiting_payment' || !reserva.expiresAt || Date.parse(reserva.expiresAt) <= Date.parse(input.now) || reserva.priceMajor === null || reserva.priceMajor <= 0n)
+    throw new ErrorFinanzasServicio(
+      409,
+      'APPOINTMENT_NOT_PAYABLE',
+      'the turno has no deposit to pay'
+    )
+  const money = createNonNegativeMoney(reserva.currency, montoSenaReserva(reserva.priceMajor, reserva.currency))
+  return {
+    obligacionId: identificadorObligacion(trabajo.trabajoId, 'sena'),
+    tenantId: trabajo.tenantId,
+    clienteId: trabajo.clienteId ?? trabajo.tenantId,
+    prestadorTenantId: trabajo.prestadorTenantId,
+    prestadorId: trabajo.prestadorId,
+    publicacionId: null,
+    commitmentId: null,
+    trabajoId: trabajo.trabajoId,
+    part: 'sena',
+    amountSource: ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRECIO_RESERVA,
+    budgetId: null,
+    budgetVersion: null,
+    amountMinor: money.minor,
+    currency: money.currency,
+    status: ESTADOS_OBLIGACION_PAGO_SERVICIO.PENDIENTE_PAGO,
+    version: 1,
+    actorId: input.context.actorId,
+    correlationId: input.context.correlationId,
+    createdAt: input.now,
+    updatedAt: input.now,
+  }
 }
 
 // Deposit ('sena') or balance ('saldo') obligation of a request-born work. The only monetary

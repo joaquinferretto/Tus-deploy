@@ -153,3 +153,97 @@ test('ASISTENTE necesidad: facts accumulate across messages; only the trade and 
   assert.deepEqual(r.otroOficio, ['plomeria', '2026-10-01', { kind: 'from', from: '12:00', to: null }, true])
   assert.deepEqual(r.soloDia, ['profession'])
 })
+
+// ASISTENTE-HORA-01: a time is normalised by the backend however it is said. The minutes are part
+// of the time: "a las 9 y 30" is 09:30, never 09:00.
+test('ASISTENTE hora: the minutes of a time are read however they are said ("9 y 30", "9.30", "y media", "y cuarto"); "a las 9 y 30" is never 09:00', () => {
+  const FRASES = ['9:30', '09:30', '9.30', '9,30', '9h30', '9 y 30', 'a las 9 y 30', '9 y 45', 'a las 10 y 15', 'a las 9 y 05', '9 y media', 'nueve y media', 'a las nueve y media', '9 y cuarto', 'a las 9 y cuarto', 'nueve y cuarto', 'a las 10', 'a las 3 y 30', '9 y 30 de la noche', 'a las 9 y 30 de la mañana', 'tipo 9 y 30']
+  const r = runTypeScriptScenario(`${SETUP}
+    const hora = (texto) => { const t = x(texto).time; return !t ? null : t.kind === 'exact' ? t.from : t }
+    console.log(JSON.stringify({
+      horas: ${JSON.stringify(FRASES)}.map(hora),
+      enFrase: [x('necesito un electricista mañana a las 9 y 30 en Centro'), x('quiero una masajista el sábado 9 y media, cualquier zona'), x('mañana a las 9 y cuarto')],
+      // Minutes that do not exist are not a time, and never the bare hour.
+      invalidas: ['9 y 70', 'a las 9 y 70', '25 y 30', 'a las 25'].map(hora),
+      // A range keeps being a range; two days of a month are not a time.
+      rangos: [hora('entre las 9 y 11'), hora('entre las 9 y 30 y las 11'), hora('de 9 a 12'), hora('el 5 y 10 de octubre')],
+      // Outside the step that waits for a time, a bare number is not one.
+      sueltos: ['10', '930', '1', '2', '3', 'el cuarto'].map(hora),
+    }))
+  `)
+  assert.deepEqual(Object.fromEntries(FRASES.map((frase, i) => [frase, r.horas[i]])), {
+    '9:30': '09:30', '09:30': '09:30', '9.30': '09:30', '9,30': '09:30', '9h30': '09:30',
+    '9 y 30': '09:30', 'a las 9 y 30': '09:30', '9 y 45': '09:45', 'a las 10 y 15': '10:15', 'a las 9 y 05': '09:05',
+    '9 y media': '09:30', 'nueve y media': '09:30', 'a las nueve y media': '09:30',
+    '9 y cuarto': '09:15', 'a las 9 y cuarto': '09:15', 'nueve y cuarto': '09:15',
+    'a las 10': '10:00', 'a las 3 y 30': '15:30', '9 y 30 de la noche': '21:30', 'a las 9 y 30 de la mañana': '09:30', 'tipo 9 y 30': '09:30',
+  })
+  assert.deepEqual(r.enFrase[0], { profession: 'electricidad', zone: 'Centro', anyZone: false, day: '2026-10-02', dayTo: null, time: { kind: 'exact', from: '09:30', to: null } })
+  assert.deepEqual([r.enFrase[1].profession, r.enFrase[1].day, r.enFrase[1].time, r.enFrase[1].anyZone], ['masaje', '2026-10-03', { kind: 'exact', from: '09:30', to: null }, true])
+  assert.deepEqual(r.enFrase[2], { day: '2026-10-02', dayTo: null, time: { kind: 'exact', from: '09:15', to: null } })
+  assert.deepEqual(r.invalidas, [null, null, null, null], 'impossible minutes are not a time: never read as the bare hour')
+  assert.deepEqual(r.rangos, [{ kind: 'between', from: '09:00', to: '11:00' }, { kind: 'between', from: '09:30', to: '11:00' }, { kind: 'between', from: '09:00', to: '12:00' }, null])
+  assert.deepEqual(r.sueltos, [null, null, null, null, null, null], 'a bare number is not a time in a free message')
+})
+
+test('ASISTENTE hora: when a time is awaited, a bare number or phrase gives the clock times it may mean; what is not a time gives none', () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const { horasPosibles, pareceHora } = await import('./apps/api/src/tus/asistente/necesidad.ts')
+    const de = (lista) => Object.fromEntries(lista.map((t) => [t, horasPosibles(t)]))
+    console.log(JSON.stringify({
+      horas: de(['10', '930', '0930', '1030', '9', '3', '15', '9:30', '09:30', '9.30', '9 y 30', 'a las 9 y 30', '9 y media', 'nueve y media', 'a las 9 y cuarto', 'las 10', '10 hs', '9 y 30 de la mañana', '9 pm', 'mejor a las 10', 'A las 9 y 30, por favor', 'dale, a las 9 y media entonces']),
+      ninguna: ['', 'hola', 'el segundo', 'con Ana', '25', '9 y 70', '2460', '99', 'a la tarde', 'tengo 2 consultas'].map((t) => horasPosibles(t).length),
+      parece: ['25', '9 y 70', 'a las 99', 'nueve y algo', 'y media', 'a la una'].map(pareceHora),
+      noParece: ['hola', 'con Ana', 'gracias', 'cuánto sale?', 'tengo una duda', 'el primero'].map(pareceHora),
+    }))
+  `)
+  const ambas = (manana, tarde) => [manana, tarde]
+  assert.deepEqual(r.horas, {
+    10: ambas('10:00', '22:00'), 930: ambas('09:30', '21:30'), '0930': ambas('09:30', '21:30'), 1030: ambas('10:30', '22:30'), 9: ambas('09:00', '21:00'),
+    // From 1 to 7 the afternoon is the likely one; the caller keeps the one the professional has.
+    3: ['15:00', '03:00'], 15: ['15:00'],
+    '9:30': ambas('09:30', '21:30'), '09:30': ambas('09:30', '21:30'), '9.30': ambas('09:30', '21:30'), '9 y 30': ambas('09:30', '21:30'), 'a las 9 y 30': ambas('09:30', '21:30'),
+    '9 y media': ambas('09:30', '21:30'), 'nueve y media': ambas('09:30', '21:30'), 'a las 9 y cuarto': ambas('09:15', '21:15'), 'las 10': ambas('10:00', '22:00'), '10 hs': ambas('10:00', '22:00'),
+    '9 y 30 de la mañana': ['09:30'], '9 pm': ['21:00'], 'mejor a las 10': ambas('10:00', '22:00'), 'A las 9 y 30, por favor': ambas('09:30', '21:30'), 'dale, a las 9 y media entonces': ['09:30'],
+  })
+  assert.deepEqual(r.ninguna, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+  assert.deepEqual(r.parece, [true, true, true, true, true, true], 'an attempt to say a time is recognised even when it cannot be read')
+  assert.deepEqual(r.noParece, [false, false, false, false, false, false])
+})
+
+test('ASISTENTE hora: a number chooses a professional among several and is a time for the ONE that is waiting for it; "y cuarto" is a quarter past, never the fourth professional', () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const { elegirOferta, horaLocal, preguntaHora } = await import('./apps/api/src/tus/asistente/busqueda.ts')
+    const iso = (hora) => new Date('2026-10-02T' + hora + ':00.000-03:00').toISOString()
+    const item = (name, horas) => ({ providerId: 'perfil-' + name.toLowerCase(), name, starts: horas.map(iso) })
+    const VARIOS = { profession: 'masaje', items: [item('Ana', ['09:00', '09:15']), item('Beto', ['09:00', '09:15']), item('Caro', ['09:00', '09:15']), item('Dana', ['09:00', '09:15'])] }
+    const UNA = { profession: 'masaje', items: [item('Ana', ['09:00', '09:15', '09:30', '10:00', '15:00'])], esperaHora: true }
+    const elegir = (ofertas) => (texto) => { const e = elegirOferta(texto, x(texto), ofertas); return e ? [e.item.name, e.starts.map(horaLocal)] : null }
+    console.log(JSON.stringify({
+      // Several professionals on the table: numbers and ordinals choose one of them.
+      varios: Object.fromEntries(['1', '2', '3', '4', 'el 2', 'el cuarto', 'la cuarta', 'el segundo', 'con Caro', 'a las 9 y cuarto', '9 y cuarto', '930'].map((t) => [t, elegir(VARIOS)(t)])),
+      // One professional waiting for its time: the same words are a time, checked against its real ones.
+      una: Object.fromEntries(['10', '930', '3', '9 y 30', 'a las 9 y 30', '9 y media', 'nueve y media', 'a las 9 y cuarto', '9:30', '09:30', '9.30', '1', '14', 'a la mañana', 'a la tarde', 'el primero', 'hola', '25'].map((t) => [t, elegir(UNA)(t)])),
+      // The same single professional without the pending question: a bare number is not a time.
+      sinPregunta: ['10', '930', 'a las 10'].map(elegir({ ...UNA, esperaHora: false })),
+      pregunta: preguntaHora(UNA.items[0]),
+    }))
+  `)
+  const todas = ['09:00', '09:15']
+  assert.deepEqual(r.varios, {
+    1: ['Ana', todas], 2: ['Beto', todas], 3: ['Caro', todas], 4: ['Dana', todas], 'el 2': ['Beto', todas],
+    'el cuarto': ['Dana', todas], 'la cuarta': ['Dana', todas], 'el segundo': ['Beto', todas], 'con Caro': ['Caro', todas],
+    'a las 9 y cuarto': null, '9 y cuarto': null, 930: null,
+  }, '"1", "2", "3" keep choosing a professional; "y cuarto" does not choose the fourth one')
+  assert.deepEqual(r.una, {
+    10: ['Ana', ['10:00']], 930: ['Ana', ['09:30']], 3: ['Ana', ['15:00']],
+    '9 y 30': ['Ana', ['09:30']], 'a las 9 y 30': ['Ana', ['09:30']], '9 y media': ['Ana', ['09:30']], 'nueve y media': ['Ana', ['09:30']],
+    'a las 9 y cuarto': ['Ana', ['09:15']], '9:30': ['Ana', ['09:30']], '09:30': ['Ana', ['09:30']], '9.30': ['Ana', ['09:30']],
+    // A time it does not have: the professional with no time (the caller lists the real ones).
+    1: ['Ana', []], 14: ['Ana', []],
+    'a la mañana': ['Ana', ['09:00', '09:15', '09:30', '10:00']], 'a la tarde': ['Ana', ['15:00']],
+    'el primero': ['Ana', ['09:00', '09:15', '09:30', '10:00', '15:00']], hola: null, 25: null,
+  })
+  assert.deepEqual(r.sinPregunta, [null, null, ['Ana', ['10:00']]])
+  assert.equal(r.pregunta, 'No entendí la hora. Ana tiene: 09:00, 09:15, 09:30, 10:00, 15:00. ¿Cuál preferís?')
+})

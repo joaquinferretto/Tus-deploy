@@ -59,17 +59,21 @@ const sumarDias = (fecha: string, dias: number): string => new Date(Date.parse(`
 const diaSemana = (fecha: string): number => new Date(`${fecha}T12:00:00.000Z`).getUTCDay()
 const hhmm = (hora: number, minuto = 0): string => `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`
 
-// Lowercase, no accents, punctuation as spaces; the colon of a time ("18:30") is kept.
+// Lowercase, no accents, punctuation as spaces; the colon of a time ("18:30") is kept, and
+// "9.30", "9,30" and "9h30" are the same time.
 function normalizar(texto: string): string {
   return sinAcentos(texto.toLowerCase().slice(0, 600))
-    .replace(/(\d)[.h](\d{2})\b/gu, '$1:$2')
+    .replace(/(\d)[.,h](\d{2})\b/gu, '$1:$2')
     .replace(/[^a-z0-9ñ:/\s]/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim()
 }
 
 const NUMEROS: Record<string, number> = { una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12 }
-const HORA = String.raw`(\d{1,2}|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?::(\d{2}))?(?: y (media|cuarto))?(?: ?(?:hs|horas|hrs|h)\b)?(?: (?:de|por) la (manana|tarde|noche)| ?(am|pm)\b)?`
+// The hour, then its minutes in any of the ways people say them: "9:30", "9 y 30", "9 y media",
+// "9 y cuarto". The minutes are part of the time: "a las 9 y 30" is never read as 09:00.
+const NUMERO_HORA = String.raw`\d{1,2}|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce`
+const HORA = String.raw`(${NUMERO_HORA})(?::(\d{2}))?(?: y (media|cuarto|\d{2})\b)?(?: ?(?:hs|horas|hrs|h)\b)?(?: (?:de|por) la (manana|tarde|noche)| ?(am|pm)\b)?`
 
 // One clock time as the person said it. Without "de la mañana/tarde", an hour from 1 to 7 is the
 // afternoon (nobody books a massage at 6 in the morning by saying "a las 6").
@@ -77,7 +81,7 @@ function leerHora(partes: (string | undefined)[]): string | null {
   const [numero, minutos, fraccion, franja, sufijo] = partes
   if (!numero) return null
   let hora = /^\d/u.test(numero) ? Number(numero) : NUMEROS[numero] ?? NaN
-  const minuto = minutos ? Number(minutos) : fraccion === 'media' ? 30 : fraccion === 'cuarto' ? 15 : 0
+  const minuto = minutos ? Number(minutos) : fraccion === 'media' ? 30 : fraccion === 'cuarto' ? 15 : fraccion ? Number(fraccion) : 0
   if (!Number.isInteger(hora) || hora > 24 || minuto > 59) return null
   if (hora === 24) hora = 0
   const tarde = franja === 'tarde' || franja === 'noche' || sufijo === 'pm'
@@ -123,6 +127,15 @@ function leerVentana(texto: string): { ventana: VentanaHoraria | null; resto: st
       regex: /\b(\d{1,2})(?::(\d{2}))? ?(?:hs|horas|hrs)\b|\b(\d{1,2}):(\d{2})\b/u,
       armar: (m) => {
         const from = leerHora(m[1] ? [m[1], m[2]] : [m[3], m[4]])
+        return from ? { kind: 'exact', from, to: null } : null
+      },
+    },
+    {
+      // "9 y 30", "9 y media", "nueve y cuarto": an hour with its minutes, with no "a las".
+      // Not two days of a month ("el 5 y 10 de octubre").
+      regex: new RegExp(String.raw`\b(${NUMERO_HORA}) y (media|cuarto|\d{2})\b(?! de (?!la ))(?: (?:de|por) la (manana|tarde|noche)| ?(am|pm)\b)?`, 'u'),
+      armar: (m) => {
+        const from = leerHora([m[1], undefined, m[2], m[3], m[4]])
         return from ? { kind: 'exact', from, to: null } : null
       },
     },
@@ -208,6 +221,44 @@ function oficioConErrata(texto: string): string | null {
     if (palabras.some((palabra) => claves.some((clave) => clave[0] === palabra[0] && distancia(palabra, clave, palabra.length >= 10 ? 2 : 1) <= (palabra.length >= 10 ? 2 : 1)))) encontrados.add(item.id)
   }
   return encontrados.size === 1 ? [...encontrados][0]! : null
+}
+
+// ---- a time on its own, when the conversation is waiting for one ------------------------------
+// "¿A qué hora con Ana?" was asked: the answer is a time even when it is said bare ("10", "930",
+// "nueve y media"). Returned as the clock times it may mean, the most likely first: without "de
+// la mañana / de la tarde", an hour written from 1 to 12 may be either half of the day ("3" is
+// 15:00 or 03:00) and the caller keeps the one the professional really offers. Empty: the message
+// is not one time. Only for that step: anywhere else a bare number is not a time.
+export function horasPosibles(mensaje: string): string[] {
+  const texto = normalizar(mensaje).replace(/ (?:por favor|porfa|gracias)$/u, '')
+  if (!texto) return []
+  const prefijo = String.raw`^(?:(?:a|para|pa|sobre|como a|tipo|mejor|dale|si|ok) )*(?:las? )?`
+  let partes: (string | undefined)[] | null = null
+  // "930", "0930", "1030": the hour and its minutes written together.
+  const junta = new RegExp(String.raw`${prefijo}(\d{1,2})(\d{2})(?: ?(?:hs|horas|hrs|h))?$`, 'u').exec(texto)
+  if (junta) partes = [junta[1], junta[2]]
+  else {
+    const entera = new RegExp(String.raw`${prefijo}${HORA}$`, 'u').exec(texto)
+    if (entera) partes = entera.slice(1, 6)
+  }
+  if (!partes) {
+    // A time inside a longer sentence ("dale, a las 9 y media entonces"): as the extractor reads it.
+    const { ventana } = leerVentana(texto)
+    return ventana?.kind === 'exact' && ventana.from ? [ventana.from] : []
+  }
+  const principal = leerHora(partes)
+  if (!principal) return []
+  const escrita = /^\d/u.test(partes[0]!) ? Number(partes[0]) : NUMEROS[partes[0]!] ?? NaN
+  const explicita = Boolean(partes[3] || partes[4])
+  if (explicita || !(escrita >= 1 && escrita <= 12)) return [principal]
+  const hora = Number(principal.slice(0, 2))
+  return [principal, hhmm(hora >= 12 ? hora - 12 : hora + 12, Number(principal.slice(3)))]
+}
+
+// The message looks like an attempt to say a time (a number, "media", "cuarto"), understood or
+// not. "una" counts only as "la una": on its own it is an article ("tengo una duda").
+export function pareceHora(mensaje: string): boolean {
+  return /\d|\b(?:dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|media|cuarto|mediodia|medianoche|la una)\b/u.test(normalizar(mensaje))
 }
 
 export function extraerNecesidad(mensaje: string, ahora: number): DatosNecesidad {

@@ -2,7 +2,7 @@ import type { Trabajo } from '@factory/contracts'
 import { parseMinorUnits } from '@factory/contracts'
 import type { MarketplaceStorePort } from '../../catalog/index.ts'
 import type { TrabajoStorePort } from '../../work/index.ts'
-import type { ObligacionServicio, RegistroIdempotenciaFinanciera } from './modelo.ts'
+import type { ObligacionServicio, RegistroIdempotenciaFinanciera, ReservaTurnoFinanciera } from './modelo.ts'
 import type { IntencionPagoServicioDominio } from './pagos.ts'
 import type {
   InstantaneaComisionServicio,
@@ -35,8 +35,14 @@ import type {
 export class IdentidadServicioEnMemoria implements PuertoIdentidadServicio {
   constructor(
     private readonly work: TrabajoStorePort,
-    private readonly marketplace: Pick<MarketplaceStorePort, 'commitments' | 'listings'>
+    private readonly marketplace: Pick<MarketplaceStorePort, 'commitments' | 'listings'>,
+    // Reservations of turnos (compositions with the calendar); none without it.
+    private readonly reservas: { buscar(input: { prestadorTenantId: string; reservaId: string }): Promise<ReservaTurnoFinanciera | null> } | null = null
   ) {}
+
+  async buscarReservaTurno(input: { prestadorTenantId: string; reservaId: string }) {
+    return this.reservas ? this.reservas.buscar(input) : null
+  }
 
   async buscarTrabajoAccesible(input: {
     tenantId: string

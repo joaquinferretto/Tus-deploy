@@ -91,6 +91,8 @@ export class FuenteTrabajosAdminPrisma implements FuenteTrabajosAdmin {
 
   async pagina(input: { pagina: number; tamano: number; q: string; estado: string }) {
     const where = {
+      // The payment order of a turno is administered as a turno (Turnos panel), not as a work.
+      origen: { not: 'turno' },
       ...(ESTADOS.includes(input.estado) ? { estado: input.estado } : {}),
       ...(input.q
         ? {

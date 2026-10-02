@@ -2,7 +2,7 @@ import { oficio } from '../directorio/oficios.ts'
 import { sinAcentos } from '../texto.ts'
 import type { DisponibilidadNecesidad, OfertaTurnos } from './dominio.ts'
 import type { AdjuntoAsistente } from './meta.ts'
-import { describirDia, describirVentana, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
+import { describirDia, describirVentana, enVentana, horasPosibles, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
 
 // From a real availability result to what the person reads. Pure: every name, time and count
 // comes from the result of the domain; nothing here can add a provider, a time or a price.
@@ -10,6 +10,9 @@ import { describirDia, describirVentana, type DatosNecesidad, type NecesidadTurn
 export interface OfertasMostradas {
   profession: string
   items: { providerId: string; name: string; starts: string[] }[]
+  // The conversation asked "¿a qué hora?" about the ONE professional in `items`: the next message
+  // is read as a time (a bare "10" is 10:00 there, not "the tenth" nor a professional).
+  esperaHora?: boolean
 }
 
 const DIAS_CORTOS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
@@ -84,6 +87,12 @@ export function textoDisponibilidad(need: NecesidadTurno, resultado: Disponibili
   return `${otraZona}Encontré ${cuantos(ofertas.length)} de ${label} con turno ${cuando}:\n${ofertas.map((item, indice) => linea(item, indice, iniciosDe(item))).join('\n')}${duraciones}\n${unoSolo ? '¿Con cuál querés solicitar el turno?' : 'Decime con quién y a qué hora y te preparo la solicitud.'}`
 }
 
+// The time was not understood while a professional was waiting for one: its real times again,
+// never an error.
+export function preguntaHora(item: OfertasMostradas['items'][number]): string {
+  return `No entendí la hora. ${item.name} tiene: ${item.starts.slice(0, 6).map(horaLocal).join(', ')}. ¿Cuál preferís?`
+}
+
 // The ONE thing still missing to search (never the zone).
 export function preguntaFaltante(need: NecesidadTurno): string {
   if (!need.profession) {
@@ -117,7 +126,8 @@ const ORDINALES: [RegExp, number][] = [
   [/\b(?:primer[oa]?|1r[oa]|1er[oa]?)\b/u, 0],
   [/\b(?:segund[oa]|2d[oa])\b/u, 1],
   [/\b(?:tercer[oa]?|3r[oa]|3er[oa]?)\b/u, 2],
-  [/\b(?:cuart[oa]|4t[oa])\b/u, 3],
+  // "y cuarto" is a quarter past the hour ("a las 9 y cuarto"), never the fourth professional.
+  [/(?<!\by )\b(?:cuart[oa]|4t[oa])\b/u, 3],
   [/\b(?:quint[oa]|5t[oa])\b/u, 4],
 ]
 
@@ -126,6 +136,23 @@ const ORDINALES: [RegExp, number][] = [
 // provider that fit the time (and day) the message says. null: the message does not choose.
 export function elegirOferta(mensaje: string, datos: DatosNecesidad, ofertas: OfertasMostradas | null | undefined): { item: OfertasMostradas['items'][number]; starts: string[] } | null {
   if (!ofertas || ofertas.items.length === 0) return null
+  // The conversation is waiting for the time of ONE professional: the message is read as a time
+  // first, normalised here and matched against the times that professional really has. A time it
+  // does not have comes back with no starts (the caller says which ones it has).
+  if (ofertas.esperaHora && ofertas.items.length === 1 && !datos.profession) {
+    const unico = ofertas.items[0]!
+    const delDia = unico.starts.filter((inicio) => !datos.day || diaLocal(inicio) === datos.day)
+    const horas = horasPosibles(mensaje)
+    if (horas.length > 0) {
+      for (const hora of horas) {
+        const starts = delDia.filter((inicio) => horaLocal(inicio) === hora)
+        if (starts.length > 0) return { item: unico, starts }
+      }
+      return { item: unico, starts: [] }
+    }
+    // "a la tarde", "después de las 10": the times of that professional inside that part of the day.
+    if (datos.time && datos.time.kind !== 'exact') return { item: unico, starts: delDia.filter((inicio) => enVentana(horaLocal(inicio), datos.time!)) }
+  }
   const texto = sinAcentos(mensaje.toLowerCase()).replace(/[^a-z0-9ñ:\s]/gu, ' ').replace(/\s+/gu, ' ').trim()
   let item: OfertasMostradas['items'][number] | undefined
   for (const [patron, indice] of ORDINALES) if (!item && patron.test(texto)) item = ofertas.items[indice]

@@ -54,8 +54,10 @@ export type AdjuntoAsistente =
   // the asked time and these are the closest starts.
   | { kind: 'appointments'; profession: string; providers: OfertaTurnoAsistenteDTO[] }
   | { kind: 'sources'; sources: { documentId: string; title: string }[] }
-  // The reply needs an account; the channel offers its own way in (the Web: sign in).
-  | { kind: 'sign_in' }
+  // The reply needs an account; the channel offers its own way in (the Web: sign in or register).
+  // returnTo: internal path the person comes back to afterwards (the turno being requested, with
+  // its professional, service and time), so nothing has to be searched again.
+  | { kind: 'sign_in'; returnTo?: string }
 
 export type AccionAsistenteDTO =
   // Answer of a confirmation card; `id` is opaque and bound to the conversation and the account.

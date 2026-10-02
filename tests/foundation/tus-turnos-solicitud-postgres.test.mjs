@@ -77,7 +77,7 @@ const SETUP = `
   const pendientes = async (token) => { const r = await call('GET', '/tus/v1/prestador/turnos/solicitudes', token); return r.body }
 `
 
-test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client requests as the account of the session (no identity from the body, no copy of name/phone/email); the request is pending and holds its time; the provider is notified, sees it and accepts or rejects; only accepting confirms', { skip, timeout: 240000 }, () => {
+test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client requests as the account of the session (no identity from the body, no copy of name/phone/email); the request is pending and holds its time; the provider is notified, sees it and accepts or rejects; with nothing to pay (no deposit service composed) accepting confirms', { skip, timeout: 240000 }, () => {
   const r = runTypeScriptScenario(`${SETUP}
     const out = {}
     try {
@@ -85,8 +85,10 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
       const visitante = await solicitar(null, 0, '10:00')
       out.visitante = [visitante.status, visitante.body.code, await prisma.reserva.count({ where: { tenantId: p.tenantId } })]
 
-      // 1-4, 14. Ana requests. The body tries to pass as Beto and to dictate a name and a contact.
-      const pedido = await solicitar('tok-ana', 0, '10:00', { clienteId: beto.id, userId: beto.id, clienteTenantId: beto.tenantId, clienteNombre: 'Otra Persona', clienteTelefono: '3794000000', clienteEmail: 'otra@example.com', estado: 'confirmed', notas: 'Dolor de espalda' })
+      // 1-4, 14. Authority fields are rejected; Ana then sends a valid request.
+      const inyeccion = await solicitar('tok-ana', 0, '09:00', { clienteId: beto.id, userId: beto.id, clienteTenantId: beto.tenantId, clienteNombre: 'Otra Persona', clienteTelefono: '3794000000', clienteEmail: 'otra@example.com', estado: 'confirmed' })
+      out.inyeccion = [inyeccion.status, inyeccion.body.code, await prisma.reserva.count({ where: { clienteId: beto.id } })]
+      const pedido = await solicitar('tok-ana', 0, '10:00', { notas: 'Dolor de espalda' })
       const guardada = await fila(pedido.body.id)
       out.pedido = [pedido.status, pedido.body.estado, pedido.body.clienteNombre, pedido.body.oficioNombre === oficio.nombre, pedido.body.duracionMinutos, Boolean(pedido.body.expiraEn), pedido.body.notas]
       out.enBase = [guardada.estado, guardada.clienteId === ana.id, guardada.clienteTenantId === ana.tenantId, guardada.esInvitado, guardada.clienteNombre, guardada.clienteTelefono, guardada.clienteEmail]
@@ -94,8 +96,8 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
       const vigencia = guardada.solicitudExpiraEn.getTime() - guardada.fechaCreacion.getTime()
       out.vigencia = [Math.round(vigencia / 3_600_000), guardada.solicitudExpiraEn.getTime() <= guardada.fechaInicio.getTime()]
       // The old path is the same rule (a Web still on the previous version keeps working).
-      const alias = await call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', 'tok-ana', { oficioId: oficio.id, inicio: a(0, '12:00'), clienteNombre: 'Formulario Viejo' })
-      out.alias = [alias.status, alias.body.estado, alias.body.clienteNombre, (await call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', null, { oficioId: oficio.id, inicio: a(0, '14:00'), clienteNombre: 'Invitado' })).status]
+      const alias = await call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', 'tok-ana', { oficioId: oficio.id, inicio: a(0, '12:00') })
+      out.alias = [alias.status, alias.body.estado, alias.body.clienteNombre, (await call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', null, { oficioId: oficio.id, inicio: a(0, '14:00') })).status]
       // What the Web shows instead of asking: the data of the session's account.
       const solicitante = await call('GET', '/tus/v1/cliente/turnos/solicitante', 'tok-ana')
       out.solicitante = [solicitante.status, solicitante.body.nombre, solicitante.body.email === run + '-ana@example.com', solicitante.body.telefono, (await call('GET', '/tus/v1/cliente/turnos/solicitante', null)).status]
@@ -120,7 +122,8 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
       out.ajenos = [(await aceptar('tok-p2', pedido.body.id)).status, (await aceptar('tok-ana', pedido.body.id)).status, (await aceptar(null, pedido.body.id)).status, (await rechazar('tok-p2', pedido.body.id)).status, (await fila(pedido.body.id)).estado]
       out.noPorEstado = [(await call('PATCH', '/tus/v1/prestador/turnos/' + pedido.body.id + '/estado', 'tok-p', { estado: 'confirmed' })).body.code, (await call('PATCH', '/tus/v1/prestador/turnos/' + pedido.body.id + '/estado', 'tok-p', { estado: 'completed' })).body.code, (await fila(pedido.body.id)).estado]
 
-      // 6-7. The provider accepts: only now it is a confirmed reservation.
+      // 6-7. The provider accepts. No deposit can be charged here, so accepting confirms (the
+      //      deposit flow is in tus-turnos-sena-postgres).
       const aceptada = await aceptar('tok-p', pedido.body.id)
       out.aceptada = [aceptada.status, aceptada.body.estado, aceptada.body.expiraEn, aceptada.body.clienteNombre, aceptada.body.clienteEmail === run + '-ana@example.com', (await fila(pedido.body.id)).estado]
       // The same answer again is the same result (and no second notice); the opposite one is refused.
@@ -161,6 +164,7 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.visitante, [401, 'LOGIN_REQUIRED', 0], 'a visitor is sent to sign in and nothing is stored')
+  assert.deepEqual(r.inyeccion, [400, 'UNTRUSTED_BOOKING_FIELDS', 0])
   assert.deepEqual(r.pedido, [201, 'pending', 'Ana María Cliente', true, 60, true, 'Dolor de espalda'], 'the request is pending, in the name of the account of the session')
   assert.deepEqual(r.enBase, ['pending', true, true, false, null, null, null], 'the client is the session account; no name, phone or email is copied onto the reservation')
   assert.deepEqual(r.vigencia, [24, true])
@@ -170,10 +174,10 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
   assert.deepEqual(r.panel, [2, 'pending', 'Ana María Cliente', null, null, true, 60], 'the provider sees who asks; the contact stays private while it is pending')
   assert.deepEqual(r.panelAjeno, [0, 401])
   assert.deepEqual(r.retiene, ['ocupado', 'SLOT_OCCUPIED', 'SLOT_OCCUPIED'], 'a pending request holds its time against other requests')
-  assert.deepEqual(r.cliente, [200, 'pending', 'Pendiente de confirmación', true, true, true, 0])
+  assert.deepEqual(r.cliente, [200, 'pending', 'Pendiente de respuesta', true, true, true, 0])
   assert.deepEqual(r.ajenos, [404, 404, 401, 404, 'pending'], 'nobody but the provider of that agenda answers a request')
   assert.deepEqual(r.noPorEstado, ['INVALID_STATUS', 'INVALID_TRANSITION', 'pending'], 'a request is never confirmed through the generic state change')
-  assert.deepEqual(r.aceptada, [200, 'confirmed', null, 'Ana María Cliente', true, 'confirmed'], 'accepting is what confirms; the contact is shown from then on')
+  assert.deepEqual(r.aceptada, [200, 'confirmed', null, 'Ana María Cliente', true, 'confirmed'], 'nothing to pay: accepting confirms; the contact is shown from then on')
   assert.deepEqual(r.repetida, [200, 'confirmed', 409, 'REQUEST_NOT_PENDING', 'confirmed'])
   assert.deepEqual(r.avisoCliente, [[true, 'confirmed']], 'the client is told once')
   assert.equal(r.clienteConfirmada, 'confirmed')
@@ -186,12 +190,12 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
   assert.deepEqual(r.base, ['23514', '23514', 'ok', '23P01', 'ok', 'ok'], 'PostgreSQL: known states only, a pending row has its validity, live rows never overlap, rejected and expired ones do')
 })
 
-test('TURNOS solicitud PostgreSQL: the time is decided again on accepting (blocked meanwhile -> not confirmed, rejected); an overdue request expires, frees its time and cannot be accepted; one client cannot keep an agenda waiting', { skip, timeout: 240000 }, () => {
+test('TURNOS solicitud PostgreSQL: the time is decided again on accepting (blocked meanwhile -> not accepted, rejected); an overdue request expires, frees its time and cannot be accepted; one client cannot keep an agenda waiting', { skip, timeout: 240000 }, () => {
   const r = runTypeScriptScenario(`${SETUP}
     const out = {}
     try {
       const aceptar = (id) => call('POST', '/tus/v1/prestador/turnos/' + id + '/aceptar', 'tok-p')
-      // 10. The provider blocks the time after the request: accepting does not confirm it.
+      // 10. The provider blocks the time after the request: accepting does not move it to payment.
       const pedido = await solicitar('tok-ana', 0, '10:00')
       await turnos.bloquearHorario({ prestadorTenantId: p.tenantId, inicio: a(0, '09:00'), fin: a(0, '12:00'), motivo: 'Trámite' })
       const sinHorario = await aceptar(pedido.body.id)
@@ -210,7 +214,7 @@ test('TURNOS solicitud PostgreSQL: the time is decided again on accepting (block
       const tarde = await aceptar(vieja.body.id)
       out.vencida = [nueva.status, nueva.body.estado, (await fila(vieja.body.id)).estado, tarde.status, tarde.body.code, (await fila(nueva.body.id)).estado]
       const aceptadaNueva = await aceptar(nueva.body.id)
-      out.unaSola = [aceptadaNueva.body.estado, await prisma.reserva.count({ where: { tenantId: p.tenantId, fechaInicio: new Date(a(1, '15:00')), estado: { in: ['pending', 'confirmed'] } } })]
+      out.unaSola = [aceptadaNueva.body.estado, await prisma.reserva.count({ where: { tenantId: p.tenantId, fechaInicio: new Date(a(1, '15:00')), estado: { in: ['pending', 'awaiting_payment', 'confirmed'] } } })]
       // A request whose turno already started cannot be confirmed either.
       const pasada = await solicitar('tok-ana', 2, '09:00')
       await prisma.$executeRawUnsafe('UPDATE public."reservas" SET "fecha_inicio" = now() at time zone \\'utc\\' - interval \\'2 hours\\', "fecha_fin" = now() at time zone \\'utc\\' - interval \\'1 hour\\', "solicitud_expira_en" = now() at time zone \\'utc\\' + interval \\'1 hour\\' WHERE "id" = $1', pasada.body.id)
@@ -274,13 +278,13 @@ test('TURNOS solicitud PostgreSQL concurrency: several clients requesting the sa
         solicitar('tok-c1', 2, '10:00').then((x) => x.status),
         call('POST', '/tus/v1/prestador/turnos/manual', 'tok-p', { oficioId: oficio.id, inicio: a(2, '10:00'), clienteNombre: 'Presencial' }).then((x) => x.status),
       ])
-      out.mezcla = [mezcla.filter((x) => x === 201).length, mezcla.filter((x) => x === 409).length, await prisma.reserva.count({ where: { tenantId: p.tenantId, fechaInicio: new Date(a(2, '10:00')), estado: { in: ['pending', 'confirmed'] } } })]
+      out.mezcla = [mezcla.filter((x) => x === 201).length, mezcla.filter((x) => x === 409).length, await prisma.reserva.count({ where: { tenantId: p.tenantId, fechaInicio: new Date(a(2, '10:00')), estado: { in: ['pending', 'awaiting_payment', 'confirmed'] } } })]
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.carrera, [1, 5, 1], 'six simultaneous requests for one time: one request, five 409')
   assert.deepEqual(r.solapadas, [1, 3])
-  assert.deepEqual(r.dobles, [[200, 200, 200, 200, 200], true, 'confirmed', 2, 1], 'the same answer five times at once: confirmed once, one change, one notice')
+  assert.deepEqual(r.dobles, [[200, 200, 200, 200, 200], true, 'confirmed', 2, 1], 'the same answer five times at once: accepted once, one change, one notice')
   assert.equal(r.unaReserva, 1)
   assert.deepEqual(r.duelos, [['200,409', true, 1], ['200,409', true, 1], ['200,409', true, 1]], 'accept against reject: exactly one wins and the loser is told the request was already answered')
   assert.deepEqual(r.mezcla, [1, 1, 1])
@@ -296,8 +300,10 @@ test('TURNOS solicitud review: no client path confirms; the owner of a request i
       sesiones['tok-admin'].permissions = ['tus:providers:admin']
       const aceptar = (token, id) => call('POST', '/tus/v1/prestador/turnos/' + id + '/aceptar', token)
 
-      // 6. The request tries every way of naming another owner or a state.
-      const forjada = await solicitar('tok-ana', 0, '10:00', { clienteId: beto.id, userId: beto.id, accountId: beto.id, subjectId: beto.id, cliente: { cuentaId: beto.id }, clienteTenantId: beto.tenantId, tenantId: p2.tenantId, prestadorTenantId: p2.tenantId, esInvitado: true, estado: 'confirmed', creadoPorAdminId: 'admin-' + run, solicitudExpiraEn: '2099-01-01T00:00:00.000Z', precioFinal: 1 })
+      // 6. Every attempt to name another owner, provider, price or state is rejected.
+      const inyeccion = await solicitar('tok-ana', 0, '09:00', { clienteId: beto.id, userId: beto.id, accountId: beto.id, subjectId: beto.id, cliente: { cuentaId: beto.id }, clienteTenantId: beto.tenantId, tenantId: p2.tenantId, prestadorTenantId: p2.tenantId, esInvitado: true, estado: 'confirmed', creadoPorAdminId: 'admin-' + run, solicitudExpiraEn: '2099-01-01T00:00:00.000Z', precioFinal: 1 })
+      out.inyeccion = [inyeccion.status, inyeccion.body.code, await prisma.reserva.count({ where: { clienteId: beto.id } })]
+      const forjada = await solicitar('tok-ana', 0, '10:00')
       const guardada = await fila(forjada.body.id)
       out.forjada = [forjada.status, guardada.estado, guardada.clienteId === ana.id, guardada.clienteTenantId === ana.tenantId, guardada.tenantId === p.tenantId, guardada.esInvitado, guardada.creadoPorAdminId, Number(guardada.precioFinal), guardada.solicitudExpiraEn.getFullYear() < 2099]
       out.betoNoLaVe = (await call('GET', '/tus/v1/cliente/turnos', 'tok-beto')).body.items.length
@@ -333,7 +339,7 @@ test('TURNOS solicitud review: no client path confirms; the owner of a request i
       // 7. Each state, the same time: does it hold it (agenda + a new request)?
       const estados = {}
       const base = await solicitar('tok-ana', 2, '10:00')
-      for (const estado of ['pending', 'confirmed', 'completed', 'rejected', 'expired', 'cancelled', 'cancelled-late', 'no-show']) {
+      for (const estado of ['pending', 'awaiting_payment', 'confirmed', 'completed', 'rejected', 'expired', 'cancelled', 'cancelled-late', 'no-show']) {
         await prisma.reserva.update({ where: { id: base.body.id }, data: { estado } })
         const libre = await agendaDe(2, '10:00')
         const intento = await solicitar('tok-beto', 2, '10:00')
@@ -354,7 +360,8 @@ test('TURNOS solicitud review: no client path confirms; the owner of a request i
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.forjada, [201, 'pending', true, true, true, false, null, 15000, true], 'the owner, the provider, the state, the price and the validity come from the server, whatever the body says')
+  assert.deepEqual(r.inyeccion, [400, 'UNTRUSTED_BOOKING_FIELDS', 0])
+  assert.deepEqual(r.forjada, [201, 'pending', true, true, true, false, null, 15000, true], 'the owner, provider, state, price and validity come from the server')
   assert.equal(r.betoNoLaVe, 0, 'the account named in the body owns nothing')
   assert.deepEqual(r.clienteNoConfirma, [404, 400, 404, 403, 404, 403, 'INVALID_TRANSITION', 'pending'], 'no client call confirms a request; the administration cannot confirm it for the provider either')
   assert.deepEqual(r.privadoPendiente, [['Ana María Cliente', true, true], ['Ana María Cliente', true, true], ['Ana María Cliente', true, true]], 'pending: the name, never the phone or the email, in every provider endpoint')
@@ -364,6 +371,7 @@ test('TURNOS solicitud review: no client path confirms; the owner of a request i
   assert.deepEqual(r.privadoRechazada, ['Ana María Cliente', true, true])
   assert.deepEqual(r.estados, {
     pending: ['ocupado', 409],
+    awaiting_payment: ['ocupado', 409],
     confirmed: ['ocupado', 409],
     completed: ['ocupado', 409],
     rejected: ['disponible', 201],
@@ -376,13 +384,13 @@ test('TURNOS solicitud review: no client path confirms; the owner of a request i
   assert.equal(r.vigenciaLarga, 24 * 60, 'a turno far ahead: exactly 24 hours')
 })
 
-test('TURNOS solicitud review concurrency: accepting while another client takes the time (overdue request) confirms nothing twice; accepting a live request while another client asks for its time leaves one reservation', { skip, timeout: 240000 }, () => {
+test('TURNOS solicitud review concurrency: accepting while another client takes the time (overdue request) changes nothing twice; accepting a live request while another client asks for its time leaves one reservation', { skip, timeout: 240000 }, () => {
   const r = runTypeScriptScenario(`${SETUP}
     const out = {}
     try {
       await Promise.all(Array.from({ length: 8 }, () => prisma.$queryRawUnsafe('select 1 as ok from pg_sleep(0.05)')))
       const aceptar = (id) => call('POST', '/tus/v1/prestador/turnos/' + id + '/aceptar', 'tok-p')
-      const vivas = (indice, hora) => prisma.reserva.count({ where: { tenantId: p.tenantId, fechaInicio: new Date(a(indice, hora)), estado: { in: ['pending', 'confirmed'] } } })
+      const vivas = (indice, hora) => prisma.reserva.count({ where: { tenantId: p.tenantId, fechaInicio: new Date(a(indice, hora)), estado: { in: ['pending', 'awaiting_payment', 'confirmed'] } } })
       const rondas = []
       for (const hora of ['09:00', '11:00', '13:00', '15:00']) {
         // Overdue request of Ana: the provider accepts it at the same moment Beto asks for that time.

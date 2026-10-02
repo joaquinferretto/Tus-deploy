@@ -51,6 +51,23 @@ export function identificadorTrabajoSolicitud(solicitudId: string): string {
   return `trabajo-solicitud-${solicitudId}`
 }
 
+// TURNOS-SENA-01. Payment order of a CONFIRMED turno: money in TUS always hangs from a work, so a
+// turno that has to charge its deposit gets one, bound to its reservation (one per reservation:
+// uq_trabajos_reserva). Every value is a persisted fact of that reservation resolved by the
+// server (its client, its provider), never a value of a request. `tenantId`/`actorId` are the
+// client's. It is NOT a work the parties manage: the turno lives in its reservation, so this
+// order is invisible to the work screens and commands and its state never changes.
+export interface ComandoOrdenDeTurno extends TrabajoContext {
+  reservaId: string
+  prestadorTenantId: string
+  prestadorId: string
+  createdAt: string
+}
+
+export function identificadorOrdenDeTurno(reservaId: string): string {
+  return `trabajo-turno-${reservaId}`
+}
+
 export interface ComandoDiagnostico extends TrabajoContext {
   trabajoId: string
   descripcionOriginal: string
@@ -284,6 +301,8 @@ export interface TrabajoOutboxPort {
 // acepta el trabajo es quien la confirma: una solicitud vigente y de un horario futuro pasa a
 // `confirmed` en esta misma transaccion (o ninguna de las dos cosas ocurre). Una solicitud
 // vencida, rechazada o cancelada no se vincula. Una reserva ya confirmada solo se bloquea.
+// (Un trabajo del marketplace se cobra al completarse, W09-02: no hay seña que esperar. La seña
+// que confirma es la de los turnos del directorio, TURNOS-SENA-01.)
 export interface TrabajoReservaPort {
   lockForWork(input: {
     ownerTenantId: string
@@ -533,11 +552,69 @@ export class ServicioTrabajo {
     return this.transaction.run((repositories) => this.crearDesdeSolicitud(repositories, input))
   }
 
+  // Payment order of an accepted turno awaiting its deposit. Idempotent per reservation: the same reservation with
+  // the same parties returns the existing order (two requests at once are settled by the unique
+  // index uq_trabajos_reserva and the retry of the transaction); another client or another kind
+  // of work on that reservation is a conflict.
+  async asegurarOrdenDeTurno(input: ComandoOrdenDeTurno): Promise<{ work: Trabajo; created: boolean }> {
+    validateContext(input)
+    for (const [field, value] of [['reservaId', input.reservaId], ['prestadorTenantId', input.prestadorTenantId], ['prestadorId', input.prestadorId]] as const)
+      requireText(value ?? '', field)
+    if (!isIsoTimestamp(input.createdAt)) throw new TrabajoError(400, 'INVALID', 'createdAt must be a valid timestamp')
+    if (input.prestadorTenantId === input.tenantId)
+      throw new TrabajoError(409, 'SELF_WORK', 'a client cannot hire its own provider tenant')
+    const existente = (store: TrabajoStorePort) => store.findByReservation({ prestadorTenantId: input.prestadorTenantId, reservationId: input.reservaId })
+    const mismaOrden = (work: Trabajo): { work: Trabajo; created: boolean } => {
+      if (work.origin !== 'turno' || work.tenantId !== input.tenantId || work.prestadorId !== input.prestadorId)
+        throw new TrabajoError(409, 'CONFLICT', 'the reservation already has a work with another party')
+      return { work, created: false }
+    }
+    try {
+      return await this.transaction.run(async (repositories) => {
+        const previa = await existente(repositories.work)
+        if (previa) return mismaOrden(previa)
+        const work: Trabajo = {
+          contractVersion: TUS_CONTRACT_VERSION,
+          trabajoId: identificadorOrdenDeTurno(input.reservaId),
+          tenantId: input.tenantId,
+          prestadorTenantId: input.prestadorTenantId,
+          origin: 'turno',
+          commitmentId: null,
+          prestadorId: input.prestadorId,
+          publicacionId: null,
+          solicitudId: null,
+          reservaId: input.reservaId,
+          clienteId: input.tenantId,
+          // The provider already accepted the turno; nothing is negotiated here.
+          status: ESTADOS_TRABAJO.ACEPTADO,
+          version: 1,
+          budgetRequired: false,
+          acceptedBudgetId: null,
+          acceptedBudgetVersion: null,
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        }
+        await repositories.work.createWork(work)
+        await repositories.work.appendTransition({ ...initialTransition(work, input), reason: 'work.order_of_appointment' })
+        await this.recordChange(repositories, input, work, 'work.order_of_appointment', 'work', work.trabajoId, {
+          reservaId: input.reservaId,
+          prestadorTenantId: input.prestadorTenantId,
+        })
+        return { work, created: true }
+      })
+    } catch (error) {
+      // Lost the race to the unique index: the other request created the same order.
+      const previa = await this.transaction.run((repositories) => existente(repositories.work))
+      if (previa) return mismaOrden(previa)
+      throw error
+    }
+  }
+
   async getWork(context: TrabajoContext, trabajoId: string): Promise<TrabajoDetalle> {
     validateContext(context)
     return this.transaction.run(async ({ work: store }) => {
       const work = await store.findAccessible({ tenantId: context.tenantId, trabajoId })
-      if (!work) throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
+      if (!work || esOrdenDeTurno(work)) throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
       const viewer = audienceOf(work, context)
       const scope = { tenantId: work.tenantId, trabajoId: work.trabajoId }
       const belongs = (item: { tenantId: string; trabajoId: string }) =>
@@ -567,7 +644,9 @@ export class ServicioTrabajo {
 
   async listWorks(context: TrabajoContext): Promise<Trabajo[]> {
     validateContext(context)
-    return this.transaction.run(async ({ work: store }) => store.listAccessible(context.tenantId))
+    // The order of a turno is not a work of the parties: the turno is seen in "Mis turnos" and
+    // in the agenda of the provider.
+    return this.transaction.run(async ({ work: store }) => (await store.listAccessible(context.tenantId)).filter((work) => !esOrdenDeTurno(work)))
   }
 
   async createDiagnosis(
@@ -1291,7 +1370,8 @@ export class ServicioTrabajo {
       tenantId: context.tenantId,
       trabajoId: context.trabajoId,
     })
-    if (!work) throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
+    // Every command of a work goes through here: the order of a turno accepts none of them.
+    if (!work || esOrdenDeTurno(work)) throw new TrabajoError(404, 'NOT_FOUND', 'work was not found')
     return work
   }
 
@@ -1941,6 +2021,8 @@ export class ReservasTrabajoEnMemoria implements TrabajoReservaPort {
     return this.confirmBooking(input.ownerTenantId, input.reservationId, input.acceptedAt)
   }
 }
+
+const esOrdenDeTurno = (work: Trabajo): boolean => work.origin === 'turno'
 
 function audienceOf(work: Trabajo, context: TrabajoContext): AudienciaTrabajo {
   if (work.prestadorTenantId === context.tenantId) return 'provider'

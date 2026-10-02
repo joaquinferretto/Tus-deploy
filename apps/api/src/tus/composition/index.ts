@@ -34,10 +34,13 @@ import {
 import { PrismaTusFinanceStore, type ClientePrismaFinanzas } from '../finance/prisma.ts'
 import { ServicioFinanzasServicios } from '../finance/servicios/servicio.ts'
 import { AlmacenFinanzasServicioEnMemoria, IdentidadServicioEnMemoria, TransaccionFinanzasServicioEnMemoria } from '../finance/servicios/memoria.ts'
-import { TransaccionFinanzasServicioPrisma, type ClientePrismaFinanzasServicio } from '../adapters/prisma-finanzas-servicios.ts'
+import { TransaccionFinanzasServicioPrisma, confirmarReservaPorPagoPrisma, type ClientePrismaFinanzasServicio } from '../adapters/prisma-finanzas-servicios.ts'
 import { AlmacenConfiguracionPagosEnMemoria } from '../finance/servicios/configuracion.ts'
 import { AlmacenCuentasCobroEnMemoria } from '../finance/servicios/cuentas-cobro.ts'
 import { crearModuloPagosServicio } from '../finance/servicios/composicion-pagos.ts'
+import { ALCANCE_PAGOS_SERVICIO, crearHabilitacionPagosServicio } from '../finance/servicios/habilitacion-pagos.ts'
+import { ServicioEvidenciasHabilitacion } from '../readiness/evidencias-admin.ts'
+import { AlmacenAdminEvidenciasPrisma, type ClientePrismaEvidenciasHabilitacion } from '../adapters/prisma-evidencias-habilitacion.ts'
 import { ConfiguracionPagosPrisma, CuentasCobroPrisma, type ClientePrismaConfiguracionPagos } from '../adapters/prisma-configuracion-pagos.ts'
 import { InMemoryDeliveryStore, TusDeliveryService } from '../delivery/index.ts'
 import { InMemoryPosStore, TusPosService } from '../pos/index.ts'
@@ -49,6 +52,7 @@ import { EvaluadorHabilitacion, PERFILES_HABILITACION } from '../readiness/index
 import type { ServicioVerificacionIdentidad } from '../identidad/servicio.ts'
 import { crearServicioIdentidad } from '../identidad/composicion.ts'
 import { TransaccionIdentidadPrisma, type ClientePrismaIdentidad } from '../adapters/prisma-identidad.ts'
+import { montoSenaReserva } from '../finance/servicios/modelo.ts'
 
 export interface TusApplicationFactoryOptions
   extends Pick<TusApplicationDependencies, 'now' | 'releasePolicy' | 'operationsTelemetry' | 'evaluadorHabilitacion' | 'perfilHabilitacion' | 'alcanceHabilitacion' | 'identity'> {
@@ -121,6 +125,25 @@ export function createTusApplication(
   const serviceFinance = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore), {
       completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: workStore, outbox: workOutbox }, input),
+      confirmarReservaPorPago: async (input) => {
+        const currentTime = options.now?.() ?? Date.now()
+        const booking = await calendarStore.bookings.find(input.reservaId)
+        const expiresAt = Date.parse(booking?.requestExpiresAt ?? '')
+        if (
+          !booking ||
+          booking.status !== 'awaiting_payment' ||
+          booking.ownerTenantId !== input.prestadorTenantId ||
+          booking.tenantId !== input.clienteTenantId ||
+          !Number.isFinite(expiresAt) ||
+          expiresAt <= currentTime
+        ) return false
+        const currency = booking.moneda ?? booking.priceSnapshot?.currency
+        const expected = booking.precioFinal && currency ? montoSenaReserva(booking.precioFinal, currency) : undefined
+        if (currency !== input.currency || expected !== input.amountMinor) return false
+        const updatedAt = new Date(currentTime).toISOString()
+        await calendarStore.bookings.save({ ...booking, status: 'confirmed', requestExpiresAt: undefined, version: booking.version + 1, updatedAt })
+        return true
+      },
     }),
     options.now,
     servicePayments.proveedor,
@@ -172,23 +195,21 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
   const reporting = new TusReportingService({ store: new PrismaReportingStore(client as never) })
   const work = new ServicioTrabajo(new PrismaTrabajoTransaction(client), () => Date.now())
   const paymentsClient = client as unknown as ClientePrismaConfiguracionPagos
-  // WEB-09E: real money in production also needs the evidence-based `settlement` readiness
-  // decision; a blocked or failing evaluation keeps payments unavailable.
+  // WEB-09E: real money in production also needs the evidence-based readiness decision of the
+  // `service-payments` capability (not `settlement`, the gate of the general marketplace); a
+  // blocked or failing evaluation keeps payments unavailable.
   const perfilPagos = PERFILES_HABILITACION.find((perfil) => perfil === env['TUS_DEPLOYMENT_PROFILE']) ?? 'render-native'
-  const produccionAutorizada = async () => {
-    try {
-      const decision = await evaluadorHabilitacion.require({ tenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || 'tus-platform', actorId: 'system:service-payments', correlationId: `service-payments-readiness-${Date.now()}`, capability: 'settlement', profile: perfilPagos, scope: 'argentina-stage-1' })
-      return decision.enabled && decision.disposition === 'authorized'
-    } catch {
-      return false
-    }
-  }
-  const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient), produccionAutorizada, identidadVerificada })
+  const tenantPlataforma = env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || 'tus-platform'
+  const habilitacionPagos = crearHabilitacionPagosServicio(evaluadorHabilitacion, { tenantId: tenantPlataforma, profile: perfilPagos })
+  // The registry writes for the same tenant, profile and scope that decision is evaluated for.
+  const readinessEvidence = new ServicioEvidenciasHabilitacion(new AlmacenAdminEvidenciasPrisma(client as unknown as ClientePrismaEvidenciasHabilitacion), { tenantId: tenantPlataforma, profile: perfilPagos, scope: ALCANCE_PAGOS_SERVICIO })
+  const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient), produccionAutorizada: habilitacionPagos.autorizada, habilitaciones: habilitacionPagos.estado, identidadVerificada })
   // The provider is Mercado Pago only when every variable is present; otherwise unavailable.
   // The approved balance of a request-born work completes it with the SAME transactional client.
   const serviceFinance = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio, (tx) => ({
       completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: new PrismaTrabajoStore(tx as unknown as TusPrismaClient), outbox: new PrismaTrabajoOutboxStore(tx as unknown as TusPrismaClient) }, input),
+      confirmarReservaPorPago: (input) => confirmarReservaPorPagoPrisma(tx, input),
     })),
     () => Date.now(),
     servicePayments.proveedor,
@@ -219,6 +240,7 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
     work,
     serviceFinance,
     servicePayments,
+    readinessEvidence,
     identity,
     evaluadorHabilitacion,
     perfilHabilitacion: 'native-local',

@@ -21,6 +21,7 @@ import type { ServicioFinanzasServicios } from '../finance/servicios/servicio.ts
 import type { ModuloPagosServicio } from '../finance/servicios/composicion-pagos.ts'
 import type { TusOperationsTelemetry } from '@factory/observability'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
+import type { ServicioEvidenciasHabilitacion } from '../readiness/evidencias-admin.ts'
 import type { ServicioVerificacionIdentidad } from '../identidad/servicio.ts'
 import { TUS_BOUNDED_CONTEXTS } from '../ports/index.ts'
 import type {
@@ -71,6 +72,8 @@ export interface TusApplicationDependencies {
   serviceFinance?: ServicioFinanzasServicios
   // WEB-09D: payment configuration (admin), provider payment accounts and readiness.
   servicePayments?: ModuloPagosServicio
+  // Administrative registry of the readiness evidence of the platform tenant (platform admin only).
+  readinessEvidence?: ServicioEvidenciasHabilitacion
   // IDENTITY-NOSIS: provider identity verification (consent, DNI upload, queue, admin review).
   identity?: ServicioVerificacionIdentidad
   operationsTelemetry?: TusOperationsTelemetry
@@ -92,6 +95,7 @@ export class TusApplicationService {
   readonly work?: ServicioTrabajo
   readonly serviceFinance?: ServicioFinanzasServicios
   readonly servicePayments?: ModuloPagosServicio
+  readonly readinessEvidence?: ServicioEvidenciasHabilitacion
   readonly identity?: ServicioVerificacionIdentidad
   readonly contexts = TUS_BOUNDED_CONTEXTS
   private readonly dependencies: TusApplicationDependencies
@@ -112,6 +116,7 @@ export class TusApplicationService {
     this.work = dependencies.work
     this.serviceFinance = dependencies.serviceFinance
     this.servicePayments = dependencies.servicePayments
+    this.readinessEvidence = dependencies.readinessEvidence
     this.identity = dependencies.identity
     this.evaluadorHabilitacion = dependencies.evaluadorHabilitacion
     if (!dependencies.transaction) throw new Error('TUS transaction boundary is required')

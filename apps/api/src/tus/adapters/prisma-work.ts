@@ -560,7 +560,7 @@ export class PrismaTrabajoReservaStore implements TrabajoReservaPort {
       publicacionId: input.listingId,
     }
     // TURNOS-SOLICITUD-01: the provider accepting the work is what confirms a request still
-    // waiting. Decided with the clock of this server (never a time of the request): the request
+    // waiting (a marketplace work is paid once completed, W09-02: there is no deposit to wait for). Decided with the clock of this server (never a time of the request): the request
     // must be valid, for a time that has not passed, and its time must not have been blocked by
     // the provider meanwhile. Conditional UPDATE: two acceptances at once confirm it once.
     const ahora = new Date()
@@ -652,7 +652,7 @@ export function mapTrabajo(row: Record<string, unknown>): Trabajo {
     trabajoId: stringValue(row, 'trabajoId'),
     tenantId: stringValue(row, 'tenantId'),
     prestadorTenantId: stringValue(row, 'prestadorTenantId'),
-    origin: row['origen'] === 'solicitud' ? 'solicitud' : 'marketplace',
+    origin: row['origen'] === 'solicitud' ? 'solicitud' : row['origen'] === 'turno' ? 'turno' : 'marketplace',
     commitmentId: nullableStringValue(row, 'compromisoId'),
     prestadorId: stringValue(row, 'prestadorId'),
     publicacionId: nullableStringValue(row, 'publicacionId'),

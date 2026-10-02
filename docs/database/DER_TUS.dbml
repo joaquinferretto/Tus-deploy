@@ -300,14 +300,15 @@ Table reservas {
   cliente_id varchar [note: '[EXTERNA/LOGICA] identidad de cliente']
   fecha_inicio timestamp [note: 'ex startsAt']
   fecha_fin timestamp [note: 'ex endsAt']
-  estado varchar [note: 'ex status. pending | confirmed | rejected | expired | cancelled | cancelled-late | no-show | completed (ck_reservas_estado, NOT VALID). pending = solicitada por el cliente, espera al prestador']
-  solicitud_expira_en timestamp [null, note: 'TURNOS-SOLICITUD-01: hasta cuándo una solicitud pending retiene su horario (ck_reservas_solicitud_vigencia). NULL si la reserva no nació como solicitud']
+  estado varchar [note: 'pending | awaiting_payment | confirmed | rejected | expired | cancelled | cancelled-late | no-show | completed. confirmed: por el pago verificado de la seña; sin seña (sin precio o pagos online apagados), turnos manuales/admin y trabajos del marketplace lo confirma la aceptación']
+  solicitud_expira_en timestamp [null, note: 'Vigencia de pending y de awaiting_payment; la aceptación abre una nueva ventana de pago acotada por el inicio']
   version int
   fecha_creacion timestamp [note: 'ex createdAt']
   fecha_actualizacion timestamp [note: 'ex updatedAt']
 
   indexes {
     (calendario_id, solicitud_expira_en) [name: 'ix_reservas_solicitudes_pendientes', note: 'parcial: WHERE estado = pending']
+    (calendario_id, solicitud_expira_en) [name: 'ix_reservas_esperando_pago', note: 'parcial: WHERE estado = awaiting_payment']
     (tenant_id, reserva_id) [unique, name: 'uq_reservas_tenant_reserva']
     (tenant_id, calendario_id, fecha_inicio, fecha_fin) [name: 'idx_reservas_tenant_calendario_franja']
     (tenant_id, publicacion_id, fecha_inicio, fecha_fin) [name: 'idx_reservas_tenant_publicacion_franja']
@@ -685,6 +686,37 @@ Table compensaciones_soporte {
 // ============================================================
 // WHATSAPP
 // ============================================================
+
+Table contactos_whatsapp {
+  id varchar [pk]
+  canal varchar [note: 'whatsapp | web']
+  wa_id varchar [unique]
+  cuenta_vinculada_id varchar [null]
+  tenant_vinculado_id varchar [null]
+  version int
+  fecha_creacion timestamp
+}
+
+Table conversaciones_whatsapp {
+  id varchar [pk]
+  contacto_id varchar [note: 'FK a contactos_whatsapp']
+  canal varchar [note: 'whatsapp | web']
+  estado varchar
+  modo varchar
+  abierta_en timestamp
+  ultimo_mensaje_en timestamp
+  estado_conversacional json
+  version int
+  cuenta_identificada_id varchar [null, note: 'TURNOS-SENA-01: FK a Account; no copia nombre ni DNI']
+  identificada_en timestamp [null, note: 'Vigencia de la identificación por nombre + DNI']
+
+  indexes {
+    (cuenta_identificada_id) [name: 'ix_conversaciones_whatsapp_cuenta_identificada', note: 'parcial: WHERE cuenta_identificada_id IS NOT NULL']
+  }
+}
+
+Ref: conversaciones_whatsapp.contacto_id > contactos_whatsapp.id
+Ref: conversaciones_whatsapp.cuenta_identificada_id > "Account".id
 
 Table acciones_whatsapp {
   id varchar [pk]
@@ -1748,7 +1780,7 @@ Table obligaciones_pago_servicio {
   publicacion_id varchar
   compromiso_id varchar [note: 'compromisos_mercado_servicios, via FK compuesta a trabajos']
   trabajo_id varchar
-  origen_importe varchar [note: 'accepted_budget | fixed_price_commitment']
+  origen_importe varchar [note: 'accepted_budget | fixed_price_commitment | booked_price']
   presupuesto_id varchar [null]
   presupuesto_version int [null]
   monto bigint [note: 'minor units >= 0']
@@ -1777,7 +1809,7 @@ Table trabajos {
   trabajo_id varchar
   tenant_id varchar [note: 'tenant cliente/compromiso']
   prestador_tenant_id varchar [note: 'tenant del prestador/publicacion/reserva']
-  origen varchar [default: 'marketplace', note: 'marketplace | solicitud (ck_trabajos_origen_coherente)']
+  origen varchar [default: 'marketplace', note: 'marketplace | solicitud | turno (ck_trabajos_origen_coherente)']
   compromiso_id varchar [null, note: 'obligatorio si origen=marketplace']
   prestador_id varchar
   publicacion_id varchar [null, note: 'obligatorio si origen=marketplace']
@@ -1804,7 +1836,7 @@ Table trabajos {
     (prestador_tenant_id, prestador_id, estado) [name: 'idx_trabajos_prestador_estado']
   }
 
-  Note: 'Trabajo = agregado de ejecucion de servicio. tenant_id y prestador_tenant_id pueden ser distintos. Nace de un compromiso de marketplace (origen=marketplace) o de una solicitud donde el cliente eligio UN prestador (origen=solicitud).'
+  Note: 'Trabajo = agregado de ejecucion de servicio. tenant_id y prestador_tenant_id pueden ser distintos. Nace de un compromiso de marketplace (origen=marketplace) o de una solicitud donde el cliente eligio UN prestador (origen=solicitud). origen=turno es la orden de pago de un turno aceptado: enlaza 1:1 la reserva con su obligacion de seña y no es un trabajo que las partes gestionen.'
 }
 
 Table diagnosticos {

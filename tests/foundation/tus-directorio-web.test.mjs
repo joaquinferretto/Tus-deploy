@@ -122,8 +122,8 @@ test('ASSISTANT: free conversation with the shared assistant, sign-in keeps the 
   assert.match(chat, /useAssistant\(/)
   // Signing in comes back to the same screen, and the conversation survives the round trip: it is
   // stored by the API (the visitor's conversation becomes the account's).
-  assert.match(conversation, /withReturnTo\('\/sign-in', pathname\)/)
-  assert.match(conversation, /withReturnTo\('\/registro', pathname\)/)
+  assert.match(conversation, /withReturnTo\('\/sign-in', \(value\.kind === 'sign_in' && value\.returnTo\) \|\| pathname\)/)
+  assert.match(conversation, /withReturnTo\('\/registro', \(value\.kind === 'sign_in' && value\.returnTo\) \|\| pathname\)/)
   assert.match(client, /\/tus\/v1\/asistente\/historial/)
   assert.match(client, /visitorId/)
   // The AI never picks: real providers are shown as cards and the client presses "Elegir".

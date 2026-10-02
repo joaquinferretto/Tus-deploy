@@ -145,7 +145,8 @@ export class ServicioAsistenteWeb {
       conversacional: true,
       // On the Web the model always reads the message and decides (patterns are only its fallback).
       enrutado: 'modelo',
-      pedirCuenta: async () => [{ type: 'text', text: TEXTOS_ASISTENTE_WEB.necesitaCuenta, attachment: { kind: 'sign_in' } }],
+      // Sign in or register, and come back to what was being done (an internal path of the Web).
+      pedirCuenta: async (_motivo, opciones) => [{ type: 'text', text: TEXTOS_ASISTENTE_WEB.necesitaCuenta, attachment: { kind: 'sign_in', ...(opciones?.returnTo ? { returnTo: opciones.returnTo } : {}) } }],
       evento: (evento) => {
         activity.push(evento)
         input.onActivity?.(evento)

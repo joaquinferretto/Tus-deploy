@@ -7,6 +7,7 @@ import type { ServicioDirectorio } from '../directorio/servicio.ts'
 import type { ServicioSolicitudes } from '../solicitudes/servicio.ts'
 import type { ServicioTurnos } from '../calendar/turnos-service.ts'
 import { etiquetaEstadoTurno } from '@factory/contracts'
+import { senaDePrecio } from '../calendar/turnos-sena.ts'
 
 // The assistant reaches TUS only through this port. The adapter below delegates to the SAME
 // application services used by the Web/API routes (marketplace, work, finance, identity), so
@@ -76,7 +77,32 @@ export interface ConsultaDisponibilidad {
   zone: string | null
 }
 
+// What a professional offers for a trade, as the client chooses it: the variants (or the service
+// itself when it has none) with their REAL price and the deposit the backend computes from it
+// (pesos). The model never supplies or alters any of these values.
+export interface ServicioTurnoAsistente {
+  serviceName: string
+  options: { tariffId: string | null; name: string; durationMinutes: number; price: number | null; deposit: number | null }[]
+}
+
+// A deposit the client can pay now, as the conversation names it (no internal id is ever shown;
+// `ref` stays in the backend).
+export interface SenaPendienteAsistente {
+  ref: string
+  providerName: string
+  service: string | null
+  startsAt: string
+  amount: number
+}
+
 export interface PuertoDominioAsistente {
+  // Variants and real prices of a professional's service (null: it does not offer that service).
+  servicioDeTurno(providerId: string, oficioId: string): Promise<ServicioTurnoAsistente | null>
+  // Public name of a visible professional (null: unknown or not available).
+  nombrePrestador(providerId: string): Promise<string | null>
+  // Deposits of accepted turnos awaiting payment that the client can pay now, and the checkout of one.
+  senasPendientes(context: TusAuthenticatedTenantContext): Promise<SenaPendienteAsistente[]>
+  pagarSena(context: TusAuthenticatedTenantContext, ref: string): Promise<{ url: string; amount: number }>
   // Providers of a trade with their REAL free turnos for a day (or two) and a time window.
   buscarDisponibilidad(consulta: ConsultaDisponibilidad): Promise<DisponibilidadNecesidad>
   buscarServicios(filter: { query: string | null; category: string | null }): Promise<ServicioPublico[]>
@@ -126,7 +152,7 @@ export interface PuertoDominioAsistente {
     inicio: string
     tarifaId?: string
     notas?: string
-  }): Promise<{ id: string; prestadorNombre: string; inicio: string; fin: string; precioFinal: number | null; estado: string }>
+  }): Promise<{ id: string; prestadorNombre: string; inicio: string; fin: string; precioFinal: number | null; estado: string; sena?: { monto: number; estado: string } | null }>
   // Turnos del cliente de la sesión con su estado real (pendiente, confirmada, rechazada...).
   misTurnos(context: TusAuthenticatedTenantContext): Promise<{ id: string; providerName: string; service: string | null; startsAt: string; status: string; statusLabel: string }[]>
 }
@@ -362,6 +388,43 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     }
   }
 
+  async nombrePrestador(providerId: string): Promise<string | null> {
+    const perfil = await this.servicios.directorio.perfil(providerId).catch(() => null)
+    return perfil?.displayName ?? null
+  }
+
+  async servicioDeTurno(providerId: string, oficioId: string): Promise<ServicioTurnoAsistente | null> {
+    if (!this.compartidos?.turnos) return null
+    const servicios = await this.compartidos.turnos.serviciosDePrestador({ perfilId: providerId }).catch(() => [])
+    const servicio = servicios.find((item) => item.oficioId === oficioId)
+    if (!servicio || !servicio.turnosHabilitados) return null
+    // The deposit is announced only where one will really be asked (online payments on).
+    const conSena = (precio: number | null) => (servicio.senaRequerida && precio !== null && precio > 0 ? senaDePrecio(precio) : null)
+    return {
+      serviceName: servicio.nombre,
+      options:
+        servicio.tarifas.length > 0
+          ? servicio.tarifas.map((tarifa) => ({ tariffId: tarifa.id, name: tarifa.nombre, durationMinutes: tarifa.duracionMinutos, price: tarifa.precio, deposit: conSena(tarifa.precio) }))
+          : [{ tariffId: null, name: servicio.nombre, durationMinutes: servicio.duracionMinutos, price: servicio.precioBase, deposit: conSena(servicio.precioBase) }],
+    }
+  }
+
+  async senasPendientes(context: TusAuthenticatedTenantContext): Promise<SenaPendienteAsistente[]> {
+    if (!this.compartidos?.turnos) return []
+    const turnos = await this.compartidos.turnos.turnosCliente(context.subjectId)
+    return turnos
+      .filter((turno) => turno.sena?.estado === 'pending')
+      .sort((a, b) => a.inicio.localeCompare(b.inicio))
+      .map((turno) => ({ ref: turno.id, providerName: turno.prestadorNombre, service: turno.tarifaNombre ?? turno.oficioNombre ?? null, startsAt: turno.inicio, amount: turno.sena!.monto }))
+  }
+
+  async pagarSena(context: TusAuthenticatedTenantContext, ref: string) {
+    if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    // Only a turno of that very account: another person's does not exist for it.
+    const pago = await this.compartidos.turnos.pagarSena({ clienteId: context.subjectId, reservaId: ref, correlationId: context.correlationId })
+    return { url: pago.checkoutUrl, amount: pago.monto }
+  }
+
   async reservarTurno(
     context: TusAuthenticatedTenantContext | null,
     input: {
@@ -391,6 +454,7 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
       fin: turno.fin,
       precioFinal: turno.precioFinal,
       estado: turno.estado,
+      sena: turno.sena ? { monto: turno.sena.monto, estado: turno.sena.estado } : null,
     }
   }
 

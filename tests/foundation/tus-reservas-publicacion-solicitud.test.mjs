@@ -295,12 +295,18 @@ test('RESERVAS, one meaning in the whole code: the only writers of a confirmed r
   // Line endings differ between checkouts: the patterns below are written for LF.
   const read = (path) => readFileSync(join(root, path), 'utf8').replaceAll('\r\n', '\n')
   const bookings = read('apps/api/src/tus/calendar/bookings.ts')
-  assert.match(bookings, /\/\/ A REQUEST: nothing sent by the client can make it confirmed\. The provider confirms it\.\n\s+status: BOOKING_STATUS\.PENDING,\n\s+requestExpiresAt: new Date\(Math\.min\(serverNow \+ HORAS_VIGENCIA_SOLICITUD_TURNO \* 3_600_000, Date\.parse\(slot\.start\)\)\)\.toISOString\(\),/u, 'the booking of a client is born pending, with a validity computed from the server clock')
+  assert.match(bookings, /\/\/ A REQUEST: nothing sent by the client can make it accepted or confirmed\.\n\s+status: BOOKING_STATUS\.PENDING,\n\s+requestExpiresAt: new Date\(Math\.min\(serverNow \+ HORAS_VIGENCIA_SOLICITUD_TURNO \* 3_600_000, Date\.parse\(slot\.start\)\)\)\.toISOString\(\),/u, 'the booking of a client is born pending, with a validity computed from the server clock')
   assert.doesNotMatch(bookings, /status: BOOKING_STATUS\.CONFIRMED,/u, 'the booking service never writes a confirmed reservation')
   // Every place that writes "confirmed" on a reservation, in the whole API.
   const escritores = [
-    ['apps/api/src/tus/calendar/turnos-service.ts', /estado: solicitud \? 'pending' : 'confirmed'|estado: 'confirmed',|pasar\('confirmed'\)/gu, 4],
+    // turnos-service: the administration's turno, the provider's manual and forced turnos, and the
+    // provider accepting a request with NOTHING to pay (`aceptado` is 'confirmed' only then; with a
+    // deposit it is 'awaiting_payment'). 'estado: 'confirmed',' also matches one read filter.
+    ['apps/api/src/tus/calendar/turnos-service.ts', /estado: solicitud \? 'pending' : 'confirmed'|estado: 'confirmed',|pasar\(aceptado\)/gu, 5],
+    ['apps/api/src/tus/calendar/turnos-service.ts', /const aceptado: EstadoTurno = requisito === 'exigible' \? 'awaiting_payment' : 'confirmed'/gu, 1],
     ['apps/api/src/tus/adapters/prisma-work.ts', /data: \{ estado: 'confirmed'/gu, 2],
+    // TURNOS-SENA-01: the verified payment of the deposit, inside the finance transaction.
+    ['apps/api/src/tus/adapters/prisma-finanzas-servicios.ts', /data: \{ estado: 'confirmed'/gu, 1],
     ['apps/api/src/tus/adapters/prisma-calendar.ts', /estado: 'confirmed'/gu, 0],
     ['apps/api/src/tus/calendar/turnos-http.ts', /estado: 'confirmed'/gu, 0],
     ['apps/api/src/tus/http/router.ts', /estado: 'confirmed'|status: 'confirmed'/gu, 0],

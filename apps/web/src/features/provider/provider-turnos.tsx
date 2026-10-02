@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { CODIGO_SOLICITUD_SIN_HORARIO, etiquetaEstadoTurno, type DetalleTurno, type ServicioTurnosDTO } from '@factory/contracts'
+import { CODIGO_SOLICITUD_SIN_HORARIO, etiquetaEstadoTurno, etiquetaSenaTurno, formatearPesos, type DetalleTurno, type ServicioTurnosDTO } from '@factory/contracts'
 import { TurnosError, diaTurno, horaTurno, turnosApi, turnosErrorDe, turnosFetch } from '../../lib/tus-turnos-client'
 import { claseEstadoTurno } from '../turnos/estado-turno'
 import { ProviderAvailability } from './provider-availability'
@@ -15,7 +15,7 @@ export function ProviderTurnos(): React.ReactNode {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filtroEstado, setFiltroEstado] = useState<string>('')
-  // Requests of clients waiting for this provider's answer: accepting is what confirms a turno.
+  // Requests of clients waiting for this provider's answer: accepting opens the deposit payment.
   const [solicitudes, setSolicitudes] = useState<DetalleTurno[]>([])
   const [respondiendo, setRespondiendo] = useState<string | null>(null)
   const [avisoSolicitud, setAvisoSolicitud] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null)
@@ -88,7 +88,9 @@ export function ProviderTurnos(): React.ReactNode {
     setAvisoSolicitud(null)
     try {
       const turno = aceptar ? await turnosApi.aceptarSolicitud(solicitud.id) : await turnosApi.rechazarSolicitud(solicitud.id)
-      setAvisoSolicitud({ tipo: 'ok', texto: `${etiquetaEstadoTurno(turno.estado)}: turno de ${solicitud.clienteNombre ?? 'el cliente'} del ${diaTurno(solicitud.inicio)} a las ${horaTurno(solicitud.inicio)} hs.` })
+      // Accepting does not confirm a turno with a deposit: it waits for the client's payment.
+      const detalle = turno.estado === 'awaiting_payment' ? ' Queda esperando que el cliente abone la seña; se confirma cuando Mercado Pago acredite el pago.' : ''
+      setAvisoSolicitud({ tipo: 'ok', texto: `${etiquetaEstadoTurno(turno.estado)}: turno de ${solicitud.clienteNombre ?? 'el cliente'} del ${diaTurno(solicitud.inicio)} a las ${horaTurno(solicitud.inicio)} hs.${detalle}` })
     } catch (err: unknown) {
       // CODIGO_SOLICITUD_SIN_HORARIO: the time was no longer free and the API already stored the
       // request as rejected; the message says so.
@@ -212,8 +214,17 @@ export function ProviderTurnos(): React.ReactNode {
                     </div>
                     <div>
                       <dt>Servicio:</dt>
-                      <dd>{solicitud.oficioNombre ?? solicitud.tarifaNombre ?? 'Turno'}</dd>
+                      <dd>{[solicitud.oficioNombre, solicitud.tarifaNombre].filter((nombre, indice, lista) => nombre && lista.indexOf(nombre) === indice).join(' · ') || 'Turno'}</dd>
                     </div>
+                    {solicitud.precioFinal != null && solicitud.precioFinal > 0 ? (
+                      <div>
+                        <dt>Precio:</dt>
+                        <dd>
+                          {formatearPesos(solicitud.precioFinal)}
+                          {solicitud.sena ? ` · seña ${formatearPesos(solicitud.sena.monto)} (la abona el cliente cuando aceptes)` : ''}
+                        </dd>
+                      </div>
+                    ) : null}
                     <div>
                       <dt>Fecha:</dt>
                       <dd>{diaTurno(solicitud.inicio)}</dd>
@@ -264,7 +275,8 @@ export function ProviderTurnos(): React.ReactNode {
             style={{ padding: '6px 10px', borderRadius: 'var(--tus-control-radius)', border: '1px solid #d1d5db', minHeight: 40 }}
           >
             <option value="">Todos</option>
-            <option value="pending">Pendientes de confirmación</option>
+            <option value="pending">Pendientes de respuesta</option>
+            <option value="awaiting_payment">Esperando pago de seña</option>
             <option value="confirmed">Confirmados</option>
             <option value="rejected">Rechazados</option>
             <option value="completed">Completados</option>
@@ -323,6 +335,7 @@ export function ProviderTurnos(): React.ReactNode {
                   </div>
                   <div style={{ color: '#6b7280', fontSize: '0.85rem' }}>
                     {t.oficioNombre || t.tarifaNombre || t.oficioId} · {t.duracionMinutos} min · ${PESOS.format(t.precioFinal ?? 0)}
+                    {t.sena ? ` · Seña ${formatearPesos(t.sena.monto)}: ${etiquetaSenaTurno(t.sena.estado)}` : ''}
                   </div>
                   {t.notas ? <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: 4 }}>Nota: {t.notas}</div> : null}
                 </div>
@@ -330,24 +343,24 @@ export function ProviderTurnos(): React.ReactNode {
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <span className={claseEstadoTurno(t.estado)}>{etiquetaEstadoTurno(t.estado)}</span>
 
-                  {t.estado === 'confirmed' && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => cambiarEstado(t.id, 'completed')}
-                        style={{ padding: '6px 10px', borderRadius: 'var(--tus-control-radius)', border: '1px solid #22c55e', background: '#f0fdf4', color: '#15803d', fontSize: '0.85rem', cursor: 'pointer' }}
-                      >
-                        ✓ Completado
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => cambiarEstado(t.id, 'cancelled')}
-                        style={{ padding: '6px 10px', borderRadius: 'var(--tus-control-radius)', border: '1px solid #ef4444', background: '#fef2f2', color: '#b91c1c', fontSize: '0.85rem', cursor: 'pointer' }}
-                      >
-                        Cancelar
-                      </button>
-                    </>
-                  )}
+                  {t.estado === 'confirmed' ? (
+                    <button
+                      type="button"
+                      onClick={() => cambiarEstado(t.id, 'completed')}
+                      style={{ padding: '6px 10px', borderRadius: 'var(--tus-control-radius)', border: '1px solid #22c55e', background: '#f0fdf4', color: '#15803d', fontSize: '0.85rem', cursor: 'pointer' }}
+                    >
+                      ✓ Completado
+                    </button>
+                  ) : null}
+                  {t.estado === 'confirmed' || t.estado === 'awaiting_payment' ? (
+                    <button
+                      type="button"
+                      onClick={() => cambiarEstado(t.id, 'cancelled')}
+                      style={{ padding: '6px 10px', borderRadius: 'var(--tus-control-radius)', border: '1px solid #ef4444', background: '#fef2f2', color: '#b91c1c', fontSize: '0.85rem', cursor: 'pointer' }}
+                    >
+                      Cancelar
+                    </button>
+                  ) : null}
                 </div>
               </div>
             )

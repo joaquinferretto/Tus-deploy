@@ -146,10 +146,12 @@ export function AssistantConversation({ assistant, compact = false }: { assistan
       )
     return (
       <div className={styles.cardActions}>
-        <Link className={styles.buttonPrimary} href={withReturnTo('/sign-in', pathname) as Route}>
+        {/* The API may say where to come back to (the turno being requested: its professional,
+            service and time). withReturnTo only accepts an internal path. */}
+        <Link className={styles.buttonPrimary} href={withReturnTo('/sign-in', (value.kind === 'sign_in' && value.returnTo) || pathname) as Route}>
           Iniciar sesión
         </Link>
-        <Link className={styles.buttonSecondary} href={withReturnTo('/registro', pathname) as Route}>
+        <Link className={styles.buttonSecondary} href={withReturnTo('/registro', (value.kind === 'sign_in' && value.returnTo) || pathname) as Route}>
           Crear cuenta
         </Link>
       </div>

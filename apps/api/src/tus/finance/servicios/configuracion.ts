@@ -182,6 +182,21 @@ export function proveedorOperativo(estado: EstadoOperativoPagos): boolean {
   )
 }
 
+// Evidence-based readiness of one capability, as an operator reads it: `blockers` lists each
+// requirement still lacking valid evidence as `gate:reason` (never a secret, never a value).
+export interface EstadoHabilitacionPagos {
+  capability: 'service-payments' | 'settlement'
+  authorized: boolean
+  blockers: string[]
+}
+
+// `servicePayments` is the gate service payments depend on. `settlement` is the gate of the
+// general marketplace, reported only so the two are never confused.
+export interface EstadoHabilitacionesPagos {
+  servicePayments: EstadoHabilitacionPagos
+  settlement: EstadoHabilitacionPagos
+}
+
 // Answers "can a customer pay this provider now?" without touching the finance transaction.
 export interface PuertoPoliticaCobro {
   reglaComision(input: {
@@ -220,8 +235,9 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     private readonly store: PuertoConfiguracionPagos,
     private readonly operativo: () => EstadoOperativoPagos,
     private readonly cuentaConectada: (prestadorTenantId: string) => Promise<boolean>,
-    // Production money also needs the evidence-based readiness decision (legal, tax, KYB/KYC,
-    // Mercado Pago...). No environment variable can bypass it. Sandbox does not move real money.
+    // Production money also needs the evidence-based readiness decision of the
+    // `service-payments` capability (legal, tax, KYC, KYB, Mercado Pago, runtime). No environment
+    // variable can bypass it. Sandbox does not move real money.
     private readonly produccionAutorizada: () => Promise<boolean> = async () => false,
     // IDENTITY-NOSIS: a provider receives money only after its identity is verified.
     private readonly identidadVerificada:
@@ -273,7 +289,10 @@ export class ServicioConfiguracionPagos {
     private readonly store: PuertoConfiguracionPagos,
     private readonly operativo: () => EstadoOperativoPagos,
     private readonly now: () => number = () => Date.now(),
-    private readonly produccionAutorizada: () => Promise<boolean> = async () => false
+    private readonly produccionAutorizada: () => Promise<boolean> = async () => false,
+    // Detail of the readiness gates for the status. Absent in isolated compositions: the status
+    // then only knows whether service payments are authorized.
+    private readonly habilitaciones: (() => Promise<EstadoHabilitacionesPagos>) | null = null
   ) {}
 
   async listarPoliticas(): Promise<PoliticaComisionServicio[]> {
@@ -399,6 +418,9 @@ export class ServicioConfiguracionPagos {
       pspFeeBearer: ResponsableFeePsp
       persisted: boolean
     }
+    // `gate` names the capability service payments are evaluated against; `requiredNow` is
+    // false in sandbox, where no real money moves and the gate does not block.
+    readiness: { gate: 'service-payments'; requiredNow: boolean } & EstadoHabilitacionesPagos
     blockers: string[]
   }> {
     const operational = this.operativo()
@@ -422,7 +444,11 @@ export class ServicioConfiguracionPagos {
     if (!operational.realProviderAdapterAvailable) blockers.push('REAL_PAYMENT_ADAPTER_UNAVAILABLE')
     if (global.pspFeeBearer === 'undetermined') blockers.push('PSP_FEE_POLICY_UNDECIDED')
     if (global.pspFeeBearer === 'platform') blockers.push('PSP_FEE_POLICY_UNSUPPORTED')
-    if (operational.environment === 'production' && !(await this.produccionAutorizada()))
+    const habilitaciones = this.habilitaciones
+      ? await this.habilitaciones()
+      : await this.habilitacionesSinDetalle()
+    const requiredNow = operational.environment === 'production'
+    if (requiredNow && !habilitaciones.servicePayments.authorized)
       blockers.push('PRODUCTION_READINESS_NOT_AUTHORIZED')
     return {
       checkedAt: new Date(this.now()).toISOString(),
@@ -436,7 +462,20 @@ export class ServicioConfiguracionPagos {
         pspFeeBearer: global.pspFeeBearer,
         persisted: global.politicaId !== null,
       },
+      readiness: { gate: 'service-payments', requiredNow, ...habilitaciones },
       blockers,
+    }
+  }
+
+  private async habilitacionesSinDetalle(): Promise<EstadoHabilitacionesPagos> {
+    const authorized = await this.produccionAutorizada()
+    return {
+      servicePayments: {
+        capability: 'service-payments',
+        authorized,
+        blockers: authorized ? [] : ['READINESS_NOT_AUTHORIZED'],
+      },
+      settlement: { capability: 'settlement', authorized: false, blockers: ['NOT_EVALUATED'] },
     }
   }
 }

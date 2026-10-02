@@ -109,9 +109,9 @@ test('ASISTENTE conversacional (Web, sin modelo): the acceptance message goes fr
   assert.deepEqual(r.consulta, [{ profession: 'masaje', day: '2026-09-26', dayTo: null, time: { kind: 'exact', from: '18:00', to: null }, zone: null }], 'trade, day and exact time from the message; no zone because it does not matter')
   assert.deepEqual(r.tarjetas, [['Ana Gómez', 'Centro', true, [true]], ['Beto Ruiz', 'San Benito', true, [true]]])
   assert.deepEqual(r.anonimo, ['sign_in', null, 0])
-  assert.equal(r.tarjeta[0], 'Voy a enviar tu solicitud de turno:\nPrestador: Beto Ruiz\nHorario: sábado, 26 de septiembre, 18:00 hs\nEl turno queda pendiente hasta que el prestador confirme.\n¿Querés solicitar ese turno?')
-  assert.deepEqual(r.tarjeta.slice(1), [['Solicitar turno', 'Cancelar'], 0], 'nothing is booked before the explicit confirmation')
-  assert.equal(r.listo, 'Listo, envié tu solicitud de turno para el sábado, 26 de septiembre a las 18:00 hs. Queda pendiente hasta que el prestador la confirme; podés ver el estado en "Mis turnos".')
+  assert.equal(r.tarjeta[0], 'Vas a solicitar:\nPrestador: Beto Ruiz\nFecha: sábado 26 de septiembre\nHorario: 18:00\nLa solicitud queda pendiente hasta que el prestador la acepte.\n¿Querés solicitar este turno?')
+  assert.deepEqual(r.tarjeta.slice(1), [['Sí, solicitar turno', 'No'], 0], 'nothing is booked before the explicit confirmation')
+  assert.equal(r.listo, 'Solicitud enviada para el sábado, 26 de septiembre a las 18:00 hs. Queda pendiente hasta que el prestador la acepte; podés ver el estado en "Mis turnos".')
   assert.doesNotMatch(r.listo, /confirmad[oa]|reservad[oa]/iu, 'a request is never announced as a confirmed reservation')
   assert.deepEqual(r.reserva, [1, { subjectId: 'customer-user', providerId: 'perfil-beto', oficioId: 'masaje', inicio: '2026-09-26T21:00:00.000Z' }, true])
   assert.equal(r.busquedasViejas, 0)
@@ -206,7 +206,7 @@ test('ASISTENTE conversacional: the reply says what really happened (no exact ti
       out.conAna = (await decir('con Ana', sesion)).text
       out.horaQueNoTiene = (await decir('a las 16', sesion)).text
       const tarjeta = await decir('a las 17:30', sesion)
-      out.tarjeta = [tarjeta.text.split('\\n').slice(1, 3), tarjeta.actions?.map((a) => a.label) ?? null]
+      out.tarjeta = [tarjeta.text.split('\\n').slice(1, 4), tarjeta.actions?.map((a) => a.label) ?? null]
       out.sinReservaAun = dom.reservas.length
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
@@ -221,7 +221,7 @@ test('ASISTENTE conversacional: the reply says what really happened (no exact ti
   assert.match(r.variasHoras, /1\. Ana Gómez — Centro: 17:00, 17:30, 18:00, 19:00\n2\. Beto Ruiz — San Benito: 18:00\nDecime con quién y a qué hora/u)
   assert.equal(r.conAna, '¿A qué hora con Ana Gómez? Tiene: 17:00, 17:30, 18:00, 19:00.')
   assert.equal(r.horaQueNoTiene, 'Ana Gómez no tiene turno a esa hora. Tiene: 17:00, 17:30, 18:00, 19:00. ¿Cuál preferís?')
-  assert.deepEqual(r.tarjeta, [['Prestador: Ana Gómez', 'Horario: sábado, 26 de septiembre, 17:30 hs'], ['Solicitar turno', 'Cancelar']])
+  assert.deepEqual(r.tarjeta, [['Prestador: Ana Gómez', 'Fecha: sábado 26 de septiembre', 'Horario: 17:30'], ['Sí, solicitar turno', 'No']])
   assert.equal(r.sinReservaAun, 0)
 })
 
@@ -308,7 +308,7 @@ test('ASISTENTE conversacional (WhatsApp): the same free-text message gives the 
       await whatsapp('5491155551002', PRINCIPAL)
       await linkContact('5491155551002', 'customer-user')
       const tarjeta = await whatsapp('5491155551002', 'el segundo')
-      out.tarjeta = [tarjeta.type, tarjeta.text.split('\\n').slice(0, 3)]
+      out.tarjeta = [tarjeta.type, tarjeta.text.split('\\n').slice(0, 4)]
       const listo = await whatsapp('5491155551002', 'sí')
       out.listo = [listo.text, dom.reservas.at(-1)]
       // Step by step, still without forms: trade -> day and time -> "no me importa la zona".
@@ -330,8 +330,8 @@ test('ASISTENTE conversacional (WhatsApp): the same free-text message gives the 
   assert.deepEqual(r.consulta, { profession: 'masaje', day: '2026-09-26', dayTo: null, time: { kind: 'exact', from: '18:00', to: null }, zone: null })
   assert.deepEqual([r.estado.profession, r.estado.day, r.estado.time, r.estado.zone, r.estado.anyZone, r.estado.clientTravels], ['masaje', '2026-09-26', { kind: 'exact', from: '18:00', to: null }, null, true, true], 'the whole message is kept in the conversation state')
   assert.deepEqual(r.sinCuenta, ['cta_url', 0])
-  assert.deepEqual(r.tarjeta, ['buttons', ['Voy a enviar tu solicitud de turno:', 'Prestador: Beto Ruiz', 'Horario: sábado, 26 de septiembre, 18:00 hs']])
-  assert.equal(r.listo[0], 'Listo, envié tu solicitud de turno para el sábado, 26 de septiembre a las 18:00 hs. Queda pendiente hasta que el prestador la confirme; podés ver el estado en "Mis turnos".', 'WhatsApp: a pending request, the same words as the Web')
+  assert.deepEqual(r.tarjeta, ['buttons', ['Vas a solicitar:', 'Prestador: Beto Ruiz', 'Fecha: sábado 26 de septiembre', 'Horario: 18:00']])
+  assert.equal(r.listo[0], 'Solicitud enviada para el sábado, 26 de septiembre a las 18:00 hs. Queda pendiente hasta que el prestador la acepte; podés ver el estado en "Mis turnos".', 'WhatsApp: a pending request, the same words as the Web')
   assert.doesNotMatch(r.listo[0], /confirmad[oa]|reservad[oa]/iu)
   assert.deepEqual(r.listo[1], { subjectId: 'customer-user', providerId: 'perfil-beto', oficioId: 'masaje', inicio: '2026-09-26T21:00:00.000Z' })
   assert.deepEqual(r.pasos, ['¿Para cuándo necesitás Electricidad?', 'Encontré 2 profesionales de Electricidad con turno mañana a las 18:00:', 'Encontré 2 profesionales de Electricidad con turno mañana a las 18:00:'])
@@ -373,4 +373,220 @@ test('ASISTENTE conversacional multi-turn: "Necesito un electricista" -> "Para m
   assert.equal(r.whatsapp[3][1], 'cta_url', '"El segundo" refers to the second professional shown: booking needs the linked account')
   assert.deepEqual(r.consultasWhatsapp, r.consultasWeb, 'both channels asked the backend for the same searches')
   assert.deepEqual([r.estado.profession, r.estado.day, r.estado.time], ['electricidad', '2026-09-26', { kind: 'between', from: '13:00', to: '20:00' }])
+})
+
+// ---- ASISTENTE-HORA-01 ---------------------------------------------------------------------------
+// "¿A qué hora con bongio?" was asked: the answer is a time however it is written, normalised by
+// the backend and checked against the real times of that professional. The model is not needed
+// (in these scenarios it fails if it is called) and the generic error is never the answer.
+const HORA_SETUP = `
+  const BONGIO = { id: 'perfil-bongio', name: 'bongio', area: 'Camba Cuá', verified: false, jobs: 0, turnos: true, horas: ['09:00', '09:15', '09:30', '09:45', '10:00', '10:15', '10:30'], tarifas: [] }
+  const CARLA = { id: 'perfil-carla', name: 'Carla Paz', area: 'Centro', verified: false, jobs: 1, turnos: true, horas: ['09:15', '11:00'], tarifas: [] }
+  AGENDA = [BONGIO, ANA, BETO, CARLA]
+  const BUSCAR = 'necesito una masajista para mañana'
+  const horario = (texto) => (/Fecha: [^\\n]+\\nHorario: [^\\n]+/u.exec(texto) ?? [texto])[0]
+  // A long conversation is summarised now and then (a call with no tools, unrelated to the turn).
+  const alTurno = (desde) => chat.calls.slice(desde).filter((c) => !String(c.messages[0].content).startsWith('Resumí la conversación')).length
+  // What Groq does when the model calls a tool that was not offered: the request fails.
+  const ofrecidas = []
+  script = (input) => {
+    if (!esRuteo(input)) ofrecidas.push(input.tools ?? [])
+    const error = new Error('tool call validation failed: attempted to call tool book_appointment which was not in request.tools')
+    error.code = 'tool_use_failed'
+    throw error
+  }
+`
+const PREGUNTA_HORA = '¿A qué hora con bongio? Tiene: 09:00, 09:15, 09:30, 09:45, 10:00, 10:15.'
+const TIENE = 'bongio tiene: 09:00, 09:15, 09:30, 09:45, 10:00, 10:15. ¿Cuál preferís?'
+const NO_ENTENDI = 'No entendí la hora. ' + TIENE
+const NO_TIENE = 'bongio no tiene turno a esa hora. Tiene: 09:00, 09:15, 09:30, 09:45, 10:00, 10:15. ¿Cuál preferís?'
+const CON_HORA = (hora) => `Fecha: sábado 26 de septiembre\nHorario: ${hora}`
+// Every way of saying the time that must work, and what it must resolve to.
+const FRASES_HORA = {
+  '9:30': CON_HORA('09:30'), '09:30': CON_HORA('09:30'), '9.30': CON_HORA('09:30'), '9 y 30': CON_HORA('09:30'), 'a las 9 y 30': CON_HORA('09:30'),
+  '9 y media': CON_HORA('09:30'), 'nueve y media': CON_HORA('09:30'), 'a las nueve y media': CON_HORA('09:30'), 'a las 9 y cuarto': CON_HORA('09:15'),
+  930: CON_HORA('09:30'), 10: CON_HORA('10:00'), 'a las 10': CON_HORA('10:00'), '9 y 45': CON_HORA('09:45'), 'a las 10 y 15': CON_HORA('10:15'),
+  // A time bongio does not have, and attempts that are not a time: its real times, never an error.
+  14: NO_TIENE, 'a las 11': NO_TIENE, 25: NO_ENTENDI, '9 y 70': NO_ENTENDI,
+}
+
+test('ASISTENTE hora (Web): after choosing a professional, the time is understood however it is written and checked against its real times; the model is never called', () => {
+  const r = runTypeScriptScenario(`${SETUP(true)}${HORA_SETUP}
+    const out = { frases: {}, preguntas: [] }
+    try {
+      const sesion = { token: 'tok-cliente' }
+      // On the Web the model words the reply of a search turn (here it fails and the backend
+      // text is used). Choosing the professional and saying the time must not call it at all.
+      let llamadasAlElegir = 0
+      for (const frase of ${JSON.stringify(Object.keys(FRASES_HORA))}) {
+        await decir(BUSCAR, sesion)
+        const antes = chat.calls.length
+        out.preguntas.push((await decir('1', sesion)).text)
+        const m = await decir(frase, sesion)
+        llamadasAlElegir += alTurno(antes)
+        out.frases[frase] = [horario(m.text), m.actions?.map((a) => a.label) ?? null]
+        // The prepared request is cancelled: each phrase starts from a clean table.
+        if (m.actions) await enviar({ replyId: m.actions[1].id }, sesion)
+      }
+      // Not understood, then said properly: the step is still waiting for the time; "sí" sends it.
+      await decir(BUSCAR, sesion)
+      const antes = chat.calls.length
+      await decir('1', sesion)
+      out.noEntendida = (await decir('9 y 70', sesion)).text
+      const tarjeta = await decir('9 y 30', sesion)
+      out.tarjeta = tarjeta.text
+      out.antesDeConfirmar = dom.reservas.length
+      out.listo = (await enviar({ replyId: tarjeta.actions[0].id }, sesion)).mensajes[0].text
+      out.reserva = dom.reservas.at(-1)
+      out.modelo = llamadasAlElegir + alTurno(antes)
+    } finally { await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual([...new Set(r.preguntas)], [PREGUNTA_HORA], '"1" chooses the first professional every time and only its time is asked')
+  for (const [frase, esperado] of Object.entries(FRASES_HORA)) {
+    const esTarjeta = esperado.startsWith('Fecha')
+    assert.deepEqual(r.frases[frase], [esperado, esTarjeta ? ['Sí, solicitar turno', 'No'] : null], `Web: "${frase}"`)
+  }
+  assert.equal(r.noEntendida, NO_ENTENDI)
+  assert.equal(r.tarjeta, 'Vas a solicitar:\nPrestador: bongio\nFecha: sábado 26 de septiembre\nHorario: 09:30\nLa solicitud queda pendiente hasta que el prestador la acepte.\n¿Querés solicitar este turno?')
+  assert.equal(r.antesDeConfirmar, 0, 'nothing is requested before the explicit confirmation')
+  assert.match(r.listo, /^Solicitud enviada para el sábado, 26 de septiembre a las 09:30 hs\./u)
+  assert.deepEqual(r.reserva, { subjectId: 'customer-user', providerId: 'perfil-bongio', oficioId: 'masaje', inicio: '2026-09-26T12:30:00.000Z' }, 'the request is for 09:30, not 09:00')
+  assert.equal(r.modelo, 0, 'the backend resolves the choice and the time: the model is not called in any of those turns')
+})
+
+test('ASISTENTE hora (WhatsApp): the production conversation ("1" then "9 y 30") and every other way of saying the time reach the request card; the step is kept in the state', () => {
+  const r = runTypeScriptScenario(`${SETUP(true)}${HORA_SETUP}
+    const out = { frases: {}, preguntas: [] }
+    try {
+      let n = 0
+      const nuevo = async () => { const id = '54911555593' + String(n += 1).padStart(2, '0'); await whatsapp(id, BUSCAR); await linkContact(id, 'customer-user'); return id }
+      for (const frase of ${JSON.stringify(Object.keys(FRASES_HORA))}) {
+        const id = await nuevo()
+        out.preguntas.push((await whatsapp(id, '1')).text)
+        const antes = (await conversationOf(id)).state
+        const m = await whatsapp(id, frase)
+        const despues = (await conversationOf(id)).state
+        out.frases[frase] = [horario(m.text), m.type, [antes.currentIntent, antes.offers.esperaHora === true, antes.offers.items.map((i) => i.name)], [despues.currentIntent, despues.offers?.esperaHora === true]]
+      }
+      // The conversation of production, to the end: search -> "1" -> "9 y 30" -> "sí".
+      const id = await nuevo()
+      await whatsapp(id, '1')
+      const tarjeta = await whatsapp(id, '9 y 30')
+      out.tarjeta = [tarjeta.type, tarjeta.text]
+      out.antesDeConfirmar = dom.reservas.length
+      out.listo = (await whatsapp(id, 'sí')).text
+      out.reserva = dom.reservas.at(-1)
+      out.modelo = [chat.calls.length, ofrecidas.length]
+      out.errores = metrics.filter((m) => /llm_error|turn_failed/u.test(m.name)).length
+    } finally { await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual([...new Set(r.preguntas)], [PREGUNTA_HORA])
+  for (const [frase, esperado] of Object.entries(FRASES_HORA)) {
+    const esTarjeta = esperado.startsWith('Fecha')
+    assert.deepEqual(r.frases[frase].slice(0, 2), [esperado, esTarjeta ? 'buttons' : 'text'], `WhatsApp: "${frase}"`)
+    assert.deepEqual(r.frases[frase][2], ['reserva', true, ['bongio']], 'after "1" the conversation waits for the time of that professional')
+    // Resolved: the step is over. Not resolved: the conversation keeps waiting for the time.
+    assert.deepEqual(r.frases[frase][3], ['reserva', !esTarjeta], `WhatsApp: state after "${frase}"`)
+  }
+  assert.deepEqual(r.tarjeta, ['buttons', 'Vas a solicitar:\nPrestador: bongio\nFecha: sábado 26 de septiembre\nHorario: 09:30\nLa solicitud queda pendiente hasta que el prestador la acepte.\n¿Querés solicitar este turno?'])
+  assert.equal(r.antesDeConfirmar, 0)
+  assert.match(r.listo, /^Solicitud enviada para el sábado, 26 de septiembre a las 09:30 hs\./u)
+  assert.deepEqual(r.reserva, { subjectId: 'customer-user', providerId: 'perfil-bongio', oficioId: 'masaje', inicio: '2026-09-26T12:30:00.000Z' })
+  assert.deepEqual(r.modelo, [0, 0], 'no model call in the whole conversation')
+  assert.equal(r.errores, 0)
+})
+
+test('ASISTENTE hora (Web y WhatsApp): "1", "2", "3" keep choosing a professional; "a las 9 y cuarto" is a time and never the fourth professional; "el cuarto" still is', () => {
+  const r = runTypeScriptScenario(`${SETUP(true)}${HORA_SETUP}
+    const out = { web: {}, whatsapp: {} }
+    try {
+      const sesion = { token: 'tok-cliente' }
+      const primera = (texto) => texto.split('\\n')[0]
+      out.listado = (await decir(BUSCAR, sesion)).text
+      for (const numero of ['1', '2', '3', 'el cuarto']) { await decir(BUSCAR, sesion); out.web[numero] = (await decir(numero, sesion)).text }
+      // Carla (the fourth) is chosen by its ordinal; then "a las 9 y cuarto" is its time.
+      await decir(BUSCAR, sesion)
+      await decir('el cuarto', sesion)
+      const deCarla = await decir('a las 9 y cuarto', sesion)
+      out.web.cuartoYLuegoHora = deCarla.text.split('\\n').slice(1, 4)
+      await enviar({ replyId: deCarla.actions[1].id }, sesion)
+      // Four professionals on the table and nobody chosen: "y cuarto" is a time, so it narrows
+      // the search to 09:15 instead of choosing the fourth professional.
+      await decir(BUSCAR, sesion)
+      const cuarto = await decir('a las 9 y cuarto', sesion)
+      out.web.yCuarto = [cuarto.text, cuarto.actions, dom.consultas.at(-1).time]
+
+      let n = 0
+      const nuevo = async () => { const id = '54911555594' + String(n += 1).padStart(2, '0'); await whatsapp(id, BUSCAR); await linkContact(id, 'customer-user'); return id }
+      for (const numero of ['1', '2', '3', 'el cuarto']) out.whatsapp[numero] = (await whatsapp(await nuevo(), numero)).text
+      const id = await nuevo()
+      const waCuarto = await whatsapp(id, 'a las 9 y cuarto')
+      out.whatsapp.yCuarto = [waCuarto.text, waCuarto.type, dom.consultas.at(-1).time]
+      const otro = await nuevo()
+      await whatsapp(otro, 'el cuarto')
+      const carla = await whatsapp(otro, 'a las 9 y cuarto')
+      out.whatsapp.cuartoYLuegoHora = [carla.type, carla.text.split('\\n').slice(1, 4)]
+      out.reservas = dom.reservas.length
+    } finally { await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  const elecciones = {
+    1: PREGUNTA_HORA,
+    2: '¿A qué hora con Ana Gómez? Tiene: 10:00, 17:00, 17:30, 18:00, 19:00.',
+    3: '¿A qué hora con Beto Ruiz? Tiene: 10:00, 18:00.',
+    'el cuarto': '¿A qué hora con Carla Paz? Tiene: 09:15, 11:00.',
+  }
+  assert.match(r.listado, /\n1\. bongio — Camba Cuá: .*\n2\. Ana Gómez — Centro: .*\n3\. Beto Ruiz — San Benito: .*\n4\. Carla Paz — Centro: 09:15, 11:00\n/u)
+  // The search is repeated for 09:15: who has that time shows it, the others their closest ones.
+  const SOLO_915 = 'Encontré 4 profesionales de Masaje con turno mañana a las 09:15:\n1. bongio — Camba Cuá: 09:15\n2. Ana Gómez — Centro: 10:00, 17:00, 17:30\n3. Beto Ruiz — San Benito: 10:00, 18:00\n4. Carla Paz — Centro: 09:15\nDecime con quién y a qué hora y te preparo la solicitud.'
+  for (const canal of ['web', 'whatsapp']) {
+    for (const [numero, esperado] of Object.entries(elecciones)) assert.equal(r[canal][numero], esperado, `${canal}: "${numero}" chooses that professional`)
+    assert.equal(r[canal].yCuarto[0], SOLO_915, `${canal}: "a las 9 y cuarto" is 09:15 for everybody, not the fourth professional`)
+    assert.doesNotMatch(r[canal].yCuarto[0], /Prestador: Carla Paz|¿A qué hora con Carla Paz/u)
+    assert.deepEqual(r[canal].yCuarto[2], { kind: 'exact', from: '09:15', to: null })
+  }
+  assert.equal(r.web.yCuarto[1], null)
+  assert.equal(r.whatsapp.yCuarto[1], 'text')
+  assert.deepEqual(r.web.cuartoYLuegoHora, ['Prestador: Carla Paz', 'Fecha: sábado 26 de septiembre', 'Horario: 09:15'])
+  assert.deepEqual(r.whatsapp.cuartoYLuegoHora, ['buttons', ['Prestador: Carla Paz', 'Fecha: sábado 26 de septiembre', 'Horario: 09:15']])
+  assert.equal(r.reservas, 0)
+})
+
+test('ASISTENTE hora (Web y WhatsApp): while the time is awaited the conversation stays a booking; if the model fails there, the real times are shown instead of the generic error', () => {
+  const r = runTypeScriptScenario(`${SETUP(true)}${HORA_SETUP}
+    const out = {}
+    try {
+      const DUDA = 'no sé, cuál me recomendás?'
+      const sesion = { token: 'tok-cliente' }
+      await decir(BUSCAR, sesion)
+      await decir('1', sesion)
+      const web = await enviar({ text: DUDA }, sesion)
+      out.web = [web.status, web.mensajes.map((m) => m.text), web.actividad.filter((a) => a.startsWith('routing')), ofrecidas.at(-1) ?? null]
+      // The step survived the failure: the time said next is still understood.
+      out.webSigue = horario((await decir('9 y 30', sesion)).text)
+
+      ofrecidas.length = 0
+      const id = '5491155559501'
+      await whatsapp(id, BUSCAR)
+      await linkContact(id, 'customer-user')
+      await whatsapp(id, '1')
+      const wa = await whatsapp(id, DUDA)
+      out.whatsapp = [wa.type, wa.text, ofrecidas.at(-1) ?? null, (await conversationOf(id)).state.currentIntent]
+      out.whatsappSigue = horario((await whatsapp(id, 'nueve y media')).text)
+      out.generico = MENSAJES.aiUnavailable
+    } finally { await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.web[0], 200)
+  assert.deepEqual(r.web[1], [NO_ENTENDI], 'Web: the real times of the professional, not the generic error')
+  assert.deepEqual(r.web[2], ['routing:reserva'])
+  assert.ok(r.web[3].includes('book_appointment') && r.web[3].length > 1, 'Web: the booking tools are offered to the model, not only search_services')
+  assert.equal(r.webSigue, CON_HORA('09:30'))
+  assert.deepEqual(r.whatsapp.slice(0, 2), ['text', NO_ENTENDI], 'WhatsApp: the real times of the professional, not the generic error')
+  assert.ok(r.whatsapp[2].includes('book_appointment') && r.whatsapp[2].length > 1, 'WhatsApp: routed as a booking, never as "otro" with only search_services')
+  assert.equal(r.whatsapp[3], 'reserva')
+  assert.equal(r.whatsappSigue, CON_HORA('09:30'))
+  for (const texto of [...r.web[1], r.whatsapp[1]]) assert.notEqual(texto, r.generico)
 })

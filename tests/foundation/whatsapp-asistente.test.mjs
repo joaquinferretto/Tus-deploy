@@ -211,7 +211,7 @@ test('WHATSAPP confirmations: writes need a bound, expiring, single-use confirma
     out.looseYes = lastSent().message.text
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(result.prompt, ['buttons', ['Confirmar', 'Cancelar'], true])
+  assert.deepEqual(result.prompt, ['buttons', ['Confirmar', 'Cancelar'], false], 'the card a person reads never carries an internal id (the budget id used to be in it)')
   assert.equal(result.statusBefore, 'budget_pending')
   assert.match(result.foreign, /No encontré una acción pendiente/u)
   assert.equal(result.executed, 'Listo, aceptaste el presupuesto.')

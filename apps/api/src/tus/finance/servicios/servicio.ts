@@ -15,6 +15,7 @@ import type {
 import {
   ESTADOS_PRESUPUESTO,
   ESTADOS_TRABAJO,
+  ORIGENES_IMPORTE_OBLIGACION_SERVICIO,
   TUS_CONTRACT_VERSION,
   formatMinorUnits,
 } from '@factory/contracts'
@@ -36,8 +37,10 @@ import {
 } from './liquidacion.ts'
 import {
   ErrorFinanzasServicio,
+  derivarObligacionSenaTurno,
   derivarObligacionServicio,
   derivarObligacionTramo,
+  montoSenaReserva,
   montosSenaSaldo,
   huellaSolicitudFinanciera,
   proyectarObligacion,
@@ -51,6 +54,7 @@ import {
   type PresupuestoFinanciero,
   type PublicacionServicioFinanciera,
   type RegistroIdempotenciaFinanciera,
+  type ReservaTurnoFinanciera,
 } from './modelo.ts'
 import {
   ErrorProveedorPagos,
@@ -83,6 +87,11 @@ export interface PuertoIdentidadServicio {
     presupuestoId: string
     version: number
   }): Promise<PresupuestoFinanciero | null>
+  // Reservation of the order of a turno (TURNOS-SENA-01), by the provider's agenda it belongs to.
+  buscarReservaTurno(input: {
+    prestadorTenantId: string
+    reservaId: string
+  }): Promise<ReservaTurnoFinanciera | null>
 }
 
 export interface PuertoObligacionesServicio {
@@ -164,7 +173,7 @@ export interface PuertoInboxEventosPago {
 export interface RegistroOutboxFinanciero {
   eventId: string
   tenantId: string
-  aggregateType: 'obligacion_pago_servicio' | 'intencion_pago_servicio' | 'liquidacion_servicio'
+  aggregateType: 'obligacion_pago_servicio' | 'intencion_pago_servicio' | 'liquidacion_servicio' | 'reserva'
   aggregateId: string
   eventType: string
   payload: Record<string, unknown>
@@ -275,6 +284,15 @@ export interface PuertoCierreTrabajoPorPago {
     correlationId: string
     createdAt: string
   }): Promise<'completed' | 'already_completed' | 'not_in_progress'>
+  // awaiting_payment -> confirmed for the turno whose deposit was just approved, in the SAME
+  // transaction. false: the turno is no longer waiting for that payment (nothing is changed).
+  confirmarReservaPorPago?(input: {
+    reservaId: string
+    prestadorTenantId: string
+    clienteTenantId: string
+    amountMinor: bigint
+    currency: string
+  }): Promise<boolean>
 }
 
 // Deposit/balance state of a request-born work with an accepted budget (work summary and the
@@ -322,6 +340,8 @@ export interface ResultadoEvaluacionCobro {
   // Part charged now and its amount (null when nothing can be charged).
   part: TramoPagoServicio | null
   amountMinor: bigint | null
+  // Currency of the amount when it does not come from a budget (deposit of a turno).
+  currency?: string | null
 }
 
 // Implementations run the callback in one serializable transaction (Prisma) or one
@@ -496,10 +516,13 @@ export class ServicioFinanzasServicios {
           : null,
         part: cobro.part,
         amountMinor:
-          budget && !cobro.reason && cobro.amountMinor !== null
+          (budget || cobro.currency) && !cobro.reason && cobro.amountMinor !== null
             ? formatMinorUnits(cobro.amountMinor)
             : null,
-        currency: budget && !cobro.reason && cobro.amountMinor !== null ? budget.currency : null,
+        currency:
+          !cobro.reason && cobro.amountMinor !== null
+            ? (budget?.currency ?? cobro.currency ?? null)
+            : null,
         payable: notPayableReason === null,
         notPayableReason,
         obligation: obligation
@@ -544,6 +567,7 @@ export class ServicioFinanzasServicios {
         : null
     if (trabajo.origin === 'solicitud')
       return this.evaluarCobroSolicitud(repositories, trabajo, presupuesto)
+    if (trabajo.origin === 'turno') return this.evaluarCobroTurno(repositories, trabajo)
     const result = (reason: MotivoNoCobrableServicio | null): ResultadoEvaluacionCobro => ({
       reason,
       presupuesto,
@@ -605,6 +629,62 @@ export class ServicioFinanzasServicios {
     if (trabajo.status !== ESTADOS_TRABAJO.EN_PROGRESO || !trabajo.finishedAt)
       return result('WORK_NOT_FINISHED', 'saldo', amounts.saldo)
     return result(null, 'saldo', amounts.saldo)
+  }
+
+  // Order of a turno (TURNOS-SENA-01): only its deposit, half of the price booked on the
+  // reservation, payable while the turno is awaiting payment and has not started. The reservation is the
+  // authority for both the amount and the moment; nothing of the order itself decides.
+  protected async evaluarCobroTurno(
+    repositories: RepositoriosFinanzasServicio,
+    trabajo: Trabajo
+  ): Promise<ResultadoEvaluacionCobro> {
+    const reserva = trabajo.reservaId
+      ? await repositories.identidad.buscarReservaTurno({
+          prestadorTenantId: trabajo.prestadorTenantId,
+          reservaId: trabajo.reservaId,
+        })
+      : null
+    const result = (
+      reason: MotivoNoCobrableServicio | null,
+      amountMinor: bigint | null = null
+    ): ResultadoEvaluacionCobro => ({
+      reason,
+      presupuesto: null,
+      publicacion: null,
+      part: amountMinor === null ? null : 'sena',
+      amountMinor,
+      currency: reserva?.currency ?? null,
+    })
+    if (!reserva || reserva.esInvitado || reserva.clienteTenantId !== trabajo.tenantId)
+      return result('INCONSISTENT_COMMERCIAL_CHAIN')
+    const sena = await repositories.obligaciones.buscarPorTrabajo({
+      tenantId: trabajo.tenantId,
+      trabajoId: trabajo.trabajoId,
+      part: 'sena',
+    })
+    if (sena?.status === 'paid') return result('ALREADY_PAID')
+    if (sena && sena.status !== 'pending_payment') return result('OBLIGATION_CLOSED')
+    if (['cancelled', 'cancelled-late', 'no-show', 'rejected', 'expired'].includes(reserva.status))
+      return result('WORK_CANCELLED')
+    if (
+      reserva.status !== 'awaiting_payment' ||
+      !reserva.expiresAt || Date.parse(reserva.expiresAt) <= this.now() ||
+      reserva.priceMajor === null ||
+      reserva.priceMajor <= 0n ||
+      Date.parse(reserva.startsAt) <= this.now()
+    )
+      return result('APPOINTMENT_NOT_PAYABLE')
+    return result(null, sena?.amountMinor ?? montoSenaReserva(reserva.priceMajor, reserva.currency))
+  }
+
+  // Whether the deposit of a turno of that provider could be charged online now (platform switch,
+  // linked Mercado Pago account, verified identity). Read-only.
+  async disponibilidadCobroPrestador(input: {
+    prestadorTenantId: string
+    prestadorId: string
+  }): Promise<{ available: boolean; reason: string | null }> {
+    const availability = await this.politica.disponibilidad({ ...input, categoria: null })
+    return { available: availability.available === true, reason: availability.reason ?? null }
   }
 
   // Deposit/balance state of a request-born work already authorized by the caller. Null for
@@ -916,13 +996,15 @@ export class ServicioFinanzasServicios {
             publicacionId: obligation.publicacionId,
           })
         : null
-      const title =
-        obligation.part === 'sena'
+      const deTurno = obligation.amountSource === ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRECIO_RESERVA
+      const title = deTurno
+        ? 'Seña (50%) del turno TUS'
+        : obligation.part === 'sena'
           ? 'Seña (50%) del trabajo TUS'
           : obligation.part === 'saldo'
             ? 'Saldo (50%) del trabajo TUS'
             : (publicacion?.nombre ?? null)
-      return { status: 'claimed' as const, intent: claimed, title, part: obligation.part }
+      return { status: 'claimed' as const, intent: claimed, title, part: obligation.part, deTurno }
     })
     if (claim.status !== 'claimed')
       return { status: claim.status, payment: proyectarIntencionPago(claim.intent) }
@@ -939,10 +1021,13 @@ export class ServicioFinanzasServicios {
         commissionMinor: intent.commission?.commissionMinor ?? null,
         title: claim.title ?? 'Servicio TUS',
         trabajoId: intent.trabajoId,
-        // Request-born works return to their page; the return never confirms a payment.
-        ...(claim.part === 'total'
-          ? {}
-          : { returnPath: `/trabajos/${encodeURIComponent(intent.trabajoId)}?pago=retorno` }),
+        // Request-born works return to their page and a turno to "Mis turnos"; the return never
+        // confirms a payment.
+        ...(claim.deTurno
+          ? { returnPath: '/mis-turnos?pago=retorno' }
+          : claim.part === 'total'
+            ? {}
+            : { returnPath: `/trabajos/${encodeURIComponent(intent.trabajoId)}?pago=retorno` }),
       })
     } catch (error) {
       failure = error instanceof ErrorProveedorPagos ? error.code : 'PROVIDER_UNAVAILABLE'
@@ -1385,7 +1470,7 @@ export class ServicioFinanzasServicios {
           .sort((left, right) => left.attempt - right.attempt)
           .map(proyectarIntencionPago)
       const parts =
-        trabajo.origin === 'solicitud'
+        trabajo.origin === 'solicitud' || trabajo.origin === 'turno'
           ? (
               await repositories.obligaciones.listarPorTrabajo({
                 tenantId: trabajo.tenantId,
@@ -1488,7 +1573,17 @@ export class ServicioFinanzasServicios {
         tenantId: obligation.tenantId,
         trabajoId: obligation.trabajoId,
       })
-      if (trabajo?.status !== ESTADOS_TRABAJO.COMPLETADO)
+      // The order of a turno never changes state: its turno is done when its reservation is.
+      const terminado =
+        trabajo?.origin === 'turno' && trabajo.reservaId
+          ? (
+              await repositories.identidad.buscarReservaTurno({
+                prestadorTenantId: trabajo.prestadorTenantId,
+                reservaId: trabajo.reservaId,
+              })
+            )?.status === 'completed'
+          : trabajo?.status === ESTADOS_TRABAJO.COMPLETADO
+      if (!terminado)
         return {
           status: 'unchanged',
           reason: 'work_not_completed',
@@ -1681,6 +1776,48 @@ export class ServicioFinanzasServicios {
         },
       })
       await this.publicarLiquidacion(repositories, settlement, 'tus.service_settlement.held')
+      // The paid deposit of a turno confirms its reservation in this same transaction: it is the
+      // only automatic path from awaiting_payment to confirmed. The money was really collected, so
+      // the approval is ALWAYS booked: when the turno is no longer waiting for it (its payment
+      // window ran out, or it was cancelled meanwhile) the reservation stays released, nothing is
+      // confirmed, and the case is left on record for the platform to refund. Marketplace works
+      // keep their own rule (W09-02): paid once completed, their reservation is not touched here.
+      if (obligation.part === 'sena' && obligation.amountSource === ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRECIO_RESERVA) {
+        const work = await repositories.identidad.buscarTrabajoAccesible({ tenantId: obligation.tenantId, trabajoId: obligation.trabajoId })
+        const reservaId = work?.origin === 'turno' && work.tenantId === obligation.tenantId && work.prestadorTenantId === obligation.prestadorTenantId ? (work.reservaId ?? null) : null
+        const confirmed =
+          reservaId && work && repositories.cierreTrabajo?.confirmarReservaPorPago
+            ? await repositories.cierreTrabajo.confirmarReservaPorPago({
+                reservaId,
+                prestadorTenantId: work.prestadorTenantId,
+                clienteTenantId: work.tenantId,
+                amountMinor: obligation.amountMinor,
+                currency: obligation.currency,
+              })
+            : false
+        const eventType = confirmed ? 'tus.turno.confirmed' : 'tus.turno.deposit_without_turno'
+        await this.auditar(repositories, obligation, {
+          resourceType: 'work',
+          resourceId: obligation.trabajoId,
+          action: confirmed ? 'appointment.confirmed_by_deposit' : 'appointment.deposit_without_turno',
+          origin: 'provider_event',
+          actorId: ACTOR_PROVEEDOR,
+          correlationId: `provider-event:${event.eventId}`,
+          idempotencyKey: event.eventId,
+          previousStatus: confirmed ? 'awaiting_payment' : null,
+          status: confirmed ? 'confirmed' : 'requires_refund_review',
+          metadata: { paymentId: intent.paymentId },
+        })
+        await repositories.outbox.publicar({
+          eventId: `${eventType}:${reservaId ?? obligation.trabajoId}`,
+          tenantId: obligation.tenantId,
+          aggregateType: 'reserva',
+          aggregateId: reservaId ?? obligation.trabajoId,
+          eventType,
+          payload: { reservaId, paymentId: intent.paymentId, prestadorTenantId: obligation.prestadorTenantId, clienteTenantId: obligation.tenantId },
+          createdAt: now,
+        })
+      }
       // The approved balance is what completes a request-born work (same transaction).
       if (obligation.part === 'saldo' && repositories.cierreTrabajo) {
         const closed = await repositories.cierreTrabajo.completarPorPagoFinal({
@@ -2008,6 +2145,37 @@ export class ServicioFinanzasServicios {
           'payment obligation no longer matches the work'
         )
       return existing
+    }
+    if (trabajo.origin === 'turno') {
+      if (part !== 'sena')
+        throw new ErrorFinanzasServicio(409, 'INCONSISTENT_COMMERCIAL_CHAIN', 'a turno only has a deposit')
+      const reserva = trabajo.reservaId
+        ? await repositories.identidad.buscarReservaTurno({
+            prestadorTenantId: trabajo.prestadorTenantId,
+            reservaId: trabajo.reservaId,
+          })
+        : null
+      const obligation = derivarObligacionSenaTurno({ context, trabajo, reserva, now: this.isoNow() })
+      await repositories.obligaciones.crear(obligation)
+      await this.auditar(repositories, obligation, {
+        resourceType: 'obligation',
+        resourceId: obligation.obligacionId,
+        action: 'obligation.created',
+        origin: 'customer',
+        actorId: context.actorId,
+        correlationId: context.correlationId,
+        idempotencyKey,
+        previousStatus: null,
+        status: obligation.status,
+        metadata: {
+          part,
+          amountSource: obligation.amountSource,
+          amountMinor: obligation.amountMinor.toString(10),
+          bookedPriceMajor: reserva?.priceMajor?.toString(10) ?? null,
+          currency: obligation.currency,
+        },
+      })
+      return obligation
     }
     const presupuesto =
       trabajo.acceptedBudgetId && trabajo.acceptedBudgetVersion

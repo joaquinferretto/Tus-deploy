@@ -5,6 +5,8 @@ import { ServicioTurnos } from './turnos-service.ts'
 import { ErrorCalendario } from './bookings.ts'
 import { CODIGO_SESION_REQUERIDA, type ClienteTurnoAdmin } from '@factory/contracts'
 
+const CAMPOS_SOLICITUD_CLIENTE = new Set(['oficioId', 'inicio', 'tarifaId', 'notas'])
+
 export function crearRouterTurnos({
   servicio,
   sessions,
@@ -68,18 +70,23 @@ export function crearRouterTurnos({
   )
 
   // A client REQUESTS a turno; nothing is confirmed here. The client is the account of the
-  // session: identity fields of the body (a client id, a name, a phone, an email) are never read.
+  // session. Reject authority fields instead of silently ignoring them so a caller cannot mistake
+  // an attempted identity, provider, amount or state override for an accepted instruction.
   // Without a session there is nobody to request for: 401 LOGIN_REQUIRED and the Web sends the
   // person to sign in and back to this turno. The old path stays as an alias of the same rule.
   const solicitar = asyncHandler(async (request: Request, response: Response) => {
     const prestadorId = String(request.params['id'] ?? '')
-    const body = comoRegistro(request.body)
-    const oficioId = String(body['oficioId'] ?? '')
-    const inicio = String(body['inicio'] ?? '')
     response.setHeader('cache-control', 'private, no-store')
-    if (!oficioId || !inicio) return void enviarError(response, 400, 'INVALID_PARAMS', 'oficioId e inicio son requeridos')
     const context = await intentarAutenticar(request, sessions)
     if (!context) return void enviarError(response, 401, CODIGO_SESION_REQUERIDA, 'Iniciá sesión para solicitar el turno.')
+    const body = comoRegistro(request.body)
+    const invalidFields = Object.keys(body).filter((field) => !CAMPOS_SOLICITUD_CLIENTE.has(field))
+    if (invalidFields.length > 0) {
+      return void enviarError(response, 400, 'UNTRUSTED_BOOKING_FIELDS', 'La solicitud contiene campos que determina TUS.')
+    }
+    const oficioId = String(body['oficioId'] ?? '')
+    const inicio = String(body['inicio'] ?? '')
+    if (!oficioId || !inicio) return void enviarError(response, 400, 'INVALID_PARAMS', 'oficioId e inicio son requeridos')
     try {
       const turno = await servicio.solicitarTurno({
         prestadorId,
@@ -144,6 +151,27 @@ export function crearRouterTurnos({
     })
   )
 
+  // Deposit of an accepted turno of the session's own account: the hosted Mercado Pago checkout of
+  // that deposit. The body is never read: the turno is the one of the path, the client is the
+  // session and the amount is derived from the price stored on the reservation. It pays nothing
+  // by itself; only Mercado Pago's verified notification marks the deposit as paid.
+  router.post(
+    '/tus/v1/cliente/turnos/:id/sena/checkout',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      response.setHeader('cache-control', 'private, no-store')
+      if (Object.keys(comoRegistro(request.body)).length > 0) {
+        return void enviarError(response, 400, 'UNTRUSTED_PAYMENT_FIELDS', 'El importe y los datos del pago los determina TUS.')
+      }
+      try {
+        response.status(200).json(await servicio.pagarSena({ clienteId: context.subjectId, reservaId: String(request.params['id'] ?? ''), correlationId: context.correlationId }))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
   // -----------------------------------------------------------------------------------------------
   // 2. PRESTADOR ENDPOINTS (Gestión de sus turnos y agenda)
   // -----------------------------------------------------------------------------------------------
@@ -183,8 +211,8 @@ export function crearRouterTurnos({
     })
   )
 
-  // The provider answers a request of its own agenda. Accepting is what confirms the reservation
-  // (the time is checked again inside the transaction); rejecting gives the time back.
+  // The provider answers a request of its own agenda. Accepting reserves the time while the deposit
+  // is pending (the time is checked again inside the transaction); rejecting gives the time back.
   for (const [accion, aceptar] of [['aceptar', true], ['rechazar', false]] as const) {
     router.post(
       `/tus/v1/prestador/turnos/:id/${accion}`,

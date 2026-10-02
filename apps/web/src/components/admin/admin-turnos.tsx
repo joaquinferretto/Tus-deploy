@@ -23,7 +23,8 @@ const PESOS = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
 const TAMANO = 25
 
 const ESTADO: Record<string, { label: string; className: string }> = {
-  pending: { label: 'Pendiente de confirmación', className: styles.badgeWarn },
+  pending: { label: 'Pendiente de respuesta', className: styles.badgeWarn },
+  awaiting_payment: { label: 'Esperando pago de seña', className: styles.badgeWarn },
   confirmed: { label: 'Confirmado', className: styles.badgeOk },
   rejected: { label: 'Rechazado', className: styles.badgeDanger },
   expired: { label: 'Vencido sin respuesta', className: styles.badgeNeutral },
@@ -133,7 +134,8 @@ export function AdminTurnos(): React.ReactNode {
               value={estado}
             >
               <option value="">Todos</option>
-              <option value="pending">Pendientes de confirmación</option>
+              <option value="pending">Pendientes de respuesta</option>
+              <option value="awaiting_payment">Esperando pago de seña</option>
               <option value="confirmed">Confirmados</option>
               <option value="rejected">Rechazados</option>
               <option value="expired">Vencidos sin respuesta</option>

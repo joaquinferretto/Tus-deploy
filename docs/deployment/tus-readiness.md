@@ -44,6 +44,10 @@ POS, AWS/Groq, PostgreSQL, browser/device, and runtime evidence is current,
 scoped, unexpired, and not revoked. Settlement, payout, custody, and fleet
 claims remain disabled when any required gate is absent. The overall output must
 remain `not-production-ready` while any required external record is missing.
+Service payments (deposit of a turno, deposit and balance of a request-born
+work) are a separate capability, `service-payments`: it needs legal, tax,
+KYC/KYB, Mercado Pago and runtime evidence and never POS, AWS or Groq-migration
+evidence; `settlement` evidence does not authorize it.
 Keep deterministic tests and plan validation separate from provider, database,
 browser, device, and production smoke evidence. See the complete traceable
 matrix in `docs/evidence/readiness/tus-matrix.md`.

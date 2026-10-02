@@ -71,8 +71,30 @@ export interface EstadoConversacional {
   // Providers and real starts of the last availability search, in the order they were shown
   // ("el segundo", a name or a time on the next message refer to them). Never authoritative:
   // booking re-reads the real availability.
-  offers?: { profession: string; items: { providerId: string; name: string; starts: string[] }[] } | null
+  // esperaHora: "¿a qué hora?" was asked about the one professional in `items` (busqueda.ts).
+  offers?: { profession: string; items: { providerId: string; name: string; starts: string[] }[]; esperaHora?: boolean } | null
+  // TURNOS-SENA-01: the turno being requested (professional and time already chosen), while the
+  // conversation asks for what is still missing before the confirmation: which service (when the
+  // professional offers several) and who the client is (WhatsApp: full name + document). Never
+  // authoritative: the provider, the service, its price and the time are read again from the
+  // backend at every step, and it holds no account and no price.
+  booking?: SolicitudEnCurso | null
+  // The conversation asked for name + document for something that is not a booking (the payment
+  // link of a deposit) and is waiting for them.
+  identityFor?: { purpose: 'deposit'; at: number } | null
   lowConfidenceCount: number
+}
+
+export interface SolicitudEnCurso {
+  providerId: string
+  providerName: string
+  profession: string
+  startsAt: string
+  // Variant chosen among the ones the backend offered; null = the service has no variants.
+  tariffId: string | null
+  // 'service': waiting for the variant. 'identity': waiting for name + document (or the sign-in).
+  step: 'service' | 'identity'
+  at: number
 }
 
 export const ESTADO_CONVERSACIONAL_INICIAL: EstadoConversacional = {
@@ -103,7 +125,14 @@ export interface ConversacionWhatsapp {
   summaryMessageCount: number
   state: EstadoConversacional
   version: number
+  // Account this conversation identified by full name + document (WhatsApp has no TUS session),
+  // and when. A reference kept in its own column (FK to the account), never shown to anybody.
+  identifiedAccountId?: string | null
+  identifiedAt?: string | null
 }
+
+// How long an identification by name + document is honoured.
+export const VIGENCIA_IDENTIFICACION_MS = 24 * 60 * 60 * 1000
 
 export type DireccionMensaje = 'inbound' | 'outbound'
 
@@ -316,5 +345,9 @@ export const MENSAJES = {
   noInfo: 'No tengo información suficiente para asegurarte eso.',
   confirmationExpired: 'Esa confirmación ya venció. Si querés, lo preparo de nuevo.',
   confirmationCancelled: 'Listo, no hice ningún cambio.',
+  identityNeeded: 'Para registrar la solicitud necesito tu nombre completo y DNI.',
+  identityNotFound: 'No encontré una cuenta de TUS registrada con esos datos. Necesitás registrarte en TUS para poder solicitar el turno.',
+  identityFound: 'Encontré tu cuenta.',
+  identityBlocked: 'Por seguridad no puedo seguir verificando datos por acá. Iniciá sesión en la Web de TUS para solicitar el turno.',
   unlinked: 'Listo, desvinculé este WhatsApp de tu cuenta TUS.',
 } as const

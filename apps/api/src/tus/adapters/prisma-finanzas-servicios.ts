@@ -1,5 +1,6 @@
 import {
   TUS_CONTRACT_VERSION,
+  majorDecimalToMinorUnits,
   parseMinorUnits,
   type EstadoDespachoPagoServicio,
   type EstadoProveedorPagoServicio,
@@ -12,8 +13,10 @@ import {
 } from '@factory/contracts'
 import {
   ErrorFinanzasServicio,
+  montoSenaReserva,
   type ObligacionServicio,
   type RegistroIdempotenciaFinanciera,
+  type ReservaTurnoFinanciera,
 } from '../finance/servicios/modelo.ts'
 import type { IntencionPagoServicioDominio } from '../finance/servicios/pagos.ts'
 import type {
@@ -68,6 +71,7 @@ export interface ClientePrismaFinanzasServicio {
   compromisoMercadoServicios: DelegadoPrismaFinanzasServicio
   publicacion: DelegadoPrismaFinanzasServicio
   presupuesto: DelegadoPrismaFinanzasServicio
+  reserva: DelegadoPrismaFinanzasServicio
   obligacionPagoServicio: DelegadoPrismaFinanzasServicio
   idempotenciaFinanciera: DelegadoPrismaFinanzasServicio
   intencionPago: DelegadoPrismaFinanzasServicio
@@ -83,6 +87,30 @@ export interface ClientePrismaFinanzasServicio {
     callback: (client: ClientePrismaFinanzasServicio) => Promise<T>,
     options?: { isolationLevel?: 'Serializable' }
   ): Promise<T>
+}
+
+// The verified deposit approval and the reservation transition share the finance transaction.
+// The reservation, customer, provider and amount are checked again against persisted data.
+export async function confirmarReservaPorPagoPrisma(
+  client: ClientePrismaFinanzasServicio,
+  input: { reservaId: string; prestadorTenantId: string; clienteTenantId: string; amountMinor: bigint; currency: string }
+): Promise<boolean> {
+  const row = await client.reserva.findFirst({ where: {
+    reservaId: input.reservaId,
+    tenantId: input.prestadorTenantId,
+    clienteTenantId: input.clienteTenantId,
+    estado: 'awaiting_payment',
+    esInvitado: false,
+  } })
+  if (!row || typeof row['precioFinal'] !== 'bigint' || row['precioFinal'] <= 0n || row['moneda'] !== input.currency ||
+      !(row['solicitudExpiraEn'] instanceof Date) || row['solicitudExpiraEn'].getTime() <= Date.now()) return false
+  if (montoSenaReserva(row['precioFinal'], input.currency) !== input.amountMinor) return false
+  const updated = await client.reserva.updateMany({
+    where: { id: row['id'], estado: 'awaiting_payment', clienteTenantId: input.clienteTenantId, tenantId: input.prestadorTenantId },
+    // Confirmed: it no longer has a window that can run out.
+    data: { estado: 'confirmed', solicitudExpiraEn: null, version: { increment: 1 }, fechaActualizacion: new Date() },
+  })
+  return updated.count === 1
 }
 
 export class IdentidadServicioPrisma implements PuertoIdentidadServicio {
@@ -159,6 +187,28 @@ export class IdentidadServicioPrisma implements PuertoIdentidadServicio {
       status: texto(row, 'estado') as EstadoPresupuesto,
       currency: texto(row, 'moneda').toUpperCase(),
       totalMinor: parseMinorUnits(row['montoTotal']),
+    }
+  }
+
+  async buscarReservaTurno(input: {
+    prestadorTenantId: string
+    reservaId: string
+  }): Promise<ReservaTurnoFinanciera | null> {
+    const row = await this.client.reserva.findFirst({
+      where: { tenantId: input.prestadorTenantId, reservaId: input.reservaId },
+    })
+    if (!row) return null
+    const precio = row['precioFinal']
+    return {
+      prestadorTenantId: texto(row, 'tenantId'),
+      reservaId: texto(row, 'reservaId'),
+      clienteTenantId: textoNullable(row, 'clienteTenantId'),
+      esInvitado: row['esInvitado'] === true,
+      status: texto(row, 'estado'),
+      startsAt: fecha(row, 'fechaInicio'),
+      expiresAt: row['solicitudExpiraEn'] ? fecha(row, 'solicitudExpiraEn') : null,
+      priceMajor: precio === null || precio === undefined ? null : BigInt(precio as bigint | number | string),
+      currency: (textoNullable(row, 'moneda') ?? 'ARS').toUpperCase(),
     }
   }
 }

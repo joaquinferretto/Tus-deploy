@@ -3,6 +3,10 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import {
   CODIGO_DEMASIADAS_SOLICITUDES,
+  CODIGO_PAGO_NO_DISPONIBLE,
+  CODIGO_PAGOS_SERVICIO_NO_HABILITADOS,
+  CODIGO_PRESTADOR_SIN_COBRO,
+  CODIGO_SENA_YA_EMITIDA,
   CODIGO_SOLICITUD_NO_PENDIENTE,
   CODIGO_SOLICITUD_SIN_HORARIO,
   CODIGO_SOLICITUD_VENCIDA,
@@ -10,6 +14,7 @@ import {
   DIAS_AGENDA,
   ESTADOS_TURNO_LIBERAN,
   HORAS_VIGENCIA_SOLICITUD_TURNO,
+  HORAS_VIGENCIA_PAGO_SENA_TURNO,
   INTERVALO_TURNO_PREDETERMINADO,
   MAXIMO_DIAS_ADELANTE_AGENDA,
   MAXIMO_SOLICITUDES_PENDIENTES_POR_AGENDA,
@@ -23,6 +28,7 @@ import {
   type SolicitanteTurnoDTO,
   type AgendaSemanal,
   type BloqueoAgendaDTO,
+  type CheckoutSenaTurnoDTO,
   type ClienteTurnoAdmin,
   type ClienteTurnosDTO,
   type DetalleTurno,
@@ -38,6 +44,7 @@ import { agendaDelDia } from './agenda.ts'
 import { ErrorCalendario } from './bookings.ts'
 import { dateWeekday } from './rules.ts'
 import { SIN_NOTIFICADOR_TURNOS, type NotificadorTurnos } from './turnos-notificaciones.ts'
+import { senaDePrecio, type ServicioSenaTurnos } from './turnos-sena.ts'
 
 // A turno a client REQUESTS. The client is the account of the session (never a value of the
 // request body) and its name and contact are read from that account, not copied here.
@@ -115,14 +122,14 @@ const ESTADOS_LIBERAN: string[] = [...ESTADOS_TURNO_LIBERAN]
 
 // Reservations that still hold their time: not released, and not a request whose validity ran
 // out (the next write of its agenda marks it `expired`; until then every read already ignores it).
-const queOcupan = (ahora: Date) => ({ estado: { notIn: ESTADOS_LIBERAN }, NOT: { estado: 'pending', solicitudExpiraEn: { lte: ahora } } })
+const queOcupan = (ahora: Date) => ({ estado: { notIn: ESTADOS_LIBERAN }, NOT: { estado: { in: ['pending', 'awaiting_payment'] }, solicitudExpiraEn: { lte: ahora } } })
 
 // Filter of a list by the state each row is SHOWN with: a request whose validity ran out reads as
 // expired even before a write marks it, so it is listed under "expired" and never under "pending".
 function filtroPorEstado(estado: string): Record<string, unknown> {
   const ahora = new Date()
-  if (estado === 'pending') return { estado: 'pending', solicitudExpiraEn: { gt: ahora } }
-  if (estado === 'expired') return { OR: [{ estado: 'expired' }, { estado: 'pending', solicitudExpiraEn: { lte: ahora } }] }
+  if (estado === 'pending' || estado === 'awaiting_payment') return { estado, solicitudExpiraEn: { gt: ahora } }
+  if (estado === 'expired') return { OR: [{ estado: 'expired' }, { estado: { in: ['pending', 'awaiting_payment'] }, solicitudExpiraEn: { lte: ahora } }] }
   return { estado }
 }
 
@@ -169,14 +176,68 @@ type CalendarioAgenda = { id: string; granularidadMinutos: number; bufferMinutos
 type FilaReserva = Prisma.ReservaGetPayload<object>
 
 export class ServicioTurnos {
+  private readonly notificadores: NotificadorTurnos[]
+  // Deposit of the turnos (TURNOS-SENA-01); without it no turno shows or charges one.
+  private senas: ServicioSenaTurnos | null = null
+
   constructor(
     private readonly prisma: PrismaClient,
-    private readonly notificador: NotificadorTurnos = SIN_NOTIFICADOR_TURNOS
-  ) {}
+    notificador: NotificadorTurnos = SIN_NOTIFICADOR_TURNOS
+  ) {
+    this.notificadores = [notificador]
+  }
 
-  // Outbound notices never decide anything: they run after the commit and a failure is ignored.
-  private avisar(envio: () => Promise<void>): void {
-    void envio().catch(() => undefined)
+  // Wired after the services they need exist (payments, the assistant's channels).
+  conSenas(senas: ServicioSenaTurnos): this {
+    this.senas = senas
+    return this
+  }
+
+  agregarNotificador(notificador: NotificadorTurnos): this {
+    this.notificadores.push(notificador)
+    return this
+  }
+
+  // Outbound notices never decide anything: they run after the commit, each channel on its own,
+  // and a failure is ignored.
+  private avisar(envio: (notificador: NotificadorTurnos) => Promise<void>): void {
+    for (const notificador of this.notificadores) void Promise.resolve().then(() => envio(notificador)).catch(() => undefined)
+  }
+
+  // Called only after the finance transaction applied a verified deposit approval. The work is
+  // the normalized link from payment obligation to reservation; no webhook body supplies a client.
+  async avisarTurnoConfirmado(trabajoId: string): Promise<void> {
+    const orden = await this.prisma.trabajo.findFirst({ where: { trabajoId, origen: 'turno' } })
+    if (!orden?.reservaId) return
+    const reserva = await this.prisma.reserva.findFirst({ where: {
+      reservaId: orden.reservaId,
+      tenantId: orden.prestadorTenantId,
+      clienteTenantId: orden.tenantId,
+      estado: 'confirmed',
+    } })
+    if (!reserva) return
+    const [perfil, oficios, clientes] = await Promise.all([
+      this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: reserva.tenantId } }),
+      this.nombresDeOficio([reserva]),
+      this.clientesDe([reserva]),
+    ])
+    const nombreCliente = clientes.get(reserva.clienteId)?.nombre ?? 'Tu cliente'
+    this.avisar((notificador) => notificador.turnoConfirmado({
+      reservaId: reserva.id,
+      clienteCuentaId: reserva.clienteId,
+      prestadorTenantId: reserva.tenantId,
+      clienteNombre: nombreCliente,
+      prestadorNombre: perfil?.nombrePublico ?? 'El profesional',
+      servicio: reserva.tarifaNombre ?? (reserva.servicioId ? oficios.get(reserva.servicioId) : null) ?? 'el servicio',
+      inicio: reserva.fechaInicio,
+    }))
+  }
+
+  // The deposit of each turno, derived (never stored on the reservation): one batch for the list.
+  private async agregarSenas(rows: FilaReserva[], turnos: DetalleTurno[]): Promise<DetalleTurno[]> {
+    if (!this.senas || rows.length === 0) return turnos
+    const senas = await this.senas.senasDe(rows)
+    return turnos.map((turno) => ({ ...turno, sena: senas.get(turno.id) ?? null }))
   }
 
   /**
@@ -192,7 +253,7 @@ export class ServicioTurnos {
       // Requests nobody answered in time give their time back before anything else is decided.
       const ahora = new Date()
       await tx.reserva.updateMany({
-        where: { calendarioId: calendario.id, estado: 'pending', solicitudExpiraEn: { lte: ahora } },
+        where: { calendarioId: calendario.id, estado: { in: ['pending', 'awaiting_payment'] }, solicitudExpiraEn: { lte: ahora } },
         data: { estado: 'expired', version: { increment: 1 }, fechaActualizacion: ahora },
       })
       // The interval may have changed while waiting for the lock.
@@ -351,7 +412,9 @@ export class ServicioTurnos {
     const calendario = await this.asegurarCalendarioPrestador(servicio.perfil.tenantId, servicio.perfil.prestadorId)
     const fechas = Array.from({ length: DIAS_AGENDA }, (_, index) => sumarDias(input.desde, index))
     const dias = await this.agendaDias(calendario, fechas, duracion, servicio.config.bufferMinutos ?? calendario.bufferMinutos ?? 0)
-    return { desde: input.desde, hasta, duracionMinutos: duracion, tarifas: servicio.tarifas, dias }
+    const precio = tarifa?.precio ?? (servicio.config.precioBase === null ? null : Number(servicio.config.precioBase))
+    const conSena = precio !== null && precio > 0 && this.senas ? await this.senas.requeridaPara(servicio.perfil.tenantId) : false
+    return { desde: input.desde, hasta, duracionMinutos: duracion, tarifas: servicio.tarifas, dias, precio: precio !== null && precio > 0 ? precio : null, sena: conSena ? senaDePrecio(precio!) : null }
   }
 
   /**
@@ -452,13 +515,14 @@ export class ServicioTurnos {
    * `pending`, que retiene el horario hasta que el prestador responda o venza su vigencia
    * (HORAS_VIGENCIA_SOLICITUD_TURNO, nunca más allá del inicio del turno). La disponibilidad se
    * vuelve a decidir acá, con la agenda bloqueada: lo que el cliente vio en pantalla no garantiza
-   * nada. Solo el prestador la convierte en `confirmed` (aceptarSolicitud).
+   * nada. El prestador la convierte en `awaiting_payment`; el webhook verificado de la seña es la
+   * única vía normal que luego la convierte en `confirmed`.
    */
   async solicitarTurno(input: EntradaSolicitudTurno): Promise<DetalleTurno> {
     const turno = await this.crearTurno({ ...input }, true)
     const expiraEn = turno.expiraEn ? new Date(turno.expiraEn) : new Date(turno.inicio)
-    this.avisar(async () =>
-      this.notificador.solicitudRecibida({
+    this.avisar((notificador) =>
+      notificador.solicitudRecibida({
         reservaId: turno.id,
         prestadorTenantId: turno.tenantId,
         clienteNombre: turno.clienteNombre ?? 'Un cliente',
@@ -512,12 +576,20 @@ export class ServicioTurnos {
     }
 
     let tarifa = input.tarifaId ? perfil.tarifas.find((t) => t.id === input.tarifaId) : null
+    // A variant that was named must be one of THIS provider's service: its price is what the
+    // client saw. An unknown one is refused instead of silently charging another variant.
+    if (input.tarifaId && !tarifa) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Esa tarifa no pertenece al servicio')
     if (!tarifa && perfil.tarifas.length > 0) {
       tarifa = perfil.tarifas[0]
     }
 
     const duracion = tarifa?.duracionMinutos ?? servicioConfig?.duracionMinutos ?? 60
     const precio = tarifa?.precio ?? servicioConfig?.precioBase ?? 0n
+    // Where a turno is confirmed by paying its deposit (online payments on), a service without a
+    // published price cannot be requested: there would be nothing to compute the deposit from and
+    // the turno could never be confirmed. With payments off a price-less service works as before.
+    if (solicitud && precio <= 0n && this.senas && (await this.senas.exigePrecio(perfil.tenantId)))
+      throw new ErrorCalendario(409, 'SERVICE_PRICE_REQUIRED', 'Este servicio necesita un precio publicado para solicitar un turno con seña.')
 
     const inicio = new Date(input.inicio)
     if (isNaN(inicio.getTime())) {
@@ -576,7 +648,8 @@ export class ServicioTurnos {
       })
 
       const [clientes, oficios] = await Promise.all([this.clientesDe([row]), this.nombresDeOficio([row])])
-      return this.mapearDetalleTurno(row, perfil.nombrePublico, { cliente: clientes.get(row.clienteId) ?? null, contacto: 'siempre', oficioNombre: oficios.get(input.oficioId) })
+      const [turno] = await this.agregarSenas([row], [this.mapearDetalleTurno(row, perfil.nombrePublico, { cliente: clientes.get(row.clienteId) ?? null, contacto: 'siempre', oficioNombre: oficios.get(input.oficioId) })])
+      return turno!
     } catch (error: unknown) {
       if (esSolapamiento(error)) throw horarioOcupado('El horario seleccionado ya fue reservado. Por favor elegí otro horario.')
       throw error
@@ -620,7 +693,7 @@ export class ServicioTurnos {
   // turno is confirmed.
   private async detallesPrestador(rows: FilaReserva[], prestadorNombre: string): Promise<DetalleTurno[]> {
     const [clientes, oficios] = await Promise.all([this.clientesDe(rows), this.nombresDeOficio(rows)])
-    return rows.map((row) => this.mapearDetalleTurno(row, prestadorNombre, { cliente: clientes.get(row.clienteId) ?? null, contacto: 'confirmado', oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined }))
+    return this.agregarSenas(rows, rows.map((row) => this.mapearDetalleTurno(row, prestadorNombre, { cliente: clientes.get(row.clienteId) ?? null, contacto: 'confirmado', oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined })))
   }
 
   // Name and contact of the registered clients of some reservations, read from their accounts in
@@ -653,9 +726,9 @@ export class ServicioTurnos {
   }
 
   /**
-   * El prestador ACEPTA una solicitud: recién ahí la reserva queda confirmada. Se decide con la
+   * El prestador ACEPTA una solicitud: queda esperando el pago de la seña. Se decide con la
    * agenda bloqueada y volviendo a mirar el horario: si mientras tanto quedó bloqueado u ocupado,
-   * no se confirma y la solicitud queda rechazada.
+   * no se acepta y la solicitud queda rechazada.
    */
   async aceptarSolicitud(input: { prestadorTenantId: string; reservaId: string }): Promise<DetalleTurno> {
     return this.responderSolicitud({ ...input, aceptar: true })
@@ -675,7 +748,15 @@ export class ServicioTurnos {
     })
     const calendario = reserva ? await this.prisma.calendario.findUnique({ where: { id: reserva.calendarioId } }) : null
     if (!reserva || !calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Solicitud no encontrada')
-    const destino: EstadoTurno = input.aceptar ? 'confirmed' : 'rejected'
+    // Accepting opens the payment of the deposit; the verified payment is what confirms. Only a
+    // turno with nothing to pay (no price, or online payments off for the whole platform) is
+    // confirmed by the acceptance itself. A provider that cannot charge yet cannot accept, and
+    // nobody can while TUS itself is not authorized to charge service payments in production.
+    const requisito = input.aceptar && reserva.estado === 'pending' && this.senas ? await this.senas.requisitoDe(reserva) : 'sin_sena'
+    if (requisito === 'bloqueada') throw new ErrorCalendario(409, CODIGO_PRESTADOR_SIN_COBRO, 'Para aceptar turnos con seña primero tenés que conectar tu cuenta de Mercado Pago y tener tu identidad verificada.')
+    if (requisito === 'no_habilitada') throw new ErrorCalendario(409, CODIGO_PAGOS_SERVICIO_NO_HABILITADOS, 'Los pagos de servicios todavía no están habilitados en TUS. Por ahora no se pueden aceptar turnos con seña; la solicitud sigue pendiente.')
+    const aceptado: EstadoTurno = requisito === 'exigible' ? 'awaiting_payment' : 'confirmed'
+    const destino: EstadoTurno = input.aceptar ? aceptado : 'rejected'
 
     const resultado = await this.conAgendaBloqueada(calendario, async (tx) => {
       const ahora = new Date()
@@ -684,17 +765,21 @@ export class ServicioTurnos {
       const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
       if (!actual) return { tipo: 'respondida' as const }
       // The same answer twice (double click, two tabs) is the same result, not an error.
-      if (actual.estado === destino) return { tipo: 'repetida' as const, row: actual }
+      if (actual.estado === destino || (input.aceptar && (actual.estado === 'awaiting_payment' || actual.estado === 'confirmed'))) return { tipo: 'repetida' as const, row: actual }
       if (actual.estado === 'expired') return { tipo: 'vencida' as const }
       if (actual.estado !== 'pending') return { tipo: 'respondida' as const }
-      const pasar = (estado: EstadoTurno) => tx.reserva.update({ where: { id: actual.id }, data: { estado, version: { increment: 1 }, fechaActualizacion: ahora } })
+      const pasar = (estado: EstadoTurno) => tx.reserva.update({ where: { id: actual.id }, data: {
+        estado,
+        ...(estado === 'awaiting_payment' ? { solicitudExpiraEn: new Date(Math.min(ahora.getTime() + HORAS_VIGENCIA_PAGO_SENA_TURNO * 3_600_000, actual.fechaInicio.getTime())) } : {}),
+        version: { increment: 1 }, fechaActualizacion: ahora,
+      } })
       if (!input.aceptar) return { tipo: 'hecha' as const, row: await pasar('rejected') }
       if (actual.fechaInicio.getTime() <= ahora.getTime()) {
         await pasar('expired')
         return { tipo: 'vencida' as const }
       }
       // Still free? The request held its time against other turnos (PostgreSQL), but the provider
-      // may have blocked it since. Both are looked at again here; nothing is confirmed on trust.
+      // may have blocked it since. Both are looked at again here; nothing is accepted on trust.
       const bloqueo = await tx.excepcionCalendario.findFirst({
         where: { calendarioId: actual.calendarioId, estado: 'active', fechaInicio: { lt: actual.fechaFin }, fechaFin: { gt: actual.fechaInicio } },
       })
@@ -702,7 +787,7 @@ export class ServicioTurnos {
         where: { calendarioId: actual.calendarioId, id: { not: actual.id }, ...queOcupan(ahora), fechaInicio: { lt: actual.fechaFin }, fechaFin: { gt: actual.fechaInicio } },
       })
       if (bloqueo || otro) return { tipo: 'ocupada' as const, row: await pasar('rejected') }
-      return { tipo: 'hecha' as const, row: await pasar('confirmed') }
+      return { tipo: 'hecha' as const, row: await pasar(aceptado) }
     })
 
     if (resultado.tipo === 'vencida') throw new ErrorCalendario(409, CODIGO_SOLICITUD_VENCIDA, 'La solicitud venció antes de ser respondida.')
@@ -711,24 +796,32 @@ export class ServicioTurnos {
     const [turno] = await this.detallesPrestador([resultado.row], perfil?.nombrePublico ?? 'Prestador')
     if (resultado.tipo !== 'repetida' && !resultado.row.esInvitado) {
       const fila = resultado.row
-      this.avisar(async () =>
-        this.notificador.solicitudRespondida({
-          reservaId: fila.id,
-          clienteCuentaId: fila.clienteId,
-          resultado: fila.estado === 'confirmed' ? 'confirmed' : 'rejected',
-          prestadorNombre: perfil?.nombrePublico ?? 'El profesional',
-          servicio: turno!.oficioNombre ?? turno!.tarifaNombre ?? 'el servicio',
-          inicio: fila.fechaInicio,
-        })
-      )
+      const aceptada = fila.estado === 'awaiting_payment' || fila.estado === 'confirmed'
+      // Accepted: the deposit becomes payable. Its checkout is prepared here (after the commit,
+      // outside any transaction) so the notice can carry the real link; when it cannot be prepared
+      // the notice goes without it and the client asks for it from "Mis turnos" or the assistant.
+      void (async () => {
+        const pago = fila.estado === 'awaiting_payment' && this.senas && turno!.sena?.estado === 'pending' ? await this.senas.enlaceAlAceptar(fila, `turno-aceptado:${fila.reservaId}`) : null
+        this.avisar((notificador) =>
+          notificador.solicitudRespondida({
+            reservaId: fila.id,
+            clienteCuentaId: fila.clienteId,
+            resultado: fila.estado === 'awaiting_payment' ? 'awaiting_payment' : fila.estado === 'confirmed' ? 'confirmed' : 'rejected',
+            prestadorNombre: perfil?.nombrePublico ?? 'El profesional',
+            servicio: turno!.oficioNombre ?? turno!.tarifaNombre ?? 'el servicio',
+            inicio: fila.fechaInicio,
+            sena: fila.estado === 'awaiting_payment' && turno!.sena ? { monto: turno!.sena.monto, moneda: turno!.sena.moneda, pagable: turno!.sena.estado === 'pending', url: pago?.checkoutUrl ?? null } : null,
+          })
+        )
+      })().catch(() => undefined)
     }
-    // Stored as rejected (committed above); the provider is told why it could not be confirmed.
+    // Stored as rejected (committed above); the provider is told why it could not be accepted.
     if (resultado.tipo === 'ocupada') throw new ErrorCalendario(409, CODIGO_SOLICITUD_SIN_HORARIO, 'Ese horario ya no está libre en tu agenda: la solicitud quedó rechazada.')
     return turno!
   }
 
   /**
-   * Turnos del cliente de la sesión (solicitudes pendientes, confirmados e historial), con el
+   * Turnos del cliente de la sesión (solicitudes pendientes, esperando pago, confirmados e historial), con el
    * nombre del prestador y del servicio.
    */
   async turnosCliente(clienteId: string): Promise<DetalleTurno[]> {
@@ -739,14 +832,14 @@ export class ServicioTurnos {
       this.nombresDeOficio(rows),
     ])
     const perfilDe = new Map(perfiles.map((perfil) => [perfil.tenantId, perfil]))
-    return rows.map((row) => {
+    return this.agregarSenas(rows, rows.map((row) => {
       const perfil = perfilDe.get(row.tenantId)
       return {
         ...this.mapearDetalleTurno(row, perfil?.nombrePublico ?? 'Prestador', { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined }),
         // Public profile id: the link back to the professional.
         ...(perfil ? { prestadorId: perfil.id } : {}),
       }
-    })
+    }))
   }
 
   /**
@@ -764,12 +857,21 @@ export class ServicioTurnos {
       const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
       if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
       if (actual.estado === 'cancelled') return actual
-      if ((actual.estado !== 'pending' && actual.estado !== 'confirmed') || actual.fechaInicio.getTime() <= ahora.getTime())
+      if ((actual.estado !== 'pending' && actual.estado !== 'awaiting_payment' && actual.estado !== 'confirmed') || actual.fechaInicio.getTime() <= ahora.getTime())
         throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no se puede cancelar.')
       return tx.reserva.update({ where: { id: actual.id }, data: { estado: 'cancelled', version: { increment: 1 }, fechaActualizacion: ahora } })
     })
     const [perfil, oficios] = await Promise.all([this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: row.tenantId } }), this.nombresDeOficio([row])])
     return this.mapearDetalleTurno(row, perfil?.nombrePublico ?? 'Prestador', { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined })
+  }
+
+  /**
+   * El cliente pide pagar la seña de SU turno aceptado: checkout de Mercado Pago de esa seña.
+   * Abrirlo no paga nada: la seña figura pagada recién con la notificación verificada.
+   */
+  async pagarSena(input: { clienteId: string; reservaId: string; correlationId: string }): Promise<CheckoutSenaTurnoDTO> {
+    if (!this.senas) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'El pago online todavía no está disponible.')
+    return this.senas.iniciarPago(input)
   }
 
   /**
@@ -947,7 +1049,7 @@ export class ServicioTurnos {
       // Nothing leaves a final state, and a request is never confirmed from here: only its
       // provider accepts it (aceptarSolicitud re-checks the time). Expiry is the system's.
       const permitidos: readonly string[] = esEstadoTurno(actual.estado) ? TRANSICIONES_TURNO[actual.estado] : []
-      if (!permitidos.includes(nuevo) || nuevo === 'expired' || (actual.estado === 'pending' && nuevo === 'confirmed'))
+      if (!permitidos.includes(nuevo) || nuevo === 'expired' || nuevo === 'confirmed' || nuevo === 'awaiting_payment')
         throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no admite ese cambio de estado.')
       return tx.reserva.update({
         where: { id: actual.id },
@@ -989,6 +1091,10 @@ export class ServicioTurnos {
 
     if (!reserva) {
       throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+    }
+    // The deposit was computed from this price and may already be paid: the price is now fixed.
+    if (this.senas && (await this.senas.emitida(reserva))) {
+      throw new ErrorCalendario(409, CODIGO_SENA_YA_EMITIDA, 'Ese turno ya tiene su seña emitida: el precio no se puede modificar.')
     }
 
     const updated = await this.prisma.reserva.update({
@@ -1180,7 +1286,9 @@ export class ServicioTurnos {
       },
     })
     if (!perfil) throw new ErrorCalendario(404, 'NOT_FOUND', 'Prestador no encontrado')
+    const senaRequerida = this.senas ? await this.senas.requeridaPara(perfil.tenantId) : false
     return perfil.servicios.map((servicio) => ({
+      senaRequerida,
       oficioId: servicio.oficioId,
       nombre: servicio.oficio.nombre,
       turnosHabilitados: perfil.aceptaTurnos && servicio.turnosHabilitados,
@@ -1348,14 +1456,14 @@ export class ServicioTurnos {
     const oficioDe = new Map(nombresOficio.map((oficio) => [oficio.id, oficio.nombre]))
 
     return {
-      items: rows.map((r) => {
+      items: await this.agregarSenas(rows, rows.map((r) => {
         const perfil = perfilDe.get(r.tenantId)
         return {
           ...this.mapearDetalleTurno(r, perfil?.nombrePublico ?? 'Prestador', { cliente: clientes.get(r.clienteId) ?? null, contacto: 'siempre' }),
           ...(perfil ? { prestadorId: perfil.id } : {}),
           ...(r.servicioId && oficioDe.has(r.servicioId) ? { oficioNombre: oficioDe.get(r.servicioId)! } : {}),
         }
-      }),
+      })),
       total,
       pagina,
       totalPaginas: Math.max(1, Math.ceil(total / tamano)),
@@ -1486,7 +1594,7 @@ export class ServicioTurnos {
   ): DetalleTurno {
     const vence = r['solicitudExpiraEn'] ? new Date(String(r['solicitudExpiraEn'])) : null
     // A request whose validity ran out reads as expired even before a write marks it.
-    const estado = r['estado'] === 'pending' && vence && vence.getTime() <= Date.now() ? 'expired' : String(r['estado'])
+    const estado = (r['estado'] === 'pending' || r['estado'] === 'awaiting_payment') && vence && vence.getTime() <= Date.now() ? 'expired' : String(r['estado'])
     const verContacto = extra.contacto !== 'confirmado' || estado === 'confirmed' || estado === 'completed'
     const cliente = extra.cliente ?? null
     return {
@@ -1505,7 +1613,7 @@ export class ServicioTurnos {
       precioFinal: r['precioFinal'] != null ? Number(r['precioFinal']) : null,
       moneda: String(r['moneda'] ?? 'ARS'),
       estado,
-      expiraEn: estado === 'pending' && vence ? vence.toISOString() : null,
+      expiraEn: (estado === 'pending' || estado === 'awaiting_payment') && vence ? vence.toISOString() : null,
       ...(extra.oficioNombre ? { oficioNombre: extra.oficioNombre } : {}),
       clienteNombre: cliente ? cliente.nombre : r['clienteNombre'] ? String(r['clienteNombre']) : null,
       clienteTelefono: !verContacto ? null : cliente ? cliente.telefono : r['clienteTelefono'] ? String(r['clienteTelefono']) : null,

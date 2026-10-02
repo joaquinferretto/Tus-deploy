@@ -14,10 +14,11 @@ import { effectiveListingDuration, publicationRequiresBudget } from '../catalog/
 
 // States of a reservation (reservas.estado, ESTADOS_TURNO in the contracts). A client never
 // creates a confirmed one: its booking is a REQUEST (`pending`) that holds its time until the
-// provider answers or its validity runs out. Only the provider confirms it: by accepting the
-// request in its agenda or by accepting the work the reservation belongs to.
+// provider answers or its validity runs out. Provider acceptance moves it to awaiting_payment;
+// only the verified payment event moves it to confirmed.
 const BOOKING_STATUS = {
   PENDING: 'pending',
+  AWAITING_PAYMENT: 'awaiting_payment',
   CONFIRMED: 'confirmed',
   REJECTED: 'rejected',
   EXPIRED: 'expired',
@@ -40,8 +41,8 @@ export interface Reserva {
   startsAt: string
   endsAt: string
   status: BookingStatus
-  // Until when a pending request holds its time (reservas.solicitud_expira_en). Decided by the
-  // server: 24 hours and never beyond the start of the reservation.
+  // Until when a pending or awaiting-payment request holds its time
+  // (reservas.solicitud_expira_en), never beyond the start of the reservation.
   requestExpiresAt?: string
   version: number
   priceSnapshot?: MoneySnapshot
@@ -582,7 +583,7 @@ export class ServiceCalendarService {
         customerId: input.customerId,
         startsAt: slot.start,
         endsAt: slot.end,
-        // A REQUEST: nothing sent by the client can make it confirmed. The provider confirms it.
+        // A REQUEST: nothing sent by the client can make it accepted or confirmed.
         status: BOOKING_STATUS.PENDING,
         requestExpiresAt: new Date(Math.min(serverNow + HORAS_VIGENCIA_SOLICITUD_TURNO * 3_600_000, Date.parse(slot.start))).toISOString(),
         version: 1,
@@ -674,7 +675,7 @@ export class ServiceCalendarService {
         throw new ErrorCalendario(409, 'STALE_VERSION', 'booking version is stale')
       // A request still waiting: its client withdraws it (cancelled) or the provider of the
       // agenda turns it down (rejected). Either way the time is offered again.
-      if (booking.status === BOOKING_STATUS.PENDING) {
+      if (booking.status === BOOKING_STATUS.PENDING || booking.status === BOOKING_STATUS.AWAITING_PAYMENT) {
         const byProvider = booking.ownerTenantId === context.tenantId && booking.tenantId !== context.tenantId
         const answered = {
           ...booking,
@@ -863,7 +864,7 @@ function addMinutes(timestamp: string, minutes: number): string {
 
 // A pending request whose validity ran out (it no longer holds its time).
 function requestIsOverdue(booking: Reserva, now: number): boolean {
-  return booking.status === BOOKING_STATUS.PENDING && Date.parse(booking.requestExpiresAt ?? booking.startsAt) <= now
+  return (booking.status === BOOKING_STATUS.PENDING || booking.status === BOOKING_STATUS.AWAITING_PAYMENT) && Date.parse(booking.requestExpiresAt ?? booking.startsAt) <= now
 }
 
 function availableCapacity(
@@ -873,10 +874,10 @@ function availableCapacity(
   now: number
 ): number {
   // The calendar of a provider is also its agenda of turnos (TURNOS-SOLICITUD-01): a confirmed
-  // reservation and a request still waiting for the provider both hold their time, and PostgreSQL
-  // would refuse a reservation over them. An overdue request holds nothing.
+  // reservation, a pending request and an accepted request awaiting payment hold their time.
+  // PostgreSQL refuses a reservation over them. An overdue request holds nothing.
   const holdsTime = (booking: Reserva): boolean =>
-    booking.status === BOOKING_STATUS.CONFIRMED || (booking.status === BOOKING_STATUS.PENDING && !requestIsOverdue(booking, now))
+    booking.status === BOOKING_STATUS.CONFIRMED || ((booking.status === BOOKING_STATUS.PENDING || booking.status === BOOKING_STATUS.AWAITING_PAYMENT) && !requestIsOverdue(booking, now))
   const active = bookings.filter(
     (booking) =>
       holdsTime(booking) &&

@@ -29,15 +29,25 @@ export function mensajeErrorTurno(code: string | undefined, fallback = 'No pudim
   if (code === CODIGO_DEMASIADAS_SOLICITUDES) return 'Ya tenés varias solicitudes pendientes con este profesional. Esperá su respuesta o cancelá alguna.'
   if (code === CODIGO_TRANSICION_INVALIDA) return 'Ese turno ya no admite ese cambio.'
   if (code === CODIGO_SOLICITUD_SIN_HORARIO) return 'Ese horario ya no está libre en tu agenda: la solicitud quedó rechazada.'
+  if (code === CODIGO_PRESTADOR_SIN_COBRO) return 'Para aceptar turnos con seña primero tenés que conectar tu cuenta de Mercado Pago y tener tu identidad verificada.'
+  if (code === CODIGO_PAGOS_SERVICIO_NO_HABILITADOS) return 'Los pagos de servicios todavía no están habilitados en TUS. Por ahora no se pueden aceptar turnos con seña; la solicitud sigue pendiente.'
+  if (code === CODIGO_SENA_NO_PAGABLE) return 'La seña de ese turno no se puede pagar ahora.'
+  if (code === CODIGO_SENA_YA_PAGADA) return 'La seña de ese turno ya está pagada.'
+  if (code === CODIGO_PAGO_NO_DISPONIBLE) return 'El pago online todavía no está disponible para ese profesional. Coordiná la seña directamente con él.'
+  if (code === CODIGO_SENA_YA_EMITIDA) return 'Ese turno ya tiene su seña emitida: el precio no se puede modificar.'
   return fallback
 }
 
 // ---- states of a turno --------------------------------------------------------------------------
 // A client never confirms a turno: it REQUESTS it. The row is born `pending` (it holds its time
-// until the request is answered or its validity runs out) and only the provider turns it into
-// `confirmed`. reservas.estado is the single source of truth (ck_reservas_estado).
+// until the request is answered or its validity runs out). Provider acceptance opens payment and
+// only the verified deposit event turns it into `confirmed`. reservas.estado is the source of truth.
+// The one case where the acceptance itself confirms is a turno with NO deposit to pay (no price,
+// or online payments switched off for the whole platform): there is nothing to wait for. With
+// payments on, a provider that cannot charge (no Mercado Pago account, identity not verified)
+// cannot accept: the turno is never confirmed for free (same rule as W09-05).
 
-export const ESTADOS_TURNO = ['pending', 'confirmed', 'rejected', 'expired', 'cancelled', 'cancelled-late', 'no-show', 'completed'] as const
+export const ESTADOS_TURNO = ['pending', 'awaiting_payment', 'confirmed', 'rejected', 'expired', 'cancelled', 'cancelled-late', 'no-show', 'completed'] as const
 export type EstadoTurno = (typeof ESTADOS_TURNO)[number]
 
 // States that give the time back. The same list as the predicate of ex_reservas_sin_solapamiento.
@@ -45,7 +55,8 @@ export const ESTADOS_TURNO_LIBERAN = ['cancelled', 'cancelled-late', 'no-show', 
 
 // Allowed changes of state. Nothing leaves a final state.
 export const TRANSICIONES_TURNO: Record<EstadoTurno, readonly EstadoTurno[]> = {
-  pending: ['confirmed', 'rejected', 'cancelled', 'expired'],
+  pending: ['awaiting_payment', 'confirmed', 'rejected', 'cancelled', 'expired'],
+  awaiting_payment: ['confirmed', 'cancelled', 'expired'],
   confirmed: ['completed', 'cancelled', 'cancelled-late', 'no-show'],
   rejected: [],
   expired: [],
@@ -58,10 +69,11 @@ export const TRANSICIONES_TURNO: Record<EstadoTurno, readonly EstadoTurno[]> = {
 export const esEstadoTurno = (value: unknown): value is EstadoTurno => (ESTADOS_TURNO as readonly unknown[]).includes(value)
 
 const ETIQUETAS_ESTADO_TURNO: Record<EstadoTurno, string> = {
-  pending: 'Pendiente de confirmación',
-  confirmed: 'Confirmada',
+  pending: 'Pendiente de respuesta',
+  awaiting_payment: 'Esperando pago de seña',
+  confirmed: 'Turno confirmado',
   rejected: 'Rechazada',
-  expired: 'Vencida sin respuesta',
+  expired: 'Vencida',
   cancelled: 'Cancelada',
   'cancelled-late': 'Cancelada fuera de término',
   'no-show': 'Ausente',
@@ -72,6 +84,8 @@ export const etiquetaEstadoTurno = (estado: string): string => (esEstadoTurno(es
 
 // How long a request holds its time waiting for the provider (never beyond the start of the turno).
 export const HORAS_VIGENCIA_SOLICITUD_TURNO = 24
+// The same hold window starts again when the provider accepts and the deposit becomes due.
+export const HORAS_VIGENCIA_PAGO_SENA_TURNO = HORAS_VIGENCIA_SOLICITUD_TURNO
 // Requests one client may have waiting in the same agenda at once.
 export const MAXIMO_SOLICITUDES_PENDIENTES_POR_AGENDA = 3
 
@@ -82,6 +96,64 @@ export const CODIGO_DEMASIADAS_SOLICITUDES = 'TOO_MANY_PENDING_REQUESTS'
 export const CODIGO_TRANSICION_INVALIDA = 'INVALID_TRANSITION'
 // The provider accepted a request whose time is no longer free in its agenda: stored as rejected.
 export const CODIGO_SOLICITUD_SIN_HORARIO = 'REQUEST_SLOT_UNAVAILABLE'
+// The turno has a deposit and its provider cannot charge it yet: the request stays pending.
+export const CODIGO_PRESTADOR_SIN_COBRO = 'PROVIDER_PAYMENT_ACCOUNT_REQUIRED'
+// The turno has a deposit and TUS itself may not charge service payments yet (production without
+// the `service-payments` readiness authorization): the request stays pending, never confirmed.
+export const CODIGO_PAGOS_SERVICIO_NO_HABILITADOS = 'SERVICE_PAYMENTS_NOT_AUTHORIZED'
+
+// ---- deposit of a turno (TURNOS-SENA-01) -------------------------------------------------------
+// The deposit ("seña") of a turno is half of its price. Nothing of it is stored on the
+// reservation: the amount derives from reservas.precio_final (one rule, in the backend) and the
+// status from the payment obligation of the turno, which only Mercado Pago's verified
+// notification moves to `paid`.
+//   not_due         still a request: the deposit is asked once the provider accepts
+//   unavailable     accepted, but online payment is not available for that provider yet
+//   pending         accepted: the deposit can be paid now
+//   paid | refunded | charged_back   as Mercado Pago reported
+// A turno without a deposit (no price, a guest or manual turno, or one that ended without paying
+// it) simply has none: `sena` is null.
+export const ESTADOS_SENA_TURNO = ['not_due', 'unavailable', 'pending', 'paid', 'refunded', 'charged_back'] as const
+export type EstadoSenaTurno = (typeof ESTADOS_SENA_TURNO)[number]
+
+export interface SenaTurnoDTO {
+  // In pesos (it may carry cents when the price is odd).
+  monto: number
+  moneda: string
+  estado: EstadoSenaTurno
+}
+
+// Answer of "pay the deposit": the hosted Mercado Pago checkout of THAT deposit. Opening it pays
+// nothing by itself: the turno shows `paid` only after the verified notification.
+export interface CheckoutSenaTurnoDTO {
+  checkoutUrl: string
+  monto: number
+  moneda: string
+}
+
+export const CODIGO_SENA_NO_PAGABLE = 'DEPOSIT_NOT_PAYABLE'
+export const CODIGO_SENA_YA_PAGADA = 'DEPOSIT_ALREADY_PAID'
+export const CODIGO_PAGO_NO_DISPONIBLE = 'PAYMENT_NOT_AVAILABLE'
+// The price of a turno cannot change once its deposit was issued.
+export const CODIGO_SENA_YA_EMITIDA = 'DEPOSIT_ALREADY_ISSUED'
+
+const ETIQUETAS_SENA_TURNO: Record<EstadoSenaTurno, string> = {
+  not_due: 'Se abona cuando el prestador acepte',
+  unavailable: 'Se coordina con el prestador',
+  pending: 'Pendiente de pago',
+  paid: 'Pagada',
+  refunded: 'Reintegrada',
+  charged_back: 'Desconocida por el medio de pago',
+}
+
+export const etiquetaSenaTurno = (estado: string): string => ((ESTADOS_SENA_TURNO as readonly string[]).includes(estado) ? ETIQUETAS_SENA_TURNO[estado as EstadoSenaTurno] : estado)
+
+// "$25.000", "$12.500,50": how a price in pesos is shown to a person, everywhere.
+export function formatearPesos(monto: number): string {
+  const [entero, decimales] = (Math.round(monto * 100) / 100).toFixed(2).split('.')
+  const miles = entero!.replace(/\B(?=(\d{3})+(?!\d))/gu, '.')
+  return `$${miles}${decimales === '00' ? '' : `,${decimales}`}`
+}
 
 // What a signed-in person sees before requesting ("Solicitás el turno como"): data of the
 // account of the session, with the phone masked. Never typed again, never sent by the browser.
@@ -210,6 +282,11 @@ export interface AgendaSemanal {
   tarifas: TarifaServicioPublica[]
   dias: DiaAgenda[]
   mensaje?: string
+  // Price (pesos) of what the agenda was asked for (the chosen variant, or the service itself)
+  // and the deposit the backend computes from it. sena: null when no deposit will be asked
+  // (no price, or online payments off). Never computed by the Web.
+  precio?: number | null
+  sena?: number | null
 }
 
 export const DIAS_AGENDA = 7
@@ -246,6 +323,8 @@ export interface ServicioTurnosDTO {
   duracionMinutos: number
   precioBase: number | null
   tarifas: TarifaServicioPublica[]
+  // A turno of this provider is confirmed by paying its deposit (online payments are on).
+  senaRequerida?: boolean
 }
 
 // ---- administration ----------------------------------------------------------------------------

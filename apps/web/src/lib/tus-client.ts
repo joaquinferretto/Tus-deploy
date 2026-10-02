@@ -462,9 +462,9 @@ export interface TusCalendarBooking {
   customerId: string
   startsAt: string
   endsAt: string
-  // `pending`: requested by the client, waiting for the provider. Only the provider confirms it.
-  status: 'pending' | 'confirmed' | 'rejected' | 'expired' | 'cancelled' | 'cancelled-late' | 'no-show' | 'completed'
-  // Until when a pending request holds its time (decided by the server).
+  // `pending`: waiting for the provider; `awaiting_payment`: accepted, waiting for the deposit.
+  status: 'pending' | 'awaiting_payment' | 'confirmed' | 'rejected' | 'expired' | 'cancelled' | 'cancelled-late' | 'no-show' | 'completed'
+  // Until when a pending or awaiting-payment request holds its time (decided by the server).
   requestExpiresAt?: string
   version: number
   policyVersion: string

@@ -1,5 +1,6 @@
 import { alcanceDeCuenta } from '../../auth-security/application/auth-service.ts'
 import {
+  CuentasPorDocumentoPrisma,
   IndiceConocimientoPrisma,
   TransaccionAsistentePrisma,
   type ClientePrismaAsistente,
@@ -31,5 +32,6 @@ export function crearModuloWhatsappPrisma(
     ...(servicios ? { servicios } : {}),
     knowledgeIndex: new IndiceConocimientoPrisma(client),
     verificadorTelefono: verificadorTelefono ?? null,
+    identidades: new CuentasPorDocumentoPrisma(prisma as ConstructorParameters<typeof CuentasPorDocumentoPrisma>[0]),
   })
 }

@@ -665,13 +665,71 @@ Los pagos solo se ofrecen si se cumple **todo** (el endpoint `status` lista lo q
 2. Política de comisión válida (por defecto 10%, fee a cargo del prestador).
 3. `POST /tus/v1/admin/payments/configuration` `{"paymentsEnabled":true,"reason":"...","expectedVersion":<n>}`.
 4. El prestador del trabajo con cuenta de Mercado Pago **Conectada**.
-5. En `production` además: decisión de habilitación `settlement` **autorizada por evidencia** (legal, impuestos,
-   KYB/KYC, Mercado Pago, etc.). Ninguna variable puede saltear ese gate; sin evidencia el motivo es
-   `PRODUCTION_NOT_AUTHORIZED`.
+5. En `production` además: decisión de habilitación `service-payments` **autorizada por evidencia** (ver
+   "Habilitación de producción" más abajo). Ninguna variable puede saltear ese gate; sin evidencia el motivo es
+   `PRODUCTION_NOT_AUTHORIZED`. En `sandbox` el gate se informa pero no bloquea.
 
 Deshabilitar (inmediato, sin redeploy): `"paymentsEnabled":false`. Corte de emergencia: `TUS_MERCADOPAGO_ENABLED=false` y
 reinicio de la API. Los pagos registrados no se borran; los webhooks de pagos ya creados siguen conciliándose mientras el
 adaptador esté configurado.
+
+### Habilitación de producción: `service-payments` (no `settlement`)
+
+Los pagos de servicios (seña de un turno, seña y saldo de un trabajo de solicitud) tienen su **propia** capacidad de
+habilitación: `service-payments`. `settlement` es el gate del marketplace general (productos, entrega, POS) y **no** es
+el gate de las señas; conserva sus nueve requisitos.
+
+| Requisito         | `service-payments` | `settlement` | Qué respalda en pagos de servicios                                          |
+| ----------------- | :----------------: | :----------: | --------------------------------------------------------------------------- |
+| `legal`           |         sí         |      sí      | modelo operativo y términos para prestadores aprobados (Argentina)          |
+| `tax`             |         sí         |      sí      | tratamiento fiscal y facturación de la comisión de TUS                      |
+| `kyc`             |         sí         |      sí      | que la verificación de identidad de prestadores (DNI/CUIL) está operando    |
+| `kyb`             |         sí         |      sí      | verificación comercial del prestador (ver el gap abajo)                     |
+| `mercadoPago`     |         sí         |      sí      | cuenta/aplicación/producto Split 1:1 validados y prueba sandbox completa    |
+| `runtimeProvider` |         sí         |      sí      | runtime en producción sano (health, ready, webhook alcanzable) y su smoke   |
+| `posPilot`        |         no         |      sí      | no aplica: no hay POS en un pago de servicio                                |
+| `aws`             |         no         |      sí      | no aplica: no hay un target AWS en el camino del dinero                     |
+| `groqMigration`   |         no         |      sí      | no aplica: el modelo no decide importes, pagos ni estados                   |
+
+- La evidencia es **por capacidad**: una fila de `settlement` no habilita `service-payments` ni al revés.
+- Se evalúa para el tenant de plataforma (`TUS_PLATFORM_ADMIN_TENANT_ID`, o `tus-platform` si está vacía), alcance
+  `argentina-stage-1` y perfil `TUS_DEPLOYMENT_PROFILE` (por defecto `render-native`).
+- La evidencia tiene que ser **real y autorizada** (`authorized-external`, vigente, no revocada, una sola fila por
+  requisito). Ninguna variable, flag ni booleano la reemplaza. Está prohibido insertar filas a mano para simular una
+  autorización.
+- **KYC/KYB:** `kyc` es el registro de plataforma de que la verificación de identidad funciona; además, en cada cobro
+  el backend exige que **ese** prestador tenga la identidad verificada (`PROVIDER_IDENTITY_NOT_VERIFIED`). `kyb` es
+  "verificación del negocio": el modelo actual guarda la identidad de una persona (DNI, nombre, CUIL), no una
+  entidad comercial ni una condición fiscal. Es un **gap conocido**; queda a decisión del dueño cómo se acredita para
+  un prestador individual (ver `docs/activation-gates.md`). Mientras no se decida, `kyb` no se cumple.
+- **KYB no se cumple con datos de identidad**: DNI verificado, CUIL válido o cuenta de Mercado Pago conectada no
+  equivalen a KYB. Qué documento lo acredita para un prestador individual es una decisión legal/fiscal del dueño.
+- La evidencia se registra desde *Administración → Pagos → Evidencias de habilitación* (o las rutas
+  `/tus/v1/admin/payments/readiness/evidence`), con sesión de admin elevada por MFA. Se guarda una **referencia** al
+  documento, nunca el documento, credenciales, payloads ni datos personales. Cada alta y cada revocación quedan
+  auditadas. Detalle en `docs/activation-gates.md` ("Recording readiness evidence").
+- Sin la habilitación en `production` y con `paymentsEnabled = true`:
+  - un turno **con precio** se puede solicitar pero **no se puede aceptar** (`SERVICE_PAYMENTS_NOT_AUTHORIZED`): queda
+    pendiente y vence con su plazo. Nunca pasa a `confirmed` sin su seña;
+  - no se crea ningún checkout (`PRODUCTION_NOT_AUTHORIZED` en finanzas, `PAYMENT_NOT_AVAILABLE` en la seña de un
+    turno) y no se simula ningún pago;
+  - un turno **sin precio** no tiene seña y conserva su regla: aceptar confirma.
+- Con `paymentsEnabled = false` no hay seña en toda la plataforma y aceptar confirma (W09-08); es el interruptor para
+  volver al régimen anterior sin redeploy.
+
+`GET /tus/v1/admin/payments/status` muestra qué gate se evalúa y qué le falta a cada uno:
+
+```json
+"readiness": {
+  "gate": "service-payments",
+  "requiredNow": true,
+  "servicePayments": { "capability": "service-payments", "authorized": false, "blockers": ["legal:evidence_missing", "..."] },
+  "settlement": { "capability": "settlement", "authorized": false, "blockers": ["legal:evidence_missing", "..."] }
+}
+```
+
+`requiredNow` es `false` en sandbox. El blocker general `PRODUCTION_READINESS_NOT_AUTHORIZED` aparece solo cuando
+`service-payments` no está autorizado en `production`; el estado de `settlement` es informativo.
 
 ### Prueba sandbox de punta a punta (pendiente de credenciales)
 
@@ -725,8 +783,8 @@ adaptador esté configurado.
 2. Confirmar en sandbox: que `marketplace_fee` se acepta sin `marketplace` (o cargar `MERCADO_PAGO_MARKETPLACE`), que
    las notificaciones configuradas por `notification_url` llegan con `x-signature`, y el formato del error de reembolso
    sin saldo.
-3. Revisión legal/fiscal (facturación de la comisión, términos para prestadores) y evidencia de habilitación
-   `settlement` para producción.
+3. Revisión legal/fiscal (facturación de la comisión, términos para prestadores) y evidencia real de habilitación
+   `service-payments` para producción (§7, "Habilitación de producción").
 4. Solo entonces: credenciales productivas, `MERCADO_PAGO_ENVIRONMENT=production` y `paymentsEnabled:true`.
 
 ## 11. Checklist práctico de staging
@@ -893,7 +951,8 @@ manualmente con motivo.
 - **Bloquea usar TUS:** `/ready` no 200, migraciones incompletas, `TUS_ROUTES_ENABLED` apagado o login sin procedimiento de
   verificación de staging.
 - **Bloquea pagos sandbox:** credenciales, seller/buyer de prueba, callback/webhook y runner sandbox sin ejecutar.
-- **Bloquea pagos productivos:** todo lo anterior más legal, fiscal, KYC/KYB, settlement y evidencia de dinero real.
+- **Bloquea pagos productivos:** todo lo anterior más la evidencia real de `service-payments` (legal, fiscal, KYC/KYB,
+  Mercado Pago y runtime). `settlement` es el gate del marketplace general, no el de los pagos de servicios.
 
 No hacer push ni ejecutar deploy automático desde este documento. El commit/branch y el árbol Git deben quedar registrados
 antes de que el dueño cargue credenciales y ejecute la fase externa.

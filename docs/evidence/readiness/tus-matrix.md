@@ -35,6 +35,7 @@ profile-scoped, and unrevoked. A local result cannot be promoted to that class.
 | AWS/Groq provider and cloud conformance | Current scoped credentials, quota, owner approval, cloud smoke, and rollback evidence | Authorized cloud/provider environment | `764d204` / 2026-08-28 | AI Platform and Cloud Operations | Selected deployment profile only | deferred / disabled | `deferred` |
 | PostgreSQL managed service and production data boundary | Authorized managed-service backup, migration, HTTP restart/replay, and recovery evidence | Managed PostgreSQL production-like environment | `764d204` / 2026-08-28 | Data Operations | Exact profile and tenant scope | deferred / disabled | `deferred` |
 | Legal, tax, KYC, and KYB approval | Current owner-controlled Argentina operating, invoicing, identity, and merchant records | Legal/Compliance and approved operating environment | `764d204` / 2026-08-28 | Legal, Tax, Trust, and Marketplace Operations | Argentina Stage 1 pilot scope | deferred / disabled | `deferred` |
+| Service payments (`service-payments`): deposit of a turno, deposit and balance of a request-born work | Current owner-controlled records for `legal`, `kyc`, `kyb`, `tax`, `mercadoPago` and `runtimeProvider` under the `service-payments` capability; `GET /tus/v1/admin/payments/status` → `readiness.servicePayments` | Production API and approved operating environment | working tree / 2026-10-02 | Legal, Tax, Trust, Provider and Runtime Operations | Argentina Stage 1, platform tenant | deferred / disabled (no record exists; evidence is recorded through the payment administration, see `docs/activation-gates.md`) | `deferred` |
 | Browser and screen-reader conformance | Authorized browser matrix, keyboard/screen-reader, and production-like UI smoke | Supported browser test environment | `764d204` / 2026-08-28 | Web Platform | Declared web profile and viewport matrix | deferred / disabled | `deferred` |
 | Physical device and POS pilot | Authorized device matrix, offline/recovery, hardware, operator, receipt, and pilot evidence | Authorized physical-device/POS environment | `764d204` / 2026-08-28 | Mobile and POS Operations | Argentina Stage 1 pilot hardware | deferred / disabled | `deferred` |
 | Production operations | On-call, monitoring, incident, rollback, backup/restore, and runbook sign-off | Authorized production-like environment | `764d204` / 2026-08-28 | Operations | Exact deployment profile and pilot scope | deferred / disabled | `deferred` |
@@ -68,6 +69,15 @@ These activation switches remain disabled: `tusRoutes: false`, `providers: false
 The full repository suite remains a local-deterministic validation attempt, not a
 release gate. PR5 focused readiness/activation evidence is independently green,
 while all external readiness boundaries remain deferred.
+
+## Service payments are not settlement
+
+Added 2026-10-02. `settlement` gates the general marketplace and keeps its nine
+requirements. Service payments are gated by `service-payments`, which asks for
+`legal`, `kyc`, `kyb`, `tax`, `mercadoPago` and `runtimeProvider` and never
+for `posPilot`, `aws` or `groqMigration`. Evidence is per capability and must
+be real and owner-authorized; sandbox can be exercised without it, production
+money cannot. See `docs/activation-gates.md`.
 
 ## Argentina-first boundaries and non-goals
 

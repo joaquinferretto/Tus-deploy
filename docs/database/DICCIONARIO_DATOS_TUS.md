@@ -946,21 +946,38 @@ El cliente **no confirma** un turno: lo **solicita**. La solicitud no es una tab
 | Estado (`reservas.estado`) | Significado | ¿Retiene el horario? |
 | --- | --- | --- |
 | `pending` | Solicitada por el cliente; espera la respuesta del prestador | Sí, hasta `solicitud_expira_en` |
-| `confirmed` | El prestador la aceptó (o la creó la administración / el propio prestador) | Sí |
+| `awaiting_payment` | El prestador la aceptó; espera el pago verificado de la seña | Sí, hasta `solicitud_expira_en` |
+| `confirmed` | Mercado Pago aprobó la seña y el backend validó la cadena comercial; también puede ser un turno manual/administrativo | Sí |
 | `rejected` | El prestador la rechazó, o el horario ya no estaba libre al aceptar | No |
 | `expired` | Nadie respondió antes de `solicitud_expira_en` | No |
 | `cancelled`, `cancelled-late`, `no-show` | Cancelaciones y ausencia | No |
 | `completed` | Turno realizado | Sí |
 
-Transiciones permitidas: `pending` → `confirmed` \| `rejected` \| `cancelled` \| `expired`;
-`confirmed` → `completed` \| `cancelled` \| `cancelled-late` \| `no-show`. Nada sale de un estado final
+Transiciones permitidas: `pending` → `awaiting_payment` \| `confirmed` \| `rejected` \| `cancelled` \| `expired`;
+`awaiting_payment` → `confirmed` \| `cancelled` \| `expired`; `confirmed` → `completed` \| `cancelled` \|
+`cancelled-late` \| `no-show`. Nada sale de un estado final
 (`TRANSICIONES_TURNO` en `packages/contracts/src/tus-turnos.ts`).
 
-- `reservas.solicitud_expira_en` (timestamp, NULL): vigencia de la solicitud: 24 horas desde que se
-  pide y nunca más allá del inicio del turno. `ck_reservas_solicitud_vigencia`: toda fila `pending`
-  la tiene. Índice parcial `ix_reservas_solicitudes_pendientes (calendario_id, solicitud_expira_en)
-  WHERE estado = 'pending'`.
-- `ck_reservas_estado` (NOT VALID): el estado es uno de los ocho anteriores. No se validó sobre las
+Qué hace la aceptación del prestador (regla de seña, igual a W09-05):
+
+| Situación | Aceptar | Motivo |
+|---|---|---|
+| Turno con precio, pagos online activos y prestador que puede cobrar | `pending` → `awaiting_payment` | La seña pagada y verificada es lo que confirma |
+| Pagos online activos, pero el prestador no conectó Mercado Pago o no verificó su identidad | 409 `PROVIDER_PAYMENT_ACCOUNT_REQUIRED`; sigue `pending` | Nunca se confirma gratis ni se deja esperando un pago imposible |
+| Pagos online apagados en toda la plataforma, o turno sin precio | `pending` → `confirmed` | No existe seña que esperar (comportamiento previo a la seña) |
+
+`awaiting_payment` → `confirmed` lo escribe únicamente la transacción financiera que aplica la aprobación
+verificada de Mercado Pago. Ni el cliente, ni el prestador, ni la administración, ni el asistente tienen
+un camino para escribirlo (`PATCH .../estado` rechaza `confirmed` y `awaiting_payment`).
+
+Con pagos online activos, un servicio sin precio publicado no admite solicitudes
+(409 `SERVICE_PRICE_REQUIRED`): no habría de dónde calcular la seña.
+
+- `reservas.solicitud_expira_en` (timestamp, NULL): vigencia de `pending`; al aceptar se reemplaza por
+  una ventana de pago de 24 horas, siempre acotada por el inicio. `ck_reservas_solicitud_vigencia`
+  exige fecha tanto para `pending` como para `awaiting_payment`. Índices parciales
+  `ix_reservas_solicitudes_pendientes` e `ix_reservas_esperando_pago`.
+- `ck_reservas_estado` (NOT VALID): el estado es uno de los nueve anteriores. No se validó sobre las
   filas históricas; `scripts/db/diagnostico-not-valid.mjs` dice cuáles bloquearían la validación.
 - `ex_reservas_sin_solapamiento`: mismas columnas y operadores; su predicado deja afuera también
   `rejected` y `expired`. Sigue siendo la autoridad final contra la doble reserva.
@@ -974,11 +991,38 @@ Transiciones permitidas: `pending` → `confirmed` \| `rejected` \| `cancelled` 
 
 **Una sola semántica para toda reserva de un cliente.** La reserva de una publicación del marketplace
 (`POST /tus/v1/calendar/bookings`, pantallas `/tus/mercado` y `/tus/calendario`) usa el mismo modelo:
-la fila nace `pending` con `solicitud_expira_en`, retiene su horario y solo el prestador la confirma.
-En el flujo de Trabajos esa confirmación es la aceptación del trabajo: `lockForWork` pasa la solicitud
+la fila nace `pending` con `solicitud_expira_en` y retiene su horario. En el flujo de Trabajos del
+marketplace la confirmación sigue siendo la aceptación del trabajo: `lockForWork` pasa la solicitud
 vigente a `confirmed` en la misma transacción que crea el trabajo (UPDATE condicional: vigente, de un
-horario futuro, sin bloqueo del prestador; dos aceptaciones simultáneas la confirman una vez). Una
-solicitud vencida, rechazada o cancelada no se vincula a un trabajo.
+horario futuro, sin bloqueo del prestador; dos aceptaciones simultáneas la confirman una vez). Ese flujo
+no tiene seña: un trabajo del marketplace se cobra al completarse (W09-02), así que no hay pago previo
+que esperar. Una solicitud vencida, rechazada o cancelada no se vincula a un trabajo.
 
-Quiénes pueden escribir `confirmed`: el prestador (turno manual propio, aceptar una solicitud, aceptar un
-trabajo) y la administración (turno general o forzado). Ningún endpoint de cliente.
+El 50% se deriva de `reservas.precio_final`; no existe `reservas.precio_sena`. La obligación usa
+`origen_importe = 'booked_price'`, `tramo = 'sena'` y cuelga de un `trabajos.origen = 'turno'` enlazado
+1:1 con la reserva. El webhook valida reserva, cliente, prestador, importe, moneda, estado y vigencia.
+
+Un pago aprobado cuya reserva ya no espera pago (la ventana venció o el turno se canceló mientras el
+cliente pagaba) **se registra igual** (obligación `paid`, comisión, asiento contable): el dinero fue
+cobrado. No confirma nada ni le quita el horario a quien lo tenga; queda en
+`auditoria_finanzas_servicio` como `appointment.deposit_without_turno` (`requires_refund_review`) y en
+el outbox como `tus.turno.deposit_without_turno`, para que la plataforma lo reintegre con el reembolso
+existente.
+
+Quiénes pueden escribir `confirmed`: (1) la transacción financiera del pago verificado de la seña;
+(2) el prestador al aceptar una solicitud **sin seña** (sin precio, o con los pagos online apagados en
+toda la plataforma); (3) el prestador al crear un turno manual propio o al aceptar un trabajo del
+marketplace; (4) la administración (turno general o forzado). Ningún endpoint de cliente, ningún cambio
+genérico de estado y ninguna herramienta del asistente puede escribirlo.
+
+### 7.20 Seña e identificación de turnos (TURNOS-SENA-01, `20261027100000_tus_turnos_sena`)
+
+La migración no crea tablas ni duplica datos personales. Amplía `reservas.estado`, reutiliza
+`solicitud_expira_en`, habilita `trabajos.origen = 'turno'` y `obligaciones_pago_servicio.origen_importe =
+'booked_price'`. La relación `trabajos(reserva_tenant_id, reserva_id)` mantiene una sola orden por reserva.
+
+`conversaciones_whatsapp.cuenta_identificada_id` referencia `Account.id` y
+`conversaciones_whatsapp.identificada_en` limita la vigencia de esa identificación. Nombre y DNI se leen
+de `User`; no se copian a la conversación ni a la reserva. El índice parcial
+`ix_conversaciones_whatsapp_cuenta_identificada` permite ubicar las conversaciones a las que se envían
+los avisos del turno.

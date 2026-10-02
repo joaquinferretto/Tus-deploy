@@ -139,6 +139,36 @@ MENSAJE -> extracción de datos -> estado de la conversación -> qué falta -> B
   solo horario posible se prepara la reserva (`book_appointment`, confirmación explícita ligada a la
   cuenta); con varios se pregunta solo la hora. Sin cuenta se ofrece iniciar sesión (Web) o vincular
   (WhatsApp).
+- **La hora, dicha como sea** (ASISTENTE-HORA-01): los minutos se leen en cualquiera de sus formas
+  (`9:30`, `09:30`, `9.30`, `9 y 30`, `9 y media`, `nueve y media`, `9 y cuarto`); "a las 9 y 30"
+  nunca termina en 09:00. Mientras la conversación espera la hora de UN profesional
+  (`offers.esperaHora`, tras "¿A qué hora con …?"), un número o frase suelta es una hora (`10` →
+  10:00, `930` → 09:30) que el backend normaliza y valida contra los horarios reales de ese
+  profesional; fuera de ese paso, `1`, `2`, `3` siguen eligiendo profesional. "y cuarto" es un
+  cuarto de hora, nunca el cuarto profesional. Si la hora no existe en su agenda o no se entiende,
+  se responden sus horarios reales ("No entendí la hora. … tiene: …"), no el error genérico, y la
+  intención sigue siendo `reserva`. Nada de esto pasa por el modelo.
+- **De la elección a la solicitud** (TURNOS-SENA-01): elegido el profesional y el horario, el backend
+  lleva los pasos que faltan, sin modelo y en ambos canales:
+  1. **Servicio**: si el profesional tiene varias variantes (`tarifas_servicio_prestador`) pregunta cuál,
+     con el precio real de cada una; se elige por número, ordinal o nombre. Con una sola (o ninguna) no
+     pregunta. Una variante inventada por el modelo no se acepta.
+  2. **Cliente**: en la Web es la sesión (sin sesión, "iniciar sesión / crear cuenta" con retorno al mismo
+     profesional, servicio y horario). En WhatsApp pide nombre completo y DNI; `ServicioIdentificacionCliente`
+     normaliza el DNI, busca la cuenta por documento y exige que el nombre sea el de esa persona. No
+     encontrada, DNI de otra persona o nombre distinto reciben la misma respuesta y el link real de
+     registro (`/registro?returnTo=…`); cinco fallos por hora bloquean la verificación en esa conversación.
+     La cuenta queda en `conversaciones_whatsapp.cuenta_identificada_id` (24 h); el DNI no se guarda en el
+     mensaje, no va al modelo ni a la auditoría. Identificarse no vincula el WhatsApp: solo habilita
+     solicitar el turno y pagar su seña; el resto de las herramientas privadas sigue pidiendo vincular.
+  3. **Resumen**: prestador, servicio, fecha, horario, precio y seña (calculados por el backend) con los
+     botones "Sí, solicitar turno" / "No". El "sí" crea la solicitud `pending`.
+  4. **Después**: cuando el prestador acepta, el cliente recibe por WhatsApp (si su ventana de 24 h de
+     Meta sigue abierta; si no, email y "Mis turnos") el aviso con el link real de Checkout Pro de la
+     seña. "Quiero pagar la seña" devuelve ese link en cualquier momento. Cuando Mercado Pago aprueba el
+     pago llega "¡Tu turno quedó confirmado!". Ningún texto dice "confirmado" antes de eso.
+  Ningún identificador interno (cuenta, prestador, tarifa, reserva, trabajo) se escribe en una respuesta:
+  las tarjetas se arman con nombres y los textos del modelo se filtran (`sinIdentificadores`).
 
 El modelo y las reglas se reparten así:
 

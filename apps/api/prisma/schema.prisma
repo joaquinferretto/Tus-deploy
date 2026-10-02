@@ -67,6 +67,7 @@ model Account {
   desafiosTelefono   DesafioTelefono[]
   mensajesTrabajo    MensajeTrabajo[]
   calificacionesTrabajo CalificacionTrabajo[]
+  conversacionesIdentificadas ConversacionWhatsapp[]
 
   @@unique([userId, tenantId])
   @@index([tenantId])
@@ -783,7 +784,9 @@ model Trabajo {
   trabajoId                  String   @map("trabajo_id")
   tenantId                   String   @map("tenant_id")
   prestadorTenantId          String   @map("prestador_tenant_id")
-  // origen 'marketplace' (commitment + listing) or 'solicitud' (directory request); CHECK in SQL.
+  // origen 'marketplace' (commitment + listing), 'solicitud' (directory request) or 'turno'
+  // (TURNOS-SENA-01: payment order of an accepted turno awaiting its deposit, bound to its reservation; the life of
+  // that turno stays in reservas.estado and this row keeps estado 'accepted'). CHECKs in SQL.
   origen                     String   @default("marketplace") @map("origen")
   compromisoId               String?  @map("compromiso_id")
   prestadorId                String   @map("prestador_id")
@@ -1086,7 +1089,8 @@ model ObligacionPagoServicio {
   publicacionId      String?  @map("publicacion_id")
   compromisoId       String?  @map("compromiso_id")
   trabajoId          String   @map("trabajo_id")
-  // 'total' (marketplace) | 'sena' | 'saldo' (request-born work, 50% each); CHECK in SQL.
+  // 'total' (marketplace) | 'sena' | 'saldo' (request-born work, 50% each) | 'sena' of a turno
+  // (origen_importe 'booked_price': half of reservas.precio_final); CHECKs in SQL.
   tramo              String   @default("total") @map("tramo")
   origenImporte      String   @map("origen_importe")
   presupuestoId      String?  @map("presupuesto_id")
@@ -2081,7 +2085,7 @@ model Reserva {
   clienteId          String   @map("cliente_id")
   fechaInicio        DateTime @map("fecha_inicio")
   fechaFin           DateTime @map("fecha_fin")
-  // TURNOS-SOLICITUD-01: pending (requested by the client, waiting for the provider) | confirmed |
+  // TURNOS-SOLICITUD-01: pending (waiting for provider) | awaiting_payment (provider accepted) | confirmed (deposit approved) |
   // rejected | expired | cancelled | cancelled-late | no-show | completed. ck_reservas_estado (SQL,
   // NOT VALID). ex_reservas_sin_solapamiento (SQL): no two rows of a calendar overlap unless their
   // state released the time (cancelled, cancelled-late, no-show, rejected, expired).
@@ -2089,8 +2093,8 @@ model Reserva {
   version            Int
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")
-  // Until when a pending request holds its time. ck_reservas_solicitud_vigencia (SQL): a pending
-  // row always has it. Partial index ix_reservas_solicitudes_pendientes (SQL).
+  // Until when a pending or awaiting_payment request holds its time. The same timestamp gets a
+  // fresh 24-hour bound at acceptance. ck_reservas_solicitud_vigencia and partial indexes (SQL).
   solicitudExpiraEn  DateTime? @map("solicitud_expira_en")
 
   tarifaId                 String?  @map("tarifa_id")
@@ -2710,6 +2714,12 @@ model ConversacionWhatsapp {
   mensajesResumidos    Int       @default(0) @map("mensajes_resumidos")
   estadoConversacional Json      @map("estado_conversacional")
   version              Int       @default(1) @map("version")
+  // TURNOS-SENA-01: account this conversation identified by full name + document (WhatsApp has no
+  // TUS session). A reference, never a copy of the person. ck_conversaciones_whatsapp_identificacion
+  // and the partial index ix_conversaciones_whatsapp_cuenta_identificada live in SQL.
+  cuentaIdentificadaId String?   @map("cuenta_identificada_id")
+  identificadaEn       DateTime? @map("identificada_en")
+  cuentaIdentificada   Account?  @relation(fields: [cuentaIdentificadaId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "fk_conversaciones_whatsapp_cuenta_identificada")
 
   @@index([modo, ultimoMensajeEn], map: "ix_conversaciones_whatsapp_panel")
   @@index([canal, modo, ultimoMensajeEn], map: "ix_conversaciones_whatsapp_canal_panel")

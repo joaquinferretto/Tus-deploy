@@ -131,8 +131,8 @@ Never enable a broader credential or delete neutral contracts as a rollback.
 
 ## TUS Argentina Stage 1 readiness
 
-TUS production publication, provider actions, settlement, fleet operations, and
-release jobs are separate capabilities. Each capability is disabled until its
+TUS production publication, provider actions, settlement, service payments,
+fleet operations, and release jobs are separate capabilities. Each capability is disabled until its
 required evidence is valid, scoped to the tenant and Argentina Stage 1 pilot,
 unexpired, and not revoked. Deterministic tests can exercise the evaluator but
 are always `deterministic-test-only`; they never authorize production activity.
@@ -160,14 +160,14 @@ fake, or partial authorized record cannot promote the overall report.
 
 | Gate | Evidence owner | Applies to | Required record |
 | --- | --- | --- | --- |
-| `legal` | Legal and Compliance | All production TUS capabilities | Approved Argentina operating model and policy reference |
-| `kyc` | Trust and Safety / Identity | Provider actions, settlement, fleet, and release jobs | Actor/provider identity verification reference |
+| `legal` | Legal and Compliance | All production TUS capabilities (service payments included) | Approved Argentina operating model and policy reference |
+| `kyc` | Trust and Safety / Identity | Provider actions, settlement, service payments, fleet, and release jobs | Actor/provider identity verification reference |
 | `kyb` | Marketplace Operations / Compliance | Publication and all money-moving capabilities | Merchant business verification reference |
 | `tax` | Finance and Tax | Publication and all money-moving capabilities | Country tax and invoicing approval reference |
-| `mercadoPago` | Payments / Provider Operations | Provider actions, settlement, and release jobs | Approved account/product/contract validation |
-| `posPilot` | POS Product and Operations | Settlement, fleet, and release jobs | Authorized hardware and operational pilot evidence |
-| `aws` | AI Platform / Runtime | Provider actions and settlement | Approved AWS target/provider evidence |
-| `groqMigration` | AI Platform / Runtime | Provider actions and settlement | Transitional parity, fallback, and retirement backlog |
+| `mercadoPago` | Payments / Provider Operations | Provider actions, settlement, service payments, and release jobs | Approved account/product/contract validation |
+| `posPilot` | POS Product and Operations | Settlement, fleet, and release jobs (never service payments) | Authorized hardware and operational pilot evidence |
+| `aws` | AI Platform / Runtime | Provider actions and settlement (never service payments) | Approved AWS target/provider evidence |
+| `groqMigration` | AI Platform / Runtime | Provider actions and settlement (never service payments) | Transitional parity, fallback, and retirement backlog |
 | `runtimeProvider` | Runtime Operations | Publication and all operational capabilities | Runtime/provider readiness and smoke evidence |
 
 Every readiness evidence record preserves `owner`, `scope`, `evidenceType`,
@@ -175,6 +175,155 @@ Every readiness evidence record preserves `owner`, `scope`, `evidenceType`,
 records the exact evidence IDs and failed gate reasons. Missing, out-of-scope,
 expired, or revoked evidence fails closed; it never falls back to a deployment
 boolean, provider credential, or client claim.
+
+### Service payments capability (`service-payments`)
+
+`settlement` is the money gate of the general marketplace (products, delivery,
+POS). It is **not** the gate of service payments. The deposit of a turno
+(TURNOS-SENA-01) and the deposit and balance of a request-born work (W09-05),
+charged through Mercado Pago Checkout Pro with Split 1:1, are authorized by
+their own capability: `service-payments`.
+
+| Capability | Required gates |
+| --- | --- |
+| `settlement` | `legal`, `kyc`, `kyb`, `tax`, `mercadoPago`, `posPilot`, `aws`, `groqMigration`, `runtimeProvider` (unchanged) |
+| `service-payments` | `legal`, `kyc`, `kyb`, `tax`, `mercadoPago`, `runtimeProvider` |
+
+Gates that do not apply to `service-payments`, and why:
+
+- `posPilot`: no POS hardware or operator takes part in a service payment.
+- `aws`: no AWS target is in the money path (API on Hostinger, Web on Vercel).
+- `groqMigration`: the assistant never decides amounts, payments or states; a
+  model-provider migration is unrelated to charging a deposit.
+
+Rules:
+
+- Evidence is recorded per capability. A `settlement` record never authorizes
+  `service-payments`, and a `service-payments` record never authorizes
+  `settlement`.
+- The decision is evaluated for the platform tenant
+  (`TUS_PLATFORM_ADMIN_TENANT_ID`, or `tus-platform` when unset), scope
+  `argentina-stage-1`, and the deployment profile (`TUS_DEPLOYMENT_PROFILE`,
+  default `render-native`).
+- Evidence must be real and owner-authorized (`authorized-external`, current,
+  unrevoked, one record per gate). No environment variable, feature flag or
+  boolean replaces it. Writing rows by hand to simulate an approval is
+  forbidden.
+- Sandbox (`MERCADO_PAGO_ENVIRONMENT=sandbox`) moves no real money: the gate is
+  reported but does not block, so the whole flow can be tested without
+  production authorization. Production requires a valid decision before any
+  charge; without it the reason is `PRODUCTION_NOT_AUTHORIZED`, no checkout
+  is created, and a priced turno cannot be accepted
+  (`SERVICE_PAYMENTS_NOT_AUTHORIZED`): it is never confirmed without its
+  deposit. A turno without a price has no deposit and is unaffected.
+- `GET /tus/v1/admin/payments/status` reports both gates under `readiness`
+  (`servicePayments` and `settlement`, each with `authorized` and the
+  `gate:reason` list it still lacks) and names the one being enforced
+  (`readiness.gate = "service-payments"`).
+
+Meaning of the identity gates for `service-payments`:
+
+- `kyc` is the owner-approved record that provider identity verification is
+  operating (IDENTITY-NOSIS: DNI, name and CUIL of the person). It is a
+  platform-level record. The per-provider fact is enforced separately on every
+  charge: a provider whose identity is not verified cannot be paid
+  (`PROVIDER_IDENTITY_NOT_VERIFIED`).
+- `kyb` is "merchant business verification". It is **not** met by identity
+  data: a verified DNI, a valid CUIL or a linked Mercado Pago account do not
+  amount to KYB, and nothing in the code treats them as such.
+
+#### KYB for individual providers: what the domain holds today, and the gap
+
+| Model | What it represents | Commercial verification? |
+| --- | --- | --- |
+| `verificaciones_identidad` (IDENTITY-NOSIS) | A natural person: DNI, name and a CUIL validated against the DNI | No. It proves who the person is, not their commercial or fiscal standing |
+| `prestadores` | Operational record of a provider: cohort, location, status `approved`/`suspended` | No. `approved` is an operational status with no legal form or fiscal data behind it |
+| `perfiles_publicos_prestador` | Public profile: name, trade, zone, services, prices | No |
+| `cuentas_cobro_prestador` | The linked Mercado Pago account (account id, scopes, encrypted tokens) | No. Whatever Mercado Pago verified about its user is not recorded by TUS |
+| `perfiles_fiscales` (billing) | Fiscal profile of a party: fiscal identity, fiscal category, status, evidence reference, external authority (`ARCA/AFIP-external`), external approval reference | It is the right shape, but nothing writes it for a provider: no onboarding step, no review, no link to `prestadores`, and no charge depends on it |
+
+So the domain represents a **verified natural person**, not a **commercially
+verified individual provider**. Missing, to represent the latter:
+
+1. The provider's declared fiscal condition and fiscal identity as provider data
+   (for an individual: the tax registration category and its tax id).
+2. A verification status of that declaration, with who verified it, when,
+   against which external authority and under which evidence reference.
+3. A backend gate on charging that reads that status per provider, next to the
+   existing identity gate.
+
+Minimal modification proposed (**not implemented**; it depends on the
+decisions below): reuse `perfiles_fiscales`, which already has those columns,
+with the provider as the party (`parte_id` = the provider) instead of adding
+tables; add a provider onboarding step that records the declaration, a
+platform-admin review that sets its status, and a per-provider reason
+(for example `PROVIDER_COMMERCIAL_PROFILE_NOT_VERIFIED`) in the availability
+of the charge. The identity model and the existing gates stay as they are.
+
+Decisions the repository cannot make, left to the owner with legal and tax
+advice, and kept out of the code:
+
+- Which document or external check constitutes KYB evidence for an individual
+  provider, and for a company.
+- Whether Stage 1 admits only individuals, and which fiscal categories.
+- Who verifies it and how often it must be renewed.
+- What the platform-level `kyb` record of `service-payments` must reference
+  (the approved policy and the proof that the process is operating).
+
+Until those are decided and recorded, `kyb` stays unmet and production
+service payments stay blocked. The registry below can store the reference to
+that evidence once it exists; it does not decide what the evidence is.
+
+### Recording readiness evidence
+
+Readiness evidence of the platform tenant is recorded through the payment
+administration, never by writing rows by hand:
+
+| Route | What it does |
+| --- | --- |
+| `GET /tus/v1/admin/payments/readiness/evidence` | Lists, per capability (`service-payments`, `settlement`), the required gates and every record with its status (`current`, `revoked`, `expired`, `not_yet_valid`) |
+| `POST /tus/v1/admin/payments/readiness/evidence` | Records one reference for one requirement of one capability |
+| `POST /tus/v1/admin/payments/readiness/evidence/:evidenceId/revoke` | Revokes a record, with a reason |
+
+The Web shows the same in *Administración → Pagos → Evidencias de habilitación*.
+
+- Authority: `tus:payments:admin`, which only an allowlisted, verified account
+  gets and only an MFA-elevated session keeps, plus the platform tenant when
+  `TUS_PLATFORM_ADMIN_TENANT_ID` is set. Checked on every request.
+- The request may only say: `capability`, `gate`, `owner`, `evidenceType`,
+  `evidenceRef`, `policyVersion`, and optionally `issuedAt` (not in the
+  future) and `expiresAt` (in the future, or null). Any other field is refused
+  (`UNTRUSTED_EVIDENCE_FIELDS`). Tenant, scope, profile, source
+  (`authorized-external`), actor, identifiers and the revoked flag are set by
+  the server.
+- Only the capabilities evaluated for the platform tenant can be recorded
+  (`service-payments`, `settlement`), and only with a gate that capability
+  requires.
+- A record holds a **reference** to the document its owner keeps (a minutes
+  number, a file id, a document location). It never holds the document, a
+  secret, a token, a credential, a provider payload or personal data: values
+  with those shapes are refused (`SENSITIVE_EVIDENCE_VALUE`) and never echoed.
+  That check is defense in depth; the administrator remains responsible for
+  what is typed.
+- One current record per requirement: a second one is refused
+  (`EVIDENCE_ALREADY_CURRENT`) until the first is revoked or expires, and a
+  reference is never reused for the same requirement
+  (`EVIDENCE_REFERENCE_ALREADY_USED`). Records are never deleted.
+- Every registration and revocation is written with its audit event
+  (`readiness.evidence_registered`, `readiness.evidence_revoked`: actor,
+  correlation id, capability, gate, reference, reason) in the same transaction.
+- Renewal, **for `service-payments` only**: a revoked or expired record is
+  history. Exactly one current authorized record satisfies its gate even when
+  older revoked or expired records exist for it. Any other record next to it
+  (deterministic, deferred, not yet valid, or a second current one) still
+  blocks.
+- `settlement` and every other capability keep the original rule, unchanged:
+  any revoked or expired record of a gate blocks that gate, even next to a
+  current one. Renewing `settlement` evidence after a revocation or an expiry
+  is therefore not possible today; changing that is an owner decision.
+
+Recording a reference does not make the evidence real: the administrator who
+records it attests that the document exists and was approved by its owner.
 
 ### Rollback boundary
 

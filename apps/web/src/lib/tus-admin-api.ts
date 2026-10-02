@@ -22,11 +22,36 @@ async function call<T>(path: string, body?: unknown, method?: 'POST' | 'PATCH' |
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: { code?: unknown; fields?: unknown } } | null
-    const fields = Array.isArray(payload?.error?.fields) ? payload.error.fields.filter((item): item is string => typeof item === 'string') : []
-    throw new AdminApiError(response.status, typeof payload?.error?.code === 'string' ? payload.error.code : 'ERROR', fields)
+    // Two error shapes exist in the API: { error: { code, fields } } and the flat { code, fields }.
+    const payload = (await response.json().catch(() => null)) as { code?: unknown; fields?: unknown; error?: { code?: unknown; fields?: unknown } | string } | null
+    const anidado = typeof payload?.error === 'object' && payload.error !== null ? payload.error : null
+    const lista = anidado?.fields ?? payload?.fields
+    const fields = Array.isArray(lista) ? lista.filter((item): item is string => typeof item === 'string') : []
+    const code = typeof anidado?.code === 'string' ? anidado.code : typeof payload?.code === 'string' ? payload.code : 'ERROR'
+    throw new AdminApiError(response.status, code, fields)
   }
   return (await response.json()) as T
+}
+
+export interface AdminEvidenciaHabilitacion {
+  evidenceId: string
+  capability: string
+  gate: string
+  owner: string
+  scope: string
+  evidenceType: string
+  evidenceRef: string
+  policyVersion: string
+  issuedAt: string
+  expiresAt: string | null
+  revoked: boolean
+  status: 'current' | 'revoked' | 'expired' | 'not_yet_valid'
+  recordedAt: string
+}
+
+export interface AdminEvidenciasHabilitacion {
+  scope: string
+  capabilities: { capability: string; requiredGates: string[]; evidence: AdminEvidenciaHabilitacion[] }[]
 }
 
 export interface AdminResumen {
@@ -285,7 +310,13 @@ export const adminApi = {
   trabajos: (input: { q: string; estado: string; page: number; pageSize: number }) => call<AdminPage<AdminTrabajo>>(`/tus/v1/admin/trabajos?${new URLSearchParams({ q: input.q, estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   trabajo: (id: string) => call<AdminTrabajoDetalle>(`/tus/v1/admin/trabajos/${encodeURIComponent(id)}`),
   // Readiness of online payments: booleans and missing items only, never secret values.
-  pagosEstado: () => call<{ productEnabled: boolean; blockers: string[]; operational: { environment: string }; globalPolicy: { rateBps: number; persisted: boolean } }>('/tus/v1/admin/payments/status'),
+  pagosEstado: () => call<{ productEnabled: boolean; blockers: string[]; operational: { environment: string }; globalPolicy: { rateBps: number; persisted: boolean }; readiness?: { gate: string; requiredNow: boolean; servicePayments: { authorized: boolean; blockers: string[] }; settlement: { authorized: boolean; blockers: string[] } } }>('/tus/v1/admin/payments/status'),
+  // Readiness evidence of the platform: tenant, actor, scope and status are decided by the API.
+  evidenciasHabilitacion: () => call<AdminEvidenciasHabilitacion>('/tus/v1/admin/payments/readiness/evidence'),
+  registrarEvidenciaHabilitacion: (input: { capability: string; gate: string; owner: string; evidenceType: string; evidenceRef: string; policyVersion: string; expiresAt?: string }) =>
+    call<{ evidence: AdminEvidenciaHabilitacion }>('/tus/v1/admin/payments/readiness/evidence', input),
+  revocarEvidenciaHabilitacion: (evidenceId: string, reason: string) =>
+    call<{ evidence: AdminEvidenciaHabilitacion }>(`/tus/v1/admin/payments/readiness/evidence/${encodeURIComponent(evidenceId)}/revoke`, { reason }),
   pagos: (input: { estado: string; page: number; pageSize: number }) => call<AdminPage<AdminPago>>(`/tus/v1/admin/pagos?${new URLSearchParams({ estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   cancelarTrabajo: (id: string, expectedVersion: number, reason: string, idempotencyKey: string) => call<{ status: string }>(`/tus/v1/admin/trabajos/${encodeURIComponent(id)}/cancelar`, { expectedVersion, reason }, 'POST', { 'Idempotency-Key': idempotencyKey }),
   // One page of an entity (server-side filters and pagination) with its usage counts.

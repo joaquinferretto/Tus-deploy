@@ -256,6 +256,8 @@ sin almacenar binarios.
 | Concepto canónico      | Identificador recomendado | Anterior     | Definición simple                                                            | No usar como equivalente general |
 | ---------------------- | ------------------------- | ------------ | ---------------------------------------------------------------------------- | -------------------------------- |
 | Reserva                | `Reserva`                 | `Booking`    | Bloqueo o asignación de una franja, recurso o servicio para un cliente.      | Booking                          |
+| Solicitud de turno     | `Reserva` (`pending`)     | `Appointment request` | Turno pedido por un cliente con cuenta; retiene su horario hasta que el prestador responde o vence. | No es una reserva confirmada |
+| Seña de turno          | `ObligacionPagoServicio` (`tramo = sena`, `origen_importe = booked_price`) | `Deposit` | 50% del precio del turno; su pago verificado por Mercado Pago es lo que confirma el turno (`awaiting_payment` → `confirmed`). | Anticipo, reserva paga |
 | Compromiso             | `Compromiso`              | `Commitment` | Obligación registrada entre actores de TUS respecto de una operación.        | Promesa, reserva                 |
 | Carrito                | `Carrito`                 | `Cart`       | Conjunto temporal de productos o servicios seleccionados antes de confirmar. | Cesta                            |
 | Línea de carrito       | `LineaCarrito`            | `Cart Line`  | Producto o servicio individual dentro de un carrito.                         | Ítem de carrito                  |
@@ -353,6 +355,8 @@ No traducir automáticamente `Readiness` como `Preparacion`. Usar `Preparacion` 
 | Resultado de habilitación | `ResultadoHabilitacion`   | `Disposition`       | Resultado funcional de evaluar una capacidad.                 |
 
 `Disposition` no debe traducirse palabra por palabra. Si representa otro resultado distinto de una evaluación de habilitación, se documentará con el significado específico antes de renombrarlo.
+
+Capacidades vigentes (valores congelados): `publication`, `provider-actions`, `settlement`, `service-payments`, `fleet` y `release-jobs`. `settlement` es la capacidad del marketplace general; `service-payments` es la de los pagos de servicios (seña de un turno, seña y saldo de un trabajo de solicitud) y tiene su propia evidencia.
 
 ## Auditoría y plataforma
 

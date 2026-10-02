@@ -39,6 +39,8 @@ export interface RepositoriosAsistente {
     // nor Meta window on the Web).
     listar(filter: { mode?: ModoConversacion; channel?: CanalConversacion; limit?: number; offset?: number }): Promise<ConversacionWhatsapp[]>
     contar(filter: { mode?: ModoConversacion; channel?: CanalConversacion }): Promise<number>
+    // Active conversations that identified that account by name + document.
+    identificadasPor(accountId: string): Promise<ConversacionWhatsapp[]>
   }
   mensajes: {
     buscarPorWamid(wamid: string): Promise<MensajeConversacion | null>
@@ -75,7 +77,11 @@ export interface RepositoriosAsistente {
     // Conditional transition (idempotency of the decision).
     actualizar(value: ConfirmacionAsistente, expectedStatus: ConfirmacionAsistente['status']): Promise<boolean>
   }
-  auditoria: { registrar(event: EventoAuditoriaAsistente): Promise<void> }
+  auditoria: {
+    registrar(event: EventoAuditoriaAsistente): Promise<void>
+    // Events of one action in a conversation since a moment (rate limits decided by the backend).
+    contarDesde(input: { action: string; conversationId: string; since: string }): Promise<number>
+  }
   consentimientosWhatsapp: {
     buscar(tenantId: string, recipientType: ConsentimientoWhatsApp['recipientType'], recipientId: string): Promise<ConsentimientoWhatsApp | null>
     guardar(value: ConsentimientoWhatsApp): Promise<void>

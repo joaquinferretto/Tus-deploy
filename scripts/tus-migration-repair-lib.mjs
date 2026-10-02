@@ -709,6 +709,42 @@ export const REVIEWED_MIGRATION_STATEMENTS = Object.freeze([
     sha256: '8e58c83894e125db682d6f1407582025e1f58f84ce19e7e938fa3f7302e9cfc3',
     reason: 'Drops the exclusion constraint ex_reservas_sin_solapamiento only to re-create it in the next statement with the same columns and operators and a predicate that also leaves out the two new states rejected and expired. No existing row is in either state, so the rows it protects are exactly the same and the re-creation cannot fail; both statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted or rewritten.',
   },
+  {
+    migration: '20261027100000_tus_turnos_sena',
+    classification: 'high_risk',
+    sha256: 'b51d2b21153c656412969565a75297a453071124972ace3b9c62a8cae2de8358',
+    reason: 'Drops the CHECK ck_reservas_estado only to re-create it in the next statement, NOT VALID as before, with one more accepted value (awaiting_payment). No existing row has that state and every other value is kept, so nothing that was accepted is refused. Both statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted or rewritten.',
+  },
+  {
+    migration: '20261027100000_tus_turnos_sena',
+    classification: 'high_risk',
+    sha256: '46642dfa156d4cb638442038b4b8b55f0cb3eb09b0c2c617edf5ada772143254',
+    reason: 'Drops the CHECK ck_reservas_solicitud_vigencia only to re-create it in the next statement, NOT VALID as before, so that a reservation awaiting its deposit also has to say until when it holds its time, like a pending request already did. No existing row is awaiting payment. Both statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted or rewritten.',
+  },
+  {
+    migration: '20261027100000_tus_turnos_sena',
+    classification: 'high_risk',
+    sha256: '8df11498fb517b9d5b852dff1b4e1e7f0d55ac2ce1e340b365340490b643e50b',
+    reason: 'Drops the CHECK ck_trabajos_origen only to re-create it in the next statement with one more accepted value (turno). Every existing row is marketplace or solicitud, which the new definition also accepts, so the re-creation cannot fail. Both statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted or rewritten.',
+  },
+  {
+    migration: '20261027100000_tus_turnos_sena',
+    classification: 'high_risk',
+    sha256: 'dd7c47c7c8b1f2a6cc4c44f348aa874a5d93e5a37e29177af3025e8b2516440a',
+    reason: 'Drops the CHECK ck_trabajos_origen_coherente only to re-create it in the next statement with its two branches unchanged plus a third one for origen = turno. No existing row has that origin, so the rows it accepts are exactly the same and the re-creation cannot fail. Both statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted or rewritten.',
+  },
+  {
+    migration: '20261027100000_tus_turnos_sena',
+    classification: 'high_risk',
+    sha256: '7298b9251974e41f0d4a58b590bbbd90247f6ff6b285d268ae6d24b65382a320',
+    reason: 'Drops the CHECK ck_obligaciones_pago_origen_importe only to re-create it in the next statement with its two branches unchanged plus booked_price (without a budget). No existing row has that value, so the re-creation cannot fail. Both statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted or rewritten.',
+  },
+  {
+    migration: '20261027100000_tus_turnos_sena',
+    classification: 'high_risk',
+    sha256: 'bf374437bc6972d2f4438cf6f350e8c214b4134db6077e37c366aecdd2ea9fa9',
+    reason: 'Drops the CHECK ck_obligaciones_pago_tramo_cadena only to re-create it in the next statement: total keeps the marketplace chain, sena and saldo keep the accepted budget, and a sena may also come from booked_price. No existing row has booked_price, so every existing row satisfies the new definition and the re-creation cannot fail. Both statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted or rewritten.',
+  },
 ])
 
 export function normalizedStatementHash(sql) {

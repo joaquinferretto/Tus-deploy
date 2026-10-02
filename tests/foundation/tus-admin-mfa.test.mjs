@@ -318,7 +318,7 @@ test('MFA wiring: every API router resolves sessions through the MFA gate; only 
   // reports admin candidacy; it never authorizes).
   assert.equal((server.match(/rawSessions/gu) ?? []).length, 4, 'raw sessions never reach a business router')
   assert.match(server, /const raw = await rawSessions\.resolve\(accessToken, correlationId\)/u)
-  assert.match(server, /createTusHttpRouter\(\{ application, sessions, whatsapp \}\)/u)
+  assert.match(server, /createTusHttpRouter\(\{ application, sessions, whatsapp, onTurnoConfirmed: \(trabajoId\) => servicioTurnos\.avisarTurnoConfirmado\(trabajoId\) \}\)/u)
   assert.match(server, /'\/auth\/mfa',\s*'\/auth\/verify-email\/resend',\s*'\/auth\/admin\/bootstrap-verify',\s*\],\s*authRateLimitMiddleware/u)
   const migration = read('apps/api/prisma/migrations/20261005100000_tus_admin_mfa/migration.sql')
   assert.doesNotMatch(migration, /\bDROP\b|ALTER TABLE|TRUNCATE|DELETE FROM|UPDATE public/iu, 'additive migration')
