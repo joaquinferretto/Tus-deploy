@@ -185,8 +185,14 @@ test('TURNOS: snapshot historico de precio y auditoria admin obligatoria', () =>
       excepcionCalendario: {
         findMany: async () => []
       },
+      oficioServicio: {
+        findMany: async () => []
+      },
       reserva: {
         findMany: async () => [],
+        // Overdue requests are expired when the agenda is locked: none here.
+        updateMany: async () => ({ count: 0 }),
+        findUnique: async () => reservaCreada,
         create: async ({ data }) => {
           reservaCreada = { ...data, id: data.id }
           return reservaCreada

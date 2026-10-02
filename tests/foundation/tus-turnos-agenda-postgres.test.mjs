@@ -254,15 +254,17 @@ test('TURNOS agenda HTTP: the weekly agenda is public and never cached; the week
       out.listaAjena = await call('GET', '/tus/v1/prestador/turnos/bloqueos', 'tok-p2').then((x) => x.body.items.length)
       out.listaSinSesion = (await call('GET', '/tus/v1/prestador/turnos/bloqueos')).status
       out.diaBloqueado = (await call('GET', agenda)).body.dias[0].estado
-      out.reservaEnBloqueo = await call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', undefined, { oficioId: oficio.id, inicio: a(0, '10:00'), clienteNombre: 'Invitada' }).then((x) => [x.status, x.body.code])
+      out.reservaEnBloqueo = await call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', 'tok-cliente', { oficioId: oficio.id, inicio: a(0, '10:00') }).then((x) => [x.status, x.body.code])
       out.quitarAjeno = (await call('DELETE', '/tus/v1/prestador/turnos/bloqueos/' + creado.body.id, 'tok-p2')).status
       out.quitarSinSesion = (await call('DELETE', '/tus/v1/prestador/turnos/bloqueos/' + creado.body.id)).status
       out.quitar = (await call('DELETE', '/tus/v1/prestador/turnos/bloqueos/' + creado.body.id, 'tok-p')).status
       out.diaLiberado = (await call('GET', agenda)).body.dias[0].estado
 
-      // Booking through HTTP: the taken time is shown as taken and a second booking gets 409.
-      const reserva = { oficioId: oficio.id, inicio: a(0, '10:00'), clienteNombre: 'Invitada' }
-      const dos = await Promise.all([call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', undefined, reserva), call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', undefined, reserva)])
+      // Requesting through HTTP (a signed-in client): the requested time is shown as taken and a
+      // second request for it gets 409. A visitor is asked to sign in.
+      const reserva = { oficioId: oficio.id, inicio: a(0, '10:00') }
+      out.visitante = await call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', undefined, { ...reserva, clienteNombre: 'Invitada' }).then((x) => [x.status, x.body.code])
+      const dos = await Promise.all([call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', 'tok-cliente', reserva), call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', 'tok-cliente', reserva)])
       out.dosReservas = dos.map((x) => x.status + ':' + (x.body.code ?? 'ok')).sort()
       const final = (await call('GET', agenda)).body.dias[0].franjas.find((f) => f.hora === '10:00')
       out.ocupadoEnAgenda = [final.estado, Object.keys(final).sort()]
@@ -296,6 +298,7 @@ test('TURNOS agenda HTTP: the weekly agenda is public and never cached; the week
   assert.equal(r.quitarSinSesion, 401)
   assert.equal(r.quitar, 200)
   assert.equal(r.diaLiberado, 'laboral')
+  assert.deepEqual(r.visitante, [401, 'LOGIN_REQUIRED'], 'a visitor cannot request a turno')
   assert.deepEqual(r.dosReservas, ['201:ok', '409:SLOT_OCCUPIED'])
   assert.deepEqual(r.ocupadoEnAgenda, ['ocupado', ['estado', 'fin', 'hora', 'inicio']])
 })

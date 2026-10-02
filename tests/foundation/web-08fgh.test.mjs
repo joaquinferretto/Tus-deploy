@@ -244,10 +244,20 @@ test('WEB-08H Prisma adapter locks the reservation with the transaction client a
   const result = runTypeScriptScenario(`
     const { PrismaTrabajoReservaStore, PrismaTrabajoTransaction } = await import('./apps/api/src/tus/adapters/prisma-work.ts')
     const calls = []
-    const reservas = new PrismaTrabajoReservaStore({ reserva: { updateMany: async (input) => (calls.push(input), { count: input.where.reservaId === 'reservation-1' ? 1 : 0 }) } })
-    const locked = await reservas.lockForWork({ ownerTenantId: 'provider-tenant', reservationId: 'reservation-1', customerTenantId: 'customer-tenant', listingId: 'listing-1' })
-    const refused = await reservas.lockForWork({ ownerTenantId: 'provider-tenant', reservationId: 'reservation-2', customerTenantId: 'customer-tenant', listingId: 'listing-1' })
-    const txClient = { reserva: { updateMany: async () => ({ count: 1 }) }, marker: 'tx' }
+    // No request waiting (findMany finds none): an already confirmed reservation is only locked.
+    const reservas = new PrismaTrabajoReservaStore({ reserva: { findMany: async () => [], updateMany: async (input) => (calls.push(input), { count: input.where.reservaId === 'reservation-1' ? 1 : 0 }) } })
+    const locked = await reservas.lockForWork({ ownerTenantId: 'provider-tenant', reservationId: 'reservation-1', customerTenantId: 'customer-tenant', listingId: 'listing-1', acceptedAt: '2026-09-24T10:00:00.000Z' })
+    const refused = await reservas.lockForWork({ ownerTenantId: 'provider-tenant', reservationId: 'reservation-2', customerTenantId: 'customer-tenant', listingId: 'listing-1', acceptedAt: '2026-09-24T10:00:00.000Z' })
+    // TURNOS-SOLICITUD-01: a request still waiting is confirmed by the acceptance of its work, with
+    // one conditional UPDATE; a time the provider blocked meanwhile confirms nothing.
+    const pendiente = { calendarioId: 'cal-1', fechaInicio: new Date('2099-01-05T13:00:00.000Z'), fechaFin: new Date('2099-01-05T14:00:00.000Z') }
+    const confirmCalls = []
+    const conSolicitud = (bloqueos) => new PrismaTrabajoReservaStore({ reserva: { findMany: async (input) => (confirmCalls.push(['find', input.where]), [pendiente]), updateMany: async (input) => (confirmCalls.push(['update', input.where, input.data]), { count: 1 }) }, excepcionCalendario: { findMany: async (input) => (confirmCalls.push(['blocks', input.where]), bloqueos) } })
+    const confirmed = await conSolicitud([]).lockForWork({ ownerTenantId: 'provider-tenant', reservationId: 'reservation-3', customerTenantId: 'customer-tenant', listingId: 'listing-1', acceptedAt: '2026-09-24T10:00:00.000Z' })
+    const confirmacion = confirmCalls.splice(0)
+    const blocked = await conSolicitud([{ id: 'exc-1' }]).lockForWork({ ownerTenantId: 'provider-tenant', reservationId: 'reservation-3', customerTenantId: 'customer-tenant', listingId: 'listing-1', acceptedAt: '2026-09-24T10:00:00.000Z' })
+    const bloqueada = confirmCalls.splice(0)
+    const txClient = { reserva: { findMany: async () => [], updateMany: async () => ({ count: 1 }) }, marker: 'tx' }
     let attempts = 0
     let usedTxClient = false
     const transaction = new PrismaTrabajoTransaction({ $transaction: async (operation, options) => {
@@ -257,12 +267,12 @@ test('WEB-08H Prisma adapter locks the reservation with the transaction client a
       return operation(txClient)
     } })
     await transaction.run(async (repositories) => {
-      usedTxClient = await repositories.reservations.lockForWork({ ownerTenantId: 'p', reservationId: 'r', customerTenantId: 'c', listingId: 'l' })
+      usedTxClient = await repositories.reservations.lockForWork({ ownerTenantId: 'p', reservationId: 'r', customerTenantId: 'c', listingId: 'l', acceptedAt: '2026-09-24T10:00:00.000Z' })
     })
     let exhausted = ''
     const failing = new PrismaTrabajoTransaction({ $transaction: async () => { const error = new Error('unique'); error.code = 'P2002'; throw error } })
     try { await failing.run(async () => undefined) } catch (error) { exhausted = error.code }
-    console.log(JSON.stringify({ locked, refused, where: calls[0].where, data: calls[0].data, attempts, usedTxClient, exhausted }))
+    console.log(JSON.stringify({ locked, refused, where: calls[0].where, data: calls[0].data, attempts, usedTxClient, exhausted, confirmed, blocked, confirmacion: confirmacion.map((call) => call[0]), pendienteWhere: { estado: confirmacion[0][1].estado, vigente: Object.keys(confirmacion[0][1].solicitudExpiraEn), futura: Object.keys(confirmacion[0][1].fechaInicio), propia: [confirmacion[0][1].tenantId, confirmacion[0][1].reservaId, confirmacion[0][1].clienteTenantId, confirmacion[0][1].publicacionId] }, confirmData: { estado: confirmacion[2][2].estado, version: confirmacion[2][2].version }, mismoWhere: JSON.stringify(confirmacion[0][1]) === JSON.stringify(confirmacion[2][1]), bloqueada: bloqueada.map((call) => call[0]) }))
   `)
 
   assert.equal(result.locked, true)
@@ -275,6 +285,15 @@ test('WEB-08H Prisma adapter locks the reservation with the transaction client a
     estado: 'confirmed',
   })
   assert.deepEqual(result.data, { estado: 'confirmed' })
+  // A pending request: found only if valid, future and of this provider, client and listing;
+  // blocks are looked at; then confirmed by the same conditional filter.
+  assert.equal(result.confirmed, true)
+  assert.deepEqual(result.confirmacion, ['find', 'blocks', 'update'])
+  assert.deepEqual(result.pendienteWhere, { estado: 'pending', vigente: ['gt'], futura: ['gt'], propia: ['provider-tenant', 'reservation-3', 'customer-tenant', 'listing-1'] })
+  assert.deepEqual(result.confirmData, { estado: 'confirmed', version: { increment: 1 } })
+  assert.equal(result.mismoWhere, true, 'the UPDATE repeats the conditions it was found with (two acceptances confirm once)')
+  assert.equal(result.blocked, false, 'a time blocked by the provider meanwhile is not confirmed')
+  assert.deepEqual(result.bloqueada, ['find', 'blocks'], 'blocked: the request is found, the block is seen, and nothing is written')
   assert.equal(result.attempts, 2)
   assert.equal(result.usedTxClient, true)
   assert.equal(result.exhausted, 'CONCURRENT_MODIFICATION')

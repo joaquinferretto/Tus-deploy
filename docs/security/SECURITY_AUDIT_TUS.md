@@ -45,6 +45,7 @@ Se realizó una auditoría estática y dinámica de la superficie completa del b
 - **ID:** `SEC-02-B3`
 - **Severidad:** `HIGH` (Preventivo)
 - **Componente:** `apps/api/src/tus/adapters/prisma-calendar.ts` y PostgreSQL 16
+- **Actualización (TURNOS-SOLICITUD-01):** `POST /tus/v1/calendar/bookings` ya no crea reservas confirmadas: crea una solicitud `pending` que solo el prestador confirma; el reloj es el del servidor.
 - **Evidencia:** La reserva de turnos (`POST /tus/v1/calendar/bookings`) requiere garantizar que dos solicitudes simultáneas para el mismo prestador y franja horaria no generen doble turno confirmado (race condition).
 - **Impacto:** Superposición física de turnos de clientes.
 - **Corrección requerida:** Diseñar e incorporar `exclusion constraint` en PostgreSQL 16 utilizando `btree_gist` sobre el rango temporal `tstzrange(fecha_inicio, fecha_fin)` y estado confirmado.

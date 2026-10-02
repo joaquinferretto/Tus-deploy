@@ -937,3 +937,48 @@ tarifas es una transacción con `FOR UPDATE` sobre la fila de `perfil_servicios`
 **Geografía**: `localidades.provincia` es derivado de `provincia_id`
 (`tr_localidades_provincia_derivada`, `tr_provincias_renombrada`); `fk_barrios_zona_localidad`
 (`(zona_id, localidad_id)` → `zonas_ubicacion`, vía `uq_zonas_ubicacion_id_localidad`).
+
+### 7.19 Solicitud de reserva de turnos (TURNOS-SOLICITUD-01, `20261026100000_tus_turnos_solicitud_reserva`)
+
+El cliente **no confirma** un turno: lo **solicita**. La solicitud no es una tabla nueva: es la fila de
+`reservas` (prestador, servicio, fecha, horario y cliente ya están ahí) en el estado `pending`.
+
+| Estado (`reservas.estado`) | Significado | ¿Retiene el horario? |
+| --- | --- | --- |
+| `pending` | Solicitada por el cliente; espera la respuesta del prestador | Sí, hasta `solicitud_expira_en` |
+| `confirmed` | El prestador la aceptó (o la creó la administración / el propio prestador) | Sí |
+| `rejected` | El prestador la rechazó, o el horario ya no estaba libre al aceptar | No |
+| `expired` | Nadie respondió antes de `solicitud_expira_en` | No |
+| `cancelled`, `cancelled-late`, `no-show` | Cancelaciones y ausencia | No |
+| `completed` | Turno realizado | Sí |
+
+Transiciones permitidas: `pending` → `confirmed` \| `rejected` \| `cancelled` \| `expired`;
+`confirmed` → `completed` \| `cancelled` \| `cancelled-late` \| `no-show`. Nada sale de un estado final
+(`TRANSICIONES_TURNO` en `packages/contracts/src/tus-turnos.ts`).
+
+- `reservas.solicitud_expira_en` (timestamp, NULL): vigencia de la solicitud: 24 horas desde que se
+  pide y nunca más allá del inicio del turno. `ck_reservas_solicitud_vigencia`: toda fila `pending`
+  la tiene. Índice parcial `ix_reservas_solicitudes_pendientes (calendario_id, solicitud_expira_en)
+  WHERE estado = 'pending'`.
+- `ck_reservas_estado` (NOT VALID): el estado es uno de los ocho anteriores. No se validó sobre las
+  filas históricas; `scripts/db/diagnostico-not-valid.mjs` dice cuáles bloquearían la validación.
+- `ex_reservas_sin_solapamiento`: mismas columnas y operadores; su predicado deja afuera también
+  `rejected` y `expired`. Sigue siendo la autoridad final contra la doble reserva.
+- **Datos del cliente**: una solicitud guarda `cliente_id` (la cuenta de la sesión) y
+  `cliente_tenant_id`. No copia nombre, teléfono ni email: `cliente_nombre`, `cliente_telefono` y
+  `cliente_email` quedan NULL y se leen de la cuenta. Esas columnas siguen existiendo para clientes
+  **sin** cuenta (invitado cargado por la administración, turno manual del prestador).
+- Una solicitud vencida se marca `expired` en la siguiente escritura de su agenda (con la fila del
+  calendario bloqueada); hasta entonces toda lectura ya la trata como vencida y su horario como libre.
+- Límite: 3 solicitudes `pending` por cliente en una misma agenda.
+
+**Una sola semántica para toda reserva de un cliente.** La reserva de una publicación del marketplace
+(`POST /tus/v1/calendar/bookings`, pantallas `/tus/mercado` y `/tus/calendario`) usa el mismo modelo:
+la fila nace `pending` con `solicitud_expira_en`, retiene su horario y solo el prestador la confirma.
+En el flujo de Trabajos esa confirmación es la aceptación del trabajo: `lockForWork` pasa la solicitud
+vigente a `confirmed` en la misma transacción que crea el trabajo (UPDATE condicional: vigente, de un
+horario futuro, sin bloqueo del prestador; dos aceptaciones simultáneas la confirman una vez). Una
+solicitud vencida, rechazada o cancelada no se vincula a un trabajo.
+
+Quiénes pueden escribir `confirmed`: el prestador (turno manual propio, aceptar una solicitud, aceptar un
+trabajo) y la administración (turno general o forzado). Ningún endpoint de cliente.

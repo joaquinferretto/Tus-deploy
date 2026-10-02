@@ -21,7 +21,7 @@ test('D2 resolves the principal provider calendar and books a service publicatio
     const { InMemoryMarketplaceStore, TusMarketplaceService } = await import('./apps/api/src/tus/catalog/index.ts')
     const { InMemoryServiceCalendarStore, ServiceCalendarService } = await import('./apps/api/src/tus/calendar/bookings.ts')
     const marketplaceStore = new InMemoryMarketplaceStore()
-    const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore())
+    const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore(), () => Date.parse('2026-09-14T11:00:00.000Z'))
     const marketplace = new TusMarketplaceService(marketplaceStore, { calendarResolver: calendar })
     const merchant = { subjectId: 'merchant-user', sessionId: 'merchant-session', tenantId: 'merchant-tenant', roles: ['merchant'], permissions: ['tus:marketplace:write', 'tus:marketplace:read'], correlationId: 'corr-merchant' }
     const operator = { ...merchant, permissions: ['tus:marketplace:write', 'tus:calendar:write', 'tus:marketplace:read'] }
@@ -55,7 +55,7 @@ test('D2 exposes not_configured and blocks automatic booking for requires_budget
   const result = await runTypeScriptScenario(`
     const { InMemoryMarketplaceStore, TusMarketplaceService } = await import('./apps/api/src/tus/catalog/index.ts')
     const { InMemoryServiceCalendarStore, ServiceCalendarService } = await import('./apps/api/src/tus/calendar/bookings.ts')
-    const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore())
+    const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore(), () => Date.parse('2026-09-14T11:00:00.000Z'))
     const marketplace = new TusMarketplaceService(new InMemoryMarketplaceStore(), { calendarResolver: calendar })
     const merchant = { subjectId: 'merchant-user', sessionId: 'merchant-session', tenantId: 'merchant-tenant', roles: ['merchant'], permissions: ['tus:marketplace:write', 'tus:marketplace:read'], correlationId: 'corr-merchant' }
     await marketplace.onboard(merchant, { merchantId: 'provider-1', cohort: 'beauty-personal-care', locationId: 'location-1', timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'], operatingPolicyVersion: 'policy-1' })
@@ -88,7 +88,7 @@ test('D2 applies the physical publication modes to effective duration and automa
     const { InMemoryServiceCalendarStore, ServiceCalendarService } = await import('./apps/api/src/tus/calendar/bookings.ts')
     const merchant = { subjectId: 'merchant-user', sessionId: 'merchant-session', tenantId: 'merchant-tenant', roles: ['merchant'], permissions: ['tus:marketplace:write', 'tus:marketplace:read'], correlationId: 'corr-merchant' }
     const customer = { subjectId: 'customer-user', sessionId: 'customer-session', tenantId: 'customer-tenant', roles: ['customer'], permissions: ['tus:marketplace:read'], correlationId: 'corr-customer' }
-    const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore())
+    const calendar = new ServiceCalendarService(new InMemoryServiceCalendarStore(), () => Date.parse('2026-09-14T11:00:00.000Z'))
     const marketplace = new TusMarketplaceService(new InMemoryMarketplaceStore(), { calendarResolver: calendar })
     await marketplace.onboard(merchant, { merchantId: 'provider-1', cohort: 'repairs-trades', locationId: 'location-1', timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'], operatingPolicyVersion: 'policy-1' })
     const diagnostic = await marketplace.createListing(merchant, { merchantId: 'provider-1', kind: 'service', name: 'Diagnostic', description: 'Diagnostic visit', cohort: 'repairs-trades', locationId: 'location-1', currency: 'ARS', price: 1000, bookingMode: 'visita_diagnostico', durationMinutes: 35, capacity: 1, workingHours: [{ day: 1, start: '09:00', end: '12:00' }] })
@@ -116,11 +116,12 @@ test('D2 exposes canonical listing slots and idempotent booking over HTTP withou
     const { createTusHttpRouter } = (await import('./apps/api/src/tus/http/router.ts')).default
     const { InMemoryTusSessionResolver } = (await import('./apps/api/src/tus/adapters/in-memory.ts')).default
     const { createApp } = (await import('./apps/api/src/server.ts')).default
-    const application = createTusApplication()
+    const reloj = () => Date.parse('2026-09-14T11:00:00.000Z')
+    const application = createTusApplication({ now: reloj })
     const sessions = new InMemoryTusSessionResolver()
     sessions.add('merchant-token', { sessionId: 'merchant-session', subjectId: 'merchant-user', tenantId: 'merchant-tenant', roles: ['merchant'], permissions: ['tus:marketplace:write', 'tus:marketplace:read', 'tus:calendar:write'] })
     sessions.add('customer-token', { sessionId: 'customer-session', subjectId: 'customer-user', tenantId: 'customer-tenant', roles: ['customer'], permissions: ['tus:marketplace:read'] })
-    const app = createApp({ tusRouter: createTusHttpRouter({ application, sessions }), tusRoutesEnabled: true })
+    const app = createApp({ tusRouter: createTusHttpRouter({ application, sessions, now: reloj }), tusRoutesEnabled: true })
     const server = app.listen(0)
     const base = 'http://127.0.0.1:' + server.address().port
     const request = async (token, method, path, body, key) => { const response = await fetch(base + path, { method, headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', 'x-correlation-id': 'corr-d2', ...(key ? { 'idempotency-key': key } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); return { status: response.status, body: await response.json() } }

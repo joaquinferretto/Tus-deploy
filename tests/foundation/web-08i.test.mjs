@@ -136,7 +136,7 @@ test('WEB-08I work cancellation is the only path and cancels work and reservatio
 
   assert.equal(result.customerWorkCancel, 403)
   assert.deepEqual(result.cancelled, { status: 200, workStatus: 'cancelled' })
-  assert.deepEqual(result.bookingAfterFirst, { status: 'cancelled', version: 2 })
+  assert.deepEqual(result.bookingAfterFirst, { status: 'cancelled', version: 3 }, 'requested (1), confirmed by the accepted work (2), cancelled with the work (3)')
   assert.deepEqual(result.replay, { status: 200, replay: 'replay' })
   assert.deepEqual(result.otherKey, { status: 409, code: 'INVALID_STATE' })
   assert.equal(result.bookingStable, true)

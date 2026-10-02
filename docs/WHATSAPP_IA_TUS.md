@@ -155,6 +155,26 @@ WhatsApp recibe exactamente el mismo tipo de mensaje libre y produce la misma co
 La verificación telefónica (`VERIFICAR TUS <código>`) sigue separada: se resuelve antes del
 asistente y nunca pasa por el modelo.
 
+## Un turno se solicita, no se confirma (TURNOS-SOLICITUD-01)
+
+Desde la Web, el asistente Web o WhatsApp, el cliente **solicita** un turno; solo el prestador lo
+confirma.
+
+- `book_appointment` prepara la solicitud y pide la aceptación del usuario ("¿Querés solicitar ese
+  turno?", botón **Solicitar turno**). Al aceptar se crea la reserva en estado `pending` a nombre de la
+  cuenta de la sesión (Web) o de la cuenta vinculada (WhatsApp). El asistente no puede reservar a
+  nombre de otra persona: `clientName` y `clientPhone` se aceptan por compatibilidad y se ignoran.
+- La respuesta es fija, la arma el backend y es igual en los dos canales: "Listo, envié tu solicitud
+  de turno para el … Queda pendiente hasta que el prestador la confirme". Nunca "reserva confirmada"
+  ni "turno reservado" (regla 13 del prompt; el texto del resultado no pasa por el modelo).
+- `list_my_reservations` devuelve los turnos del cliente con su estado real (`appointments`):
+  pendiente de confirmación, confirmada, rechazada, cancelada o vencida.
+- El prestador responde desde **Solicitudes de reserva** en `/prestador/turnos` (Aceptar / Rechazar).
+  Avisos: la solicitud aparece en ese panel y, si el envío de emails de TUS está configurado
+  (`EMAIL_PROVIDER=resend`), el prestador recibe un email al llegar una solicitud y el cliente otro
+  cuando se responde. **No hay todavía aviso proactivo por WhatsApp al prestador**: fuera de la
+  ventana de 24 h Meta exige una plantilla aprobada y TUS no tiene un envío proactivo implementado.
+
 ## Canal Web: el mismo asistente (ASISTENTE-WEB-01)
 
 El asistente de la Web (`/asistente` y la ventana flotante) no es otro asistente: es un **canal** del mismo `OrquestadorConversacion`. Modelo, herramientas (`herramientas.ts`), base de conocimiento (`RecuperadorConocimiento`), confirmaciones, memoria (`conversaciones_whatsapp` / `mensajes_conversacion_whatsapp`, con `canal = 'web'`) y permisos son el mismo codigo. Lo unico propio del canal vive en `asistente/web.ts` (quien habla, guardar el mensaje, devolver la respuesta en vez de enviarla por Meta) y en `CanalTurno`.

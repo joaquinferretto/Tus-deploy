@@ -300,12 +300,14 @@ Table reservas {
   cliente_id varchar [note: '[EXTERNA/LOGICA] identidad de cliente']
   fecha_inicio timestamp [note: 'ex startsAt']
   fecha_fin timestamp [note: 'ex endsAt']
-  estado varchar [note: 'ex status']
+  estado varchar [note: 'ex status. pending | confirmed | rejected | expired | cancelled | cancelled-late | no-show | completed (ck_reservas_estado, NOT VALID). pending = solicitada por el cliente, espera al prestador']
+  solicitud_expira_en timestamp [null, note: 'TURNOS-SOLICITUD-01: hasta cuándo una solicitud pending retiene su horario (ck_reservas_solicitud_vigencia). NULL si la reserva no nació como solicitud']
   version int
   fecha_creacion timestamp [note: 'ex createdAt']
   fecha_actualizacion timestamp [note: 'ex updatedAt']
 
   indexes {
+    (calendario_id, solicitud_expira_en) [name: 'ix_reservas_solicitudes_pendientes', note: 'parcial: WHERE estado = pending']
     (tenant_id, reserva_id) [unique, name: 'uq_reservas_tenant_reserva']
     (tenant_id, calendario_id, fecha_inicio, fecha_fin) [name: 'idx_reservas_tenant_calendario_franja']
     (tenant_id, publicacion_id, fecha_inicio, fecha_fin) [name: 'idx_reservas_tenant_publicacion_franja']
