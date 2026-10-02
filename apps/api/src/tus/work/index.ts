@@ -278,14 +278,20 @@ export interface TrabajoOutboxPort {
 }
 
 // WEB-08H: la reserva se valida y bloquea dentro de la misma transaccion que crea el trabajo.
-// `lockForWork` devuelve true solo si la reserva confirmada pertenece al prestador, al cliente y
-// a la publicacion del compromiso, y la mantiene bloqueada hasta el commit.
+// `lockForWork` devuelve true solo si la reserva pertenece al prestador, al cliente y a la
+// publicacion del compromiso, y la mantiene bloqueada hasta el commit.
+// TURNOS-SOLICITUD-01: la reserva de un cliente nace como solicitud (`pending`). El prestador que
+// acepta el trabajo es quien la confirma: una solicitud vigente y de un horario futuro pasa a
+// `confirmed` en esta misma transaccion (o ninguna de las dos cosas ocurre). Una solicitud
+// vencida, rechazada o cancelada no se vincula. Una reserva ya confirmada solo se bloquea.
 export interface TrabajoReservaPort {
   lockForWork(input: {
     ownerTenantId: string
     reservationId: string
     customerTenantId: string
     listingId: string
+    // Moment of the acceptance (in-memory adapter). PostgreSQL decides with its own server clock.
+    acceptedAt: string
   }): Promise<boolean>
   // WEB-08I: cancela la reserva vinculada dentro de la transaccion que cancela el trabajo, con el
   // mismo lock de fila. Devuelve false si la reserva ya no estaba confirmada (nada que cambiar).
@@ -427,6 +433,7 @@ export class ServicioTrabajo {
           reservationId,
           customerTenantId: input.commitment.tenantId,
           listingId: input.publication.listingId,
+          acceptedAt: input.createdAt,
         })
         if (!locked)
           throw new TrabajoError(
@@ -1869,6 +1876,8 @@ interface ReservaVinculable {
   ownerTenantId: string
   listingId?: string
   status: string
+  startsAt?: string
+  requestExpiresAt?: string
 }
 
 // Adaptador en memoria: valida contra el calendario dentro del cerrojo serial de
@@ -1880,6 +1889,12 @@ export class ReservasTrabajoEnMemoria implements TrabajoReservaPort {
       reservationId: string
     ) => Promise<ReservaVinculable | null>,
     private readonly cancelBooking?: (
+      ownerTenantId: string,
+      reservationId: string,
+      updatedAt: string
+    ) => Promise<boolean>,
+    // Turns a pending request into the confirmed reservation (the provider accepted its work).
+    private readonly confirmBooking?: (
       ownerTenantId: string,
       reservationId: string,
       updatedAt: string
@@ -1904,15 +1919,26 @@ export class ReservasTrabajoEnMemoria implements TrabajoReservaPort {
     reservationId: string
     customerTenantId: string
     listingId: string
+    acceptedAt: string
   }): Promise<boolean> {
     const booking = await this.findBooking(input.ownerTenantId, input.reservationId)
-    return (
-      booking !== null &&
-      booking.ownerTenantId === input.ownerTenantId &&
-      booking.tenantId === input.customerTenantId &&
-      booking.listingId === input.listingId &&
-      booking.status === 'confirmed'
+    if (
+      booking === null ||
+      booking.ownerTenantId !== input.ownerTenantId ||
+      booking.tenantId !== input.customerTenantId ||
+      booking.listingId !== input.listingId
     )
+      return false
+    if (booking.status === 'confirmed') return true
+    // A request still waiting: accepting the work confirms it, if it is still valid and its time
+    // has not passed.
+    const now = Date.parse(input.acceptedAt)
+    const vigente =
+      booking.status === 'pending' &&
+      Date.parse(booking.requestExpiresAt ?? booking.startsAt ?? '') > now &&
+      Date.parse(booking.startsAt ?? '') > now
+    if (!vigente || !this.confirmBooking) return false
+    return this.confirmBooking(input.ownerTenantId, input.reservationId, input.acceptedAt)
   }
 }
 

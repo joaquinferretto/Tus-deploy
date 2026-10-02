@@ -2037,6 +2037,8 @@ export function createTusHttpRouter({
     }
   )
 
+  // The clock of a reservation is the server's. A `now` sent by the client is never read: it
+  // would let it move the booking cutoff, the late-cancellation window or the no-show window.
   router.post('/tus/v1/calendar/bookings', async (request: Request, response: Response) => {
     const context = await authenticate(request, sessions)
     const body = asRecord(request.body)
@@ -2064,7 +2066,7 @@ export function createTusHttpRouter({
         slotId,
         idempotencyKey,
         requestHash,
-        now: readString(body, 'now') || new Date(now()).toISOString(),
+        now: new Date(now()).toISOString(),
       }
       const result = listingId
         ? await requireCalendar(application).bookPublication(
@@ -2108,7 +2110,7 @@ export function createTusHttpRouter({
           proyectarResultadoReserva(
             await requireCalendar(application).cancel(context, {
               bookingId: request.params['bookingId'] ?? '',
-              now: readString(body, 'now') || new Date(now()).toISOString(),
+              now: new Date(now()).toISOString(),
               reason: readString(body, 'reason'),
               ...(readFiniteNumber(body, 'expectedVersion') === undefined
                 ? {}
@@ -2140,7 +2142,7 @@ export function createTusHttpRouter({
           proyectarResultadoReserva(
             await requireCalendar(application).markNoShow(context, {
               bookingId: request.params['bookingId'] ?? '',
-              now: readString(body, 'now') || new Date(now()).toISOString(),
+              now: new Date(now()).toISOString(),
             })
           )
         )

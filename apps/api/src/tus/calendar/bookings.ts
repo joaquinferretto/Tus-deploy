@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { TUS_CONTRACT_VERSION } from '@factory/contracts'
+import { HORAS_VIGENCIA_SOLICITUD_TURNO, MAXIMO_SOLICITUDES_PENDIENTES_POR_AGENDA, TUS_CONTRACT_VERSION } from '@factory/contracts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { generateServiceSlots, type Franja, type SlotGenerationOptions } from './slots.ts'
 import {
@@ -12,14 +12,21 @@ import type { Publicacion } from '../catalog/index.ts'
 import { SerializadorEnMemoria } from '../domain/serializador-en-memoria.ts'
 import { effectiveListingDuration, publicationRequiresBudget } from '../catalog/index.ts'
 
+// States of a reservation (reservas.estado, ESTADOS_TURNO in the contracts). A client never
+// creates a confirmed one: its booking is a REQUEST (`pending`) that holds its time until the
+// provider answers or its validity runs out. Only the provider confirms it: by accepting the
+// request in its agenda or by accepting the work the reservation belongs to.
 const BOOKING_STATUS = {
+  PENDING: 'pending',
   CONFIRMED: 'confirmed',
+  REJECTED: 'rejected',
+  EXPIRED: 'expired',
   CANCELLED: 'cancelled',
   CANCELLED_LATE: 'cancelled-late',
   NO_SHOW: 'no-show',
 } as const
 
-type BookingStatus = (typeof BOOKING_STATUS)[keyof typeof BOOKING_STATUS]
+type BookingStatus = (typeof BOOKING_STATUS)[keyof typeof BOOKING_STATUS] | 'completed'
 
 export interface Reserva {
   contractVersion: typeof TUS_CONTRACT_VERSION
@@ -33,6 +40,9 @@ export interface Reserva {
   startsAt: string
   endsAt: string
   status: BookingStatus
+  // Until when a pending request holds its time (reservas.solicitud_expira_en). Decided by the
+  // server: 24 hours and never beyond the start of the reservation.
+  requestExpiresAt?: string
   version: number
   priceSnapshot?: MoneySnapshot
   policyVersion: string
@@ -105,6 +115,8 @@ export interface ServiceCalendarStorePort {
     save(booking: Reserva): Promise<void>
     find(bookingId: string): Promise<Reserva | null>
     forCalendar(calendarId: string): Promise<Reserva[]>
+    // Requests nobody answered in time stop holding their time: marked `expired`.
+    expireOverdue(input: { calendarId: string; now: string }): Promise<void>
     // WEB-08I: bloquea la fila de la reserva hasta el fin de la transaccion; es el mismo lock que
     // toma `TrabajoReservaPort.lockForWork` al vincularla a un trabajo (WEB-08H).
     lockForChange(input: { ownerTenantId: string; bookingId: string }): Promise<void>
@@ -178,6 +190,11 @@ export class InMemoryServiceCalendarStore implements ServiceCalendarStorePort {
       [...this.bookingRecords.values()]
         .filter((booking) => booking.calendarId === calendarId)
         .map((booking) => structuredClone(booking)),
+    expireOverdue: async (input: { calendarId: string; now: string }) => {
+      for (const booking of this.bookingRecords.values())
+        if (booking.calendarId === input.calendarId && requestIsOverdue(booking, Date.parse(input.now)))
+          this.bookingRecords.set(booking.bookingId, { ...booking, status: BOOKING_STATUS.EXPIRED, version: booking.version + 1, updatedAt: input.now })
+    },
     // En memoria el serializador compartido con Trabajo ya excluye la vinculacion concurrente.
     lockForChange: async (_input: { ownerTenantId: string; bookingId: string }) => undefined,
     linkedWorkId: async (input: { ownerTenantId: string; bookingId: string }) =>
@@ -395,7 +412,7 @@ export class ServiceCalendarService {
       durationMinutes,
     })
     const bookings = await this.store.bookings.forCalendar(calendar.calendarId)
-    return slots.filter((slot) => availableCapacity(slot, bookings, calendar) > 0)
+    return slots.filter((slot) => availableCapacity(slot, bookings, calendar, this.now()) > 0)
   }
 
   async book(
@@ -538,8 +555,16 @@ export class ServiceCalendarService {
         throw new ErrorCalendario(400, 'INVALID', 'now must be a valid timestamp')
       if (now >= Date.parse(slot.start) - calendar.bookingCutoffMinutes * 60_000)
         throw new ErrorCalendario(409, 'BOOKING_CUTOFF', 'booking cutoff has passed')
+      // The validity of a request is decided with the clock of the server, never with a time
+      // sent by the client. Overdue requests give their time back before anything is decided.
+      const serverNow = this.now()
+      await store.bookings.expireOverdue({ calendarId: calendar.calendarId, now: new Date(serverNow).toISOString() })
       const bookings = await store.bookings.forCalendar(calendar.calendarId)
-      if (availableCapacity(slot, bookings, calendar) === 0) {
+      // One client cannot keep an agenda waiting with many open requests.
+      const waiting = bookings.filter((item) => item.status === BOOKING_STATUS.PENDING && item.customerId === input.customerId).length
+      if (waiting >= MAXIMO_SOLICITUDES_PENDIENTES_POR_AGENDA)
+        throw new ErrorCalendario(409, 'TOO_MANY_PENDING_REQUESTS', 'too many requests are waiting for this provider')
+      if (availableCapacity(slot, bookings, calendar, serverNow) === 0) {
         const response = { status: 'rejected' as const, reason: 'capacity' as const }
         await store.idempotency.complete({
           tenantId: context.tenantId,
@@ -557,7 +582,9 @@ export class ServiceCalendarService {
         customerId: input.customerId,
         startsAt: slot.start,
         endsAt: slot.end,
-        status: BOOKING_STATUS.CONFIRMED,
+        // A REQUEST: nothing sent by the client can make it confirmed. The provider confirms it.
+        status: BOOKING_STATUS.PENDING,
+        requestExpiresAt: new Date(Math.min(serverNow + HORAS_VIGENCIA_SOLICITUD_TURNO * 3_600_000, Date.parse(slot.start))).toISOString(),
         version: 1,
         ...(input.publication
           ? {
@@ -645,6 +672,20 @@ export class ServiceCalendarService {
       await ensureNotLinkedToWork(store, booking)
       if (input.expectedVersion !== undefined && input.expectedVersion !== booking.version)
         throw new ErrorCalendario(409, 'STALE_VERSION', 'booking version is stale')
+      // A request still waiting: its client withdraws it (cancelled) or the provider of the
+      // agenda turns it down (rejected). Either way the time is offered again.
+      if (booking.status === BOOKING_STATUS.PENDING) {
+        const byProvider = booking.ownerTenantId === context.tenantId && booking.tenantId !== context.tenantId
+        const answered = {
+          ...booking,
+          status: byProvider ? BOOKING_STATUS.REJECTED : BOOKING_STATUS.CANCELLED,
+          version: booking.version + 1,
+          updatedAt: input.now,
+        }
+        await store.bookings.save(answered)
+        await this.record(store, context, byProvider ? 'booking.rejected' : 'booking.cancelled', booking.bookingId, input.now, 'booking.cancelled', booking.bookingId)
+        return answered
+      }
       if (booking.status !== BOOKING_STATUS.CONFIRMED) return booking
       const calendar = await store.calendars.find(booking.calendarId)
       if (!calendar)
@@ -820,14 +861,25 @@ function addMinutes(timestamp: string, minutes: number): string {
   return new Date(Date.parse(timestamp) + minutes * 60_000).toISOString()
 }
 
+// A pending request whose validity ran out (it no longer holds its time).
+function requestIsOverdue(booking: Reserva, now: number): boolean {
+  return booking.status === BOOKING_STATUS.PENDING && Date.parse(booking.requestExpiresAt ?? booking.startsAt) <= now
+}
+
 function availableCapacity(
   slot: Franja,
   bookings: readonly Reserva[],
-  calendar: Calendario
+  calendar: Calendario,
+  now: number
 ): number {
+  // The calendar of a provider is also its agenda of turnos (TURNOS-SOLICITUD-01): a confirmed
+  // reservation and a request still waiting for the provider both hold their time, and PostgreSQL
+  // would refuse a reservation over them. An overdue request holds nothing.
+  const holdsTime = (booking: Reserva): boolean =>
+    booking.status === BOOKING_STATUS.CONFIRMED || (booking.status === BOOKING_STATUS.PENDING && !requestIsOverdue(booking, now))
   const active = bookings.filter(
     (booking) =>
-      booking.status === BOOKING_STATUS.CONFIRMED &&
+      holdsTime(booking) &&
       overlaps(
         slot.start,
         addMinutes(slot.end, calendar.bufferMinutes),

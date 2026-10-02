@@ -108,6 +108,12 @@ export function createTusApplication(
     if (!booking || booking.ownerTenantId !== ownerTenantId || booking.status !== 'confirmed') return false
     await calendarStore.bookings.save({ ...booking, status: 'cancelled', version: booking.version + 1, updatedAt })
     return true
+  }, async (ownerTenantId, reservationId, updatedAt) => {
+    // TURNOS-SOLICITUD-01: the provider accepted the work of a request still waiting.
+    const booking = await calendarStore.bookings.find(reservationId)
+    if (!booking || booking.ownerTenantId !== ownerTenantId || booking.status !== 'pending') return false
+    await calendarStore.bookings.save({ ...booking, status: 'confirmed', version: booking.version + 1, updatedAt })
+    return true
   }) }, reservationSerializer), options.now)
   // In-memory composition never reads process.env: payments stay unavailable unless a test
   // injects its own module. The preview still works.

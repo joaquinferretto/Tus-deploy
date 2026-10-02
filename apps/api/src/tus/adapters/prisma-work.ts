@@ -551,15 +551,35 @@ export class PrismaTrabajoReservaStore implements TrabajoReservaPort {
     reservationId: string
     customerTenantId: string
     listingId: string
+    acceptedAt: string
   }): Promise<boolean> {
+    const propia = {
+      tenantId: input.ownerTenantId,
+      reservaId: input.reservationId,
+      clienteTenantId: input.customerTenantId,
+      publicacionId: input.listingId,
+    }
+    // TURNOS-SOLICITUD-01: the provider accepting the work is what confirms a request still
+    // waiting. Decided with the clock of this server (never a time of the request): the request
+    // must be valid, for a time that has not passed, and its time must not have been blocked by
+    // the provider meanwhile. Conditional UPDATE: two acceptances at once confirm it once.
+    const ahora = new Date()
+    const vigente = { ...propia, estado: 'pending', solicitudExpiraEn: { gt: ahora }, fechaInicio: { gt: ahora } }
+    const [solicitud] = await this.client.reserva.findMany({ where: vigente })
+    if (solicitud) {
+      const bloqueos = await this.client.excepcionCalendario.findMany({
+        where: { calendarioId: String(solicitud['calendarioId']), estado: 'active', fechaInicio: { lt: solicitud['fechaFin'] }, fechaFin: { gt: solicitud['fechaInicio'] } },
+      })
+      if (bloqueos.length > 0) return false
+      const confirmada = await this.client.reserva.updateMany({
+        where: vigente,
+        data: { estado: 'confirmed', version: { increment: 1 }, fechaActualizacion: ahora },
+      })
+      if (confirmada.count === 1) return true
+    }
+    // Already confirmed: the UPDATE without an effective change only takes the row lock.
     const result = await this.client.reserva.updateMany({
-      where: {
-        tenantId: input.ownerTenantId,
-        reservaId: input.reservationId,
-        clienteTenantId: input.customerTenantId,
-        publicacionId: input.listingId,
-        estado: 'confirmed',
-      },
+      where: { ...propia, estado: 'confirmed' },
       data: { estado: 'confirmed' },
     })
     return result.count === 1

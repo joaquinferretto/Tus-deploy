@@ -100,6 +100,15 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
     },
     forCalendar: async (calendarId: string) =>
       (await this.client.reserva.findMany({ where: { calendarioId: calendarId } })).map(toBooking),
+    // Same rule as the turnos agenda: an overdue request is marked expired and frees its time
+    // (ex_reservas_sin_solapamiento leaves expired rows out).
+    expireOverdue: async (input: { calendarId: string; now: string }) => {
+      const now = new Date(input.now)
+      await this.client.reserva.updateMany({
+        where: { calendarioId: input.calendarId, estado: 'pending', solicitudExpiraEn: { lte: now } },
+        data: { estado: 'expired', version: { increment: 1 }, fechaActualizacion: now },
+      })
+    },
     // WEB-08I: UPDATE sin cambio efectivo para tomar el lock de fila, igual que la vinculacion
     // WEB-08H. En Serializable, si la fila cambio desde el snapshot la transaccion falla (P2034)
     // y el reintento relee el vinculo ya confirmado.
@@ -228,7 +237,13 @@ export class PrismaServiceCalendarStore implements ServiceCalendarStorePort {
           { isolationLevel: 'Serializable' }
         )
       } catch (error) {
-        if (!isSerializationFailure(error) || attempt === 2) throw error
+        // PostgreSQL refused an overlapping reservation (the turnos agenda took that time
+        // meanwhile): a conflict the client can act on, never an internal error.
+        if (isOverlap(error)) throw new ErrorCalendario(409, 'SLOT_OCCUPIED', 'requested slot was taken meanwhile')
+        if (!isSerializationFailure(error)) throw error
+        // Still colliding after the retries (many requests for one agenda at once): the client is
+        // told to try again, like the work transaction does; never an internal error.
+        if (attempt === 2) throw new ErrorCalendario(409, 'CONCURRENT_MODIFICATION', 'the agenda changed at the same time; try again')
       }
     }
     throw new Error('calendar transaction retry limit exceeded')
@@ -243,6 +258,11 @@ function claimExistingCalendarIdempotency(
   if (existing.status === 'completed' && existing.response)
     return { status: 'replay' as const, response: decodeResult(existing.response) }
   return { status: 'in_progress' as const }
+}
+
+function isOverlap(error: unknown): boolean {
+  const text = String(error)
+  return text.includes('ex_reservas_sin_solapamiento') || text.includes('23P01')
 }
 
 function isSerializationFailure(error: unknown): boolean {
@@ -277,6 +297,7 @@ function bookingRow(booking: Reserva): Record<string, unknown> {
     fechaInicio: new Date(booking.startsAt),
     fechaFin: new Date(booking.endsAt),
     estado: booking.status,
+    solicitudExpiraEn: booking.requestExpiresAt ? new Date(booking.requestExpiresAt) : null,
     version: booking.version,
     tarifaId: booking.tarifaId ?? null,
     tarifaNombre: booking.tarifaNombre ?? null,
@@ -365,6 +386,7 @@ function toBooking(row: Record<string, unknown>): Reserva {
     startsAt: new Date(String(row['fechaInicio'])).toISOString(),
     endsAt: new Date(String(row['fechaFin'])).toISOString(),
     status: row['estado'] as Reserva['status'],
+    ...(row['solicitudExpiraEn'] ? { requestExpiresAt: new Date(String(row['solicitudExpiraEn'])).toISOString() } : {}),
     version: Number(row['version']),
     policyVersion: 'calendar-policy-1',
     tarifaId: row['tarifaId'] ? String(row['tarifaId']) : undefined,
