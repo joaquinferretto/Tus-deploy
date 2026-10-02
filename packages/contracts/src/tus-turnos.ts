@@ -23,7 +23,72 @@ export function mensajeErrorTurno(code: string | undefined, fallback = 'No pudim
   if (code === 'NOT_FOUND') return 'No encontramos ese prestador, servicio o turno.'
   if (code === 'FORBIDDEN') return 'Tu cuenta no tiene permiso para hacer eso.'
   if (code === 'INVALID_PARAMS' || code === 'INVALID_REQUEST') return 'Revisá los datos del turno.'
+  if (code === CODIGO_SESION_REQUERIDA) return 'Iniciá sesión para solicitar el turno.'
+  if (code === CODIGO_SOLICITUD_NO_PENDIENTE) return 'Esa solicitud ya fue respondida.'
+  if (code === CODIGO_SOLICITUD_VENCIDA) return 'Esa solicitud venció antes de ser respondida.'
+  if (code === CODIGO_DEMASIADAS_SOLICITUDES) return 'Ya tenés varias solicitudes pendientes con este profesional. Esperá su respuesta o cancelá alguna.'
+  if (code === CODIGO_TRANSICION_INVALIDA) return 'Ese turno ya no admite ese cambio.'
+  if (code === CODIGO_SOLICITUD_SIN_HORARIO) return 'Ese horario ya no está libre en tu agenda: la solicitud quedó rechazada.'
   return fallback
+}
+
+// ---- states of a turno --------------------------------------------------------------------------
+// A client never confirms a turno: it REQUESTS it. The row is born `pending` (it holds its time
+// until the request is answered or its validity runs out) and only the provider turns it into
+// `confirmed`. reservas.estado is the single source of truth (ck_reservas_estado).
+
+export const ESTADOS_TURNO = ['pending', 'confirmed', 'rejected', 'expired', 'cancelled', 'cancelled-late', 'no-show', 'completed'] as const
+export type EstadoTurno = (typeof ESTADOS_TURNO)[number]
+
+// States that give the time back. The same list as the predicate of ex_reservas_sin_solapamiento.
+export const ESTADOS_TURNO_LIBERAN = ['cancelled', 'cancelled-late', 'no-show', 'rejected', 'expired'] as const satisfies readonly EstadoTurno[]
+
+// Allowed changes of state. Nothing leaves a final state.
+export const TRANSICIONES_TURNO: Record<EstadoTurno, readonly EstadoTurno[]> = {
+  pending: ['confirmed', 'rejected', 'cancelled', 'expired'],
+  confirmed: ['completed', 'cancelled', 'cancelled-late', 'no-show'],
+  rejected: [],
+  expired: [],
+  cancelled: [],
+  'cancelled-late': [],
+  'no-show': [],
+  completed: [],
+}
+
+export const esEstadoTurno = (value: unknown): value is EstadoTurno => (ESTADOS_TURNO as readonly unknown[]).includes(value)
+
+const ETIQUETAS_ESTADO_TURNO: Record<EstadoTurno, string> = {
+  pending: 'Pendiente de confirmación',
+  confirmed: 'Confirmada',
+  rejected: 'Rechazada',
+  expired: 'Vencida sin respuesta',
+  cancelled: 'Cancelada',
+  'cancelled-late': 'Cancelada fuera de término',
+  'no-show': 'Ausente',
+  completed: 'Completada',
+}
+
+export const etiquetaEstadoTurno = (estado: string): string => (esEstadoTurno(estado) ? ETIQUETAS_ESTADO_TURNO[estado] : estado)
+
+// How long a request holds its time waiting for the provider (never beyond the start of the turno).
+export const HORAS_VIGENCIA_SOLICITUD_TURNO = 24
+// Requests one client may have waiting in the same agenda at once.
+export const MAXIMO_SOLICITUDES_PENDIENTES_POR_AGENDA = 3
+
+export const CODIGO_SESION_REQUERIDA = 'LOGIN_REQUIRED'
+export const CODIGO_SOLICITUD_NO_PENDIENTE = 'REQUEST_NOT_PENDING'
+export const CODIGO_SOLICITUD_VENCIDA = 'REQUEST_EXPIRED'
+export const CODIGO_DEMASIADAS_SOLICITUDES = 'TOO_MANY_PENDING_REQUESTS'
+export const CODIGO_TRANSICION_INVALIDA = 'INVALID_TRANSITION'
+// The provider accepted a request whose time is no longer free in its agenda: stored as rejected.
+export const CODIGO_SOLICITUD_SIN_HORARIO = 'REQUEST_SLOT_UNAVAILABLE'
+
+// What a signed-in person sees before requesting ("Solicitás el turno como"): data of the
+// account of the session, with the phone masked. Never typed again, never sent by the browser.
+export interface SolicitanteTurnoDTO {
+  nombre: string
+  email: string
+  telefono: string | null
 }
 
 export interface DisponibilidadTurnos {

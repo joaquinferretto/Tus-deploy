@@ -170,7 +170,11 @@ export interface DetalleTurno {
   precioLista: number | null
   precioFinal: number | null
   moneda: string
-  estado: 'confirmed' | 'cancelled' | 'cancelled-late' | 'no-show' | string
+  // One of ESTADOS_TURNO (tus-turnos.ts). `pending`: requested by the client, waiting for the provider.
+  estado: 'pending' | 'confirmed' | 'rejected' | 'expired' | 'cancelled' | 'cancelled-late' | 'no-show' | 'completed' | string
+  // Until when a pending request holds its time (null once it is no longer a request).
+  expiraEn?: string | null
+  // Name of a registered client comes from the account (never a copy typed in a form).
   clienteNombre?: string | null
   clienteTelefono?: string | null
   clienteEmail?: string | null
