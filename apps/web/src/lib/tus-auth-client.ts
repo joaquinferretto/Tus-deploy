@@ -320,9 +320,11 @@ export function isPlatformOnly(capabilities: TusAccountCapabilities | null): boo
 }
 
 export interface AccountLink {
-  href: '/tus/admin' | '/prestador/solicitudes' | '/mis-solicitudes' | '/mi-perfil' | '/trabajos'
+  href: '/tus/admin' | '/prestador/solicitudes' | '/mis-solicitudes' | '/mi-perfil' | '/mis-turnos' | '/trabajos'
   label: string
   primary?: boolean
+  // Shown in the mobile menu and the footer, not among the buttons of the desktop header.
+  soloMenu?: boolean
 }
 
 // Account links of the header, the mobile menu and the footer: ONE list derived from the real
@@ -331,7 +333,8 @@ export function accountLinks(capabilities: TusAccountCapabilities | null): Accou
   return [
     { ...panelFor(capabilities), primary: true },
     { href: '/mi-perfil', label: 'Mi perfil' },
-    ...(isPlatformOnly(capabilities) ? [] : [{ href: '/trabajos' as const, label: 'Mis trabajos' }]),
+    // Turnos and works belong to accounts that can have them (clients, providers).
+    ...(isPlatformOnly(capabilities) ? [] : [{ href: '/mis-turnos' as const, label: 'Mis turnos', soloMenu: true }, { href: '/trabajos' as const, label: 'Mis trabajos' }]),
   ]
 }
 

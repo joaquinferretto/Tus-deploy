@@ -188,12 +188,15 @@ test('ONBOARDING and navigation: incomplete profile -> /mi-perfil with returnTo 
   assert.deepEqual(result.abierto, ['/mi-perfil', '/mi-perfil', '/mi-perfil'], 'returnTo is an internal path only')
   assert.deepEqual(result.exentas, [true, true, true, true, true, true, true])
   assert.deepEqual(result.protegidas, [false, false, false, false, false, false, false])
-  assert.deepEqual(result.links, [['Panel admin', 'Mi perfil'], ['Panel admin', 'Mi perfil', 'Mis trabajos'], ['Mis solicitudes', 'Mi perfil', 'Mis trabajos']])
+  assert.deepEqual(result.links, [['Panel admin', 'Mi perfil'], ['Panel admin', 'Mi perfil', 'Mis turnos', 'Mis trabajos'], ['Mis solicitudes', 'Mi perfil', 'Mis turnos', 'Mis trabajos']])
   assert.deepEqual(result.platformOnly, [true, false, false, false])
 
   // Header (desktop + mobile menu) and footer render that one list; the route itself answers.
   const header = read('apps/web/src/features/home/public-header.tsx')
-  assert.equal((header.match(/links\.map\(/gu) ?? []).length, 2, 'desktop actions and the mobile menu use the same list')
+  // One list for both. The desktop header leaves out the links marked soloMenu ("Mis turnos": a
+  // fourth button runs into the centred logo); the mobile menu and the footer show them all.
+  assert.equal((header.match(/links\.filter\(\(link\) => !link\.soloMenu\)\.map\(/gu) ?? []).length, 1, 'desktop actions come from the shared list')
+  assert.equal((header.match(/links\.map\(/gu) ?? []).length, 1, 'the mobile menu renders the whole shared list')
   assert.match(read('apps/web/src/features/home/site-footer.tsx'), /accountLinks\(account\.capabilities\)/u)
   const work = read('apps/web/src/features/work/work-page.tsx')
   assert.match(work, /isPlatformOnly\(account\.capabilities\)/u, '/trabajos itself tells a platform-only account it has no works (not only hidden)')

@@ -20,7 +20,7 @@ export function AssistantChat(): React.ReactNode {
         Escribí con tus palabras qué necesitás. El asistente busca profesionales reales, consulta turnos y responde tus dudas sobre TUS. Vos elegís y confirmás cada acción.
       </p>
       <div className={styles.toolbar}>
-        <p>{account.status === 'signed-in' ? 'Sesión iniciada: podés reservar y enviar solicitudes.' : 'Sin sesión podés consultar; para reservar o contratar vas a tener que iniciar sesión.'}</p>
+        <p>{account.status === 'signed-in' ? 'Sesión iniciada: podés solicitar turnos y enviar solicitudes.' : 'Sin sesión podés consultar; para solicitar un turno o contratar vas a tener que iniciar sesión.'}</p>
         <button className={styles.linkButton} disabled={assistant.busy || assistant.messages.length === 0} onClick={assistant.restart} type="button">
           Nueva conversación
         </button>

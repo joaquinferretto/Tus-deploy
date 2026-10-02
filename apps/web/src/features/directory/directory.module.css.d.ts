@@ -39,6 +39,10 @@ declare const styles: {
   readonly profession: string
   readonly profileGrid: string
   readonly profileHead: string
+  readonly requestFacts: string
+  readonly requestSent: string
+  readonly requester: string
+  readonly requesterLabel: string
   readonly resultCount: string
   readonly searchField: string
   readonly searchRow: string
@@ -49,10 +53,21 @@ declare const styles: {
   readonly srOnlyLabel: string
   readonly state: string
   readonly stateActions: string
+  readonly submitHint: string
+  readonly submitRow: string
   readonly subtitle: string
   readonly tarifaCard: string
   readonly tarifaCardActive: string
   readonly title: string
+  readonly turnoActions: string
+  readonly turnoCard: string
+  readonly turnoCardNew: string
+  readonly turnoData: string
+  readonly turnoList: string
+  readonly turnoState: string
+  readonly turnoStateOff: string
+  readonly turnoStateOk: string
+  readonly turnoStatePending: string
   readonly verified: string
 }
 export default styles

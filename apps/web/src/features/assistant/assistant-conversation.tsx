@@ -100,7 +100,7 @@ export function AssistantConversation({ assistant, compact = false }: { assistan
               </p>
               <div className={styles.slots}>
                 {provider.starts.map((startsAt) => (
-                  <button className={styles.slot} disabled={!active} key={startsAt} onClick={() => assistant.send(`Quiero reservar con ${provider.name} el ${diaDe(startsAt)} a las ${hora(startsAt)}`)} type="button">
+                  <button className={styles.slot} disabled={!active} key={startsAt} onClick={() => assistant.send(`Quiero solicitar el turno con ${provider.name} el ${diaDe(startsAt)} a las ${hora(startsAt)}`)} type="button">
                     {hora(startsAt)}
                     <small>{diaCorto(startsAt)}</small>
                   </button>
@@ -121,7 +121,7 @@ export function AssistantConversation({ assistant, compact = false }: { assistan
           <strong className={styles.slotsTitle}>Turnos del {dia(value.date)}</strong>
           <div className={styles.slots}>
             {value.slots.map((slot) => (
-              <button className={styles.slot} disabled={!active} key={slot.startsAt} onClick={() => assistant.send(`Quiero reservar el turno del ${dia(value.date)} a las ${hora(slot.startsAt)}`)} type="button">
+              <button className={styles.slot} disabled={!active} key={slot.startsAt} onClick={() => assistant.send(`Quiero solicitar el turno del ${dia(value.date)} a las ${hora(slot.startsAt)}`)} type="button">
                 {hora(slot.startsAt)}
                 <small>{slot.durationMinutes} min</small>
               </button>
@@ -195,7 +195,7 @@ export function AssistantConversation({ assistant, compact = false }: { assistan
                       className={action.id.startsWith('confirm:') ? styles.buttonPrimary : styles.buttonSecondary}
                       disabled={busy || message.id !== lastAssistant}
                       key={action.id}
-                      onClick={() => assistant.reply(action.id)}
+                      onClick={() => assistant.reply(action.id, action.label)}
                       type="button"
                     >
                       {action.label}

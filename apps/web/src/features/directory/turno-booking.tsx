@@ -1,44 +1,79 @@
 'use client'
 
-import { useState } from 'react'
-import type { FranjaAgenda, PerfilPrestadorPublico, TarifaServicioPublica, DetalleTurno } from '@factory/contracts'
-import { CODIGO_HORARIO_NO_DISPONIBLE, CODIGO_HORARIO_OCUPADO } from '@factory/contracts'
+import type { Route } from 'next'
+import Link from 'next/link'
+import { useEffect, useState } from 'react'
+import type { AgendaSemanal as Agenda, DetalleTurno, FranjaAgenda, PerfilPrestadorPublico, SolicitanteTurnoDTO, TarifaServicioPublica } from '@factory/contracts'
+import { CODIGO_HORARIO_NO_DISPONIBLE, CODIGO_HORARIO_OCUPADO, CODIGO_SESION_REQUERIDA, etiquetaEstadoTurno } from '@factory/contracts'
 import homeStyles from '../home/home.module.css'
 import { AgendaSemanal } from '../turnos/agenda-semanal'
-import { TurnosError, fechaTurno, horaTurno, turnosErrorDe, turnosFetch } from '../../lib/tus-turnos-client'
+import { TurnosError, diaTurno, fechaTurno, horaTurno, turnosApi } from '../../lib/tus-turnos-client'
 import styles from './directory.module.css'
 
 const PESOS = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 })
 
+// A time the person had chosen before being sent to sign in (read from the return URL). It is
+// only a suggestion: it is selected again only if the API still offers it as available.
+export interface TurnoElegido {
+  oficioId: string
+  inicio: string
+  tarifaId?: string
+}
+
+// The client does not confirm a turno: it REQUESTS it. The request is made as the account of the
+// session (its name and contact are shown, never asked again and never sent by this page) and
+// stays pending until the provider accepts it. A visitor is sent to sign in and comes back here.
 export function TurnoBooking({
   worker,
-  authenticatedName,
-  onConfirmed,
+  autenticado,
+  retorno,
+  elegido = null,
+  onSolicitado,
 }: {
   worker: PerfilPrestadorPublico
-  authenticatedName?: string
-  onConfirmed?: (turno: DetalleTurno) => void
+  // null while the session is being verified.
+  autenticado: boolean | null
+  // Path of this profile: where the sign-in returns to.
+  retorno: string
+  elegido?: TurnoElegido | null
+  onSolicitado?: (turno: DetalleTurno) => void
 }): React.ReactNode {
-  const [selectedOficio, setSelectedOficio] = useState<string>(worker.profession.id)
+  const ofrece = (oficioId: string) => worker.profession.id === oficioId || (worker.professions ?? []).some((item) => item.id === oficioId)
+  const inicial = elegido && ofrece(elegido.oficioId) ? elegido : null
+  const [selectedOficio, setSelectedOficio] = useState<string>(inicial?.oficioId ?? worker.profession.id)
   // Bumped to ask the API for the agenda again (after someone else took the time).
   const [refresh, setRefresh] = useState(0)
   const [tarifas, setTarifas] = useState<TarifaServicioPublica[]>([])
   // The tarifa the client picked; without a pick the first one applies (API and Web alike).
-  const [tarifaElegida, setTarifaElegida] = useState<string>('')
+  const [tarifaElegida, setTarifaElegida] = useState<string>(inicial?.tarifaId ?? '')
   const selectedTarifaId = tarifaElegida || tarifas[0]?.id || ''
   const [duracion, setDuracion] = useState(0)
   const [selectedSlot, setSelectedSlot] = useState<FranjaAgenda | null>(null)
-
-  // Datos de contacto
-  const [clienteNombre, setClienteNombre] = useState(authenticatedName ?? '')
-  const [clienteTelefono, setClienteTelefono] = useState('')
-  const [clienteEmail, setClienteEmail] = useState('')
+  // The time chosen before signing in, until the agenda says whether it is still available.
+  const [pendienteDeElegir, setPendienteDeElegir] = useState<string | null>(inicial?.inicio ?? null)
   const [notas, setNotas] = useState('')
+  const [solicitante, setSolicitante] = useState<SolicitanteTurnoDTO | null>(null)
 
-  // Estado de reserva
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [confirmedTurno, setConfirmedTurno] = useState<DetalleTurno | null>(null)
+  const [solicitado, setSolicitado] = useState<DetalleTurno | null>(null)
+
+  // Who the request is made as: the account of the session, read from the API.
+  useEffect(() => {
+    if (autenticado !== true) return
+    let vigente = true
+    turnosApi
+      .solicitante()
+      .then((datos) => {
+        if (vigente) setSolicitante(datos)
+      })
+      .catch(() => {
+        if (vigente) setSolicitante(null)
+      })
+    return () => {
+      vigente = false
+    }
+  }, [autenticado])
 
   // The service or the tarifa (its duration) changed: the chosen time belongs to another agenda.
   function cambiarServicio(oficioId: string) {
@@ -46,13 +81,33 @@ export function TurnoBooking({
     setTarifaElegida('')
     setTarifas([])
     setSelectedSlot(null)
+    setPendienteDeElegir(null)
     setErrorMsg(null)
   }
 
   function cambiarTarifa(tarifaId: string) {
     setTarifaElegida(tarifaId)
     setSelectedSlot(null)
+    setPendienteDeElegir(null)
     setErrorMsg(null)
+  }
+
+  function agendaRecibida(agenda: Agenda) {
+    setTarifas(agenda.tarifas)
+    setDuracion(agenda.duracionMinutos)
+    if (!pendienteDeElegir) return
+    // Back from sign-in: the time is chosen again only if the API still offers it.
+    const franja = agenda.dias.flatMap((dia) => dia.franjas).find((item) => item.inicio === pendienteDeElegir && item.estado === 'disponible')
+    setPendienteDeElegir(null)
+    if (franja) setSelectedSlot(franja)
+    else setErrorMsg('El horario que habías elegido ya no está disponible. Elegí otro.')
+  }
+
+  function irAIniciarSesion() {
+    const params = new URLSearchParams({ turno: '1', oficio: selectedOficio })
+    if (selectedSlot) params.set('inicio', selectedSlot.inicio)
+    if (tarifaElegida) params.set('tarifa', tarifaElegida)
+    window.location.assign(`/sign-in?returnTo=${encodeURIComponent(`${retorno}?${params.toString()}`)}`)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -61,8 +116,8 @@ export function TurnoBooking({
       setErrorMsg('Por favor seleccioná un horario disponible.')
       return
     }
-    if (!clienteNombre.trim()) {
-      setErrorMsg('Por favor ingresá tu nombre.')
+    if (autenticado !== true) {
+      irAIniciarSesion()
       return
     }
 
@@ -70,64 +125,65 @@ export function TurnoBooking({
     setErrorMsg(null)
 
     try {
-      const res = await turnosFetch(`/tus/v1/public/prestadores/${encodeURIComponent(worker.id)}/turnos/reservar`, {
-        method: 'POST',
-        body: JSON.stringify({
-          oficioId: selectedOficio,
-          tarifaId: selectedTarifaId || undefined,
-          inicio: selectedSlot.inicio,
-          clienteNombre: clienteNombre.trim(),
-          clienteTelefono: clienteTelefono.trim() || undefined,
-          clienteEmail: clienteEmail.trim() || undefined,
-          notas: notas.trim() || undefined,
-        }),
+      // Only what the request is about. Who asks is the session: nothing of the person is sent.
+      const turno = await turnosApi.solicitarTurno(worker.id, {
+        oficioId: selectedOficio,
+        inicio: selectedSlot.inicio,
+        ...(selectedTarifaId ? { tarifaId: selectedTarifaId } : {}),
+        ...(notas.trim() ? { notas: notas.trim() } : {}),
       })
-
-      if (!res.ok) throw await turnosErrorDe(res, 'No se pudo confirmar el turno. Probá con otro horario.')
-      const data = (await res.json()) as DetalleTurno
-
-      setConfirmedTurno(data)
-      onConfirmed?.(data)
+      setSolicitado(turno)
+      onSolicitado?.(turno)
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : 'Error inesperado al reservar el turno')
+      // The session ended meanwhile: sign in and come back to this same time.
+      if (err instanceof TurnosError && (err.code === CODIGO_SESION_REQUERIDA || err.status === 401)) {
+        irAIniciarSesion()
+        return
+      }
+      setErrorMsg(err instanceof Error ? err.message : 'No pudimos enviar la solicitud.')
       // Someone took the slot (409): show the real availability again so another one is chosen.
-      if (err instanceof TurnosError && (err.code === CODIGO_HORARIO_OCUPADO || err.code === CODIGO_HORARIO_NO_DISPONIBLE)) setRefresh((value) => value + 1)
+      if (err instanceof TurnosError && (err.code === CODIGO_HORARIO_OCUPADO || err.code === CODIGO_HORARIO_NO_DISPONIBLE)) {
+        setSelectedSlot(null)
+        setRefresh((value) => value + 1)
+      }
     } finally {
       setSubmitting(false)
     }
   }
 
-  if (confirmedTurno) {
-    const inicioDate = new Date(confirmedTurno.inicio)
-    const fechaFormateada = inicioDate.toLocaleDateString('es-AR', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-    })
-    const horaFormateada = horaTurno(confirmedTurno.inicio)
-
+  if (solicitado) {
     return (
-      <section aria-labelledby="turno-confirmado" className={styles.panel} style={{ marginTop: 24, border: '2px solid #22c55e' }}>
-        <h2 className={styles.panelTitle} id="turno-confirmado" style={{ color: '#15803d' }}>
-          ✓ ¡Turno Confirmado!
+      <section aria-labelledby="solicitud-enviada" className={`${styles.panel} ${styles.requestSent}`} data-solicitud-enviada>
+        <h2 className={styles.panelTitle} id="solicitud-enviada" style={{ margin: 0 }}>
+          Solicitud enviada
         </h2>
-        <div style={{ display: 'grid', gap: 12, lineHeight: 1.6 }}>
-          <p style={{ margin: 0, fontSize: '1.05rem' }}>
-            Tu turno con <strong>{worker.displayName}</strong> quedó agendado.
-          </p>
-          <ul style={{ margin: 0, paddingLeft: 20 }}>
-            <li><strong>Fecha:</strong> {fechaFormateada}</li>
-            <li><strong>Horario:</strong> {horaFormateada} hs ({confirmedTurno.duracionMinutos} min)</li>
-            {confirmedTurno.tarifaNombre ? <li><strong>Servicio:</strong> {confirmedTurno.tarifaNombre}</li> : null}
-            {confirmedTurno.precioFinal != null ? (
-              <li><strong>Precio:</strong> ${PESOS.format(confirmedTurno.precioFinal)} (fijado históricamente)</li>
-            ) : null}
-            <li><strong>A nombre de:</strong> {confirmedTurno.clienteNombre}</li>
-          </ul>
-          <p className={styles.muted} style={{ fontSize: '0.9rem', margin: 0 }}>
-            El profesional te esperará en el horario coordinado. Ante cualquier cambio, podés contactarlo a través de la plataforma.
-          </p>
-        </div>
+        <p style={{ lineHeight: 1.5, margin: 0 }}>
+          Le enviamos la solicitud a <strong>{worker.displayName}</strong>. El turno quedará confirmado cuando la acepte.
+        </p>
+        <ul className={styles.requestFacts}>
+          {solicitado.oficioNombre || solicitado.tarifaNombre ? (
+            <li>
+              <strong>Servicio:</strong> {solicitado.oficioNombre ?? solicitado.tarifaNombre}
+            </li>
+          ) : null}
+          <li>
+            <strong>Fecha:</strong> {diaTurno(solicitado.inicio)}
+          </li>
+          <li>
+            <strong>Horario:</strong> {horaTurno(solicitado.inicio)} hs ({solicitado.duracionMinutos} min)
+          </li>
+          {solicitado.precioFinal != null && solicitado.precioFinal > 0 ? (
+            <li>
+              <strong>Precio:</strong> ${PESOS.format(solicitado.precioFinal)}
+            </li>
+          ) : null}
+        </ul>
+        <p style={{ margin: 0 }}>
+          Estado: <span className={`${styles.turnoState} ${styles.turnoStatePending}`}>{etiquetaEstadoTurno(solicitado.estado)} del prestador</span>
+        </p>
+        <p className={styles.muted} style={{ fontSize: '0.9rem', margin: 0 }}>
+          Te avisamos cuando responda. Mientras tanto podés ver el estado en <Link href={'/mis-turnos' as Route}>Mis turnos</Link>.
+        </p>
       </section>
     )
   }
@@ -135,9 +191,9 @@ export function TurnoBooking({
   const selectedTarifa = tarifas.find((t) => t.id === selectedTarifaId)
 
   return (
-    <section aria-labelledby="reservar-turno" className={styles.panel} style={{ marginTop: 24 }}>
-      <h2 className={styles.panelTitle} id="reservar-turno">
-        Reservar turno con {worker.displayName}
+    <section aria-labelledby="solicitar-turno" className={styles.panel} style={{ marginTop: 24 }}>
+      <h2 className={styles.panelTitle} id="solicitar-turno">
+        Solicitar turno con {worker.displayName}
       </h2>
 
       <form onSubmit={handleSubmit} className={styles.bookingForm}>
@@ -147,12 +203,7 @@ export function TurnoBooking({
             <label htmlFor="turno-oficio" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
               Servicio
             </label>
-            <select
-              id="turno-oficio"
-              value={selectedOficio}
-              onChange={(e) => cambiarServicio(e.target.value)}
-              className={styles.bookingControl}
-            >
+            <select id="turno-oficio" value={selectedOficio} onChange={(e) => cambiarServicio(e.target.value)} className={styles.bookingControl}>
               {worker.professions?.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.title}
@@ -165,9 +216,7 @@ export function TurnoBooking({
         {/* Variantes de Tarifas y Duración */}
         {tarifas.length > 0 && (
           <div>
-            <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>
-              Tarifa / Duración
-            </label>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>Tarifa / Duración</label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {tarifas.map((t) => (
                 <button
@@ -194,80 +243,52 @@ export function TurnoBooking({
             Elegí día y horario{duracion > 0 ? <span className={styles.muted} style={{ fontWeight: 400 }}>{` · turnos de ${duracion} min`}</span> : null}
           </p>
           <AgendaSemanal
-            onAgenda={(agenda) => {
-              setTarifas(agenda.tarifas)
-              setDuracion(agenda.duracionMinutos)
-            }}
+            onAgenda={agendaRecibida}
             onSeleccion={(franja) => {
               setSelectedSlot(franja)
               if (franja) setErrorMsg(null)
             }}
             origen={{ tipo: 'publica', prestadorId: worker.id, oficioId: selectedOficio, ...(tarifaElegida ? { tarifaId: tarifaElegida } : {}) }}
             seleccion={selectedSlot?.inicio ?? null}
+            {...(inicial ? { semanaInicial: new Date(new Date(inicial.inicio).getTime() - 3 * 60 * 60_000).toISOString().slice(0, 10) } : {})}
             version={refresh}
           />
         </div>
 
-        {/* Datos de contacto */}
-        <div style={{ display: 'grid', gap: 10, marginTop: 8 }}>
-          <div>
-            <label htmlFor="turno-nombre" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
-              Tu nombre y apellido *
-            </label>
-            <input
-              id="turno-nombre"
-              type="text"
-              required
-              value={clienteNombre}
-              onChange={(e) => setClienteNombre(e.target.value)}
-              placeholder="Ej. Juan Pérez"
-              className={styles.bookingControl}
-            />
+        {/* Who asks: the account of the session. Nothing is typed again. */}
+        {autenticado === true ? (
+          <div className={styles.requester} data-solicitante>
+            <span className={styles.requesterLabel}>Solicitás el turno como</span>
+            {solicitante ? (
+              <>
+                <strong>{solicitante.nombre}</strong>
+                {solicitante.telefono ? <span>{solicitante.telefono}</span> : null}
+                <span>{solicitante.email}</span>
+              </>
+            ) : (
+              <span className={styles.muted}>Tu cuenta de TUS</span>
+            )}
           </div>
+        ) : autenticado === false ? (
+          <p className={styles.notice} role="note">
+            Para solicitar el turno tenés que iniciar sesión. Te traemos de vuelta a este mismo horario.
+          </p>
+        ) : null}
 
-          <div className={styles.bookingRow2}>
-            <div>
-              <label htmlFor="turno-tel" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
-                Teléfono
-              </label>
-              <input
-                id="turno-tel"
-                type="tel"
-                value={clienteTelefono}
-                onChange={(e) => setClienteTelefono(e.target.value)}
-                placeholder="Ej. 3794 123456"
-                className={styles.bookingControl}
-              />
-            </div>
-            <div>
-              <label htmlFor="turno-email" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
-                Email
-              </label>
-              <input
-                id="turno-email"
-                type="email"
-                value={clienteEmail}
-                onChange={(e) => setClienteEmail(e.target.value)}
-                placeholder="tu@email.com"
-                className={styles.bookingControl}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="turno-notas" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
-              Notas adicionales (opcional)
-            </label>
-            <textarea
-              id="turno-notas"
-              rows={2}
-              value={notas}
-              onChange={(e) => setNotas(e.target.value)}
-              placeholder="Detalle o consulta sobre la atención..."
-              className={styles.bookingControl}
-              style={{ minHeight: 80, resize: 'vertical' }}
-            />
-          </div>
+        <div>
+          <label htmlFor="turno-notas" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+            Notas para el profesional (opcional)
+          </label>
+          <textarea
+            id="turno-notas"
+            maxLength={500}
+            rows={2}
+            value={notas}
+            onChange={(e) => setNotas(e.target.value)}
+            placeholder="Detalle o consulta sobre la atención..."
+            className={styles.bookingControl}
+            style={{ minHeight: 80, resize: 'vertical' }}
+          />
         </div>
 
         {errorMsg && (
@@ -276,8 +297,8 @@ export function TurnoBooking({
           </div>
         )}
 
-        {/* Resumen y botón de confirmación */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+        {/* Resumen y pedido: una solicitud, no una confirmación */}
+        <div className={styles.submitRow}>
           <div aria-live="polite">
             {selectedSlot ? (
               <span data-turno-elegido style={{ fontSize: '0.95rem' }}>
@@ -287,15 +308,11 @@ export function TurnoBooking({
             ) : null}
           </div>
 
-          <button
-            type="submit"
-            disabled={submitting || !selectedSlot}
-            className={homeStyles.buttonPrimary}
-            style={{ opacity: submitting || !selectedSlot ? 0.6 : 1 }}
-          >
-            {submitting ? 'Confirmando...' : 'Confirmar reserva'}
+          <button type="submit" disabled={submitting || !selectedSlot || autenticado === null} className={homeStyles.buttonPrimary} style={{ opacity: submitting || !selectedSlot ? 0.6 : 1 }}>
+            {submitting ? 'Enviando solicitud...' : autenticado === false ? 'Iniciar sesión para solicitar' : 'Solicitar reserva'}
           </button>
         </div>
+        <p className={styles.submitHint}>El turno queda pendiente hasta que el prestador confirme.</p>
       </form>
     </section>
   )

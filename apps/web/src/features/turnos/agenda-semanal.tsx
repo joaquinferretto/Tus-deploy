@@ -32,6 +32,7 @@ export function AgendaSemanal({
   onSeleccion,
   onAgenda,
   soloLectura = false,
+  semanaInicial,
 }: {
   origen: OrigenAgenda
   // Bump to ask the API again (after a booking, a 409, or a change of the weekly availability).
@@ -41,9 +42,11 @@ export function AgendaSemanal({
   onSeleccion?: (franja: FranjaAgenda | null) => void
   onAgenda?: (agenda: Agenda) => void
   soloLectura?: boolean
+  // Week to open on (any date of it), e.g. the one of a time the person had chosen before signing in.
+  semanaInicial?: string
 }): React.ReactNode {
   const semanaActual = lunesDe(hoyArgentina())
-  const [desde, setDesde] = useState(semanaActual)
+  const [desde, setDesde] = useState(() => (semanaInicial && lunesDe(semanaInicial) > semanaActual ? lunesDe(semanaInicial) : semanaActual))
   const [agenda, setAgenda] = useState<Agenda | null>(null)
   const [estado, setEstado] = useState<'cargando' | 'lista' | 'error'>('cargando')
   const [error, setError] = useState('')

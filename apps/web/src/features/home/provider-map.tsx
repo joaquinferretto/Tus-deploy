@@ -317,7 +317,7 @@ function WorkerPopupBody({ worker, label, exact }: { worker: PrestadorPublico; l
       <div className={styles.popupActions}>
         <a className={styles.popupCta} href={`/trabajadores/${encodeURIComponent(worker.id)}`}>Ver perfil</a>
         {worker.aceptaTurnos !== false ? (
-          <a className={styles.popupCta} href={`/trabajadores/${encodeURIComponent(worker.id)}?turno=1`}>Reservar turno</a>
+          <a className={styles.popupCta} href={`/trabajadores/${encodeURIComponent(worker.id)}?turno=1`}>Solicitar turno</a>
         ) : null}
         {worker.aceptaSolicitudes !== false ? (
           <a className={styles.popupCta} href={`/trabajadores/${encodeURIComponent(worker.id)}?solicitar=1`}>Solicitar servicio</a>

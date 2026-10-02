@@ -25,13 +25,13 @@ type CalendarioClienteProps =
       listingId: string
       serviceId?: never
       calendarId: string
-      onReservaConfirmada?: (slot: TusCalendarSlot, reserva: TusCalendarBooking) => void
+      onReservaSolicitada?: (slot: TusCalendarSlot, reserva: TusCalendarBooking) => void
     }
   | {
       listingId?: never
       serviceId: string
       calendarId: string
-      onReservaConfirmada?: never
+      onReservaSolicitada?: never
     }
 
 type CalendarDisplaySlot = TusCalendarSlot | TusLegacyCalendarSlot
@@ -85,7 +85,7 @@ export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNod
   const selectedSlot = slotState.slots.find((slot) => slot.slotId === selectedSlotId)
 
   async function consultarDisponibilidad(): Promise<void> {
-    if (date.length === 0 || bookingState.status === 'loading' || bookingState.status === 'confirmed') return
+    if (date.length === 0 || bookingState.status === 'loading' || bookingState.status === 'requested') return
     setSelectedSlotId(undefined)
     setBookingIntent(null)
     setBookingState({ status: 'idle' })
@@ -107,7 +107,7 @@ export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNod
   }
 
   async function reservarHorario(): Promise<void> {
-    if (selectedSlot === undefined || bookingState.status === 'loading' || bookingState.status === 'confirmed') return
+    if (selectedSlot === undefined || bookingState.status === 'loading' || bookingState.status === 'requested') return
     const intent =
       bookingIntent ??
       (props.listingId === undefined
@@ -154,9 +154,9 @@ export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNod
         setBookingState({ status: 'error', message: mensajeErrorCalendario(result.reason) })
       } else {
         const reserva = result.status === 'replay' ? result.booking : result
-        setBookingState({ status: 'confirmed', reserva })
+        setBookingState({ status: 'requested', reserva })
         if (props.listingId !== undefined) {
-          props.onReservaConfirmada?.(
+          props.onReservaSolicitada?.(
             {
               ...selectedSlot,
               listingId: props.listingId,
@@ -184,7 +184,7 @@ export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNod
       </div>
       <p>
         Las franjas y la zona horaria vienen del calendario del prestador. TUS vuelve a comprobar la
-        disponibilidad antes de confirmar la reserva.
+        disponibilidad antes de enviar la solicitud de reserva.
       </p>
       <div className="tus-calendar-controls">
         <label htmlFor="calendar-date">
@@ -195,7 +195,7 @@ export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNod
             disabled={
               slotState.status === 'loading'
               || bookingState.status === 'loading'
-              || bookingState.status === 'confirmed'
+              || bookingState.status === 'requested'
             }
             type="date"
             value={date}
@@ -209,7 +209,7 @@ export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNod
           />
         </label>
         <TusActionButton
-          disabled={date.length === 0 || bookingState.status === 'loading' || bookingState.status === 'confirmed'}
+          disabled={date.length === 0 || bookingState.status === 'loading' || bookingState.status === 'requested'}
           loading={slotState.status === 'loading'}
           onClick={() => void consultarDisponibilidad()}
           type="button"
@@ -238,7 +238,7 @@ export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNod
             <label className="tus-calendar-slot" data-selected={slot.slotId === selectedSlotId} key={slot.slotId}>
               <input
                 checked={slot.slotId === selectedSlotId}
-                disabled={bookingState.status === 'loading' || bookingState.status === 'confirmed'}
+                disabled={bookingState.status === 'loading' || bookingState.status === 'requested'}
                 name="calendarSlot"
                 onChange={() => {
                   setSelectedSlotId(slot.slotId)
@@ -256,17 +256,17 @@ export function CalendarioCliente(props: CalendarioClienteProps): React.ReactNod
           ))}
         </div>
       )}
-      {bookingState.status === 'confirmed' ? (
-        <TusStateMessage state={{ status: 'ready', message: `Reserva confirmada: ${bookingState.reserva.bookingId}.` }} />
+      {bookingState.status === 'requested' ? (
+        <TusStateMessage state={{ status: 'ready', message: `Solicitud de reserva enviada (${bookingState.reserva.bookingId}). Queda pendiente hasta que el prestador la confirme.` }} />
       ) : bookingState.status === 'loading' ? (
-        <TusStateMessage state={{ status: 'loading', message: 'Confirmando la reserva con TUS…' }} />
+        <TusStateMessage state={{ status: 'loading', message: 'Enviando la solicitud de reserva a TUS…' }} />
       ) : bookingState.status === 'conflict' ? (
         <TusStateMessage state={{ status: 'conflict', message: bookingState.message ?? 'La franja ya no está disponible.' }} />
       ) : bookingState.status === 'error' ? (
-        <TusStateMessage state={{ status: 'error', message: bookingState.message ?? 'La reserva no fue confirmada.' }} />
+        <TusStateMessage state={{ status: 'error', message: bookingState.message ?? 'La solicitud de reserva no se envió.' }} />
       ) : null}
-      <TusActionButton disabled={selectedSlot === undefined || bookingState.status === 'loading' || bookingState.status === 'confirmed'} onClick={() => void reservarHorario()} type="button">
-        Confirmar reserva
+      <TusActionButton disabled={selectedSlot === undefined || bookingState.status === 'loading' || bookingState.status === 'requested'} onClick={() => void reservarHorario()} type="button">
+        Solicitar reserva
       </TusActionButton>
     </section>
   )
@@ -280,7 +280,8 @@ interface SlotState {
 
 type BookingState =
   | { status: 'idle' | 'loading' }
-  | { status: 'confirmed'; reserva: TusCalendarBooking }
+  // Sent as a request: it stays pending until the provider confirms it.
+  | { status: 'requested'; reserva: TusCalendarBooking }
   | { status: 'conflict' | 'error'; message?: string }
 
 function formatearFranja(slot: CalendarDisplaySlot): string {

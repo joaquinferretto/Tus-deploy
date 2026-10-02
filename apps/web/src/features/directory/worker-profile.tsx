@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 import homeStyles from '../home/home.module.css'
 import type { CategoryId } from '../home/types'
 import { RequestForm } from '../requests/request-form'
-import { TurnoBooking } from './turno-booking'
+import { TurnoBooking, type TurnoElegido } from './turno-booking'
 import { useTusSession } from '../session/use-tus-session'
 import { DAY_NAMES, DirectoryRequestError, createDirectoryClient } from './directory-client'
 import styles from './directory.module.css'
@@ -27,13 +27,23 @@ export function WorkerProfile({ id }: { id: string }): React.ReactNode {
   const [requesting, setRequesting] = useState(false)
   const [sent, setSent] = useState<{ warning: string | null } | null>(null)
   const [bookingTurno, setBookingTurno] = useState(false)
+  // The time chosen before signing in, as the return URL carries it (validated before any use).
+  const [turnoElegido, setTurnoElegido] = useState<TurnoElegido | null>(null)
   const profile = useQuery({ queryKey: ['trabajador', id], queryFn: () => client.profile(id), retry: (count, error) => !(error instanceof DirectoryRequestError && error.status === 404) && count < 2 })
 
   // Back from sign-in with ?solicitar=1: reopen the request form without losing the worker.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('turno') === '1') {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('turno') === '1') {
+      const oficio = params.get('oficio') ?? ''
+      const inicio = params.get('inicio') ?? ''
+      const tarifa = params.get('tarifa') ?? ''
+      // Only well-formed values, and a time still in the future. The API decides if it is free.
+      if (/^[a-z0-9_-]{1,80}$/iu.test(oficio) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(inicio) && Date.parse(inicio) > Date.now())
+        setTurnoElegido({ oficioId: oficio, inicio, ...(/^[A-Za-z0-9_-]{1,80}$/u.test(tarifa) ? { tarifaId: tarifa } : {}) })
       setBookingTurno(true)
       setRequesting(false)
+      window.history.replaceState(null, '', path)
     }
     if (session.status === 'authenticated' && new URLSearchParams(window.location.search).get('solicitar') === '1') {
       setRequesting(true)
@@ -153,7 +163,7 @@ export function WorkerProfile({ id }: { id: string }): React.ReactNode {
                   }}
                   type="button"
                 >
-                  Reservar turno
+                  Solicitar turno
                 </button>
               ) : null}
               {worker.aceptaSolicitudes !== false && !requesting ? (
@@ -176,9 +186,10 @@ export function WorkerProfile({ id }: { id: string }): React.ReactNode {
 
       {bookingTurno ? (
         <TurnoBooking
+          autenticado={session.status === 'authenticated' ? true : session.status === 'loading' ? null : false}
+          elegido={turnoElegido}
+          retorno={path}
           worker={worker}
-          authenticatedName={undefined}
-          onConfirmed={() => {}}
         />
       ) : null}
 

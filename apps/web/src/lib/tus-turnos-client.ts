@@ -11,6 +11,7 @@ import {
   type PaginaTurnosAdmin,
   type PrestadorTurnosDTO,
   type ServicioTurnosDTO,
+  type SolicitanteTurnoDTO,
 } from '@factory/contracts'
 
 import { resolveWebApiBaseUrl } from './api-url'
@@ -79,6 +80,19 @@ export const turnosApi = {
   miAgenda: (oficioId: string, desde: string) => json<AgendaSemanal>(`/tus/v1/prestador/turnos/agenda?${query({ oficioId, desde })}`, undefined, 'No pudimos consultar la agenda.'),
   misBloqueos: () => json<{ items: BloqueoAgendaDTO[] }>('/tus/v1/prestador/turnos/bloqueos').then((result) => result.items),
   quitarBloqueo: (id: string) => json<{ ok: true }>(`/tus/v1/prestador/turnos/bloqueos/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'No pudimos quitar el bloqueo.'),
+  // Requests waiting for this provider's answer, and the answer itself. Accepting is what
+  // confirms a reservation; the API decides the time again.
+  misSolicitudes: () => json<{ items: DetalleTurno[]; pendientes: number }>('/tus/v1/prestador/turnos/solicitudes', undefined, 'No pudimos cargar las solicitudes de reserva.'),
+  aceptarSolicitud: (id: string) => json<DetalleTurno>(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/aceptar`, { method: 'POST' }, 'No pudimos aceptar la solicitud.'),
+  rechazarSolicitud: (id: string) => json<DetalleTurno>(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/rechazar`, { method: 'POST' }, 'No pudimos rechazar la solicitud.'),
+  // ---- client (own turnos) ----
+  // Who the request is made as: the data of the session's account (never typed in a form).
+  solicitante: () => json<SolicitanteTurnoDTO>('/tus/v1/cliente/turnos/solicitante'),
+  // A REQUEST: it stays pending until the provider accepts it. The client is the session.
+  solicitarTurno: (prestadorId: string, input: { oficioId: string; inicio: string; tarifaId?: string; notas?: string }) =>
+    json<DetalleTurno>(`/tus/v1/prestadores/${encodeURIComponent(prestadorId)}/turnos/solicitudes`, { method: 'POST', body: JSON.stringify(input) }, 'No pudimos enviar la solicitud. Probá con otro horario.'),
+  misTurnos: () => json<{ items: DetalleTurno[] }>('/tus/v1/cliente/turnos', undefined, 'No pudimos cargar tus turnos.').then((result) => result.items),
+  cancelarMiTurno: (id: string) => json<DetalleTurno>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/cancelar`, { method: 'POST' }, 'No pudimos cancelar el turno.'),
   // ---- public (booking) ----
   agendaPublica: (prestadorId: string, oficioId: string, desde: string, tarifaId?: string) =>
     json<AgendaSemanal>(`/tus/v1/public/prestadores/${encodeURIComponent(prestadorId)}/turnos/agenda?${query({ oficioId, desde, tarifaId })}`, undefined, 'No pudimos consultar la agenda.'),
@@ -107,4 +121,6 @@ export function instanteArgentina(fecha: string, hora: string): string {
 
 const ZONA = 'America/Argentina/Buenos_Aires'
 export const horaTurno = (iso: string) => new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: ZONA })
+// "viernes 2 de octubre"
+export const diaTurno = (iso: string) => new Date(iso).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: ZONA })
 export const fechaTurno = (iso: string) => new Date(iso).toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric', timeZone: ZONA })

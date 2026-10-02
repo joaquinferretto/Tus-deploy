@@ -52,7 +52,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
       <span aria-label="Comprobando sesión" className={styles.sessionLoading} role="status" />
     ) : auth.status === 'signed-in' ? (
       <>
-        {links.map((link) => (
+        {links.filter((link) => !link.soloMenu).map((link) => (
           <Link className={link.primary ? styles.buttonPrimary : styles.buttonSecondary} href={link.href as Route} key={link.href}>
             {link.label}
           </Link>

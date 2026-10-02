@@ -352,7 +352,7 @@ function DetallePublicacion({
           <CalendarioCliente
             calendarId={calendarId}
             listingId={publicacion.listingId}
-            onReservaConfirmada={(slot) => onCheckout(publicacion, slot)}
+            onReservaSolicitada={(slot) => onCheckout(publicacion, slot)}
           />
         ) : null}
         {service && budgetRequired ? (
@@ -462,7 +462,7 @@ function copyForPublicacion(publicacion: TusDiscoveryResponse['items'][number]):
         : publicacionRequierePresupuesto(publicacion)
           ? 'TUS no genera slots ni reservas automáticas hasta contar con un presupuesto.'
           : publicacion.availabilityStatus === 'configured'
-            ? 'La disponibilidad y la reserva se confirman contra la agenda activa del prestador.'
+            ? 'La disponibilidad se verifica contra la agenda activa del prestador. La reserva es una solicitud: queda pendiente hasta que el prestador la confirme.'
             : 'La agenda del prestador no está configurada para esta publicación.',
     actionLabel: publicacion.kind === 'product' ? 'Iniciar compra' : 'Solicitar servicio',
     detailLabel: 'Ver publicación',

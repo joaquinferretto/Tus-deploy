@@ -617,3 +617,139 @@
   padding: 24px;
   width: 100%;
 }
+
+/* ---- turno requests (TURNOS-SOLICITUD-01) ----------------------------------------------- */
+/* Who the request is made as: data of the account, shown, never asked again. */
+.requester {
+  background: var(--tus-cream);
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-control-radius);
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+}
+
+.requester strong {
+  font-size: 1rem;
+}
+
+.requesterLabel {
+  color: var(--tus-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* State of a turno. Pending is the orange of TUS: waiting, not done. */
+.turnoState {
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-control-radius);
+  display: inline-block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.turnoStatePending {
+  background: var(--tus-orange-soft);
+  border-color: var(--tus-orange);
+  color: var(--tus-ink);
+}
+
+.turnoStateOk {
+  background: #ecfdf3;
+  border-color: #86d5a4;
+  color: #166534;
+}
+
+.turnoStateOff {
+  background: var(--tus-cream);
+  color: var(--tus-ink-soft);
+}
+
+/* "Solicitud enviada": a request waiting for the provider, never the look of a confirmed turno. */
+.requestSent {
+  border: 2px solid var(--tus-orange);
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.requestFacts {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.submitRow {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.submitHint {
+  color: var(--tus-muted);
+  font-size: 0.88rem;
+  margin: 0;
+}
+
+/* A request in the provider panel or a turno in "Mis turnos". */
+.turnoCard {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.turnoCardNew {
+  border-color: var(--tus-orange);
+}
+
+.turnoData {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.turnoData div {
+  display: flex;
+  gap: 6px;
+}
+
+.turnoData dt {
+  color: var(--tus-muted);
+  min-width: 76px;
+}
+
+.turnoData dd {
+  font-weight: 600;
+  margin: 0;
+}
+
+.turnoActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.turnoList {
+  display: grid;
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .submitRow button,
+  .turnoActions button {
+    flex: 1 1 100%;
+    min-height: 48px;
+  }
+}

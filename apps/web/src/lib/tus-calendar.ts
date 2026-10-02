@@ -83,7 +83,9 @@ export function mensajeErrorCalendario(code: string | undefined): string {
   if (code === 'INCONSISTENT_CONFIGURATION') return 'La configuración del servicio no permite reservar este horario.'
   if (code === 'CONFLICT' || code === 'IN_PROGRESS') return 'La reserva tiene una solicitud en conflicto. Conservamos la intención original.'
   if (code === 'NOT_FOUND') return 'El calendario o servicio ya no está disponible para reservar.'
-  return 'No pudimos confirmar la reserva. Revisá la disponibilidad e intentá nuevamente.'
+  if (code === 'SLOT_OCCUPIED') return 'Ese horario acaba de ser ocupado. Actualizá la disponibilidad y elegí otro.'
+  if (code === 'TOO_MANY_PENDING_REQUESTS') return 'Ya tenés varias solicitudes pendientes con este prestador. Esperá su respuesta o retirá alguna.'
+  return 'No pudimos enviar la solicitud de reserva. Revisá la disponibilidad e intentá nuevamente.'
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

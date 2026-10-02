@@ -13,7 +13,7 @@ const TOOL_LABEL: Record<string, string> = {
   search_providers: 'Buscando prestadores…',
   search_services: 'Buscando servicios…',
   get_available_slots: 'Consultando turnos disponibles…',
-  book_appointment: 'Preparando la reserva…',
+  book_appointment: 'Preparando la solicitud de turno…',
   request_provider: 'Preparando la solicitud…',
   get_service_details: 'Consultando el servicio…',
 }
@@ -41,7 +41,8 @@ export interface AssistantState {
   activity: ActividadAsistenteDTO | null
   error: string | null
   send(text: string): void
-  reply(replyId: string): void
+  // label: the text of the pressed button, echoed as the message of the person.
+  reply(replyId: string, label?: string): void
   restart(): void
 }
 
@@ -100,7 +101,7 @@ export function useAssistant(enabled: boolean, sessionKey: string): AssistantSta
     },
     [turn]
   )
-  const reply = useCallback((replyId: string) => turn({ replyId }, replyId.startsWith('confirm:') ? 'Confirmar' : 'Cancelar'), [turn])
+  const reply = useCallback((replyId: string, label?: string) => turn({ replyId }, label ?? (replyId.startsWith('confirm:') ? 'Confirmar' : 'Cancelar')), [turn])
   const restart = useCallback(() => {
     if (working.current) return
     setMessages([])

@@ -75,9 +75,9 @@ test('ROLES: "Ir a mi panel" follows the server-side role; admin gets "Panel adm
   assert.deepEqual(result.unknown, { href: '/mis-solicitudes', label: 'Mis solicitudes' })
   // Navigation follows real capabilities: a platform administration account has no works.
   assert.deepEqual(result.links.platformOnly, ['/tus/admin', '/mi-perfil'])
-  assert.deepEqual(result.links.adminProvider, ['/tus/admin', '/mi-perfil', '/trabajos'])
-  assert.deepEqual(result.links.provider, ['/prestador/solicitudes', '/mi-perfil', '/trabajos'])
-  assert.deepEqual(result.links.client, ['/mis-solicitudes', '/mi-perfil', '/trabajos'])
+  assert.deepEqual(result.links.adminProvider, ['/tus/admin', '/mi-perfil', '/mis-turnos', '/trabajos'])
+  assert.deepEqual(result.links.provider, ['/prestador/solicitudes', '/mi-perfil', '/mis-turnos', '/trabajos'])
+  assert.deepEqual(result.links.client, ['/mis-solicitudes', '/mi-perfil', '/mis-turnos', '/trabajos'])
   const header = read('apps/web/src/features/home/public-header.tsx')
   assert.doesNotMatch(header, /href="\/mi-perfil">\s*(?:<span[^]*?<\/span>\s*)?Ir a mi panel/u, 'the panel is not /mi-perfil')
   // The header builds its account links from ONE capability-based list (accountLinks), whose first

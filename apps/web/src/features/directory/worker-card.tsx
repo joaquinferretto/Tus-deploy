@@ -62,7 +62,7 @@ export function WorkerCard({
         </Link>
         {worker.aceptaTurnos !== false && !onChoose ? (
           <Link className={homeStyles.buttonPrimary} href={`${profileHref(worker.id)}?turno=1` as Route}>
-            Reservar turno
+            Solicitar turno
           </Link>
         ) : null}
         {onChoose ? (

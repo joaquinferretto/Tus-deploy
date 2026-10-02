@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import type { DetalleTurno, ServicioTurnosDTO } from '@factory/contracts'
-import { horaTurno, turnosApi, turnosErrorDe, turnosFetch } from '../../lib/tus-turnos-client'
+import { CODIGO_SOLICITUD_SIN_HORARIO, etiquetaEstadoTurno, type DetalleTurno, type ServicioTurnosDTO } from '@factory/contracts'
+import { TurnosError, diaTurno, horaTurno, turnosApi, turnosErrorDe, turnosFetch } from '../../lib/tus-turnos-client'
+import { claseEstadoTurno } from '../turnos/estado-turno'
 import { ProviderAvailability } from './provider-availability'
 import homeStyles from '../home/home.module.css'
 import styles from '../directory/directory.module.css'
@@ -14,6 +15,10 @@ export function ProviderTurnos(): React.ReactNode {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filtroEstado, setFiltroEstado] = useState<string>('')
+  // Requests of clients waiting for this provider's answer: accepting is what confirms a turno.
+  const [solicitudes, setSolicitudes] = useState<DetalleTurno[]>([])
+  const [respondiendo, setRespondiendo] = useState<string | null>(null)
+  const [avisoSolicitud, setAvisoSolicitud] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null)
 
   // Modal turno manual
   const [modalManual, setModalManual] = useState(false)
@@ -63,9 +68,38 @@ export function ProviderTurnos(): React.ReactNode {
       })
   }, [filtroEstado])
 
+  const cargarSolicitudes = useCallback(() => {
+    turnosApi
+      .misSolicitudes()
+      .then((resultado) => setSolicitudes(resultado.items))
+      .catch(() => setSolicitudes([]))
+  }, [])
+
   useEffect(() => {
     cargarTurnos()
   }, [cargarTurnos])
+
+  useEffect(() => {
+    cargarSolicitudes()
+  }, [cargarSolicitudes])
+
+  async function responder(solicitud: DetalleTurno, aceptar: boolean) {
+    setRespondiendo(solicitud.id)
+    setAvisoSolicitud(null)
+    try {
+      const turno = aceptar ? await turnosApi.aceptarSolicitud(solicitud.id) : await turnosApi.rechazarSolicitud(solicitud.id)
+      setAvisoSolicitud({ tipo: 'ok', texto: `${etiquetaEstadoTurno(turno.estado)}: turno de ${solicitud.clienteNombre ?? 'el cliente'} del ${diaTurno(solicitud.inicio)} a las ${horaTurno(solicitud.inicio)} hs.` })
+    } catch (err: unknown) {
+      // CODIGO_SOLICITUD_SIN_HORARIO: the time was no longer free and the API already stored the
+      // request as rejected; the message says so.
+      setAvisoSolicitud({ tipo: 'error', texto: err instanceof TurnosError && err.code === CODIGO_SOLICITUD_SIN_HORARIO ? err.message : err instanceof Error ? err.message : 'No pudimos responder la solicitud.' })
+    } finally {
+      setRespondiendo(null)
+      cargarSolicitudes()
+      cargarTurnos()
+      setVersionAgenda((value) => value + 1)
+    }
+  }
 
   async function cambiarEstado(id: string, nuevoEstado: string) {
     try {
@@ -151,6 +185,72 @@ export function ProviderTurnos(): React.ReactNode {
 
   return (
     <div style={{ display: 'grid', gap: 20 }}>
+      {/* Solicitudes de reserva: lo que los clientes pidieron y espera la respuesta del prestador */}
+      <section aria-labelledby="solicitudes-reserva" className={styles.panel} data-solicitudes>
+        <h2 className={styles.panelTitle} id="solicitudes-reserva">
+          Solicitudes de reserva{solicitudes.length > 0 ? ` (${solicitudes.length})` : ''}
+        </h2>
+        {avisoSolicitud ? (
+          <p className={styles.notice} role={avisoSolicitud.tipo === 'error' ? 'alert' : 'status'} style={{ marginBottom: 12 }}>
+            {avisoSolicitud.texto}
+          </p>
+        ) : null}
+        {solicitudes.length === 0 ? (
+          <p className={styles.muted} style={{ margin: 0 }}>
+            No tenés solicitudes pendientes. Cuando un cliente pida un turno aparece acá para que la aceptes o la rechaces.
+          </p>
+        ) : (
+          <div className={styles.turnoList}>
+            {solicitudes.map((solicitud) => (
+              <article className={`${styles.panel} ${styles.turnoCard} ${styles.turnoCardNew}`} data-solicitud={solicitud.id} key={solicitud.id}>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <strong>Nueva solicitud</strong>
+                  <dl className={styles.turnoData}>
+                    <div>
+                      <dt>Cliente:</dt>
+                      <dd>{solicitud.clienteNombre ?? 'Cliente de TUS'}</dd>
+                    </div>
+                    <div>
+                      <dt>Servicio:</dt>
+                      <dd>{solicitud.oficioNombre ?? solicitud.tarifaNombre ?? 'Turno'}</dd>
+                    </div>
+                    <div>
+                      <dt>Fecha:</dt>
+                      <dd>{diaTurno(solicitud.inicio)}</dd>
+                    </div>
+                    <div>
+                      <dt>Horario:</dt>
+                      <dd>{horaTurno(solicitud.inicio)}</dd>
+                    </div>
+                    <div>
+                      <dt>Duración:</dt>
+                      <dd>{solicitud.duracionMinutos} minutos</dd>
+                    </div>
+                    {solicitud.notas ? (
+                      <div>
+                        <dt>Nota:</dt>
+                        <dd>{solicitud.notas}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                  <span className={claseEstadoTurno(solicitud.estado)} style={{ justifySelf: 'start' }}>
+                    {etiquetaEstadoTurno(solicitud.estado)}
+                  </span>
+                </div>
+                <div className={styles.turnoActions}>
+                  <button className={homeStyles.buttonSecondary} disabled={respondiendo === solicitud.id} onClick={() => void responder(solicitud, false)} type="button">
+                    Rechazar
+                  </button>
+                  <button className={homeStyles.buttonPrimary} disabled={respondiendo === solicitud.id} onClick={() => void responder(solicitud, true)} type="button">
+                    {respondiendo === solicitud.id ? 'Guardando…' : 'Aceptar'}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
       {/* Disponibilidad semanal (intervalo, días y horarios) y la agenda que ven los clientes */}
       <ProviderAvailability servicios={servicios} version={versionAgenda} />
 
@@ -164,7 +264,9 @@ export function ProviderTurnos(): React.ReactNode {
             style={{ padding: '6px 10px', borderRadius: 'var(--tus-control-radius)', border: '1px solid #d1d5db', minHeight: 40 }}
           >
             <option value="">Todos</option>
+            <option value="pending">Pendientes de confirmación</option>
             <option value="confirmed">Confirmados</option>
+            <option value="rejected">Rechazados</option>
             <option value="completed">Completados</option>
             <option value="cancelled">Cancelados</option>
           </select>
@@ -201,7 +303,7 @@ export function ProviderTurnos(): React.ReactNode {
         <div role="alert" style={{ background: '#fee2e2', color: '#dc2626', padding: 16, borderRadius: 'var(--tus-control-radius)' }}>{error}</div>
       ) : turnos.length === 0 ? (
         <div className={styles.panel} style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>
-          No tenés turnos registrados con este filtro. Podés agendar uno manualmente o esperar reservas de clientes.
+          No tenés turnos registrados con este filtro. Podés agendar uno manualmente o esperar solicitudes de clientes.
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
@@ -220,24 +322,13 @@ export function ProviderTurnos(): React.ReactNode {
                     Cliente: <strong>{t.clienteNombre || 'Cliente'}</strong> {t.clienteTelefono ? `(${t.clienteTelefono})` : ''}
                   </div>
                   <div style={{ color: '#6b7280', fontSize: '0.85rem' }}>
-                    {t.tarifaNombre || t.oficioId} · {t.duracionMinutos} min · ${PESOS.format(t.precioFinal ?? 0)}
+                    {t.oficioNombre || t.tarifaNombre || t.oficioId} · {t.duracionMinutos} min · ${PESOS.format(t.precioFinal ?? 0)}
                   </div>
                   {t.notas ? <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: 4 }}>Nota: {t.notas}</div> : null}
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: 'var(--tus-control-radius)',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      background: t.estado === 'confirmed' ? '#dcfce7' : t.estado === 'completed' ? '#e0e7ff' : '#fee2e2',
-                      color: t.estado === 'confirmed' ? '#15803d' : t.estado === 'completed' ? '#4338ca' : '#b91c1c',
-                    }}
-                  >
-                    {t.estado}
-                  </span>
+                  <span className={claseEstadoTurno(t.estado)}>{etiquetaEstadoTurno(t.estado)}</span>
 
                   {t.estado === 'confirmed' && (
                     <>
