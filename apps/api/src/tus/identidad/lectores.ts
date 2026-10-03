@@ -32,29 +32,114 @@ export function lecturaNoDisponible(kind: 'ocr' | 'vision'): LecturaDocumento {
 
 // ---- OCR -----------------------------------------------------------------------------------
 
-export interface MotorOcr {
-  reconocer(image: ImagenParaLectura): Promise<{ text: string; confidence: number }>
+// Whether the local OCR can run here, and why not. Never a path or file content.
+export interface DisponibilidadOcr {
+  available: boolean
+  reason: 'ok' | 'lang_path_not_set' | 'lang_path_not_local' | 'language_data_missing' | 'engine_failed'
+  languages: string[]
+  missing: string[]
 }
 
-// tesseract.js (WASM, no system binaries). Language data is fetched once by the library (or
-// from TESSERACT_LANG_PATH). One worker is reused for every image.
-export class MotorOcrTesseract implements MotorOcr {
-  private worker: Promise<{
-    recognize(image: Buffer): Promise<{ data: { text: string; confidence: number } }>
-  }> | null = null
+export interface MotorOcr {
+  reconocer(image: ImagenParaLectura): Promise<{ text: string; confidence: number }>
+  // Stops the engine (after a timeout or a failure); the next reading starts a fresh one.
+  reiniciar?(): Promise<void>
+  disponibilidad?(): Promise<DisponibilidadOcr>
+}
 
-  constructor(private readonly options: { langPath?: string } = {}) {}
+export class ErrorOcrNoDisponible extends Error {
+  constructor(readonly reason: DisponibilidadOcr['reason']) {
+    super(`local OCR is not available: ${reason}`)
+    this.name = 'ErrorOcrNoDisponible'
+  }
+}
+
+export interface OpcionesMotorOcr {
+  // Directory with <language>.traineddata (or .traineddata.gz). A URL downloads from the network.
+  langPath?: string
+  // Tesseract language codes (default: English, what the identity reader needs for a DNI's MRZ).
+  idiomas?: readonly string[]
+  // true: the language data must already be on disk (langPath, a local directory). Nothing is
+  // downloaded and nothing is written; without the files the engine is unavailable.
+  soloLocal?: boolean
+}
+
+type WorkerTesseract = {
+  recognize(image: Buffer): Promise<{ data: { text: string; confidence: number } }>
+  terminate(): Promise<unknown>
+}
+
+const IDIOMA_OCR = /^[a-z]{3}(?:_[a-z]{2,8})?$/u
+const esUrl = (value: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//iu.test(value)
+
+// tesseract.js (WASM, no system binaries). One worker is reused and readings go one at a time.
+// With `soloLocal` the language data is read from langPath and never fetched or cached (the
+// library otherwise downloads it from a CDN on first use and writes it to the working directory).
+export class MotorOcrTesseract implements MotorOcr {
+  private worker: Promise<WorkerTesseract> | null = null
+  private cola: Promise<unknown> = Promise.resolve()
+  private readonly idiomas: string[]
+
+  constructor(private readonly options: OpcionesMotorOcr = {}) {
+    const idiomas = [...new Set((options.idiomas ?? ['eng']).map((idioma) => idioma.trim().toLowerCase()))].filter((idioma) => IDIOMA_OCR.test(idioma))
+    this.idiomas = idiomas.length > 0 ? idiomas : ['eng']
+  }
+
+  // Which language files exist in langPath and in which form (all gzip or all plain).
+  private async datosLocales(): Promise<{ gzip: boolean | null; missing: string[] }> {
+    const { access } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const existe = (archivo: string) => access(join(this.options.langPath ?? '', archivo)).then(() => true, () => false)
+    const planos = await Promise.all(this.idiomas.map((idioma) => existe(`${idioma}.traineddata`)))
+    if (planos.every(Boolean)) return { gzip: false, missing: [] }
+    const comprimidos = await Promise.all(this.idiomas.map((idioma) => existe(`${idioma}.traineddata.gz`)))
+    if (comprimidos.every(Boolean)) return { gzip: true, missing: [] }
+    return { gzip: null, missing: this.idiomas.filter((_, indice) => !planos[indice] && !comprimidos[indice]) }
+  }
+
+  async disponibilidad(): Promise<DisponibilidadOcr> {
+    const base = { languages: [...this.idiomas], missing: [] as string[] }
+    if (!this.options.soloLocal) return { available: true, reason: 'ok', ...base }
+    const langPath = this.options.langPath?.trim()
+    if (!langPath) return { available: false, reason: 'lang_path_not_set', ...base, missing: [...this.idiomas] }
+    if (esUrl(langPath)) return { available: false, reason: 'lang_path_not_local', ...base, missing: [...this.idiomas] }
+    const datos = await this.datosLocales()
+    // Mixed forms (one plain, one gzip) cannot be loaded together: reported as missing too.
+    return datos.gzip === null ? { available: false, reason: 'language_data_missing', ...base, missing: datos.missing.length > 0 ? datos.missing : [...this.idiomas] } : { available: true, reason: 'ok', ...base }
+  }
+
+  private async crear(): Promise<WorkerTesseract> {
+    let opciones: Record<string, unknown> = this.options.langPath ? { langPath: this.options.langPath } : {}
+    if (this.options.soloLocal) {
+      const estado = await this.disponibilidad()
+      if (!estado.available) throw new ErrorOcrNoDisponible(estado.reason)
+      const { gzip } = await this.datosLocales()
+      opciones = { langPath: this.options.langPath!.trim(), cacheMethod: 'none', gzip: gzip === true }
+    }
+    const { createWorker } = await import('tesseract.js')
+    return (await createWorker(this.idiomas.join('+'), 1, opciones)) as unknown as WorkerTesseract
+  }
 
   async reconocer(image: ImagenParaLectura): Promise<{ text: string; confidence: number }> {
-    this.worker ??= import('tesseract.js').then(({ createWorker }) =>
-      createWorker('eng', 1, this.options.langPath ? { langPath: this.options.langPath } : {})
-    ) as never
-    const worker = await this.worker!
-    const result = await worker.recognize(image.bytes)
-    return {
-      text: result.data.text,
-      confidence: Math.max(0, Math.min(1, result.data.confidence / 100)),
-    }
+    const turno = this.cola.then(async () => {
+      // A worker that could not be created is not remembered: the next reading tries again.
+      this.worker ??= this.crear().catch((error: unknown) => {
+        this.worker = null
+        throw error
+      })
+      const worker = await this.worker
+      const result = await worker.recognize(image.bytes)
+      return { text: result.data.text, confidence: Math.max(0, Math.min(1, result.data.confidence / 100)) }
+    })
+    this.cola = turno.catch(() => undefined)
+    return turno
+  }
+
+  async reiniciar(): Promise<void> {
+    const worker = this.worker
+    this.worker = null
+    this.cola = Promise.resolve()
+    if (worker) await worker.then((item) => item.terminate()).catch(() => undefined)
   }
 }
 

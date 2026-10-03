@@ -202,10 +202,16 @@ export function crearModuloWhatsapp(input: {
             limitesComprobante.analyzer === 'vision'
               ? new AnalizadorComprobanteVision(
                   new ModeloVisionComprobanteGroq({ pool: groqPool!, model: env['GROQ_VISION_MODEL']?.trim() || undefined, responseFormat: env['GROQ_VISION_RESPONSE_FORMAT']?.trim() === 'json_schema' ? 'json_schema' : 'json_object', timeoutMs: limitesComprobante.timeoutMs }),
-                  new ExtractorTextoPdfPoppler(env['WHATSAPP_RECEIPT_PDFTOTEXT']?.trim() || 'pdftotext'),
+                  new ExtractorTextoPdfPoppler(env['WHATSAPP_RECEIPT_PDFTOTEXT']?.trim() || 'pdftotext', { maxBytes: limitesComprobante.maxPdfBytes }),
                   limitesComprobante
                 )
-              : new AnalizadorComprobanteOcr(new MotorOcrTesseract(env['TESSERACT_LANG_PATH']?.trim() ? { langPath: env['TESSERACT_LANG_PATH']!.trim() } : {}), new ExtractorTextoPdfPoppler(env['WHATSAPP_RECEIPT_PDFTOTEXT']?.trim() || 'pdftotext'), limitesComprobante),
+              : new AnalizadorComprobanteOcr(
+                  // Receipts are in Spanish. The language data must already be on disk
+                  // (TESSERACT_LANG_PATH): a request never downloads it; without it images are not read.
+                  new MotorOcrTesseract({ langPath: env['TESSERACT_LANG_PATH']?.trim() || undefined, idiomas: (env['WHATSAPP_RECEIPT_OCR_LANGS']?.trim() || 'spa').split(/[+,\s]+/u), soloLocal: true }),
+                  new ExtractorTextoPdfPoppler(env['WHATSAPP_RECEIPT_PDFTOTEXT']?.trim() || 'pdftotext', { maxBytes: limitesComprobante.maxPdfBytes }),
+                  limitesComprobante
+                ),
             limitesComprobante
           )
         : null

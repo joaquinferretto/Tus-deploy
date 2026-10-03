@@ -113,9 +113,9 @@ test('receipts: one pending payment is verified without reading the file; with s
     out.lectorColgado = { empieza: colgado.textos[0].startsWith('No pude leer el comprobante'), consultas: dom.verificaciones.length, motivo: metrics.slice(antesM).filter((m) => m.name === 'assistant.receipt_failed').map((m) => m.reason) }
 
     // W) a valid PDF read for real (pdftotext through stdin/stdout): its amount chooses the work.
-    const { spawnSync } = await import('node:child_process')
-    out.hayPoppler = spawnSync('pdftotext', ['-v']).error === undefined
+    // Only a pdftotext that really extracts from stdin counts (poppler's; Xpdf's does not).
     const { AnalizadorComprobanteOcr, ExtractorTextoPdfPoppler } = await import('./apps/api/src/tus/asistente/comprobantes.ts')
+    out.hayPoppler = (await new ExtractorTextoPdfPoppler().disponibilidad()).available
     const real = new AnalizadorComprobanteOcr({ reconocer: async () => ({ text: '', confidence: 0 }) }, new ExtractorTextoPdfPoppler(), limitesComprobante)
     reiniciar([MASAJE], [LUZ()]); dom.resultados.set('work:t-luz', { estado: 'confirmed', amountMinor: '2250000' })
     const delegado = lector.analizar; lector.analizar = (archivo) => { lector.llamadas.push({ tipo: archivo.kind, mime: archivo.mimeType, bytes: archivo.bytes.length }); return real.analizar(archivo) }

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import * as z from 'zod/v4'
 import { crearPoolCredencialesGroq, type GroqCredentialPool } from '../../providers/groq/index.ts'
-import { GROQ_CHAT_COMPLETIONS_URL, GROQ_VISION_MODEL_POR_DEFECTO, type MotorOcr } from '../identidad/lectores.ts'
+import { ErrorOcrNoDisponible, GROQ_CHAT_COMPLETIONS_URL, GROQ_VISION_MODEL_POR_DEFECTO, type DisponibilidadOcr, type MotorOcr } from '../identidad/lectores.ts'
 
 // TUS-WHATSAPP-MULTIMODAL-02: reading a payment receipt (image or PDF) sent through WhatsApp.
 //
@@ -75,7 +75,10 @@ export type CodigoErrorComprobante =
   | 'CORRUPT'
   | 'TOO_MANY_PAGES'
   | 'DOWNLOAD_FAILED'
+  // The reader does not exist here (binary missing, language data missing, provider not configured).
   | 'ANALYZER_UNAVAILABLE'
+  // The reader exists and broke (process killed, unexpected exit, provider error): not the file's fault.
+  | 'ANALYZER_FAILED'
   | 'ANALYZER_TIMEOUT'
   | 'NO_TEXT'
 
@@ -324,29 +327,175 @@ export function interpretarTextoComprobante(text: string, opciones: { analyzer?:
 
 // ---- analyzers ---------------------------------------------------------------------------------
 
+// What of the receipt reading can run here (for readiness): never a path, a key or a content.
+export interface CapacidadesComprobantes {
+  analyzer: 'ocr' | 'vision'
+  images: { available: boolean; reason: string }
+  pdf: { available: boolean; reason: string }
+}
+
 export interface AnalizadorComprobante {
   readonly kind: 'ocr' | 'vision'
   // Reads a VALIDATED file. The answer is evidence, never a fact. Throws ErrorComprobante.
   analizar(archivo: ComprobanteValidado): Promise<EvidenciaComprobante>
+  capacidades?(): Promise<CapacidadesComprobantes>
 }
 
 export interface ExtractorTextoPdf {
   extraer(bytes: Buffer, opciones: { maxPaginas: number; timeoutMs: number }): Promise<string>
+  disponibilidad?(forzar?: boolean): Promise<{ available: boolean; reason: string }>
 }
+
+async function capacidadPdf(extractor: ExtractorTextoPdf | null): Promise<{ available: boolean; reason: string }> {
+  if (!extractor) return { available: false, reason: 'not_configured' }
+  if (!extractor.disponibilidad) return { available: true, reason: 'ok' }
+  const estado = await extractor.disponibilidad().catch(() => ({ available: false, reason: 'failed' }))
+  return { available: estado.available, reason: estado.reason }
+}
+
+// Whether pdftotext can be used here, and why not. Never the binary's output or a path.
+export interface DisponibilidadPdf {
+  available: boolean
+  // 'incompatible': a pdftotext exists but cannot read a PDF from standard input (TUS never writes
+  // the file to disk). Poppler's pdftotext can; Xpdf's cannot.
+  reason: 'ok' | 'missing' | 'not_executable' | 'incompatible' | 'failed' | 'timeout' | 'invalid_path'
+  version: string | null
+}
+
+type ProcesoPdf = ReturnType<typeof spawn>
+// How the process is started (tests replace it to simulate each way of failing).
+export type LanzadorPdf = (binario: string, argumentos: string[]) => ProcesoPdf
+
+const MARCA_AUTOPRUEBA = 'TUSPDFOK'
+
+// A one-page PDF with a known word, built in memory: what the availability check extracts to
+// prove that this pdftotext really reads a PDF from standard input.
+export function pdfDeAutoprueba(): Buffer {
+  const flujo = `BT /F1 12 Tf 10 100 Td (${MARCA_AUTOPRUEBA}) Tj ET`
+  const objetos = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${flujo.length} >>\nstream\n${flujo}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let salida = '%PDF-1.4\n'
+  const posiciones: number[] = []
+  objetos.forEach((objeto, indice) => {
+    posiciones.push(salida.length)
+    salida += `${indice + 1} 0 obj\n${objeto}\nendobj\n`
+  })
+  const xref = salida.length
+  salida += `xref\n0 ${objetos.length + 1}\n0000000000 65535 f \n`
+  for (const posicion of posiciones) salida += `${String(posicion).padStart(10, '0')} 00000 n \n`
+  salida += `trailer\n<< /Size ${objetos.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return Buffer.from(salida, 'latin1')
+}
+
+// The configured binary: a bare program name found through PATH or an absolute path. Anything
+// else (arguments, relative paths, shell syntax) is refused: nothing is ever run through a shell.
+export function binarioPdftotextValido(binario: string): boolean {
+  if (binario.length === 0 || binario.length > 260 || /[\u0000-\u001f"'`;|&<>$*?]/u.test(binario)) return false
+  if (/^[A-Za-z0-9._-]+$/u.test(binario)) return true
+  return /^(?:[A-Za-z]:[\\/]|\/)[^\n]*$/u.test(binario) && !/(?:^|[\\/])\.\.(?:[\\/]|$)/u.test(binario)
+}
+
+const TEXTO_PDF_MAXIMO = 256 * 1024
+const DISPONIBILIDAD_VIGENTE_MS = 5 * 60_000
 
 // pdftotext (poppler-utils) without a shell and without temporary files: the PDF goes through
 // stdin, the text comes through stdout, the arguments are fixed, the output and the time are
-// capped, and only the first pages are read. If the binary is missing a PDF cannot be read.
+// capped, and only the first pages are read. Each way of failing has its own code:
+//   ANALYZER_UNAVAILABLE  the binary is missing or cannot be executed (installation problem)
+//   CORRUPT               pdftotext says the PDF cannot be opened or is protected (exit 1, 3)
+//   ANALYZER_FAILED       the process broke for another reason (other exit code, killed by a signal)
+//   ANALYZER_TIMEOUT      it did not finish in time (it is killed)
+//   TOO_LARGE             the file or its text is over the cap
 export class ExtractorTextoPdfPoppler implements ExtractorTextoPdf {
-  constructor(private readonly binario = 'pdftotext') {}
+  private comprobada: { at: number; valor: DisponibilidadPdf } | null = null
+
+  constructor(
+    private readonly binario = 'pdftotext',
+    private readonly opciones: { maxBytes?: number; now?: () => number; lanzar?: LanzadorPdf } = {}
+  ) {}
+
+  private proceso(argumentos: string[]): ProcesoPdf {
+    if (this.opciones.lanzar) return this.opciones.lanzar(this.binario, argumentos)
+    return spawn(this.binario, argumentos, { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env['PATH'] ?? '', LANG: 'C.UTF-8' }, shell: false, windowsHide: true })
+  }
+
+  private ahora(): number {
+    return this.opciones.now?.() ?? Date.now()
+  }
+
+  // Whether PDFs can really be read here: `pdftotext -v` (the binary exists and runs) and then a
+  // built-in one-page PDF extracted through standard input (it is a pdftotext TUS can use). Cached
+  // for a few minutes so that a readiness probe never spawns a process per request; `forzar`
+  // re-checks now.
+  async disponibilidad(forzar = false): Promise<DisponibilidadPdf> {
+    if (!forzar && this.comprobada && this.ahora() - this.comprobada.at < DISPONIBILIDAD_VIGENTE_MS) return this.comprobada.valor
+    let valor = await this.comprobar()
+    if (valor.available) {
+      const version = valor.version
+      valor = await this.extraer(pdfDeAutoprueba(), { maxPaginas: 1, timeoutMs: 5_000 }).then(
+        (texto): DisponibilidadPdf => (texto.includes(MARCA_AUTOPRUEBA) ? { available: true, reason: 'ok', version } : { available: false, reason: 'incompatible', version }),
+        (error: unknown): DisponibilidadPdf => {
+          const code = error instanceof ErrorComprobante ? error.code : 'ANALYZER_FAILED'
+          // It runs but cannot extract its own sample PDF: this build does not read standard input
+          // (or is broken). Either way PDFs cannot be read with it.
+          return { available: false, reason: code === 'ANALYZER_TIMEOUT' ? 'timeout' : code === 'ANALYZER_UNAVAILABLE' ? 'missing' : 'incompatible', version }
+        }
+      )
+    }
+    this.comprobada = { at: this.ahora(), valor }
+    return valor
+  }
+
+  private comprobar(): Promise<DisponibilidadPdf> {
+    if (!binarioPdftotextValido(this.binario)) return Promise.resolve({ available: false, reason: 'invalid_path', version: null })
+    return new Promise((resolve) => {
+      let hijo: ProcesoPdf
+      try {
+        hijo = this.proceso(['-v'])
+      } catch {
+        return resolve({ available: false, reason: 'missing', version: null })
+      }
+      let salida = ''
+      let resuelto = false
+      const terminar = (valor: DisponibilidadPdf) => {
+        if (resuelto) return
+        resuelto = true
+        clearTimeout(temporizador)
+        hijo.kill('SIGKILL')
+        resolve(valor)
+      }
+      const temporizador = setTimeout(() => terminar({ available: false, reason: 'timeout', version: null }), 5_000)
+      const leer = (parte: Buffer) => {
+        if (salida.length < 2_048) salida += parte.toString('latin1')
+      }
+      hijo.stdout!.on('data', leer)
+      hijo.stderr!.on('data', leer)
+      hijo.stdin!.on('error', () => undefined)
+      hijo.stdin!.end()
+      hijo.on('error', (error: NodeJS.ErrnoException) => terminar({ available: false, reason: error.code === 'EACCES' || error.code === 'EPERM' ? 'not_executable' : 'missing', version: null }))
+      hijo.on('close', (codigo) => {
+        // Poppler prints "pdftotext version X.Y.Z" (Xpdf's build prints it too and exits 99).
+        const version = salida.match(/pdftotext\s+version\s+([0-9][0-9A-Za-z.]*)/iu)?.[1] ?? null
+        terminar(version || codigo === 0 ? { available: true, reason: 'ok', version } : { available: false, reason: 'failed', version: null })
+      })
+    })
+  }
 
   extraer(bytes: Buffer, opciones: { maxPaginas: number; timeoutMs: number }): Promise<string> {
+    if (!binarioPdftotextValido(this.binario)) return Promise.reject(new ErrorComprobante('ANALYZER_UNAVAILABLE', 'pdftotext path is not valid'))
+    if (this.opciones.maxBytes !== undefined && bytes.length > this.opciones.maxBytes) return Promise.reject(new ErrorComprobante('TOO_LARGE', 'PDF is too large'))
     return new Promise((resolve, reject) => {
-      const hijo = spawn(this.binario, ['-l', String(opciones.maxPaginas), '-q', '-nopgbrk', '-enc', 'UTF-8', '-', '-'], {
-        stdio: ['pipe', 'pipe', 'ignore'],
-        env: { PATH: process.env['PATH'] ?? '', LANG: 'C.UTF-8' },
-        shell: false,
-      })
+      let hijo: ProcesoPdf
+      try {
+        hijo = this.proceso(['-l', String(opciones.maxPaginas), '-q', '-nopgbrk', '-enc', 'UTF-8', '-', '-'])
+      } catch {
+        return reject(new ErrorComprobante('ANALYZER_UNAVAILABLE', 'pdftotext is not available'))
+      }
       const partes: Buffer[] = []
       let total = 0
       let cerrado = false
@@ -359,19 +508,27 @@ export class ExtractorTextoPdfPoppler implements ExtractorTextoPdf {
         else resolve(texto)
       }
       const temporizador = setTimeout(() => terminar(new ErrorComprobante('ANALYZER_TIMEOUT', 'PDF text extraction timed out')), opciones.timeoutMs)
-      hijo.on('error', () => terminar(new ErrorComprobante('ANALYZER_UNAVAILABLE', 'pdftotext is not available')))
-      hijo.stdout.on('data', (parte: Buffer) => {
+      hijo.on('error', (error: NodeJS.ErrnoException) => {
+        // The binary is not there (or cannot be run): remembered, so readiness reports it at once.
+        this.comprobada = { at: this.ahora(), valor: { available: false, reason: error.code === 'EACCES' || error.code === 'EPERM' ? 'not_executable' : 'missing', version: null } }
+        terminar(new ErrorComprobante('ANALYZER_UNAVAILABLE', 'pdftotext is not available'))
+      })
+      hijo.stdout!.on('data', (parte: Buffer) => {
         total += parte.length
-        if (total > 256 * 1024) return terminar(new ErrorComprobante('CORRUPT', 'PDF text is too large'))
+        if (total > TEXTO_PDF_MAXIMO) return terminar(new ErrorComprobante('TOO_LARGE', 'PDF text is too large'))
         partes.push(parte)
       })
-      hijo.stdin.on('error', () => undefined)
-      hijo.on('close', (codigo) => {
+      // stderr is drained and discarded: it may quote the document, so it is never kept or logged.
+      hijo.stderr!.on('data', () => undefined)
+      hijo.stdin!.on('error', () => undefined)
+      hijo.on('close', (codigo, senal) => {
         if (cerrado) return
-        if (codigo !== 0) return terminar(new ErrorComprobante('CORRUPT', 'PDF could not be read'))
-        terminar(null, Buffer.concat(partes).toString('utf8'))
+        if (codigo === 0) return terminar(null, Buffer.concat(partes).toString('utf8'))
+        // Poppler: 1 = the PDF could not be opened, 3 = protected against text extraction.
+        if (codigo === 1 || codigo === 3) return terminar(new ErrorComprobante('CORRUPT', 'PDF could not be read'))
+        terminar(new ErrorComprobante('ANALYZER_FAILED', senal ? 'pdftotext was ended by a signal' : `pdftotext ended with exit code ${codigo}`))
       })
-      hijo.stdin.end(bytes)
+      hijo.stdin!.end(bytes)
     })
   }
 }
@@ -400,10 +557,20 @@ export class AnalizadorComprobanteOcr implements AnalizadorComprobante {
     try {
       lectura = await conLimiteDeTiempo(this.motor.reconocer({ bytes: archivo.bytes, mimeType: archivo.mimeType } as never), this.limits.timeoutMs)
     } catch (error) {
-      throw error instanceof ErrorComprobante ? error : new ErrorComprobante('ANALYZER_UNAVAILABLE', 'OCR failed')
+      // The language data is not installed: an installation problem, nothing was read.
+      if (error instanceof ErrorOcrNoDisponible) throw new ErrorComprobante('ANALYZER_UNAVAILABLE', 'local OCR is not available')
+      // A reading that ran out of time or broke keeps the engine busy or damaged: it is stopped,
+      // and the next receipt starts a fresh one.
+      await this.motor.reiniciar?.().catch(() => undefined)
+      throw error instanceof ErrorComprobante ? error : new ErrorComprobante('ANALYZER_FAILED', 'OCR failed')
     }
     if (lectura.text.trim().length < 8) throw new ErrorComprobante('NO_TEXT', 'no text could be read')
     return interpretarTextoComprobante(lectura.text, { analyzer: 'ocr', confidence: lectura.confidence })
+  }
+
+  async capacidades(): Promise<CapacidadesComprobantes> {
+    const ocr: DisponibilidadOcr | { available: boolean; reason: string } = this.motor.disponibilidad ? await this.motor.disponibilidad().catch(() => ({ available: false, reason: 'engine_failed' })) : { available: true, reason: 'ok' }
+    return { analyzer: 'ocr', images: { available: ocr.available, reason: ocr.reason }, pdf: await capacidadPdf(this.pdf) }
   }
 }
 
@@ -497,11 +664,20 @@ export class ModeloVisionComprobanteGroq implements ModeloVisionComprobante {
       ],
     })
     if (Buffer.byteLength(body) > 20 * 1024 * 1024) return null
-    const response = await this.pool.request({
-      url: this.options.endpoint ?? GROQ_CHAT_COMPLETIONS_URL,
-      idempotent: true,
-      createInit: () => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(this.options.timeoutMs ?? 30_000) }),
-    })
+    const timeoutMs = this.options.timeoutMs ?? 30_000
+    const enviadoEn = Date.now()
+    const response = await this.pool
+      .request({
+        url: this.options.endpoint ?? GROQ_CHAT_COMPLETIONS_URL,
+        idempotent: true,
+        createInit: () => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(timeoutMs) }),
+      })
+      .catch((error: unknown) => {
+        // The pool reports a failed request without its cause (it may quote the request). A
+        // request that used up its time limit is a timeout, not a provider error.
+        if (Date.now() - enviadoEn >= timeoutMs) throw Object.assign(new Error('groq vision request timed out'), { name: 'TimeoutError' })
+        throw error
+      })
     // Reported by status only: the body may echo request data.
     if (!response.ok) throw new Error(`groq vision request failed with status ${response.status}`)
     const payload = (await response.json()) as { choices?: { finish_reason?: string; message?: { content?: string | null } }[] }
@@ -536,7 +712,12 @@ export class AnalizadorComprobanteVision implements AnalizadorComprobante {
     try {
       crudo = await conLimiteDeTiempo(this.modelo.extraer({ bytes: archivo.bytes, mimeType: archivo.mimeType }), this.limits.timeoutMs)
     } catch (error) {
-      throw error instanceof ErrorComprobante ? error : new ErrorComprobante('ANALYZER_UNAVAILABLE', 'vision provider failed')
+      // The provider answered an error, was unreachable or is rate limited: it failed, the file
+      // was not judged. Nothing of its answer is kept.
+      if (error instanceof ErrorComprobante) throw error
+      // The request was aborted by its own time limit: a timeout, like the outer guard.
+      const nombre = error instanceof Error ? error.name : ''
+      throw new ErrorComprobante(nombre === 'TimeoutError' || nombre === 'AbortError' ? 'ANALYZER_TIMEOUT' : 'ANALYZER_FAILED', 'vision provider failed')
     }
     const parsed = EsquemaComprobanteVision.safeParse(crudo)
     // Output outside the schema is discarded: nothing a model says freely is ever used.
@@ -558,6 +739,11 @@ export class AnalizadorComprobanteVision implements AnalizadorComprobante {
       status: lectura.status_text ?? 'unknown',
       confidence: { overall: confianza },
     }
+  }
+
+  // The provider is only known to be configured: it is not called to find out.
+  async capacidades(): Promise<CapacidadesComprobantes> {
+    return { analyzer: 'vision', images: { available: true, reason: 'configured' }, pdf: await capacidadPdf(this.pdf) }
   }
 }
 
@@ -638,6 +824,11 @@ export class ServicioComprobantes {
     private readonly analizador: AnalizadorComprobante,
     private readonly limits: LimitesComprobante
   ) {}
+
+  // What can be read here, for readiness and for the start-up log.
+  async capacidades(): Promise<CapacidadesComprobantes> {
+    return this.analizador.capacidades ? this.analizador.capacidades() : { analyzer: this.analizador.kind, images: { available: true, reason: 'ok' }, pdf: { available: true, reason: 'ok' } }
+  }
 
   async analizar(mediaId: string): Promise<EvidenciaComprobante> {
     let descargado: { mimeType: string; bytes: Buffer }

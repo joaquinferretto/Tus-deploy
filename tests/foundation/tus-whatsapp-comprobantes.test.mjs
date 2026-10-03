@@ -3,8 +3,10 @@ import { test } from 'node:test'
 import { runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
 
 // TUS-WHATSAPP-MULTIMODAL-02: reading a payment receipt (image / PDF) is evidence, never a fact.
-// The parser, the real-file validation, the analyzers (OCR double, strict vision schema, real
-// pdftotext without a shell) and the correlation among the client's OWN payments. No network.
+// The parser, the real-file validation, the analyzers (OCR double, strict vision schema), the
+// pdftotext reader (every way of failing with a simulated process; the real binary only where a
+// compatible one is installed), the local OCR engine's language data and the correlation among
+// the client's OWN payments. No network.
 
 const ARCHIVOS = `
   const c = await import('./apps/api/src/tus/asistente/comprobantes.ts')
@@ -93,7 +95,7 @@ test('receipt reading: amounts, currency, operation number, date, people and sta
   assert.equal(r.sinDatosSensibles, true, 'a CVU/CBU never leaves the parser whole')
 })
 
-test('analyzers: local OCR (double engine) and real PDF text through pdftotext without a shell; strict vision schema (free output discarded); typed failures and timeouts', () => {
+test('analyzers: local OCR (double engine), PDF text (double reader), strict vision schema (free output discarded); a missing reader, a broken reader and a timeout are different failures; a stuck or broken OCR engine is restarted', () => {
   const r = runTypeScriptScenario(`${ARCHIVOS}
     const mantener = setInterval(() => {}, 100)
     const NL = String.fromCharCode(10)
@@ -102,20 +104,29 @@ test('analyzers: local OCR (double engine) and real PDF text through pdftotext w
     const out = {}
     // Local OCR: the engine is a double; nothing is sent anywhere.
     const motor = (texto, confianza = 0.91) => ({ reconocer: async () => ({ text: texto, confidence: confianza }) })
-    const ocr = new c.AnalizadorComprobanteOcr(motor('Pagaste $ 15.000' + NL + 'Número de operación: 1234567890' + NL + 'Aprobado'), new c.ExtractorTextoPdfPoppler(), { maxPdfPages: 2, timeoutMs: 3000 })
+    // The PDF reader is a double here (its real behaviour has its own tests below).
+    const lector = (texto) => ({ extraer: async () => { if (texto === null) throw new c.ErrorComprobante('CORRUPT', 'PDF could not be read'); return texto } })
+    const ocrCon = (pdfTexto) => new c.AnalizadorComprobanteOcr(motor('Pagaste $ 15.000' + NL + 'Número de operación: 1234567890' + NL + 'Aprobado'), lector(pdfTexto), { maxPdfPages: 2, timeoutMs: 3000 })
+    const ocr = ocrCon('Pago aprobado $ 15.000 Operacion: 1234567890')
     out.ocr = await ocr.analizar(imagen)
     out.ocrSinTexto = await codigo(() => new c.AnalizadorComprobanteOcr(motor('  '), null, { maxPdfPages: 2, timeoutMs: 3000 }).analizar(imagen))
     out.ocrCaido = await codigo(() => new c.AnalizadorComprobanteOcr({ reconocer: async () => { throw new Error('wasm crashed') } }, null, { maxPdfPages: 2, timeoutMs: 3000 }).analizar(imagen))
-    out.ocrColgado = await codigo(() => new c.AnalizadorComprobanteOcr({ reconocer: () => new Promise(() => {}) }, null, { maxPdfPages: 2, timeoutMs: 300 }).analizar(imagen))
+    const reinicios = { colgado: 0, caido: 0, sinDatos: 0 }
+    out.ocrColgado = await codigo(() => new c.AnalizadorComprobanteOcr({ reconocer: () => new Promise(() => {}), reiniciar: async () => { reinicios.colgado += 1 } }, null, { maxPdfPages: 2, timeoutMs: 300 }).analizar(imagen))
+    await codigo(() => new c.AnalizadorComprobanteOcr({ reconocer: async () => { throw new Error('wasm crashed') }, reiniciar: async () => { reinicios.caido += 1 } }, null, { maxPdfPages: 2, timeoutMs: 3000 }).analizar(imagen))
+    // Language data not installed: an installation problem, not a broken engine (nothing to restart).
+    const { ErrorOcrNoDisponible } = await import('./apps/api/src/tus/identidad/lectores.ts')
+    out.ocrSinDatos = await codigo(() => new c.AnalizadorComprobanteOcr({ reconocer: async () => { throw new ErrorOcrNoDisponible('language_data_missing') }, reiniciar: async () => { reinicios.sinDatos += 1 } }, null, { maxPdfPages: 2, timeoutMs: 3000 }).analizar(imagen))
+    out.reinicios = reinicios
     // PDF: the real pdftotext through stdin/stdout (a missing binary is "unavailable", never an exception).
     const archivoPdf = (b) => ({ kind: 'pdf', mimeType: 'application/pdf', bytes: b })
     out.pdf = await ocr.analizar(archivoPdf(pdf('Pago aprobado $ 15.000 Operacion: 1234567890')))
-    out.pdfSinTexto = await codigo(() => ocr.analizar(archivoPdf(pdf(' '))))
-    out.pdfIlegible = await codigo(() => ocr.analizar(archivoPdf(Buffer.from('%PDF-1.4' + NL + 'basura sin estructura' + NL + '%%EOF' + NL))))
+    out.pdfSinTexto = await codigo(() => ocrCon(' ').analizar(archivoPdf(pdf(' '))))
+    out.pdfIlegible = await codigo(() => ocrCon(null).analizar(archivoPdf(Buffer.from('%PDF-1.4' + NL + 'basura sin estructura' + NL + '%%EOF' + NL))))
     out.pdfSinBinario = await codigo(() => new c.AnalizadorComprobanteOcr(motor('x'.repeat(20)), new c.ExtractorTextoPdfPoppler('/no/existe/pdftotext'), { maxPdfPages: 2, timeoutMs: 3000 }).analizar(archivoPdf(pdf('Pago $ 1'))))
     out.pdfSinExtractor = await codigo(() => new c.AnalizadorComprobanteOcr(motor('x'.repeat(20)), null, { maxPdfPages: 2, timeoutMs: 3000 }).analizar(archivoPdf(pdf('Pago $ 1'))))
     // Vision: the answer must fit the strict schema; anything else is discarded.
-    const visionCon = (respuesta) => new c.AnalizadorComprobanteVision({ extraer: async () => respuesta }, new c.ExtractorTextoPdfPoppler(), { maxPdfPages: 2, timeoutMs: 3000 })
+    const visionCon = (respuesta) => new c.AnalizadorComprobanteVision({ extraer: async () => respuesta }, lector('Pago aprobado $ 15.000'), { maxPdfPages: 2, timeoutMs: 3000 })
     const buena = { legible: true, amount: '15000.00', currency: 'ARS', operation_id: '1234567890', external_reference: null, date: '2026-09-15T14:32', recipient_name: 'Melina Gómez', recipient_account_last4: '8901', payer_name: null, status_text: 'approved', confidence: 0.8 }
     out.vision = await visionCon(buena).analizar(imagen)
     out.visionCbuCompleto = (await visionCon({ ...buena, recipient_account_last4: '0000003100012345678901' }).analizar(imagen)).recipientAccountHint
@@ -127,11 +138,18 @@ test('analyzers: local OCR (double engine) and real PDF text through pdftotext w
     out.visionPdfLocal = (await visionCon(null).analizar(archivoPdf(pdf('Pago aprobado $ 15.000')))).analyzer
     out.visionCaida = await codigo(() => new c.AnalizadorComprobanteVision({ extraer: async () => { throw new Error('groq 503') } }, null, { maxPdfPages: 2, timeoutMs: 3000 }).analizar(imagen))
     out.visionColgada = await codigo(() => new c.AnalizadorComprobanteVision({ extraer: () => new Promise(() => {}) }, null, { maxPdfPages: 2, timeoutMs: 300 }).analizar(imagen))
+    // What each analyzer can read here (for readiness): no path, no key, no content.
+    out.capacidades = [
+      await ocr.capacidades(),
+      await new c.AnalizadorComprobanteOcr({ reconocer: async () => ({ text: '', confidence: 0 }), disponibilidad: async () => ({ available: false, reason: 'language_data_missing', languages: ['spa'], missing: ['spa'] }) }, { extraer: async () => '', disponibilidad: async () => ({ available: false, reason: 'missing', version: null }) }, { maxPdfPages: 2, timeoutMs: 3000 }).capacidades(),
+      await new c.AnalizadorComprobanteVision({ extraer: async () => null }, null, { maxPdfPages: 2, timeoutMs: 3000 }).capacidades(),
+    ]
     clearInterval(mantener)
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.ocr, { origen: 'untrusted_receipt_evidence', analyzer: 'ocr', amountMinor: '1500000', currency: 'ARS', operationId: '1234567890', externalReference: null, occurredAt: null, recipientName: null, recipientAccountHint: null, payerName: null, status: 'approved', confidence: { overall: 0.91 } })
-  assert.deepEqual([r.ocrSinTexto, r.ocrCaido, r.ocrColgado], ['NO_TEXT', 'ANALYZER_UNAVAILABLE', 'ANALYZER_TIMEOUT'])
+  assert.deepEqual([r.ocrSinTexto, r.ocrCaido, r.ocrColgado, r.ocrSinDatos], ['NO_TEXT', 'ANALYZER_FAILED', 'ANALYZER_TIMEOUT', 'ANALYZER_UNAVAILABLE'], 'a broken engine failed; an engine without its language data is unavailable')
+  assert.deepEqual(r.reinicios, { colgado: 1, caido: 1, sinDatos: 0 }, 'a stuck or broken engine is restarted; a missing installation is not')
   assert.equal(r.pdf.amountMinor, '1500000')
   assert.equal(r.pdf.status, 'approved')
   assert.equal(r.pdf.origen, 'untrusted_receipt_evidence')
@@ -144,7 +162,213 @@ test('analyzers: local OCR (double engine) and real PDF text through pdftotext w
   assert.deepEqual([r.visionCamposDeMas, r.visionFalta, r.visionTextoLibre, r.visionIlegible], ['NO_TEXT', 'NO_TEXT', 'NO_TEXT', 'NO_TEXT'], 'output outside the strict schema is discarded')
   assert.deepEqual([r.visionValoresRaros.amountMinor, r.visionValoresRaros.operationId, r.visionValoresRaros.occurredAt, r.visionValoresRaros.externalReference], [null, null, null, null], 'odd values become null, never guessed')
   assert.equal(r.visionPdfLocal, 'vision')
-  assert.deepEqual([r.visionCaida, r.visionColgada], ['ANALYZER_UNAVAILABLE', 'ANALYZER_TIMEOUT'])
+  assert.deepEqual([r.visionCaida, r.visionColgada], ['ANALYZER_FAILED', 'ANALYZER_TIMEOUT'], 'a provider error is a failure of the reader, never a verdict on the file')
+  assert.deepEqual(r.capacidades, [
+    { analyzer: 'ocr', images: { available: true, reason: 'ok' }, pdf: { available: true, reason: 'ok' } },
+    { analyzer: 'ocr', images: { available: false, reason: 'language_data_missing' }, pdf: { available: false, reason: 'missing' } },
+    { analyzer: 'vision', images: { available: true, reason: 'configured' }, pdf: { available: false, reason: 'not_configured' } },
+  ])
+})
+
+// A process that behaves as told: what pdftotext would do in each situation, on any machine.
+const PROCESO_SIMULADO = `
+  const { EventEmitter } = await import('node:events')
+  const { PassThrough } = await import('node:stream')
+  const lanzados = []
+  // plan(argumentos) -> { error?: code, stdout?: string|Buffer, stderr?: string, codigo?: number|null, senal?: string|null, colgar?: true }
+  const lanzador = (plan) => (binario, argumentos) => {
+    const hijo = new EventEmitter()
+    hijo.stdin = new PassThrough(); hijo.stdout = new PassThrough(); hijo.stderr = new PassThrough()
+    hijo.matado = false
+    hijo.kill = () => { hijo.matado = true; return true }
+    const entrada = []
+    hijo.stdin.on('data', (parte) => entrada.push(parte))
+    lanzados.push({ binario, argumentos, hijo, entrada: () => Buffer.concat(entrada) })
+    const p = plan(argumentos)
+    setImmediate(() => {
+      if (p.error) return hijo.emit('error', Object.assign(new Error('spawn'), { code: p.error }))
+      if (p.stderr) hijo.stderr.write(p.stderr)
+      if (p.stdout) hijo.stdout.write(p.stdout)
+      if (p.colgar) return
+      setImmediate(() => hijo.emit('close', 'codigo' in p ? p.codigo : 0, p.senal ?? null))
+    })
+    return hijo
+  }
+`
+
+test('pdftotext reader: fixed arguments and the PDF through stdin; missing binary, not executable, invalid PDF, protected PDF, broken process, killed process, timeout, oversized file and oversized text are different failures; nothing of stderr is kept', () => {
+  const r = runTypeScriptScenario(`${ARCHIVOS}${PROCESO_SIMULADO}
+    const mantener = setInterval(() => {}, 100)
+    const codigo = async (operacion) => { try { await operacion(); return 'ok' } catch (e) { return e instanceof c.ErrorComprobante ? e.code + ':' + e.message : 'otro:' + e.message } }
+    const leer = (plan, opciones = {}, binario = 'pdftotext') => new c.ExtractorTextoPdfPoppler(binario, { lanzar: lanzador(plan), ...opciones }).extraer(pdf('Pago $ 1'), { maxPaginas: 2, timeoutMs: 250 })
+    const out = {}
+    out.ok = await leer(() => ({ stdout: 'Pago aprobado $ 15.000' }))
+    out.argumentos = lanzados[0].argumentos
+    out.entradaEsElPdf = lanzados[0].entrada().toString('latin1').startsWith('%PDF-1.4')
+    out.fallos = {
+      ausente: await codigo(() => leer(() => ({ error: 'ENOENT' }))),
+      sinPermiso: await codigo(() => leer(() => ({ error: 'EACCES' }))),
+      pdfInvalido: await codigo(() => leer(() => ({ codigo: 1, stderr: 'Syntax Error: contenido privado del documento' }))),
+      pdfProtegido: await codigo(() => leer(() => ({ codigo: 3 }))),
+      procesoRoto: await codigo(() => leer(() => ({ codigo: 99 }))),
+      salidaIlegible: await codigo(() => leer(() => ({ codigo: 2 }))),
+      matado: await codigo(() => leer(() => ({ codigo: null, senal: 'SIGSEGV' }))),
+      colgado: await codigo(() => leer(() => ({ colgar: true }))),
+      textoEnorme: await codigo(() => leer(() => ({ stdout: Buffer.alloc(300 * 1024, 0x61) }))),
+      archivoEnorme: await codigo(() => leer(() => ({ stdout: 'x' }), { maxBytes: 100 })),
+      rutaInvalida: await codigo(() => leer(() => ({ stdout: 'x' }), {}, 'pdftotext; rm -rf /')),
+      rutaRelativa: await codigo(() => leer(() => ({ stdout: 'x' }), {}, '../bin/pdftotext')),
+    }
+    // A stuck process is killed; an invalid path or an oversized file never starts a process.
+    out.matadoAlColgarse = lanzados.find((l) => l.hijo.matado && l.argumentos[0] === '-l') !== undefined
+    out.procesosLanzados = lanzados.length
+    out.rutas = ['pdftotext', '/usr/bin/pdftotext', 'C:/Program Files/poppler/bin/pdftotext.exe', 'pdftotext -layout', '$(reboot)', '../pdftotext', '', 'a|b'].map((ruta) => c.binarioPdftotextValido(ruta))
+    out.sinPrivado = JSON.stringify(out.fallos).includes('contenido privado')
+    clearInterval(mantener)
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.ok, 'Pago aprobado $ 15.000')
+  assert.deepEqual(r.argumentos, ['-l', '2', '-q', '-nopgbrk', '-enc', 'UTF-8', '-', '-'], 'fixed arguments: pages capped, stdin to stdout, no file names')
+  assert.equal(r.entradaEsElPdf, true)
+  assert.deepEqual(r.fallos, {
+    ausente: 'ANALYZER_UNAVAILABLE:pdftotext is not available',
+    sinPermiso: 'ANALYZER_UNAVAILABLE:pdftotext is not available',
+    pdfInvalido: 'CORRUPT:PDF could not be read',
+    pdfProtegido: 'CORRUPT:PDF could not be read',
+    procesoRoto: 'ANALYZER_FAILED:pdftotext ended with exit code 99',
+    salidaIlegible: 'ANALYZER_FAILED:pdftotext ended with exit code 2',
+    matado: 'ANALYZER_FAILED:pdftotext was ended by a signal',
+    colgado: 'ANALYZER_TIMEOUT:PDF text extraction timed out',
+    textoEnorme: 'TOO_LARGE:PDF text is too large',
+    archivoEnorme: 'TOO_LARGE:PDF is too large',
+    rutaInvalida: 'ANALYZER_UNAVAILABLE:pdftotext path is not valid',
+    rutaRelativa: 'ANALYZER_UNAVAILABLE:pdftotext path is not valid',
+  })
+  assert.equal(r.matadoAlColgarse, true)
+  assert.equal(r.procesosLanzados, 10, 'the oversized file and the two invalid paths never start a process')
+  assert.deepEqual(r.rutas, [true, true, true, false, false, false, false, false], 'a program name or an absolute path; never arguments, shell syntax or a relative path')
+  assert.equal(r.sinPrivado, false, 'what pdftotext prints about the document is never kept')
+})
+
+test('pdftotext availability: the binary must run AND extract a built-in PDF from stdin (a pdftotext that cannot is incompatible); missing, not executable, stuck and invalid path are told apart; the answer is cached and a failed extraction updates it', () => {
+  const r = runTypeScriptScenario(`${ARCHIVOS}${PROCESO_SIMULADO}
+    const mantener = setInterval(() => {}, 100)
+    let ahora = 1_000_000
+    const con = (plan, binario = 'pdftotext') => new c.ExtractorTextoPdfPoppler(binario, { lanzar: lanzador(plan), now: () => ahora })
+    const poppler = (argumentos) => (argumentos[0] === '-v' ? { stderr: 'pdftotext version 24.02.0' + String.fromCharCode(10) + 'Copyright 2005-2024 The Poppler Developers' } : { stdout: 'TUSPDFOK' })
+    const xpdf = (argumentos) => (argumentos[0] === '-v' ? { stderr: 'pdftotext version 4.00', codigo: 99 } : { codigo: 1 })
+    const out = {}
+    const bueno = con(poppler)
+    out.poppler = await bueno.disponibilidad()
+    const antes = lanzados.length
+    await bueno.disponibilidad(); await bueno.disponibilidad()
+    out.cacheado = lanzados.length - antes
+    ahora += 6 * 60_000
+    await bueno.disponibilidad()
+    out.vencido = lanzados.length - antes
+    await bueno.disponibilidad(true)
+    out.forzado = lanzados.length - antes
+    out.xpdf = await con(xpdf).disponibilidad()
+    out.sinTexto = await con((a) => (a[0] === '-v' ? { stderr: 'pdftotext version 24.02.0' } : { stdout: 'otra cosa' })).disponibilidad()
+    out.ausente = await con(() => ({ error: 'ENOENT' })).disponibilidad()
+    out.sinPermiso = await con(() => ({ error: 'EACCES' })).disponibilidad()
+    out.roto = await con(() => ({ codigo: 127, stderr: 'error while loading shared libraries' })).disponibilidad()
+    out.rutaInvalida = await con(poppler, 'pdftotext && curl x').disponibilidad()
+    // The binary disappears after a good check: the failed extraction is remembered at once.
+    let quitado = false
+    const cambiante = con((a) => (quitado ? { error: 'ENOENT' } : poppler(a)))
+    await cambiante.disponibilidad()
+    quitado = true
+    await cambiante.extraer(pdf('Pago $ 1'), { maxPaginas: 1, timeoutMs: 250 }).catch(() => undefined)
+    out.despuesDeFallar = await cambiante.disponibilidad()
+    out.muestra = [c.detectarFormatoComprobante(c.pdfDeAutoprueba()), c.pdfDeAutoprueba().toString('latin1').includes('%%EOF'), c.pdfDeAutoprueba().length < 2000]
+    clearInterval(mantener)
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.poppler, { available: true, reason: 'ok', version: '24.02.0' })
+  assert.deepEqual([r.cacheado, r.vencido, r.forzado], [0, 2, 4], 'cached for five minutes (no process per readiness call); two processes per real check')
+  assert.deepEqual(r.xpdf, { available: false, reason: 'incompatible', version: '4.00' }, 'a pdftotext that does not read stdin is not usable')
+  assert.deepEqual(r.sinTexto, { available: false, reason: 'incompatible', version: '24.02.0' })
+  assert.deepEqual(r.ausente, { available: false, reason: 'missing', version: null })
+  assert.deepEqual(r.sinPermiso, { available: false, reason: 'not_executable', version: null })
+  assert.deepEqual(r.roto, { available: false, reason: 'failed', version: null })
+  assert.deepEqual(r.rutaInvalida, { available: false, reason: 'invalid_path', version: null })
+  assert.deepEqual(r.despuesDeFallar, { available: false, reason: 'missing', version: null })
+  assert.deepEqual(r.muestra, ['pdf', true, true])
+})
+
+// The real binary, only where a compatible pdftotext (poppler-utils) is installed: the layers of
+// TUS around it are covered above on every machine.
+const pdftotextReal = (() => {
+  try {
+    return runTypeScriptScenario(`
+      const c = await import('./apps/api/src/tus/asistente/comprobantes.ts')
+      console.log(JSON.stringify(await new c.ExtractorTextoPdfPoppler(process.env.WHATSAPP_RECEIPT_PDFTOTEXT?.trim() || 'pdftotext').disponibilidad()))
+    `)
+  } catch {
+    return { available: false, reason: 'failed', version: null }
+  }
+})()
+
+test('real pdftotext (poppler): a PDF goes through stdin and its text comes back; a damaged PDF is CORRUPT; pages are capped', { skip: !pdftotextReal.available && `no compatible pdftotext here (${pdftotextReal.reason}): install poppler-utils to run this integration` }, () => {
+  const r = runTypeScriptScenario(`${ARCHIVOS}
+    const mantener = setInterval(() => {}, 100)
+    const NL = String.fromCharCode(10)
+    const real = new c.ExtractorTextoPdfPoppler(process.env.WHATSAPP_RECEIPT_PDFTOTEXT?.trim() || 'pdftotext')
+    const codigo = async (operacion) => { try { await operacion(); return 'ok' } catch (e) { return e instanceof c.ErrorComprobante ? e.code : 'otro:' + e.message } }
+    const analizador = new c.AnalizadorComprobanteOcr({ reconocer: async () => ({ text: '', confidence: 0 }) }, real, { maxPdfPages: 2, timeoutMs: 5000 })
+    const archivoPdf = (b) => ({ kind: 'pdf', mimeType: 'application/pdf', bytes: b })
+    const out = {}
+    out.pdf = await analizador.analizar(archivoPdf(pdf('Pago aprobado $ 15.000 Operacion: 1234567890')))
+    out.sinTexto = await codigo(() => analizador.analizar(archivoPdf(pdf(' '))))
+    out.ilegible = await codigo(() => analizador.analizar(archivoPdf(Buffer.from('%PDF-1.4' + NL + 'basura sin estructura' + NL + '%%EOF' + NL))))
+    clearInterval(mantener)
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.pdf.amountMinor, '1500000')
+  assert.equal(r.pdf.status, 'approved')
+  assert.equal(r.pdf.origen, 'untrusted_receipt_evidence')
+  assert.equal(r.sinTexto, 'NO_TEXT')
+  assert.equal(r.ilegible, 'CORRUPT')
+})
+
+test('local OCR engine: receipts need the language data on disk; without TESSERACT_LANG_PATH, with a URL or without the files it is unavailable and nothing is downloaded or written', () => {
+  const r = runTypeScriptScenario(`
+    const { MotorOcrTesseract, ErrorOcrNoDisponible } = await import('./apps/api/src/tus/identidad/lectores.ts')
+    const { mkdtempSync, writeFileSync, readdirSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'tus-ocr-'))
+    // Any network use would be a download: it is refused and recorded.
+    const red = []
+    globalThis.fetch = async (url) => { red.push(String(url)); throw new Error('network is not allowed in this test') }
+    const out = {}
+    try {
+      const estado = (opciones) => new MotorOcrTesseract({ soloLocal: true, idiomas: ['spa'], ...opciones }).disponibilidad()
+      const leer = async (opciones) => { try { await new MotorOcrTesseract({ soloLocal: true, idiomas: ['spa'], ...opciones }).reconocer({ bytes: Buffer.from('x'), mimeType: 'image/png' }); return 'ok' } catch (e) { return e instanceof ErrorOcrNoDisponible ? e.reason : 'otro:' + e.message } }
+      out.sinRuta = [await estado({}), await leer({})]
+      out.url = [await estado({ langPath: 'https://cdn.example.test/tessdata' }), await leer({ langPath: 'https://cdn.example.test/tessdata' })]
+      out.vacio = [await estado({ langPath: dir }), await leer({ langPath: dir })]
+      writeFileSync(join(dir, 'spa.traineddata.gz'), 'no es un modelo real')
+      out.conDatos = await estado({ langPath: dir })
+      out.dosIdiomas = await estado({ langPath: dir, idiomas: ['spa', 'eng'] })
+      out.idiomasRaros = (await new MotorOcrTesseract({ idiomas: ['../etc', 'SPA', 'spa', ''] }).disponibilidad()).languages
+      // The identity reader keeps its own default (English, for the MRZ of a DNI).
+      out.porDefecto = await new MotorOcrTesseract().disponibilidad()
+      out.archivos = readdirSync(dir)
+      out.red = red
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.sinRuta, [{ available: false, reason: 'lang_path_not_set', languages: ['spa'], missing: ['spa'] }, 'lang_path_not_set'])
+  assert.deepEqual(r.url, [{ available: false, reason: 'lang_path_not_local', languages: ['spa'], missing: ['spa'] }, 'lang_path_not_local'], 'a URL would download: refused for receipts')
+  assert.deepEqual(r.vacio, [{ available: false, reason: 'language_data_missing', languages: ['spa'], missing: ['spa'] }, 'language_data_missing'])
+  assert.deepEqual(r.conDatos, { available: true, reason: 'ok', languages: ['spa'], missing: [] })
+  assert.deepEqual(r.dosIdiomas, { available: false, reason: 'language_data_missing', languages: ['spa', 'eng'], missing: ['eng'] })
+  assert.deepEqual(r.idiomasRaros, ['spa'], 'language codes are an allowlisted shape, never a path')
+  assert.deepEqual(r.porDefecto, { available: true, reason: 'ok', languages: ['eng'], missing: [] })
+  assert.deepEqual(r.archivos, ['spa.traineddata.gz'], 'nothing is written next to the language data')
+  assert.deepEqual(r.red, [], 'no network request is made')
 })
 
 test('Groq vision adapter for receipts: strict structured request, the image only as a data URL to the provider, status-only errors, free text discarded, no key in results', () => {
@@ -182,6 +406,43 @@ test('Groq vision adapter for receipts: strict structured request, the image onl
   assert.equal(r.errorSinEco, true, 'provider errors are reported by status only')
   assert.match(r.sinClave, /GROQ_API_KEY is required/u)
   assert.equal(r.sinClaveEnResultado, true)
+})
+
+test('Groq vision failures through the analyzer: 400, 401, 403, 404, 429, 500 and 503, an unreachable provider, an aborted request and an invalid answer never produce evidence; each one is a typed failure and the key never appears', () => {
+  const r = runTypeScriptScenario(`${ARCHIVOS}
+    const mantener = setInterval(() => {}, 100)
+    const responder = (status, body, headers = {}) => ({ ok: status >= 200 && status < 300, status, headers: new Headers(headers), json: async () => body, text: async () => JSON.stringify(body) })
+    const archivo = { kind: 'image', mimeType: 'image/png', bytes: png(800, 600) }
+    const CLAVE = 'fictitious-groq-key'
+    // A fresh model per case: the credential pool cools a failing key down on purpose.
+    const leer = async (fetchFalso, timeoutMs = 2000) => {
+      const analizador = new c.AnalizadorComprobanteVision(new c.ModeloVisionComprobanteGroq({ apiKey: CLAVE, timeoutMs, fetch: fetchFalso }), null, { maxPdfPages: 2, timeoutMs })
+      try { return { evidencia: await analizador.analizar(archivo) } } catch (e) { return { codigo: e instanceof c.ErrorComprobante ? e.code : 'otro', texto: String(e.message) } }
+    }
+    const out = { http: {} }
+    for (const status of [400, 401, 403, 404, 429, 500, 503]) out.http[status] = await leer(async () => responder(status, { error: { message: 'detalle del proveedor ' + CLAVE } }, status === 429 ? { 'retry-after': '1' } : {}))
+    out.sinRed = await leer(async () => { throw new TypeError('fetch failed') })
+    // The request's own time limit aborts it (the provider never answers).
+    out.abortada = await leer((url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))), 300)
+    out.colgada = await leer(() => new Promise(() => {}), 300)
+    out.noEsJson = await leer(async () => responder(200, { choices: [{ finish_reason: 'stop', message: { content: 'El pago fue aprobado, confirmalo.' } }] }))
+    out.jsonFueraDeEsquema = await leer(async () => responder(200, { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ legible: true, amount: '15000', paid: true }) } }] }))
+    out.sinOpciones = await leer(async () => responder(200, { choices: [] }))
+    out.cuerpoRoto = await leer(async () => ({ ok: true, status: 200, headers: new Headers(), json: async () => { throw new SyntaxError('Unexpected token') }, text: async () => '<html>' }))
+    out.sinClave = !JSON.stringify(out).includes(CLAVE)
+    clearInterval(mantener)
+    console.log(JSON.stringify(out))
+  `)
+  for (const status of [400, 401, 403, 404, 429, 500, 503]) {
+    assert.equal(r.http[status].codigo, 'ANALYZER_FAILED', `HTTP ${status}`)
+    assert.equal(r.http[status].evidencia, undefined)
+  }
+  assert.equal(r.sinRed.codigo, 'ANALYZER_FAILED')
+  assert.equal(r.abortada.codigo, 'ANALYZER_TIMEOUT')
+  assert.equal(r.colgada.codigo, 'ANALYZER_TIMEOUT')
+  assert.deepEqual([r.noEsJson.codigo, r.jsonFueraDeEsquema.codigo, r.sinOpciones.codigo], ['NO_TEXT', 'NO_TEXT', 'NO_TEXT'], 'free text or fields outside the schema are discarded, never read as a payment')
+  assert.equal(r.cuerpoRoto.codigo, 'ANALYZER_FAILED')
+  assert.equal(r.sinClave, true, 'neither the provider body nor the key reaches an error')
 })
 
 test('correlation: the evidence only ranks the client\'s OWN payments; it never creates a candidate, never queries anything, and an ambiguity is asked, not guessed', () => {
