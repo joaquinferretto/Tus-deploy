@@ -148,6 +148,24 @@ const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [
 const asString = (value: unknown): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null
 
+// A media URL (or a redirect of one) is only followed over HTTPS to a Meta host.
+function urlDeMedioMeta(valor: string): URL {
+  let url: URL
+  try {
+    url = new URL(valor)
+  } catch {
+    throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'invalid media URL')
+  }
+  if (
+    url.protocol !== 'https:' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    !/(^|.)(fbsbx.com|facebook.com|whatsapp.net|fbcdn.net)$/u.test(url.hostname)
+  )
+    throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'unexpected media host')
+  return url
+}
+
 // Reads a response body up to `maxBytes` (one more byte is enough to know it is too large).
 async function leerConTope(response: Response, maxBytes: number): Promise<Buffer> {
   const reader = response.body?.getReader?.()
@@ -505,32 +523,47 @@ export class MetaWhatsappCloudProvider implements WhatsappProvider {
       throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media type is not allowed')
     if (Number.isFinite(size) && size > limits.maxBytes)
       throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media is too large')
-    // Media URLs are only downloadable from Meta hosts with the same bearer token.
-    let mediaUrl: URL
+    // Media URLs are only downloadable from Meta hosts with the same bearer token. Redirects are
+    // followed by hand so every hop is checked too, and the token never leaves the first host.
+    const deadline = AbortSignal.timeout(this.config.timeoutMs ?? 15_000)
+    let mediaUrl = urlDeMedioMeta(url)
+    let response: Response
+    let bytes: Buffer
     try {
-      mediaUrl = new URL(url)
-    } catch {
-      throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'invalid media URL')
+      response = await this.fetchImpl(mediaUrl, {
+        headers: { authorization: `Bearer ${this.config.accessToken}` },
+        redirect: 'manual',
+        signal: deadline,
+      })
+      for (let saltos = 0; response.status >= 300 && response.status < 400; saltos += 1) {
+        const destino = response.headers?.get?.('location')
+        if (!destino || saltos >= 2)
+          throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'unexpected media redirect')
+        const siguiente = urlDeMedioMeta(new URL(destino, mediaUrl).toString())
+        const mismoOrigen = siguiente.origin === mediaUrl.origin
+        mediaUrl = siguiente
+        response = await this.fetchImpl(mediaUrl, {
+          ...(mismoOrigen ? { headers: { authorization: `Bearer ${this.config.accessToken}` } } : {}),
+          redirect: 'manual',
+          signal: deadline,
+        })
+      }
+      if (!response.ok)
+        throw new ErrorMetaWhatsapp(
+          'WHATSAPP_MEDIA',
+          `media download failed with status ${response.status}`
+        )
+      // The cap applies while reading: a body larger than declared is cut, never buffered whole.
+      const declared = Number(response.headers?.get?.('content-length'))
+      if (Number.isFinite(declared) && declared > limits.maxBytes)
+        throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media is too large')
+      bytes = await leerConTope(response, limits.maxBytes)
+    } catch (error) {
+      if (error instanceof ErrorMetaWhatsapp) throw error
+      // Network failure or deadline (also while the body was being read). The cause may carry the
+      // URL, so it is not kept.
+      throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media download timed out or failed')
     }
-    if (
-      mediaUrl.protocol !== 'https:' ||
-      !/(^|\.)(fbsbx\.com|facebook\.com|whatsapp\.net)$/u.test(mediaUrl.hostname)
-    )
-      throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'unexpected media host')
-    const response = await this.fetchImpl(mediaUrl, {
-      headers: { authorization: `Bearer ${this.config.accessToken}` },
-      signal: AbortSignal.timeout(this.config.timeoutMs ?? 15_000),
-    })
-    if (!response.ok)
-      throw new ErrorMetaWhatsapp(
-        'WHATSAPP_MEDIA',
-        `media download failed with status ${response.status}`
-      )
-    // The cap applies while reading: a body larger than declared is cut, never buffered whole.
-    const declared = Number(response.headers?.get?.('content-length'))
-    if (Number.isFinite(declared) && declared > limits.maxBytes)
-      throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media is too large')
-    const bytes = await leerConTope(response, limits.maxBytes)
     if (bytes.length === 0 || bytes.length > limits.maxBytes)
       throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media size is invalid')
     return { mimeType, bytes }

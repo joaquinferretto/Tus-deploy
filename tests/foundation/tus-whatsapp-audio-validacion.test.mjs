@@ -136,3 +136,92 @@ test('Meta media download: only Meta hosts, a declared or real size above the ca
   assert.equal(r.idInvalido, 'invalid media id')
   assert.equal(r.descargasAjenas, 0, 'the bearer token never goes to a host that is not Meta')
 })
+
+test('Meta media download failures: metadata and download errors (401, 403, 404, 429, 5xx, an expired URL), network failures and a hung body are classified without leaking the token or the URL; redirects are followed only to Meta hosts over HTTPS and the token stays on the first host', async () => {
+  const r = runTypeScriptScenario(`
+    const { MetaWhatsappCloudProvider, ErrorMetaWhatsapp } = await import('./apps/api/src/tus/asistente/meta.ts')
+    const TOKEN = 'fictitious-token'
+    const URL_MEDIO = 'https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1&ext=1'
+    const json = (status, body) => ({ ok: status >= 200 && status < 300, status, headers: new Headers(), json: async () => body })
+    const binario = (status, headers = {}, partes = [new Uint8Array(20)]) => ({ ok: status >= 200 && status < 300, status, headers: new Headers(headers), body: { getReader: () => { let i = 0; return { read: async () => (i < partes.length ? { done: false, value: partes[i++] } : { done: true }), cancel: async () => {} } } } })
+    let metadatos = () => json(200, { url: URL_MEDIO, mime_type: 'image/jpeg', file_size: 20 })
+    let descarga = () => binario(200)
+    const pedidos = []
+    const fetchFalso = async (url, init = {}) => {
+      const destino = String(url)
+      pedidos.push({ destino, conToken: new Headers(init.headers).get('authorization') === 'Bearer ' + TOKEN, redirect: init.redirect ?? null })
+      return destino.includes('graph.facebook.com') ? metadatos() : descarga(destino, init)
+    }
+    const meta = new MetaWhatsappCloudProvider({ accessToken: TOKEN, phoneNumberId: '1234567890', graphApiVersion: 'v25.0', timeoutMs: 150 }, fetchFalso)
+    const limites = { maxBytes: 100, allowedMimeTypes: ['image/jpeg', 'application/pdf'] }
+    const errores = []
+    const intentar = async () => { try { const m = await meta.downloadMedia('1234567', limites); return 'ok:' + m.bytes.length } catch (e) { errores.push(String(e.message) + ' ' + String(e.stack)); return e instanceof ErrorMetaWhatsapp ? e.code + ':' + e.message : 'otro:' + e.message } }
+    const out = {}
+    // AbortSignal.timeout does not keep the process alive on its own.
+    const vivo = setInterval(() => {}, 1000)
+
+    // Metadata request (Graph API).
+    out.metadatos = {}
+    for (const status of [401, 403, 404, 429, 500, 503]) { metadatos = () => json(status, { error: { message: 'x' } }); out.metadatos[status] = (await intentar()).split(':')[0] }
+    metadatos = () => { throw new Error('socket hang up ' + TOKEN) }; out.metadatos.red = (await intentar()).split(':')[0]
+    metadatos = () => json(200, { mime_type: 'image/jpeg' }); out.metadatos.sinUrl = await intentar()
+    metadatos = () => json(200, { url: 'https://user:pass@lookaside.fbsbx.com/a', mime_type: 'image/jpeg' }); out.metadatos.urlConCredenciales = await intentar()
+    metadatos = () => json(200, { url: 'https://fbsbx.com.evil.example/a', mime_type: 'image/jpeg' }); out.metadatos.hostParecido = await intentar()
+    metadatos = () => json(200, { url: URL_MEDIO, mime_type: 'image/jpeg', file_size: 20 })
+
+    // Download (the temporary URL): an expired URL answers 401/404.
+    out.descarga = {}
+    for (const status of [401, 403, 404, 429, 500, 503]) { descarga = () => binario(status); out.descarga[status] = await intentar() }
+    descarga = () => { throw new Error('getaddrinfo ENOTFOUND ' + URL_MEDIO) }; out.descarga.red = await intentar()
+    descarga = (_u, init) => new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)))
+    let antes = Date.now(); out.descarga.colgada = await intentar(); out.descarga.colgadaAcotada = Date.now() - antes < 3000
+    descarga = (_u, init) => ({ ok: true, status: 200, headers: new Headers(), body: { getReader: () => ({ read: () => new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))), cancel: async () => {} }) } })
+    antes = Date.now(); out.descarga.cuerpoColgado = await intentar(); out.descarga.cuerpoColgadoAcotado = Date.now() - antes < 3000
+    descarga = () => binario(200, {}, []); out.descarga.vacia = await intentar()
+
+    // Redirects.
+    out.redireccion = {}
+    const saltos = (ubicaciones) => { let i = 0; return () => { if (i >= ubicaciones.length) return binario(200); const ubicacion = ubicaciones[i++]; return binario(302, ubicacion === null ? {} : { location: ubicacion }) } }
+    let desde = pedidos.length
+    descarga = saltos(['https://scontent.xx.fbcdn.net/v/file.jpg']); out.redireccion.aMeta = await intentar()
+    out.redireccion.tokenEnElSalto = pedidos.slice(desde).filter((p) => p.destino.includes('fbcdn.net')).map((p) => p.conToken)
+    desde = pedidos.length
+    descarga = saltos(['/whatsapp_business/otro']); out.redireccion.mismoHost = await intentar()
+    out.redireccion.tokenMismoHost = pedidos.slice(desde).filter((p) => p.destino.includes('/whatsapp_business/otro')).map((p) => p.conToken)
+    descarga = saltos(['https://evil.example.com/a']); out.redireccion.aOtroHost = await intentar()
+    descarga = saltos(['http://lookaside.fbsbx.com/a']); out.redireccion.sinHttps = await intentar()
+    descarga = saltos(['http://169.254.169.254/latest/meta-data']); out.redireccion.aRedInterna = await intentar()
+    descarga = saltos([null]); out.redireccion.sinDestino = await intentar()
+    descarga = saltos(['/a', '/b', '/c']); out.redireccion.demasiadas = await intentar()
+
+    out.pedidosAjenos = pedidos.filter((p) => !/^https:\\/\\/([a-z0-9.-]+\\.)?(facebook\\.com|fbsbx\\.com|fbcdn\\.net)\\//u.test(p.destino)).length
+    out.tokenFueraDelPrimerHost = pedidos.filter((p) => p.conToken && !/^https:\\/\\/(graph\\.facebook\\.com|lookaside\\.fbsbx\\.com)\\//u.test(p.destino)).length
+    out.descargasSinRedireccionManual = pedidos.filter((p) => !p.destino.includes('graph.facebook.com') && p.redirect !== 'manual').length
+    out.secretoEnErrores = errores.some((texto) => texto.includes(TOKEN) || texto.includes('mid=1'))
+    clearInterval(vivo)
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.metadatos, {
+    401: 'WHATSAPP_AUTH', 403: 'WHATSAPP_INVALID_REQUEST', 404: 'WHATSAPP_INVALID_REQUEST', 429: 'WHATSAPP_RATE_LIMITED', 500: 'WHATSAPP_UNAVAILABLE', 503: 'WHATSAPP_UNAVAILABLE',
+    red: 'WHATSAPP_TIMEOUT',
+    sinUrl: 'WHATSAPP_MEDIA:media type is not allowed',
+    urlConCredenciales: 'WHATSAPP_MEDIA:unexpected media host',
+    hostParecido: 'WHATSAPP_MEDIA:unexpected media host',
+  })
+  for (const status of [401, 403, 404, 429, 500, 503]) assert.equal(r.descarga[status], `WHATSAPP_MEDIA:media download failed with status ${status}`)
+  assert.equal(r.descarga.red, 'WHATSAPP_MEDIA:media download timed out or failed')
+  assert.deepEqual([r.descarga.colgada, r.descarga.colgadaAcotada], ['WHATSAPP_MEDIA:media download timed out or failed', true])
+  assert.deepEqual([r.descarga.cuerpoColgado, r.descarga.cuerpoColgadoAcotado], ['WHATSAPP_MEDIA:media download timed out or failed', true], 'the deadline also covers the body')
+  assert.equal(r.descarga.vacia, 'WHATSAPP_MEDIA:media size is invalid')
+  assert.deepEqual([r.redireccion.aMeta, r.redireccion.tokenEnElSalto], ['ok:20', [false]], 'another origin does not receive the token')
+  assert.deepEqual([r.redireccion.mismoHost, r.redireccion.tokenMismoHost], ['ok:20', [true]])
+  assert.equal(r.redireccion.aOtroHost, 'WHATSAPP_MEDIA:unexpected media host')
+  assert.equal(r.redireccion.sinHttps, 'WHATSAPP_MEDIA:unexpected media host')
+  assert.equal(r.redireccion.aRedInterna, 'WHATSAPP_MEDIA:unexpected media host')
+  assert.equal(r.redireccion.sinDestino, 'WHATSAPP_MEDIA:unexpected media redirect')
+  assert.equal(r.redireccion.demasiadas, 'WHATSAPP_MEDIA:unexpected media redirect')
+  assert.equal(r.pedidosAjenos, 0, 'nothing is requested from a host that is not Meta')
+  assert.equal(r.tokenFueraDelPrimerHost, 0)
+  assert.equal(r.descargasSinRedireccionManual, 0)
+  assert.equal(r.secretoEnErrores, false, 'no error carries the token or the media URL')
+})
