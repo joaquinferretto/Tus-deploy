@@ -175,6 +175,12 @@ test('RESPONSIVE MAP: the hero follows the visible viewport, small screens get a
   // Icons are memoized, so an unchanged render does not rebuild the markers.
   assert.match(map, /const iconCache = new Map<string, L\.DivIcon>\(\)/)
   assert.match(web('features/alojamientos/alojamientos-map.tsx'), /<MapSizeWatcher \/>/)
+  // Swapping maps mid-animation must not leave a Leaflet timer running on a removed map.
+  assert.match(map, /export function MapUnmountGuard\(\) \{[\s\S]*?interno\._stop\?\.\(\)[\s\S]*?interno\._animatingZoom = false/)
+  assert.match(map, /<MapUnmountGuard \/>/)
+  assert.match(web('features/alojamientos/alojamientos-map.tsx'), /<MapUnmountGuard \/>/)
+  // The sheet is anchored to the screen (the bottom of the map can be below the fold).
+  assert.match(css, /\.mapSheet \{[^}]*position: fixed;[^}]*z-index: 1200;/)
 
   const logo = web('features/brand/brand.module.css')
   assert.match(logo, /\.logoHeader \{\s*height: clamp\(26px, 7vw, 36px\);\s*width: auto;/)

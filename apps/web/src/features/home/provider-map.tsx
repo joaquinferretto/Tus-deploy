@@ -331,6 +331,28 @@ export function MapSizeWatcher() {
   return null
 }
 
+// Leaflet ends a zoom animation on a timer. When the map is removed meanwhile (the type selector
+// swaps one map for the other, or the page changes) that timer runs on a pane that no longer
+// exists and throws. Stopping the running animations and clearing the pending-zoom flag as the
+// map goes away turns that timer into a no-op.
+export function MapUnmountGuard() {
+  const map = useMap()
+  useEffect(
+    () => () => {
+      // Not map.stop(): it also sets the zoom, which itself fails on a removed map.
+      const interno = map as unknown as { _stop?: () => void; _animatingZoom?: boolean }
+      try {
+        interno._stop?.()
+      } catch {
+        // The map is already gone: nothing left to stop.
+      }
+      interno._animatingZoom = false
+    },
+    [map]
+  )
+  return null
+}
+
 function ZoomWatcher({ onZoom }: { onZoom: (zoom: number) => void }) {
   const map = useMapEvents({ zoomend: () => onZoom(map.getZoom()) })
   return null
@@ -519,6 +541,7 @@ export default function ProviderMap({
         <ZoomControl position="bottomleft" zoomInTitle="Acercar" zoomOutTitle="Alejar" />
         <ZoomWatcher onZoom={setZoom} />
         <MapSizeWatcher />
+        <MapUnmountGuard />
         <MapInteractionController interactive={interactive} />
         <MapController activePopupRef={activePopupRef} home={home} recenterSignal={recenterSignal + searchSignal} selected={selected} workers={workers} />
         <MapEventsHandler mapRef={mapRef} onPopupClose={handlePopupClose} onPopupOpen={handlePopupOpen} />

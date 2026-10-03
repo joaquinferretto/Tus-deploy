@@ -9,7 +9,7 @@ import type { Route } from 'next'
 import type { AlojamientoPublicoDTO } from '@factory/contracts'
 import { DEFAULT_MAP_CENTER } from '../home/types'
 import { useMapHome, type MapHome } from '../home/use-map-home'
-import { MapSizeWatcher } from '../home/provider-map'
+import { MapSizeWatcher, MapUnmountGuard } from '../home/provider-map'
 import styles from './alojamientos.module.css'
 const TILE_URL = process.env['NEXT_PUBLIC_MAP_TILE_URL'] || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 const TILE_ATTRIBUTION = process.env['NEXT_PUBLIC_MAP_TILE_ATTRIBUTION'] || '&copy; OpenStreetMap contributors'
@@ -93,6 +93,7 @@ export default function AlojamientosMap({
         <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} />
         <MapBoundsWatcher alojamientos={alojamientos} home={home} />
         <MapSizeWatcher />
+        <MapUnmountGuard />
 
         {alojamientos.map((a) => {
           const priceLabel = a.precioDesde
