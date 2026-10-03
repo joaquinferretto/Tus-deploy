@@ -4,8 +4,9 @@ import type { CatalogoOficios } from '@factory/contracts'
 
 import styles from './home.module.css'
 
-// Categoría → Servicio. A category alone shows every provider with ANY service in it; choosing a
-// service narrows it to that service. Options come from the administered catalog.
+// Categoría → Subcategoría (a service of that category). A category alone shows every provider
+// with ANY service in it; choosing a subcategory narrows it to that service. Both lists come from
+// the catalog the administration keeps in the backend: nothing is hardcoded here.
 export function MapFilters({
   catalog,
   category,
@@ -33,9 +34,9 @@ export function MapFilters({
         </select>
       </label>
       <label className={styles.mapFilter}>
-        <span>Servicio</span>
+        <span>Subcategoría</span>
         <select onChange={(event) => onChange({ category: shownCategory, profession: event.target.value })} value={visibleServices.some((item) => item.id === service) ? service : ''}>
-          <option value="">{shownCategory ? 'Todos los de la categoría' : 'Todos'}</option>
+          <option value="">{shownCategory ? 'Todas las de la categoría' : 'Todas'}</option>
           {visibleServices.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </label>

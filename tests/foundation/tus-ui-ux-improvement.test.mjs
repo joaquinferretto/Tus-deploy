@@ -132,7 +132,9 @@ test('PR3 gives public and recovery pages semantic landmarks and descriptive hea
   // One h1, then h2 sections and h3 items (no skipped levels).
   assert.equal((home.match(/<h1[\s>]/g) ?? []).length, 1)
   assert.match(home, /<h2[\s>]/)
-  assert.match(home, /<h3[\s>]/)
+  // The h3 items of "Cómo funciona" live in the component shared with the header dialog.
+  assert.match(home, /<HowItWorksSteps \/>/)
+  assert.match(readFileSync(join(root, 'apps/web/src/features/home/how-it-works.tsx'), 'utf8'), /heading = 'h3'/)
   // Sign-in keeps the current page as return destination (assistant, worker profile).
   assert.match(header, /withReturnTo\('\/sign-in', back\)/)
   assert.match(header, /<Link[^>]+href=\{signInHref\}/)

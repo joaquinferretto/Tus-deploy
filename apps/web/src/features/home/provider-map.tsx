@@ -17,6 +17,7 @@ import styles from './home.module.css'
 import { categoryMarkerSvg } from './category-icons'
 import { ratingLabel } from '../directory/rating-label'
 import { servicesLabel } from '../directory/services-label'
+import { Avatar } from '../directory/avatar'
 import { MAX_CLUSTER_ZOOM, clusterMarkers, type MapGroup } from './map-clusters'
 
 const TILE_URL = process.env['NEXT_PUBLIC_MAP_TILE_URL'] || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
@@ -25,20 +26,37 @@ const TILE_ATTRIBUTION = process.env['NEXT_PUBLIC_MAP_TILE_ATTRIBUTION'] || '&co
 // Every marker uses the TUS orange; the icon inside tells the trade apart (no rainbow of colours).
 const MARKER_COLOR = '#ff5a00'
 
+// Icons are built once per (trade icon, active) and per (count, active): a render that changes
+// nothing hands Leaflet the same objects, so it does not rebuild the markers' DOM.
+const iconCache = new Map<string, L.DivIcon>()
+function cachedIcon(key: string, build: () => L.DivIcon): L.DivIcon {
+  let icon = iconCache.get(key)
+  if (!icon) {
+    icon = build()
+    iconCache.set(key, icon)
+  }
+  return icon
+}
+
 function markerIcon(worker: PrestadorPublico, active: boolean, catalog: CatalogoOficios | undefined) {
   const category = tradeOf(catalog, worker.profession.id)
-  return L.divIcon({
+  return cachedIcon(`w:${category.icon}:${active}`, () => L.divIcon({
     className: '',
     html: `<span class="${styles.marker} ${active ? styles.markerActive : ''}" style="background:${MARKER_COLOR}">${categoryMarkerSvg(category.icon)}</span>`,
     iconAnchor: [17, 17],
     iconSize: [34, 34],
     popupAnchor: [0, -18],
-  })
+  }))
 }
 
 // Group marker: only a number and fixed markup (no provider text inside the HTML string).
-function groupIcon(count: number, active: boolean) {
+function groupIcon(total: number, active: boolean) {
+  const count = Math.min(999, Math.max(0, Math.trunc(total)))
   const size = count >= 100 ? 46 : count >= 10 ? 42 : 38
+  return cachedIcon(`g:${count}:${active}`, () => groupDivIcon(count, size, active))
+}
+
+function groupDivIcon(count: number, size: number, active: boolean) {
   return L.divIcon({
     className: '',
     html: `<span class="${styles.marker} ${styles.markerCount} ${active ? styles.markerActive : ''}" style="background:${MARKER_COLOR};width:${size}px;height:${size}px">${Math.min(999, Math.max(0, Math.trunc(count)))}</span>`,
@@ -50,7 +68,7 @@ function groupIcon(count: number, active: boolean) {
 
 function overlayPadding(map: L.Map) {
   const wide = map.getSize().x > 768
-  return wide ? { topLeft: L.point(40, 290), bottomRight: L.point(40, 80) } : { topLeft: L.point(24, 24), bottomRight: L.point(24, 24) }
+  return wide ? { topLeft: L.point(40, 340), bottomRight: L.point(40, 80) } : { topLeft: L.point(24, 24), bottomRight: L.point(24, 24) }
 }
 
 // ONE point per provider (not one per service): mapPoint, or the first public location of older
@@ -287,6 +305,32 @@ function MapEventsHandler({
   return null
 }
 
+// Leaflet caches the size of its container. It is told to measure again ONLY when the container
+// really changed size (rotation, the mobile address bar, the dock growing), once per frame.
+export function MapSizeWatcher() {
+  const map = useMap()
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return
+    const container = map.getContainer()
+    let width = container.clientWidth
+    let height = container.clientHeight
+    let frame = 0
+    const observer = new ResizeObserver(() => {
+      if (container.clientWidth === width && container.clientHeight === height) return
+      width = container.clientWidth
+      height = container.clientHeight
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => map.invalidateSize({ animate: false }))
+    })
+    observer.observe(container)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [map])
+  return null
+}
+
 function ZoomWatcher({ onZoom }: { onZoom: (zoom: number) => void }) {
   const map = useMapEvents({ zoomend: () => onZoom(map.getZoom()) })
   return null
@@ -306,14 +350,18 @@ function MapInteractionController({ interactive }: { interactive: boolean }) {
 function WorkerPopupBody({ worker, label, exact }: { worker: PrestadorPublico; label: string; exact: boolean }) {
   return (
     <>
-      <span className={styles.popupCategory} style={{ color: MARKER_COLOR }}>{servicesLabel(worker)}</span>
-      <p className={styles.popupTitle}>{worker.displayName}</p>
+      <div className={styles.popupHead}>
+        <Avatar initials={worker.initials} photoUrl={worker.photoUrl} size="sm" />
+        <div>
+          <p className={styles.popupTitle}>{worker.displayName}{worker.verified ? <span title="Identidad verificada"> ✓</span> : null}</p>
+          <span className={styles.popupCategory} style={{ color: MARKER_COLOR }}>{servicesLabel(worker)}</span>
+        </div>
+      </div>
       <p className={styles.popupMeta}>{label}{exact ? '' : ' · zona aproximada'}</p>
       <p className={styles.popupMeta}>{worker.availability.label}</p>
       {/* Only real facts: ratings of completed works (or nothing) and no exact distance. */}
       {ratingLabel(worker.rating) ? <p className={styles.popupMeta}>{ratingLabel(worker.rating)}</p> : null}
-      {worker.completedJobs > 0 ? <p className={styles.popupMeta}>{worker.completedJobs} {worker.completedJobs === 1 ? 'trabajo completado' : 'trabajos completados'} en TUS</p> : null}
-      {worker.verified ? <p className={styles.popupMeta}>Identidad verificada</p> : null}
+      {worker.verified ? <p className={styles.srOnly}>Identidad verificada</p> : null}
       <div className={styles.popupActions}>
         <a className={styles.popupCta} href={`/trabajadores/${encodeURIComponent(worker.id)}`}>Ver perfil</a>
         {worker.aceptaTurnos !== false ? (
@@ -382,12 +430,16 @@ export default function ProviderMap({
   onSelect,
   searchSignal = 0,
   catalog,
+  popups = true,
 }: {
   workers: PrestadorPublico[]
   selectedId: string | null
   onSelect: (id: string | null) => void
   searchSignal?: number
   catalog?: CatalogoOficios
+  // False on small screens: the selected provider is shown in a bottom sheet by the page, not in
+  // a popup over the map. Group lists keep their popup.
+  popups?: boolean
 }): React.ReactNode {
   const [touch] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches)
   const [interactive, setInteractive] = useState(!touch)
@@ -466,6 +518,7 @@ export default function ProviderMap({
         <TileLayer attribution={TILE_ATTRIBUTION} url={TILE_URL} />
         <ZoomControl position="bottomleft" zoomInTitle="Acercar" zoomOutTitle="Alejar" />
         <ZoomWatcher onZoom={setZoom} />
+        <MapSizeWatcher />
         <MapInteractionController interactive={interactive} />
         <MapController activePopupRef={activePopupRef} home={home} recenterSignal={recenterSignal + searchSignal} selected={selected} workers={workers} />
         <MapEventsHandler mapRef={mapRef} onPopupClose={handlePopupClose} onPopupOpen={handlePopupOpen} />
@@ -485,9 +538,11 @@ export default function ProviderMap({
                 title={`${worker.displayName}: ${servicesLabel(worker)}`}
                 zIndexOffset={active ? 1000 : 0}
               >
-                <Popup {...popupPadding}>
-                  <div className={styles.popup}><WorkerPopupBody exact={location.exact} label={location.label} worker={worker} /></div>
-                </Popup>
+                {popups ? (
+                  <Popup {...popupPadding}>
+                    <div className={styles.popup}><WorkerPopupBody exact={location.exact} label={location.label} worker={worker} /></div>
+                  </Popup>
+                ) : null}
               </Marker>
             )
           }

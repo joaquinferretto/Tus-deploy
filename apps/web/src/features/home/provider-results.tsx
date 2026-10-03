@@ -10,7 +10,7 @@ export function ProviderResults({ workers, status, selectedId, onSelect, filtere
     <section aria-labelledby="prestadores-titulo" className={styles.section} id="prestadores">
       <div className={styles.sectionHeader}>
         <div>
-          <h2 className={styles.sectionTitle} id="prestadores-titulo">Prestadores en tu zona</h2>
+          <h2 className={styles.sectionTitle} id="prestadores-titulo">Profesionales en tu zona</h2>
           <p className={styles.sectionSubtitle}>Elegí un profesional y revisá su perfil antes de solicitar.</p>
         </div>
         <a className={styles.seeAll} href="/trabajadores">Ver directorio completo →</a>
@@ -23,7 +23,7 @@ export function ProviderResults({ workers, status, selectedId, onSelect, filtere
             Todavía no hay prestadores publicados. ¿Sos profesional? <a href="/prestador/perfil-publico">Creá tu perfil público</a> y aparecé acá.
           </p>
         )
-      ) : <ul className={styles.providerGrid}>{workers.slice(0, 6).map((worker) => <li className={worker.id === selectedId ? styles.providerSelected : undefined} key={worker.id} onClick={() => onSelect(worker.id)}><WorkerCard worker={worker} /></li>)}</ul>}
+      ) : <ul className={styles.providerGrid}>{workers.slice(0, 6).map((worker) => <li className={worker.id === selectedId ? styles.providerSelected : undefined} key={worker.id} onClick={() => onSelect(worker.id)}><WorkerCard compact worker={worker} /></li>)}</ul>}
     </section>
   )
 }

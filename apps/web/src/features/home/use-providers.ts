@@ -11,7 +11,8 @@ export function useHomeProviders(filters: ProviderMapFilters) {
   const source = useMemo(() => getProvidersSource(), [])
   return useQuery({
     queryKey: ['home-providers', debounced.category ?? '', debounced.profession, debounced.zone, debounced.query],
-    queryFn: () => source.list(debounced),
+    // The signal aborts the request when the filters change before it answers.
+    queryFn: ({ signal }) => source.list(debounced, signal),
     staleTime: 30_000,
   })
 }

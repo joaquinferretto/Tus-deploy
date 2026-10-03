@@ -22,6 +22,7 @@ export function SiteFooter({ logo }: { logo?: React.ReactNode } = {}): React.Rea
             <h2>Servicios</h2>
             <Link href="/">Buscar servicios</Link>
             <Link href="/trabajadores">Buscar trabajador</Link>
+            <Link href="/alojamientos">Alojamientos</Link>
             <Link href="/publicar">Publicar solicitud</Link>
           </nav>
         </div>

@@ -104,7 +104,8 @@ export interface UbicacionPrestadorWeb {
 export function createDirectoryClient(fetchImpl: Fetch = fetchWithSession) {
   return {
     catalog: () => call<CatalogoOficios>(fetchImpl, '/tus/v1/public/oficios'),
-    list: (filters: DirectoryFilters) => call<PaginaDirectorio>(fetchImpl, `/tus/v1/public/prestadores${directoryQuery(filters)}`),
+    // `signal` cancels a search that a newer one superseded (the map and the directory pass it).
+    list: (filters: DirectoryFilters, signal?: AbortSignal) => call<PaginaDirectorio>(fetchImpl, `/tus/v1/public/prestadores${directoryQuery(filters)}`, signal ? { signal } : {}),
     profile: (id: string) => call<PerfilPrestadorPublico>(fetchImpl, `/tus/v1/public/prestadores/${encodeURIComponent(id)}`),
     interpret: (text: string) =>
       call<InterpretacionNecesidad>(fetchImpl, '/tus/v1/asistente/interpretar', { method: 'POST', body: JSON.stringify({ text }) }),

@@ -11,7 +11,7 @@ export interface ProviderMapFilters {
 }
 
 export interface ProvidersSource {
-  list(filters: ProviderMapFilters): Promise<PrestadorPublico[]>
+  list(filters: ProviderMapFilters, signal?: AbortSignal): Promise<PrestadorPublico[]>
 }
 
 export function toProviderFilters(filters: ProviderMapFilters): DirectoryFilters {
@@ -27,8 +27,8 @@ export function toProviderFilters(filters: ProviderMapFilters): DirectoryFilters
 export function createApiProvidersSource(): ProvidersSource {
   const client = createDirectoryClient()
   return {
-    async list(filters) {
-      const result: PaginaDirectorio = await client.list(toProviderFilters(filters))
+    async list(filters, signal) {
+      const result: PaginaDirectorio = await client.list(toProviderFilters(filters), signal)
       return result.items
     },
   }

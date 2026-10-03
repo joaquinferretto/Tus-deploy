@@ -2,7 +2,9 @@
 declare const styles: {
   readonly available: string
   readonly avatar: string
+  readonly avatarImage: string
   readonly avatarLarge: string
+  readonly avatarSm: string
   readonly back: string
   readonly bookingControl: string
   readonly bookingForm: string
@@ -11,11 +13,14 @@ declare const styles: {
   readonly candidates: string
   readonly card: string
   readonly cardActions: string
+  readonly cardCompact: string
+  readonly cardHeading: string
   readonly cardTop: string
   readonly chat: string
   readonly check: string
   readonly chip: string
   readonly chips: string
+  readonly compactFacts: string
   readonly composer: string
   readonly container: string
   readonly facts: string
@@ -69,5 +74,6 @@ declare const styles: {
   readonly turnoStateOk: string
   readonly turnoStatePending: string
   readonly verified: string
+  readonly verifiedMark: string
 }
 export default styles

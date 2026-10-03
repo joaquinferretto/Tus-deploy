@@ -9,6 +9,7 @@ import type { Route } from 'next'
 import type { AlojamientoPublicoDTO } from '@factory/contracts'
 import { DEFAULT_MAP_CENTER } from '../home/types'
 import { useMapHome, type MapHome } from '../home/use-map-home'
+import { MapSizeWatcher } from '../home/provider-map'
 import styles from './alojamientos.module.css'
 const TILE_URL = process.env['NEXT_PUBLIC_MAP_TILE_URL'] || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 const TILE_ATTRIBUTION = process.env['NEXT_PUBLIC_MAP_TILE_ATTRIBUTION'] || '&copy; OpenStreetMap contributors'
@@ -21,7 +22,20 @@ function formatPrice(amount: number) {
   }).format(amount)
 }
 
+// One icon per (label, active): an unchanged render gives Leaflet the same object.
+const priceIcons = new Map<string, L.DivIcon>()
 function createPriceIcon(priceLabel: string, active: boolean) {
+  const key = `${priceLabel}:${active}`
+  let icon = priceIcons.get(key)
+  if (!icon) {
+    icon = priceDivIcon(priceLabel, active)
+    priceIcons.set(key, icon)
+  }
+  return icon
+}
+
+// `priceLabel` is a number formatted here or the fixed word "Consultar": never text of a lodging.
+function priceDivIcon(priceLabel: string, active: boolean) {
   return L.divIcon({
     className: '',
     html: `<div class="${styles.mapMarkerPrice} ${active ? styles.mapMarkerPriceActive : ''}">${priceLabel}</div>`,
@@ -54,16 +68,22 @@ export interface AlojamientosMapProps {
   alojamientos: AlojamientoPublicoDTO[]
   selectedId: string | null
   onSelect: (id: string) => void
+  // Home map: fills its container (no fixed height or frame) ...
+  fill?: boolean
+  // ... and on small screens the page shows the selected lodging in a bottom sheet instead.
+  popups?: boolean
 }
 
 export default function AlojamientosMap({
   alojamientos,
   selectedId,
   onSelect,
+  fill = false,
+  popups = true,
 }: AlojamientosMapProps): React.ReactNode {
   const home = useMapHome()
   return (
-    <div className={styles.mapContainer}>
+    <div className={fill ? undefined : styles.mapContainer} style={fill ? { height: '100%', width: '100%' } : undefined}>
       <MapContainer
         center={[DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng]}
         zoom={DEFAULT_MAP_CENTER.zoom}
@@ -72,6 +92,7 @@ export default function AlojamientosMap({
       >
         <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} />
         <MapBoundsWatcher alojamientos={alojamientos} home={home} />
+        <MapSizeWatcher />
 
         {alojamientos.map((a) => {
           const priceLabel = a.precioDesde
@@ -90,7 +111,7 @@ export default function AlojamientosMap({
                 click: () => onSelect(a.id),
               }}
             >
-              <Popup>
+              {popups ? <Popup>
                 <div className={styles.popupContainer}>
                   {primaryImg && (
                     <div style={{ width: '100%', height: 100, marginBottom: 8, borderRadius: 6, overflow: 'hidden' }}>
@@ -117,7 +138,7 @@ export default function AlojamientosMap({
                     Ver alojamiento
                   </Link>
                 </div>
-              </Popup>
+              </Popup> : null}
             </Marker>
           )
         })}

@@ -753,3 +753,55 @@
     min-height: 48px;
   }
 }
+
+/* ---- avatar with a photo, and the compact card of the map ---------------------------------- */
+.avatar {
+  overflow: hidden;
+}
+
+.avatarSm {
+  font-size: 0.85rem;
+  height: 40px;
+  width: 40px;
+}
+
+.avatarImage {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.cardCompact {
+  gap: 8px;
+  padding: 14px;
+}
+
+.cardCompact .name {
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.cardCompact .profession {
+  font-size: 0.85rem;
+}
+
+.cardCompact .cardActions > * {
+  min-height: 40px;
+  min-width: 104px;
+}
+
+.cardHeading {
+  min-width: 0;
+}
+
+.compactFacts {
+  color: var(--tus-ink-soft);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.verifiedMark {
+  color: var(--tus-success);
+  font-weight: 700;
+}
