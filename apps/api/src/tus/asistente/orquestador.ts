@@ -624,6 +624,18 @@ export class OrquestadorConversacion {
     //    Named for ANOTHER day than the one listed ("quiero a Melina mañana"): her own search (5).
     const elegida = elegirOferta(text, datos, state.offers)
     const eleccion = elegida && elegida.starts.length === 0 && (datos.day || datos.asap) ? null : elegida
+    // "Melina" and then "mejor a la tarde" (a window, not one of her exact times) when she has
+    // nothing then: the time asked is kept in
+    // the need (it is a change of mind, never dropped) and the person decides between her real
+    // times or searching who has that time ("sí" searches it).
+    if (eleccion && eleccion.starts.length === 0 && eleccion.item.starts.length > 0 && datos.time && datos.time.kind !== 'exact' && vigente?.profession) {
+      const need = combinarNecesidad(vigente, { time: datos.time })
+      marcar('reserva')
+      await this.actualizarEstado(conversationId, { need, needAt: ahora, chosenProviderId: eleccion.item.providerId, suggestion: { kind: 'search', at: ahora }, pendingConfirmationId: null, lowConfidenceCount: 0 })
+      const ventana = describirVentana(datos.time)
+      const cuando = need.day ? ` ${describirDia(need.day, need.dayTo, ahora)}` : ''
+      return [{ type: 'text', text: `${eleccion.item.name} no tiene turnos ${ventana}${cuando}. Tiene: ${eleccion.item.starts.slice(0, 6).map(horaLocal).join(', ')}. ¿Querés alguno de esos o busco quién tiene ${ventana}?` }]
+    }
     if (eleccion) {
       const reply = await this.reservarEleccion(turn, actor, eleccion, state.offers!.profession, correlationId, text)
       if (reply) {
@@ -801,7 +813,14 @@ export class OrquestadorConversacion {
       }
       if (nombradas.length === 1) {
         need = combinarNecesidad(need, { providerId: nombradas[0]!.providerId, providerName: nombradas[0]!.name })
-        busqueda = { ...busqueda, resultado: soloProfesional(busqueda.resultado, nombradas[0]!.providerId) }
+        const suyo = soloProfesional(busqueda.resultado, nombradas[0]!.providerId)
+        // "Lo antes posible con Sabrina": the first day anyone was free is not hers; her own
+        // first free turno is searched again, day by day, only in her agenda.
+        if (need.asap && !suyo.providers.some((item) => item.matches.length > 0)) {
+          const propia = await this.consultarDisponibilidad(turn, need, correlationId)
+          if (!propia) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
+          busqueda = propia
+        } else busqueda = { ...busqueda, resultado: suyo }
         await this.actualizarEstado(conversationId, { need, offers: ofertasDeResultado(busqueda.resultado), chosenProviderId: nombradas[0]!.providerId })
       }
     }

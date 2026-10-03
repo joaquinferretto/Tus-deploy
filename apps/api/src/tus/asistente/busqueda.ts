@@ -151,7 +151,7 @@ function distanciaEdicion(a: string, b: string): number {
 }
 
 // "la otra", "el otro", "no esa, la otra": another of the professionals listed.
-export const PIDE_OTRA = /\b(?:la|el|con la|con el) otr[oa]\b|\botr[oa] (?:profesional|masajista|persona|opcion)\b|^\s*otr[oa]\s*[.!?]*\s*$/iu
+export const PIDE_OTRA = /\b(?:la|el|con la|con el) otr[oa]\b|\botr[oa] (?:profesional|masajista|persona|opcion)\b|^\s*otr[oa]\s*[.!?]*\s*$|^\s*[¿]?\s*(?:y\s+)?con\s+otr[oa]\s*[.!?]*\s*$/iu
 
 export function textoDisponibilidad(need: NecesidadTurno, resultado: DisponibilidadNecesidad, ahora: number): string {
   const label = oficio(resultado.profession).label
