@@ -466,12 +466,14 @@ test('HTTP: provider earnings and payouts are the session provider\'s only; the 
       const id = creada.body.payout.payoutId
       out.ver = [(await call('GET', '/tus/v1/provider/earnings/payouts/' + id, 'prestador')).status, (await call('GET', '/tus/v1/provider/earnings/payouts/' + id, 'otro')).status, (await call('POST', '/tus/v1/provider/earnings/payouts/' + id + '/cancel', 'otro', {})).status, (await call('GET', '/tus/v1/provider/earnings/payouts', 'prestador')).body.items.length, (await call('GET', '/tus/v1/provider/earnings/payouts', 'otro')).body.items.length]
       out.historial = (await call('GET', '/tus/v1/provider/earnings/history', 'prestador')).body.items.map((h) => [h.kind, h.status]).sort()
-      const RUTAS = [['GET', '/tus/v1/admin/payments/payouts'], ['GET', '/tus/v1/admin/payments/payouts/' + id], ['POST', '/tus/v1/admin/payments/payouts/' + id + '/process'], ['GET', '/tus/v1/admin/payments/earnings/negative-balances'], ['GET', '/tus/v1/admin/payments/earnings/reconciliation?providerTenantId=provider-tenant'], ['POST', '/tus/v1/admin/payments/earnings/adjustments']]
+      const RUTAS = [['GET', '/tus/v1/admin/payments/payouts'], ['GET', '/tus/v1/admin/payments/payouts/' + id], ['POST', '/tus/v1/admin/payments/payouts/' + id + '/process'], ['GET', '/tus/v1/admin/payments/earnings/negative-balances'], ['GET', '/tus/v1/admin/payments/earnings/reconciliation?providerTenantId=provider-tenant'], ['POST', '/tus/v1/admin/payments/earnings/adjustments'], ['GET', '/tus/v1/admin/payments/payouts/' + id + '/audit']]
       out.admin = []
       for (const token of [null, 'cliente', 'prestador', 'admin-sin-mfa']) out.admin.push([token, ...(await Promise.all(RUTAS.map(([method, path]) => call(method, path, token, method === 'POST' ? {} : undefined, { 'idempotency-key': 'clave-admin-1' }).then((x) => x.status))))])
       const lista = await call('GET', '/tus/v1/admin/payments/payouts?status=open', 'admin-mfa')
       const detalle = await call('GET', '/tus/v1/admin/payments/payouts/' + id, 'admin-mfa')
       out.lista = [lista.status, lista.body.total, lista.body.automaticAvailable, lista.body.items[0].providerTenantId, detalle.status, detalle.body.items.length, detalle.body.movements.map((x) => x.kind)]
+      const auditoria = await call('GET', '/tus/v1/admin/payments/payouts/' + id + '/audit', 'admin-mfa')
+      out.auditoria = [auditoria.status, auditoria.cache, auditoria.body.items.map((x) => [x.action, x.previousStatus, x.status, x.actorId]), detalle.body.audit.length, (await call('GET', '/tus/v1/admin/payments/payouts/liq-ajena/audit', 'admin-mfa')).status]
       const viaMp = await call('POST', '/tus/v1/admin/payments/payouts/' + id + '/process', 'admin-mfa', { mechanism: 'mercado_pago_payouts' })
       out.sinPayouts = [viaMp.status, viaMp.body.code]
       out.accionDesconocida = (await call('POST', '/tus/v1/admin/payments/payouts/' + id + '/approve', 'admin-mfa', {})).status
@@ -497,7 +499,8 @@ test('HTTP: provider earnings and payouts are the session provider\'s only; the 
   assert.deepEqual(r.solicitud, [201, '1125000', 'prestador@mp.test', 200, [409, 'PAYOUT_ALREADY_OPEN']])
   assert.deepEqual(r.ver, [200, 404, 404, 1, 0])
   assert.deepEqual(r.historial, [['earning', 'reserved'], ['payout_reserve', 'reserved']])
-  assert.deepEqual(r.admin, [[null, 403, 403, 403, 403, 403, 403], ['cliente', 403, 403, 403, 403, 403, 403], ['prestador', 403, 403, 403, 403, 403, 403], ['admin-sin-mfa', 403, 403, 403, 403, 403, 403]])
+  assert.deepEqual(r.admin, [[null, 403, 403, 403, 403, 403, 403, 403], ['cliente', 403, 403, 403, 403, 403, 403, 403], ['prestador', 403, 403, 403, 403, 403, 403, 403], ['admin-sin-mfa', 403, 403, 403, 403, 403, 403, 403]])
+  assert.deepEqual(r.auditoria, [200, 'no-store', [['requested', null, 'requested', 'acc-provider']], 1, 404], 'the audit trail is platform administration only (MFA), never cached')
   assert.deepEqual(r.lista, [200, 1, false, 'provider-tenant', 200, 1, ['payout_reserve']])
   assert.deepEqual(r.sinPayouts, [503, 'PAYOUTS_NOT_CONFIGURED'], 'without Mercado Pago Payouts configured nothing is pretended to be sent')
   assert.equal(r.accionDesconocida, 404)
@@ -531,4 +534,88 @@ test('Web: /prestador/pagos shows Ganancias disponibles, En proceso, Pagadas, Sa
   assert.match(adminPage, /disabled=\{busy \|\| !automaticAvailable\}/u)
   assert.match(adminApi, /\/tus\/v1\/admin\/payments\/payouts\/\$\{encodeURIComponent\(id\)\}\/\$\{action\}/u)
   assert.match(layout, /\{ href: '\/tus\/admin\/liquidaciones', label: 'Liquidaciones' \}/u)
+})
+
+test('GANANCIAS-02 domain: every action on a payout request is audited in order (requested, processing, send_rejected / send_unconfirmed / send_confirmed, provider_status, paid, failed, cancelled) with actor and correlation and no secrets; blocked reasons are explicit; concurrent requests open one; the provider sees whether Mercado Pago is connected', () => {
+  const r = runTypeScriptScenario(`${DOMINIO}
+    const out = {}
+    const historia = async (tenant, id) => (await store.auditoria(tenant, id)).map((x) => [x.version, x.accion, x.estadoAnterior, x.estadoNuevo, x.actorId, x.correlationId, x.detalle])
+    // Without Mercado Pago: earnings accumulate, the payout is blocked with a clear reason.
+    await ganar('t-ana', 1500000n, 150000n)
+    await ganar('t-ana', 2000000n, 200000n, 100000n)
+    const sinCuenta = await service.resumen(ana)
+    out.sinCuenta = [sinCuenta.availableMinor, sinCuenta.canRequest, sinCuenta.blockedReason, sinCuenta.paymentAccountStatus, await codeOf(() => service.solicitar(ana, 'clave-ana-0001', destino))]
+    store.cuentas.set('t-ana', 'cuenta-ana')
+    verificados.delete('t-ana')
+    out.sinIdentidad = [(await service.resumen(ana)).blockedReason, await codeOf(() => service.solicitar(ana, 'clave-ana-0001', destino))]
+    verificados.add('t-ana')
+    minimo = 5000000n
+    out.bajoMinimo = [(await service.resumen(ana)).blockedReason, await codeOf(() => service.solicitar(ana, 'clave-ana-0001', destino))]
+    minimo = 1000000n
+    out.habilitada = [(await service.resumen(ana)).canRequest, (await service.resumen(ana)).paymentAccountStatus]
+
+    // Five requests at once with different keys: exactly one is opened.
+    const carrera = await Promise.allSettled([1, 2, 3, 4, 5].map((i) => service.solicitar(ana, 'clave-carrera-' + i, destino)))
+    out.carrera = [carrera.filter((x) => x.status === 'fulfilled').length, [...new Set(carrera.filter((x) => x.status === 'rejected').map((x) => x.reason?.code))]]
+    const r1 = carrera.find((x) => x.status === 'fulfilled').value.payout
+
+    // Rejected by Mercado Pago on creation: failed, released, audited as send_rejected.
+    mp.fallas.push('rechazo')
+    await service.procesar(admin, r1.payoutId, { mechanism: 'mercado_pago_payouts' })
+    out.rechazo = await historia('t-ana', r1.payoutId)
+
+    // Not confirmed, resent with the same key, then Mercado Pago reports progress and payment.
+    const r2 = (await service.solicitar(ana, 'clave-ana-0002', destino)).payout
+    mp.fallas.push('caida')
+    out.caida = await codeOf(() => service.procesar(admin, r2.payoutId, { mechanism: 'mercado_pago_payouts' }))
+    await service.reenviar(admin, r2.payoutId)
+    mover(r2.payoutId, 'success', 'in_progress')
+    await service.actualizarDesdeMercadoPago(admin, r2.payoutId)
+    // The same status read again adds nothing.
+    await service.actualizarDesdeMercadoPago(admin, r2.payoutId)
+    const pid = mover(r2.payoutId, 'success', 'accredited')
+    await service.notificacionPayout({ payout: { id: pid } })
+    out.pago = await historia('t-ana', r2.payoutId)
+    out.saldoPago = (await service.resumen(ana)).paidMinor
+
+    // Cancelled by the provider, cancelled by the administration.
+    await ganar('t-ana', 2000000n, 200000n)
+    const r3 = (await service.solicitar(ana, 'clave-ana-0003', destino)).payout
+    await service.cancelar(ana, r3.payoutId)
+    const r4 = (await service.solicitar(ana, 'clave-ana-0004', destino)).payout
+    await service.cancelarAdmin(admin, r4.payoutId, { reason: 'Email equivocado' })
+    out.cancelaciones = [(await historia('t-ana', r3.payoutId)).at(-1), (await historia('t-ana', r4.payoutId)).at(-1), (await service.resumen(ana)).availableMinor]
+    // Nothing secret or internal reaches the audit.
+    out.sinSecretos = /token|secret|Bearer|signature/iu.test(JSON.stringify(store.auditoriaGuardada))
+    // The trail of another provider's request is not this provider's.
+    out.aislada = (await store.auditoria('t-beto', r2.payoutId)).length
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.sinCuenta, ['3050000', false, 'PAYMENT_ACCOUNT_REQUIRED', 'not_connected', 'PAYMENT_ACCOUNT_REQUIRED'], 'without Mercado Pago the earnings accumulate and cannot be withdrawn')
+  assert.deepEqual(r.sinIdentidad, ['IDENTITY_NOT_VERIFIED', 'PROVIDER_IDENTITY_NOT_VERIFIED'])
+  assert.deepEqual(r.bajoMinimo, ['BELOW_MINIMUM', 'PAYOUT_BELOW_MINIMUM'])
+  assert.deepEqual(r.habilitada, [true, 'connected'])
+  assert.deepEqual(r.carrera, [1, ['PAYOUT_ALREADY_OPEN']])
+  assert.deepEqual(r.rechazo, [
+    [1, 'requested', null, 'requested', 'u-ana', 'c-ana', { amountMinor: '3050000', movements: '3' }],
+    [2, 'processing', 'requested', 'processing', 'u-admin', 'c-admin', { mechanism: 'mercado_pago_payouts' }],
+    [3, 'send_rejected', 'processing', 'failed', 'u-admin', 'c-admin', { mechanism: 'mercado_pago_payouts', providerStatus: 'rejected_on_create', reason: 'mercado_pago_rejected', releasedMinor: '3050000' }],
+  ])
+  assert.equal(r.caida, 'PAYOUT_SEND_UNCONFIRMED')
+  assert.deepEqual(r.pago, [
+    [1, 'requested', null, 'requested', 'u-ana', 'c-ana', { amountMinor: '3050000', movements: '3' }],
+    [2, 'processing', 'requested', 'processing', 'u-admin', 'c-admin', { mechanism: 'mercado_pago_payouts' }],
+    [3, 'send_unconfirmed', 'processing', 'processing', 'u-admin', 'c-admin', { error: 'PROVIDER_UNAVAILABLE' }],
+    [4, 'send_confirmed', 'processing', 'processing', 'u-admin', 'c-admin', { providerPayoutId: 'POP1', providerTransactionId: 'TOP1', providerStatus: 'created' }],
+    [5, 'provider_status', 'processing', 'processing', 'u-admin', 'c-admin', { providerStatus: 'success:in_progress' }],
+    [6, 'paid', 'processing', 'paid', 'system:mercado-pago-payouts', 'mercado-pago-payouts-notification', { mechanism: 'mercado_pago_payouts', providerStatus: 'success:accredited' }],
+  ], 'one entry per version; Mercado Pago\'s answer is recorded as the actor of the payment')
+  assert.equal(r.saldoPago, '3050000')
+  assert.deepEqual(r.cancelaciones, [
+    [2, 'cancelled', 'requested', 'cancelled', 'u-ana', 'c-ana', { reason: 'cancelled-by-provider', releasedMinor: '1800000' }],
+    [2, 'cancelled', 'requested', 'cancelled', 'u-admin', 'c-admin', { reason: 'Email equivocado', releasedMinor: '1800000' }],
+    '1800000',
+  ])
+  assert.equal(r.sinSecretos, false)
+  assert.equal(r.aislada, 0)
 })

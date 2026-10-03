@@ -325,3 +325,143 @@ test('GANANCIAS E2E PostgreSQL + real Mercado Pago adapters: platform collection
     emailInvalido: 'ck_solicitudes_liquidacion_email',
   })
 })
+
+test('GANANCIAS-02 PostgreSQL: the collecting account must match the mode frozen on the intent; one Mercado Pago account per provider; one reversal per earning; payout requests are idempotent, retried safely after a failure, paid by another means only with its reference, and fully audited in an append-only trail', { skip, timeout: 600000 }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const m = await prestador('m', 'Modo ' + run, [['Masaje', 30000]])
+      const s1 = await prestador('s1', 'Split uno ' + run, [['Masaje', 30000]])
+      const s2 = await prestador('s2', 'Split dos ' + run, [['Masaje', 30000]])
+      const rp = await prestador('rp', 'Reintento ' + run, [['Masaje', 30000], ['Largo', 40000]])
+      const dup = await prestador('dup', 'Duplicado ' + run, [['Masaje', 30000]])
+      const ana = await cliente('ana')
+
+      // A payment in the provider's OWN account carrying the reference of an intent TUS collects:
+      // quarantined, the turno is not confirmed and no earning is booked.
+      const pm = await turnoConCheckout(m, ana, 3, '10:00', 'Masaje')
+      out.conecta = (await conectarMercadoPago(m, '901')).status
+      mpPayment('7201', { ...pm.preferencia, seller: '901' })
+      const nm = await ingerir(notification('7201', { userId: '901' }))
+      out.modo = [pm.pago.modoCobro, nm.result, nm.reason, await estadoTurno(pm), (await filas(m)).length]
+
+      // A payment collected by ANOTHER provider's account for a Split intent: quarantined.
+      await conectarMercadoPago(s1, '902')
+      await conectarMercadoPago(s2, '903')
+      const ps = await turnoConCheckout(s1, ana, 3, '11:00', 'Masaje')
+      mpPayment('7301', { ...ps.preferencia, seller: '903' })
+      const ns = await ingerir(notification('7301', { userId: '903' }))
+      out.cobrador = [ps.pago.modoCobro, ns.result, ns.reason, await estadoTurno(ps)]
+      // The real payment in its own account still confirms it.
+      mpPayment('7302', ps.preferencia)
+      out.cobradorReal = [(await ingerir(notification('7302', { userId: '902' }))).result, await estadoTurno(ps)]
+
+      // One Mercado Pago account belongs to one provider.
+      out.duplicada = await conectarMercadoPago(dup, '902')
+      out.duplicadaEstado = (await modulo.cuentas.estadoCuenta({ tenantId: dup.tenantId })).status
+
+      // Earnings of a provider without Mercado Pago, then it connects and asks to be paid.
+      const p1 = await turnoConCheckout(rp, ana, 4, '10:00', 'Masaje')
+      mpPayment('7401', p1.preferencia)
+      await ingerir(notification('7401', { userId: '555' }))
+      const p2 = await turnoConCheckout(rp, ana, 4, '11:00', 'Largo')
+      mpPayment('7402', p2.preferencia)
+      await ingerir(notification('7402', { userId: '555' }))
+      out.acumulado = [await filas(rp), (await saldo(rp)).disponible, (await saldo(rp)).motivo, (await ganancias.resumen(rp.ctx)).paymentAccountStatus]
+      await conectarMercadoPago(rp, '904')
+      out.conectado = [(await ganancias.resumen(rp.ctx)).paymentAccountStatus, (await saldo(rp)).puede]
+
+      // Idempotency: the same key returns the same request; a different key is a second open
+      // request and is refused.
+      const k1 = await ganancias.solicitar(rp.ctx, 'clave-reintento-1', { destinationEmail: 'rp@prestador.test' })
+      const k1bis = await ganancias.solicitar(rp.ctx, 'clave-reintento-1', { destinationEmail: 'rp@prestador.test' })
+      out.idempotencia = [k1.status, k1bis.status, k1bis.payout.payoutId === k1.payout.payoutId, k1.payout.status, await codeOf(() => ganancias.solicitar(rp.ctx, 'clave-reintento-x', { destinationEmail: 'rp@prestador.test' }))]
+
+      // Paid by another means: never without its reference; a failure releases the funds.
+      await ganancias.procesar(admin, k1.payout.payoutId, { mechanism: 'manual' })
+      out.sinReferencia = await codeOf(() => ganancias.marcarPagada(admin, k1.payout.payoutId, {}))
+      const fallida = await ganancias.marcarFallida(admin, k1.payout.payoutId, { reason: 'la transferencia rebotó' })
+      out.fallida = [fallida.status, fallida.failureReason, (await saldo(rp)).disponible, (await saldo(rp)).puede, await codeOf(() => ganancias.marcarFallida(admin, k1.payout.payoutId, { reason: 'otra vez' }))]
+
+      // The safe retry is a new request: it takes the same released earnings.
+      const k2 = await ganancias.solicitar(rp.ctx, 'clave-reintento-2', { destinationEmail: 'rp@prestador.test' })
+      await ganancias.procesar(admin, k2.payout.payoutId, { mechanism: 'manual', note: 'transferencia bancaria' })
+      const pagada = await ganancias.marcarPagada(admin, k2.payout.payoutId, { externalReference: 'TRANSF-77' })
+      out.reintento = [k2.status, k2.payout.amountMinor === k1.payout.amountMinor, pagada.status, pagada.externalReference, await saldo(rp), await codeOf(() => ganancias.marcarPagada(admin, k2.payout.payoutId, { externalReference: 'TRANSF-78' }))]
+      const items = async (id) => (await db.query('SELECT activo FROM items_solicitud_liquidacion WHERE solicitud_id = $1 ORDER BY movimiento_id', [id])).rows.map((x) => x.activo)
+      out.items = [await items(k1.payout.payoutId), await items(k2.payout.payoutId)]
+
+      // The audit trail: one entry per version, in order, written with each change.
+      const auditoria = async (id) => (await db.query('SELECT version, accion, estado_anterior, estado_nuevo, actor_id, detalle FROM auditoria_liquidaciones WHERE solicitud_id = $1 ORDER BY version', [id])).rows.map((x) => [x.version, x.accion, x.estado_anterior, x.estado_nuevo, x.actor_id, x.detalle])
+      out.auditoria1 = await auditoria(k1.payout.payoutId)
+      out.auditoria2 = await auditoria(k2.payout.payoutId)
+      const dto = await ganancias.auditoriaDe(k2.payout.payoutId)
+      out.auditoriaDto = [dto.map((x) => x.action), (await ganancias.detalle(k2.payout.payoutId)).audit.length]
+      out.auditoriaOtro = await codeOf(() => ganancias.auditoriaDe('liq-no-existe'))
+
+      // A refund and then a chargeback of the SAME payment debit the provider once.
+      await fin.solicitarReembolso({ tenantId: ana.tenantId, paymentId: p1.pago.pagoId, actorId: 'u-admin', correlationId: 'r', idempotencyKey: run + '-refund-7401', reason: 'servicio no prestado' })
+      mp.payments.set('7401', { ...mp.payments.get('7401'), status: 'refunded', status_detail: 'refunded', date_last_updated: new Date(Date.now() + 180_000).toISOString() })
+      await ingerir(notification('7401', { userId: '555' }))
+      mp.payments.set('7401', { ...mp.payments.get('7401'), status: 'charged_back', status_detail: 'settled', date_last_updated: new Date(Date.now() + 240_000).toISOString() })
+      await ingerir(notification('7401', { userId: '555' }))
+      out.unReverso = [(await filas(rp)).filter(([tipo]) => tipo === 'refund_debit' || tipo === 'chargeback_debit'), (await saldo(rp)).disponible, (await saldo(rp)).negativo]
+
+      // The database by itself.
+      const fila = (await db.query('SELECT * FROM auditoria_liquidaciones WHERE solicitud_id = $1 AND version = 1', [k2.payout.payoutId])).rows[0]
+      const ganancia = (await db.query("SELECT * FROM movimientos_ganancia_prestador WHERE prestador_tenant_id = $1 AND tipo = 'refund_debit'", [rp.tenantId])).rows[0]
+      out.base = {
+        auditoriaUpdate: await sqlError('UPDATE auditoria_liquidaciones SET accion = $1 WHERE id = $2', ['paid', fila.id]),
+        auditoriaDelete: await sqlError('DELETE FROM auditoria_liquidaciones WHERE id = $1', [fila.id]),
+        auditoriaVersionRepetida: await sqlError('INSERT INTO auditoria_liquidaciones (id, prestador_tenant_id, solicitud_id, version, accion, estado_anterior, estado_nuevo, actor_id, correlacion_id, detalle, fecha_creacion) VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8, $9, now())', [run + '-a1', fila.prestador_tenant_id, fila.solicitud_id, 'paid', 'processing', 'paid', 'x', 'x', '{}']),
+        creacionConAnterior: await sqlError('INSERT INTO auditoria_liquidaciones (id, prestador_tenant_id, solicitud_id, version, accion, estado_anterior, estado_nuevo, actor_id, correlacion_id, detalle, fecha_creacion) VALUES ($1, $2, $3, 99, $4, $5, $6, $7, $8, $9, now())', [run + '-a2', fila.prestador_tenant_id, fila.solicitud_id, 'requested', 'processing', 'requested', 'x', 'x', '{}']),
+        detalleNoObjeto: await sqlError('INSERT INTO auditoria_liquidaciones (id, prestador_tenant_id, solicitud_id, version, accion, estado_anterior, estado_nuevo, actor_id, correlacion_id, detalle, fecha_creacion) VALUES ($1, $2, $3, 98, $4, $5, $6, $7, $8, $9, now())', [run + '-a3', fila.prestador_tenant_id, fila.solicitud_id, 'paid', 'processing', 'paid', 'x', 'x', '[]']),
+        auditoriaSinSolicitud: await sqlError('INSERT INTO auditoria_liquidaciones (id, prestador_tenant_id, solicitud_id, version, accion, estado_anterior, estado_nuevo, actor_id, correlacion_id, detalle, fecha_creacion) VALUES ($1, $2, $3, 1, $4, NULL, $5, $6, $7, $8, now())', [run + '-a4', fila.prestador_tenant_id, 'liq-no-existe', 'requested', 'requested', 'x', 'x', '{}']),
+        estadoViejo: await sqlError("UPDATE solicitudes_liquidacion SET estado = 'pending' WHERE solicitud_id = $1", [k2.payout.payoutId]),
+        segundoReverso: await sqlError('INSERT INTO movimientos_ganancia_prestador (id, movimiento_id, prestador_tenant_id, prestador_id, tipo, monto, moneda, obligacion_tenant_id, obligacion_id, trabajo_id, motivo, actor_id, correlacion_id, fecha_creacion) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())', [run + '-m1', 'chargeback-x:' + run, ganancia.prestador_tenant_id, ganancia.prestador_id, 'chargeback_debit', ganancia.monto, 'ARS', ganancia.obligacion_tenant_id, ganancia.obligacion_id, ganancia.trabajo_id, 'x', 'x', 'x']),
+      }
+    } finally { await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  // The collecting account decides nothing by itself: it must be the one of the intent.
+  assert.equal(r.conecta, 'connected')
+  assert.deepEqual(r.modo, ['plataforma', 'quarantined', 'collection_mode_mismatch', 'awaiting_payment', 0], 'money in the provider\'s own account never becomes an earning TUS owes')
+  assert.deepEqual(r.cobrador, ['split', 'quarantined', 'collector_mismatch', 'awaiting_payment'], 'another provider\'s account never confirms this turno')
+  assert.deepEqual(r.cobradorReal, ['applied', 'confirmed'])
+  assert.deepEqual(r.duplicada, { status: 'error', reason: 'ACCOUNT_ALREADY_LINKED', redirectUrl: 'https://web.tus.test/prestador/pagos?mercadoPago=error&reason=ACCOUNT_ALREADY_LINKED' })
+  assert.notEqual(r.duplicadaEstado, 'connected')
+  // Accumulation without Mercado Pago, blocked with a clear reason.
+  assert.deepEqual(r.acumulado, [[['earning_credit', '1350000'], ['earning_credit', '1800000']], '3150000', 'PAYMENT_ACCOUNT_REQUIRED', 'not_connected'])
+  assert.deepEqual(r.conectado, ['connected', true])
+  // Idempotency, failure, retry.
+  assert.deepEqual(r.idempotencia, ['created', 'existing', true, 'requested', 'PAYOUT_ALREADY_OPEN'])
+  assert.equal(r.sinReferencia, 'INVALID')
+  assert.deepEqual(r.fallida, ['failed', 'la transferencia rebotó', '3150000', true, 'INVALID_TRANSITION'], 'a failure gives the money back and cannot be applied twice')
+  assert.deepEqual(r.reintento, ['created', true, 'paid', 'TRANSF-77', { disponible: '0', negativo: '0', reservado: '0', proceso: '0', pagado: '3150000', tarifas: '0', puede: false, motivo: 'NO_FUNDS' }, 'INVALID_TRANSITION'])
+  assert.deepEqual(r.items, [[false, false], [true, true]], 'the failed request released its earnings; the retry holds them')
+  // Audit trail.
+  assert.deepEqual(r.auditoria1, [
+    [1, 'requested', null, 'requested', 'u-rp', { amountMinor: '3150000', movements: '2' }],
+    [2, 'processing', 'requested', 'processing', 'u-admin', { mechanism: 'manual' }],
+    [3, 'failed', 'processing', 'failed', 'u-admin', { mechanism: 'manual', reason: 'la transferencia rebotó', releasedMinor: '3150000' }],
+  ])
+  assert.deepEqual(r.auditoria2, [
+    [1, 'requested', null, 'requested', 'u-rp', { amountMinor: '3150000', movements: '2' }],
+    [2, 'processing', 'requested', 'processing', 'u-admin', { mechanism: 'manual', note: 'transferencia bancaria' }],
+    [3, 'paid', 'processing', 'paid', 'u-admin', { mechanism: 'manual', externalReference: 'TRANSF-77', note: 'transferencia bancaria' }],
+  ])
+  assert.deepEqual(r.auditoriaDto, [['requested', 'processing', 'paid'], 3])
+  assert.equal(r.auditoriaOtro, 'NOT_FOUND')
+  // One reversal per earning; the balance goes negative after the payout and is visible.
+  assert.deepEqual(r.unReverso, [[['refund_debit', '1350000']], '-1350000', '1350000'])
+  assert.deepEqual(r.base, {
+    auditoriaUpdate: 'append-only',
+    auditoriaDelete: 'append-only',
+    auditoriaVersionRepetida: 'uq_auditoria_liquidaciones_solicitud_version',
+    creacionConAnterior: 'ck_auditoria_liquidaciones_creacion',
+    detalleNoObjeto: 'ck_auditoria_liquidaciones_detalle',
+    auditoriaSinSolicitud: 'fk_auditoria_liquidaciones_solicitud',
+    estadoViejo: 'ck_solicitudes_liquidacion_estado',
+    segundoReverso: 'uq_movimientos_ganancia_reverso_unico',
+  })
+})
