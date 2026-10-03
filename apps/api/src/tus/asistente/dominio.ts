@@ -95,6 +95,23 @@ export interface SenaPendienteAsistente {
   amount: number
 }
 
+// TUS-WHATSAPP-MULTIMODAL-01: a deposit whose payment the client may ask about ("ya pagué").
+export interface SenaVerificableAsistente {
+  ref: string
+  providerName: string
+  service: string | null
+  startsAt: string
+  amount: number
+  // 'pending': not paid as far as TUS knows. 'paid': Mercado Pago's payment is already applied.
+  estado: 'pending' | 'paid'
+}
+
+// What the BACKEND found out about a deposit's payment, read from Mercado Pago. The assistant only
+// words it: nothing in the conversation (text, audio, image, receipt) can produce `confirmed`.
+export type VerificacionSenaAsistente =
+  | { estado: 'confirmed'; appliedNow: boolean; turnoConfirmado: boolean; amount: number }
+  | { estado: 'pending' | 'not_approved' | 'not_found' | 'quarantined' | 'unavailable' }
+
 export interface PuertoDominioAsistente {
   // Variants and real prices of a professional's service (null: it does not offer that service).
   servicioDeTurno(providerId: string, oficioId: string): Promise<ServicioTurnoAsistente | null>
@@ -103,6 +120,13 @@ export interface PuertoDominioAsistente {
   // Deposits of accepted turnos awaiting payment that the client can pay now, and the checkout of one.
   senasPendientes(context: TusAuthenticatedTenantContext): Promise<SenaPendienteAsistente[]>
   pagarSena(context: TusAuthenticatedTenantContext, ref: string): Promise<{ url: string; amount: number }>
+  // Deposits of the client's own upcoming turnos that are pending or already paid, and the real
+  // state of one deposit's payment (a turno of another account does not exist for it).
+  senasVerificables?(context: TusAuthenticatedTenantContext): Promise<SenaVerificableAsistente[]>
+  verificarSena?(context: TusAuthenticatedTenantContext, ref: string): Promise<VerificacionSenaAsistente>
+  // The same query for the payment (deposit or balance) of a WORK of the client: finance reads Mercado
+  // Pago and applies it like the webhook does. Only the customer of the work can ask.
+  verificarPagoTrabajo?(context: TusAuthenticatedTenantContext, workId: string): Promise<{ estado: 'confirmed' | 'pending' | 'not_approved' | 'not_found' | 'quarantined' | 'unavailable'; appliedNow: boolean; amountMinor: string | null; currency: string | null }>
   // Providers of a trade with their REAL free turnos for a day (or two) and a time window.
   buscarDisponibilidad(consulta: ConsultaDisponibilidad): Promise<DisponibilidadNecesidad>
   buscarServicios(filter: { query: string | null; category: string | null }): Promise<ServicioPublico[]>
@@ -416,6 +440,34 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
       .filter((turno) => turno.sena?.estado === 'pending')
       .sort((a, b) => a.inicio.localeCompare(b.inicio))
       .map((turno) => ({ ref: turno.id, providerName: turno.prestadorNombre, service: turno.tarifaNombre ?? turno.oficioNombre ?? null, startsAt: turno.inicio, amount: turno.sena!.monto }))
+  }
+
+  async senasVerificables(context: TusAuthenticatedTenantContext): Promise<SenaVerificableAsistente[]> {
+    if (!this.compartidos?.turnos) return []
+    const turnos = await this.compartidos.turnos.turnosCliente(context.subjectId)
+    const ahora = this.now()
+    return turnos
+      .filter((turno) => Date.parse(turno.inicio) > ahora && (turno.sena?.estado === 'pending' || turno.sena?.estado === 'paid'))
+      .sort((a, b) => a.inicio.localeCompare(b.inicio))
+      .slice(0, 5)
+      .map((turno) => ({ ref: turno.id, providerName: turno.prestadorNombre, service: turno.tarifaNombre ?? turno.oficioNombre ?? null, startsAt: turno.inicio, amount: turno.sena!.monto, estado: turno.sena!.estado as 'pending' | 'paid' }))
+  }
+
+  async verificarPagoTrabajo(context: TusAuthenticatedTenantContext, workId: string) {
+    const finanzas = this.application.serviceFinance
+    if (!finanzas?.verificarPagoDelTrabajo) return { estado: 'unavailable' as const, appliedNow: false, amountMinor: null, currency: null }
+    const resultado = await finanzas.verificarPagoDelTrabajo({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: workId })
+    return { estado: resultado.status === 'approved' ? ('confirmed' as const) : resultado.status, appliedNow: resultado.appliedNow, amountMinor: resultado.amountMinor, currency: resultado.currency }
+  }
+
+  async verificarSena(context: TusAuthenticatedTenantContext, ref: string): Promise<VerificacionSenaAsistente> {
+    if (!this.compartidos?.turnos) return { estado: 'unavailable' }
+    // The backend finance domain reads Mercado Pago and applies it like the webhook does.
+    const verificacion = await this.compartidos.turnos.verificarPagoSena({ clienteId: context.subjectId, reservaId: ref, correlationId: context.correlationId })
+    if (verificacion.status !== 'approved') return { estado: verificacion.status === 'pending' || verificacion.status === 'not_approved' || verificacion.status === 'quarantined' || verificacion.status === 'unavailable' ? verificacion.status : 'not_found' }
+    const turnos = await this.compartidos.turnos.turnosCliente(context.subjectId)
+    const turno = turnos.find((item) => item.id === ref || item.reservaId === ref)
+    return { estado: 'confirmed', appliedNow: verificacion.appliedNow, turnoConfirmado: turno?.estado === 'confirmed', amount: turno?.sena?.monto ?? Number(verificacion.amountMinor ?? 0) / 100 }
   }
 
   async pagarSena(context: TusAuthenticatedTenantContext, ref: string) {

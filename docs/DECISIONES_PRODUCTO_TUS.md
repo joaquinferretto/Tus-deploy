@@ -473,6 +473,25 @@ seña en ese caso).
   "Vinculá tu cuenta de Mercado Pago para retirar tus ganancias." La UI nunca llama "pagada" a una ganancia solo acumulada:
   "Pagadas" son solicitudes completadas.
 
+### W09-11: WhatsApp multimodal — audios, comprobantes y verificación de pagos (TUS-WHATSAPP-MULTIMODAL-01, 2026-10-03)
+
+- **Regla**: la IA interpreta, el backend decide, Mercado Pago certifica el dinero. Un comprobante (imagen o PDF), un audio, un
+  texto o la frase "ya pagué" **nunca** confirman un pago, un turno, una ganancia ni una liquidación.
+- **Audios**: se transcriben con el STT ya previsto (Groq Whisper, `GROQ_STT_MODEL`) y entran al MISMO flujo que un texto.
+  Solo formatos que el proveedor acepta sin conversión (Ogg/Opus, MP3, MP4/M4A); aac y amr crudos se rechazan y TUS no
+  convierte. Procesamiento efímero: no se guarda el audio, solo el texto y metadatos mínimos. Si no se entiende, se pide
+  repetir o escribir.
+- **Comprobantes**: son una pista, no una prueba. No se descargan, no se leen, no se hace OCR y no se envían a ningún
+  proveedor de IA (privacidad: pueden traer DNI/CUIL, CBU/CVU). La correlación sale de la cuenta del cliente y de sus
+  propios turnos con seña pendiente.
+- **"¿Ya te llegó?"**: el backend consulta a Mercado Pago por la referencia interna de la intención (con el modo congelado:
+  cuenta de TUS o del prestador) y aplica lo que informa por la MISMA máquina de estados del webhook. El webhook sigue
+  siendo el camino principal; la consulta es reconciliación y es idempotente en ambos sentidos.
+- **Límites**: 15 s entre consultas y 6 por hora por conversación; 20 medios por hora por contacto (configurable).
+- **No existe** en WhatsApp la posibilidad de consultar un pago por un identificador que escriba la persona.
+- Pendiente de decisión de producto: extracción local de datos del comprobante (monto, referencia) solo como pista y
+  siempre `user_supplied_untrusted_evidence`; no se implementa en esta fase.
+
 ### W09-07: Calificación del Prestador (FASE 9)
 
 - Solo el Cliente del trabajo (tenant de la sesión) califica, una vez, y solo con el trabajo `completed` (con pagos

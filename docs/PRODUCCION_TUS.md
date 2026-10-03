@@ -867,6 +867,32 @@ el gate de las señas; conserva sus nueve requisitos.
 7. Reembolso total desde el admin y verificar que el webhook deja la obligación `refunded`.
 8. Reenviar una notificación desde el panel de Mercado Pago: TUS responde `duplicate` sin efectos.
 
+### 7.x WhatsApp multimodal: audios, comprobantes y verificación de pagos (TUS-WHATSAPP-MULTIMODAL-01)
+
+Apagado por defecto: sin `WHATSAPP_AUDIO_TRANSCRIPTION=true` los audios se contestan "por ahora no puedo escuchar audios", y
+la verificación de pagos solo actúa si existe una seña pendiente de un cliente (con los pagos habilitados). **No cambia
+`paymentsEnabled` ni activa dinero real.** Detalle y arquitectura: `docs/WHATSAPP_IA_TUS.md`.
+
+Variables (todas opcionales; valores inválidos mantienen el default): `WHATSAPP_AUDIO_TRANSCRIPTION`, `GROQ_STT_MODEL`,
+`WHATSAPP_STT_MAX_BYTES`, `WHATSAPP_STT_TIMEOUT_MS`, `WHATSAPP_STT_MAX_SECONDS`, `WHATSAPP_STT_MIME_TYPES`,
+`WHATSAPP_MEDIA_MAX_PER_HOUR`. Sin migraciones nuevas.
+
+Antes de habilitarlo (todo **NO VERIFICADO CONTRA PROVEEDOR REAL** hasta que se haga):
+
+1. **Mercado Pago**: la consulta de pagos usa `GET /v1/payments/search?external_reference=<id de pago de TUS>` con el token de
+   la cuenta que debió cobrar. Confirmar con Mercado Pago (o en sandbox) que la búsqueda por `external_reference` está
+   disponible para la aplicación y devuelve los campos que usa el webhook (`collector_id`, `transaction_amount`,
+   `currency_id`, `status`, `fee_details`). Si no lo estuviera, la consulta devuelve "no pude consultar Mercado Pago" y el
+   webhook sigue siendo el único camino: nada se rompe ni se confirma.
+2. **Groq Whisper**: confirmar `response_format=verbose_json` (segmentos con `avg_logprob` y `no_speech_prob`) y el modelo
+   configurado; sin esos campos la transcripción se usa sin confianza (no se inventa).
+3. **Meta**: probar con un número de prueba una nota de voz real (Ogg/Opus) y una imagen; confirmar que las notas de voz
+   llegan como `audio/ogg`.
+4. Alertas: `assistant.audio_failed` (por motivo), `assistant.payment_check` (resultado) y `assistant.payment_check_limited`.
+
+Riesgos que quedan: un cliente que paga y no recibe el webhook depende de la consulta o de la reconciliación manual; los
+reembolsos parciales hechos en el panel de Mercado Pago no se modelan (límite documentado de la fase de ganancias).
+
 ## 8. Smoke posterior al despliegue
 
 0. **Qué build corre:** `GET https://api.tusservicios.shop/version` → `{ service, commit, builtAt, startedAt }`. `commit` tiene

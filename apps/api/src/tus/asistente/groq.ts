@@ -2,6 +2,7 @@
 // The model never touches the database: it can only request tools, which the backend validates
 // and executes with the actor's own authority. No Anthropic, no SDK: plain fetch.
 
+import { ErrorAudio, confianzaDeSegmentos, extensionDeAudio, type ResultadoTranscripcion } from './audio.ts'
 import {
   crearPoolCredencialesGroq,
   GroqCredentialPoolUnavailableError,
@@ -198,6 +199,8 @@ export function llamada(
 
 export interface Transcriptor {
   transcribir(audio: { bytes: Buffer; mimeType: string }): Promise<string>
+  // The same with how sure the provider says it is (absent: the assistant only has the text).
+  transcribirDetallado?(audio: { bytes: Buffer; mimeType: string }): Promise<ResultadoTranscripcion>
 }
 
 export class TranscriptorGroq implements Transcriptor {
@@ -222,36 +225,40 @@ export class TranscriptorGroq implements Transcriptor {
   }
 
   async transcribir(audio: { bytes: Buffer; mimeType: string }): Promise<string> {
-    const extension = audio.mimeType.includes('ogg')
-      ? 'ogg'
-      : audio.mimeType.includes('mpeg')
-        ? 'mp3'
-        : audio.mimeType.includes('mp4')
-          ? 'm4a'
-          : 'bin'
-    const response = await this.pool.request({
-      url: `${GROQ_BASE_URL}/audio/transcriptions`,
-      idempotent: true,
-      createInit: () => {
-        const form = new FormData()
-        form.append(
-          'file',
-          new Blob([new Uint8Array(audio.bytes)], { type: audio.mimeType }),
-          `audio.${extension}`
-        )
-        form.append('model', this.options.model || GROQ_STT_MODEL_POR_DEFECTO)
-        form.append('language', 'es')
-        form.append('response_format', 'json')
-        return {
-          method: 'POST',
-          body: form,
-          signal: AbortSignal.timeout(this.options.timeoutMs ?? 30_000),
-        }
-      },
-    })
-    if (!response.ok) throw new Error(`transcription failed with status ${response.status}`)
-    const payload = (await response.json()) as { text?: unknown }
-    if (typeof payload.text !== 'string') throw new Error('transcription returned no text')
-    return payload.text.slice(0, 2000)
+    return (await this.transcribirDetallado(audio)).text
+  }
+
+  async transcribirDetallado(audio: { bytes: Buffer; mimeType: string }): Promise<ResultadoTranscripcion> {
+    let response: Response
+    // The pool hides the cause of a failed attempt: the own timeout signal says whether it was us.
+    let senal: AbortSignal | null = null
+    try {
+      response = await this.pool.request({
+        url: `${GROQ_BASE_URL}/audio/transcriptions`,
+        idempotent: true,
+        createInit: () => {
+          const form = new FormData()
+          form.append(
+            'file',
+            new Blob([new Uint8Array(audio.bytes)], { type: audio.mimeType }),
+            `audio.${extensionDeAudio(audio.mimeType)}`
+          )
+          form.append('model', this.options.model || GROQ_STT_MODEL_POR_DEFECTO)
+          form.append('language', 'es')
+          // verbose_json adds, per segment, how sure the model is (avg_logprob, no_speech_prob).
+          form.append('response_format', 'verbose_json')
+          senal = AbortSignal.timeout(this.options.timeoutMs ?? 30_000)
+          return { method: 'POST', body: form, signal: senal }
+        },
+      })
+    } catch (error) {
+      const name = (error as { name?: unknown })?.name
+      const agotado = name === 'TimeoutError' || name === 'AbortError' || (senal as AbortSignal | null)?.aborted === true
+      throw new ErrorAudio(agotado ? 'STT_TIMEOUT' : 'STT_UNAVAILABLE', 'speech to text did not answer')
+    }
+    if (!response.ok) throw new ErrorAudio('STT_UNAVAILABLE', `transcription failed with status ${response.status}`)
+    const payload = (await response.json().catch(() => ({}))) as { text?: unknown; segments?: unknown }
+    if (typeof payload.text !== 'string') throw new ErrorAudio('STT_UNAVAILABLE', 'transcription returned no text')
+    return { text: payload.text.trim().slice(0, 2000), confianza: confianzaDeSegmentos(payload.segments) }
   }
 }

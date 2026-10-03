@@ -362,6 +362,16 @@ El área opcional del snapshot de identidad se sanitiza antes de consumirse y no
 Las rutas Web desconocidas usan `apps/web/src/app/not-found.tsx` y vuelven a `/`; el fallback de `tus` aplica la misma regla.
 Las rutas inexistentes del API continúan siendo 404 JSON desde Express.
 
+
+### WhatsApp multimodal (TUS-WHATSAPP-MULTIMODAL-01)
+
+Un audio se descarga, se valida por su contenido real y se transcribe (STT de Groq) a texto que entra al MISMO orquestador que
+un mensaje escrito. Un comprobante (imagen o PDF) es solo una pista: no se lee ni se envía a ningún proveedor de IA. "Ya
+pagué" y los comprobantes piden al backend `verificarPagoDelTrabajo`: finanzas consulta a Mercado Pago por la referencia
+interna de la intención (con el modo congelado) y aplica el resultado por la MISMA máquina de estados que el webhook
+(`aplicarEventoVerificado`). La IA interpreta, el backend decide y Mercado Pago certifica el dinero: ningún texto, audio ni
+imagen confirma un pago. Detalle en `docs/WHATSAPP_IA_TUS.md`.
+
 ## Validacion y evidencia
 
 La Build D2 fue validada con:

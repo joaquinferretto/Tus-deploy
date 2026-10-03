@@ -17,6 +17,9 @@ export interface LimitesIngreso {
   blockThresholdPerMinute: number
   blockMs: number
   debounceMs: number
+  // Voice notes, images and documents a contact may send per hour: each one costs a download, a
+  // speech-to-text call or a payment query, so it is bounded apart from plain text.
+  maxMediaPerHour: number
 }
 
 export const LIMITES_INGRESO_POR_DEFECTO: LimitesIngreso = {
@@ -24,6 +27,7 @@ export const LIMITES_INGRESO_POR_DEFECTO: LimitesIngreso = {
   blockThresholdPerMinute: 60,
   blockMs: 60 * 60 * 1000,
   debounceMs: 1500,
+  maxMediaPerHour: 20,
 }
 
 export interface ResultadoIngreso {
@@ -213,7 +217,11 @@ export class ServicioIngresoWhatsapp {
       new Date(nowMs - 60_000).toISOString()
     )
     const blocked = Boolean(contact.blockedUntil && Date.parse(contact.blockedUntil) > nowMs)
-    const rateLimited = blocked || recent >= this.limits.maxInboundPerMinute
+    const esMedia = event.type === 'audio' || event.type === 'image' || event.type === 'document'
+    const mediaRecientes = esMedia
+      ? await repositories.mensajes.contarEntrantesDesde(contact.contactId, new Date(nowMs - 60 * 60_000).toISOString(), ['audio', 'image', 'document'])
+      : 0
+    const rateLimited = blocked || recent >= this.limits.maxInboundPerMinute || (esMedia && mediaRecientes >= this.limits.maxMediaPerHour)
     const message: MensajeConversacion = {
       messageId: `mensaje-whatsapp-${randomUUID()}`,
       conversationId: conversation.conversationId,
@@ -230,7 +238,8 @@ export class ServicioIngresoWhatsapp {
       actor: 'contact',
       metadata: {
         ...(event.replyId ? { replyId: event.replyId.slice(0, 256) } : {}),
-        ...(event.media ? { media: { id: event.media.id, mimeType: event.media.mimeType } } : {}),
+        // Only identifiers and a hash: the content of a media message is never stored here.
+        ...(event.media ? { media: { id: event.media.id, mimeType: event.media.mimeType, ...(event.media.sha256 ? { sha256: event.media.sha256 } : {}) } } : {}),
         ...(event.location ? { location: event.location } : {}),
         ...(verificacion ? { verificacionTelefono: {} } : {}),
       },

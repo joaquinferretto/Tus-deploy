@@ -92,7 +92,11 @@ export interface EstadoConversacional {
   booking?: SolicitudEnCurso | null
   // The conversation asked for name + document for something that is not a booking (the payment
   // link of a deposit) and is waiting for them.
-  identityFor?: { purpose: 'deposit'; at: number } | null
+  identityFor?: { purpose: 'deposit' | 'payment_check'; at: number } | null
+  // TUS-WHATSAPP-MULTIMODAL-01: bookkeeping of "ya pagué" / receipts. Never authoritative: it only
+  // paces the questions to Mercado Pago (the backend asks it again every time) and remembers which
+  // deposits were offered to choose from. It holds no amount, no status and no account.
+  paymentCheck?: { since: number; count: number; lastAt: number; contextAt?: number | null; choosing?: { refs: string[]; at: number } | null } | null
   // The last reply was a price (ms): "¿y con Melina?" right after is about the price too.
   priceAt?: number | null
   lowConfidenceCount: number
@@ -171,6 +175,7 @@ export interface MensajeConversacion {
     | 'text'
     | 'image'
     | 'audio'
+    | 'document'
     | 'location'
     | 'interactive'
     | 'button'
@@ -347,6 +352,7 @@ export const MENSAJES = {
   rateLimited: 'Estás enviando muchos mensajes seguidos. Esperá un momento y volvé a escribirme.',
   unsupported: 'Por ahora solo puedo leer mensajes de texto. ¿Me lo escribís?',
   audioUnsupported: 'Por ahora no puedo escuchar audios. ¿Me contás por escrito qué necesitás?',
+  audioNotUnderstood: 'No pude entender bien ese audio. ¿Podés mandármelo otra vez o escribirme el mensaje?',
   imageReceived:
     'Recibí la foto. Por ahora la guardo para el equipo; contame con palabras qué pasa así te ayudo.',
   locationReceived:

@@ -4,10 +4,11 @@ import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './c
 import { DIAS_BUSQUEDA_PRIMERA, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, elegirOferta, horaLocal, ofertasDeResultado, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDisponibilidad, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type OfertasMostradas } from './busqueda.ts'
 import { oficio } from '../directorio/oficios.ts'
 import { formatearPesos } from '@factory/contracts'
-import type { DisponibilidadNecesidad, PuertoDominioAsistente } from './dominio.ts'
+import type { DisponibilidadNecesidad, PuertoDominioAsistente, SenaVerificableAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
 import { BOTONES_SOLICITUD, elegirServicio, elegirServicioPorNombre, enlaceRegistro, fechaLarga, horaCorta, preguntaServicio, resumenSolicitud, retornoDeSolicitud, sinIdentificadores, textoPrecio, type OpcionServicio } from './solicitud-turno.ts'
 import { ErrorChat, type ChatProvider, type MensajeChat, type Transcriptor } from './groq.ts'
+import { ErrorAudio, LIMITES_AUDIO_POR_DEFECTO, validarAudio, type LimitesAudio, type ResultadoTranscripcion } from './audio.ts'
 import { combinarNecesidad, describirDia, describirVentana, diaSiguiente, extraerNecesidad, faltantes, horaArgentina, hoyArgentina, horasPosibles, limitesVentana, mencionaAlgo, pareceHora, ventanaDesde, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
 import {
   HERRAMIENTAS,
@@ -176,6 +177,8 @@ export interface DependenciasOrquestador {
   linking: ServicioVinculacionWhatsapp
   knowledge: RecuperadorConocimiento | null
   transcriptor: Transcriptor | null
+  // Speech-to-text limits (size, timeout, duration, formats); defaults when absent.
+  audio?: Partial<LimitesAudio>
   limits?: Partial<LimitesAsistente>
   now?: () => number
   metric?: Metrica
@@ -186,6 +189,57 @@ export interface DependenciasOrquestador {
   identidades?: ServicioIdentificacionCliente | null
   // Public address of the Web (real registration and sign-in routes).
   webBaseUrl?: string | null
+}
+
+// A picture or document that arrived in the turn. Only its existence matters: it is never read.
+interface ComprobanteRecibido {
+  type: 'image' | 'document'
+  hasCaption: boolean
+}
+
+// Resolves with the promise or rejects with STT_TIMEOUT when it takes longer than `ms`.
+function conLimiteDeTiempo<T>(promesa: Promise<T>, ms: number): Promise<T> {
+  let temporizador: ReturnType<typeof setTimeout> | undefined
+  const limite = new Promise<never>((_, reject) => {
+    temporizador = setTimeout(() => reject(new ErrorAudio('STT_TIMEOUT', 'speech to text timed out')), ms)
+  })
+  return Promise.race([promesa, limite]).finally(() => clearTimeout(temporizador))
+}
+
+const sinAcentos = (value: string): string => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+// The deposit a person names ("la de Melina", "la segunda"): exactly one candidate, or null (asked again).
+function elegirSenaPorTexto(candidatas: SenaVerificableAsistente[], text: string): SenaVerificableAsistente | null {
+  const plano = sinAcentos(text)
+  const palabras = (value: string) => sinAcentos(value).split(/[^a-z0-9ñ]+/u).filter((palabra) => palabra.length >= 3)
+  const nombradas = candidatas.filter((sena) => palabras(sena.providerName).some((palabra) => new RegExp(`\\b${palabra}\\b`, 'u').test(plano)))
+  if (nombradas.length === 1) return nombradas[0]!
+  if (nombradas.length > 1) return null
+  const orden = /\b(?:primer[ao]?|1)\b/u.test(plano) ? 0 : /\b(?:segund[ao]?|2)\b/u.test(plano) ? 1 : /\b(?:tercer[ao]?|3)\b/u.test(plano) ? 2 : -1
+  return orden >= 0 ? (candidatas[orden] ?? null) : null
+}
+
+// What the backend found, in words. A receipt is acknowledged but never counts: only `confirmed`
+// (Mercado Pago's own report accepted by the backend) says the deposit is paid.
+function textoDeVerificacion(verificacion: VerificacionSenaAsistente, sena: SenaVerificableAsistente, hayComprobante: boolean): string {
+  switch (verificacion.estado) {
+    case 'confirmed':
+      return verificacion.turnoConfirmado
+        ? `Sí, Mercado Pago confirmó tu seña de ${formatearPesos(verificacion.amount)}. Tu turno con ${sena.providerName} quedó confirmado.`
+        : `Mercado Pago confirmó tu pago de ${formatearPesos(verificacion.amount)}, pero tu turno con ${sena.providerName} no figura confirmado. Revisalo en "Mis turnos" y, si algo no cierra, escribile al equipo de TUS.`
+    case 'pending':
+      return 'Encontré el pago, pero Mercado Pago todavía lo muestra pendiente. Cuando se acredite se confirma tu turno.'
+    case 'not_approved':
+      return 'No pude confirmar ese pago en Mercado Pago: figura rechazado o cancelado. Si querés, te paso de nuevo el link para pagar la seña.'
+    case 'quarantined':
+      return 'Encontré un pago en Mercado Pago, pero no coincide con lo esperado para esta seña, así que no lo puedo aplicar. Lo va a revisar el equipo de TUS.'
+    case 'unavailable':
+      return 'No pude consultar Mercado Pago en este momento. Probá de nuevo en unos minutos.'
+    default:
+      return hayComprobante
+        ? 'Recibí el comprobante, pero no pude confirmar ese pago en Mercado Pago. Un comprobante no alcanza: el pago lo confirma Mercado Pago. Si lo hiciste recién, puede tardar un momento en aparecer.'
+        : 'Todavía no encuentro un pago acreditado para esa seña. Si lo hiciste recién, puede tardar un momento en aparecer.'
+  }
 }
 
 type Turno = {
@@ -214,6 +268,31 @@ const MAXIMO_IDENTIFICACIONES_FALLIDAS = 5
 const VENTANA_IDENTIFICACIONES_MS = 60 * 60_000
 // "quiero pagar la seña", "¿cómo abono la seña?", "pasame el link de la seña".
 const PIDE_PAGAR_SENA = (text: string): boolean => /\bse[ñn]as?\b/iu.test(text) && /\b(?:pag\w*|abon\w*|link|enlace|c[oó]mo|quiero|transfer\w*)\b/iu.test(text)
+// "ya pagué", "hice la transferencia", "¿te llegó el pago?", "te mando el comprobante": the person
+// says the deposit was paid (or asks whether it arrived). It only ASKS the backend to look: what
+// the person says is never evidence.
+// Word edges are Unicode-aware on purpose: `\b` does not see "é" or "ó" as part of a word.
+const INICIO = '(?<![\\p{L}\\p{N}])'
+const FIN = '(?![\\p{L}\\p{N}])'
+const frase = (cuerpo: string) => new RegExp(`${INICIO}(?:${cuerpo})${FIN}`, 'iu')
+const PATRONES_PAGO_REALIZADO = [
+  frase('pagu[eé]|abon[eé]|transfer[ií]|deposit[eé]'),
+  frase('(?:hice|realic[eé]|efectu[eé]|mand[eé]|envi[eé])\\s+(?:el|la|un|una|mi)\\s+(?:pago|transferencia|se[ñn]a|dep[oó]sito)'),
+  frase('(?:ya\\s+)?(?:est[aá]|qued[oó])\\s+(?:pagad[oa]|abonad[oa]|acreditad[oa])'),
+  // "te mando el comprobante", "adjunto el comprobante": not a bare question about receipts.
+  frase('(?:te\\s+)?(?:mando|mand[eé]|paso|pas[eé]|env[ií]o|envi[eé]|adjunto|adjunt[eé])\\s+(?:el|mi|un|otro)\\s+comprobante'),
+  frase('(?:lleg[oó]|acredit[oó]|se\\s+acredit[oó]|figura|aparece)[^.?!]{0,30}?(?:pago|se[ñn]a|transferencia|plata|dinero)'),
+  frase('(?:pago|se[ñn]a|transferencia)[^.?!]{0,30}?(?:lleg[oó]|acreditad[oa]|se\\s+acredit[oó]|figura|aparece)'),
+]
+const PAGO_REALIZADO = (text: string): boolean => PATRONES_PAGO_REALIZADO.some((patron) => patron.test(text))
+// Questions to Mercado Pago per conversation: spaced apart, and a few per hour. Asking again and
+// again changes nothing (the backend always reads the real state), it only costs calls.
+const VERIFICACIONES_POR_HORA = 6
+const ESPERA_ENTRE_VERIFICACIONES_MS = 15_000
+const VENTANA_VERIFICACIONES_MS = 60 * 60_000
+const ELECCION_VIGENTE_MS = 10 * 60_000
+// A payment link was sent in this conversation: a receipt right after is about it.
+const CONTEXTO_PAGO_VIGENTE_MS = 24 * 60 * 60_000
 const DISPONIBILIDAD_NO_CONSULTADA = 'No pude consultar la disponibilidad en este momento. Probá de nuevo en unos minutos.'
 // "¿Y cuánto sale?", "¿cuánto es el precio?", "precio": the price of what is being talked about.
 // Not "cuanto antes" (urgency).
@@ -400,9 +479,10 @@ export class OrquestadorConversacion {
 
   private async textoDelTurno(
     turn: Turno
-  ): Promise<{ text: string; replyId: string | null; notices: string[] }> {
+  ): Promise<{ text: string; replyId: string | null; notices: string[]; comprobantes: ComprobanteRecibido[] }> {
     const parts: string[] = []
     const notices: string[] = []
+    const comprobantes: ComprobanteRecibido[] = []
     let replyId: string | null = null
     for (const message of turn.pending) {
       if (message.type === 'text' && message.text) parts.push(message.text)
@@ -413,44 +493,72 @@ export class OrquestadorConversacion {
         replyId = (message.metadata['replyId'] as string | undefined) ?? replyId
         if (message.text) parts.push(message.text)
       } else if (message.type === 'audio') {
-        const transcript = await this.transcribir(message)
-        if (transcript) parts.push(transcript)
-        else notices.push(MENSAJES.audioUnsupported)
-      } else if (message.type === 'image') {
-        // Images are kept for the team and never sent to the model automatically (privacy).
+        // A voice note becomes TEXT here and goes through exactly the same conversation as typed text.
+        const resultado = await this.transcribir(message)
+        if ('texto' in resultado) parts.push(resultado.texto)
+        else notices.push(resultado.fallo === 'disabled' ? MENSAJES.audioUnsupported : MENSAJES.audioNotUnderstood)
+      } else if (message.type === 'image' || message.type === 'document') {
+        // A picture or a document is only ever a HINT of a payment: it is not downloaded, read or
+        // shown to the model (privacy), and nothing in it is evidence of money. Its caption is text.
         if (message.text) parts.push(message.text)
-        else notices.push(MENSAJES.imageReceived)
+        comprobantes.push({ type: message.type, hasCaption: Boolean(message.text) })
       } else if (message.type === 'location') {
         notices.push(MENSAJES.locationReceived)
         parts.push('[El usuario compartió una ubicación aproximada]')
       } else notices.push(MENSAJES.unsupported)
     }
-    return { text: parts.join('\n').slice(0, 2000), replyId, notices: [...new Set(notices)] }
+    return { text: parts.join('\n').slice(0, 2000), replyId, notices: [...new Set(notices)], comprobantes }
   }
 
-  private async transcribir(message: MensajeConversacion): Promise<string | null> {
+  // Voice note -> text. Nothing the sender declares is trusted: the real bytes are checked (format,
+  // size, duration) before the STT provider sees them, the audio only lives in memory and is never
+  // stored, and a failure never invents words: the person is asked to repeat or to write.
+  private async transcribir(message: MensajeConversacion): Promise<{ texto: string } | { fallo: 'disabled' | 'failed' }> {
+    // The same WhatsApp message is never transcribed twice (a retried turn reuses its transcript).
+    if (message.metadata['transcribed'] === true && message.text) return { texto: message.text }
+    if (!this.deps.transcriptor) return { fallo: 'disabled' }
     const media = message.metadata['media'] as { id?: string } | undefined
-    if (!this.deps.transcriptor || !media?.id) return null
-    try {
-      const audio = await this.deps.whatsapp.downloadMedia(media.id, {
-        maxBytes: 16 * 1024 * 1024,
-        allowedMimeTypes: ['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/amr'],
-      })
-      const transcript = (await this.deps.transcriptor.transcribir(audio)).trim()
-      if (!transcript) return null
-      await this.deps.transaction.ejecutar(async (repositories) => {
-        const current = await repositories.mensajes.buscar(message.messageId)
-        if (current)
-          await repositories.mensajes.actualizar({
-            ...current,
-            text: transcript,
-            metadata: { ...current.metadata, transcribed: true },
-          })
-      })
-      return transcript
-    } catch {
-      return null
+    const limites: LimitesAudio = { ...LIMITES_AUDIO_POR_DEFECTO, ...this.deps.audio }
+    const inicio = this.now()
+    const fallar = async (reason: string): Promise<{ fallo: 'failed' }> => {
+      this.metric('assistant.audio_failed', { reason })
+      await this.actualizarMensaje(message.messageId, (current) => ({ ...current, metadata: { ...current.metadata, stt: { status: 'failed', reason } } }))
+      return { fallo: 'failed' }
     }
+    if (!media?.id) return fallar('NO_MEDIA')
+    try {
+      const descargado = await this.deps.whatsapp.downloadMedia(media.id, {
+        maxBytes: limites.maxBytes,
+        allowedMimeTypes: ['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/amr', 'audio/x-m4a', 'audio/webm', 'audio/wav', 'audio/flac'],
+      })
+      const audio = validarAudio(descargado.bytes, descargado.mimeType, limites)
+      const transcriptor = this.deps.transcriptor
+      const pedido = { bytes: audio.bytes, mimeType: audio.mimeType }
+      const salida = await conLimiteDeTiempo(
+        transcriptor.transcribirDetallado ? transcriptor.transcribirDetallado(pedido) : transcriptor.transcribir(pedido).then((text): ResultadoTranscripcion => ({ text, confianza: 'desconocida' })),
+        limites.timeoutMs + 1_000
+      )
+      const resultado: ResultadoTranscripcion = { ...salida, text: salida.text.trim() }
+      if (resultado.text.length < 2) return await fallar('EMPTY_TRANSCRIPT')
+      // Only when the provider reports how sure it is (never an invented confidence).
+      if (resultado.confianza === 'sin_voz' || resultado.confianza === 'baja') return await fallar(`LOW_CONFIDENCE_${resultado.confianza}`)
+      await this.actualizarMensaje(message.messageId, (current) => ({
+        ...current,
+        text: resultado.text,
+        metadata: { ...current.metadata, transcribed: true, stt: { status: 'ok', confidence: resultado.confianza, bytes: audio.bytes.length, ...(audio.durationSeconds !== null ? { seconds: Math.round(audio.durationSeconds) } : {}) } },
+      }))
+      this.metric('assistant.audio_transcribed', { ms: this.now() - inicio, bytes: audio.bytes.length, confidence: resultado.confianza })
+      return { texto: resultado.text }
+    } catch (error) {
+      return fallar(error instanceof ErrorAudio ? error.code : error instanceof ErrorMetaWhatsapp ? 'DOWNLOAD_FAILED' : 'STT_UNAVAILABLE')
+    }
+  }
+
+  private async actualizarMensaje(messageId: string, cambio: (current: MensajeConversacion) => MensajeConversacion): Promise<void> {
+    await this.deps.transaction.ejecutar(async (repositories) => {
+      const current = await repositories.mensajes.buscar(messageId)
+      if (current) await repositories.mensajes.actualizar(cambio(current))
+    })
   }
 
   private async actor(turn: Turno, correlationId: string): Promise<ActorAsistente> {
@@ -480,10 +588,18 @@ export class OrquestadorConversacion {
   private async decidir(
     turn: Turno,
     actor: ActorAsistente,
-    input: { text: string; replyId: string | null; notices: string[] },
+    input: { text: string; replyId: string | null; notices: string[]; comprobantes: ComprobanteRecibido[] },
     correlationId: string
   ): Promise<MensajeSaliente[]> {
     const text = input.text
+    // "Ya pagué" and receipts: the BACKEND asks Mercado Pago and words what it found. Neither the
+    // sentence, nor a voice note, nor a picture can confirm anything (see verificacionDePago).
+    const pago = await this.verificacionDePago(turn, actor, input, correlationId)
+    if (pago) return pago
+    // A picture or document that is not a payment receipt keeps its old answers.
+    for (const comprobante of input.comprobantes)
+      if (!comprobante.hasCaption) input.notices.push(comprobante.type === 'image' ? MENSAJES.imageReceived : MENSAJES.unsupported)
+    input.notices = [...new Set(input.notices)]
     if (!text) return input.notices.map((notice) => ({ type: 'text', text: notice }))
 
     // Fixed answers only for commands the model must never own: there is no human operator to
@@ -1175,6 +1291,116 @@ export class OrquestadorConversacion {
     })
   }
 
+  // ---- "ya pagué" and receipts: only the backend and Mercado Pago know whether money arrived ------
+  //
+  // Reaches here for: a sentence saying the deposit was paid ("ya pagué", "¿te llegó el pago?"),
+  // an image or document (a receipt), or the answers to the questions this flow asked. What
+  // happens is ALWAYS the same and none of it comes from the message: the client is the linked or
+  // identified account, the deposit is one of ITS OWN turnos, and the backend finance domain
+  // reads the payment from Mercado Pago by TUS's own payment reference and applies it through the
+  // same state machine as the webhook. The text, the audio or the picture are never read as
+  // evidence: a receipt cannot confirm anything, and nothing in it is downloaded or sent to a model.
+  private async verificacionDePago(
+    turn: Turno,
+    actor: ActorAsistente,
+    input: { text: string; comprobantes: ComprobanteRecibido[] },
+    correlationId: string
+  ): Promise<MensajeSaliente[] | null> {
+    const domain = this.deps.domain
+    if (typeof domain.senasVerificables !== 'function' || typeof domain.verificarSena !== 'function') return null
+    const state = turn.conversation.state
+    const conversationId = turn.conversation.conversationId
+    const ahora = this.now()
+    const text = input.text
+    const hayComprobante = input.comprobantes.length > 0
+    const dicePago = PAGO_REALIZADO(text)
+    const esperando = state.identityFor?.purpose === 'payment_check' && ahora - state.identityFor.at <= SOLICITUD_VIGENTE_MS
+    const eligiendo = state.paymentCheck?.choosing && ahora - state.paymentCheck.choosing.at <= ELECCION_VIGENTE_MS ? state.paymentCheck.choosing : null
+    const contextoPago = typeof state.paymentCheck?.contextAt === 'number' && ahora - state.paymentCheck.contextAt <= CONTEXTO_PAGO_VIGENTE_MS
+    if (!dicePago && !esperando && !eligiendo && !hayComprobante) return null
+    // A reply while waiting for the choice or the identity must not be taken for something else.
+    if (!dicePago && !hayComprobante && !esperando && eligiendo && PIDE_PAGAR_SENA(text)) return null
+
+    let cuenta = cuentaDeSolicitud(actor)
+    let encontrada = false
+    if (!cuenta) {
+      // An image alone from someone nobody knows: the old answer (a photo for the team).
+      if (!dicePago && !esperando && !(hayComprobante && contextoPago)) return null
+      if (turn.canal.id !== 'whatsapp' || !this.deps.identidades) return turn.canal.pedirCuenta('private', { returnTo: '/mis-turnos' })
+      if (!esperando) {
+        await this.actualizarEstado(conversationId, { identityFor: { purpose: 'payment_check', at: ahora }, lowConfidenceCount: 0 })
+        return [{ type: 'text', text: 'Para revisar tu pago necesito tu nombre completo y DNI.' }]
+      }
+      if (respuestaConfirmacion(text, null)?.decision === 'no') {
+        await this.actualizarEstado(conversationId, { identityFor: null })
+        return [{ type: 'text', text: MENSAJES.confirmationCancelled }]
+      }
+      const identidad = await this.identificar(turn, text, correlationId, '/mis-turnos')
+      if (identidad.estado === 'respuesta') return identidad.mensajes
+      cuenta = identidad.contexto
+      encontrada = true
+    }
+    if (state.identityFor?.purpose === 'payment_check') await this.actualizarEstado(conversationId, { identityFor: null, lowConfidenceCount: 0 })
+    const saludo: MensajeSaliente[] = encontrada ? [{ type: 'text', text: MENSAJES.identityFound }] : []
+    const responder = (texto: string): MensajeSaliente[] => [...saludo, { type: 'text', text: texto }]
+    turn.intencion = 'pago'
+    turn.canal.evento?.({ type: 'routing', intent: 'pago' })
+
+    const senas = await domain.senasVerificables(cuenta).catch(() => null)
+    if (!senas) return responder('No pude consultar tus pagos en este momento. Probá de nuevo en unos minutos.')
+    // A picture that is not about a payment (no words, no payment in progress): the old answer.
+    if (hayComprobante && !dicePago && !esperando && !eligiendo && !contextoPago && senas.length === 0) return null
+    const pendientes = senas.filter((sena) => sena.estado === 'pending')
+    const pagadas = senas.filter((sena) => sena.estado === 'paid')
+
+    if (pendientes.length === 0) {
+      if (pagadas.length > 0) {
+        const sena = pagadas[0]!
+        const inicio = new Date(sena.startsAt)
+        return responder(`Tu seña de ${formatearPesos(sena.amount)} con ${sena.providerName} para el ${fechaLarga(inicio)} a las ${horaCorta(inicio)} ya figura acreditada por Mercado Pago. No tenés señas pendientes.`)
+      }
+      return responder(
+        hayComprobante
+          ? 'Recibí el comprobante, pero todavía no pude relacionarlo con un pago confirmado de Mercado Pago.'
+          : 'No encuentro señas de turnos pendientes de pago en tu cuenta. Si el pago es de un trabajo, decime cuál y lo reviso.'
+      )
+    }
+
+    // Which deposit: the only one, or the one the person names; otherwise it is asked (never guessed).
+    let objetivo: SenaVerificableAsistente | null = pendientes.length === 1 ? pendientes[0]! : null
+    if (!objetivo) {
+      const candidatas = eligiendo ? pendientes.filter((sena) => eligiendo.refs.includes(sena.ref)) : pendientes
+      objetivo = elegirSenaPorTexto(candidatas.length > 0 ? candidatas : pendientes, text)
+    }
+    if (!objetivo) {
+      const lista = pendientes.slice(0, 5).map((sena, indice) => `${indice + 1}) ${sena.providerName}${sena.service ? ` (${sena.service})` : ''}, ${fechaLarga(new Date(sena.startsAt))} a las ${horaCorta(new Date(sena.startsAt))}, seña de ${formatearPesos(sena.amount)}`)
+      await this.actualizarEstado(conversationId, { paymentCheck: { ...(state.paymentCheck ?? { since: ahora, count: 0, lastAt: 0 }), choosing: { refs: pendientes.slice(0, 5).map((sena) => sena.ref), at: ahora } } })
+      return responder(`Tenés ${pendientes.length} señas pendientes:\n${lista.join('\n')}\n¿De cuál es el pago? Decime el nombre del profesional.`)
+    }
+
+    // Pacing: the same question again and again changes nothing, it only costs calls to Mercado Pago.
+    const previo = state.paymentCheck
+    const dentroDeVentana = previo !== null && previo !== undefined && ahora - previo.since <= VENTANA_VERIFICACIONES_MS
+    if (previo && ahora - previo.lastAt < ESPERA_ENTRE_VERIFICACIONES_MS) return responder('Ya estoy revisando ese pago. Esperá unos segundos y volvé a preguntarme.')
+    if (dentroDeVentana && previo!.count >= VERIFICACIONES_POR_HORA) {
+      this.metric('assistant.payment_check_limited', { channel: turn.canal.id })
+      return responder('Ya revisé tu pago varias veces. Apenas Mercado Pago lo acredite, tu turno se confirma solo. Probá de nuevo más tarde.')
+    }
+    await this.actualizarEstado(conversationId, { paymentCheck: { since: dentroDeVentana ? previo!.since : ahora, count: (dentroDeVentana ? previo!.count : 0) + 1, lastAt: ahora, contextAt: previo?.contextAt ?? ahora, choosing: null } })
+
+    let verificacion: VerificacionSenaAsistente
+    try {
+      verificacion = await domain.verificarSena(cuenta, objetivo.ref)
+    } catch {
+      verificacion = { estado: 'unavailable' }
+    }
+    this.metric('assistant.payment_check', { channel: turn.canal.id, result: verificacion.estado, receipt: hayComprobante })
+    await this.deps.transaction.ejecutar((repositories) =>
+      this.auditar(repositories, 'assistant.payment_checked', turn, correlationId, { result: verificacion.estado, withReceipt: hayComprobante, appliedNow: verificacion.estado === 'confirmed' ? verificacion.appliedNow : false })
+    )
+    return responder(textoDeVerificacion(verificacion, objetivo, hayComprobante))
+  }
+
   // "Quiero pagar la seña": the checkout of the deposits the client can pay now. The turnos, the
   // amounts and the links come from the backend; nothing is paid by sending a link.
   private async pedidoDeSena(turn: Turno, actor: ActorAsistente, text: string, correlationId: string): Promise<MensajeSaliente[] | null> {
@@ -1208,16 +1434,20 @@ export class OrquestadorConversacion {
     if (!senas) return [...saludo, { type: 'text', text: 'No pude consultar tus turnos en este momento. Probá de nuevo en unos minutos.' }]
     if (senas.length === 0) return [...saludo, { type: 'text', text: 'No tenés señas pendientes de pago. La seña se puede abonar cuando el prestador acepta el turno.' }]
     const mensajes: MensajeSaliente[] = [...saludo]
+    let linkEnviado = false
     for (const sena of senas.slice(0, 3)) {
       const inicio = new Date(sena.startsAt)
       const turno = `tu turno con ${sena.providerName}${sena.service ? ` (${sena.service})` : ''} del ${fechaLarga(inicio)} a las ${horaCorta(inicio)}`
       try {
         const pago = await this.deps.domain.pagarSena(cuenta, sena.ref)
         mensajes.push({ type: 'cta_url', text: `Seña de ${turno}: ${formatearPesos(pago.amount)}. El pago se acredita cuando Mercado Pago lo aprueba.`, label: 'Pagar seña', url: pago.url })
+        linkEnviado = true
       } catch {
         mensajes.push({ type: 'text', text: `No pude generar ahora el link de pago de la seña de ${turno}. Probá de nuevo en unos minutos.` })
       }
     }
+    // A receipt that comes next is about this payment.
+    if (linkEnviado) await this.actualizarEstado(conversationId, { paymentCheck: { ...(state.paymentCheck ?? { since: this.now(), count: 0, lastAt: 0 }), contextAt: this.now() } })
     return mensajes
   }
 

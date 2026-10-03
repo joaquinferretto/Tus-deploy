@@ -33,6 +33,7 @@ import {
   type Metrica,
   type ResolutorCuentaAsistente,
 } from './orquestador.ts'
+import { leerLimitesAudio } from './audio.ts'
 import { WhatsappTemplateService } from './plantillas.ts'
 import type { PuertoTransaccionAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
 import { ServicioSoporteWhatsapp } from './soporte.ts'
@@ -68,6 +69,7 @@ export function leerLimites(env: Record<string, string | undefined>): {
       maxInboundPerMinute: numero(env['WHATSAPP_INBOUND_MAX_PER_MINUTE'], 12, 1, 120),
       blockThresholdPerMinute: numero(env['WHATSAPP_INBOUND_BLOCK_PER_MINUTE'], 60, 5, 1000),
       debounceMs: numero(env['WHATSAPP_DEBOUNCE_MS'], 1_500, 0, 10_000),
+      maxMediaPerHour: numero(env['WHATSAPP_MEDIA_MAX_PER_HOUR'], 20, 1, 200),
     },
     topK: numero(env['RAG_TOP_K'], 4, 1, 10),
   }
@@ -172,13 +174,15 @@ export function crearModuloWhatsapp(input: {
             model: env['GROQ_WHATSAPP_MODEL']?.trim() || undefined,
           })
         : null
+  const limitesAudio = leerLimitesAudio(env)
   const transcriptor =
     input.transcriptor !== undefined
       ? input.transcriptor
-      : groqPool && env['WHATSAPP_AUDIO_TRANSCRIPTION']?.trim() === 'true'
+      : groqPool && limitesAudio.enabled
         ? new TranscriptorGroq({
             pool: groqPool,
-            model: env['GROQ_STT_MODEL']?.trim() || undefined,
+            model: limitesAudio.model ?? undefined,
+            timeoutMs: limitesAudio.timeoutMs,
           })
         : null
   const embeddings =
@@ -207,6 +211,7 @@ export function crearModuloWhatsapp(input: {
     linking: vinculacion,
     knowledge,
     transcriptor,
+    audio: limitesAudio,
     limits: limits.asistente,
     now,
     ...(input.metric ? { metric: input.metric } : {}),

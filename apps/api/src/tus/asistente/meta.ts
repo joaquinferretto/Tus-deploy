@@ -109,7 +109,7 @@ export function firmarPayloadMeta(rawBody: Buffer | string, appSecret: string): 
 // ---- normalized webhook events -------------------------------------------------------------
 
 export type TipoMensajeEntrante =
-  'text' | 'image' | 'audio' | 'location' | 'interactive' | 'button' | 'unsupported'
+  'text' | 'image' | 'audio' | 'document' | 'location' | 'interactive' | 'button' | 'unsupported'
 
 export interface MensajeEntranteMeta {
   kind: 'message'
@@ -147,6 +147,25 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
 const asString = (value: unknown): string | null =>
   typeof value === 'string' && value.length > 0 ? value : null
+
+// Reads a response body up to `maxBytes` (one more byte is enough to know it is too large).
+async function leerConTope(response: Response, maxBytes: number): Promise<Buffer> {
+  const reader = response.body?.getReader?.()
+  if (!reader) return Buffer.from(await response.arrayBuffer())
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media is too large')
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks)
+}
 
 // Parses the Cloud API "whatsapp_business_account" payload into minimal events. Unknown shapes are
 // ignored (never thrown) so that one odd entry cannot block the rest of the batch.
@@ -195,7 +214,7 @@ export function parsearWebhookMeta(
         }
         if (type === 'text') {
           events.push({ ...base, type: 'text', text: asString(asRecord(message['text'])['body']) })
-        } else if (type === 'image' || type === 'audio') {
+        } else if (type === 'image' || type === 'audio' || type === 'document') {
           const media = asRecord(message[type])
           const id = asString(media['id'])
           events.push({
@@ -507,7 +526,11 @@ export class MetaWhatsappCloudProvider implements WhatsappProvider {
         'WHATSAPP_MEDIA',
         `media download failed with status ${response.status}`
       )
-    const bytes = Buffer.from(await response.arrayBuffer())
+    // The cap applies while reading: a body larger than declared is cut, never buffered whole.
+    const declared = Number(response.headers?.get?.('content-length'))
+    if (Number.isFinite(declared) && declared > limits.maxBytes)
+      throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media is too large')
+    const bytes = await leerConTope(response, limits.maxBytes)
     if (bytes.length === 0 || bytes.length > limits.maxBytes)
       throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media size is invalid')
     return { mimeType, bytes }

@@ -233,6 +233,26 @@ export const HERRAMIENTAS = [
     execute: async (args, actor, domain) => ({ payment: await domain.estadoPago(actor.context!, args.workId) }),
   }),
   herramienta({
+    name: 'get_pending_payments',
+    description: 'Señas de turnos próximos del cliente vinculado que están pendientes de pago o ya acreditadas (no modifica nada).',
+    audience: 'linked',
+    schema: vacio,
+    confirmation: null,
+    execute: async (_args, actor, domain) => ({ deposits: (await domain.senasVerificables?.(actor.context!)) ?? [] }),
+  }),
+  herramienta({
+    name: 'verify_payment_status',
+    description:
+      'Consulta a Mercado Pago, a través del backend, el estado REAL del pago de la seña de un turno del cliente (ref de get_pending_payments) o de un trabajo suyo (workId). Pasá exactamente uno. Solo consulta: lo que diga el cliente, un audio o un comprobante nunca confirma un pago; el resultado lo decide el backend.',
+    audience: 'linked',
+    schema: z.strictObject({ ref: ID.optional(), workId: ID.optional() }).refine((value) => (value.ref === undefined) !== (value.workId === undefined), 'exactly one of ref or workId'),
+    confirmation: null,
+    execute: async (args, actor, domain) => {
+      if (args.workId !== undefined) return { verification: domain.verificarPagoTrabajo ? await domain.verificarPagoTrabajo(actor.context!, args.workId) : { estado: 'unavailable' } }
+      return { verification: domain.verificarSena ? await domain.verificarSena(actor.context!, args.ref!) : { estado: 'unavailable' } }
+    },
+  }),
+  herramienta({
     name: 'list_provider_jobs',
     description: 'Lista los trabajos del prestador vinculado.',
     audience: 'provider',
@@ -504,7 +524,7 @@ const HERRAMIENTAS_POR_INTENCION: Record<IntencionAsistente, { client: NombreHer
   trabajos: { client: ['list_my_works', 'get_my_work', 'list_my_requests', 'list_my_open_requests'], provider: ['list_provider_jobs', 'get_provider_job', 'cancel_work', 'complete_work'] },
   presupuesto: { client: ['list_my_works', 'get_my_budget', 'accept_budget', 'reject_budget'], provider: ['list_provider_jobs', 'get_provider_job'] },
   reserva: { client: ['find_appointments', 'get_available_slots', 'book_appointment', 'collect_service_request', 'search_providers', 'list_my_reservations', 'get_service_details'], provider: ['list_provider_reservations'] },
-  pago: { client: ['list_my_works', 'get_payment_status', 'get_payment_link'], provider: ['get_mercadopago_connection_status'] },
+  pago: { client: ['list_my_works', 'get_payment_status', 'get_payment_link', 'get_pending_payments', 'verify_payment_status'], provider: ['get_mercadopago_connection_status'] },
   identidad: { client: [], provider: ['get_identity_status'] },
   conocimiento: { client: [], provider: [] },
   saludo: { client: [], provider: [] },

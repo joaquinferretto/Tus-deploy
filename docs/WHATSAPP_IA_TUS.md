@@ -26,7 +26,11 @@ Variables opcionales:
 - `GROQ_API_KEY_1` a `GROQ_API_KEY_6` (pool opcional, round-robin; no hace falta configurar dos)
 - `GROQ_WHATSAPP_MODEL` (default `openai/gpt-oss-120b`)
 - `GROQ_STT_MODEL` (default `whisper-large-v3-turbo`)
-- `WHATSAPP_AUDIO_TRANSCRIPTION=true` para audio
+- `WHATSAPP_AUDIO_TRANSCRIPTION=true` para audio (ver "Audios, comprobantes y verificación de pagos")
+- `WHATSAPP_STT_MAX_BYTES` (default `16777216`, 1 KiB a 25 MiB), `WHATSAPP_STT_TIMEOUT_MS` (default `30000`),
+  `WHATSAPP_STT_MAX_SECONDS` (default `180`) y `WHATSAPP_STT_MIME_TYPES` (default `audio/ogg,audio/mpeg,audio/mp4`;
+  solo se aceptan formatos que Whisper admite sin conversión). El proveedor es siempre Groq y el modelo `GROQ_STT_MODEL`.
+- `WHATSAPP_MEDIA_MAX_PER_HOUR` (default `20`): audios, imágenes y documentos por contacto y hora
 - `WHATSAPP_INBOUND_MAX_PER_MINUTE` (default `12`)
 - `WHATSAPP_INBOUND_BLOCK_PER_MINUTE` (default `60`)
 - `WHATSAPP_DEBOUNCE_MS` (default `1500`)
@@ -315,6 +319,115 @@ Rutas del canal Web (sesion opcional; `visitorId` es un id aleatorio del navegad
 Limites: 12 mensajes por minuto por conversacion (`WHATSAPP_INBOUND_MAX_PER_MINUTE`) y 30 por minuto por IP. No hay streaming token a token: el orquestador valida el texto del modelo antes de liberarlo. Al iniciar sesion, la conversacion que la persona tenia como visitante pasa a su cuenta.
 
 Tests: `tests/foundation/tus-asistente-web.test.mjs`.
+
+## Audios, comprobantes y verificación de pagos (TUS-WHATSAPP-MULTIMODAL-01)
+
+Regla de la fase: **la IA interpreta, el backend decide y Mercado Pago certifica el dinero.**
+
+> **Un comprobante enviado por WhatsApp nunca confirma un pago. TUS confirma dinero únicamente mediante el dominio
+> financiero y la verificación contra Mercado Pago.** Una imagen, un PDF, un audio, un texto o una afirmación del cliente
+> ("ya pagué") nunca marcan un pago como aprobado, nunca confirman un turno, nunca crean una ganancia.
+
+### Qué existía y qué se agregó
+
+Ya existían: el parser de media de Meta (id, mime y sha256), la descarga por Graph API restringida a hosts de Meta, el
+transcriptor Groq/Whisper cableado detrás de `WHATSAPP_AUDIO_TRANSCRIPTION` y el orquestador que convertía un audio en texto.
+Se agregó: límites configurables, validación del contenido real, duración, confianza del proveedor, fallback correcto,
+no repetir una transcripción, límite de media por hora, tipo `document`, y todo el circuito de comprobantes y de
+verificación de pagos (el proveedor de pagos no tenía una consulta de pago).
+
+### Audio (notas de voz)
+
+`webhook Meta → mensaje de audio (media id) → worker → descarga (Graph API, tope de bytes mientras se lee) → validación
+→ STT (Groq) → texto → el MISMO orquestador que un mensaje escrito`. No hay un asistente paralelo: el texto transcripto
+pasa por la misma búsqueda real de disponibilidad, el mismo estado de la conversación ("quiero masaje" y luego un audio
+"con Melina mañana a la tarde" conserva el servicio) y las mismas reglas. Los tests prueban paridad exacta audio/texto.
+
+- **Validación (`asistente/audio.ts`)**: nada de lo que declara el remitente o Meta se toma como cierto. Los bytes
+  deciden el formato (firma `OggS`, `ftyp`, `ID3`/trama MPEG); aac y amr crudos, aunque sean formatos de WhatsApp, no los
+  acepta Whisper y TUS **no convierte** (decisión: sin ffmpeg, sin procesos hijos ni archivos temporales). Tamaño máximo,
+  duración máxima (medible en Ogg/Opus, el formato de la nota de voz: granule de la última página sobre 48 kHz menos el
+  pre-skip; en otros contenedores solo rige el tamaño) y lista blanca de tipos reales.
+- **Efímero**: el audio vive en memoria durante la transcripción y se descarta. Se guarda solo el texto transcripto y
+  metadatos mínimos (`media.id`, `mimeType`, `sha256`, `stt: { status, confidence, bytes, seconds }`). Nunca el audio, ni
+  base64, ni tokens, en base o logs.
+- **Confianza**: solo la que informa el proveedor (`verbose_json` de Whisper: `avg_logprob` y `no_speech_prob`, con los
+  umbrales del propio Whisper: silencio si `no_speech_prob > 0.6` y `avg_logprob < -1`; baja si el promedio de
+  `avg_logprob < -1`). Si el proveedor no informa nada, no se inventa. Con silencio o confianza baja se pide repetir.
+- **Fallos** (formato, tamaño, duración, corrupto, STT caído, timeout, transcripción vacía): *"No pude entender bien ese
+  audio. ¿Podés mandármelo otra vez o escribirme el mensaje?"* El motivo queda en una métrica
+  (`assistant.audio_failed`) y en `metadata.stt`. Con el STT apagado se mantiene *"Por ahora no puedo escuchar audios..."*.
+- **Duplicados**: el `wamid` es único (Meta reentrega: se procesa una vez) y una transcripción ya hecha se reutiliza.
+- **Abuso**: además del límite por minuto, `WHATSAPP_MEDIA_MAX_PER_HOUR` corta audios/imágenes/documentos antes de que
+  cuesten una descarga, una llamada al STT o una consulta de pago.
+
+### Comprobantes (imagen o documento) y "ya pagué"
+
+Un comprobante es **solo una pista de que la persona dice haber pagado**. TUS **no descarga, no lee, no hace OCR ni envía a
+ningún proveedor de IA** la imagen o el PDF (decisión de privacidad: pueden traer nombre, DNI/CUIL, CBU/CVU). De la imagen
+se guarda únicamente el identificador de Meta, el tipo y su hash. Lo que sí se usa es el texto que la acompaña, igual que
+cualquier mensaje. Nada de lo que diga o contenga el comprobante se usa como dato financiero: no hay `payment_id`,
+monto, fecha ni referencia extraídos (la extracción local queda como evolución posible; si se hiciera, serían siempre
+`user_supplied_untrusted_evidence`).
+
+La correlación sale de **referencias internas**, no del comprobante: la cuenta vinculada (o identificada por nombre + DNI,
+como en el pago de la seña) → sus propios turnos próximos con seña pendiente (`senasVerificables`) → la intención de pago
+de ese turno. Con una sola seña pendiente se verifica esa; con varias se pregunta cuál ("la de Melina"); si no hay ninguna,
+*"Recibí el comprobante, pero todavía no pude relacionarlo con un pago confirmado de Mercado Pago."* Una foto sin palabras,
+sin seña pendiente y sin un link de pago reciente conserva su respuesta de siempre (se guarda para el equipo).
+
+### Verificación real del pago
+
+`herramienta/orquestador → turnos (verificarPagoSena) → finanzas (verificarPagoDelTrabajo)`:
+
+1. Solo el **cliente del trabajo** pregunta por **su** pago (otro cliente o el prestador reciben 404).
+2. Se toma la intención (la última con checkout) y su **modo congelado** (`split` / `plataforma`).
+3. Se consulta a Mercado Pago **por la referencia interna** (`external_reference` = id de pago de TUS, nunca un valor
+   escrito por la persona) con la cuenta que debió cobrar (la de TUS para `plataforma`, la del prestador para `split`):
+   `GET /v1/payments/search?external_reference=…`. Cada resultado se normaliza con la MISMA función que el webhook
+   (que además rechaza un cobrador distinto).
+4. Cada pago se aplica por **`aplicarEventoVerificado`**, la misma máquina de estados del webhook (collector, modo,
+   referencia, moneda, importe, comisión de marketplace, transiciones, inbox, confirmación del turno, ganancia). Es el
+   único lugar donde el dinero cambia de estado.
+5. Se audita (`payment.queried_by_customer`; en el asistente `assistant.payment_checked`).
+
+Resultados: `approved` (Mercado Pago lo informó aprobado **y** todas las validaciones del webhook lo aceptaron, o ya estaba
+aplicado), `pending`, `not_approved` (rechazado/cancelado/expirado), `quarantined` (importe, moneda, modo… no coinciden: no
+se aplica), `not_found` y `unavailable`. Respuestas: *"Sí, Mercado Pago confirmó tu seña de $15.000. Tu turno con Melina
+quedó confirmado."* / *"Encontré el pago, pero Mercado Pago todavía lo muestra pendiente…"* / *"Todavía no encuentro un pago
+acreditado para esa seña…"* / *"Recibí el comprobante, pero no pude confirmar ese pago en Mercado Pago…"*. Nunca se
+acusa de fraude ni se dice "el comprobante parece válido".
+
+**El webhook sigue siendo el camino principal**; la consulta es una reconciliación adicional. Si Mercado Pago ya aprobó y el
+webhook no llegó, la consulta aplica; el webhook que llega después es un no-op (`stale`/`no_op`): una aprobación, una
+confirmación, una ganancia (índices únicos del ledger y estado de la intención). Probado en PostgreSQL con webhook antes,
+después, duplicado y concurrente con tres consultas simultáneas. Con Split 1:1 no se crea ganancia.
+
+### Herramientas del asistente (modelo)
+
+`get_pending_payments` (señas pendientes o ya acreditadas del cliente vinculado) y `verify_payment_status` (exactamente uno de
+`ref` —seña de un turno— o `workId` —seña o saldo de un trabajo del cliente—): solo **piden** al backend, que usa el mismo
+dominio financiero (`verificarPagoDelTrabajo`); el modelo no recibe tokens ni credenciales y no puede decidir el resultado. El camino determinístico
+(la conversación) no pasa por el modelo.
+
+### Límites de la consulta de pagos
+
+Por conversación: 15 s entre consultas a Mercado Pago y 6 por hora (el estado de ritmo vive en el estado de la conversación,
+no es autoridad). Una conversación nunca puede consultar pagos arbitrarios: no existe consulta por un id escrito por la
+persona.
+
+### Persistencia
+
+Sin tablas ni migraciones nuevas. Claves JSON nuevas: `mensajes.metadata.media.sha256`, `mensajes.metadata.stt`,
+`conversaciones.estado.paymentCheck` (ritmo y elección entre señas; sin montos ni estados) y acciones de auditoría
+`assistant.payment_checked` y `payment.queried_by_customer`.
+
+### Qué no está verificado contra el proveedor real
+
+Todo se probó contra dobles offline en el borde de `fetch` y de los puertos: **NO VERIFICADO CONTRA PROVEEDOR REAL** — Groq
+Whisper (`verbose_json`, campos de segmentos), la búsqueda de pagos de Mercado Pago (`/v1/payments/search` por
+`external_reference`) y la descarga de media de Meta. Antes de habilitar en producción hay que probar en sandbox/un número
+de prueba y confirmar con Mercado Pago que la búsqueda por `external_reference` está disponible para la aplicación.
 
 ## Migracion
 

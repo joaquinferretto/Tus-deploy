@@ -389,12 +389,13 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
             ).map(mapMensaje),
       contar: async (conversationId) =>
         client.mensajeConversacionWhatsapp.count({ where: { conversacionId: conversationId } }),
-      contarEntrantesDesde: async (contactId, since) =>
+      contarEntrantesDesde: async (contactId, since, types) =>
         client.mensajeConversacionWhatsapp.count({
           where: {
             contactoId: contactId,
             direccion: 'inbound',
             fechaCreacion: { gte: new Date(since) },
+            ...(types ? { tipo: { in: [...types] } } : {}),
           },
         }),
     },
