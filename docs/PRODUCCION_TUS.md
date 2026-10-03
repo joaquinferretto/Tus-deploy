@@ -881,12 +881,23 @@ Variables (todas opcionales; valores inválidos mantienen el default): `WHATSAPP
 `WHATSAPP_RECEIPT_ANALYZER` (`ocr` local | `vision` Groq), `WHATSAPP_RECEIPT_MAX_BYTES`, `WHATSAPP_RECEIPT_PDF_MAX_BYTES`,
 `WHATSAPP_RECEIPT_PDF_MAX_PAGES`, `WHATSAPP_RECEIPT_TIMEOUT_MS`, `WHATSAPP_RECEIPT_MAX_PER_HOUR`,
 `WHATSAPP_RECEIPT_MIME_TYPES`. El comprobante es solo una pista para elegir entre pagos pendientes del propio cliente; el
-dinero lo confirma únicamente el dominio financiero tras consultar a Mercado Pago. Requisitos de entorno para `ocr`: datos de
-idioma de tesseract accesibles (`TESSERACT_LANG_PATH`) y `pdftotext` (paquete poppler-utils) instalado para PDF; sin ellos la
+dinero lo confirma únicamente el dominio financiero tras consultar a Mercado Pago. Requisitos de entorno para `ocr`:
+
+- **PDF**: `pdftotext` de **poppler** (`apt-get install poppler-utils`; en Alpine `apk add poppler-utils`). El de Xpdf no sirve
+  (no lee stdin) y se informa como `incompatible`. `WHATSAPP_RECEIPT_PDFTOTEXT` acepta un nombre de comando o una ruta absoluta.
+- **Imágenes**: datos de idioma de tesseract **ya copiados al disco** en `TESSERACT_LANG_PATH` (`spa.traineddata` o
+  `spa.traineddata.gz`; idiomas en `WHATSAPP_RECEIPT_OCR_LANGS`, default `spa`). La API **nunca los descarga**: se instalan
+  en el despliegue. Comprobación local con una imagen sintética: `scripts/dev/probar-ocr-comprobante.mjs`.
+
+Sin ellos la API arranca igual: `/ready` sigue en 200 e informa en `capabilities` (`receiptImages`, `receiptPdf`, además de
+`whatsapp`, `groq` y `audioTranscription`) un estado (`ready` | `disabled` | `unavailable`) y un motivo fijo (por ejemplo
+`ocr:language_data_missing`, `ocr:missing`, `ocr:incompatible`, `groq_not_configured`), nunca un valor de configuración. Lo
+mismo se registra una vez al arrancar (`optional capabilities`). En ese caso la
 lectura falla de forma tipada y se le pregunta a la persona a cuál pago corresponde. Privacidad: los bytes viven solo en memoria
 durante el análisis; con `ocr` nada sale de TUS; con `vision` solo la imagen va a Groq; no se guardan imágenes, PDF, texto OCR
-completo, CVU/CBU completos ni DNI. **NO VERIFICADO CONTRA PROVEEDOR REAL**: descarga de media de Meta, visión de Groq, OCR local con
-datos de idioma reales y `pdftotext` en producción.
+completo, CVU/CBU completos ni DNI. El OCR local con datos de idioma reales (español) se verificó en una máquina de desarrollo con
+un comprobante sintético. **NO VERIFICADO CONTRA PROVEEDOR REAL**: descarga de media de Meta, visión de Groq y `pdftotext` de
+poppler en el servidor de producción.
 
 Antes de habilitarlo (todo **NO VERIFICADO CONTRA PROVEEDOR REAL** hasta que se haga):
 

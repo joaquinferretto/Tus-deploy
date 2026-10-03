@@ -35,7 +35,8 @@ Variables opcionales:
   (default `5242880`), `WHATSAPP_RECEIPT_PDF_MAX_BYTES` (default `2097152`), `WHATSAPP_RECEIPT_PDF_MAX_PAGES` (default `3`),
   `WHATSAPP_RECEIPT_TIMEOUT_MS` (default `25000`), `WHATSAPP_RECEIPT_MAX_PER_HOUR` (default `6`),
   `WHATSAPP_RECEIPT_MIME_TYPES` (default `image/jpeg,image/png,image/webp,application/pdf`), `WHATSAPP_RECEIPT_PDFTOTEXT`
-  (ruta de `pdftotext`; default el del PATH), `TESSERACT_LANG_PATH` (datos de idioma del OCR local) y, para `vision`,
+  (nombre o ruta absoluta del `pdftotext` de poppler; default el del PATH), `TESSERACT_LANG_PATH` (directorio local con los datos
+  de idioma del OCR; la API nunca los descarga), `WHATSAPP_RECEIPT_OCR_LANGS` (default `spa`) y, para `vision`,
   `GROQ_VISION_MODEL` / `GROQ_VISION_RESPONSE_FORMAT`. Valores inválidos mantienen el default seguro.
 - `WHATSAPP_MEDIA_MAX_PER_HOUR` (default `20`): audios, imágenes y documentos por contacto y hora
 - `WHATSAPP_INBOUND_MAX_PER_MINUTE` (default `12`)
@@ -386,6 +387,23 @@ de cabeceras/dimensiones (límite de píxeles) y de PDF (`%%EOF`, sin `/Encrypt`
 (zip/html/exe con tipo de imagen), enorme o con demasiadas páginas → error tipado, nunca excepción. Los bytes viven **solo en
 memoria durante el análisis y se descartan**: no hay archivos temporales ni se guardan.
 
+**Disponibilidad y errores.** Cada lector informa si puede trabajar (`capacidades()`, expuesto en `/ready` → `capabilities` y en
+el log de arranque) y cada fallo tiene un código propio, que es el motivo de la métrica `assistant.receipt_failed`:
+
+| Código | Significa |
+| --- | --- |
+| `ANALYZER_UNAVAILABLE` | el lector no está instalado o configurado (falta `pdftotext`, faltan los datos de idioma) |
+| `ANALYZER_FAILED` | el lector existe y falló (proceso con error, OCR caído, Groq 4xx/5xx o respuesta inválida) |
+| `ANALYZER_TIMEOUT` | se venció el tiempo; el proceso se mata y el worker de OCR se reinicia |
+| `CORRUPT` | el archivo no es un PDF o una imagen válida (magic bytes, estructura) |
+| `TOO_LARGE` / `TOO_MANY_PAGES` | supera los límites configurados (también la salida de `pdftotext`) |
+| `DOWNLOAD_FAILED` | Meta no entregó el archivo (URL vencida, 401/403/404/429/5xx, host inesperado) |
+
+`pdftotext`: la disponibilidad se comprueba **extrayendo un PDF propio por stdin** (no alcanza con que el binario exista; el de
+Xpdf se informa `incompatible`), se guarda 5 minutos y se actualiza si una extracción real descubre que el binario ya no está.
+OCR: solo lee datos de idioma del disco (`cacheMethod: none`, sin red y sin escribir nada); las lecturas se hacen de a una.
+Ningún log lleva texto del comprobante, el nombre del archivo ni la salida de error del proceso.
+
 **Lectura** (`AnalizadorComprobante`, salida acotada a un esquema; nunca texto libre que cambie dinero):
 
 - `ocr` (por defecto): OCR **local** (tesseract.js) para imágenes, y para PDF solo la **capa de texto** con `pdftotext`
@@ -470,10 +488,15 @@ comprobantes: ver arriba qué se guarda y qué no) y acciones de auditoría
 
 ### Qué no está verificado contra el proveedor real
 
-Todo se probó contra dobles offline en el borde de `fetch` y de los puertos: **NO VERIFICADO CONTRA PROVEEDOR REAL** — Groq
-Whisper (`verbose_json`, campos de segmentos), la visión de Groq para comprobantes, el OCR local con datos de idioma reales
-(tesseract), la disponibilidad de `pdftotext` en el entorno de producción, la búsqueda de pagos de Mercado Pago (`/v1/payments/search` por
-`external_reference`) y la descarga de media de Meta. Antes de habilitar en producción hay que probar en sandbox/un número
+**Verificado real (local, 2026-10-03):** el OCR local (tesseract.js con `spa.traineddata` en disco) leyó un comprobante
+sintético: monto, moneda, número de operación, fecha, destinatario, últimos 4 dígitos de la cuenta y estado.
+
+Lo demás se probó contra dobles offline en el borde de `fetch`, del proceso y de los puertos: **NO VERIFICADO CONTRA PROVEEDOR
+REAL** — Groq Whisper (`verbose_json`, campos de segmentos), la visión de Groq para comprobantes, el `pdftotext` de poppler
+(en la máquina de desarrollo solo había el de Xpdf, que se detecta como incompatible), la búsqueda de pagos de Mercado Pago
+(`/v1/payments/search` por `external_reference`, paginada de a 30 y hasta 120 resultados) y la descarga de media de Meta
+(incluido si la URL temporal redirige: las redirecciones se siguen a mano, solo a hosts de Meta por HTTPS y sin reenviar el
+token a otro origen). Antes de habilitar en producción hay que probar en sandbox/un número
 de prueba y confirmar con Mercado Pago que la búsqueda por `external_reference` está disponible para la aplicación.
 
 ## Migracion
