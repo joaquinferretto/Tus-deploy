@@ -1838,6 +1838,7 @@ Table cuentas_cobro_prestador {
 
   indexes {
     (prestador_tenant_id, proveedor) [unique, name: 'uq_cuentas_cobro_prestador_proveedor']
+    (proveedor, cuenta_externa_id) [unique, name: 'uq_cuentas_cobro_prestador_cuenta_externa', note: "parcial (SQL): WHERE estado = 'connected' AND cuenta_externa_id IS NOT NULL; una cuenta de Mercado Pago, un prestador"]
   }
 
   Note: 'WEB-09D: vinculo OAuth del prestador; solo referencias seguras.'

@@ -1068,6 +1068,11 @@ Aditiva y forward-only, aprobada por el gate de `scripts/tus-migration-repair-li
   `(obligacion_tenant_id, obligacion_id) WHERE tipo IN ('refund_debit', 'chargeback_debit')`: una ganancia se revierte
   una sola vez (un reembolso seguido de un contracargo del mismo pago no debita dos veces; cualquier otra disputa es un
   ajuste explícito).
+- Migración `20261030100000_tus_cuenta_cobro_externa_unica` (TUS-GANANCIAS-02, aditiva): índice único parcial
+  `uq_cuentas_cobro_prestador_cuenta_externa` `(proveedor, cuenta_externa_id) WHERE estado = 'connected' AND
+  cuenta_externa_id IS NOT NULL` en `cuentas_cobro_prestador`: una cuenta de Mercado Pago pertenece a un solo prestador
+  aunque dos vinculaciones OAuth corran a la vez (las notificaciones se resuelven por la cuenta cobradora). Desconectar
+  libera la cuenta. La violación se informa como `ACCOUNT_ALREADY_LINKED`.
 - `auditoria_liquidaciones` (append-only, trigger `tus_auditoria_liquidacion_append_only`): una fila por versión de la
   solicitud, escrita en la transacción del cambio. `accion` ∈ `requested | processing | send_confirmed |
   send_unconfirmed | send_rejected | provider_status | paid | failed | cancelled`; `estado_anterior` es NULL solo en

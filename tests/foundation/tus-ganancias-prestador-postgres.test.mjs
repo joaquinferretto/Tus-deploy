@@ -359,6 +359,9 @@ test('GANANCIAS-02 PostgreSQL: the collecting account must match the mode frozen
       // One Mercado Pago account belongs to one provider.
       out.duplicada = await conectarMercadoPago(dup, '902')
       out.duplicadaEstado = (await modulo.cuentas.estadoCuenta({ tenantId: dup.tenantId })).status
+      // The database refuses it too: two OAuth completions racing past the application check.
+      await conectarMercadoPago(dup, '905')
+      out.duplicadaEnBase = await sqlError("UPDATE cuentas_cobro_prestador SET cuenta_externa_id = '902' WHERE prestador_tenant_id = $1 AND proveedor = 'mercado-pago'", [dup.tenantId])
 
       // Earnings of a provider without Mercado Pago, then it connects and asks to be paid.
       const p1 = await turnoConCheckout(rp, ana, 4, '10:00', 'Masaje')
@@ -430,6 +433,7 @@ test('GANANCIAS-02 PostgreSQL: the collecting account must match the mode frozen
   assert.deepEqual(r.cobradorReal, ['applied', 'confirmed'])
   assert.deepEqual(r.duplicada, { status: 'error', reason: 'ACCOUNT_ALREADY_LINKED', redirectUrl: 'https://web.tus.test/prestador/pagos?mercadoPago=error&reason=ACCOUNT_ALREADY_LINKED' })
   assert.notEqual(r.duplicadaEstado, 'connected')
+  assert.equal(r.duplicadaEnBase, 'uq_cuentas_cobro_prestador_cuenta_externa', 'one Mercado Pago account, one provider: also enforced by the database')
   // Accumulation without Mercado Pago, blocked with a clear reason.
   assert.deepEqual(r.acumulado, [[['earning_credit', '1350000'], ['earning_credit', '1800000']], '3150000', 'PAYMENT_ACCOUNT_REQUIRED', 'not_connected'])
   assert.deepEqual(r.conectado, ['connected', true])

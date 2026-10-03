@@ -174,19 +174,27 @@ export class CuentasCobroPrisma implements PuertoCuentasCobro {
         })
         return true
       } catch (error) {
-        if (codigoPrisma(error) === 'P2002') return false
+        if (codigoPrisma(error) === 'P2002') {
+          if (cuentaExternaEnUso(error)) throw cuentaYaVinculada()
+          return false
+        }
         throw error
       }
     }
-    const result = await this.client.cuentaCobroPrestador.updateMany({
-      where: {
-        prestadorTenantId: cuenta.prestadorTenantId,
-        proveedor: PROVEEDOR,
-        version: expectedVersion,
-      },
-      data,
-    })
-    return result.count === 1
+    try {
+      const result = await this.client.cuentaCobroPrestador.updateMany({
+        where: {
+          prestadorTenantId: cuenta.prestadorTenantId,
+          proveedor: PROVEEDOR,
+          version: expectedVersion,
+        },
+        data,
+      })
+      return result.count === 1
+    } catch (error) {
+      if (codigoPrisma(error) === 'P2002' && cuentaExternaEnUso(error)) throw cuentaYaVinculada()
+      throw error
+    }
   }
 
   async guardarCredencial(input: {
@@ -292,6 +300,17 @@ function codigoPrisma(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null && 'code' in error
     ? String((error as { code: unknown }).code)
     : undefined
+}
+
+// The unique violation of "one Mercado Pago account, one provider" (and not of the provider's own row).
+function cuentaExternaEnUso(error: unknown): boolean {
+  const meta = typeof error === 'object' && error !== null && 'meta' in error ? (error as { meta?: unknown }).meta : undefined
+  const message = typeof error === 'object' && error !== null && 'message' in error ? String((error as { message: unknown }).message) : ''
+  return `${JSON.stringify(meta ?? '')} ${message}`.includes('cuenta_externa')
+}
+
+function cuentaYaVinculada(): ErrorFinanzasServicio {
+  return new ErrorFinanzasServicio(409, 'ACCOUNT_ALREADY_LINKED', 'that Mercado Pago account is already linked to another provider')
 }
 
 function fecha(value: unknown): string {
