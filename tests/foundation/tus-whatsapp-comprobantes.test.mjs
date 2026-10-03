@@ -77,7 +77,7 @@ test('receipt reading: amounts, currency, operation number, date, people and sta
     out.rechazado = leer('Pago rechazado $ 15.000' + String.fromCharCode(10) + 'Operación 1111')
     out.referencia = leer('Referencia: pago-8f3a2b1c-4d5e' + String.fromCharCode(10) + '$ 100,00')
     out.basura = leer('lorem ipsum dolor sit amet sin ningún dato de pago')
-    out.vacia = c.hayEvidencia(leer('lorem ipsum')) 
+    out.vacia = c.hayEvidencia(leer('lorem ipsum'))
     out.sinDatosSensibles = JSON.stringify([out.mp, out.banco]).match(/0000003100012345678901|12345678901/u) === null
     console.log(JSON.stringify(out))
   `)
