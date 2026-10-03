@@ -372,7 +372,7 @@ test('ASISTENTE conversacional multi-turn: "Necesito un electricista" -> "Para m
   assert.deepEqual(r.whatsapp.slice(0, 3).map((t) => t[0]), r.web.slice(0, 3).map((t) => t[0]), 'WhatsApp answers the same thing')
   assert.equal(r.whatsapp[3][1], 'cta_url', '"El segundo" refers to the second professional shown: booking needs the linked account')
   assert.deepEqual(r.consultasWhatsapp, r.consultasWeb, 'both channels asked the backend for the same searches')
-  assert.deepEqual([r.estado.profession, r.estado.day, r.estado.time], ['electricidad', '2026-09-26', { kind: 'between', from: '13:00', to: '20:00' }])
+  assert.deepEqual([r.estado.profession, r.estado.day, r.estado.time], ['electricidad', '2026-09-26', { kind: 'between', from: '13:00', to: '20:00', part: 'tarde' }], 'the state says "a la tarde"; the backend got only its bounds (above)')
 })
 
 // ---- ASISTENTE-HORA-01 ---------------------------------------------------------------------------
@@ -539,8 +539,10 @@ test('ASISTENTE hora (Web y WhatsApp): "1", "2", "3" keep choosing a professiona
     'el cuarto': '¿A qué hora con Carla Paz? Tiene: 09:15, 11:00.',
   }
   assert.match(r.listado, /\n1\. bongio — Camba Cuá: .*\n2\. Ana Gómez — Centro: .*\n3\. Beto Ruiz — San Benito: .*\n4\. Carla Paz — Centro: 09:15, 11:00\n/u)
-  // The search is repeated for 09:15: who has that time shows it, the others their closest ones.
-  const SOLO_915 = 'Encontré 4 profesionales de Masaje con turno mañana a las 09:15:\n1. bongio — Camba Cuá: 09:15\n2. Ana Gómez — Centro: 10:00, 17:00, 17:30\n3. Beto Ruiz — San Benito: 10:00, 18:00\n4. Carla Paz — Centro: 09:15\nDecime con quién y a qué hora y te preparo la solicitud.'
+  // The search is repeated for 09:15. Contract changed on purpose (ASISTENTE-CONTEXTO-02, owner
+  // request): when someone has that time, ONLY who has it is listed; the others' closest times are
+  // offered only when nobody fits.
+  const SOLO_915 = 'Encontré 2 profesionales de Masaje con turno mañana a las 09:15:\n1. bongio — Camba Cuá: 09:15\n2. Carla Paz — Centro: 09:15\n¿Con cuál querés solicitar el turno?'
   for (const canal of ['web', 'whatsapp']) {
     for (const [numero, esperado] of Object.entries(elecciones)) assert.equal(r[canal][numero], esperado, `${canal}: "${numero}" chooses that professional`)
     assert.equal(r[canal].yCuarto[0], SOLO_915, `${canal}: "a las 9 y cuarto" is 09:15 for everybody, not the fourth professional`)

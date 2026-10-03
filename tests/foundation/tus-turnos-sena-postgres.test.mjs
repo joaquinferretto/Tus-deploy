@@ -105,7 +105,7 @@ const SETUP = `
   const a = (indice, hora) => new Date(c.sumarDias(lunes, indice) + 'T' + hora + ':00.000-03:00').toISOString()
   // Name of the constraint the database rejected the write with (Prisma reports a unique or a
   // foreign key violation by its own code: P2002 / P2003).
-  const restriccion = async (op) => { try { await op(); return 'ok' } catch (e) { return String(e?.message ?? e).match(/(ck_[a-z_]+|uq_[a-z_]+|fk_[a-z_]+)/u)?.[1] ?? (e?.code === 'P2002' ? 'unique:' + [e.meta?.target].flat().join(',') : e?.code === 'P2003' ? 'foreign_key' : e?.code ?? String(e?.message ?? e).slice(0, 80)) } }
+  const restriccion = async (op) => { try { await op(); return 'ok' } catch (e) { if (e?.code === 'P2003') return 'foreign_key'; return String(e?.message ?? e).match(/(ck_[a-z_]+|uq_[a-z_]+|fk_[a-z_]+)/u)?.[1] ?? (e?.code === 'P2002' ? 'unique:' + [e.meta?.target].flat().join(',') : e?.code === 'P2003' ? 'foreign_key' : e?.code ?? String(e?.message ?? e).slice(0, 80)) } }
   const codeOf = async (op) => { try { await op(); return 'none' } catch (e) { return e?.code ?? String(e) } }
   const app = express()
   app.use(express.json())
@@ -777,10 +777,10 @@ test('TURNOS seña PostgreSQL habilitación: the deposit depends on the service-
   assert.deepEqual(r.sinGate, [201, { monto: 12500, moneda: 'ARS', estado: 'not_due' }, 409, 'SERVICE_PAYMENTS_NOT_AUTHORIZED', 'pending', 409, 'DEPOSIT_NOT_PAYABLE', null, true, 0], 'production without the authorization: the priced request cannot be accepted, stays pending, and nothing is confirmed, charged, created or announced')
   assert.deepEqual(r.sinVerificar, [503, 'PAYMENT_NOT_AVAILABLE', 'pending'], 'an unavailable check never turns into a confirmation')
   assert.deepEqual(r.sinPrecio, [201, null, 200, 'confirmed', null, null], 'a price-less service has no deposit and keeps its rule: accepting confirms')
-  assert.deepEqual(r.sandbox, [[false, true], { available: true, reason: null }, 200, 'awaiting_payment', 200, 10000, 'awaiting_payment'], 'sandbox does not ask for the production authorization; accepting and the checkout still do not confirm')
+  assert.deepEqual(r.sandbox, [[false, true], { available: true, reason: null, mode: 'split' }, 200, 'awaiting_payment', 200, 10000, 'awaiting_payment'], 'sandbox does not ask for the production authorization; accepting and the checkout still do not confirm')
   assert.deepEqual(r.sandboxAprobado, ['recorded:applied', 'confirmed'], 'in sandbox too, only the verified notification confirms')
   assert.deepEqual(r.luegoHabilitado, [200, 'awaiting_payment', { monto: 12500, moneda: 'ARS', estado: 'pending' }], 'production with the authorization: the provider can accept, and accepting opens the payment instead of confirming')
-  assert.deepEqual(r.soloServicios, [[true, false], { available: true, reason: null }, true], 'service-payments is authorized without posPilot, aws or groqMigration, while settlement stays blocked')
+  assert.deepEqual(r.soloServicios, [[true, false], { available: true, reason: null, mode: 'split' }, true], 'service-payments is authorized without posPilot, aws or groqMigration, while settlement stays blocked')
   assert.deepEqual(r.conGate, [{ monto: 10000, moneda: 'ARS', estado: 'not_due' }, 'awaiting_payment', { monto: 10000, moneda: 'ARS', estado: 'pending' }, 400, 'UNTRUSTED_PAYMENT_FIELDS', 200, 10000, true])
   assert.equal(r.checkoutNoConfirma, 'awaiting_payment', 'creating the checkout does not confirm the turno')
   assert.deepEqual(r.prestadorSinCuenta, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' })

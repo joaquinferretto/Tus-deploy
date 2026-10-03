@@ -415,6 +415,96 @@ para un prestador individual y cómo se modela (ver `docs/activation-gates.md`);
 solicitud (W09-05) deben bloquearse igual que los turnos cuando falta `service-payments` (hoy siguen sin
 seña en ese caso).
 
+### W09-09: Ganancias de prestadores sin Mercado Pago y solicitudes de pago (TUS-GANANCIAS-01, 2026-10-03)
+
+- Si TUS tiene configurada su propia cuenta de Mercado Pago (`MERCADO_PAGO_PLATFORM_*`), un prestador **sin** cuenta
+  conectada puede cobrar: TUS cobra con su cuenta (sin split) y la parte del prestador queda como **ganancia pendiente**.
+  Solo en ese caso esto reemplaza el bloqueo `bloqueada` de W09-08 y W09-05. Identidad verificada y, en producción,
+  `service-payments` siguen siendo obligatorios. Con cuenta conectada: Split 1:1 sin cambios, sin ganancias en TUS.
+- Ganancia = bruto − comisión TUS; la **tarifa de Mercado Pago la soporta el prestador** (decisión del dueño), con el importe
+  real que informa Mercado Pago, debitado cuando se conoce y visible para el prestador.
+- Ledger append-only: `earning_credit`, `psp_fee_debit`, `refund_debit`, `chargeback_debit`, `adjustment_credit`,
+  `adjustment_debit`, `payout_reserve`, `payout_release`, `payout_completed`. El saldo se deriva; no hay campo saldo.
+- **Mínimo** $10.000 inicial, configurable por la administración (configuración de pagos versionada). **Frecuencia** libre.
+  Una sola solicitud activa por prestador. Para pedir: Mercado Pago conectado con OAuth vigente y cuenta habilitada,
+  identidad verificada, disponible ≥ mínimo; el prestador indica el email de su cuenta de Mercado Pago.
+- **Saldo negativo**: obligación del prestador, visible para la administración, no retirable, compensado por ganancias
+  futuras; nunca se cobra fuera de TUS. Resoluciones manuales solo con `adjustment_credit` / `adjustment_debit`.
+- **Ejecución**: la vía por defecto y verificable es la **manual administrativa** (el administrador paga por el medio
+  autorizado y registra el comprobante). Mercado Pago Payouts (`POST /v1/payouts`, desde la cuenta de TUS a la del prestador)
+  queda preparado detrás de un puerto pero **DEPENDENCIA EXTERNA NO CONFIRMADA**: el contrato no se pudo verificar contra la
+  documentación de Mercado Pago ni contra una cuenta habilitada, por eso está apagado; si se habilita, el resultado se confirma solo por la consulta de la transacción a Mercado Pago; o, si la administración pagó por otro medio, registro
+  con comprobante obligatorio. Las dos vías nunca se mezclan en una solicitud. La administración procesa cada solicitud
+  (control antifraude); no hay envíos automáticos sin intervención.
+- WhatsApp no permite pedir el pago de ganancias (solo la Web).
+
+### W09-10: Estados de liquidación, auditoría y controles de cobrador (TUS-GANANCIAS-02, 2026-10-03)
+
+- Estados mínimos de una solicitud de pago: `requested`, `processing`, `paid`, `failed`, `cancelled` (antes `pending`
+  en lugar de `requested`). `failed` y `cancelled` liberan la reserva; el reintento seguro es una solicitud nueva.
+- Toda acción sobre una solicitud queda en una auditoría append-only, una entrada por versión, en la misma transacción.
+- Un pago cuya cuenta cobradora no coincide con el modo congelado en la intención (plataforma vs. cuenta del prestador, o
+  la cuenta de otro prestador) va a cuarentena; nunca genera ganancia ni confirma un turno.
+- Una cuenta de Mercado Pago solo puede vincularse a un prestador.
+- Una ganancia se revierte una sola vez; disputas adicionales se resuelven con ajustes explícitos.
+- Mercado Pago Payouts queda apagado hasta que el titular verifique el contrato con Mercado Pago y lo pruebe en sandbox:
+  desde el entorno de desarrollo no pudo verificarse contra documentación oficial ni SDKs oficiales. La vía "otro medio"
+  con comprobante es la operativa disponible mientras tanto; nunca se simula un pago.
+- **Transiciones permitidas** (las únicas; nada salta un estado y `paid`, `failed` y `cancelled` son finales):
+  `requested → processing → paid`, `requested → cancelled` (nadie empezó a pagarla; la cancela el prestador o la
+  administración) y `processing → failed` (se intentó pagar y no ocurrió; la marca la administración o la respuesta de
+  Mercado Pago). Una solicitud `processing` no se cancela y una `requested` no se marca fallida. `paid` exige evidencia:
+  la transacción de Mercado Pago consultada como acreditada o, en la vía manual, el comprobante de la operación.
+- **Cálculo de cada saldo** (siempre derivado del ledger y de las solicitudes; no existe ninguna columna de saldo):
+  - Total histórico cobrado (`earnedMinor`) = Σ `earning_credit`. Solo crece; no es dinero ya transferido.
+  - Tarifas de Mercado Pago (`feesMinor`) = Σ `psp_fee_debit`. Ajustes netos (`adjustmentsMinor`) = Σ `refund_debit` +
+    Σ `chargeback_debit` + Σ `adjustment_debit` − Σ `adjustment_credit` (positivo: debitado).
+  - Disponible (`availableMinor`) = Σ `earning_credit` + Σ `adjustment_credit` − Σ `psp_fee_debit` − Σ `refund_debit` −
+    Σ `chargeback_debit` − Σ `adjustment_debit` − Σ `payout_reserve` + Σ `payout_release`. Si es negativo, `negativeMinor`
+    es su valor absoluto, no se puede retirar y la próxima ganancia lo compensa primero (−5.000 + 8.000 = 3.000).
+  - Reservado (`reservedMinor`) = Σ (`payout_reserve` − `payout_release` − `payout_completed`) de las solicitudes
+    `requested`. En proceso (`processingMinor`) = lo mismo para las solicitudes `processing`. Pagado (`paidMinor`) =
+    Σ `payout_completed`.
+  - Identidad de control: `earned − fees − adjustments = available + reserved + processing + paid`.
+  - **No existe un saldo "pendiente" distinto del disponible**: TUS no impone un período de maduración; la ganancia
+    acumulada por un cobro de plataforma ya es disponible y se retira al superar el mínimo con Mercado Pago vinculado. Si
+    producto quiere una retención (p. ej. días tras el turno), es una decisión nueva que requiere agregarla al ledger.
+- Mientras el prestador no vincule Mercado Pago, la ganancia queda acumulada en TUS (no se pierde) y la UI le dice:
+  "Vinculá tu cuenta de Mercado Pago para retirar tus ganancias." La UI nunca llama "pagada" a una ganancia solo acumulada:
+  "Pagadas" son solicitudes completadas.
+
+### W09-11: WhatsApp multimodal — audios, comprobantes y verificación de pagos (TUS-WHATSAPP-MULTIMODAL-01, 2026-10-03)
+
+- **Regla**: la IA interpreta, el backend decide, Mercado Pago certifica el dinero. Un comprobante (imagen o PDF), un audio, un
+  texto o la frase "ya pagué" **nunca** confirman un pago, un turno, una ganancia ni una liquidación.
+- **Audios**: se transcriben con el STT ya previsto (Groq Whisper, `GROQ_STT_MODEL`) y entran al MISMO flujo que un texto.
+  Solo formatos que el proveedor acepta sin conversión (Ogg/Opus, MP3, MP4/M4A); aac y amr crudos se rechazan y TUS no
+  convierte. Procesamiento efímero: no se guarda el audio, solo el texto y metadatos mínimos. Si no se entiende, se pide
+  repetir o escribir.
+- **Comprobantes**: son una pista, no una prueba (fase TUS-WHATSAPP-MULTIMODAL-01 no los leía; TUS-WHATSAPP-MULTIMODAL-02 los
+  lee de forma segura, apagado por defecto). Ver W09-12.
+- **"¿Ya te llegó?"**: el backend consulta a Mercado Pago por la referencia interna de la intención (con el modo congelado:
+  cuenta de TUS o del prestador) y aplica lo que informa por la MISMA máquina de estados del webhook. El webhook sigue
+  siendo el camino principal; la consulta es reconciliación y es idempotente en ambos sentidos.
+- **Límites**: 15 s entre consultas y 6 por hora por conversación; 20 medios por hora por contacto (configurable).
+- **No existe** en WhatsApp la posibilidad de consultar un pago por un identificador que escriba la persona.
+
+### W09-12: Lectura segura de comprobantes (TUS-WHATSAPP-MULTIMODAL-02, 2026-10-03)
+
+- **Regla**: imagen/PDF = pista; contexto TUS = correlación; Mercado Pago = autoridad financiera; backend TUS = decisión.
+  Ninguna imagen, PDF, OCR, texto o respuesta de una IA marca un pago como confirmado.
+- **Cuándo**: solo si hay varios pagos pendientes del cliente (con uno solo se verifica directo y el archivo no se descarga).
+- **Cómo**: descarga acotada (Meta, bytes, tiempo, tipos reales), análisis efímero en memoria, evidencia estructurada
+  `untrusted_receipt_evidence` que solo ordena los candidatos del MISMO cliente; todo candidato pasa por la verificación
+  completa del dominio financiero contra Mercado Pago.
+- **Proveedor**: OCR local por defecto (nada sale de TUS; PDF solo por su capa de texto con `pdftotext`); visión de Groq como
+  opción (`WHATSAPP_RECEIPT_ANALYZER=vision`), solo para imágenes. Decisión: privacidad primero, el costo de un modelo de visión
+  solo si el OCR local no alcanza en la práctica.
+- **Persistencia mínima**: estado, analizador, monto, moneda y fecha; hash de Meta para no releer. No se guardan imagen, PDF,
+  base64, texto OCR, CVU/CBU completos, DNI ni nombres del pagador.
+- **Pendiente de decisión de producto**: aceptar o no formatos que hoy se rechazan (HEIC, PDF escaneado sin texto) y si se
+  habilita `vision` en producción.
+
 ### W09-07: Calificación del Prestador (FASE 9)
 
 - Solo el Cliente del trabajo (tenant de la sesión) califica, una vez, y solo con el trabajo `completed` (con pagos

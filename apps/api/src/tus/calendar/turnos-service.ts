@@ -874,6 +874,12 @@ export class ServicioTurnos {
     return this.senas.iniciarPago(input)
   }
 
+  /** El estado real del pago de la seña de SU turno (lo informa Mercado Pago; nada que diga el cliente lo cambia). */
+  async verificarPagoSena(input: { clienteId: string; reservaId: string; correlationId: string }) {
+    if (!this.senas) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'El pago online todavía no está disponible.')
+    return this.senas.verificarPago(input)
+  }
+
   /**
    * Datos con los que la persona de la sesión solicita un turno (los de su cuenta, con el
    * teléfono enmascarado). Es lo que la Web muestra en lugar de pedirlos otra vez.

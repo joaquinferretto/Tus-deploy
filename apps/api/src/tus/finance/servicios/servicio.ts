@@ -68,6 +68,7 @@ import {
   type PuertoProveedorPagosServicio,
   type ResultadoCheckout,
 } from './pagos.ts'
+import { debitoDeGanancia, gananciaDeAprobacion, tarifaDeGanancia, type MovimientoGanancia, type PuertoLedgerGanancias } from './ganancias.ts'
 
 // Reads the WEB-08 commercial chain inside the finance transaction. Every lookup is scoped:
 // a work is visible only to its customer tenant or its provider tenant.
@@ -331,6 +332,9 @@ export interface RepositoriosFinanzasServicio {
   liquidaciones: PuertoLiquidacionesServicio
   conciliaciones: PuertoConciliacionesServicio
   reembolsos: PuertoReembolsosServicio
+  // TUS-GANANCIAS-01: what TUS owes providers for payments it collected (optional: absent in
+  // compositions without it, then nothing is booked there).
+  ganancias?: PuertoLedgerGanancias
 }
 
 export interface ResultadoEvaluacionCobro {
@@ -379,6 +383,18 @@ export type ResultadoIngestaEvento =
       payment: IntencionPagoServicio
       obligation: ObligacionPagoServicio
     }
+
+// What the payment query reports about a customer's payment. `approved` means Mercado Pago
+// reported it approved AND every validation of the webhook accepted it (or it was already applied).
+export interface ResultadoVerificacionPagoServicio {
+  status: 'approved' | 'pending' | 'not_approved' | 'not_found' | 'quarantined' | 'unavailable'
+  // True when THIS query applied the approval (the webhook had not arrived yet).
+  appliedNow: boolean
+  trabajoId: string
+  amountMinor: string | null
+  currency: string | null
+  reason: string | null
+}
 
 export interface ResumenFinancieroTrabajoServicio {
   trabajoId: string
@@ -747,6 +763,7 @@ export class ServicioFinanzasServicios {
     publicacion: PublicacionServicioFinanciera | null
     trabajo: Trabajo
     part: TramoPagoServicio
+    mode: 'split' | 'plataforma'
   }> {
     const trabajo = await this.requerirTrabajo(repositories, context, trabajoId)
     if (trabajo.tenantId !== context.tenantId)
@@ -773,7 +790,7 @@ export class ServicioFinanzasServicios {
         availability.reason ?? 'PAYMENTS_DISABLED',
         'online payment is not available yet'
       )
-    return { publicacion: cobro.publicacion, trabajo, part: cobro.part }
+    return { publicacion: cobro.publicacion, trabajo, part: cobro.part, mode: availability.mode ?? 'split' }
   }
 
   // Customer command: fixes the payable amount of a work from persisted commercial facts.
@@ -844,7 +861,7 @@ export class ServicioFinanzasServicios {
           status: 'replay',
           ...(idempotency.response as Omit<ResultadoIntencionPago, 'status'>),
         }
-      const { publicacion, part } = await this.exigirCobroDisponible(
+      const { publicacion, part, mode } = await this.exigirCobroDisponible(
         repositories,
         input,
         input.trabajoId
@@ -924,6 +941,8 @@ export class ServicioFinanzasServicios {
           checkoutExpiresAt: null,
           dispatchClaimedUntil: null,
           environment: this.proveedor.environment ?? null,
+          // Decided now, with the provider's account as it is: frozen on the intent.
+          collectionMode: mode,
         }
         await repositories.intenciones.crear(intent)
         await this.auditar(repositories, obligation, {
@@ -1019,6 +1038,7 @@ export class ServicioFinanzasServicios {
         currency: intent.currency,
         prestadorTenantId: intent.prestadorTenantId,
         commissionMinor: intent.commission?.commissionMinor ?? null,
+        collectionMode: intent.collectionMode ?? 'split',
         title: claim.title ?? 'Servicio TUS',
         trabajoId: intent.trabajoId,
         // Request-born works return to their page and a turno to "Mis turnos"; the return never
@@ -1234,6 +1254,7 @@ export class ServicioFinanzasServicios {
         status: 'new' as const,
         refund,
         providerReference: intent.providerReference,
+        collectionMode: intent.collectionMode ?? 'split',
       }
     })
     if (prepared.status !== 'new')
@@ -1246,6 +1267,7 @@ export class ServicioFinanzasServicios {
           prestadorTenantId: prepared.refund.prestadorTenantId,
           providerReference: prepared.providerReference,
           idempotencyKey: prepared.refund.reembolsoId,
+          collectionMode: prepared.collectionMode,
         })
       ).providerRefundId
     } catch (error) {
@@ -1326,6 +1348,23 @@ export class ServicioFinanzasServicios {
         reason: error instanceof ErrorFinanzasServicio ? error.code : 'INVALID_EVENT',
       }
     }
+    return this.aplicarEventoVerificado(event, {
+      signature: input.signature,
+      rawBody: input.rawBody,
+      receivedAt: input.receivedAt,
+    })
+  }
+
+  // The state machine of a VERIFIED payment event (what Mercado Pago itself reported for a
+  // payment): intent resolution, durable inbox, the validations of `evaluarEvento`, the
+  // transitions and everything an approval, refund or chargeback triggers (turno confirmation,
+  // earning). It is the ONE place money changes state: the webhook calls it after verifying the
+  // signature and the payment lookup; the payment query (`verificarPagoDelTrabajo`) calls it with
+  // the payment read from Mercado Pago. The same event applied twice is a no-op.
+  protected async aplicarEventoVerificado(
+    event: EventoPagoNormalizado,
+    origen: { signature: string; rawBody: string; receivedAt: string }
+  ): Promise<ResultadoIngestaEvento> {
     return this.transaction.ejecutar(async (repositories) => {
       const intent = await this.resolverIntencionEvento(repositories, event)
       if (!intent) return { status: 'unmatched', reason: 'payment_not_found' }
@@ -1423,10 +1462,10 @@ export class ServicioFinanzasServicios {
         status: event.rawStatus,
         amountMinor: event.amountMinor,
         currency: event.currency,
-        signature: input.signature,
-        rawBody: input.rawBody,
+        signature: origen.signature,
+        rawBody: origen.rawBody,
         occurredAt: event.occurredAt,
-        receivedAt: input.receivedAt,
+        receivedAt: origen.receivedAt,
         result: outcome.result,
         reason: outcome.reason,
       })
@@ -1451,6 +1490,82 @@ export class ServicioFinanzasServicios {
         obligation: proyectarObligacion(updatedObligation),
       }
     })
+  }
+
+  // TUS-WHATSAPP-MULTIMODAL-01: "did my payment arrive?". The CUSTOMER of a work asks for the real
+  // state of ITS payment. Nothing said or sent by the customer decides it: the payment is read from
+  // Mercado Pago by TUS's own payment id (the external reference of the intent, never a value the
+  // customer typed) with the account that must have collected it, and whatever Mercado Pago reports
+  // goes through the SAME state machine as the webhook (`aplicarEventoVerificado`: collector,
+  // mode, reference, currency and amount are validated there). If the webhook already applied it,
+  // or arrives later, that is a no-op: one approval, one confirmation, one earning.
+  async verificarPagoDelTrabajo(
+    input: ContextoFinanzasServicio & { trabajoId: string }
+  ): Promise<ResultadoVerificacionPagoServicio> {
+    validarContextoFinanzasServicio(input)
+    const objetivo = await this.transaction.ejecutar(async (repositories) => {
+      const trabajo = await this.requerirTrabajo(repositories, input, input.trabajoId)
+      // Only the customer asks about its own payment; the provider's tenant does not.
+      if (trabajo.tenantId !== input.tenantId) throw new ErrorFinanzasServicio(404, 'NOT_FOUND', 'work was not found')
+      const obligaciones = await repositories.obligaciones.listarPorTrabajo({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId })
+      let abierta: { obligation: ObligacionServicio; intent: IntencionPagoServicioDominio } | null = null
+      for (const obligation of obligaciones) {
+        if (obligation.status === 'paid') continue
+        const intents = await repositories.intenciones.listarPorObligacion({ tenantId: obligation.tenantId, obligacionId: obligation.obligacionId })
+        const intent = intents.filter((item) => item.checkoutReference || item.providerReference).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+        if (intent && (!abierta || intent.createdAt > abierta.intent.createdAt)) abierta = { obligation, intent }
+      }
+      return { trabajo, abierta, pagadas: obligaciones.filter((obligation) => obligation.status === 'paid') }
+    })
+    if (!objetivo.abierta) {
+      const pagada = objetivo.pagadas[0]
+      return pagada
+        ? { status: 'approved', appliedNow: false, trabajoId: input.trabajoId, amountMinor: pagada.amountMinor.toString(10), currency: pagada.currency, reason: null }
+        : { status: 'not_found', appliedNow: false, trabajoId: input.trabajoId, amountMinor: null, currency: null, reason: 'no_payment_started' }
+    }
+    const { obligation, intent } = objetivo.abierta
+    const base = { trabajoId: input.trabajoId, amountMinor: intent.amountMinor.toString(10), currency: intent.currency }
+    if (!this.proveedor.consultarPagos) return { ...base, status: 'unavailable', appliedNow: false, reason: 'provider_cannot_be_queried' }
+    let events: EventoPagoNormalizado[]
+    try {
+      events = await this.proveedor.consultarPagos({ paymentId: intent.paymentId, collectionMode: intent.collectionMode ?? 'split', prestadorTenantId: intent.prestadorTenantId })
+    } catch (error) {
+      if (error instanceof ErrorFinanzasServicio && error.code === 'PROVIDER_UNAVAILABLE') return { ...base, status: 'unavailable', appliedNow: false, reason: 'provider_unavailable' }
+      // A payment of another seller or an incomplete one is not a payment of this intent.
+      return { ...base, status: 'not_found', appliedNow: false, reason: error instanceof ErrorFinanzasServicio ? error.code : 'invalid_provider_payment' }
+    }
+    // Only payments created for THIS intent (its own external reference), oldest first.
+    const propios = events.filter((event) => event.paymentId === intent.paymentId).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+    if (propios.length === 0) return { ...base, status: 'not_found', appliedNow: false, reason: 'provider_has_no_payment' }
+    const resultados: ResultadoIngestaEvento[] = []
+    for (const event of propios)
+      resultados.push(await this.aplicarEventoVerificado(event, { signature: 'payment-query', rawBody: JSON.stringify({ origin: 'payment_query', providerReference: event.providerReference, status: event.rawStatus }), receivedAt: this.isoNow() }))
+    const appliedNow = resultados.some((resultado, index) => resultado.status === 'recorded' && resultado.result === 'applied' && propios[index]!.status === 'approved')
+    const cuarentena = resultados.find((resultado) => resultado.status === 'recorded' && resultado.result === 'quarantined')
+    const final = await this.transaction.ejecutar(async (repositories) => {
+      const actual = await repositories.obligaciones.buscar({ tenantId: obligation.tenantId, obligacionId: obligation.obligacionId })
+      const intents = await repositories.intenciones.listarPorObligacion({ tenantId: obligation.tenantId, obligacionId: obligation.obligacionId })
+      const vigente = intents.find((item) => item.paymentId === intent.paymentId) ?? intent
+      if (actual)
+        await this.auditar(repositories, actual, {
+          resourceType: 'payment',
+          resourceId: intent.paymentId,
+          action: 'payment.queried_by_customer',
+          origin: 'customer',
+          actorId: input.actorId,
+          correlationId: input.correlationId,
+          idempotencyKey: null,
+          previousStatus: intent.providerStatus,
+          status: vigente.providerStatus,
+          metadata: { appliedNow, events: propios.length },
+        })
+      return { obligation: actual, intent: vigente }
+    })
+    if (final.obligation?.status === 'paid') return { ...base, status: 'approved', appliedNow, reason: null }
+    if (cuarentena && cuarentena.status === 'recorded') return { ...base, status: 'quarantined', appliedNow: false, reason: cuarentena.reason }
+    if (propios.every((event) => event.status === 'rejected' || event.status === 'cancelled' || event.status === 'expired' || event.status === 'refunded' || event.status === 'charged_back'))
+      return { ...base, status: 'not_approved', appliedNow: false, reason: propios[propios.length - 1]!.status }
+    return { ...base, status: 'pending', appliedNow: false, reason: null }
   }
 
   async consultarFinanzasTrabajo(
@@ -1776,6 +1891,15 @@ export class ServicioFinanzasServicios {
         },
       })
       await this.publicarLiquidacion(repositories, settlement, 'tus.service_settlement.held')
+      // TUS collected this payment with its own account: the provider's share (gross minus the
+      // frozen commission) is an earning TUS owes. Split payments were already paid by Mercado Pago.
+      if (intent.collectionMode === 'plataforma' && repositories.ganancias) {
+        const ganancia = gananciaDeAprobacion({ obligation, netMinor: snapshot.netMinor, paymentId: intent.paymentId, eventId: event.eventId, now })
+        if (!(await repositories.ganancias.buscar(ganancia))) await repositories.ganancias.registrar(ganancia)
+        // The Mercado Pago fee is the provider's, as in Split 1:1: when the approval already
+        // reports it, it is debited now; otherwise when the payment reports it.
+        await this.debitarTarifaGanancia(repositories, ganancia, snapshot.pspFeeMinor, event.eventId, now)
+      }
       // The paid deposit of a turno confirms its reservation in this same transaction: it is the
       // only automatic path from awaiting_payment to confirmed. The money was really collected, so
       // the approval is ALWAYS booked: when the turno is no longer waiting for it (its payment
@@ -1843,6 +1967,19 @@ export class ServicioFinanzasServicios {
       return
     }
     if (intent.providerStatus !== 'refunded' && intent.providerStatus !== 'charged_back') return
+    // The earning is never edited: its reversal is a new debit movement.
+    if (repositories.ganancias) {
+      const ganancia = await repositories.ganancias.buscar({ prestadorTenantId: obligation.prestadorTenantId, movimientoId: `earning:${obligation.obligacionId}` })
+      if (ganancia) {
+        // One reversal per earning: a refund and a later chargeback of the same payment (or the
+        // other way round) never debit the provider twice; any further dispute is an explicit
+        // administrative adjustment.
+        const reembolso = debitoDeGanancia(ganancia, 'refund_debit', event.eventId, now)
+        const contracargo = debitoDeGanancia(ganancia, 'chargeback_debit', event.eventId, now)
+        const debito = intent.providerStatus === 'refunded' ? reembolso : contracargo
+        if (!(await repositories.ganancias.buscar(reembolso)) && !(await repositories.ganancias.buscar(contracargo))) await repositories.ganancias.registrar(debito)
+      }
+    }
     const entryType =
       intent.providerStatus === 'refunded' ? 'refund_compensation' : 'chargeback_compensation'
     await repositories.ledger.agregar(
@@ -1903,6 +2040,24 @@ export class ServicioFinanzasServicios {
       pspFeeMinor: event.pspFeeMinor,
       providerNetMinor: breakdown.providerNetMinor,
     })
+    // A payment TUS collected: the fee reported now is debited from the provider's earning.
+    if (repositories.ganancias) {
+      const ganancia = await repositories.ganancias.buscar({ prestadorTenantId: obligation.prestadorTenantId, movimientoId: `earning:${obligation.obligacionId}` })
+      if (ganancia) await this.debitarTarifaGanancia(repositories, ganancia, event.pspFeeMinor, event.eventId, this.isoNow())
+    }
+  }
+
+  // TUS-GANANCIAS-01: the reported Mercado Pago fee of a collection made by TUS, once.
+  protected async debitarTarifaGanancia(
+    repositories: RepositoriosFinanzasServicio,
+    ganancia: MovimientoGanancia,
+    pspFeeMinor: bigint | null,
+    eventId: string,
+    now: string
+  ): Promise<void> {
+    if (!repositories.ganancias || pspFeeMinor === null) return
+    const tarifa = tarifaDeGanancia(ganancia, pspFeeMinor, eventId, now)
+    if (tarifa && !(await repositories.ganancias.buscar(tarifa))) await repositories.ganancias.registrar(tarifa)
   }
 
   protected async guardarLiquidacion(
@@ -1946,6 +2101,16 @@ export class ServicioFinanzasServicios {
   ): { result: ResultadoEventoProveedor; reason: string | null } {
     if (intent.providerReference && intent.providerReference !== event.providerReference)
       return { result: 'quarantined', reason: 'provider_reference_mismatch' }
+    // TUS-GANANCIAS-01: the account that collected must be the one the intent was created for.
+    // A payment in a provider's own account carrying the reference of an intent TUS collects
+    // (or the other way round, or in another provider's account) would make TUS owe money it
+    // never received, or confirm a turno with money that went elsewhere.
+    if (event.collectedBy) {
+      const mode = intent.collectionMode ?? 'split'
+      if (event.collectedBy.mode !== mode) return { result: 'quarantined', reason: 'collection_mode_mismatch' }
+      if (mode === 'split' && event.collectedBy.prestadorTenantId !== intent.prestadorTenantId)
+        return { result: 'quarantined', reason: 'collector_mismatch' }
+    }
     if (event.currency !== intent.currency)
       return { result: 'quarantined', reason: 'currency_mismatch' }
     if (event.amountMinor !== intent.amountMinor)
@@ -1957,6 +2122,10 @@ export class ServicioFinanzasServicios {
       event.marketplaceFeeMinor !== intent.commission.commissionMinor
     )
       return { result: 'quarantined', reason: 'marketplace_fee_mismatch' }
+    // TUS-GANANCIAS-01: a payment TUS collected with its own account carries no marketplace fee;
+    // one that does is not the preference TUS created.
+    if (intent.collectionMode === 'plataforma' && event.marketplaceFeeMinor !== null && event.marketplaceFeeMinor !== undefined && event.marketplaceFeeMinor !== 0n)
+      return { result: 'quarantined', reason: 'marketplace_fee_unexpected' }
     if (event.status === 'unknown')
       return { result: 'ignored_unknown_status', reason: `unmapped:${event.rawStatus}` }
     // WEB-09E hosted checkout: one preference can collect several payment attempts (a rejected

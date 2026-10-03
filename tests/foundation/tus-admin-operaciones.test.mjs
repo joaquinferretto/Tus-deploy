@@ -107,6 +107,38 @@ test(
       let queries = 0
       prisma.$on('query', () => { queries += 1 })
       try {
+        // Its own request-born work with a paid deposit (fictitious rows, unique run prefix), so the
+        // test does not depend on another file having written that database first.
+        const { PrismaTrabajoTransaction, PrismaTrabajoStore, PrismaTrabajoOutboxStore } = await import('./apps/api/src/tus/adapters/prisma-work.ts')
+        const { TransaccionFinanzasServicioPrisma } = await import('./apps/api/src/tus/adapters/prisma-finanzas-servicios.ts')
+        const { ServicioTrabajo } = await import('./apps/api/src/tus/work/index.ts')
+        const { ServicioFinanzasServicios } = await import('./apps/api/src/tus/finance/servicios/servicio.ts')
+        const { ProveedorPagosServicioDeterminista } = await import('./apps/api/src/tus/finance/servicios/pagos.ts')
+        const { pagosTrabajo } = await import('./apps/api/src/tus/composition/index.ts')
+        const T = (s) => 'f10' + Date.now().toString(36) + '-' + s
+        const run = T('')
+        const R = (s) => run + s
+        const sql = (q) => prisma.$executeRawUnsafe(q)
+        await sql("INSERT INTO \\"TusTenant\\"(id, slug, name, status, \\"createdAt\\", \\"updatedAt\\") VALUES ('" + R('cli') + "','" + R('cli') + "','c','active',now(),now()), ('" + R('pre') + "','" + R('pre') + "','p','active',now(),now())")
+        await sql("INSERT INTO \\"User\\"(id, email, \\"normalizedEmail\\", \\"displayName\\", \\"updatedAt\\") VALUES ('" + R('u') + "','" + R('u') + "@t.invalid','" + R('u') + "@t.invalid','A',now())")
+        await sql("INSERT INTO \\"Account\\"(id, \\"userId\\", \\"tenantId\\", status, \\"createdAt\\", \\"updatedAt\\") VALUES ('" + R('acc') + "','" + R('u') + "','" + R('cli') + "','active',now(),now())")
+        await sql("INSERT INTO prestadores(id, tenant_id, prestador_id, cohorte, ubicacion_id, zona_horaria, roles_personal, version_politica_operativa, estado, fecha_creacion, fecha_actualizacion) VALUES ('" + R('pr') + "','" + R('pre') + "','p-1','repairs-trades','loc','America/Argentina/Buenos_Aires',ARRAY['owner'],'v1','active',now(),now())")
+        await sql("INSERT INTO solicitudes_servicio(id, cuenta_id, categoria, titulo, nombre_publico, zona, latitud, longitud, urgencia, estado, fecha_creacion, fecha_actualizacion, expira_en, visibilidad, prestador_tenant_id, prestador_id, estado_asignacion, origen) VALUES ('" + R('sol') + "','" + R('acc') + "','plomeria','Pierde la canilla','A','Centro',-27.4,-58.8,'esta_semana','abierta',now(),now(),now() + interval '7 days','dirigida','" + R('pre') + "','p-1','aceptada','web_directory')")
+        let seedNow = Date.parse('2026-09-29T12:00:00.000Z')
+        const work = new ServicioTrabajo(new PrismaTrabajoTransaction(prisma), () => seedNow)
+        const proveedor = new ProveedorPagosServicioDeterminista('f10-secret')
+        const politica = { reglaComision: async () => ({ politicaId: null, rateBps: 1000, ruleVersion: 'f10-10', pspFeeBearer: 'provider' }), disponibilidad: async () => ({ available: true, reason: null }) }
+        const fin = new ServicioFinanzasServicios(new TransaccionFinanzasServicioPrisma(prisma, (tx) => ({ completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: new PrismaTrabajoStore(tx), outbox: new PrismaTrabajoOutboxStore(tx) }, input) })), () => seedNow, proveedor, undefined, politica)
+        work.conPagos(pagosTrabajo(fin))
+        const customer = { tenantId: R('cli'), actorId: 'actor-cli', correlationId: 'c' }
+        const provider = { tenantId: R('pre'), actorId: 'actor-pre', correlationId: 'c' }
+        const at = () => new Date(seedNow += 1000).toISOString()
+        const { work: w0 } = await work.crearDesdeSolicitudEnTransaccion({ ...customer, solicitudId: R('sol'), prestadorTenantId: R('pre'), prestadorId: 'p-1', createdAt: at() })
+        const budget = await work.createBudget({ ...provider, trabajoId: w0.trabajoId, currency: 'ARS', scope: 'Cambio de cuerito', totalMinor: '100000', lines: [{ lineId: 'l1', description: 'mano de obra', quantity: 1, unitAmountMinor: '100000', totalAmountMinor: '100000' }], idempotencyKey: R('b'), requestHash: 'h', createdAt: at() })
+        await work.decideBudget({ ...customer, trabajoId: w0.trabajoId, presupuestoId: budget.budget.presupuestoId, presupuestoVersion: budget.budget.version, decision: 'accepted', idempotencyKey: R('d'), requestHash: 'h', createdAt: at() })
+        const sena = await fin.iniciarCheckout({ ...customer, trabajoId: w0.trabajoId, idempotencyKey: R('sena') })
+        const raw = JSON.stringify({ id: R('evt'), data: { id: 'fake-mp-' + sena.payment.paymentId, external_reference: sena.payment.paymentId, status: 'approved', currency_id: 'ARS', transaction_amount: '500.00', date_last_updated: at() } })
+        await fin.ingerirEventoProveedor({ rawBody: raw, signature: proveedor.firmar(raw), receivedAt: at() })
         const fuente = new FuenteTrabajosAdminPrisma(prisma)
         const count = async (op) => { queries = 0; const value = await op(); return { value, queries } }
         const small = await count(() => fuente.pagina({ pagina: 1, tamano: 10, q: '', estado: '' }))

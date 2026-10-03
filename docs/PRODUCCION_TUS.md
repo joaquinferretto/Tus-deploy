@@ -657,6 +657,129 @@ producto: el fee de Mercado Pago sale del prestador); `platform` y `undetermined
 - La obligación pasa a `refunded` solo cuando llega el webhook verificado con el pago `refunded`.
 - Reembolso parcial: **no soportado** (Mercado Pago lo informa como `approved` + `partially_refunded`).
 
+### Cobro por TUS y ganancias de prestadores (TUS-GANANCIAS-01)
+
+**Cobro.** Un prestador **sin** Mercado Pago conectado puede cobrar igual cuando TUS tiene configurada su propia cuenta:
+
+| Variable (Hostinger API) | Qué es | Secreta |
+| --- | --- | --- |
+| `MERCADO_PAGO_PLATFORM_ACCESS_TOKEN` | Access Token de la cuenta de Mercado Pago **de TUS** (dueño de la aplicación) | sí |
+| `MERCADO_PAGO_PLATFORM_USER_ID` | User ID numérico de esa misma cuenta | no |
+
+- Sin las dos variables (o con el proveedor simulado) **nada cambia**: el prestador sin cuenta no puede cobrar
+  (`PROVIDER_ACCOUNT_NOT_CONNECTED`) y una seña no se puede aceptar (W09-08).
+- Con ellas, el cobro de un prestador sin cuenta se crea con el token de TUS, **sin `marketplace_fee` ni split**
+  (`intenciones_pago.modo_cobro = 'plataforma'`). El webhook se verifica igual (firma + consulta del pago con la cuenta
+  que cobró); un pago "de plataforma" que trae `marketplace_fee` va a cuarentena (`marketplace_fee_unexpected`).
+- Al aprobarse, en la misma transacción financiera, se registra la **ganancia**: bruto − comisión TUS congelada. La tarifa de
+  Mercado Pago la soporta el prestador (como en Split 1:1): débito propio (`psp_fee_debit`) con el importe que informa
+  Mercado Pago; si todavía no lo informa no se estima y se debita cuando llega. Un prestador **con** cuenta sigue en Split 1:1.
+- Reembolso (desde la cuenta de TUS) → `refund_debit`; contracargo → `chargeback_debit`. Nunca se edita la ganancia.
+  Una ganancia se revierte **una sola vez** (un reembolso y un contracargo del mismo pago no debitan dos veces; índice
+  único parcial `uq_movimientos_ganancia_reverso_unico`).
+- **Cuenta que cobró = modo congelado (TUS-GANANCIAS-02).** El adaptador real resuelve quién cobró cada pago notificado
+  (la cuenta de TUS o la cuenta vinculada de un prestador) y el servicio lo compara con `modo_cobro` de la intención: un
+  pago en la cuenta propia del prestador con la referencia de una intención de plataforma va a cuarentena
+  (`collection_mode_mismatch`, TUS nunca registra una ganancia por dinero que no cobró), y un pago Split cobrado por la
+  cuenta de otro prestador también (`collector_mismatch`). Ninguno confirma el turno.
+- **Una cuenta de Mercado Pago, un prestador.** El callback OAuth rechaza vincular una cuenta ya conectada a otro
+  prestador (`ACCOUNT_ALREADY_LINKED`): las notificaciones se resuelven por la cuenta cobradora y no pueden ser ambiguas.
+- **Credencial del modo plataforma.** La implementación usa exactamente el Access Token y el User ID de la cuenta de TUS
+  (dueña de la aplicación): no usa la Public Key, ni el Client ID/Secret (que siguen siendo solo de OAuth), ni tokens de
+  prestadores. Se cargan como variables de entorno de la API (Hostinger), nunca en el repositorio, en la base ni en
+  variables `NEXT_PUBLIC_*`; el token no se registra en logs ni en la auditoría.
+
+**Retiro del prestador.** En `/prestador/pagos` ve ganancias disponibles, en proceso, pagadas, saldo negativo, tarifas,
+mínimo e historial (fecha, tipo, servicio, turno, importe, estado) y pide el pago de todo lo disponible a **su cuenta de
+Mercado Pago (el email de esa cuenta)**. Requisitos: disponible ≥ mínimo (inicial $10.000; se cambia con
+`POST /tus/v1/admin/payments/configuration` y `"minimumPayoutMinor"`), Mercado Pago conectado con OAuth vigente (y en
+producción cuenta productiva), identidad verificada, ninguna otra solicitud activa. Los fondos quedan **reservados**
+(`payout_reserve`) y la solicitud queda **solicitada** (`requested`), pendiente de procesamiento por TUS.
+
+Estados de una solicitud: `requested` → `processing` → `paid`, o `failed` / `cancelled` (estos dos liberan la reserva con
+`payout_release`; el dinero vuelve a estar disponible y el prestador puede pedir de nuevo con otra solicitud). Cada
+acción queda en la auditoría append-only `auditoria_liquidaciones` (una entrada por versión: acción, estado anterior y
+nuevo, actor, correlación y detalle sin secretos), visible en el detalle de `/tus/admin/liquidaciones` y en
+`GET /tus/v1/admin/payments/payouts/:payoutId/audit`.
+
+**Verificación del contrato de Mercado Pago Payouts (TUS-GANANCIAS-02, 2026-10-03).** Desde el entorno de desarrollo de
+esta tarea no fue posible leer la documentación oficial (el dominio de Mercado Pago no es accesible) y **ninguno de los
+SDKs oficiales de Mercado Pago** (Node, Python, Java, PHP, Go, Ruby, .NET) expone un cliente de Payouts/"money-out". El
+adaptador `payouts-mercado-pago.ts` implementa el contrato descripto abajo y está probado contra un doble offline de ese
+contrato, **no contra Mercado Pago**. Por eso:
+
+- Payouts sigue **apagado por defecto** (`TUS_MERCADOPAGO_PAYOUTS_ENABLED=false`) y sin él ningún pago se envía ni se
+  simula: la solicitud espera, y la administración puede pagarla por otro medio con comprobante.
+- Antes de habilitarlo, el titular de la cuenta de TUS debe confirmar con Mercado Pago que la cuenta tiene el producto
+  habilitado y que el endpoint, los encabezados, la firma y los estados coinciden con este documento, y probarlo en
+  sandbox (paso 2 de abajo). Si difieren, se ajusta solo el adaptador: el resto (reserva, idempotencia por id de
+  solicitud, resultado leído del proveedor, liberación ante fallo) no cambia.
+- Si el contrato fuera incorrecto, el modo de falla es seguro: un 4xx al crear marca la solicitud fallida y libera los
+  fondos; nada se marca pagado sin que la consulta del proveedor diga `success/accredited`.
+
+**Ejecución: Mercado Pago Payouts** (producto "money-out" de Mercado Pago, referencia esperada:
+https://www.mercadopago.com.ar/developers/es/docs/payouts/landing; contrato **no verificado**, ver arriba). Desde `/tus/admin/liquidaciones` el admin elige:
+
+- **Pagar con Mercado Pago**: `POST https://api.mercadopago.com/v1/payouts` con el token de TUS, una transacción
+  `type: account` al email del prestador por el monto exacto, `X-Idempotency-Key` = id de la solicitud (un reintento nunca
+  crea otra transferencia), `X-test-token: true` en sandbox y `X-enforce-signature` + `X-signature` (firma Ed25519 del
+  body) en producción. El resultado **solo** sale de `GET /v1/payouts/{id}/transactions/{id}`: lo consulta TUS al recibir la
+  notificación (que Mercado Pago no firma, por eso su contenido nunca se usa) o con "Consultar estado". `success/accredited`
+  → pagada (`payout_completed`); `rejected`, `error`, `canceled`, `refunded` → fallida (`payout_release`, fondos
+  liberados). Un rechazo al crear la libera al instante; una respuesta ambigua la deja "en proceso" para reenviar (misma
+  clave). Una transferencia enviada a Mercado Pago **no** se puede marcar pagada ni fallida a mano.
+- **Pagar por otro medio**: la administración hace la operación fuera de TUS (por ejemplo, una transferencia desde la
+  cuenta de TUS) y la registra con su **comprobante** obligatorio y observación ("Marcar como pagada"). Sin comprobante no
+  se puede marcar pagada.
+- **Cancelar** (solo `requested`) / **Marcar como fallida** (solo `processing` por otro medio): liberan los fondos, con motivo.
+  Cualquier otra transición es `409 INVALID_TRANSITION`.
+- **Control del destino (riesgo abierto):** el email de destino lo escribe el prestador y TUS no lo contrasta con la
+  cuenta de Mercado Pago vinculada (la vinculación OAuth guarda el id de usuario, no su email). Antes de pagar, la
+  administración debe verificar en el detalle que el email corresponde al titular verificado de esa cuenta; para la
+  automatización con Payouts hay que resolver este contraste (por ejemplo, el email desde `users/me` de la cuenta vinculada)
+  antes de habilitarla.
+- **Doble control (riesgo abierto):** la misma persona administradora puede procesar y marcar pagada una solicitud manual;
+  la auditoría registra cada actor, pero no hay aprobación de una segunda persona.
+
+Variables de Payouts (Hostinger API):
+
+| Variable | Qué es | Secreta |
+| --- | --- | --- |
+| `TUS_MERCADOPAGO_PAYOUTS_ENABLED` | `true` habilita Payouts (apagado por defecto) | no |
+| `MERCADO_PAGO_PAYOUTS_NOTIFICATION_URL` | `https://<api>/tus/v1/integrations/mercado-pago/payouts/webhooks` | no |
+| `MERCADO_PAGO_PAYOUTS_SIGNING_KEY` | Clave privada Ed25519 (PEM). Obligatoria en producción | sí |
+
+Qué tiene que hacer el dueño de la cuenta de TUS (una sola vez), en este orden:
+
+1. En Mercado Pago Developers, con la aplicación de TUS, copiar las **credenciales de prueba** (Access Token y User ID) a
+   un entorno de staging con `MERCADO_PAGO_ENVIRONMENT=sandbox`: `MERCADO_PAGO_PLATFORM_ACCESS_TOKEN`,
+   `MERCADO_PAGO_PLATFORM_USER_ID`, `TUS_MERCADOPAGO_PAYOUTS_ENABLED=true` y `MERCADO_PAGO_PAYOUTS_NOTIFICATION_URL`.
+2. Crear **usuarios de prueba** (comprador, prestador) en "Tus integraciones > Cuentas de prueba" y probar en staging:
+   cobro de una seña sin MP, notificación, ganancia, solicitud de pago al email del usuario de prueba, "Pagar con Mercado
+   Pago", notificación de Payouts y estado `success/accredited`; luego un reembolso.
+3. Para producción: generar el par Ed25519 (`openssl genpkey -algorithm ed25519 -out mpprivate.pem && openssl pkey -in
+   mpprivate.pem -pubout -out mppublic.pem`), **enviar la clave pública al equipo de Integraciones de Mercado Pago** (lo
+   indica la documentación de Payouts: es un paso que solo hace el titular de la cuenta) y cargar la privada en
+   `MERCADO_PAGO_PAYOUTS_SIGNING_KEY`. Confirmar con Mercado Pago que la cuenta de TUS tiene Payouts habilitado.
+4. Activar las credenciales productivas, cargar las variables productivas y habilitar `service-payments` con evidencia.
+   La cuenta de TUS necesita **saldo disponible** para transferir: si no alcanza, Mercado Pago rechaza
+   (`insufficient_funds`) y la solicitud falla liberando los fondos.
+
+Administración: saldos negativos (`GET /tus/v1/admin/payments/earnings/negative-balances`), ajustes explícitos
+(`POST /tus/v1/admin/payments/earnings/adjustments`) y conciliación por prestador
+(`GET /tus/v1/admin/payments/earnings/reconciliation?providerTenantId=…`: bruto, comisión, tarifa, ganancia, reversos y
+solicitud que la pagó).
+
+Limitaciones reales de Mercado Pago:
+
+- Payouts identifica la cuenta destino por **email**; Mercado Pago no documenta un endpoint para leer el email de la cuenta
+  vinculada por OAuth, por eso el prestador lo informa al solicitar (TUS guarda también el User ID vinculado para control).
+- Las notificaciones de Payouts no traen firma documentada: TUS nunca confía en su contenido y siempre consulta la
+  transacción con su token.
+- En producción cada request debe ir firmado y la clave pública la registra Mercado Pago a pedido del titular.
+- Si una transferencia acreditada es devuelta luego por el banco (`refunded` después de `success`), TUS no la revierte
+  sola: se ve en el estado del proveedor y se resuelve con un ajuste explícito.
+
 ### Habilitar y deshabilitar pagos (sandbox)
 
 Los pagos solo se ofrecen si se cumple **todo** (el endpoint `status` lista lo que falta en `blockers`):
@@ -743,6 +866,43 @@ el gate de las señas; conserva sus nueve requisitos.
 6. Repetir con tarjeta **rechazada** (la Web ofrece reintentar en el mismo checkout) y con un pago **pendiente**.
 7. Reembolso total desde el admin y verificar que el webhook deja la obligación `refunded`.
 8. Reenviar una notificación desde el panel de Mercado Pago: TUS responde `duplicate` sin efectos.
+
+### 7.x WhatsApp multimodal: audios, comprobantes y verificación de pagos (TUS-WHATSAPP-MULTIMODAL-01)
+
+Apagado por defecto: sin `WHATSAPP_AUDIO_TRANSCRIPTION=true` los audios se contestan "por ahora no puedo escuchar audios", y
+la verificación de pagos solo actúa si existe una seña pendiente de un cliente (con los pagos habilitados). **No cambia
+`paymentsEnabled` ni activa dinero real.** Detalle y arquitectura: `docs/WHATSAPP_IA_TUS.md`.
+
+Variables (todas opcionales; valores inválidos mantienen el default): `WHATSAPP_AUDIO_TRANSCRIPTION`, `GROQ_STT_MODEL`,
+`WHATSAPP_STT_MAX_BYTES`, `WHATSAPP_STT_TIMEOUT_MS`, `WHATSAPP_STT_MAX_SECONDS`, `WHATSAPP_STT_MIME_TYPES`,
+`WHATSAPP_MEDIA_MAX_PER_HOUR`. Sin migraciones nuevas.
+
+**Lectura de comprobantes (TUS-WHATSAPP-MULTIMODAL-02)**, apagada por defecto: `WHATSAPP_RECEIPT_ANALYSIS=true`,
+`WHATSAPP_RECEIPT_ANALYZER` (`ocr` local | `vision` Groq), `WHATSAPP_RECEIPT_MAX_BYTES`, `WHATSAPP_RECEIPT_PDF_MAX_BYTES`,
+`WHATSAPP_RECEIPT_PDF_MAX_PAGES`, `WHATSAPP_RECEIPT_TIMEOUT_MS`, `WHATSAPP_RECEIPT_MAX_PER_HOUR`,
+`WHATSAPP_RECEIPT_MIME_TYPES`. El comprobante es solo una pista para elegir entre pagos pendientes del propio cliente; el
+dinero lo confirma únicamente el dominio financiero tras consultar a Mercado Pago. Requisitos de entorno para `ocr`: datos de
+idioma de tesseract accesibles (`TESSERACT_LANG_PATH`) y `pdftotext` (paquete poppler-utils) instalado para PDF; sin ellos la
+lectura falla de forma tipada y se le pregunta a la persona a cuál pago corresponde. Privacidad: los bytes viven solo en memoria
+durante el análisis; con `ocr` nada sale de TUS; con `vision` solo la imagen va a Groq; no se guardan imágenes, PDF, texto OCR
+completo, CVU/CBU completos ni DNI. **NO VERIFICADO CONTRA PROVEEDOR REAL**: descarga de media de Meta, visión de Groq, OCR local con
+datos de idioma reales y `pdftotext` en producción.
+
+Antes de habilitarlo (todo **NO VERIFICADO CONTRA PROVEEDOR REAL** hasta que se haga):
+
+1. **Mercado Pago**: la consulta de pagos usa `GET /v1/payments/search?external_reference=<id de pago de TUS>` con el token de
+   la cuenta que debió cobrar. Confirmar con Mercado Pago (o en sandbox) que la búsqueda por `external_reference` está
+   disponible para la aplicación y devuelve los campos que usa el webhook (`collector_id`, `transaction_amount`,
+   `currency_id`, `status`, `fee_details`). Si no lo estuviera, la consulta devuelve "no pude consultar Mercado Pago" y el
+   webhook sigue siendo el único camino: nada se rompe ni se confirma.
+2. **Groq Whisper**: confirmar `response_format=verbose_json` (segmentos con `avg_logprob` y `no_speech_prob`) y el modelo
+   configurado; sin esos campos la transcripción se usa sin confianza (no se inventa).
+3. **Meta**: probar con un número de prueba una nota de voz real (Ogg/Opus) y una imagen; confirmar que las notas de voz
+   llegan como `audio/ogg`.
+4. Alertas: `assistant.audio_failed` (por motivo), `assistant.payment_check` (resultado) y `assistant.payment_check_limited`.
+
+Riesgos que quedan: un cliente que paga y no recibe el webhook depende de la consulta o de la reconciliación manual; los
+reembolsos parciales hechos en el panel de Mercado Pago no se modelan (límite documentado de la fase de ganancias).
 
 ## 8. Smoke posterior al despliegue
 
@@ -923,6 +1083,8 @@ server-derived y tenant-scoped.
 | Futuro MP              | `MERCADO_PAGO_CLIENT_SECRET`                                                   |                                                    no |                       sí |
 | Futuro MP              | `MERCADO_PAGO_WEBHOOK_SECRET`                                                  |                                                    no |                       sí |
 | Futuro MP              | `TUS_PAYMENT_CREDENTIALS_KEY`                                                  |                                                    no |                       sí |
+| Futuro MP              | `MERCADO_PAGO_PLATFORM_ACCESS_TOKEN`, `MERCADO_PAGO_PLATFORM_USER_ID` | no (solo para cobrar por prestadores sin MP) | solo el token |
+| Futuro MP              | `TUS_MERCADOPAGO_PAYOUTS_ENABLED`, `MERCADO_PAGO_PAYOUTS_NOTIFICATION_URL`, `MERCADO_PAGO_PAYOUTS_SIGNING_KEY` | no (Payouts de ganancias; la clave solo en producción) | solo la clave |
 | Hostinger API          | `IDENTITY_PROVIDER=nosis-browser`                                              |                                        sí (identidad) |                       no |
 | Hostinger API + worker | `TUS_IDENTITY_DOCUMENTS_KEY`                                                   |                                   sí (subidas de DNI) |                       sí |
 | Host worker            | `NOSIS_BROWSER_*`, `TUS_NOSIS_SESSION_KEY`, `GROQ_API_KEY`/`GROQ_API_KEY_1..6` | para verificar automáticamente; pool Groq round-robin | credenciales y claves sí |

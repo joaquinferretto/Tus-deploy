@@ -26,7 +26,18 @@ Variables opcionales:
 - `GROQ_API_KEY_1` a `GROQ_API_KEY_6` (pool opcional, round-robin; no hace falta configurar dos)
 - `GROQ_WHATSAPP_MODEL` (default `openai/gpt-oss-120b`)
 - `GROQ_STT_MODEL` (default `whisper-large-v3-turbo`)
-- `WHATSAPP_AUDIO_TRANSCRIPTION=true` para audio
+- `WHATSAPP_AUDIO_TRANSCRIPTION=true` para audio (ver "Audios, comprobantes y verificación de pagos")
+- `WHATSAPP_STT_MAX_BYTES` (default `16777216`, 1 KiB a 25 MiB), `WHATSAPP_STT_TIMEOUT_MS` (default `30000`),
+  `WHATSAPP_STT_MAX_SECONDS` (default `180`) y `WHATSAPP_STT_MIME_TYPES` (default `audio/ogg,audio/mpeg,audio/mp4`;
+  solo se aceptan formatos que Whisper admite sin conversión). El proveedor es siempre Groq y el modelo `GROQ_STT_MODEL`.
+- `WHATSAPP_RECEIPT_ANALYSIS=true` habilita la lectura de comprobantes (default apagado; sin ella igual funciona "ya pagué" y una
+  sola obligación pendiente). `WHATSAPP_RECEIPT_ANALYZER` (`ocr` por defecto | `vision`), `WHATSAPP_RECEIPT_MAX_BYTES`
+  (default `5242880`), `WHATSAPP_RECEIPT_PDF_MAX_BYTES` (default `2097152`), `WHATSAPP_RECEIPT_PDF_MAX_PAGES` (default `3`),
+  `WHATSAPP_RECEIPT_TIMEOUT_MS` (default `25000`), `WHATSAPP_RECEIPT_MAX_PER_HOUR` (default `6`),
+  `WHATSAPP_RECEIPT_MIME_TYPES` (default `image/jpeg,image/png,image/webp,application/pdf`), `WHATSAPP_RECEIPT_PDFTOTEXT`
+  (ruta de `pdftotext`; default el del PATH), `TESSERACT_LANG_PATH` (datos de idioma del OCR local) y, para `vision`,
+  `GROQ_VISION_MODEL` / `GROQ_VISION_RESPONSE_FORMAT`. Valores inválidos mantienen el default seguro.
+- `WHATSAPP_MEDIA_MAX_PER_HOUR` (default `20`): audios, imágenes y documentos por contacto y hora
 - `WHATSAPP_INBOUND_MAX_PER_MINUTE` (default `12`)
 - `WHATSAPP_INBOUND_BLOCK_PER_MINUTE` (default `60`)
 - `WHATSAPP_DEBOUNCE_MS` (default `1500`)
@@ -185,6 +196,85 @@ WhatsApp recibe exactamente el mismo tipo de mensaje libre y produce la misma co
 La verificación telefónica (`VERIFICAR TUS <código>`) sigue separada: se resuelve antes del
 asistente y nunca pasa por el modelo.
 
+### Contexto entre mensajes cortos (ASISTENTE-CONTEXTO-01)
+
+Los mensajes seguidos ("El lunes" · "Lo antes posible" · "Con cualquiera") son UNA necesidad: cada
+uno cambia solo lo que dice y el backend actúa sobre el estado estructurado, sin volver a preguntar
+lo ya dicho. Todo sale de la búsqueda real; nada se solicita sin el "sí" explícito.
+
+- **Lo antes posible** (`need.asap`): "lo antes posible", "cuanto antes", "apenas haya", "el día más
+  próximo", "la primera que tenga", "ahora", "ya mismo", "urgente". No fija día: la búsqueda empieza en
+  el día conocido (hoy, desde la hora actual, si no hay uno) y avanza día por día, con la misma consulta
+  al backend, hasta encontrar un turno libre que respete el horario pedido (máximo 14 días). Si hoy no
+  hay, se dice: "Hoy no hay turnos libres. La primera disponibilidad … es mañana: …". Ya no existe el
+  bucle "sin turnos libres hoy. ¿Querés que busque otro día?" ante "lo antes posible".
+- **Cualquiera disponible** (`need.anyProvider`): "cualquiera", "la que sea", "me da igual quién", "no
+  importa quién", "el que esté disponible", "asignáme una", "mandame cualquiera". Mantiene servicio,
+  día y horario y el backend propone UNA opción concreta, el primer inicio real que cumple: "La primera
+  opción que encontré es mañana a las 09:00 con Melina. ¿Querés esa?". "Sí" prepara la tarjeta de
+  solicitud (servicio, cliente y confirmación como siempre); "no" la descarta y conserva la necesidad.
+  "Me da igual dónde" sigue siendo la zona, no el profesional.
+- **Profesional por nombre o posición**: "Melina", "con Melina", "melna" (un error de tipeo sobre un
+  nombre listado, solo si coincide con UNA), "la segunda", "la otra" / "no esa, la otra" se resuelven
+  contra la lista que el backend mostró (`state.shown`). "Melina ya mismo" toma su primer horario real
+  sin volver a listar; "Quiero a Melina mañana" busca la agenda de ella ese día.
+- **Precio**: "¿y cuánto sale?", "¿cuánto es el precio?" consultan el precio real
+  (`servicioDeTurno`) del servicio en curso para los profesionales listados o el elegido, y dicen cuál no
+  tiene precio publicado. No inicia otro flujo ni pide vincular la cuenta.
+- **Mensaje ininteligible** ("Ysk", "jsjs"): no se repite la última pregunta; se pregunta algo corto con
+  lo conocido ("¿Querés que busque el primer turno libre de Masaje con cualquier profesional?") y un
+  "sí" lo ejecuta.
+- **Cambios de opinión**: "no mejor el martes", "mañana a la tarde", "después de las 18" cambian solo
+  ese dato; la preferencia de profesional se conserva.
+- **Disponibilidad que cambió**: antes de preparar la tarjeta se relee el horario elegido en la agenda;
+  si ya no está libre se dice y se propone el siguiente real del mismo profesional. Si el "sí" de la
+  tarjeta recibe `409 SLOT_OCCUPIED`, no se solicita nada: "Ese horario acaba de ocuparse. Busco el
+  siguiente disponible." y se propone el siguiente.
+
+Las propuestas pendientes viven en `estado_conversacional.suggestion` (30 minutos) y nunca son
+autoridad: aceptar vuelve a leer la disponibilidad y la solicitud la valida el backend.
+
+Segunda pasada (ASISTENTE-CONTEXTO-02):
+
+- **El horario pedido es un requisito.** Si alguien cumple (hora exacta, "desde", "hasta", rango o parte
+  del día), se listan **solo** quienes cumplen; los horarios de otras horas no aparecen bajo "con turno a
+  las 09:15". Si nadie cumple, se dice ("No encontré turnos … a las 11:00") y se ofrecen los más cercanos
+  reales. La lista recordada (`offers`, `shown`) es la misma que se mostró, así que "la primera" es la
+  primera que la persona vio.
+- **Tipos de horario separados en el estado**: exacta (`exact`), desde (`from`), hasta (`until`), rango
+  (`between`), parte del día (`between` + `part: manana|mediodia|tarde|noche`) y "lo antes posible"
+  (`asap`, que no es un horario). Al backend llegan solo los límites.
+- **Nombres ambiguos se preguntan**: "melna" o "Melina" con "Melina" y "Melina Martínez" en la lista →
+  "¿Con cuál? 2. Melina (Barrio Sur) · 4. Melina Martínez (Centro)". El nombre completo elige. "La de
+  Barrio Sur" elige por la zona mostrada. Un profesional nombrado en el mismo mensaje del servicio
+  ("una masajista con Melina mañana") se resuelve contra el resultado real.
+- **Precio que sigue el tema**: "¿y con Melina?", "¿cuánto me sale con ella?", "¿cuánto sería?", "¿cuánto
+  pago?" usan el profesional nombrado, el elegido o el propuesto. "Pagar la seña" sigue siendo otro flujo.
+- **Propuestas**: "sí", "dale", "esa", "esa misma" aceptan; "no" descarta y conserva la necesidad; "no,
+  mejor la segunda" descarta y elige de la lista mostrada.
+- **Mensajes ininteligibles**: solo después de que fallan todas las lecturas (servicio, profesional,
+  zona, día, hora, sí/no, número u ordinal, precio, otra área) y únicamente si las palabras tienen forma de
+  error de tipeo (sin vocales, corridas de teclado como "asd"/"qwe", una tecla repetida). "Barrio Ponce",
+  "Santa Ana" o "Rosa" siguen el flujo normal. La aclaración ofrece lo conocido ("Si querés, sigo buscando
+  turnos de Masaje mañana.") y un "sí" vuelve a buscar exactamente eso.
+- **Modelo real**: no se probó con Groq en esta pasada (no hay clave configurada en el entorno local). Las
+  reglas críticas (disponibilidad, horario, profesional, precio, identidad, reserva, pago) no dependen del
+  modelo.
+
+Tercera pasada (ASISTENTE-CONTEXTO-03, 2026-10-03):
+
+- **"Lo antes posible con Sabrina"** en un solo mensaje: la búsqueda se cortaba el primer día en que CUALQUIER
+  profesional tenía turno y recién después filtraba por la nombrada, respondiendo que no tenía turnos en 14 días. Ahora,
+  si la nombrada no tiene turno ese día, se busca día por día solo en su agenda y se propone su primer inicio real.
+- **Franja después de elegir profesional** ("Melina" → "mejor a la tarde"): antes se perdía y un "cualquiera" posterior
+  proponía un turno de la mañana. Ahora la franja (parte del día, desde, hasta, rango) se guarda en la necesidad, se
+  muestran los horarios reales de ella y se ofrece buscar quién tiene esa franja ("sí" la busca; "cualquiera" la
+  respeta). Una hora exacta que ella no tiene conserva la respuesta anterior ("no tiene turno a esa hora…").
+- **"¿Y con otra?"** se entiende como otra profesional de la lista mostrada (si queda más de una, se pregunta cuál,
+  numeradas como se mostraron).
+- Sin modelo configurado, un "sí" sin propuesta pendiente (por ejemplo, después del aviso de vinculación) cae en la
+  respuesta genérica del modelo no disponible; con Groq lo redacta el modelo. No crea ni confirma nada.
+
 ## Un turno se solicita, no se confirma (TURNOS-SOLICITUD-01)
 
 Desde la Web, el asistente Web o WhatsApp, el cliente **solicita** un turno; solo el prestador lo
@@ -236,6 +326,155 @@ Rutas del canal Web (sesion opcional; `visitorId` es un id aleatorio del navegad
 Limites: 12 mensajes por minuto por conversacion (`WHATSAPP_INBOUND_MAX_PER_MINUTE`) y 30 por minuto por IP. No hay streaming token a token: el orquestador valida el texto del modelo antes de liberarlo. Al iniciar sesion, la conversacion que la persona tenia como visitante pasa a su cuenta.
 
 Tests: `tests/foundation/tus-asistente-web.test.mjs`.
+
+## Audios, comprobantes y verificación de pagos (TUS-WHATSAPP-MULTIMODAL-01)
+
+Regla de la fase: **la IA interpreta, el backend decide y Mercado Pago certifica el dinero.**
+
+> **Un comprobante enviado por WhatsApp nunca confirma un pago. TUS confirma dinero únicamente mediante el dominio
+> financiero y la verificación contra Mercado Pago.** Una imagen, un PDF, un audio, un texto o una afirmación del cliente
+> ("ya pagué") nunca marcan un pago como aprobado, nunca confirman un turno, nunca crean una ganancia.
+
+### Qué existía y qué se agregó
+
+Ya existían: el parser de media de Meta (id, mime y sha256), la descarga por Graph API restringida a hosts de Meta, el
+transcriptor Groq/Whisper cableado detrás de `WHATSAPP_AUDIO_TRANSCRIPTION` y el orquestador que convertía un audio en texto.
+Se agregó: límites configurables, validación del contenido real, duración, confianza del proveedor, fallback correcto,
+no repetir una transcripción, límite de media por hora, tipo `document`, y todo el circuito de comprobantes y de
+verificación de pagos (el proveedor de pagos no tenía una consulta de pago).
+
+### Audio (notas de voz)
+
+`webhook Meta → mensaje de audio (media id) → worker → descarga (Graph API, tope de bytes mientras se lee) → validación
+→ STT (Groq) → texto → el MISMO orquestador que un mensaje escrito`. No hay un asistente paralelo: el texto transcripto
+pasa por la misma búsqueda real de disponibilidad, el mismo estado de la conversación ("quiero masaje" y luego un audio
+"con Melina mañana a la tarde" conserva el servicio) y las mismas reglas. Los tests prueban paridad exacta audio/texto.
+
+- **Validación (`asistente/audio.ts`)**: nada de lo que declara el remitente o Meta se toma como cierto. Los bytes
+  deciden el formato (firma `OggS`, `ftyp`, `ID3`/trama MPEG); aac y amr crudos, aunque sean formatos de WhatsApp, no los
+  acepta Whisper y TUS **no convierte** (decisión: sin ffmpeg, sin procesos hijos ni archivos temporales). Tamaño máximo,
+  duración máxima (medible en Ogg/Opus, el formato de la nota de voz: granule de la última página sobre 48 kHz menos el
+  pre-skip; en otros contenedores solo rige el tamaño) y lista blanca de tipos reales.
+- **Efímero**: el audio vive en memoria durante la transcripción y se descarta. Se guarda solo el texto transcripto y
+  metadatos mínimos (`media.id`, `mimeType`, `sha256`, `stt: { status, confidence, bytes, seconds }`). Nunca el audio, ni
+  base64, ni tokens, en base o logs.
+- **Confianza**: solo la que informa el proveedor (`verbose_json` de Whisper: `avg_logprob` y `no_speech_prob`, con los
+  umbrales del propio Whisper: silencio si `no_speech_prob > 0.6` y `avg_logprob < -1`; baja si el promedio de
+  `avg_logprob < -1`). Si el proveedor no informa nada, no se inventa. Con silencio o confianza baja se pide repetir.
+- **Fallos** (formato, tamaño, duración, corrupto, STT caído, timeout, transcripción vacía): *"No pude entender bien ese
+  audio. ¿Podés mandármelo otra vez o escribirme el mensaje?"* El motivo queda en una métrica
+  (`assistant.audio_failed`) y en `metadata.stt`. Con el STT apagado se mantiene *"Por ahora no puedo escuchar audios..."*.
+- **Duplicados**: el `wamid` es único (Meta reentrega: se procesa una vez) y una transcripción ya hecha se reutiliza.
+- **Abuso**: además del límite por minuto, `WHATSAPP_MEDIA_MAX_PER_HOUR` corta audios/imágenes/documentos antes de que
+  cuesten una descarga, una llamada al STT o una consulta de pago.
+
+### Comprobantes (imagen o documento) y "ya pagué"
+
+Un comprobante es **solo una pista**. Regla de la fase TUS-WHATSAPP-MULTIMODAL-02: **imagen/PDF = pista; contexto TUS =
+correlación; Mercado Pago = autoridad financiera; backend TUS = decisión.** Nada de lo que contenga el comprobante se usa
+como dato financiero: es `untrusted_receipt_evidence` (`origen`) y solo sirve para **ordenar los pagos pendientes del propio
+cliente** cuando hay más de uno.
+
+**Cuándo se lee.** Con **una sola** obligación pendiente compatible no hace falta leer nada: se verifica directo contra
+Mercado Pago (el archivo ni se descarga). Con **varias**, se descarga y se lee el comprobante para ver a cuál corresponde.
+Sin texto "ya pagué" y con una imagen sola funciona igual.
+
+**Descarga segura** (`ServicioComprobantes`, `MetaWhatsappCloudProvider.downloadMedia`): solo Graph API de Meta y hosts de Meta
+(sin redirecciones a hosts externos), tope de bytes **mientras se lee** (nunca se bufferiza de más), tiempo máximo,
+lista blanca de tipos reales (JPEG, PNG, WebP, PDF: **mandan los bytes, no el tipo declarado ni la extensión**), validación
+de cabeceras/dimensiones (límite de píxeles) y de PDF (`%%EOF`, sin `/Encrypt`, máximo de páginas). Archivo corrupto, falso
+(zip/html/exe con tipo de imagen), enorme o con demasiadas páginas → error tipado, nunca excepción. Los bytes viven **solo en
+memoria durante el análisis y se descartan**: no hay archivos temporales ni se guardan.
+
+**Lectura** (`AnalizadorComprobante`, salida acotada a un esquema; nunca texto libre que cambie dinero):
+
+- `ocr` (por defecto): OCR **local** (tesseract.js) para imágenes, y para PDF solo la **capa de texto** con `pdftotext`
+  (poppler) por stdin/stdout, sin shell. **Nada sale de TUS.**
+- `vision` (opt-in, `WHATSAPP_RECEIPT_ANALYZER=vision`): visión de Groq con el pool de claves existente y salida
+  `json_schema` estricta validada con zod; lo fuera de esquema se descarta. Solo la **imagen** se envía a Groq (como
+  base64 en la petición, nunca registrada); los PDF **nunca** se envían: se leen localmente.
+
+Campos extraídos (todos opcionales, solo si realmente se leyeron): `amountMinor`, `currency`, `operationId`,
+`externalReference`, fecha/hora, `recipientName`, `recipientAccountHint` (**solo los últimos 4 dígitos** de un CVU/CBU),
+`payerName`, `statusText` (categoría) y confianza por campo solo si el lector la entrega.
+
+**Correlación** (`correlacionarComprobante`): únicamente entre los pagos del **mismo cliente** (`pagosVerificables`: señas de
+sus turnos y partes abiertas —seña/saldo— de sus trabajos). La evidencia nunca crea candidatos ni consulta pagos de otros;
+un número de operación solo coincide con la referencia de un candidato propio y **nunca se confía solo**. Puntúa monto,
+referencia de operación, fecha, profesional/servicio y palabras del texto; si hay un ganador estricto se verifica ese, si no
+se pregunta: *"Tenés 2 pagos pendientes: 1) … 2) … ¿A cuál corresponde el comprobante? Decime el nombre del profesional o el
+servicio."* Cualquier candidato elegido pasa igual por la verificación completa del dominio (actor, obligación, importe,
+moneda, cobrador, `external_reference`, modo y estado).
+
+Un comprobante de otra persona no abre ni revela nada (no es candidato). Uno falso o que Mercado Pago no respalda termina en
+*"Recibí el comprobante, pero no pude confirmar ese pago en Mercado Pago…"*, sin confirmar pago, turno, trabajo ni ganancia, y
+sin acusar de fraude. Si el analizador falla o no hay lectura: *"No pude leer el comprobante, así que no sé a cuál
+corresponde."* y se pregunta.
+
+**Límites**: `WHATSAPP_RECEIPT_MAX_PER_HOUR` análisis por conversación y hora (además del límite general de media por
+contacto), reutilización por **sha256 de Meta** (la misma imagen no se vuelve a leer ni a descargar) y el ritmo de consultas a
+Mercado Pago. Combinado con audio en el mismo turno (nota de voz + imagen) el texto transcripto aporta las palabras de
+correlación.
+
+**Privacidad / qué se guarda**: en el mensaje, `metadata.receipt` = {estado, analizador, monto, moneda, fecha, cantidad de
+lecturas}; en el estado de la conversación, un caché mínimo `paymentCheck.receipts` = {sha256, momento, monto, moneda, fecha}.
+**NO se guardan**: la imagen ni el PDF, base64, el texto OCR completo, CVU/CBU completos, DNI, nombres del pagador ni la respuesta
+cruda del modelo. Los logs no contienen imágenes ni base64 (errores de visión: solo el estado HTTP).
+
+### Verificación real del pago
+
+`herramienta/orquestador → turnos (verificarPagoSena) → finanzas (verificarPagoDelTrabajo)`:
+
+1. Solo el **cliente del trabajo** pregunta por **su** pago (otro cliente o el prestador reciben 404).
+2. Se toma la intención (la última con checkout) y su **modo congelado** (`split` / `plataforma`).
+3. Se consulta a Mercado Pago **por la referencia interna** (`external_reference` = id de pago de TUS, nunca un valor
+   escrito por la persona) con la cuenta que debió cobrar (la de TUS para `plataforma`, la del prestador para `split`):
+   `GET /v1/payments/search?external_reference=…`. Cada resultado se normaliza con la MISMA función que el webhook
+   (que además rechaza un cobrador distinto).
+4. Cada pago se aplica por **`aplicarEventoVerificado`**, la misma máquina de estados del webhook (collector, modo,
+   referencia, moneda, importe, comisión de marketplace, transiciones, inbox, confirmación del turno, ganancia). Es el
+   único lugar donde el dinero cambia de estado.
+5. Se audita (`payment.queried_by_customer`; en el asistente `assistant.payment_checked`).
+
+Resultados: `approved` (Mercado Pago lo informó aprobado **y** todas las validaciones del webhook lo aceptaron, o ya estaba
+aplicado), `pending`, `not_approved` (rechazado/cancelado/expirado), `quarantined` (importe, moneda, modo… no coinciden: no
+se aplica), `not_found` y `unavailable`. Respuestas: *"Sí, Mercado Pago confirmó tu seña de $15.000. Tu turno con Melina
+quedó confirmado."* / *"Encontré el pago, pero Mercado Pago todavía lo muestra pendiente…"* / *"Todavía no encuentro un pago
+acreditado para esa seña…"* / *"Recibí el comprobante, pero no pude confirmar ese pago en Mercado Pago…"*. Nunca se
+acusa de fraude ni se dice "el comprobante parece válido".
+
+**El webhook sigue siendo el camino principal**; la consulta es una reconciliación adicional. Si Mercado Pago ya aprobó y el
+webhook no llegó, la consulta aplica; el webhook que llega después es un no-op (`stale`/`no_op`): una aprobación, una
+confirmación, una ganancia (índices únicos del ledger y estado de la intención). Probado en PostgreSQL con webhook antes,
+después, duplicado y concurrente con tres consultas simultáneas. Con Split 1:1 no se crea ganancia.
+
+### Herramientas del asistente (modelo)
+
+`get_pending_payments` (señas pendientes o ya acreditadas del cliente vinculado) y `verify_payment_status` (exactamente uno de
+`ref` —seña de un turno— o `workId` —seña o saldo de un trabajo del cliente—): solo **piden** al backend, que usa el mismo
+dominio financiero (`verificarPagoDelTrabajo`); el modelo no recibe tokens ni credenciales y no puede decidir el resultado. El camino determinístico
+(la conversación) no pasa por el modelo.
+
+### Límites de la consulta de pagos
+
+Por conversación: 15 s entre consultas a Mercado Pago y 6 por hora (el estado de ritmo vive en el estado de la conversación,
+no es autoridad). Una conversación nunca puede consultar pagos arbitrarios: no existe consulta por un id escrito por la
+persona.
+
+### Persistencia
+
+Sin tablas ni migraciones nuevas. Claves JSON nuevas: `mensajes.metadata.media.sha256`, `mensajes.metadata.stt`,
+`mensajes.metadata.receipt` y `conversaciones.estado.paymentCheck` (ritmo, elección entre pagos y caché mínimo de lecturas de
+comprobantes: ver arriba qué se guarda y qué no) y acciones de auditoría
+`assistant.payment_checked` y `payment.queried_by_customer`.
+
+### Qué no está verificado contra el proveedor real
+
+Todo se probó contra dobles offline en el borde de `fetch` y de los puertos: **NO VERIFICADO CONTRA PROVEEDOR REAL** — Groq
+Whisper (`verbose_json`, campos de segmentos), la visión de Groq para comprobantes, el OCR local con datos de idioma reales
+(tesseract), la disponibilidad de `pdftotext` en el entorno de producción, la búsqueda de pagos de Mercado Pago (`/v1/payments/search` por
+`external_reference`) y la descarga de media de Meta. Antes de habilitar en producción hay que probar en sandbox/un número
+de prueba y confirmar con Mercado Pago que la búsqueda por `external_reference` está disponible para la aplicación.
 
 ## Migracion
 

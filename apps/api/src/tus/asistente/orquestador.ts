@@ -1,13 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './conocimiento.ts'
-import { adjuntoDisponibilidad, elegirOferta, horaLocal, ofertasDeResultado, preguntaFaltante, preguntaHora, resumenParaModelo, textoDisponibilidad, type OfertasMostradas } from './busqueda.ts'
+import { DIAS_BUSQUEDA_PRIMERA, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, elegirOferta, horaLocal, ofertasDeResultado, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDisponibilidad, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type OfertasMostradas } from './busqueda.ts'
+import { oficio } from '../directorio/oficios.ts'
 import { formatearPesos } from '@factory/contracts'
-import type { DisponibilidadNecesidad, PuertoDominioAsistente } from './dominio.ts'
+import type { DisponibilidadNecesidad, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
+import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
 import { BOTONES_SOLICITUD, elegirServicio, elegirServicioPorNombre, enlaceRegistro, fechaLarga, horaCorta, preguntaServicio, resumenSolicitud, retornoDeSolicitud, sinIdentificadores, textoPrecio, type OpcionServicio } from './solicitud-turno.ts'
 import { ErrorChat, type ChatProvider, type MensajeChat, type Transcriptor } from './groq.ts'
-import { combinarNecesidad, extraerNecesidad, faltantes, horaArgentina, hoyArgentina, pareceHora, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
+import { ErrorAudio, LIMITES_AUDIO_POR_DEFECTO, validarAudio, type LimitesAudio, type ResultadoTranscripcion } from './audio.ts'
+import { combinarNecesidad, describirDia, describirVentana, diaSiguiente, extraerNecesidad, faltantes, horaArgentina, hoyArgentina, horasPosibles, limitesVentana, mencionaAlgo, pareceHora, ventanaDesde, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
 import {
   HERRAMIENTAS,
   PROMPT_ENRUTADOR,
@@ -36,6 +39,7 @@ import {
   type ConfirmacionAsistente,
   type ContactoWhatsapp,
   type ConversacionWhatsapp,
+  type EstadoConversacional,
   type MensajeConversacion,
   type SolicitudEnCurso,
 } from './modelo.ts'
@@ -175,6 +179,12 @@ export interface DependenciasOrquestador {
   linking: ServicioVinculacionWhatsapp
   knowledge: RecuperadorConocimiento | null
   transcriptor: Transcriptor | null
+  // Speech-to-text limits (size, timeout, duration, formats); defaults when absent.
+  audio?: Partial<LimitesAudio>
+  // TUS-WHATSAPP-MULTIMODAL-02: reads a payment receipt (image/PDF) as untrusted evidence, only to
+  // choose among the client's own payments. Absent or disabled: a receipt is just a hint.
+  comprobantes?: ServicioComprobantes | null
+  limitesComprobante?: Partial<LimitesComprobante>
   limits?: Partial<LimitesAsistente>
   now?: () => number
   metric?: Metrica
@@ -185,6 +195,69 @@ export interface DependenciasOrquestador {
   identidades?: ServicioIdentificacionCliente | null
   // Public address of the Web (real registration and sign-in routes).
   webBaseUrl?: string | null
+}
+
+// A picture or document that arrived in the turn. Only its existence matters: it is never read.
+interface ComprobanteRecibido {
+  type: 'image' | 'document'
+  hasCaption: boolean
+}
+
+// Resolves with the promise or rejects with STT_TIMEOUT when it takes longer than `ms`.
+function conLimiteDeTiempo<T>(promesa: Promise<T>, ms: number): Promise<T> {
+  let temporizador: ReturnType<typeof setTimeout> | undefined
+  const limite = new Promise<never>((_, reject) => {
+    temporizador = setTimeout(() => reject(new ErrorAudio('STT_TIMEOUT', 'speech to text timed out')), ms)
+  })
+  return Promise.race([promesa, limite]).finally(() => clearTimeout(temporizador))
+}
+
+const sinAcentos = (value: string): string => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+const dinero = (minor: string): string => formatearPesos(Number(minor) / 100)
+
+const aCandidato = (pago: PagoVerificableAsistente): PagoCandidato => ({ ref: pago.ref, amountMinor: pago.amountMinor, currency: pago.currency, startsAt: pago.startsAt, providerName: pago.providerName, service: pago.service, operationRef: pago.operationRef })
+
+function etiquetaDePago(pago: PagoVerificableAsistente): string {
+  if (pago.kind === 'turno') {
+    const inicio = new Date(pago.startsAt!)
+    return `${pago.providerName}${pago.service ? ` (${pago.service})` : ''}, ${fechaLarga(inicio)} a las ${horaCorta(inicio)}, seña de ${dinero(pago.amountMinor)}`
+  }
+  return `Trabajo de ${pago.service ?? 'un servicio'}, ${pago.part === 'saldo' ? 'saldo' : 'seña'} de ${dinero(pago.amountMinor)}`
+}
+
+// "la primera", "la 2": the person answers the list this flow showed. Names and services are read
+// by the correlation, not here.
+function ordinalDe(text: string, candidatas: PagoVerificableAsistente[]): PagoVerificableAsistente | null {
+  const plano = sinAcentos(text)
+  const orden = /\b(?:primer[ao]?|1)\b/u.test(plano) ? 0 : /\b(?:segund[ao]?|2)\b/u.test(plano) ? 1 : /\b(?:tercer[ao]?|3)\b/u.test(plano) ? 2 : -1
+  return orden >= 0 ? (candidatas[orden] ?? null) : null
+}
+
+// What the backend found, in words. A receipt is acknowledged but never counts: only `confirmed`
+// (Mercado Pago's own report accepted by the backend) says the payment is made.
+function textoDeVerificacion(verificacion: VerificacionSenaAsistente, pago: PagoVerificableAsistente, hayComprobante: boolean): string {
+  const esTrabajo = pago.kind === 'trabajo'
+  const que = esTrabajo ? 'este pago' : 'esta seña'
+  switch (verificacion.estado) {
+    case 'confirmed':
+      if (esTrabajo) return `Sí, Mercado Pago confirmó ${pago.part === 'saldo' ? 'el saldo' : 'la seña'} de ${formatearPesos(verificacion.amount)} del trabajo de ${pago.service ?? 'servicio'}.`
+      return verificacion.turnoConfirmado
+        ? `Sí, Mercado Pago confirmó tu seña de ${formatearPesos(verificacion.amount)}. Tu turno con ${pago.providerName} quedó confirmado.`
+        : `Mercado Pago confirmó tu pago de ${formatearPesos(verificacion.amount)}, pero tu turno con ${pago.providerName} no figura confirmado. Revisalo en "Mis turnos" y, si algo no cierra, escribile al equipo de TUS.`
+    case 'pending':
+      return `Encontré el pago correspondiente, pero Mercado Pago todavía lo muestra pendiente. ${esTrabajo ? 'Cuando se acredite se registra solo.' : 'Cuando se acredite se confirma tu turno.'}`
+    case 'not_approved':
+      return `No pude confirmar ese pago en Mercado Pago: figura rechazado o cancelado.${esTrabajo ? '' : ' Si querés, te paso de nuevo el link para pagar la seña.'}`
+    case 'quarantined':
+      return `Encontré un pago en Mercado Pago, pero no coincide con lo esperado para ${que}, así que no lo puedo aplicar. Lo va a revisar el equipo de TUS.`
+    case 'unavailable':
+      return 'No pude consultar Mercado Pago en este momento. Probá de nuevo en unos minutos.'
+    default:
+      return hayComprobante
+        ? 'Recibí el comprobante, pero no pude confirmar ese pago en Mercado Pago. Un comprobante no alcanza: el pago lo confirma Mercado Pago. Si lo hiciste recién, puede tardar un momento en aparecer.'
+        : `Todavía no encuentro un pago acreditado para ${que}. Si lo hiciste recién, puede tardar un momento en aparecer.`
+  }
 }
 
 type Turno = {
@@ -213,7 +286,98 @@ const MAXIMO_IDENTIFICACIONES_FALLIDAS = 5
 const VENTANA_IDENTIFICACIONES_MS = 60 * 60_000
 // "quiero pagar la seña", "¿cómo abono la seña?", "pasame el link de la seña".
 const PIDE_PAGAR_SENA = (text: string): boolean => /\bse[ñn]as?\b/iu.test(text) && /\b(?:pag\w*|abon\w*|link|enlace|c[oó]mo|quiero|transfer\w*)\b/iu.test(text)
+// "ya pagué", "hice la transferencia", "¿te llegó el pago?", "te mando el comprobante": the person
+// says the deposit was paid (or asks whether it arrived). It only ASKS the backend to look: what
+// the person says is never evidence.
+// Word edges are Unicode-aware on purpose: `\b` does not see "é" or "ó" as part of a word.
+const INICIO = '(?<![\\p{L}\\p{N}])'
+const FIN = '(?![\\p{L}\\p{N}])'
+const frase = (cuerpo: string) => new RegExp(`${INICIO}(?:${cuerpo})${FIN}`, 'iu')
+const PATRONES_PAGO_REALIZADO = [
+  frase('pagu[eé]|abon[eé]|transfer[ií]|deposit[eé]'),
+  frase('(?:hice|realic[eé]|efectu[eé]|mand[eé]|envi[eé])\\s+(?:el|la|un|una|mi)\\s+(?:pago|transferencia|se[ñn]a|dep[oó]sito)'),
+  frase('(?:ya\\s+)?(?:est[aá]|qued[oó])\\s+(?:pagad[oa]|abonad[oa]|acreditad[oa])'),
+  // "te mando el comprobante", "adjunto el comprobante": not a bare question about receipts.
+  frase('(?:te\\s+)?(?:mando|mand[eé]|paso|pas[eé]|env[ií]o|envi[eé]|adjunto|adjunt[eé])\\s+(?:el|mi|un|otro)\\s+comprobante'),
+  frase('(?:lleg[oó]|acredit[oó]|se\\s+acredit[oó]|figura|aparece)[^.?!]{0,30}?(?:pago|se[ñn]a|transferencia|plata|dinero)'),
+  frase('(?:pago|se[ñn]a|transferencia)[^.?!]{0,30}?(?:lleg[oó]|acreditad[oa]|se\\s+acredit[oó]|figura|aparece)'),
+]
+const PAGO_REALIZADO = (text: string): boolean => PATRONES_PAGO_REALIZADO.some((patron) => patron.test(text))
+// Questions to Mercado Pago per conversation: spaced apart, and a few per hour. Asking again and
+// again changes nothing (the backend always reads the real state), it only costs calls.
+const VERIFICACIONES_POR_HORA = 6
+const ESPERA_ENTRE_VERIFICACIONES_MS = 15_000
+const VENTANA_VERIFICACIONES_MS = 60 * 60_000
+const ELECCION_VIGENTE_MS = 10 * 60_000
+// A payment link was sent in this conversation: a receipt right after is about it.
+const CONTEXTO_PAGO_VIGENTE_MS = 24 * 60 * 60_000
 const DISPONIBILIDAD_NO_CONSULTADA = 'No pude consultar la disponibilidad en este momento. Probá de nuevo en unos minutos.'
+// "¿Y cuánto sale?", "¿cuánto es el precio?", "precio": the price of what is being talked about.
+// Not "cuanto antes" (urgency).
+// "¿Cuánto pago?" asks a price too; paying ("quiero pagar la seña") is another flow.
+const PIDE_PRECIO = /\b(?:cu[aá]nto (?:sale|cuesta|cobra[ns]?|es|ser[ií]a|vale|saldr[ií]a|me sale|me saldr[ií]a|me cobra[ns]?|me cuesta|est[aá]|pago|tengo que pagar|hay que pagar|abono)|precios?|qu[eé] (?:precio|valor)|valor(?:es)?|tarifas?)\b/iu
+// Right after a price: "¿y con Melina?", "¿y con ella?", "¿y la otra?" are about the price too.
+const SIGUE_PRECIO = /^\s*¿?\s*y (?:con |la |el )?\S/iu
+// Accepting what the assistant proposed ("¿Querés esa?").
+const PATRON_ACEPTA = /^\s*(?:s[ií]+|sip|dale|ok(?:a|ey)?|okay|bueno|listo|perfecto|esa|ese|esa misma|ese mismo|la misma|el mismo|esa est[aá] bien|de una|joya|va|vamos|me sirve|sirve|reservala|reservalo|la que me (?:mostraste|propusiste|dijiste)(?: antes)?|el que me (?:mostraste|propusiste|dijiste)(?: antes)?|s[ií],? (?:esa|ese|esa misma|dale|por favor|reserv\w*|me sirve|perfecto))\s*[.!]*\s*$/iu
+// "no, mejor la segunda", "no, el martes": the proposal is dropped and the rest is read as usual.
+const NO_Y_ALGO_MAS = /^\s*no\b[\s,.!]+\S/iu
+// Short replies that are understood elsewhere (or are just courtesy).
+const RESPUESTA_COMUN = /^(?:s[ií]+|no|ok(?:a|ey)?|dale|bueno|listo|perfecto|genial|joya|gracias|grax|hola|buenas|chau|nada|ja+|je+|jaj\w*|uh|ah|eh|mmm+)$/iu
+// The form of a word nobody writes on purpose: no vowel ("ysk", "jsjs", "xd"), keyboard runs
+// ("asd", "qwe", "jkl", "asdf") or a key held down ("aaaa"). Real words, names and places
+// ("Rosa", "Santa Ana", "Ponce") never have it.
+const CORRIDAS_TECLADO = ['qwertyuiop', 'asdfghjklñ', 'zxcvbnm']
+function pareceTecleo(palabra: string): boolean {
+  if (palabra.length < 2) return false
+  if (!/[aeiouáéíóúü]/u.test(palabra)) return true
+  if (/(.)\1\1/u.test(palabra)) return true
+  if (palabra.length > 6) return false
+  // At least three letters in a row of the keyboard, in order ("asd", "sdf", "qwe").
+  for (let i = 0; i + 3 <= palabra.length; i += 1) if (CORRIDAS_TECLADO.some((fila) => fila.includes(palabra.slice(i, i + 3)))) return true
+  return false
+}
+
+// Nothing in the message can be read. Only after every reading failed (service, professional,
+// zone, day, time, yes/no, a number or an ordinal, a price, another area of TUS) AND the words
+// have the form of a typing slip. A word that is simply unknown ("Barrio Ponce", "Santa Ana") is
+// left to the normal flow, where the model may still understand it.
+function ininteligible(text: string): boolean {
+  const limpio = text.toLowerCase().replace(/[^a-záéíóúñü0-9\s]/giu, ' ').replace(/\s+/gu, ' ').trim()
+  if (!limpio || limpio.length > 16 || /\d/u.test(limpio) || RESPUESTA_COMUN.test(limpio)) return false
+  const palabras = limpio.split(' ')
+  return palabras.length <= 2 && palabras.every((palabra) => palabra.length < 2 || pareceTecleo(palabra))
+}
+
+// What a search found: the result of the day it was found on (null: none in the days searched)
+// and the day it started from.
+interface BusquedaHecha {
+  resultado: DisponibilidadNecesidad
+  dia: string | null
+  desde: string
+}
+
+// Only the professional the person chose, with the outcome recomputed for her.
+function soloProfesional(resultado: DisponibilidadNecesidad, providerId: string): DisponibilidadNecesidad {
+  const providers = resultado.providers.filter((item) => item.providerId === providerId)
+  const outcome: DisponibilidadNecesidad['outcome'] =
+    providers.length === 0 ? 'no_providers' : providers.some((item) => item.matches.length > 0) ? 'matches' : providers.some((item) => item.nearby.length > 0) ? 'nearby' : providers.some((item) => item.takesAppointments) ? 'no_availability' : 'no_appointments'
+  return { ...resultado, outcome, providers }
+}
+
+// The earliest real start that fits, among every professional of the result (after `despues`).
+function primerInicio(resultado: DisponibilidadNecesidad, despues: string | null = null): { providerId: string; name: string; start: string } | null {
+  let mejor: { providerId: string; name: string; start: string } | null = null
+  for (const item of resultado.providers)
+    for (const start of item.matches) if ((!despues || start > despues) && (!mejor || start < mejor.start)) mejor = { providerId: item.providerId, name: item.name, start }
+  return mejor
+}
+
+const sumarDiasA = (dia: string, dias: number): string => {
+  let resultado = dia
+  for (let i = 0; i < dias; i += 1) resultado = diaSiguiente(resultado)
+  return resultado
+}
 
 type TurnoCargado = Omit<Turno, 'canal'>
 
@@ -333,9 +497,10 @@ export class OrquestadorConversacion {
 
   private async textoDelTurno(
     turn: Turno
-  ): Promise<{ text: string; replyId: string | null; notices: string[] }> {
+  ): Promise<{ text: string; replyId: string | null; notices: string[]; comprobantes: ComprobanteRecibido[] }> {
     const parts: string[] = []
     const notices: string[] = []
+    const comprobantes: ComprobanteRecibido[] = []
     let replyId: string | null = null
     for (const message of turn.pending) {
       if (message.type === 'text' && message.text) parts.push(message.text)
@@ -346,44 +511,72 @@ export class OrquestadorConversacion {
         replyId = (message.metadata['replyId'] as string | undefined) ?? replyId
         if (message.text) parts.push(message.text)
       } else if (message.type === 'audio') {
-        const transcript = await this.transcribir(message)
-        if (transcript) parts.push(transcript)
-        else notices.push(MENSAJES.audioUnsupported)
-      } else if (message.type === 'image') {
-        // Images are kept for the team and never sent to the model automatically (privacy).
+        // A voice note becomes TEXT here and goes through exactly the same conversation as typed text.
+        const resultado = await this.transcribir(message)
+        if ('texto' in resultado) parts.push(resultado.texto)
+        else notices.push(resultado.fallo === 'disabled' ? MENSAJES.audioUnsupported : MENSAJES.audioNotUnderstood)
+      } else if (message.type === 'image' || message.type === 'document') {
+        // A picture or a document is only ever a HINT of a payment: it is not downloaded, read or
+        // shown to the model (privacy), and nothing in it is evidence of money. Its caption is text.
         if (message.text) parts.push(message.text)
-        else notices.push(MENSAJES.imageReceived)
+        comprobantes.push({ type: message.type, hasCaption: Boolean(message.text) })
       } else if (message.type === 'location') {
         notices.push(MENSAJES.locationReceived)
         parts.push('[El usuario compartió una ubicación aproximada]')
       } else notices.push(MENSAJES.unsupported)
     }
-    return { text: parts.join('\n').slice(0, 2000), replyId, notices: [...new Set(notices)] }
+    return { text: parts.join('\n').slice(0, 2000), replyId, notices: [...new Set(notices)], comprobantes }
   }
 
-  private async transcribir(message: MensajeConversacion): Promise<string | null> {
+  // Voice note -> text. Nothing the sender declares is trusted: the real bytes are checked (format,
+  // size, duration) before the STT provider sees them, the audio only lives in memory and is never
+  // stored, and a failure never invents words: the person is asked to repeat or to write.
+  private async transcribir(message: MensajeConversacion): Promise<{ texto: string } | { fallo: 'disabled' | 'failed' }> {
+    // The same WhatsApp message is never transcribed twice (a retried turn reuses its transcript).
+    if (message.metadata['transcribed'] === true && message.text) return { texto: message.text }
+    if (!this.deps.transcriptor) return { fallo: 'disabled' }
     const media = message.metadata['media'] as { id?: string } | undefined
-    if (!this.deps.transcriptor || !media?.id) return null
-    try {
-      const audio = await this.deps.whatsapp.downloadMedia(media.id, {
-        maxBytes: 16 * 1024 * 1024,
-        allowedMimeTypes: ['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/amr'],
-      })
-      const transcript = (await this.deps.transcriptor.transcribir(audio)).trim()
-      if (!transcript) return null
-      await this.deps.transaction.ejecutar(async (repositories) => {
-        const current = await repositories.mensajes.buscar(message.messageId)
-        if (current)
-          await repositories.mensajes.actualizar({
-            ...current,
-            text: transcript,
-            metadata: { ...current.metadata, transcribed: true },
-          })
-      })
-      return transcript
-    } catch {
-      return null
+    const limites: LimitesAudio = { ...LIMITES_AUDIO_POR_DEFECTO, ...this.deps.audio }
+    const inicio = this.now()
+    const fallar = async (reason: string): Promise<{ fallo: 'failed' }> => {
+      this.metric('assistant.audio_failed', { reason })
+      await this.actualizarMensaje(message.messageId, (current) => ({ ...current, metadata: { ...current.metadata, stt: { status: 'failed', reason } } }))
+      return { fallo: 'failed' }
     }
+    if (!media?.id) return fallar('NO_MEDIA')
+    try {
+      const descargado = await this.deps.whatsapp.downloadMedia(media.id, {
+        maxBytes: limites.maxBytes,
+        allowedMimeTypes: ['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/amr', 'audio/x-m4a', 'audio/webm', 'audio/wav', 'audio/flac'],
+      })
+      const audio = validarAudio(descargado.bytes, descargado.mimeType, limites)
+      const transcriptor = this.deps.transcriptor
+      const pedido = { bytes: audio.bytes, mimeType: audio.mimeType }
+      const salida = await conLimiteDeTiempo(
+        transcriptor.transcribirDetallado ? transcriptor.transcribirDetallado(pedido) : transcriptor.transcribir(pedido).then((text): ResultadoTranscripcion => ({ text, confianza: 'desconocida' })),
+        limites.timeoutMs + 1_000
+      )
+      const resultado: ResultadoTranscripcion = { ...salida, text: salida.text.trim() }
+      if (resultado.text.length < 2) return await fallar('EMPTY_TRANSCRIPT')
+      // Only when the provider reports how sure it is (never an invented confidence).
+      if (resultado.confianza === 'sin_voz' || resultado.confianza === 'baja') return await fallar(`LOW_CONFIDENCE_${resultado.confianza}`)
+      await this.actualizarMensaje(message.messageId, (current) => ({
+        ...current,
+        text: resultado.text,
+        metadata: { ...current.metadata, transcribed: true, stt: { status: 'ok', confidence: resultado.confianza, bytes: audio.bytes.length, ...(audio.durationSeconds !== null ? { seconds: Math.round(audio.durationSeconds) } : {}) } },
+      }))
+      this.metric('assistant.audio_transcribed', { ms: this.now() - inicio, bytes: audio.bytes.length, confidence: resultado.confianza })
+      return { texto: resultado.text }
+    } catch (error) {
+      return fallar(error instanceof ErrorAudio ? error.code : error instanceof ErrorMetaWhatsapp ? 'DOWNLOAD_FAILED' : 'STT_UNAVAILABLE')
+    }
+  }
+
+  private async actualizarMensaje(messageId: string, cambio: (current: MensajeConversacion) => MensajeConversacion): Promise<void> {
+    await this.deps.transaction.ejecutar(async (repositories) => {
+      const current = await repositories.mensajes.buscar(messageId)
+      if (current) await repositories.mensajes.actualizar(cambio(current))
+    })
   }
 
   private async actor(turn: Turno, correlationId: string): Promise<ActorAsistente> {
@@ -413,10 +606,18 @@ export class OrquestadorConversacion {
   private async decidir(
     turn: Turno,
     actor: ActorAsistente,
-    input: { text: string; replyId: string | null; notices: string[] },
+    input: { text: string; replyId: string | null; notices: string[]; comprobantes: ComprobanteRecibido[] },
     correlationId: string
   ): Promise<MensajeSaliente[]> {
     const text = input.text
+    // "Ya pagué" and receipts: the BACKEND asks Mercado Pago and words what it found. Neither the
+    // sentence, nor a voice note, nor a picture can confirm anything (see verificacionDePago).
+    const pago = await this.verificacionDePago(turn, actor, input, correlationId)
+    if (pago) return pago
+    // A picture or document that is not a payment receipt keeps its old answers.
+    for (const comprobante of input.comprobantes)
+      if (!comprobante.hasCaption) input.notices.push(comprobante.type === 'image' ? MENSAJES.imageReceived : MENSAJES.unsupported)
+    input.notices = [...new Set(input.notices)]
     if (!text) return input.notices.map((notice) => ({ type: 'text', text: notice }))
 
     // Fixed answers only for commands the model must never own: there is no human operator to
@@ -464,50 +665,175 @@ export class OrquestadorConversacion {
 
   // null: the message is not (only) about finding a service, or the model should phrase the one
   // question that is missing; the normal flow goes on with turn.busqueda set when it is a search.
+  //
+  // Every message is read against the STATE of the conversation (what was asked, listed and
+  // proposed so far): a short message ("la otra", "cualquiera", "lo antes posible", "¿y cuánto
+  // sale?", "sí") changes only what it says and the backend acts on it. Nothing here invents a
+  // turno: every option comes from a real availability search.
   private async turnoDeBusqueda(turn: Turno, actor: ActorAsistente, text: string, correlationId: string): Promise<MensajeSaliente[] | null> {
     const state = turn.conversation.state
-    const datos = extraerNecesidad(text, this.now())
+    const conversationId = turn.conversation.conversationId
+    const ahora = this.now()
+    const datos = extraerNecesidad(text, ahora)
+    // What was said half an hour ago (or for a day that already passed) is another conversation.
+    const vigente = state.need && ahora - (state.needAt ?? 0) <= NECESIDAD_VIGENTE_MS && (!state.need.day || state.need.day >= hoyArgentina(ahora)) ? combinarNecesidad(state.need, {}) : null
+    const marcar = (intencion: IntencionAsistente) => {
+      turn.intencion = intencion
+      turn.canal.evento?.({ type: 'routing', intent: intencion })
+    }
 
-    // Choosing one of the professionals already shown ("el segundo", a name, a time).
-    const eleccion = elegirOferta(text, datos, state.offers)
+    // 1. Something concrete was proposed ("¿Querés esa?", "¿Querés que busque...?"): "sí" takes
+    //    it, "no" drops it. "Sí, pero el martes" says more: it is read as a change below.
+    const sugerencia = state.suggestion && ahora - state.suggestion.at <= SOLICITUD_VIGENTE_MS ? state.suggestion : null
+    // "No, mejor la segunda" / "no, el martes": the proposal is dropped; the rest of the message
+    // is read below against the same need (nothing else is lost).
+    if (sugerencia && NO_Y_ALGO_MAS.test(text)) await this.actualizarEstado(conversationId, { suggestion: null })
+    else if (sugerencia && !mencionaAlgo(datos)) {
+      const acepta = PATRON_ACEPTA.test(text)
+      const rechaza = !acepta && respuestaConfirmacion(text, null)?.decision === 'no'
+      if (acepta || rechaza) {
+        await this.actualizarEstado(conversationId, { suggestion: null, lowConfidenceCount: 0 })
+        if (rechaza) {
+          marcar('buscar')
+          return [{ type: 'text', text: 'Dale. ¿Preferís otro día, otro horario u otra profesional?' }]
+        }
+        if (sugerencia.kind === 'offer') {
+          marcar('reserva')
+          const item = { providerId: sugerencia.providerId, name: sugerencia.name, starts: [sugerencia.start] }
+          return (await this.reservarEleccion(turn, actor, { item, starts: [sugerencia.start] }, sugerencia.profession, correlationId, text)) ?? [{ type: 'text', text: MENSAJES.aiUnavailable }]
+        }
+        if (vigente?.profession) {
+          // 'search': the same need, searched again as it is.
+          if (sugerencia.kind === 'search') return this.buscarConEstado(turn, actor, vigente, text, correlationId)
+          const desde = sugerencia.kind === 'next_days' && vigente.day ? diaSiguiente(vigente.day) : null
+          const need = combinarNecesidad(vigente, { asap: true, ...(sugerencia.kind === 'first_any' ? { anyProvider: true } : {}), ...(desde ? { day: desde, dayTo: null } : {}) })
+          return this.buscarConEstado(turn, actor, need, text, correlationId)
+        }
+      }
+    }
+
+    // 2. "¿Y cuánto sale?": the real price of the service being talked about, never another flow.
+    const enTema = vigente?.profession ?? state.booking?.profession ?? state.offers?.profession ?? null
+    const sigueConPrecio = Boolean(state.priceAt && ahora - state.priceAt <= SOLICITUD_VIGENTE_MS && SIGUE_PRECIO.test(text))
+    if ((PIDE_PRECIO.test(text) || sigueConPrecio) && enTema && (!datos.profession || datos.profession === enTema)) {
+      const precios = await this.responderPrecio(turn, enTema, text)
+      if (precios) {
+        marcar('buscar')
+        await this.actualizarEstado(conversationId, { lowConfidenceCount: 0, priceAt: ahora })
+        return precios
+      }
+    }
+
+    // 3. "la otra", "no esa, la otra": another professional of the list that was shown.
+    const lista = state.shown && state.shown.items.length > 0 ? state.shown : null
+    if (lista && PIDE_OTRA.test(text) && !datos.profession) {
+      const resto = lista.items.filter((item) => item.providerId !== state.chosenProviderId)
+      marcar('reserva')
+      if (state.chosenProviderId && resto.length === 1) {
+        const otra = resto[0]!
+        const eleccionOtra = elegirOferta(otra.name, datos, { profession: lista.profession, items: [otra] })
+        if (eleccionOtra) return (await this.reservarEleccion(turn, actor, eleccionOtra, lista.profession, correlationId, text)) ?? [{ type: 'text', text: MENSAJES.aiUnavailable }]
+      }
+      // Several are left: which one, numbered as they were shown.
+      await this.actualizarEstado(conversationId, { offers: { profession: lista.profession, items: lista.items }, lowConfidenceCount: 0 })
+      return [{ type: 'text', text: `¿Con cuál? ${lista.items.map((item, indice) => (item.providerId === state.chosenProviderId ? null : `${indice + 1}. ${item.name}`)).filter(Boolean).join(' · ')}` }]
+    }
+
+    if (!lista && PIDE_OTRA.test(text) && !datos.profession) {
+      marcar('buscar')
+      return [{ type: 'text', text: enTema ? `Todavía no te mostré profesionales de ${oficio(enTema).label} para elegir otra. ¿Para cuándo lo necesitás?` : '¿La otra de cuál? Contame qué servicio buscás y te muestro profesionales.' }]
+    }
+
+    // A name that fits SEVERAL professionals listed ("Melina" with "Melina Martínez" too, or a
+    // typo one letter away from two of them): asked, never guessed.
+    const listados = state.offers?.items.length ? state.offers.items : (lista?.items ?? [])
+    const varias = !datos.anyProvider && !datos.profession && listados.length > 1 ? profesionalesNombrados(text, listados) : []
+    if (varias.length > 1) {
+      marcar('reserva')
+      await this.actualizarEstado(conversationId, { offers: { profession: (state.offers?.items.length ? state.offers.profession : lista?.profession) ?? enTema ?? '', items: listados }, lowConfidenceCount: 0 })
+      return [{ type: 'text', text: `¿Con cuál? ${listados.map((item, indice) => (varias.includes(item) ? `${indice + 1}. ${item.name}${item.area ? ` (${item.area})` : ''}` : null)).filter(Boolean).join(' · ')}` }]
+    }
+
+    // 4. Choosing one of the professionals shown ("el segundo", a name, a time, "Melina ya mismo").
+    //    Named for ANOTHER day than the one listed ("quiero a Melina mañana"): her own search (5).
+    const elegida = elegirOferta(text, datos, state.offers)
+    const eleccion = elegida && elegida.starts.length === 0 && (datos.day || datos.asap) ? null : elegida
+    // "Melina" and then "mejor a la tarde" (a window, not one of her exact times) when she has
+    // nothing then: the time asked is kept in
+    // the need (it is a change of mind, never dropped) and the person decides between her real
+    // times or searching who has that time ("sí" searches it).
+    if (eleccion && eleccion.starts.length === 0 && eleccion.item.starts.length > 0 && datos.time && datos.time.kind !== 'exact' && vigente?.profession) {
+      const need = combinarNecesidad(vigente, { time: datos.time })
+      marcar('reserva')
+      await this.actualizarEstado(conversationId, { need, needAt: ahora, chosenProviderId: eleccion.item.providerId, suggestion: { kind: 'search', at: ahora }, pendingConfirmationId: null, lowConfidenceCount: 0 })
+      const ventana = describirVentana(datos.time)
+      const cuando = need.day ? ` ${describirDia(need.day, need.dayTo, ahora)}` : ''
+      return [{ type: 'text', text: `${eleccion.item.name} no tiene turnos ${ventana}${cuando}. Tiene: ${eleccion.item.starts.slice(0, 6).map(horaLocal).join(', ')}. ¿Querés alguno de esos o busco quién tiene ${ventana}?` }]
+    }
     if (eleccion) {
       const reply = await this.reservarEleccion(turn, actor, eleccion, state.offers!.profession, correlationId, text)
       if (reply) {
-        turn.intencion = 'reserva'
-        turn.canal.evento?.({ type: 'routing', intent: 'reserva' })
+        marcar('reserva')
         return reply
       }
     }
 
+    // 5. A professional of the last search named together with WHEN ("Melina ya mismo", "quiero
+    //    a Melina mañana", "lo antes posible con Melina"): her real availability is searched.
+    const candidatos = lista?.items ?? state.draft?.candidates ?? []
+    const nombrado = !datos.anyProvider && !datos.profession && candidatos.length > 0 ? profesionalNombrado(text, candidatos) : null
+    if (nombrado && vigente?.profession && (datos.asap || datos.day || datos.time)) {
+      datos.providerId = nombrado.providerId
+      datos.providerName = nombrado.name
+    }
     // Choosing one of the providers listed without turnos ("con el segundo", "con Beto") is not a
     // new search: the booking / request tools take it from here.
-    const candidatos = state.draft?.candidates ?? []
-    if (!datos.profession && candidatos.length > 0 && elegirOferta(text, {}, { profession: '', items: candidatos.map((candidato) => ({ ...candidato, starts: [] })) })) return null
+    if (!datos.profession && !datos.providerId && candidatos.length > 0 && elegirOferta(text, { anyProvider: datos.anyProvider }, { profession: '', items: candidatos.map((candidato) => ({ ...candidato, starts: [] })) })) return null
 
-    // What was said half an hour ago (or for a day that already passed) is another conversation.
-    const vigente = state.need && this.now() - (state.needAt ?? 0) <= NECESIDAD_VIGENTE_MS && (!state.need.day || state.need.day >= hoyArgentina(this.now())) ? state.need : null
     const enCurso = Boolean(vigente) || state.currentIntent === 'buscar' || state.currentIntent === 'reserva'
     const detectada = detectarIntencion(text)
     // "mis trabajos de plomería", "¿cómo pago mañana?": another area of TUS, not a search.
     const otraArea = intencionPrivada(detectada) || detectada === 'conocimiento'
     const nombraOficio = Boolean(datos.profession || datos.alternatives?.length)
-    const sigueBusqueda = enCurso && Boolean(datos.day || datos.time || datos.zone || datos.anyZone || datos.clientTravels)
+    const cambiaAlgo = Boolean(datos.day || datos.time || datos.zone || datos.anyZone || datos.clientTravels || datos.asap || datos.anyProvider || datos.providerId)
+    const sigueBusqueda = enCurso && cambiaAlgo
     // "mañana a las 18" as a first message: a day or a time for something still to be said.
-    const soloCuando = !enCurso && Boolean(datos.day || datos.time) && (detectada === 'reserva' || detectada === 'otro' || detectada === 'buscar')
+    const soloCuando = !enCurso && Boolean(datos.day || datos.time || datos.asap) && (detectada === 'reserva' || detectada === 'otro' || detectada === 'buscar')
     const esBusqueda = (nombraOficio && (PIDE_SERVICIO.test(text) || !otraArea)) || ((sigueBusqueda || soloCuando) && !otraArea)
     // Waiting for the time of one professional and the message tries to say one that cannot be
     // read ("9 y 70", "25"): its real times again. Decided here, never by the model.
     const pendiente = esperaHoraDe(state)
     if (pendiente && !esBusqueda && !otraArea && pareceHora(text)) {
-      turn.intencion = 'reserva'
-      turn.canal.evento?.({ type: 'routing', intent: 'reserva' })
-      await this.actualizarEstado(turn.conversation.conversationId, { lowConfidenceCount: 0 })
+      marcar('reserva')
+      await this.actualizarEstado(conversationId, { lowConfidenceCount: 0 })
       return [{ type: 'text', text: preguntaHora(pendiente) }]
+    }
+    // 6. A search is going on and the message says nothing that can be read ("Ysk"): a short
+    //    question built from what is known, never the last question again.
+    const leible = mencionaAlgo(datos) || PIDE_PRECIO.test(text) || PIDE_OTRA.test(text) || respuestaConfirmacion(text, null) !== null || horasPosibles(text).length > 0 || candidatos.some((candidato) => profesionalesNombrados(text, [candidato]).length > 0) || detectada !== 'otro'
+    if (!esBusqueda && !otraArea && vigente?.profession && !leible && ininteligible(text)) {
+      marcar('buscar')
+      const label = oficio(vigente.profession).label
+      // What is known is offered back; never the last question again.
+      if (vigente.day || vigente.asap) {
+        const cuando = vigente.asap && !vigente.day ? 'lo antes posible' : [describirDia(vigente.day!, vigente.dayTo, ahora), describirVentana(vigente.time)].filter(Boolean).join(' ')
+        await this.actualizarEstado(conversationId, { suggestion: { kind: 'search', at: ahora }, pendingConfirmationId: null, lowConfidenceCount: 0 })
+        return [{ type: 'text', text: `No llegué a entender ese mensaje 😅. Si querés, sigo buscando turnos de ${label} ${cuando}${vigente.providerName ? ` con ${vigente.providerName}` : vigente.anyProvider ? ' con cualquier profesional' : ''}.` }]
+      }
+      await this.actualizarEstado(conversationId, { suggestion: { kind: 'first_any', at: ahora }, pendingConfirmationId: null, lowConfidenceCount: 0 })
+      return [{ type: 'text', text: `No llegué a entender ese mensaje 😅. ¿Querés que busque el primer turno libre de ${label} con cualquier profesional?` }]
     }
     if (!esBusqueda) return null
 
     const previa = vigente ?? (state.draft?.profession ? combinarNecesidad(null, { profession: state.draft.profession, ...(state.draft.zone ? { zone: state.draft.zone } : {}) }) : null)
     const need = combinarNecesidad(previa, datos)
+    // "No, mejor el martes": a new day replaces the professional chosen for the old one only if
+    // she is not named again; the preference itself ("cualquiera") is kept.
+    return this.buscarConEstado(turn, actor, need, text, correlationId, previa)
+  }
+
+  // Stores the need (only what changed was merged) and searches when nothing is missing.
+  private async buscarConEstado(turn: Turno, actor: ActorAsistente, need: NecesidadTurno, text: string, correlationId: string, previa: NecesidadTurno | null = turn.conversation.state.need ?? null): Promise<MensajeSaliente[] | null> {
     // A new need replaces what was being shown for the previous one.
     const cambio = previa?.profession !== need.profession
     await this.actualizarEstado(turn.conversation.conversationId, {
@@ -515,9 +841,10 @@ export class OrquestadorConversacion {
       needAt: this.now(),
       currentIntent: 'buscar',
       lowConfidenceCount: 0,
+      suggestion: null,
       // A search is something else than the turno that was being requested.
       booking: null,
-      ...(cambio ? { offers: null, slots: null, draft: { listingId: null, urgency: null, problem: null, profession: need.profession, zone: need.zone } } : {}),
+      ...(cambio ? { offers: null, slots: null, shown: null, chosenProviderId: null, draft: { listingId: null, urgency: null, problem: null, profession: need.profession, zone: need.zone } } : {}),
     })
     turn.busqueda = { need }
 
@@ -534,47 +861,166 @@ export class OrquestadorConversacion {
     return [{ type: 'text', text: preguntaFaltante(need) }]
   }
 
-  private async consultarDisponibilidad(turn: Turno, need: NecesidadTurno, correlationId: string): Promise<DisponibilidadNecesidad | null> {
+  // The REAL availability for a need. A day: that day (or two). "Lo antes posible": from the day
+  // known (today, from the current time, when there is none) forward, one day at a time, until a
+  // day has a free turno that fits the hours asked; at most DIAS_BUSQUEDA_PRIMERA days. A chosen
+  // professional limits the result to her. Every day is one call to the same backend search.
+  private async consultarDisponibilidad(turn: Turno, need: NecesidadTurno, correlationId: string): Promise<BusquedaHecha | null> {
     turn.canal.evento?.({ type: 'tool', tool: 'find_appointments', phase: 'start' })
     const started = this.now()
-    let resultado: DisponibilidadNecesidad | null = null
-    try {
-      let timer: NodeJS.Timeout | undefined
-      resultado = await Promise.race([
-        this.deps.domain.buscarDisponibilidad({ profession: need.profession!, day: need.day!, dayTo: need.dayTo, time: need.time, zone: need.zone }).finally(() => clearTimeout(timer)),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(Object.assign(new Error('tool timeout'), { code: 'TOOL_TIMEOUT' })), this.limits.toolTimeoutMs * 2)
-        }),
-      ])
-    } catch {
-      resultado = null
+    const hoy = hoyArgentina(started)
+    const desde = need.day && need.day > hoy ? need.day : hoy
+    const consultar = async (day: string, dayTo: string | null, time: NecesidadTurno['time']): Promise<DisponibilidadNecesidad | null> => {
+      try {
+        let timer: NodeJS.Timeout | undefined
+        const resultado = await Promise.race([
+          this.deps.domain.buscarDisponibilidad({ profession: need.profession!, day, dayTo, time: limitesVentana(time), zone: need.zone }).finally(() => clearTimeout(timer)),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(Object.assign(new Error('tool timeout'), { code: 'TOOL_TIMEOUT' })), this.limits.toolTimeoutMs * 2)
+          }),
+        ])
+        return need.providerId ? soloProfesional(resultado, need.providerId) : resultado
+      } catch {
+        return null
+      }
     }
-    this.metric('whatsapp.tool_call', { tool: 'find_appointments', ms: this.now() - started, ok: resultado !== null })
-    turn.canal.evento?.({ type: 'tool', tool: 'find_appointments', phase: 'end', ok: resultado !== null })
+    let busqueda: BusquedaHecha | null = null
+    if (!need.asap) {
+      const resultado = await consultar(need.day!, need.dayTo, need.time)
+      busqueda = resultado ? { resultado, dia: need.day!, desde: need.day! } : null
+    } else {
+      let ultimo: DisponibilidadNecesidad | null = null
+      for (let salto = 0; salto < DIAS_BUSQUEDA_PRIMERA; salto += 1) {
+        const dia = salto === 0 ? desde : sumarDiasA(desde, salto)
+        // Today only what is still ahead of the current time.
+        const ventana = dia === hoy ? ventanaDesde(need.time, horaArgentina(started)) : need.time
+        if (ventana === 'pasada') continue
+        const resultado = await consultar(dia, null, ventana)
+        if (!resultado) {
+          ultimo = null
+          break
+        }
+        ultimo = resultado
+        if (resultado.outcome === 'no_providers' || resultado.outcome === 'no_appointments') {
+          busqueda = { resultado, dia, desde }
+          break
+        }
+        if (resultado.providers.some((item) => item.matches.length > 0)) {
+          // Only what fits: "nearby" starts of other hours are not the first turno asked for.
+          busqueda = { resultado: { ...resultado, outcome: 'matches', providers: resultado.providers.map((item) => ({ ...item, nearby: [] })) }, dia, desde }
+          break
+        }
+      }
+      if (!busqueda && ultimo) busqueda = { resultado: { ...ultimo, outcome: 'no_availability', providers: ultimo.providers.map((item) => ({ ...item, matches: [], nearby: [] })) }, dia: null, desde }
+    }
+    this.metric('whatsapp.tool_call', { tool: 'find_appointments', ms: this.now() - started, ok: busqueda !== null })
+    turn.canal.evento?.({ type: 'tool', tool: 'find_appointments', phase: 'end', ok: busqueda !== null })
     await this.registrarUsoHerramientas(turn, ['find_appointments'], [], correlationId)
-    if (!resultado) return null
+    if (!busqueda) return null
+    const ofertas = ofertasDeResultado(busqueda.resultado)
     await this.actualizarEstado(turn.conversation.conversationId, {
       need,
       needAt: this.now(),
       currentIntent: 'buscar',
       lowConfidenceCount: 0,
-      offers: ofertasDeResultado(resultado),
+      offers: ofertas,
+      shown: { profession: ofertas.profession, items: ofertas.items },
+      chosenProviderId: null,
       slots: null,
-      draft: { listingId: null, urgency: null, problem: turn.conversation.state.draft?.problem ?? null, profession: need.profession, zone: need.zone, candidates: resultado.providers.map(({ providerId, name }) => ({ providerId, name })) },
+      draft: { listingId: null, urgency: null, problem: turn.conversation.state.draft?.problem ?? null, profession: need.profession, zone: need.zone, candidates: busqueda.resultado.providers.map(({ providerId, name }) => ({ providerId, name })) },
     })
-    return resultado
+    return busqueda
   }
 
-  private async buscarYResponder(turn: Turno, actor: ActorAsistente, need: NecesidadTurno, text: string, correlationId: string): Promise<MensajeSaliente[]> {
-    const resultado = await this.consultarDisponibilidad(turn, need, correlationId)
-    if (!resultado) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
-    const fijo = textoDisponibilidad(need, resultado, this.now())
+  private async buscarYResponder(turn: Turno, actor: ActorAsistente, needPedida: NecesidadTurno, text: string, correlationId: string): Promise<MensajeSaliente[]> {
+    let need = needPedida
+    let busqueda = await this.consultarDisponibilidad(turn, need, correlationId)
+    if (!busqueda) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
+    const conversationId = turn.conversation.conversationId
+    // "Quiero una masajista con Melina mañana": a professional named in the same message that
+    // asked for the service is resolved against the professionals the backend really returned.
+    if (!need.providerId && !need.anyProvider) {
+      const nombradas = profesionalesNombrados(text, busqueda.resultado.providers)
+      if (nombradas.length > 1) {
+        const items = busqueda.resultado.providers.filter((item) => nombradas.includes(item))
+        return [{ type: 'text', text: `¿Con cuál? ${items.map((item) => `${item.name} (${item.area})`).join(' · ')}` }]
+      }
+      if (nombradas.length === 1) {
+        need = combinarNecesidad(need, { providerId: nombradas[0]!.providerId, providerName: nombradas[0]!.name })
+        const suyo = soloProfesional(busqueda.resultado, nombradas[0]!.providerId)
+        // "Lo antes posible con Sabrina": the first day anyone was free is not hers; her own
+        // first free turno is searched again, day by day, only in her agenda.
+        if (need.asap && !suyo.providers.some((item) => item.matches.length > 0)) {
+          const propia = await this.consultarDisponibilidad(turn, need, correlationId)
+          if (!propia) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
+          busqueda = propia
+        } else busqueda = { ...busqueda, resultado: suyo }
+        await this.actualizarEstado(conversationId, { need, offers: ofertasDeResultado(busqueda.resultado), chosenProviderId: nombradas[0]!.providerId })
+      }
+    }
+    const { resultado, dia, desde } = busqueda
+
+    // Anyone, or one professional chosen, with a real free turno: ONE concrete option, the first
+    // start that fits. The person accepts it with "sí"; nothing is requested before that.
+    const primera = (need.anyProvider || (need.providerId && need.asap)) && resultado.outcome === 'matches' ? primerInicio(resultado) : null
+    if (primera) {
+      await this.actualizarEstado(conversationId, {
+        suggestion: { kind: 'offer', profession: resultado.profession, providerId: primera.providerId, name: primera.name, start: primera.start, at: this.now() },
+        pendingConfirmationId: null,
+      })
+      return [{ type: 'text', text: textoPropuesta({ name: primera.name, start: primera.start, desde, ahora: this.now(), time: need.time }) }]
+    }
+    // One professional for a given day: her real times (one: the request card; several: which).
+    const suya = need.providerId && !need.asap && resultado.outcome === 'matches' ? resultado.providers.find((item) => item.providerId === need.providerId) : null
+    if (suya) {
+      const item = { providerId: suya.providerId, name: suya.name, starts: suya.matches }
+      const reply = await this.reservarEleccion(turn, actor, { item, starts: suya.matches }, resultado.profession, correlationId, text)
+      if (reply) return reply
+    }
+    if (need.providerId && resultado.outcome !== 'matches') {
+      const nombre = need.providerName ?? 'esa profesional'
+      return [{ type: 'text', text: `No encontré turnos libres con ${nombre}${need.asap ? ` en los próximos ${DIAS_BUSQUEDA_PRIMERA} días` : ` ${describirDia(dia ?? desde, need.dayTo, this.now())}`}. ¿Querés que busque con otra profesional?` }]
+    }
+
+    const efectiva: NecesidadTurno = need.asap && dia ? { ...need, day: dia, dayTo: null } : need
+    const fijo = need.asap ? textoPrimeraDisponibilidad(need, resultado, dia ?? desde, desde, this.now()) : textoDisponibilidad(need, resultado, this.now())
+    // Nothing that day: "sí" (or "el día más próximo") looks at the following days.
+    if (!need.asap && resultado.outcome === 'no_availability') await this.actualizarEstado(conversationId, { suggestion: { kind: 'next_days', at: this.now() }, pendingConfirmationId: null })
     const attachment = turn.canal.conversacional ? adjuntoDisponibilidad(resultado) : null
     // Text-only channel (or no model): the reply is rendered from the result, so nothing can be
     // embellished. Conversational channel: the model writes it from the same result; the data
     // itself travels in the cards built here.
-    const redactado = turn.canal.conversacional ? await this.redactarResultado(turn, actor, need, resultado, text) : null
+    const redactado = turn.canal.conversacional ? await this.redactarResultado(turn, actor, efectiva, resultado, text) : null
     return [{ type: 'text', text: redactado ?? fijo, ...(attachment ? { attachment } : {}) }]
+  }
+
+  // The real prices of the service being talked about: the professional of the turno being
+  // requested, the one chosen, or the ones listed by the last search (at most five).
+  private async responderPrecio(turn: Turno, profession: string, text: string): Promise<MensajeSaliente[] | null> {
+    if (typeof this.deps.domain.servicioDeTurno !== 'function') return null
+    const state = turn.conversation.state
+    const todos = state.shown?.items.length ? state.shown.items : state.offers?.items.length ? state.offers.items : (state.draft?.candidates ?? [])
+    const sugerida = state.suggestion?.kind === 'offer' ? [{ providerId: state.suggestion.providerId, name: state.suggestion.name }] : null
+    const elegidaPorId = state.chosenProviderId ? todos.filter((item) => item.providerId === state.chosenProviderId).slice(0, 1) : []
+    const elegidaEnNecesidad = state.need?.providerId ? [{ providerId: state.need.providerId, name: state.need.providerName ?? '' }] : []
+    // "¿y con Melina?": that one; "con ella" / "con él": the one being talked about.
+    const nombrada = profesionalNombrado(text, todos)
+    const conElla = /\bcon (?:ella|[eé]l|esa|ese)\b/iu.test(text)
+    const elegida = nombrada
+      ? [nombrada]
+      : state.booking
+        ? [{ providerId: state.booking.providerId, name: state.booking.providerName }]
+        : sugerida ?? (elegidaPorId.length ? elegidaPorId : elegidaEnNecesidad.length ? elegidaEnNecesidad : state.offers?.esperaHora && state.offers.items.length === 1 ? state.offers.items : null)
+    if (conElla && !elegida) return [{ type: 'text', text: '¿Con cuál de los profesionales? Decime su nombre o su número.' }]
+    const listados = elegida ?? todos
+    if (listados.length === 0) return null
+    const precios = await Promise.all(
+      listados.slice(0, 5).map(async (item) => {
+        const servicio = await this.deps.domain.servicioDeTurno(item.providerId, profession).catch(() => null)
+        return { name: item.name, options: servicio ? servicio.options.map((opcion) => ({ name: opcion.name, price: opcion.price })) : [] }
+      })
+    )
+    return [{ type: 'text', text: textoPrecios(oficio(profession).label, precios) }]
   }
 
   // The model phrases a search result it did not produce. null: no model, or nothing usable.
@@ -605,24 +1051,51 @@ export class OrquestadorConversacion {
   }
 
   // The person chose a professional (and maybe a time) among the ones shown. One start left:
-  // the booking is prepared (bound confirmation). Several: only the time is asked. null: the
-  // choice cannot be resolved here and the normal flow handles the message.
+  // the booking is prepared (bound confirmation), after checking that start is still free.
+  // Several: only the time is asked. null: the choice cannot be resolved here and the normal
+  // flow handles the message.
   private async reservarEleccion(turn: Turno, actor: ActorAsistente, eleccion: NonNullable<ReturnType<typeof elegirOferta>>, profession: string, correlationId: string, mensaje = ''): Promise<MensajeSaliente[] | null> {
     const { item, starts } = eleccion
+    const conversationId = turn.conversation.conversationId
+    await this.actualizarEstado(conversationId, { chosenProviderId: item.providerId, suggestion: null })
     if (starts.length === 0) {
       if (item.starts.length === 0) return null
       return [{ type: 'text', text: `${item.name} no tiene turno a esa hora. Tiene: ${item.starts.slice(0, 6).map(horaLocal).join(', ')}. ¿Cuál preferís?` }]
     }
     if (starts.length > 1) {
       // From now on a time alone refers to this professional.
-      await this.actualizarEstado(turn.conversation.conversationId, { offers: { profession, items: [item], esperaHora: true }, currentIntent: 'reserva', booking: null })
+      await this.actualizarEstado(conversationId, { offers: { profession, items: [item], esperaHora: true }, currentIntent: 'reserva', booking: null })
       return [{ type: 'text', text: `¿A qué hora con ${item.name}? Tiene: ${starts.slice(0, 6).map(horaLocal).join(', ')}.` }]
     }
+    // The list may be old: the start is read again from the agenda before anything is prepared.
+    if (!(await this.sigueLibre(item.providerId, profession, starts[0]!))) return this.siguienteDe(turn, profession, item.providerId, item.name, starts[0]!, 'Quiero verificar nuevamente porque la disponibilidad cambió: ese horario ya no está libre.', correlationId)
     // The time was given: the conversation is no longer waiting for one.
-    if (turn.conversation.state.offers?.esperaHora) await this.actualizarEstado(turn.conversation.conversationId, { offers: { ...turn.conversation.state.offers, esperaHora: false } })
+    if (turn.conversation.state.offers?.esperaHora) await this.actualizarEstado(conversationId, { offers: { ...turn.conversation.state.offers, esperaHora: false } })
     // Professional and time are chosen: what is left is the service (if there are several), the
     // client and the confirmation.
     return this.continuarSolicitud(turn, actor, { providerId: item.providerId, providerName: item.name, profession, startsAt: starts[0]!, tariffId: null }, correlationId, { mensaje })
+  }
+
+  // Whether a start is still free in the agenda of that professional. Unknown (the agenda cannot
+  // be read here): true, the request itself is validated again by the backend when it is sent.
+  private async sigueLibre(providerId: string, profession: string, start: string): Promise<boolean> {
+    if (typeof this.deps.domain.turnosDisponibles !== 'function') return true
+    const agenda = await this.deps.domain.turnosDisponibles(providerId, profession, diaLocal(start)).catch(() => null)
+    if (!agenda || agenda.mensaje || agenda.slots.length === 0) return true
+    return agenda.slots.some((slot) => slot.disponible && slot.inicio === start)
+  }
+
+  // A start was taken meanwhile: the next real free turno of the same professional, proposed.
+  private async siguienteDe(turn: Turno, profession: string, providerId: string, name: string, start: string, motivo: string, correlationId: string): Promise<MensajeSaliente[]> {
+    const need = combinarNecesidad(null, { profession, day: diaLocal(start), time: { kind: 'from', from: horaLocal(start), to: null }, asap: true, providerId, providerName: name })
+    const busqueda = await this.consultarDisponibilidad(turn, need, correlationId)
+    const primera = busqueda && busqueda.resultado.outcome === 'matches' ? primerInicio(busqueda.resultado, start) : null
+    if (!primera) return [{ type: 'text', text: `${motivo} No encontré otro turno libre con ${name} en los próximos días. ¿Querés que busque con otra profesional?` }]
+    await this.actualizarEstado(turn.conversation.conversationId, {
+      suggestion: { kind: 'offer', profession, providerId: primera.providerId, name: primera.name, start: primera.start, at: this.now() },
+      pendingConfirmationId: null,
+    })
+    return [{ type: 'text', text: `${motivo} El siguiente turno libre con ${primera.name} es ${describirDia(diaLocal(primera.start), null, this.now())} a las ${horaLocal(primera.start)}. ¿Querés ese?` }]
   }
 
   // ---- requesting a turno: service, client, confirmation (TURNOS-SENA-01) ------------------------
@@ -836,6 +1309,212 @@ export class OrquestadorConversacion {
     })
   }
 
+  // ---- "ya pagué" and receipts: only the backend and Mercado Pago know whether money arrived ------
+  //
+  // Reaches here for: a sentence saying the deposit was paid ("ya pagué", "¿te llegó el pago?"),
+  // an image or document (a receipt), or the answers to the questions this flow asked. What
+  // happens is ALWAYS the same and none of it comes from the message: the client is the linked or
+  // identified account, the deposit is one of ITS OWN turnos, and the backend finance domain
+  // reads the payment from Mercado Pago by TUS's own payment reference and applies it through the
+  // same state machine as the webhook. The text, the audio or the picture are never read as
+  // evidence: a receipt cannot confirm anything, and nothing in it is downloaded or sent to a model.
+  private async verificacionDePago(
+    turn: Turno,
+    actor: ActorAsistente,
+    input: { text: string; comprobantes: ComprobanteRecibido[] },
+    correlationId: string
+  ): Promise<MensajeSaliente[] | null> {
+    const domain = this.deps.domain
+    if (typeof domain.verificarSena !== 'function' || (typeof domain.pagosVerificables !== 'function' && typeof domain.senasVerificables !== 'function')) return null
+    const state = turn.conversation.state
+    const conversationId = turn.conversation.conversationId
+    const ahora = this.now()
+    const text = input.text
+    const hayComprobante = input.comprobantes.length > 0
+    const dicePago = PAGO_REALIZADO(text)
+    const esperando = state.identityFor?.purpose === 'payment_check' && ahora - state.identityFor.at <= SOLICITUD_VIGENTE_MS
+    const eligiendo = state.paymentCheck?.choosing && ahora - state.paymentCheck.choosing.at <= ELECCION_VIGENTE_MS ? state.paymentCheck.choosing : null
+    const contextoPago = typeof state.paymentCheck?.contextAt === 'number' && ahora - state.paymentCheck.contextAt <= CONTEXTO_PAGO_VIGENTE_MS
+    if (!dicePago && !esperando && !eligiendo && !hayComprobante) return null
+    // A reply while waiting for the choice or the identity must not be taken for something else.
+    if (!dicePago && !hayComprobante && !esperando && eligiendo && PIDE_PAGAR_SENA(text)) return null
+
+    let cuenta = cuentaDeSolicitud(actor)
+    let encontrada = false
+    if (!cuenta) {
+      // An image alone from someone nobody knows: the old answer (a photo for the team).
+      if (!dicePago && !esperando && !(hayComprobante && contextoPago)) return null
+      if (turn.canal.id !== 'whatsapp' || !this.deps.identidades) return turn.canal.pedirCuenta('private', { returnTo: '/mis-turnos' })
+      if (!esperando) {
+        await this.actualizarEstado(conversationId, { identityFor: { purpose: 'payment_check', at: ahora }, lowConfidenceCount: 0 })
+        return [{ type: 'text', text: 'Para revisar tu pago necesito tu nombre completo y DNI.' }]
+      }
+      if (respuestaConfirmacion(text, null)?.decision === 'no') {
+        await this.actualizarEstado(conversationId, { identityFor: null })
+        return [{ type: 'text', text: MENSAJES.confirmationCancelled }]
+      }
+      const identidad = await this.identificar(turn, text, correlationId, '/mis-turnos')
+      if (identidad.estado === 'respuesta') return identidad.mensajes
+      cuenta = identidad.contexto
+      encontrada = true
+    }
+    if (state.identityFor?.purpose === 'payment_check') await this.actualizarEstado(conversationId, { identityFor: null, lowConfidenceCount: 0 })
+    const saludo: MensajeSaliente[] = encontrada ? [{ type: 'text', text: MENSAJES.identityFound }] : []
+    const responder = (texto: string): MensajeSaliente[] => [...saludo, { type: 'text', text: texto }]
+    turn.intencion = 'pago'
+    turn.canal.evento?.({ type: 'routing', intent: 'pago' })
+
+    // The payments of THIS client: the only ones a receipt can ever be matched with.
+    const pagos = await this.pagosDeLaCuenta(cuenta)
+    if (!pagos) return responder('No pude consultar tus pagos en este momento. Probá de nuevo en unos minutos.')
+    // A picture that is not about a payment (no words, no payment in progress): the old answer.
+    if (hayComprobante && !dicePago && !esperando && !eligiendo && !contextoPago && pagos.length === 0) return null
+    const pendientes = pagos.filter((pago) => pago.estado === 'pending')
+    const pagadas = pagos.filter((pago) => pago.estado === 'paid')
+
+    if (pendientes.length === 0) {
+      if (pagadas.length > 0) {
+        const pago = pagadas[0]!
+        const inicio = pago.startsAt ? new Date(pago.startsAt) : null
+        return responder(`Tu seña de ${dinero(pago.amountMinor)} con ${pago.providerName} para el ${fechaLarga(inicio!)} a las ${horaCorta(inicio!)} ya figura acreditada por Mercado Pago. No tenés pagos pendientes.`)
+      }
+      return responder(
+        hayComprobante
+          ? 'Recibí el comprobante, pero todavía no pude relacionarlo con un pago confirmado de Mercado Pago.'
+          : 'No encuentro pagos pendientes en tu cuenta. Si el pago es de otro trabajo, decime cuál y lo reviso.'
+      )
+    }
+
+    // Bookkeeping is accumulated here and written once per branch (never overwritten by a later write).
+    const pc = { ...(state.paymentCheck ?? { since: ahora, count: 0, lastAt: 0 }) }
+    const guardar = () => this.actualizarEstado(conversationId, { paymentCheck: pc })
+
+    // Which payment: the only one; the one the person answers with an ordinal; the one the evidence
+    // and the words point to without doubt; otherwise it is asked, never guessed.
+    let objetivo: PagoVerificableAsistente | null = pendientes.length === 1 ? pendientes[0]! : null
+    let analisisFallido = false
+    if (!objetivo) {
+      const candidatas = eligiendo ? pendientes.filter((pago) => eligiendo.refs.includes(pago.ref)) : pendientes
+      const universo = candidatas.length > 0 ? candidatas : pendientes
+      objetivo = (eligiendo ? ordinalDe(text, universo) : null) ?? null
+      if (!objetivo) {
+        let evidencia: EvidenciaComprobante | null = null
+        if (hayComprobante) {
+          const lectura = await this.evidenciaDeComprobantes(turn, pc, ahora)
+          evidencia = lectura.evidencia
+          analisisFallido = lectura.fallo
+        }
+        const pistas = { day: extraerNecesidad(text, ahora).day ?? null, words: sinAcentos(text) }
+        const resultado = correlacionarComprobante(evidencia, universo.map(aCandidato), pistas)
+        if (resultado.tipo === 'unica') objetivo = universo.find((pago) => pago.ref === resultado.candidato.ref) ?? null
+      }
+    }
+    if (!objetivo) {
+      const lista = pendientes.slice(0, 5).map((pago, indice) => `${indice + 1}) ${etiquetaDePago(pago)}`)
+      pc.choosing = { refs: pendientes.slice(0, 5).map((pago) => pago.ref), at: ahora }
+      await guardar()
+      const aviso = analisisFallido ? 'No pude leer el comprobante, así que no sé a cuál corresponde. ' : ''
+      return responder(`${aviso}Tenés ${pendientes.length} pagos pendientes:\n${lista.join('\n')}\n¿A cuál corresponde ${hayComprobante ? 'el comprobante' : 'el pago'}? Decime el nombre del profesional o el servicio.`)
+    }
+
+    // Pacing: the same question again and again changes nothing, it only costs calls to Mercado Pago.
+    const previo = state.paymentCheck
+    const dentroDeVentana = previo !== null && previo !== undefined && ahora - previo.since <= VENTANA_VERIFICACIONES_MS
+    if (previo && ahora - previo.lastAt < ESPERA_ENTRE_VERIFICACIONES_MS) {
+      await guardar()
+      return responder('Ya estoy revisando ese pago. Esperá unos segundos y volvé a preguntarme.')
+    }
+    if (dentroDeVentana && previo!.count >= VERIFICACIONES_POR_HORA) {
+      await guardar()
+      this.metric('assistant.payment_check_limited', { channel: turn.canal.id })
+      return responder('Ya revisé tu pago varias veces. Apenas Mercado Pago lo acredite, tu pago se confirma solo. Probá de nuevo más tarde.')
+    }
+    pc.since = dentroDeVentana ? previo!.since : ahora
+    pc.count = (dentroDeVentana ? previo!.count : 0) + 1
+    pc.lastAt = ahora
+    pc.contextAt = previo?.contextAt ?? ahora
+    pc.choosing = null
+    await guardar()
+
+    // The financial domain reads Mercado Pago and applies it through the webhook's state machine.
+    // Nothing of the receipt, the words or the picture goes with the question: only the client's own payment.
+    let verificacion: VerificacionSenaAsistente
+    try {
+      verificacion = await this.verificarPago(cuenta, objetivo)
+    } catch {
+      verificacion = { estado: 'unavailable' }
+    }
+    this.metric('assistant.payment_check', { channel: turn.canal.id, result: verificacion.estado, receipt: hayComprobante, kind: objetivo.kind })
+    await this.deps.transaction.ejecutar((repositories) =>
+      this.auditar(repositories, 'assistant.payment_checked', turn, correlationId, { result: verificacion.estado, withReceipt: hayComprobante, appliedNow: verificacion.estado === 'confirmed' ? verificacion.appliedNow : false, kind: objetivo!.kind })
+    )
+    return responder(textoDeVerificacion(verificacion, objetivo, hayComprobante))
+  }
+
+  private async pagosDeLaCuenta(cuenta: TusAuthenticatedTenantContext): Promise<PagoVerificableAsistente[] | null> {
+    const domain = this.deps.domain
+    try {
+      if (typeof domain.pagosVerificables === 'function') return await domain.pagosVerificables(cuenta)
+      const senas = (await domain.senasVerificables!(cuenta)) ?? []
+      return senas.map((sena) => ({ ref: sena.ref, kind: 'turno' as const, part: null, providerName: sena.providerName, service: sena.service, startsAt: sena.startsAt, amountMinor: String(Math.round(sena.amount * 100)), currency: 'ARS', estado: sena.estado, operationRef: null }))
+    } catch {
+      return null
+    }
+  }
+
+  private async verificarPago(cuenta: TusAuthenticatedTenantContext, pago: PagoVerificableAsistente): Promise<VerificacionSenaAsistente> {
+    const domain = this.deps.domain
+    if (pago.kind === 'trabajo') {
+      if (typeof domain.verificarPagoTrabajo !== 'function') return { estado: 'unavailable' }
+      const resultado = await domain.verificarPagoTrabajo(cuenta, pago.ref.replace(/^work:/u, ''))
+      return resultado.estado === 'confirmed' ? { estado: 'confirmed', appliedNow: resultado.appliedNow, turnoConfirmado: false, amount: Number(resultado.amountMinor ?? pago.amountMinor) / 100 } : { estado: resultado.estado }
+    }
+    return domain.verificarSena!(cuenta, pago.ref)
+  }
+
+  // Reads the receipt of the turn ONLY to choose among the client's own payments. Same picture
+  // (Meta's hash) as one already read: reused, nothing is downloaded or read again. Analyses per
+  // hour are bounded. The bytes never leave the service that reads them; the message keeps only
+  // the minimum (status, amount, currency, date). A failure is "no evidence", never a guess.
+  private async evidenciaDeComprobantes(
+    turn: Turno,
+    pc: NonNullable<EstadoConversacional['paymentCheck']>,
+    ahora: number
+  ): Promise<{ evidencia: EvidenciaComprobante | null; fallo: boolean }> {
+    const servicio = this.deps.comprobantes
+    const limites: LimitesComprobante = { ...LIMITES_COMPROBANTE_POR_DEFECTO, ...this.deps.limitesComprobante }
+    const mensaje = [...turn.pending].reverse().find((item) => (item.type === 'image' || item.type === 'document') && (item.metadata['media'] as { id?: string } | undefined)?.id)
+    if (!servicio || !limites.enabled || !mensaje) return { evidencia: null, fallo: false }
+    const media = mensaje.metadata['media'] as { id: string; sha256?: string }
+    const guardado = (estado: string, extra: Record<string, unknown> = {}) =>
+      this.actualizarMensaje(mensaje.messageId, (current) => ({ ...current, metadata: { ...current.metadata, receipt: { status: estado, ...extra } } }))
+    const conocido = media.sha256 ? (pc.receipts ?? []).find((item) => item.sha256 === media.sha256) : undefined
+    if (conocido) {
+      this.metric('assistant.receipt_reused', {})
+      await guardado('reused')
+      return { evidencia: { ...EVIDENCIA_VACIA, analyzer: limites.analyzer, amountMinor: conocido.amountMinor, currency: conocido.currency, occurredAt: conocido.occurredAt }, fallo: false }
+    }
+    const ventana = pc.analisis && ahora - pc.analisis.since <= 60 * 60_000 ? pc.analisis : { since: ahora, count: 0 }
+    if (ventana.count >= limites.maxPerHour) {
+      this.metric('assistant.receipt_limited', {})
+      await guardado('rate_limited')
+      return { evidencia: null, fallo: true }
+    }
+    pc.analisis = { since: ventana.since, count: ventana.count + 1 }
+    try {
+      const evidencia = await servicio.analizar(media.id)
+      this.metric('assistant.receipt_analyzed', { analyzer: evidencia.analyzer, found: hayEvidencia(evidencia) })
+      await guardado('analyzed', { analyzer: evidencia.analyzer, amountMinor: evidencia.amountMinor, currency: evidencia.currency, ...(evidencia.occurredAt ? { date: evidencia.occurredAt.slice(0, 10) } : {}), reads: evidencia.status })
+      if (media.sha256) pc.receipts = [{ sha256: media.sha256, at: ahora, amountMinor: evidencia.amountMinor, currency: evidencia.currency, occurredAt: evidencia.occurredAt }, ...(pc.receipts ?? [])].slice(0, 5)
+      return { evidencia, fallo: false }
+    } catch (error) {
+      const motivo = error instanceof ErrorComprobante ? error.code : 'ANALYZER_UNAVAILABLE'
+      this.metric('assistant.receipt_failed', { reason: motivo })
+      await guardado('failed', { reason: motivo })
+      return { evidencia: null, fallo: true }
+    }
+  }
+
   // "Quiero pagar la seña": the checkout of the deposits the client can pay now. The turnos, the
   // amounts and the links come from the backend; nothing is paid by sending a link.
   private async pedidoDeSena(turn: Turno, actor: ActorAsistente, text: string, correlationId: string): Promise<MensajeSaliente[] | null> {
@@ -869,16 +1548,20 @@ export class OrquestadorConversacion {
     if (!senas) return [...saludo, { type: 'text', text: 'No pude consultar tus turnos en este momento. Probá de nuevo en unos minutos.' }]
     if (senas.length === 0) return [...saludo, { type: 'text', text: 'No tenés señas pendientes de pago. La seña se puede abonar cuando el prestador acepta el turno.' }]
     const mensajes: MensajeSaliente[] = [...saludo]
+    let linkEnviado = false
     for (const sena of senas.slice(0, 3)) {
       const inicio = new Date(sena.startsAt)
       const turno = `tu turno con ${sena.providerName}${sena.service ? ` (${sena.service})` : ''} del ${fechaLarga(inicio)} a las ${horaCorta(inicio)}`
       try {
         const pago = await this.deps.domain.pagarSena(cuenta, sena.ref)
         mensajes.push({ type: 'cta_url', text: `Seña de ${turno}: ${formatearPesos(pago.amount)}. El pago se acredita cuando Mercado Pago lo aprueba.`, label: 'Pagar seña', url: pago.url })
+        linkEnviado = true
       } catch {
         mensajes.push({ type: 'text', text: `No pude generar ahora el link de pago de la seña de ${turno}. Probá de nuevo en unos minutos.` })
       }
     }
+    // A receipt that comes next is about this payment.
+    if (linkEnviado) await this.actualizarEstado(conversationId, { paymentCheck: { ...(state.paymentCheck ?? { since: this.now(), count: 0, lastAt: 0 }), contextAt: this.now() } })
     return mensajes
   }
 
@@ -1177,13 +1860,14 @@ export class OrquestadorConversacion {
             contenido = { missing: faltan, known: need, instruction: 'Preguntá SOLO por lo que falta (missing), de a una cosa. La zona nunca es obligatoria.' }
             if (!turn.canal.conversacional) return [{ type: 'text', text: preguntaFaltante(need) }]
           } else {
-            const resultado = await this.consultarDisponibilidad(turn, need, correlationId)
-            if (!resultado) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
-            if (!turn.canal.conversacional) return [{ type: 'text', text: textoDisponibilidad(need, resultado, this.now()) }]
+            const busqueda = await this.consultarDisponibilidad(turn, need, correlationId)
+            if (!busqueda) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
+            const resultado = busqueda.resultado
+            if (!turn.canal.conversacional) return [{ type: 'text', text: need.asap ? textoPrimeraDisponibilidad(need, resultado, busqueda.dia ?? busqueda.desde, busqueda.desde, this.now()) : textoDisponibilidad(need, resultado, this.now()) }]
             draft = { listingId: null, urgency: null, problem: draft?.problem ?? null, profession: need.profession, zone: need.zone, candidates: resultado.providers.map(({ providerId, name }) => ({ providerId, name })) }
             adjunto = adjuntoDisponibilidad(resultado)
             datosEnTurno = true
-            buscado = textoDisponibilidad(need, resultado, this.now())
+            buscado = need.asap ? textoPrimeraDisponibilidad(need, resultado, busqueda.dia ?? busqueda.desde, busqueda.desde, this.now()) : textoDisponibilidad(need, resultado, this.now())
             contenido = resumenParaModelo(need, resultado, this.now())
           }
           messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify(contenido).slice(0, 6000) })
@@ -1323,7 +2007,7 @@ export class OrquestadorConversacion {
         ? `Rol actual según TUS: ${actor.isProvider ? 'cliente y prestador' : 'cliente'}.`
         : '',
       state.activeWorkId ? `Trabajo activo en la conversación: ${state.activeWorkId}.` : '',
-      need ? `Necesidad conocida (ya la dijo el usuario; no la vuelvas a preguntar): ${JSON.stringify({ oficio: need.profession, dia: need.day, hasta: need.dayTo, horario: need.time, zona: need.zone, cualquierZona: need.anyZone, seTraslada: need.clientTravels, urgente: need.urgent })}.` : '',
+      need ? `Necesidad conocida (ya la dijo el usuario; no la vuelvas a preguntar): ${JSON.stringify({ oficio: need.profession, dia: need.day, hasta: need.dayTo, horario: need.time, zona: need.zone, cualquierZona: need.anyZone, seTraslada: need.clientTravels, loAntesPosible: need.asap ?? false, cualquierProfesional: need.anyProvider ?? false, profesionalElegido: need.providerName ?? null, urgente: need.urgent })}.` : '',
       need && faltantes(need).length > 0 ? `Para buscar turnos falta SOLO: ${faltantes(need).map((campo) => (campo === 'profession' ? 'qué servicio necesita' : 'para qué día')).join(' y ')}. La zona no hace falta.` : '',
       state.draft ? `Borrador de solicitud en curso: ${JSON.stringify(state.draft)}.` : '',
       state.offers?.items.length ? `Profesionales mostrados, en orden (para reservar usá su providerId, el oficio "${state.offers.profession}" y como startsAt EXACTAMENTE uno de sus "starts"): ${JSON.stringify(state.offers.items)}.` : '',
@@ -1469,6 +2153,14 @@ export class OrquestadorConversacion {
       data,
       correlationId
     )
+    // 409 SLOT_OCCUPIED: somebody took that time between the card and the "sí". Nothing was
+    // requested; the next real free turno of the same professional is proposed instead.
+    const ocupado = !result.ok && loaded.tool === 'book_appointment' && (data['error'] === 'SLOT_OCCUPIED' || data['error'] === 'SLOT_NOT_AVAILABLE')
+    const pedido = loaded.arguments as { providerId?: unknown; profession?: unknown; startsAt?: unknown }
+    if (ocupado && typeof pedido.providerId === 'string' && typeof pedido.profession === 'string' && typeof pedido.startsAt === 'string') {
+      const nombre = (await this.deps.domain.nombrePrestador?.(pedido.providerId).catch(() => null)) ?? 'ese profesional'
+      return this.siguienteDe(turn, pedido.profession, pedido.providerId, nombre, pedido.startsAt, 'Ese horario acaba de ocuparse. Busco el siguiente disponible.', correlationId)
+    }
     return formatearResultadoAccion(loaded.tool, result.ok, data)
   }
 

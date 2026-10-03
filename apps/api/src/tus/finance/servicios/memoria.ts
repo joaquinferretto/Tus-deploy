@@ -4,6 +4,7 @@ import type { MarketplaceStorePort } from '../../catalog/index.ts'
 import type { TrabajoStorePort } from '../../work/index.ts'
 import type { ObligacionServicio, RegistroIdempotenciaFinanciera, ReservaTurnoFinanciera } from './modelo.ts'
 import type { IntencionPagoServicioDominio } from './pagos.ts'
+import type { MovimientoGanancia, PuertoLedgerGanancias } from './ganancias.ts'
 import type {
   InstantaneaComisionServicio,
   LiquidacionServicioDominio,
@@ -116,6 +117,8 @@ export interface EstadoFinanzasServicioEnMemoria {
   liquidaciones: Map<string, LiquidacionServicioDominio>
   conciliaciones: (ConciliacionServicio & { prestadorTenantId: string })[]
   reembolsos: Map<string, ReembolsoServicioDominio>
+  // TUS-GANANCIAS-01: earnings TUS owes providers (append-only, like the database).
+  ganancias: Map<string, MovimientoGanancia>
 }
 
 export type PuertoConFallaInyectable =
@@ -134,6 +137,7 @@ export class AlmacenFinanzasServicioEnMemoria {
     liquidaciones: new Map(),
     conciliaciones: [],
     reembolsos: new Map(),
+    ganancias: new Map(),
   }
   private readonly fallas = new Set<PuertoConFallaInyectable>()
 
@@ -374,6 +378,19 @@ export class AlmacenFinanzasServicioEnMemoria {
     }
   }
 
+  // Append-only: a movement id is booked once per provider, mirroring the database trigger and
+  // unique index.
+  ganancias(): PuertoLedgerGanancias {
+    return {
+      buscar: async (input) => clonar(this.state.ganancias.get(clave(input.prestadorTenantId, input.movimientoId)) ?? null),
+      registrar: async (movimiento) => {
+        const key = clave(movimiento.prestadorTenantId, movimiento.movimientoId)
+        if (this.state.ganancias.has(key)) throw Object.assign(new Error('earning movements are append-only'), { code: 'P2002' })
+        this.state.ganancias.set(key, clonar(movimiento))
+      },
+    }
+  }
+
   conciliaciones(): PuertoConciliacionesServicio {
     return {
       registrar: async (result) => {
@@ -436,6 +453,7 @@ export class TransaccionFinanzasServicioEnMemoria implements PuertoTransaccionFi
       comisiones: this.store.comisiones(),
       ledger: this.store.ledger(),
       liquidaciones: this.store.liquidaciones(),
+      ganancias: this.store.ganancias(),
       conciliaciones: this.store.conciliaciones(),
       reembolsos: this.store.reembolsos(),
     }

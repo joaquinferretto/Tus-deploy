@@ -54,7 +54,8 @@ export interface RepositoriosAsistente {
     // The same message `ultimos(id, 1)` returns, for many conversations in one query.
     ultimoDeConversaciones(conversationIds: readonly string[]): Promise<MensajeConversacion[]>
     contar(conversationId: string): Promise<number>
-    contarEntrantesDesde(contactId: string, since: string): Promise<number>
+    // `types`: only inbound messages of those types (media limits); absent: every type.
+    contarEntrantesDesde(contactId: string, since: string, types?: readonly string[]): Promise<number>
   }
   cola: {
     // One queued job per conversation: a new inbound message only pushes `availableAt`

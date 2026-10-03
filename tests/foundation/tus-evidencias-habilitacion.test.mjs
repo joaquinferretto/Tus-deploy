@@ -161,10 +161,12 @@ test('one current record per requirement; a reference is never reused; revoking 
   assert.equal(await gates.autorizada(), true, 'a new current record renews the requirement; the revoked one stays as history')
 
   // An expired record blocks, and a new one renews it too.
+  // The gates evaluate with the real clock: expiry is relative to it (a fixed date turns the test red the day it passes).
+  const realNow = Date.now()
   const { service: timed, gates: timedGates } = registry()
-  for (const gate of SERVICE_PAYMENT_GATES) await timed.registrar(admin, valid({ gate, evidenceRef: 'REF-' + gate + '-1', ...(gate === 'legal' ? { expiresAt: '2026-10-03T12:00:00.000Z' } : {}) }))
+  for (const gate of SERVICE_PAYMENT_GATES) await timed.registrar(admin, valid({ gate, evidenceRef: 'REF-' + gate + '-1', ...(gate === 'legal' ? { expiresAt: new Date(realNow + 3_600_000).toISOString() } : {}) }))
   assert.equal(await timedGates.autorizada(), true)
-  const expiredNow = '2026-10-04T12:00:00.000Z'
+  const expiredNow = new Date(realNow + 2 * 3_600_000).toISOString()
   const decision = evaluarHabilitacion({ tenantId: TENANT, capability: 'service-payments', scope: SCOPE, now: expiredNow, evidence: (await timed.listar()).capabilities[0].evidence.map((item) => crearEvidenciaHabilitacion({ ...item, tenantId: TENANT, source: 'authorized-external', profile: PROFILE })) })
   assert.deepEqual(decision.failedGates, [{ gate: 'legal', reason: 'evidence_expired' }])
 

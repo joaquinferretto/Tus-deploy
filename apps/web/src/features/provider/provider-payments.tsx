@@ -16,6 +16,7 @@ import {
 import type { TusWebSession } from '../../lib/tus-ui-contract'
 import { useTusSession } from '../session/use-tus-session'
 import { maskAccountId } from './payment-account-mask'
+import { ProviderEarningsPanel } from './provider-earnings'
 import styles from '../work/work.module.css'
 
 const RETURN_TO = '/prestador/pagos'
@@ -35,7 +36,28 @@ export function ProviderPayments(): React.ReactNode {
         {auth.status === 'unavailable' ? 'No pudimos conectar con TUS. Volvé a intentar.' : 'Verificando tu sesión…'}
       </p>
     )
-  return <PaymentAccountPanel session={auth.session} />
+  return (
+    <>
+      <PaymentAccountPanel session={auth.session} />
+      <ProviderEarningsPanel session={auth.session} />
+    </>
+  )
+}
+
+// Shared by the Mercado Pago and the earnings panels: starts the OAuth link in Mercado Pago.
+export async function startMercadoPagoConnection(session: TusWebSession): Promise<string | null> {
+  try {
+    const { authorizationUrl } = await client().connectPaymentAccount(session)
+    if (!isMercadoPagoAuthorizationUrl(authorizationUrl)) return 'TUS devolvió una dirección de autorización no válida.'
+    window.location.assign(authorizationUrl)
+    return null
+  } catch (error) {
+    return error instanceof TusRequestError && error.code === 'PROVIDER_IDENTITY_NOT_VERIFIED'
+      ? 'Primero completá la verificación de identidad. Después vas a poder conectar Mercado Pago.'
+      : error instanceof TusRequestError && error.status === 503
+        ? 'La conexión con Mercado Pago todavía no está habilitada en TUS.'
+        : 'No se pudo iniciar la conexión con Mercado Pago. Reintentá.'
+  }
 }
 
 export function PaymentAccountPanel({ session }: { session: TusWebSession }): React.ReactNode {
@@ -69,20 +91,8 @@ export function PaymentAccountPanel({ session }: { session: TusWebSession }): Re
     if (busy) return
     setBusy(true)
     try {
-      const { authorizationUrl } = await client().connectPaymentAccount(session)
-      if (!isMercadoPagoAuthorizationUrl(authorizationUrl)) {
-        setNotice('TUS devolvió una dirección de autorización no válida.')
-        return
-      }
-      window.location.assign(authorizationUrl)
-    } catch (error) {
-      setNotice(
-        error instanceof TusRequestError && error.code === 'PROVIDER_IDENTITY_NOT_VERIFIED'
-          ? 'Primero completá la verificación de identidad. Después vas a poder conectar Mercado Pago.'
-          : error instanceof TusRequestError && error.status === 503
-            ? 'La conexión con Mercado Pago todavía no está habilitada en TUS.'
-            : 'No se pudo iniciar la conexión con Mercado Pago. Reintentá.'
-      )
+      const failure = await startMercadoPagoConnection(session)
+      if (failure) setNotice(failure)
     } finally {
       setBusy(false)
     }

@@ -40,16 +40,16 @@ test('ASISTENTE necesidad: the mandatory phrases give every fact in one pass (no
   `)
   assert.deepEqual(r.f1, { profession: 'masaje', anyZone: true, clientTravels: true, day: '2026-10-02', dayTo: null, time: { kind: 'exact', from: '18:00', to: null } })
   assert.deepEqual(r.f2, { profession: 'electricidad', zone: 'Centro', anyZone: false, day: '2026-10-02', dayTo: null, time: { kind: 'exact', from: '10:00', to: null } })
-  assert.deepEqual(r.f3, { profession: 'plomeria', urgent: true, day: '2026-10-01', time: { kind: 'from', from: '12:00', to: null } }, '"ahora" is today from the current time of the server')
+  assert.deepEqual(r.f3, { profession: 'plomeria', urgent: true, asap: true }, '"ahora" is the first real free turno: no day is pinned, the search starts today from the current time of the server')
   assert.deepEqual(r.f4, { profession: 'aire', day: '2026-10-02', dayTo: null, time: { kind: 'from', from: '17:00', to: null } }, '"después de las 17" is a lower bound, not an exact time')
-  assert.deepEqual(r.f5, { profession: 'masaje', anyZone: true, day: '2026-10-03', dayTo: null, time: { kind: 'between', from: '13:00', to: '20:00' } })
+  assert.deepEqual(r.f5, { profession: 'masaje', anyZone: true, day: '2026-10-03', dayTo: null, time: { kind: 'between', from: '13:00', to: '20:00', part: 'tarde' } })
   assert.deepEqual(r.f6, { profession: 'electricidad' })
   assert.deepEqual(r.f7, { day: '2026-10-02', dayTo: null, time: { kind: 'exact', from: '18:00', to: null } }, 'an exact time stays exact')
   assert.deepEqual(r.f8, { anyZone: true })
   assert.deepEqual(r.e1, { profession: 'electricidad', anyZone: true, clientTravels: true, day: '2026-10-02', dayTo: null, time: { kind: 'exact', from: '10:00', to: null } })
   assert.deepEqual(r.e2, { profession: 'aire', zone: 'Centro', anyZone: false, day: '2026-10-02', dayTo: null, time: { kind: 'from', from: '17:00', to: null } })
-  assert.deepEqual(r.e4, { profession: 'plomeria', zone: 'Centro', anyZone: false, urgent: true, day: '2026-10-01', time: { kind: 'from', from: '12:00', to: null } })
-  assert.deepEqual(r.e5, { profession: 'masaje', anyZone: true, day: '2026-10-03', dayTo: null, time: { kind: 'between', from: '13:00', to: '20:00' } })
+  assert.deepEqual(r.e4, { profession: 'plomeria', zone: 'Centro', anyZone: false, urgent: true, asap: true })
+  assert.deepEqual(r.e5, { profession: 'masaje', anyZone: true, day: '2026-10-03', dayTo: null, time: { kind: 'between', from: '13:00', to: '20:00', part: 'tarde' } })
   assert.deepEqual(r.nada, [{}, {}, {}, {}], 'a message without facts adds nothing')
 })
 
@@ -85,7 +85,8 @@ test('ASISTENTE necesidad: relative dates and times are resolved with the server
     exacta: { kind: 'exact', from: '18:00', to: null }, conMinutos: { kind: 'exact', from: '18:30', to: null }, hs: { kind: 'exact', from: '18:00', to: null }, yMedia: { kind: 'exact', from: '09:30', to: null },
     seisTarde: { kind: 'exact', from: '18:00', to: null }, seis: { kind: 'exact', from: '18:00', to: null }, nueveManana: { kind: 'exact', from: '09:00', to: null }, diez: { kind: 'exact', from: '10:00', to: null },
     despues: { kind: 'from', from: '18:00', to: null }, aPartir: { kind: 'from', from: '17:30', to: null }, antes: { kind: 'until', from: null, to: '12:00' }, entre: { kind: 'between', from: '10:00', to: '14:00' }, deA: { kind: 'between', from: '10:00', to: '14:00' },
-    manana: { kind: 'between', from: '06:00', to: '12:00' }, mediodia: { kind: 'between', from: '12:00', to: '14:00' }, tarde: { kind: 'between', from: '13:00', to: '20:00' }, noche: { kind: 'between', from: '20:00', to: '23:59' },
+    // A part of the day keeps what was said (part); its bounds are what the backend searches.
+    manana: { kind: 'between', from: '06:00', to: '12:00', part: 'manana' }, mediodia: { kind: 'between', from: '12:00', to: '14:00', part: 'mediodia' }, tarde: { kind: 'between', from: '13:00', to: '20:00', part: 'tarde' }, noche: { kind: 'between', from: '20:00', to: '23:59', part: 'noche' },
   })
   assert.equal(r.tarde, '2026-10-02', '22:30 of Thursday in Argentina: "mañana" is Friday')
   assert.deepEqual(r.textos, ['hoy', 'mañana', 'el sábado 3/10 y el domingo 4/10', 'a las 18:00', 'desde las 17:00', 'a la tarde', 'entre las 10:00 y las 14:00'])
@@ -111,7 +112,7 @@ test('ASISTENTE necesidad: the zone is optional and "any zone" is understood in 
   assert.deepEqual(r.noEsZona, [[null, null, null], [null, null, null]])
   assert.deepEqual(r.erratas[0], { profession: 'masaje', anyZone: true, day: '2026-10-02', dayTo: null, time: { kind: 'exact', from: '18:00', to: null } })
   assert.deepEqual(r.erratas[1], { profession: 'electricidad', day: '2026-10-03', dayTo: null, time: { kind: 'between', from: '10:00', to: '14:00' } })
-  assert.deepEqual(r.erratas[2], { profession: 'plomeria', day: '2026-10-03', dayTo: '2026-10-04', time: { kind: 'between', from: '06:00', to: '12:00' } })
+  assert.deepEqual(r.erratas[2], { profession: 'plomeria', day: '2026-10-03', dayTo: '2026-10-04', time: { kind: 'between', from: '06:00', to: '12:00', part: 'manana' } })
   assert.deepEqual(r.erratas[3], { profession: 'gas', day: '2026-10-05', dayTo: null, time: { kind: 'until', from: null, to: '12:00' } })
   assert.ok(r.ambiguo.alternatives.length > 1 && !r.ambiguo.profession, 'an ambiguous word offers its trades instead of guessing')
   assert.equal(r.presupuesto, 20000)
@@ -136,7 +137,7 @@ test('ASISTENTE necesidad: facts accumulate across messages; only the trade and 
       masaje: [masaje.profession, masaje.day, masaje.time, masaje.anyZone, faltantes(masaje)],
       otroDia: [otroDia.day, otroDia.time.from], otraHora: [otraHora.day, otraHora.time.from],
       conZona: [conZona.zone, conZona.anyZone], sinZona: [sinZona.zone, sinZona.anyZone],
-      otroOficio: [otroOficio.profession, otroOficio.day, otroOficio.time, otroOficio.anyZone],
+      otroOficio: [otroOficio.profession, otroOficio.day, otroOficio.time, otroOficio.anyZone, otroOficio.asap, faltantes(otroOficio)],
       soloDia: faltantes(combinarNecesidad(null, x('mañana a las 18'))),
     }))
   `)
@@ -150,7 +151,7 @@ test('ASISTENTE necesidad: facts accumulate across messages; only the trade and 
   assert.deepEqual(r.otraHora, ['2026-10-02', '19:00'])
   assert.deepEqual(r.conZona, ['Centro', false])
   assert.deepEqual(r.sinZona, [null, true])
-  assert.deepEqual(r.otroOficio, ['plomeria', '2026-10-01', { kind: 'from', from: '12:00', to: null }, true])
+  assert.deepEqual(r.otroOficio, ['plomeria', null, null, true, true, []], 'a new trade drops the old day and time; "ahora" asks for the first free turno, so nothing is missing to search')
   assert.deepEqual(r.soloDia, ['profession'])
 })
 

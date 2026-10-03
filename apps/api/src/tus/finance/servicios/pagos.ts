@@ -51,6 +51,9 @@ export interface IntencionPagoServicioDominio {
   checkoutExpiresAt?: string | null
   dispatchClaimedUntil?: string | null
   environment?: EntornoProveedorPago | null
+  // TUS-GANANCIAS-01: 'split' (seller account, Split 1:1) or 'plataforma' (TUS's own account;
+  // the provider's share becomes an earning). Absent on legacy rows: 'split'.
+  collectionMode?: 'split' | 'plataforma'
 }
 
 const TRANSICIONES_PROVEEDOR: Readonly<
@@ -117,6 +120,10 @@ export interface EventoPagoNormalizado {
   marketplaceFeeMinor?: bigint | null
   // WEB-09E: seller account that collected the payment (Mercado Pago `collector_id`).
   collectorId?: string | null
+  // TUS-GANANCIAS-01: who collected it, as resolved by the real adapter from the collector:
+  // TUS's own account ('plataforma', no provider) or the linked account of a provider ('split').
+  // Absent (fake provider): not checked. Must agree with the mode frozen on the intent.
+  collectedBy?: { mode: 'split' | 'plataforma'; prestadorTenantId: string | null }
 }
 
 export interface EntradaEventoProveedor {
@@ -136,6 +143,8 @@ export interface SolicitudCheckout {
   // WEB-09E: seller account and marketplace fee (minor units) frozen on the intent.
   prestadorTenantId?: string
   commissionMinor?: bigint | null
+  // TUS-GANANCIAS-01: 'plataforma' collects with TUS's own account (no marketplace_fee).
+  collectionMode?: 'split' | 'plataforma'
   title?: string
   trabajoId?: string
   // Web path the browser returns to (default: the marketplace workspace). Never a confirmation.
@@ -159,6 +168,15 @@ export interface PuertoProveedorPagosServicio {
   readonly source: OrigenIntencionPagoServicio
   readonly environment?: EntornoProveedorPago
   crearPago(input: SolicitudCheckout): Promise<ResultadoCheckout>
+  // TUS-WHATSAPP-MULTIMODAL-01: the payments Mercado Pago itself holds for ONE of TUS's payment
+  // intents (its external reference), normalized exactly like a webhook's payment and read with
+  // the account that must have collected it. Never a lookup by a value a person typed. Absent
+  // where the provider cannot be asked.
+  consultarPagos?(input: {
+    paymentId: string
+    collectionMode: 'split' | 'plataforma'
+    prestadorTenantId: string
+  }): Promise<EventoPagoNormalizado[]>
   verificarEvento(
     input: EntradaEventoProveedor
   ): EventoPagoNormalizado | Promise<EventoPagoNormalizado>
@@ -166,6 +184,7 @@ export interface PuertoProveedorPagosServicio {
     prestadorTenantId: string
     providerReference: string
     idempotencyKey: string
+    collectionMode?: 'split' | 'plataforma'
   }): Promise<{ providerRefundId: string }>
 }
 

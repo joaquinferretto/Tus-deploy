@@ -8,7 +8,7 @@ import {
   type SenaTurnoDTO,
 } from '@factory/contracts'
 import { montoSenaReserva } from '../finance/servicios/modelo.ts'
-import { MOTIVOS_PRESTADOR_SIN_COBRO } from '../finance/servicios/servicio.ts'
+import { MOTIVOS_PRESTADOR_SIN_COBRO, type ResultadoVerificacionPagoServicio } from '../finance/servicios/servicio.ts'
 import { esUrlMercadoPago } from '../finance/servicios/mercado-pago.ts'
 import { ErrorCalendario } from './bookings.ts'
 
@@ -53,6 +53,9 @@ export interface PagosSenaTurno {
     prestadorId: string
     correlationId: string
   }): Promise<{ url: string }>
+  // TUS-WHATSAPP-MULTIMODAL-01: the REAL state of the payment of the turno's order, read from
+  // Mercado Pago and applied through the same state machine as the webhook (idempotent).
+  verificar?(input: { trabajoId: string; clienteTenantId: string; clienteCuentaId: string; correlationId: string }): Promise<ResultadoVerificacionPagoServicio>
 }
 
 // The payments of a deposit over the application's own work and finance services: the order of
@@ -65,6 +68,7 @@ export function pagosSenaDeAplicacion(
     serviceFinance?: {
       disponibilidadCobroPrestador(input: { prestadorTenantId: string; prestadorId: string }): Promise<{ available: boolean; reason: string | null }>
       iniciarCheckout(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string; idempotencyKey: string }): Promise<{ checkoutUrl: string }>
+      verificarPagoDelTrabajo?(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string }): Promise<ResultadoVerificacionPagoServicio>
     }
   },
   now: () => number = Date.now
@@ -85,6 +89,9 @@ export function pagosSenaDeAplicacion(
       const resultado = await serviceFinance.iniciarCheckout({ ...contexto, trabajoId: orden.trabajoId, idempotencyKey: `sena-turno:${input.reservaId}` })
       return { url: resultado.checkoutUrl }
     },
+    verificar: serviceFinance.verificarPagoDelTrabajo
+      ? (input) => serviceFinance.verificarPagoDelTrabajo!({ tenantId: input.clienteTenantId, actorId: input.clienteCuentaId, correlationId: input.correlationId, trabajoId: input.trabajoId })
+      : undefined,
   }
 }
 
@@ -208,6 +215,23 @@ export class ServicioSenaTurnos {
     // Somebody else's turno does not exist for this account.
     if (!row) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
     return this.checkoutDe(row, input.correlationId)
+  }
+
+  /**
+   * "¿Ya me llegó el pago?": el estado REAL del pago de la seña de SU turno. No decide nada: lee a
+   * Mercado Pago y aplica lo que informa por el mismo camino que la notificación (idempotente: si la
+   * notificación ya llegó, o llega después, no pasa nada dos veces). Un turno ajeno no existe para
+   * esta cuenta.
+   */
+  async verificarPago(input: { clienteId: string; reservaId: string; correlationId: string }): Promise<ResultadoVerificacionPagoServicio> {
+    const row = await this.prisma.reserva.findFirst({
+      where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false },
+    })
+    if (!row || !row.clienteTenantId) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+    const orden = await this.prisma.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: row.tenantId, reservaId: row.reservaId } })
+    if (!orden) return { status: 'not_found', appliedNow: false, trabajoId: '', amountMinor: null, currency: null, reason: 'no_payment_started' }
+    if (!this.pagos?.verificar) return { status: 'unavailable', appliedNow: false, trabajoId: orden.trabajoId, amountMinor: null, currency: null, reason: 'payments_not_composed' }
+    return this.pagos.verificar({ trabajoId: orden.trabajoId, clienteTenantId: row.clienteTenantId, clienteCuentaId: row.clienteId, correlationId: input.correlationId })
   }
 
   /**

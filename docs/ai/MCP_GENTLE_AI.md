@@ -55,7 +55,7 @@ Context7 y gh_grep funcionaron sin API key. No hay credenciales pendientes para 
 - El instalador añadió su guía global en `C:\Users\juaqu\.gemini\GEMINI.md`; para TUS prevalecen las instrucciones del usuario y las fuentes canónicas del proyecto.
 - Telemetría desactivada persistentemente en `C:\Users\juaqu\.gentle-ai\telemetry.json`.
 - Registro regenerado: `.atl/skill-registry.md` y su caché. Ahora referencia 16 skills existentes de TUS; sustituye el índice obsoleto que apuntaba a otro usuario/proyecto. No se duplicaron las skills.
-- `.gitignore` recibió la exclusión de estado local `.atl/` por el comando oficial. Los dos archivos ya versionados siguen siendo rastreados por Git.
+- `.gitignore` recibió la exclusión de estado local `.atl/` por el comando oficial. Los dos archivos que habían quedado versionados se sacaron del índice de Git (TUS-REPO-CLEANUP): es estado local generado y se regenera con `gentle-ai skill-registry refresh`.
 - API, Web, seguridad, migraciones PostgreSQL, recovery, pagos, WhatsApp y QA visual reutilizan las skills existentes y los runbooks; no generan documentación canónica alternativa.
 
 Limitación de `gentle-ai doctor`: da `unhealthy` por GGA ausente (componente no solicitado) y advierte que no encuentra Engram en configuración global de los agentes. No inspecciona correctamente esta configuración MCP de workspace. Engram sí pasó el smoke directo y fue detectado por Antigravity. No instalar GGA ni duplicar MCP para esconder esas advertencias.

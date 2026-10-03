@@ -116,8 +116,8 @@ export class AlmacenAsistenteEnMemoria {
             return last ? [clone(last)] : []
           }),
         contar: async (conversationId) => [...s().mensajes.values()].filter((m) => m.conversationId === conversationId).length,
-        contarEntrantesDesde: async (contactId, since) =>
-          [...s().mensajes.values()].filter((m) => m.contactId === contactId && m.direction === 'inbound' && m.createdAt >= since).length,
+        contarEntrantesDesde: async (contactId, since, types) =>
+          [...s().mensajes.values()].filter((m) => m.contactId === contactId && m.direction === 'inbound' && m.createdAt >= since && (!types || types.includes(m.type))).length,
       },
       cola: {
         encolar: async (input) => {

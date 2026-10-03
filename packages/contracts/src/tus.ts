@@ -617,6 +617,8 @@ export interface ConfiguracionPagosServicio {
   paymentsEnabled: boolean
   provider: 'mercado-pago'
   currency: string
+  // TUS-GANANCIAS-01: minimum of a provider payout request, minor units (centavos).
+  minimumPayoutMinor: string
   reason: string
   actorId: string
   createdAt: string

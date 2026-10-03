@@ -250,7 +250,10 @@ export interface MarketplaceStorePort {
   }
   commitments: {
     saveMany(commitments: readonly MarketplaceCommitment[]): Promise<void>
-    find(commitmentId: string): Promise<MarketplaceCommitment | null>
+    find(
+      commitmentId: string | { tenantId: string; commitmentId: string },
+      tenantId?: string
+    ): Promise<MarketplaceCommitment | null>
     forTenant(tenantId: string): Promise<MarketplaceCommitment[]>
     forListing(listingId: string): Promise<MarketplaceCommitment[]>
   }
@@ -383,10 +386,19 @@ export class InMemoryMarketplaceStore implements MarketplaceStorePort {
       commitments.forEach((commitment) =>
         this.commitmentRecords.set(commitment.commitmentId, structuredClone(commitment))
       ),
-    find: async (commitmentId: string) =>
-      this.commitmentRecords.has(commitmentId)
-        ? structuredClone(this.commitmentRecords.get(commitmentId)!)
-        : null,
+    find: async (
+      commitmentId: string | { tenantId: string; commitmentId: string },
+      tenantId?: string
+    ) => {
+      const resolvedCommitmentId =
+        typeof commitmentId === 'object' ? commitmentId.commitmentId : commitmentId
+      const resolvedTenantId =
+        typeof commitmentId === 'object' ? commitmentId.tenantId : tenantId
+      const record = this.commitmentRecords.get(resolvedCommitmentId)
+      if (!record) return null
+      if (resolvedTenantId !== undefined && record.tenantId !== resolvedTenantId) return null
+      return structuredClone(record)
+    },
     forTenant: async (tenantId: string) =>
       [...this.commitmentRecords.values()]
         .filter((commitment) => commitment.tenantId === tenantId)

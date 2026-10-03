@@ -375,7 +375,7 @@ test('PASSWORDS: Pwned Passwords sends only a 5-char SHA-1 prefix and fails open
     const down = await new PwnedPasswordsChecker(async () => { throw new Error('offline') }).isBreached(pwd)
     const queries = []
     let attempts = 0
-    const limiter = new PostgresRateLimiter({ $queryRawUnsafe: async (sql, ...values) => { queries.push({ sql, values: values.map(String) }); attempts += 1; return [{ attempts }] } }, 'sign-in', 2, 60_000)
+    const limiter = new PostgresRateLimiter({ $queryRawUnsafe: async (sql, ...values) => { queries.push({ sql, values: values.map(String) }); if (sql.includes('INSERT INTO')) attempts += 1; return [{ attempts }] } }, 'sign-in', 2, 60_000)
     const allowed = [await limiter.allow('ana@example.com', 1000), await limiter.allow('ana@example.com', 2000), await limiter.allow('ana@example.com', 3000)]
     console.log(JSON.stringify({ url: urls[0].url, padding: urls[0].padding, sentPassword: JSON.stringify(urls).includes(pwd) || JSON.stringify(urls).includes(hash), breached, clean, down, allowed, key: queries[0].values[0], emailInSql: JSON.stringify(queries).includes('ana@example.com'), upsert: /ON CONFLICT \\("key"\\) DO UPDATE/u.test(queries[0].sql) }))
   `)
