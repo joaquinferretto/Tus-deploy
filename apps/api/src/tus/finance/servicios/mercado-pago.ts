@@ -59,6 +59,9 @@ export interface ConfiguracionProveedorMercadoPago {
 // Largest minor amount rendered exactly as a JSON number with two decimals.
 const MAXIMO_MINOR_EXACTO = 900_719_925_474_099n
 export const TOLERANCIA_FIRMA_MS = 5 * 60 * 1000
+// Payment query: page size and page cap of one search (120 attempts of one intent at most).
+const TAMANO_BUSQUEDA_PAGOS = 30
+const PAGINAS_BUSQUEDA_PAGOS = 4
 
 export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
   readonly provider = 'mercado-pago' as const
@@ -203,6 +206,9 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
   // account that must have collected them (TUS's for a platform collection, the seller's for
   // Split 1:1). Each result is normalized by the SAME function as a webhook's payment, which also
   // rejects a payment of another collector. Search: GET /v1/payments/search?external_reference=.
+  // The search is read page by page (bounded), and a result that is not of this reference and
+  // this collector (the search also lists payments the account MADE) is not a payment of the
+  // intent: it is left out, never trusted and never a reason to hide the intent's own payments.
   async consultarPagos(input: {
     paymentId: string
     collectionMode: 'split' | 'plataforma'
@@ -212,20 +218,32 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
     if (porPlataforma && !this.config.plataforma)
       throw new ErrorFinanzasServicio(503, 'PROVIDER_UNAVAILABLE', 'platform collection is not configured')
     let token: { accessToken: string; externalAccountId: string }
-    let result: Record<string, unknown>
+    const vistos = new Map<string, Record<string, unknown>>()
     try {
       token = porPlataforma
         ? { accessToken: this.config.plataforma!.accessToken, externalAccountId: this.config.plataforma!.userId }
         : await this.tokenVendedor(input.prestadorTenantId)
-      result = await this.request(
-        'GET',
-        `/v1/payments/search?external_reference=${encodeURIComponent(input.paymentId)}&sort=date_created&criteria=asc&limit=10`,
-        token.accessToken
-      )
+      for (let pagina = 0; pagina < PAGINAS_BUSQUEDA_PAGOS; pagina += 1) {
+        const result = await this.request(
+          'GET',
+          `/v1/payments/search?external_reference=${encodeURIComponent(input.paymentId)}&sort=date_created&criteria=asc&limit=${TAMANO_BUSQUEDA_PAGOS}&offset=${pagina * TAMANO_BUSQUEDA_PAGOS}`,
+          token.accessToken
+        )
+        const lote = Array.isArray(result['results']) ? (result['results'] as unknown[]) : []
+        for (const item of lote) {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+          const payment = item as Record<string, unknown>
+          if (String(payment['external_reference'] ?? '') !== input.paymentId) continue
+          if (String(payment['collector_id'] ?? '') !== token.externalAccountId) continue
+          vistos.set(String(payment['id'] ?? ''), payment)
+        }
+        const total = Number((result['paging'] as Record<string, unknown> | undefined)?.['total'])
+        if (lote.length < TAMANO_BUSQUEDA_PAGOS || !Number.isFinite(total) || (pagina + 1) * TAMANO_BUSQUEDA_PAGOS >= total) break
+      }
     } catch (error) {
       throw new ErrorFinanzasServicio(503, 'PROVIDER_UNAVAILABLE', error instanceof ErrorProveedorPagos ? error.code : 'payment search failed')
     }
-    const payments = Array.isArray(result['results']) ? (result['results'] as Record<string, unknown>[]) : []
+    const payments = [...vistos.values()]
     const collectedBy = porPlataforma
       ? ({ mode: 'plataforma', prestadorTenantId: null } as const)
       : ({ mode: 'split', prestadorTenantId: input.prestadorTenantId } as const)
