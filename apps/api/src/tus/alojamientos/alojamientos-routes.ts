@@ -26,7 +26,10 @@ export interface OpcionesRutasAlojamientos {
 export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesRutasAlojamientos): Router {
   const router = Router()
   const alojamientosService = new AlojamientosService(prisma)
-  const checkoutService = new CheckoutAlojamientosService(alojamientosService)
+  const checkoutService = new CheckoutAlojamientosService(alojamientosService, {
+    simulado: opciones.pagoSimuladoHabilitado === true,
+    ...(process.env['TUS_WEB_BASE_URL']?.trim() ? { webBaseUrl: process.env['TUS_WEB_BASE_URL'].trim() } : {}),
+  })
 
   // Helper para manejar errores
   const manejarError = (err: unknown, res: Response) => {

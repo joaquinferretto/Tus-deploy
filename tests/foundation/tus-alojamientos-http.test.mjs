@@ -435,7 +435,7 @@ test('SEGURIDAD ALOJAMIENTOS: solo la cuenta titular califica su reserva', async
 
 test('SEGURIDAD ALOJAMIENTOS: la preferencia de checkout es de la cuenta titular', async () => {
   const mock = crearMockPrisma()
-  await conServidor(crearAppTest(mock.db), async (base) => {
+  await conServidor(crearAppTest(mock.db, { pagoSimuladoHabilitado: true }), async (base) => {
     const hold = await crearHold(base, 'tok-cliente')
     const ruta = `/reservas/${hold.id}/checkout-preference`
     assert.equal((await pedir(base, 'POST', ruta)).status, 401)
@@ -443,6 +443,24 @@ test('SEGURIDAD ALOJAMIENTOS: la preferencia de checkout es de la cuenta titular
     assert.equal((await pedir(base, 'POST', ruta, 'tok-cliente')).status, 200)
     assert.equal((await pedir(base, 'POST', '/reservas/res-no-existe/checkout-preference')).status, 404)
   })
+  // Sin la simulación explícita (producción) no hay preferencia, ni real ni simulada, aunque falte
+  // toda variable de Mercado Pago; la autorización se sigue evaluando primero.
+  const anterior = process.env['MP_ACCESS_TOKEN']
+  delete process.env['MP_ACCESS_TOKEN']
+  try {
+    const produccion = crearMockPrisma()
+    await conServidor(crearAppTest(produccion.db), async (base) => {
+      const hold = await crearHold(base, 'tok-cliente')
+      const ruta = `/reservas/${hold.id}/checkout-preference`
+      assert.equal((await pedir(base, 'POST', ruta)).status, 401)
+      assert.equal((await pedir(base, 'POST', ruta, 'tok-cliente-2')).status, 403)
+      const cerrada = await pedir(base, 'POST', ruta, 'tok-cliente')
+      assert.equal(cerrada.status, 503)
+      assert.doesNotMatch(JSON.stringify(await cerrada.json()), /initPoint|preferenceId/u)
+    })
+  } finally {
+    if (anterior !== undefined) process.env['MP_ACCESS_TOKEN'] = anterior
+  }
 })
 
 test('SEGURIDAD ALOJAMIENTOS: simular-pago está apagado salvo habilitación explícita', async () => {
