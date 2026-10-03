@@ -496,7 +496,17 @@ REAL** — Groq Whisper (`verbose_json`, campos de segmentos), la visión de Gro
 (en la máquina de desarrollo solo había el de Xpdf, que se detecta como incompatible), la búsqueda de pagos de Mercado Pago
 (`/v1/payments/search` por `external_reference`, paginada de a 30 y hasta 120 resultados) y la descarga de media de Meta
 (incluido si la URL temporal redirige: las redirecciones se siguen a mano, solo a hosts de Meta por HTTPS y sin reenviar el
-token a otro origen). Antes de habilitar en producción hay que probar en sandbox/un número
+token a otro origen).
+
+Las comprobaciones reales están preparadas en `scripts/dev/probar-integraciones-reales.mjs` (solo lectura, sin imprimir
+secretos; sale con código 2 y sin contactar a nadie si falta la credencial):
+
+| Comprobación | Necesita | Qué hace |
+| --- | --- | --- |
+| `groq-vision <imagen sintética>` | `GROQ_API_KEY` o `GROQ_API_KEY_1..6` | lee un comprobante **sintético** con el modelo de visión |
+| `meta [mediaId]` | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | GET del número; con el id de media de un mensaje de prueba controlado, lo descarga en memoria e informa tipo, tamaño y validación |
+| `mercado-pago <external_reference>` | `MERCADO_PAGO_PLATFORM_ACCESS_TOKEN`, `MERCADO_PAGO_PLATFORM_USER_ID` | solo `GET /v1/payments/search`; informa cantidades y estados, no toca el ledger |
+| `scripts/dev/probar-ocr-comprobante.mjs <imagen> [langPath]` | datos de idioma en disco | OCR local, sin red | Antes de habilitar en producción hay que probar en sandbox/un número
 de prueba y confirmar con Mercado Pago que la búsqueda por `external_reference` está disponible para la aplicación.
 
 ## Migracion
