@@ -184,5 +184,18 @@ test('WU6 exposes operations routes and SEO foundations without enabling financi
   assert.match(source, /reports\/operations/)
   assert.match(page, /Reporting|Support|WhatsApp/)
   assert.match(observability, /createTusOperationsTelemetry/)
-  assert.doesNotMatch(source, /payout|release.*enabled/i)
+  assert.doesNotMatch(source, /release.*enabled/i)
+  // TUS-GANANCIAS-01 added provider payouts on purpose (owner decision): the provider requests,
+  // a platform administrator (MFA) processes each request, which sends a Mercado Pago Payouts
+  // transfer or records a payment made by another means. Still no release by itself: money only
+  // leaves through the administration's action, Payouts is off unless explicitly enabled, and a
+  // notification never pays (the state is read from Mercado Pago).
+  const pagos = readFileSync(join(root, 'apps/api/src/tus/finance/servicios/composicion-pagos.ts'), 'utf8')
+  const earnings = readFileSync(join(root, 'apps/api/src/tus/finance/servicios/ganancias.ts'), 'utf8')
+  const llamadasDePago = source.match(/earnings\.(procesar|reenviar)\(/gu) ?? []
+  assert.deepEqual(llamadasDePago, ['earnings.procesar(', 'earnings.reenviar('], 'only the admin action route sends a payout')
+  assert.match(source, /const adminGanancias = [^\n]*\n\s*if \(!isPlatformPaymentsAdmin\(context, application\)/u)
+  assert.match(source, /process: \(\) => earnings\.procesar\(ctx, id, body\)/u)
+  assert.match(pagos, /env\['TUS_MERCADOPAGO_PAYOUTS_ENABLED'\]\?\.trim\(\) !== 'true'/u)
+  assert.match(earnings, /async notificacionPayout\(body: unknown\)[\s\S]*?this\.aplicarEstadoProveedor\(solicitud/u)
 })

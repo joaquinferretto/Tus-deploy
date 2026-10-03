@@ -68,6 +68,7 @@ import {
   type PuertoProveedorPagosServicio,
   type ResultadoCheckout,
 } from './pagos.ts'
+import { debitoDeGanancia, gananciaDeAprobacion, tarifaDeGanancia, type MovimientoGanancia, type PuertoLedgerGanancias } from './ganancias.ts'
 
 // Reads the WEB-08 commercial chain inside the finance transaction. Every lookup is scoped:
 // a work is visible only to its customer tenant or its provider tenant.
@@ -331,6 +332,9 @@ export interface RepositoriosFinanzasServicio {
   liquidaciones: PuertoLiquidacionesServicio
   conciliaciones: PuertoConciliacionesServicio
   reembolsos: PuertoReembolsosServicio
+  // TUS-GANANCIAS-01: what TUS owes providers for payments it collected (optional: absent in
+  // compositions without it, then nothing is booked there).
+  ganancias?: PuertoLedgerGanancias
 }
 
 export interface ResultadoEvaluacionCobro {
@@ -747,6 +751,7 @@ export class ServicioFinanzasServicios {
     publicacion: PublicacionServicioFinanciera | null
     trabajo: Trabajo
     part: TramoPagoServicio
+    mode: 'split' | 'plataforma'
   }> {
     const trabajo = await this.requerirTrabajo(repositories, context, trabajoId)
     if (trabajo.tenantId !== context.tenantId)
@@ -773,7 +778,7 @@ export class ServicioFinanzasServicios {
         availability.reason ?? 'PAYMENTS_DISABLED',
         'online payment is not available yet'
       )
-    return { publicacion: cobro.publicacion, trabajo, part: cobro.part }
+    return { publicacion: cobro.publicacion, trabajo, part: cobro.part, mode: availability.mode ?? 'split' }
   }
 
   // Customer command: fixes the payable amount of a work from persisted commercial facts.
@@ -844,7 +849,7 @@ export class ServicioFinanzasServicios {
           status: 'replay',
           ...(idempotency.response as Omit<ResultadoIntencionPago, 'status'>),
         }
-      const { publicacion, part } = await this.exigirCobroDisponible(
+      const { publicacion, part, mode } = await this.exigirCobroDisponible(
         repositories,
         input,
         input.trabajoId
@@ -924,6 +929,8 @@ export class ServicioFinanzasServicios {
           checkoutExpiresAt: null,
           dispatchClaimedUntil: null,
           environment: this.proveedor.environment ?? null,
+          // Decided now, with the provider's account as it is: frozen on the intent.
+          collectionMode: mode,
         }
         await repositories.intenciones.crear(intent)
         await this.auditar(repositories, obligation, {
@@ -1019,6 +1026,7 @@ export class ServicioFinanzasServicios {
         currency: intent.currency,
         prestadorTenantId: intent.prestadorTenantId,
         commissionMinor: intent.commission?.commissionMinor ?? null,
+        collectionMode: intent.collectionMode ?? 'split',
         title: claim.title ?? 'Servicio TUS',
         trabajoId: intent.trabajoId,
         // Request-born works return to their page and a turno to "Mis turnos"; the return never
@@ -1234,6 +1242,7 @@ export class ServicioFinanzasServicios {
         status: 'new' as const,
         refund,
         providerReference: intent.providerReference,
+        collectionMode: intent.collectionMode ?? 'split',
       }
     })
     if (prepared.status !== 'new')
@@ -1246,6 +1255,7 @@ export class ServicioFinanzasServicios {
           prestadorTenantId: prepared.refund.prestadorTenantId,
           providerReference: prepared.providerReference,
           idempotencyKey: prepared.refund.reembolsoId,
+          collectionMode: prepared.collectionMode,
         })
       ).providerRefundId
     } catch (error) {
@@ -1776,6 +1786,15 @@ export class ServicioFinanzasServicios {
         },
       })
       await this.publicarLiquidacion(repositories, settlement, 'tus.service_settlement.held')
+      // TUS collected this payment with its own account: the provider's share (gross minus the
+      // frozen commission) is an earning TUS owes. Split payments were already paid by Mercado Pago.
+      if (intent.collectionMode === 'plataforma' && repositories.ganancias) {
+        const ganancia = gananciaDeAprobacion({ obligation, netMinor: snapshot.netMinor, paymentId: intent.paymentId, eventId: event.eventId, now })
+        if (!(await repositories.ganancias.buscar(ganancia))) await repositories.ganancias.registrar(ganancia)
+        // The Mercado Pago fee is the provider's, as in Split 1:1: when the approval already
+        // reports it, it is debited now; otherwise when the payment reports it.
+        await this.debitarTarifaGanancia(repositories, ganancia, snapshot.pspFeeMinor, event.eventId, now)
+      }
       // The paid deposit of a turno confirms its reservation in this same transaction: it is the
       // only automatic path from awaiting_payment to confirmed. The money was really collected, so
       // the approval is ALWAYS booked: when the turno is no longer waiting for it (its payment
@@ -1843,6 +1862,14 @@ export class ServicioFinanzasServicios {
       return
     }
     if (intent.providerStatus !== 'refunded' && intent.providerStatus !== 'charged_back') return
+    // The earning is never edited: its reversal is a new debit movement.
+    if (repositories.ganancias) {
+      const ganancia = await repositories.ganancias.buscar({ prestadorTenantId: obligation.prestadorTenantId, movimientoId: `earning:${obligation.obligacionId}` })
+      if (ganancia) {
+        const debito = debitoDeGanancia(ganancia, intent.providerStatus === 'refunded' ? 'refund_debit' : 'chargeback_debit', event.eventId, now)
+        if (!(await repositories.ganancias.buscar(debito))) await repositories.ganancias.registrar(debito)
+      }
+    }
     const entryType =
       intent.providerStatus === 'refunded' ? 'refund_compensation' : 'chargeback_compensation'
     await repositories.ledger.agregar(
@@ -1903,6 +1930,24 @@ export class ServicioFinanzasServicios {
       pspFeeMinor: event.pspFeeMinor,
       providerNetMinor: breakdown.providerNetMinor,
     })
+    // A payment TUS collected: the fee reported now is debited from the provider's earning.
+    if (repositories.ganancias) {
+      const ganancia = await repositories.ganancias.buscar({ prestadorTenantId: obligation.prestadorTenantId, movimientoId: `earning:${obligation.obligacionId}` })
+      if (ganancia) await this.debitarTarifaGanancia(repositories, ganancia, event.pspFeeMinor, event.eventId, this.isoNow())
+    }
+  }
+
+  // TUS-GANANCIAS-01: the reported Mercado Pago fee of a collection made by TUS, once.
+  protected async debitarTarifaGanancia(
+    repositories: RepositoriosFinanzasServicio,
+    ganancia: MovimientoGanancia,
+    pspFeeMinor: bigint | null,
+    eventId: string,
+    now: string
+  ): Promise<void> {
+    if (!repositories.ganancias || pspFeeMinor === null) return
+    const tarifa = tarifaDeGanancia(ganancia, pspFeeMinor, eventId, now)
+    if (tarifa && !(await repositories.ganancias.buscar(tarifa))) await repositories.ganancias.registrar(tarifa)
   }
 
   protected async guardarLiquidacion(
@@ -1957,6 +2002,10 @@ export class ServicioFinanzasServicios {
       event.marketplaceFeeMinor !== intent.commission.commissionMinor
     )
       return { result: 'quarantined', reason: 'marketplace_fee_mismatch' }
+    // TUS-GANANCIAS-01: a payment TUS collected with its own account carries no marketplace fee;
+    // one that does is not the preference TUS created.
+    if (intent.collectionMode === 'plataforma' && event.marketplaceFeeMinor !== null && event.marketplaceFeeMinor !== undefined && event.marketplaceFeeMinor !== 0n)
+      return { result: 'quarantined', reason: 'marketplace_fee_unexpected' }
     if (event.status === 'unknown')
       return { result: 'ignored_unknown_status', reason: `unmapped:${event.rawStatus}` }
     // WEB-09E hosted checkout: one preference can collect several payment attempts (a rejected

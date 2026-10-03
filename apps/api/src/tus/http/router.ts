@@ -35,6 +35,7 @@ import {
 import { ErrorEvidenciaHabilitacion } from '../readiness/evidencias-admin.ts'
 import { TrabajoError } from '../work/index.ts'
 import { ErrorFinanzasServicio } from '../finance/servicios/modelo.ts'
+import { ErrorProveedorPagos } from '../finance/servicios/pagos.ts'
 import { ErrorIdentidad } from '../identidad/modelo.ts'
 import type { ModuloWhatsapp } from '../asistente/composicion.ts'
 import { leerAdminsPlataforma } from '../../auth-security/application/auth-service.ts'
@@ -992,6 +993,212 @@ export function createTusHttpRouter({
       }
     }
   )
+
+  // TUS-GANANCIAS-01: the provider's earnings (payments TUS collected for it) and its payout
+  // requests. The provider is the session's tenant; nothing in the request names another one.
+  const gananciasDe = (request: Request, response: Response, context: TusAuthenticatedTenantContext | null, body: Record<string, unknown> = {}): context is TusAuthenticatedTenantContext => {
+    if (!context || !hasPermission(context, 'tus:marketplace:write') || hasSpoofedAuthority(body, request, context) || !application.providerEarnings) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS provider earnings access is not authorized')
+      return false
+    }
+    response.setHeader('cache-control', 'private, no-store')
+    return true
+  }
+  const contextoGanancias = (context: TusAuthenticatedTenantContext) => ({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId })
+  // Mercado Pago unreachable or refusing while querying a payout: a gateway error, never a 500.
+  const enviarErrorGanancias = (response: Response, error: unknown) => {
+    if (error instanceof ErrorProveedorPagos) {
+      sendError(response, 502, error.code, 'Mercado Pago did not answer the payout operation')
+      return
+    }
+    sendServiceFinanceError(response, error)
+  }
+
+  router.get(['/tus/v1/provider/earnings', '/tus/v1/prestador/ganancias'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!gananciasDe(request, response, context)) return
+    try {
+      response.status(200).json(await application.providerEarnings!.resumen(contextoGanancias(context)))
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  router.get(['/tus/v1/provider/earnings/history', '/tus/v1/prestador/ganancias/historial'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!gananciasDe(request, response, context)) return
+    try {
+      response.status(200).json({ items: await application.providerEarnings!.historial(contextoGanancias(context)) })
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  router.get(['/tus/v1/provider/earnings/payouts', '/tus/v1/prestador/ganancias/liquidaciones'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!gananciasDe(request, response, context)) return
+    try {
+      response.status(200).json({ items: await application.providerEarnings!.liquidaciones(contextoGanancias(context)) })
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  // The amount is everything available, decided by TUS: the body carries only the email of the
+  // provider's own Mercado Pago account.
+  router.post(['/tus/v1/provider/earnings/payouts', '/tus/v1/prestador/ganancias/liquidaciones'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!gananciasDe(request, response, context, body)) return
+    try {
+      const result = await application.providerEarnings!.solicitar(contextoGanancias(context), readOptionalHeader(request, 'idempotency-key') ?? '', body)
+      response.status(result.status === 'created' ? 201 : 200).json(result)
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  router.get(['/tus/v1/provider/earnings/payouts/:payoutId', '/tus/v1/prestador/ganancias/liquidaciones/:payoutId'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!gananciasDe(request, response, context)) return
+    try {
+      response.status(200).json({ payout: await application.providerEarnings!.ver(contextoGanancias(context), String(request.params['payoutId'] ?? '')) })
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  router.post(['/tus/v1/provider/earnings/payouts/:payoutId/cancel', '/tus/v1/prestador/ganancias/liquidaciones/:payoutId/cancelar'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!gananciasDe(request, response, context, body)) return
+    try {
+      response.status(200).json({ payout: await application.providerEarnings!.cancelar(contextoGanancias(context), String(request.params['payoutId'] ?? '')) })
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  // Mercado Pago Payouts notification. Public (Mercado Pago calls it) and never trusted: it only
+  // names a payout; its state is read from Mercado Pago with TUS's token. Always 200 so that
+  // Mercado Pago stops retrying what TUS already handled or does not know.
+  router.post(['/tus/v1/integrations/mercado-pago/payouts/webhooks'], async (request: Request, response: Response) => {
+    response.setHeader('cache-control', 'no-store')
+    if (!application.providerEarnings) {
+      response.status(200).json({ received: true })
+      return
+    }
+    try {
+      const result = await application.providerEarnings.notificacionPayout(request.body)
+      response.status(200).json({ received: true, status: result.status })
+    } catch {
+      // Mercado Pago unreachable: answer an error so that Mercado Pago retries the notification.
+      sendError(response, 503, 'UNAVAILABLE', 'payout notification could not be processed')
+    }
+  })
+
+  // Platform administration of payouts: the same authority as the rest of the payment
+  // administration (permission + MFA-elevated session + platform tenant).
+  const adminGanancias = (request: Request, response: Response, context: TusAuthenticatedTenantContext | null, body: Record<string, unknown> = {}): context is TusAuthenticatedTenantContext => {
+    if (!isPlatformPaymentsAdmin(context, application) || !context || hasSpoofedAuthority(body, request, context) || !application.providerEarnings) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized')
+      return false
+    }
+    response.setHeader('cache-control', 'no-store')
+    return true
+  }
+
+  router.get(['/tus/v1/admin/payments/payouts'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!adminGanancias(request, response, context)) return
+    try {
+      const page = await application.providerEarnings!.listar({ status: request.query['status'], providerTenantId: request.query['providerTenantId'], page: request.query['page'], pageSize: request.query['pageSize'] })
+      response.status(200).json({ ...page, automaticAvailable: application.providerEarnings!.pagoAutomaticoDisponible })
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  router.get(['/tus/v1/admin/payments/payouts/:payoutId'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!adminGanancias(request, response, context)) return
+    try {
+      response.status(200).json(await application.providerEarnings!.detalle(String(request.params['payoutId'] ?? '')))
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  // process (mechanism: mercado_pago_payouts | manual), resend, refresh (from Mercado Pago),
+  // paid (manual only, with the external reference), failed and cancel (never once a Mercado
+  // Pago transfer was sent: only Mercado Pago's answer resolves it).
+  router.post(['/tus/v1/admin/payments/payouts/:payoutId/:accion'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!adminGanancias(request, response, context, body)) return
+    const accion = String(request.params['accion'] ?? '')
+    const id = String(request.params['payoutId'] ?? '')
+    const ctx = { tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId }
+    const earnings = application.providerEarnings!
+    const acciones: Record<string, () => Promise<unknown>> = {
+      process: () => earnings.procesar(ctx, id, body),
+      resend: () => earnings.reenviar(ctx, id),
+      refresh: () => earnings.actualizarDesdeMercadoPago(ctx, id),
+      paid: () => earnings.marcarPagada(ctx, id, body),
+      failed: () => earnings.marcarFallida(ctx, id, body),
+      cancel: () => earnings.cancelarAdmin(ctx, id, body),
+    }
+    const ejecutar = acciones[accion]
+    if (!ejecutar) {
+      sendError(response, 404, 'NOT_FOUND', 'unknown payout action')
+      return
+    }
+    try {
+      response.status(200).json({ payout: await ejecutar() })
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  // Negative balances (an obligation of the provider netted by future earnings; never charged).
+  router.get(['/tus/v1/admin/payments/earnings/negative-balances'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!adminGanancias(request, response, context)) return
+    try {
+      response.status(200).json({ items: await application.providerEarnings!.saldosNegativos() })
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  // Reconciliation of one provider's collections made by TUS.
+  router.get(['/tus/v1/admin/payments/earnings/reconciliation'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!adminGanancias(request, response, context)) return
+    const providerTenantId = typeof request.query['providerTenantId'] === 'string' ? request.query['providerTenantId'].trim() : ''
+    if (!providerTenantId || providerTenantId.length > 200) {
+      sendError(response, 400, 'INVALID', 'providerTenantId is required')
+      return
+    }
+    try {
+      response.status(200).json({ items: await application.providerEarnings!.conciliacion(providerTenantId) })
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
+  // An explicit manual resolution (credit or debit movement with its reason); idempotent by key.
+  router.post(['/tus/v1/admin/payments/earnings/adjustments'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    const body = asRecord(request.body)
+    if (!adminGanancias(request, response, context, body)) return
+    try {
+      const result = await application.providerEarnings!.ajustar({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId }, body, readOptionalHeader(request, 'idempotency-key') ?? '')
+      response.status(result.status === 'created' ? 201 : 200).json(result)
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
 
   // WEB-09D: provider (prestador) Mercado Pago account link. Tokens never leave the server.
   router.get(

@@ -38,20 +38,31 @@ test(
         const rows = await prisma.perfilServicio.findMany({ where: { perfilId: T('perfil-a') }, orderBy: { orden: 'asc' } })
         const principal = (await prisma.perfilPublicoPrestador.findFirst({ where: { id: T('perfil-a') } })).oficio
         let broken = 'none'
-        try { await prisma.perfilPublicoPrestador.update({ where: { id: T('perfil-a') }, data: { oficio: 'aire' } }) } catch (e) { broken = /fk_perfiles_servicio_principal/.test(String(e.message)) ? 'fk' : String(e.message).slice(0, 80) }
+        try { await prisma.perfilPublicoPrestador.update({ where: { id: T('perfil-a') }, data: { oficio: 'aire' } }) } catch (e) {
+          // fk_perfiles_servicio_principal is DEFERRABLE INITIALLY DEFERRED: it fires at COMMIT and
+          // Prisma reports that violation (P2003) without the constraint name. PostgreSQL names it
+          // when the same write is checked immediately, so the constraint is asked for by name there.
+          broken = /fk_perfiles_servicio_principal/.test(String(e.message)) ? 'fk' : e.code !== 'P2003' ? String(e.message).slice(0, 80) : await prisma.$transaction(async (tx) => {
+            await tx.$executeRawUnsafe('SET CONSTRAINTS "fk_perfiles_servicio_principal" IMMEDIATE')
+            await tx.$executeRawUnsafe('UPDATE "perfiles_publicos_prestador" SET "oficio" = $1 WHERE "id" = $2', 'aire', T('perfil-a'))
+            return 'accepted'
+          }).catch((raw) => (/fk_perfiles_servicio_principal/.test(String(raw.message) + JSON.stringify(raw.meta ?? {})) ? 'fk' : String(raw.message).slice(0, 80)))
+        }
+        const principalAfter = (await prisma.perfilPublicoPrestador.findFirst({ where: { id: T('perfil-a') } })).oficio
         for (let i = 0; i < 12; i++) { const p = await provider('n' + i); await store.guardar(base(p, i % 2 ? ['electricidad', 'plomeria'] : ['plomeria'], T('perfil-n' + i))) }
         queries = 0
         const electricidad = await store.visibles({ oficios: ['electricidad', 'plomeria'], limite: 300 })
         const listQueries = queries
         const mine = electricidad.filter((p) => p.tenantId.startsWith(run))
-        console.log(JSON.stringify({ five, two, rows: rows.map((r) => [r.oficioId, r.orden]), principal, broken, unique: new Set(mine.map((p) => p.id)).size === mine.length, count: mine.length, listQueries }))
+        console.log(JSON.stringify({ five, two, rows: rows.map((r) => [r.oficioId, r.orden]), principal, principalAfter, broken, unique: new Set(mine.map((p) => p.id)).size === mine.length, count: mine.length, listQueries }))
       } finally { await prisma.$disconnect() }
     `)
     assert.deepEqual(r.five, ['electricidad', 'plomeria', 'pintura', 'albanileria', 'mecanica'])
     assert.deepEqual(r.two, ['pintura', 'electricidad'])
     assert.deepEqual(r.rows, [['pintura', 0], ['electricidad', 1]])
     assert.equal(r.principal, 'pintura')
-    assert.equal(r.broken, 'fk')
+    assert.equal(r.broken, 'fk', 'a principal outside the set is rejected by fk_perfiles_servicio_principal')
+    assert.equal(r.principalAfter, 'pintura', 'and the principal did not change')
     assert.equal(r.unique, true)
     assert.equal(r.count, 13)
     // One query for the profiles and one batched read of their services, whatever the size.

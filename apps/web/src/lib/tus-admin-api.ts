@@ -1,5 +1,5 @@
 import { resolveWebApiBaseUrl } from './api-url'
-import type { FiltrosUsuariosAdmin, PaginaUsuariosAdmin, PerfilUsuarioAdminDTO, UsuarioAdminDTO } from '@factory/contracts'
+import type { DetalleLiquidacionAdminDTO, FiltrosUsuariosAdmin, LiquidacionAdminDTO, PaginaUsuariosAdmin, PerfilUsuarioAdminDTO, UsuarioAdminDTO } from '@factory/contracts'
 import type { UbicacionPrestadorWeb } from '@/features/directory/directory-client'
 
 import { fetchWithSession } from './session-credentials'
@@ -317,6 +317,11 @@ export const adminApi = {
     call<{ evidence: AdminEvidenciaHabilitacion }>('/tus/v1/admin/payments/readiness/evidence', input),
   revocarEvidenciaHabilitacion: (evidenceId: string, reason: string) =>
     call<{ evidence: AdminEvidenciaHabilitacion }>(`/tus/v1/admin/payments/readiness/evidence/${encodeURIComponent(evidenceId)}/revoke`, { reason }),
+  // TUS-GANANCIAS-01: provider payout requests. The API decides amounts and states; the page only
+  // sends the action, the mechanism and what the administrator types.
+  liquidaciones: (input: { status: string; page: number; pageSize: number }) => call<{ items: LiquidacionAdminDTO[]; total: number; page: number; pageSize: number; automaticAvailable: boolean }>(`/tus/v1/admin/payments/payouts?${new URLSearchParams({ status: input.status, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
+  liquidacion: (id: string) => call<DetalleLiquidacionAdminDTO>(`/tus/v1/admin/payments/payouts/${encodeURIComponent(id)}`),
+  accionLiquidacion: (id: string, action: 'process' | 'resend' | 'refresh' | 'paid' | 'failed' | 'cancel', body: Record<string, string> = {}) => call<{ payout: LiquidacionAdminDTO }>(`/tus/v1/admin/payments/payouts/${encodeURIComponent(id)}/${action}`, body),
   pagos: (input: { estado: string; page: number; pageSize: number }) => call<AdminPage<AdminPago>>(`/tus/v1/admin/pagos?${new URLSearchParams({ estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   cancelarTrabajo: (id: string, expectedVersion: number, reason: string, idempotencyKey: string) => call<{ status: string }>(`/tus/v1/admin/trabajos/${encodeURIComponent(id)}/cancelar`, { expectedVersion, reason }, 'POST', { 'Idempotency-Key': idempotencyKey }),
   // One page of an entity (server-side filters and pagination) with its usage counts.

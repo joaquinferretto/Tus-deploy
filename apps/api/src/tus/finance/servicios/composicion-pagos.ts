@@ -20,6 +20,8 @@ import {
   type ConfiguracionProveedorMercadoPago,
 } from './mercado-pago.ts'
 import { ProveedorPagosServicioNoDisponible, type PuertoProveedorPagosServicio } from './pagos.ts'
+import { EjecucionLiquidacionNoConfigurada, type PuertoEjecucionLiquidacion } from './ganancias.ts'
+import { EjecucionLiquidacionMercadoPago, clavePrivadaPayouts, type ConfiguracionPayoutsMercadoPago } from './payouts-mercado-pago.ts'
 
 // WEB-09E: the real Mercado Pago adapter exists. It is only composed when every variable is
 // present; otherwise the runtime keeps `ProveedorPagosServicioNoDisponible` (fail closed).
@@ -32,6 +34,11 @@ export interface ModuloPagosServicio {
   proveedor: PuertoProveedorPagosServicio
   operativo: () => EstadoOperativoPagos
   platformAdminTenantId: string | null
+  // TUS collects with its own account for providers without a linked one (earnings regime).
+  cobroPlataforma: boolean
+  // How provider earnings are paid out: Mercado Pago Payouts when configured; otherwise nothing
+  // can be sent (fail closed).
+  liquidaciones: PuertoEjecucionLiquidacion
 }
 
 export function crearModuloPagosServicio(input: {
@@ -50,6 +57,7 @@ export function crearModuloPagosServicio(input: {
   identidadVerificada?: (tenantId: string) => Promise<boolean>
   // Tests inject a fake HTTP transport for the Mercado Pago API.
   mercadoPago?: Pick<ConfiguracionProveedorMercadoPago, 'fetch' | 'apiBaseUrl'>
+  payouts?: Pick<ConfiguracionPayoutsMercadoPago, 'fetch' | 'apiBaseUrl'>
 }): ModuloPagosServicio {
   const now = input.now ?? (() => Date.now())
   const env = input.env
@@ -92,6 +100,10 @@ export function crearModuloPagosServicio(input: {
     input.identidadVerificada ?? null
   )
   const produccionAutorizada = input.produccionAutorizada ?? (async () => false)
+  // TUS-GANANCIAS-01: TUS's own account, to collect for providers without a linked account.
+  const tokenPlataforma = env['MERCADO_PAGO_PLATFORM_ACCESS_TOKEN']?.trim() ?? ''
+  const usuarioPlataforma = env['MERCADO_PAGO_PLATFORM_USER_ID']?.trim() ?? ''
+  const plataforma = tokenPlataforma && /^\d{3,20}$/u.test(usuarioPlataforma) ? { accessToken: tokenPlataforma, userId: usuarioPlataforma } : null
   const proveedor: PuertoProveedorPagosServicio =
     oauthListo && proveedorOperativo(estado) && estado.environment !== 'unset'
       ? new ProveedorPagosMercadoPago(
@@ -101,6 +113,7 @@ export function crearModuloPagosServicio(input: {
             notificationUrl: env['MERCADO_PAGO_NOTIFICATION_URL']!.trim(),
             webBaseUrl: env['TUS_WEB_BASE_URL']!.trim(),
             marketplace: env['MERCADO_PAGO_MARKETPLACE']?.trim() || null,
+            plataforma,
             now,
             ...input.mercadoPago,
           },
@@ -108,6 +121,7 @@ export function crearModuloPagosServicio(input: {
         )
       : new ProveedorPagosServicioNoDisponible()
   const platformAdminTenantId = env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null
+  const liquidaciones = crearEjecucionLiquidaciones(env, estado.environment, plataforma, proveedor.source === 'authorized', input.payouts)
   return {
     configuracion: new ServicioConfiguracionPagos(
       input.configuracion,
@@ -122,10 +136,38 @@ export function crearModuloPagosServicio(input: {
       operativo,
       (tenantId) => cuentas.cuentaConectada(tenantId),
       produccionAutorizada,
-      input.identidadVerificada ?? null
+      input.identidadVerificada ?? null,
+      // Only with the real adapter configured: a fake or missing provider never collects for TUS.
+      () => plataforma !== null && proveedor.source === 'authorized'
     ),
     proveedor,
     operativo,
     platformAdminTenantId,
+    cobroPlataforma: plataforma !== null && proveedor.source === 'authorized',
+    liquidaciones,
+  }
+}
+
+// TUS-GANANCIAS-01: Mercado Pago Payouts with TUS's own account. Composed only when explicitly
+// enabled (TUS_MERCADOPAGO_PAYOUTS_ENABLED=true), with the real payment adapter and the platform
+// account configured, and, in production, with a valid Ed25519 request-signing key. Anything
+// missing or invalid leaves payouts unavailable (no transfer can be sent).
+function crearEjecucionLiquidaciones(
+  env: Record<string, string | undefined>,
+  environment: EstadoOperativoPagos['environment'],
+  plataforma: { accessToken: string; userId: string } | null,
+  proveedorReal: boolean,
+  transporte: Pick<ConfiguracionPayoutsMercadoPago, 'fetch' | 'apiBaseUrl'> | undefined
+): PuertoEjecucionLiquidacion {
+  if (env['TUS_MERCADOPAGO_PAYOUTS_ENABLED']?.trim() !== 'true' || !plataforma || !proveedorReal) return new EjecucionLiquidacionNoConfigurada()
+  if (environment !== 'sandbox' && environment !== 'production') return new EjecucionLiquidacionNoConfigurada()
+  const notificationUrl = env['MERCADO_PAGO_PAYOUTS_NOTIFICATION_URL']?.trim() || null
+  try {
+    const pem = env['MERCADO_PAGO_PAYOUTS_SIGNING_KEY']?.trim() ?? ''
+    const signingKey = pem ? clavePrivadaPayouts(pem) : null
+    return new EjecucionLiquidacionMercadoPago({ environment, accessToken: plataforma.accessToken, signingKey, notificationUrl, ...transporte })
+  } catch {
+    // Invalid key or URL, or production without its signing key.
+    return new EjecucionLiquidacionNoConfigurada()
   }
 }

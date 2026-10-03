@@ -415,6 +415,27 @@ para un prestador individual y cómo se modela (ver `docs/activation-gates.md`);
 solicitud (W09-05) deben bloquearse igual que los turnos cuando falta `service-payments` (hoy siguen sin
 seña en ese caso).
 
+### W09-09: Ganancias de prestadores sin Mercado Pago y solicitudes de pago (TUS-GANANCIAS-01, 2026-10-03)
+
+- Si TUS tiene configurada su propia cuenta de Mercado Pago (`MERCADO_PAGO_PLATFORM_*`), un prestador **sin** cuenta
+  conectada puede cobrar: TUS cobra con su cuenta (sin split) y la parte del prestador queda como **ganancia pendiente**.
+  Solo en ese caso esto reemplaza el bloqueo `bloqueada` de W09-08 y W09-05. Identidad verificada y, en producción,
+  `service-payments` siguen siendo obligatorios. Con cuenta conectada: Split 1:1 sin cambios, sin ganancias en TUS.
+- Ganancia = bruto − comisión TUS; la **tarifa de Mercado Pago la soporta el prestador** (decisión del dueño), con el importe
+  real que informa Mercado Pago, debitado cuando se conoce y visible para el prestador.
+- Ledger append-only: `earning_credit`, `psp_fee_debit`, `refund_debit`, `chargeback_debit`, `adjustment_credit`,
+  `adjustment_debit`, `payout_reserve`, `payout_release`, `payout_completed`. El saldo se deriva; no hay campo saldo.
+- **Mínimo** $10.000 inicial, configurable por la administración (configuración de pagos versionada). **Frecuencia** libre.
+  Una sola solicitud activa por prestador. Para pedir: Mercado Pago conectado con OAuth vigente y cuenta habilitada,
+  identidad verificada, disponible ≥ mínimo; el prestador indica el email de su cuenta de Mercado Pago.
+- **Saldo negativo**: obligación del prestador, visible para la administración, no retirable, compensado por ganancias
+  futuras; nunca se cobra fuera de TUS. Resoluciones manuales solo con `adjustment_credit` / `adjustment_debit`.
+- **Ejecución**: Mercado Pago Payouts (API oficial, `POST /v1/payouts`) desde la cuenta de TUS a la cuenta del prestador,
+  confirmada solo por la consulta de la transacción a Mercado Pago; o, si la administración pagó por otro medio, registro
+  con comprobante obligatorio. Las dos vías nunca se mezclan en una solicitud. La administración procesa cada solicitud
+  (control antifraude); no hay envíos automáticos sin intervención.
+- WhatsApp no permite pedir el pago de ganancias (solo la Web).
+
 ### W09-07: Calificación del Prestador (FASE 9)
 
 - Solo el Cliente del trabajo (tenant de la sesión) califica, una vez, y solo con el trabajo `completed` (con pagos

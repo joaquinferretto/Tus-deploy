@@ -50,6 +50,10 @@ export interface ConfiguracionProveedorMercadoPago {
   timeoutMs?: number
   signatureToleranceMs?: number
   now?: () => number
+  // TUS-GANANCIAS-01: TUS's OWN account (the access token of the TUS application owner and its
+  // user id, from the Mercado Pago Developers panel). With it TUS collects for a provider that
+  // has no linked account; without it such a provider cannot be charged (as before).
+  plataforma?: { accessToken: string; userId: string } | null
 }
 
 // Largest minor amount rendered exactly as a JSON number with two decimals.
@@ -85,7 +89,11 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
       throw new ErrorProveedorPagos('PROVIDER_REJECTED', 'amount is outside the supported range')
     if (input.commissionMinor < 0n || input.commissionMinor > input.amountMinor)
       throw new ErrorProveedorPagos('PROVIDER_REJECTED', 'marketplace fee is outside the amount')
-    const token = await this.tokenVendedor(input.prestadorTenantId)
+    // Collected by TUS: its own account, no split and no marketplace_fee (the commission is
+    // kept from what TUS collects; the rest is the provider's earning).
+    const porPlataforma = input.collectionMode === 'plataforma'
+    if (porPlataforma && !this.config.plataforma) throw new ErrorProveedorPagos('PROVIDER_ACCOUNT_NOT_CONNECTED', 'platform collection is not configured')
+    const token = porPlataforma ? { accessToken: this.config.plataforma!.accessToken, externalAccountId: this.config.plataforma!.userId } : await this.tokenVendedor(input.prestadorTenantId)
     const path =
       input.returnPath && /^\/[A-Za-z0-9/_.?=&%-]*$/u.test(input.returnPath) && !input.returnPath.startsWith('//')
         ? input.returnPath
@@ -102,8 +110,8 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
         },
       ],
       external_reference: input.paymentId,
-      marketplace_fee: aNumeroExacto(input.commissionMinor, input.currency),
-      ...(this.config.marketplace ? { marketplace: this.config.marketplace } : {}),
+      ...(porPlataforma ? {} : { marketplace_fee: aNumeroExacto(input.commissionMinor, input.currency) }),
+      ...(this.config.marketplace && !porPlataforma ? { marketplace: this.config.marketplace } : {}),
       notification_url: this.config.notificationUrl,
       back_urls: { success: back, pending: back, failure: back },
       auto_return: 'approved',
@@ -157,14 +165,16 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
         'notification data id does not match the signature'
       )
     const collector = String(body['user_id'] ?? '')
-    const cuenta = collector ? await this.cuentas.cuentaPorExterna(collector) : null
-    if (!cuenta)
+    // A payment TUS collected with its own account is read with that account.
+    const plataforma = this.config.plataforma && collector === this.config.plataforma.userId ? this.config.plataforma : null
+    const cuenta = plataforma || !collector ? null : await this.cuentas.cuentaPorExterna(collector)
+    if (!cuenta && !plataforma)
       throw new ErrorFinanzasServicio(
         202,
         'UNKNOWN_COLLECTOR',
         'notification belongs to no linked seller'
       )
-    const token = await this.tokenVendedor(cuenta.prestadorTenantId)
+    const token = plataforma ? { accessToken: plataforma.accessToken, externalAccountId: plataforma.userId } : await this.tokenVendedor(cuenta!.prestadorTenantId)
     let payment: Record<string, unknown>
     try {
       payment = await this.request(
@@ -189,8 +199,11 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
     prestadorTenantId: string
     providerReference: string
     idempotencyKey: string
+    collectionMode?: 'split' | 'plataforma'
   }): Promise<{ providerRefundId: string }> {
-    const token = await this.tokenVendedor(input.prestadorTenantId)
+    // A payment TUS collected is refunded from TUS's account.
+    if (input.collectionMode === 'plataforma' && !this.config.plataforma) throw new ErrorProveedorPagos('PROVIDER_ACCOUNT_NOT_CONNECTED', 'platform collection is not configured')
+    const token = input.collectionMode === 'plataforma' ? { accessToken: this.config.plataforma!.accessToken } : await this.tokenVendedor(input.prestadorTenantId)
     // Total refund: official docs require an empty body.
     const response = await this.request(
       'POST',

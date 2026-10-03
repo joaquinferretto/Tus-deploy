@@ -16,6 +16,9 @@ export interface VentanaHoraria {
   kind: 'exact' | 'from' | 'until' | 'between'
   from: string | null
   to: string | null
+  // A part of the day said as such ("a la tarde"): the same bounds as a range, but the state says
+  // what the person said. Never sent to the backend (it searches the bounds).
+  part?: 'manana' | 'mediodia' | 'tarde' | 'noche'
 }
 
 export interface NecesidadTurno {
@@ -32,9 +35,19 @@ export interface NecesidadTurno {
   clientTravels: boolean
   urgent: boolean
   budgetMax: number | null
+  // "lo antes posible", "el día más próximo", "ya": the FIRST real free turno. The search starts
+  // at `day` (today, from the current time, when there is none) and walks forward day by day.
+  asap: boolean
+  // "cualquiera", "me da igual quién", "la que esté disponible": no professional is preferred and
+  // the backend may propose the first one with a real free turno.
+  anyProvider: boolean
+  // The professional the person chose by name or by position ("Melina", "la segunda"), resolved
+  // by the backend against the professionals it really listed. Never a value the person typed.
+  providerId: string | null
+  providerName: string | null
 }
 
-export const NECESIDAD_VACIA: NecesidadTurno = { profession: null, alternatives: [], day: null, dayTo: null, time: null, zone: null, anyZone: false, clientTravels: false, urgent: false, budgetMax: null }
+export const NECESIDAD_VACIA: NecesidadTurno = { profession: null, alternatives: [], day: null, dayTo: null, time: null, zone: null, anyZone: false, clientTravels: false, urgent: false, budgetMax: null, asap: false, anyProvider: false, providerId: null, providerName: null }
 
 // Only the keys the message really mentions.
 export type DatosNecesidad = Partial<NecesidadTurno>
@@ -67,6 +80,9 @@ function normalizar(texto: string): string {
     .replace(/[^a-z0-9ñ:/\s]/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim()
+    // How it is written on a phone: "lunes q viene", "x la tarde".
+    .replace(/\bq\b/gu, 'que')
+    .replace(/\bx\b/gu, 'por')
 }
 
 const NUMEROS: Record<string, number> = { una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12 }
@@ -111,6 +127,9 @@ function leerVentana(texto: string): { ventana: VentanaHoraria | null; resto: st
     {
       regex: new RegExp(String.raw`\b(?:antes|hasta) (?:de )?(?:las? )?${HORA}`, 'u'),
       armar: (m) => {
+        // "cuanto antes una masajista": a word for a number is a time only with its article
+        // ("antes de la una"); digits always are.
+        if (!/\d|\blas? /u.test(m[0])) return null
         const to = leerHora(m.slice(1, 6))
         return to ? { kind: 'until', from: null, to } : null
       },
@@ -184,16 +203,50 @@ function leerDia(texto: string, hoy: string): { day: string; dayTo: string | nul
 }
 
 function leerFranja(texto: string): VentanaHoraria | null {
-  if (/\b(?:a|por|de|en|durante) la manana\b|\bmanana temprano\b|\btemprano\b|\besta manana\b/u.test(texto)) return { kind: 'between', ...FRANJAS.manana }
-  if (/\b(?:al |a |del )?mediodia\b/u.test(texto)) return { kind: 'between', ...FRANJAS.mediodia }
-  if (/\b(?:a|por|de|en|durante) la tarde\b|\besta tarde\b|\btardecita\b/u.test(texto)) return { kind: 'between', ...FRANJAS.tarde }
-  if (/\b(?:a|por|de|en|durante) la noche\b|\besta noche\b|\bnochecita\b/u.test(texto)) return { kind: 'between', ...FRANJAS.noche }
+  if (/\b(?:a|por|de|en|durante) la manana\b|\bmanana temprano\b|\btemprano\b|\besta manana\b/u.test(texto)) return { kind: 'between', ...FRANJAS.manana, part: 'manana' }
+  if (/\b(?:al |a |del )?mediodia\b/u.test(texto)) return { kind: 'between', ...FRANJAS.mediodia, part: 'mediodia' }
+  if (/\b(?:a|por|de|en|durante) la tarde\b|\besta tarde\b|\btardecita\b/u.test(texto)) return { kind: 'between', ...FRANJAS.tarde, part: 'tarde' }
+  if (/\b(?:a|por|de|en|durante) la noche\b|\besta noche\b|\bnochecita\b/u.test(texto)) return { kind: 'between', ...FRANJAS.noche, part: 'noche' }
   return null
+}
+
+// The window as the backend searches it: the bounds only.
+export function limitesVentana(time: VentanaHoraria | null): VentanaHoraria | null {
+  return time ? { kind: time.kind, from: time.from, to: time.to } : null
 }
 
 const CUALQUIER_ZONA = /\bno (?:me )?(?:importa|interesa|preocupa)(?: mucho)? (?:la zona|el barrio|el lugar|donde|la ubicacion|la distancia)\b|\bme da (?:igual|lo mismo) (?:donde|la zona|el barrio|el lugar|en que|que barrio|que zona)\b|\b(?:en |de )?cual(?:qu|k)ier (?:barrio|zona|lugar|lado|parte)\b|\bsin importar (?:el barrio|la zona|el lugar|donde)\b|\b(?:donde|a donde|adonde) sea\b|\bes indistinto\b|\bindistint[oa] (?:la zona|el barrio)\b|\bla zona (?:es lo de menos|no importa|me da igual)\b|\bel barrio (?:no importa|me da igual)\b/u
 const SE_DESPLAZA = /\bvoy yo\b|\byo voy\b|\bme (?:traslado|muevo|acerco|desplazo)\b|\bpuedo (?:ir|trasladarme|moverme|acercarme)\b|\bvoy (?:hasta|a) donde\b|\bme puedo (?:trasladar|mover|acercar)\b|\bvoy hasta (?:donde|su|el|la)\b/u
-const URGENTE = /\b(?:urgente|urgencia|emergencia|ya mismo|ahora mismo|ahora|cuanto antes|lo antes posible|ya)\b/u
+const URGENTE = /\b(?:urgente|urgencia|emergencia|ya mismo|ahora mismo|ahora|ya)\b/u
+// The first real free turno, whenever it is: no day of its own (the search walks forward).
+const LO_ANTES_POSIBLE = new RegExp(
+  [
+    String.raw`\b(?:urgente|urgencia|emergencia|ya mismo|ahora mismo|ahora|ya|hoy mismo)\b`,
+    String.raw`\b(?:lo antes posible|cuanto antes|lo (?:mas|antes) (?:pronto|rapido) (?:posible|que (?:se )?pueda)|lo mas pronto|lo mas proximo|apenas (?:haya|pueda|puedas|se pueda|tengan?)|cuando (?:haya|se pueda)|en cuanto (?:haya|se pueda|pueda))\b`,
+    String.raw`\b(?:el|la) (?:dia|fecha|turno|horario|hora) mas (?:proxim[oa]|cercan[oa]|pronto|temprano)\b`,
+    String.raw`\b(?:el )?primer (?:dia|turno|horario|hueco|lugar)(?: (?:que|libre|disponible|posible))?\b`,
+    String.raw`\bla primera (?:fecha|hora|que (?:haya|tenga|pueda|este)|disponible|libre)\b`,
+    String.raw`\b(?:el|la) que (?:este|tenga|pueda|haya) (?:disponible|libre|lugar)? ?primer[oa]\b`,
+    String.raw`\b(?:que venga|que pueda venir|que me atienda|que me vea) (?:ya|hoy|ahora)\b`,
+  ].join('|'),
+  'u'
+)
+// No professional is preferred: whoever has a real free turno. The zone is not a professional
+// ("me da igual donde" is CUALQUIER_ZONA).
+const CUALQUIER_PROFESIONAL = new RegExp(
+  [
+    String.raw`\bcualquiera\b`,
+    String.raw`\bcualquier (?:profesional|prestador[a]?|persona|masajista|une?|uno|una)\b`,
+    String.raw`\b(?:la|el|lo) que sea\b|\bquien sea\b`,
+    String.raw`\bme da (?:igual|lo mismo)(?! (?:donde|la zona|el barrio|el lugar|en que|que barrio|que zona|la hora|el horario|el dia))(?: (?:quien|cual|con quien|la [a-z]+|el [a-z]+))?\b`,
+    String.raw`\bno (?:me )?importa (?:quien|cual|con quien|(?:la|el) (?!zona\b|barrio\b|lugar\b|ubicacion\b|distancia\b|hora\b|horario\b|dia\b|precio\b)[a-z]+)\b`,
+    String.raw`\b(?:la|el) que (?:este|tenga|pueda|haya)(?: (?:disponible|libre|lugar|turno))?\b`,
+    String.raw`\b(?:una|uno) que (?:pueda|este|tenga|venga|me atienda)\b`,
+    String.raw`\b(?:la|el) primer[oa]? que (?:haya|tenga|pueda|este)\b`,
+    String.raw`\b(?:mandame|asignam[ea]|buscame|conseguime|dame|pasame) (?:una|uno|cualquiera|a cualquiera|alguien)\b`,
+  ].join('|'),
+  'u'
+)
 
 // Words that never name a trade, so a typo check must not turn them into one.
 const NO_SON_OFICIO = new Set(['manana', 'tarde', 'noche', 'quiero', 'necesito', 'busco', 'buscando', 'alguien', 'importa', 'barrio', 'cualquier', 'despues', 'antes', 'entre', 'sabado', 'domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'semana', 'urgente', 'ahora', 'centro', 'donde', 'pasado', 'proximo', 'horas', 'turno', 'turnos', 'servicio', 'persona', 'favor', 'gracias', 'puedo', 'quisiera', 'traslado', 'mediodia', 'temprano', 'arregle', 'arreglar', 'arreglo', 'reservar', 'reserva', 'reservo', 'primero', 'primera', 'segundo', 'segunda', 'tercero', 'tercera', 'cuarto', 'quinto', 'confirmar', 'cancelar', 'trabajo', 'trabajos', 'solicitud', 'presupuesto'])
@@ -297,12 +350,12 @@ export function extraerNecesidad(mensaje: string, ahora: number): DatosNecesidad
   if (ventana) datos.time = ventana
   else if (franja) datos.time = franja
 
-  if (URGENTE.test(texto)) {
-    datos.urgent = true
-    // "ahora" / "urgente" without a day is today, from this moment on.
-    if (!datos.day) datos.day = hoy
-    if (!datos.time && datos.day === hoy) datos.time = { kind: 'from', from: horaArgentina(ahora), to: null }
-  }
+  if (URGENTE.test(texto)) datos.urgent = true
+  // "lo antes posible", "ahora", "el día más próximo": the first real free turno. No day is
+  // fixed here: the search starts at the day already known (today from the current time when
+  // there is none) and goes forward until there is one.
+  if (LO_ANTES_POSIBLE.test(texto)) datos.asap = true
+  if (CUALQUIER_PROFESIONAL.test(texto)) datos.anyProvider = true
   // A time or a part of the day without a day ("a las 18", "esta tarde") keeps the day known so
   // far; the caller decides (combinarNecesidad).
   return datos
@@ -311,7 +364,8 @@ export function extraerNecesidad(mensaje: string, ahora: number): DatosNecesidad
 // The state of the conversation after a message: what was known plus what the message adds.
 // A new trade is a new need (its day and time are kept only if the same message repeats them).
 export function combinarNecesidad(previa: NecesidadTurno | null, datos: DatosNecesidad): NecesidadTurno {
-  const base = previa ?? NECESIDAD_VACIA
+  // A state saved before a field existed reads as its empty value.
+  const base: NecesidadTurno = { ...NECESIDAD_VACIA, ...(previa ?? {}) }
   const cambiaOficio = datos.profession !== undefined && datos.profession !== null && base.profession !== null && datos.profession !== base.profession
   const origen = cambiaOficio ? { ...NECESIDAD_VACIA, zone: base.zone, anyZone: base.anyZone, clientTravels: base.clientTravels } : base
   const siguiente: NecesidadTurno = { ...origen }
@@ -334,13 +388,39 @@ export function combinarNecesidad(previa: NecesidadTurno | null, datos: DatosNec
   if (datos.clientTravels) siguiente.clientTravels = true
   if (datos.urgent !== undefined) siguiente.urgent = datos.urgent
   if (datos.budgetMax) siguiente.budgetMax = datos.budgetMax
+  if (datos.asap) siguiente.asap = true
+  // A professional chosen by name and "cualquiera" exclude each other: the last one said wins.
+  if (datos.providerId) {
+    siguiente.providerId = datos.providerId
+    siguiente.providerName = datos.providerName ?? null
+    siguiente.anyProvider = false
+  } else if (datos.anyProvider) {
+    siguiente.anyProvider = true
+    siguiente.providerId = null
+    siguiente.providerName = null
+  }
   return siguiente
 }
 
 // What is still needed to look for real availability. The zone is never required: without one
-// the search covers every provider of the trade.
+// the search covers every provider of the trade. "Lo antes posible" needs no day: the search
+// starts today.
 export function faltantes(necesidad: NecesidadTurno): ('profession' | 'day')[] {
-  return [...(necesidad.profession ? [] : (['profession'] as const)), ...(necesidad.day ? [] : (['day'] as const))]
+  return [...(necesidad.profession ? [] : (['profession'] as const)), ...(necesidad.day || necesidad.asap ? [] : (['day'] as const))]
+}
+
+// The day after a calendar day (YYYY-MM-DD), for the search that walks forward.
+export const diaSiguiente = (fecha: string): string => sumarDias(fecha, 1)
+
+// The window of TODAY that is still ahead: what the person asked, from the current time on.
+// null when nothing of it is left today (the search moves to the next day).
+export function ventanaDesde(time: VentanaHoraria | null, hora: string): VentanaHoraria | null | 'pasada' {
+  if (!time) return { kind: 'from', from: hora, to: null }
+  if (time.kind === 'exact') return time.from! >= hora ? time : 'pasada'
+  if (time.kind === 'from') return { kind: 'from', from: time.from! >= hora ? time.from : hora, to: null }
+  if (time.kind === 'until') return time.to! > hora ? { kind: 'between', from: hora, to: time.to } : 'pasada'
+  if (time.to! <= hora) return 'pasada'
+  return { kind: 'between', from: time.from! >= hora ? time.from : hora, to: time.to }
 }
 
 export const mencionaAlgo = (datos: DatosNecesidad): boolean => Object.keys(datos).length > 0
@@ -360,6 +440,7 @@ export function describirDia(day: string, dayTo: string | null, ahora: number): 
 
 export function describirVentana(time: VentanaHoraria | null): string {
   if (!time) return ''
+  if (time.part) return time.part === 'manana' ? 'a la mañana' : time.part === 'mediodia' ? 'al mediodía' : `a la ${time.part}`
   if (time.kind === 'exact') return `a las ${time.from}`
   if (time.kind === 'from') return `desde las ${time.from}`
   if (time.kind === 'until') return `antes de las ${time.to}`

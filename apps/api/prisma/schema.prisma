@@ -702,6 +702,8 @@ model Prestador {
   perfilPublico       PerfilPublicoPrestador?
   solicitudesDirigidas SolicitudServicio[]
   postulaciones       PostulacionSolicitud[]
+  solicitudesLiquidacion SolicitudLiquidacion[]
+  movimientosGanancia    MovimientoGananciaPrestador[]
 
   @@unique([tenantId, prestadorId], map: "uq_prestadores_tenant_prestador")
   @@index([tenantId, estado], map: "idx_prestadores_tenant_estado")
@@ -1053,6 +1055,11 @@ model IntencionPago {
   comisionMarketplace      BigInt?   @map("comision_marketplace")
   despachoReclamadoHasta   DateTime? @map("despacho_reclamado_hasta")
   entornoProveedor         String?   @map("entorno_proveedor")
+  // TUS-GANANCIAS-01: who collected it. 'split': Mercado Pago Split 1:1 with the provider's
+  // account (every payment before this field). 'plataforma': TUS's own account because the
+  // provider had none linked; the provider's share becomes an earning (movimientos_ganancia_prestador).
+  // CHECK ck_intenciones_pago_modo_cobro (SQL).
+  modoCobro                String    @default("split") @map("modo_cobro")
 
   compromiso Compromiso?             @relation(fields: [tenantId, compromisoId], references: [tenantId, compromisoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_compromisos")
   obligacion ObligacionPagoServicio? @relation("IntencionPagoObligacion", fields: [tenantId, obligacionId], references: [tenantId, obligacionId], onDelete: Restrict, onUpdate: NoAction, map: "fk_intenciones_pago_obligaciones")
@@ -1115,6 +1122,7 @@ model ObligacionPagoServicio {
   auditorias               AuditoriaFinanzasServicio[]
   liquidaciones            LiquidacionServicio[]       @relation("LiquidacionObligacion")
   liquidacionesIdentidad   LiquidacionServicio[]       @relation("LiquidacionIdentidadObligacion")
+  movimientosGanancia      MovimientoGananciaPrestador[]
   conciliaciones           ConciliacionServicio[]
 
   @@unique([tenantId, obligacionId], map: "uq_obligaciones_pago_tenant_obligacion")
@@ -1284,6 +1292,8 @@ model ConfiguracionPagosServicio {
   pagosHabilitados Boolean  @map("pagos_habilitados")
   proveedor        String   @map("proveedor")
   moneda           String   @map("moneda")
+  // TUS-GANANCIAS-01: minimum payout request (centavos). CHECK > 0 in SQL.
+  montoMinimoLiquidacion BigInt @default(1000000) @map("monto_minimo_liquidacion")
   motivo           String   @map("motivo")
   actorId          String   @map("actor_id")
   correlacionId    String   @map("correlacion_id")
@@ -1311,7 +1321,11 @@ model CuentaCobroPrestador {
   fechaCreacion      DateTime  @map("fecha_creacion")
   fechaActualizacion DateTime  @map("fecha_actualizacion")
 
+  solicitudesLiquidacion SolicitudLiquidacion[]
+
   @@unique([prestadorTenantId, proveedor], map: "uq_cuentas_cobro_prestador_proveedor")
+  // Target of the payout requests' account FK (same provider).
+  @@unique([id, prestadorTenantId], map: "uq_cuentas_cobro_prestador_id_tenant")
   @@map("cuentas_cobro_prestador")
 }
 
@@ -3541,4 +3555,109 @@ model CalificacionAlojamiento {
 
   @@index([alojamientoId], map: "ix_calificaciones_alojamiento_alojamiento")
   @@map("calificaciones_alojamiento")
+}
+
+// TUS-GANANCIAS-01: a provider's request to be paid the earnings TUS holds for it. One open
+// (pending/processing) request per provider: partial unique index
+// uq_solicitudes_liquidacion_una_abierta (SQL); one request per Mercado Pago payout:
+// uq_solicitudes_liquidacion_payout_proveedor (SQL). CHECKs on state, amount (> 0), currency (ARS),
+// destination email, execution mechanism and the data of each final state live in SQL.
+model SolicitudLiquidacion {
+  id                 String    @id(map: "solicitudes_liquidacion_pkey")
+  solicitudId        String    @map("solicitud_id")
+  prestadorTenantId  String    @map("prestador_tenant_id")
+  prestadorId        String    @map("prestador_id")
+  monto              BigInt    @map("monto")
+  moneda             String    @map("moneda")
+  // pending | processing | paid | failed | cancelled
+  estado             String    @map("estado")
+  cuentaCobroId      String    @map("cuenta_cobro_id")
+  // Email of the provider's Mercado Pago account (Payouts destination) and the linked account id.
+  emailDestino       String    @map("email_destino")
+  cuentaExternaDestino String? @map("cuenta_externa_destino")
+  // mercado_pago_payouts | manual (CHECKs in SQL).
+  mecanismo          String?   @map("mecanismo")
+  payoutProveedorId  String?   @map("payout_proveedor_id")
+  transaccionProveedorId String? @map("transaccion_proveedor_id")
+  estadoProveedor    String?   @map("estado_proveedor")
+  referenciaExterna  String?   @map("referencia_externa")
+  motivoFallo        String?   @map("motivo_fallo")
+  observacion        String?   @map("observacion")
+  solicitadaPor      String    @map("solicitada_por")
+  procesadaPor       String?   @map("procesada_por")
+  resueltaPor        String?   @map("resuelta_por")
+  claveIdempotencia  String    @map("clave_idempotencia")
+  correlacionId      String    @map("correlacion_id")
+  version            Int       @default(1) @map("version")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
+  procesandoEn       DateTime? @map("procesando_en")
+  pagadaEn           DateTime? @map("pagada_en")
+  fallidaEn          DateTime? @map("fallida_en")
+  canceladaEn        DateTime? @map("cancelada_en")
+
+  prestador   Prestador                     @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_liquidacion_prestador")
+  cuentaCobro CuentaCobroPrestador          @relation(fields: [cuentaCobroId, prestadorTenantId], references: [id, prestadorTenantId], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_liquidacion_cuenta_cobro")
+  items       ItemSolicitudLiquidacion[]
+  movimientos MovimientoGananciaPrestador[]
+
+  @@unique([prestadorTenantId, solicitudId], map: "uq_solicitudes_liquidacion_prestador_solicitud")
+  @@unique([prestadorTenantId, claveIdempotencia], map: "uq_solicitudes_liquidacion_prestador_clave")
+  @@index([estado, fechaCreacion], map: "ix_solicitudes_liquidacion_estado_fecha")
+  @@map("solicitudes_liquidacion")
+}
+
+// TUS-GANANCIAS-01: append-only ledger of what TUS owes each provider (trigger
+// tus_movimiento_ganancia_append_only). earning_credit: the provider's share of an approved
+// payment TUS collected; psp_fee_debit: its Mercado Pago fee; refund_debit / chargeback_debit: its
+// reversal; adjustment_credit / adjustment_debit: explicit manual resolutions; payout_reserve /
+// payout_release / payout_completed: a payout request reserving, releasing and paying. The
+// balance is derived from it. CHECKs (amount > 0, ARS, type, origin per type) and the partial
+// unique indexes uq_movimientos_ganancia_obligacion_tipo and uq_movimientos_ganancia_solicitud_tipo
+// live in SQL.
+model MovimientoGananciaPrestador {
+  id                      String   @id(map: "movimientos_ganancia_prestador_pkey")
+  movimientoId            String   @map("movimiento_id")
+  prestadorTenantId       String   @map("prestador_tenant_id")
+  prestadorId             String   @map("prestador_id")
+  tipo                    String   @map("tipo")
+  monto                   BigInt   @map("monto")
+  moneda                  String   @map("moneda")
+  obligacionTenantId      String?  @map("obligacion_tenant_id")
+  obligacionId            String?  @map("obligacion_id")
+  trabajoId               String?  @map("trabajo_id")
+  solicitudId             String?  @map("solicitud_id")
+  movimientoRelacionadoId String?  @map("movimiento_relacionado_id")
+  motivo                  String   @map("motivo")
+  actorId                 String   @map("actor_id")
+  correlacionId           String   @map("correlacion_id")
+  fechaCreacion           DateTime @map("fecha_creacion")
+
+  prestador  Prestador               @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_movimientos_ganancia_prestador")
+  obligacion ObligacionPagoServicio? @relation(fields: [obligacionTenantId, obligacionId, prestadorTenantId, trabajoId], references: [tenantId, obligacionId, prestadorTenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_movimientos_ganancia_obligacion")
+  solicitud  SolicitudLiquidacion?   @relation(fields: [prestadorTenantId, solicitudId], references: [prestadorTenantId, solicitudId], onDelete: Restrict, onUpdate: NoAction, map: "fk_movimientos_ganancia_solicitud")
+  items      ItemSolicitudLiquidacion[]
+
+  @@unique([prestadorTenantId, movimientoId], map: "uq_movimientos_ganancia_prestador_movimiento")
+  @@index([prestadorTenantId, fechaCreacion], map: "ix_movimientos_ganancia_prestador_fecha")
+  @@map("movimientos_ganancia_prestador")
+}
+
+// TUS-GANANCIAS-01: which ledger movements a payout request pays. A movement is in at most ONE
+// active request (partial unique index uq_items_solicitud_liquidacion_movimiento_activo, SQL);
+// a failed or cancelled request releases its items (activo = false, fecha_liberacion).
+model ItemSolicitudLiquidacion {
+  id                String    @id(map: "items_solicitud_liquidacion_pkey")
+  prestadorTenantId String    @map("prestador_tenant_id")
+  solicitudId       String    @map("solicitud_id")
+  movimientoId      String    @map("movimiento_id")
+  activo            Boolean   @default(true) @map("activo")
+  fechaCreacion     DateTime  @map("fecha_creacion")
+  fechaLiberacion   DateTime? @map("fecha_liberacion")
+
+  solicitud  SolicitudLiquidacion        @relation(fields: [prestadorTenantId, solicitudId], references: [prestadorTenantId, solicitudId], onDelete: Restrict, onUpdate: NoAction, map: "fk_items_solicitud_liquidacion_solicitud")
+  movimiento MovimientoGananciaPrestador @relation(fields: [prestadorTenantId, movimientoId], references: [prestadorTenantId, movimientoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_items_solicitud_liquidacion_movimiento")
+
+  @@unique([prestadorTenantId, solicitudId, movimientoId], map: "uq_items_solicitud_liquidacion_solicitud_movimiento")
+  @@map("items_solicitud_liquidacion")
 }

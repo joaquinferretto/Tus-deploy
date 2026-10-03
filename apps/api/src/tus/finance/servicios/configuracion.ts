@@ -34,6 +34,12 @@ export const REGLA_COMISION_APLICABLE_POR_DEFECTO: ReglaComisionAplicable = Obje
   pspFeeBearer: 'provider',
 })
 
+// TUS-GANANCIAS-01: minimum of a provider payout request while no configuration says otherwise
+// ($10.000,00). The ONLY place of this default in code; the database column has the same DEFAULT
+// for configurations recorded before the field existed. Changed by recording a configuration.
+export const MONTO_MINIMO_LIQUIDACION_POR_DEFECTO_MINOR = 1_000_000n
+const MONTO_MINIMO_LIQUIDACION_MAXIMO_MINOR = 100_000_000_000n
+
 export type PoliticaComisionDominio = Omit<PoliticaComisionServicio, 'contractVersion'> & {
   correlationId: string
 }
@@ -208,7 +214,7 @@ export interface PuertoPoliticaCobro {
     prestadorTenantId: string
     prestadorId: string
     categoria: string | null
-  }): Promise<{ available: boolean; reason: MotivoPagoNoDisponible | null }>
+  }): Promise<{ available: boolean; reason: MotivoPagoNoDisponible | null; mode?: 'split' | 'plataforma' }>
 }
 
 // Fixed policy: tests and fixtures. Availability only depends on the injected provider.
@@ -241,7 +247,11 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     private readonly produccionAutorizada: () => Promise<boolean> = async () => false,
     // IDENTITY-NOSIS: a provider receives money only after its identity is verified.
     private readonly identidadVerificada:
-      ((prestadorTenantId: string) => Promise<boolean>) | null = null
+      ((prestadorTenantId: string) => Promise<boolean>) | null = null,
+    // TUS-GANANCIAS-01: TUS can collect with its own Mercado Pago account (platform access token
+    // and user configured). Then a provider without a linked account can still be paid: TUS
+    // collects and the provider's share becomes an earning to be paid out later.
+    private readonly cobroPlataforma: () => boolean = () => false
   ) {}
 
   async reglaComision(input: {
@@ -255,7 +265,7 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     prestadorTenantId: string
     prestadorId: string
     categoria: string | null
-  }): Promise<{ available: boolean; reason: MotivoPagoNoDisponible | null }> {
+  }): Promise<{ available: boolean; reason: MotivoPagoNoDisponible | null; mode?: 'split' | 'plataforma' }> {
     const configuracion = await this.store.ultimaConfiguracion()
     if (!configuracion?.paymentsEnabled) return { available: false, reason: 'PAYMENTS_DISABLED' }
     const operativo = this.operativo()
@@ -273,8 +283,8 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     if (this.identidadVerificada && !(await this.identidadVerificada(input.prestadorTenantId)))
       return { available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }
     if (!(await this.cuentaConectada(input.prestadorTenantId)))
-      return { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }
-    return { available: true, reason: null }
+      return this.cobroPlataforma() ? { available: true, reason: null, mode: 'plataforma' } : { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }
+    return { available: true, reason: null, mode: 'split' }
   }
 }
 
@@ -359,7 +369,7 @@ export class ServicioConfiguracionPagos {
 
   async configuracionActual(): Promise<{
     configuration: ConfiguracionPagosServicio | null
-    effective: { paymentsEnabled: boolean; provider: 'mercado-pago'; currency: string }
+    effective: { paymentsEnabled: boolean; provider: 'mercado-pago'; currency: string; minimumPayoutMinor: string }
   }> {
     const current = await this.store.ultimaConfiguracion()
     return {
@@ -368,8 +378,15 @@ export class ServicioConfiguracionPagos {
         paymentsEnabled: current?.paymentsEnabled ?? false,
         provider: 'mercado-pago',
         currency: current?.currency ?? 'ARS',
+        minimumPayoutMinor: current?.minimumPayoutMinor ?? MONTO_MINIMO_LIQUIDACION_POR_DEFECTO_MINOR.toString(10),
       },
     }
+  }
+
+  // The minimum of a provider payout request in force (centavos).
+  async minimoLiquidacion(): Promise<bigint> {
+    const current = await this.store.ultimaConfiguracion()
+    return current ? BigInt(current.minimumPayoutMinor) : MONTO_MINIMO_LIQUIDACION_POR_DEFECTO_MINOR
   }
 
   async registrarConfiguracion(
@@ -383,6 +400,10 @@ export class ServicioConfiguracionPagos {
     const currency = texto(input['currency']) ?? 'ARS'
     if (currency !== 'ARS')
       throw new ErrorFinanzasServicio(400, 'INVALID', 'only ARS service payments are supported')
+    // Optional: absent keeps the minimum in force.
+    const minimo = input['minimumPayoutMinor']
+    if (minimo !== undefined && (typeof minimo !== 'string' || !/^[1-9]\d{0,14}$/u.test(minimo) || BigInt(minimo) > MONTO_MINIMO_LIQUIDACION_MAXIMO_MINOR))
+      throw new ErrorFinanzasServicio(400, 'INVALID', 'minimumPayoutMinor must be a positive integer of centavos')
     const current = await this.store.ultimaConfiguracion()
     if ((current?.version ?? 0) !== input['expectedVersion'])
       throw new ErrorFinanzasServicio(
@@ -396,6 +417,7 @@ export class ServicioConfiguracionPagos {
       paymentsEnabled: input['paymentsEnabled'],
       provider: 'mercado-pago',
       currency,
+      minimumPayoutMinor: typeof minimo === 'string' ? minimo : (current?.minimumPayoutMinor ?? MONTO_MINIMO_LIQUIDACION_POR_DEFECTO_MINOR.toString(10)),
       reason,
       actorId: context.actorId,
       correlationId: context.correlationId,
@@ -506,6 +528,7 @@ function proyectarConfiguracion(
     paymentsEnabled: configuracion.paymentsEnabled,
     provider: configuracion.provider,
     currency: configuracion.currency,
+    minimumPayoutMinor: configuracion.minimumPayoutMinor,
     reason: configuracion.reason,
     actorId: configuracion.actorId,
     createdAt: configuracion.createdAt,

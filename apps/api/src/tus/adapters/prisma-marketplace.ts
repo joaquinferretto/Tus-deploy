@@ -107,7 +107,32 @@ export class PrismaMarketplaceStore implements MarketplaceStorePort {
       )
       await this.client.compromisoMercadoServicios.createMany({ data: rows })
     },
-    find: async (commitmentId: string) => {
+    find: async (
+      commitmentId: string | { tenantId: string; commitmentId: string },
+      tenantId?: string
+    ) => {
+      if (typeof commitmentId === 'object') {
+        const row = await this.client.compromisoMercadoServicios.findUnique({
+          where: {
+            tenantId_compromisoId: {
+              tenantId: commitmentId.tenantId,
+              compromisoId: commitmentId.commitmentId,
+            },
+          },
+        })
+        return row ? toCommitment(row) : null
+      }
+      if (tenantId !== undefined) {
+        const row = await this.client.compromisoMercadoServicios.findUnique({
+          where: {
+            tenantId_compromisoId: {
+              tenantId,
+              compromisoId: commitmentId,
+            },
+          },
+        })
+        return row ? toCommitment(row) : null
+      }
       const row = await this.client.compromisoMercadoServicios.findUnique({
         where: { id: commitmentId },
       })

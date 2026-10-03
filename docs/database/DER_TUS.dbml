@@ -943,6 +943,7 @@ Table intenciones_pago {
   comision_marketplace bigint [null, note: 'WEB-09E: marketplace_fee enviado a Mercado Pago; <= monto']
   despacho_reclamado_hasta timestamp [null, note: 'WEB-09E: reclamo corto contra checkouts duplicados']
   entorno_proveedor varchar [null, note: 'sandbox | production | deterministic']
+  modo_cobro varchar [note: "TUS-GANANCIAS-01: 'split' (cuenta del prestador, default de toda fila previa) | 'plataforma' (cuenta de TUS; la parte del prestador es una ganancia)"]
 
   indexes {
     (tenant_id, pago_id) [unique, name: 'uq_intenciones_pago_tenant_pago']
@@ -1660,6 +1661,103 @@ Table reembolsos_servicio {
 
 Ref: reembolsos_servicio.(tenant_id, pago_id, obligacion_id) > intenciones_pago.(tenant_id, pago_id, obligacion_id) [delete: restrict]
 
+Table solicitudes_liquidacion {
+  id varchar [pk]
+  solicitud_id varchar
+  prestador_tenant_id varchar
+  prestador_id varchar
+  monto bigint [note: '> 0; centavos ARS; todo lo disponible al pedirla']
+  moneda varchar [note: 'ARS']
+  estado varchar [note: 'pending | processing | paid | failed | cancelled']
+  cuenta_cobro_id varchar
+  email_destino varchar [note: 'email de la cuenta de Mercado Pago del prestador (destino de Payouts); CHECK de formato']
+  cuenta_externa_destino varchar [null, note: 'User ID de la cuenta vinculada al pedir']
+  mecanismo varchar [null, note: 'mercado_pago_payouts | manual; obligatorio en processing/paid']
+  payout_proveedor_id varchar [null, note: '[EXTERNA] id del payout de Mercado Pago; único parcial']
+  transaccion_proveedor_id varchar [null, note: '[EXTERNA] id de la transacción del payout']
+  estado_proveedor varchar [null, note: 'último status:status_detail informado por Mercado Pago']
+  referencia_externa varchar [null, note: 'obligatoria en paid: payout/transacción o comprobante del otro medio']
+  motivo_fallo varchar [null, note: 'obligatorio en failed']
+  observacion varchar [null]
+  solicitada_por varchar
+  procesada_por varchar [null]
+  resuelta_por varchar [null]
+  clave_idempotencia varchar
+  correlacion_id varchar
+  version int
+  fecha_creacion timestamp
+  fecha_actualizacion timestamp
+  procesando_en timestamp [null]
+  pagada_en timestamp [null]
+  fallida_en timestamp [null]
+  cancelada_en timestamp [null]
+
+  indexes {
+    (prestador_tenant_id, solicitud_id) [unique, name: 'uq_solicitudes_liquidacion_prestador_solicitud']
+    (prestador_tenant_id, clave_idempotencia) [unique, name: 'uq_solicitudes_liquidacion_prestador_clave']
+    (prestador_tenant_id) [unique, name: 'uq_solicitudes_liquidacion_una_abierta', note: "parcial (SQL): WHERE estado IN ('pending', 'processing')"]
+    (payout_proveedor_id) [unique, name: 'uq_solicitudes_liquidacion_payout_proveedor', note: 'parcial (SQL): WHERE payout_proveedor_id IS NOT NULL']
+    (estado, fecha_creacion) [name: 'ix_solicitudes_liquidacion_estado_fecha']
+  }
+
+  Note: 'TUS-GANANCIAS-01: pedido de pago de ganancias; ejecutado por Mercado Pago Payouts o registrado con comprobante.'
+}
+
+Ref: solicitudes_liquidacion.(prestador_tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id) [delete: restrict]
+Ref: solicitudes_liquidacion.(cuenta_cobro_id, prestador_tenant_id) > cuentas_cobro_prestador.(id, prestador_tenant_id) [delete: restrict]
+
+Table movimientos_ganancia_prestador {
+  id varchar [pk]
+  movimiento_id varchar [note: 'earning: | mp-fee: | refund: | chargeback: <obligacion>; payout-reserve: | payout-release: | payout-completed: <solicitud>; adjustment:<clave>']
+  prestador_tenant_id varchar
+  prestador_id varchar
+  tipo varchar [note: 'earning_credit | psp_fee_debit | refund_debit | chargeback_debit | adjustment_credit | adjustment_debit | payout_reserve | payout_release | payout_completed']
+  monto bigint [note: '> 0; el efecto lo da el tipo']
+  moneda varchar [note: 'ARS']
+  obligacion_tenant_id varchar [null]
+  obligacion_id varchar [null]
+  trabajo_id varchar [null]
+  solicitud_id varchar [null]
+  movimiento_relacionado_id varchar [null]
+  motivo varchar
+  actor_id varchar
+  correlacion_id varchar
+  fecha_creacion timestamp
+
+  indexes {
+    (prestador_tenant_id, movimiento_id) [unique, name: 'uq_movimientos_ganancia_prestador_movimiento']
+    (obligacion_tenant_id, obligacion_id, tipo) [unique, name: 'uq_movimientos_ganancia_obligacion_tipo', note: 'parcial (SQL): WHERE obligacion_id IS NOT NULL']
+    (prestador_tenant_id, solicitud_id, tipo) [unique, name: 'uq_movimientos_ganancia_solicitud_tipo', note: 'parcial (SQL): WHERE solicitud_id IS NOT NULL']
+    (prestador_tenant_id, fecha_creacion) [name: 'ix_movimientos_ganancia_prestador_fecha']
+  }
+
+  Note: 'TUS-GANANCIAS-01: ledger append-only (trigger) de lo que TUS debe a cada prestador. El saldo se deriva; no hay columna saldo.'
+}
+
+Ref: movimientos_ganancia_prestador.(prestador_tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id) [delete: restrict]
+Ref: movimientos_ganancia_prestador.(obligacion_tenant_id, obligacion_id, prestador_tenant_id, trabajo_id) > obligaciones_pago_servicio.(tenant_id, obligacion_id, prestador_tenant_id, trabajo_id) [delete: restrict]
+Ref: movimientos_ganancia_prestador.(prestador_tenant_id, solicitud_id) > solicitudes_liquidacion.(prestador_tenant_id, solicitud_id) [delete: restrict]
+
+Table items_solicitud_liquidacion {
+  id varchar [pk]
+  prestador_tenant_id varchar
+  solicitud_id varchar
+  movimiento_id varchar
+  activo boolean [note: 'false al liberar (failed/cancelled); los de una solicitud pagada siguen activos']
+  fecha_creacion timestamp
+  fecha_liberacion timestamp [null]
+
+  indexes {
+    (prestador_tenant_id, solicitud_id, movimiento_id) [unique, name: 'uq_items_solicitud_liquidacion_solicitud_movimiento']
+    (prestador_tenant_id, movimiento_id) [unique, name: 'uq_items_solicitud_liquidacion_movimiento_activo', note: 'parcial (SQL): WHERE activo']
+  }
+
+  Note: 'TUS-GANANCIAS-01: movimientos exactos que reserva cada solicitud; un movimiento en una sola solicitud activa.'
+}
+
+Ref: items_solicitud_liquidacion.(prestador_tenant_id, solicitud_id) > solicitudes_liquidacion.(prestador_tenant_id, solicitud_id) [delete: restrict]
+Ref: items_solicitud_liquidacion.(prestador_tenant_id, movimiento_id) > movimientos_ganancia_prestador.(prestador_tenant_id, movimiento_id) [delete: restrict]
+
 Table politicas_comision_servicio {
   id varchar [pk]
   politica_id varchar [unique]
@@ -1689,6 +1787,7 @@ Table configuraciones_pagos_servicio {
   pagos_habilitados boolean
   proveedor varchar [note: 'mercado-pago (CHECK)']
   moneda varchar
+  monto_minimo_liquidacion bigint [note: 'TUS-GANANCIAS-01: mínimo de una solicitud de pago en centavos; DEFAULT 1000000; CHECK > 0']
   motivo varchar
   actor_id varchar
   correlacion_id varchar

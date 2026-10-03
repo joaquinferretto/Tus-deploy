@@ -72,7 +72,18 @@ export interface EstadoConversacional {
   // ("el segundo", a name or a time on the next message refer to them). Never authoritative:
   // booking re-reads the real availability.
   // esperaHora: "¿a qué hora?" was asked about the one professional in `items` (busqueda.ts).
-  offers?: { profession: string; items: { providerId: string; name: string; starts: string[] }[]; esperaHora?: boolean } | null
+  offers?: { profession: string; items: { providerId: string; name: string; area?: string; starts: string[] }[]; esperaHora?: boolean } | null
+  // The full list of that search as it was shown, kept when `offers` narrows to one professional:
+  // "la otra" and "la segunda" keep referring to it. chosenProviderId: the one chosen from it.
+  shown?: { profession: string; items: { providerId: string; name: string; area?: string; starts: string[] }[] } | null
+  chosenProviderId?: string | null
+  // One concrete thing the assistant proposed and the person may accept with "sí": a free turno
+  // (offer), the first free turno of anyone (first_any), or the days after the one with nothing
+  // (next_days). Never authoritative: accepting re-reads the real availability.
+  suggestion?:
+    | { kind: 'offer'; profession: string; providerId: string; name: string; start: string; at: number }
+    | { kind: 'first_any' | 'next_days' | 'search'; at: number }
+    | null
   // TURNOS-SENA-01: the turno being requested (professional and time already chosen), while the
   // conversation asks for what is still missing before the confirmation: which service (when the
   // professional offers several) and who the client is (WhatsApp: full name + document). Never
@@ -82,6 +93,8 @@ export interface EstadoConversacional {
   // The conversation asked for name + document for something that is not a booking (the payment
   // link of a deposit) and is waiting for them.
   identityFor?: { purpose: 'deposit'; at: number } | null
+  // The last reply was a price (ms): "¿y con Melina?" right after is about the price too.
+  priceAt?: number | null
   lowConfidenceCount: number
 }
 

@@ -51,6 +51,9 @@ export interface IntencionPagoServicioDominio {
   checkoutExpiresAt?: string | null
   dispatchClaimedUntil?: string | null
   environment?: EntornoProveedorPago | null
+  // TUS-GANANCIAS-01: 'split' (seller account, Split 1:1) or 'plataforma' (TUS's own account;
+  // the provider's share becomes an earning). Absent on legacy rows: 'split'.
+  collectionMode?: 'split' | 'plataforma'
 }
 
 const TRANSICIONES_PROVEEDOR: Readonly<
@@ -136,6 +139,8 @@ export interface SolicitudCheckout {
   // WEB-09E: seller account and marketplace fee (minor units) frozen on the intent.
   prestadorTenantId?: string
   commissionMinor?: bigint | null
+  // TUS-GANANCIAS-01: 'plataforma' collects with TUS's own account (no marketplace_fee).
+  collectionMode?: 'split' | 'plataforma'
   title?: string
   trabajoId?: string
   // Web path the browser returns to (default: the marketplace workspace). Never a confirmation.
@@ -166,6 +171,7 @@ export interface PuertoProveedorPagosServicio {
     prestadorTenantId: string
     providerReference: string
     idempotencyKey: string
+    collectionMode?: 'split' | 'plataforma'
   }): Promise<{ providerRefundId: string }>
 }
 

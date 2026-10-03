@@ -22,6 +22,7 @@ import type { ModuloPagosServicio } from '../finance/servicios/composicion-pagos
 import type { TusOperationsTelemetry } from '@factory/observability'
 import type { EvaluadorHabilitacion, PerfilHabilitacion } from '../readiness/index.ts'
 import type { ServicioEvidenciasHabilitacion } from '../readiness/evidencias-admin.ts'
+import type { ServicioGananciasPrestador } from '../finance/servicios/ganancias.ts'
 import type { ServicioVerificacionIdentidad } from '../identidad/servicio.ts'
 import { TUS_BOUNDED_CONTEXTS } from '../ports/index.ts'
 import type {
@@ -74,6 +75,8 @@ export interface TusApplicationDependencies {
   servicePayments?: ModuloPagosServicio
   // Administrative registry of the readiness evidence of the platform tenant (platform admin only).
   readinessEvidence?: ServicioEvidenciasHabilitacion
+  // TUS-GANANCIAS-01: earnings TUS owes providers and their payout requests.
+  providerEarnings?: ServicioGananciasPrestador
   // IDENTITY-NOSIS: provider identity verification (consent, DNI upload, queue, admin review).
   identity?: ServicioVerificacionIdentidad
   operationsTelemetry?: TusOperationsTelemetry
@@ -96,6 +99,7 @@ export class TusApplicationService {
   readonly serviceFinance?: ServicioFinanzasServicios
   readonly servicePayments?: ModuloPagosServicio
   readonly readinessEvidence?: ServicioEvidenciasHabilitacion
+  readonly providerEarnings?: ServicioGananciasPrestador
   readonly identity?: ServicioVerificacionIdentidad
   readonly contexts = TUS_BOUNDED_CONTEXTS
   private readonly dependencies: TusApplicationDependencies
@@ -117,6 +121,7 @@ export class TusApplicationService {
     this.serviceFinance = dependencies.serviceFinance
     this.servicePayments = dependencies.servicePayments
     this.readinessEvidence = dependencies.readinessEvidence
+    this.providerEarnings = dependencies.providerEarnings
     this.identity = dependencies.identity
     this.evaluadorHabilitacion = dependencies.evaluadorHabilitacion
     if (!dependencies.transaction) throw new Error('TUS transaction boundary is required')

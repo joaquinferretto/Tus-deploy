@@ -1,5 +1,5 @@
 import { TUS_CONTRACT_VERSION } from '@factory/contracts/tus'
-import type { WorkSummary, WorkMessage, WorkRating } from '@factory/contracts'
+import type { WorkSummary, WorkMessage, WorkRating, MovimientoHistorialGanancia, ResumenGananciasPrestador, SolicitudLiquidacionDTO } from '@factory/contracts'
 import type {
   ComprobantePOS,
   CasoSoporte,
@@ -93,6 +93,15 @@ export interface TusWorkListResponse {
 // an amount; it only renders what TUS returns.
 export type TusPaymentPreview = VistaPreviaPagoServicio
 export type TusPaymentAccount = CuentaCobroPrestador & { connectAvailable: boolean }
+// TUS-GANANCIAS-01: earnings TUS collected for the provider and its payout requests. The amount
+// of a request is decided by TUS (everything available); the Web sends only the destination email.
+export type TusProviderEarnings = ResumenGananciasPrestador
+export type TusEarningsMovement = MovimientoHistorialGanancia
+export type TusPayout = SolicitudLiquidacionDTO
+export interface TusPayoutRequestResponse {
+  status: 'created' | 'existing'
+  payout: TusPayout
+}
 export interface TusPaymentIntentResponse {
   status: 'executed' | 'replay' | 'existing'
   payment: { paymentId: string; providerStatus: string; dispatchStatus: string }
@@ -686,6 +695,11 @@ export interface TusWebClient {
     context: TusWebContext
   ): Promise<{ authorizationUrl: string; expiresAt: string }>
   disconnectPaymentAccount(context: TusWebContext): Promise<TusPaymentAccount>
+  providerEarnings(context: TusWebContext): Promise<TusProviderEarnings>
+  providerEarningsHistory(context: TusWebContext): Promise<{ items: TusEarningsMovement[] }>
+  providerPayouts(context: TusWebContext): Promise<{ items: TusPayout[] }>
+  requestPayout(input: TusWebContext & { idempotencyKey: string; destinationEmail: string }): Promise<TusPayoutRequestResponse>
+  cancelPayout(context: TusWebContext, payoutId: string): Promise<{ payout: TusPayout }>
   listWork(context: TusWebContext): Promise<TusWorkListResponse>
   listMyWorks(context: TusWebContext): Promise<{ items: WorkSummary[] }>
   workSummary(context: TusWebContext, workId: string): Promise<WorkSummary>
@@ -1247,6 +1261,16 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         path: '/tus/v1/provider/payment-account/disconnect',
         body: {},
       }),
+    providerEarnings: (context) =>
+      transport.request<TusProviderEarnings>({ ...context, method: 'GET', path: '/tus/v1/provider/earnings' }),
+    providerEarningsHistory: (context) =>
+      transport.request<{ items: TusEarningsMovement[] }>({ ...context, method: 'GET', path: '/tus/v1/provider/earnings/history' }),
+    providerPayouts: (context) =>
+      transport.request<{ items: TusPayout[] }>({ ...context, method: 'GET', path: '/tus/v1/provider/earnings/payouts' }),
+    requestPayout: ({ idempotencyKey, destinationEmail, ...context }) =>
+      transport.request<TusPayoutRequestResponse>({ ...context, idempotencyKey, method: 'POST', path: '/tus/v1/provider/earnings/payouts', body: { destinationEmail } }),
+    cancelPayout: (context, payoutId) =>
+      transport.request<{ payout: TusPayout }>({ ...context, method: 'POST', path: `/tus/v1/provider/earnings/payouts/${encodeURIComponent(payoutId)}/cancel`, body: {} }),
     listWork: (context) =>
       transport.request<TusWorkListResponse>({
         ...context,

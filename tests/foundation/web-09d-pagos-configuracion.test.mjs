@@ -413,8 +413,8 @@ test('WEB-09D Prisma adapters: append-only versions, atomic single-use OAuth sta
     let duplicate = 'none'
     try { await config.agregarPolitica({ ...policy, politicaId: 'p2' }) } catch (error) { duplicate = error.code }
     const policies = await config.listarPoliticas()
-    await config.agregarConfiguracion({ configuracionId: 'c1', version: 1, paymentsEnabled: false, provider: 'mercado-pago', currency: 'ARS', reason: 'r', actorId: 'a', correlationId: 'c', createdAt: '2026-09-24T10:00:00.000Z' })
-    await config.agregarConfiguracion({ configuracionId: 'c2', version: 2, paymentsEnabled: true, provider: 'mercado-pago', currency: 'ARS', reason: 'r', actorId: 'a', correlationId: 'c', createdAt: '2026-09-24T10:01:00.000Z' })
+    await config.agregarConfiguracion({ configuracionId: 'c1', version: 1, paymentsEnabled: false, provider: 'mercado-pago', currency: 'ARS', minimumPayoutMinor: '1000000', reason: 'r', actorId: 'a', correlationId: 'c', createdAt: '2026-09-24T10:00:00.000Z' })
+    await config.agregarConfiguracion({ configuracionId: 'c2', version: 2, paymentsEnabled: true, provider: 'mercado-pago', currency: 'ARS', minimumPayoutMinor: '2500000', reason: 'r', actorId: 'a', correlationId: 'c', createdAt: '2026-09-24T10:01:00.000Z' })
     const latest = await config.ultimaConfiguracion()
     const accounts = new CuentasCobroPrisma(client)
     const account = { prestadorTenantId: 'provider-tenant', provider: 'mercado-pago', status: 'connected', externalAccountId: '1', liveMode: false, scopes: ['read', 'write'], connectedAt: '2026-09-24T10:00:00.000Z', expiresAt: null, version: 1, actorId: 'a', correlationId: 'c', createdAt: '2026-09-24T10:00:00.000Z', updatedAt: '2026-09-24T10:00:00.000Z' }
@@ -440,6 +440,7 @@ test('WEB-09D Prisma adapters: append-only versions, atomic single-use OAuth sta
   assert.equal(result.clave, 'prestador:provider-1')
   assert.equal(result.latest.version, 2)
   assert.equal(result.latest.paymentsEnabled, true)
+  assert.equal(result.latest.minimumPayoutMinor, '2500000', 'the payout minimum is persisted and read back')
   assert.equal(result.created, true)
   assert.equal(result.createdTwice, false)
   assert.equal(result.staleUpdate, false)

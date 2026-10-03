@@ -17,6 +17,7 @@ const NAV = [
   { href: '/tus/admin/solicitudes', label: 'Solicitudes' },
   { href: '/tus/admin/trabajos', label: 'Trabajos' },
   { href: '/tus/admin/pagos', label: 'Pagos' },
+  { href: '/tus/admin/liquidaciones', label: 'Liquidaciones' },
   { href: '/tus/admin/categorias', label: 'Categorías' },
   { href: '/tus/admin/servicios', label: 'Servicios' },
   { href: '/tus/admin/zonas', label: 'Zonas y barrios' },

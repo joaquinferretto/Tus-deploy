@@ -49,6 +49,7 @@ import type {
   PuertoCierreTrabajoPorPago,
 } from '../finance/servicios/servicio.ts'
 import { isSerializationFailure, isUniqueConstraint, mapTrabajo } from './prisma-work.ts'
+import { LedgerGananciasPrisma, type ClienteLedgerGanancias } from './prisma-ganancias.ts'
 import { asegurarSujetoFinancieroUnico } from '../finance/sujeto.ts'
 
 // Service keys live in their own namespace inside `idempotencia_financiera`, which the legacy
@@ -83,6 +84,8 @@ export interface ClientePrismaFinanzasServicio {
   liquidacionServicio: DelegadoPrismaFinanzasServicio
   conciliacionServicio: DelegadoPrismaFinanzasServicio
   reembolsoServicio?: DelegadoPrismaFinanzasServicio
+  // TUS-GANANCIAS-01 (absent in narrow test clients: no earnings are booked then).
+  movimientoGananciaPrestador?: DelegadoPrismaFinanzasServicio
   $transaction<T>(
     callback: (client: ClientePrismaFinanzasServicio) => Promise<T>,
     options?: { isolationLevel?: 'Serializable' }
@@ -838,6 +841,7 @@ export class TransaccionFinanzasServicioPrisma implements PuertoTransaccionFinan
       liquidaciones: new LiquidacionesServicioPrisma(client),
       conciliaciones: new ConciliacionesServicioPrisma(client),
       reembolsos: new ReembolsosServicioPrisma(client),
+      ...(client.movimientoGananciaPrestador ? { ganancias: new LedgerGananciasPrisma(client as unknown as ClienteLedgerGanancias) } : {}),
     }
   }
 }
@@ -933,6 +937,7 @@ export function filaIntencion(intent: IntencionPagoServicioDominio): Fila {
     politicaComisionId: intent.commission?.politicaId ?? null,
     comisionMarketplace: intent.commission?.commissionMinor ?? null,
     entornoProveedor: intent.environment ?? null,
+    modoCobro: intent.collectionMode ?? 'split',
   }
 }
 
@@ -988,6 +993,7 @@ export function mapearIntencion(row: Fila): IntencionPagoServicioDominio {
       : null,
     environment: (textoNullable(row, 'entornoProveedor') ??
       null) as IntencionPagoServicioDominio['environment'],
+    collectionMode: textoNullable(row, 'modoCobro') === 'plataforma' ? 'plataforma' : 'split',
   }
 }
 

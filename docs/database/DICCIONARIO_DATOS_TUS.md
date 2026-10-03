@@ -1026,3 +1026,31 @@ La migración no crea tablas ni duplica datos personales. Amplía `reservas.esta
 de `User`; no se copian a la conversación ni a la reserva. El índice parcial
 `ix_conversaciones_whatsapp_cuenta_identificada` permite ubicar las conversaciones a las que se envían
 los avisos del turno.
+
+### 7.21 Ganancias de prestadores y solicitudes de pago (TUS-GANANCIAS-01, `20261028100000_tus_ganancias_prestador`)
+
+Aditiva. `intenciones_pago.modo_cobro` (`split | plataforma`, NOT NULL DEFAULT `'split'`: toda fila previa queda en
+split). `configuraciones_pagos_servicio.monto_minimo_liquidacion` (bigint, DEFAULT 1000000, CHECK > 0): mínimo de una
+solicitud, versionado con la configuración de pagos. Índice único `uq_cuentas_cobro_prestador_id_tenant` (id, prestador).
+
+- `movimientos_ganancia_prestador`: ledger **append-only** (trigger `tus_movimiento_ganancia_append_only`). `tipo` ∈
+  `earning_credit | psp_fee_debit | refund_debit | chargeback_debit | adjustment_credit | adjustment_debit | payout_reserve |
+  payout_release | payout_completed`; `monto` > 0 (el efecto lo da el tipo); `moneda = 'ARS'`. Ganancia, tarifa y reversos
+  cuelgan de la obligación exacta del prestador (FK compuesta a `obligaciones_pago_servicio`); reserva, liberación y pago
+  de su solicitud; los ajustes de ninguna (su `motivo` explica). Únicos: `(prestador_tenant_id, movimiento_id)`; parcial
+  `(obligacion_tenant_id, obligacion_id, tipo)`; parcial `uq_movimientos_ganancia_solicitud_tipo`
+  `(prestador_tenant_id, solicitud_id, tipo)`: una reserva, una liberación y un pago por solicitud.
+- `solicitudes_liquidacion`: pedido de pago. `estado` ∈ `pending | processing | paid | failed | cancelled`;
+  `email_destino` (email de la cuenta de Mercado Pago del prestador, CHECK de formato) y `cuenta_externa_destino` (User ID
+  vinculado al pedir); `mecanismo` ∈ `mercado_pago_payouts | manual` (obligatorio en processing/paid);
+  `payout_proveedor_id` / `transaccion_proveedor_id` (ids de Mercado Pago Payouts, juntos, único parcial
+  `uq_solicitudes_liquidacion_payout_proveedor`); `estado_proveedor`; `referencia_externa` (obligatoria en paid);
+  `observacion`; `solicitada_por`, `procesada_por`, `resuelta_por`; fechas por estado con CHECK de coherencia. FK a
+  `prestadores` y a `cuentas_cobro_prestador(id, prestador_tenant_id)`; parcial `uq_solicitudes_liquidacion_una_abierta`.
+- `items_solicitud_liquidacion`: qué movimientos paga cada solicitud; parcial
+  `uq_items_solicitud_liquidacion_movimiento_activo` (`WHERE activo`); fallida/cancelada los libera.
+
+El saldo no se guarda: disponible = ganancias y ajustes a favor − tarifas, reversos y ajustes en contra − reservas +
+liberaciones; reservado/en proceso = reservas abiertas según el estado de su solicitud; pagado = suma de
+`payout_completed`. Índices parciales y trigger viven solo en SQL y están comentados en el modelo.
+

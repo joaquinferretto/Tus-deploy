@@ -40,6 +40,8 @@ import { AlmacenCuentasCobroEnMemoria } from '../finance/servicios/cuentas-cobro
 import { crearModuloPagosServicio } from '../finance/servicios/composicion-pagos.ts'
 import { ALCANCE_PAGOS_SERVICIO, crearHabilitacionPagosServicio } from '../finance/servicios/habilitacion-pagos.ts'
 import { ServicioEvidenciasHabilitacion } from '../readiness/evidencias-admin.ts'
+import { ServicioGananciasPrestador } from '../finance/servicios/ganancias.ts'
+import { AlmacenSolicitudesLiquidacionPrisma, type ClientePrismaGanancias } from '../adapters/prisma-ganancias.ts'
 import { AlmacenAdminEvidenciasPrisma, type ClientePrismaEvidenciasHabilitacion } from '../adapters/prisma-evidencias-habilitacion.ts'
 import { ConfiguracionPagosPrisma, CuentasCobroPrisma, type ClientePrismaConfiguracionPagos } from '../adapters/prisma-configuracion-pagos.ts'
 import { InMemoryDeliveryStore, TusDeliveryService } from '../delivery/index.ts'
@@ -241,6 +243,20 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
     serviceFinance,
     servicePayments,
     readinessEvidence,
+    // Payouts are sent through Mercado Pago Payouts with TUS's own account when configured
+    // (servicePayments.liquidaciones); otherwise nothing can be sent.
+    providerEarnings: new ServicioGananciasPrestador(new AlmacenSolicitudesLiquidacionPrisma(client as unknown as ClientePrismaGanancias), servicePayments.liquidaciones, identidadVerificada, () => Date.now(), {
+      // The minimum is administrative configuration (versioned payment configuration).
+      minimoLiquidacion: () => servicePayments.configuracion.minimoLiquidacion(),
+      // Requesting needs a usable link: OAuth still valid (renewed if close to expiry) and, in
+      // production, a live Mercado Pago account.
+      cuentaHabilitada: async (tenantId) => {
+        const cuenta = await servicePayments.cuentas.estadoCuenta({ tenantId })
+        if (servicePayments.operativo().environment === 'production' && cuenta.liveMode !== true) return false
+        await servicePayments.cuentas.tokenVigente(tenantId)
+        return true
+      },
+    }),
     identity,
     evaluadorHabilitacion,
     perfilHabilitacion: 'native-local',

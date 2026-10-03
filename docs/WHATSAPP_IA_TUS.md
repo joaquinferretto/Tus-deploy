@@ -185,6 +185,71 @@ WhatsApp recibe exactamente el mismo tipo de mensaje libre y produce la misma co
 La verificación telefónica (`VERIFICAR TUS <código>`) sigue separada: se resuelve antes del
 asistente y nunca pasa por el modelo.
 
+### Contexto entre mensajes cortos (ASISTENTE-CONTEXTO-01)
+
+Los mensajes seguidos ("El lunes" · "Lo antes posible" · "Con cualquiera") son UNA necesidad: cada
+uno cambia solo lo que dice y el backend actúa sobre el estado estructurado, sin volver a preguntar
+lo ya dicho. Todo sale de la búsqueda real; nada se solicita sin el "sí" explícito.
+
+- **Lo antes posible** (`need.asap`): "lo antes posible", "cuanto antes", "apenas haya", "el día más
+  próximo", "la primera que tenga", "ahora", "ya mismo", "urgente". No fija día: la búsqueda empieza en
+  el día conocido (hoy, desde la hora actual, si no hay uno) y avanza día por día, con la misma consulta
+  al backend, hasta encontrar un turno libre que respete el horario pedido (máximo 14 días). Si hoy no
+  hay, se dice: "Hoy no hay turnos libres. La primera disponibilidad … es mañana: …". Ya no existe el
+  bucle "sin turnos libres hoy. ¿Querés que busque otro día?" ante "lo antes posible".
+- **Cualquiera disponible** (`need.anyProvider`): "cualquiera", "la que sea", "me da igual quién", "no
+  importa quién", "el que esté disponible", "asignáme una", "mandame cualquiera". Mantiene servicio,
+  día y horario y el backend propone UNA opción concreta, el primer inicio real que cumple: "La primera
+  opción que encontré es mañana a las 09:00 con Melina. ¿Querés esa?". "Sí" prepara la tarjeta de
+  solicitud (servicio, cliente y confirmación como siempre); "no" la descarta y conserva la necesidad.
+  "Me da igual dónde" sigue siendo la zona, no el profesional.
+- **Profesional por nombre o posición**: "Melina", "con Melina", "melna" (un error de tipeo sobre un
+  nombre listado, solo si coincide con UNA), "la segunda", "la otra" / "no esa, la otra" se resuelven
+  contra la lista que el backend mostró (`state.shown`). "Melina ya mismo" toma su primer horario real
+  sin volver a listar; "Quiero a Melina mañana" busca la agenda de ella ese día.
+- **Precio**: "¿y cuánto sale?", "¿cuánto es el precio?" consultan el precio real
+  (`servicioDeTurno`) del servicio en curso para los profesionales listados o el elegido, y dicen cuál no
+  tiene precio publicado. No inicia otro flujo ni pide vincular la cuenta.
+- **Mensaje ininteligible** ("Ysk", "jsjs"): no se repite la última pregunta; se pregunta algo corto con
+  lo conocido ("¿Querés que busque el primer turno libre de Masaje con cualquier profesional?") y un
+  "sí" lo ejecuta.
+- **Cambios de opinión**: "no mejor el martes", "mañana a la tarde", "después de las 18" cambian solo
+  ese dato; la preferencia de profesional se conserva.
+- **Disponibilidad que cambió**: antes de preparar la tarjeta se relee el horario elegido en la agenda;
+  si ya no está libre se dice y se propone el siguiente real del mismo profesional. Si el "sí" de la
+  tarjeta recibe `409 SLOT_OCCUPIED`, no se solicita nada: "Ese horario acaba de ocuparse. Busco el
+  siguiente disponible." y se propone el siguiente.
+
+Las propuestas pendientes viven en `estado_conversacional.suggestion` (30 minutos) y nunca son
+autoridad: aceptar vuelve a leer la disponibilidad y la solicitud la valida el backend.
+
+Segunda pasada (ASISTENTE-CONTEXTO-02):
+
+- **El horario pedido es un requisito.** Si alguien cumple (hora exacta, "desde", "hasta", rango o parte
+  del día), se listan **solo** quienes cumplen; los horarios de otras horas no aparecen bajo "con turno a
+  las 09:15". Si nadie cumple, se dice ("No encontré turnos … a las 11:00") y se ofrecen los más cercanos
+  reales. La lista recordada (`offers`, `shown`) es la misma que se mostró, así que "la primera" es la
+  primera que la persona vio.
+- **Tipos de horario separados en el estado**: exacta (`exact`), desde (`from`), hasta (`until`), rango
+  (`between`), parte del día (`between` + `part: manana|mediodia|tarde|noche`) y "lo antes posible"
+  (`asap`, que no es un horario). Al backend llegan solo los límites.
+- **Nombres ambiguos se preguntan**: "melna" o "Melina" con "Melina" y "Melina Martínez" en la lista →
+  "¿Con cuál? 2. Melina (Barrio Sur) · 4. Melina Martínez (Centro)". El nombre completo elige. "La de
+  Barrio Sur" elige por la zona mostrada. Un profesional nombrado en el mismo mensaje del servicio
+  ("una masajista con Melina mañana") se resuelve contra el resultado real.
+- **Precio que sigue el tema**: "¿y con Melina?", "¿cuánto me sale con ella?", "¿cuánto sería?", "¿cuánto
+  pago?" usan el profesional nombrado, el elegido o el propuesto. "Pagar la seña" sigue siendo otro flujo.
+- **Propuestas**: "sí", "dale", "esa", "esa misma" aceptan; "no" descarta y conserva la necesidad; "no,
+  mejor la segunda" descarta y elige de la lista mostrada.
+- **Mensajes ininteligibles**: solo después de que fallan todas las lecturas (servicio, profesional,
+  zona, día, hora, sí/no, número u ordinal, precio, otra área) y únicamente si las palabras tienen forma de
+  error de tipeo (sin vocales, corridas de teclado como "asd"/"qwe", una tecla repetida). "Barrio Ponce",
+  "Santa Ana" o "Rosa" siguen el flujo normal. La aclaración ofrece lo conocido ("Si querés, sigo buscando
+  turnos de Masaje mañana.") y un "sí" vuelve a buscar exactamente eso.
+- **Modelo real**: no se probó con Groq en esta pasada (no hay clave configurada en el entorno local). Las
+  reglas críticas (disponibilidad, horario, profesional, precio, identidad, reserva, pago) no dependen del
+  modelo.
+
 ## Un turno se solicita, no se confirma (TURNOS-SOLICITUD-01)
 
 Desde la Web, el asistente Web o WhatsApp, el cliente **solicita** un turno; solo el prestador lo
