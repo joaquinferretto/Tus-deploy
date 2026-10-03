@@ -168,6 +168,15 @@ export interface PuertoProveedorPagosServicio {
   readonly source: OrigenIntencionPagoServicio
   readonly environment?: EntornoProveedorPago
   crearPago(input: SolicitudCheckout): Promise<ResultadoCheckout>
+  // TUS-WHATSAPP-MULTIMODAL-01: the payments Mercado Pago itself holds for ONE of TUS's payment
+  // intents (its external reference), normalized exactly like a webhook's payment and read with
+  // the account that must have collected it. Never a lookup by a value a person typed. Absent
+  // where the provider cannot be asked.
+  consultarPagos?(input: {
+    paymentId: string
+    collectionMode: 'split' | 'plataforma'
+    prestadorTenantId: string
+  }): Promise<EventoPagoNormalizado[]>
   verificarEvento(
     input: EntradaEventoProveedor
   ): EventoPagoNormalizado | Promise<EventoPagoNormalizado>

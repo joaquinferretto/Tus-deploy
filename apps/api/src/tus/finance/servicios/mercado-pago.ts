@@ -198,6 +198,43 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
     }
   }
 
+  // TUS-WHATSAPP-MULTIMODAL-01: the payments Mercado Pago holds for one TUS payment intent, found
+  // by TUS's own external reference (never by a value a person typed) with the token of the
+  // account that must have collected them (TUS's for a platform collection, the seller's for
+  // Split 1:1). Each result is normalized by the SAME function as a webhook's payment, which also
+  // rejects a payment of another collector. Search: GET /v1/payments/search?external_reference=.
+  async consultarPagos(input: {
+    paymentId: string
+    collectionMode: 'split' | 'plataforma'
+    prestadorTenantId: string
+  }): Promise<EventoPagoNormalizado[]> {
+    const porPlataforma = input.collectionMode === 'plataforma'
+    if (porPlataforma && !this.config.plataforma)
+      throw new ErrorFinanzasServicio(503, 'PROVIDER_UNAVAILABLE', 'platform collection is not configured')
+    let token: { accessToken: string; externalAccountId: string }
+    let result: Record<string, unknown>
+    try {
+      token = porPlataforma
+        ? { accessToken: this.config.plataforma!.accessToken, externalAccountId: this.config.plataforma!.userId }
+        : await this.tokenVendedor(input.prestadorTenantId)
+      result = await this.request(
+        'GET',
+        `/v1/payments/search?external_reference=${encodeURIComponent(input.paymentId)}&sort=date_created&criteria=asc&limit=10`,
+        token.accessToken
+      )
+    } catch (error) {
+      throw new ErrorFinanzasServicio(503, 'PROVIDER_UNAVAILABLE', error instanceof ErrorProveedorPagos ? error.code : 'payment search failed')
+    }
+    const payments = Array.isArray(result['results']) ? (result['results'] as Record<string, unknown>[]) : []
+    const collectedBy = porPlataforma
+      ? ({ mode: 'plataforma', prestadorTenantId: null } as const)
+      : ({ mode: 'split', prestadorTenantId: input.prestadorTenantId } as const)
+    return payments.map((payment) => ({
+      ...normalizarPagoMercadoPago(payment, { expectedCollector: token.externalAccountId, notificationId: null }),
+      collectedBy,
+    }))
+  }
+
   async reembolsar(input: {
     prestadorTenantId: string
     providerReference: string

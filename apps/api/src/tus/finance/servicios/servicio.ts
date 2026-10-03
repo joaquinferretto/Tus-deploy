@@ -384,6 +384,18 @@ export type ResultadoIngestaEvento =
       obligation: ObligacionPagoServicio
     }
 
+// What the payment query reports about a customer's payment. `approved` means Mercado Pago
+// reported it approved AND every validation of the webhook accepted it (or it was already applied).
+export interface ResultadoVerificacionPagoServicio {
+  status: 'approved' | 'pending' | 'not_approved' | 'not_found' | 'quarantined' | 'unavailable'
+  // True when THIS query applied the approval (the webhook had not arrived yet).
+  appliedNow: boolean
+  trabajoId: string
+  amountMinor: string | null
+  currency: string | null
+  reason: string | null
+}
+
 export interface ResumenFinancieroTrabajoServicio {
   trabajoId: string
   viewer: 'customer' | 'provider'
@@ -1336,6 +1348,23 @@ export class ServicioFinanzasServicios {
         reason: error instanceof ErrorFinanzasServicio ? error.code : 'INVALID_EVENT',
       }
     }
+    return this.aplicarEventoVerificado(event, {
+      signature: input.signature,
+      rawBody: input.rawBody,
+      receivedAt: input.receivedAt,
+    })
+  }
+
+  // The state machine of a VERIFIED payment event (what Mercado Pago itself reported for a
+  // payment): intent resolution, durable inbox, the validations of `evaluarEvento`, the
+  // transitions and everything an approval, refund or chargeback triggers (turno confirmation,
+  // earning). It is the ONE place money changes state: the webhook calls it after verifying the
+  // signature and the payment lookup; the payment query (`verificarPagoDelTrabajo`) calls it with
+  // the payment read from Mercado Pago. The same event applied twice is a no-op.
+  protected async aplicarEventoVerificado(
+    event: EventoPagoNormalizado,
+    origen: { signature: string; rawBody: string; receivedAt: string }
+  ): Promise<ResultadoIngestaEvento> {
     return this.transaction.ejecutar(async (repositories) => {
       const intent = await this.resolverIntencionEvento(repositories, event)
       if (!intent) return { status: 'unmatched', reason: 'payment_not_found' }
@@ -1433,10 +1462,10 @@ export class ServicioFinanzasServicios {
         status: event.rawStatus,
         amountMinor: event.amountMinor,
         currency: event.currency,
-        signature: input.signature,
-        rawBody: input.rawBody,
+        signature: origen.signature,
+        rawBody: origen.rawBody,
         occurredAt: event.occurredAt,
-        receivedAt: input.receivedAt,
+        receivedAt: origen.receivedAt,
         result: outcome.result,
         reason: outcome.reason,
       })
@@ -1461,6 +1490,82 @@ export class ServicioFinanzasServicios {
         obligation: proyectarObligacion(updatedObligation),
       }
     })
+  }
+
+  // TUS-WHATSAPP-MULTIMODAL-01: "did my payment arrive?". The CUSTOMER of a work asks for the real
+  // state of ITS payment. Nothing said or sent by the customer decides it: the payment is read from
+  // Mercado Pago by TUS's own payment id (the external reference of the intent, never a value the
+  // customer typed) with the account that must have collected it, and whatever Mercado Pago reports
+  // goes through the SAME state machine as the webhook (`aplicarEventoVerificado`: collector,
+  // mode, reference, currency and amount are validated there). If the webhook already applied it,
+  // or arrives later, that is a no-op: one approval, one confirmation, one earning.
+  async verificarPagoDelTrabajo(
+    input: ContextoFinanzasServicio & { trabajoId: string }
+  ): Promise<ResultadoVerificacionPagoServicio> {
+    validarContextoFinanzasServicio(input)
+    const objetivo = await this.transaction.ejecutar(async (repositories) => {
+      const trabajo = await this.requerirTrabajo(repositories, input, input.trabajoId)
+      // Only the customer asks about its own payment; the provider's tenant does not.
+      if (trabajo.tenantId !== input.tenantId) throw new ErrorFinanzasServicio(404, 'NOT_FOUND', 'work was not found')
+      const obligaciones = await repositories.obligaciones.listarPorTrabajo({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId })
+      let abierta: { obligation: ObligacionServicio; intent: IntencionPagoServicioDominio } | null = null
+      for (const obligation of obligaciones) {
+        if (obligation.status === 'paid') continue
+        const intents = await repositories.intenciones.listarPorObligacion({ tenantId: obligation.tenantId, obligacionId: obligation.obligacionId })
+        const intent = intents.filter((item) => item.checkoutReference || item.providerReference).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+        if (intent && (!abierta || intent.createdAt > abierta.intent.createdAt)) abierta = { obligation, intent }
+      }
+      return { trabajo, abierta, pagadas: obligaciones.filter((obligation) => obligation.status === 'paid') }
+    })
+    if (!objetivo.abierta) {
+      const pagada = objetivo.pagadas[0]
+      return pagada
+        ? { status: 'approved', appliedNow: false, trabajoId: input.trabajoId, amountMinor: pagada.amountMinor.toString(10), currency: pagada.currency, reason: null }
+        : { status: 'not_found', appliedNow: false, trabajoId: input.trabajoId, amountMinor: null, currency: null, reason: 'no_payment_started' }
+    }
+    const { obligation, intent } = objetivo.abierta
+    const base = { trabajoId: input.trabajoId, amountMinor: intent.amountMinor.toString(10), currency: intent.currency }
+    if (!this.proveedor.consultarPagos) return { ...base, status: 'unavailable', appliedNow: false, reason: 'provider_cannot_be_queried' }
+    let events: EventoPagoNormalizado[]
+    try {
+      events = await this.proveedor.consultarPagos({ paymentId: intent.paymentId, collectionMode: intent.collectionMode ?? 'split', prestadorTenantId: intent.prestadorTenantId })
+    } catch (error) {
+      if (error instanceof ErrorFinanzasServicio && error.code === 'PROVIDER_UNAVAILABLE') return { ...base, status: 'unavailable', appliedNow: false, reason: 'provider_unavailable' }
+      // A payment of another seller or an incomplete one is not a payment of this intent.
+      return { ...base, status: 'not_found', appliedNow: false, reason: error instanceof ErrorFinanzasServicio ? error.code : 'invalid_provider_payment' }
+    }
+    // Only payments created for THIS intent (its own external reference), oldest first.
+    const propios = events.filter((event) => event.paymentId === intent.paymentId).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+    if (propios.length === 0) return { ...base, status: 'not_found', appliedNow: false, reason: 'provider_has_no_payment' }
+    const resultados: ResultadoIngestaEvento[] = []
+    for (const event of propios)
+      resultados.push(await this.aplicarEventoVerificado(event, { signature: 'payment-query', rawBody: JSON.stringify({ origin: 'payment_query', providerReference: event.providerReference, status: event.rawStatus }), receivedAt: this.isoNow() }))
+    const appliedNow = resultados.some((resultado, index) => resultado.status === 'recorded' && resultado.result === 'applied' && propios[index]!.status === 'approved')
+    const cuarentena = resultados.find((resultado) => resultado.status === 'recorded' && resultado.result === 'quarantined')
+    const final = await this.transaction.ejecutar(async (repositories) => {
+      const actual = await repositories.obligaciones.buscar({ tenantId: obligation.tenantId, obligacionId: obligation.obligacionId })
+      const intents = await repositories.intenciones.listarPorObligacion({ tenantId: obligation.tenantId, obligacionId: obligation.obligacionId })
+      const vigente = intents.find((item) => item.paymentId === intent.paymentId) ?? intent
+      if (actual)
+        await this.auditar(repositories, actual, {
+          resourceType: 'payment',
+          resourceId: intent.paymentId,
+          action: 'payment.queried_by_customer',
+          origin: 'customer',
+          actorId: input.actorId,
+          correlationId: input.correlationId,
+          idempotencyKey: null,
+          previousStatus: intent.providerStatus,
+          status: vigente.providerStatus,
+          metadata: { appliedNow, events: propios.length },
+        })
+      return { obligation: actual, intent: vigente }
+    })
+    if (final.obligation?.status === 'paid') return { ...base, status: 'approved', appliedNow, reason: null }
+    if (cuarentena && cuarentena.status === 'recorded') return { ...base, status: 'quarantined', appliedNow: false, reason: cuarentena.reason }
+    if (propios.every((event) => event.status === 'rejected' || event.status === 'cancelled' || event.status === 'expired' || event.status === 'refunded' || event.status === 'charged_back'))
+      return { ...base, status: 'not_approved', appliedNow: false, reason: propios[propios.length - 1]!.status }
+    return { ...base, status: 'pending', appliedNow: false, reason: null }
   }
 
   async consultarFinanzasTrabajo(

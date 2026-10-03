@@ -33,6 +33,13 @@ export const MERCADO_PAGO_API_SETUP = `
       if (!payment || String(payment.collector_id) !== seller) return reply(404, { message: 'payment not found' })
       return reply(201, { id: 900000 + mp.refunds.length, payment_id: Number(refundMatch[1]), status: 'approved' })
     }
+    // Payments of one account found by external reference (TUS payment query): only that
+    // account's own payments are visible to its token, like Mercado Pago.
+    if (path === '/v1/payments/search' && init.method === 'GET') {
+      const reference = new URL(url).searchParams.get('external_reference')
+      const results = [...mp.payments.values()].filter((payment) => payment.external_reference === reference && String(payment.collector_id) === seller)
+      return reply(200, { paging: { total: results.length, limit: 10, offset: 0 }, results })
+    }
     const paymentMatch = path.match(/^\\/v1\\/payments\\/([^/]+)$/)
     if (paymentMatch) {
       const payment = mp.payments.get(paymentMatch[1])
