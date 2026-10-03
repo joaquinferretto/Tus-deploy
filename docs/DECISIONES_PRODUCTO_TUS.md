@@ -481,16 +481,29 @@ seña en ese caso).
   Solo formatos que el proveedor acepta sin conversión (Ogg/Opus, MP3, MP4/M4A); aac y amr crudos se rechazan y TUS no
   convierte. Procesamiento efímero: no se guarda el audio, solo el texto y metadatos mínimos. Si no se entiende, se pide
   repetir o escribir.
-- **Comprobantes**: son una pista, no una prueba. No se descargan, no se leen, no se hace OCR y no se envían a ningún
-  proveedor de IA (privacidad: pueden traer DNI/CUIL, CBU/CVU). La correlación sale de la cuenta del cliente y de sus
-  propios turnos con seña pendiente.
+- **Comprobantes**: son una pista, no una prueba (fase TUS-WHATSAPP-MULTIMODAL-01 no los leía; TUS-WHATSAPP-MULTIMODAL-02 los
+  lee de forma segura, apagado por defecto). Ver W09-12.
 - **"¿Ya te llegó?"**: el backend consulta a Mercado Pago por la referencia interna de la intención (con el modo congelado:
   cuenta de TUS o del prestador) y aplica lo que informa por la MISMA máquina de estados del webhook. El webhook sigue
   siendo el camino principal; la consulta es reconciliación y es idempotente en ambos sentidos.
 - **Límites**: 15 s entre consultas y 6 por hora por conversación; 20 medios por hora por contacto (configurable).
 - **No existe** en WhatsApp la posibilidad de consultar un pago por un identificador que escriba la persona.
-- Pendiente de decisión de producto: extracción local de datos del comprobante (monto, referencia) solo como pista y
-  siempre `user_supplied_untrusted_evidence`; no se implementa en esta fase.
+
+### W09-12: Lectura segura de comprobantes (TUS-WHATSAPP-MULTIMODAL-02, 2026-10-03)
+
+- **Regla**: imagen/PDF = pista; contexto TUS = correlación; Mercado Pago = autoridad financiera; backend TUS = decisión.
+  Ninguna imagen, PDF, OCR, texto o respuesta de una IA marca un pago como confirmado.
+- **Cuándo**: solo si hay varios pagos pendientes del cliente (con uno solo se verifica directo y el archivo no se descarga).
+- **Cómo**: descarga acotada (Meta, bytes, tiempo, tipos reales), análisis efímero en memoria, evidencia estructurada
+  `untrusted_receipt_evidence` que solo ordena los candidatos del MISMO cliente; todo candidato pasa por la verificación
+  completa del dominio financiero contra Mercado Pago.
+- **Proveedor**: OCR local por defecto (nada sale de TUS; PDF solo por su capa de texto con `pdftotext`); visión de Groq como
+  opción (`WHATSAPP_RECEIPT_ANALYZER=vision`), solo para imágenes. Decisión: privacidad primero, el costo de un modelo de visión
+  solo si el OCR local no alcanza en la práctica.
+- **Persistencia mínima**: estado, analizador, monto, moneda y fecha; hash de Meta para no releer. No se guardan imagen, PDF,
+  base64, texto OCR, CVU/CBU completos, DNI ni nombres del pagador.
+- **Pendiente de decisión de producto**: aceptar o no formatos que hoy se rechazan (HEIC, PDF escaneado sin texto) y si se
+  habilita `vision` en producción.
 
 ### W09-07: Calificación del Prestador (FASE 9)
 

@@ -877,6 +877,17 @@ Variables (todas opcionales; valores inválidos mantienen el default): `WHATSAPP
 `WHATSAPP_STT_MAX_BYTES`, `WHATSAPP_STT_TIMEOUT_MS`, `WHATSAPP_STT_MAX_SECONDS`, `WHATSAPP_STT_MIME_TYPES`,
 `WHATSAPP_MEDIA_MAX_PER_HOUR`. Sin migraciones nuevas.
 
+**Lectura de comprobantes (TUS-WHATSAPP-MULTIMODAL-02)**, apagada por defecto: `WHATSAPP_RECEIPT_ANALYSIS=true`,
+`WHATSAPP_RECEIPT_ANALYZER` (`ocr` local | `vision` Groq), `WHATSAPP_RECEIPT_MAX_BYTES`, `WHATSAPP_RECEIPT_PDF_MAX_BYTES`,
+`WHATSAPP_RECEIPT_PDF_MAX_PAGES`, `WHATSAPP_RECEIPT_TIMEOUT_MS`, `WHATSAPP_RECEIPT_MAX_PER_HOUR`,
+`WHATSAPP_RECEIPT_MIME_TYPES`. El comprobante es solo una pista para elegir entre pagos pendientes del propio cliente; el
+dinero lo confirma únicamente el dominio financiero tras consultar a Mercado Pago. Requisitos de entorno para `ocr`: datos de
+idioma de tesseract accesibles (`TESSERACT_LANG_PATH`) y `pdftotext` (paquete poppler-utils) instalado para PDF; sin ellos la
+lectura falla de forma tipada y se le pregunta a la persona a cuál pago corresponde. Privacidad: los bytes viven solo en memoria
+durante el análisis; con `ocr` nada sale de TUS; con `vision` solo la imagen va a Groq; no se guardan imágenes, PDF, texto OCR
+completo, CVU/CBU completos ni DNI. **NO VERIFICADO CONTRA PROVEEDOR REAL**: descarga de media de Meta, visión de Groq, OCR local con
+datos de idioma reales y `pdftotext` en producción.
+
 Antes de habilitarlo (todo **NO VERIFICADO CONTRA PROVEEDOR REAL** hasta que se haga):
 
 1. **Mercado Pago**: la consulta de pagos usa `GET /v1/payments/search?external_reference=<id de pago de TUS>` con el token de

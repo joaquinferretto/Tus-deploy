@@ -30,6 +30,13 @@ Variables opcionales:
 - `WHATSAPP_STT_MAX_BYTES` (default `16777216`, 1 KiB a 25 MiB), `WHATSAPP_STT_TIMEOUT_MS` (default `30000`),
   `WHATSAPP_STT_MAX_SECONDS` (default `180`) y `WHATSAPP_STT_MIME_TYPES` (default `audio/ogg,audio/mpeg,audio/mp4`;
   solo se aceptan formatos que Whisper admite sin conversión). El proveedor es siempre Groq y el modelo `GROQ_STT_MODEL`.
+- `WHATSAPP_RECEIPT_ANALYSIS=true` habilita la lectura de comprobantes (default apagado; sin ella igual funciona "ya pagué" y una
+  sola obligación pendiente). `WHATSAPP_RECEIPT_ANALYZER` (`ocr` por defecto | `vision`), `WHATSAPP_RECEIPT_MAX_BYTES`
+  (default `5242880`), `WHATSAPP_RECEIPT_PDF_MAX_BYTES` (default `2097152`), `WHATSAPP_RECEIPT_PDF_MAX_PAGES` (default `3`),
+  `WHATSAPP_RECEIPT_TIMEOUT_MS` (default `25000`), `WHATSAPP_RECEIPT_MAX_PER_HOUR` (default `6`),
+  `WHATSAPP_RECEIPT_MIME_TYPES` (default `image/jpeg,image/png,image/webp,application/pdf`), `WHATSAPP_RECEIPT_PDFTOTEXT`
+  (ruta de `pdftotext`; default el del PATH), `TESSERACT_LANG_PATH` (datos de idioma del OCR local) y, para `vision`,
+  `GROQ_VISION_MODEL` / `GROQ_VISION_RESPONSE_FORMAT`. Valores inválidos mantienen el default seguro.
 - `WHATSAPP_MEDIA_MAX_PER_HOUR` (default `20`): audios, imágenes y documentos por contacto y hora
 - `WHATSAPP_INBOUND_MAX_PER_MINUTE` (default `12`)
 - `WHATSAPP_INBOUND_BLOCK_PER_MINUTE` (default `60`)
@@ -363,18 +370,56 @@ pasa por la misma búsqueda real de disponibilidad, el mismo estado de la conver
 
 ### Comprobantes (imagen o documento) y "ya pagué"
 
-Un comprobante es **solo una pista de que la persona dice haber pagado**. TUS **no descarga, no lee, no hace OCR ni envía a
-ningún proveedor de IA** la imagen o el PDF (decisión de privacidad: pueden traer nombre, DNI/CUIL, CBU/CVU). De la imagen
-se guarda únicamente el identificador de Meta, el tipo y su hash. Lo que sí se usa es el texto que la acompaña, igual que
-cualquier mensaje. Nada de lo que diga o contenga el comprobante se usa como dato financiero: no hay `payment_id`,
-monto, fecha ni referencia extraídos (la extracción local queda como evolución posible; si se hiciera, serían siempre
-`user_supplied_untrusted_evidence`).
+Un comprobante es **solo una pista**. Regla de la fase TUS-WHATSAPP-MULTIMODAL-02: **imagen/PDF = pista; contexto TUS =
+correlación; Mercado Pago = autoridad financiera; backend TUS = decisión.** Nada de lo que contenga el comprobante se usa
+como dato financiero: es `untrusted_receipt_evidence` (`origen`) y solo sirve para **ordenar los pagos pendientes del propio
+cliente** cuando hay más de uno.
 
-La correlación sale de **referencias internas**, no del comprobante: la cuenta vinculada (o identificada por nombre + DNI,
-como en el pago de la seña) → sus propios turnos próximos con seña pendiente (`senasVerificables`) → la intención de pago
-de ese turno. Con una sola seña pendiente se verifica esa; con varias se pregunta cuál ("la de Melina"); si no hay ninguna,
-*"Recibí el comprobante, pero todavía no pude relacionarlo con un pago confirmado de Mercado Pago."* Una foto sin palabras,
-sin seña pendiente y sin un link de pago reciente conserva su respuesta de siempre (se guarda para el equipo).
+**Cuándo se lee.** Con **una sola** obligación pendiente compatible no hace falta leer nada: se verifica directo contra
+Mercado Pago (el archivo ni se descarga). Con **varias**, se descarga y se lee el comprobante para ver a cuál corresponde.
+Sin texto "ya pagué" y con una imagen sola funciona igual.
+
+**Descarga segura** (`ServicioComprobantes`, `MetaWhatsappCloudProvider.downloadMedia`): solo Graph API de Meta y hosts de Meta
+(sin redirecciones a hosts externos), tope de bytes **mientras se lee** (nunca se bufferiza de más), tiempo máximo,
+lista blanca de tipos reales (JPEG, PNG, WebP, PDF: **mandan los bytes, no el tipo declarado ni la extensión**), validación
+de cabeceras/dimensiones (límite de píxeles) y de PDF (`%%EOF`, sin `/Encrypt`, máximo de páginas). Archivo corrupto, falso
+(zip/html/exe con tipo de imagen), enorme o con demasiadas páginas → error tipado, nunca excepción. Los bytes viven **solo en
+memoria durante el análisis y se descartan**: no hay archivos temporales ni se guardan.
+
+**Lectura** (`AnalizadorComprobante`, salida acotada a un esquema; nunca texto libre que cambie dinero):
+
+- `ocr` (por defecto): OCR **local** (tesseract.js) para imágenes, y para PDF solo la **capa de texto** con `pdftotext`
+  (poppler) por stdin/stdout, sin shell. **Nada sale de TUS.**
+- `vision` (opt-in, `WHATSAPP_RECEIPT_ANALYZER=vision`): visión de Groq con el pool de claves existente y salida
+  `json_schema` estricta validada con zod; lo fuera de esquema se descarta. Solo la **imagen** se envía a Groq (como
+  base64 en la petición, nunca registrada); los PDF **nunca** se envían: se leen localmente.
+
+Campos extraídos (todos opcionales, solo si realmente se leyeron): `amountMinor`, `currency`, `operationId`,
+`externalReference`, fecha/hora, `recipientName`, `recipientAccountHint` (**solo los últimos 4 dígitos** de un CVU/CBU),
+`payerName`, `statusText` (categoría) y confianza por campo solo si el lector la entrega.
+
+**Correlación** (`correlacionarComprobante`): únicamente entre los pagos del **mismo cliente** (`pagosVerificables`: señas de
+sus turnos y partes abiertas —seña/saldo— de sus trabajos). La evidencia nunca crea candidatos ni consulta pagos de otros;
+un número de operación solo coincide con la referencia de un candidato propio y **nunca se confía solo**. Puntúa monto,
+referencia de operación, fecha, profesional/servicio y palabras del texto; si hay un ganador estricto se verifica ese, si no
+se pregunta: *"Tenés 2 pagos pendientes: 1) … 2) … ¿A cuál corresponde el comprobante? Decime el nombre del profesional o el
+servicio."* Cualquier candidato elegido pasa igual por la verificación completa del dominio (actor, obligación, importe,
+moneda, cobrador, `external_reference`, modo y estado).
+
+Un comprobante de otra persona no abre ni revela nada (no es candidato). Uno falso o que Mercado Pago no respalda termina en
+*"Recibí el comprobante, pero no pude confirmar ese pago en Mercado Pago…"*, sin confirmar pago, turno, trabajo ni ganancia, y
+sin acusar de fraude. Si el analizador falla o no hay lectura: *"No pude leer el comprobante, así que no sé a cuál
+corresponde."* y se pregunta.
+
+**Límites**: `WHATSAPP_RECEIPT_MAX_PER_HOUR` análisis por conversación y hora (además del límite general de media por
+contacto), reutilización por **sha256 de Meta** (la misma imagen no se vuelve a leer ni a descargar) y el ritmo de consultas a
+Mercado Pago. Combinado con audio en el mismo turno (nota de voz + imagen) el texto transcripto aporta las palabras de
+correlación.
+
+**Privacidad / qué se guarda**: en el mensaje, `metadata.receipt` = {estado, analizador, monto, moneda, fecha, cantidad de
+lecturas}; en el estado de la conversación, un caché mínimo `paymentCheck.receipts` = {sha256, momento, monto, moneda, fecha}.
+**NO se guardan**: la imagen ni el PDF, base64, el texto OCR completo, CVU/CBU completos, DNI, nombres del pagador ni la respuesta
+cruda del modelo. Los logs no contienen imágenes ni base64 (errores de visión: solo el estado HTTP).
 
 ### Verificación real del pago
 
@@ -419,13 +464,15 @@ persona.
 ### Persistencia
 
 Sin tablas ni migraciones nuevas. Claves JSON nuevas: `mensajes.metadata.media.sha256`, `mensajes.metadata.stt`,
-`conversaciones.estado.paymentCheck` (ritmo y elección entre señas; sin montos ni estados) y acciones de auditoría
+`mensajes.metadata.receipt` y `conversaciones.estado.paymentCheck` (ritmo, elección entre pagos y caché mínimo de lecturas de
+comprobantes: ver arriba qué se guarda y qué no) y acciones de auditoría
 `assistant.payment_checked` y `payment.queried_by_customer`.
 
 ### Qué no está verificado contra el proveedor real
 
 Todo se probó contra dobles offline en el borde de `fetch` y de los puertos: **NO VERIFICADO CONTRA PROVEEDOR REAL** — Groq
-Whisper (`verbose_json`, campos de segmentos), la búsqueda de pagos de Mercado Pago (`/v1/payments/search` por
+Whisper (`verbose_json`, campos de segmentos), la visión de Groq para comprobantes, el OCR local con datos de idioma reales
+(tesseract), la disponibilidad de `pdftotext` en el entorno de producción, la búsqueda de pagos de Mercado Pago (`/v1/payments/search` por
 `external_reference`) y la descarga de media de Meta. Antes de habilitar en producción hay que probar en sandbox/un número
 de prueba y confirmar con Mercado Pago que la búsqueda por `external_reference` está disponible para la aplicación.
 
