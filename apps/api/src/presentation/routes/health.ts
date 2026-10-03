@@ -127,8 +127,14 @@ function summary(dependencies: ApiReadiness): Record<string, string> {
   )
 }
 
+// Optional capabilities (speech to text, receipt reading, ...): reported, never blocking.
+export type OptionalCapabilities = Record<string, { status: string; reason: string }>
+
 export interface HealthRouterOptions {
   getReadiness?: () => Promise<ApiReadiness>
+  // Reported under `capabilities` in /ready. It never changes `ready` nor the status code; when it
+  // fails or takes too long the field says "unknown". It must not return configuration values.
+  getCapabilities?: () => Promise<OptionalCapabilities>
   databaseLifecycle?: DatabaseLifecycle
   probes?: Partial<ReadinessProbes>
   timeouts?: Partial<ReadinessTimeouts>
@@ -155,8 +161,12 @@ export function createHealthRouter(options: HealthRouterOptions = {}): ExpressRo
     const correlationId = getCorrelationId(req)
     res.setHeader('X-Correlation-Id', correlationId)
     res.setHeader('Cache-Control', 'no-store')
+    const getCapabilities = options.getCapabilities
+    const capabilitiesWork: Promise<OptionalCapabilities | 'unknown' | undefined> = getCapabilities
+      ? bounded(getCapabilities, timeouts.optionalMs).catch(() => 'unknown' as const)
+      : Promise.resolve(undefined)
     try {
-      const dependencies = await bounded(getReadiness, timeouts.totalMs)
+      const [dependencies, capabilities] = await Promise.all([bounded(getReadiness, timeouts.totalMs), capabilitiesWork])
       const reports = dependencyKeys.map((key) => dependencies[key])
       const schemaReady = dependencies.schema?.compatible ?? true
       const ready = schemaReady && reports.every((report) => !report.blocksApiReadiness)
@@ -169,6 +179,7 @@ export function createHealthRouter(options: HealthRouterOptions = {}): ExpressRo
         summary: summary(dependencies),
         dependencies,
         ...(dependencies.schema ? { schema: dependencies.schema } : {}),
+        ...(capabilities === undefined ? {} : { capabilities }),
         checks: {
           ...Object.fromEntries(dependencyKeys.map((key) => [key, dependencies[key].status === 'ready'])),
           ...(dependencies.schema ? { schema: dependencies.schema.compatible } : {}),

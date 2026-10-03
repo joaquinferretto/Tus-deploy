@@ -220,3 +220,68 @@ test('database lifecycle probe runs SELECT 1 with a client-side query timeout on
   })
   await lifecycle.close()
 })
+
+// Optional capabilities (WhatsApp, Groq, speech to text, receipt OCR, pdftotext) are REPORTED by
+// /ready; they never decide it.
+test('optional capabilities: reported under `capabilities`, never blocking; a failing or hanging reporter says "unknown" and /ready keeps its own answer', () =>
+  withEnv(nativeEnv, async () => {
+    const probes = { postgresConnection: async () => true, postgresSchema: async () => okSchema }
+    const todas = {
+      whatsapp: { status: 'disabled', reason: 'not_enabled' },
+      groq: { status: 'disabled', reason: 'not_configured' },
+      audioTranscription: { status: 'unavailable', reason: 'groq_not_configured' },
+      receiptImages: { status: 'unavailable', reason: 'ocr:language_data_missing' },
+      receiptPdf: { status: 'unavailable', reason: 'ocr:missing' },
+    }
+    const sin = await request(createHealthRouter({ timeouts: fast, probes }))
+    assert.equal(sin.status, 200)
+    assert.equal('capabilities' in sin.body, false)
+
+    const apagadas = await request(createHealthRouter({ timeouts: fast, probes, getCapabilities: async () => todas }))
+    assert.equal(apagadas.status, 200, 'no optional integration takes the API down')
+    assert.equal(apagadas.body.ready, true)
+    assert.deepEqual(apagadas.body.capabilities, todas)
+
+    const rota = await request(createHealthRouter({ timeouts: fast, probes, getCapabilities: async () => { throw new Error(SECRET_URL) } }))
+    assert.deepEqual([rota.status, rota.body.ready, rota.body.capabilities], [200, true, 'unknown'])
+    assert.doesNotMatch(JSON.stringify(rota.body), /super-secret-pass/u)
+
+    const colgada = await request(createHealthRouter({ timeouts: fast, probes, getCapabilities: never }))
+    assert.deepEqual([colgada.status, colgada.body.ready, colgada.body.capabilities], [200, true, 'unknown'])
+    assert.ok(colgada.ms < 1500, `a hanging reporter is not waited for: ${colgada.ms} ms`)
+
+    // The database still decides: capabilities that are all ready do not make an unready API ready.
+    const sinBase = await request(createHealthRouter({ timeouts: fast, probes: { postgresConnection: async () => false, postgresSchema: async () => okSchema }, getCapabilities: async () => ({ groq: { status: 'ready', reason: 'configured' } }) }))
+    assert.deepEqual([sinBase.status, sinBase.body.ready], [503, false])
+  }))
+
+test('assistant capabilities: with nothing configured every optional capability is off or unavailable with a fixed reason, and no configuration value is reported', async () => {
+  const { crearModuloWhatsapp } = await import('../../apps/api/src/tus/asistente/composicion.ts')
+  const transaction = { ejecutar: async () => { throw new Error('not used') } }
+  const accounts = { contexto: async () => null }
+  const modulo = (env) => crearModuloWhatsapp({ env, transaction, accounts, knowledgeIndex: null, domain: {} })
+  assert.deepEqual(await modulo({}).capacidades(), {
+    whatsapp: { status: 'disabled', reason: 'not_enabled' },
+    groq: { status: 'disabled', reason: 'not_configured' },
+    audioTranscription: { status: 'disabled', reason: 'not_enabled' },
+    receiptImages: { status: 'disabled', reason: 'not_enabled' },
+    receiptPdf: { status: 'disabled', reason: 'not_enabled' },
+  })
+  // Enabled features whose dependency is missing are "unavailable", each with its cause.
+  const sinDependencias = await modulo({
+    WHATSAPP_AUDIO_TRANSCRIPTION: 'true',
+    WHATSAPP_RECEIPT_ANALYSIS: 'true',
+    WHATSAPP_RECEIPT_ANALYZER: 'ocr',
+    WHATSAPP_RECEIPT_PDFTOTEXT: 'tus-binary-that-does-not-exist',
+  }).capacidades()
+  assert.deepEqual(sinDependencias.audioTranscription, { status: 'unavailable', reason: 'groq_not_configured' })
+  assert.deepEqual(sinDependencias.receiptImages, { status: 'unavailable', reason: 'ocr:lang_path_not_set' })
+  assert.deepEqual(sinDependencias.receiptPdf, { status: 'unavailable', reason: 'ocr:missing' })
+  const vision = await modulo({ WHATSAPP_RECEIPT_ANALYSIS: 'true', WHATSAPP_RECEIPT_ANALYZER: 'vision' }).capacidades()
+  assert.deepEqual(vision.receiptImages, { status: 'unavailable', reason: 'groq_not_configured' })
+  // With a key, the report says "configured" and never the key.
+  const KEY = 'gsk_fictitious_key_for_tests_only'
+  const conGroq = await modulo({ GROQ_API_KEY: KEY, GROQ_API_KEY_1: KEY, WHATSAPP_AUDIO_TRANSCRIPTION: 'true' }).capacidades()
+  assert.deepEqual([conGroq.groq, conGroq.audioTranscription], [{ status: 'ready', reason: 'configured' }, { status: 'ready', reason: 'configured' }])
+  assert.equal(JSON.stringify(conGroq).includes(KEY), false)
+})

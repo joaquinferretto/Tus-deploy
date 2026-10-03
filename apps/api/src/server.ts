@@ -212,10 +212,12 @@ export function createApp(options: CreateAppOptions = {}): Application {
 
   // Routes
   app.use(
-    options.getReadiness || options.databaseLifecycle
+    options.getReadiness || options.databaseLifecycle || whatsapp
       ? createHealthRouter({
           getReadiness: options.getReadiness,
           databaseLifecycle: options.databaseLifecycle,
+          // Optional integrations are reported, never required: /ready stays 200 without them.
+          ...(whatsapp ? { getCapabilities: async () => ({ ...(await whatsapp.capacidades()) }) } : {}),
         })
       : healthRouter
   )
@@ -358,6 +360,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     if (whatsapp?.config.enabled && whatsapp.config.problems.length > 0)
       throw Object.assign(new Error('WhatsApp configuration is invalid'), { reason: 'WHATSAPP_CONFIG_INVALID' })
     server = await listen(app, port, host, runtimeConfig.shutdownTimeoutMs)
+    // What the optional integrations can do, once at start-up (statuses only, no configuration).
+    if (whatsapp)
+      void whatsapp.capacidades().then(
+        (capacidades) => logger.info('optional capabilities', { details: { ...capacidades } }),
+        () => logger.warn('optional capabilities could not be determined')
+      )
     lifecycle.register('database', databaseLifecycle.close)
     lifecycle.register('mongodb', disconnectMongoDB)
     lifecycle.register('redis', disconnectRedis)

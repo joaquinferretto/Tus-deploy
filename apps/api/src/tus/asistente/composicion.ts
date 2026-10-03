@@ -107,8 +107,24 @@ export function crearProveedorEmbeddings(
   return null
 }
 
+// State of one OPTIONAL capability, for readiness and the start-up log: a fixed status and a
+// fixed reason, never a value of the configuration.
+export interface CapacidadOpcional {
+  status: 'ready' | 'disabled' | 'unavailable'
+  reason: string
+}
+export interface CapacidadesAsistente {
+  whatsapp: CapacidadOpcional
+  groq: CapacidadOpcional
+  audioTranscription: CapacidadOpcional
+  receiptImages: CapacidadOpcional
+  receiptPdf: CapacidadOpcional
+}
+
 export interface ModuloWhatsapp {
   config: ConfiguracionWhatsapp
+  // What the optional integrations can do right now. None of them blocks the API.
+  capacidades(): Promise<CapacidadesAsistente>
   whatsapp: WhatsappProvider
   ingreso: ServicioIngresoWhatsapp
   vinculacion: ServicioVinculacionWhatsapp
@@ -252,8 +268,26 @@ export function crearModuloWhatsapp(input: {
     webBaseUrl: env['TUS_WEB_BASE_URL']?.trim() || null,
   })
   const ayuda = new ServicioAyudaPublica(knowledge, input.metric)
+  const capacidades = async (): Promise<CapacidadesAsistente> => {
+    const apagada = (reason = 'not_enabled'): CapacidadOpcional => ({ status: 'disabled', reason })
+    const lectura = !limitesComprobante.enabled ? null : comprobantes ? await comprobantes.capacidades() : undefined
+    const deLectura = (parte: 'images' | 'pdf'): CapacidadOpcional =>
+      lectura === null
+        ? apagada()
+        : lectura === undefined
+          ? { status: 'unavailable', reason: 'groq_not_configured' }
+          : { status: lectura[parte].available ? 'ready' : 'unavailable', reason: lectura.analyzer + ':' + lectura[parte].reason }
+    return {
+      whatsapp: !config.enabled ? apagada() : config.problems.length > 0 ? { status: 'unavailable', reason: 'invalid_configuration' } : { status: 'ready', reason: 'configured' },
+      groq: groqPool ? { status: 'ready', reason: 'configured' } : apagada('not_configured'),
+      audioTranscription: !limitesAudio.enabled ? apagada() : transcriptor ? { status: 'ready', reason: 'configured' } : { status: 'unavailable', reason: 'groq_not_configured' },
+      receiptImages: deLectura('images'),
+      receiptPdf: deLectura('pdf'),
+    }
+  }
   return {
     config,
+    capacidades,
     whatsapp,
     ingreso: new ServicioIngresoWhatsapp(input.transaction, limits.ingreso, now, input.log, input.verificadorTelefono ?? null),
     vinculacion,
