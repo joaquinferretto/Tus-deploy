@@ -157,7 +157,8 @@ test(
     assert.ok(r.queries[2] <= 12, `detail queries: ${r.queries[2]}`)
     assert.ok(r.queries[3] <= 4, `payments queries: ${r.queries[3]}`)
     assert.ok(r.queries[4] <= 2, `admin provider columns: ${r.queries[4]}`)
-    for (const ref of r.refs) assert.match(ref, /^•••• .{4}$/u)
+    // A masked reference: its last four characters at most (a reference of four or fewer shows none).
+    for (const ref of r.refs) assert.match(ref, /^••••(?: .{4})?$/u)
     assert.doesNotMatch(r.text, /fake-mp-|access_token|refresh|secret|cifrad|texto/iu)
   }
 )
