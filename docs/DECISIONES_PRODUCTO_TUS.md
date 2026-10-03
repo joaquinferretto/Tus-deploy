@@ -430,8 +430,10 @@ seña en ese caso).
   identidad verificada, disponible ≥ mínimo; el prestador indica el email de su cuenta de Mercado Pago.
 - **Saldo negativo**: obligación del prestador, visible para la administración, no retirable, compensado por ganancias
   futuras; nunca se cobra fuera de TUS. Resoluciones manuales solo con `adjustment_credit` / `adjustment_debit`.
-- **Ejecución**: Mercado Pago Payouts (API oficial, `POST /v1/payouts`) desde la cuenta de TUS a la cuenta del prestador,
-  confirmada solo por la consulta de la transacción a Mercado Pago; o, si la administración pagó por otro medio, registro
+- **Ejecución**: la vía por defecto y verificable es la **manual administrativa** (el administrador paga por el medio
+  autorizado y registra el comprobante). Mercado Pago Payouts (`POST /v1/payouts`, desde la cuenta de TUS a la del prestador)
+  queda preparado detrás de un puerto pero **DEPENDENCIA EXTERNA NO CONFIRMADA**: el contrato no se pudo verificar contra la
+  documentación de Mercado Pago ni contra una cuenta habilitada, por eso está apagado; si se habilita, el resultado se confirma solo por la consulta de la transacción a Mercado Pago; o, si la administración pagó por otro medio, registro
   con comprobante obligatorio. Las dos vías nunca se mezclan en una solicitud. La administración procesa cada solicitud
   (control antifraude); no hay envíos automáticos sin intervención.
 - WhatsApp no permite pedir el pago de ganancias (solo la Web).
@@ -448,6 +450,28 @@ seña en ese caso).
 - Mercado Pago Payouts queda apagado hasta que el titular verifique el contrato con Mercado Pago y lo pruebe en sandbox:
   desde el entorno de desarrollo no pudo verificarse contra documentación oficial ni SDKs oficiales. La vía "otro medio"
   con comprobante es la operativa disponible mientras tanto; nunca se simula un pago.
+- **Transiciones permitidas** (las únicas; nada salta un estado y `paid`, `failed` y `cancelled` son finales):
+  `requested → processing → paid`, `requested → cancelled` (nadie empezó a pagarla; la cancela el prestador o la
+  administración) y `processing → failed` (se intentó pagar y no ocurrió; la marca la administración o la respuesta de
+  Mercado Pago). Una solicitud `processing` no se cancela y una `requested` no se marca fallida. `paid` exige evidencia:
+  la transacción de Mercado Pago consultada como acreditada o, en la vía manual, el comprobante de la operación.
+- **Cálculo de cada saldo** (siempre derivado del ledger y de las solicitudes; no existe ninguna columna de saldo):
+  - Total histórico cobrado (`earnedMinor`) = Σ `earning_credit`. Solo crece; no es dinero ya transferido.
+  - Tarifas de Mercado Pago (`feesMinor`) = Σ `psp_fee_debit`. Ajustes netos (`adjustmentsMinor`) = Σ `refund_debit` +
+    Σ `chargeback_debit` + Σ `adjustment_debit` − Σ `adjustment_credit` (positivo: debitado).
+  - Disponible (`availableMinor`) = Σ `earning_credit` + Σ `adjustment_credit` − Σ `psp_fee_debit` − Σ `refund_debit` −
+    Σ `chargeback_debit` − Σ `adjustment_debit` − Σ `payout_reserve` + Σ `payout_release`. Si es negativo, `negativeMinor`
+    es su valor absoluto, no se puede retirar y la próxima ganancia lo compensa primero (−5.000 + 8.000 = 3.000).
+  - Reservado (`reservedMinor`) = Σ (`payout_reserve` − `payout_release` − `payout_completed`) de las solicitudes
+    `requested`. En proceso (`processingMinor`) = lo mismo para las solicitudes `processing`. Pagado (`paidMinor`) =
+    Σ `payout_completed`.
+  - Identidad de control: `earned − fees − adjustments = available + reserved + processing + paid`.
+  - **No existe un saldo "pendiente" distinto del disponible**: TUS no impone un período de maduración; la ganancia
+    acumulada por un cobro de plataforma ya es disponible y se retira al superar el mínimo con Mercado Pago vinculado. Si
+    producto quiere una retención (p. ej. días tras el turno), es una decisión nueva que requiere agregarla al ledger.
+- Mientras el prestador no vincule Mercado Pago, la ganancia queda acumulada en TUS (no se pierde) y la UI le dice:
+  "Vinculá tu cuenta de Mercado Pago para retirar tus ganancias." La UI nunca llama "pagada" a una ganancia solo acumulada:
+  "Pagadas" son solicitudes completadas.
 
 ### W09-07: Calificación del Prestador (FASE 9)
 

@@ -511,7 +511,7 @@ test('HTTP: provider earnings and payouts are the session provider\'s only; the 
   assert.equal(r.sinIds, false)
 })
 
-test('Web: /prestador/pagos shows Ganancias disponibles, En proceso, Pagadas, Saldo negativo, the minimum, the payout form with the Mercado Pago email, the pending-administration explanation and the history with service and turno; /tus/admin/liquidaciones lists, details and acts', () => {
+test('Web: /prestador/pagos shows Total histórico cobrado, Ganancias disponibles, En liquidación, Pagadas, Saldo negativo, the minimum, the payout form with the Mercado Pago email, the pending-administration explanation and the history with service and turno; /tus/admin/liquidaciones lists, details and acts', () => {
   const panel = readFileSync(join(root, 'apps/web/src/features/provider/provider-earnings.tsx'), 'utf8')
   const client = readFileSync(join(root, 'apps/web/src/lib/tus-client.ts'), 'utf8')
   const pagos = readFileSync(join(root, 'apps/web/src/features/provider/provider-payments.tsx'), 'utf8')
@@ -519,9 +519,9 @@ test('Web: /prestador/pagos shows Ganancias disponibles, En proceso, Pagadas, Sa
   const adminPage = readFileSync(join(root, 'apps/web/src/components/admin/admin-liquidaciones.tsx'), 'utf8')
   const adminApi = readFileSync(join(root, 'apps/web/src/lib/tus-admin-api.ts'), 'utf8')
   const layout = readFileSync(join(root, 'apps/web/src/components/admin/admin-layout.tsx'), 'utf8')
-  for (const texto of ['Ganancias disponibles', 'En proceso', 'Pagadas', 'Saldo negativo', 'Tarifas de Mercado Pago', 'Mínimo para solicitar', 'Email de tu cuenta de Mercado Pago', 'Solicitar pago', 'Conectar Mercado Pago', 'Pendiente de procesamiento por TUS', 'Historial', 'Fecha', 'Tipo', 'Servicio', 'Turno', 'Importe', 'Estado', 'Solicitudes de pago'])
+  for (const texto of ['Total histórico cobrado', 'Ganancias disponibles', 'En liquidación', 'Pagadas', 'Saldo negativo', 'Tarifas de Mercado Pago', 'Mínimo para solicitar', 'Email de tu cuenta de Mercado Pago', 'Solicitar pago', 'Conectar Mercado Pago', 'Pendiente de procesamiento por TUS', 'Historial', 'Fecha', 'Tipo', 'Servicio', 'Turno', 'Importe', 'Estado', 'Solicitudes de pago'])
     assert.ok(panel.includes(texto), texto)
-  assert.ok(contratos.includes('Para solicitar el pago de tus ganancias necesitás conectar Mercado Pago.'))
+  assert.ok(contratos.includes('Vinculá tu cuenta de Mercado Pago para retirar tus ganancias.'))
   assert.match(panel, /mensajeMotivoSinLiquidacion\(summary\.blockedReason\)/u)
   assert.match(pagos, /<ProviderEarningsPanel session=\{auth\.session\} \/>/u)
   // The payout request carries an idempotency key and the destination email only.
@@ -618,4 +618,66 @@ test('GANANCIAS-02 domain: every action on a payout request is audited in order 
   ])
   assert.equal(r.sinSecretos, false)
   assert.equal(r.aislada, 0)
+})
+
+test('GANANCIAS-02 state machine: only requested -> processing -> paid, requested -> cancelled and processing -> failed exist; nothing skips a state, a paid or closed request never moves again; the historical total is derived from the ledger', () => {
+  const r = runTypeScriptScenario(`${DOMINIO}
+    const out = {}
+    await ganar('t-ana', 1500000n, 150000n)
+    await ganar('t-ana', 2000000n, 200000n, 100000n)
+    store.cuentas.set('t-ana', 'cuenta-ana')
+    verificados.add('t-ana')
+    const vistos = []
+    const resumen = async () => { const s = await service.resumen(ana); vistos.push(s); return [s.earnedMinor, s.availableMinor, s.reservedMinor, s.processingMinor, s.paidMinor, s.feesMinor] }
+    out.inicial = await resumen()
+
+    // requested: it cannot be failed (nobody tried to pay it) nor paid (nobody started paying it).
+    const r1 = (await service.solicitar(ana, 'clave-maquina-1', destino)).payout
+    out.requested = [
+      await codeOf(() => service.marcarFallida(admin, r1.payoutId, { reason: 'sin intento de pago' })),
+      await codeOf(() => service.marcarPagada(admin, r1.payoutId, { externalReference: 'TR-0001' })),
+      (await service.ver(ana, r1.payoutId)).status,
+      await resumen(),
+    ]
+    // processing (by another means): it cannot be cancelled by anybody, nor processed twice.
+    await service.procesar(admin, r1.payoutId, { mechanism: 'manual' })
+    out.processing = [
+      await codeOf(() => service.cancelarAdmin(admin, r1.payoutId, { reason: 'ya no se paga' })),
+      await codeOf(() => service.cancelar(ana, r1.payoutId)),
+      await codeOf(() => service.procesar(admin, r1.payoutId, { mechanism: 'manual' })),
+      (await service.ver(ana, r1.payoutId)).status,
+      await resumen(),
+    ]
+    // processing -> failed: the money is back; a failed request never moves again.
+    await service.marcarFallida(admin, r1.payoutId, { reason: 'la transferencia rebotó' })
+    out.failed = [
+      await codeOf(() => service.marcarPagada(admin, r1.payoutId, { externalReference: 'TR-0002' })),
+      await codeOf(() => service.procesar(admin, r1.payoutId, { mechanism: 'manual' })),
+      await codeOf(() => service.cancelar(ana, r1.payoutId)),
+      await codeOf(() => service.marcarFallida(admin, r1.payoutId, { reason: 'otra vez' })),
+      await resumen(),
+    ]
+    // The retry is a NEW request: processing -> paid; a paid request never moves and never gives its money back.
+    const r2 = (await service.solicitar(ana, 'clave-maquina-2', destino)).payout
+    await service.procesar(admin, r2.payoutId, { mechanism: 'manual' })
+    await service.marcarPagada(admin, r2.payoutId, { externalReference: 'TR-0003' })
+    out.paid = [
+      await codeOf(() => service.marcarFallida(admin, r2.payoutId, { reason: 'ya estaba pagada' })),
+      await codeOf(() => service.cancelarAdmin(admin, r2.payoutId, { reason: 'ya estaba pagada' })),
+      await codeOf(() => service.cancelar(ana, r2.payoutId)),
+      await codeOf(() => service.procesar(admin, r2.payoutId, { mechanism: 'manual' })),
+      await codeOf(() => service.marcarPagada(admin, r2.payoutId, { externalReference: 'TR-0004' })),
+      (await service.ver(ana, r2.payoutId)).status,
+      await resumen(),
+    ]
+    // The control identity of the derived balances holds in every state: earned - fees - net adjustments = available + reserved + processing + paid.
+    out.identidad = vistos.length > 4 && vistos.every((s) => BigInt(s.earnedMinor) - BigInt(s.feesMinor) - BigInt(s.adjustmentsMinor) === BigInt(s.availableMinor) + BigInt(s.reservedMinor) + BigInt(s.processingMinor) + BigInt(s.paidMinor))
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.identidad, true, 'the balances reconcile in every state of the request')
+  assert.deepEqual(r.inicial, ['3150000', '3050000', '0', '0', '0', '100000'], 'earned is the sum of the earnings; available is net of the fee')
+  assert.deepEqual(r.requested, ['INVALID_TRANSITION', 'INVALID_TRANSITION', 'requested', ['3150000', '0', '3050000', '0', '0', '100000']])
+  assert.deepEqual(r.processing, ['INVALID_TRANSITION', 'INVALID_TRANSITION', 'INVALID_TRANSITION', 'processing', ['3150000', '0', '0', '3050000', '0', '100000']])
+  assert.deepEqual(r.failed, ['INVALID_TRANSITION', 'INVALID_TRANSITION', 'INVALID_TRANSITION', 'INVALID_TRANSITION', ['3150000', '3050000', '0', '0', '0', '100000']], 'failed gives the money back and is final')
+  assert.deepEqual(r.paid, ['INVALID_TRANSITION', 'INVALID_TRANSITION', 'INVALID_TRANSITION', 'INVALID_TRANSITION', 'INVALID_TRANSITION', 'paid', ['3150000', '0', '0', '0', '3050000', '100000']], 'paid is final: the money never becomes available again and the historical total never changes')
 })

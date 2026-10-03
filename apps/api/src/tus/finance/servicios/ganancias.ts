@@ -243,6 +243,9 @@ function movimientoDeLiquidacion(solicitud: SolicitudLiquidacion, tipo: 'payout_
 // ---- balance ------------------------------------------------------------------------------------
 
 export interface SaldoGanancias {
+  // Everything TUS ever collected for the provider: the sum of its earnings (before fees,
+  // reversals and payouts). Historical, never decreases.
+  earned: bigint
   // What TUS owes minus what open or paid requests took (reserve - release).
   available: bigint
   reserved: bigint
@@ -256,7 +259,7 @@ export interface SaldoGanancias {
 // debit adjustments. A request's reserve takes its amount from what is available; a release
 // gives it back; a completion turns it into "paid". available = owed - reserves + releases.
 export function calcularSaldo(movimientos: readonly MovimientoGanancia[], solicitudes: readonly SolicitudLiquidacion[]): SaldoGanancias {
-  const saldo: SaldoGanancias = { available: 0n, reserved: 0n, processing: 0n, paid: 0n, fees: 0n, adjustments: 0n }
+  const saldo: SaldoGanancias = { earned: 0n, available: 0n, reserved: 0n, processing: 0n, paid: 0n, fees: 0n, adjustments: 0n }
   const abierto = new Map<string, bigint>()
   for (const movimiento of movimientos) {
     const monto = movimiento.amountMinor
@@ -278,6 +281,7 @@ export function calcularSaldo(movimientos: readonly MovimientoGanancia[], solici
         saldo.available -= monto
         break
       case 'earning_credit':
+        saldo.earned += monto
         saldo.available += monto
         break
       default:
@@ -543,9 +547,11 @@ const CONCEPTO_HISTORIAL: Readonly<Record<TipoMovimientoGanancia, string>> = {
   payout_completed: 'Pago enviado a tu Mercado Pago',
 }
 
+// The only paths: requested -> processing -> paid, requested -> cancelled (nobody started paying
+// it) and processing -> failed (the payment was attempted and did not happen). Nothing skips a state.
 const TRANSICIONES: Readonly<Record<EstadoSolicitudLiquidacion, readonly EstadoSolicitudLiquidacion[]>> = {
-  requested: ['processing', 'failed', 'cancelled'],
-  processing: ['paid', 'failed', 'cancelled'],
+  requested: ['processing', 'cancelled'],
+  processing: ['paid', 'failed'],
   paid: [],
   failed: [],
   cancelled: [],
@@ -659,6 +665,7 @@ export class ServicioGananciasPrestador {
     const minor = (value: bigint) => value.toString(10)
     return {
       currency: 'ARS',
+      earnedMinor: minor(saldo.earned),
       availableMinor: minor(saldo.available),
       negativeMinor: minor(saldo.available < 0n ? -saldo.available : 0n),
       reservedMinor: minor(saldo.reserved),

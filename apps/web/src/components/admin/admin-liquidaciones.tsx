@@ -211,11 +211,14 @@ function DetalleLiquidacion({ id, onChange }: { id: string; onChange: () => void
           <button disabled={busy || referencia.trim().length < 3} type="submit">Marcar como pagada</button>
         </form>
       ) : null}
-      {(payout.status === 'requested' || (payout.status === 'processing' && !enviadaAMercadoPago)) ? (
+      {payout.status === 'requested' || (payout.status === 'processing' && !enviadaAMercadoPago) ? (
         <div className={styles.toolbar}>
           <label>Motivo <input onChange={(event) => setMotivo(event.target.value)} value={motivo} /></label>
-          <button disabled={busy || motivo.trim().length < 3} onClick={() => void accion('failed', { reason: motivo.trim() }, 'Marcada como fallida: el monto volvió a estar disponible para el prestador.')} type="button">Marcar como fallida</button>
-          <button disabled={busy || motivo.trim().length < 3} onClick={() => void accion('cancel', { reason: motivo.trim() }, 'Cancelada: el monto volvió a estar disponible para el prestador.')} type="button">Cancelar</button>
+          {payout.status === 'processing' ? (
+            <button disabled={busy || motivo.trim().length < 3} onClick={() => void accion('failed', { reason: motivo.trim() }, 'Marcada como fallida: el monto volvió a estar disponible para el prestador.')} type="button">Marcar como fallida</button>
+          ) : (
+            <button disabled={busy || motivo.trim().length < 3} onClick={() => void accion('cancel', { reason: motivo.trim() }, 'Cancelada: el monto volvió a estar disponible para el prestador.')} type="button">Cancelar</button>
+          )}
         </div>
       ) : null}
     </section>

@@ -51,7 +51,7 @@ const ESTADO_SOLICITUD: Record<TusPayout['status'], string> = {
 const ERRORES_SOLICITUD: Record<string, string> = {
   PAYOUT_NO_FUNDS: 'Todavía no tenés ganancias disponibles para solicitar.',
   PAYOUT_BELOW_MINIMUM: 'Todavía no llegaste al mínimo para solicitar el pago de tus ganancias.',
-  PAYMENT_ACCOUNT_REQUIRED: 'Para solicitar el pago de tus ganancias necesitás conectar Mercado Pago.',
+  PAYMENT_ACCOUNT_REQUIRED: 'Vinculá tu cuenta de Mercado Pago para retirar tus ganancias.',
   PAYOUT_ALREADY_OPEN: 'Ya tenés una solicitud de pago en proceso.',
   PROVIDER_IDENTITY_NOT_VERIFIED: 'Para solicitar el pago de tus ganancias tu identidad tiene que estar verificada.',
   INVALID_DESTINATION_EMAIL: 'Escribí el email de tu cuenta de Mercado Pago.',
@@ -176,10 +176,16 @@ export function ProviderEarningsPanel({ session }: { session: TusWebSession }): 
         <p role="status">Consultando tus ganancias…</p>
       ) : (
         <>
+          <p>
+            Las ganancias disponibles están acumuladas en TUS: todavía no te las transferimos. Se te pagan cuando solicitás el
+            retiro y TUS lo completa en tu cuenta de Mercado Pago.
+          </p>
           <dl>
+            <dt>Total histórico cobrado</dt>
+            <dd>{formatMoney(summary.earnedMinor, summary.currency)}</dd>
             <dt>Ganancias disponibles</dt>
             <dd>{summary.negativeMinor !== '0' ? formatMoney('0', summary.currency) : formatMoney(summary.availableMinor, summary.currency)}</dd>
-            <dt>En proceso</dt>
+            <dt>En liquidación</dt>
             <dd>{formatMoney((BigInt(summary.reservedMinor) + BigInt(summary.processingMinor)).toString(), summary.currency)}</dd>
             <dt>Pagadas</dt>
             <dd>{formatMoney(summary.paidMinor, summary.currency)}</dd>
@@ -194,7 +200,7 @@ export function ProviderEarningsPanel({ session }: { session: TusWebSession }): 
             {summary.adjustmentsMinor !== '0' ? (
               <>
                 <dt>Devoluciones, contracargos y ajustes</dt>
-                <dd>{monto(summary.adjustmentsMinor, summary.currency)}</dd>
+                <dd>{monto((-BigInt(summary.adjustmentsMinor)).toString(), summary.currency)}</dd>
               </>
             ) : null}
             <dt>Mínimo para solicitar</dt>

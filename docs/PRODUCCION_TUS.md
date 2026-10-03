@@ -731,7 +731,15 @@ https://www.mercadopago.com.ar/developers/es/docs/payouts/landing; contrato **no
 - **Pagar por otro medio**: la administración hace la operación fuera de TUS (por ejemplo, una transferencia desde la
   cuenta de TUS) y la registra con su **comprobante** obligatorio y observación ("Marcar como pagada"). Sin comprobante no
   se puede marcar pagada.
-- **Marcar como fallida / Cancelar** (solicitada, o en proceso por otro medio): libera los fondos, con motivo.
+- **Cancelar** (solo `requested`) / **Marcar como fallida** (solo `processing` por otro medio): liberan los fondos, con motivo.
+  Cualquier otra transición es `409 INVALID_TRANSITION`.
+- **Control del destino (riesgo abierto):** el email de destino lo escribe el prestador y TUS no lo contrasta con la
+  cuenta de Mercado Pago vinculada (la vinculación OAuth guarda el id de usuario, no su email). Antes de pagar, la
+  administración debe verificar en el detalle que el email corresponde al titular verificado de esa cuenta; para la
+  automatización con Payouts hay que resolver este contraste (por ejemplo, el email desde `users/me` de la cuenta vinculada)
+  antes de habilitarla.
+- **Doble control (riesgo abierto):** la misma persona administradora puede procesar y marcar pagada una solicitud manual;
+  la auditoría registra cada actor, pero no hay aprobación de una segunda persona.
 
 Variables de Payouts (Hostinger API):
 

@@ -39,6 +39,9 @@ export interface SolicitudLiquidacionDTO {
 
 export interface ResumenGananciasPrestador {
   currency: 'ARS'
+  // Historical total TUS collected for the provider (the sum of its earnings, before fees,
+  // reversals and payouts). It is not money TUS already transferred.
+  earnedMinor: string
   // Derived from the ledger: earnings net of fees, reversals and adjustments, minus what open or
   // paid requests hold. May be negative (then `negativeMinor` is its absolute value).
   availableMinor: string
@@ -161,7 +164,7 @@ export interface AuditoriaLiquidacionDTO {
 }
 
 export function mensajeMotivoSinLiquidacion(motivo: MotivoSinLiquidacion | null): string | null {
-  if (motivo === 'PAYMENT_ACCOUNT_REQUIRED') return 'Para solicitar el pago de tus ganancias necesitás conectar Mercado Pago.'
+  if (motivo === 'PAYMENT_ACCOUNT_REQUIRED') return 'Vinculá tu cuenta de Mercado Pago para retirar tus ganancias.'
   if (motivo === 'PAYOUT_IN_PROGRESS') return 'Ya tenés una solicitud de pago en proceso.'
   if (motivo === 'IDENTITY_NOT_VERIFIED') return 'Para solicitar el pago de tus ganancias tu identidad tiene que estar verificada.'
   if (motivo === 'NO_FUNDS') return 'Todavía no tenés ganancias disponibles para solicitar.'

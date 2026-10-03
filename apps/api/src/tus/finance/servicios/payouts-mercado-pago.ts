@@ -3,8 +3,9 @@ import { minorUnitsToMajorDecimal } from '@factory/contracts'
 import { ErrorProveedorPagos } from './pagos.ts'
 import type { EstadoTransferencia, PuertoEjecucionLiquidacion } from './ganancias.ts'
 
-// TUS-GANANCIAS-01: payouts of provider earnings through Mercado Pago Payouts ("money-out"), the
-// official account-to-account transfer API (Argentina):
+// TUS-GANANCIAS-01: payouts of provider earnings through Mercado Pago Payouts ("money-out"), an
+// account-to-account transfer API. UNVERIFIED (see TUS-GANANCIAS-02 below): the contract written
+// here is the one believed to apply, not one confirmed against Mercado Pago:
 //   POST https://api.mercadopago.com/v1/payouts                                  create (202)
 //   GET  https://api.mercadopago.com/v1/payouts/{payout_id}/transactions/{id}     transfer state
 // https://www.mercadopago.com.ar/developers/es/docs/payouts/integration-configuration/money-transfers
