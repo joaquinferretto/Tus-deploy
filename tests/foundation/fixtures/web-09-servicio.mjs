@@ -8,10 +8,13 @@ const tsxCli = join(root, 'apps/api/node_modules/tsx/dist/cli.mjs')
 export function runTypeScriptScenario(source) {
   const output = execFileSync(
     process.execPath,
-    [tsxCli, '--eval', `(async () => {\n${source}\n})()`],
+    // The scenario goes through stdin, not `--eval`: a long one does not fit in a Windows command
+    // line (32,767 characters) and the process would not even start (ENAMETOOLONG).
+    [tsxCli, '-'],
     {
       cwd: root,
       encoding: 'utf8',
+      input: `(async () => {\n${source}\n})()`,
     }
   )
   return parseScenarioOutput(output)
