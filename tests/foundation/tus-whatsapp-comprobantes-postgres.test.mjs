@@ -74,7 +74,7 @@ test('receipts on PostgreSQL, turnos: the image only ranks the client\'s own pen
     try {
       const sin = await prestador('sin', 'Sin MP ' + run, [['Masaje', 30000], ['Largo', 60000]])
       const con = await prestador('con', 'Con MP ' + run, [['Masaje', 30000], ['Largo', 60000]])
-      await conectarMercadoPago(con, '8801')
+      await conectarMercadoPago(con, '8811')
       const ana = await cliente('ana')
       const beto = await cliente('beto')
       const carla = await cliente('carla')
@@ -192,7 +192,7 @@ test('receipts on PostgreSQL, works: the receipt picks the deposit or the balanc
     try {
       const sin = await prestador('sin', 'Sin MP ' + run, [['Masaje', 30000]])
       const con = await prestador('con', 'Con MP ' + run, [['Masaje', 30000]])
-      await conectarMercadoPago(con, '8802')
+      await conectarMercadoPago(con, '8812')
       const ana = await cliente('ana')
       const beto = await cliente('beto')
       ${ASISTENTE}
