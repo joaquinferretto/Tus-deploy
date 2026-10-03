@@ -9,7 +9,8 @@ import styles from './brand.module.css'
 // plain "TUS" wordmark is rendered so the build and pages keep working.
 export const TUS_LOGO_FILES = ['logo-tus.png', 'tus-logo.png'] as const
 
-// Width follows the provided logo (1875x839, ~2.24:1); CSS keeps the real ratio with width:auto.
+// Width follows the provided logo (1875x839, ~2.24:1); these are its intrinsic design sizes. The
+// rendered height is responsive (brand.module.css) and the width keeps the real ratio.
 const SIZES = {
   header: { height: 36, width: 80 },
   auth: { height: 60, width: 134 },
@@ -35,11 +36,10 @@ export function TusLogo({ variant = 'header' }: { variant?: keyof typeof SIZES }
   return (
     <Image
       alt="TUS"
-      className={styles.logo}
+      className={`${styles.logo} ${variant === 'auth' ? styles.logoAuth : styles.logoHeader}`}
       height={size.height}
       priority={variant === 'header'}
       src={`/brand/${file}`}
-      style={{ height: size.height, width: 'auto' }}
       width={size.width}
     />
   )

@@ -17,3 +17,14 @@
 .wordmarkAuth {
   font-size: 2.75rem;
 }
+
+/* The logo scales with the viewport between a readable minimum and its design size. */
+.logoHeader {
+  height: clamp(26px, 7vw, 36px);
+  width: auto;
+}
+
+.logoAuth {
+  height: clamp(44px, 14vw, 60px);
+  width: auto;
+}
