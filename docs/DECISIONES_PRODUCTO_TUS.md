@@ -436,6 +436,19 @@ seña en ese caso).
   (control antifraude); no hay envíos automáticos sin intervención.
 - WhatsApp no permite pedir el pago de ganancias (solo la Web).
 
+### W09-10: Estados de liquidación, auditoría y controles de cobrador (TUS-GANANCIAS-02, 2026-10-03)
+
+- Estados mínimos de una solicitud de pago: `requested`, `processing`, `paid`, `failed`, `cancelled` (antes `pending`
+  en lugar de `requested`). `failed` y `cancelled` liberan la reserva; el reintento seguro es una solicitud nueva.
+- Toda acción sobre una solicitud queda en una auditoría append-only, una entrada por versión, en la misma transacción.
+- Un pago cuya cuenta cobradora no coincide con el modo congelado en la intención (plataforma vs. cuenta del prestador, o
+  la cuenta de otro prestador) va a cuarentena; nunca genera ganancia ni confirma un turno.
+- Una cuenta de Mercado Pago solo puede vincularse a un prestador.
+- Una ganancia se revierte una sola vez; disputas adicionales se resuelven con ajustes explícitos.
+- Mercado Pago Payouts queda apagado hasta que el titular verifique el contrato con Mercado Pago y lo pruebe en sandbox:
+  desde el entorno de desarrollo no pudo verificarse contra documentación oficial ni SDKs oficiales. La vía "otro medio"
+  con comprobante es la operativa disponible mientras tanto; nunca se simula un pago.
+
 ### W09-07: Calificación del Prestador (FASE 9)
 
 - Solo el Cliente del trabajo (tenant de la sesión) califica, una vez, y solo con el trabajo `completed` (con pagos

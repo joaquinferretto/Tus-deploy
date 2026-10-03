@@ -250,6 +250,20 @@ Segunda pasada (ASISTENTE-CONTEXTO-02):
   reglas críticas (disponibilidad, horario, profesional, precio, identidad, reserva, pago) no dependen del
   modelo.
 
+Tercera pasada (ASISTENTE-CONTEXTO-03, 2026-10-03):
+
+- **"Lo antes posible con Sabrina"** en un solo mensaje: la búsqueda se cortaba el primer día en que CUALQUIER
+  profesional tenía turno y recién después filtraba por la nombrada, respondiendo que no tenía turnos en 14 días. Ahora,
+  si la nombrada no tiene turno ese día, se busca día por día solo en su agenda y se propone su primer inicio real.
+- **Franja después de elegir profesional** ("Melina" → "mejor a la tarde"): antes se perdía y un "cualquiera" posterior
+  proponía un turno de la mañana. Ahora la franja (parte del día, desde, hasta, rango) se guarda en la necesidad, se
+  muestran los horarios reales de ella y se ofrece buscar quién tiene esa franja ("sí" la busca; "cualquiera" la
+  respeta). Una hora exacta que ella no tiene conserva la respuesta anterior ("no tiene turno a esa hora…").
+- **"¿Y con otra?"** se entiende como otra profesional de la lista mostrada (si queda más de una, se pregunta cuál,
+  numeradas como se mostraron).
+- Sin modelo configurado, un "sí" sin propuesta pendiente (por ejemplo, después del aviso de vinculación) cae en la
+  respuesta genérica del modelo no disponible; con Groq lo redacta el modelo. No crea ni confirma nada.
+
 ## Un turno se solicita, no se confirma (TURNOS-SOLICITUD-01)
 
 Desde la Web, el asistente Web o WhatsApp, el cliente **solicita** un turno; solo el prestador lo

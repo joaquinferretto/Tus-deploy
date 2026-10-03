@@ -1054,3 +1054,28 @@ El saldo no se guarda: disponible = ganancias y ajustes a favor − tarifas, rev
 liberaciones; reservado/en proceso = reservas abiertas según el estado de su solicitud; pagado = suma de
 `payout_completed`. Índices parciales y trigger viven solo en SQL y están comentados en el modelo.
 
+
+### 7.22 Estados de solicitud de pago y auditoría (TUS-GANANCIAS-02, `20261029100000_tus_liquidaciones_auditoria`)
+
+Aditiva y forward-only, aprobada por el gate de `scripts/tus-migration-repair-lib.mjs` con tres entradas revisadas
+(DROP/CREATE del índice parcial y del CHECK de estado, y el renombre determinista de filas).
+
+- `solicitudes_liquidacion.estado` ∈ `requested | processing | paid | failed | cancelled`. `requested` reemplaza a
+  `pending` (las filas existentes se renombran en la misma transacción); `uq_solicitudes_liquidacion_una_abierta` pasa a
+  `WHERE estado IN ('requested', 'processing')`. `failed` y `cancelled` son finales y liberan la reserva; el reintento
+  seguro es una solicitud nueva (otra clave), que toma los mismos movimientos liberados.
+- `movimientos_ganancia_prestador`: índice único parcial `uq_movimientos_ganancia_reverso_unico`
+  `(obligacion_tenant_id, obligacion_id) WHERE tipo IN ('refund_debit', 'chargeback_debit')`: una ganancia se revierte
+  una sola vez (un reembolso seguido de un contracargo del mismo pago no debita dos veces; cualquier otra disputa es un
+  ajuste explícito).
+- `auditoria_liquidaciones` (append-only, trigger `tus_auditoria_liquidacion_append_only`): una fila por versión de la
+  solicitud, escrita en la transacción del cambio. `accion` ∈ `requested | processing | send_confirmed |
+  send_unconfirmed | send_rejected | provider_status | paid | failed | cancelled`; `estado_anterior` es NULL solo en
+  `requested` (CHECK `ck_auditoria_liquidaciones_creacion`); `detalle` es un objeto JSON (CHECK) con datos cortos
+  (mecanismo, estado informado por Mercado Pago, motivo, referencia, monto liberado), nunca tokens, firmas ni payloads.
+  Único `(prestador_tenant_id, solicitud_id, version)`; FK compuesta a `solicitudes_liquidacion`. Las solicitudes creadas
+  antes de esta migración (solo entornos de desarrollo) tienen auditoría desde su siguiente acción.
+
+Normalización: la auditoría no duplica el estado vigente (que vive en la solicitud) sino la historia de cambios; el
+saldo sigue derivándose del ledger. `prestador_id` en solicitudes y movimientos es parte de la FK compuesta a
+`prestadores(tenant_id, prestador_id)`, no un dato copiado.

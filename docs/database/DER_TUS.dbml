@@ -1668,7 +1668,7 @@ Table solicitudes_liquidacion {
   prestador_id varchar
   monto bigint [note: '> 0; centavos ARS; todo lo disponible al pedirla']
   moneda varchar [note: 'ARS']
-  estado varchar [note: 'pending | processing | paid | failed | cancelled']
+  estado varchar [note: 'requested | processing | paid | failed | cancelled (pending hasta 20261029100000)']
   cuenta_cobro_id varchar
   email_destino varchar [note: 'email de la cuenta de Mercado Pago del prestador (destino de Payouts); CHECK de formato']
   cuenta_externa_destino varchar [null, note: 'User ID de la cuenta vinculada al pedir']
@@ -1695,7 +1695,7 @@ Table solicitudes_liquidacion {
   indexes {
     (prestador_tenant_id, solicitud_id) [unique, name: 'uq_solicitudes_liquidacion_prestador_solicitud']
     (prestador_tenant_id, clave_idempotencia) [unique, name: 'uq_solicitudes_liquidacion_prestador_clave']
-    (prestador_tenant_id) [unique, name: 'uq_solicitudes_liquidacion_una_abierta', note: "parcial (SQL): WHERE estado IN ('pending', 'processing')"]
+    (prestador_tenant_id) [unique, name: 'uq_solicitudes_liquidacion_una_abierta', note: "parcial (SQL): WHERE estado IN ('requested', 'processing')"]
     (payout_proveedor_id) [unique, name: 'uq_solicitudes_liquidacion_payout_proveedor', note: 'parcial (SQL): WHERE payout_proveedor_id IS NOT NULL']
     (estado, fecha_creacion) [name: 'ix_solicitudes_liquidacion_estado_fecha']
   }
@@ -1728,6 +1728,7 @@ Table movimientos_ganancia_prestador {
     (prestador_tenant_id, movimiento_id) [unique, name: 'uq_movimientos_ganancia_prestador_movimiento']
     (obligacion_tenant_id, obligacion_id, tipo) [unique, name: 'uq_movimientos_ganancia_obligacion_tipo', note: 'parcial (SQL): WHERE obligacion_id IS NOT NULL']
     (prestador_tenant_id, solicitud_id, tipo) [unique, name: 'uq_movimientos_ganancia_solicitud_tipo', note: 'parcial (SQL): WHERE solicitud_id IS NOT NULL']
+    (obligacion_tenant_id, obligacion_id) [unique, name: 'uq_movimientos_ganancia_reverso_unico', note: "parcial (SQL): WHERE tipo IN ('refund_debit', 'chargeback_debit'); un solo reverso por ganancia"]
     (prestador_tenant_id, fecha_creacion) [name: 'ix_movimientos_ganancia_prestador_fecha']
   }
 
@@ -1757,6 +1758,29 @@ Table items_solicitud_liquidacion {
 
 Ref: items_solicitud_liquidacion.(prestador_tenant_id, solicitud_id) > solicitudes_liquidacion.(prestador_tenant_id, solicitud_id) [delete: restrict]
 Ref: items_solicitud_liquidacion.(prestador_tenant_id, movimiento_id) > movimientos_ganancia_prestador.(prestador_tenant_id, movimiento_id) [delete: restrict]
+
+Table auditoria_liquidaciones {
+  id varchar [pk]
+  prestador_tenant_id varchar
+  solicitud_id varchar
+  version int [note: '> 0; versión de la solicitud que produjo la acción']
+  accion varchar [note: 'requested | processing | send_confirmed | send_unconfirmed | send_rejected | provider_status | paid | failed | cancelled']
+  estado_anterior varchar [null, note: 'NULL solo en requested (CHECK)']
+  estado_nuevo varchar
+  actor_id varchar
+  correlacion_id varchar
+  detalle jsonb [note: 'objeto (CHECK); solo datos cortos: mecanismo, estado del proveedor, motivo, referencia; nunca tokens ni payloads']
+  fecha_creacion timestamp
+
+  indexes {
+    (prestador_tenant_id, solicitud_id, version) [unique, name: 'uq_auditoria_liquidaciones_solicitud_version']
+    (fecha_creacion) [name: 'ix_auditoria_liquidaciones_fecha']
+  }
+
+  Note: 'TUS-GANANCIAS-02: auditoría append-only (trigger) de cada solicitud de pago, escrita en la transacción del cambio.'
+}
+
+Ref: auditoria_liquidaciones.(prestador_tenant_id, solicitud_id) > solicitudes_liquidacion.(prestador_tenant_id, solicitud_id) [delete: restrict]
 
 Table politicas_comision_servicio {
   id varchar [pk]

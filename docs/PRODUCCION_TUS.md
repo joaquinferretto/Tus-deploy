@@ -675,16 +675,50 @@ producto: el fee de Mercado Pago sale del prestador); `platform` y `undetermined
   Mercado Pago la soporta el prestador (como en Split 1:1): débito propio (`psp_fee_debit`) con el importe que informa
   Mercado Pago; si todavía no lo informa no se estima y se debita cuando llega. Un prestador **con** cuenta sigue en Split 1:1.
 - Reembolso (desde la cuenta de TUS) → `refund_debit`; contracargo → `chargeback_debit`. Nunca se edita la ganancia.
+  Una ganancia se revierte **una sola vez** (un reembolso y un contracargo del mismo pago no debitan dos veces; índice
+  único parcial `uq_movimientos_ganancia_reverso_unico`).
+- **Cuenta que cobró = modo congelado (TUS-GANANCIAS-02).** El adaptador real resuelve quién cobró cada pago notificado
+  (la cuenta de TUS o la cuenta vinculada de un prestador) y el servicio lo compara con `modo_cobro` de la intención: un
+  pago en la cuenta propia del prestador con la referencia de una intención de plataforma va a cuarentena
+  (`collection_mode_mismatch`, TUS nunca registra una ganancia por dinero que no cobró), y un pago Split cobrado por la
+  cuenta de otro prestador también (`collector_mismatch`). Ninguno confirma el turno.
+- **Una cuenta de Mercado Pago, un prestador.** El callback OAuth rechaza vincular una cuenta ya conectada a otro
+  prestador (`ACCOUNT_ALREADY_LINKED`): las notificaciones se resuelven por la cuenta cobradora y no pueden ser ambiguas.
+- **Credencial del modo plataforma.** La implementación usa exactamente el Access Token y el User ID de la cuenta de TUS
+  (dueña de la aplicación): no usa la Public Key, ni el Client ID/Secret (que siguen siendo solo de OAuth), ni tokens de
+  prestadores. Se cargan como variables de entorno de la API (Hostinger), nunca en el repositorio, en la base ni en
+  variables `NEXT_PUBLIC_*`; el token no se registra en logs ni en la auditoría.
 
 **Retiro del prestador.** En `/prestador/pagos` ve ganancias disponibles, en proceso, pagadas, saldo negativo, tarifas,
 mínimo e historial (fecha, tipo, servicio, turno, importe, estado) y pide el pago de todo lo disponible a **su cuenta de
 Mercado Pago (el email de esa cuenta)**. Requisitos: disponible ≥ mínimo (inicial $10.000; se cambia con
 `POST /tus/v1/admin/payments/configuration` y `"minimumPayoutMinor"`), Mercado Pago conectado con OAuth vigente (y en
 producción cuenta productiva), identidad verificada, ninguna otra solicitud activa. Los fondos quedan **reservados**
-(`payout_reserve`) y la solicitud queda **pendiente de procesamiento por TUS**.
+(`payout_reserve`) y la solicitud queda **solicitada** (`requested`), pendiente de procesamiento por TUS.
 
-**Ejecución real: Mercado Pago Payouts** (API oficial "money-out", Argentina:
-https://www.mercadopago.com.ar/developers/es/docs/payouts/landing). Desde `/tus/admin/liquidaciones` el admin elige:
+Estados de una solicitud: `requested` → `processing` → `paid`, o `failed` / `cancelled` (estos dos liberan la reserva con
+`payout_release`; el dinero vuelve a estar disponible y el prestador puede pedir de nuevo con otra solicitud). Cada
+acción queda en la auditoría append-only `auditoria_liquidaciones` (una entrada por versión: acción, estado anterior y
+nuevo, actor, correlación y detalle sin secretos), visible en el detalle de `/tus/admin/liquidaciones` y en
+`GET /tus/v1/admin/payments/payouts/:payoutId/audit`.
+
+**Verificación del contrato de Mercado Pago Payouts (TUS-GANANCIAS-02, 2026-10-03).** Desde el entorno de desarrollo de
+esta tarea no fue posible leer la documentación oficial (el dominio de Mercado Pago no es accesible) y **ninguno de los
+SDKs oficiales de Mercado Pago** (Node, Python, Java, PHP, Go, Ruby, .NET) expone un cliente de Payouts/"money-out". El
+adaptador `payouts-mercado-pago.ts` implementa el contrato descripto abajo y está probado contra un doble offline de ese
+contrato, **no contra Mercado Pago**. Por eso:
+
+- Payouts sigue **apagado por defecto** (`TUS_MERCADOPAGO_PAYOUTS_ENABLED=false`) y sin él ningún pago se envía ni se
+  simula: la solicitud espera, y la administración puede pagarla por otro medio con comprobante.
+- Antes de habilitarlo, el titular de la cuenta de TUS debe confirmar con Mercado Pago que la cuenta tiene el producto
+  habilitado y que el endpoint, los encabezados, la firma y los estados coinciden con este documento, y probarlo en
+  sandbox (paso 2 de abajo). Si difieren, se ajusta solo el adaptador: el resto (reserva, idempotencia por id de
+  solicitud, resultado leído del proveedor, liberación ante fallo) no cambia.
+- Si el contrato fuera incorrecto, el modo de falla es seguro: un 4xx al crear marca la solicitud fallida y libera los
+  fondos; nada se marca pagado sin que la consulta del proveedor diga `success/accredited`.
+
+**Ejecución: Mercado Pago Payouts** (producto "money-out" de Mercado Pago, referencia esperada:
+https://www.mercadopago.com.ar/developers/es/docs/payouts/landing; contrato **no verificado**, ver arriba). Desde `/tus/admin/liquidaciones` el admin elige:
 
 - **Pagar con Mercado Pago**: `POST https://api.mercadopago.com/v1/payouts` con el token de TUS, una transacción
   `type: account` al email del prestador por el monto exacto, `X-Idempotency-Key` = id de la solicitud (un reintento nunca
@@ -697,7 +731,7 @@ https://www.mercadopago.com.ar/developers/es/docs/payouts/landing). Desde `/tus/
 - **Pagar por otro medio**: la administración hace la operación fuera de TUS (por ejemplo, una transferencia desde la
   cuenta de TUS) y la registra con su **comprobante** obligatorio y observación ("Marcar como pagada"). Sin comprobante no
   se puede marcar pagada.
-- **Marcar como fallida / Cancelar** (pendiente o pagada por otro medio): libera los fondos, con motivo.
+- **Marcar como fallida / Cancelar** (solicitada, o en proceso por otro medio): libera los fondos, con motivo.
 
 Variables de Payouts (Hostinger API):
 

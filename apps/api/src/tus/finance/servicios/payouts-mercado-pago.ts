@@ -17,6 +17,13 @@ import type { EstadoTransferencia, PuertoEjecucionLiquidacion } from './ganancia
 //   registered with Mercado Pago's Integrations team).
 // The result is never taken from the creation answer or from a notification: only the transfer
 // queried from Mercado Pago says whether it was accredited.
+//
+// TUS-GANANCIAS-02: this contract could not be verified against Mercado Pago's documentation from
+// the development environment, and no official Mercado Pago SDK ships a Payouts client. It stays
+// behind PuertoEjecucionLiquidacion and is composed only with TUS_MERCADOPAGO_PAYOUTS_ENABLED=true;
+// the account owner confirms it with Mercado Pago and in sandbox before enabling it (see
+// docs/PRODUCCION_TUS.md). A wrong contract fails safe: a 4xx releases the funds, nothing is paid
+// without Mercado Pago reporting success/accredited.
 
 type FetchLike = (
   url: string,
