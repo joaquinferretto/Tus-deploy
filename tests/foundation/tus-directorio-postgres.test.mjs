@@ -9,9 +9,30 @@ const url = process.env.TUS_DIRECTORIO_PG_URL ?? process.env.TUS_E2E_PG_URL
 const PRISMA = `
   const { PrismaClient } = await import('./apps/api/node_modules/@prisma/client/index.js')
   const prisma = new PrismaClient({ datasourceUrl: ${JSON.stringify(url ?? '')}, log: [{ emit: 'event', level: 'query' }], errorFormat: 'minimal' })
-  let queries = 0
-  prisma.$on('query', () => { queries += 1 })
+  // Every SQL statement the client sends, in the order the engine ran them.
+  const sentencias = []
+  prisma.$on('query', (e) => { sentencias.push(e.query) })
   const run = 'd' + Date.now().toString(36)
+  // The DATA statements one operation runs. The operation is delimited by two marker statements
+  // and the events of both are awaited, so the count never depends on when an event is delivered
+  // to JavaScript; what the driver adds around a statement (transaction control, the DEALLOCATE of
+  // a pooled connection) is not a read of the application and is not counted.
+  const CONTROL = /^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|DEALLOCATE|SET )/iu
+  let mediciones = 0
+  async function medir(operacion) {
+    const marca = 'tus_medicion_' + run + '_' + (mediciones += 1)
+    const marcar = async (lado) => {
+      await prisma.$queryRawUnsafe('SELECT 1 AS "' + marca + '_' + lado + '"')
+      for (let i = 0; i < 1000 && !sentencias.some((q) => q.includes(marca + '_' + lado)); i += 1) await new Promise((resolve) => setTimeout(resolve, 5))
+      const en = sentencias.findIndex((q) => q.includes(marca + '_' + lado))
+      if (en < 0) throw new Error('the event of the ' + lado + ' marker was not delivered')
+      return en
+    }
+    const inicio = await marcar('inicio')
+    const valor = await operacion()
+    const fin = await marcar('fin')
+    return { valor, consultas: sentencias.slice(inicio + 1, fin).filter((q) => !CONTROL.test(q.trim())) }
+  }
   const T = (s) => run + '-' + s
   const sql = (q) => prisma.$executeRawUnsafe(q)
   async function provider(key) {
@@ -50,9 +71,9 @@ test(
         }
         const principalAfter = (await prisma.perfilPublicoPrestador.findFirst({ where: { id: T('perfil-a') } })).oficio
         for (let i = 0; i < 12; i++) { const p = await provider('n' + i); await store.guardar(base(p, i % 2 ? ['electricidad', 'plomeria'] : ['plomeria'], T('perfil-n' + i))) }
-        queries = 0
-        const electricidad = await store.visibles({ oficios: ['electricidad', 'plomeria'], limite: 300 })
-        const listQueries = queries
+        const medicion = await medir(() => store.visibles({ oficios: ['electricidad', 'plomeria'], limite: 300 }))
+        const electricidad = medicion.valor
+        const listQueries = medicion.consultas.length
         const mine = electricidad.filter((p) => p.tenantId.startsWith(run))
         console.log(JSON.stringify({ five, two, rows: rows.map((r) => [r.oficioId, r.orden]), principal, principalAfter, broken, unique: new Set(mine.map((p) => p.id)).size === mine.length, count: mine.length, listQueries }))
       } finally { await prisma.$disconnect() }
@@ -119,15 +140,15 @@ test(
           if (!saved.ok) throw new Error('profile ' + JSON.stringify(saved))
         }
         await add(0)
-        queries = 0
-        const one = await directorio.listar({ q: 'Mapa' })
-        const withOne = queries
+        const uno = await medir(() => directorio.listar({ q: 'Mapa' }))
         for (let i = 1; i < 40; i++) await add(i)
-        queries = 0
-        const forty = await directorio.listar({ q: 'Mapa' })
-        const withForty = queries
+        const cuarenta = await medir(() => directorio.listar({ q: 'Mapa' }))
+        const one = uno.valor
+        const forty = cuarenta.valor
         const mine = (page) => page.items.filter((w) => w.displayName.startsWith('Mapa ')).length
-        console.log(JSON.stringify({ withOne, withForty, one: one.total >= 1, forty: forty.total >= 40, pageMine: mine(forty) > 0 }))
+        // Which tables each measurement read (the same ones, each once: no read per provider).
+        const tablas = (consultas) => consultas.map((q) => (q.match(/FROM "public"\."([a-z_]+)"/u) ?? [])[1] ?? 'otra').sort()
+        console.log(JSON.stringify({ withOne: uno.consultas.length, withForty: cuarenta.consultas.length, tablasUno: tablas(uno.consultas), tablasCuarenta: tablas(cuarenta.consultas), one: one.total >= 1, forty: forty.total >= 40, pageMine: mine(forty) > 0 }))
       } finally { await prisma.$disconnect() }
     `)
     assert.equal(r.one, true)
@@ -135,6 +156,10 @@ test(
     assert.equal(r.pageMine, true)
     assert.equal(r.withForty, r.withOne, `1 provider: ${r.withOne} queries, 40 providers: ${r.withForty}`)
     assert.ok(r.withOne <= 6, `queries: ${r.withOne}`)
+    // The same reads in both cases, one per table: profiles, their services, listings, providers
+    // and completed works.
+    assert.deepEqual(r.tablasCuarenta, r.tablasUno)
+    assert.deepEqual(r.tablasUno, ['perfil_servicios', 'perfiles_publicos_prestador', 'prestadores', 'publicaciones', 'trabajos'])
   }
 )
 

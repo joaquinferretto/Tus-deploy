@@ -382,3 +382,43 @@ test('WHATSAPP uses the same directory and request services (no duplicated rules
   assert.equal(result.confirmado.data.request.assignment, 'pendiente')
   assert.deepEqual(result.bandeja, [['whatsapp', 'pendiente']])
 })
+
+// Deterministic regression of the map's N+1 guard, without a database: the REAL Prisma adapters
+// over a client that only counts the reads it is asked for. Whatever the number of visible
+// providers, the directory asks for the same four reads (profiles with their services, listings,
+// providers and completed works): never one per provider.
+test('MAP N+1 (deterministic): the directory asks for the same reads for 1, 40 and 300 providers', () => {
+  const r = runTypeScriptScenario(`
+    const { crearServicioDirectorio } = await import('./apps/api/src/tus/directorio/composicion.ts')
+    const { PrismaMarketplaceStore } = await import('./apps/api/src/tus/adapters/prisma-marketplace.ts')
+    const lecturas = (cantidad) => {
+      const llamadas = []
+      const ahora = new Date('2026-10-01T12:00:00.000Z')
+      const perfiles = Array.from({ length: cantidad }, (_, i) => ({ id: 'perfil-' + String(i).padStart(4, '0'), tenantId: 't-' + i, prestadorId: 'p-' + i, nombrePublico: 'Mapa ' + i, oficio: 'plomeria', zona: 'Centro', zonasCobertura: ['Centro'], modalidadAtencion: 'domicilio', radioCoberturaKm: null, descripcion: null, aniosExperiencia: null, visible: true, fechaCreacion: ahora, fechaActualizacion: ahora, servicios: [{ oficioId: 'plomeria', orden: 0 }] }))
+      const contar = (nombre, respuesta) => async (args) => { llamadas.push(nombre + ':' + (args?.where?.tenantId?.in?.length ?? args?.where?.prestadorTenantId?.in?.length ?? '-')); return respuesta(args) }
+      const prisma = {
+        perfilPublicoPrestador: { findMany: contar('perfiles.findMany', (args) => perfiles.slice(0, args.take)) },
+        publicacion: { findMany: contar('publicaciones.findMany', () => []) },
+        prestador: { findMany: contar('prestadores.findMany', (args) => args.where.tenantId.in.map((tenantId) => ({ tenantId, prestadorId: 'p-' + tenantId.slice(2), cohorte: 'repairs-trades', ubicacionId: 'loc', zonaHoraria: 'America/Argentina/Buenos_Aires', rolesPersonal: ['owner'], versionPoliticaOperativa: 'v1', estado: 'approved', fechaCreacion: ahora, fechaActualizacion: ahora }))), findFirst: contar('prestadores.findFirst', () => null) },
+        trabajo: { groupBy: contar('trabajos.groupBy', () => []), count: contar('trabajos.count', () => 0) },
+      }
+      return { prisma, llamadas }
+    }
+    const out = {}
+    for (const cantidad of [1, 40, 300]) {
+      const { prisma, llamadas } = lecturas(cantidad)
+      const directorio = crearServicioDirectorio({ application: { marketplace: { store: new PrismaMarketplaceStore(prisma) } }, prisma })
+      const pagina = await directorio.listar({ q: 'Mapa' })
+      const mapa = await directorio.listar({ q: 'Mapa', mapa: true })
+      out[cantidad] = { total: pagina.total, enMapa: mapa.items.length, llamadas: llamadas.slice(0, llamadas.length / 2).sort(), porListado: llamadas.length / 2 }
+    }
+    console.log(JSON.stringify(out))
+  `)
+  for (const cantidad of [1, 40, 300]) {
+    assert.equal(r[cantidad].total, cantidad)
+    assert.equal(r[cantidad].enMapa, cantidad)
+    assert.equal(r[cantidad].porListado, 4, `${cantidad} providers: ${r[cantidad].llamadas}`)
+    // One batched read per source, each asked for the whole page of tenants at once.
+    assert.deepEqual(r[cantidad].llamadas, ['perfiles.findMany:-', `prestadores.findMany:${cantidad}`, `publicaciones.findMany:${cantidad}`, `trabajos.groupBy:${cantidad}`])
+  }
+})
