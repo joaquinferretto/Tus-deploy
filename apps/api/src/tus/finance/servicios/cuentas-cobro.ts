@@ -525,6 +525,11 @@ export class ServicioCuentasCobro {
         codeVerifier: verifier,
         redirectUri: config.redirectUri,
       })
+      // One Mercado Pago account belongs to one provider: notifications are resolved by the
+      // collecting account, so the same account linked twice would be ambiguous (TUS-GANANCIAS-02).
+      const vinculada = await this.store.buscarCuentaPorExterna(token.userId)
+      if (vinculada && vinculada.prestadorTenantId !== estado.prestadorTenantId)
+        return redirect('error', 'ACCOUNT_ALREADY_LINKED')
       await this.store.guardarCredencial({
         prestadorTenantId: estado.prestadorTenantId,
         ciphertext: boveda.cifrar(

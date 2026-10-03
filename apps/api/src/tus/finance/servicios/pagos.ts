@@ -120,6 +120,10 @@ export interface EventoPagoNormalizado {
   marketplaceFeeMinor?: bigint | null
   // WEB-09E: seller account that collected the payment (Mercado Pago `collector_id`).
   collectorId?: string | null
+  // TUS-GANANCIAS-01: who collected it, as resolved by the real adapter from the collector:
+  // TUS's own account ('plataforma', no provider) or the linked account of a provider ('split').
+  // Absent (fake provider): not checked. Must agree with the mode frozen on the intent.
+  collectedBy?: { mode: 'split' | 'plataforma'; prestadorTenantId: string | null }
 }
 
 export interface EntradaEventoProveedor {

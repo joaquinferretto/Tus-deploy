@@ -15,14 +15,26 @@ import styles from './admin.module.css'
 // paid by another means, by recording that operation with its reference. The API decides every
 // amount and state; this page only sends the action and what the administrator types.
 const ESTADO: Record<LiquidacionAdminDTO['status'], { label: string; tone: 'ok' | 'brand' | 'off' | 'warn' }> = {
-  pending: { label: 'Pendiente', tone: 'warn' },
+  requested: { label: 'Solicitada', tone: 'warn' },
   processing: { label: 'En proceso', tone: 'brand' },
   paid: { label: 'Pagada', tone: 'ok' },
   failed: { label: 'Fallida', tone: 'off' },
   cancelled: { label: 'Cancelada', tone: 'off' },
 }
 const MECANISMO: Record<string, string> = { mercado_pago_payouts: 'Mercado Pago Payouts', manual: 'Otro medio (registrado por la administración)' }
-const FILTROS = [['open', 'Abiertas'], ['pending', 'Pendientes'], ['processing', 'En proceso'], ['paid', 'Pagadas'], ['failed', 'Fallidas'], ['cancelled', 'Canceladas'], ['', 'Todas']] as const
+const ACCION_AUDITORIA: Record<DetalleLiquidacionAdminDTO['audit'][number]['action'], string> = {
+  requested: 'Solicitada por el prestador',
+  processing: 'Procesamiento iniciado',
+  send_confirmed: 'Envío confirmado por Mercado Pago',
+  send_unconfirmed: 'Envío sin confirmar',
+  send_rejected: 'Envío rechazado por Mercado Pago',
+  provider_status: 'Estado informado por Mercado Pago',
+  paid: 'Pagada',
+  failed: 'Fallida',
+  cancelled: 'Cancelada',
+}
+
+const FILTROS = [['open', 'Abiertas'], ['requested', 'Solicitadas'], ['processing', 'En proceso'], ['paid', 'Pagadas'], ['failed', 'Fallidas'], ['cancelled', 'Canceladas'], ['', 'Todas']] as const
 const TIPO_ITEM: Record<string, string> = { earning: 'Ganancia', mercado_pago_fee: 'Tarifa Mercado Pago', refund: 'Devolución', chargeback: 'Contracargo', adjustment: 'Ajuste' }
 
 function mensajeDe(cause: unknown): string {
@@ -136,7 +148,7 @@ function DetalleLiquidacion({ id, onChange }: { id: string; onChange: () => void
 
   if (error && !detalle) return <p className={styles.error} role="alert">{error}</p>
   if (!detalle) return <p className={styles.muted} role="status">Cargando detalle…</p>
-  const { payout, account, items, movements, automaticAvailable } = detalle
+  const { payout, account, items, movements, automaticAvailable, audit } = detalle
   const enviadaAMercadoPago = payout.mechanism === 'mercado_pago_payouts'
   return (
     <section aria-label="Detalle de la liquidación" className={styles.card}>
@@ -169,8 +181,17 @@ function DetalleLiquidacion({ id, onChange }: { id: string; onChange: () => void
       </table>
       <h3>Movimientos contables</h3>
       <ul>{movements.map((item) => <li key={item.kind}>{item.kind === 'payout_reserve' ? 'Reserva' : item.kind === 'payout_release' ? 'Liberación' : 'Pago completado'}: {formatMoney(item.amountMinor, 'ARS')} · {formatFecha(item.date)} · {item.actorId}</li>)}</ul>
+      <h3>Auditoría</h3>
+      <ol aria-label="Auditoría de la liquidación">
+        {audit.map((item) => (
+          <li key={item.version}>
+            {formatFecha(item.date)} · {ACCION_AUDITORIA[item.action]} · {item.previousStatus ? `${ESTADO[item.previousStatus].label} → ` : ''}{ESTADO[item.status].label} · {item.actorId}
+            {Object.keys(item.detail).length > 0 ? ` · ${Object.entries(item.detail).map(([clave, valor]) => `${clave}: ${valor}`).join(', ')}` : ''}
+          </li>
+        ))}
+      </ol>
 
-      {payout.status === 'pending' ? (
+      {payout.status === 'requested' ? (
         <div className={styles.toolbar}>
           <label>Observación (opcional) <input onChange={(event) => setNota(event.target.value)} value={nota} /></label>
           <button disabled={busy || !automaticAvailable} onClick={() => void accion('process', { mechanism: 'mercado_pago_payouts', ...(nota.trim() ? { note: nota.trim() } : {}) }, 'Transferencia enviada a Mercado Pago. El resultado lo confirma Mercado Pago.')} type="button">Pagar con Mercado Pago</button>
@@ -190,7 +211,7 @@ function DetalleLiquidacion({ id, onChange }: { id: string; onChange: () => void
           <button disabled={busy || referencia.trim().length < 3} type="submit">Marcar como pagada</button>
         </form>
       ) : null}
-      {(payout.status === 'pending' || (payout.status === 'processing' && !enviadaAMercadoPago)) ? (
+      {(payout.status === 'requested' || (payout.status === 'processing' && !enviadaAMercadoPago)) ? (
         <div className={styles.toolbar}>
           <label>Motivo <input onChange={(event) => setMotivo(event.target.value)} value={motivo} /></label>
           <button disabled={busy || motivo.trim().length < 3} onClick={() => void accion('failed', { reason: motivo.trim() }, 'Marcada como fallida: el monto volvió a estar disponible para el prestador.')} type="button">Marcar como fallida</button>

@@ -3,7 +3,10 @@
 // minor units (centavos) written as strings, ARS only. No internal database id is part of the
 // provider shapes; `payoutId` is the provider's own request reference.
 
-export const ESTADOS_SOLICITUD_LIQUIDACION = ['pending', 'processing', 'paid', 'failed', 'cancelled'] as const
+// requested: the provider asked and its funds are reserved; processing: the administration is
+// paying it (Mercado Pago Payouts or another means); paid / failed / cancelled are final. Failed
+// and cancelled release the reserved funds; a new request is the safe retry.
+export const ESTADOS_SOLICITUD_LIQUIDACION = ['requested', 'processing', 'paid', 'failed', 'cancelled'] as const
 export type EstadoSolicitudLiquidacion = (typeof ESTADOS_SOLICITUD_LIQUIDACION)[number]
 
 // How a payout is executed: Mercado Pago Payouts (POST /v1/payouts, account-to-account transfer
@@ -40,7 +43,7 @@ export interface ResumenGananciasPrestador {
   // paid requests hold. May be negative (then `negativeMinor` is its absolute value).
   availableMinor: string
   negativeMinor: string
-  // In a pending request / in a request being paid.
+  // In a requested payout / in a payout being paid.
   reservedMinor: string
   processingMinor: string
   // Paid out by TUS.
@@ -56,6 +59,9 @@ export interface ResumenGananciasPrestador {
   openPayout: SolicitudLiquidacionDTO | null
   // The email of the last request, to prefill the next one (the provider's own data).
   lastDestinationEmail: string | null
+  // The provider's Mercado Pago account as TUS has it linked ('not_connected' when none). A
+  // payout also needs it to answer when TUS renews its authorization (checked on request).
+  paymentAccountStatus: string
 }
 
 export type EstadoMovimientoGanancia = 'available' | 'reserved' | 'processing' | 'paid' | 'adjustment' | 'failed' | 'cancelled'
@@ -133,6 +139,25 @@ export interface DetalleLiquidacionAdminDTO {
   movements: { kind: 'payout_reserve' | 'payout_release' | 'payout_completed'; amountMinor: string; date: string; actorId: string }[]
   // Whether Mercado Pago Payouts is configured to execute it.
   automaticAvailable: boolean
+  // Every action on the request, oldest first (append-only audit trail).
+  audit: AuditoriaLiquidacionDTO[]
+}
+
+// What happened to a payout request: its creation, each state change, every sending attempt to
+// Mercado Pago and its answer. Never holds tokens, signatures or provider payloads.
+export const ACCIONES_AUDITORIA_LIQUIDACION = ['requested', 'processing', 'send_confirmed', 'send_unconfirmed', 'send_rejected', 'provider_status', 'paid', 'failed', 'cancelled'] as const
+export type AccionAuditoriaLiquidacion = (typeof ACCIONES_AUDITORIA_LIQUIDACION)[number]
+
+export interface AuditoriaLiquidacionDTO {
+  action: AccionAuditoriaLiquidacion
+  previousStatus: EstadoSolicitudLiquidacion | null
+  status: EstadoSolicitudLiquidacion
+  version: number
+  actorId: string
+  correlationId: string
+  // Short facts of the action (mechanism, provider status, reason, reference), strings only.
+  detail: Record<string, string>
+  date: string
 }
 
 export function mensajeMotivoSinLiquidacion(motivo: MotivoSinLiquidacion | null): string | null {

@@ -1866,8 +1866,13 @@ export class ServicioFinanzasServicios {
     if (repositories.ganancias) {
       const ganancia = await repositories.ganancias.buscar({ prestadorTenantId: obligation.prestadorTenantId, movimientoId: `earning:${obligation.obligacionId}` })
       if (ganancia) {
-        const debito = debitoDeGanancia(ganancia, intent.providerStatus === 'refunded' ? 'refund_debit' : 'chargeback_debit', event.eventId, now)
-        if (!(await repositories.ganancias.buscar(debito))) await repositories.ganancias.registrar(debito)
+        // One reversal per earning: a refund and a later chargeback of the same payment (or the
+        // other way round) never debit the provider twice; any further dispute is an explicit
+        // administrative adjustment.
+        const reembolso = debitoDeGanancia(ganancia, 'refund_debit', event.eventId, now)
+        const contracargo = debitoDeGanancia(ganancia, 'chargeback_debit', event.eventId, now)
+        const debito = intent.providerStatus === 'refunded' ? reembolso : contracargo
+        if (!(await repositories.ganancias.buscar(reembolso)) && !(await repositories.ganancias.buscar(contracargo))) await repositories.ganancias.registrar(debito)
       }
     }
     const entryType =
@@ -1991,6 +1996,16 @@ export class ServicioFinanzasServicios {
   ): { result: ResultadoEventoProveedor; reason: string | null } {
     if (intent.providerReference && intent.providerReference !== event.providerReference)
       return { result: 'quarantined', reason: 'provider_reference_mismatch' }
+    // TUS-GANANCIAS-01: the account that collected must be the one the intent was created for.
+    // A payment in a provider's own account carrying the reference of an intent TUS collects
+    // (or the other way round, or in another provider's account) would make TUS owe money it
+    // never received, or confirm a turno with money that went elsewhere.
+    if (event.collectedBy) {
+      const mode = intent.collectionMode ?? 'split'
+      if (event.collectedBy.mode !== mode) return { result: 'quarantined', reason: 'collection_mode_mismatch' }
+      if (mode === 'split' && event.collectedBy.prestadorTenantId !== intent.prestadorTenantId)
+        return { result: 'quarantined', reason: 'collector_mismatch' }
+    }
     if (event.currency !== intent.currency)
       return { result: 'quarantined', reason: 'currency_mismatch' }
     if (event.amountMinor !== intent.amountMinor)

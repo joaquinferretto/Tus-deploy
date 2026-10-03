@@ -189,10 +189,13 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
         error instanceof ErrorProveedorPagos ? error.code : 'payment lookup failed'
       )
     }
-    return normalizarPagoMercadoPago(payment, {
-      expectedCollector: token.externalAccountId,
-      notificationId: body['id'] === undefined ? null : String(body['id']),
-    })
+    return {
+      ...normalizarPagoMercadoPago(payment, {
+        expectedCollector: token.externalAccountId,
+        notificationId: body['id'] === undefined ? null : String(body['id']),
+      }),
+      collectedBy: plataforma ? { mode: 'plataforma', prestadorTenantId: null } : { mode: 'split', prestadorTenantId: cuenta!.prestadorTenantId },
+    }
   }
 
   async reembolsar(input: {

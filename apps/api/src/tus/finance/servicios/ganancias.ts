@@ -4,7 +4,10 @@ import {
   CODIGO_CUENTA_REQUERIDA,
   CODIGO_LIQUIDACION_ABIERTA,
   CODIGO_SIN_FONDOS,
+  ESTADOS_SOLICITUD_LIQUIDACION,
+  type AccionAuditoriaLiquidacion,
   type AjusteGananciaDTO,
+  type AuditoriaLiquidacionDTO,
   type ConciliacionGananciaDTO,
   type DetalleLiquidacionAdminDTO,
   type EstadoMovimientoGanancia,
@@ -109,6 +112,32 @@ export interface ItemLiquidacion {
   solicitudId: string
   movimientoId: string
   activo: boolean
+}
+
+// One action on a payout request (append-only), written in the same transaction as the change it
+// describes. `version` is the request version the action produced: one entry per version.
+export interface EventoAuditoriaLiquidacion {
+  solicitudId: string
+  prestadorTenantId: string
+  version: number
+  accion: AccionAuditoriaLiquidacion
+  estadoAnterior: EstadoSolicitudLiquidacion | null
+  estadoNuevo: EstadoSolicitudLiquidacion
+  actorId: string
+  correlationId: string
+  detalle: Record<string, string>
+  createdAt: string
+}
+
+// Only short, known facts reach the audit: never a token, signature or provider payload.
+function detalleAuditoria(campos: Record<string, string | null | undefined>): Record<string, string> {
+  const detalle: Record<string, string> = {}
+  for (const [clave, valor] of Object.entries(campos)) if (typeof valor === 'string' && valor) detalle[clave] = valor.slice(0, 300)
+  return detalle
+}
+
+export function proyectarAuditoria(evento: EventoAuditoriaLiquidacion): AuditoriaLiquidacionDTO {
+  return { action: evento.accion, previousStatus: evento.estadoAnterior, status: evento.estadoNuevo, version: evento.version, actorId: evento.actorId, correlationId: evento.correlationId, detail: { ...evento.detalle }, date: evento.createdAt }
 }
 
 // Effect of a movement on what TUS owes the provider (payout movements are accounted apart).
@@ -258,7 +287,7 @@ export function calcularSaldo(movimientos: readonly MovimientoGanancia[], solici
   }
   const estadoDe = new Map(solicitudes.map((solicitud) => [solicitud.solicitudId, solicitud.status]))
   for (const [solicitudId, monto] of abierto) {
-    if (estadoDe.get(solicitudId) === 'pending') saldo.reserved += monto
+    if (estadoDe.get(solicitudId) === 'requested') saldo.reserved += monto
     else if (estadoDe.get(solicitudId) === 'processing') saldo.processing += monto
   }
   return saldo
@@ -279,6 +308,16 @@ export interface DecisionSolicitud {
   solicitud: SolicitudLiquidacion
   movimientoIds: string[]
   reserva: MovimientoGanancia
+  auditoria: EventoAuditoriaLiquidacion
+}
+
+export interface Transicion {
+  actual: SolicitudLiquidacion
+  siguiente: SolicitudLiquidacion
+  liberar: boolean
+  movimientos: MovimientoGanancia[]
+  auditoria: EventoAuditoriaLiquidacion
+  at: string
 }
 
 export interface FiltroLiquidaciones {
@@ -305,8 +344,10 @@ export interface PuertoSolicitudesLiquidacion {
   // request fails with PAYOUT_ALREADY_OPEN (unique indexes); the same key returns the stored one.
   crearAtomica(prestadorTenantId: string, idempotencyKey: string, armar: (estado: EstadoReservable) => DecisionSolicitud | SolicitudLiquidacion): Promise<{ solicitud: SolicitudLiquidacion; nueva: boolean }>
   // Moves or updates a request (optimistic on its version and state). Releasing frees its items.
-  // The movements (release or completion) are booked in the same transaction.
-  transicionar(input: { actual: SolicitudLiquidacion; siguiente: SolicitudLiquidacion; liberar: boolean; movimientos: MovimientoGanancia[]; at: string }): Promise<boolean>
+  // The movements (release or completion) and the audit entry are written in the same transaction.
+  transicionar(input: Transicion): Promise<boolean>
+  // The audit trail of one request, oldest first.
+  auditoria(prestadorTenantId: string, solicitudId: string): Promise<EventoAuditoriaLiquidacion[]>
   // Platform administration: requests of every provider.
   listar(filtro: FiltroLiquidaciones): Promise<{ items: SolicitudLiquidacion[]; total: number }>
   buscarPorId(solicitudId: string): Promise<SolicitudLiquidacion | null>
@@ -331,6 +372,7 @@ export class AlmacenSolicitudesLiquidacionEnMemoria implements PuertoSolicitudes
   readonly prestadores = new Map<string, string>()
   readonly cuentas = new Map<string, string>()
   readonly desglosesGuardados = new Map<string, { grossMinor: bigint; commissionMinor: bigint; pspFeeMinor: bigint | null }>()
+  readonly auditoriaGuardada: EventoAuditoriaLiquidacion[] = []
 
   constructor(readonly ledger: LedgerGananciasEnMemoria = new LedgerGananciasEnMemoria()) {}
 
@@ -411,17 +453,22 @@ export class AlmacenSolicitudesLiquidacionEnMemoria implements PuertoSolicitudes
       movimientos: this.ledger.movimientos.filter((item) => item.prestadorTenantId === prestadorTenantId).map((item) => this.copia(item)),
       itemsActivos: this.itemsGuardados.filter((item) => item.prestadorTenantId === prestadorTenantId && item.activo).map(({ solicitudId, movimientoId, activo }) => ({ solicitudId, movimientoId, activo })),
       solicitudes: propias.map((item) => this.copia(item)),
-      abierta: this.copia(propias.find((item) => item.status === 'pending' || item.status === 'processing') ?? null),
+      abierta: this.copia(propias.find((item) => item.status === 'requested' || item.status === 'processing') ?? null),
       porClave: this.copia(propias.find((item) => item.idempotencyKey === idempotencyKey) ?? null),
     })
     if (!('movimientoIds' in decision)) return { solicitud: decision, nueva: false }
     this.solicitudesGuardadas.push(this.copia(decision.solicitud))
     for (const movimientoId of decision.movimientoIds) this.itemsGuardados.push({ prestadorTenantId, solicitudId: decision.solicitud.solicitudId, movimientoId, activo: true })
     this.ledger.movimientos.push(this.copia(decision.reserva))
+    this.auditoriaGuardada.push(this.copia(decision.auditoria))
     return { solicitud: this.copia(decision.solicitud), nueva: true }
   }
 
-  async transicionar(input: { actual: SolicitudLiquidacion; siguiente: SolicitudLiquidacion; liberar: boolean; movimientos: MovimientoGanancia[]; at: string }): Promise<boolean> {
+  async auditoria(prestadorTenantId: string, solicitudId: string): Promise<EventoAuditoriaLiquidacion[]> {
+    return this.auditoriaGuardada.filter((item) => item.prestadorTenantId === prestadorTenantId && item.solicitudId === solicitudId).map((item) => this.copia(item))
+  }
+
+  async transicionar(input: Transicion): Promise<boolean> {
     const index = this.solicitudesGuardadas.findIndex((item) => item.prestadorTenantId === input.actual.prestadorTenantId && item.solicitudId === input.actual.solicitudId)
     const current = this.solicitudesGuardadas[index]
     if (!current || current.version !== input.actual.version || current.status !== input.actual.status) return false
@@ -430,6 +477,7 @@ export class AlmacenSolicitudesLiquidacionEnMemoria implements PuertoSolicitudes
     this.solicitudesGuardadas[index] = this.copia(input.siguiente)
     if (input.liberar) for (const item of this.itemsGuardados) if (item.solicitudId === input.actual.solicitudId) item.activo = false
     for (const movimiento of input.movimientos) this.ledger.movimientos.push(this.copia(movimiento))
+    this.auditoriaGuardada.push(this.copia(input.auditoria))
     return true
   }
 }
@@ -496,7 +544,7 @@ const CONCEPTO_HISTORIAL: Readonly<Record<TipoMovimientoGanancia, string>> = {
 }
 
 const TRANSICIONES: Readonly<Record<EstadoSolicitudLiquidacion, readonly EstadoSolicitudLiquidacion[]>> = {
-  pending: ['processing', 'failed', 'cancelled'],
+  requested: ['processing', 'failed', 'cancelled'],
   processing: ['paid', 'failed', 'cancelled'],
   paid: [],
   failed: [],
@@ -508,6 +556,10 @@ export interface ContextoGanancias {
   actorId: string
   correlationId: string
 }
+
+// Who did something to a request (the administration, the provider or Mercado Pago's answer).
+type Actor = Pick<ContextoGanancias, 'actorId' | 'correlationId'>
+const MERCADO_PAGO_PAYOUTS: Actor = { actorId: 'system:mercado-pago-payouts', correlationId: 'mercado-pago-payouts-notification' }
 
 const texto = (value: unknown, campo: string, maximo = 200): string => {
   const limpio = typeof value === 'string' ? value.trim() : ''
@@ -586,7 +638,7 @@ export class ServicioGananciasPrestador {
 
   private async estado(prestadorTenantId: string) {
     const [movimientos, items, solicitudes] = await Promise.all([this.store.movimientos(prestadorTenantId), this.store.items(prestadorTenantId), this.store.solicitudes(prestadorTenantId)])
-    return { movimientos, items, solicitudes, saldo: calcularSaldo(movimientos, solicitudes), abierta: solicitudes.find((item) => item.status === 'pending' || item.status === 'processing') ?? null }
+    return { movimientos, items, solicitudes, saldo: calcularSaldo(movimientos, solicitudes), abierta: solicitudes.find((item) => item.status === 'requested' || item.status === 'processing') ?? null }
   }
 
   // Why the provider cannot request a payout now (null: it can).
@@ -603,6 +655,7 @@ export class ServicioGananciasPrestador {
     const { saldo, abierta, solicitudes } = await this.estado(context.tenantId)
     const minimo = await this.opciones.minimoLiquidacion()
     const motivo = await this.motivo(context.tenantId, saldo.available, abierta, minimo)
+    const cuenta = await this.store.cuentaActual(context.tenantId)
     const minor = (value: bigint) => value.toString(10)
     return {
       currency: 'ARS',
@@ -618,6 +671,7 @@ export class ServicioGananciasPrestador {
       blockedReason: motivo,
       openPayout: abierta ? proyectarSolicitud(abierta) : null,
       lastDestinationEmail: solicitudes.at(-1)?.destinationEmail ?? null,
+      paymentAccountStatus: cuenta?.status ?? 'not_connected',
     }
   }
 
@@ -630,10 +684,10 @@ export class ServicioGananciasPrestador {
       const deSolicitud = movimiento.solicitudId ? estadoDe.get(movimiento.solicitudId) : undefined
       const enSolicitud = tomado.get(movimiento.movimientoId)
       const estado: EstadoMovimientoGanancia =
-        movimiento.tipo === 'payout_reserve' ? (deSolicitud === 'pending' ? 'reserved' : (deSolicitud ?? 'reserved'))
+        movimiento.tipo === 'payout_reserve' ? (deSolicitud === 'requested' ? 'reserved' : (deSolicitud ?? 'reserved'))
         : movimiento.tipo === 'payout_release' ? (deSolicitud === 'cancelled' ? 'cancelled' : 'failed')
         : movimiento.tipo === 'payout_completed' ? 'paid'
-        : enSolicitud === 'pending' ? 'reserved'
+        : enSolicitud === 'requested' ? 'reserved'
         : enSolicitud === 'processing' ? 'processing'
         : enSolicitud === 'paid' ? 'paid'
         : movimiento.tipo === 'earning_credit' ? 'available'
@@ -685,7 +739,7 @@ export class ServicioGananciasPrestador {
         prestadorId,
         amountMinor: monto,
         currency: 'ARS',
-        status: 'pending',
+        status: 'requested',
         cuentaCobroId: cuenta.cuentaCobroId,
         destinationEmail: destino,
         destinationAccountId: cuenta.externalAccountId,
@@ -709,7 +763,12 @@ export class ServicioGananciasPrestador {
         failedAt: null,
         cancelledAt: null,
       }
-      return { solicitud: nuevaSolicitud, movimientoIds: libres.map((movimiento) => movimiento.movimientoId), reserva: movimientoDeLiquidacion(nuevaSolicitud, 'payout_reserve', 'payout-requested', context.actorId, ahora) }
+      return {
+        solicitud: nuevaSolicitud,
+        movimientoIds: libres.map((movimiento) => movimiento.movimientoId),
+        reserva: movimientoDeLiquidacion(nuevaSolicitud, 'payout_reserve', 'payout-requested', context.actorId, ahora),
+        auditoria: this.evento(nuevaSolicitud, null, 'requested', context, { amountMinor: monto.toString(10), movements: String(libres.length) }),
+      }
     })
     return { status: nueva ? 'created' : 'existing', payout: proyectarSolicitud(solicitud) }
   }
@@ -725,8 +784,8 @@ export class ServicioGananciasPrestador {
   async cancelar(context: ContextoGanancias, solicitudId: string): Promise<SolicitudLiquidacionDTO> {
     const solicitud = await this.store.buscar(context.tenantId, solicitudId)
     if (!solicitud) throw new ErrorFinanzasServicio(404, 'NOT_FOUND', 'payout request not found')
-    if (solicitud.status !== 'pending') throw new ErrorFinanzasServicio(409, 'INVALID_TRANSITION', 'only a pending request can be cancelled')
-    return proyectarSolicitud(await this.mover(solicitud, 'cancelled', context.actorId, { failureReason: 'cancelled-by-provider' }))
+    if (solicitud.status !== 'requested') throw new ErrorFinanzasServicio(409, 'INVALID_TRANSITION', 'only a requested payout nobody started paying can be cancelled')
+    return proyectarSolicitud(await this.mover(solicitud, 'cancelled', context, { failureReason: 'cancelled-by-provider' }))
   }
 
   // ---- platform administration -------------------------------------------------------------
@@ -737,8 +796,8 @@ export class ServicioGananciasPrestador {
 
   async listar(input: { status?: unknown; providerTenantId?: unknown; page?: unknown; pageSize?: unknown }): Promise<{ items: LiquidacionAdminDTO[]; total: number; page: number; pageSize: number }> {
     const estado = typeof input.status === 'string' && input.status ? input.status : ''
-    const estados = estado === '' ? (['pending', 'processing', 'paid', 'failed', 'cancelled'] as const) : estado === 'open' ? (['pending', 'processing'] as const) : ([estado] as EstadoSolicitudLiquidacion[])
-    if (!estados.every((item) => ['pending', 'processing', 'paid', 'failed', 'cancelled'].includes(item))) throw new ErrorFinanzasServicio(400, 'INVALID', 'unknown status filter')
+    const estados = estado === '' ? (ESTADOS_SOLICITUD_LIQUIDACION) : estado === 'open' ? (['requested', 'processing'] as const) : ([estado] as EstadoSolicitudLiquidacion[])
+    if (!estados.every((item) => (ESTADOS_SOLICITUD_LIQUIDACION as readonly string[]).includes(item))) throw new ErrorFinanzasServicio(400, 'INVALID', 'unknown status filter')
     const page = Math.max(1, Math.min(10_000, Number.parseInt(String(input.page ?? '1'), 10) || 1))
     const pageSize = Math.max(1, Math.min(100, Number.parseInt(String(input.pageSize ?? '25'), 10) || 25))
     const prestadorTenantId = typeof input.providerTenantId === 'string' && input.providerTenantId.trim() ? input.providerTenantId.trim().slice(0, 200) : null
@@ -751,7 +810,7 @@ export class ServicioGananciasPrestador {
   async detalle(solicitudId: string): Promise<DetalleLiquidacionAdminDTO> {
     const solicitud = await this.store.buscarPorId(solicitudId)
     if (!solicitud) throw new ErrorFinanzasServicio(404, 'NOT_FOUND', 'payout request not found')
-    const [{ movimientos, items }, cuenta, nombre] = await Promise.all([this.estado(solicitud.prestadorTenantId), this.store.cuentaActual(solicitud.prestadorTenantId), this.store.nombrePrestador(solicitud.prestadorTenantId)])
+    const [{ movimientos, items }, cuenta, nombre, auditoria] = await Promise.all([this.estado(solicitud.prestadorTenantId), this.store.cuentaActual(solicitud.prestadorTenantId), this.store.nombrePrestador(solicitud.prestadorTenantId), this.store.auditoria(solicitud.prestadorTenantId, solicitud.solicitudId)])
     const deLaSolicitud = new Set(items.filter((item) => item.solicitudId === solicitud.solicitudId).map((item) => item.movimientoId))
     return {
       payout: proyectarAdmin(solicitud, nombre),
@@ -763,7 +822,14 @@ export class ServicioGananciasPrestador {
         .filter((movimiento) => movimiento.solicitudId === solicitud.solicitudId && esMovimientoDeLiquidacion(movimiento.tipo))
         .map((movimiento) => ({ kind: movimiento.tipo as 'payout_reserve' | 'payout_release' | 'payout_completed', amountMinor: movimiento.amountMinor.toString(10), date: movimiento.createdAt, actorId: movimiento.actorId })),
       automaticAvailable: this.ejecucion.disponible,
+      audit: auditoria.map(proyectarAuditoria),
     }
+  }
+
+  // The audit trail of one request (platform administration).
+  async auditoriaDe(solicitudId: string): Promise<AuditoriaLiquidacionDTO[]> {
+    const solicitud = await this.requerir(solicitudId)
+    return (await this.store.auditoria(solicitud.prestadorTenantId, solicitud.solicitudId)).map(proyectarAuditoria)
   }
 
   private async requerir(solicitudId: string): Promise<SolicitudLiquidacion> {
@@ -782,19 +848,19 @@ export class ServicioGananciasPrestador {
     const note = textoOpcional(input['note'], 'note')
     const solicitud = await this.requerir(solicitudId)
     if (mecanismo === 'mercado_pago_payouts' && !this.ejecucion.disponible) throw new ErrorFinanzasServicio(503, 'PAYOUTS_NOT_CONFIGURED', 'Mercado Pago Payouts is not configured')
-    if (solicitud.status !== 'pending') throw new ErrorFinanzasServicio(409, 'INVALID_TRANSITION', `payout request cannot be processed from ${solicitud.status}`)
-    const enProceso = await this.mover(solicitud, 'processing', context.actorId, { mechanism: mecanismo, note, processedBy: context.actorId })
-    return proyectarSolicitud(mecanismo === 'mercado_pago_payouts' ? await this.enviarAMercadoPago(enProceso, context.actorId) : enProceso)
+    if (solicitud.status !== 'requested') throw new ErrorFinanzasServicio(409, 'INVALID_TRANSITION', `payout request cannot be processed from ${solicitud.status}`)
+    const enProceso = await this.mover(solicitud, 'processing', context, { mechanism: mecanismo, note, processedBy: context.actorId })
+    return proyectarSolicitud(mecanismo === 'mercado_pago_payouts' ? await this.enviarAMercadoPago(enProceso, context) : enProceso)
   }
 
   // Sends (or resends, with the same idempotency key) a request being paid through Mercado Pago.
   async reenviar(context: ContextoGanancias, solicitudId: string): Promise<SolicitudLiquidacionDTO> {
     const solicitud = await this.requerir(solicitudId)
     if (solicitud.status !== 'processing' || solicitud.mechanism !== 'mercado_pago_payouts' || solicitud.providerPayoutId) throw new ErrorFinanzasServicio(409, 'INVALID_TRANSITION', 'only a Mercado Pago payout whose sending was not confirmed can be resent')
-    return proyectarSolicitud(await this.enviarAMercadoPago(solicitud, context.actorId))
+    return proyectarSolicitud(await this.enviarAMercadoPago(solicitud, context))
   }
 
-  private async enviarAMercadoPago(solicitud: SolicitudLiquidacion, actorId: string): Promise<SolicitudLiquidacion> {
+  private async enviarAMercadoPago(solicitud: SolicitudLiquidacion, actor: Actor): Promise<SolicitudLiquidacion> {
     let enviado: { payoutId: string; transactionId: string; status: string }
     try {
       enviado = await this.ejecucion.enviar({ solicitudId: solicitud.solicitudId, amountMinor: solicitud.amountMinor, destinationEmail: solicitud.destinationEmail, description: 'Pago de ganancias TUS' })
@@ -803,13 +869,14 @@ export class ServicioGananciasPrestador {
       // Mercado Pago refused it (wrong destination, no funds, forbidden): nothing was sent, the
       // funds go back to the provider. Anything ambiguous keeps the request being paid; resending
       // reuses the idempotency key, so no second transfer can exist.
-      if (code === 'PROVIDER_REJECTED') return this.mover(solicitud, 'failed', actorId, { failureReason: 'mercado_pago_rejected', providerStatus: 'rejected_on_create' })
+      if (code === 'PROVIDER_REJECTED') return this.mover(solicitud, 'failed', actor, { failureReason: 'mercado_pago_rejected', providerStatus: 'rejected_on_create' }, 'send_rejected')
       const actualizada = { ...solicitud, providerStatus: 'send_unconfirmed', version: solicitud.version + 1, updatedAt: this.iso() }
-      await this.store.transicionar({ actual: solicitud, siguiente: actualizada, liberar: false, movimientos: [], at: actualizada.updatedAt })
+      await this.store.transicionar({ actual: solicitud, siguiente: actualizada, liberar: false, movimientos: [], auditoria: this.evento(actualizada, solicitud.status, 'send_unconfirmed', actor, { error: typeof code === 'string' ? code : 'unknown' }), at: actualizada.updatedAt })
       throw new ErrorFinanzasServicio(502, 'PAYOUT_SEND_UNCONFIRMED', 'Mercado Pago did not confirm the transfer; resend it or refresh its status')
     }
     const conIds: SolicitudLiquidacion = { ...solicitud, providerPayoutId: enviado.payoutId, providerTransactionId: enviado.transactionId, providerStatus: enviado.status, externalReference: `${enviado.payoutId}/${enviado.transactionId}`, version: solicitud.version + 1, updatedAt: this.iso() }
-    if (!(await this.store.transicionar({ actual: solicitud, siguiente: conIds, liberar: false, movimientos: [], at: conIds.updatedAt }))) throw new ErrorFinanzasServicio(409, 'VERSION_CONFLICT', 'payout request changed; reload it')
+    const auditoria = this.evento(conIds, solicitud.status, 'send_confirmed', actor, { providerPayoutId: enviado.payoutId, providerTransactionId: enviado.transactionId, providerStatus: enviado.status })
+    if (!(await this.store.transicionar({ actual: solicitud, siguiente: conIds, liberar: false, movimientos: [], auditoria, at: conIds.updatedAt }))) throw new ErrorFinanzasServicio(409, 'VERSION_CONFLICT', 'payout request changed; reload it')
     return conIds
   }
 
@@ -817,19 +884,20 @@ export class ServicioGananciasPrestador {
   // a definitive failure releases the funds, anything else keeps it being paid.
   async actualizarDesdeMercadoPago(context: ContextoGanancias, solicitudId: string): Promise<SolicitudLiquidacionDTO> {
     const solicitud = await this.requerir(solicitudId)
-    return proyectarSolicitud(await this.aplicarEstadoProveedor(solicitud, context.actorId))
+    return proyectarSolicitud(await this.aplicarEstadoProveedor(solicitud, context))
   }
 
-  private async aplicarEstadoProveedor(solicitud: SolicitudLiquidacion, actorId: string): Promise<SolicitudLiquidacion> {
+  private async aplicarEstadoProveedor(solicitud: SolicitudLiquidacion, actor: Actor): Promise<SolicitudLiquidacion> {
     if (solicitud.mechanism !== 'mercado_pago_payouts' || !solicitud.providerPayoutId || !solicitud.providerTransactionId) throw new ErrorFinanzasServicio(409, 'NOT_A_MERCADO_PAGO_PAYOUT', 'the request was not sent through Mercado Pago Payouts')
     if (solicitud.status !== 'processing') return solicitud
     const estado = await this.ejecucion.consultar({ payoutId: solicitud.providerPayoutId, transactionId: solicitud.providerTransactionId })
     const providerStatus = `${estado.status}${estado.statusDetail ? `:${estado.statusDetail}` : ''}`
-    if (estado.resultado === 'paid') return this.mover(solicitud, 'paid', actorId, { providerStatus })
-    if (estado.resultado === 'failed') return this.mover(solicitud, 'failed', actorId, { providerStatus, failureReason: `mercado_pago:${providerStatus}` })
+    if (estado.resultado === 'paid') return this.mover(solicitud, 'paid', actor, { providerStatus })
+    if (estado.resultado === 'failed') return this.mover(solicitud, 'failed', actor, { providerStatus, failureReason: `mercado_pago:${providerStatus}` })
     if (providerStatus === solicitud.providerStatus) return solicitud
     const actualizada = { ...solicitud, providerStatus, version: solicitud.version + 1, updatedAt: this.iso() }
-    return (await this.store.transicionar({ actual: solicitud, siguiente: actualizada, liberar: false, movimientos: [], at: actualizada.updatedAt })) ? actualizada : solicitud
+    const auditoria = this.evento(actualizada, solicitud.status, 'provider_status', actor, { providerStatus })
+    return (await this.store.transicionar({ actual: solicitud, siguiente: actualizada, liberar: false, movimientos: [], auditoria, at: actualizada.updatedAt })) ? actualizada : solicitud
   }
 
   // A Mercado Pago Payouts notification. Its content is never trusted (Mercado Pago documents no
@@ -841,7 +909,7 @@ export class ServicioGananciasPrestador {
     if (!/^[A-Za-z0-9_-]{1,64}$/u.test(payoutId)) return { status: 'ignored' }
     const solicitud = await this.store.buscarPorPayoutProveedor(payoutId)
     if (!solicitud) return { status: 'ignored' }
-    const actualizada = await this.aplicarEstadoProveedor(solicitud, 'system:mercado-pago-payouts')
+    const actualizada = await this.aplicarEstadoProveedor(solicitud, MERCADO_PAGO_PAYOUTS)
     return { status: 'applied', payoutStatus: actualizada.status }
   }
 
@@ -853,7 +921,7 @@ export class ServicioGananciasPrestador {
     const note = textoOpcional(input['note'], 'note')
     const solicitud = await this.requerir(solicitudId)
     if (solicitud.status !== 'processing' || solicitud.mechanism !== 'manual') throw new ErrorFinanzasServicio(409, 'INVALID_TRANSITION', 'only a request being paid by another means can be marked paid; a Mercado Pago payout is confirmed by Mercado Pago')
-    return proyectarSolicitud(await this.mover(solicitud, 'paid', context.actorId, { externalReference: reference, note: note ?? solicitud.note }))
+    return proyectarSolicitud(await this.mover(solicitud, 'paid', context, { externalReference: reference, note: note ?? solicitud.note }))
   }
 
   async marcarFallida(context: ContextoGanancias, solicitudId: string, input: Record<string, unknown>): Promise<SolicitudLiquidacionDTO> {
@@ -861,7 +929,7 @@ export class ServicioGananciasPrestador {
     const reason = texto(input['reason'], 'reason', 300)
     const solicitud = await this.requerir(solicitudId)
     this.exigirSinTransferenciaEnviada(solicitud)
-    return proyectarSolicitud(await this.mover(solicitud, 'failed', context.actorId, { failureReason: reason }))
+    return proyectarSolicitud(await this.mover(solicitud, 'failed', context, { failureReason: reason }))
   }
 
   async cancelarAdmin(context: ContextoGanancias, solicitudId: string, input: Record<string, unknown>): Promise<SolicitudLiquidacionDTO> {
@@ -869,7 +937,7 @@ export class ServicioGananciasPrestador {
     const reason = texto(input['reason'], 'reason', 300)
     const solicitud = await this.requerir(solicitudId)
     this.exigirSinTransferenciaEnviada(solicitud)
-    return proyectarSolicitud(await this.mover(solicitud, 'cancelled', context.actorId, { failureReason: reason }))
+    return proyectarSolicitud(await this.mover(solicitud, 'cancelled', context, { failureReason: reason }))
   }
 
   // Money that may have left through Mercado Pago is never released by hand: only Mercado Pago's
@@ -958,12 +1026,29 @@ export class ServicioGananciasPrestador {
       })
   }
 
+  private evento(siguiente: SolicitudLiquidacion, anterior: EstadoSolicitudLiquidacion | null, accion: AccionAuditoriaLiquidacion, actor: Actor, detalle: Record<string, string | null | undefined>): EventoAuditoriaLiquidacion {
+    return {
+      solicitudId: siguiente.solicitudId,
+      prestadorTenantId: siguiente.prestadorTenantId,
+      version: siguiente.version,
+      accion,
+      estadoAnterior: anterior,
+      estadoNuevo: siguiente.status,
+      actorId: actor.actorId,
+      correlationId: actor.correlationId,
+      detalle: detalleAuditoria(detalle),
+      createdAt: siguiente.updatedAt,
+    }
+  }
+
   private async mover(
     solicitud: SolicitudLiquidacion,
     hacia: EstadoSolicitudLiquidacion,
-    actorId: string,
-    extra: { externalReference?: string; failureReason?: string; mechanism?: MecanismoLiquidacion; note?: string | null; processedBy?: string; providerStatus?: string }
+    actor: Actor,
+    extra: { externalReference?: string; failureReason?: string; mechanism?: MecanismoLiquidacion; note?: string | null; processedBy?: string; providerStatus?: string },
+    accion: AccionAuditoriaLiquidacion = hacia as AccionAuditoriaLiquidacion
   ): Promise<SolicitudLiquidacion> {
+    const actorId = actor.actorId
     if (!TRANSICIONES[solicitud.status].includes(hacia)) throw new ErrorFinanzasServicio(409, 'INVALID_TRANSITION', `payout request cannot move from ${solicitud.status} to ${hacia}`)
     const ahora = this.iso()
     const siguiente: SolicitudLiquidacion = {
@@ -989,7 +1074,15 @@ export class ServicioGananciasPrestador {
         : hacia === 'failed' || hacia === 'cancelled'
           ? [movimientoDeLiquidacion(siguiente, 'payout_release', `payout-${hacia}:${siguiente.failureReason ?? ''}`.slice(0, 300), actorId, ahora)]
           : []
-    const movida = await this.store.transicionar({ actual: solicitud, siguiente, liberar: hacia === 'failed' || hacia === 'cancelled', movimientos, at: ahora })
+    const auditoria = this.evento(siguiente, solicitud.status, accion, actor, {
+      mechanism: siguiente.mechanism,
+      providerStatus: extra.providerStatus,
+      externalReference: extra.externalReference,
+      reason: extra.failureReason,
+      note: extra.note ?? undefined,
+      releasedMinor: hacia === 'failed' || hacia === 'cancelled' ? siguiente.amountMinor.toString(10) : undefined,
+    })
+    const movida = await this.store.transicionar({ actual: solicitud, siguiente, liberar: hacia === 'failed' || hacia === 'cancelled', movimientos, auditoria, at: ahora })
     if (!movida) throw new ErrorFinanzasServicio(409, 'VERSION_CONFLICT', 'payout request changed; reload it')
     return siguiente
   }

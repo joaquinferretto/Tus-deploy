@@ -3569,7 +3569,9 @@ model SolicitudLiquidacion {
   prestadorId        String    @map("prestador_id")
   monto              BigInt    @map("monto")
   moneda             String    @map("moneda")
-  // pending | processing | paid | failed | cancelled
+  // requested | processing | paid | failed | cancelled (CHECK in SQL; 'pending' until
+  // 20261029100000_tus_liquidaciones_auditoria). Partial unique uq_solicitudes_liquidacion_una_abierta
+  // (one requested or processing request per provider) lives in SQL.
   estado             String    @map("estado")
   cuentaCobroId      String    @map("cuenta_cobro_id")
   // Email of the provider's Mercado Pago account (Payouts destination) and the linked account id.
@@ -3600,11 +3602,37 @@ model SolicitudLiquidacion {
   cuentaCobro CuentaCobroPrestador          @relation(fields: [cuentaCobroId, prestadorTenantId], references: [id, prestadorTenantId], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_liquidacion_cuenta_cobro")
   items       ItemSolicitudLiquidacion[]
   movimientos MovimientoGananciaPrestador[]
+  auditoria   AuditoriaLiquidacion[]
 
   @@unique([prestadorTenantId, solicitudId], map: "uq_solicitudes_liquidacion_prestador_solicitud")
   @@unique([prestadorTenantId, claveIdempotencia], map: "uq_solicitudes_liquidacion_prestador_clave")
   @@index([estado, fechaCreacion], map: "ix_solicitudes_liquidacion_estado_fecha")
   @@map("solicitudes_liquidacion")
+}
+
+// TUS-GANANCIAS-02: append-only audit trail of a payout request (trigger
+// tus_auditoria_liquidacion_append_only): its creation, each state change, every sending attempt
+// to Mercado Pago and its answer. One entry per request version, written in the transaction of
+// the change. CHECKs (action, states, only the creation without a previous state, detail is a
+// JSON object) live in SQL. `detalle` holds short facts only, never tokens or payloads.
+model AuditoriaLiquidacion {
+  id                String   @id(map: "auditoria_liquidaciones_pkey")
+  prestadorTenantId String   @map("prestador_tenant_id")
+  solicitudId       String   @map("solicitud_id")
+  version           Int      @map("version")
+  accion            String   @map("accion")
+  estadoAnterior    String?  @map("estado_anterior")
+  estadoNuevo       String   @map("estado_nuevo")
+  actorId           String   @map("actor_id")
+  correlacionId     String   @map("correlacion_id")
+  detalle           Json     @default("{}") @map("detalle")
+  fechaCreacion     DateTime @map("fecha_creacion")
+
+  solicitud SolicitudLiquidacion @relation(fields: [prestadorTenantId, solicitudId], references: [prestadorTenantId, solicitudId], onDelete: Restrict, onUpdate: NoAction, map: "fk_auditoria_liquidaciones_solicitud")
+
+  @@unique([prestadorTenantId, solicitudId, version], map: "uq_auditoria_liquidaciones_solicitud_version")
+  @@index([fechaCreacion], map: "ix_auditoria_liquidaciones_fecha")
+  @@map("auditoria_liquidaciones")
 }
 
 // TUS-GANANCIAS-01: append-only ledger of what TUS owes each provider (trigger
@@ -3613,8 +3641,8 @@ model SolicitudLiquidacion {
 // reversal; adjustment_credit / adjustment_debit: explicit manual resolutions; payout_reserve /
 // payout_release / payout_completed: a payout request reserving, releasing and paying. The
 // balance is derived from it. CHECKs (amount > 0, ARS, type, origin per type) and the partial
-// unique indexes uq_movimientos_ganancia_obligacion_tipo and uq_movimientos_ganancia_solicitud_tipo
-// live in SQL.
+// unique indexes uq_movimientos_ganancia_obligacion_tipo, uq_movimientos_ganancia_solicitud_tipo and
+// uq_movimientos_ganancia_reverso_unico (one refund OR chargeback debit per obligation) live in SQL.
 model MovimientoGananciaPrestador {
   id                      String   @id(map: "movimientos_ganancia_prestador_pkey")
   movimientoId            String   @map("movimiento_id")

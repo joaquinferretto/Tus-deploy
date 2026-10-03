@@ -3,6 +3,7 @@ import { ErrorFinanzasServicio } from '../finance/servicios/modelo.ts'
 import type {
   DecisionSolicitud,
   EstadoReservable,
+  EventoAuditoriaLiquidacion,
   FiltroLiquidaciones,
   ItemLiquidacion,
   MovimientoConContexto,
@@ -11,6 +12,7 @@ import type {
   PuertoSolicitudesLiquidacion,
   SolicitudLiquidacion,
   TipoMovimientoGanancia,
+  Transicion,
 } from '../finance/servicios/ganancias.ts'
 import { isSerializationFailure, isUniqueConstraint } from './prisma-work.ts'
 
@@ -38,6 +40,7 @@ export interface ClientePrismaGanancias {
   movimientoGananciaPrestador: Delegado
   solicitudLiquidacion: Delegado
   itemSolicitudLiquidacion: Delegado
+  auditoriaLiquidacion: Delegado
   cuentaCobroPrestador: Delegado
   prestador: Delegado
   perfilPublicoPrestador: Delegado
@@ -145,6 +148,38 @@ function camposSolicitud(solicitud: SolicitudLiquidacion): Record<string, unknow
     pagadaEn: solicitud.paidAt ? new Date(solicitud.paidAt) : null,
     fallidaEn: solicitud.failedAt ? new Date(solicitud.failedAt) : null,
     canceladaEn: solicitud.cancelledAt ? new Date(solicitud.cancelledAt) : null,
+  }
+}
+
+function filaAuditoria(evento: EventoAuditoriaLiquidacion): Record<string, unknown> {
+  return {
+    id: `auditoria-liquidacion-${evento.solicitudId}-v${evento.version}`,
+    prestadorTenantId: evento.prestadorTenantId,
+    solicitudId: evento.solicitudId,
+    version: evento.version,
+    accion: evento.accion,
+    estadoAnterior: evento.estadoAnterior,
+    estadoNuevo: evento.estadoNuevo,
+    actorId: evento.actorId,
+    correlacionId: evento.correlationId,
+    detalle: evento.detalle,
+    fechaCreacion: new Date(evento.createdAt),
+  }
+}
+
+function auditoriaDe(fila: Fila): EventoAuditoriaLiquidacion {
+  const detalle = typeof fila['detalle'] === 'object' && fila['detalle'] !== null ? (fila['detalle'] as Record<string, unknown>) : {}
+  return {
+    solicitudId: String(fila['solicitudId']),
+    prestadorTenantId: String(fila['prestadorTenantId']),
+    version: Number(fila['version']),
+    accion: fila['accion'] as EventoAuditoriaLiquidacion['accion'],
+    estadoAnterior: textoNulo(fila['estadoAnterior']) as EstadoSolicitudLiquidacion | null,
+    estadoNuevo: fila['estadoNuevo'] as EstadoSolicitudLiquidacion,
+    actorId: String(fila['actorId']),
+    correlationId: String(fila['correlacionId']),
+    detalle: Object.fromEntries(Object.entries(detalle).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
+    createdAt: fecha(fila['fechaCreacion']),
   }
 }
 
@@ -294,7 +329,7 @@ export class AlmacenSolicitudesLiquidacionPrisma implements PuertoSolicitudesLiq
             movimientos: movimientos.map(movimientoDe),
             itemsActivos: items.map(itemDe),
             solicitudes: propias,
-            abierta: propias.find((item) => item.status === 'pending' || item.status === 'processing') ?? null,
+            abierta: propias.find((item) => item.status === 'requested' || item.status === 'processing') ?? null,
             porClave: propias.find((item) => item.idempotencyKey === idempotencyKey) ?? null,
           })
           if (!('movimientoIds' in decision)) return { solicitud: decision, nueva: false }
@@ -323,6 +358,7 @@ export class AlmacenSolicitudesLiquidacionPrisma implements PuertoSolicitudesLiq
               data: movimientoIds.map((movimientoId) => ({ id: `item-liquidacion-${solicitud.solicitudId}-${movimientoId}`, prestadorTenantId, solicitudId: solicitud.solicitudId, movimientoId, activo: true, fechaCreacion: creada })),
             })
           await tx.movimientoGananciaPrestador.create({ data: filaMovimiento(reserva) })
+          await tx.auditoriaLiquidacion.create({ data: filaAuditoria(decision.auditoria) })
           return { solicitud, nueva: true }
         },
         { isolationLevel: 'Serializable' }
@@ -338,7 +374,11 @@ export class AlmacenSolicitudesLiquidacionPrisma implements PuertoSolicitudesLiq
     }
   }
 
-  async transicionar(input: { actual: SolicitudLiquidacion; siguiente: SolicitudLiquidacion; liberar: boolean; movimientos: MovimientoGanancia[]; at: string }): Promise<boolean> {
+  async auditoria(prestadorTenantId: string, solicitudId: string): Promise<EventoAuditoriaLiquidacion[]> {
+    return (await this.client.auditoriaLiquidacion.findMany({ where: { prestadorTenantId, solicitudId }, orderBy: { version: 'asc' } })).map(auditoriaDe)
+  }
+
+  async transicionar(input: Transicion): Promise<boolean> {
     try {
       return await this.client.$transaction(
         async (tx) => {
@@ -350,6 +390,7 @@ export class AlmacenSolicitudesLiquidacionPrisma implements PuertoSolicitudesLiq
           if (input.liberar)
             await tx.itemSolicitudLiquidacion.updateMany({ where: { prestadorTenantId: input.actual.prestadorTenantId, solicitudId: input.actual.solicitudId, activo: true }, data: { activo: false, fechaLiberacion: new Date(input.at) } })
           for (const movimiento of input.movimientos) await tx.movimientoGananciaPrestador.create({ data: filaMovimiento(movimiento) })
+          await tx.auditoriaLiquidacion.create({ data: filaAuditoria(input.auditoria) })
           return true
         },
         { isolationLevel: 'Serializable' }

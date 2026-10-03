@@ -34,6 +34,7 @@ const SETUP = `
   const c = await import('./packages/contracts/src/tus-turnos.ts')
   ${MERCADO_PAGO_API_SETUP}
   const run = 'e' + Date.now().toString(36) + Math.floor(Math.random() * 1000)
+  mp.idRun = 'r' + Math.random().toString(36).slice(2, 8)
   const auth = createPrismaAuthService(prisma)
   const PLATFORM_TOKEN = 'platform-token-555'
   mp.sellers.set(PLATFORM_TOKEN, '555')

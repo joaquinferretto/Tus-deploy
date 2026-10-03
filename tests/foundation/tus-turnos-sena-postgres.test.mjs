@@ -105,7 +105,7 @@ const SETUP = `
   const a = (indice, hora) => new Date(c.sumarDias(lunes, indice) + 'T' + hora + ':00.000-03:00').toISOString()
   // Name of the constraint the database rejected the write with (Prisma reports a unique or a
   // foreign key violation by its own code: P2002 / P2003).
-  const restriccion = async (op) => { try { await op(); return 'ok' } catch (e) { return String(e?.message ?? e).match(/(ck_[a-z_]+|uq_[a-z_]+|fk_[a-z_]+)/u)?.[1] ?? (e?.code === 'P2002' ? 'unique:' + [e.meta?.target].flat().join(',') : e?.code === 'P2003' ? 'foreign_key' : e?.code ?? String(e?.message ?? e).slice(0, 80)) } }
+  const restriccion = async (op) => { try { await op(); return 'ok' } catch (e) { if (e?.code === 'P2003') return 'foreign_key'; return String(e?.message ?? e).match(/(ck_[a-z_]+|uq_[a-z_]+|fk_[a-z_]+)/u)?.[1] ?? (e?.code === 'P2002' ? 'unique:' + [e.meta?.target].flat().join(',') : e?.code === 'P2003' ? 'foreign_key' : e?.code ?? String(e?.message ?? e).slice(0, 80)) } }
   const codeOf = async (op) => { try { await op(); return 'none' } catch (e) { return e?.code ?? String(e) } }
   const app = express()
   app.use(express.json())

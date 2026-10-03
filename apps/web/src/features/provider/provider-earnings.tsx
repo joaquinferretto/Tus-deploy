@@ -41,7 +41,7 @@ const TIPO_MOVIMIENTO: Record<TusEarningsMovement['kind'], string> = {
 }
 
 const ESTADO_SOLICITUD: Record<TusPayout['status'], string> = {
-  pending: 'Pendiente de procesamiento por TUS',
+  requested: 'Solicitada · Pendiente de procesamiento por TUS',
   processing: 'En proceso',
   paid: 'Pagada',
   failed: 'Fallida (el monto volvió a estar disponible)',
@@ -72,7 +72,7 @@ function turno(value: string | null): string {
 
 // What happens with an open request, in words the provider can act on.
 function textoSolicitud(payout: TusPayout): string {
-  if (payout.status === 'pending') return 'TUS tiene que procesarla: el pago todavía no se envió.'
+  if (payout.status === 'requested') return 'TUS tiene que procesarla: el pago todavía no se envió.'
   if (payout.mechanism === 'mercado_pago_payouts') return 'TUS envió la transferencia a tu cuenta de Mercado Pago; esperamos la confirmación de Mercado Pago.'
   return 'TUS está realizando el pago por otro medio y lo va a registrar con su comprobante.'
 }
@@ -199,6 +199,8 @@ export function ProviderEarningsPanel({ session }: { session: TusWebSession }): 
             ) : null}
             <dt>Mínimo para solicitar</dt>
             <dd>{formatMoney(summary.minimumPayoutMinor, summary.currency)}</dd>
+            <dt>Mercado Pago</dt>
+            <dd>{summary.paymentAccountStatus === 'connected' ? 'Conectado' : 'No conectado'}</dd>
           </dl>
           {summary.negativeMinor !== '0' ? (
             <p role="status">
@@ -229,7 +231,7 @@ export function ProviderEarningsPanel({ session }: { session: TusWebSession }): 
               Solicitud por {formatMoney(summary.openPayout.amountMinor, summary.openPayout.currency)} del{' '}
               {fecha(summary.openPayout.createdAt)} a {summary.openPayout.destinationEmail}: {ESTADO_SOLICITUD[summary.openPayout.status]}.{' '}
               {textoSolicitud(summary.openPayout)}{' '}
-              {summary.openPayout.status === 'pending' ? (
+              {summary.openPayout.status === 'requested' ? (
                 <button disabled={busy} onClick={() => void cancelPayout(summary.openPayout!.payoutId)} type="button">
                   Cancelar solicitud
                 </button>

@@ -5,10 +5,12 @@
 //   POST /v1/payouts (202, X-Idempotency-Key required, X-test-token in sandbox, X-enforce-signature
 //   + X-signature = Ed25519 signature of the body in production)
 //   GET  /v1/payouts/{payout_id}/transactions/{transaction_id}
+// `mp.idRun` (empty by default) prefixes the ids the stand-in generates, so a test against a
+// persistent database can run again without colliding with the unique ids of a previous run.
 export const MERCADO_PAGO_API_SETUP = `
   const { firmarManifiestoMercadoPago } = await import('./apps/api/src/tus/finance/servicios/mercado-pago.ts')
   const nodeCrypto = await import('node:crypto')
-  const mp = { requests: [], preferences: [], payments: new Map(), sellers: new Map(), refunds: [], tokenSeq: 0, payouts: new Map(), payoutsByKey: new Map(), payoutSeq: 0, payoutRejectEmails: new Set(), payoutsDown: 0, payoutPublicKey: null }
+  const mp = { requests: [], preferences: [], payments: new Map(), sellers: new Map(), refunds: [], tokenSeq: 0, payouts: new Map(), payoutsByKey: new Map(), payoutSeq: 0, payoutRejectEmails: new Set(), payoutsDown: 0, payoutPublicKey: null, idRun: '' }
   const WEBHOOK_SECRET = 'api-webhook-secret'
   function issueTokens(userId) { mp.tokenSeq += 1; const token = 'seller-token-' + userId + '-' + mp.tokenSeq; mp.sellers.set(token, userId); return { access_token: token, refresh_token: 'seller-refresh-' + userId + '-' + mp.tokenSeq, public_key: 'seller-public-' + userId, user_id: Number(userId), scope: 'offline_access read write', live_mode: false, expires_in: 15552000 } }
   const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
@@ -20,7 +22,7 @@ export const MERCADO_PAGO_API_SETUP = `
     const seller = mp.sellers.get(String(init.headers.authorization ?? '').replace('Bearer ', ''))
     if (!seller) return reply(401, { message: 'invalid token' })
     if (path === '/checkout/preferences' && init.method === 'POST') {
-      const id = 'pref-' + (mp.preferences.length + 1)
+      const id = 'pref-' + mp.idRun + (mp.preferences.length + 1)
       mp.preferences.push({ id, seller, body, idempotencyKey: init.headers['X-Idempotency-Key'] })
       return reply(201, { id, init_point: 'https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=' + id, sandbox_init_point: 'https://sandbox.mercadopago.com.ar/checkout/v1/redirect?pref_id=' + id })
     }
@@ -63,8 +65,8 @@ export const MERCADO_PAGO_API_SETUP = `
   }
   function crearPayout(seller, body, key) {
     mp.payoutSeq += 1
-    const id = 'POP' + String(mp.payoutSeq).padStart(8, '0')
-    const transactionId = 'TOP' + String(mp.payoutSeq).padStart(8, '0')
+    const id = 'POP' + mp.idRun + String(mp.payoutSeq).padStart(8, '0')
+    const transactionId = 'TOP' + mp.idRun + String(mp.payoutSeq).padStart(8, '0')
     const payout = { id, transactionId, seller, status: 'created', statusDetail: null, amount: body.transactions[0].amount, account: body.transactions[0].account, externalReference: body.external_reference, notificationUrl: body.config?.notification_url ?? null, idempotencyKey: key }
     mp.payouts.set(id, payout)
     return { payout, response: { id, external_reference: body.external_reference, idempotency_key: key, status: 'created', transactions: [{ id: transactionId, amount: body.transactions[0].amount, external_reference: body.transactions[0].external_reference }] } }

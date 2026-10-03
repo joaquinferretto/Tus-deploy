@@ -1129,6 +1129,18 @@ export function createTusHttpRouter({
     }
   })
 
+  // The append-only audit trail of one request (creation, every state change, every sending
+  // attempt to Mercado Pago and its answer, with actor and correlation).
+  router.get(['/tus/v1/admin/payments/payouts/:payoutId/audit'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!adminGanancias(request, response, context)) return
+    try {
+      response.status(200).json({ items: await application.providerEarnings!.auditoriaDe(String(request.params['payoutId'] ?? '')) })
+    } catch (error) {
+      enviarErrorGanancias(response, error)
+    }
+  })
+
   // process (mechanism: mercado_pago_payouts | manual), resend, refresh (from Mercado Pago),
   // paid (manual only, with the external reference), failed and cancel (never once a Mercado
   // Pago transfer was sent: only Mercado Pago's answer resolves it).

@@ -745,6 +745,24 @@ export const REVIEWED_MIGRATION_STATEMENTS = Object.freeze([
     sha256: 'bf374437bc6972d2f4438cf6f350e8c214b4134db6077e37c366aecdd2ea9fa9',
     reason: 'Drops the CHECK ck_obligaciones_pago_tramo_cadena only to re-create it in the next statement: total keeps the marketplace chain, sena and saldo keep the accepted budget, and a sena may also come from booked_price. No existing row has booked_price, so every existing row satisfies the new definition and the re-creation cannot fail. Both statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted or rewritten.',
   },
+  {
+    migration: '20261029100000_tus_liquidaciones_auditoria',
+    classification: 'high_risk',
+    sha256: '5f1fa9c64d431b8a148591166784d7f819cab66513c69205bcbe612b7fe1cedf',
+    reason: 'Drops the partial unique index uq_solicitudes_liquidacion_una_abierta only to re-create it later in the same migration with the same column and the open states under their new name (requested instead of pending, plus processing). Every row is renamed before the re-creation, so the set of open requests it protects is exactly the same and the re-creation cannot fail. All statements run in the transaction of the migration, so no second open request can slip in. No row is deleted.',
+  },
+  {
+    migration: '20261029100000_tus_liquidaciones_auditoria',
+    classification: 'high_risk',
+    sha256: '0e328bf7ea9310b1e9f54ad355a13c1e9097df078868ed0b77b04c75131cd1e8',
+    reason: 'Drops the CHECK ck_solicitudes_liquidacion_estado only to re-create it two statements later with the same five states, the first one renamed from pending to requested. The rows are renamed in between, so every row satisfies the new definition and the re-creation cannot fail. All statements run in the transaction of the migration, so the table is never left without the rule. No row is deleted.',
+  },
+  {
+    migration: '20261029100000_tus_liquidaciones_auditoria',
+    classification: 'ambiguous',
+    sha256: '63b5691b532d8883ded6b1e6af38890270ae34f0e90d8f1143400f1f42570b1f',
+    reason: 'Deterministic rename of one state value: payout requests in pending (the provider asked, funds reserved, nobody started paying) are the same requests now called requested. No other column, row or state is touched; amounts, items and ledger movements are not rewritten.',
+  },
 ])
 
 export function normalizedStatementHash(sql) {

@@ -146,7 +146,7 @@ test('domain: the owner\'s example (15.000 -> 13.500, +20.000 = 33.500); a payou
     const pagadaManual = await service.marcarPagada(admin, r5.payoutId, { externalReference: 'TRANSF-2026-10-03-001', note: 'Comprobante en Drive' })
     out.pagadaManual = [pagadaManual.status, pagadaManual.externalReference, tipos(r5.payoutId), await saldo(ana)]
 
-    // 10. Cancelled by the provider (pending) and by the administration: released.
+    // 10. Cancelled by the provider (requested) and by the administration: released.
     await ganar('t-ana', 2000000n, 200000n)
     const r6 = (await service.solicitar(ana, 'clave-sexta', destino)).payout
     out.cancelada = [(await service.cancelar(ana, r6.payoutId)).status, tipos(r6.payoutId)]
@@ -189,7 +189,7 @@ test('domain: the owner\'s example (15.000 -> 13.500, +20.000 = 33.500); a payou
   assert.deepEqual(r.entradas, ['IDEMPOTENCY_KEY_REQUIRED', 'INVALID_DESTINATION_EMAIL', 'UNTRUSTED_PAYOUT_FIELDS'])
   assert.deepEqual(r.bajoMinimo, [[false, 'BELOW_MINIMUM'], 'PAYOUT_BELOW_MINIMUM'])
   assert.deepEqual(r.carrera, [1, ['PAYOUT_ALREADY_OPEN']])
-  assert.deepEqual(r.r1, ['3350000', 'pending', 'ana@prestadora.test', null, ['payout_reserve'], 2, ['amountMinor', 'createdAt', 'currency', 'destinationEmail', 'externalReference', 'failureReason', 'mechanism', 'paidAt', 'payoutId', 'processingAt', 'providerStatus', 'status', 'updatedAt']])
+  assert.deepEqual(r.r1, ['3350000', 'requested', 'ana@prestadora.test', null, ['payout_reserve'], 2, ['amountMinor', 'createdAt', 'currency', 'destinationEmail', 'externalReference', 'failureReason', 'mechanism', 'paidAt', 'payoutId', 'processingAt', 'providerStatus', 'status', 'updatedAt']])
   assert.deepEqual(r.repetida, ['existing', 1])
   assert.equal(r.segunda, 'PAYOUT_ALREADY_OPEN')
   assert.deepEqual(r.reservado, ['0', '0', '3350000', '0', '0', '0', false, 'PAYOUT_IN_PROGRESS'])
