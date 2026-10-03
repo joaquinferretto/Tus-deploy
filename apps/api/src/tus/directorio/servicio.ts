@@ -22,6 +22,7 @@ import { asociarPunto, resolverPuntoMapa, type GeocodificadorInverso, type Punto
 import { coordenadasValidas } from '../geo/geometria.ts'
 import type { AlmacenPerfiles, FuentesDirectorio } from './puertos.ts'
 import { barriosDeUbicacion, catalogoVigente, oficiosVigentes } from '../catalogo/vigente.ts'
+import { ErrorFotoPerfil, prepararFotoPerfil, rutaFotoPerfil, type AlmacenFotosPerfil, type CodigoFoto, type FotoPerfil } from './foto.ts'
 
 export interface FilaAdminPrestador {
   id: string; tenantId: string; nombre: string; oficio: string; oficioLabel: string; zona: string | null; zonasCobertura: string[]
@@ -93,14 +94,24 @@ export interface UbicacionPrestador {
 // Caso de uso compartido por el directorio Web ("Buscar trabajador"), el asistente Web ("Buscar
 // servicios") y las herramientas del asistente de WhatsApp. Solo lee datos reales: si un prestador
 // no está aprobado o no tiene perfil visible, no aparece; nunca se completan datos faltantes.
+export type ResultadoFoto = { ok: true; photoUrl: string | null } | { ok: false; code: 'NOT_FOUND' | 'UNAVAILABLE' | 'RATE_LIMITED' | CodigoFoto }
+
+// A provider changes its photo rarely: a handful of uploads per hour is plenty.
+const SUBIDAS_FOTO_POR_HORA = 10
+const VENTANA_SUBIDAS_FOTO_MS = 60 * 60 * 1000
+const idPerfilValido = (id: unknown): id is string => typeof id === 'string' && /^[A-Za-z0-9-]{1,64}$/u.test(id)
+
 export class ServicioDirectorio {
   private readonly now: () => number
   private readonly newId: () => string
+  private readonly subidasDeFoto = new Map<string, number[]>()
 
   constructor(
     private readonly deps: {
       perfiles: AlmacenPerfiles
       fuentes: FuentesDirectorio
+      // Profile photos. Absent: no photo can be uploaded and no profile shows one.
+      fotos?: AlmacenFotosPerfil | null
       now?: () => number
       newId?: () => string
       // Reverse geocoder: only to MATCH existing areas when no polygon contains a saved point.
@@ -137,6 +148,7 @@ export class ServicioDirectorio {
       // Editing the profile never touches its map location (a separate, explicit operation).
       ...GEOGRAFIA_VACIA,
       ...(actual ? pickGeografia(actual) : {}),
+      fotoSha256: actual?.fotoSha256 ?? null,
       ...validacion.valor,
       creadoEn: actual?.creadoEn ?? ahora,
       actualizadoEn: ahora,
@@ -147,6 +159,55 @@ export class ServicioDirectorio {
       this.deps.fuentes.ubicacionIdentidadVerificada?.(context.tenantId) ?? Promise.resolve(null),
     ])
     return { ok: true, perfil: { ...proyectarPerfil(perfil, hechos, ahora, resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible } }
+  }
+
+  // ---- foto de perfil ---------------------------------------------------------------------------
+
+  // The provider's own photo: the profile ALWAYS comes from the session's tenant. The bytes are
+  // untrusted (see foto.ts); a new photo replaces the previous one.
+  async guardarMiFoto(tenantId: string, bytes: unknown): Promise<ResultadoFoto> {
+    const fotos = this.deps.fotos
+    if (!fotos) return { ok: false, code: 'UNAVAILABLE' }
+    const perfil = await this.deps.perfiles.porTenant(tenantId)
+    if (!perfil) return { ok: false, code: 'NOT_FOUND' }
+    const ahora = this.now()
+    const recientes = (this.subidasDeFoto.get(tenantId) ?? []).filter((momento) => ahora - momento < VENTANA_SUBIDAS_FOTO_MS)
+    if (recientes.length >= SUBIDAS_FOTO_POR_HORA) return { ok: false, code: 'RATE_LIMITED' }
+    let foto: ReturnType<typeof prepararFotoPerfil>
+    try {
+      foto = prepararFotoPerfil(bytes)
+    } catch (error) {
+      return { ok: false, code: error instanceof ErrorFotoPerfil ? error.code : 'PHOTO_CORRUPT' }
+    }
+    this.subidasDeFoto.set(tenantId, [...recientes, ahora])
+    await fotos.guardar({ ...foto, perfilId: perfil.id, actualizadaEn: ahora })
+    return { ok: true, photoUrl: rutaFotoPerfil(perfil.id, foto.sha256) }
+  }
+
+  async quitarMiFoto(tenantId: string): Promise<ResultadoFoto> {
+    const perfil = await this.deps.perfiles.porTenant(tenantId)
+    return perfil ? this.quitarFoto(perfil.id) : { ok: false, code: 'NOT_FOUND' }
+  }
+
+  // Platform administration (moderation): removes the photo of any profile by its public id.
+  async quitarFotoDePerfil(id: unknown): Promise<ResultadoFoto> {
+    const perfil = idPerfilValido(id) ? await this.deps.perfiles.porId(id) : null
+    return perfil ? this.quitarFoto(perfil.id) : { ok: false, code: 'NOT_FOUND' }
+  }
+
+  private async quitarFoto(perfilId: string): Promise<ResultadoFoto> {
+    if (!this.deps.fotos) return { ok: false, code: 'UNAVAILABLE' }
+    await this.deps.fotos.quitar(perfilId)
+    return { ok: true, photoUrl: null }
+  }
+
+  // The photo anyone may see: only of a VISIBLE profile and only the one the profile points to.
+  async fotoPublica(id: unknown): Promise<FotoPerfil | null> {
+    if (!this.deps.fotos || !idPerfilValido(id)) return null
+    const perfil = await this.deps.perfiles.porId(id)
+    if (!perfil || !perfil.visible || !perfil.fotoSha256) return null
+    const foto = await this.deps.fotos.obtener(perfil.id)
+    return foto && foto.sha256 === perfil.fotoSha256 ? foto : null
   }
 
   // ---- ubicación en el mapa (el prestador desde su sesión, el admin por id) --------------------

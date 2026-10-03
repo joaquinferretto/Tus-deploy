@@ -41,6 +41,12 @@ declare const styles: {
   readonly options: string
   readonly panel: string
   readonly panelTitle: string
+  readonly photoEditor: string
+  readonly photoEditorActions: string
+  readonly photoEditorBody: string
+  readonly photoEditorInput: string
+  readonly photoEditorPick: string
+  readonly photoEditorTitle: string
   readonly profession: string
   readonly profileGrid: string
   readonly profileHead: string

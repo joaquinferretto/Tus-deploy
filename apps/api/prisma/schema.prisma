@@ -2977,6 +2977,9 @@ model PerfilPublicoPrestador {
   barrioId               String?  @map("barrio_id")
   zonaId                 String?  @map("zona_id")
   ubicacionAsociacion    String?  @map("ubicacion_asociacion")
+  // Hash of the profile photo (fotos_perfil_prestador); null without one. 20261031100000.
+  fotoSha256             String?  @map("foto_sha256")
+  foto                   FotoPerfilPrestador?
   barrio             Barrio?        @relation(fields: [barrioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_barrio")
   zonaUbicacion      ZonaUbicacion? @relation(fields: [zonaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_zona")
   prestador          Prestador @relation(fields: [tenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfiles_publicos_prestador_prestador")
@@ -2994,6 +2997,22 @@ model PerfilPublicoPrestador {
   @@index([barrioId], map: "ix_perfiles_publicos_prestador_barrio")
   @@index([zonaId], map: "ix_perfiles_publicos_prestador_zona")
   @@map("perfiles_publicos_prestador")
+}
+
+// Foto de perfil del prestador: una por perfil, sin metadata, validada por magic bytes y
+// dimensiones (CHECKs en SQL). 20261031100000.
+model FotoPerfilPrestador {
+  perfilId           String   @id(map: "fotos_perfil_prestador_pkey") @map("perfil_id")
+  tipoMime           String   @map("tipo_mime")
+  tamanoBytes        Int      @map("tamano_bytes")
+  ancho              Int      @map("ancho")
+  alto               Int      @map("alto")
+  sha256             String   @map("sha256")
+  contenido          Bytes    @map("contenido")
+  fechaActualizacion DateTime @map("fecha_actualizacion")
+  perfil             PerfilPublicoPrestador @relation(fields: [perfilId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_fotos_perfil_prestador_perfil")
+
+  @@map("fotos_perfil_prestador")
 }
 
 // Fotos de solicitudes (hasta 2, sin metadata). 20261001100000.

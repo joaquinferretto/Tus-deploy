@@ -785,6 +785,19 @@ Relación con búsqueda y mapa: los barrios y zonas activos son los lugares que 
 
 `perfiles_publicos_prestador.oficio` es el servicio principal: FK compuesta `fk_perfiles_servicio_principal (id, oficio) → perfil_servicios (perfil_id, oficio_id)` `DEFERRABLE INITIALLY DEFERRED` (la aplicación escribe perfil y servicios en una transacción).
 
+Foto de perfil del prestador (`20261031100000_tus_foto_perfil_prestador`):
+
+| Tabla / columna | Tipo | Nulo | Propósito |
+|---|---|---|---|
+| `perfiles_publicos_prestador.foto_sha256` | `text` | NULL | Hash de la foto vigente (CHECK 64 hex). Lo escribe solo el almacén de fotos, en la misma transacción que los bytes; editar el perfil no lo toca. Con él se arma la ruta pública de la foto sin leer otra tabla. |
+| `fotos_perfil_prestador.perfil_id` | `text` | NOT NULL | PK y FK a `perfiles_publicos_prestador.id` (RESTRICT). Una fila por perfil: una foto nueva reemplaza a la anterior, no queda ninguna vieja. |
+| `fotos_perfil_prestador.tipo_mime` | `text` | NOT NULL | CHECK `image/jpeg` \| `image/png` \| `image/webp`. Es el tipo detectado por magic bytes, nunca el que declaró quien subió el archivo. |
+| `fotos_perfil_prestador.tamano_bytes`, `ancho`, `alto` | `integer` | NOT NULL | CHECK 1 a 2 MB e igual a `octet_length(contenido)`; 96 a 4096 píxeles por lado (leídos del encabezado de la imagen). |
+| `fotos_perfil_prestador.sha256` | `text` | NOT NULL | CHECK 64 hex. |
+| `fotos_perfil_prestador.contenido` | `bytea` | NOT NULL | La imagen saneada (sin EXIF/GPS/XMP ni texto). No hay nombre de archivo ni ruta en disco. |
+
+Se sirve solo la foto de un perfil **visible** (`GET /tus/v1/public/prestadores/:id/foto`).
+
 Ubicación del prestador en `perfiles_publicos_prestador` (DIR-06/DIR-07):
 
 | Columna | Tipo | Nulo | Propósito |

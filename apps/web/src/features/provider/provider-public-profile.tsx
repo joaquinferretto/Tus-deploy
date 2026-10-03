@@ -12,6 +12,7 @@ import { DirectoryRequestError, createDirectoryClient } from '../directory/direc
 import styles from '../directory/directory.module.css'
 import { useTusSession } from '../session/use-tus-session'
 import { ServicePicker } from '../catalog/service-picker'
+import { ProfilePhoto } from './profile-photo'
 
 const client = createDirectoryClient()
 const RETURN_TO = '/prestador/perfil-publico'
@@ -37,6 +38,7 @@ export function ProviderPublicProfile(): React.ReactNode {
   const [fields, setFields] = useState<string[]>([])
   const [message, setMessage] = useState('')
   const [publicId, setPublicId] = useState<string | null>(null)
+  const [photo, setPhoto] = useState<{ url: string | null; initials: string }>({ url: null, initials: '' })
 
   useEffect(() => {
     if (session.status === 'guest') window.location.replace(`/sign-in?returnTo=${encodeURIComponent(RETURN_TO)}`)
@@ -46,6 +48,7 @@ export function ProviderPublicProfile(): React.ReactNode {
         setCatalog(loadedCatalog)
         if (mine.profile) {
           setPublicId(mine.profile.id)
+          setPhoto({ url: mine.profile.photoUrl ?? null, initials: mine.profile.initials })
           setValues({
             displayName: mine.profile.displayName,
             professions: mine.profile.professions?.map((item) => item.id) ?? [mine.profile.profession.id],
@@ -124,6 +127,10 @@ export function ProviderPublicProfile(): React.ReactNode {
 
   return (
     <form className={authStyles.form} noValidate onSubmit={(event) => void save(event)}>
+      {/* The photo belongs to a saved profile: it appears once the profile exists. */}
+      {publicId ? (
+        <ProfilePhoto initials={photo.initials} onChange={(url) => setPhoto((current) => ({ ...current, url }))} photoUrl={photo.url} session={session.session} visible={values.visible} />
+      ) : null}
       <p className={authStyles.notice}>
         Esto es lo que ven los clientes en “Buscar trabajador”. No publiques teléfono, email ni dirección: solo zonas aproximadas. La verificación,
         los trabajos realizados y tus horarios los calcula TUS.

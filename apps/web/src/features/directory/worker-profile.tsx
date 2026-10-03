@@ -10,6 +10,7 @@ import type { CategoryId } from '../home/types'
 import { RequestForm } from '../requests/request-form'
 import { TurnoBooking, type TurnoElegido } from './turno-booking'
 import { useTusSession } from '../session/use-tus-session'
+import { Avatar } from './avatar'
 import { DAY_NAMES, DirectoryRequestError, createDirectoryClient } from './directory-client'
 import styles from './directory.module.css'
 import { ratingLabel } from './rating-label'
@@ -88,9 +89,7 @@ export function WorkerProfile({ id }: { id: string }): React.ReactNode {
         ← Volver a Buscar trabajador
       </Link>
       <div className={styles.profileHead}>
-        <span aria-hidden="true" className={`${styles.avatar} ${styles.avatarLarge}`}>
-          {worker.initials}
-        </span>
+        <Avatar initials={worker.initials} photoUrl={worker.photoUrl} size="lg" />
         <div>
           <h1 className={styles.title}>{worker.displayName}</h1>
           <p className={styles.profession}>

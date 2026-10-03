@@ -82,6 +82,7 @@ Fecha de corte baseline: 2026-09-30 (Auditoría previa a Fases Turnos / UX-UI / 
 | `GET` | `/tus/v1/public/oficios` | Public | Cualquiera | No | N/A | None | Global | Catálogo público de oficios y categorías activas. |
 | `GET` | `/tus/v1/public/prestadores` | Public | Cualquiera | No | N/A | Query params | Global | Listado de prestadores visibles para el mapa y directorio. Ubicación exacta filtrada si `mostrarUbicacionExacta = false`. |
 | `GET` | `/tus/v1/public/prestadores/:id` | Public | Cualquiera | No | N/A | Param ID | Global | Perfil público de un prestador visible. |
+| `GET` | `/tus/v1/public/prestadores/:id/foto` | Public | Cualquiera | No | Solo perfiles visibles (404 si no, o sin foto) | Param ID (`[A-Za-z0-9-]{1,64}`) | Global | Foto del perfil con `nosniff`, CSP `default-src 'none'; sandbox` y caché solo del navegador. |
 | `GET` | `/tus/v1/public/solicitudes` | Public | Cualquiera | No | N/A | Query params | Global | Solicitudes públicas abiertas. Oculta datos privados de contacto. |
 | `GET` | `/tus/v1/public/solicitudes/:id/imagenes/:orden` | Public | Cualquiera | No | N/A | Param ID + orden | Global | Entrega segura de imágenes de solicitudes públicas (MIME validado). |
 | `POST` | `/tus/v1/asistente/ayuda` | Public | Cualquiera | No | N/A | Zod | Global | Ayuda extractiva para usuarios sin sesión. |
@@ -118,6 +119,8 @@ Fecha de corte baseline: 2026-09-30 (Auditoría previa a Fases Turnos / UX-UI / 
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `GET` | `/tus/v1/prestador/perfil-publico` | Bearer / Cookie | Prestador | No | `tenantId` de sesión | None | Global | Obtiene el perfil comercial propio. |
 | `PUT` | `/tus/v1/prestador/perfil-publico` | Bearer / Cookie | Prestador | No | `tenantId` de sesión | Zod | Global | Edita perfil, zonas de cobertura, modalidad y servicios N:M. |
+| `PUT` | `/tus/v1/prestador/perfil-publico/foto` | Bearer / Cookie | Prestador (`tus:marketplace:write`) | No | `tenantId` de sesión (no hay id en la ruta ni en el cuerpo) | Cuerpo binario: tipo por magic bytes (JPEG/PNG/WebP), hasta 2 MB, 96 a 4096 px por lado, sin animación, metadatos quitados | Global + 10 subidas por hora por prestador | Sube o reemplaza la foto del perfil propio. |
+| `DELETE` | `/tus/v1/prestador/perfil-publico/foto` | Bearer / Cookie | Prestador (`tus:marketplace:write`) | No | `tenantId` de sesión | None | Global | Quita la foto del perfil propio. |
 | `GET` | `/tus/v1/prestador/ubicacion` | Bearer / Cookie | Prestador | No | `tenantId` de sesión | None | Global | Consulta ubicación y pin propio en el mapa. |
 | `PUT` | `/tus/v1/prestador/ubicacion` | Bearer / Cookie | Prestador | No | `tenantId` de sesión | Zod | Global | Actualiza coordenadas y toggle de ubicación exacta. |
 | `DELETE` | `/tus/v1/prestador/ubicacion` | Bearer / Cookie | Prestador | No | `tenantId` de sesión | None | Global | Elimina pin de mapa propio. |
@@ -185,6 +188,7 @@ Fecha de corte baseline: 2026-09-30 (Auditoría previa a Fases Turnos / UX-UI / 
 | `GET` | `/tus/v1/admin/prestadores/:id/ubicacion` | MFA Elevated | Admin | Sí | Plataforma | Param ID | Global | Consulta de pin administrativo de prestador. |
 | `PUT` | `/tus/v1/admin/prestadores/:id/ubicacion` | MFA Elevated | Admin | Sí | Plataforma | Zod | Global | Ajuste administrativo de ubicación geográfica. |
 | `DELETE` | `/tus/v1/admin/prestadores/:id/ubicacion` | MFA Elevated | Admin | Sí | Plataforma | Param ID | Global | Eliminación administrativa de pin de mapa. |
+| `DELETE` | `/tus/v1/admin/prestadores/:id/foto` | MFA Elevated | Admin | Sí | Plataforma | Param ID | Global | Quita la foto de un perfil (moderación). |
 | `GET` | `/tus/v1/admin/solicitudes` | MFA Elevated | Admin | Sí | Plataforma | Paginación server-side | Global | Supervisión de solicitudes públicas y directas. |
 | `GET` | `/tus/v1/admin/catalogo` | MFA Elevated | Admin | Sí | Plataforma | None | Global | Catálogo completo (oficios, categorías, zonas, barrios). |
 | `GET` | `/tus/v1/admin/catalogo/:entidad` | MFA Elevated | Admin | Sí | Plataforma | Paginación server-side | Global | Listado paginado de elementos de catálogo. |
