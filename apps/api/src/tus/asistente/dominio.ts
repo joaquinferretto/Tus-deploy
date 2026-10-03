@@ -106,6 +106,24 @@ export interface SenaVerificableAsistente {
   estado: 'pending' | 'paid'
 }
 
+// TUS-WHATSAPP-MULTIMODAL-02: any payment of the client that a receipt may be about: a deposit of
+// a turno or the deposit/balance of a work. Listed by the backend from the client's OWN turnos and
+// works (never from a receipt); `ref` is the turno reference or `work:<workId>`.
+export interface PagoVerificableAsistente {
+  ref: string
+  kind: 'turno' | 'trabajo'
+  // Which part of a work (null for a turno's deposit).
+  part: 'sena' | 'saldo' | 'total' | null
+  providerName: string
+  service: string | null
+  startsAt: string | null
+  amountMinor: string
+  currency: string
+  estado: 'pending' | 'paid'
+  // Mercado Pago's payment id when TUS already knows it for this very payment.
+  operationRef: string | null
+}
+
 // What the BACKEND found out about a deposit's payment, read from Mercado Pago. The assistant only
 // words it: nothing in the conversation (text, audio, image, receipt) can produce `confirmed`.
 export type VerificacionSenaAsistente =
@@ -123,6 +141,8 @@ export interface PuertoDominioAsistente {
   // Deposits of the client's own upcoming turnos that are pending or already paid, and the real
   // state of one deposit's payment (a turno of another account does not exist for it).
   senasVerificables?(context: TusAuthenticatedTenantContext): Promise<SenaVerificableAsistente[]>
+  // Deposits of turnos plus the open deposit/balance of the client's works.
+  pagosVerificables?(context: TusAuthenticatedTenantContext): Promise<PagoVerificableAsistente[]>
   verificarSena?(context: TusAuthenticatedTenantContext, ref: string): Promise<VerificacionSenaAsistente>
   // The same query for the payment (deposit or balance) of a WORK of the client: finance reads Mercado
   // Pago and applies it like the webhook does. Only the customer of the work can ask.
@@ -451,6 +471,37 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
       .sort((a, b) => a.inicio.localeCompare(b.inicio))
       .slice(0, 5)
       .map((turno) => ({ ref: turno.id, providerName: turno.prestadorNombre, service: turno.tarifaNombre ?? turno.oficioNombre ?? null, startsAt: turno.inicio, amount: turno.sena!.monto, estado: turno.sena!.estado as 'pending' | 'paid' }))
+  }
+
+  async pagosVerificables(context: TusAuthenticatedTenantContext): Promise<PagoVerificableAsistente[]> {
+    const turnos: PagoVerificableAsistente[] = (await this.senasVerificables(context)).map((sena) => ({
+      ref: sena.ref,
+      kind: 'turno',
+      part: null,
+      providerName: sena.providerName,
+      service: sena.service,
+      startsAt: sena.startsAt,
+      amountMinor: String(Math.round(sena.amount * 100)),
+      currency: 'ARS',
+      estado: sena.estado,
+      operationRef: null,
+    }))
+    const finanzas = this.application.serviceFinance
+    if (!finanzas) return turnos
+    // Works of the client (the order of a turno is not one: its deposit is already listed above).
+    const trabajos: PagoVerificableAsistente[] = []
+    const lista = await this.trabajos(context, 'client').catch(() => [])
+    for (const trabajo of lista.filter((item) => !item.hasReservation).slice(0, 10)) {
+      const resumen = await finanzas.consultarFinanzasTrabajo({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId, trabajoId: trabajo.workId }).catch(() => null)
+      const partes = resumen?.parts ?? (resumen?.obligation ? [{ obligation: resumen.obligation, payments: resumen.payments }] : [])
+      for (const parte of partes) {
+        // Open and with a checkout started: a payment that may already have been made.
+        if (parte.obligation.status !== 'pending_payment' || parte.payments.length === 0) continue
+        const ultima = [...parte.payments].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+        trabajos.push({ ref: `work:${trabajo.workId}`, kind: 'trabajo', part: parte.obligation.part ?? 'total', providerName: '', service: trabajo.serviceName, startsAt: null, amountMinor: parte.obligation.amountMinor, currency: parte.obligation.currency, estado: 'pending', operationRef: ultima?.providerReference ?? null })
+      }
+    }
+    return [...turnos, ...trabajos]
   }
 
   async verificarPagoTrabajo(context: TusAuthenticatedTenantContext, workId: string) {

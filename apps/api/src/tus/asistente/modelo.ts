@@ -96,7 +96,18 @@ export interface EstadoConversacional {
   // TUS-WHATSAPP-MULTIMODAL-01: bookkeeping of "ya pagué" / receipts. Never authoritative: it only
   // paces the questions to Mercado Pago (the backend asks it again every time) and remembers which
   // deposits were offered to choose from. It holds no amount, no status and no account.
-  paymentCheck?: { since: number; count: number; lastAt: number; contextAt?: number | null; choosing?: { refs: string[]; at: number } | null } | null
+  paymentCheck?: {
+    since: number
+    count: number
+    lastAt: number
+    contextAt?: number | null
+    choosing?: { refs: string[]; at: number } | null
+    // TUS-WHATSAPP-MULTIMODAL-02: receipt analyses of the last hour and the receipts already read
+    // (by Meta's hash), so the same picture is never downloaded or read twice. Only amount, currency
+    // and date, never a name, an account or an operation number. Not authoritative.
+    analisis?: { since: number; count: number } | null
+    receipts?: { sha256: string; at: number; amountMinor: string | null; currency: 'ARS' | 'USD' | null; occurredAt: string | null }[] | null
+  } | null
   // The last reply was a price (ms): "¿y con Melina?" right after is about the price too.
   priceAt?: number | null
   lowConfidenceCount: number

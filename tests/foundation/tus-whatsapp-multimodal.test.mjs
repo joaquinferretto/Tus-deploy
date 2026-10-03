@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { SERVICE_SETUP, runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
-import { WHATSAPP_SETUP } from './fixtures/whatsapp.mjs'
+import { runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
+import { MULTIMODAL_SETUP } from './fixtures/whatsapp-multimodal.mjs'
 
 // TUS-WHATSAPP-MULTIMODAL-01: voice notes, receipts and "ya pagué" in the WhatsApp assistant.
 //
@@ -14,100 +14,7 @@ import { WHATSAPP_SETUP } from './fixtures/whatsapp.mjs'
 //
 // Clock of the fixture: Friday 2026-09-25, 09:00 in Argentina. "mañana" is Saturday 26.
 
-const SETUP = `${SERVICE_SETUP}${WHATSAPP_SETUP}
-  Date.now = waClock
-  const { catalogoVigente, establecerCatalogo } = await import('./apps/api/src/tus/catalogo/vigente.ts')
-  const catalogo = catalogoVigente()
-  establecerCatalogo({ ...catalogo, oficios: [...catalogo.oficios, { id: 'masaje', categoriaId: null, nombre: 'Masaje', profesion: 'Masajista', slug: 'masaje', descripcion: null, icono: 'herramienta', activo: true, orden: 20, sinonimos: ['masaje', 'masajes', 'masajista', 'contractura'] }] })
-  const iso = (dia, hora) => new Date(dia + 'T' + hora + ':00.000-03:00').toISOString()
-  const cabe = (hora, t) => !t || (t.kind === 'exact' ? hora === t.from : t.kind === 'from' ? hora >= t.from : t.kind === 'until' ? hora < t.to : hora >= t.from && hora < t.to)
-  const TARIFA = [{ id: 't-unica', name: 'Masaje descontracturante', durationMinutes: 60, price: 30000 }]
-  const AGENDA = [
-    { id: 'perfil-melina', name: 'Melina', area: 'Centro', verified: true, jobs: 9, turnos: true, horas: ['17:00', '18:00', '19:00'], tarifas: TARIFA, base: null },
-    { id: 'perfil-sabrina', name: 'Sabrina', area: 'Centro', verified: true, jobs: 5, turnos: true, horas: ['16:00', '20:00'], tarifas: TARIFA, base: null },
-  ]
-  // What the backend knows about each deposit's payment: set by the test, never by the assistant.
-  const dom = { consultas: [], senas: new Map(), resultados: new Map(), verificaciones: [], lanzar: new Set(), pagos: [] }
-  const dominio = {
-    esPrestador: async () => false,
-    buscarServicios: async () => [],
-    servicio: async () => null,
-    solicitudes: async () => [],
-    trabajos: async () => [],
-    buscarPrestadores: async (filter) => ({ profession: filter.profession, providers: [] }),
-    buscarDisponibilidad: async (consulta) => {
-      dom.consultas.push(consulta)
-      const providers = AGENDA.map((p) => {
-        const libres = p.horas.map((h) => [h, iso(consulta.day, h)])
-        const matches = libres.filter(([h]) => cabe(h, consulta.time)).map(([, i]) => i)
-        return { providerId: p.id, name: p.name, profession: 'Masajista', area: p.area, verified: p.verified, completedJobs: p.jobs, takesAppointments: p.turnos, durationMinutes: 60, tariffs: p.tarifas, matches, nearby: matches.length === 0 && consulta.time ? libres.slice(0, 3).map(([, i]) => i) : [] }
-      })
-      return { profession: consulta.profession, outcome: providers.some((p) => p.matches.length) ? 'matches' : 'nearby', zoneRelaxed: false, providers }
-    },
-    servicioDeTurno: async (providerId) => {
-      const p = AGENDA.find((item) => item.id === providerId)
-      if (!p) return null
-      return { serviceName: 'Masaje', options: p.tarifas.map((t) => ({ tariffId: t.id, name: t.name, durationMinutes: t.durationMinutes, price: t.price, deposit: 15000 })) }
-    },
-    nombrePrestador: async (providerId) => AGENDA.find((item) => item.id === providerId)?.name ?? null,
-    reservarTurno: async () => { throw Object.assign(new Error('not used'), { code: 'NOT_USED' }) },
-    senasPendientes: async () => [],
-    pagarSena: async (context, ref) => { dom.pagos.push([context.subjectId, ref]); return { url: 'https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=pref-' + ref, amount: 15000 } },
-    misTurnos: async () => [],
-    senasVerificables: async (context) => (dom.senas.get(context.subjectId) ?? []).map((s) => ({ ...s })),
-    verificarSena: async (context, ref) => {
-      dom.verificaciones.push([context.subjectId, ref])
-      if (dom.lanzar.has(ref)) throw new Error('mercado pago down')
-      return dom.resultados.get(ref) ?? { estado: 'not_found' }
-    },
-  }
-  const personas = new Map([['12345678', { accountId: 'customer-user', tenantId: customer.tenantId, firstName: 'Juan Ignacio', lastName: 'Mumbach', displayName: 'Juan Ignacio Mumbach' }]])
-  const identidades = { buscarPorDocumento: async (tipo, numero) => personas.get(numero) ?? null }
-  const cuentas = { ...accountResolver, contextoDeCuenta: async (accountId, correlationId) => { const cuenta = accounts.get(accountId); return cuenta ? accountResolver.contexto(accountId, cuenta.tenantId, correlationId) : null } }
-
-  // The speech-to-text port: the test says what the provider answers.
-  // Both ports: the plain one (text only) and the one that also reports confidence (what the real adapter has).
-  const stt = { llamadas: [], proxima: 'hola',
-    transcribirDetallado: async (audio) => { stt.llamadas.push({ mime: audio.mimeType, bytes: audio.bytes.length }); const salida = stt.proxima; if (salida instanceof Error) throw salida; if (salida === 'colgar') return new Promise(() => {}); return typeof salida === 'string' ? { text: salida, confianza: 'desconocida' } : salida },
-    transcribir: async (audio) => (await stt.transcribirDetallado(audio)).text }
-  const env = { ...waEnv, WHATSAPP_STT_MAX_BYTES: '4096', WHATSAPP_STT_TIMEOUT_MS: '1000', WHATSAPP_STT_MAX_SECONDS: '60', WHATSAPP_MEDIA_MAX_PER_HOUR: '6', WHATSAPP_INBOUND_MAX_PER_MINUTE: '120' }
-  const modulo = crearModuloWhatsapp({ env, transaction: waTx, accounts: cuentas, domain: dominio, knowledgeIndex, whatsapp: fakeWa, chat: null, embeddings, transcriptor: stt, now: waClock, identidades, metric: (name, fields) => metrics.push({ name, ...fields }) })
-  const cola = modulo.crearWorker({ owner: 'mm' })
-  const descargas = []
-  const descargaOriginal = fakeWa.downloadMedia.bind(fakeWa)
-  fakeWa.downloadMedia = async (id, limites) => { descargas.push(id); return descargaOriginal(id, limites) }
-
-  // An Ogg/Opus voice note of the given length (real container: header page and last page).
-  function oggOpus(segundos) {
-    const cabeza = Buffer.alloc(19)
-    cabeza.write('OpusHead', 0, 'latin1'); cabeza[8] = 1; cabeza[9] = 1; cabeza.writeUInt16LE(312, 10); cabeza.writeUInt32LE(48000, 12)
-    const pagina = (flags, granule, payload) => { const h = Buffer.alloc(28); h.write('OggS', 0, 'latin1'); h[5] = flags; h.writeBigInt64LE(BigInt(granule), 6); h.writeUInt32LE(1, 14); h[26] = 1; h[27] = payload.length; return Buffer.concat([h, payload]) }
-    return Buffer.concat([pagina(2, 0, cabeza), pagina(4, Math.round(segundos * 48000) + 312, Buffer.alloc(40, 1))])
-  }
-  let mediaSeq = 0
-  const nuevoMedia = (mimeType, bytes) => { mediaSeq += 1; const id = '55500' + String(mediaSeq).padStart(4, '0'); fakeWa.media.set(id, { mimeType, bytes }); return id }
-  const cuerpoAudio = (id, mime = 'audio/ogg; codecs=opus') => ({ type: 'audio', body: { audio: { id, mime_type: mime, sha256: 'hash-' + id } } })
-  const cuerpoImagen = (caption) => { const id = nuevoMedia('image/jpeg', Buffer.from('fake-jpeg-bytes')); return { type: 'image', body: { image: { id, mime_type: 'image/jpeg', sha256: 'hash-' + id, ...(caption ? { caption } : {}) } } } }
-  const cuerpoDocumento = (caption) => { const id = nuevoMedia('application/pdf', Buffer.from('%PDF-1.4 fake')); return { type: 'document', body: { document: { id, mime_type: 'application/pdf', filename: 'comprobante.pdf', sha256: 'hash-' + id, ...(caption ? { caption } : {}) } } } }
-
-  const textosEnviados = () => fakeWa.sent.map((x) => x.message.text ?? x.message.type)
-  async function turno(waId, text, extra, avance = 20000) {
-    const antes = fakeWa.sent.length
-    const resultado = await modulo.ingreso.procesar(parsearWebhookMeta(inbound(waId, text, extra), PHONE_ID), 'corr-mm')
-    for (let i = 0; i < 5; i += 1) if ((await cola.procesarSiguiente()).outcome === 'idle') break
-    waAdvance(avance)
-    return { resultado, textos: fakeWa.sent.slice(antes).map((x) => x.message.text ?? x.message.type) }
-  }
-  // A voice note of a person: the STT provider hears "frase".
-  async function voz(waId, frase, opciones = {}) {
-    stt.proxima = frase
-    const id = nuevoMedia(opciones.mimeType ?? 'audio/ogg', opciones.bytes ?? oggOpus(opciones.segundos ?? 4))
-    return turno(waId, '', cuerpoAudio(id, opciones.mimeDeclarado))
-  }
-  const conversacionDe = async (waId) => { const c = await contactOf(waId); return c ? waStore.repositorios().conversaciones.activaDeContacto(c.contactId) : null }
-  const mensajesDe = async (waId) => { const c = await contactOf(waId); return [...waStore.state.mensajes.values()].filter((m) => m.contactId === c.contactId) }
-  async function vincular(waId) { await turno(waId, 'hola'); await linkContact(waId, 'customer-user') }
-`
+const SETUP = MULTIMODAL_SETUP
 
 test('voice notes: the transcript enters the SAME conversation as typed text (search, context, asap, any, professional, time); corrupt, large, wrong, slow or failing audio is answered naturally without inventing; duplicates and floods are bounded', () => {
   const r = runTypeScriptScenario(`${SETUP}
@@ -311,8 +218,8 @@ test('"ya pagué" and receipts: the backend asks Mercado Pago and words what it 
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.aprobado, { textos: ['Sí, Mercado Pago confirmó tu seña de $15.000. Tu turno con Melina quedó confirmado.'], consultas: [['customer-user', 'res-mel']] })
-  assert.equal(r.pendiente, 'Encontré el pago, pero Mercado Pago todavía lo muestra pendiente. Cuando se acredite se confirma tu turno.')
-  assert.equal(r.noEncontrado, 'Todavía no encuentro un pago acreditado para esa seña. Si lo hiciste recién, puede tardar un momento en aparecer.')
+  assert.equal(r.pendiente, 'Encontré el pago correspondiente, pero Mercado Pago todavía lo muestra pendiente. Cuando se acredite se confirma tu turno.')
+  assert.equal(r.noEncontrado, 'Todavía no encuentro un pago acreditado para esta seña. Si lo hiciste recién, puede tardar un momento en aparecer.')
   assert.match(r.rechazado, /No pude confirmar ese pago en Mercado Pago: figura rechazado o cancelado/u)
   assert.match(r.cuarentena, /no coincide con lo esperado para esta seña, así que no lo puedo aplicar/u)
   assert.equal(r.caido, 'No pude consultar Mercado Pago en este momento. Probá de nuevo en unos minutos.')
@@ -321,14 +228,14 @@ test('"ya pagué" and receipts: the backend asks Mercado Pago and words what it 
   assert.deepEqual(r.comprobanteValido, ['Sí, Mercado Pago confirmó tu seña de $15.000. Tu turno con Melina quedó confirmado.'], 'confirmed only because the backend said so')
   assert.equal(r.sinPago.comprobante[0], 'Recibí el comprobante, pero todavía no pude relacionarlo con un pago confirmado de Mercado Pago.')
   assert.match(r.sinPago.foto[0], /^Recibí la foto\. Por ahora la guardo para el equipo/u)
-  assert.match(r.sinPago.texto[0], /No encuentro señas de turnos pendientes de pago en tu cuenta\. Si el pago es de un trabajo, decime cuál y lo reviso\./u)
+  assert.match(r.sinPago.texto[0], /No encuentro pagos pendientes en tu cuenta\. Si el pago es de otro trabajo, decime cuál y lo reviso\./u)
   assert.equal(r.sinPago.consultas, 0)
   assert.deepEqual(r.yaAcreditada.consultas, 0)
   assert.match(r.yaAcreditada.textos[0], /ya figura acreditada por Mercado Pago/u)
   assert.equal(r.dos.consultasAntesDeElegir, 0, 'two deposits: nothing is asked before the person chooses')
-  assert.match(r.dos.pregunta[0], /Tenés 2 señas pendientes:\n1\) Melina[^\n]*\n2\) Sabrina[^\n]*\n¿De cuál es el pago\?/u)
+  assert.match(r.dos.pregunta[0], /Tenés 2 pagos pendientes:\n1\) Melina[^\n]*\n2\) Sabrina[^\n]*\n¿A cuál corresponde el pago\? Decime el nombre del profesional o el servicio\./u)
   assert.deepEqual(r.dos.consultas, [['customer-user', 'res-sab']], 'only the deposit named is asked')
-  assert.equal(r.dos.respuesta[0], 'Encontré el pago, pero Mercado Pago todavía lo muestra pendiente. Cuando se acredite se confirma tu turno.')
+  assert.equal(r.dos.respuesta[0], 'Encontré el pago correspondiente, pero Mercado Pago todavía lo muestra pendiente. Cuando se acredite se confirma tu turno.')
   assert.deepEqual(r.idAjeno.consultas, [['customer-user', 'res-mel']], 'an operation number typed by the person is never looked up')
   assert.equal(r.voz.textos[0], 'Sí, Mercado Pago confirmó tu seña de $15.000. Tu turno con Melina quedó confirmado.')
   assert.equal(r.voz.consultas, 1)
@@ -339,7 +246,7 @@ test('"ya pagué" and receipts: the backend asks Mercado Pago and words what it 
   assert.equal(r.desconocido.consultasSinCuenta, 0)
   assert.deepEqual(r.desconocido.consultas, [['customer-user', 'res-mel']])
   assert.equal(r.desconocido.identificado.at(-1), 'Sí, Mercado Pago confirmó tu seña de $15.000. Tu turno con Melina quedó confirmado.')
-  assert.deepEqual(r.imagenDuplicada, { una: 1, mismoWamid: [1, 0], nuevoWamid: ['Encontré el pago, pero Mercado Pago todavía lo muestra pendiente. Cuando se acredite se confirma tu turno.'], consultas: 2 }, 'a redelivered receipt is processed once; the same picture again is a new, paced question that still confirms nothing')
+  assert.deepEqual(r.imagenDuplicada, { una: 1, mismoWamid: [1, 0], nuevoWamid: ['Encontré el pago correspondiente, pero Mercado Pago todavía lo muestra pendiente. Cuando se acredite se confirma tu turno.'], consultas: 2 }, 'a redelivered receipt is processed once; the same picture again is a new, paced question that still confirms nothing')
   assert.equal(r.noEsPagoRealizado.consultas, 0, 'a question about receipts or about paying is not a payment claim')
   assert.deepEqual(r.afirmaConfirmacion, [], 'no reply to a non-confirmed payment says it is confirmed')
   assert.equal(r.consultasTotales, true)

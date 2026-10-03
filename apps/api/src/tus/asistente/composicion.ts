@@ -34,6 +34,8 @@ import {
   type ResolutorCuentaAsistente,
 } from './orquestador.ts'
 import { leerLimitesAudio } from './audio.ts'
+import { AnalizadorComprobanteOcr, AnalizadorComprobanteVision, ExtractorTextoPdfPoppler, ModeloVisionComprobanteGroq, ServicioComprobantes, leerLimitesComprobante } from './comprobantes.ts'
+import { MotorOcrTesseract } from '../identidad/lectores.ts'
 import { WhatsappTemplateService } from './plantillas.ts'
 import type { PuertoTransaccionAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
 import { ServicioSoporteWhatsapp } from './soporte.ts'
@@ -140,6 +142,8 @@ export function crearModuloWhatsapp(input: {
   chat?: ChatProvider | null
   embeddings?: EmbeddingProvider | null
   transcriptor?: Transcriptor | null
+  // Reads payment receipts (tests inject a double; otherwise built from WHATSAPP_RECEIPT_*).
+  comprobantes?: ServicioComprobantes | null
   now?: () => number
   metric?: Metrica
   log?: (event: string, fields: Record<string, unknown>) => void
@@ -185,6 +189,26 @@ export function crearModuloWhatsapp(input: {
             timeoutMs: limitesAudio.timeoutMs,
           })
         : null
+  // TUS-WHATSAPP-MULTIMODAL-02: receipts are read only when explicitly enabled. Local OCR keeps
+  // everything inside TUS; 'vision' sends the image to Groq. PDFs are read from their text layer
+  // with pdftotext (no shell, no temp files).
+  const limitesComprobante = leerLimitesComprobante(env)
+  const comprobantes: ServicioComprobantes | null =
+    input.comprobantes !== undefined
+      ? input.comprobantes
+      : limitesComprobante.enabled && (limitesComprobante.analyzer === 'ocr' || groqPool)
+        ? new ServicioComprobantes(
+            whatsapp,
+            limitesComprobante.analyzer === 'vision'
+              ? new AnalizadorComprobanteVision(
+                  new ModeloVisionComprobanteGroq({ pool: groqPool!, model: env['GROQ_VISION_MODEL']?.trim() || undefined, responseFormat: env['GROQ_VISION_RESPONSE_FORMAT']?.trim() === 'json_schema' ? 'json_schema' : 'json_object', timeoutMs: limitesComprobante.timeoutMs }),
+                  new ExtractorTextoPdfPoppler(env['WHATSAPP_RECEIPT_PDFTOTEXT']?.trim() || 'pdftotext'),
+                  limitesComprobante
+                )
+              : new AnalizadorComprobanteOcr(new MotorOcrTesseract(env['TESSERACT_LANG_PATH']?.trim() ? { langPath: env['TESSERACT_LANG_PATH']!.trim() } : {}), new ExtractorTextoPdfPoppler(env['WHATSAPP_RECEIPT_PDFTOTEXT']?.trim() || 'pdftotext'), limitesComprobante),
+            limitesComprobante
+          )
+        : null
   const embeddings =
     input.embeddings !== undefined ? input.embeddings : crearProveedorEmbeddings(env)
   const knowledge = input.knowledgeIndex
@@ -212,6 +236,8 @@ export function crearModuloWhatsapp(input: {
     knowledge,
     transcriptor,
     audio: limitesAudio,
+    comprobantes,
+    limitesComprobante,
     limits: limits.asistente,
     now,
     ...(input.metric ? { metric: input.metric } : {}),

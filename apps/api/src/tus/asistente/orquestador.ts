@@ -4,7 +4,8 @@ import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './c
 import { DIAS_BUSQUEDA_PRIMERA, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, elegirOferta, horaLocal, ofertasDeResultado, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDisponibilidad, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type OfertasMostradas } from './busqueda.ts'
 import { oficio } from '../directorio/oficios.ts'
 import { formatearPesos } from '@factory/contracts'
-import type { DisponibilidadNecesidad, PuertoDominioAsistente, SenaVerificableAsistente, VerificacionSenaAsistente } from './dominio.ts'
+import type { DisponibilidadNecesidad, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
+import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
 import { BOTONES_SOLICITUD, elegirServicio, elegirServicioPorNombre, enlaceRegistro, fechaLarga, horaCorta, preguntaServicio, resumenSolicitud, retornoDeSolicitud, sinIdentificadores, textoPrecio, type OpcionServicio } from './solicitud-turno.ts'
 import { ErrorChat, type ChatProvider, type MensajeChat, type Transcriptor } from './groq.ts'
@@ -38,6 +39,7 @@ import {
   type ConfirmacionAsistente,
   type ContactoWhatsapp,
   type ConversacionWhatsapp,
+  type EstadoConversacional,
   type MensajeConversacion,
   type SolicitudEnCurso,
 } from './modelo.ts'
@@ -179,6 +181,10 @@ export interface DependenciasOrquestador {
   transcriptor: Transcriptor | null
   // Speech-to-text limits (size, timeout, duration, formats); defaults when absent.
   audio?: Partial<LimitesAudio>
+  // TUS-WHATSAPP-MULTIMODAL-02: reads a payment receipt (image/PDF) as untrusted evidence, only to
+  // choose among the client's own payments. Absent or disabled: a receipt is just a hint.
+  comprobantes?: ServicioComprobantes | null
+  limitesComprobante?: Partial<LimitesComprobante>
   limits?: Partial<LimitesAsistente>
   now?: () => number
   metric?: Metrica
@@ -208,37 +214,49 @@ function conLimiteDeTiempo<T>(promesa: Promise<T>, ms: number): Promise<T> {
 
 const sinAcentos = (value: string): string => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
 
-// The deposit a person names ("la de Melina", "la segunda"): exactly one candidate, or null (asked again).
-function elegirSenaPorTexto(candidatas: SenaVerificableAsistente[], text: string): SenaVerificableAsistente | null {
+const dinero = (minor: string): string => formatearPesos(Number(minor) / 100)
+
+const aCandidato = (pago: PagoVerificableAsistente): PagoCandidato => ({ ref: pago.ref, amountMinor: pago.amountMinor, currency: pago.currency, startsAt: pago.startsAt, providerName: pago.providerName, service: pago.service, operationRef: pago.operationRef })
+
+function etiquetaDePago(pago: PagoVerificableAsistente): string {
+  if (pago.kind === 'turno') {
+    const inicio = new Date(pago.startsAt!)
+    return `${pago.providerName}${pago.service ? ` (${pago.service})` : ''}, ${fechaLarga(inicio)} a las ${horaCorta(inicio)}, seña de ${dinero(pago.amountMinor)}`
+  }
+  return `Trabajo de ${pago.service ?? 'un servicio'}, ${pago.part === 'saldo' ? 'saldo' : 'seña'} de ${dinero(pago.amountMinor)}`
+}
+
+// "la primera", "la 2": the person answers the list this flow showed. Names and services are read
+// by the correlation, not here.
+function ordinalDe(text: string, candidatas: PagoVerificableAsistente[]): PagoVerificableAsistente | null {
   const plano = sinAcentos(text)
-  const palabras = (value: string) => sinAcentos(value).split(/[^a-z0-9ñ]+/u).filter((palabra) => palabra.length >= 3)
-  const nombradas = candidatas.filter((sena) => palabras(sena.providerName).some((palabra) => new RegExp(`\\b${palabra}\\b`, 'u').test(plano)))
-  if (nombradas.length === 1) return nombradas[0]!
-  if (nombradas.length > 1) return null
   const orden = /\b(?:primer[ao]?|1)\b/u.test(plano) ? 0 : /\b(?:segund[ao]?|2)\b/u.test(plano) ? 1 : /\b(?:tercer[ao]?|3)\b/u.test(plano) ? 2 : -1
   return orden >= 0 ? (candidatas[orden] ?? null) : null
 }
 
 // What the backend found, in words. A receipt is acknowledged but never counts: only `confirmed`
-// (Mercado Pago's own report accepted by the backend) says the deposit is paid.
-function textoDeVerificacion(verificacion: VerificacionSenaAsistente, sena: SenaVerificableAsistente, hayComprobante: boolean): string {
+// (Mercado Pago's own report accepted by the backend) says the payment is made.
+function textoDeVerificacion(verificacion: VerificacionSenaAsistente, pago: PagoVerificableAsistente, hayComprobante: boolean): string {
+  const esTrabajo = pago.kind === 'trabajo'
+  const que = esTrabajo ? 'este pago' : 'esta seña'
   switch (verificacion.estado) {
     case 'confirmed':
+      if (esTrabajo) return `Sí, Mercado Pago confirmó ${pago.part === 'saldo' ? 'el saldo' : 'la seña'} de ${formatearPesos(verificacion.amount)} del trabajo de ${pago.service ?? 'servicio'}.`
       return verificacion.turnoConfirmado
-        ? `Sí, Mercado Pago confirmó tu seña de ${formatearPesos(verificacion.amount)}. Tu turno con ${sena.providerName} quedó confirmado.`
-        : `Mercado Pago confirmó tu pago de ${formatearPesos(verificacion.amount)}, pero tu turno con ${sena.providerName} no figura confirmado. Revisalo en "Mis turnos" y, si algo no cierra, escribile al equipo de TUS.`
+        ? `Sí, Mercado Pago confirmó tu seña de ${formatearPesos(verificacion.amount)}. Tu turno con ${pago.providerName} quedó confirmado.`
+        : `Mercado Pago confirmó tu pago de ${formatearPesos(verificacion.amount)}, pero tu turno con ${pago.providerName} no figura confirmado. Revisalo en "Mis turnos" y, si algo no cierra, escribile al equipo de TUS.`
     case 'pending':
-      return 'Encontré el pago, pero Mercado Pago todavía lo muestra pendiente. Cuando se acredite se confirma tu turno.'
+      return `Encontré el pago correspondiente, pero Mercado Pago todavía lo muestra pendiente. ${esTrabajo ? 'Cuando se acredite se registra solo.' : 'Cuando se acredite se confirma tu turno.'}`
     case 'not_approved':
-      return 'No pude confirmar ese pago en Mercado Pago: figura rechazado o cancelado. Si querés, te paso de nuevo el link para pagar la seña.'
+      return `No pude confirmar ese pago en Mercado Pago: figura rechazado o cancelado.${esTrabajo ? '' : ' Si querés, te paso de nuevo el link para pagar la seña.'}`
     case 'quarantined':
-      return 'Encontré un pago en Mercado Pago, pero no coincide con lo esperado para esta seña, así que no lo puedo aplicar. Lo va a revisar el equipo de TUS.'
+      return `Encontré un pago en Mercado Pago, pero no coincide con lo esperado para ${que}, así que no lo puedo aplicar. Lo va a revisar el equipo de TUS.`
     case 'unavailable':
       return 'No pude consultar Mercado Pago en este momento. Probá de nuevo en unos minutos.'
     default:
       return hayComprobante
         ? 'Recibí el comprobante, pero no pude confirmar ese pago en Mercado Pago. Un comprobante no alcanza: el pago lo confirma Mercado Pago. Si lo hiciste recién, puede tardar un momento en aparecer.'
-        : 'Todavía no encuentro un pago acreditado para esa seña. Si lo hiciste recién, puede tardar un momento en aparecer.'
+        : `Todavía no encuentro un pago acreditado para ${que}. Si lo hiciste recién, puede tardar un momento en aparecer.`
   }
 }
 
@@ -1307,7 +1325,7 @@ export class OrquestadorConversacion {
     correlationId: string
   ): Promise<MensajeSaliente[] | null> {
     const domain = this.deps.domain
-    if (typeof domain.senasVerificables !== 'function' || typeof domain.verificarSena !== 'function') return null
+    if (typeof domain.verificarSena !== 'function' || (typeof domain.pagosVerificables !== 'function' && typeof domain.senasVerificables !== 'function')) return null
     const state = turn.conversation.state
     const conversationId = turn.conversation.conversationId
     const ahora = this.now()
@@ -1346,59 +1364,155 @@ export class OrquestadorConversacion {
     turn.intencion = 'pago'
     turn.canal.evento?.({ type: 'routing', intent: 'pago' })
 
-    const senas = await domain.senasVerificables(cuenta).catch(() => null)
-    if (!senas) return responder('No pude consultar tus pagos en este momento. Probá de nuevo en unos minutos.')
+    // The payments of THIS client: the only ones a receipt can ever be matched with.
+    const pagos = await this.pagosDeLaCuenta(cuenta)
+    if (!pagos) return responder('No pude consultar tus pagos en este momento. Probá de nuevo en unos minutos.')
     // A picture that is not about a payment (no words, no payment in progress): the old answer.
-    if (hayComprobante && !dicePago && !esperando && !eligiendo && !contextoPago && senas.length === 0) return null
-    const pendientes = senas.filter((sena) => sena.estado === 'pending')
-    const pagadas = senas.filter((sena) => sena.estado === 'paid')
+    if (hayComprobante && !dicePago && !esperando && !eligiendo && !contextoPago && pagos.length === 0) return null
+    const pendientes = pagos.filter((pago) => pago.estado === 'pending')
+    const pagadas = pagos.filter((pago) => pago.estado === 'paid')
 
     if (pendientes.length === 0) {
       if (pagadas.length > 0) {
-        const sena = pagadas[0]!
-        const inicio = new Date(sena.startsAt)
-        return responder(`Tu seña de ${formatearPesos(sena.amount)} con ${sena.providerName} para el ${fechaLarga(inicio)} a las ${horaCorta(inicio)} ya figura acreditada por Mercado Pago. No tenés señas pendientes.`)
+        const pago = pagadas[0]!
+        const inicio = pago.startsAt ? new Date(pago.startsAt) : null
+        return responder(`Tu seña de ${dinero(pago.amountMinor)} con ${pago.providerName} para el ${fechaLarga(inicio!)} a las ${horaCorta(inicio!)} ya figura acreditada por Mercado Pago. No tenés pagos pendientes.`)
       }
       return responder(
         hayComprobante
           ? 'Recibí el comprobante, pero todavía no pude relacionarlo con un pago confirmado de Mercado Pago.'
-          : 'No encuentro señas de turnos pendientes de pago en tu cuenta. Si el pago es de un trabajo, decime cuál y lo reviso.'
+          : 'No encuentro pagos pendientes en tu cuenta. Si el pago es de otro trabajo, decime cuál y lo reviso.'
       )
     }
 
-    // Which deposit: the only one, or the one the person names; otherwise it is asked (never guessed).
-    let objetivo: SenaVerificableAsistente | null = pendientes.length === 1 ? pendientes[0]! : null
+    // Bookkeeping is accumulated here and written once per branch (never overwritten by a later write).
+    const pc = { ...(state.paymentCheck ?? { since: ahora, count: 0, lastAt: 0 }) }
+    const guardar = () => this.actualizarEstado(conversationId, { paymentCheck: pc })
+
+    // Which payment: the only one; the one the person answers with an ordinal; the one the evidence
+    // and the words point to without doubt; otherwise it is asked, never guessed.
+    let objetivo: PagoVerificableAsistente | null = pendientes.length === 1 ? pendientes[0]! : null
+    let analisisFallido = false
     if (!objetivo) {
-      const candidatas = eligiendo ? pendientes.filter((sena) => eligiendo.refs.includes(sena.ref)) : pendientes
-      objetivo = elegirSenaPorTexto(candidatas.length > 0 ? candidatas : pendientes, text)
+      const candidatas = eligiendo ? pendientes.filter((pago) => eligiendo.refs.includes(pago.ref)) : pendientes
+      const universo = candidatas.length > 0 ? candidatas : pendientes
+      objetivo = (eligiendo ? ordinalDe(text, universo) : null) ?? null
+      if (!objetivo) {
+        let evidencia: EvidenciaComprobante | null = null
+        if (hayComprobante) {
+          const lectura = await this.evidenciaDeComprobantes(turn, pc, ahora)
+          evidencia = lectura.evidencia
+          analisisFallido = lectura.fallo
+        }
+        const pistas = { day: extraerNecesidad(text, ahora).day ?? null, words: sinAcentos(text) }
+        const resultado = correlacionarComprobante(evidencia, universo.map(aCandidato), pistas)
+        if (resultado.tipo === 'unica') objetivo = universo.find((pago) => pago.ref === resultado.candidato.ref) ?? null
+      }
     }
     if (!objetivo) {
-      const lista = pendientes.slice(0, 5).map((sena, indice) => `${indice + 1}) ${sena.providerName}${sena.service ? ` (${sena.service})` : ''}, ${fechaLarga(new Date(sena.startsAt))} a las ${horaCorta(new Date(sena.startsAt))}, seña de ${formatearPesos(sena.amount)}`)
-      await this.actualizarEstado(conversationId, { paymentCheck: { ...(state.paymentCheck ?? { since: ahora, count: 0, lastAt: 0 }), choosing: { refs: pendientes.slice(0, 5).map((sena) => sena.ref), at: ahora } } })
-      return responder(`Tenés ${pendientes.length} señas pendientes:\n${lista.join('\n')}\n¿De cuál es el pago? Decime el nombre del profesional.`)
+      const lista = pendientes.slice(0, 5).map((pago, indice) => `${indice + 1}) ${etiquetaDePago(pago)}`)
+      pc.choosing = { refs: pendientes.slice(0, 5).map((pago) => pago.ref), at: ahora }
+      await guardar()
+      const aviso = analisisFallido ? 'No pude leer el comprobante, así que no sé a cuál corresponde. ' : ''
+      return responder(`${aviso}Tenés ${pendientes.length} pagos pendientes:\n${lista.join('\n')}\n¿A cuál corresponde ${hayComprobante ? 'el comprobante' : 'el pago'}? Decime el nombre del profesional o el servicio.`)
     }
 
     // Pacing: the same question again and again changes nothing, it only costs calls to Mercado Pago.
     const previo = state.paymentCheck
     const dentroDeVentana = previo !== null && previo !== undefined && ahora - previo.since <= VENTANA_VERIFICACIONES_MS
-    if (previo && ahora - previo.lastAt < ESPERA_ENTRE_VERIFICACIONES_MS) return responder('Ya estoy revisando ese pago. Esperá unos segundos y volvé a preguntarme.')
-    if (dentroDeVentana && previo!.count >= VERIFICACIONES_POR_HORA) {
-      this.metric('assistant.payment_check_limited', { channel: turn.canal.id })
-      return responder('Ya revisé tu pago varias veces. Apenas Mercado Pago lo acredite, tu turno se confirma solo. Probá de nuevo más tarde.')
+    if (previo && ahora - previo.lastAt < ESPERA_ENTRE_VERIFICACIONES_MS) {
+      await guardar()
+      return responder('Ya estoy revisando ese pago. Esperá unos segundos y volvé a preguntarme.')
     }
-    await this.actualizarEstado(conversationId, { paymentCheck: { since: dentroDeVentana ? previo!.since : ahora, count: (dentroDeVentana ? previo!.count : 0) + 1, lastAt: ahora, contextAt: previo?.contextAt ?? ahora, choosing: null } })
+    if (dentroDeVentana && previo!.count >= VERIFICACIONES_POR_HORA) {
+      await guardar()
+      this.metric('assistant.payment_check_limited', { channel: turn.canal.id })
+      return responder('Ya revisé tu pago varias veces. Apenas Mercado Pago lo acredite, tu pago se confirma solo. Probá de nuevo más tarde.')
+    }
+    pc.since = dentroDeVentana ? previo!.since : ahora
+    pc.count = (dentroDeVentana ? previo!.count : 0) + 1
+    pc.lastAt = ahora
+    pc.contextAt = previo?.contextAt ?? ahora
+    pc.choosing = null
+    await guardar()
 
+    // The financial domain reads Mercado Pago and applies it through the webhook's state machine.
+    // Nothing of the receipt, the words or the picture goes with the question: only the client's own payment.
     let verificacion: VerificacionSenaAsistente
     try {
-      verificacion = await domain.verificarSena(cuenta, objetivo.ref)
+      verificacion = await this.verificarPago(cuenta, objetivo)
     } catch {
       verificacion = { estado: 'unavailable' }
     }
-    this.metric('assistant.payment_check', { channel: turn.canal.id, result: verificacion.estado, receipt: hayComprobante })
+    this.metric('assistant.payment_check', { channel: turn.canal.id, result: verificacion.estado, receipt: hayComprobante, kind: objetivo.kind })
     await this.deps.transaction.ejecutar((repositories) =>
-      this.auditar(repositories, 'assistant.payment_checked', turn, correlationId, { result: verificacion.estado, withReceipt: hayComprobante, appliedNow: verificacion.estado === 'confirmed' ? verificacion.appliedNow : false })
+      this.auditar(repositories, 'assistant.payment_checked', turn, correlationId, { result: verificacion.estado, withReceipt: hayComprobante, appliedNow: verificacion.estado === 'confirmed' ? verificacion.appliedNow : false, kind: objetivo!.kind })
     )
     return responder(textoDeVerificacion(verificacion, objetivo, hayComprobante))
+  }
+
+  private async pagosDeLaCuenta(cuenta: TusAuthenticatedTenantContext): Promise<PagoVerificableAsistente[] | null> {
+    const domain = this.deps.domain
+    try {
+      if (typeof domain.pagosVerificables === 'function') return await domain.pagosVerificables(cuenta)
+      const senas = (await domain.senasVerificables!(cuenta)) ?? []
+      return senas.map((sena) => ({ ref: sena.ref, kind: 'turno' as const, part: null, providerName: sena.providerName, service: sena.service, startsAt: sena.startsAt, amountMinor: String(Math.round(sena.amount * 100)), currency: 'ARS', estado: sena.estado, operationRef: null }))
+    } catch {
+      return null
+    }
+  }
+
+  private async verificarPago(cuenta: TusAuthenticatedTenantContext, pago: PagoVerificableAsistente): Promise<VerificacionSenaAsistente> {
+    const domain = this.deps.domain
+    if (pago.kind === 'trabajo') {
+      if (typeof domain.verificarPagoTrabajo !== 'function') return { estado: 'unavailable' }
+      const resultado = await domain.verificarPagoTrabajo(cuenta, pago.ref.replace(/^work:/u, ''))
+      return resultado.estado === 'confirmed' ? { estado: 'confirmed', appliedNow: resultado.appliedNow, turnoConfirmado: false, amount: Number(resultado.amountMinor ?? pago.amountMinor) / 100 } : { estado: resultado.estado }
+    }
+    return domain.verificarSena!(cuenta, pago.ref)
+  }
+
+  // Reads the receipt of the turn ONLY to choose among the client's own payments. Same picture
+  // (Meta's hash) as one already read: reused, nothing is downloaded or read again. Analyses per
+  // hour are bounded. The bytes never leave the service that reads them; the message keeps only
+  // the minimum (status, amount, currency, date). A failure is "no evidence", never a guess.
+  private async evidenciaDeComprobantes(
+    turn: Turno,
+    pc: NonNullable<EstadoConversacional['paymentCheck']>,
+    ahora: number
+  ): Promise<{ evidencia: EvidenciaComprobante | null; fallo: boolean }> {
+    const servicio = this.deps.comprobantes
+    const limites: LimitesComprobante = { ...LIMITES_COMPROBANTE_POR_DEFECTO, ...this.deps.limitesComprobante }
+    const mensaje = [...turn.pending].reverse().find((item) => (item.type === 'image' || item.type === 'document') && (item.metadata['media'] as { id?: string } | undefined)?.id)
+    if (!servicio || !limites.enabled || !mensaje) return { evidencia: null, fallo: false }
+    const media = mensaje.metadata['media'] as { id: string; sha256?: string }
+    const guardado = (estado: string, extra: Record<string, unknown> = {}) =>
+      this.actualizarMensaje(mensaje.messageId, (current) => ({ ...current, metadata: { ...current.metadata, receipt: { status: estado, ...extra } } }))
+    const conocido = media.sha256 ? (pc.receipts ?? []).find((item) => item.sha256 === media.sha256) : undefined
+    if (conocido) {
+      this.metric('assistant.receipt_reused', {})
+      await guardado('reused')
+      return { evidencia: { ...EVIDENCIA_VACIA, analyzer: limites.analyzer, amountMinor: conocido.amountMinor, currency: conocido.currency, occurredAt: conocido.occurredAt }, fallo: false }
+    }
+    const ventana = pc.analisis && ahora - pc.analisis.since <= 60 * 60_000 ? pc.analisis : { since: ahora, count: 0 }
+    if (ventana.count >= limites.maxPerHour) {
+      this.metric('assistant.receipt_limited', {})
+      await guardado('rate_limited')
+      return { evidencia: null, fallo: true }
+    }
+    pc.analisis = { since: ventana.since, count: ventana.count + 1 }
+    try {
+      const evidencia = await servicio.analizar(media.id)
+      this.metric('assistant.receipt_analyzed', { analyzer: evidencia.analyzer, found: hayEvidencia(evidencia) })
+      await guardado('analyzed', { analyzer: evidencia.analyzer, amountMinor: evidencia.amountMinor, currency: evidencia.currency, ...(evidencia.occurredAt ? { date: evidencia.occurredAt.slice(0, 10) } : {}), reads: evidencia.status })
+      if (media.sha256) pc.receipts = [{ sha256: media.sha256, at: ahora, amountMinor: evidencia.amountMinor, currency: evidencia.currency, occurredAt: evidencia.occurredAt }, ...(pc.receipts ?? [])].slice(0, 5)
+      return { evidencia, fallo: false }
+    } catch (error) {
+      const motivo = error instanceof ErrorComprobante ? error.code : 'ANALYZER_UNAVAILABLE'
+      this.metric('assistant.receipt_failed', { reason: motivo })
+      await guardado('failed', { reason: motivo })
+      return { evidencia: null, fallo: true }
+    }
   }
 
   // "Quiero pagar la seña": the checkout of the deposits the client can pay now. The turnos, the

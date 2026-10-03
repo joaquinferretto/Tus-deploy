@@ -627,11 +627,9 @@ export class FakeWhatsappProvider implements WhatsappProvider {
     limits: { maxBytes: number; allowedMimeTypes: readonly string[] }
   ): Promise<MediaMeta> {
     const media = this.media.get(mediaId)
-    if (
-      !media ||
-      !limits.allowedMimeTypes.includes(media.mimeType) ||
-      media.bytes.length > limits.maxBytes
-    )
+    if (media && limits.allowedMimeTypes.includes(media.mimeType) && media.bytes.length > limits.maxBytes)
+      throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media is too large')
+    if (!media || !limits.allowedMimeTypes.includes(media.mimeType))
       throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'media is not available')
     return media
   }
