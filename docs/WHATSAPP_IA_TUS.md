@@ -207,8 +207,8 @@ lo ya dicho. Todo sale de la búsqueda real; nada se solicita sin el "sí" expl�
   próximo", "la primera que tenga", "ahora", "ya mismo", "urgente". No fija día: la búsqueda empieza en
   el día conocido (hoy, desde la hora actual, si no hay uno) y avanza día por día, con la misma consulta
   al backend, hasta encontrar un turno libre que respete el horario pedido (máximo 14 días). Si hoy no
-  hay, se dice: "Hoy no hay turnos libres. La primera disponibilidad … es mañana: …". Ya no existe el
-  bucle "sin turnos libres hoy. ¿Querés que busque otro día?" ante "lo antes posible".
+  hay, se dice el primer turno real con su día (ver ASISTENTE-GENERAL-01 más abajo, que reemplaza los
+  textos de esta sección).
 - **Cualquiera disponible** (`need.anyProvider`): "cualquiera", "la que sea", "me da igual quién", "no
   importa quién", "el que esté disponible", "asignáme una", "mandame cualquiera". Mantiene servicio,
   día y horario y el backend propone UNA opción concreta, el primer inicio real que cumple: "La primera
@@ -275,6 +275,68 @@ Tercera pasada (ASISTENTE-CONTEXTO-03, 2026-10-03):
   numeradas como se mostraron).
 - Sin modelo configurado, un "sí" sin propuesta pendiente (por ejemplo, después del aviso de vinculación) cae en la
   respuesta genérica del modelo no disponible; con Groq lo redacta el modelo. No crea ni confirma nada.
+
+### Asistente general, días reales e identidad (ASISTENTE-GENERAL-01, 2026-10-04)
+
+Esta pasada reemplaza lo que las anteriores dicen sobre "¿Para cuándo…?", "Hoy no hay turnos libres. La primera
+disponibilidad … es mañana" y "¿Querés que busque otro día?": esos textos ya no existen.
+
+**No es un bot de un servicio.** Ningún código del asistente nombra un oficio (regex, texto o valor por defecto): el
+servicio sale solo del mensaje, resuelto contra el catálogo administrado. Sin servicio dicho se pregunta
+"¿Qué servicio necesitás? Por ejemplo: …" con oficios reales del catálogo ("Hola", "necesito ayuda"); un servicio que
+TUS no tiene responde "No encontré ese servicio en TUS" y vuelve a preguntar. Un saludo abre una conversación nueva y
+descarta el servicio anterior. Las palabras para personas son generales ("profesional", "otro profesional").
+
+**Causa del salto a un servicio ya conversado.** "Ya estoy registrado y logueado…" se leía como urgencia: la palabra
+"ya" marcaba "lo antes posible" y relanzaba la búsqueda con el servicio guardado en el estado. Ahora "ya" es urgencia
+solo cuando significa "ahora" ("lo necesito ya", "ya mismo"), no cuando es "ya + verbo" ("ya estoy", "ya pagué").
+
+**Disponibilidad con días reales.**
+
+- El día ya no es obligatorio. Con el servicio solo, el backend recorre el calendario desde hoy (7 días; los 7
+  siguientes solo si en los primeros no hay nada) y muestra hasta 3 días con turnos, cada opción numerada con su
+  profesional, su zona y sus horarios bajo su día ("Jueves 8", "Viernes 9"). En WhatsApp no interviene el modelo; en la
+  Web el modelo sigue a cargo de la conversación y, si no trae datos reales, busca el backend.
+- Un día se dice siempre con su día de semana y su número ("hoy martes 6", "mañana miércoles 7", "el jueves 8"); se
+  agrega el mes cuando el número solo podría confundirse (otro mes, o 7 días o más: "el martes 13 de octubre"). El
+  calendario es el de Argentina (UTC-3), nunca UTC.
+- "Lo antes posible": "La primera disponibilidad de {servicio} es {día} a las {hora} con {profesional}." y las opciones
+  de ese día. Los días anteriores sin turnos no se recitan.
+- Un día pedido que no tiene turnos se dice una vez ("Hoy martes 6 no hay turnos libres.") junto con los días que sí
+  tienen, sin preguntar si se busca otro día.
+- "¿Qué días atiende?" responde solo días ("Esta semana hay disponibilidad de {servicio} el jueves 8 y el viernes 9"),
+  del profesional nombrado o elegido si la pregunta es sobre él, o de cualquier profesional compatible si es general.
+  "¿Qué horarios?" muestra los del día conocido o, sin día, los próximos días con turnos.
+
+**Estado estructurado.** Cada opción mostrada guarda profesional, zona, inicios reales y, en un listado de varios días,
+su día (`offers.items[].day`). Sobre eso se resuelve el mensaje siguiente:
+
+- Una hora sola ("9:45") es esa hora **del día que se mostró**, nunca de hoy: si un solo profesional la tiene se lo
+  elige; si varios la tienen se vuelve a consultar ese día para esa hora; si está en varios días se pregunta el día.
+- Un número ("2", "el 2 a las 16") o un ordinal es la opción en esa posición: un profesional y, en un listado de varios
+  días, su día. Un nombre o una zona es el profesional en cualquiera de los días listados. Elegir no vuelve a buscar.
+- Un horario que se ocupó entre la lista y la elección: "Ese horario acaba de dejar de estar disponible." y se propone
+  el más cercano del mismo profesional (ese mismo día primero).
+- Al elegir se repite una vez lo elegido con su precio real: "Perfecto: {profesional}, {día} a las {hora}. El servicio
+  cuesta … y la seña es de …" (precio y seña los calcula el backend).
+
+**Estado de la cuenta y del número.** "Ya estoy registrado y logueado, ¿podés ver mi número?" lo responde el backend
+(`estadoDeVinculo`) antes de cualquier otra lectura del mensaje, con el estado real:
+
+| Estado | Qué significa | Respuesta |
+|---|---|---|
+| `vinculado` | El contacto tiene cuenta vinculada y la cuenta está activa. | "Sí, este WhatsApp ya está vinculado a tu cuenta TUS." |
+| `verificado_sin_vinculo` | El número es el teléfono verificado de una cuenta, sin WhatsApp vinculado. | "Sí, este número coincide con una cuenta TUS que ya tiene el celular verificado. Solo falta vincular…" + botón |
+| `desafio_pendiente` | Hay una verificación o vinculación en curso para este número. | Pide enviar el mensaje `VERIFICAR TUS` |
+| `sin_cuenta` | El número no es el teléfono verificado de ninguna cuenta activa. | "No encuentro este número como verificado…" |
+| `conflicto` | La cuenta del número está vinculada a otro WhatsApp, o el vínculo apunta a una cuenta que ya no está. | No se vincula desde el chat |
+
+El único número que se consulta es el `wa_id` que entregó Meta (`ServicioTelefono.estadoNumero`, con
+`telefonoDesdeWaId` y `waIdEquivalentes`: mismo resultado con o sin el 9); un número escrito en el mensaje no se
+consulta nunca. La respuesta es un estado: no sale nombre, email, documento, cuenta ni tenant. Una sesión Web no es
+visible desde WhatsApp y se dice ("No puedo ver si iniciaste sesión en la Web…"). Lo que la persona dice no vincula nada:
+el vínculo lo escribe solo el desafío. Buscar es público; solicitar un turno, ver turnos, pagos o datos de la cuenta
+siguen pidiendo la cuenta.
 
 ## Un turno se solicita, no se confirma (TURNOS-SOLICITUD-01)
 
