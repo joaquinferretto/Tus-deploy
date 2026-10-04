@@ -16,7 +16,7 @@ export default function Page(): React.ReactNode {
       <div className={styles.page}>
         <h1>Ubicación en el mapa</h1>
         <nav aria-label="Prestador">
-          <a href="/prestador/perfil-publico">Mi perfil público</a> · <a href="/prestador/solicitudes">Solicitudes</a> · <a href="/trabajos">Mis trabajos</a> · <a href="/prestador/pagos">Pagos</a>
+          <a href="/prestador/perfil-publico">Mi perfil público</a> · <a href="/prestador/solicitudes">Solicitudes</a> · <a href="/trabajos">Mis trabajos</a> · <a href="/prestador/pagos">Pagos</a> · <a href="/ayuda/prestadores">Manual</a>
         </nav>
         <p>Guardar tu ubicación no publica tu dirección: vos decidís si el mapa muestra el punto exacto o solo tu barrio o zona.</p>
         <ProviderLocationPage />

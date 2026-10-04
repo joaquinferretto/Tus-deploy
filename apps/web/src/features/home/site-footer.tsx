@@ -46,7 +46,7 @@ export function SiteFooter({ logo }: { logo?: React.ReactNode } = {}): React.Rea
             <h2>TUS</h2>
             <Link href="/#como-funciona">Cómo funciona</Link>
             <Link href="/#profesionales">Para profesionales</Link>
-            <Link href="/asistente">Ayuda</Link>
+            <a href="/ayuda">Ayuda</a>
           </nav>
           {account.status === 'signed-in' ? (
             <nav aria-label="Cuenta" className={styles.footerColumn}>

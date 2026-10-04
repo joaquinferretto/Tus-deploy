@@ -1506,3 +1506,36 @@
     transition: none;
   }
 }
+
+/* ---- header: "Ayuda" opens a compact menu with the guides (desktop only) --------------------- */
+.helpMenu {
+  position: relative;
+}
+
+.helpList {
+  background: var(--tus-white);
+  border: 1px solid var(--tus-line);
+  border-radius: 12px;
+  box-shadow: var(--tus-shadow);
+  display: grid;
+  gap: 2px;
+  left: 0;
+  list-style: none;
+  margin: 6px 0 0;
+  min-width: 230px;
+  padding: 6px;
+  position: absolute;
+  top: 100%;
+  z-index: 30;
+}
+
+.nav .helpList a {
+  display: block;
+  font-size: 0.92rem;
+  padding: 9px 10px;
+  white-space: nowrap;
+}
+
+.nav .helpList a[aria-current='page'] {
+  background: var(--tus-orange-soft);
+}
