@@ -117,7 +117,9 @@ test('TURNOS agenda PostgreSQL: the weekly availability is stored in the existin
       // Starts that would overlap each other, at once: only 11:00 is a turno of a 60 minute service;
       // the others are not offered, so they cannot be booked even while the agenda is busy.
       const solapadas = await Promise.all(['10:15', '10:30', '10:45', '11:00'].map((hora) => reservar(4, hora).then(() => 'ok', (e) => e.code + ':' + e.status)))
-      out.solapadas = [solapadas.filter((x) => x === 'ok').length, solapadas.filter((x) => x === 'SLOT_NOT_AVAILABLE:409').length]
+      // A start off the sequence is refused either way: "not available", or "occupied" when the
+      // 11:00 turno was already stored by the time it was checked. Which of the two depends on the race.
+      out.solapadas = [solapadas.filter((x) => x === 'ok').length, solapadas.filter((x) => x === 'SLOT_NOT_AVAILABLE:409' || x === 'SLOT_OCCUPIED:409').length, solapadas[3]]
       out.filasViernes = await prisma.reserva.count({ where: { tenantId: p.tenantId, fechaInicio: { gte: new Date(a(4, '00:00')), lt: new Date(a(5, '00:00')) } } })
 
       // Exceptions: a closed day (holiday / vacation / manual block) without touching the weekly hours.
@@ -184,7 +186,7 @@ test('TURNOS agenda PostgreSQL: the weekly availability is stored in the existin
   assert.deepEqual(r.fueraDeRango, ['INVALID_DATE', 'INVALID_DATE', 'INVALID_DATE'])
   assert.deepEqual(r.semanaActual, [7, true])
   assert.deepEqual(r.carrera, [1, 5], 'exactly one of six simultaneous bookings of the same time is stored')
-  assert.deepEqual(r.solapadas, [1, 3], 'only the real turno is stored; starts off the sequence are refused')
+  assert.deepEqual(r.solapadas, [1, 3, 'ok'], 'only the real turno (11:00) is stored; the three starts off the sequence are refused')
   assert.equal(r.filasViernes, 2)
   assert.equal(r.bloqueoInvalido, 'INVALID_DATE')
   assert.deepEqual(r.feriado, ['bloqueado', 0, 8])
