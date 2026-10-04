@@ -11,6 +11,7 @@ import { vistaDesafio, type ErrorTelefono, type ServicioVerificacionTelefono } f
 // - GET  /auth/phone/config                     official TUS WhatsApp number (public, no secrets)
 // - GET  /auth/phone                            own phone identity (masked)             [session]
 // - POST /auth/phone/challenges                 verify / change the own phone           [session]
+// - POST /auth/phone/whatsapp-link              challenge to link the own VERIFIED phone's WhatsApp [session]
 // - GET  /auth/phone/challenges/:id             state of an own challenge               [session]
 // - POST /auth/phone/challenges/:id/status      state by poll secret (sign-up, recovery) [public]
 // - POST /auth/phone/challenges/:id/renew       new code for the same flow (poll secret) [public]
@@ -32,7 +33,7 @@ export function crearRouterTelefono({ servicio, sessions, auth }: { servicio: Se
   }
   const cuerpo = (request: Request) => (typeof request.body === 'object' && request.body !== null && !Array.isArray(request.body) ? (request.body as Record<string, unknown>) : {})
   const fallar = (response: Response, error: ErrorTelefono) => {
-    const status = error.code === 'INVALID_PHONE' ? 422 : error.code === 'RATE_LIMITED' ? 429 : error.code === 'ALREADY_VERIFIED' ? 409 : error.code === 'NOT_FOUND' ? 404 : error.code === 'UNAVAILABLE' ? 503 : 403
+    const status = error.code === 'INVALID_PHONE' ? 422 : error.code === 'RATE_LIMITED' ? 429 : error.code === 'ALREADY_VERIFIED' || error.code === 'ALREADY_LINKED' || error.code === 'PHONE_NOT_VERIFIED' ? 409 : error.code === 'NOT_FOUND' ? 404 : error.code === 'UNAVAILABLE' ? 503 : 403
     response.status(status).json({ error: { code: error.code, ...('motivo' in error ? { reason: error.motivo } : {}), message: 'phone verification rejected' } })
   }
 
@@ -53,6 +54,15 @@ export function crearRouterTelefono({ servicio, sessions, auth }: { servicio: Se
     const context = await sesion(request, response)
     if (!context) return
     const resultado = await servicio.iniciar(context.subjectId, { telefono: cuerpo(request)['phone'], ...(request.ip ? { ip: request.ip } : {}) })
+    if (!resultado.ok) return fallar(response, resultado)
+    response.status(201).json({ challenge: vistaDesafio(resultado) })
+  }))
+
+  // No body: the number is the account's verified phone, never a request value.
+  router.post('/auth/phone/whatsapp-link', asyncHandler(async (request: Request, response: Response) => {
+    const context = await sesion(request, response)
+    if (!context) return
+    const resultado = await servicio.iniciarVinculo(context.subjectId, request.ip ? { ip: request.ip } : {})
     if (!resultado.ok) return fallar(response, resultado)
     response.status(201).json({ challenge: vistaDesafio(resultado) })
   }))

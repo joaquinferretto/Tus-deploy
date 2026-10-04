@@ -317,7 +317,8 @@ const PATRON_HANDOFF =
   /\b(hablar con (una |un )?(persona|humano|alguien|operador|asesor)|operador|soporte|soporte humano|atenci[oó]n humana|quiero un humano|agente humano)\b/iu
 const PATRON_RECLAMO =
   /\b(reclamo|denuncia|estafa|fraude|me robaron|disputa|abogado|defensa del consumidor|contracargo)\b/iu
-const PATRON_VINCULAR = /\b(vincular|vincul[aá] mi cuenta|conectar mi cuenta|asociar mi cuenta)\b/iu
+const PATRON_VINCULAR =
+  /\b(vincular|vincul[aá] mi cuenta|conectar mi cuenta|asociar mi cuenta|ya tengo cuenta|ya (lo )?verifiqu[eé]|ya (lo )?hice|no entiendo|por qu[eé] tengo que vincular)(?![\p{L}\p{N}])/iu
 const PATRON_DESVINCULAR =
   /\b(desvincular|desvincul[aá]|borrar mi n[uú]mero|olvidar mi n[uú]mero)\b/iu
 const PATRON_SI =
@@ -368,6 +369,11 @@ export const MENSAJES = {
     'Recibí la foto. Por ahora la guardo para el equipo; contame con palabras qué pasa así te ayudo.',
   locationReceived:
     'Gracias, tomé la zona aproximada. No la comparto con prestadores hasta que corresponda.',
+  linkSteps:
+    'Para continuar por WhatsApp necesitás vincular este número con una cuenta TUS.\n\n1. Registrate o iniciá sesión en TUS.\n2. Entrá a Mi perfil.\n3. Verificá tu número de celular.\n4. Tocá "Vincular este WhatsApp".\n\nDespués volvés acá y podés seguir normalmente.',
+  linkVerifiedPending:
+    'Tu número ya está verificado. Solo falta vincular este WhatsApp. Entrá a Mi perfil y tocá "Vincular este WhatsApp".',
+  alreadyLinked: 'Este WhatsApp ya está vinculado a tu cuenta TUS.',
   linkRequired:
     'Para ver o hacer cosas de tu cuenta primero tengo que vincular este WhatsApp con tu cuenta TUS.',
   aiUnavailable:

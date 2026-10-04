@@ -56,6 +56,8 @@ import { getPrismaClient } from './infrastructure/database/prisma/client.ts'
 import { createPrismaAuthService } from './auth-security/composition.ts'
 import { AlmacenTelefonosPrisma, type ClientePrismaTelefonos } from './auth-security/phone/almacenes.ts'
 import { crearServicioTelefono } from './auth-security/phone/composicion.ts'
+import { repositoriosAsistentePrisma, type ClientePrismaAsistente } from './tus/adapters/prisma-asistente.ts'
+import { crearPuenteAsistente } from './tus/asistente/vinculacion.ts'
 import { crearRouterTelefono } from './auth-security/phone/http.ts'
 import type { RawQueryClient } from './auth-security/adapters/postgres/postgres-rate-limiter.ts'
 import { leerAdminsPlataforma } from './auth-security/application/auth-service.ts'
@@ -145,7 +147,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
   // Phone-first identity: challenges verified by a user-initiated WhatsApp message (webhook).
   const telefonos = crearServicioTelefono({
     auth,
-    telefonos: new AlmacenTelefonosPrisma(prisma as unknown as ClientePrismaTelefonos),
+    telefonos: new AlmacenTelefonosPrisma(prisma as unknown as ClientePrismaTelefonos, (cliente) => crearPuenteAsistente(repositoriosAsistentePrisma(cliente as unknown as ClientePrismaAsistente))),
     env: process.env,
     raw: prisma as unknown as RawQueryClient,
   })

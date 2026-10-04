@@ -17,6 +17,8 @@ import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
 export interface VerificadorTelefonoWhatsapp {
   esMensajeVerificacion(texto: unknown): boolean
   verificarDesdeWhatsapp(entrada: { waId: string; texto: string; wamid: string }): Promise<{ resultado: string; desafioId: string | null; respuesta: string | null }>
+  // Read-only state for wording: does a verified identity phone match this sender? (never authority)
+  numeroVerificado?(waId: string): Promise<boolean>
   registrarConfirmacion(desafioId: string, resultado: { ok: true } | { ok: false; error: string }): Promise<void>
 }
 

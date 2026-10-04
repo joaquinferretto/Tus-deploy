@@ -10,6 +10,7 @@ import {
 } from './modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
 import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
+import { crearPuenteAsistente, vincularContactoPorVerificacion, type EntradaVinculoPorVerificacion } from './vinculacion.ts'
 
 // In-memory adapters with PostgreSQL semantics (unique wamid, one queued job per conversation,
 // conditional single-use tokens, serialized transactions with rollback).
@@ -36,6 +37,22 @@ export class AlmacenAsistenteEnMemoria {
     confirmaciones: new Map(),
     auditoria: [],
     consentimientosWhatsapp: new Map(),
+  }
+
+  // For AlmacenTelefonosEnMemoria: the same contacts the assistant reads, with rollback.
+  enlaceTelefonos() {
+    return {
+      puente: {
+        vincular: (entrada: EntradaVinculoPorVerificacion) => vincularContactoPorVerificacion(this.repositorios(), entrada),
+        waIdVinculado: (accountId: string) => crearPuenteAsistente(this.repositorios()).waIdVinculado(accountId),
+      },
+      instantanea: () => {
+        const antes = structuredClone(this.state)
+        return () => {
+          this.state = antes
+        }
+      },
+    }
   }
 
   repositorios(): RepositoriosAsistente {

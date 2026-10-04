@@ -15,7 +15,7 @@ import {
   hashDesafio,
   hashSecretoConsulta,
 } from './desafio.ts'
-import type { AlmacenTelefonos, DesafioTelefono, PropositoDesafio } from './puertos.ts'
+import type { AlmacenTelefonos, DesafioTelefono, PropositoDesafio, ResultadoVinculoWhatsapp } from './puertos.ts'
 
 // Phone-first identity: verification INITIATED BY THE USER from WhatsApp (no outbound OTP, no
 // authentication template). TUS creates a challenge, the Web opens WhatsApp with
@@ -25,20 +25,24 @@ import type { AlmacenTelefonos, DesafioTelefono, PropositoDesafio } from './puer
 // delivery never decides the verification.
 
 export const RESPUESTAS_VERIFICACION = {
-  verificado: '✅ Tu número quedó verificado correctamente en TUS. Ya podés volver a la aplicación.',
+  // The number was proved AND this WhatsApp is linked to the account: said only after the commit.
+  vinculado: '✅ ¡Listo! Este WhatsApp quedó vinculado a tu cuenta TUS.\n\nYa podés buscar profesionales, consultar tus turnos, verificar pagos y usar TUS directamente desde acá.',
+  // Only when no linker is wired (never in the API): the phone is verified, nothing is linked.
+  verificado: '✅ Tu número quedó verificado en TUS. Ya podés volver a la aplicación.',
+  vinculoOcupado: 'Este WhatsApp ya está vinculado a otra cuenta TUS, así que no lo vinculé. Si es tu número, desvinculalo desde esa cuenta y volvé a intentarlo.',
   recuperacion: '✅ Confirmamos tu número. Volvé a TUS para elegir tu nueva contraseña.',
   invalido: 'No pudimos verificar ese código. Volvé a TUS y generá una nueva verificación.',
 } as const
 
 export type ResultadoVerificacionWhatsapp =
-  | { resultado: 'verificado' | 'recuperacion'; desafioId: string; respuesta: string }
+  | { resultado: 'verificado' | 'vinculado' | 'recuperacion' | 'vinculo_ocupado'; desafioId: string; respuesta: string }
   | { resultado: 'invalido'; desafioId: string | null; respuesta: string }
   // The same Meta message again (webhook retry): nothing happens and nothing is sent twice.
   | { resultado: 'repetido'; desafioId: string; respuesta: null }
 
 export type ErrorTelefono =
   | { ok: false; code: 'INVALID_PHONE'; motivo: MotivoTelefonoInvalido }
-  | { ok: false; code: 'RATE_LIMITED' | 'ALREADY_VERIFIED' | 'ACCOUNT_NOT_ALLOWED' | 'NOT_FOUND' | 'UNAVAILABLE' }
+  | { ok: false; code: 'RATE_LIMITED' | 'ALREADY_VERIFIED' | 'PHONE_NOT_VERIFIED' | 'ALREADY_LINKED' | 'ACCOUNT_NOT_ALLOWED' | 'NOT_FOUND' | 'UNAVAILABLE' }
 
 export interface DesafioCreado {
   challengeId: string
@@ -73,6 +77,7 @@ export interface DependenciasTelefono {
 }
 
 class ConflictoTelefono extends Error {}
+class ConflictoVinculo extends Error {}
 
 // The challenge as the HTTP layer returns it (without the internal `ok` flag).
 export function vistaDesafio<T extends { ok: true }>(valor: T): Omit<T, 'ok'> {
@@ -109,7 +114,7 @@ export class ServicioVerificacionTelefono {
     }).catch(() => undefined)
   }
 
-  private async crear(cuenta: Account, telefono: string, purpose: PropositoDesafio, conSecreto: boolean) {
+  private async crear(cuenta: Account, telefono: string, purpose: PropositoDesafio, conSecreto: boolean, marcarPendiente = true) {
     const codigo = generarCodigoDesafio()
     const secreto = conSecreto ? generarSecretoConsulta() : null
     const ahora = this.deps.now()
@@ -133,7 +138,7 @@ export class ServicioVerificacionTelefono {
     }
     await this.deps.telefonos.transaccion(async (almacen) => {
       await almacen.crearDesafio(desafio)
-      if (purpose !== 'recuperar_contrasena') await almacen.fijarPendiente(cuenta.id, telefono)
+      if (purpose !== 'recuperar_contrasena' && marcarPendiente) await almacen.fijarPendiente(cuenta.id, telefono)
     })
     await this.auditar(AUTH_EVENT_KIND.PHONE_CHALLENGE_CREATED, cuenta, 'accepted', { purpose, phone: enmascararTelefono(telefono) })
     return { desafio, codigo, secreto }
@@ -167,6 +172,21 @@ export class ServicioVerificacionTelefono {
     // later fails on the UNIQUE identity phone.
     const purpose: PropositoDesafio = estado?.phoneNumber ? 'cambiar_telefono' : 'verificar_telefono'
     const { desafio, codigo } = await this.crear(cuenta, normalizado.e164, purpose, false)
+    return { ok: true, ...this.vista(desafio, codigo) }
+  }
+
+  // "Vincular este WhatsApp" from Mi perfil: the account already has a VERIFIED identity phone, so
+  // the challenge is for that same number. Sending it from that WhatsApp consumes the challenge and
+  // links the contact (see verificarDesdeWhatsapp). The number is never taken from the request.
+  async iniciarVinculo(accountId: string, entrada: { ip?: string } = {}): Promise<({ ok: true } & DesafioCreado) | ErrorTelefono> {
+    const cuenta = await this.deps.cuentas.getAccount(accountId)
+    if (!cuenta || cuenta.status !== 'active') return { ok: false, code: 'ACCOUNT_NOT_ALLOWED' }
+    const estado = await this.deps.telefonos.estado(accountId)
+    if (!estado?.phoneNumber) return { ok: false, code: 'PHONE_NOT_VERIFIED' }
+    if (await this.deps.telefonos.waIdVinculado(accountId)) return { ok: false, code: 'ALREADY_LINKED' }
+    const limites = this.deps.limitadores
+    if (!(await this.permitido(limites?.porCuenta, `cuenta:${accountId}`)) || (entrada.ip && !(await this.permitido(limites?.porIp, `ip:${entrada.ip}`)))) return { ok: false, code: 'RATE_LIMITED' }
+    const { desafio, codigo } = await this.crear(cuenta, estado.phoneNumber, 'verificar_telefono', false, false)
     return { ok: true, ...this.vista(desafio, codigo) }
   }
 
@@ -263,7 +283,16 @@ export class ServicioVerificacionTelefono {
       phoneMasked: estado?.phoneNumber ? enmascararTelefono(estado.phoneNumber) : null,
       verifiedAt: estado?.phoneVerifiedAt ? new Date(estado.phoneVerifiedAt).toISOString() : null,
       pendingMasked: estado?.phonePending ? enmascararTelefono(estado.phonePending) : null,
+      // A verified phone and a linked WhatsApp are different facts: the link lives on the assistant's contact.
+      whatsappLinked: Boolean(await this.deps.telefonos.waIdVinculado(accountId)),
     }
+  }
+
+  // Wording only: whether the sender's number is already a verified identity phone. It never
+  // authenticates anyone; linking still needs the challenge.
+  async numeroVerificado(waId: string): Promise<boolean> {
+    const telefono = telefonoDesdeWaId(waId)
+    return telefono !== null && (await this.deps.telefonos.cuentaPorTelefono(telefono)) !== null
   }
 
   esMensajeVerificacion(texto: unknown): boolean {
@@ -297,14 +326,24 @@ export class ServicioVerificacionTelefono {
     }
     const anterior = (await this.deps.telefonos.estado(cuenta.id))?.phoneNumber ?? null
     let consumido = false
+    let vinculo: ResultadoVinculoWhatsapp = 'no_disponible'
     try {
-      // Single use and identity change in ONE transaction: the loser of a race changes nothing.
+      // Single use, identity phone and WhatsApp link in ONE transaction: any failure (a number or a
+      // wa_id that belongs to someone else, a lost race) rolls everything back, and the success
+      // text is only chosen after the commit.
       consumido = await this.deps.telefonos.transaccion(async (almacen) => {
         if (!(await almacen.consumir(desafio.id, entrada.wamid, ahora))) return false
         if ((await almacen.fijarVerificado(cuenta.id, desafio.phone, ahora)) === 'conflicto') throw new ConflictoTelefono()
+        vinculo = await almacen.vincularWhatsapp({ waId: entrada.waId, accountId: cuenta.id, tenantId: cuenta.tenantId, telefonoAnterior: anterior && anterior !== desafio.phone ? anterior : null, correlationId: randomUUID(), now: ahora })
+        if (vinculo === 'conflicto') throw new ConflictoVinculo()
         return true
       })
     } catch (error) {
+      if (error instanceof ConflictoVinculo) {
+        await this.deps.telefonos.invalidar(desafio.id, 'conflicto', ahora)
+        await this.auditar(AUTH_EVENT_KIND.PHONE_VERIFICATION_FAILED, cuenta, 'denied', { reason: 'whatsapp_linked_elsewhere', purpose: desafio.purpose })
+        return { resultado: 'vinculo_ocupado', desafioId: desafio.id, respuesta: RESPUESTAS_VERIFICACION.vinculoOcupado }
+      }
       if (!(error instanceof ConflictoTelefono)) throw error
       await this.deps.telefonos.invalidar(desafio.id, 'conflicto', ahora)
       await this.auditar(AUTH_EVENT_KIND.PHONE_VERIFICATION_FAILED, cuenta, 'denied', { reason: 'phone_in_use', purpose: desafio.purpose })
@@ -318,7 +357,9 @@ export class ServicioVerificacionTelefono {
       phone: enmascararTelefono(desafio.phone),
       ...(anterior && anterior !== desafio.phone ? { previous: enmascararTelefono(anterior) } : {}),
     })
-    return { resultado: 'verificado', desafioId: desafio.id, respuesta: RESPUESTAS_VERIFICACION.verificado }
+    return vinculo === 'no_disponible'
+      ? { resultado: 'verificado', desafioId: desafio.id, respuesta: RESPUESTAS_VERIFICACION.verificado }
+      : { resultado: 'vinculado', desafioId: desafio.id, respuesta: RESPUESTAS_VERIFICACION.vinculado }
   }
 
   // Transport result of the WhatsApp confirmation. A failure is recorded (sanitized code) and

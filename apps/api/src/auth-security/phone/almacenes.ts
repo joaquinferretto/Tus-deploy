@@ -1,5 +1,5 @@
 import type { Account } from '../domain/models.js'
-import type { AlmacenTelefonos, DesafioTelefono, EstadoTelefonoCuenta, MotivoInvalidacion } from './puertos.ts'
+import type { AlmacenTelefonos, DesafioTelefono, EntradaVinculoWhatsapp, EstadoTelefonoCuenta, MotivoInvalidacion, PuenteAsistente, ResultadoVinculoWhatsapp } from './puertos.ts'
 
 const vivo = (desafio: DesafioTelefono) => desafio.usedAt === null && desafio.invalidatedAt === null
 
@@ -10,7 +10,20 @@ export class AlmacenTelefonosEnMemoria implements AlmacenTelefonos {
   readonly desafios = new Map<string, DesafioTelefono>()
   private cola: Promise<unknown> = Promise.resolve()
 
-  constructor(private readonly identidad: { accounts?: Map<string, Account> }) {}
+  // `asistente.puente` runs against the assistant's in-memory contacts and `instantanea()` returns
+  // the function that restores them when the transaction fails, like PostgreSQL would.
+  constructor(
+    private readonly identidad: { accounts?: Map<string, Account> },
+    private readonly asistente: { puente: PuenteAsistente; instantanea(): () => void } | null = null
+  ) {}
+
+  async vincularWhatsapp(entrada: EntradaVinculoWhatsapp): Promise<ResultadoVinculoWhatsapp> {
+    return this.asistente ? this.asistente.puente.vincular(entrada) : 'no_disponible'
+  }
+
+  async waIdVinculado(accountId: string) {
+    return this.asistente ? this.asistente.puente.waIdVinculado(accountId) : null
+  }
 
   private cuentas(): Map<string, Account> {
     return this.identidad.accounts ?? new Map()
@@ -117,7 +130,20 @@ export class AlmacenTelefonosEnMemoria implements AlmacenTelefonos {
 
   // Serialized (like the in-memory identity store): a whole operation runs before the next one.
   async transaccion<T>(operacion: (almacen: AlmacenTelefonos) => Promise<T>): Promise<T> {
-    const resultado = this.cola.then(() => operacion(this))
+    const resultado = this.cola.then(async () => {
+      const desafios = structuredClone([...this.desafios])
+      const cuentas = [...this.cuentas().values()].map((cuenta) => ({ cuenta, phoneNumber: cuenta.phoneNumber, phoneVerifiedAt: cuenta.phoneVerifiedAt, phonePending: cuenta.phonePending }))
+      const restaurarAsistente = this.asistente?.instantanea()
+      try {
+        return await operacion(this)
+      } catch (error) {
+        this.desafios.clear()
+        for (const [id, desafio] of desafios) this.desafios.set(id, desafio)
+        for (const previa of cuentas) Object.assign(previa.cuenta, { phoneNumber: previa.phoneNumber, phoneVerifiedAt: previa.phoneVerifiedAt, phonePending: previa.phonePending })
+        restaurarAsistente?.()
+        throw error
+      }
+    })
     this.cola = resultado.catch(() => undefined)
     return resultado
   }
@@ -164,7 +190,20 @@ function desdeFila(fila: Fila): DesafioTelefono {
 const esConflictoUnico = (error: unknown) => (error as { code?: unknown })?.code === 'P2002'
 
 export class AlmacenTelefonosPrisma implements AlmacenTelefonos {
-  constructor(private readonly client: ClientePrismaTelefonos) {}
+  // `puente(client)` builds the bridge on the SAME client, so inside `transaccion` it joins the
+  // transaction of the challenge.
+  constructor(
+    private readonly client: ClientePrismaTelefonos,
+    private readonly puente: ((client: ClientePrismaTelefonos) => PuenteAsistente) | null = null
+  ) {}
+
+  async vincularWhatsapp(entrada: EntradaVinculoWhatsapp): Promise<ResultadoVinculoWhatsapp> {
+    return this.puente ? this.puente(this.client).vincular(entrada) : 'no_disponible'
+  }
+
+  async waIdVinculado(accountId: string) {
+    return this.puente ? this.puente(this.client).waIdVinculado(accountId) : null
+  }
 
   private async userId(accountId: string): Promise<string | null> {
     const fila = await this.client.account.findUnique({ where: { id: accountId }, select: { userId: true } })
@@ -284,6 +323,6 @@ export class AlmacenTelefonosPrisma implements AlmacenTelefonos {
   }
 
   async transaccion<T>(operacion: (almacen: AlmacenTelefonos) => Promise<T>): Promise<T> {
-    return this.client.$transaction((cliente) => operacion(new AlmacenTelefonosPrisma(cliente)))
+    return this.client.$transaction((cliente) => operacion(new AlmacenTelefonosPrisma(cliente, this.puente)))
   }
 }

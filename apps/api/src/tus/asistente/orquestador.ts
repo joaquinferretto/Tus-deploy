@@ -472,16 +472,11 @@ export class OrquestadorConversacion {
   }
 
   private canalWhatsapp(turn: TurnoCargado, correlationId: string): CanalTurno {
-    const textos: Record<MotivoCuenta, string> = {
-      explicit: 'Para vincular tu cuenta abrí este link, iniciá sesión en TUS y confirmá.',
-      private: `${MENSAJES.linkRequired} Abrí este link, iniciá sesión y confirmá.`,
-      choose_provider: MENSAJES.linkRequired,
-    }
     return {
       id: 'whatsapp',
       conversacional: false,
       enrutado: this.limits.whatsappRouting,
-      pedirCuenta: (motivo) => this.ofrecerVinculacion(turn, correlationId, textos[motivo]),
+      pedirCuenta: () => this.ofrecerVinculacion(turn),
     }
   }
 
@@ -633,7 +628,8 @@ export class OrquestadorConversacion {
       })
       return [{ type: 'text', text: MENSAJES.unlinked }]
     }
-    if (turn.canal.id === 'whatsapp' && pideVincular(text)) return turn.canal.pedirCuenta('explicit')
+    if (turn.canal.id === 'whatsapp' && pideVincular(text))
+      return actor.context ? [{ type: 'text', text: MENSAJES.alreadyLinked }] : turn.canal.pedirCuenta('explicit')
 
     const confirmation = respuestaConfirmacion(text, input.replyId)
     const pendingId = confirmation?.confirmationId ?? turn.conversation.state.pendingConfirmationId
@@ -1614,29 +1610,14 @@ export class OrquestadorConversacion {
     return intent
   }
 
-  private async ofrecerVinculacion(
-    turn: TurnoCargado,
-    correlationId: string,
-    text: string
-  ): Promise<MensajeSaliente[]> {
-    try {
-      const link = await this.deps.linking.crearEnlace(turn.contact.contactId, correlationId)
-      return [
-        {
-          type: 'cta_url',
-          text: `${text} El link vence en 10 minutos y sirve una sola vez.`,
-          label: 'Vincular cuenta',
-          url: link.url,
-        },
-      ]
-    } catch {
-      return [
-        {
-          type: 'text',
-          text: 'Ahora no puedo generar el link de vinculación. Probá nuevamente en unos minutos.',
-        },
-      ]
-    }
+  // A WhatsApp that is not linked is sent to Mi perfil, where the person verifies the number and taps
+  // "Vincular este WhatsApp" (the challenge is created there, by the signed-in session). The wording
+  // follows the REAL state: a number that is already verified is not asked to verify again.
+  private async ofrecerVinculacion(turn: TurnoCargado): Promise<MensajeSaliente[]> {
+    const verificado = await this.deps.verificadorTelefono?.numeroVerificado?.(turn.contact.waId).catch(() => false)
+    const text = verificado ? MENSAJES.linkVerifiedPending : MENSAJES.linkSteps
+    const url = this.deps.linking.urlVincularDesdePerfil()
+    return url ? [{ type: 'cta_url', text, label: 'Vincular mi cuenta TUS', url }] : [{ type: 'text', text }]
   }
 
   private async conversar(
@@ -2320,7 +2301,7 @@ export class OrquestadorConversacion {
           now: this.now,
         })
         // The transport result is recorded; it never reverts the verification.
-        if (verificacion.desafioId && (verificacion.resultado === 'verificado' || verificacion.resultado === 'recuperacion'))
+        if (verificacion.desafioId && (verificacion.resultado === 'verificado' || verificacion.resultado === 'vinculado' || verificacion.resultado === 'recuperacion'))
           await this.deps.verificadorTelefono?.registrarConfirmacion(
             verificacion.desafioId,
             enviado.status === 'sent' ? { ok: true } : { ok: false, error: String(enviado.metadata['errorCode'] ?? 'SEND_FAILED') }

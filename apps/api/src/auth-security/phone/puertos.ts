@@ -30,7 +30,28 @@ export interface EstadoTelefonoCuenta {
   phonePending: string | null
 }
 
+// Links the WhatsApp contact (wa_id from Meta) to the TUS account. It lives behind the same store as
+// the challenge so it runs in the SAME transaction; 'no_disponible' only when no linker was wired.
+export interface EntradaVinculoWhatsapp {
+  waId: string
+  accountId: string
+  tenantId: string
+  telefonoAnterior: string | null
+  correlationId: string
+  now: number
+}
+export type ResultadoVinculoWhatsapp = 'vinculado' | 'ya_vinculado' | 'conflicto' | 'no_disponible'
+export type VinculadorWhatsapp = (entrada: EntradaVinculoWhatsapp) => Promise<Exclude<ResultadoVinculoWhatsapp, 'no_disponible'>>
+// What the identity module needs from the assistant's contacts (the source of truth of the link).
+export interface PuenteAsistente {
+  vincular: VinculadorWhatsapp
+  // The WhatsApp (wa_id) linked to the account, or null.
+  waIdVinculado(accountId: string): Promise<string | null>
+}
+
 export interface AlmacenTelefonos {
+  vincularWhatsapp(entrada: EntradaVinculoWhatsapp): Promise<ResultadoVinculoWhatsapp>
+  waIdVinculado(accountId: string): Promise<string | null>
   estado(accountId: string): Promise<EstadoTelefonoCuenta | null>
   // Many accounts at once (admin lists): one read.
   estados(accountIds: readonly string[]): Promise<Map<string, EstadoTelefonoCuenta>>

@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { telefonoDesdeWaId } from '@factory/contracts'
 import { ErrorAsistente, enmascararWaId, type ContactoWhatsapp } from './modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
 import { WHATSAPP_CONSENT_ORIGINS, crearConsentimientoWhatsApp } from '../whatsapp/consent.ts'
@@ -26,6 +27,12 @@ export class ServicioVinculacionWhatsapp {
     private readonly webBaseUrl: string | null,
     private readonly now: () => number = Date.now
   ) {}
+
+  // Where the person links this WhatsApp from: Mi perfil (the Web sends signed-out people to sign in
+  // first and brings them back here). A fixed path: nothing user-controlled goes into it.
+  urlVincularDesdePerfil(): string | null {
+    return this.webBaseUrl ? `${this.webBaseUrl.replace(/\/+$/u, '')}/mi-perfil?accion=vincular-whatsapp` : null
+  }
 
   async crearEnlace(
     contactId: string,
@@ -233,5 +240,105 @@ export class ServicioVinculacionWhatsapp {
       metadata: { waId: enmascararWaId(contact.waId), ...metadata },
       createdAt: new Date(this.now()).toISOString(),
     })
+  }
+}
+
+export interface EntradaVinculoPorVerificacion {
+  // The sender exactly as Meta delivered it (the key of the contact), never a Web value.
+  waId: string
+  accountId: string
+  tenantId: string
+  // The identity phone the account had before this verification (a number change).
+  telefonoAnterior: string | null
+  correlationId: string
+  now: number
+}
+
+export type ResultadoVinculoPorVerificacion = 'vinculado' | 'ya_vinculado' | 'conflicto'
+
+// "VERIFICAR TUS <code>" proves the person controls this WhatsApp, so it also links the contact to
+// the account. It writes the SAME field the token flow writes (contact.linkedAccountId) and is meant
+// to run inside the transaction that consumes the challenge: it never creates a second source of
+// truth. A contact linked to ANOTHER account is never reassigned.
+export async function vincularContactoPorVerificacion(
+  repositories: RepositoriosAsistente,
+  input: EntradaVinculoPorVerificacion
+): Promise<ResultadoVinculoPorVerificacion> {
+  const nowIso = new Date(input.now).toISOString()
+  const auditar = (action: string, contact: ContactoWhatsapp, metadata: Record<string, unknown>) =>
+    repositories.auditoria.registrar({
+      eventId: `auditoria-asistente-${randomUUID()}`,
+      action,
+      contactId: contact.contactId,
+      conversationId: null,
+      actorId: input.accountId,
+      correlationId: input.correlationId,
+      metadata: { waId: enmascararWaId(contact.waId), ...metadata },
+      createdAt: nowIso,
+    })
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let contact = await repositories.contactos.buscarPorWaId(input.waId)
+    if (!contact) {
+      contact = {
+        contactId: `contacto-whatsapp-${randomUUID()}`,
+        waId: input.waId,
+        displayName: null,
+        linkedAccountId: null,
+        linkedTenantId: null,
+        linkedAt: null,
+        blockedUntil: null,
+        blockedReason: null,
+        createdAt: nowIso,
+        lastInboundAt: null,
+        version: 1,
+      }
+      try {
+        await repositories.contactos.crear(contact)
+      } catch (error) {
+        if ((error as { code?: string })?.code === 'P2002') continue
+        throw error
+      }
+    }
+    if (contact.linkedAccountId && contact.linkedAccountId !== input.accountId) return 'conflicto'
+    if (contact.linkedAccountId === input.accountId && contact.linkedTenantId === input.tenantId) return 'ya_vinculado'
+    const next: ContactoWhatsapp = {
+      ...contact,
+      linkedAccountId: input.accountId,
+      linkedTenantId: input.tenantId,
+      linkedAt: nowIso,
+      version: contact.version + 1,
+    }
+    // Optimistic version check: of two accounts racing for one wa_id, only one update lands.
+    if (!(await repositories.contactos.actualizar(next, contact.version))) continue
+    await auditar('whatsapp.linked', next, { tenantId: input.tenantId, origin: 'phone_verification' })
+    if (!(await repositories.consentimientosWhatsapp.buscar(input.tenantId, 'customer', next.waId)))
+      await repositories.consentimientosWhatsapp.guardar(
+        crearConsentimientoWhatsApp({
+          tenantId: input.tenantId,
+          recipientType: 'customer',
+          recipientId: next.waId,
+          source: WHATSAPP_CONSENT_ORIGINS.WHATSAPP_INBOUND,
+          now: input.now,
+        })
+      )
+    // A number change must not leave the account linked to the number it just gave up.
+    if (input.telefonoAnterior)
+      for (const other of await repositories.contactos.vinculadosA(input.accountId)) {
+        if (other.contactId === next.contactId || telefonoDesdeWaId(other.waId) !== input.telefonoAnterior) continue
+        if (!(await repositories.contactos.actualizar({ ...other, linkedAccountId: null, linkedTenantId: null, linkedAt: null, version: other.version + 1 }, other.version))) continue
+        await auditar('whatsapp.unlinked', other, { reason: 'phone_changed' })
+      }
+    return 'vinculado'
+  }
+  return 'conflicto'
+}
+
+// What the identity module sees of the assistant's contacts, over the repositories of ONE
+// transaction (or the plain client for reads).
+export function crearPuenteAsistente(repositories: RepositoriosAsistente) {
+  return {
+    vincular: (entrada: EntradaVinculoPorVerificacion) => vincularContactoPorVerificacion(repositories, entrada),
+    waIdVinculado: async (accountId: string): Promise<string | null> =>
+      (await repositories.contactos.vinculadosA(accountId)).find((contact) => (contact.channel ?? 'whatsapp') === 'whatsapp')?.waId ?? null,
   }
 }

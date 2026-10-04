@@ -16,12 +16,12 @@ const PHONE = `
   const { ErrorMetaWhatsapp } = await import('./apps/api/src/tus/asistente/meta.ts')
   const idStore = new InMemoryIdentityStore()
   const auth = { ...createAuthService({ store: idStore, now: waClock }), store: idStore }
-  const almacenTel = new AlmacenTelefonosEnMemoria(idStore)
+  const waStore2 = new AlmacenAsistenteEnMemoria()
+  const almacenTel = new AlmacenTelefonosEnMemoria(idStore, waStore2.enlaceTelefonos())
   const tel = crearServicioTelefono({ auth, telefonos: almacenTel, env: { TUS_WHATSAPP_PUBLIC_NUMBER: '+54 9 379 400-0000' }, now: waClock })
   // The model is DOWN (every call throws) and counted: verification must never touch it.
   let llmCalls = 0
   const chatCaido = new ChatGuionado(() => { llmCalls += 1; throw new Error('groq down') })
-  const waStore2 = new AlmacenAsistenteEnMemoria()
   const waTx2 = new TransaccionAsistenteEnMemoria(waStore2)
   const meta = new FakeWhatsappProvider()
   const waTel = crearModuloWhatsapp({ env: waEnv, transaction: waTx2, accounts: accountResolver, application: tusApp, knowledgeIndex, whatsapp: meta, chat: chatCaido, embeddings, transcriptor: null, now: waClock, verificadorTelefono: tel })
@@ -39,6 +39,8 @@ const PHONE = `
   const telefonoDe = async (accountId) => (await almacenTel.estado(accountId))
   const respuestasA = (waId) => meta.sent.filter((item) => item.to === waId).map((item) => item.message.text)
 `
+
+const VINCULADO = ['✅ ¡Listo! Este WhatsApp quedó vinculado a tu cuenta TUS.', '', 'Ya podés buscar profesionales, consultar tus turnos, verificar pagos y usar TUS directamente desde acá.'].join(String.fromCharCode(10))
 
 test('PHONE normalization: Argentina (+54 / +549 / 0 / 15 / Corrientes 379), international, noise, ambiguous and invalid', () => {
   const r = runTypeScriptScenario(`
@@ -120,7 +122,7 @@ test('PHONE WhatsApp flow: the right sender verifies, fixed confirmation, code n
   assert.equal(r.email, null, 'the email stays unverified; both states coexist')
   assert.equal(r.porTelefono, true)
   assert.equal(r.porEmail, true, 'email + password also works once the phone is verified')
-  assert.deepEqual(r.respuestas, ['✅ Tu número quedó verificado correctamente en TUS. Ya podés volver a la aplicación.'])
+  assert.deepEqual(r.respuestas, [VINCULADO])
   assert.equal(r.llmCalls, 0)
   assert.equal(r.codigoGuardado, false)
   assert.equal(r.textoRedactado, true)
@@ -172,7 +174,7 @@ test('PHONE WhatsApp adversarial: other sender, expired, consumed, duplicate web
   assert.deepEqual(r.muertoPorIntentos, [null, 'failed'])
   assert.deepEqual(r.vencido, [null, 'expired'])
   assert.deepEqual(r.duplicado, ['+5493794333333', 1, 1])
-  assert.deepEqual(r.consumido, ['✅ Tu número quedó verificado correctamente en TUS. Ya podés volver a la aplicación.', invalido])
+  assert.deepEqual(r.consumido, [VINCULADO, invalido])
   assert.deepEqual(r.malformado, [invalido])
   assert.deepEqual(r.metaCaido, ['+5493794555555', 'verified', null, 'WHATSAPP_RATE_LIMITED', true])
   assert.equal(r.confirmacionOk, true)
