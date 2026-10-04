@@ -51,6 +51,11 @@ export class AlmacenTelefonosEnMemoria implements AlmacenTelefonos {
     return [...this.desafios.values()].some((desafio) => desafio.phone === phone && desafio.purpose !== 'recuperar_contrasena' && vivo(desafio) && desafio.expiresAt > at)
   }
 
+  async ultimoDesafioDe(phone: string) {
+    const propios = [...this.desafios.values()].filter((desafio) => desafio.phone === phone && desafio.purpose !== 'recuperar_contrasena').sort((a, b) => b.createdAt - a.createdAt)
+    return propios[0] ? { ...propios[0] } : null
+  }
+
   async fijarPendiente(accountId: string, phone: string | null) {
     const cuenta = this.cuentas().get(accountId)
     if (cuenta) cuenta.phonePending = phone
@@ -244,6 +249,11 @@ export class AlmacenTelefonosPrisma implements AlmacenTelefonos {
       select: { id: true },
     })
     return fila !== null
+  }
+
+  async ultimoDesafioDe(phone: string) {
+    const fila = await this.client.desafioTelefono.findFirst({ where: { telefono: phone, proposito: { not: 'recuperar_contrasena' } }, orderBy: { creadoEn: 'desc' } })
+    return fila ? desdeFila(fila) : null
   }
 
   async fijarPendiente(accountId: string, phone: string | null) {
