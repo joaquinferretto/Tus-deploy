@@ -57,6 +57,9 @@ export interface AlmacenTelefonos {
   estados(accountIds: readonly string[]): Promise<Map<string, EstadoTelefonoCuenta>>
   // Account whose VERIFIED identity phone is `phone`.
   cuentaPorTelefono(phone: string): Promise<string | null>
+  // Whether a verification or link challenge for `phone` is still waiting to be sent from WhatsApp
+  // (unused, not invalidated, not expired). A password recovery is not one.
+  desafioVivoPara(phone: string, at: number): Promise<boolean>
   fijarPendiente(accountId: string, phone: string | null): Promise<void>
   // Replaces the identity phone. 'conflicto' when another person already has it (UNIQUE).
   fijarVerificado(accountId: string, phone: string, at: number): Promise<'ok' | 'conflicto'>

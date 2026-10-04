@@ -343,6 +343,33 @@ export function pideDesvincular(text: string): boolean {
   return PATRON_DESVINCULAR.test(text)
 }
 
+// "ya estoy registrado y logueado", "¿podés ver mi número?", "¿está vinculado mi WhatsApp?": the
+// person says or asks something about the account behind this number. What is SAID changes
+// nothing: the answer is the state the backend reads for the sender's own number.
+const PATRON_CUENTA = new RegExp(
+  [
+    String.raw`\b(?:estoy|toy|estaba|figuro) (?:ya )?(?:registrad[oa]|loguead[oa]|logead[oa]|vinculad[oa]|verificad[oa]|conectad[oa])\b`,
+    String.raw`\bya (?:me )?(?:registre|logue|loguee|inicie sesion|vincule|conecte)\b`,
+    String.raw`\b(?:podes|puedes|podrias|pueden) ver(?:me)? (?:mi|el|este) (?:numero|cuenta|celular|telefono|perfil|whatsapp)\b`,
+    String.raw`\b(?:ves|tenes|reconoces|te figura|figura|aparece) (?:mi|este) (?:numero|cuenta|celular|telefono)\b`,
+    String.raw`\b(?:mi|este) (?:numero|cuenta|whatsapp|celular|telefono) (?:ya )?(?:esta|figura|aparece) (?:vinculad|verificad|registrad|conectad)[oa]\b`,
+    String.raw`\besta (?:vinculad|verificad|registrad)[oa] (?:mi|este) (?:numero|whatsapp|celular|cuenta)\b`,
+    String.raw`\b(?:ya )?tengo (?:la )?sesion (?:iniciada|abierta)\b`,
+  ].join('|'),
+  'u'
+)
+const PATRON_SESION_WEB = /\b(?:loguead[oa]|logead[oa]|sesion|conectad[oa])\b/u
+const plano = (text: string): string => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+export function preguntaPorCuenta(text: string): boolean {
+  return PATRON_CUENTA.test(plano(text))
+}
+
+// The person claims a Web session: something WhatsApp can never see.
+export function mencionaSesionWeb(text: string): boolean {
+  return PATRON_SESION_WEB.test(plano(text))
+}
+
 // Explicit yes/no only; a loose "yes" is honored only when a pending confirmation exists and it
 // belongs to this conversation, actor and action (checked by the orchestrator).
 export function respuestaConfirmacion(
@@ -376,6 +403,13 @@ export const MENSAJES = {
   linkVerifiedPending:
     'Tu número ya está verificado. Solo falta vincular este WhatsApp. Entrá a Mi perfil y tocá "Vincular este WhatsApp".',
   alreadyLinked: 'Este WhatsApp ya está vinculado a tu cuenta TUS.',
+  // Answers to "¿ves mi cuenta / mi número?", one per REAL state of the sender's number.
+  accountLinked: 'Sí, este WhatsApp ya está vinculado a tu cuenta TUS.',
+  accountVerifiedUnlinked: 'Sí, este número coincide con una cuenta TUS que ya tiene el celular verificado. Solo falta vincular este WhatsApp con tu cuenta.',
+  accountChallengePending: 'Hay una verificación en curso para este número. Para terminarla, enviá desde este WhatsApp el mensaje "VERIFICAR TUS" con el código que te muestra Mi perfil.',
+  accountUnknown: 'No encuentro este número como verificado en una cuenta TUS. Entrá a Mi perfil para verificarlo.',
+  accountConflict: 'No puedo vincular este WhatsApp desde acá: el número figura asociado a otra vinculación. Revisalo desde Mi perfil.',
+  webSessionUnknown: 'No puedo ver si iniciaste sesión en la Web: WhatsApp es un canal aparte. Lo que sí puedo comprobar es este número.',
   linkRequired:
     'Para ver o hacer cosas de tu cuenta primero tengo que vincular este WhatsApp con tu cuenta TUS.',
   aiUnavailable:

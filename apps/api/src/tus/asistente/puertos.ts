@@ -19,6 +19,10 @@ export interface VerificadorTelefonoWhatsapp {
   verificarDesdeWhatsapp(entrada: { waId: string; texto: string; wamid: string }): Promise<{ resultado: string; desafioId: string | null; respuesta: string | null }>
   // Read-only state for wording: does a verified identity phone match this sender? (never authority)
   numeroVerificado?(waId: string): Promise<boolean>
+  // Read-only state of the sender's OWN number (the wa_id Meta delivered): whether it is the
+  // verified phone of an account, linked, waiting for a challenge or in conflict. A state only:
+  // no account, name or other number. Never authority.
+  estadoNumero?(waId: string): Promise<'sin_cuenta' | 'verificado_sin_vinculo' | 'desafio_pendiente' | 'vinculado' | 'conflicto'>
   registrarConfirmacion(desafioId: string, resultado: { ok: true } | { ok: false; error: string }): Promise<void>
 }
 

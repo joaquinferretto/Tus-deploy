@@ -47,6 +47,10 @@ export class AlmacenTelefonosEnMemoria implements AlmacenTelefonos {
     return [...this.cuentas().values()].find((cuenta) => cuenta.phoneNumber === phone)?.id ?? null
   }
 
+  async desafioVivoPara(phone: string, at: number) {
+    return [...this.desafios.values()].some((desafio) => desafio.phone === phone && desafio.purpose !== 'recuperar_contrasena' && vivo(desafio) && desafio.expiresAt > at)
+  }
+
   async fijarPendiente(accountId: string, phone: string | null) {
     const cuenta = this.cuentas().get(accountId)
     if (cuenta) cuenta.phonePending = phone
@@ -159,6 +163,7 @@ export interface ClientePrismaTelefonos {
   desafioTelefono: {
     create(input: Fila): Promise<Fila>
     findUnique(input: Fila): Promise<Fila | null>
+    findFirst(input: Fila): Promise<Fila | null>
     updateMany(input: Fila): Promise<{ count: number }>
   }
   $transaction<T>(operacion: (cliente: ClientePrismaTelefonos) => Promise<T>, options?: Fila): Promise<T>
@@ -231,6 +236,14 @@ export class AlmacenTelefonosPrisma implements AlmacenTelefonos {
     const user = await this.client.user.findUnique({ where: { phoneNumber: phone }, select: { accounts: { select: { id: true }, orderBy: { createdAt: 'asc' }, take: 1 } } })
     const cuentas = (user?.['accounts'] as Fila[] | undefined) ?? []
     return cuentas[0] ? String(cuentas[0]['id']) : null
+  }
+
+  async desafioVivoPara(phone: string, at: number) {
+    const fila = await this.client.desafioTelefono.findFirst({
+      where: { telefono: phone, proposito: { not: 'recuperar_contrasena' }, usadoEn: null, invalidadoEn: null, expiraEn: { gt: new Date(at) } },
+      select: { id: true },
+    })
+    return fila !== null
   }
 
   async fijarPendiente(accountId: string, phone: string | null) {

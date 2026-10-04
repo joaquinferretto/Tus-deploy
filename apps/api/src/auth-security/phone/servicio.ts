@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { enlaceVerificacionWhatsapp, enmascararTelefono, normalizarTelefono, telefonoDesdeWaId, type MotivoTelefonoInvalido } from '@factory/contracts'
+import { enlaceVerificacionWhatsapp, enmascararTelefono, normalizarTelefono, telefonoDesdeWaId, waIdEquivalentes, type MotivoTelefonoInvalido } from '@factory/contracts'
 
 import { AUTH_EVENT_KIND } from '../domain/constants.js'
 import type { Account, SecurityEvent } from '../domain/models.js'
@@ -23,6 +23,8 @@ import type { AlmacenTelefonos, DesafioTelefono, PropositoDesafio, ResultadoVinc
 // message, and the phone is verified only if the SENDER (wa_id, from Meta, never from the Web) is
 // the number the challenge expects. The WhatsApp answer is deterministic text (no LLM) and its
 // delivery never decides the verification.
+
+export type EstadoNumeroWhatsapp = 'sin_cuenta' | 'verificado_sin_vinculo' | 'desafio_pendiente' | 'vinculado' | 'conflicto'
 
 export const RESPUESTAS_VERIFICACION = {
   // The number was proved AND this WhatsApp is linked to the account: said only after the commit.
@@ -293,6 +295,29 @@ export class ServicioVerificacionTelefono {
   async numeroVerificado(waId: string): Promise<boolean> {
     const telefono = telefonoDesdeWaId(waId)
     return telefono !== null && (await this.deps.telefonos.cuentaPorTelefono(telefono)) !== null
+  }
+
+  // What the backend knows about the number a WhatsApp message came FROM, for the conversation of
+  // that very sender. The only input is the wa_id Meta delivered (never a number somebody typed),
+  // read with the canonical phone functions, and the answer is a state: no account, name, email,
+  // document or tenant ever leaves here, so it cannot be used to look other people up. It never
+  // authenticates anyone and never changes a link: linking still needs the challenge.
+  //   sin_cuenta: the number is not the verified phone of an active account.
+  //   verificado_sin_vinculo: it is, and that account has no WhatsApp linked yet.
+  //   desafio_pendiente: a verification or link challenge for this number is waiting to be sent.
+  //   vinculado: the account of this number has this very WhatsApp linked.
+  //   conflicto: the account of this number is linked to ANOTHER WhatsApp.
+  async estadoNumero(waId: string): Promise<EstadoNumeroWhatsapp> {
+    const telefono = telefonoDesdeWaId(waId)
+    if (!telefono) return 'sin_cuenta'
+    const ahora = this.deps.now()
+    const accountId = await this.deps.telefonos.cuentaPorTelefono(telefono)
+    const cuenta = accountId ? await this.deps.cuentas.getAccount(accountId) : undefined
+    const pendiente = await this.deps.telefonos.desafioVivoPara(telefono, ahora)
+    if (!cuenta || cuenta.status !== 'active') return pendiente ? 'desafio_pendiente' : 'sin_cuenta'
+    const vinculado = await this.deps.telefonos.waIdVinculado(cuenta.id)
+    if (vinculado) return waIdEquivalentes(waId).includes(vinculado) ? 'vinculado' : 'conflicto'
+    return pendiente ? 'desafio_pendiente' : 'verificado_sin_vinculo'
   }
 
   esMensajeVerificacion(texto: unknown): boolean {
