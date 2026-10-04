@@ -340,5 +340,28 @@ export function crearPuenteAsistente(repositories: RepositoriosAsistente) {
     vincular: (entrada: EntradaVinculoPorVerificacion) => vincularContactoPorVerificacion(repositories, entrada),
     waIdVinculado: async (accountId: string): Promise<string | null> =>
       (await repositories.contactos.vinculadosA(accountId)).find((contact) => (contact.channel ?? 'whatsapp') === 'whatsapp')?.waId ?? null,
+    // The verification of a phone was revoked: the WhatsApp of THAT number stops being linked to
+    // THAT account. Compared with the canonical phone of the wa_id (Argentina with or without 9).
+    // Conversations and messages are untouched.
+    desvincular: async (input: { accountId: string; telefono: string; actorId: string; correlationId: string; now: number }): Promise<number> => {
+      let cantidad = 0
+      for (const contact of await repositories.contactos.vinculadosA(input.accountId)) {
+        if ((contact.channel ?? 'whatsapp') !== 'whatsapp' || telefonoDesdeWaId(contact.waId) !== input.telefono) continue
+        const next: ContactoWhatsapp = { ...contact, linkedAccountId: null, linkedTenantId: null, linkedAt: null, version: contact.version + 1 }
+        if (!(await repositories.contactos.actualizar(next, contact.version))) throw new ErrorAsistente(409, 'CONCURRENT_MODIFICATION', 'contact changed; retry')
+        await repositories.auditoria.registrar({
+          eventId: `auditoria-asistente-${randomUUID()}`,
+          action: 'whatsapp.unlinked',
+          contactId: contact.contactId,
+          conversationId: null,
+          actorId: input.actorId,
+          correlationId: input.correlationId,
+          metadata: { waId: enmascararWaId(contact.waId), reason: 'phone_unverified_by_admin' },
+          createdAt: new Date(input.now).toISOString(),
+        })
+        cantidad += 1
+      }
+      return cantidad
+    },
   }
 }

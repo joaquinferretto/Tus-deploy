@@ -168,3 +168,62 @@ test(
     assert.equal(r.reinicio, true)
   }
 )
+
+test(
+  'PHONE PostgreSQL admin verification: marking the pending phone as verified and removing that verification are transactional — the unique phone holds, the challenges and the WhatsApp link of THAT number go with the verification, another account is untouched, two administrators at once leave one coherent state',
+  { skip: !url && 'TUS_TELEFONO_PG_URL not set (disposable PostgreSQL 16 only)', timeout: 180000 },
+  () => {
+    const r = runTypeScriptScenario(`${SETUP}
+      try {
+        const contacto = (waId) => prisma.contactoWhatsapp.findUnique({ where: { waId } })
+        const estado = async (id) => { const e = await almacen.estado(id); return [e.phoneNumber, e.phonePending, e.phoneVerifiedAt !== null] }
+        const out = {}
+        // Verify the pending number: the canonical columns, no WhatsApp link.
+        const a = await cuenta('adm-a'); const pa = phone(20); const waA = pa.slice(1)
+        await tel.fijarPendientePorAdmin('admin-pg', a, pa)
+        const verificada = await tel.verificarPorAdmin('admin-pg', a)
+        out.verificar = [verificada.ok, verificada.cambio, verificada.telefono.verificado, verificada.telefono.whatsappVinculado, await estado(a)]
+        out.repetir = await tel.verificarPorAdmin('admin-pg', a).then((x) => [x.ok, x.cambio])
+        // The same number pending on another account: the UNIQUE index decides.
+        const b = await cuenta('adm-b')
+        await tel.fijarPendientePorAdmin('admin-pg', b, pa)
+        out.conflicto = [await tel.verificarPorAdmin('admin-pg', b).then((x) => x.code), await estado(b)]
+        out.sinTelefono = await tel.verificarPorAdmin('admin-pg', await cuenta('adm-vacia')).then((x) => x.code)
+        // The person links the WhatsApp and starts changing the number; another account has its own link.
+        const da = await tel.iniciarVinculo(a)
+        await tel.verificarDesdeWhatsapp({ waId: waA, texto: da.message, wamid: run + '-adm1' })
+        const o = await cuenta('adm-o'); const po = phone(21); const waO = po.slice(1)
+        await tel.fijarPendientePorAdmin('admin-pg', o, po); await tel.verificarPorAdmin('admin-pg', o)
+        const dOtra = await tel.iniciarVinculo(o)
+        await tel.verificarDesdeWhatsapp({ waId: waO, texto: dOtra.message, wamid: run + '-adm2' })
+        const cambio = await tel.iniciar(a, { telefono: phone(22) })
+        out.antes = [(await contacto(waA)).cuentaVinculadaId === a, (await contacto(waO)).cuentaVinculadaId === o, (await prisma.desafioTelefono.findUnique({ where: { id: cambio.challengeId } })).invalidadoEn]
+        // Two administrators remove the verification at once.
+        const carrera = await Promise.all([tel.quitarVerificacionPorAdmin('admin-pg', a), tel.quitarVerificacionPorAdmin('admin-pg-2', a)].map((p) => p.then((x) => x.ok, (e) => 'error:' + code(e))))
+        out.carrera = carrera
+        const filaDesafio = await prisma.desafioTelefono.findUnique({ where: { id: cambio.challengeId } })
+        const filaA = await contacto(waA)
+        out.despues = [await estado(a), filaDesafio.invalidadoEn !== null, filaDesafio.motivoInvalidacion, filaA.cuentaVinculadaId, filaA.tenantVinculadoId, filaA.vinculadoEn, Boolean(filaA.id)]
+        out.otra = [await estado(o), (await contacto(waO)).cuentaVinculadaId === o]
+        out.auditoriaAsistente = await prisma.auditoriaAsistente.count({ where: { accion: 'whatsapp.unlinked', contactoId: filaA.id } })
+        out.propio = await tel.estadoCuenta(a).then((x) => [x.verified, x.whatsappLinked])
+        out.repetirQuitar = await tel.quitarVerificacionPorAdmin('admin-pg', a).then((x) => [x.ok, x.cambio])
+        out.codigoViejo = (await tel.verificarDesdeWhatsapp({ waId: phone(22).slice(1), texto: cambio.message, wamid: run + '-adm3' })).resultado
+        out.pa = pa; out.p22 = phone(22); out.po = po
+        console.log(JSON.stringify(out))
+      } finally { await prisma.$disconnect() }
+    `)
+    assert.deepEqual(r.verificar, [true, true, true, false, [r.pa, null, true]], 'the pending number is the verified identity phone; WhatsApp is not linked by it')
+    assert.deepEqual(r.repetir, [true, false], 'idempotent')
+    assert.deepEqual(r.conflicto, ['PHONE_IN_USE', [null, r.pa, false]], 'the unique phone holds: the other account stays pending')
+    assert.equal(r.sinTelefono, 'NO_PHONE')
+    assert.deepEqual(r.antes, [true, true, null])
+    assert.ok(r.carrera.every((valor) => valor === true), `both administrators get an answer, none an error: ${JSON.stringify(r.carrera)}`)
+    assert.deepEqual(r.despues, [[null, r.p22, false], true, 'reemplazado', null, null, null, true], 'not verified, the challenge cancelled, the contact unlinked (and still there)')
+    assert.deepEqual(r.otra, [[r.po, null, true], true], 'the other account keeps its phone and its WhatsApp')
+    assert.ok(r.auditoriaAsistente >= 1, 'the unlink is audited')
+    assert.deepEqual(r.propio, [false, false])
+    assert.deepEqual(r.repetirQuitar, [true, false])
+    assert.notEqual(r.codigoViejo, 'vinculado', 'the cancelled code verifies nothing')
+  }
+)

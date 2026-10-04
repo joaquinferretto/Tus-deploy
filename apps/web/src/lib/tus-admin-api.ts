@@ -70,6 +70,8 @@ export interface AdminTelefono {
   numero: string | null
   verificadoEn: string | null
   pendiente: string | null
+  // A verified phone and a linked WhatsApp are different facts.
+  whatsappVinculado?: boolean
 }
 
 // One account in the admin detail: business fields only (never hashes, tokens or MFA data).
@@ -293,6 +295,9 @@ export const adminApi = {
     return call<PaginaUsuariosAdmin>(`/tus/v1/admin/usuarios?${params.toString()}`)
   },
   telefonoUsuario: (id: string, body: { accion: 'pendiente'; telefono: string } | { accion: 'quitar' }) => call<{ done: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/telefono`, body),
+  // Explicit administrative operations: the request only names the action (never a state or a
+  // date) and the API answers the updated phone identity.
+  verificacionTelefonoUsuario: (id: string, accion: 'verificar' | 'desverificar') => call<{ done: true; telefono: AdminTelefono }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/telefono`, { accion }),
   crearUsuario: (body: { displayName: string; email: string; password: string; role: 'cliente' }) => call<{ created: true }>('/tus/v1/admin/usuarios', body),
   actualizarUsuario: (id: string, body: { displayName?: string; status?: 'active' | 'suspended'; reason?: string; email?: string; emailVerified?: boolean }) => call<{ updated: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`, body, 'PATCH'),
   usuario: (id: string) => call<AdminUsuarioDetalle>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`),

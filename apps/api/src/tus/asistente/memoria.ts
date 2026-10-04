@@ -45,6 +45,7 @@ export class AlmacenAsistenteEnMemoria {
       puente: {
         vincular: (entrada: EntradaVinculoPorVerificacion) => vincularContactoPorVerificacion(this.repositorios(), entrada),
         waIdVinculado: (accountId: string) => crearPuenteAsistente(this.repositorios()).waIdVinculado(accountId),
+        desvincular: (entrada: Parameters<ReturnType<typeof crearPuenteAsistente>['desvincular']>[0]) => crearPuenteAsistente(this.repositorios()).desvincular(entrada),
       },
       instantanea: () => {
         const antes = structuredClone(this.state)

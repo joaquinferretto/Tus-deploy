@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { root, runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
@@ -26,7 +26,7 @@ const HTTP = `
   const tel = crearServicioTelefono({ auth, telefonos: almacenTel, env: { TUS_WHATSAPP_PUBLIC_NUMBER: '5493794000000' } })
   const sessions = new DurableIdentitySessionResolver(idStore)
   const adminCtx = { subjectId: 'admin-1', tenantId: 'platform', sessionId: 's', roles: ['owner'], permissions: ['tus:providers:admin', 'tus:identity:admin'], correlationId: 'c' }
-  const adminSessions = { resolve: async (token) => token === 'admin' ? adminCtx : token === 'client' ? { ...adminCtx, subjectId: 'x', permissions: ['tus:marketplace:write'] } : null }
+  const adminSessions = { resolve: async (token) => token === 'admin' ? adminCtx : token === 'client' ? { ...adminCtx, subjectId: 'x', permissions: ['tus:marketplace:write'] } : token === 'provider' ? { ...adminCtx, subjectId: 'y', roles: ['owner'], permissions: ['tus:marketplace:write', 'tus:providers:write'] } : null }
   const directorio = { tenantsConPerfil: async () => [], perfilDeTenantAdmin: async () => null }
   const app = express(); app.set('trust proxy', false); app.use(express.json())
   app.use(createAuthRouter({ service: auth.service, sessions, phones: tel }))
@@ -144,7 +144,7 @@ test('PHONE HTTP whatsapp-link: needs a session, only for the verified number of
   assert.equal(r.limite[5], 429)
 })
 
-test('PHONE HTTP admin: masked phone state, filters, pending-only edition, free a number, never "verified" from the panel', () => {
+test('PHONE HTTP admin: masked phone state, filters, pending edition, free a number; the verification state is never written from a body', () => {
   const r = runTypeScriptScenario(`${HTTP}
     try {
       const out = {}
@@ -170,7 +170,7 @@ test('PHONE HTTP admin: masked phone state, filters, pending-only edition, free 
     } finally { server.close() }
   `)
   assert.deepEqual(r.filtros, { verificado: ['a@example.com'], pendiente: ['b@example.com'], sin: ['c@example.com'] })
-  assert.deepEqual(r.detalle, { verificado: true, numero: '+549379•••1111', verificadoEn: '2026-09-30T10:00:00.000Z', pendiente: null })
+  assert.deepEqual(r.detalle, { verificado: true, numero: '+549379•••1111', verificadoEn: '2026-09-30T10:00:00.000Z', pendiente: null, whatsappVinculado: false })
   assert.equal(r.sinNumeroCompleto, true)
   assert.equal(r.pendiente, 200)
   assert.deepEqual([r.despuesPendiente.phoneNumber, r.despuesPendiente.phonePending], ['+5493794111111', '+5493794333333'], 'a pending number never replaces the verified identity')
@@ -180,6 +180,146 @@ test('PHONE HTTP admin: masked phone state, filters, pending-only edition, free 
   assert.equal(r.quitar, 200)
   assert.equal(r.despuesQuitar, null)
   assert.equal(r.cliente, 403)
+})
+
+test('PHONE HTTP admin verification: an authorized administrator marks the PENDING phone as verified and removes that verification — explicit operations, actor from the session, idempotent, audited, and removing it revokes what depended on it (challenges, the WhatsApp of THAT number) and nothing else', () => {
+  const r = runTypeScriptScenario(`${HTTP}
+    try {
+      const out = {}
+      const nueva = async (email) => (await auth.service.registerAccount({ email, password: PASSWORD, displayName: 'Persona ' + email })).created.account.id
+      const accion = (id, nombre, token = 'admin', extra = {}) => call('POST', '/tus/v1/admin/usuarios/' + id + '/telefono', { accion: nombre, ...extra }, token)
+      const estado = async (id) => { const e = await almacenTel.estado(id); return [e.phoneNumber, e.phonePending, e.phoneVerifiedAt] }
+      const eventos = () => auth.audit.events.filter((e) => e.kind === 'phone.verified_by_admin' || e.kind === 'phone.unverified_by_admin')
+      const vincular = async (id, waId) => { const desafio = await tel.iniciarVinculo(id); await tel.verificarDesdeWhatsapp({ waId, texto: desafio.message, wamid: 'wamid-' + waId }); return almacenTel.waIdVinculado(id) }
+
+      // ---- permissions: the actor is the session; a body never grants anything
+      const P = await nueva('p@example.com')
+      await tel.fijarPendientePorAdmin('admin-1', P, '379 455-0001')
+      out.permisos = [(await accion(P, 'verificar', null)).status, (await accion(P, 'verificar', 'client')).status, (await accion(P, 'verificar', 'provider')).status, (await accion(P, 'desverificar', 'client')).status, (await accion(P, 'desverificar', null)).status]
+      out.cuerpo = [
+        (await accion(P, 'verificar', 'admin', { phoneVerifiedAt: '2020-01-01T00:00:00Z' })).status,
+        (await accion(P, 'verificar', 'admin', { adminId: 'otro-admin' })).status,
+        (await accion(P, 'verificar', 'client', { role: 'admin', permissions: ['tus:identity:admin'] })).status,
+        (await call('PATCH', '/tus/v1/admin/usuarios/' + P, { phoneVerifiedAt: 1 }, 'admin')).status,
+        (await call('PATCH', '/tus/v1/admin/usuarios/' + P, { phoneVerified: true }, 'admin')).status,
+      ]
+      out.intacto = await estado(P)
+      out.sinEventos = eventos().length
+
+      // ---- A. verify the pending phone
+      const antes = Date.now()
+      const verificada = await accion(P, 'verificar')
+      out.verificar = [verificada.status, verificada.body]
+      const tras = await almacenTel.estado(P)
+      out.estadoVerificado = [tras.phoneNumber, tras.phonePending, tras.phoneVerifiedAt >= antes && tras.phoneVerifiedAt <= Date.now()]
+      out.noVincula = await almacenTel.waIdVinculado(P)
+      out.detalle = (await call('GET', '/tus/v1/admin/usuarios/' + P, null, 'admin')).body.telefono
+      out.cuentaIntacta = await auth.service.getAccountAsAdmin(P).then((c) => [c.email, c.displayName, c.status])
+      // ---- F. again: same state, no second event
+      const repetida = await accion(P, 'verificar')
+      out.repetir = [repetida.status, repetida.body.telefono.verificado, (await almacenTel.estado(P)).phoneVerifiedAt === tras.phoneVerifiedAt, eventos().length]
+
+      // ---- E. no phone, unknown account, a number that is already somebody else's
+      const S = await nueva('s@example.com')
+      const sinTelefono = await accion(S, 'verificar')
+      out.sinTelefono = [sinTelefono.status, sinTelefono.body.error.code, await estado(S)]
+      out.inexistente = [(await accion('cuenta-que-no-existe', 'verificar')).status, (await accion('cuenta-que-no-existe', 'desverificar')).status]
+      const C = await nueva('c@example.com')
+      await tel.fijarPendientePorAdmin('admin-1', C, '379 455-0001')
+      const conflicto = await accion(C, 'verificar')
+      out.conflicto = [conflicto.status, conflicto.body.error.code, conflicto.text.includes('p@example.com') || conflicto.text.includes(P), (await estado(C))[0]]
+
+      // ---- the WhatsApp of P and of another account are really linked (by their own challenges)
+      const O = await nueva('o@example.com')
+      await almacenTel.fijarVerificado(O, '+5493794550002', Date.now())
+      out.vinculos = [await vincular(P, '5493794550001'), await vincular(O, '5493794550002')]
+      out.numeroAntes = await tel.estadoNumero('5493794550001')
+      // A challenge still waiting (P is changing to another number).
+      const cambio = await tel.iniciar(P, { telefono: '379 455-0009' })
+      out.desafioVivo = [cambio.ok, almacenTel.desafios.get(cambio.challengeId).invalidatedAt]
+
+      // ---- G/I/J/K. remove the verification
+      const quitada = await accion(P, 'desverificar')
+      out.quitar = [quitada.status, quitada.body]
+      out.estadoQuitado = await estado(P)
+      out.desafioInvalidado = [almacenTel.desafios.get(cambio.challengeId).invalidatedAt !== null, almacenTel.desafios.get(cambio.challengeId).invalidationReason]
+      await tel.verificarDesdeWhatsapp({ waId: '5493794550009', texto: cambio.message, wamid: 'wamid-tarde' })
+      out.codigoViejoNoVerifica = (await estado(P))[0]
+      out.vinculosDespues = [await almacenTel.waIdVinculado(P), await almacenTel.waIdVinculado(O)]
+      out.otraIntacta = await estado(O).then((e) => [e[0], e[2] !== null])
+      out.numeroDespues = await tel.estadoNumero('5493794550001')
+      out.propio = await tel.estadoCuenta(P)
+      out.sesion = (await auth.service.getAccountAsAdmin(P)).status
+      // ---- H. again: same state, no second event
+      const repetidaQuitar = await accion(P, 'desverificar')
+      out.repetirQuitar = [repetidaQuitar.status, repetidaQuitar.body.telefono.verificado, eventos().length]
+
+      // ---- the plain case: no other number waiting — the SAME number stays, as pending
+      const Q = await nueva('q@example.com')
+      await almacenTel.fijarVerificado(Q, '+5493794550003', Date.now())
+      const simple = await accion(Q, 'desverificar')
+      out.simple = [simple.body.telefono, await estado(Q)]
+      const deNuevo = await accion(Q, 'verificar')
+      out.idaYVuelta = [deNuevo.body.telefono.verificado, deNuevo.body.telefono.numero, (await estado(Q))[0]]
+
+      // ---- M/N. audit: who, on whom, what changed; masked numbers only
+      out.auditoria = eventos().map((e) => [e.kind, e.actorId, e.metadata.target === P ? 'P' : e.metadata.target === Q ? 'Q' : '?', e.metadata.before, e.metadata.after, e.metadata.phone, typeof e.correlationId === 'string' && e.correlationId.length > 8, e.outcome])
+      out.revocacion = eventos().find((e) => e.kind === 'phone.unverified_by_admin').metadata
+      out.sinNumerosCompletos = !JSON.stringify(eventos()).includes('3794550') && ![verificada.text, quitada.text, simple.text].some((texto) => texto.includes('3794550') || texto.includes('accountId') || texto.includes('tenantId'))
+      console.log(JSON.stringify(out))
+    } finally { server.close() }
+  `)
+  assert.deepEqual(r.permisos, [401, 403, 403, 403, 401], 'no session: 401; a client or a provider: 403')
+  assert.deepEqual(r.cuerpo, [422, 422, 403, 422, 422], 'the state is never written from a body, here or in the generic account update; a role in the body grants nothing')
+  assert.deepEqual(r.intacto, [null, '+5493794550001', null], 'nothing changed by any of those requests')
+  assert.equal(r.sinEventos, 0)
+
+  assert.deepEqual(r.verificar, [200, { done: true, telefono: { verificado: true, numero: '+549379•••0001', verificadoEn: r.verificar[1].telefono.verificadoEn, pendiente: null, whatsappVinculado: false } }])
+  assert.match(r.verificar[1].telefono.verificadoEn, /^\d{4}-\d{2}-\d{2}T/u)
+  assert.deepEqual(r.estadoVerificado, ['+5493794550001', null, true], 'the canonical field: the pending number becomes the verified identity phone, with the clock of the backend')
+  assert.equal(r.noVincula, null, 'verifying is not linking: WhatsApp stays unlinked')
+  assert.deepEqual(r.detalle, r.verificar[1].telefono, 'the sheet reads the same state')
+  assert.deepEqual(r.cuentaIntacta, ['p@example.com', 'Persona p@example.com', 'active'], 'email, name and status untouched')
+  assert.deepEqual(r.repetir, [200, true, true, 1], 'idempotent: the same date, one event')
+
+  assert.deepEqual(r.sinTelefono, [422, 'NO_PHONE', [null, null, null]], 'an account without a phone cannot be marked as verified')
+  assert.deepEqual(r.inexistente, [404, 404])
+  assert.deepEqual(r.conflicto, [409, 'PHONE_IN_USE', false, null], 'a number that is the verified phone of another account: a safe conflict that names nobody')
+
+  assert.deepEqual(r.vinculos, ['5493794550001', '5493794550002'])
+  assert.deepEqual(r.desafioVivo, [true, null])
+  assert.deepEqual(r.quitar, [200, { done: true, telefono: { verificado: false, numero: null, verificadoEn: null, pendiente: '+549379•••0009', whatsappVinculado: false } }], 'the answer is the updated state')
+  assert.deepEqual(r.estadoQuitado, [null, '+5493794550009', null], 'phoneVerifiedAt is null; the number that was already waiting stays as the pending one')
+  assert.deepEqual(r.desafioInvalidado, [true, 'reemplazado'], 'the challenge that was waiting is cancelled')
+  assert.equal(r.codigoViejoNoVerifica, null, 'its old code verifies nothing afterwards')
+  assert.deepEqual(r.vinculosDespues, [null, '5493794550002'], 'the WhatsApp of that number is unlinked from that account; the other account keeps its own')
+  assert.deepEqual(r.otraIntacta, ['+5493794550002', true])
+  assert.notDeepEqual(r.numeroDespues, r.numeroAntes, 'the assistant reads the new state at once')
+  assert.deepEqual([r.propio.verified, r.propio.whatsappLinked], [false, false], 'the owner sees it as not verified and not linked')
+  assert.equal(r.sesion, 'active', 'the account and its Web sessions are untouched')
+  assert.deepEqual(r.repetirQuitar, [200, false, 2], 'idempotent: still pending, no second event')
+
+  assert.deepEqual(r.simple, [{ verificado: false, numero: null, verificadoEn: null, pendiente: '+549379•••0003', whatsappVinculado: false }, [null, '+5493794550003', null]], 'the number itself is kept: it goes back to pending')
+  assert.deepEqual(r.idaYVuelta, [true, '+549379•••0003', '+5493794550003'], 'pending -> verified -> pending -> verified')
+
+  assert.deepEqual(r.auditoria, [
+    ['phone.verified_by_admin', 'admin-1', 'P', 'pending', 'verified', '+549379•••0001', true, 'success'],
+    ['phone.unverified_by_admin', 'admin-1', 'P', 'verified', 'pending', '+549379•••0001', true, 'success'],
+    ['phone.unverified_by_admin', 'admin-1', 'Q', 'verified', 'pending', '+549379•••0003', true, 'success'],
+    ['phone.verified_by_admin', 'admin-1', 'Q', 'pending', 'verified', '+549379•••0003', true, 'success'],
+  ], 'the administrator of the SESSION, the target, the state before and after')
+  assert.deepEqual([r.revocacion.challengesInvalidated, r.revocacion.whatsappUnlinked], [1, 1], 'what the revocation took with it is recorded')
+  assert.equal(r.sinNumerosCompletos, true, 'no full number, account id or tenant id in the audit or in the answers')
+
+  // The panel: one action at a time, the administrative dialog (never the browser's), no state sent.
+  const ficha = read('apps/web/src/components/admin/admin-usuario-detalle.tsx')
+  assert.match(ficha, /titulo: '¿Marcar este teléfono como verificado\?'[\s\S]{0,260}confirmar: 'Verificar teléfono'/u)
+  assert.match(ficha, /titulo: '¿Quitar la verificación de este teléfono\?'[\s\S]{0,420}confirmar: 'Quitar verificación'/u)
+  assert.match(ficha, /cuenta\.telefono\.verificado \? \([\s\S]{0,900}Quitar verificación\s*<\/button>\s*\) : cuenta\.telefono\.pendiente \? \([\s\S]{0,900}Marcar como verificado\s*<\/button>\s*\) : \(\s*<p className=\{styles\.muted\}>Esta cuenta todavía no tiene un teléfono cargado\.<\/p>/u, 'never both buttons at once')
+  assert.doesNotMatch(ficha, /window\.confirm|\bconfirm\(|alert\(/u)
+  assert.match(read('apps/web/src/lib/tus-admin-api.ts'), /verificacionTelefonoUsuario: \(id: string, accion: 'verificar' \| 'desverificar'\) => call<\{ done: true; telefono: AdminTelefono \}>\(`\/tus\/v1\/admin\/usuarios\/\$\{encodeURIComponent\(id\)\}\/telefono`, \{ accion \}\)/u, 'the request only names the action')
+  // Not a flow for the public: the Help Center never tells a client to ask for it.
+  for (const nombre of readdirSync(join(root, 'docs/conocimiento'))) assert.doesNotMatch(read(join('docs/conocimiento', nombre)), /marc(?:ar|a|ue) (?:el |tu )?tel[eé]fono como verificado|verificaci[oó]n administrativa/iu, nombre)
 })
 
 test('PHONE Web: phone-first sign-up, one verification component (WhatsApp button, aria-live, bounded polling, new code), phone sign-in, WhatsApp recovery, profile and admin', () => {

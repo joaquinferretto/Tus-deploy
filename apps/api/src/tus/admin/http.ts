@@ -91,6 +91,15 @@ export interface FuenteActividadAdmin {
   pagina(input: { pagina: number; tamano: number; tipo: string }): Promise<{ items: EventoActividad[]; total: number }>
 }
 
+// Phone identity as the panel shows it: masked numbers and states, never an id or a secret.
+export interface TelefonoAdminDTO {
+  verificado: boolean
+  numero: string | null
+  verificadoEn: string | null
+  pendiente: string | null
+  whatsappVinculado: boolean
+}
+
 export interface DependenciasAdmin {
   sessions: TusSessionResolverPort
   directorio: ServicioDirectorio
@@ -112,11 +121,15 @@ export interface DependenciasAdmin {
   leerUsuario?: (accountId: string) => Promise<{ id: string; email: string; displayName: string; tenantId: string; status: string; emailVerifiedAt: number | null; hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean; phoneNumber?: string | null; phoneVerifiedAt?: number | null; phonePending?: string | null } | null>
   // Personal profile of an account (tus/perfil): names, document and residence, for the admin.
   perfilUsuario?: (accountId: string) => Promise<PerfilUsuarioAdminDTO | null>
-  // Phone identity administration (auth-security/phone): sets a PENDING number or frees a verified
-  // one. There is no way to mark a phone as verified from the panel.
+  // Phone identity administration (auth-security/phone): sets a PENDING number, frees a verified
+  // one, and — as explicit, audited operations — marks the pending number as verified or removes
+  // that verification. The acting administrator always comes from the session.
   telefonoAdmin?: {
     fijarPendientePorAdmin(adminId: string, accountId: string, telefono: unknown): Promise<{ ok: boolean; code?: string; motivo?: string }>
     quitarVerificadoPorAdmin(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string }>
+    verificarPorAdmin?(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string; telefono?: TelefonoAdminDTO }>
+    quitarVerificacionPorAdmin?(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string; telefono?: TelefonoAdminDTO }>
+    estadoParaAdmin?(accountId: string): Promise<TelefonoAdminDTO>
   }
   accionUsuario?: (input: { actorId: string; accountId: string; action: unknown }) => Promise<{ ok: boolean; code?: string }>
   // Provider edition (directorio/admin.ts crearEdicionPrestadorAdmin).
@@ -251,21 +264,36 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
         numero: cuenta.phoneNumber ? enmascararTelefono(cuenta.phoneNumber) : null,
         verificadoEn: cuenta.phoneVerifiedAt ? new Date(cuenta.phoneVerifiedAt).toISOString() : null,
         pendiente: cuenta.phonePending ? enmascararTelefono(cuenta.phonePending) : null,
+        // A verified phone and a linked WhatsApp are different facts.
+        whatsappVinculado: deps.telefonoAdmin?.estadoParaAdmin ? (await deps.telefonoAdmin.estadoParaAdmin(cuenta.id)).whatsappVinculado : false,
       },
     })
   }))
 
   // Phone identity: { accion: 'pendiente', telefono } leaves the number PENDING (the person
-  // verifies it from WhatsApp); { accion: 'quitar' } frees the verified number. Audited.
+  // verifies it from WhatsApp); { accion: 'quitar' } frees the verified number;
+  // { accion: 'verificar' } marks the pending number as verified and { accion: 'desverificar' }
+  // removes that verification (and what depended on it). The body only names the action: the
+  // state is never written from it, and nothing else is accepted. Audited.
   router.post('/tus/v1/admin/usuarios/:id/telefono', asyncHandler(async (request, response) => {
     const context = await guard(request, response, IDENTITY_ADMIN)
     if (!context) return
     if (!deps.telefonoAdmin) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'phone administration unavailable' } })
     const body = cuerpo(request)
     const accountId = String(request.params['id'] ?? '')
-    const resultado = body['accion'] === 'pendiente'
+    const accion = body['accion']
+    if (accion === 'verificar' || accion === 'desverificar') {
+      // Explicit operations: no field of the body is a value to store.
+      if (Object.keys(body).some((key) => key !== 'accion')) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'the verification state is not written from the request' } })
+      const operacion = accion === 'verificar' ? deps.telefonoAdmin.verificarPorAdmin : deps.telefonoAdmin.quitarVerificacionPorAdmin
+      if (!operacion) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'phone administration unavailable' } })
+      const hecho = await operacion.call(deps.telefonoAdmin, context.subjectId, accountId)
+      if (!hecho.ok) return void response.status(hecho.code === 'NOT_FOUND' ? 404 : hecho.code === 'PHONE_IN_USE' ? 409 : 422).json({ error: { code: hecho.code ?? 'INVALID_ACTION', message: 'phone change rejected' } })
+      return void response.status(200).json({ done: true, telefono: hecho.telefono })
+    }
+    const resultado = accion === 'pendiente'
       ? await deps.telefonoAdmin.fijarPendientePorAdmin(context.subjectId, accountId, body['telefono'])
-      : body['accion'] === 'quitar'
+      : accion === 'quitar'
         ? await deps.telefonoAdmin.quitarVerificadoPorAdmin(context.subjectId, accountId)
         : { ok: false, code: 'INVALID_ACTION' }
     if (!resultado.ok) return void response.status(resultado.code === 'NOT_FOUND' ? 404 : 422).json({ error: { code: resultado.code ?? 'INVALID_ACTION', ...('motivo' in resultado && resultado.motivo ? { reason: resultado.motivo } : {}), message: 'phone change rejected' } })
