@@ -416,29 +416,6 @@ button.time[aria-pressed='true']:hover {
   cursor: not-allowed;
 }
 
-.general {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-}
-
-.general label {
-  color: var(--tus-ink, #14213d);
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-
-.general .control {
-  width: 220px;
-}
-
-.hint {
-  color: var(--tus-muted, #667085);
-  font-size: 0.82rem;
-  margin: 0;
-}
-
 .days {
   border: 1px solid var(--a-line);
   border-radius: var(--a-radius);
@@ -476,8 +453,7 @@ button.time[aria-pressed='true']:hover {
   min-height: 44px;
 }
 
-.dayToggle input,
-.choice input {
+.dayToggle input {
   accent-color: var(--tus-orange, #ff5a00);
   cursor: pointer;
   flex: none;
@@ -542,31 +518,6 @@ button.time[aria-pressed='true']:hover {
 .textButton:focus-visible {
   outline: 2px solid var(--tus-orange, #ff5a00);
   outline-offset: 2px;
-}
-
-.interval {
-  align-items: center;
-  border: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  margin: 0;
-  min-width: 0;
-  padding: 0;
-}
-
-.choice {
-  align-items: center;
-  color: var(--tus-ink, #14213d);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 0.88rem;
-  gap: 8px;
-  min-height: 44px;
-}
-
-.choice .control {
-  width: 190px;
 }
 
 .blocks {
