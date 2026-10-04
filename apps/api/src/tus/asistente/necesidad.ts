@@ -92,7 +92,7 @@ const NUMERO_HORA = String.raw`\d{1,2}|una|dos|tres|cuatro|cinco|seis|siete|ocho
 const HORA = String.raw`(${NUMERO_HORA})(?::(\d{2}))?(?: y (media|cuarto|\d{2})\b)?(?: ?(?:hs|horas|hrs|h)\b)?(?: (?:de|por) la (manana|tarde|noche)| ?(am|pm)\b)?`
 
 // One clock time as the person said it. Without "de la mañana/tarde", an hour from 1 to 7 is the
-// afternoon (nobody books a massage at 6 in the morning by saying "a las 6").
+// afternoon (nobody books a turno at 6 in the morning by saying "a las 6").
 function leerHora(partes: (string | undefined)[]): string | null {
   const [numero, minutos, fraccion, franja, sufijo] = partes
   if (!numero) return null
@@ -127,7 +127,7 @@ function leerVentana(texto: string): { ventana: VentanaHoraria | null; resto: st
     {
       regex: new RegExp(String.raw`\b(?:antes|hasta) (?:de )?(?:las? )?${HORA}`, 'u'),
       armar: (m) => {
-        // "cuanto antes una masajista": a word for a number is a time only with its article
+        // "cuanto antes un profesional": a word for a number is a time only with its article
         // ("antes de la una"); digits always are.
         if (!/\d|\blas? /u.test(m[0])) return null
         const to = leerHora(m.slice(1, 6))
@@ -217,11 +217,15 @@ export function limitesVentana(time: VentanaHoraria | null): VentanaHoraria | nu
 
 const CUALQUIER_ZONA = /\bno (?:me )?(?:importa|interesa|preocupa)(?: mucho)? (?:la zona|el barrio|el lugar|donde|la ubicacion|la distancia)\b|\bme da (?:igual|lo mismo) (?:donde|la zona|el barrio|el lugar|en que|que barrio|que zona)\b|\b(?:en |de )?cual(?:qu|k)ier (?:barrio|zona|lugar|lado|parte)\b|\bsin importar (?:el barrio|la zona|el lugar|donde)\b|\b(?:donde|a donde|adonde) sea\b|\bes indistinto\b|\bindistint[oa] (?:la zona|el barrio)\b|\bla zona (?:es lo de menos|no importa|me da igual)\b|\bel barrio (?:no importa|me da igual)\b/u
 const SE_DESPLAZA = /\bvoy yo\b|\byo voy\b|\bme (?:traslado|muevo|acerco|desplazo)\b|\bpuedo (?:ir|trasladarme|moverme|acercarme)\b|\bvoy (?:hasta|a) donde\b|\bme puedo (?:trasladar|mover|acercar)\b|\bvoy hasta (?:donde|su|el|la)\b/u
-const URGENTE = /\b(?:urgente|urgencia|emergencia|ya mismo|ahora mismo|ahora|ya)\b/u
+// "ya" is urgency only when it stands for "now" ("lo necesito ya", "ya mismo"). Followed by a verb
+// or a pronoun it is "already" ("ya estoy registrado", "ya pagué", "ya te dije") and says nothing
+// about when.
+const YA = String.raw`ya(?! (?:estoy|estas?|estaba|estan|estamos|esta|tengo|tenia|tenes|soy|fui|hice|hizo|pague|abone|transferi|me|lo|la|las|los|te|le|se|no|verifique|vincule|registre|inicie|entre|habia|he|ha|elegi|dije|dijiste|sabes|paso|pasaron|mande|envie|vi|vimos|quedo|quede|que)\b)`
+const URGENTE = new RegExp(String.raw`\b(?:urgente|urgencia|emergencia|ya mismo|ahora mismo|ahora|${YA})\b`, 'u')
 // The first real free turno, whenever it is: no day of its own (the search walks forward).
 const LO_ANTES_POSIBLE = new RegExp(
   [
-    String.raw`\b(?:urgente|urgencia|emergencia|ya mismo|ahora mismo|ahora|ya|hoy mismo)\b`,
+    String.raw`\b(?:urgente|urgencia|emergencia|ya mismo|ahora mismo|ahora|${YA}|hoy mismo)\b`,
     String.raw`\b(?:lo antes posible|cuanto antes|lo (?:mas|antes) (?:pronto|rapido) (?:posible|que (?:se )?pueda)|lo mas pronto|lo mas proximo|apenas (?:haya|pueda|puedas|se pueda|tengan?)|cuando (?:haya|se pueda)|en cuanto (?:haya|se pueda|pueda))\b`,
     String.raw`\b(?:el|la) (?:dia|fecha|turno|horario|hora) mas (?:proxim[oa]|cercan[oa]|pronto|temprano)\b`,
     String.raw`\b(?:el )?primer (?:dia|turno|horario|hueco|lugar)(?: (?:que|libre|disponible|posible))?\b`,
@@ -236,7 +240,9 @@ const LO_ANTES_POSIBLE = new RegExp(
 const CUALQUIER_PROFESIONAL = new RegExp(
   [
     String.raw`\bcualquiera\b`,
-    String.raw`\bcualquier (?:profesional|prestador[a]?|persona|masajista|une?|uno|una)\b`,
+    // "cualquier profesional", "cualquier plomero": whatever the trade is called. A zone, a day or
+    // a time said that way is not a professional.
+    String.raw`\bcualquier (?!barrio\b|zona\b|lugar\b|lado\b|parte\b|dia\b|hora\b|horario\b|momento\b|fecha\b|cosa\b|servicio\b|precio\b)[a-zñ]+\b`,
     String.raw`\b(?:la|el|lo) que sea\b|\bquien sea\b`,
     String.raw`\bme da (?:igual|lo mismo)(?! (?:donde|la zona|el barrio|el lugar|en que|que barrio|que zona|la hora|el horario|el dia))(?: (?:quien|cual|con quien|la [a-z]+|el [a-z]+))?\b`,
     String.raw`\bno (?:me )?importa (?:quien|cual|con quien|(?:la|el) (?!zona\b|barrio\b|lugar\b|ubicacion\b|distancia\b|hora\b|horario\b|dia\b|precio\b)[a-z]+)\b`,
@@ -402,11 +408,11 @@ export function combinarNecesidad(previa: NecesidadTurno | null, datos: DatosNec
   return siguiente
 }
 
-// What is still needed to look for real availability. The zone is never required: without one
-// the search covers every provider of the trade. "Lo antes posible" needs no day: the search
-// starts today.
-export function faltantes(necesidad: NecesidadTurno): ('profession' | 'day')[] {
-  return [...(necesidad.profession ? [] : (['profession'] as const)), ...(necesidad.day || necesidad.asap ? [] : (['day'] as const))]
+// What is still needed to look for real availability: only the service. The zone is never
+// required (without one the search covers every provider of the trade) and neither is the day:
+// without one the backend walks the calendar forward and shows the real days with free turnos.
+export function faltantes(necesidad: NecesidadTurno): 'profession'[] {
+  return necesidad.profession ? [] : ['profession']
 }
 
 // The day after a calendar day (YYYY-MM-DD), for the search that walks forward.
@@ -427,16 +433,32 @@ export const mencionaAlgo = (datos: DatosNecesidad): boolean => Object.keys(dato
 
 // ---- how a window is told back to the person -----------------------------------------------
 
+const NOMBRES_DIA = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
+
+// A calendar day (YYYY-MM-DD, Argentina) as a person names it: "jueves 8". The month is added when
+// the bare number could be misread: another month than today's, or a week or more ahead (the same
+// weekday twice in sight): "jueves 15 de octubre".
+export function nombreDia(fecha: string, ahora: number): string {
+  const hoy = hoyArgentina(ahora)
+  const lejos = Math.round((Date.parse(`${fecha}T12:00:00.000Z`) - Date.parse(`${hoy}T12:00:00.000Z`)) / DIA_MS) >= 7
+  const mes = fecha.slice(0, 7) !== hoy.slice(0, 7) || lejos ? ` de ${MESES[Number(fecha.slice(5, 7)) - 1]}` : ''
+  return `${NOMBRES_DIA[diaSemana(fecha)]} ${Number(fecha.slice(8, 10))}${mes}`
+}
+
+// How a day is told back inside a sentence: always with its real weekday and number, so "hoy" and
+// "mañana" are never the only thing said ("mañana viernes 9", "el jueves 15 de octubre").
 export function describirDia(day: string, dayTo: string | null, ahora: number): string {
   const hoy = hoyArgentina(ahora)
   const uno = (fecha: string) => {
-    if (fecha === hoy) return 'hoy'
-    if (fecha === sumarDias(hoy, 1)) return 'mañana'
-    const nombre = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'][diaSemana(fecha)]!
-    return `el ${nombre} ${Number(fecha.slice(8, 10))}/${Number(fecha.slice(5, 7))}`
+    if (fecha === hoy) return `hoy ${nombreDia(fecha, ahora)}`
+    if (fecha === sumarDias(hoy, 1)) return `mañana ${nombreDia(fecha, ahora)}`
+    return `el ${nombreDia(fecha, ahora)}`
   }
   return dayTo ? `${uno(day)} y ${uno(dayTo)}` : uno(day)
 }
+
+// Monday of the week a day belongs to (the weeks the listings talk about run Monday to Sunday).
+export const lunesDe = (fecha: string): string => sumarDias(fecha, -((diaSemana(fecha) + 6) % 7))
 
 export function describirVentana(time: VentanaHoraria | null): string {
   if (!time) return ''

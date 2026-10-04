@@ -49,7 +49,7 @@ export function elegirServicioPorNombre(mensaje: string, opciones: OpcionServici
   if (!texto) return null
   const nombres = opciones.map((opcion) => normalizar(opcion.name))
   const exactas = opciones.filter((_, indice) => nombres[indice] && ` ${texto} `.includes(` ${nombres[indice]} `))
-  // "masaje" and "masaje deportivo" both named: the longest name is the one meant.
+  // "pintura" and "pintura de interiores" both named: the longest name is the one meant.
   if (exactas.length > 0) return exactas.sort((a, b) => normalizar(b.name).length - normalizar(a.name).length)[0]!
   const dichas = texto.split(' ').filter((palabra) => palabra.length >= 3 && !RELLENO.has(palabra) && !/^\d+$/u.test(palabra))
   const unica = (palabras: string[]): OpcionServicio | null => {
@@ -60,7 +60,7 @@ export function elegirServicioPorNombre(mensaje: string, opciones: OpcionServici
     })
     return candidatas.length === 1 ? candidatas[0]! : null
   }
-  // "el masaje de espalda": the name of the trade itself says nothing about which variant.
+  // "la pintura de interiores": the name of the trade itself says nothing about which variant.
   const delOficio = new Set(servicio ? normalizar(servicio).split(' ') : [])
   const especificas = dichas.filter((palabra) => !delOficio.has(palabra) && !delOficio.has(palabra.replace(/s$/u, '')))
   const exacta = unica(especificas)

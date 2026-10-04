@@ -1,16 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './conocimiento.ts'
-import { DIAS_BUSQUEDA_PRIMERA, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, elegirOferta, horaLocal, ofertasDeResultado, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDisponibilidad, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type OfertasMostradas } from './busqueda.ts'
+import { DIAS_BUSQUEDA_PRIMERA, DIAS_LISTADOS, DIAS_PANORAMA, PIDE_DIAS, PIDE_HORARIOS, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, diasDe, elegirOferta, horaLocal, horasDe, listaDeOpciones, ofertasDePanorama, ofertasDeResultado, personasDe, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDias, textoDisponibilidad, textoPanorama, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type DiaDisponible, type OfertasMostradas } from './busqueda.ts'
 import { oficio } from '../directorio/oficios.ts'
 import { formatearPesos } from '@factory/contracts'
-import type { DisponibilidadNecesidad, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
+import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
 import { BOTONES_SOLICITUD, elegirServicio, elegirServicioPorNombre, enlaceRegistro, fechaLarga, horaCorta, preguntaServicio, resumenSolicitud, retornoDeSolicitud, sinIdentificadores, textoPrecio, type OpcionServicio } from './solicitud-turno.ts'
 import { ErrorChat, type ChatProvider, type MensajeChat, type Transcriptor } from './groq.ts'
 import { ErrorAudio, LIMITES_AUDIO_POR_DEFECTO, validarAudio, type LimitesAudio, type ResultadoTranscripcion } from './audio.ts'
-import { combinarNecesidad, describirDia, describirVentana, diaSiguiente, extraerNecesidad, faltantes, horaArgentina, hoyArgentina, horasPosibles, limitesVentana, mencionaAlgo, pareceHora, ventanaDesde, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
+import { NECESIDAD_VACIA, combinarNecesidad, describirDia, describirVentana, diaSiguiente, extraerNecesidad, faltantes, horaArgentina, hoyArgentina, horasPosibles, limitesVentana, mencionaAlgo, pareceHora, ventanaDesde, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
 import {
   HERRAMIENTAS,
   PROMPT_ENRUTADOR,
@@ -30,9 +30,11 @@ import {
   MENSAJES,
   VIGENCIA_IDENTIFICACION_MS,
   enmascararWaId,
+  mencionaSesionWeb,
   pideDesvincular,
   pideHumano,
   pideVincular,
+  preguntaPorCuenta,
   redactarPii,
   respuestaConfirmacion,
   type CanalConversacion,
@@ -51,6 +53,9 @@ export const VERSION_PROMPT_SISTEMA = 'tus-asistente-v5'
 // Why the assistant needs an account before going on. Each channel asks in its own way
 // (WhatsApp: single-use link to bind the number; Web: sign in).
 export type MotivoCuenta = 'explicit' | 'private' | 'choose_provider'
+
+// The state of the link between a WhatsApp and a TUS account (see estadoDeVinculo).
+export type EstadoVinculo = 'vinculado' | 'verificado_sin_vinculo' | 'desafio_pendiente' | 'sin_cuenta' | 'conflicto'
 
 // Progress of a turn, for channels that can show it while the answer is being prepared. It is
 // emitted from what the backend is really doing (a tool running, the knowledge base being read).
@@ -118,7 +123,7 @@ const REGLAS_PROMPT_SISTEMA = [
   '7. No negocies reclamos, disputas ni reintegros. No existe un operador humano conectado: nunca ofrezcas soporte humano ni una derivación, tampoco ante errores.',
   '8. No podés modificar montos, comisiones, pagos ni aprobar pagos.',
   '9. Sos un asistente conversacional, no un formulario. De cada mensaje tomá TODOS los datos que traiga (oficio, día, hora, zona, si la zona le da igual, si se traslada, urgencia, presupuesto). Nunca vuelvas a preguntar algo que ya está en "Necesidad conocida" o en el historial, y nunca pidas elegir una opción que el usuario ya escribió.',
-  '10. Para buscar profesionales con turno usá find_appointments. Alcanza con el oficio y el día: la zona es OPCIONAL (si no la dijo, o dijo que le da igual o que se traslada, buscá sin zona y no la preguntes). Pasá en "when" el día y la hora tal como los dijo; el servidor resuelve la fecha con el calendario de Argentina: no calcules ni inventes fechas. Si falta un dato necesario, preguntá SOLO ese dato, de a uno.',
+  '10. Para buscar profesionales con turno usá find_appointments. Alcanza con el oficio: el día y la zona son OPCIONALES (sin día el servidor muestra los próximos días con turnos; sin zona busca en todas: no los preguntes). Pasá en "when" el día y la hora tal como los dijo, si los dijo; el servidor resuelve la fecha con el calendario de Argentina: no calcules ni inventes fechas. Si el usuario no dijo qué servicio necesita, preguntá SOLO eso: nunca asumas un servicio.',
   '11. Explicá el resultado tal cual es: si hay turnos a la hora pedida, cuáles; si no hay exactamente a esa hora, cuáles son los más cercanos; si hay profesionales pero sin turnos ese día, o que no toman turnos online (se coordina por solicitud), decilo así. No digas solo "no encontré".',
   '12. La duración de un turno sale del servicio o de su tarifa: no la inventes ni la preguntes, salvo que el resultado traiga varias duraciones.',
   '13. Para ver los horarios de un prestador puntual usá get_available_slots (fecha YYYY-MM-DD). Para pedir un turno usá book_appointment con un horario que haya devuelto una herramienta: eso envía una SOLICITUD. La solicitud queda pending; cuando el prestador acepta pasa a awaiting_payment, y solo el webhook verificado del pago de la seña la deja confirmed. Nunca digas "reserva confirmada" ni "turno reservado" por una solicitud o una aceptación; ofrecé "¿Querés solicitar ese turno?". Nunca propongas un horario que no salió de una herramienta.',
@@ -277,6 +282,8 @@ type Turno = {
 // Asking for someone ("necesito un...", "busco una...", "quiero alguien que..."), typos included.
 // "quiero ver mis trabajos" is not: the verb has to ask for a person or a service.
 const PIDE_SERVICIO = /\b(?:nece[sc]ito|ne[sc]e[sc]ito|busco|buscando|quiero|kiero|quisiera|preciso|me hace falta|hay|consigo|conseguir|recomend\w*|conoces)\s+(?:a\s+)?(?:un|una|unos|unas|alg[uú]n|alguna|alguien|el|la)\b/iu
+// Asking for help without saying for what: "necesito ayuda", "quiero un turno", "busco un profesional".
+const PEDIDO_SIN_SERVICIO = /^\s*(?:hola[,!. ]*)?(?:nece[sc]ito|quiero|busco|preciso|quisiera)\s+(?:una?\s+)?(?:ayuda|mano|servicio|profesional|prestador|trabajador|turno)\s*[.!?]*\s*$|^\s*ayuda\s*[.!?]*\s*$|\bme (?:pod[eé]s|puedes|podr[ií]as) ayudar\b/iu
 const NECESIDAD_VIGENTE_MS = 30 * 60_000
 // A request of a turno left half way (waiting for the service or for the client) is resumed for
 // this long; after that the person starts again from a fresh search.
@@ -312,6 +319,8 @@ const ELECCION_VIGENTE_MS = 10 * 60_000
 // A payment link was sent in this conversation: a receipt right after is about it.
 const CONTEXTO_PAGO_VIGENTE_MS = 24 * 60 * 60_000
 const DISPONIBILIDAD_NO_CONSULTADA = 'No pude consultar la disponibilidad en este momento. Probá de nuevo en unos minutos.'
+// A turno that was shown and got taken before the person chose it: said as what happened.
+const HORARIO_YA_NO_DISPONIBLE = 'Ese horario acaba de dejar de estar disponible.'
 // "¿Y cuánto sale?", "¿cuánto es el precio?", "precio": the price of what is being talked about.
 // Not "cuanto antes" (urgency).
 // "¿Cuánto pago?" asks a price too; paying ("quiero pagar la seña") is another flow.
@@ -350,11 +359,13 @@ function ininteligible(text: string): boolean {
 }
 
 // What a search found: the result of the day it was found on (null: none in the days searched)
-// and the day it started from.
+// and the day it started from. `dias`: no day was asked, so the calendar was walked and these are
+// the real days with free turnos (`resultado` is then the first of them).
 interface BusquedaHecha {
   resultado: DisponibilidadNecesidad
   dia: string | null
   desde: string
+  dias?: DiaDisponible[]
 }
 
 // Only the professional the person chose, with the outcome recomputed for her.
@@ -372,6 +383,20 @@ function primerInicio(resultado: DisponibilidadNecesidad, despues: string | null
     for (const start of item.matches) if ((!despues || start > despues) && (!mejor || start < mejor.start)) mejor = { providerId: item.providerId, name: item.name, start }
   return mejor
 }
+
+// Every professional a search returned, once (a listing of several days repeats them per day).
+function profesionalesDe(busqueda: BusquedaHecha): OfertaTurnos[] {
+  if (!busqueda.dias?.length) return busqueda.resultado.providers
+  const unicos = new Map<string, OfertaTurnos>()
+  for (const { resultado } of busqueda.dias)
+    for (const item of resultado.providers) {
+      const previo = unicos.get(item.providerId)
+      unicos.set(item.providerId, previo ? { ...previo, matches: [...previo.matches, ...item.matches].sort().slice(0, 8) } : item)
+    }
+  return [...unicos.values()].sort((a, b) => Number(b.matches.length > 0) - Number(a.matches.length > 0))
+}
+
+const capitalizar = (texto: string): string => texto.charAt(0).toUpperCase() + texto.slice(1)
 
 const sumarDiasA = (dia: string, dias: number): string => {
   let resultado = dia
@@ -630,6 +655,10 @@ export class OrquestadorConversacion {
     }
     if (turn.canal.id === 'whatsapp' && pideVincular(text))
       return actor.context ? [{ type: 'text', text: MENSAJES.alreadyLinked }] : turn.canal.pedirCuenta('explicit')
+    // "Ya estoy registrado y logueado, ¿podés ver mi número?": answered by the BACKEND with the
+    // real state of this number, before anything else reads the message. Saying it changes
+    // nothing (the link is only ever written by the challenge) and it is never a search.
+    if (turn.canal.id === 'whatsapp' && preguntaPorCuenta(text)) return this.responderEstadoDeCuenta(turn, actor, text)
 
     const confirmation = respuestaConfirmacion(text, input.replyId)
     const pendingId = confirmation?.confirmationId ?? turn.conversation.state.pendingConfirmationId
@@ -646,6 +675,10 @@ export class OrquestadorConversacion {
     // backend searches at once (no question, no button), on every channel, with or without model.
     const directa = await this.turnoDeBusqueda(turn, actor, text, correlationId)
     if (directa) return [...avisos, ...directa]
+    // Nothing says which service is needed (a greeting, "necesito ayuda", a service TUS does not
+    // have): it is asked. No service is ever assumed.
+    const sinServicio = await this.preguntarServicio(turn, text)
+    if (sinServicio) return [...avisos, ...sinServicio]
 
     const intent = turn.busqueda ? 'buscar' : await this.enrutar(turn, text)
     turn.intencion = intent
@@ -691,7 +724,7 @@ export class OrquestadorConversacion {
         await this.actualizarEstado(conversationId, { suggestion: null, lowConfidenceCount: 0 })
         if (rechaza) {
           marcar('buscar')
-          return [{ type: 'text', text: 'Dale. ¿Preferís otro día, otro horario u otra profesional?' }]
+          return [{ type: 'text', text: 'Dale. ¿Preferís otro día, otro horario u otro profesional?' }]
         }
         if (sugerencia.kind === 'offer') {
           marcar('reserva')
@@ -720,8 +753,14 @@ export class OrquestadorConversacion {
       }
     }
 
+    // "¿Qué días atiende?": the real days, and only the days (never a list of times).
+    if (PIDE_DIAS.test(text) && enTema && (!datos.profession || datos.profession === enTema) && !datos.day) {
+      marcar('buscar')
+      return this.responderDias(turn, vigente, enTema, text, correlationId)
+    }
+
     // 3. "la otra", "no esa, la otra": another professional of the list that was shown.
-    const lista = state.shown && state.shown.items.length > 0 ? state.shown : null
+    const lista = state.shown && state.shown.items.length > 0 ? { profession: state.shown.profession, items: personasDe(state.shown.items) } : null
     if (lista && PIDE_OTRA.test(text) && !datos.profession) {
       const resto = lista.items.filter((item) => item.providerId !== state.chosenProviderId)
       marcar('reserva')
@@ -742,7 +781,7 @@ export class OrquestadorConversacion {
 
     // A name that fits SEVERAL professionals listed ("Melina" with "Melina Martínez" too, or a
     // typo one letter away from two of them): asked, never guessed.
-    const listados = state.offers?.items.length ? state.offers.items : (lista?.items ?? [])
+    const listados = state.offers?.items.length ? personasDe(state.offers.items) : (lista?.items ?? [])
     const varias = !datos.anyProvider && !datos.profession && listados.length > 1 ? profesionalesNombrados(text, listados) : []
     if (varias.length > 1) {
       marcar('reserva')
@@ -750,9 +789,49 @@ export class OrquestadorConversacion {
       return [{ type: 'text', text: `¿Con cuál? ${listados.map((item, indice) => (varias.includes(item) ? `${indice + 1}. ${item.name}${item.area ? ` (${item.area})` : ''}` : null)).filter(Boolean).join(' · ')}` }]
     }
 
+    // A time on its own ("9:45") right after a listing is THAT time on the day that was shown,
+    // never today's: the day comes from the options shown (their real starts), not from free
+    // text. One professional has it: she is chosen. Several: the day shown is fixed and that day
+    // is searched again for that time (fresh availability, only who has it). On several days:
+    // which day. Nobody: the day shown is kept and its closest real times are searched.
+    let mantenerDia = false
+    const opciones = state.offers?.items ?? []
+    // A message that also says a day ("mañana tipo 18") is a new search for that day, not this.
+    const horaSuelta = datos.time?.kind === 'exact' && !datos.day && !datos.profession && !datos.anyProvider && !datos.asap ? datos.time.from : null
+    if (horaSuelta && state.offers && personasDe(opciones).length > 1 && !elegirOferta(text, datos, state.offers)) {
+      const conHora = opciones.map((item) => ({ item, starts: item.starts.filter((inicio) => horaLocal(inicio) === horaSuelta && (!datos.day || diaLocal(inicio) === datos.day)) })).filter((opcion) => opcion.starts.length > 0)
+      const diasConHora = [...new Set(conHora.flatMap((opcion) => opcion.starts.map(diaLocal)))].sort()
+      const mostrados = diasDe({ items: opciones })
+      const profession = state.offers.profession
+      const base: NecesidadTurno = { ...(vigente ?? NECESIDAD_VACIA), profession, asap: false, time: { kind: 'exact', from: horaSuelta, to: null } }
+      if (conHora.length === 1 && conHora[0]!.starts.length === 1) {
+        marcar('reserva')
+        await this.actualizarEstado(conversationId, { need: { ...base, day: diasConHora[0]!, dayTo: null }, needAt: ahora, lowConfidenceCount: 0 })
+        return (await this.reservarEleccion(turn, actor, conHora[0]!, profession, correlationId, text)) ?? [{ type: 'text', text: MENSAJES.aiUnavailable }]
+      }
+      if (diasConHora.length === 1) {
+        datos.day = diasConHora[0]!
+        datos.dayTo = null
+        mantenerDia = true
+      } else if (diasConHora.length > 1) {
+        marcar('reserva')
+        await this.actualizarEstado(conversationId, { need: { ...base, day: null, dayTo: null }, needAt: ahora, suggestion: null, lowConfidenceCount: 0 })
+        const nombres = diasConHora.map((dia) => describirDia(dia, null, ahora))
+        return [{ type: 'text', text: `Hay turno a las ${horaSuelta} ${nombres.slice(0, -1).join(', ')} y ${nombres[nombres.length - 1]}. ¿Qué día preferís?` }]
+      } else if (mostrados.length === 1) {
+        datos.day = mostrados[0]!
+        datos.dayTo = null
+        mantenerDia = true
+      } else if (mostrados.length > 1) {
+        marcar('reserva')
+        await this.actualizarEstado(conversationId, { lowConfidenceCount: 0 })
+        return [{ type: 'text', text: `Ninguno de los turnos que te mostré es a las ${horaSuelta}. Los horarios disponibles son:\n\n${listaDeOpciones({ items: opciones }, ahora)}\n\n¿Cuál preferís?` }]
+      }
+    }
+
     // 4. Choosing one of the professionals shown ("el segundo", a name, a time, "Melina ya mismo").
     //    Named for ANOTHER day than the one listed ("quiero a Melina mañana"): her own search (5).
-    const elegida = elegirOferta(text, datos, state.offers)
+    const elegida = mantenerDia ? null : elegirOferta(text, datos, state.offers)
     const eleccion = elegida && elegida.starts.length === 0 && (datos.day || datos.asap) ? null : elegida
     // "Melina" and then "mejor a la tarde" (a window, not one of her exact times) when she has
     // nothing then: the time asked is kept in
@@ -764,7 +843,7 @@ export class OrquestadorConversacion {
       await this.actualizarEstado(conversationId, { need, needAt: ahora, chosenProviderId: eleccion.item.providerId, suggestion: { kind: 'search', at: ahora }, pendingConfirmationId: null, lowConfidenceCount: 0 })
       const ventana = describirVentana(datos.time)
       const cuando = need.day ? ` ${describirDia(need.day, need.dayTo, ahora)}` : ''
-      return [{ type: 'text', text: `${eleccion.item.name} no tiene turnos ${ventana}${cuando}. Tiene: ${eleccion.item.starts.slice(0, 6).map(horaLocal).join(', ')}. ¿Querés alguno de esos o busco quién tiene ${ventana}?` }]
+      return [{ type: 'text', text: `${eleccion.item.name} no tiene turnos ${ventana}${cuando}. Tiene: ${horasDe(eleccion.item.starts, ahora)}. ¿Querés alguno de esos o busco quién tiene ${ventana}?` }]
     }
     if (eleccion) {
       const reply = await this.reservarEleccion(turn, actor, eleccion, state.offers!.profession, correlationId, text)
@@ -776,7 +855,7 @@ export class OrquestadorConversacion {
 
     // 5. A professional of the last search named together with WHEN ("Melina ya mismo", "quiero
     //    a Melina mañana", "lo antes posible con Melina"): her real availability is searched.
-    const candidatos = lista?.items ?? state.draft?.candidates ?? []
+    const candidatos: { providerId: string; name: string }[] = lista?.items ?? state.draft?.candidates ?? []
     const nombrado = !datos.anyProvider && !datos.profession && candidatos.length > 0 ? profesionalNombrado(text, candidatos) : null
     if (nombrado && vigente?.profession && (datos.asap || datos.day || datos.time)) {
       datos.providerId = nombrado.providerId
@@ -795,14 +874,25 @@ export class OrquestadorConversacion {
     const sigueBusqueda = enCurso && cambiaAlgo
     // "mañana a las 18" as a first message: a day or a time for something still to be said.
     const soloCuando = !enCurso && Boolean(datos.day || datos.time || datos.asap) && (detectada === 'reserva' || detectada === 'otro' || detectada === 'buscar')
-    const esBusqueda = (nombraOficio && (PIDE_SERVICIO.test(text) || !otraArea)) || ((sigueBusqueda || soloCuando) && !otraArea)
+    // "¿Qué horarios tiene?" about the service being talked about: its real times (of the day
+    // known, or of the next days with free turnos). About one professional when she is the one
+    // being talked about.
+    const pideHorarios = PIDE_HORARIOS.test(text) && Boolean(enTema) && !otraArea && !nombraOficio
+    if (pideHorarios && !datos.providerId && !datos.anyProvider) {
+      const foco = profesionalEnFoco(state, text)
+      if (foco) {
+        datos.providerId = foco.providerId
+        datos.providerName = foco.name
+      }
+    }
+    const esBusqueda = (nombraOficio && (PIDE_SERVICIO.test(text) || !otraArea)) || ((sigueBusqueda || soloCuando) && !otraArea) || pideHorarios
     // Waiting for the time of one professional and the message tries to say one that cannot be
     // read ("9 y 70", "25"): its real times again. Decided here, never by the model.
     const pendiente = esperaHoraDe(state)
     if (pendiente && !esBusqueda && !otraArea && pareceHora(text)) {
       marcar('reserva')
       await this.actualizarEstado(conversationId, { lowConfidenceCount: 0 })
-      return [{ type: 'text', text: preguntaHora(pendiente) }]
+      return [{ type: 'text', text: preguntaHora(pendiente, ahora) }]
     }
     // 6. A search is going on and the message says nothing that can be read ("Ysk"): a short
     //    question built from what is known, never the last question again.
@@ -821,8 +911,11 @@ export class OrquestadorConversacion {
     }
     if (!esBusqueda) return null
 
-    const previa = vigente ?? (state.draft?.profession ? combinarNecesidad(null, { profession: state.draft.profession, ...(state.draft.zone ? { zone: state.draft.zone } : {}) }) : null)
-    const need = combinarNecesidad(previa, datos)
+    const previa = vigente ?? (state.draft?.profession ? combinarNecesidad(null, { profession: state.draft.profession, ...(state.draft.zone ? { zone: state.draft.zone } : {}) }) : pideHorarios && enTema ? combinarNecesidad(null, { profession: enTema }) : null)
+    const combinada = combinarNecesidad(previa, datos)
+    // The day that was shown is the day meant; and asking for the times of the days ahead is not
+    // "the first one" any more.
+    const need: NecesidadTurno = mantenerDia || (pideHorarios && !datos.asap) ? { ...combinada, asap: false } : combinada
     // "No, mejor el martes": a new day replaces the professional chosen for the old one only if
     // she is not named again; the preference itself ("cualquiera") is kept.
     return this.buscarConEstado(turn, actor, need, text, correlationId, previa)
@@ -844,14 +937,22 @@ export class OrquestadorConversacion {
     })
     turn.busqueda = { need }
 
-    if (faltantes(need).length === 0) {
+    // A conversational channel with a model keeps the model in charge of a need that has no day
+    // yet (it may ask something useful or call a tool); if it brings no real data, the backend
+    // searches anyway (see conversar). Everywhere else the backend searches at once.
+    const modeloConduce = Boolean(this.deps.chat) && turn.canal.conversacional && !need.day && !need.asap && !need.providerId
+    if (faltantes(need).length === 0 && !modeloConduce) {
       turn.intencion = 'buscar'
       turn.canal.evento?.({ type: 'routing', intent: 'buscar' })
-      return this.buscarYResponder(turn, actor, need, text, correlationId)
+      const reply = await this.buscarYResponder(turn, actor, need, text, correlationId)
+      // The calendar could not be read for a need without a day: with a model at hand its tools
+      // (providers by request) take over, instead of ending the turn in an error.
+      const sinConsulta = reply.length === 1 && reply[0]!.type === 'text' && reply[0]!.text === DISPONIBILIDAD_NO_CONSULTADA
+      return sinConsulta && this.deps.chat && !need.day && !need.asap ? null : reply
     }
-    // Something is still needed. With a model at hand it phrases the ONE question (it sees what
-    // is known); without one the question is fixed, and only about what is missing.
-    if (this.deps.chat) return null
+    // On a conversational channel the model phrases the ONE question that may be missing (which
+    // service; it sees what is known); elsewhere the question is fixed. Nothing is assumed meanwhile.
+    if (this.deps.chat && turn.canal.conversacional) return null
     turn.intencion = 'buscar'
     turn.canal.evento?.({ type: 'routing', intent: 'buscar' })
     return [{ type: 'text', text: preguntaFaltante(need) }]
@@ -861,7 +962,12 @@ export class OrquestadorConversacion {
   // known (today, from the current time, when there is none) forward, one day at a time, until a
   // day has a free turno that fits the hours asked; at most DIAS_BUSQUEDA_PRIMERA days. A chosen
   // professional limits the result to her. Every day is one call to the same backend search.
-  private async consultarDisponibilidad(turn: Turno, need: NecesidadTurno, correlationId: string): Promise<BusquedaHecha | null> {
+  //
+  // No day and no "lo antes posible": the calendar is walked forward from today (or `desde`) and
+  // the real days with free turnos are kept (`dias`), DIAS_LISTADOS of them at most (every day of
+  // the stretch with `todosLosDias`). The first DIAS_PANORAMA days are walked; the next ones only
+  // when those had nothing.
+  private async consultarDisponibilidad(turn: Turno, need: NecesidadTurno, correlationId: string, opciones: { desde?: string; todosLosDias?: boolean } = {}): Promise<BusquedaHecha | null> {
     turn.canal.evento?.({ type: 'tool', tool: 'find_appointments', phase: 'start' })
     const started = this.now()
     const hoy = hoyArgentina(started)
@@ -881,9 +987,33 @@ export class OrquestadorConversacion {
       }
     }
     let busqueda: BusquedaHecha | null = null
-    if (!need.asap) {
-      const resultado = await consultar(need.day!, need.dayTo, need.time)
-      busqueda = resultado ? { resultado, dia: need.day!, desde: need.day! } : null
+    if (!need.asap && need.day) {
+      const resultado = await consultar(need.day, need.dayTo, need.time)
+      busqueda = resultado ? { resultado, dia: need.day, desde: need.day } : null
+    } else if (!need.asap) {
+      const inicio = opciones.desde && opciones.desde > hoy ? opciones.desde : hoy
+      const dias: DiaDisponible[] = []
+      let primero: DisponibilidadNecesidad | null = null
+      let fallo = false
+      for (let salto = 0; salto < DIAS_PANORAMA * 2 && dias.length < (opciones.todosLosDias ? DIAS_PANORAMA : DIAS_LISTADOS); salto += 1) {
+        if (salto >= DIAS_PANORAMA && dias.length > 0) break
+        const dia = sumarDiasA(inicio, salto)
+        // Today only what is still ahead of the current time.
+        const ventana = dia === hoy ? ventanaDesde(need.time, horaArgentina(started)) : need.time
+        if (ventana === 'pasada') continue
+        const resultado = await consultar(dia, null, ventana)
+        if (!resultado) {
+          fallo = true
+          break
+        }
+        primero ??= resultado
+        if (resultado.outcome === 'no_providers' || resultado.outcome === 'no_appointments') break
+        if (resultado.providers.some((item) => item.matches.length > 0)) dias.push({ dia, resultado: { ...resultado, outcome: 'matches', providers: resultado.providers.map((item) => ({ ...item, nearby: [] })) } })
+      }
+      if (!fallo && primero) {
+        const sinTurnos = primero.outcome === 'no_providers' || primero.outcome === 'no_appointments' ? primero : { ...primero, outcome: 'no_availability' as const, providers: primero.providers.map((item) => ({ ...item, matches: [], nearby: [] })) }
+        busqueda = dias.length > 0 ? { resultado: dias[0]!.resultado, dia: dias[0]!.dia, desde: inicio, dias } : { resultado: sinTurnos, dia: null, desde: inicio, dias: [] }
+      }
     } else {
       let ultimo: DisponibilidadNecesidad | null = null
       for (let salto = 0; salto < DIAS_BUSQUEDA_PRIMERA; salto += 1) {
@@ -913,7 +1043,9 @@ export class OrquestadorConversacion {
     turn.canal.evento?.({ type: 'tool', tool: 'find_appointments', phase: 'end', ok: busqueda !== null })
     await this.registrarUsoHerramientas(turn, ['find_appointments'], [], correlationId)
     if (!busqueda) return null
-    const ofertas = ofertasDeResultado(busqueda.resultado)
+    // What is shown is what the next message refers to: each option with its professional, its
+    // real starts and, in a listing of several days, its day.
+    const ofertas = busqueda.dias?.length ? ofertasDePanorama(busqueda.resultado.profession, busqueda.dias) : ofertasDeResultado(busqueda.resultado)
     await this.actualizarEstado(turn.conversation.conversationId, {
       need,
       needAt: this.now(),
@@ -923,7 +1055,7 @@ export class OrquestadorConversacion {
       shown: { profession: ofertas.profession, items: ofertas.items },
       chosenProviderId: null,
       slots: null,
-      draft: { listingId: null, urgency: null, problem: turn.conversation.state.draft?.problem ?? null, profession: need.profession, zone: need.zone, candidates: busqueda.resultado.providers.map(({ providerId, name }) => ({ providerId, name })) },
+      draft: { listingId: null, urgency: null, problem: turn.conversation.state.draft?.problem ?? null, profession: need.profession, zone: need.zone, candidates: profesionalesDe(busqueda).map(({ providerId, name }) => ({ providerId, name })) },
     })
     return busqueda
   }
@@ -933,39 +1065,41 @@ export class OrquestadorConversacion {
     let busqueda = await this.consultarDisponibilidad(turn, need, correlationId)
     if (!busqueda) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
     const conversationId = turn.conversation.conversationId
-    // "Quiero una masajista con Melina mañana": a professional named in the same message that
-    // asked for the service is resolved against the professionals the backend really returned.
+    // "Quiero un plomero con Juan mañana": a professional named in the same message that asked
+    // for the service is resolved against the professionals the backend really returned.
     if (!need.providerId && !need.anyProvider) {
-      const nombradas = profesionalesNombrados(text, busqueda.resultado.providers)
-      if (nombradas.length > 1) {
-        const items = busqueda.resultado.providers.filter((item) => nombradas.includes(item))
-        return [{ type: 'text', text: `¿Con cuál? ${items.map((item) => `${item.name} (${item.area})`).join(' · ')}` }]
-      }
+      const devueltos = profesionalesDe(busqueda)
+      const nombradas = profesionalesNombrados(text, devueltos)
+      if (nombradas.length > 1) return [{ type: 'text', text: `¿Con cuál? ${nombradas.map((item) => `${item.name} (${item.area})`).join(' · ')}` }]
       if (nombradas.length === 1) {
         need = combinarNecesidad(need, { providerId: nombradas[0]!.providerId, providerName: nombradas[0]!.name })
         const suyo = soloProfesional(busqueda.resultado, nombradas[0]!.providerId)
-        // "Lo antes posible con Sabrina": the first day anyone was free is not hers; her own
-        // first free turno is searched again, day by day, only in her agenda.
-        if (need.asap && !suyo.providers.some((item) => item.matches.length > 0)) {
+        // "Lo antes posible con Sabrina" (or no day at all): the first day anyone was free is not
+        // hers; her own free turnos are searched again, day by day, only in her agenda.
+        if (busqueda.dias || (need.asap && !suyo.providers.some((item) => item.matches.length > 0))) {
           const propia = await this.consultarDisponibilidad(turn, need, correlationId)
           if (!propia) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
           busqueda = propia
         } else busqueda = { ...busqueda, resultado: suyo }
-        await this.actualizarEstado(conversationId, { need, offers: ofertasDeResultado(busqueda.resultado), chosenProviderId: nombradas[0]!.providerId })
+        await this.actualizarEstado(conversationId, { need, ...(busqueda.dias ? {} : { offers: ofertasDeResultado(busqueda.resultado) }), chosenProviderId: nombradas[0]!.providerId })
       }
     }
     const { resultado, dia, desde } = busqueda
 
-    // Anyone, or one professional chosen, with a real free turno: ONE concrete option, the first
+    // Anyone, one professional chosen, or a single option left: ONE concrete turno, the first
     // start that fits. The person accepts it with "sí"; nothing is requested before that.
-    const primera = (need.anyProvider || (need.providerId && need.asap)) && resultado.outcome === 'matches' ? primerInicio(resultado) : null
+    const unica = ofertasDeResultado(resultado).items
+    const unaSola = (need.asap || busqueda.dias?.length === 1) && unica.length === 1 && unica[0]!.starts.length === 1
+    const primera = (need.anyProvider || (need.providerId && need.asap) || unaSola) && resultado.outcome === 'matches' ? primerInicio(resultado) : null
     if (primera) {
       await this.actualizarEstado(conversationId, {
         suggestion: { kind: 'offer', profession: resultado.profession, providerId: primera.providerId, name: primera.name, start: primera.start, at: this.now() },
         pendingConfirmationId: null,
       })
-      return [{ type: 'text', text: textoPropuesta({ name: primera.name, start: primera.start, desde, ahora: this.now(), time: need.time }) }]
+      return [{ type: 'text', text: textoPropuesta({ name: primera.name, start: primera.start, ahora: this.now() }) }]
     }
+    // No day was asked: the real days with free turnos, never a question about the day.
+    if (busqueda.dias) return this.responderPanorama(turn, need, busqueda)
     // One professional for a given day: her real times (one: the request card; several: which).
     const suya = need.providerId && !need.asap && resultado.outcome === 'matches' ? resultado.providers.find((item) => item.providerId === need.providerId) : null
     if (suya) {
@@ -973,21 +1107,45 @@ export class OrquestadorConversacion {
       const reply = await this.reservarEleccion(turn, actor, { item, starts: suya.matches }, resultado.profession, correlationId, text)
       if (reply) return reply
     }
+    // Nothing that day (with that professional, when one was chosen): the days that DO have free
+    // turnos are shown at once, instead of asking whether to look and saying "no hay" again.
+    if (!need.asap && need.day && (resultado.outcome === 'no_availability' || (need.providerId && resultado.outcome !== 'matches' && resultado.outcome !== 'no_providers'))) {
+      const sinDia: NecesidadTurno = { ...need, day: null, dayTo: null }
+      const siguientes = await this.consultarDisponibilidad(turn, sinDia, correlationId, { desde: diaSiguiente(need.dayTo ?? need.day) })
+      const ventana = describirVentana(need.time)
+      const motivo = `${capitalizar(describirDia(need.day, need.dayTo, this.now()))} no hay turnos libres${need.providerName ? ` con ${need.providerName}` : ''}${ventana ? ` ${ventana}` : ''}.`
+      if (siguientes?.dias?.length) return this.responderPanorama(turn, sinDia, siguientes, motivo)
+      return [{ type: 'text', text: `${motivo} Tampoco encontré en los ${DIAS_PANORAMA * 2} días siguientes.${need.providerId ? ' ¿Querés que busque con otro profesional?' : ''}` }]
+    }
     if (need.providerId && resultado.outcome !== 'matches') {
-      const nombre = need.providerName ?? 'esa profesional'
-      return [{ type: 'text', text: `No encontré turnos libres con ${nombre}${need.asap ? ` en los próximos ${DIAS_BUSQUEDA_PRIMERA} días` : ` ${describirDia(dia ?? desde, need.dayTo, this.now())}`}. ¿Querés que busque con otra profesional?` }]
+      const nombre = need.providerName ?? 'ese profesional'
+      return [{ type: 'text', text: `No encontré turnos libres con ${nombre}${need.asap ? ` en los próximos ${DIAS_BUSQUEDA_PRIMERA} días` : ` ${describirDia(dia ?? desde, need.dayTo, this.now())}`}. ¿Querés que busque con otro profesional?` }]
     }
 
     const efectiva: NecesidadTurno = need.asap && dia ? { ...need, day: dia, dayTo: null } : need
-    const fijo = need.asap ? textoPrimeraDisponibilidad(need, resultado, dia ?? desde, desde, this.now()) : textoDisponibilidad(need, resultado, this.now())
-    // Nothing that day: "sí" (or "el día más próximo") looks at the following days.
-    if (!need.asap && resultado.outcome === 'no_availability') await this.actualizarEstado(conversationId, { suggestion: { kind: 'next_days', at: this.now() }, pendingConfirmationId: null })
+    const fijo = need.asap ? textoPrimeraDisponibilidad(need, resultado, dia ?? desde, this.now()) : textoDisponibilidad(need, resultado, this.now())
     const attachment = turn.canal.conversacional ? adjuntoDisponibilidad(resultado) : null
     // Text-only channel (or no model): the reply is rendered from the result, so nothing can be
     // embellished. Conversational channel: the model writes it from the same result; the data
     // itself travels in the cards built here.
     const redactado = turn.canal.conversacional ? await this.redactarResultado(turn, actor, efectiva, resultado, text) : null
     return [{ type: 'text', text: redactado ?? fijo, ...(attachment ? { attachment } : {}) }]
+  }
+
+  // The reply of a search that walked the calendar: the real days with their professionals and
+  // times, rendered by the backend on every channel (a model never writes dates or times).
+  private async responderPanorama(turn: Turno, need: NecesidadTurno, busqueda: BusquedaHecha, motivo: string | null = null): Promise<MensajeSaliente[]> {
+    const { resultado } = busqueda
+    const dias = busqueda.dias ?? []
+    if (dias.length === 0) {
+      if (resultado.outcome === 'no_providers' || resultado.outcome === 'no_appointments') return [{ type: 'text', text: textoDisponibilidad(need, resultado, this.now()) }]
+      const ventana = describirVentana(need.time)
+      return [{ type: 'text', text: `No encontré turnos libres de ${oficio(resultado.profession).label}${need.providerName ? ` con ${need.providerName}` : ''}${ventana ? ` ${ventana}` : ''} en los próximos ${DIAS_PANORAMA * 2} días.` }]
+    }
+    const ofertas = ofertasDePanorama(resultado.profession, dias)
+    const todos = profesionalesDe(busqueda)
+    const attachment = turn.canal.conversacional ? adjuntoDisponibilidad({ ...resultado, outcome: 'matches', providers: todos }) : null
+    return [{ type: 'text', text: textoPanorama(need, ofertas, this.now(), { zonaAmpliada: resultado.zoneRelaxed, motivo }), ...(attachment ? { attachment } : {}) }]
   }
 
   // The real prices of the service being talked about: the professional of the turno being
@@ -1056,15 +1214,21 @@ export class OrquestadorConversacion {
     await this.actualizarEstado(conversationId, { chosenProviderId: item.providerId, suggestion: null })
     if (starts.length === 0) {
       if (item.starts.length === 0) return null
-      return [{ type: 'text', text: `${item.name} no tiene turno a esa hora. Tiene: ${item.starts.slice(0, 6).map(horaLocal).join(', ')}. ¿Cuál preferís?` }]
+      return [{ type: 'text', text: `${item.name} no tiene turno a esa hora. Tiene: ${horasDe(item.starts, this.now())}. ¿Cuál preferís?` }]
     }
     if (starts.length > 1) {
+      // The same time on several days: only the day is missing.
+      if (new Set(starts.map(horaLocal)).size === 1) {
+        await this.actualizarEstado(conversationId, { offers: { profession, items: [{ providerId: item.providerId, name: item.name, ...(item.area ? { area: item.area } : {}), starts }], esperaHora: true }, currentIntent: 'reserva', booking: null })
+        const dias = [...new Set(starts.map(diaLocal))].sort().map((dia) => describirDia(dia, null, this.now()))
+        return [{ type: 'text', text: `${item.name} tiene turno a las ${horaLocal(starts[0]!)} ${dias.slice(0, -1).join(', ')} y ${dias[dias.length - 1]}. ¿Qué día preferís?` }]
+      }
       // From now on a time alone refers to this professional.
-      await this.actualizarEstado(conversationId, { offers: { profession, items: [item], esperaHora: true }, currentIntent: 'reserva', booking: null })
-      return [{ type: 'text', text: `¿A qué hora con ${item.name}? Tiene: ${starts.slice(0, 6).map(horaLocal).join(', ')}.` }]
+      await this.actualizarEstado(conversationId, { offers: { profession, items: [{ providerId: item.providerId, name: item.name, ...(item.area ? { area: item.area } : {}), starts: item.starts }], esperaHora: true }, currentIntent: 'reserva', booking: null })
+      return [{ type: 'text', text: `¿A qué hora con ${item.name}? Tiene: ${horasDe(starts, this.now())}.` }]
     }
     // The list may be old: the start is read again from the agenda before anything is prepared.
-    if (!(await this.sigueLibre(item.providerId, profession, starts[0]!))) return this.siguienteDe(turn, profession, item.providerId, item.name, starts[0]!, 'Quiero verificar nuevamente porque la disponibilidad cambió: ese horario ya no está libre.', correlationId)
+    if (!(await this.sigueLibre(item.providerId, profession, starts[0]!))) return this.siguienteDe(turn, profession, item.providerId, item.name, starts[0]!, HORARIO_YA_NO_DISPONIBLE, correlationId)
     // The time was given: the conversation is no longer waiting for one.
     if (turn.conversation.state.offers?.esperaHora) await this.actualizarEstado(conversationId, { offers: { ...turn.conversation.state.offers, esperaHora: false } })
     // Professional and time are chosen: what is left is the service (if there are several), the
@@ -1083,15 +1247,43 @@ export class OrquestadorConversacion {
 
   // A start was taken meanwhile: the next real free turno of the same professional, proposed.
   private async siguienteDe(turn: Turno, profession: string, providerId: string, name: string, start: string, motivo: string, correlationId: string): Promise<MensajeSaliente[]> {
+    // The closest alternative first: another free start of the same professional on that very
+    // day (before or after the one that was taken); only then the following days.
+    const minutos = (inicio: string) => Number(horaLocal(inicio).slice(0, 2)) * 60 + Number(horaLocal(inicio).slice(3, 5))
+    const delDia = await this.consultarDisponibilidad(turn, combinarNecesidad(null, { profession, day: diaLocal(start), providerId, providerName: name }), correlationId)
+    const cercano = (delDia?.resultado.providers.flatMap((item) => item.matches) ?? [])
+      .filter((inicio) => inicio !== start && Date.parse(inicio) > this.now())
+      .sort((a, b) => Math.abs(minutos(a) - minutos(start)) - Math.abs(minutos(b) - minutos(start)) || a.localeCompare(b))[0]
     const need = combinarNecesidad(null, { profession, day: diaLocal(start), time: { kind: 'from', from: horaLocal(start), to: null }, asap: true, providerId, providerName: name })
-    const busqueda = await this.consultarDisponibilidad(turn, need, correlationId)
-    const primera = busqueda && busqueda.resultado.outcome === 'matches' ? primerInicio(busqueda.resultado, start) : null
-    if (!primera) return [{ type: 'text', text: `${motivo} No encontré otro turno libre con ${name} en los próximos días. ¿Querés que busque con otra profesional?` }]
+    const busqueda = cercano ? null : await this.consultarDisponibilidad(turn, need, correlationId)
+    const primera = cercano ? { providerId, name, start: cercano } : busqueda && busqueda.resultado.outcome === 'matches' ? primerInicio(busqueda.resultado, start) : null
+    if (!primera) return [{ type: 'text', text: `${motivo} No encontré otro turno libre con ${name} en los próximos días. ¿Querés que busque con otro profesional?` }]
     await this.actualizarEstado(turn.conversation.conversationId, {
       suggestion: { kind: 'offer', profession, providerId: primera.providerId, name: primera.name, start: primera.start, at: this.now() },
       pendingConfirmationId: null,
     })
     return [{ type: 'text', text: `${motivo} El siguiente turno libre con ${primera.name} es ${describirDia(diaLocal(primera.start), null, this.now())} a las ${horaLocal(primera.start)}. ¿Querés ese?` }]
+  }
+
+  // "¿Qué días atiende?": the real days with free turnos of the service being talked about, and
+  // nothing else. One professional's own agenda when the question is about her; otherwise the
+  // days on which any compatible professional is free. A time said before is not carried: the
+  // question is about days.
+  private async responderDias(turn: Turno, base: NecesidadTurno | null, profession: string, text: string, correlationId: string): Promise<MensajeSaliente[]> {
+    const foco = profesionalEnFoco(turn.conversation.state, text)
+    const ventana = base?.time && base.time.kind !== 'exact' ? base.time : null
+    const need: NecesidadTurno = { ...(base ?? NECESIDAD_VACIA), profession, alternatives: [], day: null, dayTo: null, time: ventana, asap: false, anyProvider: false, providerId: foco?.providerId ?? null, providerName: foco?.name ?? null }
+    const busqueda = await this.consultarDisponibilidad(turn, need, correlationId, { todosLosDias: true })
+    if (!busqueda) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
+    const dias = (busqueda.dias ?? []).map((item) => item.dia)
+    if (dias.length === 0 && (busqueda.resultado.outcome === 'no_providers' || busqueda.resultado.outcome === 'no_appointments')) return [{ type: 'text', text: textoDisponibilidad(need, busqueda.resultado, this.now()) }]
+    // Only days are told, no options: what a number or a name refers to is still the last list
+    // that was really shown (so another professional of it can still be named afterwards).
+    const previo = turn.conversation.state
+    await this.actualizarEstado(turn.conversation.conversationId, { offers: previo.offers ?? null, shown: previo.shown ?? null, draft: previo.draft ?? null, chosenProviderId: foco?.providerId ?? previo.chosenProviderId ?? null })
+    // One day only: "sí" shows its times.
+    if (dias.length === 1) await this.actualizarEstado(turn.conversation.conversationId, { need: { ...need, day: dias[0]! }, suggestion: { kind: 'search', at: this.now() }, pendingConfirmationId: null })
+    return [{ type: 'text', text: textoDias(profession, dias, this.now(), foco?.name ?? null) }]
   }
 
   // ---- requesting a turno: service, client, confirmation (TURNOS-SENA-01) ------------------------
@@ -1132,9 +1324,19 @@ export class OrquestadorConversacion {
       const booking: SolicitudEnCurso = { ...pedido, tariffId, step: 'identity', at: this.now() }
       const precio = textoPrecio(opcion)
       // No TUS session on this channel: the person says who it is and the backend looks it up.
+      // What was chosen is said back once (professional, real day and time) with its real price.
+      const elegido = `Perfecto: ${pedido.providerName}, ${describirDia(diaLocal(pedido.startsAt), null, this.now())} a las ${horaLocal(pedido.startsAt)}.`
       if (turn.canal.id === 'whatsapp' && this.deps.identidades) {
         await this.actualizarEstado(conversationId, { booking, currentIntent: 'reserva', lowConfidenceCount: 0 })
-        return [{ type: 'text', text: [precio, MENSAJES.identityNeeded].filter(Boolean).join('\n') }]
+        return [{ type: 'text', text: [elegido, precio, MENSAJES.identityNeeded].filter(Boolean).join('\n') }]
+      }
+      // WhatsApp without that lookup: the account link is the way in. The choice and its price are
+      // still said, and the request is kept so it goes on by itself once the WhatsApp is linked.
+      if (turn.canal.id === 'whatsapp') {
+        await this.actualizarEstado(conversationId, { booking, currentIntent: 'reserva', lowConfidenceCount: 0 })
+        const [vinculo, ...resto] = await turn.canal.pedirCuenta('choose_provider', { returnTo: retornoDeSolicitud(booking) })
+        const cabecera = [elegido, precio].filter(Boolean).join('\n')
+        return vinculo && (vinculo.type === 'text' || vinculo.type === 'cta_url') ? [{ ...vinculo, text: `${cabecera}\n\n${vinculo.text}` }, ...resto] : [{ type: 'text', text: cabecera }, ...(vinculo ? [vinculo] : []), ...resto]
       }
       // The Web: sign in (or register) and come back to this very turno. The request is kept so
       // the conversation goes on once the person has an account.
@@ -1610,6 +1812,61 @@ export class OrquestadorConversacion {
     return intent
   }
 
+  // The state of the link between this WhatsApp and a TUS account, decided ONLY by the backend:
+  // the contact's own link (with the account's current authority) and what the identity module
+  // knows about the sender's number. Nothing a person writes can move it.
+  //   vinculado: linked, and the account is active.
+  //   verificado_sin_vinculo: the number is the verified phone of an account, not linked yet.
+  //   desafio_pendiente: a challenge for this number is waiting to be sent from this WhatsApp.
+  //   sin_cuenta: the number is not a verified phone of any active account.
+  //   conflicto: the link or the number points somewhere it should not (another WhatsApp, an
+  //   account that is no longer available).
+  private async estadoDeVinculo(turn: TurnoCargado, actor: ActorAsistente): Promise<EstadoVinculo> {
+    if (actor.context) return 'vinculado'
+    if (turn.contact.linkedAccountId) return 'conflicto'
+    const verificador = this.deps.verificadorTelefono
+    const estado = await verificador?.estadoNumero?.(turn.contact.waId).catch(() => null)
+    // The number's account has this WhatsApp linked, but this contact is not the linked one.
+    if (estado) return estado === 'vinculado' ? 'conflicto' : estado
+    return (await verificador?.numeroVerificado?.(turn.contact.waId).catch(() => false)) ? 'verificado_sin_vinculo' : 'sin_cuenta'
+  }
+
+  // What the assistant can say about the account: the state of THIS number, never of another one,
+  // and never anything of the account itself (no name, email, document or id). A Web session is
+  // not something WhatsApp can see, and it is said so when the person claims one.
+  private async responderEstadoDeCuenta(turn: Turno, actor: ActorAsistente, text: string): Promise<MensajeSaliente[]> {
+    const estado = await this.estadoDeVinculo(turn, actor)
+    this.metric('assistant.account_state', { state: estado })
+    turn.intencion = 'identidad'
+    if (estado === 'vinculado') return [{ type: 'text', text: `${MENSAJES.accountLinked} ¿En qué te ayudo?` }]
+    const cuerpo = { verificado_sin_vinculo: MENSAJES.accountVerifiedUnlinked, desafio_pendiente: MENSAJES.accountChallengePending, sin_cuenta: MENSAJES.accountUnknown, conflicto: MENSAJES.accountConflict }[estado]
+    const texto = mencionaSesionWeb(text) ? `${MENSAJES.webSessionUnknown}\n\n${cuerpo}` : cuerpo
+    const url = this.deps.linking.urlVincularDesdePerfil()
+    return url ? [{ type: 'cta_url', text: texto, label: estado === 'sin_cuenta' ? 'Ir a Mi perfil' : 'Vincular mi cuenta TUS', url }] : [{ type: 'text', text: texto }]
+  }
+
+  // The message does not say which service is needed and nothing is being searched: the service
+  // is asked, with real services of the catalog as examples. Only where the backend writes the
+  // replies (a conversational channel lets the model phrase the same question).
+  private async preguntarServicio(turn: Turno, text: string): Promise<MensajeSaliente[] | null> {
+    if (turn.canal.conversacional) return null
+    const state = turn.conversation.state
+    const enTema = Boolean(state.need?.profession) && this.now() - (state.needAt ?? 0) <= NECESIDAD_VIGENTE_MS
+    const saludo = detectarIntencion(text) === 'saludo'
+    // Help asked without saying for what, or days and times asked of no service in particular.
+    const vago = (PEDIDO_SIN_SERVICIO.test(text) || PIDE_DIAS.test(text) || PIDE_HORARIOS.test(text)) && !enTema && !state.offers?.items.length
+    // Somebody is asked for ("necesito un astronauta") and neither the catalog nor a model can
+    // tell which service it is.
+    const desconocido = !this.deps.chat && PIDE_SERVICIO.test(text) && !enTema && !state.offers?.items.length && !state.draft?.candidates?.length
+    if (!saludo && !vago && !desconocido) return null
+    turn.intencion = saludo ? 'saludo' : 'buscar'
+    turn.canal.evento?.({ type: 'routing', intent: turn.intencion })
+    // A greeting opens a new conversation: what was being searched before is not carried into it.
+    if (saludo) await this.actualizarEstado(turn.conversation.conversationId, { need: null, needAt: null, offers: null, shown: null, chosenProviderId: null, suggestion: null, booking: null, slots: null, draft: null, currentIntent: null, lowConfidenceCount: 0 })
+    const pregunta = preguntaFaltante(NECESIDAD_VACIA, { noEncontrado: desconocido && !saludo && !vago })
+    return [{ type: 'text', text: saludo ? `¡Hola! Soy el asistente de TUS. ${pregunta}` : pregunta }]
+  }
+
   // A WhatsApp that is not linked is sent to Mi perfil, where the person verifies the number and taps
   // "Vincular este WhatsApp" (the challenge is created there, by the signed-in session). The wording
   // follows the REAL state: a number that is already verified is not asked to verify again.
@@ -1762,13 +2019,17 @@ export class OrquestadorConversacion {
               await this.actualizarEstado(turn.conversation.conversationId, { currentIntent: intent, lowConfidenceCount: 0 })
               return [{ type: 'text', text: content }]
             }
-            // Already redirected once and still no tool data: the backend asks the one thing that is
-            // missing itself, instead of looping until the turn fails.
-            if (yaReencauzado && need && faltantes(need).length > 0 && need.profession) {
-              await this.actualizarEstado(turn.conversation.conversationId, { currentIntent: intent, lowConfidenceCount: 0 })
-              return [{ type: 'text', text: preguntaFaltante(need) }]
+            // Already redirected once and still no tool data and no service known: the backend asks
+            // which service itself, instead of looping until the turn fails. No search is in
+            // progress yet, so the next message is not read as a part of one.
+            if (yaReencauzado && !need?.profession) {
+              await this.actualizarEstado(turn.conversation.conversationId, { lowConfidenceCount: 0 })
+              return [{ type: 'text', text: preguntaFaltante(need ?? NECESIDAD_VACIA, { noEncontrado: PIDE_SERVICIO.test(text) }) }]
             }
-            messages.push({ role: 'system', content: 'Para buscar usá find_appointments con todo lo que el usuario dijo (alcanza con oficio y día; la zona es opcional) o search_providers si no es un servicio por turno. No respondas con resultados sin una herramienta, y no preguntes datos que ya conocés.' })
+            // The service is known and the model still brings no real data (it asks for a day
+            // nobody needs, or answers from its own head): the backend searches itself.
+            if (yaReencauzado && need?.profession && turn.busqueda) return this.buscarYResponder(turn, actor, need, text, correlationId)
+            messages.push({ role: 'system', content: 'Para buscar usá find_appointments con todo lo que el usuario dijo (alcanza con el oficio; el día y la zona son opcionales) o search_providers si no es un servicio por turno. No respondas con resultados sin una herramienta, y no preguntes datos que ya conocés.' })
             continue
           }
           // A model must not reintroduce the unavailable human handoff, even after a tool error.
@@ -1841,14 +2102,20 @@ export class OrquestadorConversacion {
             contenido = { missing: faltan, known: need, instruction: 'Preguntá SOLO por lo que falta (missing), de a una cosa. La zona nunca es obligatoria.' }
             if (!turn.canal.conversacional) return [{ type: 'text', text: preguntaFaltante(need) }]
           } else {
+            // What the model understood (which service, when) is searched and answered by the
+            // backend exactly like a message it read itself. Days and times are never the model's:
+            // a listing of several days is rendered by the backend on every channel.
+            if (!turn.canal.conversacional || (!need.day && !need.asap)) {
+              await this.actualizarEstado(turn.conversation.conversationId, { need, needAt: this.now(), currentIntent: 'buscar', lowConfidenceCount: 0 })
+              return this.buscarYResponder(turn, actor, need, text, correlationId)
+            }
             const busqueda = await this.consultarDisponibilidad(turn, need, correlationId)
             if (!busqueda) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
             const resultado = busqueda.resultado
-            if (!turn.canal.conversacional) return [{ type: 'text', text: need.asap ? textoPrimeraDisponibilidad(need, resultado, busqueda.dia ?? busqueda.desde, busqueda.desde, this.now()) : textoDisponibilidad(need, resultado, this.now()) }]
             draft = { listingId: null, urgency: null, problem: draft?.problem ?? null, profession: need.profession, zone: need.zone, candidates: resultado.providers.map(({ providerId, name }) => ({ providerId, name })) }
             adjunto = adjuntoDisponibilidad(resultado)
             datosEnTurno = true
-            buscado = need.asap ? textoPrimeraDisponibilidad(need, resultado, busqueda.dia ?? busqueda.desde, busqueda.desde, this.now()) : textoDisponibilidad(need, resultado, this.now())
+            buscado = need.asap ? textoPrimeraDisponibilidad(need, resultado, busqueda.dia ?? busqueda.desde, this.now()) : textoDisponibilidad(need, resultado, this.now())
             contenido = resumenParaModelo(need, resultado, this.now())
           }
           messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify(contenido).slice(0, 6000) })
@@ -1964,11 +2231,13 @@ export class OrquestadorConversacion {
       })
     }
     if (buscado) return [{ type: 'text', text: buscado, ...(adjunto ? { attachment: adjunto } : {}) }]
-    // The model gave nothing usable for a search whose trade is known: the one question that is
-    // missing is still a better answer than an error.
-    if (intent === 'buscar' && !datosEnTurno && need?.profession && faltantes(need).length > 0) return [{ type: 'text', text: preguntaFaltante(need) }]
+    // The model gave nothing usable for a search and no service is known: asking which service
+    // is still a better answer than an error. No service is ever assumed.
+    if (intent === 'buscar' && !datosEnTurno && !need?.profession) return [{ type: 'text', text: preguntaFaltante(need ?? NECESIDAD_VACIA, { noEncontrado: PIDE_SERVICIO.test(text) }) }]
+    // The service is known and the model failed or brought nothing: the real search is the answer.
+    if (intent === 'buscar' && !datosEnTurno && need?.profession && turn.busqueda) return this.buscarYResponder(turn, actor, need, text, correlationId)
     const pendiente = esperaHoraDe(turn.conversation.state)
-    if (pendiente) return [{ type: 'text', text: preguntaHora(pendiente) }]
+    if (pendiente) return [{ type: 'text', text: preguntaHora(pendiente, this.now()) }]
     return this.bajaConfianza(turn, correlationId)
   }
 
@@ -1988,8 +2257,8 @@ export class OrquestadorConversacion {
         ? `Rol actual según TUS: ${actor.isProvider ? 'cliente y prestador' : 'cliente'}.`
         : '',
       state.activeWorkId ? `Trabajo activo en la conversación: ${state.activeWorkId}.` : '',
-      need ? `Necesidad conocida (ya la dijo el usuario; no la vuelvas a preguntar): ${JSON.stringify({ oficio: need.profession, dia: need.day, hasta: need.dayTo, horario: need.time, zona: need.zone, cualquierZona: need.anyZone, seTraslada: need.clientTravels, loAntesPosible: need.asap ?? false, cualquierProfesional: need.anyProvider ?? false, profesionalElegido: need.providerName ?? null, urgente: need.urgent })}.` : '',
-      need && faltantes(need).length > 0 ? `Para buscar turnos falta SOLO: ${faltantes(need).map((campo) => (campo === 'profession' ? 'qué servicio necesita' : 'para qué día')).join(' y ')}. La zona no hace falta.` : '',
+      need ? `Necesidad conocida (ya la dijo el usuario; no la vuelvas a preguntar): ${JSON.stringify({ oficio: need.profession, dia: need.day, hasta: need.dayTo, horario: need.time, zona: need.zone, cualquierZona: need.anyZone, seTraslada: need.clientTravels, loAntesPosible: need.asap ?? false, cualquierProfesional: need.anyProvider ?? false, profesionalElegido: need.providerName ?? null, urgente: need.urgent })}.` : 'El usuario todavía NO dijo qué servicio necesita: no asumas ninguno; si hace falta, preguntale qué servicio necesita.',
+      need && faltantes(need).length > 0 ? 'Para buscar turnos falta SOLO saber qué servicio necesita. El día y la zona no hacen falta.' : '',
       state.draft ? `Borrador de solicitud en curso: ${JSON.stringify(state.draft)}.` : '',
       state.offers?.items.length ? `Profesionales mostrados, en orden (para reservar usá su providerId, el oficio "${state.offers.profession}" y como startsAt EXACTAMENTE uno de sus "starts"): ${JSON.stringify(state.offers.items)}.` : '',
       state.slots ? `Últimos turnos consultados (para reservar usá ese providerId y oficio, y como startsAt EXACTAMENTE uno de los valores de "starts"): ${JSON.stringify(state.slots)}.` : '',
@@ -2140,7 +2409,7 @@ export class OrquestadorConversacion {
     const pedido = loaded.arguments as { providerId?: unknown; profession?: unknown; startsAt?: unknown }
     if (ocupado && typeof pedido.providerId === 'string' && typeof pedido.profession === 'string' && typeof pedido.startsAt === 'string') {
       const nombre = (await this.deps.domain.nombrePrestador?.(pedido.providerId).catch(() => null)) ?? 'ese profesional'
-      return this.siguienteDe(turn, pedido.profession, pedido.providerId, nombre, pedido.startsAt, 'Ese horario acaba de ocuparse. Busco el siguiente disponible.', correlationId)
+      return this.siguienteDe(turn, pedido.profession, pedido.providerId, nombre, pedido.startsAt, HORARIO_YA_NO_DISPONIBLE, correlationId)
     }
     return formatearResultadoAccion(loaded.tool, result.ok, data)
   }
@@ -2447,6 +2716,17 @@ const ZONA_HORARIA = 'America/Argentina/Buenos_Aires'
 
 // The confirmation card states exactly what will be executed (validated arguments, never model
 // prose). A booking names the provider as it was shown to the user and the time in local terms.
+// The professional a question in the singular is about ("¿qué días atiende?", "¿qué horarios
+// tiene?"): the one named among those shown, or the one chosen. A question in the plural, or with
+// nobody chosen, is about every compatible professional.
+function profesionalEnFoco(state: EstadoConversacional, text: string): { providerId: string; name: string } | null {
+  const conocidos = personasDe(state.shown?.items.length ? state.shown.items : (state.offers?.items ?? []))
+  const nombrado = profesionalNombrado(text, conocidos)
+  if (nombrado) return nombrado
+  if (!state.chosenProviderId || /\b(?:atienden|tienen|trabajan|pueden|hay)\b/iu.test(text)) return null
+  return conocidos.find((item) => item.providerId === state.chosenProviderId) ?? null
+}
+
 // The one professional the conversation asked a time for ("¿A qué hora con Ana?"), while that
 // step is in progress; null otherwise.
 function esperaHoraDe(state: { offers?: OfertasMostradas | null; currentIntent: string | null }): OfertasMostradas['items'][number] | null {

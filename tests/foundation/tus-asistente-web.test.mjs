@@ -290,7 +290,9 @@ test('ASISTENTE WEB safety: model down -> safe fallback (extractive help or a fi
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(result.caida, [200, true, [[true, 'sources', true]]], 'model down: extractive public help, marked as fallback')
-  assert.deepEqual(result.caidaBusqueda, [[['¿Para cuándo necesitás Plomería?', null]], 0], 'model down on a search: the one question that is missing, no data, no search')
+  // The service is known and no day is needed: with the model down the BACKEND searches. This
+  // fixture's domain has no availability to read, and that is what the person is told.
+  assert.deepEqual(result.caidaBusqueda, [[['No pude consultar la disponibilidad en este momento. Probá de nuevo en unos minutos.', null]], 0], 'model down on a search: the backend answers, with no invented data and no provider search made up')
   assert.deepEqual(result.inventado, [[false, null]], 'a search answered without the tool never reaches the user')
   assert.equal(result.inventadoSearches, 0)
   assert.equal(result.reservar[0], '¿Con qué profesional y para qué servicio querés el turno?')

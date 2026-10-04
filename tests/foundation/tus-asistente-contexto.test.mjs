@@ -98,12 +98,13 @@ test('ASISTENTE contexto CASO A: "cuánto antes" + "el día más próximo" + "lo
     } finally {}
     console.log(JSON.stringify(out))
   `)
-  const PRIMERA = 'Hoy no hay turnos libres. La primera disponibilidad de Masaje es mañana:\n1. Melina — Barrio Sur: 09:00, 10:15\nDecime con quién y a qué hora y te preparo la solicitud.'
+  // The first real turno is said as what it is (day, time, professional); the days before it are not recited.
+  const PRIMERA = 'La primera disponibilidad de Masaje es mañana sábado 26 a las 09:00 con Melina.\n\nOpciones de ese día:\n1. Melina — Barrio Sur: 09:00, 10:15\n\nPodés decirme el número, el nombre o el horario que preferís.'
   assert.deepEqual(r.respuestas, [PRIMERA, PRIMERA, PRIMERA], 'each message is the same need: the first real availability, never a question already answered')
   for (const texto of [...r.respuestas, ...r.segunda.slice(1)]) assert.doesNotMatch(texto, /¿Querés que busque otro día\?/u)
   assert.deepEqual(r.pedidas.slice(0, 2), [['2026-09-25', 'from:09:00-'], ['2026-09-26', null]], 'today from now, then tomorrow, from the backend')
   assert.deepEqual(r.estado, ['masaje', true, null])
-  assert.match(r.segunda[0], /sin turnos libres hoy\. ¿Querés que busque otro día\?$/u, 'a day with nothing is said once')
+  assert.match(r.segunda[0], /^Hoy viernes 25 no hay turnos libres\. Hay disponibilidad de Masaje:\n\nSábado 26\n1\. Melina — Barrio Sur: 09:00, 10:15\n\nLunes 28\n2\. Bongio/u, 'a day with nothing is said once, together with the real days that do have turnos')
   assert.equal(r.segunda[1], PRIMERA, '"el día más próximo" answers that question with the first free day')
   assert.equal(r.segunda[2], PRIMERA)
 })
@@ -146,17 +147,17 @@ test('ASISTENTE contexto CASO B and "cualquiera": anyone with a free turno gets 
     } finally {}
     console.log(JSON.stringify(out))
   `)
-  assert.equal(r.primero, '¿Para cuándo necesitás Masaje?')
-  assert.equal(r.ya, 'Hoy no hay turnos libres. La primera opción que encontré es mañana a las 09:00 con Melina. ¿Querés esa?', 'masaje + ASAP + anyone: not "¿qué día?"')
+  assert.match(r.primero, /^Hay disponibilidad de Masaje:\n\nSábado 26\n1\. Melina — Barrio Sur: 09:00, 10:15\n\nLunes 28\n2\. Bongio — Centro: 09:30/u, 'no day said: the real days with turnos, never "¿para cuándo?"')
+  assert.equal(r.ya, 'La primera disponibilidad es mañana sábado 26 a las 09:00 con Melina. ¿Querés esa?', 'masaje + ASAP + anyone: not "¿qué día?"')
   assert.deepEqual(r.pedidas, [['2026-09-25', 'from:09:00-'], ['2026-09-26', null]])
   assert.deepEqual(r.sugerencia, ['offer', 'Melina', true])
   assert.deepEqual(r.tarjeta, ['buttons', ['Prestador: Melina', 'Servicio: Masaje', 'Fecha: sábado 26 de septiembre'], 0], 'the request card; nothing requested yet')
   assert.deepEqual(r.listo, [1, 'perfil-melina', true], 'only the confirmed card requests the turno')
-  const LUNES_BONGIO = 'La primera opción que encontré es el lunes 28/9 a las 09:30 con Bongio. ¿Querés esa?'
+  const LUNES_BONGIO = 'La primera disponibilidad es el lunes 28 a las 09:30 con Bongio. ¿Querés esa?'
   for (const [frase, texto] of Object.entries(r.cualquiera)) assert.equal(texto, LUNES_BONGIO, frase)
-  assert.match(r.tarde, /^No encontré turnos de Masaje mañana a la tarde\. Lo más cercano mañana:\n1\. Melina/u, 'nobody fits: the real nearby turnos, nothing invented')
+  assert.match(r.tarde, /^No encontré turnos de Masaje mañana sábado 26 a la tarde\. Lo más cercano mañana sábado 26:\n1\. Melina/u, 'nobody fits: the real nearby turnos, nothing invented')
   assert.deepEqual(r.tardePedida, [['2026-09-26', 'between:13:00-20:00']])
-  assert.equal(r.no, 'Dale. ¿Preferís otro día, otro horario u otra profesional?')
+  assert.equal(r.no, 'Dale. ¿Preferís otro día, otro horario u otro profesional?')
   assert.deepEqual(r.noEstado, [null, 'masaje'])
 })
 
@@ -193,7 +194,7 @@ test('ASISTENTE contexto CASO C and references: "Melina ya mismo", "melna", "la 
     } finally {}
     console.log(JSON.stringify(out))
   `)
-  assert.equal(r.lista, 'Encontré 3 profesionales de Masaje con turno el lunes 28/9:\n1. Bongio — Centro: 09:30\n2. Melina — Barrio Sur: 10:15, 11:00\n3. Sabrina — San Benito: 16:00, 19:00\nDecime con quién y a qué hora y te preparo la solicitud.')
+  assert.equal(r.lista, 'Encontré 3 profesionales de Masaje con turno el lunes 28:\n1. Bongio — Centro: 09:30\n2. Melina — Barrio Sur: 10:15, 11:00\n3. Sabrina — San Benito: 16:00, 19:00\nDecime con quién y a qué hora y te preparo la solicitud.')
   assert.deepEqual(r.yaMismo, ['buttons', ['Prestador: Melina', 'Servicio: Masaje', 'Fecha: lunes 28 de septiembre', 'Horario: 10:15']], 'Melina + her first start of that day: the card, without listing the three again')
   assert.equal(r.melna, '¿A qué hora con Melina? Tiene: 10:15, 11:00.', 'a typo of a name listed')
   assert.equal(r.segunda, '¿A qué hora con Melina? Tiene: 10:15, 11:00.')
@@ -202,7 +203,7 @@ test('ASISTENTE contexto CASO C and references: "Melina ya mismo", "melna", "la 
   assert.equal(r.manana, '¿A qué hora con Melina? Tiene: 09:00, 10:15.', 'another day for her: her real times of that day')
   assert.deepEqual(r.mananaPedida, [['2026-09-26', null]])
   assert.deepEqual(r.mananaEstado, ['Melina', '2026-09-26'])
-  assert.equal(r.martes, 'Encontré 2 profesionales de Masaje con turno el martes 29/9:\n1. Bongio — Centro: 18:30\n2. Sabrina — San Benito: 18:00\n¿Con cuál querés solicitar el turno?')
+  assert.equal(r.martes, 'Encontré 2 profesionales de Masaje con turno el martes 29:\n1. Bongio — Centro: 18:30\n2. Sabrina — San Benito: 18:00\n¿Con cuál querés solicitar el turno?')
   assert.equal(r.segundaSinPrecio, 'El servicio Masaje todavía no tiene un precio publicado. Para solicitar un turno con seña, el prestador debe configurar el precio.')
   assert.deepEqual(r.otra, ['buttons', 'Prestador: Bongio', 'Horario: 18:30'], '"la otra" after choosing Sabrina is Bongio')
   assert.equal(r.reservas, 0, 'nothing was requested without the explicit confirmation')
@@ -254,21 +255,21 @@ test('ASISTENTE contexto CASO D price, CASO E unreadable message, changes of min
   assert.match(r.precio[1], /^Los precios de Masaje dependen del profesional:\n1\. Bongio: \$ ?18\.000\n2\. Melina: \$ ?20\.000\n3\. Sabrina: todavía sin precio publicado$/u, 'real prices of the professionals listed, and which one has none')
   assert.equal(r.precio[2], 0, 'a price question is not a new search')
   assert.match(r.precioMelina, /^Masaje con Melina: \$ ?20\.000\.$/u, 'the professional chosen')
-  assert.equal(r.ysk[0], '¿Para cuándo necesitás Masaje?')
+  assert.match(r.ysk[0], /^Hay disponibilidad de Masaje:\n\nSábado 26\n/u)
   assert.equal(r.ysk[1], 'No llegué a entender ese mensaje 😅. ¿Querés que busque el primer turno libre de Masaje con cualquier profesional?', 'not the last question again: a short question from the state')
-  assert.equal(r.yskSi, 'Hoy no hay turnos libres. La primera opción que encontré es mañana a las 09:00 con Melina. ¿Querés esa?')
+  assert.equal(r.yskSi, 'La primera disponibilidad es mañana sábado 26 a las 09:00 con Melina. ¿Querés esa?')
   assert.deepEqual(r.combinado, [
-    '¿Para cuándo necesitás Masaje?',
-    'Encontré 3 profesionales de Masaje con turno el lunes 28/9:',
-    'La primera disponibilidad de Masaje es el lunes 28/9:',
-    'La primera opción que encontré es el lunes 28/9 a las 09:30 con Bongio. ¿Querés esa?',
+    'Hay disponibilidad de Masaje:',
+    'Encontré 3 profesionales de Masaje con turno el lunes 28:',
+    'La primera disponibilidad de Masaje es el lunes 28 a las 09:30 con Bongio.',
+    'La primera disponibilidad es el lunes 28 a las 09:30 con Bongio. ¿Querés esa?',
   ], 'each message adds to the same need; nothing is asked twice')
   assert.deepEqual(r.combinadoEstado, ['masaje', '2026-09-28', true, true])
-  assert.equal(r.martes, 'La primera opción que encontré es el martes 29/9 a las 18:00 con Sabrina. ¿Querés esa?')
+  assert.equal(r.martes, 'La primera disponibilidad es el martes 29 a las 18:00 con Sabrina. ¿Querés esa?')
   // Only who fits the window is listed (ASISTENTE-CONTEXTO-02).
-  assert.equal(r.despues18, 'Encontré 1 profesional de Masaje con turno el lunes 28/9 desde las 18:00:\n1. Sabrina — San Benito: 19:00\n¿Con cuál querés solicitar el turno?')
+  assert.equal(r.despues18, 'Encontré 1 profesional de Masaje con turno el lunes 28 desde las 18:00:\n1. Sabrina — San Benito: 19:00\n¿Con cuál querés solicitar el turno?')
   assert.deepEqual(r.despues18Pedida, [['2026-09-28', 'from:18:00-']])
-  assert.equal(r.ahora, 'Hoy no hay turnos libres. La primera disponibilidad de Masaje es mañana:')
+  assert.equal(r.ahora, 'La primera disponibilidad de Masaje es mañana sábado 26 a las 09:00 con Melina.')
   // The fixture clock moves six seconds per message: "now" is still 09:0x.
   assert.equal(r.ahoraPedida[0][0], '2026-09-25')
   assert.match(r.ahoraPedida[0][1], /^from:09:0\d-$/u, 'today, from the current time')
@@ -305,9 +306,9 @@ test('ASISTENTE contexto: a start taken meanwhile is never requested; the list i
     } finally {}
     console.log(JSON.stringify(out))
   `)
-  assert.equal(r.vieja, 'Quiero verificar nuevamente porque la disponibilidad cambió: ese horario ya no está libre. El siguiente turno libre con Bongio es el martes 29/9 a las 18:30. ¿Querés ese?')
+  assert.equal(r.vieja, 'Ese horario acaba de dejar de estar disponible. El siguiente turno libre con Bongio es el martes 29 a las 18:30. ¿Querés ese?')
   assert.deepEqual(r.viejaSi, ['Prestador: Bongio', 'Servicio: Masaje', 'Fecha: martes 29 de septiembre', 'Horario: 18:30'])
-  assert.equal(r.ocupado, 'Ese horario acaba de ocuparse. Busco el siguiente disponible. El siguiente turno libre con Melina es el lunes 28/9 a las 11:00. ¿Querés ese?')
+  assert.equal(r.ocupado, 'Ese horario acaba de dejar de estar disponible. El siguiente turno libre con Melina es el lunes 28 a las 11:00. ¿Querés ese?')
   assert.equal(r.nadaPedido, 0, 'the 409 requested nothing')
   assert.deepEqual(r.siguiente, ['Fecha: lunes 28 de septiembre', 'Horario: 11:00'])
   assert.deepEqual(r.pedido, [1, true], 'only the confirmed next start is requested')

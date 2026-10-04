@@ -104,7 +104,7 @@ test('ASISTENTE conversacional (Web, sin modelo): the acceptance message goes fr
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.principal, [200, false, 1, 'Encontré 2 profesionales de Masaje con turno mañana a las 18:00:\n1. Ana Gómez — Centro: 18:00\n2. Beto Ruiz — San Benito: 18:00\n¿Con cuál querés solicitar el turno?', 'appointments', false], 'one reply, with real results, not a fallback')
+  assert.deepEqual(r.principal, [200, false, 1, 'Encontré 2 profesionales de Masaje con turno mañana sábado 26 a las 18:00:\n1. Ana Gómez — Centro: 18:00\n2. Beto Ruiz — San Benito: 18:00\n¿Con cuál querés solicitar el turno?', 'appointments', false], 'one reply, with real results, not a fallback')
   assert.deepEqual(r.actividad, ['routing:buscar', 'tool:find_appointments:start', 'tool:find_appointments:end'], 'message -> search, nothing in between')
   assert.deepEqual(r.consulta, [{ profession: 'masaje', day: '2026-09-26', dayTo: null, time: { kind: 'exact', from: '18:00', to: null }, zone: null }], 'trade, day and exact time from the message; no zone because it does not matter')
   assert.deepEqual(r.tarjetas, [['Ana Gómez', 'Centro', true, [true]], ['Beto Ruiz', 'San Benito', true, [true]]])
@@ -140,13 +140,15 @@ test('ASISTENTE conversacional: facts accumulate between messages; only what is 
   `)
   const consulta = (profession) => ({ profession, day: '2026-09-26', dayTo: null, time: { kind: 'exact', from: '18:00', to: null }, zone: null })
   assert.deepEqual(r.pasos, [
-    ['¿Para cuándo necesitás Electricidad?', null, 0],
-    ['Encontré 2 profesionales de Electricidad con turno mañana a las 18:00:', 'appointments', 1],
-    ['Encontré 2 profesionales de Electricidad con turno mañana a las 18:00:', 'appointments', 2],
+    // The service alone: the calendar is walked (three days with turnos) and the real days are shown.
+    ['Hay disponibilidad de Electricidad:', 'appointments', 3],
+    ['Encontré 2 profesionales de Electricidad con turno mañana sábado 26 a las 18:00:', 'appointments', 4],
+    ['Encontré 2 profesionales de Electricidad con turno mañana sábado 26 a las 18:00:', 'appointments', 5],
   ])
-  assert.deepEqual(r.consultas, [consulta('electricidad'), consulta('electricidad')], 'the search did not wait for a zone, and "no me importa la zona" kept everything else')
-  assert.deepEqual(r.masaje, ['¿Para cuándo necesitás Masaje?', 'Encontré 2 profesionales de Masaje con turno mañana a las 18:00:', consulta('masaje')])
-  assert.deepEqual(r.alReves, ['¿Qué servicio necesitás?', 'Encontré 2 profesionales de Masaje con turno mañana a las 18:00:', consulta('masaje')])
+  assert.deepEqual(r.consultas.map((c) => c.day).slice(0, 3), ['2026-09-25', '2026-09-26', '2026-09-27'], 'no day said: today (from now), tomorrow and the day after are read from the backend')
+  assert.deepEqual(r.consultas.slice(3), [consulta('electricidad'), consulta('electricidad')], 'the search did not wait for a zone, and "no me importa la zona" kept everything else')
+  assert.deepEqual([r.masaje[0].split('\n')[0], ...r.masaje.slice(1)], ['Hay disponibilidad de Masaje:', 'Encontré 2 profesionales de Masaje con turno mañana sábado 26 a las 18:00:', consulta('masaje')])
+  assert.deepEqual(r.alReves, ['¿Qué servicio necesitás? Por ejemplo: Plomería, Electricidad, Aire acondicionado, Pintura, Albañilería, Cerrajería.', 'Encontré 2 profesionales de Masaje con turno mañana sábado 26 a las 18:00:', consulta('masaje')])
   for (const texto of r.textos) assert.doesNotMatch(texto, /barrio|zona|d[oó]nde/iu, `the zone was asked: ${texto}`)
 })
 
@@ -169,10 +171,10 @@ test('ASISTENTE conversacional: each natural phrase reaches the backend as the e
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.centro[0], { profession: 'electricidad', day: '2026-09-26', dayTo: null, time: { kind: 'exact', from: '10:00', to: null }, zone: 'Centro' })
-  assert.equal(r.centro[1], 'Encontré 1 profesional de Electricidad con turno mañana a las 10:00:\n1. Ana Gómez — Centro: 10:00\n¿Con cuál querés solicitar el turno?')
+  assert.equal(r.centro[1], 'Encontré 1 profesional de Electricidad con turno mañana sábado 26 a las 10:00:\n1. Ana Gómez — Centro: 10:00\n¿Con cuál querés solicitar el turno?')
   assert.deepEqual(r.urgente[0], { profession: 'plomeria', day: '2026-09-25', dayTo: null, time: { kind: 'from', from: '09:00', to: null }, zone: null }, '"ahora": today, from the current time of the server')
   assert.deepEqual(r.despues[0], { profession: 'aire', day: '2026-09-26', dayTo: null, time: { kind: 'from', from: '17:00', to: null }, zone: null })
-  assert.equal(r.despues[1], 'Encontré 2 profesionales de Aire acondicionado con turno mañana desde las 17:00:\n1. Ana Gómez — Centro: 17:00, 17:30, 18:00, 19:00\n2. Beto Ruiz — San Benito: 18:00\nDecime con quién y a qué hora y te preparo la solicitud.')
+  assert.equal(r.despues[1], 'Encontré 2 profesionales de Aire acondicionado con turno mañana sábado 26 desde las 17:00:\n1. Ana Gómez — Centro: 17:00, 17:30, 18:00, 19:00\n2. Beto Ruiz — San Benito: 18:00\nDecime con quién y a qué hora y te preparo la solicitud.')
   assert.deepEqual(r.sabadoTarde[0], { profession: 'masaje', day: '2026-09-26', dayTo: null, time: { kind: 'between', from: '13:00', to: '20:00' }, zone: null })
   assert.deepEqual(r.finde[0], { profession: 'masaje', day: '2026-09-26', dayTo: '2026-09-27', time: { kind: 'between', from: '06:00', to: '12:00' }, zone: null })
   assert.match(r.finde[1], /1\. Ana Gómez — Centro: sáb 10:00, dom 10:00/u, 'two days: every time says its day')
@@ -211,8 +213,9 @@ test('ASISTENTE conversacional: the reply says what really happened (no exact ti
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.cercanos, ['No encontré turnos de Masaje mañana a las 16:00. Lo más cercano mañana:\n1. Ana Gómez — Centro: 10:00, 17:00, 17:30\n2. Beto Ruiz — San Benito: 10:00, 18:00\n¿Te sirve alguno?', 'appointments'], 'no exact time: the closest real times, not "no encontré"')
-  assert.deepEqual(r.sinTurnos, ['Hay 1 profesional de Masaje, pero sin turnos libres mañana. ¿Querés que busque otro día?', null])
+  assert.deepEqual(r.cercanos, ['No encontré turnos de Masaje mañana sábado 26 a las 16:00. Lo más cercano mañana sábado 26:\n1. Ana Gómez — Centro: 10:00, 17:00, 17:30\n2. Beto Ruiz — San Benito: 10:00, 18:00\n¿Te sirve alguno?', 'appointments'], 'no exact time: the closest real times, not "no encontré"')
+  // A day with nothing: the following days are looked at once, instead of asking whether to look.
+  assert.deepEqual(r.sinTurnos, ['Mañana sábado 26 no hay turnos libres a las 16:00. Tampoco encontré en los 14 días siguientes.', null])
   assert.deepEqual(r.porSolicitud, ['Encontré 2 profesionales de Masaje. No toman turnos online: se coordina enviándoles una solicitud.\n1. Ana Gómez — Centro\n2. Beto Ruiz — San Benito\n¿A cuál querés enviársela?', 'providers'])
   assert.deepEqual(r.nadie, ['Todavía no hay profesionales de Masaje publicados en TUS.', null])
   assert.deepEqual(r.nadieEnZona, ['Todavía no hay profesionales de Masaje publicados en TUS que atiendan en Centro.', null])
@@ -238,13 +241,15 @@ test('ASISTENTE conversacional (Web, con modelo): the backend searches from the 
       script = () => { throw new Error('model down') }
       const caida = await enviar({ text: PRINCIPAL }, { visitante: nuevoVisitante() })
       out.caida = [caida.mensajes[0].text.split('\\n')[0], caida.mensajes[0].kind, caida.degraded, dom.consultas.length]
-      // 3. Only the trade: the model asks the one missing thing, knowing what is known.
+      // 3. Only the trade: the model is in charge and knows what is known. When it asks for a day
+      //    nobody needs instead of bringing real data, the backend searches itself: the real days,
+      //    rendered by the backend (dates and times are never written by the model).
       chat.calls.length = 0
       const v = nuevoVisitante()
       script = (input) => { if (esRuteo(input)) throw new Error('routing must not be called'); return { content: '¿Para cuándo la necesitás?' } }
       const pregunta = await decir('quiero una masajista', { visitante: v })
       const llamada3 = chat.calls.at(-1)
-      out.pregunta = [pregunta.text, /Necesidad conocida[^\\n]*"oficio":"masaje"/u.test(sistema(llamada3)), /falta SOLO: para qué día\\. La zona no hace falta/u.test(sistema(llamada3)), llamada3.tools.includes('find_appointments'), dom.consultas.length]
+      out.pregunta = [pregunta.text.split('\\n')[0], pregunta.kind, /Necesidad conocida[^\\n]*"oficio":"masaje"/u.test(sistema(llamada3)), llamada3.tools.includes('find_appointments'), chat.calls.length]
       script = () => ({ content: 'Listo: mañana a las 18 hay dos opciones.' })
       const sigue = await decir('mañana a las 18, me da igual la zona', { visitante: v })
       out.sigue = [sigue.text, sigue.kind, dom.consultas.at(-1)]
@@ -269,22 +274,22 @@ test('ASISTENTE conversacional (Web, con modelo): the backend searches from the 
       const antes = dom.consultas.length
       const vacio = await decir('me podrás dar una mano con algo de casa', { visitante: u })
       const herramienta = chat.calls.at(-1).messages.find((m) => m.role === 'tool')
-      out.vacio = [vacio.text, JSON.parse(herramienta.content).missing, dom.consultas.length - antes]
+      out.vacio = [vacio.text, JSON.parse(herramienta.content).missing, dom.consultas.length - antes, /todavía NO dijo qué servicio necesita: no asumas ninguno/u.test(sistema(chat.calls.at(-1)))]
       // 6. A model that answers a search from its own head is not passed on.
       script = (input) => esRuteo(input) ? { content: JSON.stringify({ intent: 'buscar' }) } : { content: 'Te recomiendo a Carlos Inventado, está libre mañana a las 15 y cobra $5000.' }
       const inventado = await decir('quiero un electricista', { visitante: nuevoVisitante() })
-      out.inventado = [/Carlos Inventado/u.test(inventado.text), inventado.kind]
+      out.inventado = [/Carlos Inventado/u.test(inventado.text), inventado.text.split('\\n')[0], inventado.kind]
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.completa, ['Mañana a las 18 tenés lugar con Ana Gómez y con Beto Ruiz. ¿Con cuál seguimos?', 'appointments', false, 1, [], true, true, 1], 'the text is the model\'s; the search and the cards are the backend\'s')
-  assert.deepEqual(r.caida, ['Encontré 2 profesionales de Masaje con turno mañana a las 18:00:', 'appointments', false, 2], 'without the model the person still gets the real result')
-  assert.deepEqual(r.pregunta, ['¿Para cuándo la necesitás?', true, true, true, 2])
+  assert.deepEqual(r.caida, ['Encontré 2 profesionales de Masaje con turno mañana sábado 26 a las 18:00:', 'appointments', false, 2], 'without the model the person still gets the real result')
+  assert.deepEqual(r.pregunta, ['Hay disponibilidad de Masaje:', 'appointments', true, true, 2], 'the service alone: the real days with turnos, never "¿para cuándo?" (the model was asked once more, then the backend searched)')
   assert.deepEqual(r.sigue, ['Listo: mañana a las 18 hay dos opciones.', 'appointments', { profession: 'masaje', day: '2026-09-26', dayTo: null, time: { kind: 'exact', from: '18:00', to: null }, zone: null }])
   assert.deepEqual(r.finde, ['El sábado y el domingo hay turnos con Ana y con Beto.', 'appointments', { profession: 'aire', day: '2026-09-26', dayTo: '2026-09-27', time: null, zone: null }], 'the weekend was resolved by the server, not by the model')
-  assert.deepEqual(r.cortado, ['Encontré 2 profesionales de Aire acondicionado con turno mañana y el domingo 27/9:', 'appointments', false], 'a model that fails after the real search does not turn the result into an error')
-  assert.deepEqual(r.vacio, ['¿Qué servicio necesitás?', ['profession', 'day'], 0], 'nothing is searched until there is something to search')
-  assert.deepEqual(r.inventado, [false, null])
+  assert.deepEqual(r.cortado, ['Encontré 2 profesionales de Aire acondicionado con turno mañana sábado 26 y el domingo 27:', 'appointments', false], 'a model that fails after the real search does not turn the result into an error')
+  assert.deepEqual(r.vacio, ['¿Qué servicio necesitás?', ['profession'], 0, true], 'nothing is searched until the service is known, and no service is assumed meanwhile')
+  assert.deepEqual(r.inventado, [false, 'Hay disponibilidad de Electricidad:', 'appointments'], 'the reply is the real availability rendered by the backend, never what a model made up')
 })
 
 test('ASISTENTE conversacional (WhatsApp): the same free-text message gives the same search as the Web, without the old step-by-step flow; choosing needs the linked account; facts accumulate', () => {
@@ -325,7 +330,7 @@ test('ASISTENTE conversacional (WhatsApp): the same free-text message gives the 
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.whatsapp, ['text', 'Encontré 2 profesionales de Masaje con turno mañana a las 18:00:\n1. Ana Gómez — Centro: 18:00\n2. Beto Ruiz — San Benito: 18:00\n¿Con cuál querés solicitar el turno?', 0], 'rendered by the backend from the real result, with no model call')
+  assert.deepEqual(r.whatsapp, ['text', 'Encontré 2 profesionales de Masaje con turno mañana sábado 26 a las 18:00:\n1. Ana Gómez — Centro: 18:00\n2. Beto Ruiz — San Benito: 18:00\n¿Con cuál querés solicitar el turno?', 0], 'rendered by the backend from the real result, with no model call')
   assert.equal(r.mismaConsulta, true, 'WhatsApp and the Web ask the backend for exactly the same search')
   assert.deepEqual(r.consulta, { profession: 'masaje', day: '2026-09-26', dayTo: null, time: { kind: 'exact', from: '18:00', to: null }, zone: null })
   assert.deepEqual([r.estado.profession, r.estado.day, r.estado.time, r.estado.zone, r.estado.anyZone, r.estado.clientTravels], ['masaje', '2026-09-26', { kind: 'exact', from: '18:00', to: null }, null, true, true], 'the whole message is kept in the conversation state')
@@ -334,7 +339,7 @@ test('ASISTENTE conversacional (WhatsApp): the same free-text message gives the 
   assert.equal(r.listo[0], 'Solicitud enviada para el sábado, 26 de septiembre a las 18:00 hs. Queda pendiente hasta que el prestador la acepte; podés ver el estado en "Mis turnos".', 'WhatsApp: a pending request, the same words as the Web')
   assert.doesNotMatch(r.listo[0], /confirmad[oa]|reservad[oa]/iu)
   assert.deepEqual(r.listo[1], { subjectId: 'customer-user', providerId: 'perfil-beto', oficioId: 'masaje', inicio: '2026-09-26T21:00:00.000Z' })
-  assert.deepEqual(r.pasos, ['¿Para cuándo necesitás Electricidad?', 'Encontré 2 profesionales de Electricidad con turno mañana a las 18:00:', 'Encontré 2 profesionales de Electricidad con turno mañana a las 18:00:'])
+  assert.deepEqual(r.pasos, ['Hay disponibilidad de Electricidad:', 'Encontré 2 profesionales de Electricidad con turno mañana sábado 26 a las 18:00:', 'Encontré 2 profesionales de Electricidad con turno mañana sábado 26 a las 18:00:'])
   assert.deepEqual([r.estadoFinal.profession, r.estadoFinal.day, r.estadoFinal.time.from, r.estadoFinal.anyZone], ['electricidad', '2026-09-26', '18:00', true])
   assert.deepEqual(r.consultaFinal, { profession: 'electricidad', day: '2026-09-26', dayTo: null, time: { kind: 'exact', from: '18:00', to: null }, zone: null })
   assert.equal(r.privado, 'cta_url', '"mis trabajos de plomería" is a private area: the link is offered, no search')
@@ -360,12 +365,13 @@ test('ASISTENTE conversacional multi-turn: "Necesito un electricista" -> "Para m
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.web, [
-    ['¿Para cuándo necesitás Electricidad?', null],
-    ['Encontré 2 profesionales de Electricidad con turno mañana:', 'appointments'],
-    ['Encontré 2 profesionales de Electricidad con turno mañana a la tarde:', 'appointments'],
+    ['Hay disponibilidad de Electricidad:', 'appointments'],
+    ['Encontré 2 profesionales de Electricidad con turno mañana sábado 26:', 'appointments'],
+    ['Encontré 2 profesionales de Electricidad con turno mañana sábado 26 a la tarde:', 'appointments'],
     ['Para continuar con eso necesitás iniciar sesión en TUS.', 'sign_in'],
   ])
-  assert.deepEqual(r.consultasWeb, [
+  assert.deepEqual(r.consultasWeb.slice(0, 3).map((c) => c.day), ['2026-09-25', '2026-09-26', '2026-09-27'], 'turn 1 (no day): the calendar walked forward')
+  assert.deepEqual(r.consultasWeb.slice(3), [
     { profession: 'electricidad', day: '2026-09-26', dayTo: null, time: null, zone: null },
     { profession: 'electricidad', day: '2026-09-26', dayTo: null, time: { kind: 'between', from: '13:00', to: '20:00' }, zone: null },
   ], 'the trade of turn 1 and the day of turn 2 are still there on turn 3')
@@ -542,7 +548,7 @@ test('ASISTENTE hora (Web y WhatsApp): "1", "2", "3" keep choosing a professiona
   // The search is repeated for 09:15. Contract changed on purpose (ASISTENTE-CONTEXTO-02, owner
   // request): when someone has that time, ONLY who has it is listed; the others' closest times are
   // offered only when nobody fits.
-  const SOLO_915 = 'Encontré 2 profesionales de Masaje con turno mañana a las 09:15:\n1. bongio — Camba Cuá: 09:15\n2. Carla Paz — Centro: 09:15\n¿Con cuál querés solicitar el turno?'
+  const SOLO_915 = 'Encontré 2 profesionales de Masaje con turno mañana sábado 26 a las 09:15:\n1. bongio — Camba Cuá: 09:15\n2. Carla Paz — Centro: 09:15\n¿Con cuál querés solicitar el turno?'
   for (const canal of ['web', 'whatsapp']) {
     for (const [numero, esperado] of Object.entries(elecciones)) assert.equal(r[canal][numero], esperado, `${canal}: "${numero}" chooses that professional`)
     assert.equal(r[canal].yCuarto[0], SOLO_915, `${canal}: "a las 9 y cuarto" is 09:15 for everybody, not the fourth professional`)

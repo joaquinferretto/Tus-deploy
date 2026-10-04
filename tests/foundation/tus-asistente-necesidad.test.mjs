@@ -89,7 +89,8 @@ test('ASISTENTE necesidad: relative dates and times are resolved with the server
     manana: { kind: 'between', from: '06:00', to: '12:00', part: 'manana' }, mediodia: { kind: 'between', from: '12:00', to: '14:00', part: 'mediodia' }, tarde: { kind: 'between', from: '13:00', to: '20:00', part: 'tarde' }, noche: { kind: 'between', from: '20:00', to: '23:59', part: 'noche' },
   })
   assert.equal(r.tarde, '2026-10-02', '22:30 of Thursday in Argentina: "mañana" is Friday')
-  assert.deepEqual(r.textos, ['hoy', 'mañana', 'el sábado 3/10 y el domingo 4/10', 'a las 18:00', 'desde las 17:00', 'a la tarde', 'entre las 10:00 y las 14:00'])
+  // A day is always told with its real weekday and number: "hoy" / "mañana" are never the only thing said.
+  assert.deepEqual(r.textos, ['hoy jueves 1', 'mañana viernes 2', 'el sábado 3 y el domingo 4', 'a las 18:00', 'desde las 17:00', 'a la tarde', 'entre las 10:00 y las 14:00'])
   assert.deepEqual(r.ventana, [true, false, true, false, true, false, true])
 })
 
@@ -118,7 +119,7 @@ test('ASISTENTE necesidad: the zone is optional and "any zone" is understood in 
   assert.equal(r.presupuesto, 20000)
 })
 
-test('ASISTENTE necesidad: facts accumulate across messages; only the trade and the day are needed to search, never the zone', () => {
+test('ASISTENTE necesidad: facts accumulate across messages; only the trade is needed to search, never the day nor the zone', () => {
   const r = runTypeScriptScenario(`${SETUP}
     const pasos = []
     let need = null
@@ -142,7 +143,8 @@ test('ASISTENTE necesidad: facts accumulate across messages; only the trade and 
     }))
   `)
   assert.deepEqual(r.pasos, [
-    ['electricidad', null, null, null, false, ['day']],
+    // Without a day the backend walks the calendar and shows the real days: nothing is missing.
+    ['electricidad', null, null, null, false, []],
     ['electricidad', '2026-10-02', '18:00', null, false, []],
     ['electricidad', '2026-10-02', '18:00', null, true, []],
   ])

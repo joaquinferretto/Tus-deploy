@@ -130,7 +130,8 @@ const SETUP = (conModelo) => `${SERVICE_SETUP}${WHATSAPP_SETUP}
 `
 
 const LISTA_SERVICIOS = '¿Qué servicio querés con Bongio?\n1. Masaje base — $20.000 (60 min)\n2. Espalda completa — $25.000 (60 min)\n3. Cuerpo completo — $30.000 (60 min)\nDecime el número o el nombre.'
-const PIDE_IDENTIDAD = 'El servicio cuesta $25.000 y la seña es de $12.500.\nPara registrar la solicitud necesito tu nombre completo y DNI.'
+// What was chosen is said back once (professional, real day and time), then its real price.
+const PIDE_IDENTIDAD = 'Perfecto: Bongio, mañana sábado 26 a las 18:00.\nEl servicio cuesta $25.000 y la seña es de $12.500.\nPara registrar la solicitud necesito tu nombre completo y DNI.'
 const TARJETA = (lineas) => ['Vas a solicitar:', ...lineas, 'La solicitud queda pendiente hasta que el prestador la acepte. El turno se confirma después del pago de la seña.', '¿Querés solicitar este turno?'].join('\n')
 const TARJETA_ESPALDA = TARJETA(['Prestador: Bongio', 'Servicio: Espalda completa', 'Fecha: sábado 26 de septiembre', 'Horario: 18:00', 'Precio: $25.000', 'Seña: $12.500 (se abona cuando el prestador acepte)'])
 const NO_ENCONTRADA = 'No encontré una cuenta de TUS registrada con esos datos. Necesitás registrarte en TUS para poder solicitar el turno. Cuando termines, escribime de nuevo tu nombre completo y DNI y seguimos desde acá.'
@@ -172,7 +173,7 @@ test('ASISTENTE solicitud (WhatsApp, la conversación completa): message -> real
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.match(r.busqueda, /^Encontré 4 profesionales de Masaje con turno mañana a las 18:00:\n1\. Bongio — Camba Cuá: 18:00\n/u)
+  assert.match(r.busqueda, /^Encontré 4 profesionales de Masaje con turno mañana sábado 26 a las 18:00:\n1\. Bongio — Camba Cuá: 18:00\n/u)
   assert.deepEqual(r.servicio, ['text', LISTA_SERVICIOS], 'several services: which one, with the price of each in the database')
   assert.deepEqual(r.identidad, ['text', PIDE_IDENTIDAD], 'price and deposit of the chosen service, then who the client is')
   assert.deepEqual(r.sinCuentaAun, [0, null])
