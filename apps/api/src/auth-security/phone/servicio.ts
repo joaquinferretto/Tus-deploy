@@ -45,7 +45,16 @@ export type ResultadoVerificacionWhatsapp =
 
 export type ErrorTelefono =
   | { ok: false; code: 'INVALID_PHONE'; motivo: MotivoTelefonoInvalido }
-  | { ok: false; code: 'RATE_LIMITED' | 'ALREADY_VERIFIED' | 'PHONE_NOT_VERIFIED' | 'ALREADY_LINKED' | 'ACCOUNT_NOT_ALLOWED' | 'NOT_FOUND' | 'UNAVAILABLE' }
+  | { ok: false; code: 'RATE_LIMITED' | 'ALREADY_VERIFIED' | 'PHONE_NOT_VERIFIED' | 'ALREADY_LINKED' | 'ACCOUNT_NOT_ALLOWED' | 'NOT_FOUND' | 'UNAVAILABLE' | 'NO_PHONE' | 'PHONE_IN_USE' }
+
+// What the administration panel shows of a phone identity: masked numbers and states only.
+export interface EstadoTelefonoAdmin {
+  verificado: boolean
+  numero: string | null
+  verificadoEn: string | null
+  pendiente: string | null
+  whatsappVinculado: boolean
+}
 
 export interface DesafioCreado {
   challengeId: string
@@ -412,7 +421,7 @@ export class ServicioVerificacionTelefono {
     }
   }
 
-  // ---- administration (never marks a phone as verified) -------------------------------------
+  // ---- administration -------------------------------------------------------------------------
 
   async fijarPendientePorAdmin(adminId: string, accountId: string, telefono: unknown): Promise<{ ok: true; phoneMasked: string } | ErrorTelefono> {
     const normalizado = normalizarTelefono(telefono)
@@ -432,5 +441,74 @@ export class ServicioVerificacionTelefono {
     await this.deps.telefonos.quitarVerificado(accountId)
     await this.auditar(AUTH_EVENT_KIND.PHONE_ADMIN_CLEARED, cuenta, 'success', { target: cuenta.id, ...(anterior ? { previous: enmascararTelefono(anterior) } : {}) }, adminId)
     return { ok: true }
+  }
+
+  // Phone identity of an account as the administration sees it (masked).
+  private async vistaAdmin(accountId: string): Promise<EstadoTelefonoAdmin> {
+    const estado = await this.deps.telefonos.estado(accountId)
+    return {
+      verificado: Boolean(estado?.phoneNumber),
+      numero: estado?.phoneNumber ? enmascararTelefono(estado.phoneNumber) : null,
+      verificadoEn: estado?.phoneVerifiedAt ? new Date(estado.phoneVerifiedAt).toISOString() : null,
+      pendiente: estado?.phonePending ? enmascararTelefono(estado.phonePending) : null,
+      whatsappVinculado: Boolean(await this.deps.telefonos.waIdVinculado(accountId)),
+    }
+  }
+
+  estadoParaAdmin(accountId: string): Promise<EstadoTelefonoAdmin> {
+    return this.vistaAdmin(accountId)
+  }
+
+  // An administrator confirms that the PENDING number of the account belongs to it: it becomes
+  // the verified identity phone (the same field a WhatsApp verification writes, with the clock
+  // of the backend). The number itself is never taken from the request, WhatsApp is NOT linked
+  // (verifying is not linking) and repeating it changes nothing. Audited.
+  async verificarPorAdmin(adminId: string, accountId: string): Promise<{ ok: true; cambio: boolean; telefono: EstadoTelefonoAdmin } | ErrorTelefono> {
+    const cuenta = await this.deps.cuentas.getAccount(accountId)
+    if (!cuenta) return { ok: false, code: 'NOT_FOUND' }
+    const ahora = this.deps.now()
+    const resultado = await this.deps.telefonos.transaccion(async (almacen) => {
+      const estado = await almacen.estado(accountId)
+      if (!estado) return 'sin_cuenta' as const
+      if (!estado.phonePending) return estado.phoneNumber ? ('ya' as const) : ('sin_telefono' as const)
+      const pendiente = estado.phonePending
+      if ((await almacen.fijarVerificado(accountId, pendiente, ahora)) === 'conflicto') return 'conflicto' as const
+      // The challenges that were waiting to verify a number are no longer needed.
+      await almacen.invalidarPendientesDe(accountId, ahora)
+      return { telefono: pendiente, anterior: estado.phoneNumber }
+    })
+    if (resultado === 'sin_cuenta') return { ok: false, code: 'NOT_FOUND' }
+    if (resultado === 'sin_telefono') return { ok: false, code: 'NO_PHONE' }
+    if (resultado === 'conflicto') return { ok: false, code: 'PHONE_IN_USE' }
+    if (resultado !== 'ya')
+      await this.auditar(AUTH_EVENT_KIND.PHONE_VERIFIED_BY_ADMIN, cuenta, 'success', { target: cuenta.id, phone: enmascararTelefono(resultado.telefono), before: resultado.anterior ? 'verified_other' : 'pending', after: 'verified' }, adminId)
+    return { ok: true, cambio: resultado !== 'ya', telefono: await this.vistaAdmin(accountId) }
+  }
+
+  // A revocation of trust: the verified number goes back to PENDING (the number is kept, only its
+  // verification is removed), the challenges waiting for it are cancelled and the WhatsApp of
+  // THAT number stops being linked to THIS account — all in one transaction. Conversations,
+  // messages, the account and its Web sessions are untouched. Repeating it changes nothing.
+  async quitarVerificacionPorAdmin(adminId: string, accountId: string): Promise<{ ok: true; cambio: boolean; telefono: EstadoTelefonoAdmin } | ErrorTelefono> {
+    const cuenta = await this.deps.cuentas.getAccount(accountId)
+    if (!cuenta) return { ok: false, code: 'NOT_FOUND' }
+    const ahora = this.deps.now()
+    const correlationId = randomUUID()
+    const resultado = await this.deps.telefonos.transaccion(async (almacen) => {
+      const estado = await almacen.estado(accountId)
+      if (!estado) return 'sin_cuenta' as const
+      if (!estado.phoneNumber) return 'ya' as const
+      const telefono = estado.phoneNumber
+      await almacen.quitarVerificado(accountId)
+      // A number that was already waiting to replace it stays as the pending one.
+      if (!estado.phonePending) await almacen.fijarPendiente(accountId, telefono)
+      const desafios = await almacen.invalidarPendientesDe(accountId, ahora)
+      const desvinculados = await almacen.desvincularWhatsapp({ accountId, telefono, actorId: adminId, correlationId, now: ahora })
+      return { telefono, desafios, desvinculados }
+    })
+    if (resultado === 'sin_cuenta') return { ok: false, code: 'NOT_FOUND' }
+    if (resultado !== 'ya')
+      await this.auditar(AUTH_EVENT_KIND.PHONE_UNVERIFIED_BY_ADMIN, cuenta, 'success', { target: cuenta.id, phone: enmascararTelefono(resultado.telefono), before: 'verified', after: 'pending', challengesInvalidated: resultado.desafios, whatsappUnlinked: resultado.desvinculados }, adminId)
+    return { ok: true, cambio: resultado !== 'ya', telefono: await this.vistaAdmin(accountId) }
   }
 }

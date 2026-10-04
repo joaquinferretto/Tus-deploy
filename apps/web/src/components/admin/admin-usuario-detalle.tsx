@@ -13,6 +13,8 @@ const ROL: Record<string, string> = { admin: 'Administrador', prestador: 'Presta
 
 function errorEdicion(cause: unknown): string {
   if (cause instanceof AdminApiError) {
+    if (cause.status === 409 && cause.code === 'PHONE_IN_USE') return 'Ese número ya es el teléfono verificado de otra cuenta.'
+    if (cause.status === 422 && cause.code === 'NO_PHONE') return 'Esta cuenta todavía no tiene un teléfono cargado.'
     if (cause.status === 409) return 'Ese email ya pertenece a otra cuenta.'
     if (cause.status === 403) return 'Esa cuenta es de administración o es tu propia cuenta: su email y verificación se gestionan desde la configuración y Seguridad.'
     if (cause.status === 422 && cause.code === 'INVALID_PHONE') return 'Revisá el número: con característica, por ejemplo 379 412-3456.'
@@ -214,7 +216,54 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
                 )}
               </dd>
             </div>
+            {cuenta.telefono.verificado ? (
+              <div>
+                <dt>WhatsApp</dt>
+                <dd>
+                  <span className={cuenta.telefono.whatsappVinculado ? styles.badgeOk : styles.badgeWarn}>{cuenta.telefono.whatsappVinculado ? 'Vinculado' : 'Sin vincular'}</span>
+                </dd>
+              </div>
+            ) : null}
           </dl>
+          {/* One action at a time, by the real state: verify the pending number, or remove the
+              verification of the verified one. The API decides; nothing is written from here. */}
+          <div className={styles.actions}>
+            {cuenta.telefono.verificado ? (
+              <button
+                className={styles.buttonDanger}
+                disabled={busy}
+                onClick={() =>
+                  pedir({
+                    titulo: '¿Quitar la verificación de este teléfono?',
+                    detalle: 'El número dejará de considerarse verificado y las funciones que dependan de esa identidad podrán requerir una nueva verificación. Si su WhatsApp estaba vinculado a esta cuenta, se desvincula. Queda auditado.',
+                    confirmar: 'Quitar verificación',
+                    onConfirm: () => ejecutar(() => adminApi.verificacionTelefonoUsuario(cuenta.id, 'desverificar'), 'Se quitó la verificación del teléfono.'),
+                  })
+                }
+                type="button"
+              >
+                Quitar verificación
+              </button>
+            ) : cuenta.telefono.pendiente ? (
+              <button
+                className={styles.buttonPrimary}
+                disabled={busy}
+                onClick={() =>
+                  pedir({
+                    titulo: '¿Marcar este teléfono como verificado?',
+                    detalle: 'Esta acción confirma administrativamente que el número pertenece a esta cuenta. No vincula WhatsApp. Queda auditado.',
+                    confirmar: 'Verificar teléfono',
+                    onConfirm: () => ejecutar(() => adminApi.verificacionTelefonoUsuario(cuenta.id, 'verificar'), 'Teléfono marcado como verificado.'),
+                  })
+                }
+                type="button"
+              >
+                Marcar como verificado
+              </button>
+            ) : (
+              <p className={styles.muted}>Esta cuenta todavía no tiene un teléfono cargado.</p>
+            )}
+          </div>
           <form
             className={styles.formGrid}
             onSubmit={(event) => {
@@ -226,7 +275,7 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
             <label className={`${styles.field} ${styles.wide}`}>
               <span>Número a verificar</span>
               <input inputMode="tel" maxLength={32} onChange={(event) => setTelefono(event.target.value)} placeholder="379 412-3456" type="tel" value={telefono} />
-              <span className={styles.hint}>Queda pendiente hasta que la persona lo verifique por WhatsApp. Desde el panel nunca se marca como verificado.</span>
+              <span className={styles.hint}>Queda pendiente hasta que la persona lo verifique por WhatsApp, o hasta que lo marques como verificado.</span>
             </label>
             <div className={`${styles.actions} ${styles.wide}`}>
               <button className={styles.buttonSecondary} disabled={busy || !telefono.trim()} type="submit">

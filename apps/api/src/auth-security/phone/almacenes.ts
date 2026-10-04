@@ -1,5 +1,5 @@
 import type { Account } from '../domain/models.js'
-import type { AlmacenTelefonos, DesafioTelefono, EntradaVinculoWhatsapp, EstadoTelefonoCuenta, MotivoInvalidacion, PuenteAsistente, ResultadoVinculoWhatsapp } from './puertos.ts'
+import type { AlmacenTelefonos, DesafioTelefono, EntradaDesvinculoWhatsapp, EntradaVinculoWhatsapp, EstadoTelefonoCuenta, MotivoInvalidacion, PuenteAsistente, ResultadoVinculoWhatsapp } from './puertos.ts'
 
 const vivo = (desafio: DesafioTelefono) => desafio.usedAt === null && desafio.invalidatedAt === null
 
@@ -23,6 +23,10 @@ export class AlmacenTelefonosEnMemoria implements AlmacenTelefonos {
 
   async waIdVinculado(accountId: string) {
     return this.asistente ? this.asistente.puente.waIdVinculado(accountId) : null
+  }
+
+  async desvincularWhatsapp(entrada: EntradaDesvinculoWhatsapp) {
+    return this.asistente ? this.asistente.puente.desvincular(entrada) : 0
   }
 
   private cuentas(): Map<string, Account> {
@@ -123,6 +127,17 @@ export class AlmacenTelefonosEnMemoria implements AlmacenTelefonos {
     desafio.invalidationReason = motivo
   }
 
+  async invalidarPendientesDe(accountId: string, at: number) {
+    let cantidad = 0
+    for (const desafio of this.desafios.values())
+      if (desafio.accountId === accountId && desafio.purpose !== 'recuperar_contrasena' && vivo(desafio)) {
+        desafio.invalidatedAt = at
+        desafio.invalidationReason = 'reemplazado'
+        cantidad += 1
+      }
+    return cantidad
+  }
+
   async marcarEntregado(id: string, at: number) {
     const desafio = this.desafios.get(id)
     if (!desafio || desafio.deliveredAt !== null) return false
@@ -213,6 +228,10 @@ export class AlmacenTelefonosPrisma implements AlmacenTelefonos {
 
   async waIdVinculado(accountId: string) {
     return this.puente ? this.puente(this.client).waIdVinculado(accountId) : null
+  }
+
+  async desvincularWhatsapp(entrada: EntradaDesvinculoWhatsapp) {
+    return this.puente ? this.puente(this.client).desvincular(entrada) : 0
   }
 
   private async userId(accountId: string): Promise<string | null> {
@@ -331,6 +350,15 @@ export class AlmacenTelefonosPrisma implements AlmacenTelefonos {
 
   async invalidar(id: string, motivo: MotivoInvalidacion, at: number) {
     await this.client.desafioTelefono.updateMany({ where: { id, invalidadoEn: null }, data: { invalidadoEn: new Date(at), motivoInvalidacion: motivo } })
+  }
+
+  async invalidarPendientesDe(accountId: string, at: number) {
+    // 'reemplazado' is one of the reasons the table accepts (ck constraint): no migration needed.
+    const resultado = await this.client.desafioTelefono.updateMany({
+      where: { cuentaId: accountId, proposito: { not: 'recuperar_contrasena' }, usadoEn: null, invalidadoEn: null },
+      data: { invalidadoEn: new Date(at), motivoInvalidacion: 'reemplazado' },
+    })
+    return resultado.count
   }
 
   async marcarEntregado(id: string, at: number) {

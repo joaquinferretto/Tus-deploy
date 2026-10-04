@@ -47,11 +47,23 @@ export interface PuenteAsistente {
   vincular: VinculadorWhatsapp
   // The WhatsApp (wa_id) linked to the account, or null.
   waIdVinculado(accountId: string): Promise<string | null>
+  // Unlinks the contacts of the account whose WhatsApp IS that phone (never another number, never
+  // another account). Returns how many were unlinked.
+  desvincular(entrada: EntradaDesvinculoWhatsapp): Promise<number>
+}
+
+export interface EntradaDesvinculoWhatsapp {
+  accountId: string
+  telefono: string
+  actorId: string
+  correlationId: string
+  now: number
 }
 
 export interface AlmacenTelefonos {
   vincularWhatsapp(entrada: EntradaVinculoWhatsapp): Promise<ResultadoVinculoWhatsapp>
   waIdVinculado(accountId: string): Promise<string | null>
+  desvincularWhatsapp(entrada: EntradaDesvinculoWhatsapp): Promise<number>
   estado(accountId: string): Promise<EstadoTelefonoCuenta | null>
   // Many accounts at once (admin lists): one read.
   estados(accountIds: readonly string[]): Promise<Map<string, EstadoTelefonoCuenta>>
@@ -75,6 +87,8 @@ export interface AlmacenTelefonos {
   consumir(id: string, wamid: string, at: number): Promise<boolean>
   registrarIntentoFallido(id: string, maximo: number, at: number): Promise<void>
   invalidar(id: string, motivo: MotivoInvalidacion, at: number): Promise<void>
+  // Every verification / link challenge of the account still waiting to be used is cancelled.
+  invalidarPendientesDe(accountId: string, at: number): Promise<number>
   // Atomic: true once (the password-reset authorization is handed over a single time).
   marcarEntregado(id: string, at: number): Promise<boolean>
   registrarConfirmacion(id: string, resultado: { sentAt: number | null; error: string | null }): Promise<void>

@@ -41,6 +41,8 @@ export const AUTH_EVENT_KIND = {
   PHONE_CONFIRMATION_FAILED: 'phone.confirmation_failed',
   PHONE_ADMIN_PENDING_SET: 'phone.admin_pending_set',
   PHONE_ADMIN_CLEARED: 'phone.admin_cleared',
+  PHONE_VERIFIED_BY_ADMIN: 'phone.verified_by_admin',
+  PHONE_UNVERIFIED_BY_ADMIN: 'phone.unverified_by_admin',
 } as const
 
 export type AuthEventKind = (typeof AUTH_EVENT_KIND)[keyof typeof AUTH_EVENT_KIND]
