@@ -1,6 +1,9 @@
 import { interpretarNecesidad } from '../directorio/modelo.ts'
 import { oficiosInterpretables } from '../directorio/oficios.ts'
-import { sinAcentos } from '../texto.ts'
+import { DIA_MS, MESES, NOMBRES_DIA, diaSemana, horaArgentina, hoyArgentina, leerFecha, lunesDe, normalizarTexto as normalizar, sumarDias } from './fechas.ts'
+
+// The clock and the calendar live in fechas.ts; these are re-exported for the callers of this module.
+export { horaArgentina, hoyArgentina, lunesDe }
 
 // What a person needs, read from ONE free-text message: every fact the message carries is kept
 // (trade, day, time, zone or "any zone", who travels, urgency, budget). Pure: the clock is passed
@@ -18,7 +21,7 @@ export interface VentanaHoraria {
   to: string | null
   // A part of the day said as such ("a la tarde"): the same bounds as a range, but the state says
   // what the person said. Never sent to the backend (it searches the bounds).
-  part?: 'manana' | 'mediodia' | 'tarde' | 'noche'
+  part?: 'manana' | 'mediodia' | 'siesta' | 'tarde' | 'noche'
 }
 
 export interface NecesidadTurno {
@@ -28,6 +31,11 @@ export interface NecesidadTurno {
   // Argentina calendar day (YYYY-MM-DD); dayTo closes a range ("este fin de semana").
   day: string | null
   dayTo: string | null
+  // "la semana que viene": no single day, the calendar is walked from this day on.
+  since?: string | null
+  // "el viernes que viene" said when it may be this week's or the next: the two days the person
+  // is asked to choose between. Never a day chosen for the person.
+  dayOptions?: string[] | null
   time: VentanaHoraria | null
   zone: string | null
   // The person said the zone does not matter (or that they travel): it is never asked again.
@@ -52,38 +60,17 @@ export const NECESIDAD_VACIA: NecesidadTurno = { profession: null, alternatives:
 // Only the keys the message really mentions.
 export type DatosNecesidad = Partial<NecesidadTurno>
 
-const HORA_MS = 3_600_000
-const DIA_MS = 24 * HORA_MS
-const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
-const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
-
-// Parts of the day as people use them in Argentina.
+// Parts of the day as people use them in Argentina. The bounds are fixed HERE, in the backend:
+// a model never decides what "a la tarde" means, and it means the same in every message.
 export const FRANJAS = {
   manana: { from: '06:00', to: '12:00' },
   mediodia: { from: '12:00', to: '14:00' },
+  siesta: { from: '13:00', to: '17:00' },
   tarde: { from: '13:00', to: '20:00' },
   noche: { from: '20:00', to: '23:59' },
 } as const
 
-// Argentina has no daylight saving: UTC-3 all year.
-export const hoyArgentina = (ahora: number): string => new Date(ahora - 3 * HORA_MS).toISOString().slice(0, 10)
-export const horaArgentina = (ahora: number): string => new Date(ahora - 3 * HORA_MS).toISOString().slice(11, 16)
-const sumarDias = (fecha: string, dias: number): string => new Date(Date.parse(`${fecha}T12:00:00.000Z`) + dias * DIA_MS).toISOString().slice(0, 10)
-const diaSemana = (fecha: string): number => new Date(`${fecha}T12:00:00.000Z`).getUTCDay()
 const hhmm = (hora: number, minuto = 0): string => `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`
-
-// Lowercase, no accents, punctuation as spaces; the colon of a time ("18:30") is kept, and
-// "9.30", "9,30" and "9h30" are the same time.
-function normalizar(texto: string): string {
-  return sinAcentos(texto.toLowerCase().slice(0, 600))
-    .replace(/(\d)[.,h](\d{2})\b/gu, '$1:$2')
-    .replace(/[^a-z0-9ñ:/\s]/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    // How it is written on a phone: "lunes q viene", "x la tarde".
-    .replace(/\bq\b/gu, 'que')
-    .replace(/\bx\b/gu, 'por')
-}
 
 const NUMEROS: Record<string, number> = { una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12 }
 // The hour, then its minutes in any of the ways people say them: "9:30", "9 y 30", "9 y media",
@@ -167,44 +154,10 @@ function leerVentana(texto: string): { ventana: VentanaHoraria | null; resto: st
   return { ventana: null, resto: texto }
 }
 
-function leerDia(texto: string, hoy: string): { day: string; dayTo: string | null; resto: string } | null {
-  const quitar = (m: RegExpExecArray) => `${texto.slice(0, m.index)} ${texto.slice(m.index + m[0].length)}`
-  let m: RegExpExecArray | null
-  if ((m = /\bpasado manana\b/u.exec(texto))) return { day: sumarDias(hoy, 2), dayTo: null, resto: quitar(m) }
-  // "por la mañana" is a part of the day; a "mañana" left after that is tomorrow.
-  const sinFranja = texto.replace(/\b(?:a|por|de|en|durante) la manana\b/gu, (encontrado) => ' '.repeat(encontrado.length))
-  if ((m = /\bmanana\b/u.exec(sinFranja))) return { day: sumarDias(hoy, 1), dayTo: null, resto: `${texto.slice(0, m.index)} ${texto.slice(m.index + m[0].length)}` }
-  if ((m = /\b(?:hoy|esta (?:tarde|noche|manana))\b/u.exec(texto))) return { day: hoy, dayTo: null, resto: m[0] === 'hoy' ? quitar(m) : texto }
-  if ((m = /\b(?:este |el |proximo )?(?:fin de semana|finde)\b/u.exec(texto))) {
-    const dia = diaSemana(hoy)
-    const sabado = dia === 0 ? hoy : sumarDias(hoy, (6 - dia + 7) % 7)
-    return { day: sabado, dayTo: dia === 0 ? null : sumarDias(sabado, 1), resto: quitar(m) }
-  }
-  // An explicit date wins over the name of its day ("el viernes 16 de octubre").
-  if ((m = new RegExp(String.raw`\b(?:el |dia )?(\d{1,2}) de (${MESES.join('|')})\b`, 'u').exec(texto)) || (m = /\b(?:el |dia )?(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/u.exec(texto))) {
-    const dia = Number(m[1])
-    const mes = /^\d/u.test(m[2]!) ? Number(m[2]) : MESES.indexOf(m[2]!) + 1
-    let anio = m[3] ? Number(m[3].length === 2 ? `20${m[3]}` : m[3]) : Number(hoy.slice(0, 4))
-    const armar = () => `${anio}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`
-    const valida = () => !Number.isNaN(Date.parse(`${armar()}T12:00:00.000Z`)) && new Date(`${armar()}T12:00:00.000Z`).getUTCDate() === dia
-    if (mes < 1 || mes > 12 || dia < 1 || dia > 31 || !valida()) return null
-    // A date without year that already passed is next year's.
-    if (!m[3] && armar() < hoy) anio += 1
-    return valida() ? { day: armar(), dayTo: null, resto: quitar(m) } : null
-  }
-  if ((m = new RegExp(String.raw`\b(?:(este|el|proximo|para el|del) )?(${DIAS.join('|')})( que viene| proximo)?\b`, 'u').exec(texto))) {
-    const objetivo = DIAS.indexOf(m[2]!)
-    let saltos = (objetivo - diaSemana(hoy) + 7) % 7
-    // "el lunes que viene" said on a Monday is the next one, not today.
-    if (saltos === 0 && (m[1] === 'proximo' || m[3])) saltos = 7
-    return { day: sumarDias(hoy, saltos), dayTo: null, resto: quitar(m) }
-  }
-  return null
-}
-
 function leerFranja(texto: string): VentanaHoraria | null {
   if (/\b(?:a|por|de|en|durante) la manana\b|\bmanana temprano\b|\btemprano\b|\besta manana\b/u.test(texto)) return { kind: 'between', ...FRANJAS.manana, part: 'manana' }
   if (/\b(?:al |a |del )?mediodia\b/u.test(texto)) return { kind: 'between', ...FRANJAS.mediodia, part: 'mediodia' }
+  if (/\b(?:a|por|de|en|durante) la siesta\b|\besta siesta\b/u.test(texto)) return { kind: 'between', ...FRANJAS.siesta, part: 'siesta' }
   if (/\b(?:a|por|de|en|durante) la tarde\b|\besta tarde\b|\btardecita\b/u.test(texto)) return { kind: 'between', ...FRANJAS.tarde, part: 'tarde' }
   if (/\b(?:a|por|de|en|durante) la noche\b|\besta noche\b|\bnochecita\b/u.test(texto)) return { kind: 'between', ...FRANJAS.noche, part: 'noche' }
   return null
@@ -347,11 +300,13 @@ export function extraerNecesidad(mensaje: string, ahora: number): DatosNecesidad
   }
 
   const { ventana, resto } = leerVentana(texto)
-  const dia = leerDia(resto, hoy)
-  if (dia) {
-    datos.day = dia.day
-    datos.dayTo = dia.dayTo
-  }
+  // The date is resolved by the calendar of the backend (fechas.ts), with its documented rules.
+  const fecha = leerFecha(resto, hoy)
+  if (fecha?.tipo === 'exact') {
+    datos.day = fecha.day!
+    datos.dayTo = fecha.dayTo
+  } else if (fecha?.tipo === 'range') datos.since = fecha.day
+  else if (fecha?.tipo === 'ambiguous') datos.dayOptions = fecha.options
   const franja = ventana ? null : leerFranja(texto)
   if (ventana) datos.time = ventana
   else if (franja) datos.time = franja
@@ -382,7 +337,15 @@ export function combinarNecesidad(previa: NecesidadTurno | null, datos: DatosNec
   if (datos.day) {
     siguiente.day = datos.day
     siguiente.dayTo = datos.dayTo ?? null
+    siguiente.since = null
+  } else if (datos.since) {
+    // A stretch of the calendar replaces the day said before.
+    siguiente.since = datos.since
+    siguiente.day = null
+    siguiente.dayTo = null
   }
+  // A doubt about the day lasts one message: it is asked and answered, never stored.
+  siguiente.dayOptions = null
   if (datos.time) siguiente.time = datos.time
   if (datos.zone) {
     siguiente.zone = datos.zone
@@ -433,8 +396,6 @@ export const mencionaAlgo = (datos: DatosNecesidad): boolean => Object.keys(dato
 
 // ---- how a window is told back to the person -----------------------------------------------
 
-const NOMBRES_DIA = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
-
 // A calendar day (YYYY-MM-DD, Argentina) as a person names it: "jueves 8". The month is added when
 // the bare number could be misread: another month than today's, or a week or more ahead (the same
 // weekday twice in sight): "jueves 15 de octubre".
@@ -456,9 +417,6 @@ export function describirDia(day: string, dayTo: string | null, ahora: number): 
   }
   return dayTo ? `${uno(day)} y ${uno(dayTo)}` : uno(day)
 }
-
-// Monday of the week a day belongs to (the weeks the listings talk about run Monday to Sunday).
-export const lunesDe = (fecha: string): string => sumarDias(fecha, -((diaSemana(fecha) + 6) % 7))
 
 export function describirVentana(time: VentanaHoraria | null): string {
   if (!time) return ''

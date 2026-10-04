@@ -357,7 +357,7 @@ test('ASISTENTE one brain: WhatsApp and the Web run the same orchestrator, tools
   assert.equal(result.sameSystemRules, true, 'one set of rules; only the channel presentation line differs')
   assert.equal(result.webPrompt, true)
   assert.equal(result.sameOrchestrator, true)
-  assert.equal(result.version, 'tus-asistente-v5')
+  assert.equal(result.version, 'tus-asistente-v6')
   assert.equal(result.sameConversation, true)
   assert.deepEqual(result.adopted, ['web', null], 'a Web contact is never a linked WhatsApp number')
   assert.equal(result.anonGone, true)

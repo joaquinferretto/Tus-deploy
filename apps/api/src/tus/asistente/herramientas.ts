@@ -2,6 +2,7 @@ import * as z from 'zod/v4'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { esOficio, idsOficios } from '../directorio/oficios.ts'
 import type { PuertoDominioAsistente } from './dominio.ts'
+import { ZONA_HORARIA_TUS, fechaHoraActual, horaArgentina, hoyArgentina, nombreDiaSemana, relojSistema, resolverExpresionFecha, sumarDias } from './fechas.ts'
 import type { DefinicionHerramientaChat } from './groq.ts'
 
 // Tools the LLM may REQUEST. The backend validates the arguments (strict schemas, unknown fields
@@ -42,7 +43,28 @@ interface Herramienta<S extends z.ZodType = z.ZodType> {
   schema: S
   // Writes are never executed directly: a bound confirmation is created first.
   confirmation: null | { summarize: (args: z.infer<S>) => string }
-  execute: (args: z.infer<S>, actor: ActorAsistente, domain: PuertoDominioAsistente, extra: { idempotencyKey: string }) => Promise<unknown>
+  // `now`: the clock of the backend (injected; tests pass a fixed one). Tools never read another.
+  execute: (args: z.infer<S>, actor: ActorAsistente, domain: PuertoDominioAsistente, extra: { idempotencyKey: string; now: number }) => Promise<unknown>
+}
+
+const FECHA = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'formato de fecha debe ser YYYY-MM-DD')
+const HORA = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/u, 'formato de hora debe ser HH:mm')
+// Days a single availability question may cover.
+export const MAXIMO_DIAS_DISPONIBILIDAD = 14
+
+// What get_provider_availability answers: the real free starts of ONE professional for a service,
+// day by day, read from the agenda (the same generator the Web books with). Authoritative: a time
+// that is not here does not exist.
+export interface DisponibilidadPrestador {
+  providerId: string
+  provider: string | null
+  profession: string
+  timezone: string
+  fromDate: string
+  toDate: string
+  // false: this professional does not take turnos online for the service (or does not offer it).
+  takesAppointments: boolean
+  days: { date: string; weekday: string; slots: { time: string; startsAt: string }[] }[]
 }
 
 function herramienta<S extends z.ZodType>(definition: Herramienta<S>): Herramienta<S> {
@@ -53,10 +75,73 @@ const vacio = z.strictObject({})
 const conTrabajo = z.strictObject({ workId: ID })
 
 export const HERRAMIENTAS = [
+  // ---- the clock and the calendar are the backend's ------------------------------------------
+  herramienta({
+    name: 'get_current_datetime',
+    description: 'Fecha y hora OFICIALES de TUS en este momento (reloj del servidor, zona horaria de Argentina): fecha local, hora local y día de la semana. Usala siempre que necesites saber qué día es hoy; nunca uses tu propia noción de la fecha.',
+    audience: 'public',
+    schema: vacio,
+    confirmation: null,
+    execute: async (_args, _actor, _domain, extra) => fechaHoraActual(extra.now),
+  }),
+  herramienta({
+    name: 'resolve_date_expression',
+    description: 'Convierte una expresión de fecha TAL COMO la dijo el usuario ("hoy", "mañana", "pasado mañana", "el jueves", "este viernes", "el viernes que viene", "el 12", "el 12 de octubre", "la semana que viene") en la fecha exacta, con el calendario del servidor. Devuelve exactDate, o fromDate/toDate si es un rango. Si resolutionType es "ambiguous" preguntale al usuario cuál de las opciones quiere; si es "unresolved" pedile que diga el día. Nunca calcules una fecha por tu cuenta.',
+    audience: 'public',
+    schema: z.strictObject({ expression: z.string().trim().min(1).max(120) }),
+    confirmation: null,
+    execute: async (args, _actor, _domain, extra) => resolverExpresionFecha(args.expression, extra.now),
+  }),
+  herramienta({
+    name: 'get_provider_availability',
+    description: 'Disponibilidad REAL de UN profesional para un servicio entre dos fechas (YYYY-MM-DD, resueltas antes con resolve_date_expression; como máximo 14 días): los días con turnos libres y, en cada uno, sus horarios. Considera su agenda, excepciones, bloqueos, turnos ya tomados y la duración del servicio. Para "¿qué días puede?" pasá daysOnly = true (devuelve solo los días). timeFrom/timeTo (HH:mm) acotan el horario. Solo existen los horarios que devuelve: no agregues ninguno.',
+    audience: 'public',
+    schema: z.strictObject({
+      providerId: z.string().min(3).max(120),
+      profession: OFICIO,
+      fromDate: FECHA,
+      toDate: FECHA.nullable(),
+      timeFrom: HORA.nullable(),
+      timeTo: HORA.nullable(),
+      daysOnly: z.boolean().nullable(),
+    }),
+    confirmation: null,
+    execute: async (args, _actor, domain, extra): Promise<DisponibilidadPrestador> => {
+      const hoy = hoyArgentina(extra.now)
+      // The past is never offered, and a question covers a bounded stretch of the calendar.
+      const desde = args.fromDate < hoy ? hoy : args.fromDate
+      const pedido = args.toDate && args.toDate >= desde ? args.toDate : sumarDias(desde, 6)
+      const tope = sumarDias(desde, MAXIMO_DIAS_DISPONIBILIDAD - 1)
+      const hasta = pedido > tope ? tope : pedido
+      const horaLocal = (iso: string) => horaArgentina(Date.parse(iso))
+      const days: DisponibilidadPrestador['days'] = []
+      let takesAppointments = false
+      for (let fecha = desde; fecha <= hasta; fecha = sumarDias(fecha, 1)) {
+        const agenda = await domain.turnosDisponibles(args.providerId, args.profession, fecha).catch(() => null)
+        if (!agenda || agenda.mensaje) continue
+        takesAppointments = true
+        const slots = agenda.slots
+          .filter((slot) => slot.disponible && Date.parse(slot.inicio) > extra.now)
+          .map((slot) => ({ time: horaLocal(slot.inicio), startsAt: slot.inicio }))
+          .filter((slot) => (!args.timeFrom || slot.time >= args.timeFrom) && (!args.timeTo || slot.time < args.timeTo))
+        if (slots.length > 0) days.push({ date: fecha, weekday: nombreDiaSemana(fecha), slots })
+      }
+      return { providerId: args.providerId, provider: await domain.nombrePrestador(args.providerId).catch(() => null), profession: args.profession, timezone: ZONA_HORARIA_TUS, fromDate: desde, toDate: hasta, takesAppointments, days }
+    },
+  }),
+  herramienta({
+    name: 'find_earliest_availability',
+    description: 'El PRIMER turno libre real, en orden cronológico desde ahora, para un servicio ("lo antes posible", "cuanto antes", "el primero que haya", "hoy si puede"). providerId es opcional (un profesional ya mostrado); when es opcional y solo para una restricción de horario tal como la dijo ("a la tarde", "después de las 18"). El servidor recorre el calendario: no preguntes día por día ni digas "hoy no hay".',
+    audience: 'public',
+    schema: z.strictObject({ profession: OFICIO.nullable(), providerId: z.string().min(3).max(120).nullable(), when: z.string().trim().max(120).nullable() }),
+    confirmation: null,
+    // The orchestrator merges these facts into the need of the conversation and walks the calendar.
+    execute: async (args) => args,
+  }),
   herramienta({
     name: 'find_appointments',
     description:
-      'Busca profesionales REALES con turno disponible para lo que el usuario pidió. Alcanza con el oficio y el día; la zona es opcional. Pasá todo lo que el usuario dijo, aunque sea en un solo mensaje: profession (oficio), when (día y hora TAL COMO los dijo: "mañana a las 18", "el sábado a la tarde", "hoy después de las 17"; el servidor resuelve la fecha, no la calcules), zone (barrio si lo nombró) y anyZone = true si dijo que la zona no importa o que se traslada. Usá null para lo que no dijo: lo ya conocido se conserva. Devuelve los profesionales, sus horarios reales y qué falta si no se puede buscar todavía.',
+      'Busca los profesionales REALES que ofrecen el servicio y tienen turno disponible para lo que el usuario pidió (nunca todos los prestadores del sistema). Alcanza con el oficio: el día y la zona son opcionales (sin día devuelve los próximos días con turnos). Pasá todo lo que el usuario dijo, aunque sea en un solo mensaje: profession (oficio), when (día y hora TAL COMO los dijo: "mañana a las 18", "el sábado a la tarde", "hoy después de las 17"; el servidor resuelve la fecha, no la calcules), zone (barrio si lo nombró) y anyZone = true si dijo que la zona no importa o que se traslada. Usá null para lo que no dijo: lo ya conocido se conserva. Devuelve los profesionales, sus horarios reales y qué falta si no se puede buscar todavía.',
     audience: 'public',
     schema: z.strictObject({
       profession: OFICIO.nullable(),
@@ -127,7 +212,7 @@ export const HERRAMIENTAS = [
     schema: z.strictObject({
       providerId: z.string().min(3),
       profession: OFICIO,
-      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'formato de fecha debe ser YYYY-MM-DD'),
+      date: FECHA,
     }),
     confirmation: null,
     execute: async (args, _actor, domain) => {
@@ -516,22 +601,22 @@ export function interpretarEtiquetaIntencion(content: string | null): IntencionA
 }
 
 const HERRAMIENTAS_POR_INTENCION: Record<IntencionAsistente, { client: NombreHerramienta[]; provider: NombreHerramienta[] }> = {
-  buscar: { client: ['find_appointments', 'collect_service_request', 'search_providers', 'get_available_slots', 'book_appointment', 'request_provider', 'search_services'], provider: [] },
+  buscar: { client: ['find_appointments', 'find_earliest_availability', 'get_provider_availability', 'resolve_date_expression', 'get_current_datetime', 'collect_service_request', 'search_providers', 'get_available_slots', 'book_appointment', 'request_provider', 'search_services'], provider: [] },
   postulaciones: {
     client: ['list_my_open_requests', 'list_request_applicants', 'choose_applicant'],
     provider: ['search_open_requests', 'apply_to_request'],
   },
   trabajos: { client: ['list_my_works', 'get_my_work', 'list_my_requests', 'list_my_open_requests'], provider: ['list_provider_jobs', 'get_provider_job', 'cancel_work', 'complete_work'] },
   presupuesto: { client: ['list_my_works', 'get_my_budget', 'accept_budget', 'reject_budget'], provider: ['list_provider_jobs', 'get_provider_job'] },
-  reserva: { client: ['find_appointments', 'get_available_slots', 'book_appointment', 'collect_service_request', 'search_providers', 'list_my_reservations', 'get_service_details'], provider: ['list_provider_reservations'] },
+  reserva: { client: ['find_appointments', 'find_earliest_availability', 'get_provider_availability', 'resolve_date_expression', 'get_current_datetime', 'get_available_slots', 'book_appointment', 'collect_service_request', 'search_providers', 'list_my_reservations', 'get_service_details'], provider: ['list_provider_reservations'] },
   pago: { client: ['list_my_works', 'get_payment_status', 'get_payment_link', 'get_pending_payments', 'verify_payment_status'], provider: ['get_mercadopago_connection_status'] },
   identidad: { client: [], provider: ['get_identity_status'] },
   conocimiento: { client: [], provider: [] },
   saludo: { client: [], provider: [] },
-  otro: { client: ['search_services'], provider: [] },
+  otro: { client: ['search_services', 'get_current_datetime', 'resolve_date_expression'], provider: [] },
 }
 
-export const MAX_HERRAMIENTAS_POR_TURNO = 7
+export const MAX_HERRAMIENTAS_POR_TURNO = 12
 
 export function seleccionarHerramientas(intent: IntencionAsistente, actor: ActorAsistente): Herramienta[] {
   const names = [...HERRAMIENTAS_POR_INTENCION[intent].client, ...(actor.isProvider ? HERRAMIENTAS_POR_INTENCION[intent].provider : [])]
@@ -562,6 +647,8 @@ export async function validarYEjecutar(input: {
   timeoutMs: number
   // Only set when executing an already confirmed action.
   confirmed?: { idempotencyKey: string }
+  // The clock of the backend (the orchestrator passes its own; a fixed one in tests).
+  now?: () => number
 }): Promise<ResultadoHerramienta> {
   const tool = buscarHerramienta(input.name)
   if (!tool || !input.allowed.has(tool.name)) return { ok: false, error: 'TOOL_NOT_AVAILABLE' }
@@ -577,9 +664,10 @@ export async function validarYEjecutar(input: {
   if (!parsed.success) return { ok: false, error: 'INVALID_ARGUMENTS' }
   if (tool.confirmation && !input.confirmed)
     return { ok: true, confirmationRequired: true, summary: tool.confirmation.summarize(parsed.data), arguments: parsed.data as Record<string, unknown> }
+  const ahora = (input.now ?? relojSistema)()
   try {
     const data = await conTimeout(
-      tool.execute(parsed.data, input.actor, input.domain, { idempotencyKey: input.confirmed?.idempotencyKey ?? `whatsapp-read-${Date.now()}` }),
+      tool.execute(parsed.data, input.actor, input.domain, { idempotencyKey: input.confirmed?.idempotencyKey ?? `whatsapp-read-${ahora}`, now: ahora }),
       input.timeoutMs
     )
     return { ok: true, data }

@@ -338,6 +338,45 @@ visible desde WhatsApp y se dice ("No puedo ver si iniciaste sesión en la Web�
 el vínculo lo escribe solo el desafío. Buscar es público; solicitar un turno, ver turnos, pagos o datos de la cuenta
 siguen pidiendo la cuenta.
 
+### El modelo interpreta, el backend sabe (ASISTENTE-TOOLS-01, 2026-10-04)
+
+Ninguna fecha, horario, disponibilidad, precio o solicitud es real porque el modelo lo diga: sale de una tool o lo
+valida el backend.
+
+**Reloj y calendario** (`asistente/fechas.ts`, único lugar que resuelve fechas). Zona `America/Argentina/Buenos_Aires`.
+El reloj se inyecta (`Reloj`): producción usa el real, los tests uno fijo; las tools lo reciben del orquestador.
+Reglas, en orden: "pasado mañana" = hoy + 2; "mañana" = hoy + 1 ("a la mañana" es franja); "hoy"; "finde" = próximo
+sábado y domingo; "la semana que viene" = lunes a domingo siguientes; "esta semana" = de hoy al domingo; "12 de
+octubre" / "12/10" (sin año, si ya pasó es el año próximo); "día 12" = el próximo 12; un día de semana = su próxima
+ocurrencia, hoy incluido. **Ambigüedad:** "el viernes que viene" dicho un viernes es el siguiente; si el próximo viernes
+ya cae en la semana siguiente es ese; si todavía cae en esta semana puede ser cualquiera de los dos: no se elige, se
+pregunta ("¿El viernes 9 o el viernes 16 de octubre?") y la respuesta se lee contra esas dos fechas.
+
+**Franjas** (`FRANJAS`, backend): mañana 06–12, mediodía 12–14, siesta 13–17, tarde 13–20, noche 20–23:59. El modelo
+pasa la franja tal como se dijo; nunca define sus límites.
+
+**Tools del modelo** (las nuevas en negrita; no se duplicó ninguna existente):
+
+| Operación pedida | Tool | Qué resuelve el backend |
+|---|---|---|
+| Fecha y hora actuales | **`get_current_datetime`** | timestamp, zona, fecha local, hora local, día de semana |
+| Expresión de fecha | **`resolve_date_expression`** | `exactDate` o `fromDate`/`toDate`; `ambiguous` con opciones; `unresolved` |
+| Agenda de un profesional / sus días | **`get_provider_availability`** (`daysOnly`) | días y horarios reales (agenda, excepciones, bloqueos, turnos tomados, duración); nunca el pasado; 14 días como máximo |
+| Primer turno libre | **`find_earliest_availability`** | recorre el calendario desde ahora; profesional y franja opcionales |
+| Profesionales disponibles | `find_appointments` | solo quienes ofrecen el servicio; día, hora, zona, "cualquiera" |
+| Horarios de un día | `get_available_slots` | franjas y tarifas de un profesional y fecha |
+| Solicitar | `book_appointment` | el inicio se relee en la agenda antes de preparar la tarjeta; el dominio vuelve a validar al confirmar |
+| Servicios / prestadores / pagos | `search_services`, `search_providers`, `get_pending_payments`, `verify_payment_status` | sin cambios |
+
+**Salida autoritativa.** En WhatsApp las respuestas con días y horarios las escribe el backend. Donde escribe el modelo
+(Web), una respuesta que menciona un horario que las tools no devolvieron en ese turno se descarta y se envía el texto
+del backend. Un inicio que el modelo pide reservar y no existe, ya pasó o se ocupó se rechaza ("Ese horario no está
+disponible") y se ofrece el real más cercano. Un `providerId` que el backend no conoce se ignora.
+
+**Estado.** Lo que devolvió `get_provider_availability` queda como opciones de la conversación (profesional, días e
+inicios), igual que una búsqueda: "9:45", "16", "2" o "la segunda" se resuelven contra ese estado sin volver a
+interpretar fechas.
+
 ## Un turno se solicita, no se confirma (TURNOS-SOLICITUD-01)
 
 Desde la Web, el asistente Web o WhatsApp, el cliente **solicita** un turno; solo el prestador lo

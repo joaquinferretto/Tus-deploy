@@ -58,7 +58,7 @@ export const GENERAL_SETUP = `${SERVICE_SETUP}${WHATSAPP_SETUP}
       return { profession: consulta.profession, outcome, zoneRelaxed: false, providers: providers.map((p, i) => [p, i]).sort((a, b) => peso(a[0]) - peso(b[0]) || a[1] - b[1]).map(([p]) => p) }
     },
     turnosDisponibles: async (providerId, oficioId, fecha) => {
-      const p = AGENDA.find((x) => x.id === providerId)
+      const p = AGENDA.find((x) => x.id === providerId && x.oficio === oficioId)
       const horas = p ? (p.semana[diaSemana(fecha)] ?? []) : []
       return { slots: horas.map((h) => ({ inicio: iso(fecha, h), fin: iso(fecha, h), duracionMinutos: 45, disponible: !ocupados.has(iso(fecha, h)) })), tarifas: [] }
     },

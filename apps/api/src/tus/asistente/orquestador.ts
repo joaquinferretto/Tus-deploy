@@ -23,6 +23,7 @@ import {
   seleccionarHerramientas,
   validarYEjecutar,
   type ActorAsistente,
+  type DisponibilidadPrestador,
   type IntencionAsistente,
 } from './herramientas.ts'
 import { ErrorMetaWhatsapp, type AdjuntoAsistente, type MensajeSaliente, type WhatsappProvider } from './meta.ts'
@@ -48,7 +49,7 @@ import {
 import type { PuertoTransaccionAsistente, RepositoriosAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
 import type { ServicioVinculacionWhatsapp } from './vinculacion.ts'
 
-export const VERSION_PROMPT_SISTEMA = 'tus-asistente-v5'
+export const VERSION_PROMPT_SISTEMA = 'tus-asistente-v6'
 
 // Why the assistant needs an account before going on. Each channel asks in its own way
 // (WhatsApp: single-use link to bind the number; Web: sign in).
@@ -131,6 +132,8 @@ const REGLAS_PROMPT_SISTEMA = [
   '15. Si el usuario elige a uno de los profesionales ya mostrados ("el segundo", "ese", por nombre), es el de esa posición o nombre en "Profesionales mostrados": usá su providerId. Si hay varios posibles, preguntá cuál.',
   '16. Los identificadores (providerId, ids de trabajos, presupuestos, turnos, tarifas o cuentas) son SOLO para llamar herramientas: nunca los escribas en tu respuesta. Nombrá a las personas, los servicios, las fechas y los horarios.',
   '17. El precio de un servicio y su seña los informa el backend al preparar la solicitud de turno: no los calcules, no los estimes y no los cambies. La seña se abona recién cuando el prestador acepta el turno; nunca digas que un pago está hecho si una herramienta no lo confirmó.',
+  '18. La fecha de hoy, el día de la semana de una fecha y el significado de "mañana", "pasado mañana", "el jueves" o "la semana que viene" los resuelve el SERVIDOR: usá get_current_datetime y resolve_date_expression (o pasá la expresión tal cual en "when"). Nunca calcules una fecha ni un día de la semana por tu cuenta, ni uses tu propia noción de qué día es hoy. Si la herramienta dice que la expresión es ambigua, preguntá cuál de las opciones quiere.',
+  '19. Solo existen los días y horarios que devolvió una herramienta en esta conversación. No agregues, redondees ni supongas otros ("también hay a las 10"). Para la agenda de un profesional usá get_provider_availability; para el primer turno libre, find_earliest_availability. Las franjas ("a la mañana", "a la siesta", "a la tarde", "a la noche") las define el servidor: pasalas tal como las dijo el usuario.',
 ]
 
 // The WhatsApp prompt (kept as a named export for documentation and evaluations).
@@ -711,6 +714,28 @@ export class OrquestadorConversacion {
       turn.canal.evento?.({ type: 'routing', intent: intencion })
     }
 
+    // A day that may be two ("el viernes que viene" said on a Wednesday): nothing is chosen for
+    // the person. The two real dates are asked, and the answer ("el 16", "este", "el siguiente")
+    // is read against those two, by the backend.
+    const duda = state.dayChoice && ahora - state.dayChoice.at <= SOLICITUD_VIGENTE_MS ? state.dayChoice : null
+    if (duda && !datos.day && !datos.dayOptions) {
+      const plano = sinAcentos(text)
+      const numero = /\b(\d{1,2})\b/u.exec(plano)
+      const elegido = duda.options.find((opcion) => numero && Number(opcion.slice(8, 10)) === Number(numero[1])) ?? (/\b(?:este|esta|primer[oa]?|mas cerca\w*)\b/u.test(plano) ? duda.options[0] : /\b(?:siguiente|otro|otra|que viene|proxim[oa]|segund[oa])\b/u.test(plano) ? duda.options[1] : undefined)
+      if (elegido) {
+        datos.day = elegido
+        datos.dayTo = null
+      }
+    }
+    if (state.dayChoice) await this.actualizarEstado(conversationId, { dayChoice: null })
+    if (datos.dayOptions?.length === 2) {
+      const [primero, segundo] = datos.dayOptions as [string, string]
+      const conocida = combinarNecesidad(vigente, { ...datos, dayOptions: null })
+      marcar('buscar')
+      await this.actualizarEstado(conversationId, { need: conocida, needAt: ahora, dayChoice: { options: [primero, segundo], at: ahora }, currentIntent: 'buscar', suggestion: null, lowConfidenceCount: 0 })
+      return [{ type: 'text', text: `¿${capitalizar(describirDia(primero, null, ahora))} o ${describirDia(segundo, null, ahora)}?` }]
+    }
+
     // 1. Something concrete was proposed ("¿Querés esa?", "¿Querés que busque...?"): "sí" takes
     //    it, "no" drops it. "Sí, pero el martes" says more: it is read as a change below.
     const sugerencia = state.suggestion && ahora - state.suggestion.at <= SOLICITUD_VIGENTE_MS ? state.suggestion : null
@@ -796,6 +821,12 @@ export class OrquestadorConversacion {
     // which day. Nobody: the day shown is kept and its closest real times are searched.
     let mantenerDia = false
     const opciones = state.offers?.items ?? []
+    // A bare number that is not the position of an option ("16" with three options listed) is a
+    // time, when one of the times shown is that hour: read against the real starts shown.
+    if (!datos.time && !datos.day && opciones.length > 0 && /^\s*\d{1,2}\s*(?:hs|h)?\s*[.!]*\s*$/iu.test(text) && Number(/\d{1,2}/u.exec(text)![0]) > opciones.length) {
+      const hora = horasPosibles(text).find((posible) => opciones.some((item) => item.starts.some((inicio) => horaLocal(inicio) === posible)))
+      if (hora) datos.time = { kind: 'exact', from: hora, to: null }
+    }
     // A message that also says a day ("mañana tipo 18") is a new search for that day, not this.
     const horaSuelta = datos.time?.kind === 'exact' && !datos.day && !datos.profession && !datos.anyProvider && !datos.asap ? datos.time.from : null
     if (horaSuelta && state.offers && personasDe(opciones).length > 1 && !elegirOferta(text, datos, state.offers)) {
@@ -870,10 +901,10 @@ export class OrquestadorConversacion {
     // "mis trabajos de plomería", "¿cómo pago mañana?": another area of TUS, not a search.
     const otraArea = intencionPrivada(detectada) || detectada === 'conocimiento'
     const nombraOficio = Boolean(datos.profession || datos.alternatives?.length)
-    const cambiaAlgo = Boolean(datos.day || datos.time || datos.zone || datos.anyZone || datos.clientTravels || datos.asap || datos.anyProvider || datos.providerId)
+    const cambiaAlgo = Boolean(datos.day || datos.since || datos.time || datos.zone || datos.anyZone || datos.clientTravels || datos.asap || datos.anyProvider || datos.providerId)
     const sigueBusqueda = enCurso && cambiaAlgo
     // "mañana a las 18" as a first message: a day or a time for something still to be said.
-    const soloCuando = !enCurso && Boolean(datos.day || datos.time || datos.asap) && (detectada === 'reserva' || detectada === 'otro' || detectada === 'buscar')
+    const soloCuando = !enCurso && Boolean(datos.day || datos.since || datos.time || datos.asap) && (detectada === 'reserva' || detectada === 'otro' || detectada === 'buscar')
     // "¿Qué horarios tiene?" about the service being talked about: its real times (of the day
     // known, or of the next days with free turnos). About one professional when she is the one
     // being talked about.
@@ -971,7 +1002,8 @@ export class OrquestadorConversacion {
     turn.canal.evento?.({ type: 'tool', tool: 'find_appointments', phase: 'start' })
     const started = this.now()
     const hoy = hoyArgentina(started)
-    const desde = need.day && need.day > hoy ? need.day : hoy
+    // "La semana que viene": the calendar is walked from that Monday, not from today.
+    const desde = need.day && need.day > hoy ? need.day : need.since && need.since > hoy ? need.since : hoy
     const consultar = async (day: string, dayTo: string | null, time: NecesidadTurno['time']): Promise<DisponibilidadNecesidad | null> => {
       try {
         let timer: NodeJS.Timeout | undefined
@@ -991,7 +1023,7 @@ export class OrquestadorConversacion {
       const resultado = await consultar(need.day, need.dayTo, need.time)
       busqueda = resultado ? { resultado, dia: need.day, desde: need.day } : null
     } else if (!need.asap) {
-      const inicio = opciones.desde && opciones.desde > hoy ? opciones.desde : hoy
+      const inicio = opciones.desde && opciones.desde > desde ? opciones.desde : desde
       const dias: DiaDisponible[] = []
       let primero: DisponibilidadNecesidad | null = null
       let fallo = false
@@ -1197,6 +1229,13 @@ export class OrquestadorConversacion {
       })
       this.metric('whatsapp.llm_call', { ms: answer.latencyMs || 0, promptTokens: answer.usage?.promptTokens ?? 0, completionTokens: answer.usage?.completionTokens ?? 0 })
       const content = sinIdentificadores((answer.content ?? '').replace(/<think>[\s\S]*?<\/think>/gu, '').trim(), resultado.providers.map((provider) => provider.providerId))
+      // Only the times of the result may be said: a reply with another one is dropped (the
+      // backend's own text is used instead).
+      const reales = new Set(resultado.providers.flatMap((item) => [...item.matches, ...item.nearby]).map(horaLocal))
+      if (content && horasInventadas(content, reales)) {
+        this.metric('assistant.invented_time_blocked', { channel: turn.canal.id })
+        return null
+      }
       return content && !pideHumano(content) ? content : null
     } catch (error) {
       this.metric('whatsapp.llm_error', { code: error instanceof ErrorChat ? error.code : 'UNKNOWN' })
@@ -1245,6 +1284,18 @@ export class OrquestadorConversacion {
     return agenda.slots.some((slot) => slot.disponible && slot.inicio === start)
   }
 
+  // For a start the MODEL asks to book: it has to be a real, free start of that agenda. Unknown
+  // (the agenda cannot be read here): true, the domain validates the request again when it is sent.
+  private async existeYEstaLibre(providerId: string, profession: string, start: string): Promise<boolean> {
+    if (typeof this.deps.domain.turnosDisponibles !== 'function') return true
+    const instante = Date.parse(start)
+    if (Number.isNaN(instante) || instante <= this.now()) return false
+    const agenda = await this.deps.domain.turnosDisponibles(providerId, profession, diaLocal(start)).catch(() => null)
+    if (!agenda) return true
+    if (agenda.mensaje) return false
+    return agenda.slots.some((slot) => slot.disponible && Date.parse(slot.inicio) === instante)
+  }
+
   // A start was taken meanwhile: the next real free turno of the same professional, proposed.
   private async siguienteDe(turn: Turno, profession: string, providerId: string, name: string, start: string, motivo: string, correlationId: string): Promise<MensajeSaliente[]> {
     // The closest alternative first: another free start of the same professional on that very
@@ -1270,11 +1321,23 @@ export class OrquestadorConversacion {
   // days on which any compatible professional is free. A time said before is not carried: the
   // question is about days.
   private async responderDias(turn: Turno, base: NecesidadTurno | null, profession: string, text: string, correlationId: string): Promise<MensajeSaliente[]> {
-    const foco = profesionalEnFoco(turn.conversation.state, text)
+    let foco = profesionalEnFoco(turn.conversation.state, text)
     const ventana = base?.time && base.time.kind !== 'exact' ? base.time : null
-    const need: NecesidadTurno = { ...(base ?? NECESIDAD_VACIA), profession, alternatives: [], day: null, dayTo: null, time: ventana, asap: false, anyProvider: false, providerId: foco?.providerId ?? null, providerName: foco?.name ?? null }
-    const busqueda = await this.consultarDisponibilidad(turn, need, correlationId, { todosLosDias: true })
+    let need: NecesidadTurno = { ...(base ?? NECESIDAD_VACIA), profession, alternatives: [], day: null, dayTo: null, dayOptions: null, time: ventana, asap: false, anyProvider: false, providerId: foco?.providerId ?? null, providerName: foco?.name ?? null }
+    let busqueda = await this.consultarDisponibilidad(turn, need, correlationId, { todosLosDias: true })
     if (!busqueda) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
+    // "¿Qué días puede Melina?" before any list was shown: the name is resolved against the
+    // professionals that really offer the service (the backend's result), and HER agenda is read.
+    if (!foco) {
+      const nombrados = profesionalesNombrados(text, profesionalesDe(busqueda))
+      if (nombrados.length === 1) {
+        foco = { providerId: nombrados[0]!.providerId, name: nombrados[0]!.name }
+        need = { ...need, providerId: foco.providerId, providerName: foco.name }
+        const suya = await this.consultarDisponibilidad(turn, need, correlationId, { todosLosDias: true })
+        if (!suya) return [{ type: 'text', text: DISPONIBILIDAD_NO_CONSULTADA }]
+        busqueda = suya
+      }
+    }
     const dias = (busqueda.dias ?? []).map((item) => item.dia)
     if (dias.length === 0 && (busqueda.resultado.outcome === 'no_providers' || busqueda.resultado.outcome === 'no_appointments')) return [{ type: 'text', text: textoDisponibilidad(need, busqueda.resultado, this.now()) }]
     // Only days are told, no options: what a number or a name refers to is still the last list
@@ -1353,7 +1416,7 @@ export class OrquestadorConversacion {
       actor,
       domain: this.deps.domain,
       allowed: new Set([tool]),
-      timeoutMs: this.limits.toolTimeoutMs,
+      timeoutMs: this.limits.toolTimeoutMs, now: this.now,
     })
     if (!result.ok || !('confirmationRequired' in result)) return null
     const summary = resumenSolicitud({ providerName: pedido.providerName, startsAt: pedido.startsAt, servicio: servicio?.serviceName ?? null, opcion, notes: extra.notes ?? null })
@@ -1979,6 +2042,8 @@ export class OrquestadorConversacion {
     // The real search already ran in this turn: its result, rendered by the backend, is the reply
     // if the model then fails to phrase it (rate limit, timeout).
     let buscado: string | null = null
+    // The times the tools returned in this turn: the only ones a reply may mention.
+    const horasReales = new Set<string>()
     try {
       for (let round = 0; round <= this.limits.maxToolCalls; round += 1) {
         const started = this.now()
@@ -2034,6 +2099,12 @@ export class OrquestadorConversacion {
           }
           // A model must not reintroduce the unavailable human handoff, even after a tool error.
           if (pideHumano(content)) return [{ type: 'text', text: MENSAJES.aiUnavailable }]
+          // The tools answered with real times and the reply mentions one they did not return
+          // ("también hay a las 10"): it is not passed on. The backend's own rendering is.
+          if (horasReales.size > 0 && horasInventadas(content, horasReales)) {
+            this.metric('assistant.invented_time_blocked', { channel: turn.canal.id })
+            return [{ type: 'text', text: buscado ?? DISPONIBILIDAD_NO_CONSULTADA, ...(adjunto ? { attachment: adjunto } : {}) }]
+          }
           await this.actualizarEstado(turn.conversation.conversationId, {
             currentIntent: intent,
             lowConfidenceCount: 0,
@@ -2060,7 +2131,7 @@ export class OrquestadorConversacion {
           actor,
           domain: this.deps.domain,
           allowed,
-          timeoutMs: this.limits.toolTimeoutMs,
+          timeoutMs: this.limits.toolTimeoutMs, now: this.now,
         })
         this.metric('whatsapp.tool_call', {
           tool: call.function.name,
@@ -2082,19 +2153,35 @@ export class OrquestadorConversacion {
             return [{ type: 'text', text: need.question }]
           }
         }
-        if (result.ok && 'data' in result && call.function.name === 'find_appointments') {
+        if (result.ok && 'data' in result && (call.function.name === 'find_appointments' || call.function.name === 'find_earliest_availability')) {
           // What the model understood is merged with what the conversation already knows (the day
-          // and time it passes are resolved here, with the server's calendar).
-          const args = result.data as { profession: string | null; when: string | null; zone: string | null; anyZone: boolean | null }
+          // and time it passes are resolved here, with the server's calendar). The first free
+          // turno is the same search with "lo antes posible": the backend walks the calendar.
+          const primero = call.function.name === 'find_earliest_availability'
+          const args = result.data as { profession: string | null; when: string | null; zone?: string | null; anyZone?: boolean | null; providerId?: string | null }
           const delTexto = args.when ? extraerNecesidad(args.when, this.now()) : {}
+          // A professional the model names by id counts only if the backend knows that id.
+          const nombre = primero && args.providerId && typeof this.deps.domain.nombrePrestador === 'function' ? await this.deps.domain.nombrePrestador(args.providerId).catch(() => null) : null
           const datos: DatosNecesidad = {
             ...(delTexto.day ? { day: delTexto.day, dayTo: delTexto.dayTo ?? null } : {}),
+            ...(delTexto.since ? { since: delTexto.since } : {}),
             ...(delTexto.time ? { time: delTexto.time } : {}),
             ...(delTexto.urgent ? { urgent: true } : {}),
+            ...(delTexto.asap || primero ? { asap: true } : {}),
+            ...(delTexto.anyProvider ? { anyProvider: true } : {}),
+            ...(nombre && args.providerId ? { providerId: args.providerId, providerName: nombre } : {}),
             ...(args.profession ? { profession: args.profession } : {}),
             ...(args.zone ? { zone: args.zone } : args.anyZone ? { anyZone: true } : {}),
           }
           need = combinarNecesidad(need, datos)
+          // The model passed an expression with two reasonable dates: it is told, and asks.
+          if (delTexto.dayOptions?.length === 2) {
+            const opciones = delTexto.dayOptions
+            await this.actualizarEstado(turn.conversation.conversationId, { need, needAt: this.now(), dayChoice: { options: opciones, at: this.now() }, currentIntent: 'buscar', lowConfidenceCount: 0 })
+            if (!turn.canal.conversacional) return [{ type: 'text', text: `¿${capitalizar(describirDia(opciones[0]!, null, this.now()))} o ${describirDia(opciones[1]!, null, this.now())}?` }]
+            messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify({ ambiguousDate: opciones.map((fecha) => describirDia(fecha, null, this.now())), instruction: 'La fecha es ambigua: preguntá cuál de esas dos quiere. No elijas una.' }) })
+            continue
+          }
           const faltan = faltantes(need)
           let contenido: unknown
           if (faltan.length > 0) {
@@ -2115,10 +2202,37 @@ export class OrquestadorConversacion {
             draft = { listingId: null, urgency: null, problem: draft?.problem ?? null, profession: need.profession, zone: need.zone, candidates: resultado.providers.map(({ providerId, name }) => ({ providerId, name })) }
             adjunto = adjuntoDisponibilidad(resultado)
             datosEnTurno = true
+            for (const item of resultado.providers) for (const inicio of [...item.matches, ...item.nearby]) horasReales.add(horaLocal(inicio))
             buscado = need.asap ? textoPrimeraDisponibilidad(need, resultado, busqueda.dia ?? busqueda.desde, this.now()) : textoDisponibilidad(need, resultado, this.now())
             contenido = resumenParaModelo(need, resultado, this.now())
           }
           messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify(contenido).slice(0, 6000) })
+          continue
+        }
+        if (result.ok && 'data' in result && call.function.name === 'get_provider_availability') {
+          // The agenda of ONE professional, read by the backend. What was returned becomes the
+          // options of the conversation (a time or a day said next refers to them), and where the
+          // backend writes the replies it renders them itself.
+          const data = result.data as DisponibilidadPrestador
+          const soloDias = argumentosSeguros(call.function.arguments)['daysOnly'] === true
+          const nombre = data.provider ?? 'ese profesional'
+          const items = data.days.map((dia) => ({ providerId: data.providerId, name: nombre, starts: dia.slots.map((slot) => slot.startsAt), day: dia.date }))
+          for (const dia of data.days) for (const slot of dia.slots) horasReales.add(slot.time)
+          need = { ...combinarNecesidad(need, { profession: data.profession, providerId: data.providerId, providerName: nombre }), asap: false }
+          const ofertas = { profession: data.profession, items }
+          await this.actualizarEstado(turn.conversation.conversationId, { need, needAt: this.now(), offers: ofertas, shown: ofertas, chosenProviderId: data.providerId, currentIntent: 'reserva', suggestion: null, lowConfidenceCount: 0 })
+          const etiqueta = oficio(data.profession).label
+          buscado = !data.takesAppointments
+            ? `${nombre} no toma turnos online de ${etiqueta}.`
+            : items.length === 0
+              ? `No encontré turnos libres de ${etiqueta} con ${nombre} entre ${describirDia(data.fromDate, null, this.now())} y ${describirDia(data.toDate, null, this.now())}.`
+              : soloDias
+                ? textoDias(data.profession, data.days.map((dia) => dia.date), this.now(), nombre)
+                : textoPanorama(need, ofertas, this.now())
+          if (!turn.canal.conversacional) return [{ type: 'text', text: buscado }]
+          datosEnTurno = true
+          // Days only: the model gets the days, not the times it was not asked for.
+          messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify(soloDias ? { provider: data.provider, timezone: data.timezone, days: data.days.map(({ date, weekday }) => ({ date, weekday })) } : data).slice(0, 6000) })
           continue
         }
         if (result.ok && 'data' in result && call.function.name === 'search_providers') {
@@ -2189,6 +2303,12 @@ export class OrquestadorConversacion {
           // The model only says WHICH professional and time: the service, its price, the deposit,
           // the client and the card are the backend's (the same steps as a choice in free text).
           const args = result.arguments as { providerId: string; profession: string; startsAt: string; tariffId?: string; notes?: string }
+          // A start the model asks for counts only if the agenda really has it free right now: a
+          // time it made up, or one taken meanwhile, is refused and the real alternatives offered.
+          if (!(await this.existeYEstaLibre(args.providerId, args.profession, args.startsAt))) {
+            const quien = (typeof this.deps.domain.nombrePrestador === 'function' ? await this.deps.domain.nombrePrestador(args.providerId).catch(() => null) : null) ?? 'ese profesional'
+            return this.siguienteDe(turn, args.profession, args.providerId, quien, args.startsAt, 'Ese horario no está disponible.', correlationId)
+          }
           const mostrado = [...(turn.conversation.state.offers?.items ?? []), ...(draft?.candidates ?? [])].find((item) => item.providerId === args.providerId)?.name
           const nombre = mostrado ?? (typeof this.deps.domain.nombrePrestador === 'function' ? await this.deps.domain.nombrePrestador(args.providerId).catch(() => null) : null)
           const reply = await this.continuarSolicitud(turn, actor, { providerId: args.providerId, providerName: nombre ?? 'el profesional elegido', profession: args.profession, startsAt: args.startsAt, tariffId: args.tariffId ?? null }, correlationId, { mensaje: text, notes: args.notes ?? null })
@@ -2389,7 +2509,7 @@ export class OrquestadorConversacion {
       actor,
       domain: this.deps.domain,
       allowed: new Set(HERRAMIENTAS.filter((tool) => tool.confirmation).map((tool) => tool.name)),
-      timeoutMs: this.limits.toolTimeoutMs,
+      timeoutMs: this.limits.toolTimeoutMs, now: this.now,
       confirmed: { idempotencyKey: `${turn.canal.id}-${loaded.confirmationId}` },
     })
     const data =
@@ -2701,6 +2821,16 @@ function esPreguntaSimple(content: string): boolean {
     !/[\d$]/u.test(texto) &&
     !/\b(?:recomiend\w*|encontr\w*|disponib\w*|libres?|cobra\w*|precio|sale|se llama)\b/iu.test(texto)
   )
+}
+
+// Whether a reply mentions a clock time that is not one of the real ones ("10:00", "a las 10").
+export function horasInventadas(content: string, reales: ReadonlySet<string>): boolean {
+  for (const hallada of content.matchAll(/(?<![\d$.,])\b([01]?\d|2[0-3])[:.]([0-5]\d)\b(?!\s*%)/gu)) if (!reales.has(`${hallada[1]!.padStart(2, '0')}:${hallada[2]}`)) return true
+  for (const hallada of content.matchAll(/\ba las? (\d{1,2})(?!\d|[:.]\d)/giu)) {
+    const hora = hallada[1]!.padStart(2, '0')
+    if (![...reales].some((real) => real.startsWith(`${hora}:`))) return true
+  }
+  return false
 }
 
 function argumentosSeguros(raw: string): Record<string, unknown> {

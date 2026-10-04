@@ -79,6 +79,9 @@ export interface EstadoConversacional {
   // "la otra" and "la segunda" keep referring to it. chosenProviderId: the one chosen from it.
   shown?: { profession: string; items: { providerId: string; name: string; area?: string; starts: string[] }[] } | null
   chosenProviderId?: string | null
+  // A day that may be two real dates ("el viernes que viene"): the two the person was asked to
+  // choose between. The answer is read against them; nothing is chosen for the person.
+  dayChoice?: { options: string[]; at: number } | null
   // One concrete thing the assistant proposed and the person may accept with "sí": a free turno
   // (offer), the first free turno of anyone (first_any), or the days after the one with nothing
   // (next_days). Never authoritative: accepting re-reads the real availability.
