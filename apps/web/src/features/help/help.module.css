@@ -1,0 +1,324 @@
+/* Help Center. Tokens come from the public page frame (home.module.css: --tus-*). */
+.wrap {
+  margin: 0 auto;
+  max-width: 760px;
+  padding: 28px 20px 64px;
+  width: 100%;
+}
+
+.hero {
+  margin-bottom: 28px;
+}
+
+.heroTitle {
+  color: var(--tus-ink);
+  font-size: clamp(1.6rem, 4vw, 2.1rem);
+  line-height: 1.2;
+  margin: 0 0 16px;
+}
+
+.search {
+  display: flex;
+  gap: 8px;
+}
+
+.searchInput {
+  border: 1px solid var(--tus-line);
+  border-radius: 10px;
+  color: var(--tus-ink);
+  flex: 1 1 auto;
+  font: inherit;
+  min-height: 44px;
+  min-width: 0;
+  padding: 10px 14px;
+}
+
+.searchInput:focus-visible,
+.searchButton:focus-visible,
+.wrap a:focus-visible {
+  box-shadow: var(--tus-focus);
+  outline: 2px solid var(--tus-orange);
+  outline-offset: 2px;
+}
+
+.searchButton {
+  background: var(--tus-orange);
+  border: 0;
+  border-radius: 10px;
+  color: var(--tus-white);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 10px 18px;
+}
+
+.searchButton:hover {
+  background: var(--tus-orange-strong);
+}
+
+.category {
+  border-top: 1px solid var(--tus-line);
+  padding: 20px 0 8px;
+}
+
+.categoryTitle {
+  color: var(--tus-ink);
+  font-size: 1.1rem;
+  margin: 0 0 8px;
+}
+
+.list {
+  display: grid;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item a {
+  border-radius: 10px;
+  color: var(--tus-ink);
+  display: block;
+  min-height: 44px;
+  padding: 10px 12px;
+  text-decoration: none;
+}
+
+.item a:hover {
+  background: var(--tus-orange-soft);
+}
+
+.itemTitle {
+  color: var(--tus-orange-strong);
+  display: block;
+  font-weight: 600;
+}
+
+.itemText {
+  color: var(--tus-ink-soft);
+  display: block;
+  font-size: 0.94rem;
+  margin-top: 2px;
+}
+
+.itemTag {
+  color: var(--tus-muted);
+  display: block;
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+.empty {
+  color: var(--tus-ink-soft);
+  margin: 12px 0;
+}
+
+.crumbs {
+  color: var(--tus-muted);
+  font-size: 0.9rem;
+  margin: 0 0 14px;
+}
+
+.crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.crumbs li + li::before {
+  content: '›';
+  margin-right: 6px;
+}
+
+.crumbs a {
+  color: var(--tus-ink-soft);
+}
+
+.title {
+  color: var(--tus-ink);
+  font-size: clamp(1.5rem, 3.6vw, 2rem);
+  line-height: 1.2;
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+
+.lead {
+  color: var(--tus-ink-soft);
+  font-size: 1.05rem;
+  margin: 0 0 18px;
+}
+
+.toc {
+  background: var(--tus-surface);
+  border-radius: 12px;
+  margin: 0 0 22px;
+  padding: 12px 16px;
+}
+
+.tocTitle {
+  color: var(--tus-ink-soft);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.toc ul {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.toc a {
+  color: var(--tus-ink);
+  display: inline-block;
+  padding: 4px 0;
+}
+
+.body {
+  color: var(--tus-ink);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.body h2 {
+  font-size: 1.25rem;
+  margin: 28px 0 8px;
+  scroll-margin-top: 90px;
+}
+
+.body h3,
+.body h4 {
+  font-size: 1.05rem;
+  margin: 20px 0 6px;
+  scroll-margin-top: 90px;
+}
+
+.body p {
+  margin: 0 0 12px;
+}
+
+.body ol,
+.body ul {
+  margin: 0 0 14px;
+  padding-left: 22px;
+}
+
+.body li {
+  margin-bottom: 6px;
+}
+
+.body a,
+.status a {
+  color: var(--tus-orange-strong);
+  font-weight: 600;
+}
+
+.body blockquote {
+  border-left: 3px solid var(--tus-orange);
+  color: var(--tus-ink-soft);
+  margin: 0 0 14px;
+  padding: 2px 0 2px 12px;
+}
+
+.code {
+  background: var(--tus-surface);
+  border-radius: 6px;
+  font-size: 0.92em;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.status,
+.statusOk {
+  border: 1px solid var(--tus-line);
+  border-radius: 12px;
+  margin: 0 0 18px;
+  padding: 10px 14px;
+}
+
+.statusOk {
+  border-color: var(--tus-success);
+  color: var(--tus-success);
+}
+
+.actions {
+  border-top: 1px solid var(--tus-line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 28px;
+  padding-top: 20px;
+}
+
+.primary,
+.secondary {
+  align-items: center;
+  border-radius: 10px;
+  display: inline-flex;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 18px;
+  text-decoration: none;
+}
+
+.primary {
+  background: var(--tus-orange);
+  color: var(--tus-white);
+}
+
+.primary:hover {
+  background: var(--tus-orange-strong);
+}
+
+.secondary {
+  border: 1px solid var(--tus-line);
+  color: var(--tus-ink);
+}
+
+.secondary:hover {
+  background: var(--tus-surface);
+}
+
+.next {
+  color: var(--tus-ink-soft);
+  margin: 22px 0 0;
+}
+
+.next a {
+  color: var(--tus-orange-strong);
+  font-weight: 600;
+}
+
+.updated {
+  color: var(--tus-muted);
+  font-size: 0.85rem;
+  margin-top: 26px;
+}
+
+/* A small link to the guide inside a functional page ("¿Cómo funcionan las solicitudes?"). */
+.contextual {
+  color: var(--tus-orange-strong);
+  display: inline-block;
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin: 6px 0 0;
+  padding: 6px 0;
+}
+
+@media (max-width: 420px) {
+  .wrap {
+    padding: 20px 14px 48px;
+  }
+
+  .search {
+    flex-direction: column;
+  }
+}
