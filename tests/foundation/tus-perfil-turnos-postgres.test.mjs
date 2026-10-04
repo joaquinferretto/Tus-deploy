@@ -85,9 +85,9 @@ test('TURNOS PostgreSQL: availability comes from the agenda; a general turno onl
       const oculto = await prestador('oculto', 'Oculto ' + run, { visible: false })
       out.oculto = [await code(() => turnos.disponibilidadPublica({ prestadorId: oculto.perfilId, oficioId: oficio.id, fecha: dia })), await code(() => turnos.reservarTurno({ prestadorId: oculto.perfilId, oficioId: oficio.id, inicio: a('10:00'), clienteNombre: 'X' }))]
     } finally { await prisma.$disconnect() }
-    console.log(JSON.stringify({ ...out, esperadoNuevaAgenda: ['14:00', '14:15', '14:30', '14:45', '15:00'].map(a) }))
+    console.log(JSON.stringify({ ...out, esperadoNuevaAgenda: ['14:00', '15:00'].map(a) }))
   `)
-  assert.deepEqual(r.libre, [33, true, true, 60], '9:00 to 17:00 every 15 minutes for a 60 minute service')
+  assert.deepEqual(r.libre, [9, true, true, 60], '9:00 to 17:00, one turno every 60 minutes for a 60 minute service (the step is the duration)')
   assert.equal(r.otroServicio, 0, 'a service the provider does not offer has no turnos')
   assert.equal(r.fechaInvalida, 'INVALID_DATE')
   assert.equal(r.fueraDeAgenda, 'SLOT_NOT_AVAILABLE')
@@ -182,7 +182,7 @@ test('TURNOS admin PostgreSQL + HTTP: providers, services and clients are found 
   assert.deepEqual(r.servicios, [[true, true, true, 60, 15000]], 'only the services of that provider')
   assert.deepEqual(r.clientes, [[true, true, true]], 'the client is found by name and its phone is masked')
   assert.equal(r.clienteCorto, 0, 'a one-letter search returns nothing')
-  assert.deepEqual(r.disponibilidad, [200, 33])
+  assert.deepEqual(r.disponibilidad, [200, 9])
   assert.deepEqual(r.general, [201, true, true, false, false, true, true])
   assert.deepEqual(r.repetido, [409, 'SLOT_OCCUPIED'])
   assert.deepEqual(r.generalFueraDeHorario, [409, 'SLOT_NOT_AVAILABLE'], 'a general turno cannot be placed outside the published hours')
