@@ -1,11 +1,17 @@
 ---
 id: presupuestos
 title: Cómo funcionan los presupuestos
-version: 1
+description: Qué es un presupuesto, cómo se acepta o se rechaza y qué se paga después.
+slug: presupuestos
+category: solicitudes
+order: 55
+next: cancelaciones
+keywords: presupuesto, diagnostico, aceptar presupuesto, rechazar presupuesto
+version: 2
 visibility: public
 audience: all
 language: es
-updated: 2026-09-25
+updated: 2026-10-04
 ---
 
 # Presupuestos

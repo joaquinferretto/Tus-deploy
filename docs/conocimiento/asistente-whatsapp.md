@@ -1,7 +1,13 @@
 ---
 id: asistente-whatsapp
 title: El asistente de TUS en WhatsApp
-version: 3
+description: Qué puede hacer el asistente automático de TUS en WhatsApp y qué datos te puede pedir.
+slug: asistente-whatsapp
+category: empezar
+order: 15
+next: registro
+keywords: asistente, whatsapp, bot, chat, dni por whatsapp
+version: 4
 visibility: public
 audience: all
 language: es
