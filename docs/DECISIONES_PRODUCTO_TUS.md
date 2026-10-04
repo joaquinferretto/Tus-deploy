@@ -68,7 +68,11 @@ crear/aceptar un presupuesto.
 - La duración efectiva se toma de la modalidad de la publicación: `turno_fijo`/`visita_diagnostico` usan
   `durationMinutes`; `duracion_estimada` usa `estimatedDurationMinutes`; `requiere_presupuesto` no tiene duración
   automática.
-- La generación considera zona horaria, horarios, excepciones, granularidad, buffer, cutoff y capacidad.
+- La generación considera zona horaria, horarios, excepciones, duración, descanso, cutoff y capacidad. Los inicios
+  avanzan desde la apertura real en pasos de `duración + descanso`; la duración del último turno debe entrar completa,
+  pero no se exige descanso después del cierre.
+- `Calendario.granularidadMinutos` y `ReglaCalendario.intervaloMinutos` quedan legacy por compatibilidad: se conservan
+  sin migración destructiva, pero no deciden los slots nuevos.
 - Las reservas confirmadas ocupan capacidad solo cuando sus intervalos se superponen.
 
 ### D2-07: Persistencia sin cambio físico en D2

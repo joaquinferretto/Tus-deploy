@@ -436,8 +436,9 @@ export class ServicioTurnos {
   }
 
   /**
-   * Agenda de uno o varios días consecutivos de un calendario: las reglas semanales (con el
-   * intervalo general o el propio del día) cruzadas con bloqueos y reservas vigentes. Una lectura
+   * Agenda de uno o varios días consecutivos de un calendario: las reglas semanales (cuándo
+   * trabaja) y la duración del servicio (cada cuánto empieza un turno: duración + descanso),
+   * cruzadas con bloqueos y reservas vigentes. Una lectura
    * por tabla para todo el rango, nunca una por día.
    */
   private async agendaDias(
@@ -452,8 +453,9 @@ export class ServicioTurnos {
     const reglas = await db.reglaCalendario.findMany({
       where: { calendarioId: calendario.id, diaSemana: diasSemana.length === 1 ? diasSemana[0]! : { in: diasSemana } },
     })
-    const intervaloGeneral = calendario.granularidadMinutos || INTERVALO_TURNO_PREDETERMINADO
-    const base = { reglas, intervaloGeneral, duracionMinutos: duracion, bufferMinutos: buffer, ahora }
+    // The step between starts is the duration of the service plus its rest (agendaDelDia). The
+    // interval stored in the calendar and in each rule is LEGACY: kept in the database, not read.
+    const base = { reglas, duracionMinutos: duracion, bufferMinutos: buffer, ahora }
     // Without working hours in the range there is nothing to cross.
     if (reglas.length === 0) return fechas.map((fecha) => agendaDelDia({ ...base, fecha, reservas: [], bloqueos: [] }))
 
@@ -1349,8 +1351,10 @@ export class ServicioTurnos {
   }
 
   /**
-   * Disponibilidad semanal del prestador: el intervalo general de su agenda y los horarios de
-   * cada día (con su intervalo propio cuando lo personalizó).
+   * Disponibilidad semanal del prestador: los horarios de cada día. `intervaloGeneral` y el
+   * intervalo propio de un día son LEGACY: se siguen guardando y devolviendo por compatibilidad
+   * con clientes viejos, pero ya no deciden nada (el paso entre turnos es la duración del
+   * servicio más su descanso).
    */
   async disponibilidadSemanal(tenantId: string): Promise<DisponibilidadSemanalDTO> {
     const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId } })
@@ -1360,7 +1364,8 @@ export class ServicioTurnos {
   }
 
   /**
-   * Guarda la disponibilidad semanal completa (intervalo general + horarios por día).
+   * Guarda la disponibilidad semanal con el intervalo general (LEGACY, sin efecto en los turnos;
+   * la Web actual solo envía los horarios).
    */
   async guardarDisponibilidadSemanal(tenantId: string, input: { intervaloGeneral: unknown; horarios: unknown }): Promise<DisponibilidadSemanalDTO> {
     if (!esIntervaloTurno(input.intervaloGeneral)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Intervalo general inválido')

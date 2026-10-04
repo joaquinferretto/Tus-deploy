@@ -237,7 +237,7 @@ Table calendarios {
   nombre varchar [note: 'ex name']
   zona_horaria varchar [note: 'ex timezone']
   estado varchar [note: 'ex status']
-  granularidad_minutos int [default: 15, note: 'paso de posibles inicios']
+  granularidad_minutos int [default: 15, note: '[LEGACY] conservada por compatibilidad; los inicios usan duración + descanso']
   buffer_minutos int [default: 0, note: 'separación entre reservas']
   fecha_creacion timestamp [note: 'ex createdAt']
   fecha_actualizacion timestamp [note: 'ex updatedAt']
@@ -260,7 +260,7 @@ Table reglas_calendario {
   hora_inicio varchar [note: 'ex startsAt (time string)']
   hora_fin varchar [note: 'ex endsAt (time string)']
   capacidad int [note: 'ex capacity']
-  intervalo_minutos int [null, note: 'TURNOS-AGENDA-01: intervalo propio del día; NULL = calendarios.granularidad_minutos (general). CHECK ck_reglas_calendario_intervalo: NULL o 15/30/60/90/120']
+  intervalo_minutos int [null, note: '[LEGACY] intervalo propio del día, conservado sin efecto en slots. CHECK ck_reglas_calendario_intervalo: NULL o 15/30/60/90/120']
   fecha_creacion timestamp [note: 'ex createdAt']
   fecha_actualizacion timestamp [note: 'ex updatedAt']
 

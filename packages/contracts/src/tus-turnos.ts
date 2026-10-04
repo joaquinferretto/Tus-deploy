@@ -177,12 +177,12 @@ export interface HorarioSemanalDTO {
   diaSemana: number
   horaInicio: string
   horaFin: string
-  // Own interval of that day; absent or null = the general interval of the agenda.
+  // LEGACY compatibility field. The API keeps accepting/persisting it, but slot generation does
+  // not read it: starts are separated by service duration + rest.
   intervaloMinutos?: number | null
 }
 
-// How often a turno may START. It is not the duration of the service: a start is offered only
-// when start + duration of the service still fits inside the working hours.
+// LEGACY interval values kept for older clients and stored calendars. New UIs do not expose them.
 export const INTERVALOS_TURNO = [15, 30, 60, 90, 120] as const
 export type IntervaloTurno = (typeof INTERVALOS_TURNO)[number]
 export const INTERVALO_TURNO_PREDETERMINADO: IntervaloTurno = 15
@@ -196,8 +196,8 @@ export function etiquetaIntervalo(minutos: number): string {
   return `${horas} ${horas === 1 ? 'hora' : 'horas'}${resto ? ` ${resto} minutos` : ''}`
 }
 
-// The weekly availability a provider configures: ONE general interval and, per day, its hours and
-// (optionally) its own interval. A day without hours is a day off.
+// Compatibility DTO: the provider configures weekly hours; interval fields remain in the public
+// shape for older clients but no longer control slot generation.
 export interface DisponibilidadSemanalDTO {
   intervaloGeneral: number
   horarios: HorarioSemanalDTO[]
@@ -207,7 +207,7 @@ const minutosDe = (hora: string) => Number(hora.slice(0, 2)) * 60 + Number(hora.
 export const horaDeMinutos = (minutos: number) => `${String(Math.floor(minutos / 60)).padStart(2, '0')}:${String(minutos % 60).padStart(2, '0')}`
 
 // Starts (HH:mm) of one range of hours: every `intervalo` minutes from the opening time while the
-// whole service still ends inside the range. The single rule the API generates turnos with.
+// whole service still ends inside the range. Slot generation passes duration + rest as intervalo.
 export function iniciosDeFranja(horaInicio: string, horaFin: string, intervaloMinutos: number, duracionMinutos: number): string[] {
   if (!Number.isInteger(intervaloMinutos) || intervaloMinutos < 1 || !Number.isInteger(duracionMinutos) || duracionMinutos < 1) return []
   const fin = minutosDe(horaFin)
@@ -222,8 +222,8 @@ export type ResultadoHorarios = { ok: true; valor: HorarioSemanalDTO[] } | { ok:
 
 const HORA = /^([01]\d|2[0-3]):[0-5]\d$/u
 
-// One validation for the API and the Web: HH:mm, start before end, no overlap within a day, and
-// one interval per day (general, or one of INTERVALOS_TURNO).
+// One validation for the API and the Web: HH:mm, start before end and no overlap within a day.
+// A legacy interval, when an older client sends it, must still be valid and consistent per day.
 export function validarHorariosSemanales(input: unknown): ResultadoHorarios {
   if (!Array.isArray(input)) return { ok: false, motivo: 'formato' }
   if (input.length > 28) return { ok: false, motivo: 'demasiados' }
