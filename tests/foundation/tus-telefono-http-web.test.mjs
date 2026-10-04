@@ -225,7 +225,7 @@ test('PHONE HTTP admin verification: an authorized administrator marks the PENDI
       out.sinTelefono = [sinTelefono.status, sinTelefono.body.error.code, await estado(S)]
       out.inexistente = [(await accion('cuenta-que-no-existe', 'verificar')).status, (await accion('cuenta-que-no-existe', 'desverificar')).status]
       const C = await nueva('c@example.com')
-      await tel.fijarPendientePorAdmin('admin-1', C, '379 455-0001')
+      await almacenTel.fijarPendiente(C, '+5493794550001')
       const conflicto = await accion(C, 'verificar')
       out.conflicto = [conflicto.status, conflicto.body.error.code, conflicto.text.includes('p@example.com') || conflicto.text.includes(P), (await estado(C))[0]]
 

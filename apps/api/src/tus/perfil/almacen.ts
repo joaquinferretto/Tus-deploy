@@ -58,6 +58,18 @@ export interface AlmacenPerfil {
   perfil(accountId: string): Promise<PerfilAlmacenado | null>
   // 'documento_duplicado': another person already has that document (UNIQUE in the database).
   guardar(accountId: string, datos: DatosPerfil): Promise<'ok' | 'documento_duplicado' | 'no_encontrado'>
+  // Only the identity (names + document): the residence, the phone and the email are untouched.
+  guardarIdentidad(accountId: string, datos: DatosIdentidad): Promise<'ok' | 'documento_duplicado' | 'no_encontrado'>
+}
+
+export interface DatosIdentidad {
+  displayName: string
+  firstName: string
+  lastName: string
+  documentType: TipoDocumento
+  documentNumber: string
+  profileComplete: boolean
+  profileUpdatedAt: string
 }
 
 // ---- in memory (tests / local) -------------------------------------------------------------------
@@ -103,6 +115,15 @@ export class AlmacenPerfilEnMemoria implements AlmacenPerfil {
   }
 
   async guardar(accountId: string, datos: DatosPerfil) {
+    const actual = this.perfiles.get(accountId)
+    if (!actual) return 'no_encontrado' as const
+    const duplicado = [...this.perfiles.values()].some((otro) => otro.accountId !== accountId && otro.documentType === datos.documentType && otro.documentNumber === datos.documentNumber)
+    if (duplicado) return 'documento_duplicado' as const
+    this.perfiles.set(accountId, { ...actual, ...datos })
+    return 'ok' as const
+  }
+
+  async guardarIdentidad(accountId: string, datos: DatosIdentidad) {
     const actual = this.perfiles.get(accountId)
     if (!actual) return 'no_encontrado' as const
     const duplicado = [...this.perfiles.values()].some((otro) => otro.accountId !== accountId && otro.documentType === datos.documentType && otro.documentNumber === datos.documentNumber)
@@ -203,6 +224,19 @@ export class AlmacenPerfilPrisma implements AlmacenPerfil {
       return 'ok' as const
     } catch (error) {
       // uq_user_documento: the document belongs to another person.
+      if ((error as { code?: string })?.code === 'P2002') return 'documento_duplicado' as const
+      throw error
+    }
+  }
+
+  async guardarIdentidad(accountId: string, datos: DatosIdentidad) {
+    const fila = await this.client.account.findFirst({ where: { id: accountId } })
+    if (!fila) return 'no_encontrado' as const
+    try {
+      await this.client.user.update({ where: { id: String(fila['userId']) }, data: { ...datos, profileUpdatedAt: new Date(datos.profileUpdatedAt) } })
+      return 'ok' as const
+    } catch (error) {
+      // uq_user_documento: the document belongs to another person (also under a race).
       if ((error as { code?: string })?.code === 'P2002') return 'documento_duplicado' as const
       throw error
     }

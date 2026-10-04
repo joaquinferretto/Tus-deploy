@@ -132,6 +132,9 @@ export interface DependenciasAdmin {
     estadoParaAdmin?(accountId: string): Promise<TelefonoAdminDTO>
   }
   accionUsuario?: (input: { actorId: string; accountId: string; action: unknown }) => Promise<{ ok: boolean; code?: string }>
+  // Identity of an account (names + document), loaded or corrected by the administration. The
+  // actor is the session; the composition validates, saves and audits.
+  identidadUsuario?: (input: { actorId: string; accountId: string; body: Record<string, unknown> }) => Promise<{ ok: true; perfil: PerfilUsuarioAdminDTO } | { ok: false; code: string; errores?: Record<string, string> }>
   // Provider edition (directorio/admin.ts crearEdicionPrestadorAdmin).
   prestadorAdmin?: {
     leer(id: string): Promise<{ perfil: Record<string, unknown>; tenantId: string; prestador: { estado: string; aprobado: boolean } | null } | null>
@@ -296,8 +299,26 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
       : accion === 'quitar'
         ? await deps.telefonoAdmin.quitarVerificadoPorAdmin(context.subjectId, accountId)
         : { ok: false, code: 'INVALID_ACTION' }
-    if (!resultado.ok) return void response.status(resultado.code === 'NOT_FOUND' ? 404 : 422).json({ error: { code: resultado.code ?? 'INVALID_ACTION', ...('motivo' in resultado && resultado.motivo ? { reason: resultado.motivo } : {}), message: 'phone change rejected' } })
+    if (!resultado.ok) return void response.status(resultado.code === 'NOT_FOUND' ? 404 : resultado.code === 'PHONE_IN_USE' ? 409 : 422).json({ error: { code: resultado.code ?? 'INVALID_ACTION', ...('motivo' in resultado && resultado.motivo ? { reason: resultado.motivo } : {}), message: 'phone change rejected' } })
     response.status(200).json({ done: true })
+  }))
+
+  // Identity (first name, last name, document type and number) loaded or corrected by an
+  // administrator. An explicit operation with a closed list of fields: nothing else of the
+  // account can be written through it, and the actor is always the session.
+  router.put('/tus/v1/admin/usuarios/:id/identidad', asyncHandler(async (request, response) => {
+    const context = await guard(request, response, IDENTITY_ADMIN)
+    if (!context) return
+    if (!deps.identidadUsuario) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'identity administration unavailable' } })
+    const body = cuerpo(request)
+    const permitidos = new Set(['nombre', 'apellido', 'tipoDocumento', 'numeroDocumento', 'motivo'])
+    if (Object.keys(body).some((key) => !permitidos.has(key))) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'only the identity fields can be written here' } })
+    const resultado = await deps.identidadUsuario({ actorId: context.subjectId, accountId: String(request.params['id'] ?? ''), body })
+    if (!resultado.ok) {
+      const status = resultado.code === 'NOT_FOUND' ? 404 : resultado.code === 'FORBIDDEN' ? 403 : resultado.code === 'DOCUMENT_ALREADY_REGISTERED' ? 409 : 422
+      return void response.status(status).json({ error: { code: resultado.code, message: 'identity change rejected', ...(resultado.errores ? { fields: Object.keys(resultado.errores), errors: resultado.errores } : {}) } })
+    }
+    response.status(200).json({ perfil: resultado.perfil })
   }))
 
   router.patch('/tus/v1/admin/usuarios/:id', asyncHandler(async (request, response) => {

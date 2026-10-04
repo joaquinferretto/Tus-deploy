@@ -295,6 +295,10 @@ export const adminApi = {
     return call<PaginaUsuariosAdmin>(`/tus/v1/admin/usuarios?${params.toString()}`)
   },
   telefonoUsuario: (id: string, body: { accion: 'pendiente'; telefono: string } | { accion: 'quitar' }) => call<{ done: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/telefono`, body),
+  // Identity (names + document) loaded or corrected by the administrator. Only these fields; the
+  // API validates again, keeps the document unique and audits.
+  identidadUsuario: (id: string, body: { nombre: string; apellido: string; tipoDocumento: string; numeroDocumento: string; motivo?: string }) =>
+    call<{ perfil: PerfilUsuarioAdminDTO }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/identidad`, body, 'PUT'),
   // Explicit administrative operations: the request only names the action (never a state or a
   // date) and the API answers the updated phone identity.
   verificacionTelefonoUsuario: (id: string, accion: 'verificar' | 'desverificar') => call<{ done: true; telefono: AdminTelefono }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/telefono`, { accion }),

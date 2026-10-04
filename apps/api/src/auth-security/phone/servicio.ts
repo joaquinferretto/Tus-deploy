@@ -428,6 +428,11 @@ export class ServicioVerificacionTelefono {
     if (!normalizado.ok) return { ok: false, code: 'INVALID_PHONE', motivo: normalizado.motivo }
     const cuenta = await this.deps.cuentas.getAccount(accountId)
     if (!cuenta) return { ok: false, code: 'NOT_FOUND' }
+    // A number that is already the verified phone of an account is not loaded as pending: of this
+    // account there is nothing to verify, of another one it could never be verified here.
+    const duena = await this.deps.telefonos.cuentaPorTelefono(normalizado.e164)
+    if (duena === accountId) return { ok: false, code: 'ALREADY_VERIFIED' }
+    if (duena) return { ok: false, code: 'PHONE_IN_USE' }
     await this.deps.telefonos.fijarPendiente(accountId, normalizado.e164)
     await this.auditar(AUTH_EVENT_KIND.PHONE_ADMIN_PENDING_SET, cuenta, 'success', { phone: enmascararTelefono(normalizado.e164), target: cuenta.id }, adminId)
     return { ok: true, phoneMasked: enmascararTelefono(normalizado.e164) }
@@ -475,13 +480,16 @@ export class ServicioVerificacionTelefono {
       if ((await almacen.fijarVerificado(accountId, pendiente, ahora)) === 'conflicto') return 'conflicto' as const
       // The challenges that were waiting to verify a number are no longer needed.
       await almacen.invalidarPendientesDe(accountId, ahora)
+      // A CHANGE of number: the WhatsApp of the number that stops being the identity phone is no
+      // longer linked to this account (the new one is linked by the person, never from here).
+      if (estado.phoneNumber && estado.phoneNumber !== pendiente) await almacen.desvincularWhatsapp({ accountId, telefono: estado.phoneNumber, actorId: adminId, correlationId: randomUUID(), now: ahora })
       return { telefono: pendiente, anterior: estado.phoneNumber }
     })
     if (resultado === 'sin_cuenta') return { ok: false, code: 'NOT_FOUND' }
     if (resultado === 'sin_telefono') return { ok: false, code: 'NO_PHONE' }
     if (resultado === 'conflicto') return { ok: false, code: 'PHONE_IN_USE' }
     if (resultado !== 'ya')
-      await this.auditar(AUTH_EVENT_KIND.PHONE_VERIFIED_BY_ADMIN, cuenta, 'success', { target: cuenta.id, phone: enmascararTelefono(resultado.telefono), before: resultado.anterior ? 'verified_other' : 'pending', after: 'verified' }, adminId)
+      await this.auditar(AUTH_EVENT_KIND.PHONE_VERIFIED_BY_ADMIN, cuenta, 'success', { target: cuenta.id, phone: enmascararTelefono(resultado.telefono), before: resultado.anterior ? 'verified_other' : 'pending', after: 'verified', ...(resultado.anterior ? { previous: enmascararTelefono(resultado.anterior) } : {}) }, adminId)
     return { ok: true, cambio: resultado !== 'ya', telefono: await this.vistaAdmin(accountId) }
   }
 
