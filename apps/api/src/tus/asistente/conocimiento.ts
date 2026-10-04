@@ -1,3 +1,4 @@
+import { parsearDocumentoAyuda } from '@factory/contracts'
 import { sinAcentos } from '../texto.ts'
 import { createHash } from 'node:crypto'
 
@@ -63,48 +64,38 @@ const PATRONES_PROHIBIDOS = [
 export function parsearDocumentoConocimiento(
   file: ArchivoConocimiento
 ): { document: DocumentoConocimiento; body: string } | { error: string } {
+  // ALLOWLIST: a Markdown file directly under docs/conocimiento, with a plain name. Nothing else
+  // is ever indexed: no other directory, no nested path, no "..", no other extension.
   const normalizedPath = file.path.replaceAll('\\', '/')
-  if (!/(^|\/)docs\/conocimiento\/[a-z0-9-]+\.md$/u.test(normalizedPath))
+  // Anchored: "node_modules/x/docs/conocimiento/a.md" or an absolute path is not the knowledge base.
+  if (normalizedPath.includes('..') || !/^docs\/conocimiento\/[a-z0-9-]+\.md$/u.test(normalizedPath))
     return { error: 'path is outside docs/conocimiento' }
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/u.exec(file.content)
-  if (!match) return { error: 'missing front matter' }
-  const fields = new Map<string, string>()
-  for (const line of match[1]!.split(/\r?\n/u)) {
-    const pair = /^([a-z]+):\s*(.+)$/u.exec(line.trim())
-    if (pair) fields.set(pair[1]!, pair[2]!.trim())
-  }
-  const visibility = fields.get('visibility') as VisibilidadConocimiento | undefined
-  const audience = fields.get('audience') as DocumentoConocimiento['audience'] | undefined
-  const id = fields.get('id')
-  if (!id || !/^[a-z0-9-]{3,80}$/u.test(id)) return { error: 'invalid id' }
-  if (!visibility || !VISIBILIDADES_CONOCIMIENTO.includes(visibility))
-    return { error: 'invalid visibility' }
-  if (!audience || !['all', 'client', 'provider'].includes(audience))
-    return { error: 'invalid audience' }
-  if (fields.get('language') !== 'es') return { error: 'only es is supported' }
-  const title = fields.get('title')
-  const version = fields.get('version')
-  if (!title || !version) return { error: 'title and version are required' }
-  const body = match[2]!.trim()
+  // The same strict front matter the Help Center of the Web reads (unknown fields are rejected).
+  const parsed = parsearDocumentoAyuda(file.content)
+  if (!parsed.ok) return { error: parsed.error }
+  const { metadatos, cuerpo: body } = parsed
   if (PATRONES_PROHIBIDOS.some((pattern) => pattern.test(body)))
     return { error: 'content looks like a secret' }
+  // `all` is how the index has always stored the public audience.
+  const audience: DocumentoConocimiento['audience'] = metadatos.audience === 'public' ? 'all' : metadatos.audience
   return {
     document: {
-      documentId: id,
+      documentId: metadatos.id,
       source: normalizedPath.slice(normalizedPath.indexOf('docs/conocimiento/')),
-      title,
-      version,
-      visibility,
+      title: metadatos.title,
+      version: metadatos.version,
+      visibility: metadatos.visibility,
       audience,
       language: 'es',
-      active: fields.get('active') !== 'false',
+      active: metadatos.active,
       // Incluye la versión del chunker: si cambia la forma de fragmentar, el documento se reindexa una vez.
-      checksum: checksumConocimiento(`${VERSION_CHUNKER}\n${title}\n${version}\n${visibility}\n${audience}\n${body}`),
-      updatedAt: fields.get('updated') ?? '',
+      checksum: checksumConocimiento(`${VERSION_CHUNKER}\n${metadatos.title}\n${metadatos.version}\n${metadatos.visibility}\n${audience}\n${body}`),
+      updatedAt: metadatos.updated,
     },
     body,
   }
 }
+
 
 export function checksumConocimiento(text: string): string {
   return createHash('sha256').update(text.replace(/\r\n/gu, '\n').trim()).digest('hex')
