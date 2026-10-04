@@ -600,9 +600,37 @@ seña en ese caso).
   siempre un grupo con lista ("N prestadores en esta ubicación": nombre, servicios, calificación, Ver perfil); puntos cercanos
   (48 px) forman un cluster que al tocarlo acerca el mapa; desde zoom 17 solo se agrupan puntos idénticos.
 - Texto de popups como texto (React), nunca HTML de perfiles; el HTML de los íconos lleva solo un número acotado o un ícono fijo.
-- Filtros de la home: Categoría → Servicio. La API ya filtra por `categoria` y `oficio`.
+- Filtros de la home: Categoría → Subcategoría (un servicio de esa categoría; ver DIR-10). La API ya filtra por `categoria` y `oficio`.
 - Sin N+1: el directorio lee perfiles, prestadores, publicaciones, identidad, trabajos completados y calificaciones en lotes; la
   cantidad de consultas es la misma para 1 y para 40 prestadores (medido en PostgreSQL 16).
+
+### DIR-10: el mapa como centro de la búsqueda (2026-10-03)
+
+- **Navegación principal**: Buscar servicios, Buscar trabajador, Para profesionales, Ayuda y el botón "¿Cómo funciona?".
+  "Alojamientos" y "Cómo funciona" dejan de ser destinos del encabezado: los alojamientos se eligen en el selector del mapa
+  (y siguen en `/alojamientos` y en el pie), y "¿Cómo funciona?" abre un diálogo modal nativo (`<dialog>`: foco atrapado,
+  Escape, foco de vuelta al botón). El mismo contenido tiene dirección propia en `/como-funciona`. `/buscar-trabajador`
+  redirige a `/trabajadores` llevando solo `q` y `oficio`.
+- **Selector de tipo** (Profesionales | Alojamientos) sobre el mapa: cambia a la vez resultados, marcadores, filtros y tarjetas.
+  Los alojamientos se piden recién cuando la persona los elige.
+- **Filtros**: Categoría → Subcategoría (los servicios de esa categoría) para profesionales; Tipo y Personas para alojamientos.
+  Todas las listas salen del catálogo del backend; nada está escrito en la Web.
+- **Dirección compartible**: el estado del mapa vive en la URL (`?categoria=&servicio=&zona=` o
+  `?tipo=alojamientos&alojamiento=&personas=`) sin sumar entradas al historial. La URL es entrada no confiable: solo se leen
+  claves conocidas, con forma fija, y contra el catálogo; lo demás se descarta.
+- **Tarjetas y popup compactos**: foto o iniciales, nombre, servicios, zona aproximada, disponibilidad y la calificación real
+  (o nada: nunca una valoración inventada). En pantallas chicas el elemento elegido se abre en una hoja inferior en lugar del
+  popup.
+- **Responsive** de 320 a 1920 px: el mapa sigue al viewport visible (`dvh`, con `vh` de respaldo), el logo escala, y Leaflet
+  vuelve a medirse solo cuando su contenedor cambia de tamaño (un `ResizeObserver`; no hay polling).
+- **Lifecycle de Leaflet**: Profesionales y Alojamientos son capas excluyentes del mismo `L.Map`; el selector no destruye el
+  mapa. Las operaciones de vista se serializan con `movestart`/`moveend` y la última capa montada reemplaza una operación
+  pendiente. En el unmount real se quitan listeners y callbacks propios, y `remove()` espera la ventana de `zoomanim` de
+  Leaflet 1.9.4. Solo se usan eventos y métodos públicos; no se accede a estado privado ni se ocultan errores.
+- **Rendimiento**: íconos de marcadores memorizados, búsquedas reemplazadas canceladas (`AbortSignal`), agrupamiento propio.
+  No hay consulta por recuadro (`bounds`): el mapa trae como máximo 300 perfiles en una sola respuesta y agrupa en el
+  navegador; si esa cota deja de alcanzar, el recuadro tiene que validarse en el servidor.
+- **Foto de perfil**: ver `fotos_perfil_prestador` en el diccionario de datos. La Web solo dibuja rutas de la API de TUS.
 
 ### DIR-09: edición total desde la administración (2026-09-29)
 

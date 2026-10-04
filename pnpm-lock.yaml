@@ -276,6 +276,9 @@ importers:
       '@factory/zod-schemas':
         specifier: workspace:*
         version: link:../../packages/zod-schemas
+      '@react-leaflet/core':
+        specifier: ^3.0.0
+        version: 3.0.0(leaflet@1.9.4)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@tanstack/react-query':
         specifier: ^5.28.0
         version: 5.101.4(react@19.1.0)

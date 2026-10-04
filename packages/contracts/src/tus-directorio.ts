@@ -113,6 +113,9 @@ export interface PrestadorPublico {
   id: string
   displayName: string
   initials: string
+  // API path of the provider's profile photo (/tus/v1/public/prestadores/:id/foto?v=...); null
+  // without a photo. Absent in older payloads. Never an external URL.
+  photoUrl?: string | null
   profession: { id: OficioTus; label: string; title: string }
   // Every service the provider offers (principal first). Absent in older payloads.
   professions?: ServicioPrestadorPublico[]
@@ -296,6 +299,9 @@ export const CLAVES_PRESTADOR_PUBLICO = [
 // Claves que un DTO público de prestador jamás puede traer.
 export const CLAVES_PRIVADAS_PRESTADOR = ['tenantId', 'prestadorId', 'merchantId', 'email', 'phone', 'telefono', 'address', 'direccion', 'street', 'houseNumber', 'documentAddress', 'lat', 'lng', 'latitude', 'longitude', 'exactLatitude', 'exactLongitude', 'dni', 'cuil', 'documentNumber'] as const
 
+// The only shape a public photo path may have: the API's own route and a short version tag.
+export const RUTA_FOTO_PRESTADOR = /^\/tus\/v1\/public\/prestadores\/[A-Za-z0-9-]{1,64}\/foto(?:\?v=[a-f0-9]{8,64})?$/u
+
 const esRegistro = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export function esPrestadorPublico(value: unknown): value is PrestadorPublico {
@@ -307,6 +313,7 @@ export function esPrestadorPublico(value: unknown): value is PrestadorPublico {
     typeof value['id'] === 'string' &&
     typeof value['displayName'] === 'string' &&
     typeof value['initials'] === 'string' &&
+    (value['photoUrl'] === undefined || value['photoUrl'] === null || (typeof value['photoUrl'] === 'string' && RUTA_FOTO_PRESTADOR.test(value['photoUrl']))) &&
     esRegistro(profession) &&
     esIdOficioTus(profession['id']) &&
     typeof value['approximateArea'] === 'string' &&

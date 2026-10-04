@@ -62,6 +62,12 @@ export function prepararImagenDocumento(input: Buffer): ImagenDocumentoLimpia {
   }
 }
 
+// The same structural walk without the document size limits (profile photos are smaller): the
+// image re-emitted without metadata. Throws when it is corrupt or truncated.
+export function limpiarMetadataImagen(input: Buffer, mimeType: TipoImagenDocumento): Buffer {
+  return (mimeType === 'image/jpeg' ? limpiarJpeg(input) : mimeType === 'image/png' ? limpiarPng(input) : limpiarWebp(input)).bytes
+}
+
 function corrupto(): never {
   throw new ErrorIdentidad(422, 'DOCUMENT_CORRUPT', 'document image is corrupt or truncated')
 }

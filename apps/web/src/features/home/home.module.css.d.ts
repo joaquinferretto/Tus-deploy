@@ -20,6 +20,11 @@ declare const styles: {
   readonly categoryIcon: string
   readonly cellMain: string
   readonly chevron: string
+  readonly dialog: string
+  readonly dialogActions: string
+  readonly dialogBody: string
+  readonly dialogClose: string
+  readonly dialogHeader: string
   readonly field: string
   readonly footer: string
   readonly footerBottom: string
@@ -38,6 +43,11 @@ declare const styles: {
   readonly hideTablet: string
   readonly label: string
   readonly list: string
+  readonly lodgingBody: string
+  readonly lodgingCard: string
+  readonly lodgingName: string
+  readonly lodgingPrice: string
+  readonly lodgingThumb: string
   readonly main: string
   readonly mapControls: string
   readonly mapFilter: string
@@ -45,6 +55,8 @@ declare const styles: {
   readonly mapLayer: string
   readonly mapNotice: string
   readonly mapResults: string
+  readonly mapSheet: string
+  readonly mapSheetClose: string
   readonly mapSkeleton: string
   readonly marker: string
   readonly markerActive: string
@@ -52,12 +64,14 @@ declare const styles: {
   readonly menuButton: string
   readonly mobileMenu: string
   readonly nav: string
+  readonly navButton: string
   readonly page: string
   readonly person: string
   readonly popup: string
   readonly popupActions: string
   readonly popupCategory: string
   readonly popupCta: string
+  readonly popupHead: string
   readonly popupImages: string
   readonly popupList: string
   readonly popupListItem: string
@@ -96,6 +110,8 @@ declare const styles: {
   readonly strong: string
   readonly thumb: string
   readonly thumbs: string
+  readonly typeOption: string
+  readonly typeSelector: string
   readonly urgency: string
 }
 export default styles

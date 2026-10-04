@@ -2413,6 +2413,7 @@ Table perfiles_publicos_prestador {
   barrio_id varchar [null, ref: > barrios.id, note: 'RESTRICT; barrio asociado al guardar el punto']
   zona_id varchar [null, ref: > zonas_ubicacion.id, note: 'RESTRICT; zona asociada']
   ubicacion_asociacion varchar [null, note: 'CHECK poligono_barrio | poligono_zona | geocodificador | manual | sin_asociar']
+  foto_sha256 varchar [null, note: 'hash de la foto de perfil (20261031100000); CHECK 64 hex; lo escribe solo el almacén de fotos']
   fecha_creacion timestamp
   fecha_actualizacion timestamp
   indexes {
@@ -2436,6 +2437,19 @@ Table perfil_servicios {
 }
 Ref: perfiles_publicos_prestador.(id, oficio) - perfil_servicios.(perfil_id, oficio_id) [note: 'fk_perfiles_servicio_principal DEFERRABLE INITIALLY DEFERRED']
 Ref: solicitudes_servicio.(prestador_tenant_id, prestador_id) > prestadores.(tenant_id, prestador_id) [delete: restrict]
+
+// 20261031100000: foto de perfil del prestador. Una fila por perfil (una foto nueva reemplaza a
+// la anterior). Bytes ya saneados; los CHECK repiten los límites de la aplicación.
+Table fotos_perfil_prestador {
+  perfil_id varchar [pk, ref: - perfiles_publicos_prestador.id, note: 'RESTRICT']
+  tipo_mime varchar [note: 'CHECK: image/jpeg | image/png | image/webp (por magic bytes)']
+  tamano_bytes int [note: 'CHECK 1..2 MB e igual a octet_length(contenido)']
+  ancho int [note: 'CHECK 96..4096']
+  alto int [note: 'CHECK 96..4096']
+  sha256 varchar [note: 'CHECK 64 hex']
+  contenido bytea [note: 'sin EXIF/GPS/XMP (saneado antes de guardar)']
+  fecha_actualizacion timestamp
+}
 
 Table imagenes_solicitud {
   id varchar [pk]

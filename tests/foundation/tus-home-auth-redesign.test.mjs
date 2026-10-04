@@ -131,9 +131,9 @@ test('HOME map is client-only, uses the provider directory, and keeps requests s
   const hook = web('features/home/use-providers.ts')
   const page = web('app/page.tsx')
 
-  assert.match(home, /dynamic\(\(\) => import\('\.\/provider-map'\)[\s\S]*ssr: false/)
+  assert.match(home, /dynamic\(\(\) => import\('\.\/home-map'\)[\s\S]*ssr: false/)
   assert.match(home, /useHomeProviders\(filters\)/)
-  assert.match(home, /<ProviderMap[^>]+workers=\{providerData\}/)
+  assert.match(home, /<HomeMap[\s\S]*workers=\{providerData\}/)
   assert.match(home, /<ProviderResults[\s\S]*workers=\{providerData\}/)
   assert.match(home, /<RecentRequests[\s\S]*requests=\{requestData\}/)
   assert.doesNotMatch(home, /RequestMap|request-map/)

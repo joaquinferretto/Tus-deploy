@@ -753,3 +753,114 @@
     min-height: 48px;
   }
 }
+
+/* ---- avatar with a photo, and the compact card of the map ---------------------------------- */
+.avatar {
+  overflow: hidden;
+}
+
+.avatarSm {
+  font-size: 0.85rem;
+  height: 40px;
+  width: 40px;
+}
+
+.avatarImage {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.cardCompact {
+  gap: 8px;
+  padding: 14px;
+}
+
+.cardCompact .name {
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.cardCompact .profession {
+  font-size: 0.85rem;
+}
+
+.cardCompact .cardActions > * {
+  min-height: 40px;
+  min-width: 104px;
+}
+
+.cardHeading {
+  min-width: 0;
+}
+
+.compactFacts {
+  color: var(--tus-ink-soft);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.verifiedMark {
+  color: var(--tus-success);
+  font-weight: 700;
+}
+
+/* ---- profile photo editor (provider) -------------------------------------------------------- */
+.photoEditor {
+  align-items: center;
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-radius);
+  display: flex;
+  gap: 16px;
+  padding: 14px;
+}
+
+.photoEditorBody {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.photoEditorTitle {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.photoEditorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.photoEditorPick {
+  align-items: center;
+  cursor: pointer;
+  display: inline-flex;
+  justify-content: center;
+  min-height: 44px;
+}
+
+/* The native input stays in the accessibility tree and focusable; its label is what is seen. */
+.photoEditorInput {
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
+
+.photoEditorInput:focus-visible + button,
+.photoEditorPick:focus-within,
+.photoEditorActions:has(.photoEditorInput:focus-visible) .photoEditorPick {
+  outline: 2px solid var(--tus-orange);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .photoEditor {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

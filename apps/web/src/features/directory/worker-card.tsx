@@ -4,6 +4,7 @@ import Link from 'next/link'
 import type { CandidatoPrestador, PrestadorPublico } from '@factory/contracts'
 
 import homeStyles from '../home/home.module.css'
+import { Avatar } from './avatar'
 import styles from './directory.module.css'
 import { ratingLabel } from './rating-label'
 import { servicesLabel } from './services-label'
@@ -14,24 +15,63 @@ export function profileHref(id: string): Route {
   return `/trabajadores/${encodeURIComponent(id)}` as Route
 }
 
-// Only public, authorized data. Rating is omitted because TUS has no reviews yet (never invented);
-// no photo storage for providers exists either, so the avatar uses initials.
+// Only public, authorized data. The rating is the real one of completed works (never invented)
+// and the avatar is the provider's photo, or its initials when there is none.
+// `compact` is the short card of the map (the list under the map and the mobile sheet): who it
+// is, what it does, where and whether it is available; the rest is on the profile.
 export function WorkerCard({
   worker,
   onChoose,
   chooseLabel = 'Elegir',
+  compact = false,
 }: {
   worker: PrestadorPublico | CandidatoPrestador
   onChoose?: () => void
   chooseLabel?: string
+  compact?: boolean
 }): React.ReactNode {
   const distance = 'distanceKm' in worker && worker.distanceKm !== null ? worker.distanceKm : null
+  if (compact) {
+    const rating = ratingLabel(worker.rating)
+    return (
+      <article aria-labelledby={`trabajador-${worker.id}`} className={`${styles.card} ${styles.cardCompact}`}>
+        <div className={styles.cardTop}>
+          <Avatar initials={worker.initials} photoUrl={worker.photoUrl} size="sm" />
+          <div className={styles.cardHeading}>
+            <h3 className={styles.name} id={`trabajador-${worker.id}`}>
+              {worker.displayName}
+              {worker.verified ? (
+                <span className={styles.verifiedMark} title="Identidad verificada">
+                  {' '}✓<span className={homeStyles.srOnly}> Identidad verificada</span>
+                </span>
+              ) : null}
+            </h3>
+            <p className={styles.profession}>{servicesLabel(worker)}</p>
+          </div>
+        </div>
+        <p className={styles.compactFacts}>
+          {worker.publicArea}
+          {rating ? ` · ${rating}` : ''}
+          {worker.startingPrice ? ` · Desde ${PESOS.format(worker.startingPrice.amount)}` : ''}
+        </p>
+        <p className={`${styles.compactFacts} ${worker.availability.status === 'atiende_hoy' ? styles.available : styles.muted}`}>{worker.availability.label}</p>
+        <div className={styles.cardActions}>
+          <Link className={homeStyles.buttonSecondary} href={profileHref(worker.id)}>
+            Ver perfil
+          </Link>
+          {worker.aceptaTurnos !== false ? (
+            <Link className={homeStyles.buttonPrimary} href={`${profileHref(worker.id)}?turno=1` as Route}>
+              Solicitar turno
+            </Link>
+          ) : null}
+        </div>
+      </article>
+    )
+  }
   return (
     <article aria-labelledby={`trabajador-${worker.id}`} className={styles.card}>
       <div className={styles.cardTop}>
-        <span aria-hidden="true" className={styles.avatar}>
-          {worker.initials}
-        </span>
+        <Avatar initials={worker.initials} photoUrl={worker.photoUrl} />
         <div>
           <h3 className={styles.name} id={`trabajador-${worker.id}`}>
             {worker.displayName}

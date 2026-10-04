@@ -13,6 +13,9 @@ import type { ServicioDirectorio } from './servicio.ts'
 // - GET  /tus/v1/public/prestadores/:id         perfil público.
 // - GET  /tus/v1/prestador/perfil-publico       perfil del prestador autenticado.
 // - PUT  /tus/v1/prestador/perfil-publico       crear/editar el perfil público.
+// - GET  /tus/v1/public/prestadores/:id/foto    foto de un perfil visible.
+// - PUT|DELETE /tus/v1/prestador/perfil-publico/foto  foto del prestador autenticado (octet-stream).
+// - DELETE /tus/v1/admin/prestadores/:id/foto   quitar la foto de cualquier perfil (admin).
 // - GET|PUT|DELETE /tus/v1/prestador/ubicacion  pin del prestador (su sesión) y si se muestra exacto.
 // - GET|PUT|DELETE /tus/v1/admin/prestadores/:id/ubicacion  lo mismo para cualquier perfil (admin).
 // - POST /tus/v1/asistente/interpretar          interpreta el texto (oficio, barrio, urgencia).
@@ -129,6 +132,51 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
   router.delete('/tus/v1/admin/prestadores/:id/ubicacion', asyncHandler(async (request: Request, response: Response) => {
     if (!(await admin(request, response))) return
     responderUbicacion(response, await servicio.guardarUbicacionDePerfil(String(request.params['id'] ?? ''), { quitar: true }))
+  }))
+
+  // ---- foto de perfil ---------------------------------------------------------------------------
+  // Owner: ALWAYS its own profile (tenant from the session; there is no id to tamper with). The
+  // body is the raw image; its Content-Type and any file name are ignored (magic bytes decide).
+  const responderFoto = (response: Response, result: Awaited<ReturnType<ServicioDirectorio['guardarMiFoto']>>) => {
+    if (result.ok) response.status(200).json({ photoUrl: result.photoUrl })
+    else if (result.code === 'NOT_FOUND') enviarError(response, 404, result.code, 'Provider profile not found')
+    else if (result.code === 'UNAVAILABLE') enviarError(response, 503, result.code, 'Profile photos are not available')
+    else if (result.code === 'RATE_LIMITED') enviarError(response, 429, result.code, 'Too many photo uploads; try again later')
+    else if (result.code === 'PHOTO_TOO_LARGE') enviarError(response, 413, result.code, 'Use a photo of up to 2 MB')
+    else if (result.code === 'PHOTO_TYPE_NOT_ALLOWED') enviarError(response, 415, result.code, 'Use a JPG, PNG or WEBP photo')
+    else enviarError(response, 422, result.code, 'Use a JPG, PNG or WEBP photo between 96 and 4096 pixels per side')
+  }
+  router.put('/tus/v1/prestador/perfil-publico/foto', asyncHandler(async (request: Request, response: Response) => {
+    const context = await autenticar(request, response, sessions)
+    if (!context) return
+    if (!context.permissions.includes('tus:marketplace:write')) { enviarError(response, 403, 'FORBIDDEN', 'Provider session required'); return }
+    if (!Buffer.isBuffer(request.body)) { enviarError(response, 415, 'PHOTO_TYPE_NOT_ALLOWED', 'Send the photo as application/octet-stream'); return }
+    responderFoto(response, await servicio.guardarMiFoto(context.tenantId, request.body))
+  }))
+  router.delete('/tus/v1/prestador/perfil-publico/foto', asyncHandler(async (request: Request, response: Response) => {
+    const context = await autenticar(request, response, sessions)
+    if (!context) return
+    if (!context.permissions.includes('tus:marketplace:write')) { enviarError(response, 403, 'FORBIDDEN', 'Provider session required'); return }
+    responderFoto(response, await servicio.quitarMiFoto(context.tenantId))
+  }))
+  router.delete('/tus/v1/admin/prestadores/:id/foto', asyncHandler(async (request: Request, response: Response) => {
+    if (!(await admin(request, response))) return
+    responderFoto(response, await servicio.quitarFotoDePerfil(request.params['id']))
+  }))
+  router.get('/tus/v1/public/prestadores/:id/foto', asyncHandler(async (request: Request, response: Response) => {
+    const foto = await servicio.fotoPublica(request.params['id'])
+    if (!foto) { enviarError(response, 404, 'NOT_FOUND', 'Photo not found'); return }
+    // The type is the one TUS detected, never the one the uploader declared; the browser must not
+    // guess another, and the response can run nothing. Only the browser caches it: a profile that
+    // is hidden stops serving its photo, and a shared cache would keep doing it.
+    response.setHeader('content-type', foto.tipoMime)
+    response.setHeader('content-length', String(foto.contenido.length))
+    response.setHeader('cache-control', 'private, max-age=3600')
+    response.setHeader('x-content-type-options', 'nosniff')
+    response.setHeader('content-security-policy', "default-src 'none'; sandbox")
+    response.setHeader('content-disposition', 'inline')
+    response.setHeader('cross-origin-resource-policy', 'cross-origin')
+    response.status(200).end(foto.contenido)
   }))
 
   router.get(

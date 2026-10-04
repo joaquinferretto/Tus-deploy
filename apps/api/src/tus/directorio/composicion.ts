@@ -8,6 +8,7 @@ import {
   contarCompletadosPrisma,
   type ClientePrismaDirectorio,
 } from './almacenes.ts'
+import { AlmacenFotosPerfilEnMemoria, AlmacenFotosPerfilPrisma, type ClientePrismaFotosPerfil } from './foto.ts'
 import { ServicioDirectorio } from './servicio.ts'
 
 // Producción: perfiles en PostgreSQL y trabajos completados con un count de Prisma. Tests/local:
@@ -28,8 +29,21 @@ export function crearServicioDirectorio(input: {
   geocodificador?: GeocodificadorInverso | null
 }): ServicioDirectorio {
   const contar = input.contarCompletados ?? (input.prisma ? contarCompletadosPrisma(input.prisma) : async () => 0)
+  const memoria = input.prisma ? null : new AlmacenPerfilesEnMemoria()
+  // Profile photos live next to the profiles: PostgreSQL in production, memory in tests. A legacy
+  // Prisma double without the photo delegate simply has no photos.
+  const conFotos = input.prisma && 'fotoPerfilPrestador' in input.prisma && '$transaction' in input.prisma
+  const fotos = memoria
+    ? new AlmacenFotosPerfilEnMemoria((perfilId, sha256) => {
+        const perfil = memoria.perfiles.get(perfilId)
+        if (perfil) memoria.perfiles.set(perfilId, { ...perfil, fotoSha256: sha256 })
+      })
+    : conFotos
+      ? new AlmacenFotosPerfilPrisma(input.prisma as unknown as ClientePrismaFotosPerfil)
+      : null
   return new ServicioDirectorio({
-    perfiles: input.prisma ? new AlmacenPerfilesPrisma(input.prisma) : new AlmacenPerfilesEnMemoria(),
+    perfiles: memoria ?? new AlmacenPerfilesPrisma(input.prisma!),
+    fotos,
     fuentes: new FuentesDirectorioTus(
       input.application,
       contar,

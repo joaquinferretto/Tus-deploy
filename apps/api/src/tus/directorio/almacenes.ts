@@ -23,7 +23,8 @@ export class AlmacenPerfilesEnMemoria implements AlmacenPerfiles {
 
   async guardar(perfil: PerfilPublico) {
     for (const [id, actual] of this.perfiles) if (actual.tenantId === perfil.tenantId && id !== perfil.id) this.perfiles.delete(id)
-    this.perfiles.set(perfil.id, copiaPerfil(perfil))
+    // Like the database: saving a profile never touches its photo.
+    this.perfiles.set(perfil.id, copiaPerfil({ ...perfil, fotoSha256: this.perfiles.get(perfil.id)?.fotoSha256 ?? null }))
   }
 
   async porTenant(tenantId: string) {
@@ -131,6 +132,7 @@ function desdeFila(fila: Fila): PerfilPublico {
     barrioId: (fila['barrioId'] as string | null | undefined) ?? null,
     zonaId: (fila['zonaId'] as string | null | undefined) ?? null,
     ubicacionAsociacion: (fila['ubicacionAsociacion'] as PerfilPublico['ubicacionAsociacion'] | undefined) ?? null,
+    fotoSha256: typeof fila['fotoSha256'] === 'string' ? fila['fotoSha256'] : null,
     zona,
     zonasCobertura,
     modalidadAtencion: fila['modalidadAtencion'] === 'local' || fila['modalidadAtencion'] === 'mixto' ? fila['modalidadAtencion'] : 'domicilio',

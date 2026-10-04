@@ -46,7 +46,7 @@ export function WorkerDirectory(): React.ReactNode {
 
   const results = useQuery({
     queryKey: ['trabajadores', key, page],
-    queryFn: () => client.list({ ...filters, pagina: page }),
+    queryFn: ({ signal }) => client.list({ ...filters, pagina: page }, signal),
     staleTime: 30_000,
   })
 

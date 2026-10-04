@@ -9,15 +9,15 @@ import { accountLinks, createTusWebAuthClient } from '@/lib/tus-auth-client'
 import { withReturnTo } from '../auth/auth-validation'
 
 import { useAccountView } from '../session/use-account-view'
+import { HowItWorksDialog } from './how-it-works'
 import styles from './home.module.css'
 
-// The home (map + service search + assistant) is where services are searched; the directory lists
-// workers; "Ayuda" is the assistant that answers questions about TUS. The logo always goes home.
+// The home (map + service search + assistant) is where services AND lodgings are searched (the
+// map's type selector); the directory lists workers; "Ayuda" is the assistant that answers
+// questions about TUS. "¿Cómo funciona?" is a dialog, not a destination. The logo always goes home.
 const NAV = [
   { href: '/', label: 'Buscar servicios' },
-  { href: '/alojamientos', label: 'Alojamientos' },
   { href: '/trabajadores', label: 'Buscar trabajador' },
-  { href: '/#como-funciona', label: 'Cómo funciona' },
   { href: '/#profesionales', label: 'Para profesionales' },
   { href: '/asistente', label: 'Ayuda' },
 ] as const
@@ -26,6 +26,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
   // Session and REAL role come from the API; "Ir a mi panel" goes to that role's dashboard.
   const auth = useAccountView()
   const [open, setOpen] = useState(false)
+  const [howOpen, setHowOpen] = useState(false)
   const pathname = usePathname() ?? '/'
   // From the assistant or a worker profile, signing in comes back to the same screen.
   const back = pathname === '/' ? null : pathname
@@ -79,6 +80,9 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
               {item.label}
             </a>
           ))}
+          <button aria-haspopup="dialog" className={styles.navButton} onClick={() => setHowOpen(true)} type="button">
+            ¿Cómo funciona?
+          </button>
         </nav>
         <Link aria-label="TUS, inicio" className={styles.brandLink} href="/">
           {logo}
@@ -108,6 +112,9 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
               {item.label}
             </a>
           ))}
+          <button aria-haspopup="dialog" className={styles.navButton} onClick={() => { setOpen(false); setHowOpen(true) }} type="button">
+            ¿Cómo funciona?
+          </button>
           {auth.status === 'unknown' ? <span className={styles.sessionLoading} role="status">Comprobando sesión…</span> : auth.status === 'signed-in' ? (
             <>
               {links.map((link) => (
@@ -129,6 +136,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
           )}
         </nav>
       ) : null}
+      <HowItWorksDialog onClose={() => setHowOpen(false)} open={howOpen} />
     </header>
   )
 }

@@ -137,7 +137,7 @@ test('NO N+1: the public map reads a fixed number of batches for 1 and for 40 pr
   assert.deepEqual(r.withOne, { 'merchant.findMany': 1, 'listings.forTenants': 1, 'identity.batch': 1, 'completed.batch': 1, 'ratings.batch': 1 })
 })
 
-test('FILTERS: Categoría -> Servicio in the home; the service wins over the category; the query string carries categoria', () => {
+test('FILTERS: Categoría -> Subcategoría (a service) in the home; the service wins over the category; the query string carries categoria', () => {
   const r = runTypeScriptScenario(`
     const { toProviderFilters } = await import('./apps/web/src/features/home/providers-source.ts')
     const { directoryQuery } = await import('./apps/web/src/features/directory/directory-client.ts')
@@ -154,8 +154,11 @@ test('FILTERS: Categoría -> Servicio in the home; the service wins over the cat
   const home = read('apps/web/src/features/home/home-page.tsx')
   assert.match(home, /<MapFilters/)
   const filters = read('apps/web/src/features/home/map-filters.tsx')
-  assert.match(filters, /Categoría/)
-  assert.match(filters, /Servicio/)
+  // The second select is labelled "Subcategoría": it still lists the services of the category.
+  assert.match(filters, /<span>Categoría<\/span>/)
+  assert.match(filters, /<span>Subcategoría<\/span>/)
+  assert.match(filters, /catalog\?\.categories/)
+  assert.match(filters, /catalog\?\.items/)
 })
 
 test('SANITIZED POPUPS: provider text is rendered as JSX text only; marker HTML carries a number or a fixed icon', () => {

@@ -104,7 +104,8 @@ export interface UbicacionPrestadorWeb {
 export function createDirectoryClient(fetchImpl: Fetch = fetchWithSession) {
   return {
     catalog: () => call<CatalogoOficios>(fetchImpl, '/tus/v1/public/oficios'),
-    list: (filters: DirectoryFilters) => call<PaginaDirectorio>(fetchImpl, `/tus/v1/public/prestadores${directoryQuery(filters)}`),
+    // `signal` cancels a search that a newer one superseded (the map and the directory pass it).
+    list: (filters: DirectoryFilters, signal?: AbortSignal) => call<PaginaDirectorio>(fetchImpl, `/tus/v1/public/prestadores${directoryQuery(filters)}`, signal ? { signal } : {}),
     profile: (id: string) => call<PerfilPrestadorPublico>(fetchImpl, `/tus/v1/public/prestadores/${encodeURIComponent(id)}`),
     interpret: (text: string) =>
       call<InterpretacionNecesidad>(fetchImpl, '/tus/v1/asistente/interpretar', { method: 'POST', body: JSON.stringify({ text }) }),
@@ -116,6 +117,11 @@ export function createDirectoryClient(fetchImpl: Fetch = fetchWithSession) {
     myProfile: (session: TusWebSession) => call<{ profile: (PerfilPrestadorPublico & { visible: boolean }) | null }>(fetchImpl, '/tus/v1/prestador/perfil-publico', {}, session),
     saveProfile: (session: TusWebSession, input: { displayName: string; profession: string; professions?: string[]; zone: string; serviceZones: string[]; serviceMode: 'local' | 'domicilio' | 'mixto'; coverageRadiusKm: number | null; description: string; yearsOfExperience: number | null; visible: boolean }) =>
       call<{ profile: PerfilPrestadorPublico & { visible: boolean } }>(fetchImpl, '/tus/v1/prestador/perfil-publico', { method: 'PUT', body: JSON.stringify(input) }, session),
+    // Own profile photo: the raw file as the body (the API reads its real type from the bytes and
+    // takes the provider from the session; there is no id, name or URL to send).
+    uploadPhoto: (session: TusWebSession, file: Blob) =>
+      call<{ photoUrl: string | null }>(fetchImpl, '/tus/v1/prestador/perfil-publico/foto', { method: 'PUT', body: file, headers: { 'Content-Type': 'application/octet-stream' } }, session),
+    removePhoto: (session: TusWebSession) => call<{ photoUrl: string | null }>(fetchImpl, '/tus/v1/prestador/perfil-publico/foto', { method: 'DELETE' }, session),
     // Own map location (the API takes the provider from the session, never from the body).
     myLocation: (session: TusWebSession) => call<{ location: UbicacionPrestadorWeb | null }>(fetchImpl, '/tus/v1/prestador/ubicacion', {}, session),
     saveMyLocation: (session: TusWebSession, input: { lat: number; lng: number; showExact: boolean }) =>

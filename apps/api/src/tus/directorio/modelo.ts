@@ -5,6 +5,7 @@ import { buscarBarrio, catalogoVigente, ubicacionesReconocibles } from '../catal
 import { resolverPuntoMapa } from '../geo/resolucion.ts'
 import { esOficio, normalizarTexto, oficio, oficiosInterpretables, type OficioId } from './oficios.ts'
 import { resolverUbicacionPublicaPrestador, type AreaDomicilioFallback, type ResolucionUbicacionPublica } from './ubicacion.ts'
+import { rutaFotoPerfil } from './foto.ts'
 
 // Directorio "Buscar trabajador" y búsqueda del asistente. Todo lo que sale de acá es público:
 // nombre que el prestador eligió mostrar, oficio, barrio, descripción, experiencia y hechos
@@ -37,6 +38,9 @@ export interface PerfilPublico {
   barrioId: string | null
   zonaId: string | null
   ubicacionAsociacion: 'poligono_barrio' | 'poligono_zona' | 'geocodificador' | 'manual' | 'sin_asociar' | null
+  // Hash of the profile photo (fotos_perfil_prestador), null without one. Written ONLY by the
+  // photo store; saving the profile never changes it.
+  fotoSha256?: string | null
 }
 
 export const GEOGRAFIA_VACIA = {
@@ -204,6 +208,7 @@ export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador,
     id: perfil.id,
     displayName: perfil.nombrePublico,
     initials: iniciales(perfil.nombrePublico),
+    photoUrl: rutaFotoPerfil(perfil.id, perfil.fotoSha256),
     profession: { id: info.id, label: info.label, title: info.profesion },
     // Every service of the provider (principal first): one provider, one marker, many services.
     professions: perfil.oficios.map((id) => {

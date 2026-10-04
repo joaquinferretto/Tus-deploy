@@ -44,7 +44,8 @@ export async function listarTiposAlojamiento(): Promise<TipoAlojamientoDTO[]> {
 }
 
 export async function buscarAlojamientos(
-  filtros: FiltrosBusquedaAlojamientos = {}
+  filtros: FiltrosBusquedaAlojamientos = {},
+  opciones: { signal?: AbortSignal } = {}
 ): Promise<AlojamientoPublicoDTO[]> {
   const params = new URLSearchParams()
   if (filtros.zonaId) params.set('zonaId', filtros.zonaId)
@@ -57,7 +58,7 @@ export async function buscarAlojamientos(
   if (filtros.precioMax) params.set('precioMax', String(filtros.precioMax))
 
   const qs = params.toString() ? `?${params.toString()}` : ''
-  const data = await apiFetch<{ items: AlojamientoPublicoDTO[] }>(`/api/alojamientos/${qs}`)
+  const data = await apiFetch<{ items: AlojamientoPublicoDTO[] }>(`/api/alojamientos/${qs}`, opciones.signal ? { signal: opciones.signal } : {})
   return data.items
 }
 
