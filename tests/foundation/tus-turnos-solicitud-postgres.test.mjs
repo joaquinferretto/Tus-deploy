@@ -94,7 +94,10 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
       out.enBase = [guardada.estado, guardada.clienteId === ana.id, guardada.clienteTenantId === ana.tenantId, guardada.esInvitado, guardada.clienteNombre, guardada.clienteTelefono, guardada.clienteEmail]
       // Valid for 24 hours and never beyond the start of the turno.
       const vigencia = guardada.solicitudExpiraEn.getTime() - guardada.fechaCreacion.getTime()
-      out.vigencia = [Math.round(vigencia / 3_600_000), guardada.solicitudExpiraEn.getTime() <= guardada.fechaInicio.getTime()]
+      // The turno is next Monday at 10:00: run on a Sunday after 10:00 it starts in less than 24
+      // hours, so the expected validity is computed from the same two instants, not assumed.
+      const esperada = Math.min(24 * 3_600_000, guardada.fechaInicio.getTime() - guardada.fechaCreacion.getTime())
+      out.vigencia = [Math.abs(vigencia - esperada) < 1000, guardada.solicitudExpiraEn.getTime() <= guardada.fechaInicio.getTime()]
       // The old path is the same rule (a Web still on the previous version keeps working).
       const alias = await call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', 'tok-ana', { oficioId: oficio.id, inicio: a(0, '12:00') })
       out.alias = [alias.status, alias.body.estado, alias.body.clienteNombre, (await call('POST', '/tus/v1/public/prestadores/' + p.perfilId + '/turnos/reservar', null, { oficioId: oficio.id, inicio: a(0, '14:00') })).status]
@@ -167,7 +170,7 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
   assert.deepEqual(r.inyeccion, [400, 'UNTRUSTED_BOOKING_FIELDS', 0])
   assert.deepEqual(r.pedido, [201, 'pending', 'Ana María Cliente', true, 60, true, 'Dolor de espalda'], 'the request is pending, in the name of the account of the session')
   assert.deepEqual(r.enBase, ['pending', true, true, false, null, null, null], 'the client is the session account; no name, phone or email is copied onto the reservation')
-  assert.deepEqual(r.vigencia, [24, true])
+  assert.deepEqual(r.vigencia, [true, true], 'valid for 24 hours, or until the start when that comes first')
   assert.deepEqual(r.alias, [201, 'pending', 'Ana María Cliente', 401], 'the old path requests too, and never books as a guest')
   assert.deepEqual(r.solicitante, [200, 'Ana María Cliente', true, null, 401])
   assert.deepEqual(r.aviso, [[true, 'Ana María Cliente', true, 60, true]], 'the provider is notified once, with client, service, time and duration')
