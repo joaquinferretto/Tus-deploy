@@ -38,6 +38,8 @@ declare const styles: {
   readonly header: string
   readonly headerActions: string
   readonly headerInner: string
+  readonly helpList: string
+  readonly helpMenu: string
   readonly hero: string
   readonly hideMobile: string
   readonly hideTablet: string

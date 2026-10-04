@@ -377,6 +377,62 @@ disponible") y se ofrece el real más cercano. Un `providerId` que el backend no
 inicios), igual que una búsqueda: "9:45", "16", "2" o "la segunda" se resuelven contra ese estado sin volver a
 interpretar fechas.
 
+### Ayuda que interrumpe cualquier paso (ASISTENTE-AYUDA-01, 2026-10-04)
+
+**Qué fallaba.** Con una solicitud esperando identidad, `pasoDeSolicitud` leía CUALQUIER mensaje como intento de
+"nombre completo y DNI": "Pero cómo verifico mi número" no traía documento y se respondía otra vez con el pedido de
+datos. Lo mismo pasaba con la identidad pedida para revisar un pago o enviar el link de una seña.
+
+**Router global.** Antes de que un paso lea el mensaje, `interrupcionDeAyuda` decide si es una pregunta, un problema o
+"no funciona" (`asistencia.ts`: `detectarAyuda`). Si lo es, se responde y el paso NO se consume: la solicitud
+(`state.booking`), las opciones mostradas y la búsqueda siguen como estaban, y la respuesta termina diciendo a qué se
+vuelve ("Cuando lo resuelvas, escribime y seguimos con tu turno de Plomería con Juan Pérez, el jueves 8 a las 09:00").
+Una solicitud que espera al cliente se conserva 2 horas (registrarse o verificar lleva tiempo).
+
+No son ayuda, porque el backend las resuelve con sus tools: un pago dicho como hecho (se consulta a Mercado Pago), un
+servicio pedido, días, horarios y precios (se lee el calendario), "pagar la seña" (se envía el link). Sí lo son las
+explicaciones sobre esas mismas cosas ("¿por qué tengo que pagar seña?", "¿qué pasa si lo rechazó?").
+
+**Interpretación.** El piso es determinista (preguntas, "no puedo", "me dice…", "venció", "cambié de número", cada una
+con su tema). Cuando el paso espera los datos del cliente y el mensaje no los trae ni coincide con ningún patrón, el
+modelo devuelve solo una ETIQUETA de tema (`{"help":"phone_verification"}` o `null`); la respuesta la arma siempre el
+backend. Un mensaje con documento, o corto y sin signo de pregunta (puede ser un nombre), nunca se envía al modelo.
+
+**Cuenta: una respuesta por estado real.** Los temas de cuenta (registro, inicio de sesión, contraseña, verificación del
+teléfono, vinculación, códigos, cambio de número, "listo", "¿y después?", "no funciona") se responden con
+`estadoDeVinculo` + `estadoDesafio` del número que escribe:
+
+| Estado real | "¿Cómo verifico mi número?" |
+|---|---|
+| El número no es el teléfono verificado de una cuenta | Cómo verificarlo desde Mi perfil; botón a Mi perfil |
+| Verificado, WhatsApp sin vincular | "No necesitás verificarlo otra vez… lo que falta es vincular este WhatsApp"; botón Vincular WhatsApp |
+| Hay un código esperando | Falta enviar el mensaje `VERIFICAR TUS` desde este WhatsApp |
+| El último código venció / ya se usó / quedó anulado | La causa real y dónde generar uno nuevo |
+| Vinculado | "Tu número ya está verificado y este WhatsApp ya está vinculado" |
+| Conflicto | No se puede vincular desde el chat; revisar en Mi perfil |
+
+Verificar (TUS confirma que el teléfono es de la cuenta) y vincular (TUS conecta este WhatsApp con la cuenta) se explican
+como pasos distintos; nunca se dice "verificá WhatsApp". Una sesión de la Web no se ve desde WhatsApp y se dice.
+
+**"Listo" no se cree.** "Listo", "ya está", "ya lo hice" vuelven a leer el estado en el backend. Si el WhatsApp quedó
+vinculado, la solicitud se retoma sola con el mismo profesional, servicio, día, hora y precio ("Perfecto, ya te reconozco
+desde este WhatsApp. Seguíamos con tu turno de…") y muestra la tarjeta; si no, se dice qué falta.
+
+**No repetir.** "¿Y después?" responde el paso siguiente, no toda la explicación. La frustración ("otra vez me pide lo
+mismo") recibe el diagnóstico de qué paso falta. El pedido de nombre y DNI no se envía dos veces seguidas igual.
+
+**Dónde se hace cada cosa.** `RUTAS_TUS` son páginas reales de la Web (un test verifica que existan): Mi perfil, Mis
+turnos, Mis solicitudes, Trabajos, registro, inicio de sesión, recuperar contraseña y el panel de prestador (perfil
+público, turnos, pagos, ubicación). Lo que TUS no tiene se dice: un turno no se reprograma, se cancela y se pide otro.
+
+**Conocimiento.** Las explicaciones salen de `docs/conocimiento` (la misma base que la ayuda de la Web), eligiendo el
+pasaje cuyo encabezado nombra lo preguntado. Si no hay nada confiable: "No pude determinar qué está fallando. Decime qué
+mensaje te aparece o qué estabas intentando hacer."
+
+**Tools del modelo.** `get_tus_help` (tema + pregunta → estado real, página real y documentos) y `diagnose_user_issue`
+(estados: vínculo, teléfono verificado, último código, rol, Mercado Pago, pagos pendientes, flujo en curso; nunca un id,
+email, nombre o número).
+
 ## Un turno se solicita, no se confirma (TURNOS-SOLICITUD-01)
 
 Desde la Web, el asistente Web o WhatsApp, el cliente **solicita** un turno; solo el prestador lo
@@ -392,10 +448,18 @@ confirma.
 - `list_my_reservations` devuelve los turnos del cliente con su estado real (`appointments`):
   pendiente de confirmación, confirmada, rechazada, cancelada o vencida.
 - El prestador responde desde **Solicitudes de reserva** en `/prestador/turnos` (Aceptar / Rechazar).
-  Avisos: la solicitud aparece en ese panel y, si el envío de emails de TUS está configurado
+  Avisos: la solicitud siempre aparece en ese panel. Si el envío de emails está configurado
   (`EMAIL_PROVIDER=resend`), el prestador recibe un email al llegar una solicitud y el cliente otro
-  cuando se responde. **No hay todavía aviso proactivo por WhatsApp al prestador**: fuera de la
-  ventana de 24 h Meta exige una plantilla aprobada y TUS no tiene un envío proactivo implementado.
+  cuando se responde. También se avisa por WhatsApp a las conversaciones vinculadas o identificadas
+  de la cuenta destinataria que estén en modo bot y dentro de la ventana de servicio de 24 horas;
+  fuera de esa ventana no se inventa un envío libre ni una plantilla no aprobada: quedan el panel y
+  el email como fallback. La confirmación de la seña y las cancelaciones avisan a las partes que
+  corresponden con destinatarios resueltos por el backend, nunca por el modelo ni por un teléfono del
+  request.
+- Solicitud, respuesta, confirmación por pago y cancelación se escriben en `OutboxEvent` junto con la
+  transición de la reserva. El worker usa claim/lease, reintentos con backoff y dead-letter. Resend
+  recibe una clave idempotente por evento/destinatario y WhatsApp registra un intento determinista
+  antes de llamar a Meta; un resultado ambiguo no se reenvía automáticamente.
 
 ## Canal Web: el mismo asistente (ASISTENTE-WEB-01)
 

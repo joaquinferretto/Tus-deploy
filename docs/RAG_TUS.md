@@ -46,3 +46,25 @@ Ranking lexico (igual en memoria y en PostgreSQL): cobertura de terminos + 0,5 x
 ## Seguridad del prompt
 
 Los fragmentos recuperados se entregan como datos delimitados, con `<` y `>` neutralizados. El texto del usuario, historial y resumen pasan por redaccion de CUIL, documento, token, email, tarjeta y telefono antes de llegar al modelo. Las acciones de negocio no se resuelven desde RAG: siempre pasan por tools y los servicios de dominio.
+
+## Centro de Ayuda de la Web (AYUDA-01, 2026-10-04)
+
+**Markdown explica. Tools consultan. Backend decide.** `/ayuda` y `/ayuda/<slug>` muestran los MISMOS archivos de `docs/conocimiento/` que lee el indice del asistente: una sola fuente, sin CMS y sin formulario de edicion. Cambiar una guia es un commit, una revision y un deploy.
+
+**Front matter estricto** (`packages/contracts/src/tus-ayuda.ts`, `parsearDocumentoAyuda`, compartido por la Web y el indice). Campos permitidos: `id`, `title`, `description`, `slug`, `category`, `order`, `version`, `visibility`, `audience`, `language`, `updated`, `active`, `next`, `keywords`. Un campo desconocido, duplicado o mal formado rechaza el documento. Un documento es pagina del Centro de Ayuda solo si declara `slug`, y entonces debe ser `visibility: public` con `description` (20 a 180 caracteres), `category`, `order` y `updated`. Sin `slug` es solo conocimiento del asistente (por ejemplo `operacion-soporte-interno.md`, que nunca se publica).
+
+**Categorias**: empezar, cuenta, solicitudes, turnos, pagos, prestadores (el manual del prestador, con portada propia en `/ayuda/prestadores`) y problemas.
+
+**Markdown plano, nunca codigo.** No hay MDX ni HTML: `markdownAyuda` convierte el texto en un arbol de datos (titulo, parrafo, lista, cita; texto, fuerte, enfasis, codigo, enlace) y la Web lo dibuja con elementos React, sin inyectar HTML. Lo que parezca HTML en un documento se muestra como texto. Un enlace solo existe si es una ruta interna (`/...`, nunca `//` ni `\`) o `https://`; `javascript:`, `data:`, `vbscript:`, `http:` y cualquier otra cosa quedan como texto. Los archivos se empaquetan como texto al compilar (`asset/source` en `next.config.js`): un slug nunca se convierte en una ruta de archivo.
+
+**Allowlist del indice**: exactamente `docs/conocimiento/<nombre>.md` (anclado, sin subdirectorios, sin `..`, sin otra extension). Contenido con forma de secreto no se indexa. El indice guarda ruta, version, checksum SHA-256 y fecha de cada documento; el commit desplegado se consulta en `/version` (no se guarda por documento).
+
+**Estado privado.** Una guia es contenido publico: la pagina no lee la sesion ni cookies. El unico dato personal (telefono verificado / WhatsApp vinculado, en las guias `verificar-celular` y `vincular-whatsapp`) lo pide el navegador de la persona con sesion a `GET /auth/phone` despues de cargar la pagina; no esta en el HTML publico ni en ninguna cache, y solo se muestran dos estados, nunca el numero.
+
+**Acciones.** El boton de cada guia sale de una tabla fija de rutas internas (`ACCIONES_AYUDA`); ningun destino se toma de la URL ni del documento.
+
+**El asistente enlaza la guia.** Responde primero y despues ofrece "Guia paso a paso: <web>/ayuda/<slug>" del tema preguntado (`GUIA_DE_TEMA` en `asistencia.ts`), nunca el `/ayuda` generico cuando conoce el tema. En temas de cuenta la guia es la del paso que realmente falta (verificar o vincular).
+
+**Navegacion.** "Ayuda" es un menu en escritorio (boton con `aria-expanded`, se cierra con Escape, clic afuera o al salir el foco) y enlaces planos en el menu movil. "Solicitudes" va a la pagina real de cada rol (`/publicar` sin sesion, `/mis-solicitudes`, `/prestador/solicitudes`, `/tus/admin/solicitudes`). "Manual del prestador" aparece solo para prestadores. `/ayuda` esta exenta del onboarding de perfil.
+
+**Validacion.** `tests/foundation/tus-centro-de-ayuda.test.mjs` (front matter, publicacion, enlaces reales, XSS, allowlist, prompt injection, busqueda, estado privado, navegacion) y `node scripts/dev/ayuda-browser-smoke.mjs` (necesita `next build` con `NEXT_PUBLIC_API_URL=http://localhost:3101`; recorre todas las guias en 320, 360, 393, 768, 1280 y 1920 como visitante, cliente y prestador).

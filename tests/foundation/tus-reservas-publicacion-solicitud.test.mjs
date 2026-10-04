@@ -301,8 +301,9 @@ test('RESERVAS, one meaning in the whole code: the only writers of a confirmed r
   const escritores = [
     // turnos-service: the administration's turno, the provider's manual and forced turnos, and the
     // provider accepting a request with NOTHING to pay (`aceptado` is 'confirmed' only then; with a
-    // deposit it is 'awaiting_payment'). 'estado: 'confirmed',' also matches one read filter.
-    ['apps/api/src/tus/calendar/turnos-service.ts', /estado: solicitud \? 'pending' : 'confirmed'|estado: 'confirmed',|pasar\(aceptado\)/gu, 5],
+    // deposit it is 'awaiting_payment'). 'estado: 'confirmed',' also matches one read filter. The
+    // acceptance writes the state and queues its notice in the same transaction (pasarYNotificar).
+    ['apps/api/src/tus/calendar/turnos-service.ts', /estado: solicitud \? 'pending' : 'confirmed'|estado: 'confirmed',|pasarYNotificar\(aceptado\)/gu, 5],
     ['apps/api/src/tus/calendar/turnos-service.ts', /const aceptado: EstadoTurno = requisito === 'exigible' \? 'awaiting_payment' : 'confirmed'/gu, 1],
     ['apps/api/src/tus/adapters/prisma-work.ts', /data: \{ estado: 'confirmed'/gu, 2],
     // TURNOS-SENA-01: the verified payment of the deposit, inside the finance transaction.

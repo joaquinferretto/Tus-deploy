@@ -6,7 +6,6 @@ import {
   type CheckoutSenaTurnoDTO,
   type CrearTurnoAdmin,
   type DetalleTurno,
-  type DisponibilidadSemanalDTO,
   type DisponibilidadTurnos,
   type HorarioSemanalDTO,
   type PaginaTurnosAdmin,
@@ -71,12 +70,11 @@ const query = (params: Record<string, string | number | undefined>) => {
 export const turnosApi = {
   // ---- provider (own agenda) ----
   misServicios: () => json<{ items: ServicioTurnosDTO[] }>('/tus/v1/prestador/turnos/servicios').then((result) => result.items),
-  // Weekly availability: the general interval and the hours (and own interval) of each day.
-  miDisponibilidadSemanal: () =>
-    json<{ items: HorarioSemanalDTO[]; intervaloGeneral: number }>('/tus/v1/prestador/turnos/horarios').then((result): DisponibilidadSemanalDTO => ({ intervaloGeneral: result.intervaloGeneral, horarios: result.items })),
-  guardarMiDisponibilidadSemanal: (input: DisponibilidadSemanalDTO) =>
-    json<{ items: HorarioSemanalDTO[]; intervaloGeneral: number }>('/tus/v1/prestador/turnos/horarios', { method: 'PUT', body: JSON.stringify(input) }, 'No pudimos guardar tu disponibilidad.').then(
-      (result): DisponibilidadSemanalDTO => ({ intervaloGeneral: result.intervaloGeneral, horarios: result.items })
+  // Days and hours only: how often a turno starts is the duration of the service (decided by the API).
+  miDisponibilidadSemanal: () => json<{ items: HorarioSemanalDTO[] }>('/tus/v1/prestador/turnos/horarios').then((result) => result.items),
+  guardarMiDisponibilidadSemanal: (horarios: HorarioSemanalDTO[]) =>
+    json<{ items: HorarioSemanalDTO[] }>('/tus/v1/prestador/turnos/horarios', { method: 'PUT', body: JSON.stringify({ horarios }) }, 'No pudimos guardar tu disponibilidad.').then(
+      (result) => result.items
     ),
   miAgenda: (oficioId: string, desde: string) => json<AgendaSemanal>(`/tus/v1/prestador/turnos/agenda?${query({ oficioId, desde })}`, undefined, 'No pudimos consultar la agenda.'),
   misBloqueos: () => json<{ items: BloqueoAgendaDTO[] }>('/tus/v1/prestador/turnos/bloqueos').then((result) => result.items),

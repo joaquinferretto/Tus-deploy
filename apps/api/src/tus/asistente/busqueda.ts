@@ -172,7 +172,7 @@ export function personasDe<T extends { providerId: string; starts: string[] }>(i
 }
 
 // "¿Qué días atiende?", "¿cuándo hay turnos?": the DAYS are asked, not the times.
-export const PIDE_DIAS = /\bqu[eé] d[ií]as?\b|\bcu[aá]les d[ií]as\b|\bcu[aá]ndo (?:atiende[ns]?|hay|tiene[ns]?|trabaja[ns]?|puede[ns]?|est[aá]n? disponibles?)\b|\bd[ií]as (?:disponibles|libres|de atenci[oó]n)\b/iu
+export const PIDE_DIAS = /\bqu[eé] d[ií]as?\b|\bpor qu[eé] no hay (?:turnos|lugar)\b|\bcu[aá]ndo (?:vuelve[ns]?|va[ns]?) a (?:tener|haber)\b|\bcu[aá]les d[ií]as\b|\bcu[aá]ndo (?:atiende[ns]?|hay|tiene[ns]?|trabaja[ns]?|puede[ns]?|est[aá]n? disponibles?)\b|\bd[ií]as (?:disponibles|libres|de atenci[oó]n)\b/iu
 // "¿Qué horarios tiene?", "¿a qué hora atienden?": the TIMES are asked.
 export const PIDE_HORARIOS = /\bqu[eé] horarios?\b|\ba qu[eé] horas?\b|\bhorarios? (?:disponibles?|libres?|tiene[ns]?|hay)\b|\bqu[eé] turnos?\b|\bturnos (?:disponibles|libres)\b/iu
 

@@ -1,11 +1,16 @@
 ---
 id: cancelaciones
 title: Cancelaciones
-version: 2
+description: Cuándo se puede cancelar un trabajo, quién lo hace y qué no resuelve el asistente.
+slug: cancelaciones
+category: solicitudes
+order: 56
+keywords: cancelar, cancelacion, cancelar trabajo, reintegro
+version: 3
 visibility: public
 audience: all
 language: es
-updated: 2026-09-25
+updated: 2026-10-04
 ---
 
 # Cancelaciones

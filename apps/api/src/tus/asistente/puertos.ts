@@ -23,6 +23,8 @@ export interface VerificadorTelefonoWhatsapp {
   // verified phone of an account, linked, waiting for a challenge or in conflict. A state only:
   // no account, name or other number. Never authority.
   estadoNumero?(waId: string): Promise<'sin_cuenta' | 'verificado_sin_vinculo' | 'desafio_pendiente' | 'vinculado' | 'conflicto'>
+  // What happened to the last verification / link code of the sender's own number. A state only.
+  estadoDesafio?(waId: string): Promise<'ninguno' | 'pendiente' | 'vencido' | 'usado' | 'invalidado'>
   registrarConfirmacion(desafioId: string, resultado: { ok: true } | { ok: false; error: string }): Promise<void>
 }
 

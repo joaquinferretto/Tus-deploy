@@ -1,5 +1,5 @@
 import { formatearPesos } from '@factory/contracts'
-import type { AvisoRespuestaTurno, AvisoTurnoConfirmado, NotificadorTurnos } from '../calendar/turnos-notificaciones.ts'
+import type { AvisoRespuestaTurno, AvisoSolicitudTurno, AvisoTurnoCancelado, AvisoTurnoConfirmado, NotificadorTurnos } from '../calendar/turnos-notificaciones.ts'
 import type { WhatsappProvider, MensajeSaliente } from './meta.ts'
 import { canalDe, ventanaServicioAbierta, type ContactoWhatsapp, type ConversacionWhatsapp } from './modelo.ts'
 import { enviarMensajeSaliente, type Metrica } from './orquestador.ts'
@@ -23,15 +23,32 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
     private readonly metric?: Metrica
   ) {}
 
-  // The provider's own notice travels by email and its panel.
-  async solicitudRecibida(): Promise<void> {}
+  async solicitudRecibida(aviso: AvisoSolicitudTurno): Promise<void> {
+    if (!aviso.prestadorCuentaId) return
+    await this.entregar(
+      aviso.prestadorCuentaId,
+      { type: 'text', text: `${aviso.clienteNombre} te solicitó un turno de ${aviso.servicio} para el ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)}. Podés aceptarlo o rechazarlo desde Solicitudes de reserva.` },
+      `turno-solicitado:${aviso.reservaId}`
+    )
+  }
 
   async solicitudRespondida(aviso: AvisoRespuestaTurno): Promise<void> {
-    await this.entregar(aviso.clienteCuentaId, mensajeRespuesta(aviso), `turno-respondido:${aviso.reservaId}`)
+    await this.entregar(aviso.clienteCuentaId, mensajeRespuesta(aviso), `turno-respondido:${aviso.resultado}:${aviso.reservaId}`)
   }
 
   async turnoConfirmado(aviso: AvisoTurnoConfirmado): Promise<void> {
     await this.entregar(aviso.clienteCuentaId, { type: 'text', text: `¡Tu turno quedó confirmado! ${aviso.servicio} con ${aviso.prestadorNombre}, ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)}.` }, `turno-confirmado:${aviso.reservaId}`)
+    if (aviso.prestadorCuentaId)
+      await this.entregar(aviso.prestadorCuentaId, { type: 'text', text: `${aviso.clienteNombre} pagó la seña: el turno de ${aviso.servicio} del ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)} quedó confirmado.` }, `turno-confirmado-prestador:${aviso.reservaId}`)
+  }
+
+  async turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void> {
+    if (aviso.canceladoPor === 'cliente') {
+      if (!aviso.prestadorCuentaId) return
+      await this.entregar(aviso.prestadorCuentaId, { type: 'text', text: `${aviso.clienteNombre} canceló el turno de ${aviso.servicio} del ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)}.` }, `turno-cancelado-prestador:${aviso.reservaId}`)
+      return
+    }
+    await this.entregar(aviso.clienteCuentaId, { type: 'text', text: `${aviso.prestadorNombre} canceló tu turno de ${aviso.servicio} del ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)}. Podés pedirme otro horario u otro profesional.` }, `turno-cancelado-cliente:${aviso.reservaId}`)
   }
 
   private async entregar(clienteCuentaId: string, message: MensajeSaliente, correlationId: string): Promise<void> {
@@ -62,6 +79,7 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
       message,
       actor: 'assistant',
       correlationId,
+      idempotencyKey: `${correlationId}:${destino.conversacion.conversationId}`,
       inReplyTo: [],
       replyToWamid: undefined,
       now: this.now,

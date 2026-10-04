@@ -60,6 +60,9 @@ export interface AlmacenTelefonos {
   // Whether a verification or link challenge for `phone` is still waiting to be sent from WhatsApp
   // (unused, not invalidated, not expired). A password recovery is not one.
   desafioVivoPara(phone: string, at: number): Promise<boolean>
+  // The most recent verification / link challenge created for `phone` (a password recovery is
+  // not one), to say what happened to a code: still waiting, expired, used or cancelled.
+  ultimoDesafioDe(phone: string): Promise<DesafioTelefono | null>
   fijarPendiente(accountId: string, phone: string | null): Promise<void>
   // Replaces the identity phone. 'conflicto' when another person already has it (UNIQUE).
   fijarVerificado(accountId: string, phone: string, at: number): Promise<'ok' | 'conflicto'>

@@ -170,6 +170,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
   // Turno requests notify by email through the transport of the account emails (when configured).
   const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient, NotificadorTurnosEmail.desdeEnv(prisma as unknown as PrismaClient, process.env))
+  app.locals['tusTurnosNotificationWorkerFactory'] = () => servicioTurnos.crearWorkerNotificaciones()
   // TURNOS-SENA-01: the deposit of an accepted turno awaiting payment is charged through the same work and finance
   // services as every other payment (no parallel Mercado Pago integration).
   servicioTurnos.conSenas(new ServicioSenaTurnos(prisma as unknown as PrismaClient, pagosSenaDeAplicacion(application)))
@@ -374,9 +375,20 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     lifecycle.register('http', () =>
       closeHttpServer(server as Server, runtimeConfig.shutdownTimeoutMs)
     )
-    const workerAbort = new AbortController()
-    let workerPromise: Promise<void> | undefined
+    const notificationWorkerFactory = app.locals['tusTurnosNotificationWorkerFactory'] as (() => ReturnType<ServicioTurnos['crearWorkerNotificaciones']>) | undefined
+    if (notificationWorkerFactory) {
+      const notificationAbort = new AbortController()
+      const notificationPromise = notificationWorkerFactory().ejecutar({ signal: notificationAbort.signal }).catch((error: unknown) => {
+        logger.error('appointment notification worker stopped', { details: { error: error instanceof Error ? error.name : 'unknown' } })
+      })
+      lifecycle.register('appointment-notification-worker', async () => {
+        notificationAbort.abort()
+        await notificationPromise
+      })
+    }
     if (whatsapp?.config.enabled) {
+      const workerAbort = new AbortController()
+      let workerPromise: Promise<void> | undefined
       const worker = whatsapp.crearWorker({
         log: (event, fields) => logger.info(event, { details: fields }),
       })
@@ -384,15 +396,13 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         workerAbort.abort()
         await workerPromise
       })
-      lifecycle.start()
       workerPromise = worker.ejecutar({ signal: workerAbort.signal }).catch((error: unknown) => {
         logger.error('whatsapp worker stopped', {
           details: { error: error instanceof Error ? error.name : 'unknown' },
         })
       })
-    } else {
-      lifecycle.start()
     }
+    lifecycle.start()
 
     const shutdown = async (reason = 'signal') => {
       if (signalHandlersInstalled) {

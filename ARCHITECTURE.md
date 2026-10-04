@@ -170,7 +170,10 @@ nueva es el calendario; `horario_trabajo` de la publicación es legacy.
 ### Slots y booking
 
 La identidad de un slot es `calendarId:listingId:start`. La generación considera zona horaria IANA, horario,
-excepciones, duración efectiva, granularidad, buffer, capacidad, `now` y reservas confirmadas.
+excepciones, duración efectiva, descanso, capacidad, `now` y reservas confirmadas. Dentro de cada franja laboral,
+los inicios parten de la hora real de apertura y avanzan `duración + descanso`; sólo la duración debe entrar antes
+del cierre, por lo que no se exige un descanso ficticio después del último turno. `granularidadMinutos` y el intervalo
+por día permanecen en persistencia y contratos por compatibilidad legacy, pero no intervienen en la generación.
 
 El booking canónico:
 

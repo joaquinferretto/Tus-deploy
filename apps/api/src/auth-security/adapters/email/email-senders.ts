@@ -16,6 +16,8 @@ export interface EmailMessage {
   subject: string
   text: string
   html: string
+  // Resend keeps this key for retries of the exact same message. Other transports may ignore it.
+  idempotencyKey?: string
 }
 
 export interface EmailTransport {
@@ -100,7 +102,11 @@ export class ResendEmailTransport implements EmailTransport {
   async send(message: EmailMessage): Promise<void> {
     const response = await this.fetchImpl('https://api.resend.com/emails', {
       method: 'POST',
-      headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${this.apiKey}`,
+        'content-type': 'application/json',
+        ...(message.idempotencyKey ? { 'idempotency-key': message.idempotencyKey } : {}),
+      },
       body: JSON.stringify({ from: this.from, to: [message.to], subject: message.subject, text: message.text, html: message.html }),
       signal: AbortSignal.timeout(this.timeoutMs),
     }).catch(() => null)

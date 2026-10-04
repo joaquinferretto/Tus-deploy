@@ -24,6 +24,7 @@ import type { AlmacenTelefonos, DesafioTelefono, PropositoDesafio, ResultadoVinc
 // the number the challenge expects. The WhatsApp answer is deterministic text (no LLM) and its
 // delivery never decides the verification.
 
+export type EstadoDesafioWhatsapp = 'ninguno' | 'pendiente' | 'vencido' | 'usado' | 'invalidado'
 export type EstadoNumeroWhatsapp = 'sin_cuenta' | 'verificado_sin_vinculo' | 'desafio_pendiente' | 'vinculado' | 'conflicto'
 
 export const RESPUESTAS_VERIFICACION = {
@@ -318,6 +319,18 @@ export class ServicioVerificacionTelefono {
     const vinculado = await this.deps.telefonos.waIdVinculado(cuenta.id)
     if (vinculado) return waIdEquivalentes(waId).includes(vinculado) ? 'vinculado' : 'conflicto'
     return pendiente ? 'desafio_pendiente' : 'verificado_sin_vinculo'
+  }
+
+  // What happened to the last verification / link code created for the sender's OWN number, so a
+  // problem with a code can be explained with its real cause (never an invented one). Like
+  // estadoNumero: the only input is the wa_id Meta delivered, and the answer is a state.
+  async estadoDesafio(waId: string): Promise<EstadoDesafioWhatsapp> {
+    const telefono = telefonoDesdeWaId(waId)
+    const desafio = telefono ? await this.deps.telefonos.ultimoDesafioDe(telefono) : null
+    if (!desafio) return 'ninguno'
+    if (desafio.usedAt !== null) return 'usado'
+    if (desafio.invalidatedAt !== null) return 'invalidado'
+    return desafio.expiresAt <= this.deps.now() ? 'vencido' : 'pendiente'
   }
 
   esMensajeVerificacion(texto: unknown): boolean {

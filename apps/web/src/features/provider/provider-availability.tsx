@@ -4,12 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 
 import {
   DIAS_SEMANA,
-  INTERVALOS_TURNO,
-  INTERVALO_TURNO_PREDETERMINADO,
-  etiquetaIntervalo,
   validarHorariosSemanales,
   type BloqueoAgendaDTO,
-  type DisponibilidadSemanalDTO,
   type HorarioSemanalDTO,
   type ServicioTurnosDTO,
 } from '@factory/contracts'
@@ -32,35 +28,31 @@ interface Rango {
 interface DiaForm {
   activo: boolean
   rangos: Rango[]
-  personalizado: boolean
-  intervalo: number
 }
 
 const RANGO_INICIAL: Rango = { horaInicio: '09:00', horaFin: '18:00' }
 
-function aFormulario(disponibilidad: DisponibilidadSemanalDTO): DiaForm[] {
+function aFormulario(horarios: HorarioSemanalDTO[]): DiaForm[] {
   return [0, 1, 2, 3, 4, 5, 6].map((dia) => {
-    const delDia = disponibilidad.horarios.filter((horario) => horario.diaSemana === dia)
-    const propio = delDia[0]?.intervaloMinutos ?? null
+    const delDia = horarios.filter((horario) => horario.diaSemana === dia)
     return {
       activo: delDia.length > 0,
       rangos: delDia.length > 0 ? delDia.map(({ horaInicio, horaFin }) => ({ horaInicio, horaFin })) : [{ ...RANGO_INICIAL }],
-      personalizado: propio !== null,
-      intervalo: propio ?? 30,
     }
   })
 }
 
 const aHorarios = (dias: DiaForm[]): HorarioSemanalDTO[] =>
-  dias.flatMap((dia, diaSemana) => (dia.activo ? dia.rangos.map((rango) => ({ diaSemana, ...rango, intervaloMinutos: dia.personalizado ? dia.intervalo : null })) : []))
+  dias.flatMap((dia, diaSemana) => (dia.activo ? dia.rangos.map((rango) => ({ diaSemana, ...rango })) : []))
 
-// Agenda of the provider. Top: the weekly availability it configures (general interval, days,
-// hours, own interval of a day). Bottom: the agenda its clients see, computed by the API from
-// that configuration, the taken turnos and the blocks. Times are never invented here.
+// Agenda of the provider. Top: the weekly availability it configures (days and hours: WHEN it
+// works). Bottom: the agenda its clients see, computed by the API from that configuration, the
+// duration of the service (one turno after another, from the opening time), the taken turnos and
+// the blocks. Times are never invented here, and there is no interval to choose: how often a
+// turno starts is how long the service lasts.
 export function ProviderAvailability({ servicios, version = 0 }: { servicios: ServicioTurnosDTO[]; version?: number }): React.ReactNode {
   const conTurnos = servicios.filter((servicio) => servicio.turnosHabilitados)
   const [oficioId, setOficioId] = useState('')
-  const [general, setGeneral] = useState<number>(INTERVALO_TURNO_PREDETERMINADO)
   const [dias, setDias] = useState<DiaForm[] | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
@@ -76,10 +68,7 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
   useEffect(() => {
     void turnosApi
       .miDisponibilidadSemanal()
-      .then((disponibilidad) => {
-        setGeneral(disponibilidad.intervaloGeneral)
-        setDias(aFormulario(disponibilidad))
-      })
+      .then((horarios) => setDias(aFormulario(horarios)))
       .catch(() => setAviso({ kind: 'error', text: 'No pudimos cargar tu disponibilidad. Recargá la página.' }))
   }, [])
 
@@ -115,9 +104,7 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
     }
     setGuardando(true)
     try {
-      const guardada = await turnosApi.guardarMiDisponibilidadSemanal({ intervaloGeneral: general, horarios: validado.valor })
-      setGeneral(guardada.intervaloGeneral)
-      setDias(aFormulario(guardada))
+      setDias(aFormulario(await turnosApi.guardarMiDisponibilidadSemanal(validado.valor)))
       setAviso({ kind: 'ok', text: 'Guardamos tu disponibilidad. La agenda ya refleja el cambio; los turnos ya reservados no cambian.' })
       setCambios((value) => value + 1)
     } catch (error) {
@@ -138,14 +125,11 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
     }
   }
 
-  // An agenda saved with an interval outside the list (older data) still shows its real value.
-  const opciones = (actual: number) => (INTERVALOS_TURNO as readonly number[]).includes(actual) ? [...INTERVALOS_TURNO] : [actual, ...INTERVALOS_TURNO]
-
   return (
     <>
       <section aria-labelledby="disponibilidad-semanal-titulo" className={ui.panel}>
         <h2 id="disponibilidad-semanal-titulo">Disponibilidad semanal</h2>
-        <p className={ui.muted}>Elegí qué días trabajás, en qué horario y cada cuánto puede empezar un turno. La duración de cada turno es la del servicio.</p>
+        <p className={ui.muted}>Elegí qué días trabajás y en qué horario. Los turnos se ofrecen uno detrás de otro desde tu hora de inicio, según lo que dura cada servicio.</p>
         {dias === null ? (
           aviso ? null : (
             <p className={ui.muted} role="status">
@@ -154,26 +138,6 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
           )
         ) : (
           <div className={styles.config}>
-            <div className={styles.general}>
-              <label htmlFor="intervalo-general">Intervalo general</label>
-              <select
-                className={styles.control}
-                id="intervalo-general"
-                onChange={(event) => {
-                  setGeneral(Number(event.target.value))
-                  setAviso(null)
-                }}
-                value={general}
-              >
-                {opciones(general).map((minutos) => (
-                  <option key={minutos} value={minutos}>
-                    {etiquetaIntervalo(minutos)}
-                  </option>
-                ))}
-              </select>
-              <p className={styles.hint}>Se usa en todos los días, salvo en los que personalices.</p>
-            </div>
-
             <ul className={styles.days}>
               {ORDEN_DIAS.map((dia) => {
                 const item = dias[dia]!
@@ -224,28 +188,6 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
                             ) : null}
                           </div>
                         ))}
-                        <fieldset className={styles.interval}>
-                          <legend className={styles.srOnly}>{`Intervalo del ${nombre}`}</legend>
-                          <label className={styles.choice}>
-                            <input checked={!item.personalizado} name={`intervalo-${dia}`} onChange={() => cambiarDia(dia, { personalizado: false })} type="radio" />
-                            Usar intervalo general ({etiquetaIntervalo(general)})
-                          </label>
-                          <label className={styles.choice}>
-                            <input checked={item.personalizado} name={`intervalo-${dia}`} onChange={() => cambiarDia(dia, { personalizado: true })} type="radio" />
-                            Personalizar
-                          </label>
-                          {item.personalizado ? (
-                            <span className={styles.choice}>
-                              <select aria-label={`Intervalo del ${nombre}`} className={styles.control} onChange={(event) => cambiarDia(dia, { intervalo: Number(event.target.value) })} value={item.intervalo}>
-                                {opciones(item.intervalo).map((minutos) => (
-                                  <option key={minutos} value={minutos}>
-                                    {etiquetaIntervalo(minutos)}
-                                  </option>
-                                ))}
-                              </select>
-                            </span>
-                          ) : null}
-                        </fieldset>
                       </div>
                     ) : (
                       <p className={styles.dayOff}>No se ofrecen turnos este día.</p>

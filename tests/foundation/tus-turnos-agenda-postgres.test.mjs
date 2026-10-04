@@ -39,7 +39,8 @@ const SETUP = `
   const code = async (operation) => { try { await operation(); return 'ok' } catch (error) { return error?.code ?? String(error?.message ?? error).slice(0, 120) } }
   const dbCode = (e) => e?.code ?? (String(e?.message ?? e).match(/(P2002|P2003|23505|23514|23P01)/u)?.[1] ?? String(e?.message ?? e).slice(0, 80))
   const horas = (dia, estado = 'disponible') => dia.franjas.filter((f) => f.estado === estado).map((f) => f.hora)
-  // The example of the specification: general 1 hora; jueves 30 minutos; viernes 15 minutos.
+  // Legacy intervals (general 1 hora; jueves 30 minutos; viernes 15 minutos) are still stored, and
+  // no longer decide anything: a 60 minute service is offered every 60 minutes on every day.
   const EJEMPLO = [
     { diaSemana: 1, horaInicio: '10:00', horaFin: '15:00' },
     { diaSemana: 2, horaInicio: '10:00', horaFin: '18:00' },
@@ -48,7 +49,7 @@ const SETUP = `
   ]
 `
 
-test('TURNOS agenda PostgreSQL: the weekly availability (general interval + own interval per day) is stored in the existing calendar tables and drives the weekly agenda, the day view and the booking check; reservations and exceptions are crossed; two clients never get the same time', { skip, timeout: 240000 }, () => {
+test('TURNOS agenda PostgreSQL: the weekly availability is stored in the existing calendar tables; the hours and the DURATION of the service (not the legacy interval) drive the weekly agenda, the day view and the booking check; reservations and exceptions are crossed; two clients never get the same time', { skip, timeout: 240000 }, () => {
   const r = runTypeScriptScenario(`${SETUP}
     const out = {}
     try {
@@ -95,7 +96,7 @@ test('TURNOS agenda PostgreSQL: the weekly availability (general interval + own 
       out.diaNoLaboral = await code(() => reservar(2, '10:00'))
       out.noEntra = await code(() => reservar(0, '14:30'))
       out.ultimoQueEntra = await code(() => reservar(0, '14:00'))
-      out.intervaloPropio = await code(() => reservar(3, '14:30'))
+      out.intervaloPropio = [await code(() => reservar(3, '14:30')), await code(() => reservar(3, '15:00'))]
       const conReservas = await pedir()
       out.juevesOcupado = horas(conReservas.dias[3], 'ocupado')
       out.juevesLibre = horas(conReservas.dias[3]).slice(0, 2)
@@ -113,9 +114,12 @@ test('TURNOS agenda PostgreSQL: the weekly availability (general interval + own 
       // Concurrency: six clients, the same time, at once -> exactly one reservation.
       const carrera = await Promise.all(Array.from({ length: 6 }, (_, i) => reservar(4, '09:00', 'Cliente ' + i).then(() => 'ok', (e) => e.code + ':' + e.status)))
       out.carrera = [carrera.filter((x) => x === 'ok').length, carrera.filter((x) => x === 'SLOT_OCCUPIED:409').length]
-      // Different starts that overlap each other (60 minute service every 15 minutes): one wins.
+      // Starts that would overlap each other, at once: only 11:00 is a turno of a 60 minute service;
+      // the others are not offered, so they cannot be booked even while the agenda is busy.
       const solapadas = await Promise.all(['10:15', '10:30', '10:45', '11:00'].map((hora) => reservar(4, hora).then(() => 'ok', (e) => e.code + ':' + e.status)))
-      out.solapadas = [solapadas.filter((x) => x === 'ok').length, solapadas.filter((x) => x === 'SLOT_OCCUPIED:409').length]
+      // A start off the sequence is refused either way: "not available", or "occupied" when the
+      // 11:00 turno was already stored by the time it was checked. Which of the two depends on the race.
+      out.solapadas = [solapadas.filter((x) => x === 'ok').length, solapadas.filter((x) => x === 'SLOT_NOT_AVAILABLE:409' || x === 'SLOT_OCCUPIED:409').length, solapadas[3]]
       out.filasViernes = await prisma.reserva.count({ where: { tenantId: p.tenantId, fechaInicio: { gte: new Date(a(4, '00:00')), lt: new Date(a(5, '00:00')) } } })
 
       // Exceptions: a closed day (holiday / vacation / manual block) without touching the weekly hours.
@@ -156,33 +160,33 @@ test('TURNOS agenda PostgreSQL: the weekly availability (general interval + own 
   assert.deepEqual(r.inicial.horarios.map((h) => [h.diaSemana, h.horaInicio, h.horaFin, h.intervaloMinutos]), [1, 2, 3, 4, 5].map((dia) => [dia, '09:00', '18:00', null]))
   assert.deepEqual(r.intervaloInvalido, ['INVALID_PARAMS', 'INVALID_PARAMS'])
   assert.equal(r.guardada.intervaloGeneral, 60)
-  assert.deepEqual(r.enBase, [60, [[1, '10:00', '15:00', null], [2, '10:00', '18:00', null], [4, '14:00', '20:00', 30], [5, '09:00', '13:00', 15]]], 'general interval on the calendar, own interval on the rules of the day')
+  assert.deepEqual(r.enBase, [60, [[1, '10:00', '15:00', null], [2, '10:00', '18:00', null], [4, '14:00', '20:00', 30], [5, '09:00', '13:00', 15]]], 'the legacy intervals are still stored where they were (no migration)')
   assert.equal(r.unSoloCalendario, 1, 'the existing calendar is reused')
   assert.equal(r.checkIntervalo, '23514', 'ck_reglas_calendario_intervalo')
   assert.deepEqual(r.semana, [true, true, 60, 7, true])
   assert.deepEqual(r.estados, ['laboral', 'laboral', 'no_laboral', 'laboral', 'laboral', 'no_laboral', 'no_laboral'])
   assert.deepEqual(r.lunes, ['10:00', '11:00', '12:00', '13:00', '14:00'])
   assert.deepEqual(r.martes, ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'])
-  assert.deepEqual(r.jueves, ['14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30', '19:00'], 'own 30 minute interval; 19:30 + 1 hour would end after 20:00')
-  assert.deepEqual([r.viernes.length, r.viernes[0], r.viernes[1], r.viernes.at(-1)], [13, '09:00', '09:15', '12:00'])
+  assert.deepEqual(r.jueves, ['14:00', '15:00', '16:00', '17:00', '18:00', '19:00'], 'a 60 minute service every 60 minutes, whatever interval the day had stored')
+  assert.deepEqual(r.viernes, ['09:00', '10:00', '11:00', '12:00'], 'never every 15 minutes')
   assert.deepEqual(r.noLaborales, [0, 0, 0])
   assert.equal(r.mismoGenerador, true)
   assert.equal(r.diaLibre, 0)
-  assert.equal(r.fueraDeIntervalo, 'SLOT_NOT_AVAILABLE', '10:30 is not a start of a day with a 1 hour interval')
+  assert.equal(r.fueraDeIntervalo, 'SLOT_NOT_AVAILABLE', '10:30 is not a start of a 60 minute service that opens at 10:00')
   assert.equal(r.diaNoLaboral, 'SLOT_NOT_AVAILABLE')
   assert.equal(r.noEntra, 'SLOT_NOT_AVAILABLE')
   assert.equal(r.ultimoQueEntra, 'ok')
-  assert.equal(r.intervaloPropio, 'ok')
-  assert.deepEqual(r.juevesOcupado, ['14:00', '14:30', '15:00'], 'the whole duration of the reservation is taken')
-  assert.deepEqual(r.juevesLibre, ['15:30', '16:00'])
+  assert.deepEqual(r.intervaloPropio, ['SLOT_NOT_AVAILABLE', 'ok'], 'the booking check uses the same turnos: 14:30 does not exist, 15:00 does')
+  assert.deepEqual(r.juevesOcupado, ['15:00'], 'the turno taken, and only it')
+  assert.deepEqual(r.juevesLibre, ['14:00', '16:00'], 'the others stay where they were')
   assert.deepEqual(r.lunesOcupado, ['14:00'])
   assert.deepEqual(r.sinDatosDelCliente, ['estado', 'fin', 'hora', 'inicio'], 'a taken time never exposes who took it')
   assert.equal(r.ocupadoNoSeReserva, 'SLOT_OCCUPIED')
-  assert.deepEqual(r.semanaSiguiente, [true, 0, 11, 5])
+  assert.deepEqual(r.semanaSiguiente, [true, 0, 6, 5])
   assert.deepEqual(r.fueraDeRango, ['INVALID_DATE', 'INVALID_DATE', 'INVALID_DATE'])
   assert.deepEqual(r.semanaActual, [7, true])
   assert.deepEqual(r.carrera, [1, 5], 'exactly one of six simultaneous bookings of the same time is stored')
-  assert.deepEqual(r.solapadas, [1, 3], 'overlapping starts cannot both be stored')
+  assert.deepEqual(r.solapadas, [1, 3, 'ok'], 'only the real turno (11:00) is stored; the three starts off the sequence are refused')
   assert.equal(r.filasViernes, 2)
   assert.equal(r.bloqueoInvalido, 'INVALID_DATE')
   assert.deepEqual(r.feriado, ['bloqueado', 0, 8])
@@ -194,7 +198,7 @@ test('TURNOS agenda PostgreSQL: the weekly availability (general interval + own 
   assert.equal(r.quitarDosVeces, 'NOT_FOUND')
   assert.deepEqual(r.trasQuitar, ['laboral', 8], 'removing the exception restores the usual hours')
   assert.equal(r.reglasIntactas, 4, 'exceptions never rewrite the weekly configuration')
-  assert.deepEqual(r.tarifa, [120, ['10:00', '11:00', '12:00', '13:00'], '18:00', '11:00'])
+  assert.deepEqual(r.tarifa, [120, ['10:00', '12:00'], '18:00', '11:00'], 'the variant of 2 hours has its own turnos, every 2 hours')
   assert.equal(r.tarifaAjena, 'INVALID_PARAMS')
   assert.deepEqual(r.nueva, [['no_laboral', 'no_laboral', 'no_laboral', 'no_laboral', 'no_laboral', 'laboral', 'no_laboral'], ['08:00', '10:00'], 120])
   assert.equal(r.reservasIntactas, true)

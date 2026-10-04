@@ -27,44 +27,55 @@ test('INTEGRIDAD turnos: the rest time (buffer) protects both sides of a reserva
     const turnos = new ServicioTurnos(prisma)
     const out = {}
     try {
-      const oficio = await prisma.oficioServicio.findFirst({ where: { activo: true }, orderBy: { orden: 'asc' } })
+      const [oficio, corto] = await prisma.oficioServicio.findMany({ where: { activo: true }, orderBy: { orden: 'asc' }, take: 2 })
       const tenantId = run + '-tenant'; const prestadorId = run + '-prestador'; const ahora = new Date()
       await prisma.tusTenant.create({ data: { id: tenantId, slug: tenantId, name: 'Buffer', status: 'active', createdAt: ahora, updatedAt: ahora } })
       await prisma.prestador.create({ data: { id: run + '-p', tenantId, prestadorId, cohorte: 'repairs-trades', ubicacionId: 'ubicacion', zonaHoraria: 'America/Argentina/Buenos_Aires', rolesPersonal: ['owner'], versionPoliticaOperativa: 'v1', estado: 'approved', fechaCreacion: ahora, fechaActualizacion: ahora } })
-      // 60 minute service with 30 minutes of rest between turnos.
-      const perfil = await prisma.perfilPublicoPrestador.create({ data: { id: run + '-perfil', tenantId, prestadorId, nombrePublico: 'Buffer ' + run, oficio: oficio.id, zona: 'Centro', visible: true, fechaCreacion: ahora, fechaActualizacion: ahora, servicios: { create: [{ oficioId: oficio.id, duracionMinutos: 60, bufferMinutos: 30, precioBase: 1000n }] } } })
+      // Two services on ONE agenda, both with 30 minutes of rest between turnos: 60 minutes (a turno
+      // every 90: 08:00, 09:30, 11:00...) and 45 minutes (every 75: 08:00, 09:15, 10:30, 11:45...).
+      // Each sequence keeps its own rest; the rest between turnos of DIFFERENT services is what the
+      // booking check and the lock of the calendar protect.
+      const perfil = await prisma.perfilPublicoPrestador.create({ data: { id: run + '-perfil', tenantId, prestadorId, nombrePublico: 'Buffer ' + run, oficio: oficio.id, zona: 'Centro', visible: true, fechaCreacion: ahora, fechaActualizacion: ahora, servicios: { create: [{ oficioId: oficio.id, duracionMinutos: 60, bufferMinutos: 30, precioBase: 1000n }, { oficioId: corto.id, duracionMinutos: 45, bufferMinutos: 30, precioBase: 1000n }] } } })
       await turnos.guardarDisponibilidadSemanal(tenantId, { intervaloGeneral: 15, horarios: [0, 1, 2, 3, 4, 5, 6].map((diaSemana) => ({ diaSemana, horaInicio: '08:00', horaFin: '20:00' })) })
       const hoy = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10)
       const fecha = (n) => c.sumarDias(hoy, n)
       const a = (n, hora) => new Date(fecha(n) + 'T' + hora + ':00.000-03:00').toISOString()
-      const reservar = (n, hora) => turnos.reservarTurno({ prestadorId: perfil.id, oficioId: oficio.id, inicio: a(n, hora), clienteNombre: 'Cliente' }).then(() => 'ok', (e) => e.code)
-      const libres = async (n) => (await turnos.disponibilidadPublica({ prestadorId: perfil.id, oficioId: oficio.id, fecha: fecha(n) })).slots.map((s) => s.inicio)
+      const reservar = (n, hora, servicio = oficio) => turnos.reservarTurno({ prestadorId: perfil.id, oficioId: servicio.id, inicio: a(n, hora), clienteNombre: 'Cliente' }).then(() => 'ok', (e) => e.code)
+      const libres = async (n, servicio = oficio) => (await turnos.disponibilidadPublica({ prestadorId: perfil.id, oficioId: servicio.id, fecha: fecha(n) })).slots.map((s) => s.inicio)
 
-      // Sequential, both orders: a turno at 11:15 leaves less than 30 minutes after one that ends at 11:00.
-      out.despues = [await reservar(2, '10:00'), await reservar(2, '11:15'), await reservar(2, '11:30')]
-      out.antes = [await reservar(3, '11:15'), await reservar(3, '10:00'), await reservar(3, '09:45')]
+      // The step is duration + rest, from the opening time; a start off that sequence is not a turno.
+      const hora = (iso) => new Date(Date.parse(iso) - 3 * 3600_000).toISOString().slice(11, 16)
+      out.secuencias = [(await libres(2)).map(hora), (await libres(2, corto)).map(hora).slice(0, 5)]
+      out.fueraDeSecuencia = [await reservar(2, '10:00'), await reservar(2, '09:00', corto)]
+      // Sequential, both orders: the 45 minute turno of 10:30 starts right when the 60 minute one of
+      // 09:30 ends, with no rest between them.
+      out.despues = [await reservar(2, '09:30'), await reservar(2, '10:30', corto), await reservar(2, '11:45', corto)]
+      out.antes = [await reservar(3, '10:30', corto), await reservar(3, '09:30'), await reservar(3, '08:00')]
       const d2 = await libres(2)
-      out.ofrecidos = [d2.includes(a(2, '08:30')), d2.includes(a(2, '08:45')), d2.includes(a(2, '11:15')), d2.includes(a(2, '13:00'))]
+      out.ofrecidos = ['08:00', '09:30', '11:00', '12:30', '14:00'].map((h) => d2.includes(a(2, h)))
 
-      // Concurrent: two turnos that do not overlap (PostgreSQL's exclusion constraint allows both)
-      // but break the rest time whichever goes first. Exactly one may be stored, on every day.
+      // Concurrent: two turnos of different services that do not overlap (PostgreSQL's exclusion
+      // constraint allows both) but break the rest time whichever goes first. Exactly one may be
+      // stored, on every day.
       await calentar()
       const carreras = []
-      for (let n = 5; n < 13; n += 1) carreras.push((await Promise.all([reservar(n, '10:00'), reservar(n, '11:15')])).sort().join('+'))
+      for (let n = 5; n < 13; n += 1) carreras.push((await Promise.all([reservar(n, '09:30'), reservar(n, '10:30', corto)])).sort().join('+'))
       out.carreras = [...new Set(carreras)]
       out.filas = await prisma.reserva.count({ where: { tenantId, fechaInicio: { gte: new Date(a(5, '00:00')) } } })
 
       // A block and a change of the weekly hours go through the same lock and still work.
       await turnos.bloquearHorario({ prestadorTenantId: tenantId, inicio: a(14, '00:00'), fin: a(15, '00:00'), motivo: 'Feriado' })
-      out.trasBloqueo = await reservar(14, '10:00')
+      out.trasBloqueo = await reservar(14, '09:30')
       await turnos.guardarDisponibilidadSemanal(tenantId, { intervaloGeneral: 60, horarios: [] })
-      out.sinHorarios = await reservar(16, '10:00')
+      out.sinHorarios = await reservar(16, '09:30')
     } finally { await prisma.$disconnect() }
     console.log(JSON.stringify(out))
   `)
+  assert.deepEqual(r.secuencias, [['08:00', '09:30', '11:00', '12:30', '14:00', '15:30', '17:00', '18:30'], ['08:00', '09:15', '10:30', '11:45', '13:00']], 'a turno every duration + rest, from the opening time')
+  assert.deepEqual(r.fueraDeSecuencia, ['SLOT_NOT_AVAILABLE', 'SLOT_NOT_AVAILABLE'], 'a start that is not a turno of that service cannot be booked')
   assert.deepEqual(r.despues, ['ok', 'SLOT_OCCUPIED', 'ok'], 'no turno starts inside the rest time AFTER a reservation')
   assert.deepEqual(r.antes, ['ok', 'SLOT_OCCUPIED', 'ok'], 'no turno ends inside the rest time BEFORE a reservation')
-  assert.deepEqual(r.ofrecidos, [true, false, false, true], 'the agenda offers only starts that respect the rest time on both sides')
+  assert.deepEqual(r.ofrecidos, [true, false, false, false, true], 'the agenda offers only turnos that respect the rest time on both sides (09:30 is taken, 11:00 overlaps the 11:45 one, 12:30 starts right when it ends)')
   assert.deepEqual(r.carreras, ['SLOT_OCCUPIED+ok'], 'two simultaneous turnos never break the rest time')
   assert.equal(r.filas, 8)
   assert.equal(r.trasBloqueo, 'SLOT_NOT_AVAILABLE')

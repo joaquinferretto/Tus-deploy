@@ -26,6 +26,12 @@ const nextConfig = {
     return [{ source: '/:path*', headers: securityHeaders }]
   },
   reactStrictMode: true,
+  // AYUDA-01: the documents of docs/conocimiento are bundled as TEXT (never as code) so the Help
+  // Center renders the same files the assistant's knowledge index reads. No MDX, no evaluation.
+  webpack(config) {
+    config.module.rules.push({ test: /\.md$/, type: 'asset/source' })
+    return config
+  },
   typedRoutes: true,
   output: isWindows ? undefined : 'standalone',
   ...(standaloneOptOut ? { output: undefined } : {}),

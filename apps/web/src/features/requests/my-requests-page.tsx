@@ -8,6 +8,7 @@ import { useAccountView } from '../session/use-account-view'
 import { useTusSession } from '../session/use-tus-session'
 import { isPlatformOnly } from '../../lib/tus-auth-client'
 import { MyRequests } from './my-requests'
+import { HelpLink } from '../help/help-link'
 
 const RETURN_TO = '/mis-solicitudes'
 
@@ -28,6 +29,7 @@ export function MyRequestsPage(): React.ReactNode {
         </>
       )}
       <p className={styles.subtitle}>El estado real de cada pedido. Una solicitud enviada a un profesional queda pendiente hasta que la acepte.</p>
+      <HelpLink href="/ayuda/solicitudes">¿Cómo funcionan las solicitudes?</HelpLink>
       <div className={styles.stateActions} style={{ justifyContent: 'flex-start', margin: '16px 0 8px' }}>
         <a className={homeStyles.buttonPrimary} href="/asistente">
           Nueva búsqueda

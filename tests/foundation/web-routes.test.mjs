@@ -31,6 +31,10 @@ function routeExists(candidate, routes) {
     if (route === normalized) return true
     const routeSegments = route.split('/').filter(Boolean)
     const candidateSegments = normalized.split('/').filter(Boolean)
+    // A catch-all ([...slug]) takes one or more segments. Which /ayuda slugs are published guides
+    // is checked against the documents in tus-centro-de-ayuda.test.mjs.
+    const catchAll = routeSegments.findIndex((segment) => segment.startsWith(':...'))
+    if (catchAll >= 0) return candidateSegments.length > catchAll && routeSegments.slice(0, catchAll).every((expected, index) => expected.startsWith(':') || expected === candidateSegments[index])
     if (candidateSegments.length > routeSegments.length) return false
     return candidateSegments.every((segment, index) => {
       const expected = routeSegments[index]

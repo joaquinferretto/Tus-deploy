@@ -300,10 +300,11 @@ export function needsProfile(capabilities: TusAccountCapabilities | null): boole
 }
 
 export const PROFILE_ROUTE = '/mi-perfil'
-const PROFILE_EXEMPT = ['/mi-perfil', '/sign-in', '/registro', '/auth', '/ingresar', '/activar-admin', '/olvide-contrasena', '/recovery', '/recuperar-por-whatsapp', '/restablecer-contrasena', '/verificar-email', '/verificar-telefono', '/tus/admin']
+const PROFILE_EXEMPT = ['/mi-perfil', '/sign-in', '/registro', '/auth', '/ingresar', '/activar-admin', '/olvide-contrasena', '/recovery', '/recuperar-por-whatsapp', '/restablecer-contrasena', '/verificar-email', '/verificar-telefono', '/tus/admin', '/ayuda']
 
 // Routes an account with an incomplete profile may still open: the profile itself, the auth
-// screens (sign-in, sign-out, verification) and the platform administration panel.
+// screens (sign-in, sign-out, verification), the platform administration panel and the Help Center
+// (public guides: the one that explains the profile is never behind it).
 export function exemptFromProfile(path: string): boolean {
   return PROFILE_EXEMPT.some((prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}?`))
 }
@@ -320,7 +321,7 @@ export function isPlatformOnly(capabilities: TusAccountCapabilities | null): boo
 }
 
 export interface AccountLink {
-  href: '/tus/admin' | '/prestador/solicitudes' | '/mis-solicitudes' | '/mi-perfil' | '/mis-turnos' | '/trabajos'
+  href: '/tus/admin' | '/prestador/solicitudes' | '/mis-solicitudes' | '/mi-perfil' | '/mis-turnos' | '/trabajos' | '/ayuda/prestadores'
   label: string
   primary?: boolean
   // Shown in the mobile menu and the footer, not among the buttons of the desktop header.
@@ -335,6 +336,8 @@ export function accountLinks(capabilities: TusAccountCapabilities | null): Accou
     { href: '/mi-perfil', label: 'Mi perfil' },
     // Turnos and works belong to accounts that can have them (clients, providers).
     ...(isPlatformOnly(capabilities) ? [] : [{ href: '/mis-turnos' as const, label: 'Mis turnos', soloMenu: true }, { href: '/trabajos' as const, label: 'Mis trabajos' }]),
+    // The provider's manual: one entry (menu and footer); the rest is reached from its cover.
+    ...(capabilities?.provider ? [{ href: '/ayuda/prestadores' as const, label: 'Manual del prestador', soloMenu: true }] : []),
   ]
 }
 

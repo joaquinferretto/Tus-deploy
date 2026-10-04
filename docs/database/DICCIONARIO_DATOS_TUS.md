@@ -541,7 +541,7 @@ WHERE l.id IS NULL;
 
 **`calendarios`** — Agenda principal de disponibilidad del prestador; `(tenant_id, prestador_id)` es UNIQUE para nuevas filas y `prestador_id` nullable permite conservar legacy.
 
-- `granularidad_minutos` default 15 y `buffer_minutos` default 0 controlan la generación futura de inicios; la duración pertenece a la publicación.
+- `buffer_minutos` default 0 se suma a la duración para separar inicios. `granularidad_minutos` default 15 permanece legacy por compatibilidad y ya no controla la generación; la duración pertenece a la publicación.
 - `servicio_id` permanece nullable y legacy, sin FK canónica a `TusService`.
   **`reglas_calendario`** / **`excepciones_calendario`** — Hijos; FK físicas actuales CASCADE.
   **`reservas`** — FK física actual `calendario_id → calendarios` RESTRICT y nueva FK nullable `(tenant_id, publicacion_id) → publicaciones` RESTRICT; `cliente_tenant_id` conserva ownership cliente de reservas nuevas y queda NULL en legado sin backfill determinista; `cliente_id` externa/lógica; `servicio_id` legacy.
@@ -913,11 +913,11 @@ Los **valores** almacenados en columnas como `tipo_evento`, `resultado_habilitac
 
 La disponibilidad de un prestador vive en el dominio existente de calendario; no hay tablas nuevas.
 
-- **Intervalo general**: `calendarios.granularidad_minutos` (ya existía). Cada cuánto puede EMPEZAR un turno en toda la semana.
-- **Intervalo propio de un día**: `reglas_calendario.intervalo_minutos` (columna nueva, nullable). `NULL` = usar el general. `ck_reglas_calendario_intervalo`: `NULL` o uno de 15, 30, 60, 90, 120. Todas las franjas de un mismo día llevan el mismo valor (lo valida `validarHorariosSemanales`).
+- **Intervalo general (legacy)**: `calendarios.granularidad_minutos` se conserva para clientes y filas existentes, pero no decide nuevos inicios.
+- **Intervalo propio de un día (legacy)**: `reglas_calendario.intervalo_minutos` permanece nullable y conserva su constraint (`NULL` o 15/30/60/90/120), sin intervenir en la generación. No se elimina ni se migra destructivamente.
 - **Días y horarios**: filas de `reglas_calendario` (`dia_semana`, `hora_inicio`, `hora_fin`). Un día sin filas es un día no laboral.
 - **Excepciones** (feriado, vacaciones, bloqueo manual, horario reducido): `excepciones_calendario` con `estado = 'active'`. Quitar un bloqueo lo deja en `cancelled` (historial); nunca reescribe las reglas semanales.
-- **Duración**: es del servicio (`perfil_servicios.duracion_minutos`) o de la tarifa elegida. Un inicio existe solo si `inicio + duración <= hora_fin`.
+- **Duración y descanso**: la duración es del servicio (`perfil_servicios.duracion_minutos`) o de la tarifa elegida. Los inicios parten de `hora_inicio` y avanzan `duración + buffer_minutos`. Un inicio existe sólo si `inicio + duración <= hora_fin`; no se exige que el descanso posterior al último turno entre antes del cierre.
 - **Generación**: una sola función (`agendaDelDia`, `apps/api/src/tus/calendar/agenda.ts`) decide cada inicio y su estado (`disponible`, `ocupado`, `bloqueado`, `pasado`). La usan la vista de un día, la agenda semanal y la validación de una reserva.
 - **Concurrencia**: sin cambios. `ex_reservas_sin_solapamiento` impide dos reservas solapadas en un calendario; el perdedor recibe 409 `SLOT_OCCUPIED`.
 
