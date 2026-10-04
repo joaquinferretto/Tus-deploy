@@ -663,6 +663,68 @@ Si los gates no pasan, el sistema debe permanecer bloqueado y conservar evidenci
 - Activation controller que bloquea release jobs hasta que pasan los gates.
 - Rollback que preserva evidencia, auditoria y contratos neutrales.
 
+## Memoria conversacional de TUS
+
+Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md`.
+
+**Objetivo.** Que el asistente (Web y WhatsApp) entienda a que se refiere la persona a lo largo del
+tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
+de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
+
+**Fase actual: 0 terminada (auditoria y diseno). Todavia no hay memoria nueva implementada.**
+
+**Lo que funciona hoy**
+
+- Un solo asistente para Web y WhatsApp, con las mismas tablas: `contactos_whatsapp`,
+  `conversaciones_whatsapp` (una activa por contacto) y `mensajes_conversacion_whatsapp`.
+- Memoria reciente: los ultimos 12 mensajes de la conversacion (cantidad fija, no tokens).
+- Resumen por conversacion: una columna que se sobrescribe cada 24 mensajes; sin versiones y se pierde
+  al cerrar la conversacion.
+- pgvector (`"RagEmbedding"`, 1024 dimensiones) existe y hoy solo lo usa la base de conocimiento.
+- No hay memoria semantica de conversaciones, ni hechos persistentes, ni borrado o retencion.
+
+**Arquitectura acordada (por fases)**
+
+| Capa | Que es | Fase |
+| --- | --- | --- |
+| Historial | mensajes reales, orden estable, paginacion | 1 |
+| Memoria inmediata | mensajes recientes dentro de un presupuesto de tokens | 2 |
+| Resumen | incremental y versionado: "hasta el mensaje X" | 3 |
+| Memoria semantica | recuerdos por cuenta con pgvector | 4 |
+| Hechos | lista cerrada de tipos, con procedencia | 5 |
+| Estado real | resolutores contra las entidades de TUS | 6 |
+
+Despues: continuidad Web + WhatsApp (7), retencion y borrado (8), observabilidad y costos (9),
+validacion integral (10).
+
+**Tablas y modelos.** Se reutilizan las tres tablas de historial y `"RagEmbedding"`. Previstas, aun no
+creadas: secuencia de mensajes, `resumenes_conversacion`, `fragmentos_memoria`, `hechos_memoria`.
+Migraciones solo hacia adelante y no destructivas; sin infraestructura nueva.
+
+**Web y WhatsApp.** La memoria de largo plazo es por cuenta: la sesion en la Web, o un WhatsApp con
+vinculo verificado. Un visitante anonimo o un WhatsApp sin vincular solo tiene la memoria de su
+conversacion actual. Cada recuerdo conserva conversacion, canal y mensaje de origen.
+
+**Privacidad.** Toda lectura filtra por cuenta en la consulta, antes de la busqueda semantica: la
+cuenta A nunca recibe nada de la cuenta B. No se guardan como memoria ni se vectorizan contrasenas,
+codigos de verificacion, tokens, cookies, secretos, datos de tarjetas ni enlaces de autenticacion. Los
+registros no llevan contenido de mensajes.
+
+**Tokens.** Hoy el limite es por cantidad de mensajes. La Fase 2 introduce un constructor unico de
+contexto con presupuesto de tokens estimado por caracteres y limites en un solo lugar; el presupuesto
+inicial propuesto esta en el documento tecnico y todavia no esta medido.
+
+**Pruebas relevantes**
+
+```bash
+node scripts/test-runner.mjs tests/foundation/whatsapp-asistente.test.mjs
+node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
+node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
+```
+
+**Pendientes.** Fases 1 a 10. Para la memoria semantica en produccion hace falta un proveedor de
+embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
+
 ## Limites actuales y trabajo posterior
 
 Estos limites son intencionales y deben permanecer visibles:
@@ -705,6 +767,7 @@ pnpm run security:scan
 ## Documentacion relacionada
 
 - `ARCHITECTURE.md`: arquitectura implementada, decisiones D2 y límites conocidos.
+- `docs/MEMORIA_CONVERSACIONAL_TUS.md`: memoria conversacional del asistente (estado real y fases).
 - `docs/DECISIONES_PRODUCTO_TUS.md`: decisiones canónicas de producto y dominio por Build.
 - `docs/ROADMAP_TUS.md`: estado de fases, pendientes y bloqueos.
 - `docs/GLOSARIO_TUS.md`: terminología normativa de TUS.
