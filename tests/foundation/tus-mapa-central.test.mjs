@@ -54,7 +54,9 @@ test('MAP STATE: the address is untrusted input; only known keys and shapes are 
 test('HEADER: "Alojamientos" and "Cómo funciona" are no longer main destinations; "¿Cómo funciona?" opens a native modal dialog; the routes keep answering', () => {
   const header = web('features/home/public-header.tsx')
   const nav = header.slice(header.indexOf('const NAV = ['), header.indexOf('] as const'))
-  assert.deepEqual([...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1]), ['Buscar servicios', 'Buscar trabajador', 'Para profesionales', 'Ayuda'])
+  assert.deepEqual([...nav.matchAll(/label: '([^']+)'/g)].map((m) => m[1]), ['Buscar servicios', 'Buscar trabajador', 'Para profesionales'])
+  // "Ayuda" is a menu of its own (the Help Center), next to the destinations.
+  assert.match(header, /aria-controls="menu-ayuda" aria-expanded=\{helpOpen\}/)
   assert.doesNotMatch(nav, /alojamientos|como-funciona/)
   assert.equal((header.match(/aria-haspopup="dialog"/g) ?? []).length, 2, 'desktop navigation and mobile menu')
   assert.match(header, /<HowItWorksDialog onClose=\{\(\) => setHowOpen\(false\)\} open=\{howOpen\} \/>/)

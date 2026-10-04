@@ -75,8 +75,8 @@ test('ROLES: "Ir a mi panel" follows the server-side role; admin gets "Panel adm
   assert.deepEqual(result.unknown, { href: '/mis-solicitudes', label: 'Mis solicitudes' })
   // Navigation follows real capabilities: a platform administration account has no works.
   assert.deepEqual(result.links.platformOnly, ['/tus/admin', '/mi-perfil'])
-  assert.deepEqual(result.links.adminProvider, ['/tus/admin', '/mi-perfil', '/mis-turnos', '/trabajos'])
-  assert.deepEqual(result.links.provider, ['/prestador/solicitudes', '/mi-perfil', '/mis-turnos', '/trabajos'])
+  assert.deepEqual(result.links.adminProvider, ['/tus/admin', '/mi-perfil', '/mis-turnos', '/trabajos', '/ayuda/prestadores'])
+  assert.deepEqual(result.links.provider, ['/prestador/solicitudes', '/mi-perfil', '/mis-turnos', '/trabajos', '/ayuda/prestadores'], 'only a provider gets the provider manual')
   assert.deepEqual(result.links.client, ['/mis-solicitudes', '/mi-perfil', '/mis-turnos', '/trabajos'])
   const header = read('apps/web/src/features/home/public-header.tsx')
   assert.doesNotMatch(header, /href="\/mi-perfil">\s*(?:<span[^]*?<\/span>\s*)?Ir a mi panel/u, 'the panel is not /mi-perfil')
@@ -150,7 +150,7 @@ test('HOME layout: map first, one search field, floating assistant, orange marke
   assert.match(widget, /aria-label="Abrir el asistente de TUS"/u)
   assert.doesNotMatch(widget, /soporte|una persona|operador/iu, 'no human handoff that does not exist')
   const footer = read('apps/web/src/features/home/site-footer.tsx')
-  for (const href of ['/trabajadores', '/publicar', '/#como-funciona', '/#profesionales', '/asistente']) assert.ok(footer.includes(`href="${href}"`), href)
+  for (const href of ['/trabajadores', '/publicar', '/#como-funciona', '/#profesionales', '/ayuda']) assert.ok(footer.includes(`href="${href}"`), href)
   assert.doesNotMatch(footer, /terminos|privacidad/iu, 'no links to pages that do not exist')
   // The shared footer receives the page logo since the centred branding was unified (c3407dc).
   assert.match(read('apps/web/src/features/home/site-page.tsx'), /<SiteFooter logo=\{logo\} \/>/u)

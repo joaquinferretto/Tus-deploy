@@ -59,6 +59,8 @@ const PIDE_DATOS = 'Perfecto: Juan Pérez, el jueves 8 a las 09:00.\nEl servicio
 const SIGUE = 'Cuando lo resuelvas, escribime y seguimos con tu turno de Plomería con Juan Pérez, el jueves 8 a las 09:00: queda guardado.'
 const SIN_VERIFICAR = 'Este número todavía no figura verificado en una cuenta TUS. Iniciá sesión en la Web, entrá a Mi perfil, cargá este número y tocá "Verificar mi número": se abre WhatsApp con un mensaje listo para enviar desde acá. Eso verifica el teléfono y vincula este WhatsApp.'
 const PERFIL = 'https://web.tus.test/mi-perfil'
+// After the answer, the guide of the Help Center about THAT topic (never the generic /ayuda).
+const guia = (slug) => `Guía paso a paso: https://web.tus.test/ayuda/${slug}`
 const VINCULAR = 'https://web.tus.test/mi-perfil?accion=vincular-whatsapp'
 
 // The conversation of the screenshot, as a permanent regression.
@@ -84,7 +86,7 @@ test('AYUDA regresión de la captura: waiting for name + DNI -> data not found -
   assert.equal(r.noEncontrada[2], 'Registrarme')
   assert.match(r.noEncontrada[3], /^https:\/\/web\.tus\.test\/registro\?returnTo=/u, 'the real registration page, back to this very turno')
   assert.deepEqual(r.reservaTrasFallo, ['Juan Pérez', 'plomeria', 'identity', true], 'the turno is kept')
-  assert.deepEqual(r.pregunta, ['cta_url', `${SIN_VERIFICAR}\n\n${SIGUE}`, 'Ir a Mi perfil', PERFIL], 'the question is answered: real state, what to do, the real page, what comes next')
+  assert.deepEqual(r.pregunta, ['cta_url', `${SIN_VERIFICAR}\n\n${SIGUE}\n\n${guia('verificar-celular')}`, 'Ir a Mi perfil', PERFIL], 'the question is answered: real state, what to do, the real page, what comes next, and the guide about it')
   assert.doesNotMatch(r.pregunta[1], /nombre completo y DNI/u, 'the DNI is NOT asked again')
   assert.deepEqual(r.reservaTrasPregunta, ['Juan Pérez', 'plomeria', 'identity', true], 'asking did not consume the step: service, professional, day and time are intact')
   assert.deepEqual(r.intencion, [['phone_verification', 'identidad']])
@@ -135,7 +137,7 @@ test('AYUDA interrupciones: a question interrupts ANY step — identity, a time 
     out.noSonAyuda = metrics.filter((m) => m.name === 'assistant.help').length - antes
     console.log(JSON.stringify(out))
   `)
-  assert.equal(r.registro[1], `Este número todavía no figura verificado en una cuenta TUS. Si todavía no tenés cuenta, registrate con tu email. Después verificá tu teléfono en Mi perfil.\n\n${SIGUE}`)
+  assert.equal(r.registro[1], `Este número todavía no figura verificado en una cuenta TUS. Si todavía no tenés cuenta, registrate con tu email. Después verificá tu teléfono en Mi perfil.\n\n${SIGUE}\n\n${guia('registro')}`)
   assert.equal(r.registro[2], 'Registrarme')
   assert.match(r.registro[3], /^https:\/\/web\.tus\.test\/registro\?returnTo=%2Ftrabajadores%2Fperfil-juan/u, 'registering comes back to this turno')
   assert.match(r.paraQue, /^Te pido nombre completo y DNI para encontrar tu cuenta TUS: /u, '"¿para qué?" explains why the data is asked')
@@ -156,7 +158,7 @@ test('AYUDA interrupciones: a question interrupts ANY step — identity, a time 
   assert.equal(r.horaElegida, 'Perfecto: María Gómez, el jueves 8 a las 11:00.', 'and the answer to it is still understood')
   assert.match(r.cambiarNumero[1], /Mi perfil/u)
   assert.deepEqual(r.cambiarNumero.slice(2), ['Ir a Mi perfil', PERFIL])
-  assert.equal(r.cancelar[1], 'Un turno se cancela desde Mis turnos: "Retirar solicitud" si todavía está pendiente, "Cancelar turno" si ya fue aceptado.\n\nSeguimos con tu turno de Electricidad cuando quieras.')
+  assert.equal(r.cancelar[1], 'Un turno se cancela desde Mis turnos: "Retirar solicitud" si todavía está pendiente, "Cancelar turno" si ya fue aceptado.\n\nSeguimos con tu turno de Electricidad cuando quieras.\n\n' + guia('turnos'))
   assert.deepEqual(r.cancelar.slice(2), ['Ver mis turnos', 'https://web.tus.test/mis-turnos'])
   assert.match(r.reprogramar, /^Hoy un turno no se reprograma: se cancela desde Mis turnos y se pide uno nuevo/u, 'a feature TUS does not have is said, with the real alternative')
   assert.deepEqual(r.misTurnos.slice(2), ['Ver mis turnos', 'https://web.tus.test/mis-turnos'])
@@ -207,13 +209,13 @@ test('AYUDA estado real: "¿cómo verifico mi número?" changes with what the ba
     out.fugas = [todo.includes(b), todo.includes(c), /persona\\d+@example\\.com/u.test(todo), /Persona Secreta/u.test(todo)]
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.sinCuenta, ['cta_url', SIN_VERIFICAR, 'Ir a Mi perfil', PERFIL])
-  assert.deepEqual(r.verificado, ['cta_url', 'No necesitás verificarlo otra vez. Tu número ya está verificado; lo que falta es vincular este WhatsApp con tu cuenta TUS. Entrá a Mi perfil, tocá "Vincular este WhatsApp" y enviá desde acá el mensaje que te muestra.', 'Vincular WhatsApp', VINCULAR], 'verifying and linking are told apart')
+  assert.deepEqual(r.sinCuenta, ['cta_url', `${SIN_VERIFICAR}\n\n${guia('verificar-celular')}`, 'Ir a Mi perfil', PERFIL])
+  assert.deepEqual(r.verificado, ['cta_url', 'No necesitás verificarlo otra vez. Tu número ya está verificado; lo que falta es vincular este WhatsApp con tu cuenta TUS. Entrá a Mi perfil, tocá "Vincular este WhatsApp" y enviá desde acá el mensaje que te muestra.\n\n' + guia('vincular-whatsapp'), 'Vincular WhatsApp', VINCULAR], 'verifying and linking are told apart: the guide is the one of the step that is really missing')
   assert.match(r.porQueVincular, /Son dos pasos distintos: verificar confirma que el teléfono es de tu cuenta; vincular conecta este WhatsApp con esa cuenta\./u, 'the cause is explained, not a button repeated')
   assert.match(r.registrarse, /^No hace falta que te registres de nuevo: este número ya es el teléfono verificado de una cuenta TUS\./u)
   assert.match(r.pendiente, /^Hay una verificación en curso para este número: falta enviar desde este WhatsApp el mensaje "VERIFICAR TUS"/u)
   assert.match(r.listoSinEnviar, /^Todavía no me llegó el código de este número\./u)
-  assert.equal(r.vencido[1], 'El último código que generaste venció (dura 10 minutos). Tu número ya está verificado; lo que falta es vincular este WhatsApp con tu cuenta TUS. Generá uno nuevo: entrá a Mi perfil, tocá "Vincular este WhatsApp" y enviá desde acá el mensaje que te muestra.', 'the real cause, and where to get a new one')
+  assert.equal(r.vencido[1], 'El último código que generaste venció (dura 10 minutos). Tu número ya está verificado; lo que falta es vincular este WhatsApp con tu cuenta TUS. Generá uno nuevo: entrá a Mi perfil, tocá "Vincular este WhatsApp" y enviá desde acá el mensaje que te muestra.\n\n' + guia('vincular-whatsapp'), 'the real cause, and where to get a new one')
   assert.deepEqual(r.vencido.slice(2), ['Vincular WhatsApp', VINCULAR])
   assert.equal(r.vencidoInvalido, 'No pudimos verificar ese código. Volvé a TUS y generá una nueva verificación.', 'an expired code still verifies nothing')
   assert.deepEqual(r.vinculado, ['text', 'Tu número ya está verificado y este WhatsApp ya está vinculado a tu cuenta TUS.', null, null])
@@ -367,15 +369,14 @@ test('AYUDA rutas y conocimiento: every page the assistant points to exists in t
   // The linking deep link is the one Mi perfil really understands.
   assert.match(readFileSync(join(root, 'apps/web/src/app/mi-perfil/page.tsx'), 'utf8') + readdirSync(join(root, 'apps/web/src/features/profile')).map((f) => readFileSync(join(root, 'apps/web/src/features/profile', f), 'utf8')).join('\n'), /accion=vincular-whatsapp|vincular-whatsapp/u)
   // Knowledge: the old token flow is gone, the real one is described, and turnos/señas exist.
-  const cuenta = readFileSync(join(root, 'docs/conocimiento/registro-y-cuenta.md'), 'utf8')
-  assert.doesNotMatch(cuenta, /últimos 4 dígitos|Escribí "vincular mi cuenta"/u, 'the retired linking flow is not documented any more')
-  assert.match(cuenta, /Verificar mi número/u)
-  assert.match(cuenta, /VERIFICAR TUS/u)
-  assert.match(cuenta, /Es un paso distinto de verificar el teléfono/u)
-  assert.ok(existsSync(join(root, 'docs/conocimiento/turnos-y-senas.md')))
-  const turnos = readFileSync(join(root, 'docs/conocimiento/turnos-y-senas.md'), 'utf8')
-  assert.match(turnos, /mitad del precio/u)
-  assert.match(turnos, /no se reprograma/u)
+  // Each flow has its own guide now (they are also the pages of the Help Center).
+  const doc = (nombre) => readFileSync(join(root, 'docs/conocimiento', nombre), 'utf8')
+  for (const nombre of ['registro-y-cuenta.md', 'verificar-celular.md', 'vincular-whatsapp.md']) assert.doesNotMatch(doc(nombre), /últimos 4 dígitos|Escribí "vincular mi cuenta"/u, 'the retired linking flow is not documented any more')
+  assert.match(doc('verificar-celular.md'), /Verificar mi número/u)
+  assert.match(doc('verificar-celular.md'), /VERIFICAR TUS/u)
+  assert.match(doc('vincular-whatsapp.md'), /Son dos cosas distintas/u, 'verifying the phone and linking the WhatsApp are told apart')
+  assert.match(doc('pagos.md'), /mitad del precio/u)
+  assert.match(doc('turnos-y-senas.md'), /no se reprograma/u)
   assert.doesNotMatch(readFileSync(join(root, 'docs/conocimiento/asistente-whatsapp.md'), 'utf8'), /No envíes por el chat tu DNI/u, 'the chat does ask for the DNI to find the account: the doc no longer says the opposite')
 })
 

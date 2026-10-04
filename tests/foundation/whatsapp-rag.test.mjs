@@ -38,7 +38,7 @@ test('RAG index: canonical corpus only, deterministic chunks with headings, chec
     const stats = await index.estadisticas()
     console.log(JSON.stringify({ indexed: first.indexed.length, skipped: first.skipped.map((s) => s.reason), embedFirst, again: [again.indexed.length, again.unchanged.length], dry: dry.dryRun, third: [third.indexed, embedCalls], pagosChunks: [...new Set(pagosChunks)], fourth: fourth.deactivated, presupuestosActive: index.documents.get('presupuestos').active, chunkSizes: chunks.map((c) => c.text.length), headings: chunks.map((c) => c.heading), stats, deterministic: JSON.stringify(k.fragmentarMarkdown({ documentId: 'x', version: '1', title: 'T', source: '', visibility: 'public', audience: 'all', language: 'es', active: true, checksum: '', updatedAt: '' }, '# A\\ntexto')) === JSON.stringify(k.fragmentarMarkdown({ documentId: 'x', version: '1', title: 'T', source: '', visibility: 'public', audience: 'all', language: 'es', active: true, checksum: '', updatedAt: '' }, '# A\\ntexto')) }))
   `)
-  assert.equal(result.indexed, 13)
+  assert.equal(result.indexed, 24)
   assert.deepEqual(
     result.skipped.sort(),
     [
@@ -50,7 +50,7 @@ test('RAG index: canonical corpus only, deterministic chunks with headings, chec
     ].sort()
   )
   assert.ok(result.embedFirst > 0)
-  assert.deepEqual(result.again, [0, 13], 'unchanged documents are not re-embedded')
+  assert.deepEqual(result.again, [0, 24], 'unchanged documents are not re-embedded')
   assert.equal(result.dry, true)
   assert.deepEqual(result.third[0], ['pagos'])
   assert.ok(result.third[1] > 0)

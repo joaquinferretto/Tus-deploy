@@ -16,13 +16,15 @@ function run(source) {
 
 test('NAV: header offers both paths and the pages exist', () => {
   const header = web('features/home/public-header.tsx')
-  // Services are searched on the home (map + search + assistant); "Ayuda" opens the assistant page.
+  // Services are searched on the home (map + search + assistant); "Ayuda" is the Help Center, and
+  // the assistant page is one of its entries.
   assert.match(header, /href: '\/', label: 'Buscar servicios'/)
-  assert.match(header, /href: '\/asistente', label: 'Ayuda'/)
+  assert.match(header, /href: '\/ayuda', label: 'Centro de ayuda'/)
+  assert.match(header, /href: '\/asistente', label: 'Preguntarle al asistente'/)
   assert.match(header, /href: '\/trabajadores', label: 'Buscar trabajador'/)
   assert.match(header, /aria-current=/)
   assert.match(header, /withReturnTo\('\/sign-in', back\)/)
-  for (const page of ['asistente/page.tsx', 'trabajadores/page.tsx', 'trabajadores/[id]/page.tsx', 'mis-solicitudes/page.tsx', 'prestador/perfil-publico/page.tsx', 'prestador/solicitudes/page.tsx'])
+  for (const page of ['asistente/page.tsx', 'ayuda/page.tsx', 'ayuda/[...slug]/page.tsx', 'trabajadores/page.tsx', 'trabajadores/[id]/page.tsx', 'mis-solicitudes/page.tsx', 'prestador/perfil-publico/page.tsx', 'prestador/solicitudes/page.tsx'])
     assert.ok(existsSync(join(root, 'apps/web/src/app', page)), page)
   assert.match(web('app/tus/tus-prestador.tsx'), /href="\/prestador\/solicitudes"/)
 })

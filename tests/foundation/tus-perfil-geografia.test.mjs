@@ -171,7 +171,7 @@ test('ONBOARDING and navigation: incomplete profile -> /mi-perfil with returnTo 
       antiguo: [auth.resolvePostLoginRoute(antiguo, '/publicar'), auth.needsProfile(antiguo)],
       sinLoop: [auth.profileRoute('/mi-perfil'), auth.profileRoute('/mi-perfil?returnTo=%2Fmi-perfil'), auth.resolvePostLoginRoute(incompleto, '/mi-perfil')],
       abierto: [auth.profileRoute('https://evil.example/x'), auth.profileRoute('//evil.example'), auth.profileRoute('/sign-in')],
-      exentas: ['/mi-perfil', '/sign-in', '/registro', '/auth/sign-in', '/verificar-email', '/tus/admin', '/tus/admin/usuarios'].map(auth.exemptFromProfile),
+      exentas: ['/mi-perfil', '/sign-in', '/registro', '/auth/sign-in', '/verificar-email', '/tus/admin', '/tus/admin/usuarios', '/ayuda', '/ayuda/verificar-celular'].map(auth.exemptFromProfile),
       protegidas: ['/', '/trabajadores', '/trabajos', '/publicar', '/prestador/turnos', '/asistente', '/tus'].map(auth.exemptFromProfile),
       links: [auth.accountLinks(soloAdmin).map((l) => l.label), auth.accountLinks(adminPrestador).map((l) => l.label), auth.accountLinks(completo).map((l) => l.label)],
       platformOnly: [auth.isPlatformOnly(soloAdmin), auth.isPlatformOnly(adminPrestador), auth.isPlatformOnly(completo), auth.isPlatformOnly(null)],
@@ -186,9 +186,9 @@ test('ONBOARDING and navigation: incomplete profile -> /mi-perfil with returnTo 
   assert.deepEqual(result.antiguo, ['/publicar', false], 'an API without the profile module never forces onboarding')
   assert.deepEqual(result.sinLoop, ['/mi-perfil', '/mi-perfil', '/mi-perfil'], 'the profile never returns to itself')
   assert.deepEqual(result.abierto, ['/mi-perfil', '/mi-perfil', '/mi-perfil'], 'returnTo is an internal path only')
-  assert.deepEqual(result.exentas, [true, true, true, true, true, true, true])
+  assert.deepEqual(result.exentas, [true, true, true, true, true, true, true, true, true], 'the Help Center is public: the guide that explains the profile is never behind it')
   assert.deepEqual(result.protegidas, [false, false, false, false, false, false, false])
-  assert.deepEqual(result.links, [['Panel admin', 'Mi perfil'], ['Panel admin', 'Mi perfil', 'Mis turnos', 'Mis trabajos'], ['Mis solicitudes', 'Mi perfil', 'Mis turnos', 'Mis trabajos']])
+  assert.deepEqual(result.links, [['Panel admin', 'Mi perfil'], ['Panel admin', 'Mi perfil', 'Mis turnos', 'Mis trabajos', 'Manual del prestador'], ['Mis solicitudes', 'Mi perfil', 'Mis turnos', 'Mis trabajos']])
   assert.deepEqual(result.platformOnly, [true, false, false, false])
 
   // Header (desktop + mobile menu) and footer render that one list; the route itself answers.
