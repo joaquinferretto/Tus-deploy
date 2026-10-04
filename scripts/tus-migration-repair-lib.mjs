@@ -763,6 +763,18 @@ export const REVIEWED_MIGRATION_STATEMENTS = Object.freeze([
     sha256: '63b5691b532d8883ded6b1e6af38890270ae34f0e90d8f1143400f1f42570b1f',
     reason: 'Deterministic rename of one state value: payout requests in pending (the provider asked, funds reserved, nobody started paying) are the same requests now called requested. No other column, row or state is touched; amounts, items and ledger movements are not rewritten.',
   },
+  {
+    migration: '20261101100000_tus_precios_iniciales_servicios',
+    classification: 'ambiguous',
+    sha256: 'a4718050cd9baf0323d533f76b7ce6af2f59419bd1955f59c68e09477b6a6222',
+    reason: 'Data only, requested by the owner: the base price of every service a provider offers today (perfil_servicios.precio_base, whole pesos), for trades active in the catalog, becomes 200. No row is inserted, no column or default changes, and reservations, payments, obligations, ledger and earnings are not touched. A second run changes no row. It overwrites the base prices providers had set: accepted for the test stage.',
+  },
+  {
+    migration: '20261101100000_tus_precios_iniciales_servicios',
+    classification: 'ambiguous',
+    sha256: 'ddf2eddc8b339cc39dd2568d7ea347223502d1079e4ba6f2f1c39a41ae9ff50f',
+    reason: 'Data only, requested by the owner: the price of every ACTIVE variant (tarifas_servicio_prestador.precio, whole pesos) of a trade active in the catalog becomes 200. No row is inserted (a provider gets no service it does not offer), inactive variants keep their price, and no historical snapshot is touched. A second run changes no row. It overwrites the prices providers had set: accepted for the test stage.',
+  },
 ])
 
 export function normalizedStatementHash(sql) {

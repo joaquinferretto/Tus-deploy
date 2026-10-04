@@ -785,6 +785,17 @@ Relación con búsqueda y mapa: los barrios y zonas activos son los lugares que 
 
 `perfiles_publicos_prestador.oficio` es el servicio principal: FK compuesta `fk_perfiles_servicio_principal (id, oficio) → perfil_servicios (perfil_id, oficio_id)` `DEFERRABLE INITIALLY DEFERRED` (la aplicación escribe perfil y servicios en una transacción).
 
+Precio inicial de los servicios actuales (`20261101100000_tus_precios_iniciales_servicios`, solo datos):
+
+La fuente de verdad del precio de un servicio de un prestador no cambia: `tarifas_servicio_prestador.precio` (cada
+variante) y `perfil_servicios.precio_base` (servicio sin variantes), ambos en **pesos enteros** (ARS $200 = `200`; la
+seña la deriva el backend). La migración deja en 200 las filas que existen al aplicarla: `precio_base` de los servicios
+de oficios activos y `precio` de las variantes activas de oficios activos. No inserta filas (un prestador no recibe un
+servicio que no ofrece), no agrega ningún `DEFAULT` (los servicios futuros siguen el flujo normal de precios), no toca
+variantes inactivas ni oficios dados de baja, y no modifica `reservas.precio_final` ni ninguna tabla de pagos,
+obligaciones, ledger, ganancias o liquidaciones. Es repetible: una segunda ejecución no cambia filas. **Sobrescribe los
+precios que los prestadores habían cargado** (etapa de pruebas, pedido del dueño); no guarda los valores anteriores.
+
 Foto de perfil del prestador (`20261031100000_tus_foto_perfil_prestador`):
 
 | Tabla / columna | Tipo | Nulo | Propósito |
