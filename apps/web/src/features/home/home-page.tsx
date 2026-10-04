@@ -30,11 +30,9 @@ import type { ProviderMapFilters } from './providers-source'
 import styles from './home.module.css'
 import { useCatalog } from '../catalog/use-catalog'
 
-// Leaflet needs `window`: the maps are loaded only in the browser; the rest of the home renders on
-// the server and a light skeleton keeps the hero stable while a map loads.
-const mapSkeleton = () => <div aria-hidden="true" className={styles.mapSkeleton} />
-const ProviderMap = dynamic(() => import('./provider-map'), { ssr: false, loading: mapSkeleton })
-const LodgingMap = dynamic(() => import('../alojamientos/alojamientos-map'), { ssr: false, loading: mapSkeleton })
+// Leaflet needs `window`: the map is loaded only in the browser; the rest of the home renders on
+// the server and a light skeleton keeps the hero stable while the map loads.
+const HomeMap = dynamic(() => import('./home-map'), { ssr: false, loading: () => <div aria-hidden="true" className={styles.mapSkeleton} /> })
 
 const NO_FILTERS: ProviderMapFilters = { query: '', profession: '', zone: '', category: '' }
 
@@ -180,11 +178,19 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
             Profesionales y alojamientos cerca tuyo
           </h1>
           <div aria-label={lodgingsOn ? 'Mapa de alojamientos' : 'Mapa de prestadores y zonas de atención'} className={styles.mapLayer} role="region">
-            {lodgingsOn ? (
-              <LodgingMap alojamientos={lodgingData} fill onSelect={setSelectedLodgingId} popups={!compact} selectedId={selectedLodgingId} />
-            ) : (
-              <ProviderMap catalog={catalog.data} onSelect={selectProvider} popups={!compact} searchSignal={searchSignal} selectedId={selectedProviderId} workers={providerData} />
-            )}
+            {/* One map: the type only changes the layer drawn on it. */}
+            <HomeMap
+              catalog={catalog.data}
+              kind={kind}
+              lodgings={lodgingData}
+              onSelectLodging={setSelectedLodgingId}
+              onSelectProvider={selectProvider}
+              popups={!compact}
+              searchSignal={searchSignal}
+              selectedLodgingId={selectedLodgingId}
+              selectedProviderId={selectedProviderId}
+              workers={providerData}
+            />
           </div>
           <div className={styles.searchDock} data-map-overlay="search-dock">
             <MapTypeSelector kind={kind} onChange={changeKind} />

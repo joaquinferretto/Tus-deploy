@@ -1,10 +1,8 @@
 'use client'
 
-import 'leaflet/dist/leaflet.css'
-
 import L from 'leaflet'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet'
+import { Marker, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet'
 
 import type { PrestadorPublico } from '@factory/contracts'
 
@@ -19,6 +17,7 @@ import { ratingLabel } from '../directory/rating-label'
 import { servicesLabel } from '../directory/services-label'
 import { Avatar } from '../directory/avatar'
 import { MAX_CLUSTER_ZOOM, clusterMarkers, type MapGroup } from './map-clusters'
+import { TusMap, useMapOperation, useMapTimers } from './tus-map'
 
 const TILE_URL = process.env['NEXT_PUBLIC_MAP_TILE_URL'] || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 const TILE_ATTRIBUTION = process.env['NEXT_PUBLIC_MAP_TILE_ATTRIBUTION'] || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -97,72 +96,65 @@ function fitProviders(map: L.Map, workers: PrestadorPublico[], home: MapHome, an
   map.fitBounds(bounds, { paddingTopLeft: padding.topLeft, paddingBottomRight: padding.bottomRight, maxZoom: 15, animate })
 }
 
-// Leaflet ignores setView while a zoom animation is running (a fit that started a moment before),
-// so the person's locality is applied without animation and, if a running animation swallowed it,
-// once more when that animation ends.
 function goHome(map: L.Map, home: MapHome) {
-  const apply = () => map.setView([home.lat, home.lng], home.zoom, { animate: false })
-  apply()
-  map.once('moveend', () => {
-    if (map.getCenter().distanceTo([home.lat, home.lng]) > 100) apply()
-  })
+  map.setView([home.lat, home.lng], home.zoom, { animate: false })
 }
 
 function ensurePopupVisible(map: L.Map, popup: L.Popup) {
-  requestAnimationFrame(() => {
-    const popupEl = popup.getElement()
-    const mapEl = map.getContainer()
-    if (!popupEl || !mapEl) return
+  // Only a popup that is still open on the map is moved into view.
+  if (!popup.isOpen()) return
+  const popupEl = popup.getElement()
+  const mapEl = map.getContainer()
+  if (!popupEl || !mapEl) return
 
-    const popupRect = popupEl.getBoundingClientRect()
-    const mapRect = mapEl.getBoundingClientRect()
-    const dockEl = document.querySelector('[data-map-overlay="search-dock"]')
-    const dockRect = dockEl?.getBoundingClientRect()
-    const headerEl = document.querySelector('header')
-    const headerRect = headerEl?.getBoundingClientRect()
+  const popupRect = popupEl.getBoundingClientRect()
+  const mapRect = mapEl.getBoundingClientRect()
+  const dockEl = document.querySelector('[data-map-overlay="search-dock"]')
+  const dockRect = dockEl?.getBoundingClientRect()
+  const headerEl = document.querySelector('header')
+  const headerRect = headerEl?.getBoundingClientRect()
 
-    const MARGIN = 16
-    let safeTop = mapRect.top + MARGIN
-    let safeBottom = mapRect.bottom - MARGIN
-    let safeLeft = mapRect.left + MARGIN
-    let safeRight = mapRect.right - MARGIN
+  const MARGIN = 16
+  let safeTop = mapRect.top + MARGIN
+  let safeBottom = mapRect.bottom - MARGIN
+  let safeLeft = mapRect.left + MARGIN
+  let safeRight = mapRect.right - MARGIN
 
-    if (headerRect && headerRect.bottom > mapRect.top) {
-      safeTop = Math.max(safeTop, headerRect.bottom + MARGIN)
+  if (headerRect && headerRect.bottom > mapRect.top) {
+    safeTop = Math.max(safeTop, headerRect.bottom + MARGIN)
+  }
+
+  if (dockRect) {
+    const dockOverlapsX = dockRect.left < mapRect.right && dockRect.right > mapRect.left
+    const dockOverlapsY = dockRect.top < mapRect.bottom && dockRect.bottom > mapRect.top
+    if (dockOverlapsX && dockOverlapsY) {
+      safeTop = Math.max(safeTop, dockRect.bottom + MARGIN)
     }
+  }
 
-    if (dockRect) {
-      const dockOverlapsX = dockRect.left < mapRect.right && dockRect.right > mapRect.left
-      const dockOverlapsY = dockRect.top < mapRect.bottom && dockRect.bottom > mapRect.top
-      if (dockOverlapsX && dockOverlapsY) {
-        safeTop = Math.max(safeTop, dockRect.bottom + MARGIN)
-      }
-    }
+  safeTop = Math.max(safeTop, MARGIN)
+  safeBottom = Math.min(safeBottom, window.innerHeight - MARGIN)
+  safeLeft = Math.max(safeLeft, MARGIN)
+  safeRight = Math.min(safeRight, window.innerWidth - MARGIN)
 
-    safeTop = Math.max(safeTop, MARGIN)
-    safeBottom = Math.min(safeBottom, window.innerHeight - MARGIN)
-    safeLeft = Math.max(safeLeft, MARGIN)
-    safeRight = Math.min(safeRight, window.innerWidth - MARGIN)
+  let dx = 0
+  let dy = 0
 
-    let dx = 0
-    let dy = 0
+  if (popupRect.top < safeTop) {
+    dy = -(safeTop - popupRect.top)
+  } else if (popupRect.bottom > safeBottom) {
+    dy = popupRect.bottom - safeBottom
+  }
 
-    if (popupRect.top < safeTop) {
-      dy = -(safeTop - popupRect.top)
-    } else if (popupRect.bottom > safeBottom) {
-      dy = popupRect.bottom - safeBottom
-    }
+  if (popupRect.left < safeLeft) {
+    dx = -(safeLeft - popupRect.left)
+  } else if (popupRect.right > safeRight) {
+    dx = popupRect.right - safeRight
+  }
 
-    if (popupRect.left < safeLeft) {
-      dx = -(safeLeft - popupRect.left)
-    } else if (popupRect.right > safeRight) {
-      dx = popupRect.right - safeRight
-    }
-
-    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-      map.panBy([dx, dy], { animate: true, duration: 0.25 })
-    }
-  })
+  if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+    map.panBy([dx, dy], { animate: true, duration: 0.25 })
+  }
 }
 
 function MapController({
@@ -179,6 +171,7 @@ function MapController({
   home: MapHome
 }) {
   const map = useMap()
+  const scheduleMapOperation = useMapOperation()
   const initialFitDone = useRef(false)
   const prevRecenterSignal = useRef(recenterSignal)
   const appliedHome = useRef('')
@@ -188,25 +181,31 @@ function MapController({
     // change it in their profile). A search or "Recentrar" still frames the results.
     const homeKey = home.personal ? `${home.lat},${home.lng}` : ''
     if (homeKey !== appliedHome.current) {
-      appliedHome.current = homeKey
       if (homeKey) {
-        initialFitDone.current = true
-        prevRecenterSignal.current = recenterSignal
-        goHome(map, home)
-        return
+        return scheduleMapOperation(() => {
+          appliedHome.current = homeKey
+          initialFitDone.current = true
+          prevRecenterSignal.current = recenterSignal
+          goHome(map, home)
+        })
       }
+      appliedHome.current = homeKey
     }
     if (!initialFitDone.current && workers.length > 0) {
       // The first framing is not animated: the map simply starts there.
-      fitProviders(map, workers, home, false)
-      initialFitDone.current = true
-      return
+      return scheduleMapOperation(() => {
+        initialFitDone.current = true
+        fitProviders(map, workers, home, false)
+      })
     }
     if (recenterSignal !== prevRecenterSignal.current) {
-      prevRecenterSignal.current = recenterSignal
-      fitProviders(map, workers, home)
+      return scheduleMapOperation(() => {
+        prevRecenterSignal.current = recenterSignal
+        fitProviders(map, workers, home)
+      })
     }
-  }, [home, map, recenterSignal, workers])
+    return undefined
+  }, [home, map, recenterSignal, scheduleMapOperation, workers])
 
   const prevSelectedId = useRef<string | null>(null)
   useEffect(() => {
@@ -215,7 +214,6 @@ function MapController({
       return
     }
     if (selected.id === prevSelectedId.current) return
-    prevSelectedId.current = selected.id
 
     const location = workerPoint(selected)
     if (!location) return
@@ -255,28 +253,36 @@ function MapController({
     const targetPoint = L.point(projected.x, projected.y - shiftY)
     const target = map.unproject(targetPoint, zoom)
 
-    let done = false
-    const onFlyEnd = () => {
-      if (done) return
-      done = true
-      map.off('moveend', onFlyEnd)
-      if (activePopupRef.current && activePopupRef.current.isOpen()) {
-        ensurePopupVisible(map, activePopupRef.current)
+    let disposeOperation = () => undefined
+    const cancelScheduled = scheduleMapOperation(() => {
+      prevSelectedId.current = selected.id
+      let done = false
+      const onFlyEnd = () => {
+        if (done) return
+        done = true
+        map.off('moveend', onFlyEnd)
+        if (activePopupRef.current?.isOpen()) {
+          ensurePopupVisible(map, activePopupRef.current)
+        }
       }
-    }
 
-    map.flyTo(target, zoom, { duration: 0.5 })
-    const moveTimer = setTimeout(() => {
-      map.once('moveend', onFlyEnd)
-    }, 150)
-    const fallbackTimer = setTimeout(onFlyEnd, 550)
+      map.flyTo(target, zoom, { duration: 0.5 })
+      const moveTimer = setTimeout(() => {
+        map.once('moveend', onFlyEnd)
+      }, 150)
+      const fallbackTimer = setTimeout(onFlyEnd, 550)
+      disposeOperation = () => {
+        map.off('moveend', onFlyEnd)
+        clearTimeout(moveTimer)
+        clearTimeout(fallbackTimer)
+      }
+    })
 
     return () => {
-      map.off('moveend', onFlyEnd)
-      clearTimeout(moveTimer)
-      clearTimeout(fallbackTimer)
+      cancelScheduled()
+      disposeOperation()
     }
-  }, [activePopupRef, map, selected])
+  }, [activePopupRef, map, scheduleMapOperation, selected])
   return null
 }
 
@@ -298,58 +304,14 @@ function MapEventsHandler({
     },
   })
 
+  // The reference is only valid while this layer is mounted.
   useEffect(() => {
     mapRef.current = map
+    return () => {
+      mapRef.current = null
+    }
   }, [map, mapRef])
 
-  return null
-}
-
-// Leaflet caches the size of its container. It is told to measure again ONLY when the container
-// really changed size (rotation, the mobile address bar, the dock growing), once per frame.
-export function MapSizeWatcher() {
-  const map = useMap()
-  useEffect(() => {
-    if (typeof ResizeObserver === 'undefined') return
-    const container = map.getContainer()
-    let width = container.clientWidth
-    let height = container.clientHeight
-    let frame = 0
-    const observer = new ResizeObserver(() => {
-      if (container.clientWidth === width && container.clientHeight === height) return
-      width = container.clientWidth
-      height = container.clientHeight
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(() => map.invalidateSize({ animate: false }))
-    })
-    observer.observe(container)
-    return () => {
-      cancelAnimationFrame(frame)
-      observer.disconnect()
-    }
-  }, [map])
-  return null
-}
-
-// Leaflet ends a zoom animation on a timer. When the map is removed meanwhile (the type selector
-// swaps one map for the other, or the page changes) that timer runs on a pane that no longer
-// exists and throws. Stopping the running animations and clearing the pending-zoom flag as the
-// map goes away turns that timer into a no-op.
-export function MapUnmountGuard() {
-  const map = useMap()
-  useEffect(
-    () => () => {
-      // Not map.stop(): it also sets the zoom, which itself fails on a removed map.
-      const interno = map as unknown as { _stop?: () => void; _animatingZoom?: boolean }
-      try {
-        interno._stop?.()
-      } catch {
-        // The map is already gone: nothing left to stop.
-      }
-      interno._animatingZoom = false
-    },
-    [map]
-  )
   return null
 }
 
@@ -453,6 +415,7 @@ export default function ProviderMap({
   searchSignal = 0,
   catalog,
   popups = true,
+  overlay,
 }: {
   workers: PrestadorPublico[]
   selectedId: string | null
@@ -462,6 +425,10 @@ export default function ProviderMap({
   // False on small screens: the selected provider is shown in a bottom sheet by the page, not in
   // a popup over the map. Group lists keep their popup.
   popups?: boolean
+  // ONE map for the home. When given, this layer is drawn INSTEAD of the professionals (their
+  // markers, popups, listeners and framing are unmounted, so nothing of them is left on the map);
+  // the map itself, its tiles and its controls stay. It receives the "Recentrar" signal.
+  overlay?: ((recenterSignal: number) => React.ReactNode) | null
 }): React.ReactNode {
   const [touch] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches)
   const [interactive, setInteractive] = useState(!touch)
@@ -481,11 +448,23 @@ export default function ProviderMap({
 
   const justSelectedRef = useRef(false)
   const prevOpenedIdRef = useRef<string | null>(null)
+  // Cancelled on unmount: no callback of this component outlives it.
+  const later = useMapTimers()
+  const showingOverlay = Boolean(overlay)
+
+  // Leaving the professionals (another layer takes the map) forgets their popup and selection
+  // bookkeeping, so coming back starts clean.
+  useEffect(() => {
+    if (!showingOverlay) return
+    activePopupRef.current = null
+    prevOpenedIdRef.current = null
+    justSelectedRef.current = false
+  }, [showingOverlay])
 
   const handleSelect = (id: string | null) => {
     if (id) {
       justSelectedRef.current = true
-      setTimeout(() => {
+      later(() => {
         justSelectedRef.current = false
       }, 700)
     }
@@ -494,7 +473,7 @@ export default function ProviderMap({
 
   const handlePopupOpen = (popup: L.Popup) => {
     activePopupRef.current = popup
-    setTimeout(() => {
+    later(() => {
       if (!justSelectedRef.current && mapRef.current) {
         ensurePopupVisible(mapRef.current, popup)
       }
@@ -536,13 +515,13 @@ export default function ProviderMap({
 
   return (
     <>
-      <MapContainer center={[DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng]} dragging={interactive} ref={mapRef} scrollWheelZoom={interactive} style={{ height: '100%', width: '100%' }} zoom={DEFAULT_MAP_CENTER.zoom} zoomControl={false}>
+      <TusMap center={[DEFAULT_MAP_CENTER.lat, DEFAULT_MAP_CENTER.lng]} dragging={interactive} scrollWheelZoom={interactive} zoom={DEFAULT_MAP_CENTER.zoom}>
         <TileLayer attribution={TILE_ATTRIBUTION} url={TILE_URL} />
         <ZoomControl position="bottomleft" zoomInTitle="Acercar" zoomOutTitle="Alejar" />
         <ZoomWatcher onZoom={setZoom} />
-        <MapSizeWatcher />
-        <MapUnmountGuard />
         <MapInteractionController interactive={interactive} />
+        {overlay ? overlay(recenterSignal) : (
+          <>
         <MapController activePopupRef={activePopupRef} home={home} recenterSignal={recenterSignal + searchSignal} selected={selected} workers={workers} />
         <MapEventsHandler mapRef={mapRef} onPopupClose={handlePopupClose} onPopupOpen={handlePopupOpen} />
         {groups.map((group) => {
@@ -580,7 +559,9 @@ export default function ProviderMap({
             />
           )
         })}
-      </MapContainer>
+          </>
+        )}
+      </TusMap>
       {touch && !interactive ? <p className={styles.mapNotice} role="note">Tocá “Mover mapa” para explorarlo</p> : null}
       <div className={styles.mapControls}>
         {touch ? <button className={styles.buttonSecondary} onClick={() => setInteractive((value) => !value)} type="button">{interactive ? 'Fijar mapa' : 'Mover mapa'}</button> : null}

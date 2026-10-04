@@ -622,7 +622,11 @@ seña en ese caso).
   (o nada: nunca una valoración inventada). En pantallas chicas el elemento elegido se abre en una hoja inferior en lugar del
   popup.
 - **Responsive** de 320 a 1920 px: el mapa sigue al viewport visible (`dvh`, con `vh` de respaldo), el logo escala, y Leaflet
-  vuelve a medirse solo cuando su contenedor cambia de tamaño (un `ResizeObserver`; no hay temporizadores).
+  vuelve a medirse solo cuando su contenedor cambia de tamaño (un `ResizeObserver`; no hay polling).
+- **Lifecycle de Leaflet**: Profesionales y Alojamientos son capas excluyentes del mismo `L.Map`; el selector no destruye el
+  mapa. Las operaciones de vista se serializan con `movestart`/`moveend` y la última capa montada reemplaza una operación
+  pendiente. En el unmount real se quitan listeners y callbacks propios, y `remove()` espera la ventana de `zoomanim` de
+  Leaflet 1.9.4. Solo se usan eventos y métodos públicos; no se accede a estado privado ni se ocultan errores.
 - **Rendimiento**: íconos de marcadores memorizados, búsquedas reemplazadas canceladas (`AbortSignal`), agrupamiento propio.
   No hay consulta por recuadro (`bounds`): el mapa trae como máximo 300 perfiles en una sola respuesta y agrupa en el
   navegador; si esa cota deja de alcanzar, el recuadro tiene que validarse en el servidor.

@@ -138,7 +138,7 @@ test('ROLES API: /auth/session returns server-resolved capabilities; admin candi
 
 test('HOME layout: map first, one search field, floating assistant, orange markers, shared footer', () => {
   const home = read('apps/web/src/features/home/home-page.tsx')
-  assert.match(home, /<ProviderMap /u)
+  assert.match(home, /<HomeMap/u)
   // The floating assistant is the shared orchestrator of the API (it no longer runs the Web search).
   assert.match(home, /<AssistantWidget \/>/u)
   assert.match(home, /searchServices\(text, searchDeps\)/u, 'the search bar interprets natural text with the API interpreter')

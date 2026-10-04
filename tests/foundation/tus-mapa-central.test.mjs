@@ -90,7 +90,8 @@ test('MAP TYPE: one selector switches results, markers, filters and cards; lodgi
   assert.deepEqual([...selector.matchAll(/label: '([^']+)'/g)].map((m) => m[1]), ['Profesionales', 'Alojamientos'])
 
   assert.match(home, /<MapTypeSelector kind=\{kind\} onChange=\{changeKind\} \/>/)
-  assert.match(home, /lodgingsOn \? \(\s*<LodgingMap/)
+  assert.match(home, /<HomeMap[\s\S]*kind=\{kind\}/)
+  assert.match(web('features/home/home-map.tsx'), /kind === 'alojamientos'[\s\S]*<LodgingLayer/)
   assert.match(home, /<LodgingFilters/)
   assert.match(home, /<MapFilters/)
   assert.match(home, /<LodgingResults/)
@@ -154,8 +155,7 @@ test('RESPONSIVE MAP: the hero follows the visible viewport, small screens get a
 
   const home = web('features/home/home-page.tsx')
   assert.match(home, /const compact = useMediaQuery\('\(max-width: 768px\)'\)/)
-  assert.match(home, /<ProviderMap [^>]*popups=\{!compact\}/)
-  assert.match(home, /<LodgingMap [^>]*popups=\{!compact\}/)
+  assert.match(home, /<HomeMap[\s\S]*popups=\{!compact\}/)
   assert.match(home, /compact && !lodgingsOn && selectedProvider \? \(\s*<MapSheet/)
   assert.match(home, /compact && lodgingsOn && selectedLodging \? \(\s*<MapSheet/)
   const sheet = web('features/home/map-sheet.tsx')
@@ -165,20 +165,27 @@ test('RESPONSIVE MAP: the hero follows the visible viewport, small screens get a
   assert.match(web('features/home/use-media-query.ts'), /useSyncExternalStore\(/)
 
   const map = web('features/home/provider-map.tsx')
-  const watcher = map.slice(map.indexOf('export function MapSizeWatcher'), map.indexOf('function ZoomWatcher'))
+  const lifecycle = web('features/home/tus-map.tsx')
+  const watcher = lifecycle.slice(lifecycle.indexOf('function MapSizeWatcher'), lifecycle.indexOf('// Timers of a map component'))
   assert.match(watcher, /new ResizeObserver\(/)
   assert.match(watcher, /if \(container\.clientWidth === width && container\.clientHeight === height\) return/, 'nothing happens unless the size really changed')
   assert.match(watcher, /requestAnimationFrame\(\(\) => map\.invalidateSize\(\{ animate: false \}\)\)/)
   assert.match(watcher, /observer\.disconnect\(\)/)
-  assert.equal((map.match(/invalidateSize/g) ?? []).length, 1, 'no other caller re-measures the map')
+  assert.equal((lifecycle.match(/invalidateSize/g) ?? []).length, 1, 'no other caller re-measures the map')
   assert.doesNotMatch(map, /setInterval/)
   // Icons are memoized, so an unchanged render does not rebuild the markers.
   assert.match(map, /const iconCache = new Map<string, L\.DivIcon>\(\)/)
-  assert.match(web('features/alojamientos/alojamientos-map.tsx'), /<MapSizeWatcher \/>/)
-  // Swapping maps mid-animation must not leave a Leaflet timer running on a removed map.
-  assert.match(map, /export function MapUnmountGuard\(\) \{[\s\S]*?interno\._stop\?\.\(\)[\s\S]*?interno\._animatingZoom = false/)
-  assert.match(map, /<MapUnmountGuard \/>/)
-  assert.match(web('features/alojamientos/alojamientos-map.tsx'), /<MapUnmountGuard \/>/)
+  assert.match(lifecycle, /<MapSizeWatcher \/>/)
+  // The selector swaps layers inside one map. True unmount is delayed until Leaflet's public
+  // zoom lifecycle has settled, without private fields, stop(), or exception swallowing.
+  assert.match(web('features/home/home-map.tsx'), /kind === 'alojamientos'[\s\S]*<LodgingLayer/)
+  assert.match(lifecycle, /map\.on\('zoomanim', onZoomAnimation\)/)
+  assert.match(lifecycle, /map\.on\('zoomend', onZoomEnd\)/)
+  assert.match(lifecycle, /ZOOM_ANIMATION_MS \+ ZOOM_REMOVAL_GRACE_MS/)
+  assert.match(lifecycle, /setTimeout\(\(\) => \{[\s\S]*?map\.remove\(\)/)
+  assert.doesNotMatch(lifecycle + map, /_animatingZoom|\._stop|map\.stop\(|try\s*\{/)
+  assert.match(lifecycle, /if \(moving\) pending = scheduled/)
+  assert.match(lifecycle, /if \(pending === scheduled\) pending = null/)
   // The sheet is anchored to the screen (the bottom of the map can be below the fold).
   assert.match(css, /\.mapSheet \{[^}]*position: fixed;[^}]*z-index: 1200;/)
 
