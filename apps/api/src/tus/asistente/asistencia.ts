@@ -69,6 +69,51 @@ export type RutaTus = keyof typeof RUTAS_TUS
 
 export const enlaceTus = (webBaseUrl: string | null | undefined, ruta: RutaTus): string | null => (webBaseUrl ? `${webBaseUrl.replace(/\/+$/u, '')}${RUTAS_TUS[ruta]}` : null)
 
+// The guide of the Help Center about each topic (the slug of an article of docs/conocimiento: the
+// same documents the knowledge index reads). The assistant answers first and offers the guide
+// after; when it knows the topic it links THAT guide, never the generic /ayuda. A test checks
+// that every slug is a published article.
+export const GUIA_DE_TEMA: Partial<Record<TemaAyuda, string>> = {
+  registration: 'registro',
+  login: 'registro',
+  password_reset: 'registro',
+  phone_verification: 'verificar-celular',
+  phone_change: 'verificar-celular',
+  whatsapp_linking: 'vincular-whatsapp',
+  linking_code: 'vincular-whatsapp',
+  account_status: 'vincular-whatsapp',
+  identity_data: 'vincular-whatsapp',
+  profile: 'verificar-celular',
+  appointments: 'turnos',
+  my_appointments: 'turnos',
+  cancellations: 'turnos',
+  rescheduling: 'turnos',
+  deposit: 'pagos',
+  payments: 'pagos',
+  receipts: 'pagos',
+  service_request: 'solicitudes',
+  works: 'presupuestos',
+  how_it_works: 'empezar',
+  support: 'problemas-frecuentes',
+  provider_profile: 'prestadores/perfil-publico',
+  provider_services: 'prestadores/servicios',
+  provider_schedule: 'prestadores/disponibilidad',
+  provider_location: 'prestadores/perfil-publico',
+  mercado_pago: 'prestadores/mercado-pago',
+  earnings: 'prestadores/ganancias',
+}
+
+export const enlaceGuia = (webBaseUrl: string | null | undefined, slug: string): string | null => (webBaseUrl ? `${webBaseUrl.replace(/\/+$/u, '')}/ayuda/${slug}` : null)
+
+// The guide for a question about the account: the one of the step that is really missing.
+export function guiaDeCuenta(tema: TemaAyuda, estado: EstadoVinculoCuenta): string | null {
+  if (estado === 'vinculado') return null
+  if (tema === 'stuck' || tema === 'next_step') return estado === 'sin_cuenta' ? 'verificar-celular' : 'vincular-whatsapp'
+  // The number is already verified: what is left is the link, whatever was asked about verifying.
+  if (tema === 'phone_verification' && estado !== 'sin_cuenta') return 'vincular-whatsapp'
+  return GUIA_DE_TEMA[tema] ?? null
+}
+
 const plano = (texto: string): string =>
   sinAcentos(texto.toLowerCase().slice(0, 400))
     .replace(/[^a-z0-9ñ\s]/gu, ' ')

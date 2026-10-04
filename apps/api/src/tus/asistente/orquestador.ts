@@ -7,7 +7,7 @@ import { formatearPesos } from '@factory/contracts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
-import { TEMAS_AYUDA, TEMAS_DE_CUENTA, ayudaDeCuenta, detectarAyuda, enlaceTus, lineaDeReanudacion, pideExplicacion, rutaDeTema, type AyudaDetectada, type EstadoDesafio, type TemaAyuda } from './asistencia.ts'
+import { GUIA_DE_TEMA, TEMAS_AYUDA, TEMAS_DE_CUENTA, ayudaDeCuenta, detectarAyuda, enlaceGuia, enlaceTus, guiaDeCuenta, lineaDeReanudacion, pideExplicacion, rutaDeTema, type AyudaDetectada, type EstadoDesafio, type TemaAyuda } from './asistencia.ts'
 import { extracto } from './ayuda.ts'
 import { BOTONES_SOLICITUD, elegirServicio, elegirServicioPorNombre, enlaceRegistro, fechaLarga, horaCorta, preguntaServicio, resumenSolicitud, retornoDeSolicitud, sinIdentificadores, textoPrecio, type OpcionServicio } from './solicitud-turno.ts'
 import { ErrorChat, type ChatProvider, type MensajeChat, type Transcriptor } from './groq.ts'
@@ -1999,8 +1999,11 @@ export class OrquestadorConversacion {
     await this.actualizarEstado(conversationId, { ...(state.booking ? { booking: { ...state.booking, at: this.now() } } : {}), ...(state.need ? { needAt: this.now() } : {}), lowConfidenceCount: 0 })
     this.metric('assistant.help', { channel: turn.canal.id, topic: ayuda.tema, interrupted: pendiente?.espera ?? 'none' })
     await this.deps.transaction.ejecutar((repositories) => this.auditar(repositories, 'assistant.help', turn, correlationId, { topic: ayuda.tema, interrupted: pendiente?.espera ?? null }))
-    const armar = (texto: string, url: string | null, boton: string | null): MensajeSaliente[] => {
-      const completo = [texto, lineaDeReanudacion(pendiente)].filter(Boolean).join('\n\n')
+    // The answer comes first; the guide of the Help Center about that very topic is offered after
+    // it (never instead of it, and never the generic help page when the topic is known).
+    const armar = (texto: string, url: string | null, boton: string | null, guia: string | null = GUIA_DE_TEMA[ayuda.tema] ?? null): MensajeSaliente[] => {
+      const enlace = guia ? enlaceGuia(this.deps.webBaseUrl, guia) : null
+      const completo = [texto, lineaDeReanudacion(pendiente), enlace ? `Guía paso a paso: ${enlace}` : ''].filter(Boolean).join('\n\n')
       return url && boton ? [{ type: 'cta_url', text: completo, label: boton, url }] : [{ type: 'text', text: completo }]
     }
     // Account, phone and WhatsApp: answered from the REAL state of this number.
@@ -2011,7 +2014,7 @@ export class OrquestadorConversacion {
       const respuesta = ayudaDeCuenta(ayuda.tema, estado, desafio, { frustracion: ayuda.frustracion, hecho: ayuda.hecho, siguiente: ayuda.siguiente, sesionWeb: mencionaSesionWeb(text) })
       // Registering from a request brings the person back to that very turno.
       const url = respuesta.ruta === 'registro' && state.booking && this.deps.webBaseUrl ? enlaceRegistro(this.deps.webBaseUrl, retornoDeSolicitud(state.booking)) : respuesta.ruta ? enlaceTus(this.deps.webBaseUrl, respuesta.ruta) : null
-      return armar(respuesta.texto, url, respuesta.boton)
+      return armar(respuesta.texto, url, respuesta.boton, guiaDeCuenta(ayuda.tema, estado))
     }
     turn.intencion = 'conocimiento'
     // Where something is done: the real page, by role.
@@ -2024,7 +2027,7 @@ export class OrquestadorConversacion {
     const conocimiento = await this.ayudaDeConocimiento(turn, actor, text)
     if (conocimiento) return armar(conocimiento, lugar ? enlaceTus(this.deps.webBaseUrl, lugar.ruta) : null, lugar?.boton ?? null)
     if (lugar) return armar(lugar.donde, enlaceTus(this.deps.webBaseUrl, lugar.ruta), lugar.boton)
-    return armar(AYUDA_SIN_DIAGNOSTICO, null, null)
+    return armar(AYUDA_SIN_DIAGNOSTICO, null, null, null)
   }
 
   // A product question answered from the knowledge base. With a model: phrased from the documents
@@ -2437,7 +2440,7 @@ export class OrquestadorConversacion {
           const lugar = rutaDeTema(args.topic)
           const documentos = this.deps.knowledge ? await this.deps.knowledge.buscar(redactarPii(args.question || text), { linked: Boolean(actor.context), isProvider: actor.isProvider }).catch(() => null) : null
           datosEnTurno = true
-          messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify({ topic: args.topic, state: await this.diagnostico(turn, actor), page: lugar ? { where: lugar.donde, url: enlaceTus(this.deps.webBaseUrl, lugar.ruta) } : null, documents: documentos && documentos.confidence === 'high' ? formatearFragmentosParaPrompt(documentos.results) : null, instruction: 'Respondé con esto y nada más: qué pasa, qué tiene que hacer, dónde, y qué sigue. Si no alcanza, pedí el mensaje exacto que le aparece. No inventes rutas ni pasos.' }).slice(0, 6000) })
+          messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify({ topic: args.topic, state: await this.diagnostico(turn, actor), page: lugar ? { where: lugar.donde, url: enlaceTus(this.deps.webBaseUrl, lugar.ruta) } : null, guide: GUIA_DE_TEMA[args.topic] ? enlaceGuia(this.deps.webBaseUrl, GUIA_DE_TEMA[args.topic]!) : null, documents: documentos && documentos.confidence === 'high' ? formatearFragmentosParaPrompt(documentos.results) : null, instruction: 'Respondé con esto y nada más: qué pasa, qué tiene que hacer, dónde, y qué sigue. Si no alcanza, pedí el mensaje exacto que le aparece. No inventes rutas ni pasos.' }).slice(0, 6000) })
           continue
         }
         if (result.ok && 'data' in result && call.function.name === 'get_provider_availability') {
