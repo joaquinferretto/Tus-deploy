@@ -108,6 +108,8 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
       out.solicitante = [solicitante.status, solicitante.body.nombre, solicitante.body.email === run + '-ana@example.com', solicitante.body.telefono, (await call('GET', '/tus/v1/cliente/turnos/solicitante', null)).status]
 
       // 5. The provider is told (outbound notice) and sees the request; another provider sees nothing.
+      // Notices leave through the durable outbox, after the commit: the queue is drained before reading them.
+      await turnos.procesarNotificacionesPendientes()
       out.aviso = avisos.filter((x) => x[0] === 'recibida' && x[1] === pedido.body.id).map((x) => [x[2] === p.tenantId, x[3], x[4] === oficio.nombre, x[5], x[6] === a(0, '10:00')])
       const lista = await pendientes('tok-p')
       const vista = lista.items.find((item) => item.id === pedido.body.id)
@@ -135,6 +137,7 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
       const otraVez = await aceptar('tok-p', pedido.body.id)
       const tarde = await rechazar('tok-p', pedido.body.id)
       out.repetida = [otraVez.status, otraVez.body.estado, tarde.status, tarde.body.code, (await fila(pedido.body.id)).estado]
+      await turnos.procesarNotificacionesPendientes()
       out.avisoCliente = avisos.filter((x) => x[0] === 'respondida' && x[1] === pedido.body.id).map((x) => [x[2] === ana.id, x[3]])
       out.clienteConfirmada = (await call('GET', '/tus/v1/cliente/turnos', 'tok-ana')).body.items.find((item) => item.id === pedido.body.id).estado
       out.sigueOcupado = [await agendaDe(0, '10:00'), (await pendientes('tok-p')).items.some((item) => item.id === pedido.body.id)]
@@ -143,6 +146,7 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
       const segunda = await solicitar('tok-ana', 1, '11:00')
       const rechazada = await rechazar('tok-p', segunda.body.id)
       out.rechazada = [rechazada.status, rechazada.body.estado, (await fila(segunda.body.id)).estado, await agendaDe(1, '11:00'), (await aceptar('tok-p', segunda.body.id)).body.code]
+      await turnos.procesarNotificacionesPendientes()
       out.avisoRechazo = avisos.filter((x) => x[0] === 'respondida' && x[1] === segunda.body.id).map((x) => x[3])
       const reuso = await solicitar('tok-beto', 1, '11:00')
       out.reuso = [reuso.status, reuso.body.estado, reuso.body.clienteNombre]
