@@ -82,7 +82,11 @@ export function ProfilePage(): React.ReactNode {
   }, [])
 
   useEffect(() => {
-    if (session.status === 'guest') window.location.replace(`/sign-in?returnTo=${encodeURIComponent(RETURN_TO)}`)
+    if (session.status === 'guest') {
+      // Only the fixed action is carried through sign-in: never a value taken from the URL.
+      const vincular = new URLSearchParams(window.location.search).get('accion') === 'vincular-whatsapp'
+      window.location.replace(`/sign-in?returnTo=${encodeURIComponent(vincular ? `${RETURN_TO}?accion=vincular-whatsapp` : RETURN_TO)}`)
+    }
     if (session.status !== 'authenticated') return
     createProfileClient(session.session)
       .profile()

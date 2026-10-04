@@ -18,12 +18,20 @@ export function VerificacionWhatsapp({
   renovar,
   onVerificado,
   textoExito = 'También te enviamos la confirmación por WhatsApp.',
+  tituloExito = '✓ Número verificado',
+  titulo = 'Verificá tu número',
+  textoBoton = 'Verificar con WhatsApp',
+  textoFallo = 'No pudimos verificar este número. Probá con otro código o con otro número.',
 }: {
   desafio: DesafioTelefonoWeb
   consultar: (desafio: DesafioTelefonoWeb) => Promise<EstadoDesafioWeb>
   renovar?: (desafio: DesafioTelefonoWeb) => Promise<DesafioTelefonoWeb>
   onVerificado?: (estado: EstadoDesafioWeb) => void
   textoExito?: string
+  tituloExito?: string
+  titulo?: string
+  textoBoton?: string
+  textoFallo?: string
 }): React.ReactNode {
   const [actual, setActual] = useState(desafio)
   const [fase, setFase] = useState<'listo' | 'esperando' | 'verificado' | 'vencido' | 'fallido'>('listo')
@@ -96,20 +104,20 @@ export function VerificacionWhatsapp({
   if (fase === 'verificado')
     return (
       <div aria-live="polite" className={styles.success} role="status">
-        <p className={styles.verifiedTitle}>✓ Número verificado</p>
+        <p className={styles.verifiedTitle}>{tituloExito}</p>
         <p className={styles.verifiedText}>{textoExito}</p>
       </div>
     )
 
   return (
     <section aria-labelledby="verificar-telefono-titulo" className={styles.whatsappBox}>
-      <h2 className={styles.whatsappTitle} id="verificar-telefono-titulo">Verificá tu número</h2>
+      <h2 className={styles.whatsappTitle} id="verificar-telefono-titulo">{titulo}</h2>
       <p className={styles.whatsappText}>
         Tocá el botón, enviá el mensaje por WhatsApp y volvé a TUS. Número: <strong>{actual.phoneMasked}</strong>
       </p>
       {actual.whatsappUrl ? (
         <a className={styles.primary} href={actual.whatsappUrl} onClick={() => setFase('esperando')} rel="noopener noreferrer" target="_blank">
-          Verificar con WhatsApp
+          {textoBoton}
         </a>
       ) : (
         <p className={styles.notice}>Enviá este mensaje al WhatsApp de TUS desde tu teléfono:</p>
@@ -119,7 +127,7 @@ export function VerificacionWhatsapp({
         <button className={styles.inlineButton} onClick={() => void copiar()} type="button">{copiado ? 'Copiado' : 'Copiar'}</button>
       </p>
       <p aria-live="polite" className={styles.waiting} role="status">
-        {fase === 'esperando' ? 'Esperando verificación…' : fase === 'vencido' ? 'El código venció. Generá uno nuevo.' : fase === 'fallido' ? 'No pudimos verificar este número. Probá con otro código o con otro número.' : 'Cuando envíes el mensaje, esta pantalla se actualiza sola.'}
+        {fase === 'esperando' ? 'Esperando verificación…' : fase === 'vencido' ? 'El código venció. Generá uno nuevo.' : fase === 'fallido' ? textoFallo : 'Cuando envíes el mensaje, esta pantalla se actualiza sola.'}
       </p>
       {(fase === 'vencido' || fase === 'fallido' || fase === 'esperando') && renovar ? (
         <button className={styles.secondaryButton} onClick={() => void nuevoCodigo()} type="button">

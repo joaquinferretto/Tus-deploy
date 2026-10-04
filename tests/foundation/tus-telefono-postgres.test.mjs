@@ -14,7 +14,9 @@ const SETUP = `
   const { crearServicioTelefono } = await import('./apps/api/src/auth-security/phone/composicion.ts')
   const run = 't' + Date.now().toString(36)
   const auth = createPrismaAuthService(prisma)
-  const almacen = new AlmacenTelefonosPrisma(prisma)
+  const { crearPuenteAsistente } = await import('./apps/api/src/tus/asistente/vinculacion.ts')
+  const { repositoriosAsistentePrisma } = await import('./apps/api/src/tus/adapters/prisma-asistente.ts')
+  const almacen = new AlmacenTelefonosPrisma(prisma, (cliente) => crearPuenteAsistente(repositoriosAsistentePrisma(cliente)))
   const tel = crearServicioTelefono({ auth, telefonos: almacen, env: {}, raw: prisma })
   const PASSWORD = 'una frase larga y segura 2026'
   // Phones unique per run: Corrientes area code + a random 5-digit base + a 2-digit index.
@@ -72,7 +74,7 @@ test(
           tel.verificarDesdeWhatsapp({ waId, texto: d.message, wamid: run + '-w2' }),
           tel.verificarDesdeWhatsapp({ waId, texto: d.message, wamid: run + '-w3' }),
         ])
-        const ganadores = carrera.filter((x) => x.resultado === 'verificado').length
+        const ganadores = carrera.filter((x) => x.resultado === 'vinculado').length
         const fila = await prisma.desafioTelefono.findUnique({ where: { id: d.challengeId } })
         // Same wamid again (Meta retry): "repetido", no side effect.
         const ganador = fila.wamidVerificacion
@@ -106,5 +108,63 @@ test(
     assert.equal(r.vivos, 1)
     assert.equal(r.reemplazo, 'reemplazado')
     assert.equal(r.codigoEnDb, false, 'only hashes are stored')
+  }
+)
+
+test(
+  'PHONE PostgreSQL: VERIFICAR TUS links wa_id -> account in the challenge transaction; a wa_id of another account rolls everything back; a race has one winner',
+  { skip: !url && 'TUS_TELEFONO_PG_URL not set (disposable PostgreSQL 16 only)', timeout: 180000 },
+  () => {
+    const r = runTypeScriptScenario(`${SETUP}
+      try {
+        const userOf = async (accountId) => (await prisma.account.findUnique({ where: { id: accountId } })).userId
+        const contacto = (waId) => prisma.contactoWhatsapp.findUnique({ where: { waId } })
+        // 1. Verified phone, WhatsApp not linked -> challenge -> message -> linked row (the field the assistant reads).
+        const a = await cuenta('link-a'); const pa = phone(10); const waA = pa.slice(1)
+        await prisma.user.update({ where: { id: await userOf(a) }, data: { phoneNumber: pa, phoneVerifiedAt: new Date() } })
+        const antes = (await tel.estadoCuenta(a)).whatsappLinked
+        const da = await tel.iniciarVinculo(a)
+        const ok = await tel.verificarDesdeWhatsapp({ waId: waA, texto: da.message, wamid: run + '-l1' })
+        const filaA = await contacto(waA)
+        const accountA = await prisma.account.findUnique({ where: { id: a } })
+        const despues = (await tel.estadoCuenta(a)).whatsappLinked
+        const auditoria = await prisma.auditoriaAsistente.count({ where: { accion: 'whatsapp.linked', actorId: a } })
+        // 2. A wa_id linked to ANOTHER account: no reassignment; phone, challenge use and link all roll back.
+        const owner = await cuenta('owner'); const waO = phone(11).slice(1)
+        await prisma.contactoWhatsapp.create({ data: { id: 'c-' + run, canal: 'whatsapp', waId: waO, cuentaVinculadaId: owner, tenantVinculadoId: 't-' + run, vinculadoEn: new Date(), version: 1, fechaCreacion: new Date() } })
+        const b = await cuenta('intruder'); const db = await tel.iniciarRegistro(b, '+' + waO)
+        const bloqueado = await tel.verificarDesdeWhatsapp({ waId: waO, texto: db.message, wamid: run + '-l2' })
+        const filaO = await contacto(waO); const filaDb = await prisma.desafioTelefono.findUnique({ where: { id: db.challengeId } })
+        // 3. Two accounts, one number, simultaneous: one winner.
+        const x = await cuenta('race-x'); const y = await cuenta('race-y'); const pr = phone(12); const waR = pr.slice(1)
+        await prisma.contactoWhatsapp.create({ data: { id: 'r-' + run, canal: 'whatsapp', waId: waR, version: 1, fechaCreacion: new Date() } })
+        const dx = await tel.iniciarRegistro(x, pr); const dy = await tel.iniciarRegistro(y, pr)
+        const carrera = await Promise.all([
+          tel.verificarDesdeWhatsapp({ waId: waR, texto: dx.message, wamid: run + '-l3' }).then((v) => v.resultado, (e) => 'error:' + code(e)),
+          tel.verificarDesdeWhatsapp({ waId: waR, texto: dy.message, wamid: run + '-l4' }).then((v) => v.resultado, (e) => 'error:' + code(e)),
+        ])
+        const filaR = await contacto(waR)
+        const duenos = [(await almacen.estado(x)).phoneNumber, (await almacen.estado(y)).phoneNumber].filter((v) => v === pr).length
+        // 4. A new process (a new store instance) still sees the link.
+        const otro = new AlmacenTelefonosPrisma(prisma, (cliente) => crearPuenteAsistente(repositoriosAsistentePrisma(cliente)))
+        console.log(JSON.stringify({
+          antes, ok: ok.resultado, vinculoA: filaA?.cuentaVinculadaId === a, tenantA: filaA?.tenantVinculadoId === accountA.tenantId, despues, auditoria,
+          bloqueado: [bloqueado.resultado, filaO.cuentaVinculadaId === owner, (await almacen.estado(b)).phoneNumber, filaDb.usadoEn, filaDb.motivoInvalidacion],
+          carrera: [[...carrera].sort(), [x, y].includes(filaR?.cuentaVinculadaId), duenos],
+          reinicio: (await otro.waIdVinculado(a)) === waA,
+        }))
+      } finally { await prisma.$disconnect() }
+    `)
+    assert.equal(r.antes, false)
+    assert.equal(r.ok, 'vinculado')
+    assert.equal(r.vinculoA, true)
+    assert.equal(r.tenantA, true)
+    assert.equal(r.despues, true)
+    assert.equal(r.auditoria, 1)
+    assert.deepEqual(r.bloqueado, ['vinculo_ocupado', true, null, null, 'conflicto'])
+    assert.deepEqual(r.carrera[0], ['invalido', 'vinculado'])
+    assert.equal(r.carrera[1], true)
+    assert.equal(r.carrera[2], 1)
+    assert.equal(r.reinicio, true)
   }
 )

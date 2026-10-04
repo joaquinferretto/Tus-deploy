@@ -30,6 +30,8 @@ export interface EstadoTelefonoCuentaWeb {
   phoneMasked: string | null
   verifiedAt: string | null
   pendingMasked: string | null
+  // A verified phone and a linked WhatsApp are different facts.
+  whatsappLinked: boolean
 }
 
 export class PhoneApiError extends Error {
@@ -57,6 +59,10 @@ async function call<T>(path: string, init: { method?: 'GET' | 'POST'; body?: unk
 
 export const phoneApi = {
   miTelefono: async () => (await call<{ phone: EstadoTelefonoCuentaWeb }>('/auth/phone')).phone,
+  // The official TUS WhatsApp number (public), for "Abrir TUS en WhatsApp".
+  numeroOficial: async () => (await call<{ whatsappNumber: string | null }>('/auth/phone/config')).whatsappNumber,
+  // "Vincular este WhatsApp": a challenge for the account's own verified number (no body).
+  vincular: async () => (await call<{ challenge: DesafioTelefonoWeb }>('/auth/phone/whatsapp-link', { method: 'POST' })).challenge,
   iniciar: async (phone: string) => (await call<{ challenge: DesafioTelefonoWeb }>('/auth/phone/challenges', { method: 'POST', body: { phone } })).challenge,
   estadoConSesion: (challengeId: string) => call<EstadoDesafioWeb>(`/auth/phone/challenges/${encodeURIComponent(challengeId)}`),
   estadoConSecreto: (challengeId: string, pollSecret: string) => call<EstadoDesafioWeb>(`/auth/phone/challenges/${encodeURIComponent(challengeId)}/status`, { method: 'POST', body: { pollSecret } }),
@@ -72,6 +78,8 @@ export function mensajeErrorTelefono(error: unknown): string {
   if (error instanceof PhoneApiError) {
     if (error.code === 'INVALID_PHONE') return 'Revisá el número: escribilo con característica, por ejemplo 379 412-3456.'
     if (error.code === 'RATE_LIMITED') return 'Hiciste muchos intentos seguidos. Esperá unos minutos y probá de nuevo.'
+    if (error.code === 'ALREADY_LINKED') return 'Este WhatsApp ya está vinculado a tu cuenta.'
+    if (error.code === 'PHONE_NOT_VERIFIED') return 'Primero verificá tu número de celular.'
     if (error.code === 'ALREADY_VERIFIED') return 'Ese número ya está verificado en tu cuenta.'
     if (error.code === 'INVALID_CREDENTIALS') return 'No pudimos encontrar una cuenta pendiente con esos datos. Revisalos o creá una cuenta nueva.'
     if (error.status === 401) return 'Tu sesión venció. Ingresá de nuevo.'
