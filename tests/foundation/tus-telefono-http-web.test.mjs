@@ -20,7 +20,9 @@ const HTTP = `
   const { CuentasAdminEnMemoria } = await import('./apps/api/src/tus/admin/fuentes.ts')
   const idStore = new InMemoryIdentityStore()
   const auth = { ...createAuthService({ store: idStore }), store: idStore }
-  const almacenTel = new AlmacenTelefonosEnMemoria(idStore)
+  const { AlmacenAsistenteEnMemoria } = await import('./apps/api/src/tus/asistente/memoria.ts')
+  const waStore = new AlmacenAsistenteEnMemoria()
+  const almacenTel = new AlmacenTelefonosEnMemoria(idStore, waStore.enlaceTelefonos())
   const tel = crearServicioTelefono({ auth, telefonos: almacenTel, env: { TUS_WHATSAPP_PUBLIC_NUMBER: '5493794000000' } })
   const sessions = new DurableIdentitySessionResolver(idStore)
   const adminCtx = { subjectId: 'admin-1', tenantId: 'platform', sessionId: 's', roles: ['owner'], permissions: ['tus:providers:admin', 'tus:identity:admin'], correlationId: 'c' }
@@ -72,6 +74,74 @@ test('PHONE HTTP auth: public config, sign-up with phone (same shape for a regis
   assert.deepEqual(r.recuperar, [201, 422])
   assert.equal(r.pendienteMal, 401)
   assert.equal(r.pendienteOk, 201)
+})
+
+test('PHONE HTTP whatsapp-link: needs a session, only for the verified number of the session account, creates a challenge, ignores the body, is limited, and the WhatsApp message links it', () => {
+  const r = runTypeScriptScenario(`${HTTP}
+    try {
+      const out = {}
+      const registrar = async (email, phone) => {
+        const alta = await auth.service.registerAccount({ email, password: PASSWORD, displayName: 'Persona ' + email })
+        const id = alta.created.account.id
+        idStore.accounts.get(id).emailVerifiedAt = Date.now()
+        if (phone) await almacenTel.fijarVerificado(id, phone, Date.now())
+        const sesion = await auth.service.signIn({ email, password: PASSWORD })
+        return { id, token: sesion.ok ? sesion.session.accessToken : null, signIn: sesion.ok }
+      }
+      const a = await registrar('enlace-a@example.com', '+5493794123456')
+      const b = await registrar('enlace-b@example.com', null)
+      out.signIn = [a.signIn, b.signIn]
+      // 1. No session / bad token.
+      out.sinSesion = [(await call('POST', '/auth/phone/whatsapp-link')).status, (await call('POST', '/auth/phone/whatsapp-link', {}, 'token-falso')).status]
+      // 2. Phone not verified.
+      const sinTel = await call('POST', '/auth/phone/whatsapp-link', {}, b.token)
+      out.sinTelefono = [sinTel.status, sinTel.body.error.code]
+      // 3. Verified phone: challenge for ITS number; the body is ignored (cannot pick another number or account).
+      out.estadoAntes = (await call('GET', '/auth/phone', null, a.token)).body.phone.whatsappLinked
+      const ok = await call('POST', '/auth/phone/whatsapp-link', { phone: '3794999999', accountId: b.id, purpose: 'recuperar_contrasena', waId: '5493794999999' }, a.token)
+      const desafio = ok.body.challenge
+      out.ok = [ok.status, Object.keys(desafio).sort(), desafio.purpose, desafio.phoneMasked, desafio.whatsappUrl.startsWith('https://wa.me/5493794000000?text=VERIFICAR%20TUS%20') && desafio.whatsappUrl.length === 'https://wa.me/5493794000000?text=VERIFICAR%20TUS%20'.length + 8, desafio.pollSecret === undefined]
+      const fila = await almacenTel.desafio(desafio.challengeId)
+      out.fila = [fila.accountId === a.id, fila.phone, fila.purpose, fila.pollSecretHash]
+      out.pendienteIntacto = (await almacenTel.estado(a.id)).phonePending
+      // Another account's challenge is not readable.
+      out.ajeno = (await call('GET', '/auth/phone/challenges/' + desafio.challengeId, null, b.token)).status
+      out.propio = (await call('GET', '/auth/phone/challenges/' + desafio.challengeId, null, a.token)).body.status
+      // 4. The signed WhatsApp message from THAT number links it.
+      out.otroNumero = (await tel.verificarDesdeWhatsapp({ waId: '5493794999999', texto: desafio.message, wamid: 'wamid.otro' })).resultado
+      const hecho = await tel.verificarDesdeWhatsapp({ waId: '5493794123456', texto: desafio.message, wamid: 'wamid.ok' })
+      out.hecho = hecho.resultado
+      out.despues = [(await call('GET', '/auth/phone', null, a.token)).body.phone.whatsappLinked, (await waStore.repositorios().contactos.buscarPorWaId('5493794123456')).linkedAccountId === a.id]
+      // 5. Already linked: 409, no new challenge.
+      const otra = await call('POST', '/auth/phone/whatsapp-link', {}, a.token)
+      out.yaVinculado = [otra.status, otra.body.error.code]
+      // 6. Logout-equivalent: a revoked session cannot create challenges.
+      await auth.service.signOut({ accessToken: a.token })
+      out.trasLogout = [(await call('POST', '/auth/phone/whatsapp-link', {}, a.token)).status, (await call('GET', '/auth/phone', null, a.token)).status]
+      // 7. Rate limit (5 / 15 min per account).
+      const c = await registrar('enlace-c@example.com', '+5493794222222')
+      const codigos = []
+      for (let i = 0; i < 7; i += 1) codigos.push((await call('POST', '/auth/phone/whatsapp-link', {}, c.token)).status)
+      out.limite = codigos
+      console.log(JSON.stringify(out))
+    } finally { server.close() }
+  `)
+  assert.deepEqual(r.signIn, [true, true])
+  assert.deepEqual(r.sinSesion, [401, 401])
+  assert.deepEqual(r.sinTelefono, [409, 'PHONE_NOT_VERIFIED'])
+  assert.equal(r.estadoAntes, false)
+  assert.deepEqual(r.ok, [201, ['challengeId', 'code', 'expiresAt', 'message', 'phoneMasked', 'purpose', 'whatsappUrl'], 'verificar_telefono', '+549379•••3456', true, true])
+  assert.deepEqual(r.fila, [true, '+5493794123456', 'verificar_telefono', null], 'the number and the account come from the session, never from the body; no poll secret')
+  assert.equal(r.pendienteIntacto, null)
+  assert.equal(r.ajeno, 404)
+  assert.equal(r.propio, 'pending')
+  assert.equal(r.otroNumero, 'invalido', 'a message from another number links nothing')
+  assert.equal(r.hecho, 'vinculado')
+  assert.deepEqual(r.despues, [true, true])
+  assert.deepEqual(r.yaVinculado, [409, 'ALREADY_LINKED'])
+  assert.deepEqual(r.trasLogout, [401, 401], 'a signed-out session cannot create challenges')
+  assert.deepEqual(r.limite.slice(0, 5), [201, 201, 201, 201, 201])
+  assert.equal(r.limite[5], 429)
 })
 
 test('PHONE HTTP admin: masked phone state, filters, pending-only edition, free a number, never "verified" from the panel', () => {

@@ -68,6 +68,16 @@ export function telefonoDesdeWaId(waId: unknown): string | null {
 }
 
 // "+549379•••••3456": enough for the person to recognise it, never the whole number.
+// The same Argentine mobile can reach us as "549379..." (with the mobile 9) or "54379..." (without
+// it): the wa_id forms that may identify one contact. Anything else is only itself.
+export function waIdEquivalentes(waId: string): string[] {
+  const conNueve = /^549(\d{10})$/u.exec(waId)
+  if (conNueve) return [waId, `54${conNueve[1]}`]
+  const sinNueve = /^54(\d{10})$/u.exec(waId)
+  if (sinNueve) return [waId, `549${sinNueve[1]}`]
+  return [waId]
+}
+
 export function enmascararTelefono(e164: string): string {
   if (e164.length <= 8) return '••••'
   return `${e164.slice(0, 7)}${'•'.repeat(Math.max(3, e164.length - 11))}${e164.slice(-4)}`

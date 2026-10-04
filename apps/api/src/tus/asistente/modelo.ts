@@ -1,3 +1,5 @@
+import { waIdEquivalentes } from '@factory/contracts'
+
 // WHATSAPP-AI-01 domain: contacts, conversations, messages, queue, account links and
 // confirmations. WhatsApp is another interface over the same TUS backend: nothing here holds
 // business authority (works, budgets, payments come from the TUS services through tools).
@@ -387,3 +389,17 @@ export const MENSAJES = {
   identityBlocked: 'Por seguridad no puedo seguir verificando datos por acá. Iniciá sesión en la Web de TUS para solicitar el turno.',
   unlinked: 'Listo, desvinculé este WhatsApp de tu cuenta TUS.',
 } as const
+
+// The contact of a WhatsApp sender. The wa_id is matched as Meta delivered it first; an Argentine
+// mobile also matches its other form (with / without the 9), so one person never becomes two
+// contacts with the link on only one of them.
+export async function buscarContactoPorWaId(
+  contactos: { buscarPorWaId(waId: string): Promise<ContactoWhatsapp | null> },
+  waId: string
+): Promise<ContactoWhatsapp | null> {
+  for (const candidato of waIdEquivalentes(waId)) {
+    const contacto = await contactos.buscarPorWaId(candidato)
+    if (contacto) return contacto
+  }
+  return null
+}

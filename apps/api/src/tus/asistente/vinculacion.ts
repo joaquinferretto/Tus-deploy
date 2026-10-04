@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { telefonoDesdeWaId } from '@factory/contracts'
-import { ErrorAsistente, enmascararWaId, type ContactoWhatsapp } from './modelo.ts'
+import { ErrorAsistente, buscarContactoPorWaId, enmascararWaId, type ContactoWhatsapp } from './modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
 import { WHATSAPP_CONSENT_ORIGINS, crearConsentimientoWhatsApp } from '../whatsapp/consent.ts'
 
@@ -277,7 +277,7 @@ export async function vincularContactoPorVerificacion(
       createdAt: nowIso,
     })
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    let contact = await repositories.contactos.buscarPorWaId(input.waId)
+    let contact = await buscarContactoPorWaId(repositories.contactos, input.waId)
     if (!contact) {
       contact = {
         contactId: `contacto-whatsapp-${randomUUID()}`,

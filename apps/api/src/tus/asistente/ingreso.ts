@@ -3,6 +3,7 @@ import type { EventoWebhookMeta, MensajeEntranteMeta } from './meta.ts'
 import {
   ESTADO_CONVERSACIONAL_INICIAL,
   aplicarEstadoEntrega,
+  buscarContactoPorWaId,
   enmascararWaId,
   type ContactoWhatsapp,
   type ConversacionWhatsapp,
@@ -146,7 +147,7 @@ export class ServicioIngresoWhatsapp {
     if (await repositories.mensajes.buscarPorWamid(event.wamid)) return 'duplicate'
     const nowMs = this.now()
     const nowIso = new Date(nowMs).toISOString()
-    let contact = await repositories.contactos.buscarPorWaId(event.waId)
+    let contact = await buscarContactoPorWaId(repositories.contactos, event.waId)
     if (!contact) {
       contact = {
         contactId: `contacto-whatsapp-${randomUUID()}`,

@@ -221,3 +221,35 @@ test('VINCULO bot wording follows the REAL state, the CTA goes to Mi perfil, and
   assert.deepEqual(r.cambio, [true, 'cambiar_telefono'])
   assert.deepEqual(r.tras, [true, true, null, '+549379•••0003'])
 })
+
+test('VINCULO Argentine 9: the same mobile arriving as 549379... or 54379... is ONE contact, so the link is never lost on a second row', () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    const id = await cuenta('+5493794123456')
+    // The contact is first seen WITHOUT the 9 (how Meta may deliver it) ...
+    await enviar('543794123456', 'hola')
+    // ... and the VERIFICAR message arrives WITH the 9: it links the same contact.
+    const d = await tel.iniciarVinculo(id)
+    await enviar('5493794123456', d.message)
+    out.exito = fakeWa.sent.at(-1).message.text.startsWith('✅ ¡Listo!')
+    out.contactos = [...waStore.state.contactos.values()].filter((c) => c.waId.endsWith('3794123456')).map((c) => [c.waId, c.linkedAccountId === id])
+    // Later messages in either form are the same linked person: never asked to link again.
+    await enviar('543794123456', 'ya tengo cuenta')
+    const sinNueve = fakeWa.sent.at(-1)
+    await enviar('5493794123456', 'ya tengo cuenta')
+    const conNueve = fakeWa.sent.at(-1)
+    out.respuestas = [sinNueve.message.text, conNueve.message.text]
+    out.destinos = [sinNueve.to, conNueve.to]
+    out.contactosDespues = [...waStore.state.contactos.values()].filter((c) => c.waId.endsWith('3794123456')).length
+    // Other countries and numbers that only look alike are never merged.
+    const { waIdEquivalentes } = await import('./packages/contracts/src/tus-telefono.ts')
+    out.equivalentes = [waIdEquivalentes('5493794123456'), waIdEquivalentes('543794123456'), waIdEquivalentes('14155552671'), waIdEquivalentes('54911')]
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.exito, true)
+  assert.deepEqual(r.contactos, [['543794123456', true]], 'one contact, linked')
+  assert.deepEqual(r.respuestas, ['Este WhatsApp ya está vinculado a tu cuenta TUS.', 'Este WhatsApp ya está vinculado a tu cuenta TUS.'])
+  assert.deepEqual(r.destinos, ['543794123456', '543794123456'], 'replies go to the stored wa_id of the single contact')
+  assert.equal(r.contactosDespues, 1)
+  assert.deepEqual(r.equivalentes, [['5493794123456', '543794123456'], ['543794123456', '5493794123456'], ['14155552671'], ['54911']])
+})
