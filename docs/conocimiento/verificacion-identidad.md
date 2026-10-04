@@ -1,11 +1,17 @@
 ---
 id: verificacion-identidad
 title: Verificación de identidad de prestadores
-version: 1
+description: Cómo verificar tu identidad como prestador, qué se pide y qué resultados puede tener.
+slug: prestadores/verificacion-identidad
+category: prestadores
+order: 115
+next: prestadores/perfil-publico
+keywords: identidad, dni, verificacion de identidad, verificado, en revision
+version: 2
 visibility: public
 audience: provider
 language: es
-updated: 2026-09-25
+updated: 2026-10-04
 ---
 
 # Verificación de identidad
