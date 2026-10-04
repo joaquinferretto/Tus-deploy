@@ -217,7 +217,7 @@ test('VINCULO bot wording follows the REAL state, the CTA goes to Mi perfil, and
   `)
   assert.equal(r.pasos[0], 'Para continuar por WhatsApp necesitás vincular este número con una cuenta TUS.\n\n1. Registrate o iniciá sesión en TUS.\n2. Entrá a Mi perfil.\n3. Verificá tu número de celular.\n4. Tocá "Vincular este WhatsApp".\n\nDespués volvés acá y podés seguir normalmente.')
   assert.deepEqual(r.pasos.slice(1), ['Vincular mi cuenta TUS', 'https://web.tus.test/mi-perfil?accion=vincular-whatsapp', 'cta_url'])
-  assert.equal(r.vinculado, 'Este WhatsApp ya está vinculado a tu cuenta TUS.')
+  assert.equal(r.vinculado, 'Tu número ya está verificado y este WhatsApp ya está vinculado a tu cuenta TUS.', 'a question about linking is answered from the real state')
   assert.deepEqual(r.cambio, [true, 'cambiar_telefono'])
   assert.deepEqual(r.tras, [true, true, null, '+549379•••0003'])
 })

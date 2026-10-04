@@ -421,7 +421,9 @@ export const MENSAJES = {
   confirmationExpired: 'Esa confirmación ya venció. Si querés, lo preparo de nuevo.',
   confirmationCancelled: 'Listo, no hice ningún cambio.',
   identityNeeded: 'Para registrar la solicitud necesito tu nombre completo y DNI.',
-  identityNotFound: 'No encontré una cuenta de TUS registrada con esos datos. Necesitás registrarte en TUS para poder solicitar el turno.',
+  // The same answer for an unknown document and for one of another person (no enumeration), with
+  // what to check and what to do next.
+  identityNotFound: 'No pude validar esos datos con una cuenta TUS. Revisá que sean el mismo nombre y DNI con los que te registraste.',
   identityFound: 'Encontré tu cuenta.',
   identityBlocked: 'Por seguridad no puedo seguir verificando datos por acá. Iniciá sesión en la Web de TUS para solicitar el turno.',
   unlinked: 'Listo, desvinculé este WhatsApp de tu cuenta TUS.',

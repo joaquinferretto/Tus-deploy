@@ -134,7 +134,8 @@ const LISTA_SERVICIOS = '¿Qué servicio querés con Bongio?\n1. Masaje base —
 const PIDE_IDENTIDAD = 'Perfecto: Bongio, mañana sábado 26 a las 18:00.\nEl servicio cuesta $25.000 y la seña es de $12.500.\nPara registrar la solicitud necesito tu nombre completo y DNI.'
 const TARJETA = (lineas) => ['Vas a solicitar:', ...lineas, 'La solicitud queda pendiente hasta que el prestador la acepte. El turno se confirma después del pago de la seña.', '¿Querés solicitar este turno?'].join('\n')
 const TARJETA_ESPALDA = TARJETA(['Prestador: Bongio', 'Servicio: Espalda completa', 'Fecha: sábado 26 de septiembre', 'Horario: 18:00', 'Precio: $25.000', 'Seña: $12.500 (se abona cuando el prestador acepte)'])
-const NO_ENCONTRADA = 'No encontré una cuenta de TUS registrada con esos datos. Necesitás registrarte en TUS para poder solicitar el turno. Cuando termines, escribime de nuevo tu nombre completo y DNI y seguimos desde acá.'
+// The same answer for every failed lookup (no enumeration), now with what to check and the next step.
+const NO_ENCONTRADA = 'No pude validar esos datos con una cuenta TUS. Revisá que sean el mismo nombre y DNI con los que te registraste. Si todavía no tenés cuenta, registrate desde acá y verificá tu teléfono en Mi perfil. Tu solicitud queda guardada: cuando termines, escribime y seguimos.'
 const LISTO = 'Solicitud enviada para el sábado, 26 de septiembre a las 18:00 hs. Queda pendiente hasta que el prestador la acepte; podés ver el estado en "Mis turnos". La seña es de $12.500 y se abona recién cuando el prestador acepte.'
 const RETORNO = '/trabajadores/perfil-bongio?turno=1&oficio=masaje&inicio=2026-09-26T21%3A00%3A00.000Z&tarifa=t-espalda'
 
@@ -252,7 +253,10 @@ test('ASISTENTE identidad (WhatsApp): the backend finds the account by full name
   assert.deepEqual(r.auditoriaFallos, ['documento_desconocido', 'nombre_distinto', 'nombre_distinto', 'nombre_distinto', 'nombre_distinto'], 'the reason stays in the audit; the person hears the same thing')
   assert.equal(r.soloDocumento, 'Me falta tu nombre completo (nombre y apellido), junto con tu DNI.')
   assert.equal(r.soloNombre, 'Para registrar la solicitud necesito tu nombre completo y DNI. Por ejemplo: "Juan Pérez, 12345678".')
-  assert.equal(r.otraCosa, 'Para registrar la solicitud necesito tu nombre completo y DNI. Por ejemplo: "Juan Pérez, 12345678".')
+  // A question about the request is answered (why the data is asked, what to do instead) and the turno stays
+  // pending: it is never read as a failed answer to the step, nor answered with the same request again.
+  assert.match(r.otraCosa, /^Te pido nombre completo y DNI para encontrar tu cuenta TUS: /u)
+  assert.match(r.otraCosa, /seguimos con tu turno de Masaje con Bongio/u)
   assert.equal(r.luegoCompleta, 'buttons')
   assert.deepEqual(r.trasRegistro.slice(0, 3), ['cta_url', registro, 'buttons'], 'the link is the real registration route, with the way back to that very turno')
   assert.deepEqual(r.trasRegistro[3], ['Encontré tu cuenta.', '', 'Vas a solicitar:', 'Prestador: Bongio', 'Servicio: Espalda completa', 'Fecha: sábado 26 de septiembre'])

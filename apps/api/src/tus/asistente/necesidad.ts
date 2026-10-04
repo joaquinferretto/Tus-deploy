@@ -184,6 +184,7 @@ const LO_ANTES_POSIBLE = new RegExp(
     String.raw`\b(?:el )?primer (?:dia|turno|horario|hueco|lugar)(?: (?:que|libre|disponible|posible))?\b`,
     String.raw`\bla primera (?:fecha|hora|que (?:haya|tenga|pueda|este)|disponible|libre)\b`,
     String.raw`\b(?:el|la) que (?:este|tenga|pueda|haya) (?:disponible|libre|lugar)? ?primer[oa]\b`,
+    String.raw`\bqui[e]n (?:puede|tiene|atiende) (?:antes|primero)\b`,
     String.raw`\b(?:que venga|que pueda venir|que me atienda|que me vea) (?:ya|hoy|ahora)\b`,
   ].join('|'),
   'u'

@@ -4,6 +4,7 @@ import { esOficio, idsOficios } from '../directorio/oficios.ts'
 import type { PuertoDominioAsistente } from './dominio.ts'
 import { ZONA_HORARIA_TUS, fechaHoraActual, horaArgentina, hoyArgentina, nombreDiaSemana, relojSistema, resolverExpresionFecha, sumarDias } from './fechas.ts'
 import type { DefinicionHerramientaChat } from './groq.ts'
+import { TEMAS_AYUDA } from './asistencia.ts'
 
 // Tools the LLM may REQUEST. The backend validates the arguments (strict schemas, unknown fields
 // rejected), checks the actor (link, role) and executes the same domain services as the Web. The
@@ -128,6 +129,24 @@ export const HERRAMIENTAS = [
       }
       return { providerId: args.providerId, provider: await domain.nombrePrestador(args.providerId).catch(() => null), profession: args.profession, timezone: ZONA_HORARIA_TUS, fromDate: desde, toDate: hasta, takesAppointments, days }
     },
+  }),
+  // ---- help and diagnosis: the state and the procedure are the backend's ----------------------
+  herramienta({
+    name: 'get_tus_help',
+    description: 'Ayuda de TUS sobre un tema (registro, inicio de sesión, verificación de teléfono, vinculación de WhatsApp, códigos, turnos, seña, pagos, comprobantes, cancelaciones, perfil, panel de prestador, Mercado Pago, ganancias, navegación). Devuelve el estado REAL de la cuenta de quien pregunta, la página real donde se resuelve y la documentación vigente. Usala ante cualquier "cómo hago", "dónde", "por qué", "no puedo" o "no funciona" sobre TUS, en vez de responder de memoria.',
+    audience: 'public',
+    schema: z.strictObject({ topic: z.enum(TEMAS_AYUDA), question: z.string().trim().min(1).max(300) }),
+    confirmation: null,
+    // The orchestrator answers: it knows the channel, the real state and the flow in progress.
+    execute: async (args) => args,
+  }),
+  herramienta({
+    name: 'diagnose_user_issue',
+    description: 'Diagnóstico del problema de quien escribe, con estados REALES leídos por el backend y sin datos personales: si este WhatsApp está vinculado, si el teléfono figura verificado, qué pasó con el último código, rol, Mercado Pago conectado, pagos pendientes y qué estaba haciendo la conversación. Usala cuando algo "no funciona", "otra vez me pide lo mismo" o "ya hice eso", ANTES de repetir una instrucción.',
+    audience: 'public',
+    schema: vacio,
+    confirmation: null,
+    execute: async (args) => args,
   }),
   herramienta({
     name: 'find_earliest_availability',
@@ -601,22 +620,22 @@ export function interpretarEtiquetaIntencion(content: string | null): IntencionA
 }
 
 const HERRAMIENTAS_POR_INTENCION: Record<IntencionAsistente, { client: NombreHerramienta[]; provider: NombreHerramienta[] }> = {
-  buscar: { client: ['find_appointments', 'find_earliest_availability', 'get_provider_availability', 'resolve_date_expression', 'get_current_datetime', 'collect_service_request', 'search_providers', 'get_available_slots', 'book_appointment', 'request_provider', 'search_services'], provider: [] },
+  buscar: { client: ['find_appointments', 'find_earliest_availability', 'get_provider_availability', 'resolve_date_expression', 'get_current_datetime', 'collect_service_request', 'search_providers', 'get_available_slots', 'book_appointment', 'request_provider', 'search_services', 'get_tus_help', 'diagnose_user_issue'], provider: [] },
   postulaciones: {
     client: ['list_my_open_requests', 'list_request_applicants', 'choose_applicant'],
     provider: ['search_open_requests', 'apply_to_request'],
   },
   trabajos: { client: ['list_my_works', 'get_my_work', 'list_my_requests', 'list_my_open_requests'], provider: ['list_provider_jobs', 'get_provider_job', 'cancel_work', 'complete_work'] },
   presupuesto: { client: ['list_my_works', 'get_my_budget', 'accept_budget', 'reject_budget'], provider: ['list_provider_jobs', 'get_provider_job'] },
-  reserva: { client: ['find_appointments', 'find_earliest_availability', 'get_provider_availability', 'resolve_date_expression', 'get_current_datetime', 'get_available_slots', 'book_appointment', 'collect_service_request', 'search_providers', 'list_my_reservations', 'get_service_details'], provider: ['list_provider_reservations'] },
-  pago: { client: ['list_my_works', 'get_payment_status', 'get_payment_link', 'get_pending_payments', 'verify_payment_status'], provider: ['get_mercadopago_connection_status'] },
-  identidad: { client: [], provider: ['get_identity_status'] },
+  reserva: { client: ['find_appointments', 'find_earliest_availability', 'get_provider_availability', 'resolve_date_expression', 'get_current_datetime', 'get_available_slots', 'book_appointment', 'collect_service_request', 'search_providers', 'list_my_reservations', 'get_service_details', 'get_tus_help', 'diagnose_user_issue'], provider: ['list_provider_reservations'] },
+  pago: { client: ['list_my_works', 'get_payment_status', 'get_payment_link', 'get_pending_payments', 'verify_payment_status', 'get_tus_help', 'diagnose_user_issue'], provider: ['get_mercadopago_connection_status'] },
+  identidad: { client: ['get_tus_help', 'diagnose_user_issue'], provider: ['get_identity_status'] },
   conocimiento: { client: [], provider: [] },
   saludo: { client: [], provider: [] },
-  otro: { client: ['search_services', 'get_current_datetime', 'resolve_date_expression'], provider: [] },
+  otro: { client: ['search_services', 'get_current_datetime', 'resolve_date_expression', 'get_tus_help', 'diagnose_user_issue'], provider: [] },
 }
 
-export const MAX_HERRAMIENTAS_POR_TURNO = 12
+export const MAX_HERRAMIENTAS_POR_TURNO = 14
 
 export function seleccionarHerramientas(intent: IntencionAsistente, actor: ActorAsistente): Herramienta[] {
   const names = [...HERRAMIENTAS_POR_INTENCION[intent].client, ...(actor.isProvider ? HERRAMIENTAS_POR_INTENCION[intent].provider : [])]
