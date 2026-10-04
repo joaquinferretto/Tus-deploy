@@ -3416,6 +3416,9 @@ export async function enviarMensajeSaliente(input: {
   message: MensajeSaliente
   actor: string
   correlationId: string
+  // Stable backend key for transactional notices. If a worker retries after recording the send
+  // intent, the same row is returned and Meta is not called twice.
+  idempotencyKey?: string
   inReplyTo: string[]
   replyToWamid: string | undefined
   now: () => number
@@ -3424,7 +3427,9 @@ export async function enviarMensajeSaliente(input: {
   const text =
     input.message.type === 'template' ? `[plantilla ${input.message.name}]` : input.message.text
   const record: MensajeConversacion = {
-    messageId: `mensaje-whatsapp-${randomUUID()}`,
+    messageId: input.idempotencyKey
+      ? `mensaje-whatsapp-${createHash('sha256').update(input.idempotencyKey).digest('hex').slice(0, 40)}`
+      : `mensaje-whatsapp-${randomUUID()}`,
     conversationId: input.conversationId,
     contactId: input.contact.contactId,
     wamid: null,
@@ -3443,7 +3448,9 @@ export async function enviarMensajeSaliente(input: {
     correlationId: input.correlationId,
     createdAt: nowIso,
   }
-  await input.transaction.ejecutar(async (repositories) => {
+  const existente = await input.transaction.ejecutar(async (repositories) => {
+    const previo = await repositories.mensajes.buscar(record.messageId)
+    if (previo) return previo
     await repositories.mensajes.crear(record)
     const conversation = await repositories.conversaciones.buscar(input.conversationId)
     if (conversation)
@@ -3451,7 +3458,12 @@ export async function enviarMensajeSaliente(input: {
         { ...conversation, lastMessageAt: nowIso, version: conversation.version + 1 },
         conversation.version
       )
+    return null
   })
+  // `pending_send` is deliberately not retried: after a process crash between Meta and the
+  // status write we cannot know whether Meta delivered it. Duplicating a transactional notice is
+  // worse than leaving that delivery for operational reconciliation.
+  if (existente) return existente
   let next: MensajeConversacion
   try {
     const sent = await input.whatsapp.send(

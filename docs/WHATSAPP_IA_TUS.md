@@ -448,10 +448,18 @@ confirma.
 - `list_my_reservations` devuelve los turnos del cliente con su estado real (`appointments`):
   pendiente de confirmación, confirmada, rechazada, cancelada o vencida.
 - El prestador responde desde **Solicitudes de reserva** en `/prestador/turnos` (Aceptar / Rechazar).
-  Avisos: la solicitud aparece en ese panel y, si el envío de emails de TUS está configurado
+  Avisos: la solicitud siempre aparece en ese panel. Si el envío de emails está configurado
   (`EMAIL_PROVIDER=resend`), el prestador recibe un email al llegar una solicitud y el cliente otro
-  cuando se responde. **No hay todavía aviso proactivo por WhatsApp al prestador**: fuera de la
-  ventana de 24 h Meta exige una plantilla aprobada y TUS no tiene un envío proactivo implementado.
+  cuando se responde. También se avisa por WhatsApp a las conversaciones vinculadas o identificadas
+  de la cuenta destinataria que estén en modo bot y dentro de la ventana de servicio de 24 horas;
+  fuera de esa ventana no se inventa un envío libre ni una plantilla no aprobada: quedan el panel y
+  el email como fallback. La confirmación de la seña y las cancelaciones avisan a las partes que
+  corresponden con destinatarios resueltos por el backend, nunca por el modelo ni por un teléfono del
+  request.
+- Solicitud, respuesta, confirmación por pago y cancelación se escriben en `OutboxEvent` junto con la
+  transición de la reserva. El worker usa claim/lease, reintentos con backoff y dead-letter. Resend
+  recibe una clave idempotente por evento/destinatario y WhatsApp registra un intento determinista
+  antes de llamar a Meta; un resultado ambiguo no se reenvía automáticamente.
 
 ## Canal Web: el mismo asistente (ASISTENTE-WEB-01)
 

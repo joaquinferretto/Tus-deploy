@@ -38,7 +38,7 @@ export const turnosPagosSetup = (url) => `
   const fin = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioPrisma(prisma, (tx) => ({ completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: new PrismaTrabajoStore(tx), outbox: new PrismaTrabajoOutboxStore(tx) }, input), confirmarReservaPorPago: (input) => confirmarReservaPorPagoPrisma(tx, input) })),
     () => Date.now(), modulo.proveedor, undefined, modulo.politica)
-  const turnos = new ServicioTurnos(prisma, { solicitudRecibida: async () => {}, solicitudRespondida: async () => {}, turnoConfirmado: async () => {} })
+  const turnos = new ServicioTurnos(prisma, { solicitudRecibida: async () => {}, solicitudRespondida: async () => {}, turnoConfirmado: async () => {}, turnoCancelado: async () => {} })
   turnos.conSenas(new ServicioSenaTurnos(prisma, pagosSenaDeAplicacion({ work, serviceFinance: fin })))
   // As the composition wires it: minimum from the persisted configuration, strict account check.
   const ganancias = new ServicioGananciasPrestador(new AlmacenSolicitudesLiquidacionPrisma(prisma), modulo.liquidaciones, async (tenant) => verificados.has(tenant), () => Date.now(), {

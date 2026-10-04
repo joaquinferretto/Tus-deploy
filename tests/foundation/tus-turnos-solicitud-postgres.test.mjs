@@ -30,6 +30,8 @@ const SETUP = `
   const turnos = new ServicioTurnos(prisma, {
     solicitudRecibida: async (aviso) => { avisos.push(['recibida', aviso.reservaId, aviso.prestadorTenantId, aviso.clienteNombre, aviso.servicio, aviso.duracionMinutos, aviso.inicio.toISOString()]) },
     solicitudRespondida: async (aviso) => { avisos.push(['respondida', aviso.reservaId, aviso.clienteCuentaId, aviso.resultado]) },
+    turnoConfirmado: async () => {},
+    turnoCancelado: async (aviso) => { avisos.push(['cancelada', aviso.reservaId, aviso.canceladoPor]) },
   })
   const [oficio] = await prisma.oficioServicio.findMany({ where: { activo: true }, orderBy: { orden: 'asc' }, take: 1 })
   async function cuenta(tag, nombre) {
@@ -148,6 +150,8 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
       // The client withdraws its own request; never somebody else's.
       const retirar = (token, id) => call('POST', '/tus/v1/cliente/turnos/' + id + '/cancelar', token)
       out.retiro = [(await retirar('tok-ana', reuso.body.id)).status, (await retirar('tok-beto', reuso.body.id)).body.estado, (await retirar('tok-beto', reuso.body.id)).status, await agendaDe(1, '11:00'), (await aceptar('tok-p', reuso.body.id)).body.code]
+      await turnos.procesarNotificacionesPendientes()
+      out.avisoCancelacion = avisos.filter((x) => x[0] === 'cancelada' && x[1] === reuso.body.id).map((x) => x[2])
 
       // States follow the allowed changes: a confirmed turno is completed, and nothing leaves a final state.
       const estado = (id, nuevo) => call('PATCH', '/tus/v1/prestador/turnos/' + id + '/estado', 'tok-p', { estado: nuevo })
@@ -189,6 +193,7 @@ test('TURNOS solicitud PostgreSQL: a visitor cannot request; a signed-in client 
   assert.deepEqual(r.avisoRechazo, ['rejected'])
   assert.deepEqual(r.reuso, [201, 'pending', 'Beto Cuenta'])
   assert.deepEqual(r.retiro, [404, 'cancelled', 200, 'disponible', 'REQUEST_NOT_PENDING'], 'only its own client withdraws a request')
+  assert.deepEqual(r.avisoCancelacion, ['cliente'], 'the provider is notified once when the client cancels')
   assert.deepEqual(r.transiciones, ['completed', 'INVALID_TRANSITION', 'INVALID_TRANSITION', 'INVALID_STATUS'])
   assert.deepEqual(r.base, ['23514', '23514', 'ok', '23P01', 'ok', 'ok'], 'PostgreSQL: known states only, a pending row has its validity, live rows never overlap, rejected and expired ones do')
 })
@@ -202,6 +207,7 @@ test('TURNOS solicitud PostgreSQL: the time is decided again on accepting (block
       const pedido = await solicitar('tok-ana', 0, '10:00')
       await turnos.bloquearHorario({ prestadorTenantId: p.tenantId, inicio: a(0, '09:00'), fin: a(0, '12:00'), motivo: 'Trámite' })
       const sinHorario = await aceptar(pedido.body.id)
+      await turnos.procesarNotificacionesPendientes()
       out.bloqueado = [sinHorario.status, sinHorario.body.code, (await fila(pedido.body.id)).estado, (await call('GET', '/tus/v1/cliente/turnos', 'tok-ana')).body.items.find((item) => item.id === pedido.body.id).estado]
       out.avisoBloqueado = avisos.filter((x) => x[0] === 'respondida' && x[1] === pedido.body.id).map((x) => x[3])
       out.yaRespondida = (await aceptar(pedido.body.id)).body.code
@@ -263,6 +269,7 @@ test('TURNOS solicitud PostgreSQL concurrency: several clients requesting the sa
       const aceptar = (id) => call('POST', '/tus/v1/prestador/turnos/' + id + '/aceptar', 'tok-p')
       const rechazar = (id) => call('POST', '/tus/v1/prestador/turnos/' + id + '/rechazar', 'tok-p')
       const dobles = await Promise.all(Array.from({ length: 5 }, () => aceptar(ganadora.body.id)))
+      await turnos.procesarNotificacionesPendientes()
       out.dobles = [dobles.map((x) => x.status), dobles.every((x) => x.body.estado === 'confirmed'), (await fila(ganadora.body.id)).estado, (await fila(ganadora.body.id)).version, avisos.filter((x) => x[0] === 'respondida' && x[1] === ganadora.body.id).length]
       out.unaReserva = await prisma.reserva.count({ where: { tenantId: p.tenantId, fechaInicio: new Date(a(0, '10:00')), estado: 'confirmed' } })
 
@@ -271,6 +278,7 @@ test('TURNOS solicitud PostgreSQL concurrency: several clients requesting the sa
       for (const hora of ['09:00', '11:00', '16:00']) {
         const pedido = await solicitar('tok-c5', 1, hora)
         const [si, no] = await Promise.all([aceptar(pedido.body.id), rechazar(pedido.body.id)])
+        await turnos.procesarNotificacionesPendientes()
         const final = (await fila(pedido.body.id)).estado
         duelos.push([[si.status, no.status].sort().join(), final === 'confirmed' ? si.status === 200 && no.body.code === 'REQUEST_NOT_PENDING' : final === 'rejected' && no.status === 200 && si.body.code === 'REQUEST_NOT_PENDING', avisos.filter((x) => x[0] === 'respondida' && x[1] === pedido.body.id).length])
       }

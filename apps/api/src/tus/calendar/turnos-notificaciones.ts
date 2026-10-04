@@ -11,6 +11,8 @@ export interface NotificadorTurnos {
   solicitudRespondida(aviso: AvisoRespuestaTurno): Promise<void>
   // The verified payment of the deposit confirmed the turno: the client and the provider know.
   turnoConfirmado(aviso: AvisoTurnoConfirmado): Promise<void>
+  // A client or provider/admin cancelled a turno: only the counterpart is notified.
+  turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void>
 }
 
 export interface AvisoTurnoConfirmado {
@@ -18,6 +20,7 @@ export interface AvisoTurnoConfirmado {
   clienteCuentaId: string
   // Account of the provider (its recipient is resolved from it) and how its client is named.
   prestadorTenantId: string
+  prestadorCuentaId: string | null
   clienteNombre: string
   prestadorNombre: string
   servicio: string
@@ -28,11 +31,24 @@ export interface AvisoSolicitudTurno {
   reservaId: string
   // Account of the provider (the recipient is resolved from it, never taken from a request).
   prestadorTenantId: string
+  prestadorCuentaId: string | null
   clienteNombre: string
   servicio: string
   inicio: Date
   duracionMinutos: number
   expiraEn: Date
+}
+
+export interface AvisoTurnoCancelado {
+  reservaId: string
+  clienteCuentaId: string
+  prestadorTenantId: string
+  prestadorCuentaId: string | null
+  canceladoPor: 'cliente' | 'prestador' | 'administracion'
+  clienteNombre: string
+  prestadorNombre: string
+  servicio: string
+  inicio: Date
 }
 
 export interface AvisoRespuestaTurno {
@@ -52,6 +68,7 @@ export const SIN_NOTIFICADOR_TURNOS: NotificadorTurnos = {
   solicitudRecibida: async () => {},
   solicitudRespondida: async () => {},
   turnoConfirmado: async () => {},
+  turnoCancelado: async () => {},
 }
 
 interface ClienteCuentasNotificacion {
@@ -88,6 +105,7 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
     await this.transporte.send({
       to: cuenta.user.email,
       subject: 'Tenés una nueva solicitud de turno en TUS',
+      idempotencyKey: `turno-solicitado/${aviso.reservaId}/prestador`,
       ...emailLayout(
         'Nueva solicitud de turno',
         [
@@ -107,6 +125,7 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
       await this.transporte.send({
         to: cuenta.user.email,
         subject: '¡Tu turno quedó confirmado!',
+        idempotencyKey: `turno-respondido/${aviso.resultado}/${aviso.reservaId}/cliente`,
         ...emailLayout('Turno confirmado', [`${aviso.prestadorNombre} aceptó tu solicitud: tu turno de ${aviso.servicio} del ${cuando(aviso.inicio)} quedó confirmado.`], { label: 'Ver mis turnos', url: this.url('/mis-turnos') }),
       })
       return
@@ -115,6 +134,7 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
     await this.transporte.send({
       to: cuenta.user.email,
       subject: aceptada ? 'Tu solicitud fue aceptada: aboná la seña' : 'Tu solicitud de turno en TUS fue rechazada',
+      idempotencyKey: `turno-respondido/${aviso.resultado}/${aviso.reservaId}/cliente`,
       ...emailLayout(
         aceptada ? 'Esperando pago de seña' : 'Solicitud rechazada',
         [
@@ -136,12 +156,14 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
       this.cuentas.account.findFirst({ where: { id: aviso.clienteCuentaId, status: 'active' }, include: { user: true } }),
       this.cuentas.account.findFirst({ where: { tenantId: aviso.prestadorTenantId, status: 'active' }, include: { user: true }, orderBy: { createdAt: 'asc' } }),
     ])
-    // Each notice on its own: one failed delivery never silences the other.
-    await Promise.allSettled([
+    // Each recipient has its own provider idempotency key. If either delivery fails, the durable
+    // outbox retries the event without duplicating the one Resend already accepted.
+    await Promise.all([
       cuenta
         ? this.transporte.send({
             to: cuenta.user.email,
             subject: '¡Tu turno quedó confirmado!',
+            idempotencyKey: `turno-confirmado/${aviso.reservaId}/cliente`,
             ...emailLayout('Turno confirmado', [`Recibimos el pago de tu seña. ¡Tu turno quedó confirmado! ${aviso.servicio} con ${aviso.prestadorNombre}, ${cuando(aviso.inicio)}.`], { label: 'Ver mis turnos', url: this.url('/mis-turnos') }),
           })
         : Promise.resolve(),
@@ -149,9 +171,36 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
         ? this.transporte.send({
             to: prestador.user.email,
             subject: 'Un turno de tu agenda quedó confirmado',
+            idempotencyKey: `turno-confirmado/${aviso.reservaId}/prestador`,
             ...emailLayout('Turno confirmado', [`${aviso.clienteNombre} pagó la seña: el turno de ${aviso.servicio} del ${cuando(aviso.inicio)} quedó confirmado.`], { label: 'Ver mi agenda', url: this.url('/prestador/turnos') }),
           })
         : Promise.resolve(),
     ])
+  }
+
+  async turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void> {
+    const canceladoPorCliente = aviso.canceladoPor === 'cliente'
+    const cuenta = await this.cuentas.account.findFirst({
+      where: canceladoPorCliente
+        ? { tenantId: aviso.prestadorTenantId, status: 'active' }
+        : { id: aviso.clienteCuentaId, status: 'active' },
+      include: { user: true },
+      ...(canceladoPorCliente ? { orderBy: { createdAt: 'asc' } } : {}),
+    })
+    if (!cuenta) return
+    await this.transporte.send({
+      to: cuenta.user.email,
+      subject: 'Un turno fue cancelado',
+      idempotencyKey: `turno-cancelado/${aviso.reservaId}/${canceladoPorCliente ? 'prestador' : 'cliente'}`,
+      ...emailLayout(
+        'Turno cancelado',
+        [
+          canceladoPorCliente
+            ? `${aviso.clienteNombre} canceló el turno de ${aviso.servicio} del ${cuando(aviso.inicio)}.`
+            : `${aviso.prestadorNombre} canceló tu turno de ${aviso.servicio} del ${cuando(aviso.inicio)}. Podés elegir otro horario u otro profesional.`,
+        ],
+        { label: canceladoPorCliente ? 'Ver mi agenda' : 'Ver mis turnos', url: this.url(canceladoPorCliente ? '/prestador/turnos' : '/mis-turnos') }
+      ),
+    })
   }
 }

@@ -44,6 +44,7 @@ import { agendaDelDia } from './agenda.ts'
 import { ErrorCalendario } from './bookings.ts'
 import { dateWeekday } from './rules.ts'
 import { SIN_NOTIFICADOR_TURNOS, type NotificadorTurnos } from './turnos-notificaciones.ts'
+import { OutboxNotificacionesTurnos, type EventoNotificacionTurno } from './turnos-notificaciones-outbox.ts'
 import { senaDePrecio, type ServicioSenaTurnos } from './turnos-sena.ts'
 
 // A turno a client REQUESTS. The client is the account of the session (never a value of the
@@ -177,6 +178,7 @@ type FilaReserva = Prisma.ReservaGetPayload<object>
 
 export class ServicioTurnos {
   private readonly notificadores: NotificadorTurnos[]
+  private readonly outboxNotificaciones: OutboxNotificacionesTurnos
   // Deposit of the turnos (TURNOS-SENA-01); without it no turno shows or charges one.
   private senas: ServicioSenaTurnos | null = null
 
@@ -185,6 +187,7 @@ export class ServicioTurnos {
     notificador: NotificadorTurnos = SIN_NOTIFICADOR_TURNOS
   ) {
     this.notificadores = [notificador]
+    this.outboxNotificaciones = new OutboxNotificacionesTurnos(prisma, (evento) => this.entregarNotificacion(evento))
   }
 
   // Wired after the services they need exist (payments, the assistant's channels).
@@ -196,12 +199,6 @@ export class ServicioTurnos {
   agregarNotificador(notificador: NotificadorTurnos): this {
     this.notificadores.push(notificador)
     return this
-  }
-
-  // Outbound notices never decide anything: they run after the commit, each channel on its own,
-  // and a failure is ignored.
-  private avisar(envio: (notificador: NotificadorTurnos) => Promise<void>): void {
-    for (const notificador of this.notificadores) void Promise.resolve().then(() => envio(notificador)).catch(() => undefined)
   }
 
   // Called only after the finance transaction applied a verified deposit approval. The work is
@@ -216,21 +213,13 @@ export class ServicioTurnos {
       estado: 'confirmed',
     } })
     if (!reserva) return
-    const [perfil, oficios, clientes] = await Promise.all([
-      this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: reserva.tenantId } }),
-      this.nombresDeOficio([reserva]),
-      this.clientesDe([reserva]),
-    ])
-    const nombreCliente = clientes.get(reserva.clienteId)?.nombre ?? 'Tu cliente'
-    this.avisar((notificador) => notificador.turnoConfirmado({
+    await this.outboxNotificaciones.encolar(this.prisma, {
+      tenantId: reserva.tenantId,
       reservaId: reserva.id,
-      clienteCuentaId: reserva.clienteId,
-      prestadorTenantId: reserva.tenantId,
-      clienteNombre: nombreCliente,
-      prestadorNombre: perfil?.nombrePublico ?? 'El profesional',
-      servicio: reserva.tarifaNombre ?? (reserva.servicioId ? oficios.get(reserva.servicioId) : null) ?? 'el servicio',
-      inicio: reserva.fechaInicio,
-    }))
+      version: reserva.version,
+      evento: { kind: 'turno_confirmado', reservaId: reserva.id },
+    })
+    this.activarNotificaciones()
   }
 
   // The deposit of each turno, derived (never stored on the reservation): one batch for the list.
@@ -522,18 +511,7 @@ export class ServicioTurnos {
    */
   async solicitarTurno(input: EntradaSolicitudTurno): Promise<DetalleTurno> {
     const turno = await this.crearTurno({ ...input }, true)
-    const expiraEn = turno.expiraEn ? new Date(turno.expiraEn) : new Date(turno.inicio)
-    this.avisar((notificador) =>
-      notificador.solicitudRecibida({
-        reservaId: turno.id,
-        prestadorTenantId: turno.tenantId,
-        clienteNombre: turno.clienteNombre ?? 'Un cliente',
-        servicio: turno.oficioNombre ?? turno.tarifaNombre ?? 'un servicio',
-        inicio: new Date(turno.inicio),
-        duracionMinutos: turno.duracionMinutos,
-        expiraEn,
-      })
-    )
+    this.activarNotificaciones()
     return turno
   }
 
@@ -616,7 +594,7 @@ export class ServicioTurnos {
           const abiertas = await tx.reserva.count({ where: { calendarioId: calendario.id, clienteId: input.clienteId, esInvitado: false, estado: 'pending' } })
           if (abiertas >= MAXIMO_SOLICITUDES_PENDIENTES_POR_AGENDA) throw new ErrorCalendario(409, CODIGO_DEMASIADAS_SOLICITUDES, 'Ya tenés varias solicitudes pendientes con este profesional.')
         }
-        return tx.reserva.create({
+        const creada = await tx.reserva.create({
           data: {
             id: reservaId,
             tenantId: perfil.tenantId,
@@ -647,6 +625,14 @@ export class ServicioTurnos {
             notas: input.notas?.trim().slice(0, 500) || null,
           },
         })
+        if (solicitud)
+          await this.outboxNotificaciones.encolar(tx, {
+            tenantId: creada.tenantId,
+            reservaId: creada.id,
+            version: creada.version,
+            evento: { kind: 'solicitud_recibida', reservaId: creada.id },
+          })
+        return creada
       })
 
       const [clientes, oficios] = await Promise.all([this.clientesDe([row]), this.nombresDeOficio([row])])
@@ -705,6 +691,84 @@ export class ServicioTurnos {
     if (ids.length === 0) return new Map()
     const cuentas = await this.prisma.account.findMany({ where: { id: { in: ids } }, include: { user: true } })
     return new Map(cuentas.map((cuenta) => [cuenta.id, { nombre: nombreDeUsuario(cuenta.user), telefono: cuenta.user.phoneNumber ?? null, email: cuenta.user.email }]))
+  }
+
+  crearWorkerNotificaciones(): ReturnType<OutboxNotificacionesTurnos['crearWorker']> {
+    return this.outboxNotificaciones.crearWorker()
+  }
+
+  procesarNotificacionesPendientes(limit?: number): Promise<number> {
+    return this.outboxNotificaciones.procesarPendientes(limit)
+  }
+
+  private activarNotificaciones(): void {
+    // A previous drain may have reached an empty queue just before this transaction committed.
+    // Chain one more bounded drain so the freshly committed event is not left waiting for the
+    // periodic worker tick.
+    void this.procesarNotificacionesPendientes()
+      .then(() => this.procesarNotificacionesPendientes())
+      .catch(() => undefined)
+  }
+
+  private async entregarNotificacion(evento: EventoNotificacionTurno): Promise<void> {
+    const row = await this.prisma.reserva.findFirst({ where: { OR: [{ id: evento.reservaId }, { reservaId: evento.reservaId }] } })
+    if (!row || row.esInvitado) return
+    const [perfil, prestadorCuentaId, oficios, clientes] = await Promise.all([
+      this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: row.tenantId } }),
+      this.cuentaPrestadorId(row.tenantId),
+      this.nombresDeOficio([row]),
+      this.clientesDe([row]),
+    ])
+    const comun = {
+      reservaId: row.id,
+      clienteCuentaId: row.clienteId,
+      prestadorTenantId: row.tenantId,
+      prestadorCuentaId,
+      clienteNombre: clientes.get(row.clienteId)?.nombre ?? 'Tu cliente',
+      prestadorNombre: perfil?.nombrePublico ?? 'El profesional',
+      servicio: row.tarifaNombre ?? (row.servicioId ? oficios.get(row.servicioId) : null) ?? 'el servicio',
+      inicio: row.fechaInicio,
+    }
+    if (evento.kind === 'solicitud_recibida') {
+      const aviso = { ...comun, duracionMinutos: row.duracionMinutos ?? 60, expiraEn: row.solicitudExpiraEn ?? row.fechaInicio }
+      await Promise.all(this.notificadores.map((notificador) => notificador.solicitudRecibida(aviso)))
+      return
+    }
+    if (evento.kind === 'solicitud_respondida') {
+      const [turno] = await this.agregarSenas([row], [this.mapearDetalleTurno(row, comun.prestadorNombre, { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined })])
+      const pago = evento.resultado === 'awaiting_payment' && this.senas && turno?.sena?.estado === 'pending'
+        ? await this.senas.enlaceAlAceptar(row, `turno-aceptado:${row.reservaId}`)
+        : null
+      const aviso = {
+        reservaId: row.id,
+        clienteCuentaId: row.clienteId,
+        resultado: evento.resultado,
+        prestadorNombre: comun.prestadorNombre,
+        servicio: comun.servicio,
+        inicio: row.fechaInicio,
+        sena: evento.resultado === 'awaiting_payment' && turno?.sena
+          ? { monto: turno.sena.monto, moneda: turno.sena.moneda, pagable: turno.sena.estado === 'pending', url: pago?.checkoutUrl ?? null }
+          : null,
+      } as const
+      await Promise.all(this.notificadores.map((notificador) => notificador.solicitudRespondida(aviso)))
+      return
+    }
+    if (evento.kind === 'turno_confirmado') {
+      await Promise.all(this.notificadores.map((notificador) => notificador.turnoConfirmado(comun)))
+      return
+    }
+    await Promise.all(this.notificadores.map((notificador) => notificador.turnoCancelado({ ...comun, canceladoPor: evento.canceladoPor })))
+  }
+
+  // Backend-owned recipient resolution. Notification callers only carry the provider tenant;
+  // neither HTTP input nor an LLM may choose the account or its phone number.
+  private async cuentaPrestadorId(tenantId: string): Promise<string | null> {
+    const cuenta = await this.prisma.account.findFirst({
+      where: { tenantId, status: 'active' },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    })
+    return cuenta?.id ?? null
   }
 
   private async nombresDeOficio(rows: FilaReserva[]): Promise<Map<string, string>> {
@@ -775,7 +839,17 @@ export class ServicioTurnos {
         ...(estado === 'awaiting_payment' ? { solicitudExpiraEn: new Date(Math.min(ahora.getTime() + HORAS_VIGENCIA_PAGO_SENA_TURNO * 3_600_000, actual.fechaInicio.getTime())) } : {}),
         version: { increment: 1 }, fechaActualizacion: ahora,
       } })
-      if (!input.aceptar) return { tipo: 'hecha' as const, row: await pasar('rejected') }
+      const pasarYNotificar = async (estado: 'awaiting_payment' | 'confirmed' | 'rejected') => {
+        const row = await pasar(estado)
+        await this.outboxNotificaciones.encolar(tx, {
+          tenantId: row.tenantId,
+          reservaId: row.id,
+          version: row.version,
+          evento: { kind: 'solicitud_respondida', reservaId: row.id, resultado: estado },
+        })
+        return row
+      }
+      if (!input.aceptar) return { tipo: 'hecha' as const, row: await pasarYNotificar('rejected') }
       if (actual.fechaInicio.getTime() <= ahora.getTime()) {
         await pasar('expired')
         return { tipo: 'vencida' as const }
@@ -788,35 +862,15 @@ export class ServicioTurnos {
       const otro = await tx.reserva.findFirst({
         where: { calendarioId: actual.calendarioId, id: { not: actual.id }, ...queOcupan(ahora), fechaInicio: { lt: actual.fechaFin }, fechaFin: { gt: actual.fechaInicio } },
       })
-      if (bloqueo || otro) return { tipo: 'ocupada' as const, row: await pasar('rejected') }
-      return { tipo: 'hecha' as const, row: await pasar(aceptado) }
+      if (bloqueo || otro) return { tipo: 'ocupada' as const, row: await pasarYNotificar('rejected') }
+      return { tipo: 'hecha' as const, row: await pasarYNotificar(aceptado) }
     })
 
     if (resultado.tipo === 'vencida') throw new ErrorCalendario(409, CODIGO_SOLICITUD_VENCIDA, 'La solicitud venció antes de ser respondida.')
     if (resultado.tipo === 'respondida') throw new ErrorCalendario(409, CODIGO_SOLICITUD_NO_PENDIENTE, 'Esa solicitud ya fue respondida.')
     const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: input.prestadorTenantId } })
     const [turno] = await this.detallesPrestador([resultado.row], perfil?.nombrePublico ?? 'Prestador')
-    if (resultado.tipo !== 'repetida' && !resultado.row.esInvitado) {
-      const fila = resultado.row
-      const aceptada = fila.estado === 'awaiting_payment' || fila.estado === 'confirmed'
-      // Accepted: the deposit becomes payable. Its checkout is prepared here (after the commit,
-      // outside any transaction) so the notice can carry the real link; when it cannot be prepared
-      // the notice goes without it and the client asks for it from "Mis turnos" or the assistant.
-      void (async () => {
-        const pago = fila.estado === 'awaiting_payment' && this.senas && turno!.sena?.estado === 'pending' ? await this.senas.enlaceAlAceptar(fila, `turno-aceptado:${fila.reservaId}`) : null
-        this.avisar((notificador) =>
-          notificador.solicitudRespondida({
-            reservaId: fila.id,
-            clienteCuentaId: fila.clienteId,
-            resultado: fila.estado === 'awaiting_payment' ? 'awaiting_payment' : fila.estado === 'confirmed' ? 'confirmed' : 'rejected',
-            prestadorNombre: perfil?.nombrePublico ?? 'El profesional',
-            servicio: turno!.oficioNombre ?? turno!.tarifaNombre ?? 'el servicio',
-            inicio: fila.fechaInicio,
-            sena: fila.estado === 'awaiting_payment' && turno!.sena ? { monto: turno!.sena.monto, moneda: turno!.sena.moneda, pagable: turno!.sena.estado === 'pending', url: pago?.checkoutUrl ?? null } : null,
-          })
-        )
-      })().catch(() => undefined)
-    }
+    if (resultado.tipo !== 'repetida') this.activarNotificaciones()
     // Stored as rejected (committed above); the provider is told why it could not be accepted.
     if (resultado.tipo === 'ocupada') throw new ErrorCalendario(409, CODIGO_SOLICITUD_SIN_HORARIO, 'Ese horario ya no está libre en tu agenda: la solicitud quedó rechazada.')
     return turno!
@@ -854,15 +908,24 @@ export class ServicioTurnos {
     })
     const calendario = reserva ? await this.prisma.calendario.findUnique({ where: { id: reserva.calendarioId } }) : null
     if (!reserva || !calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
-    const row = await this.conAgendaBloqueada(calendario, async (tx) => {
+    const resultado = await this.conAgendaBloqueada(calendario, async (tx) => {
       const ahora = new Date()
       const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
       if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
-      if (actual.estado === 'cancelled') return actual
+      if (actual.estado === 'cancelled') return { row: actual, cambio: false }
       if ((actual.estado !== 'pending' && actual.estado !== 'awaiting_payment' && actual.estado !== 'confirmed') || actual.fechaInicio.getTime() <= ahora.getTime())
         throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no se puede cancelar.')
-      return tx.reserva.update({ where: { id: actual.id }, data: { estado: 'cancelled', version: { increment: 1 }, fechaActualizacion: ahora } })
+      const row = await tx.reserva.update({ where: { id: actual.id }, data: { estado: 'cancelled', version: { increment: 1 }, fechaActualizacion: ahora } })
+      await this.outboxNotificaciones.encolar(tx, {
+        tenantId: row.tenantId,
+        reservaId: row.id,
+        version: row.version,
+        evento: { kind: 'turno_cancelado', reservaId: row.id, canceladoPor: 'cliente' },
+      })
+      return { row, cambio: true }
     })
+    if (resultado.cambio) this.activarNotificaciones()
+    const row = resultado.row
     const [perfil, oficios] = await Promise.all([this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: row.tenantId } }), this.nombresDeOficio([row])])
     return this.mapearDetalleTurno(row, perfil?.nombrePublico ?? 'Prestador', { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined })
   }
@@ -1050,16 +1113,16 @@ export class ServicioTurnos {
     const calendario = await this.prisma.calendario.findUnique({ where: { id: reserva.calendarioId } })
     if (!calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
 
-    const updated = await this.conAgendaBloqueada(calendario, async (tx) => {
+    const resultado = await this.conAgendaBloqueada(calendario, async (tx) => {
       const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
       if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
-      if (actual.estado === nuevo) return actual
+      if (actual.estado === nuevo) return { row: actual, cambio: false }
       // Nothing leaves a final state, and a request is never confirmed from here: only its
       // provider accepts it (aceptarSolicitud re-checks the time). Expiry is the system's.
       const permitidos: readonly string[] = esEstadoTurno(actual.estado) ? TRANSICIONES_TURNO[actual.estado] : []
       if (!permitidos.includes(nuevo) || nuevo === 'expired' || nuevo === 'confirmed' || nuevo === 'awaiting_payment')
         throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no admite ese cambio de estado.')
-      return tx.reserva.update({
+      const row = await tx.reserva.update({
         where: { id: actual.id },
         data: {
           estado: nuevo,
@@ -1068,9 +1131,19 @@ export class ServicioTurnos {
           fechaActualizacion: new Date(),
         },
       })
+      if ((nuevo === 'cancelled' || nuevo === 'cancelled-late') && !row.esInvitado)
+        await this.outboxNotificaciones.encolar(tx, {
+          tenantId: row.tenantId,
+          reservaId: row.id,
+          version: row.version,
+          evento: { kind: 'turno_cancelado', reservaId: row.id, canceladoPor: input.isAdmin ? 'administracion' : 'prestador' },
+        })
+      return { row, cambio: true }
     })
 
+    const updated = resultado.row
     const [turno] = await this.detallesPrestador([updated], 'Prestador')
+    if (resultado.cambio && (nuevo === 'cancelled' || nuevo === 'cancelled-late')) this.activarNotificaciones()
     return turno!
   }
 
