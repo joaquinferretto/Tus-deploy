@@ -438,7 +438,7 @@ export class OrquestadorConversacion {
   ): Promise<'processed' | 'nothing' | 'human' | 'already_answered'> {
     const loaded = await this.cargarTurno(conversationId)
     if (!loaded || loaded.pending.length === 0) return 'nothing'
-    const turn: Turno = { ...loaded, canal: this.canalWhatsapp(loaded, correlationId) }
+    const turn: Turno = { ...loaded, canal: this.canalWhatsapp(loaded) }
     // Phone verification messages leave the turn BEFORE the model (and before the human-mode
     // check: a verification is answered even while an operator owns the chat). Their answer is
     // fixed text; a message whose verification is still being recorded is left for later.
@@ -506,7 +506,7 @@ export class OrquestadorConversacion {
     })
   }
 
-  private canalWhatsapp(turn: TurnoCargado, correlationId: string): CanalTurno {
+  private canalWhatsapp(turn: TurnoCargado): CanalTurno {
     return {
       id: 'whatsapp',
       conversacional: false,
@@ -2187,7 +2187,7 @@ export class OrquestadorConversacion {
         isProvider: actor.isProvider,
       }).catch(() => null)
       turn.canal.evento?.({ type: 'knowledge', phase: 'end' })
-      if (!retrieved) return this.bajaConfianza(turn, correlationId)
+      if (!retrieved) return this.bajaConfianza(turn)
       this.metric('whatsapp.rag_retrieval', {
         ms: this.now() - started,
         results: retrieved.results.length,
@@ -2592,10 +2592,10 @@ export class OrquestadorConversacion {
     if (intent === 'buscar' && !datosEnTurno && need?.profession && turn.busqueda) return this.buscarYResponder(turn, actor, need, text, correlationId)
     const pendiente = esperaHoraDe(turn.conversation.state)
     if (pendiente) return [{ type: 'text', text: preguntaHora(pendiente, this.now()) }]
-    return this.bajaConfianza(turn, correlationId)
+    return this.bajaConfianza(turn)
   }
 
-  private async bajaConfianza(turn: Turno, correlationId: string): Promise<MensajeSaliente[]> {
+  private async bajaConfianza(turn: Turno): Promise<MensajeSaliente[]> {
     const count = turn.conversation.state.lowConfidenceCount + 1
     await this.actualizarEstado(turn.conversation.conversationId, { lowConfidenceCount: count })
     turn.degradado = true
