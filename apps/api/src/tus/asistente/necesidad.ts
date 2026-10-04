@@ -53,6 +53,11 @@ export interface NecesidadTurno {
   // by the backend against the professionals it really listed. Never a value the person typed.
   providerId: string | null
   providerName: string | null
+  // Professionals the person does NOT want for THIS request ("otra persona", "que no sea
+  // Melina", "cualquiera menos la segunda"), resolved by the backend against the professionals
+  // it really listed. It lives and dies with the need: another service, or a need that expired,
+  // starts without exclusions. Never a preference of the account.
+  excludedProviderIds?: string[]
 }
 
 export const NECESIDAD_VACIA: NecesidadTurno = { profession: null, alternatives: [], day: null, dayTo: null, time: null, zone: null, anyZone: false, clientTravels: false, urgent: false, budgetMax: null, asap: false, anyProvider: false, providerId: null, providerName: null }
@@ -194,6 +199,9 @@ const LO_ANTES_POSIBLE = new RegExp(
 const CUALQUIER_PROFESIONAL = new RegExp(
   [
     String.raw`\bcualquiera\b`,
+    // "alguien lo antes posible": no professional was chosen. A generic "alguien que me
+    // arregle..." only describes the need and keeps the historical extractor shape.
+    String.raw`\balguien (?:lo antes posible|cuanto antes|lo mas pronto|urgente|ya|ahora)\b`,
     // "cualquier profesional", "cualquier plomero": whatever the trade is called. A zone, a day or
     // a time said that way is not a professional.
     String.raw`\bcualquier (?!barrio\b|zona\b|lugar\b|lado\b|parte\b|dia\b|hora\b|horario\b|momento\b|fecha\b|cosa\b|servicio\b|precio\b)[a-zñ]+\b`,
@@ -364,11 +372,14 @@ export function combinarNecesidad(previa: NecesidadTurno | null, datos: DatosNec
     siguiente.providerId = datos.providerId
     siguiente.providerName = datos.providerName ?? null
     siguiente.anyProvider = false
+    // Choosing somebody by name takes them out of the exclusions: the last thing said wins.
+    if (siguiente.excludedProviderIds?.includes(datos.providerId)) siguiente.excludedProviderIds = siguiente.excludedProviderIds.filter((id) => id !== datos.providerId)
   } else if (datos.anyProvider) {
     siguiente.anyProvider = true
     siguiente.providerId = null
     siguiente.providerName = null
   }
+  if (datos.excludedProviderIds?.length) siguiente.excludedProviderIds = [...new Set([...(siguiente.excludedProviderIds ?? []), ...datos.excludedProviderIds])].filter((id) => id !== siguiente.providerId)
   return siguiente
 }
 

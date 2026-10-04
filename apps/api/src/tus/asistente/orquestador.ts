@@ -7,6 +7,7 @@ import { formatearPesos } from '@factory/contracts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
+import { cuentaTrivial, detectarCambioDeHorario, detectarRestriccionProfesional, esPreguntaSuelta, expresaFrustracion, pideDetener, pideEmpezarDeNuevo, pideOtrasOpciones, sinInsultos, tieneInsultos } from './restricciones.ts'
 import { GUIA_DE_TEMA, TEMAS_AYUDA, TEMAS_DE_CUENTA, ayudaDeCuenta, detectarAyuda, enlaceGuia, enlaceTus, guiaDeCuenta, lineaDeReanudacion, pideExplicacion, rutaDeTema, type AyudaDetectada, type EstadoDesafio, type TemaAyuda } from './asistencia.ts'
 import { extracto } from './ayuda.ts'
 import { BOTONES_SOLICITUD, elegirServicio, elegirServicioPorNombre, enlaceRegistro, fechaLarga, horaCorta, preguntaServicio, resumenSolicitud, retornoDeSolicitud, sinIdentificadores, textoPrecio, type OpcionServicio } from './solicitud-turno.ts'
@@ -282,6 +283,8 @@ type Turno = {
   // The message is about finding a service: decided by the backend from what the message says,
   // so the routing call is skipped and the need (already merged and stored) is at hand.
   busqueda?: { need: NecesidadTurno }
+  // The last search found professionals, and every one of them was excluded by the person.
+  sinOtros?: boolean
 }
 
 // Asking for someone ("necesito un...", "busco una...", "quiero alguien que..."), typos included.
@@ -379,6 +382,14 @@ interface BusquedaHecha {
 }
 
 // Only the professional the person chose, with the outcome recomputed for her.
+// The result without the professionals the person excluded for this request.
+function sinExcluidos(resultado: DisponibilidadNecesidad, excluidos: readonly string[]): DisponibilidadNecesidad {
+  const providers = resultado.providers.filter((item) => !excluidos.includes(item.providerId))
+  if (providers.length === resultado.providers.length) return resultado
+  const outcome: DisponibilidadNecesidad['outcome'] = providers.some((item) => item.matches.length > 0) ? 'matches' : providers.some((item) => item.nearby.length > 0) ? 'nearby' : 'no_availability'
+  return { ...resultado, outcome, providers }
+}
+
 function soloProfesional(resultado: DisponibilidadNecesidad, providerId: string): DisponibilidadNecesidad {
   const providers = resultado.providers.filter((item) => item.providerId === providerId)
   const outcome: DisponibilidadNecesidad['outcome'] =
@@ -683,6 +694,10 @@ export class OrquestadorConversacion {
       return this.resolverConfirmacion(turn, actor, pendingId, confirmation.decision, correlationId)
 
     const avisos = input.notices.map((notice) => ({ type: 'text' as const, text: notice }))
+    // GLOBAL CONSTRAINT ROUTER, before the steps too: a change of mind (another professional,
+    // another time, "dejalo") or an aside is resolved first, whatever was being waited for.
+    const cambio = await this.cambioDeRestricciones(turn, actor, text, correlationId)
+    if (cambio) return [...avisos, ...cambio]
     // A turno being requested (which service, who the client is) and the payment link of a deposit
     // are steps the BACKEND owns: the answer is read here, never by the model.
     const paso = (await this.pasoDeSolicitud(turn, actor, text, correlationId)) ?? (await this.pedidoDeSena(turn, actor, text, correlationId))
@@ -705,6 +720,188 @@ export class OrquestadorConversacion {
 
     const response = await this.conversar(turn, actor, text, intent, correlationId)
     return [...avisos, ...response]
+  }
+
+  // ---- constraints: what a message CHANGES in the request under way ---------------------------
+
+  // GLOBAL CONSTRAINT ROUTER. It runs before any step reads the message (the identity step
+  // included): "otra persona", "que no sea Melina", "cualquiera menos la segunda", "dejalo",
+  // "cambiame el horario", "¿cuánto es 2 + 2?" are never an answer to "name and document".
+  //
+  // The text only says WHAT was meant (restricciones.ts). WHO is excluded is resolved here, against
+  // the state: the professional of the turno being requested, the one proposed, the one chosen,
+  // the options that were really shown. Only what the message changes is changed: the service
+  // and the day are kept, the professional and the time that depended on her are dropped, and the
+  // backend searches the real calendar again. Rude words are ignored, never answered.
+  private async cambioDeRestricciones(turn: Turno, actor: ActorAsistente, text: string, correlationId: string): Promise<MensajeSaliente[] | null> {
+    const state = turn.conversation.state
+    const conversationId = turn.conversation.conversationId
+    const ahora = this.now()
+    const booking = state.booking && Date.parse(state.booking.startsAt) > ahora && ahora - state.booking.at <= SOLICITUD_EN_ESPERA_MS ? state.booking : null
+    const vigente = state.need?.profession && ahora - (state.needAt ?? 0) <= NECESIDAD_VIGENTE_MS ? state.need : null
+    const propuesta = state.suggestion?.kind === 'offer' && ahora - state.suggestion.at <= SOLICITUD_VIGENTE_MS ? state.suggestion : null
+    const profession = booking?.profession ?? vigente?.profession ?? propuesta?.profession ?? (state.shown?.items.length ? state.shown.profession : null)
+    const pendiente = this.flujoPendiente(state)
+    const enIdentidad = booking?.step === 'identity' && turn.canal.id === 'whatsapp' && !cuentaDeSolicitud(actor)
+    const marcar = (intencion: IntencionAsistente, kind: string) => {
+      turn.intencion = intencion
+      turn.canal.evento?.({ type: 'routing', intent: intencion })
+      this.metric('assistant.constraint', { channel: turn.canal.id, kind, step: booking?.step ?? 'none', rude: tieneInsultos(text) })
+    }
+    // What the conversation goes back to, said once after an aside.
+    const retomar = (): string => {
+      if (!pendiente) return ''
+      const que = `tu turno de ${pendiente.servicio}${pendiente.profesional ? ` con ${pendiente.profesional}` : ''}${pendiente.cuando ? `, ${pendiente.cuando}` : ''}`
+      if (enIdentidad) return `Seguíamos con ${que}. Para registrar la solicitud necesito identificar tu cuenta: decime tu nombre completo y DNI.`
+      return pendiente.espera === 'busqueda' ? `Seguíamos con tu búsqueda de ${pendiente.servicio}.` : `Seguíamos con ${que}.`
+    }
+    const limpiar = { booking: null, suggestion: null, need: null, needAt: null, offers: null, shown: null, slots: null, chosenProviderId: null, dayChoice: null, pendingConfirmationId: null, lowConfidenceCount: 0 } as const
+
+    // A question about the person's own data ("¿qué presupuesto tengo?") keeps its own answer.
+    const detectada = detectarIntencion(text)
+    const privada = intencionPrivada(detectada)
+
+    // A trivial sum: the backend computes it, answers in one word and the flow is still there.
+    const cuenta = cuentaTrivial(text)
+    if (cuenta !== null) {
+      marcar('otro', 'trivial')
+      return [{ type: 'text', text: [`${cuenta}.`, retomar()].filter(Boolean).join('\n\n') }]
+    }
+
+    // "Empezar de nuevo": everything about the request is forgotten.
+    if (pideEmpezarDeNuevo(text) && (pendiente || state.shown?.items.length)) {
+      marcar('otro', 'restart')
+      await this.actualizarEstado(conversationId, limpiar)
+      return [{ type: 'text', text: 'Dale, empezamos de nuevo. ¿Qué servicio necesitás?' }]
+    }
+
+    // "Dejalo", "basta", "olvidate", "chau": the request under way is dropped. Nothing was sent
+    // to anybody yet, and that is said.
+    if (pideDetener(text) && pendiente && !state.pendingConfirmationId) {
+      marcar('otro', 'stop')
+      await this.actualizarEstado(conversationId, limpiar)
+      return [{ type: 'text', text: booking ? 'Listo, lo dejamos acá: no se envió ninguna solicitud. Cuando quieras, escribime y lo retomamos.' : 'Listo, lo dejamos acá. Cuando quieras, escribime y seguimos.' }]
+    }
+
+    // ---- another professional: "otra persona", "que no sea X", "menos la segunda", "no ella"
+    const mostrados = [...(state.shown?.items ?? []), ...(state.offers?.items ?? [])]
+    const conocidos = new Map<string, { providerId: string; name: string }>()
+    for (const item of [...personasDe(mostrados), ...(state.draft?.candidates ?? [])]) if (!conocidos.has(item.providerId)) conocidos.set(item.providerId, { providerId: item.providerId, name: item.name })
+    if (booking && !conocidos.has(booking.providerId)) conocidos.set(booking.providerId, { providerId: booking.providerId, name: booking.providerName })
+    if (propuesta && !conocidos.has(propuesta.providerId)) conocidos.set(propuesta.providerId, { providerId: propuesta.providerId, name: propuesta.name })
+    // The professional being talked about: the one of the turno being requested, the one proposed,
+    // the one chosen, or (after "la primera disponibilidad es...") the one who had it.
+    const primeraMostrada = vigente?.asap ? [...mostrados].filter((item) => item.starts.length > 0).sort((a, b) => a.starts[0]!.localeCompare(b.starts[0]!))[0]?.providerId ?? null : null
+    const actual = booking?.providerId ?? propuesta?.providerId ?? state.chosenProviderId ?? vigente?.providerId ?? primeraMostrada
+    // "Te dije que no", "otra vez la misma": the proposal on the table is what is being refused.
+    const leida = detectarRestriccionProfesional(text) ?? (propuesta && expresaFrustracion(text) && !mencionaAlgo(extraerNecesidad(sinInsultos(text), ahora)) ? { otro: false, actual: true, posiciones: [], nombres: [] } : null)
+    if (leida && profession) {
+      const excluidos = new Set<string>()
+      if ((leida.otro || leida.actual) && actual) excluidos.add(actual)
+      const lista = state.shown?.items.length ? personasDe(state.shown.items) : state.offers?.items.length ? personasDe(state.offers.items) : []
+      for (const posicion of leida.posiciones) if (lista[posicion]) excluidos.add(lista[posicion]!.providerId)
+      for (const nombre of leida.nombres) for (const persona of profesionalesNombrados(nombre, [...conocidos.values()])) excluidos.add(persona.providerId)
+      if (excluidos.size > 0) {
+        // Somebody may be chosen in the same breath ("no quiero a Melina, mejor Sabrina").
+        let resto = sinInsultos(text)
+        for (const nombre of leida.nombres) resto = resto.replace(nombre, ' ')
+        const elegida = profesionalNombrado(resto, [...conocidos.values()].filter((persona) => !excluidos.has(persona.providerId)))
+        const datos = extraerNecesidad(text, ahora)
+        const base = vigente ?? combinarNecesidad(null, { profession, ...(booking ? { day: diaLocal(booking.startsAt) } : {}) })
+        const combinada = combinarNecesidad(base, { ...datos, alternatives: [] })
+        const need: NecesidadTurno = {
+          ...combinada,
+          providerId: elegida?.providerId ?? null,
+          providerName: elegida?.name ?? null,
+          anyProvider: !elegida,
+          // Anybody else, the first real turno: unless a day was asked for (then, that day).
+          asap: Boolean(datos.asap) || base.asap || (!datos.day && !datos.since && (Boolean(booking) || Boolean(propuesta) || !combinada.day)),
+          excludedProviderIds: [...new Set([...(base.excludedProviderIds ?? []), ...excluidos])],
+        }
+        marcar('buscar', 'exclude_provider')
+        await this.actualizarEstado(conversationId, { booking: null, suggestion: null, chosenProviderId: null, pendingConfirmationId: null, lowConfidenceCount: 0 })
+        turn.sinOtros = false
+        const reply = await this.buscarConEstado(turn, actor, need, text, correlationId, base)
+        if (!reply) return null
+        const nombrados = await Promise.all((need.excludedProviderIds ?? []).map(async (id) => conocidos.get(id)?.name ?? (await this.deps.domain.nombrePrestador(id).catch(() => null))))
+        const nombres = nombrados.filter(Boolean).join(', ').replace(/, ([^,]+)$/u, ' y $1')
+        if (turn.sinOtros) {
+          const cuando = need.day && !need.asap ? ` ${describirDia(need.day, need.dayTo, ahora)}` : ''
+          return [{ type: 'text', text: `No encontré a otra persona de ${oficio(need.profession ?? profession).label} con turnos libres${cuando}${nombres ? `, además de ${nombres}` : ''}. ¿Querés que busque otro día?` }]
+        }
+        const primero = reply[0]
+        return primero && primero.type !== 'template' ? [{ ...primero, text: `Entendido, busco otra persona.\n\n${primero.text}` }, ...reply.slice(1)] : reply
+      }
+    }
+
+    // Somebody excluded before is asked for by name ("bueno, con Melina a las 9"): the last
+    // thing said wins. She is chosen, and the exclusion is lifted for her only.
+    if (!leida && vigente?.excludedProviderIds?.length) {
+      const excluidas = (await Promise.all(vigente.excludedProviderIds.map(async (providerId) => ({ providerId, name: conocidos.get(providerId)?.name ?? (await this.deps.domain.nombrePrestador(providerId).catch(() => null)) })))).filter((persona): persona is { providerId: string; name: string } => Boolean(persona.name))
+      const pedida = profesionalNombrado(sinInsultos(text), excluidas)
+      if (pedida) {
+        const datos = extraerNecesidad(text, ahora)
+        const combinada = combinarNecesidad(vigente, { ...datos, alternatives: [], providerId: pedida.providerId, providerName: pedida.name })
+        const need: NecesidadTurno = { ...combinada, asap: Boolean(datos.asap) || !combinada.day }
+        marcar('buscar', 'lift_exclusion')
+        await this.actualizarEstado(conversationId, { booking: null, suggestion: null, chosenProviderId: null, pendingConfirmationId: null, lowConfidenceCount: 0 })
+        const reply = await this.buscarConEstado(turn, actor, need, text, correlationId, vigente)
+        if (reply) return reply
+      }
+    }
+
+    // "¿Qué otros hay?": the professionals of the same service again, nobody chosen. The day is
+    // kept; who was excluded stays excluded.
+    if (pideOtrasOpciones(text) && profession && (booking || propuesta || vigente?.providerId || state.chosenProviderId)) {
+      const base = vigente ?? combinarNecesidad(null, { profession, ...(booking ? { day: diaLocal(booking.startsAt) } : propuesta ? { day: diaLocal(propuesta.start) } : {}) })
+      const need: NecesidadTurno = { ...combinarNecesidad(base, {}), providerId: null, providerName: null, anyProvider: false, asap: false, time: null, day: base.day ?? (booking ? diaLocal(booking.startsAt) : propuesta ? diaLocal(propuesta.start) : null) }
+      marcar('buscar', 'other_options')
+      await this.actualizarEstado(conversationId, { booking: null, suggestion: null, chosenProviderId: null, pendingConfirmationId: null, lowConfidenceCount: 0 })
+      const reply = await this.buscarConEstado(turn, actor, need, text, correlationId, vigente)
+      if (reply) return reply
+    }
+
+    // ---- the turno being requested: another time, its price
+    if (booking && !/\d{7,}/u.test(text.replace(/[.\s]/gu, ''))) {
+      const dia = diaLocal(booking.startsAt)
+      const ella = { profession: booking.profession, providerId: booking.providerId, providerName: booking.providerName }
+      const datos = extraerNecesidad(text, ahora)
+      const cambio = detectarCambioDeHorario(text) ?? (!datos.profession && !datos.anyProvider && (datos.day || datos.since || datos.time || datos.asap) ? 'otro_horario' : null)
+      if (cambio) {
+        const minutos = Number(horaLocal(booking.startsAt).slice(0, 2)) * 60 + Number(horaLocal(booking.startsAt).slice(3, 5))
+        const hhmm = (valor: number) => `${String(Math.floor(valor / 60)).padStart(2, '0')}:${String(valor % 60).padStart(2, '0')}`
+        // Same service and professional; only the time that was chosen is dropped.
+        const base =
+          cambio === 'mas_tarde'
+            ? combinarNecesidad(null, { ...ella, day: dia, time: { kind: 'from', from: hhmm(Math.min(minutos + 1, 23 * 60 + 59)), to: null }, asap: true })
+            : cambio === 'mas_temprano'
+              ? combinarNecesidad(null, { ...ella, day: dia, time: { kind: 'until', from: null, to: horaLocal(booking.startsAt) } })
+              : cambio === 'otro_dia'
+                ? combinarNecesidad(null, ella)
+                : combinarNecesidad(null, { ...ella, day: dia })
+        const need: NecesidadTurno = { ...combinarNecesidad(base, { ...datos, profession: null, alternatives: [] }), excludedProviderIds: vigente?.excludedProviderIds ?? [] }
+        marcar('buscar', `change_${cambio}`)
+        await this.actualizarEstado(conversationId, { booking: null, suggestion: null, pendingConfirmationId: null, lowConfidenceCount: 0 })
+        const reply = await this.buscarConEstado(turn, actor, need, text, correlationId, vigente)
+        if (reply) return reply
+      }
+      if (PIDE_PRECIO.test(text) && !privada) {
+        const precios = await this.responderPrecio(turn, booking.profession, text)
+        const primero = precios?.[0]
+        if (precios && primero && primero.type !== 'template') {
+          marcar('buscar', 'price')
+          return [{ ...primero, text: [primero.text, retomar()].filter(Boolean).join('\n\n') }, ...precios.slice(1)]
+        }
+      }
+    }
+
+    // While the identity is awaited, a question that is not about TUS is not a failed
+    // identification: it is said, briefly, that this assistant is about TUS, and what was pending.
+    if (enIdentidad && esPreguntaSuelta(text) && detectada === 'otro') {
+      marcar('otro', 'off_topic')
+      return [{ type: 'text', text: `Eso no te lo puedo responder: soy el asistente de TUS y te ayudo con servicios, turnos, pagos y tu cuenta.\n\n${retomar()}` }]
+    }
+    return null
   }
 
   // ---- finding a service: facts of the message, state, real availability ----------------------
@@ -1027,7 +1224,10 @@ export class OrquestadorConversacion {
             timer = setTimeout(() => reject(Object.assign(new Error('tool timeout'), { code: 'TOOL_TIMEOUT' })), this.limits.toolTimeoutMs * 2)
           }),
         ])
-        return need.providerId ? soloProfesional(resultado, need.providerId) : resultado
+        // Nobody excluded for this request is ever returned, whatever asked for the search.
+        const permitidos = need.excludedProviderIds?.length ? sinExcluidos(resultado, need.excludedProviderIds) : resultado
+        if (permitidos !== resultado && permitidos.providers.length === 0 && resultado.providers.length > 0) turn.sinOtros = true
+        return need.providerId ? soloProfesional(permitidos, need.providerId) : permitidos
       } catch {
         return null
       }
@@ -2442,6 +2642,21 @@ export class OrquestadorConversacion {
           datosEnTurno = true
           messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify({ topic: args.topic, state: await this.diagnostico(turn, actor), page: lugar ? { where: lugar.donde, url: enlaceTus(this.deps.webBaseUrl, lugar.ruta) } : null, guide: GUIA_DE_TEMA[args.topic] ? enlaceGuia(this.deps.webBaseUrl, GUIA_DE_TEMA[args.topic]!) : null, documents: documentos && documentos.confidence === 'high' ? formatearFragmentosParaPrompt(documentos.results) : null, instruction: 'Respondé con esto y nada más: qué pasa, qué tiene que hacer, dónde, y qué sigue. Si no alcanza, pedí el mensaje exacto que le aparece. No inventes rutas ni pasos.' }).slice(0, 6000) })
           continue
+        }
+        // A professional the person excluded for this request is not shown again by a tool the
+        // model chose to call: the model is told so, as data.
+        if (result.ok && (call.function.name === 'get_provider_availability' || call.function.name === 'get_available_slots')) {
+          const excluidos = (turn.busqueda?.need ?? turn.conversation.state.need)?.excludedProviderIds ?? []
+          let pedido: string | null = null
+          try {
+            pedido = (JSON.parse(call.function.arguments || '{}') as { providerId?: string }).providerId ?? null
+          } catch {
+            pedido = null
+          }
+          if (pedido && excluidos.includes(pedido)) {
+            messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: JSON.stringify({ excluded: true, note: 'El usuario pidió que NO sea este profesional en esta solicitud. No lo ofrezcas: buscá a otro con find_appointments o find_earliest_availability.' }) })
+            continue
+          }
         }
         if (result.ok && 'data' in result && call.function.name === 'get_provider_availability') {
           // The agenda of ONE professional, read by the backend. What was returned becomes the
