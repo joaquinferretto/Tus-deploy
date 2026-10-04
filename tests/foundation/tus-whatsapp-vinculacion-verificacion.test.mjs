@@ -207,7 +207,7 @@ test('VINCULO bot wording follows the REAL state, the CTA goes to Mi perfil, and
     const id = await cuenta('+5493794800002')
     const d = await tel.iniciarVinculo(id)
     await enviar('5493794800002', d.message)
-    out.vinculado = (await enviar('5493794800002', 'no entiendo, por qué tengo que vincular')).text
+    out.vinculado = (await enviar('5493794800002', 'por qué tengo que vincular')).text
     // Number change: the new WhatsApp becomes the linked one, the old one is unlinked.
     const nuevo = await tel.iniciar(id, { telefono: '+5493794800003' })
     out.cambio = [nuevo.ok, nuevo.purpose]

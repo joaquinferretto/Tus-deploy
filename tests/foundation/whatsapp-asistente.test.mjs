@@ -10,11 +10,16 @@ test('WHATSAPP linking: single-use short-lived token, last-4 digits, hash-only s
     const { hashTokenVinculacion } = await import('./apps/api/src/tus/asistente/vinculacion.ts')
     await say('5491155550101', 'Quiero vincular mi cuenta')
     const cta = lastSent().message
-    const token = new URL(cta.url.replace('#', '?')).searchParams.get('token')
+    // The bot now sends people to Mi perfil (verify the number, tap "Vincular este WhatsApp"). The
+    // token link below is still supported by the API, so it is created directly for these checks.
+    const botCta = [cta.type, cta.label, cta.url, cta.text.startsWith('Para continuar por WhatsApp necesitás vincular este número con una cuenta TUS.')]
+    const contactoA = await contactOf('5491155550101')
+    const enlace = await wa.vinculacion.crearEnlace(contactoA.contactId, 'corr-token')
+    const token = new URL(enlace.url.replace('#', '?')).searchParams.get('token')
     const web = (accountId) => ({ tenantId: accounts.get(accountId).tenantId, accountId, correlationId: 'corr-web' })
     const codeOfLink = async (op) => { try { await op(); return "none" } catch (error) { return error.code } }
     const out = {}
-    out.cta = [cta.type, cta.label, cta.url.startsWith('https://web.tus.test/tus/whatsapp/vincular#token='), cta.text.includes('10 minutos')]
+    out.cta = [botCta, enlace.url.startsWith('https://web.tus.test/tus/whatsapp/vincular#token=')]
     out.storedHashOnly = [...waStore.state.tokens.values()].every((t) => t.tokenHash === hashTokenVinculacion(token) && !JSON.stringify(t).includes(token))
     out.preview = await wa.vinculacion.describir(web('customer-user'), token)
     // Contact A's link opened by someone else (B) who does not know A's number: rejected.
@@ -53,7 +58,7 @@ test('WHATSAPP linking: single-use short-lived token, last-4 digits, hash-only s
      out.consentAudit = waStore.state.auditoria.filter((e) => e.action === 'whatsapp.consent.recorded').map((e) => [e.metadata.origin, e.metadata.purpose])
      console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(result.cta, ['cta_url', 'Vincular cuenta', true, true])
+  assert.deepEqual(result.cta, [['cta_url', 'Vincular mi cuenta TUS', 'https://web.tus.test/mi-perfil?accion=vincular-whatsapp', true], true])
   assert.equal(result.storedHashOnly, true)
   assert.deepEqual(result.preview, {
     whatsappMasked: '****0101',

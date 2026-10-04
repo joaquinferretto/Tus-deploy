@@ -318,7 +318,7 @@ const PATRON_HANDOFF =
 const PATRON_RECLAMO =
   /\b(reclamo|denuncia|estafa|fraude|me robaron|disputa|abogado|defensa del consumidor|contracargo)\b/iu
 const PATRON_VINCULAR =
-  /\b(vincular|vincul[aá] mi cuenta|conectar mi cuenta|asociar mi cuenta|ya tengo cuenta|ya (lo )?verifiqu[eé]|ya (lo )?hice|no entiendo|por qu[eé] tengo que vincular)(?![\p{L}\p{N}])/iu
+  /\b(vincular|vincul[aá] mi cuenta|conectar mi cuenta|asociar mi cuenta|ya tengo cuenta|ya (lo )?verifiqu[eé]|por qu[eé] tengo que vincular)(?![\p{L}\p{N}])/iu
 const PATRON_DESVINCULAR =
   /\b(desvincular|desvincul[aá]|borrar mi n[uú]mero|olvidar mi n[uú]mero)\b/iu
 const PATRON_SI =
