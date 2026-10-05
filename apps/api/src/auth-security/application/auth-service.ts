@@ -973,6 +973,16 @@ export class AuthService {
 
   // Existing audit sink (AuditEvent), with the ADMIN as actor and the modified account as target.
   // Never the email, name or any secret in the metadata.
+  // An administrator loaded or corrected the identity (names, document) of an account. The change
+  // itself is made by the profile service; this is its audit trail, with the other admin actions.
+  // `details` carries field names and masked values only.
+  async recordAdminIdentityChange(input: { actorId: string; accountId: string; details: Record<string, string | boolean> }): Promise<boolean> {
+    const account = await this.dependencies.store.getAccount(input.accountId)
+    if (!account) return false
+    await this.recordAdminAction(input.actorId, account, AUTH_EVENT_KIND.ACCOUNT_ADMIN_IDENTITY_UPDATED, { action: 'identity_updated', ...input.details })
+    return true
+  }
+
   private async recordAdminAction(
     actorId: string,
     target: { id: string; tenantId: string },

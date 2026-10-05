@@ -1,9 +1,12 @@
 import {
   CENTRO_MAPA_PREDETERMINADO,
   enmascararTelefono,
+  enmascararDocumento,
+  validarIdentidadPersonal,
   validarPerfilPersonal,
   type CampoPerfil,
   type CentroMapaDTO,
+  type ErroresIdentidad,
   type ErroresPerfil,
   type LocalidadDTO,
   type PaisDTO,
@@ -35,6 +38,20 @@ const REQUERIDOS: { campo: CampoPerfil; valor: (perfil: PerfilAlmacenado) => str
   { campo: 'numero', valor: (perfil) => perfil.addressNumber },
   { campo: 'codigoPostal', valor: (perfil) => perfil.postalCode },
 ]
+
+// What changed, for the audit: names of the fields and masked values only (never a full document).
+export interface CambioIdentidadAdmin {
+  changedFields: string[]
+  documentBefore: string | null
+  documentAfter: string
+  profileCompleteBefore: boolean
+  profileCompleteAfter: boolean
+}
+
+export type ResultadoIdentidadAdmin =
+  | { ok: true; perfil: PerfilUsuarioAdminDTO; cambio: CambioIdentidadAdmin }
+  | { ok: false; code: 'INVALID_IDENTITY'; errores: ErroresIdentidad }
+  | { ok: false; code: 'REASON_REQUIRED' | 'DOCUMENT_ALREADY_REGISTERED' | 'NOT_FOUND' }
 
 export class ServicioPerfil {
   constructor(
@@ -101,6 +118,57 @@ export class ServicioPerfil {
     if (resultado === 'no_encontrado') return { ok: false, code: 'NOT_FOUND' }
     const perfil = await this.obtener(accountId)
     return perfil ? { ok: true, perfil } : { ok: false, code: 'NOT_FOUND' }
+  }
+
+  // Platform administration (authorized by the HTTP layer): loads or corrects the IDENTITY of an
+  // account — first name, last name, document — and nothing else. The same validation the owner
+  // gets in "Mi perfil"; the document stays unique (the database decides, also under a race);
+  // "perfil completo" is recomputed from EVERY required field, so four fields alone never complete
+  // a profile that still lacks its residence. Changing a document that was already loaded needs a
+  // reason. The phone, the email, their verification and WhatsApp are untouched.
+  async actualizarIdentidadAdmin(accountId: string, body: Record<string, unknown>): Promise<ResultadoIdentidadAdmin> {
+    const validado = validarIdentidadPersonal(body)
+    if (!validado.ok) return { ok: false, code: 'INVALID_IDENTITY', errores: validado.errores }
+    const actual = await this.almacen.perfil(accountId)
+    if (!actual) return { ok: false, code: 'NOT_FOUND' }
+    const datos = validado.valor
+    const cambiaDocumento = Boolean(actual.documentNumber) && (actual.documentType !== datos.tipoDocumento || actual.documentNumber !== datos.numeroDocumento)
+    const motivo = typeof body['motivo'] === 'string' ? body['motivo'].trim() : ''
+    if (cambiaDocumento && (motivo.length < 3 || motivo.length > 300)) return { ok: false, code: 'REASON_REQUIRED' }
+    const siguiente: PerfilAlmacenado = { ...actual, firstName: datos.nombre, lastName: datos.apellido, documentType: datos.tipoDocumento, documentNumber: datos.numeroDocumento }
+    const completo = REQUERIDOS.every((requerido) => Boolean(requerido.valor(siguiente)))
+    const changedFields = [
+      ...(actual.firstName !== datos.nombre ? ['firstName'] : []),
+      ...(actual.lastName !== datos.apellido ? ['lastName'] : []),
+      ...(actual.documentType !== datos.tipoDocumento ? ['documentType'] : []),
+      ...(actual.documentNumber !== datos.numeroDocumento ? ['documentNumber'] : []),
+    ]
+    if (changedFields.length > 0) {
+      const resultado = await this.almacen.guardarIdentidad(accountId, {
+        displayName: `${datos.nombre} ${datos.apellido}`.slice(0, 120),
+        firstName: datos.nombre,
+        lastName: datos.apellido,
+        documentType: datos.tipoDocumento,
+        documentNumber: datos.numeroDocumento,
+        profileComplete: completo,
+        profileUpdatedAt: new Date(this.now()).toISOString(),
+      })
+      if (resultado === 'documento_duplicado') return { ok: false, code: 'DOCUMENT_ALREADY_REGISTERED' }
+      if (resultado === 'no_encontrado') return { ok: false, code: 'NOT_FOUND' }
+    }
+    const perfil = await this.perfilAdmin(accountId)
+    if (!perfil) return { ok: false, code: 'NOT_FOUND' }
+    return {
+      ok: true,
+      perfil,
+      cambio: {
+        changedFields,
+        documentBefore: actual.documentNumber ? enmascararDocumento(actual.documentNumber) : null,
+        documentAfter: enmascararDocumento(datos.numeroDocumento),
+        profileCompleteBefore: actual.profileComplete,
+        profileCompleteAfter: changedFields.length > 0 ? completo : actual.profileComplete,
+      },
+    }
   }
 
   // Platform administration (authorized by the HTTP layer): the full personal data of an account.

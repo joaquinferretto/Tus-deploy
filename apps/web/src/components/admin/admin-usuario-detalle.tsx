@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
-import { ETIQUETA_TIPO_DOCUMENTO, formatearDocumento } from '@factory/contracts'
+import { ETIQUETA_TIPO_DOCUMENTO, TIPOS_DOCUMENTO, formatearDocumento, validarIdentidadPersonal, type ErroresIdentidad } from '@factory/contracts'
 
 import { AdminApiError, adminApi, adminErrorMessage, formatFecha, type AdminUsuarioDetalle } from '@/lib/tus-admin-api'
 import { AdminConfirm, useConfirmacion } from './admin-confirm'
@@ -18,10 +18,21 @@ function errorEdicion(cause: unknown): string {
     if (cause.status === 409) return 'Ese email ya pertenece a otra cuenta.'
     if (cause.status === 403) return 'Esa cuenta es de administración o es tu propia cuenta: su email y verificación se gestionan desde la configuración y Seguridad.'
     if (cause.status === 422 && cause.code === 'INVALID_PHONE') return 'Revisá el número: con característica, por ejemplo 379 412-3456.'
+    if (cause.status === 422 && cause.code === 'ALREADY_VERIFIED') return 'Ese número ya es el teléfono verificado de esta cuenta.'
+    if (cause.status === 422 && (cause.code === 'INVALID_ACTION' || cause.code === 'INVALID_CHANGE')) return 'La operación no fue aceptada por el servidor. Recargá la página e intentá de nuevo.'
     if (cause.status === 422) return 'Revisá los datos: nombre de 2 a 120 caracteres y un email válido.'
   }
   return adminErrorMessage(cause)
 }
+
+interface IdentidadForm {
+  nombre: string
+  apellido: string
+  tipoDocumento: string
+  numeroDocumento: string
+  motivo: string
+}
+type ErroresIdentidadForm = ErroresIdentidad & { motivo?: string }
 
 const dato = (value: string | null | undefined) => (value ? value : <span className={styles.muted}>Sin cargar</span>)
 
@@ -38,6 +49,9 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
   const [form, setForm] = useState({ nombre: '', email: '', estado: 'active' as 'active' | 'suspended', motivo: '' })
   const [confirmacion, pedir, cerrar] = useConfirmacion()
   const [telefono, setTelefono] = useState('')
+  // null: the identity is shown read-only; an object: it is being edited.
+  const [identidad, setIdentidad] = useState<IdentidadForm | null>(null)
+  const [erroresIdentidad, setErroresIdentidad] = useState<ErroresIdentidadForm>({})
 
   const cargar = useCallback(
     () =>
@@ -92,6 +106,56 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
           : 'Se cerrarán todas sus sesiones y no podrá ingresar hasta que lo reactives. Su historial se conserva.',
       confirmar: 'email' in cambios ? 'Cambiar email' : 'Suspender',
       onConfirm: aplicar,
+    })
+  }
+
+  // ---- identity (names + document): read-only until "Editar identidad"; validated here with the
+  // same function the API uses (the API is the authority and validates again).
+  const documentoActual = cuenta?.perfil?.documento ?? null
+  const cambiaDocumento = identidad !== null && documentoActual !== null && (identidad.tipoDocumento !== documentoActual.tipo || identidad.numeroDocumento.replace(/[\s.]/gu, '').toUpperCase() !== documentoActual.numero)
+
+  function editarIdentidad() {
+    const actual = cuenta?.perfil
+    setErroresIdentidad({})
+    setAviso('')
+    setIdentidad({ nombre: actual?.nombre ?? '', apellido: actual?.apellido ?? '', tipoDocumento: actual?.documento?.tipo ?? '', numeroDocumento: actual?.documento?.numero ?? '', motivo: '' })
+  }
+
+  function guardarIdentidad(event: FormEvent) {
+    event.preventDefault()
+    if (!cuenta || !identidad) return
+    const validado = validarIdentidadPersonal({ ...identidad })
+    const errores: ErroresIdentidadForm = validado.ok ? {} : { ...validado.errores }
+    if (cambiaDocumento && identidad.motivo.trim().length < 3) errores.motivo = 'Contá el motivo del cambio (al menos 3 caracteres).'
+    setErroresIdentidad(errores)
+    if (!validado.ok || Object.keys(errores).length > 0) return
+    const enviar = async () => {
+      setBusy(true)
+      setError('')
+      setAviso('')
+      try {
+        await adminApi.identidadUsuario(cuenta.id, { ...validado.valor, ...(cambiaDocumento ? { motivo: identidad.motivo.trim() } : {}) })
+        await cargar()
+        setIdentidad(null)
+        setAviso('Identidad actualizada.')
+      } catch (cause) {
+        // The API is the authority: its field errors are shown next to each field.
+        if (cause instanceof AdminApiError && cause.code === 'INVALID_IDENTITY') {
+          const etiquetas: ErroresIdentidadForm = { nombre: 'Ingresá el nombre: solo letras, de 2 a 60 caracteres.', apellido: 'Ingresá el apellido: solo letras, de 2 a 60 caracteres.', tipoDocumento: 'Elegí el tipo de documento.', numeroDocumento: 'El número de documento no es válido para ese tipo.' }
+          setErroresIdentidad(Object.fromEntries(cause.fields.filter((campo): campo is keyof ErroresIdentidadForm => campo in etiquetas).map((campo) => [campo, etiquetas[campo]])))
+        } else if (cause instanceof AdminApiError && cause.code === 'DOCUMENT_ALREADY_REGISTERED') setErroresIdentidad({ numeroDocumento: 'Ese documento ya está asociado a otra cuenta.' })
+        else if (cause instanceof AdminApiError && cause.code === 'REASON_REQUIRED') setErroresIdentidad({ motivo: 'Contá el motivo del cambio (al menos 3 caracteres).' })
+        else setError(errorEdicion(cause))
+      } finally {
+        setBusy(false)
+      }
+    }
+    if (!cambiaDocumento) return void enviar()
+    pedir({
+      titulo: '¿Cambiar el documento de esta cuenta?',
+      detalle: 'Este dato se utiliza para identificar al usuario dentro de TUS. El cambio quedará auditado.',
+      confirmar: 'Cambiar documento',
+      onConfirm: enviar,
     })
   }
 
@@ -170,25 +234,79 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
           <div className={styles.badges}>
             <span className={perfil?.perfilCompleto ? styles.badgeOk : styles.badgeWarn}>{perfil?.perfilCompleto ? 'Perfil completo' : 'Perfil incompleto'}</span>
           </div>
-          <dl className={styles.facts}>
-            <div>
-              <dt>Nombre</dt>
-              <dd>{dato(perfil?.nombre)}</dd>
-            </div>
-            <div>
-              <dt>Apellido</dt>
-              <dd>{dato(perfil?.apellido)}</dd>
-            </div>
-            <div>
-              <dt>Tipo de documento</dt>
-              <dd>{dato(perfil?.documento ? ETIQUETA_TIPO_DOCUMENTO[perfil.documento.tipo] : null)}</dd>
-            </div>
-            <div>
-              <dt>Número</dt>
-              <dd>{dato(perfil?.documento ? formatearDocumento(perfil.documento.tipo, perfil.documento.numero) : null)}</dd>
-            </div>
-          </dl>
-          <p className={styles.muted}>Los datos personales los carga el titular desde “Mi perfil”.</p>
+          {identidad === null ? (
+            <>
+              <dl className={styles.facts}>
+                <div>
+                  <dt>Nombre</dt>
+                  <dd>{dato(perfil?.nombre)}</dd>
+                </div>
+                <div>
+                  <dt>Apellido</dt>
+                  <dd>{dato(perfil?.apellido)}</dd>
+                </div>
+                <div>
+                  <dt>Tipo de documento</dt>
+                  <dd>{dato(perfil?.documento ? ETIQUETA_TIPO_DOCUMENTO[perfil.documento.tipo] : null)}</dd>
+                </div>
+                <div>
+                  <dt>Número</dt>
+                  <dd>{dato(perfil?.documento ? formatearDocumento(perfil.documento.tipo, perfil.documento.numero) : null)}</dd>
+                </div>
+              </dl>
+              <p className={styles.muted}>El titular también puede cargar estos datos desde “Mi perfil”.</p>
+              <div className={styles.actions}>
+                <button className={styles.buttonSecondary} disabled={busy} onClick={editarIdentidad} type="button">
+                  Editar identidad
+                </button>
+              </div>
+            </>
+          ) : (
+            <form className={styles.formGrid} noValidate onSubmit={guardarIdentidad}>
+              <label className={styles.field}>
+                <span>Nombre</span>
+                <input aria-invalid={Boolean(erroresIdentidad.nombre)} autoComplete="off" maxLength={60} onChange={(event) => setIdentidad({ ...identidad, nombre: event.target.value })} value={identidad.nombre} />
+                {erroresIdentidad.nombre ? <span className={styles.fieldError} role="alert">{erroresIdentidad.nombre}</span> : null}
+              </label>
+              <label className={styles.field}>
+                <span>Apellido</span>
+                <input aria-invalid={Boolean(erroresIdentidad.apellido)} autoComplete="off" maxLength={60} onChange={(event) => setIdentidad({ ...identidad, apellido: event.target.value })} value={identidad.apellido} />
+                {erroresIdentidad.apellido ? <span className={styles.fieldError} role="alert">{erroresIdentidad.apellido}</span> : null}
+              </label>
+              <label className={styles.field}>
+                <span>Tipo de documento</span>
+                <select aria-invalid={Boolean(erroresIdentidad.tipoDocumento)} onChange={(event) => setIdentidad({ ...identidad, tipoDocumento: event.target.value })} value={identidad.tipoDocumento}>
+                  <option value="">Elegir…</option>
+                  {TIPOS_DOCUMENTO.map((tipo) => (
+                    <option key={tipo} value={tipo}>
+                      {ETIQUETA_TIPO_DOCUMENTO[tipo]}
+                    </option>
+                  ))}
+                </select>
+                {erroresIdentidad.tipoDocumento ? <span className={styles.fieldError} role="alert">{erroresIdentidad.tipoDocumento}</span> : null}
+              </label>
+              <label className={styles.field}>
+                <span>Número de documento</span>
+                <input aria-invalid={Boolean(erroresIdentidad.numeroDocumento)} autoComplete="off" inputMode={identidad.tipoDocumento === 'PASAPORTE' ? 'text' : 'numeric'} maxLength={16} onChange={(event) => setIdentidad({ ...identidad, numeroDocumento: event.target.value })} value={identidad.numeroDocumento} />
+                {erroresIdentidad.numeroDocumento ? <span className={styles.fieldError} role="alert">{erroresIdentidad.numeroDocumento}</span> : null}
+              </label>
+              {cambiaDocumento ? (
+                <label className={`${styles.field} ${styles.wide}`}>
+                  <span>Motivo del cambio de documento</span>
+                  <input aria-invalid={Boolean(erroresIdentidad.motivo)} maxLength={300} onChange={(event) => setIdentidad({ ...identidad, motivo: event.target.value })} value={identidad.motivo} />
+                  {erroresIdentidad.motivo ? <span className={styles.fieldError} role="alert">{erroresIdentidad.motivo}</span> : <span className={styles.hint}>Obligatorio. Queda registrado en la auditoría.</span>}
+                </label>
+              ) : null}
+              <div className={`${styles.actions} ${styles.wide}`}>
+                <button className={styles.buttonPrimary} disabled={busy} type="submit">
+                  {busy ? 'Guardando…' : 'Guardar cambios'}
+                </button>
+                <button className={styles.buttonSecondary} disabled={busy} onClick={() => { setIdentidad(null); setErroresIdentidad({}) }} type="button">
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          )}
         </section>
 
         <section aria-labelledby="usuario-contacto" className={styles.sheetCard}>
@@ -220,7 +338,7 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
               <div>
                 <dt>WhatsApp</dt>
                 <dd>
-                  <span className={cuenta.telefono.whatsappVinculado ? styles.badgeOk : styles.badgeWarn}>{cuenta.telefono.whatsappVinculado ? 'Vinculado' : 'Sin vincular'}</span>
+                  <span className={cuenta.telefono.whatsappVinculado ? styles.badgeOk : styles.badgeWarn}>{cuenta.telefono.whatsappVinculado ? 'Vinculado' : 'No vinculado'}</span>
                 </dd>
               </div>
             ) : null}
@@ -273,9 +391,9 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
             }}
           >
             <label className={`${styles.field} ${styles.wide}`}>
-              <span>Número a verificar</span>
+              <span>{cuenta.telefono.verificado ? 'Nuevo número (queda pendiente)' : 'Número a verificar'}</span>
               <input inputMode="tel" maxLength={32} onChange={(event) => setTelefono(event.target.value)} placeholder="379 412-3456" type="tel" value={telefono} />
-              <span className={styles.hint}>Queda pendiente hasta que la persona lo verifique por WhatsApp, o hasta que lo marques como verificado.</span>
+              <span className={styles.hint}>{cuenta.telefono.verificado ? 'El teléfono verificado actual no cambia hasta que el nuevo número se verifique.' : 'Queda pendiente hasta que la persona lo verifique por WhatsApp, o hasta que lo marques como verificado.'}</span>
             </label>
             <div className={`${styles.actions} ${styles.wide}`}>
               <button className={styles.buttonSecondary} disabled={busy || !telefono.trim()} type="submit">

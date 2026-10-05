@@ -135,6 +135,37 @@ const NOMBRE = /^[\p{L}][\p{L}\p{M}' .-]{1,59}$/u
 
 export type ResultadoPerfil = { ok: true; valor: ActualizarPerfilPersonal & { pisoDepto: string | null } } | { ok: false; errores: ErroresPerfil }
 
+export const CAMPOS_IDENTIDAD = ['nombre', 'apellido', 'tipoDocumento', 'numeroDocumento'] as const
+export type CampoIdentidad = (typeof CAMPOS_IDENTIDAD)[number]
+export type ErroresIdentidad = Partial<Record<CampoIdentidad, string>>
+export interface IdentidadPersonal {
+  nombre: string
+  apellido: string
+  tipoDocumento: TipoDocumento
+  numeroDocumento: string
+}
+export type ResultadoIdentidad = { ok: true; valor: IdentidadPersonal } | { ok: false; errores: ErroresIdentidad }
+
+// The identity of a person: first name, last name and document, validated as ONE set (never a
+// name without its document). Names: Unicode letters, accents, ñ, inner spaces, apostrophe and
+// hyphen ("María José", "O'Connor", "Pérez-Gómez"), 2 to 60 characters, never a digit; outer and
+// repeated spaces are normalized. The document follows the rule of ITS type (normalizarDocumento).
+// The same function runs in the Web form and in the API (the API is the authority).
+export function validarIdentidadPersonal(input: Record<string, unknown>): ResultadoIdentidad {
+  const errores: ErroresIdentidad = {}
+  const nombre = texto(input['nombre'])
+  const apellido = texto(input['apellido'])
+  if (!NOMBRE.test(nombre)) errores.nombre = 'Ingresá el nombre: solo letras, de 2 a 60 caracteres.'
+  if (!NOMBRE.test(apellido)) errores.apellido = 'Ingresá el apellido: solo letras, de 2 a 60 caracteres.'
+  const documento = normalizarDocumento(input['tipoDocumento'], input['numeroDocumento'])
+  if (!documento.ok) {
+    if (documento.motivo === 'tipo') errores.tipoDocumento = 'Elegí el tipo de documento.'
+    else errores.numeroDocumento = documento.motivo === 'vacio' ? 'Ingresá el número de documento.' : 'El número de documento no es válido para ese tipo.'
+  }
+  if (Object.keys(errores).length > 0 || !documento.ok) return { ok: false, errores }
+  return { ok: true, valor: { nombre, apellido, tipoDocumento: documento.tipo, numeroDocumento: documento.numero } }
+}
+
 // Same validation in the Web form and in the API (the API is the authority and repeats it).
 export function validarPerfilPersonal(input: Record<string, unknown>): ResultadoPerfil {
   const errores: ErroresPerfil = {}

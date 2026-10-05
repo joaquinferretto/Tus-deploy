@@ -186,7 +186,8 @@ test(
         out.repetir = await tel.verificarPorAdmin('admin-pg', a).then((x) => [x.ok, x.cambio])
         // The same number pending on another account: the UNIQUE index decides.
         const b = await cuenta('adm-b')
-        await tel.fijarPendientePorAdmin('admin-pg', b, pa)
+        await almacen.fijarPendiente(b, pa)
+        out.cargaRechazada = await tel.fijarPendientePorAdmin('admin-pg', b, pa).then((x) => x.code)
         out.conflicto = [await tel.verificarPorAdmin('admin-pg', b).then((x) => x.code), await estado(b)]
         out.sinTelefono = await tel.verificarPorAdmin('admin-pg', await cuenta('adm-vacia')).then((x) => x.code)
         // The person links the WhatsApp and starts changing the number; another account has its own link.
@@ -216,6 +217,7 @@ test(
     assert.deepEqual(r.verificar, [true, true, true, false, [r.pa, null, true]], 'the pending number is the verified identity phone; WhatsApp is not linked by it')
     assert.deepEqual(r.repetir, [true, false], 'idempotent')
     assert.deepEqual(r.conflicto, ['PHONE_IN_USE', [null, r.pa, false]], 'the unique phone holds: the other account stays pending')
+    assert.equal(r.cargaRechazada, 'PHONE_IN_USE', 'a number that is already the verified phone of another account is not loaded as pending')
     assert.equal(r.sinTelefono, 'NO_PHONE')
     assert.deepEqual(r.antes, [true, true, null])
     assert.ok(r.carrera.every((valor) => valor === true), `both administrators get an answer, none an error: ${JSON.stringify(r.carrera)}`)

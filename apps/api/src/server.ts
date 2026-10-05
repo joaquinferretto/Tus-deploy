@@ -58,6 +58,7 @@ import { AlmacenTelefonosPrisma, type ClientePrismaTelefonos } from './auth-secu
 import { crearServicioTelefono } from './auth-security/phone/composicion.ts'
 import { repositoriosAsistentePrisma, type ClientePrismaAsistente } from './tus/adapters/prisma-asistente.ts'
 import { crearPuenteAsistente } from './tus/asistente/vinculacion.ts'
+import { crearIdentidadUsuarioAdmin } from './tus/admin/identidad.ts'
 import { crearRouterTelefono } from './auth-security/phone/http.ts'
 import type { RawQueryClient } from './auth-security/adapters/postgres/postgres-rate-limiter.ts'
 import { leerAdminsPlataforma } from './auth-security/application/auth-service.ts'
@@ -304,6 +305,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
         leerUsuario: (accountId) => auth.service.getAccountAsAdmin(accountId),
         perfilUsuario: (accountId) => perfiles.perfilAdmin(accountId),
         accionUsuario: (input) => auth.service.adminAccountAction(input),
+        identidadUsuario: crearIdentidadUsuarioAdmin({ perfiles, auditar: (input) => auth.service.recordAdminIdentityChange(input) }),
         telefonoAdmin: telefonos,
         prestadorAdmin: crearEdicionPrestadorAdmin({ application, directorio }),
         conteos,

@@ -42,6 +42,7 @@ export const AUTH_EVENT_KIND = {
   PHONE_ADMIN_PENDING_SET: 'phone.admin_pending_set',
   PHONE_ADMIN_CLEARED: 'phone.admin_cleared',
   PHONE_VERIFIED_BY_ADMIN: 'phone.verified_by_admin',
+  ACCOUNT_ADMIN_IDENTITY_UPDATED: 'account.admin_identity_updated',
   PHONE_UNVERIFIED_BY_ADMIN: 'phone.unverified_by_admin',
 } as const
 
