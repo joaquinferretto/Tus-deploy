@@ -671,7 +671,7 @@ Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md
 tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
 de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
 
-**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica) y 5 (hechos con procedencia). Fase actual: 6 (estado real de TUS).**
+**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica), 5 (hechos con procedencia) y 6 (estado real de TUS). Fase actual: 7 (continuidad Web + WhatsApp).**
 
 **Lo que funciona hoy**
 
@@ -694,6 +694,10 @@ de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los d
   `contacto_preferido`) que se guarda solo cuando la persona lo dice como preferencia, con mensaje,
   conversacion y canal de origen. Un valor nuevo invalida el anterior sin borrarlo; "olvida mi zona"
   lo invalida. Los detecta el backend, no un modelo.
+- Estado real (Fase 6): "ya acepto?" o "a que hora viene?" se resuelven con el contexto y la memoria
+  (de que turno se habla) y se responden leyendo el turno real de la cuenta en ese momento. La memoria
+  nunca responde un estado; sin cuenta no se lee nada. Cubre turnos; pagos, solicitudes y trabajos
+  siguen por sus verificadores y herramientas.
 - Todavia no hay borrado ni retencion.
 
 **Arquitectura acordada (por fases)**
@@ -742,7 +746,7 @@ node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
 node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
 ```
 
-**Pendientes.** Fases 6 a 10. Para la memoria semantica en produccion hace falta un proveedor de
+**Pendientes.** Fases 7 a 10. Para la memoria semantica en produccion hace falta un proveedor de
 embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
 
 ## Limites actuales y trabajo posterior

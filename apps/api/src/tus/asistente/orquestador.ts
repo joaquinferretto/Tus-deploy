@@ -10,6 +10,7 @@ import { sinDocumento, type ServicioIdentificacionCliente } from './identificaci
 import { cuentaDeContacto } from './historial.ts'
 import type { ServicioMemoriaSemantica } from './memoria-semantica.ts'
 import type { ServicioHechos } from './hechos.ts'
+import { SIN_TURNOS_PROPIOS, detectarConsultaOperativa, elegirTurnoReferido, preguntarCualTurno, responderEstadoDeTurno } from './estado-real.ts'
 import { PRESUPUESTO_CONTEXTO_POR_DEFECTO, construirContexto, estimarTokens, ventanaReciente, type MensajeReciente, type PresupuestoContexto } from './contexto.ts'
 import { cuentaTrivial, detectarCambioDeHorario, detectarRestriccionProfesional, esPreguntaSuelta, expresaFrustracion, pideDetener, pideEmpezarDeNuevo, pideOtrasOpciones, sinInsultos, tieneInsultos } from './restricciones.ts'
 import { GUIA_DE_TEMA, TEMAS_AYUDA, TEMAS_DE_CUENTA, ayudaDeCuenta, detectarAyuda, enlaceGuia, enlaceTus, guiaDeCuenta, lineaDeReanudacion, pideExplicacion, rutaDeTema, type AyudaDetectada, type EstadoDesafio, type TemaAyuda } from './asistencia.ts'
@@ -674,6 +675,12 @@ export class OrquestadorConversacion {
   ): Promise<MensajeSaliente[]> {
     const text = input.text
     if (text) await this.registrarHechos(turn, text)
+    // "¿Ya aceptó?", "¿a qué hora viene?": the memory says which turno is meant, the REAL state
+    // of TUS answers. Before the help and the steps: it is a question about the person's own data.
+    if (text && input.comprobantes.length === 0) {
+      const estado = await this.consultaDeEstado(turn, actor, text)
+      if (estado) return [...input.notices.map((notice) => ({ type: 'text' as const, text: notice })), ...estado]
+    }
     // GLOBAL INTENT ROUTER, before any step reads the message: a question, a problem or "no
     // funciona" interrupts whatever the conversation was waiting for (a name and document, a
     // time, a choice). It is answered from the real state and the flow is kept, not consumed.
@@ -3194,6 +3201,39 @@ export class OrquestadorConversacion {
   //   unique index keeps exactly one;
   // - the newest `historyMessages` messages are left out: they are the recent window, sent as
   //   they are. Personal identifiers and secrets are removed before the model sees anything.
+
+  // ---- real state (MEMORIA-01, phase 6) -----------------------------------------------------
+  // A question about the person's own turno that names no turno. The reference is resolved with
+  // what the conversation and the memory know; state, day and time are read NOW from TUS for the
+  // account of the session. A memory never answers: it only points.
+  private async consultaDeEstado(turn: Turno, actor: ActorAsistente, text: string): Promise<MensajeSaliente[] | null> {
+    const consulta = detectarConsultaOperativa(text)
+    if (!consulta || typeof this.deps.domain.misTurnos !== 'function') return null
+    turn.intencion = 'reserva'
+    turn.canal.evento?.({ type: 'routing', intent: 'reserva' })
+    // The person's own data needs the account (session on the Web, verified link on WhatsApp).
+    if (!actor.context) return turn.canal.pedirCuenta('private')
+    let turnos: Awaited<ReturnType<PuertoDominioAsistente['misTurnos']>>
+    try {
+      turnos = await this.deps.domain.misTurnos(actor.context)
+    } catch {
+      this.metric('assistant.real_state', { channel: turn.canal.id, query: consulta, outcome: 'unavailable' })
+      return [{ type: 'text', text: 'No pude consultar tus turnos en este momento. Probá de nuevo en unos minutos.' }]
+    }
+    const state = turn.conversation.state
+    const recientes = await this.recientes(turn)
+    const pistas = {
+      fuertes: [state.booking?.providerName, state.booking ? oficio(state.booking.profession).label : null, state.need?.providerName, state.need?.profession ? oficio(state.need.profession).label : null, state.suggestion?.kind === 'offer' ? state.suggestion.name : null].filter((valor): valor is string => Boolean(valor)),
+      recientes: recientes.slice(-8).map((mensaje) => mensaje.content),
+      memoria: [(await this.resumenVigente(turn.conversation)) ?? '', ...(await this.recuerdosDe(turn, text))].filter(Boolean),
+    }
+    const { elegido, candidatos } = elegirTurnoReferido(turnos, pistas, this.now())
+    this.metric('assistant.real_state', { channel: turn.canal.id, query: consulta, outcome: elegido ? 'resolved' : candidatos.length === 0 ? 'none' : 'ambiguous', candidates: candidatos.length })
+    if (!elegido) return [{ type: 'text', text: candidatos.length === 0 ? SIN_TURNOS_PROPIOS : preguntarCualTurno(candidatos, this.now()) }]
+    const respuesta = responderEstadoDeTurno(consulta, elegido, this.now())
+    const url = enlaceTus(this.deps.webBaseUrl, 'misTurnos')
+    return url && turn.canal.id === 'whatsapp' ? [{ type: 'cta_url', text: respuesta, label: 'Ver mis turnos', url }] : [{ type: 'text', text: respuesta }]
+  }
 
   // Facts of the ACCOUNT of this contact (phase 5). What a message states is stored (or
   // forgotten, when the person asks) as soon as it is read, whatever answers the turn — the

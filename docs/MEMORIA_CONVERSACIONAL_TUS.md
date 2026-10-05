@@ -1,7 +1,7 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0 a 5 terminadas** (diseno; historial canonico; constructor de contexto; resumen
-incremental versionado; memoria semantica; hechos con procedencia). Este documento describe lo que el
+Estado: **Fases 0 a 6 terminadas** (diseno; historial canonico; constructor de contexto; resumen
+incremental versionado; memoria semantica; hechos con procedencia; estado real). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
 existe todavia.
 
@@ -207,6 +207,27 @@ resumen o el mensaje actual se recortaron.
 - Se registran al leer el mensaje, responda quien responda el turno (no hay IA en la deteccion). Sin
   cuenta no se guarda ni se usa nada. Metrica `assistant.facts` (guardados, invalidados), sin contenido.
 
+### 1.16 Estado real de TUS (Fase 6, implementado)
+
+- `estado-real.ts`: `detectarConsultaOperativa()` reconoce preguntas sobre el turno PROPIO que no
+  dicen cual ("ya acepto?", "a que hora viene?", "como va mi turno?"). No toma ayuda ("como veo mis
+  turnos?"), pedidos nuevos ni la disponibilidad de un profesional.
+- `consultaDeEstado()` del orquestador corre antes de la ayuda y de los pasos, en ambos canales:
+  1. exige cuenta (sesion Web o vinculo verificado); sin cuenta pide ingresar y no lee nada;
+  2. lee AHORA los turnos reales de esa cuenta (`misTurnos` del dominio);
+  3. `elegirTurnoReferido()` decide de cual se habla: si hay un solo turno vigente, ese; si hay
+     varios, el que senalan las pistas, en este orden de peso: solicitud en curso de la conversacion,
+     mensajes recientes, resumen y recuerdos de la cuenta. Si no senalan exactamente uno, se pregunta
+     cual;
+  4. `responderEstadoDeTurno()` escribe la respuesta con el estado, el dia y la hora del turno real.
+- La memoria solo senala; nunca responde. Si la conversacion o un recuerdo dicen 16:00 y la reserva
+  dice 17:00, la respuesta dice 17:00. Ningun modelo escribe un estado operativo.
+- Si TUS no se puede consultar se dice eso; no se inventa.
+- Los pagos mantienen su verificador propio (el backend consulta a Mercado Pago). Solicitudes,
+  trabajos y presupuestos siguen saliendo de las herramientas de dominio ya existentes; el resolutor
+  de referencias cubre hoy los turnos.
+- Metrica `assistant.real_state` (consulta, resultado: resuelta / ambigua / ninguna / no disponible).
+
 ## 2. Que se reutiliza
 
 - Las tres tablas de historial (contacto, conversacion, mensaje) para ambos canales.
@@ -351,7 +372,7 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | 3 | Resumen incremental y versionado | terminada |
 | 4 | Memoria semantica con pgvector | terminada |
 | 5 | Hechos con procedencia | terminada |
-| 6 | Resolutores contra el estado real de TUS | pendiente |
+| 6 | Resolutores contra el estado real de TUS | terminada (turnos) |
 | 7 | Continuidad Web + WhatsApp | pendiente |
 | 8 | Retencion, borrado y privacidad | pendiente |
 | 9 | Observabilidad y costos | pendiente |

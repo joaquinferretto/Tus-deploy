@@ -498,3 +498,85 @@ test('MEMORIA fase 5 hechos: a closed list of facts with provenance — stored o
   assert.equal(r.vencido, 0, 'an expired fact is not used')
   assert.deepEqual(r.metricas, [true, true, true])
 })
+
+test('MEMORIA fase 6 estado real: "¿ya aceptó?" and "¿a qué hora viene?" are resolved with the context and answered from the REAL turno of the account — never from a memory, never for another account, never without an account', () => {
+  const r = runTypeScriptScenario(`${MEMORIA_SETUP}
+    const e = await import('./apps/api/src/tus/asistente/estado-real.ts')
+    const { horaLocal } = await import('./apps/api/src/tus/asistente/busqueda.ts')
+    const out = {}
+    out.detecta = ['¿Ya aceptó?', 'ya me aceptaron?', 'me respondió?', '¿A qué hora viene?', 'cuándo es mi turno', '¿cómo va mi turno?', 'qué pasó con lo del turno'].map(e.detectarConsultaOperativa)
+    out.noDetecta = ['¿Cómo veo mis turnos?', 'Necesito un turno con un plomero', '¿A qué hora atiende Juan?', '¿Ya pagué?', '¿aceptó el presupuesto?', 'hola', '¿cuándo puedo pedir un turno?', 'Juan Pérez, 12345678'].map(e.detectarConsultaOperativa)
+
+    // The real state: what TUS holds, per account. The test changes it like the provider would.
+    const en = (horas) => new Date(waClock() + horas * 3600_000).toISOString()
+    const REAL = { 'cuenta-a': [{ id: 't1', providerName: 'Juan Pérez', service: 'Plomería', startsAt: en(26), status: 'pending', statusLabel: 'Pendiente' }], 'cuenta-b': [] }
+    const consultas = []
+    let caido = false
+    const dominioReal = new Proxy({ esPrestador: async () => false, misTurnos: async (context) => { consultas.push(context.subjectId); if (caido) throw new Error('caido'); return (REAL[context.subjectId] ?? []).map((t) => ({ ...t })) } }, { get: (target, prop) => target[prop] ?? (async () => []) })
+    const mod = crearModuloWhatsapp({ env: waEnv, transaction: waTx, accounts: accountResolver, domain: dominioReal, knowledgeIndex, whatsapp: fakeWa, chat, embeddings, transcriptor: null, now: waClock, metric: (name, fields) => metrics.push({ name, ...fields }) })
+    const decir = async (cuenta, text, visitante) => { const x = await mod.asistenteWeb.enviar({ identidad: cuenta ? { context: sesion(cuenta), visitorId: null } : { context: null, visitorId: visitante ?? VISITANTE }, text, correlationId: 'corr-real' }); waAdvance(6000); return x.messages[0] }
+    const hora = horaLocal(REAL['cuenta-a'][0].startsAt)
+
+    // What the conversation "remembers" is wrong on purpose: 16:00. The reservation says otherwise.
+    await decir('cuenta-a', 'Pedí un turno con el plomero Juan y creo que era a las 16:00')
+    const pendiente = await decir('cuenta-a', '¿Ya aceptó?')
+    out.pendiente = [pendiente.text.startsWith('Todavía no respondió tu solicitud.'), pendiente.text.includes('de Plomería con Juan Pérez'), pendiente.text.includes('a las ' + hora), pendiente.text.includes('16:00')]
+    // The provider accepts: the same question, the new REAL state.
+    REAL['cuenta-a'][0].status = 'awaiting_payment'
+    out.aceptado = (await decir('cuenta-a', '¿Ya aceptó?')).text.startsWith('Ya aceptó tu solicitud. Falta pagar la seña')
+    REAL['cuenta-a'][0].status = 'confirmed'
+    const horario = await decir('cuenta-a', '¿A qué hora viene?')
+    out.horario = [horario.text, horario.text.includes('a las ' + hora) && !horario.text.includes('16:00')]
+    REAL['cuenta-a'][0].status = 'rejected'
+    out.rechazado = (await decir('cuenta-a', 'me respondió?')).text.startsWith('No pudo aceptar ese turno.')
+    REAL['cuenta-a'][0].status = 'confirmed'
+    out.modeloNoInterviene = chat.calls.filter((call) => call.messages.some((m) => /Ya aceptó|A qué hora viene/u.test(String(m.content)) && m.role === 'user')).length
+
+    // Two turnos: without a hint the person is asked; talking about one of them resolves it.
+    REAL['cuenta-c'] = [{ id: 't2', providerName: 'Juan Pérez', service: 'Plomería', startsAt: en(30), status: 'pending', statusLabel: 'Pendiente' }, { id: 't3', providerName: 'Laura Gómez', service: 'Electricidad', startsAt: en(50), status: 'confirmed', statusLabel: 'Confirmado' }]
+    const ambiguo = await decir('cuenta-c', '¿Ya aceptó?')
+    out.ambiguo = [ambiguo.text.startsWith('¿De cuál turno?'), ambiguo.text.includes('Juan Pérez') && ambiguo.text.includes('Laura Gómez')]
+    await decir('cuenta-c', 'Te hablo del turno con Laura, la electricista')
+    const resuelto = await decir('cuenta-c', '¿ya confirmó?')
+    out.resuelto = [resuelto.text.includes('Laura Gómez'), resuelto.text.includes('Juan'), resuelto.text.startsWith('Ya está confirmado.')]
+
+    // Other people.
+    out.sinTurnos = (await decir('cuenta-b', '¿Ya aceptó?')).text
+    const antes = consultas.length
+    const anonimo = await decir(null, '¿Ya aceptó?', 'visitante-real-0123456789')
+    out.anonimo = [anonimo.attachment?.kind ?? null, consultas.length === antes, /Juan|Plomería/u.test(anonimo.text)]
+    out.soloPropios = consultas.every((id) => ['cuenta-a', 'cuenta-b', 'cuenta-c'].includes(id)) && !(await decir('cuenta-b', 'cuándo es mi turno')).text.includes('Juan')
+    caido = true
+    out.caido = (await decir('cuenta-a', '¿Ya aceptó?')).text
+    caido = false
+
+    // Pure choice: one live turno; hints by strength; the past is never "the turno".
+    const T = (id, providerName, service, horas, status = 'pending') => ({ id, providerName, service, startsAt: en(horas), status, statusLabel: status })
+    const elegir = (turnos, pistas = {}) => { const x = e.elegirTurnoReferido(turnos, { fuertes: [], recientes: [], memoria: [], ...pistas }, waClock()); return [x.elegido?.id ?? null, x.candidatos.length] }
+    out.eleccion = [
+      elegir([]), elegir([T('p', 'Ana', 'Masaje', -5)]), elegir([T('a', 'Ana', 'Masaje', 5)]),
+      elegir([T('a', 'Ana Ruiz', 'Masaje', 5), T('b', 'Beto Díaz', 'Plomería', 9)]),
+      elegir([T('a', 'Ana Ruiz', 'Masaje', 5), T('b', 'Beto Díaz', 'Plomería', 9)], { memoria: ['hablamos de la plomería de la cocina'] }),
+      elegir([T('a', 'Ana Ruiz', 'Masaje', 5), T('b', 'Beto Díaz', 'Plomería', 9)], { memoria: ['plomería'], fuertes: ['Ana Ruiz'] }),
+      elegir([T('a', 'Ana Ruiz', 'Masaje', 5, 'rejected'), T('b', 'Beto Díaz', 'Plomería', 9)]),
+      elegir([T('a', 'Ana Ruiz', 'Masaje', 5), T('b', 'Beto Díaz', 'Plomería', 9)], { recientes: ['ana y beto'] }),
+    ]
+    out.metricas = [metrics.some((m) => m.name === 'assistant.real_state' && m.outcome === 'resolved'), metrics.some((m) => m.name === 'assistant.real_state' && m.outcome === 'ambiguous'), !JSON.stringify(metrics.filter((m) => m.name === 'assistant.real_state')).includes('Juan')]
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.detecta, ['aceptacion', 'aceptacion', 'aceptacion', 'horario', 'horario', 'estado', 'estado'])
+  assert.deepEqual(r.noDetecta, Array(8).fill(null), 'help, a new request, the availability of a professional, payments and budgets are other things')
+  assert.deepEqual(r.pendiente, [true, true, true, false], 'the state and the time come from the reservation; the "16:00" of the conversation is never repeated')
+  assert.equal(r.aceptado, true, 'the same question after the provider accepted: the new real state')
+  assert.equal(r.horario[1], true, `the real time: ${r.horario[0]}`)
+  assert.equal(r.rechazado, true)
+  assert.equal(r.modeloNoInterviene, 0, 'no model writes an operational state')
+  assert.deepEqual(r.ambiguo, [true, true], 'several turnos and no hint: the person is asked which')
+  assert.deepEqual(r.resuelto, [true, false, true], 'the conversation says which turno; TUS says its state')
+  assert.equal(r.sinTurnos, 'No encontré turnos tuyos pendientes ni próximos.')
+  assert.deepEqual(r.anonimo, ['sign_in', true, false], 'no account: the person is asked to sign in and nothing is read')
+  assert.equal(r.soloPropios, true, 'each account only ever gets its own turnos')
+  assert.equal(r.caido, 'No pude consultar tus turnos en este momento. Probá de nuevo en unos minutos.', 'when TUS cannot be read nothing is invented')
+  assert.deepEqual(r.eleccion, [[null, 0], [null, 0], ['a', 1], [null, 2], ['b', 2], ['a', 2], ['b', 1], [null, 2]], 'one live turno is the one; otherwise the strongest hint that points at exactly one; a tie is ambiguous')
+  assert.deepEqual(r.metricas, [true, true, true])
+})
