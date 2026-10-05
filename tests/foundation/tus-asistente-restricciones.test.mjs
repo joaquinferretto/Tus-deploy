@@ -14,7 +14,8 @@ import { root, runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
 // (09:00, 09:15, 09:30, 09:45), Sabrina (09:45, 10:00), Bongio (09:45).
 
 // The same WhatsApp pipeline of the help suite (identity lookup by name + document included).
-const ayuda = readFileSync(join(root, 'tests/foundation/tus-asistente-ayuda-interrupciones.test.mjs'), 'utf8')
+// Line endings differ between checkouts: the markers below are written for LF.
+const ayuda = readFileSync(join(root, 'tests/foundation/tus-asistente-ayuda-interrupciones.test.mjs'), 'utf8').replaceAll('\r\n', '\n')
 const SETUP = `${GENERAL_SETUP}${ayuda.slice(ayuda.indexOf('const { createAuthService }'), ayuda.indexOf('`\n\nconst PIDE_DATOS'))}
   const charlar = async (waId, mensajes) => { const respuestas = []; for (const texto of mensajes) respuestas.push((await enviar(waId, texto)).text); return respuestas }
   const estado = async (waId) => {
