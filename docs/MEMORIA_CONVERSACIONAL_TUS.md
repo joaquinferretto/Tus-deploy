@@ -1,6 +1,6 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0 a 9 terminadas** (diseno; historial canonico; constructor de contexto; resumen
+Estado: **Fases 0 a 10 terminadas; sin merge, push ni deploy** (diseno; historial canonico; constructor de contexto; resumen
 incremental versionado; memoria semantica; hechos con procedencia; estado real; continuidad Web +
 WhatsApp; retencion y borrado; observabilidad y costos). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
@@ -471,9 +471,28 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | 7 | Continuidad Web + WhatsApp | terminada |
 | 8 | Retencion, borrado y privacidad | terminada |
 | 9 | Observabilidad y costos | terminada |
-| 10 | Validacion integral | pendiente |
+| 10 | Validacion integral | terminada |
 
-## 10. Riesgos y decisiones abiertas
+## 10. Validacion integral (Fase 10)
+
+Corrida el 2026-10-05 sobre la rama `feat/memoria-conversacional`:
+
+- Tests de memoria: 13/13 (`tus-memoria-conversacional.test.mjs`).
+- PostgreSQL 16 descartable con todas las migraciones: 5/5 (`tus-memoria-conversacional-postgres.test.mjs`).
+- Typecheck y lint del monorepo: sin errores. Escaner de secretos: limpio.
+- Suite completa contra PostgreSQL descartable: 233 archivos, 1237 tests: 1235 pasan, 1 omitido, 1 falla. El unico fallo fue un test de
+  precios que afirmaba que su migracion era la ultima de la cadena; quedo viejo por las cuatro
+  migraciones de memoria. Se corrigio la asercion (la migracion sigue aplicada, en su lugar) y ese
+  archivo se volvio a correr en verde. No se repitio la suite completa despues de ese cambio.
+- Build de la Web: no se corrio; la rama no toca `apps/web` ni `packages`.
+- Sin probar: proveedor real de embeddings, Groq real y WhatsApp real con memoria.
+
+## 11. Riesgos y decisiones abiertas
+
+- **Migracion `20261102100000`**: incluye un `UPDATE` que numera los mensajes existentes. Revisar el
+  tamano de `mensajes_conversacion_whatsapp` en produccion antes de aplicarla.
+- **Depuracion automatica**: el worker borra memoria vencida mientras esta ocioso.
+- **Sin endpoint**: borrar memoria y leer los contadores solo es posible desde el backend.
 
 - **Embeddings apagados por defecto** (`RAG_EMBEDDING_PROVIDER=none`): la Fase 4 necesita un proveedor
   configurado en produccion; sin el, la memoria semantica queda inactiva (el resto funciona).
@@ -483,5 +502,5 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
   habria que forzar el orden exacto para memoria.
 - **WhatsApp sin modelo**: el canal responde hoy con textos escritos por el backend; la memoria
   generada solo se usa donde hay modelo.
-- **Mensajes anteriores a la vinculacion**: lo que un contacto escribio antes de vincular la cuenta
-  pasa a ser memoria de esa cuenta solo desde la vinculacion; se define en la Fase 7.
+- **Mensajes anteriores a la vinculacion**: al vincular, la conversacion entera de ese numero cuenta
+  para la cuenta (ver 1.17).

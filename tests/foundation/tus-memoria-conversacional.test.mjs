@@ -307,7 +307,7 @@ test('MEMORIA privacidad: passwords, verification codes, tokens, cookies, card d
       enlace: 'entrá a https://tusservicios.shop/restablecer-contrasena?token=abc123DEF456 para cambiarla',
       enlaceVerificacion: 'https://tus.test/verificar-email?code=ZZZ999',
       bearer: 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijk',
-      apiKey: 'usa gsk_abcdefghijklmnop1234 por favor',
+      claveDeApi: 'usa gsk_abcdefghijklmnop1234 por favor',
       tarjeta: 'mi tarjeta es 4509 9535 6623 3704 y el cvv 123',
       dni: 'soy Juan Pérez, DNI 30.111.222, mail juan@example.com, cel 3794 123456',
       cookie: 'la cookie: tus_session=s%3Aabcdef123456',
