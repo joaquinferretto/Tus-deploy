@@ -423,3 +423,78 @@ test('MEMORIA fase 4 servicio: the account restricts the search before the simil
   assert.deepEqual(r.fallos, [0, 0], 'the memory failing never breaks the turn')
   assert.equal(r.vencido, 0)
 })
+
+test('MEMORIA fase 5 hechos: a closed list of facts with provenance — stored only when the person states a preference, updated without overwriting, forgotten on request, never for somebody without an account, never anything else', () => {
+  const r = runTypeScriptScenario(`${MEMORIA_SETUP}
+    const h = await import('./apps/api/src/tus/asistente/hechos.ts')
+    const { ENCABEZADO_HECHOS } = await import('./apps/api/src/tus/asistente/contexto.ts')
+    const out = {}
+    const ahora = waClock()
+    const detectar = (texto) => h.detectarHechos(texto, ahora).map((x) => [x.type, x.value])
+    out.detecta = {
+      horario: detectar('Yo siempre prefiero a la tarde'),
+      zona: detectar('Vivo en el Centro'),
+      contacto: detectar('Mejor escribime por WhatsApp'),
+      llamada: detectar('prefiero que me llamen por teléfono'),
+    }
+    out.noDetecta = ['Necesito un plomero para mañana a la tarde', 'Busco electricista en el Centro', 'Mi DNI es 30111222', 'Mi contraseña es hunter2', 'Tengo tres hijos y un perro', 'Odio a mi vecino', 'hola', 'olvidá mi zona, vivo en el Centro'].map((t) => detectar(t).length)
+    out.olvido = ['olvidá mi zona', 'ya no prefiero la tarde, borrá mi horario preferido', 'borrá mis preferencias', 'olvidate de mi contacto preferido por whatsapp', 'necesito un plomero', 'olvidé las llaves'].map((t) => { const x = h.detectarOlvido(t); return x === undefined ? 'nada' : x === null ? 'todo' : x })
+
+    // Through the assistant, with its store.
+    const almacen = new h.HechosEnMemoria()
+    const mod = crearModuloWhatsapp({ env: waEnv, transaction: waTx, accounts: accountResolver, application: tusApp, knowledgeIndex, factStore: almacen, whatsapp: fakeWa, chat, embeddings, transcriptor: null, now: waClock, metric: (name, fields) => metrics.push({ name, ...fields }) })
+    const decir = async (cuenta, text) => { const x = await mod.asistenteWeb.enviar({ identidad: cuenta ? { context: sesion(cuenta), visitorId: null } : { context: null, visitorId: VISITANTE }, text, correlationId: 'corr-hechos' }); waAdvance(6000); return x }
+    const enContexto = () => chat.calls.filter((call) => call.messages[0].content !== PROMPT_ENRUTADOR).at(-1).messages.find((m) => String(m.content).startsWith(ENCABEZADO_HECHOS))?.content ?? null
+    const primera = await decir('cuenta-a', 'Yo siempre prefiero a la tarde')
+    out.guardado = almacen.filas.map((f) => [f.accountId, f.type, f.value, f.conversationId === primera.conversationId, f.sourceMessageId === primera.userMessage.id, f.channel, f.confidence, Boolean(f.expiresAt), f.invalidatedAt])
+    out.mismoTurno = enContexto()
+    await decir('cuenta-a', 'Vivo en el Centro')
+    await decir('cuenta-a', 'Necesito un plomero')
+    out.contexto = enContexto()
+    // The same thing again changes nothing; a new value invalidates the old one and keeps it.
+    await decir('cuenta-a', 'siempre prefiero a la tarde, ya te dije')
+    const antes = almacen.filas.length
+    await decir('cuenta-a', 'Ahora prefiero siempre a la noche')
+    out.actualiza = [almacen.filas.length === antes + 1, almacen.filas.filter((f) => f.type === 'horario_preferido').map((f) => [f.value, f.invalidationReason]), (await almacen.activos('cuenta-a', new Date(waClock()).toISOString())).map((f) => f.type + '=' + f.value).sort()]
+    // Other people.
+    await decir('cuenta-b', 'hola, necesito un electricista')
+    out.otraCuenta = enContexto()
+    await decir(null, 'Vivo en el Centro y siempre prefiero a la tarde')
+    out.anonimo = [enContexto(), almacen.filas.every((f) => f.accountId === 'cuenta-a')]
+    // Nothing outside the closed list, however it is said.
+    await decir('cuenta-a', 'Siempre pago con tarjeta 4509 9535 6623 3704 y mi clave es hunter2')
+    out.fueraDeLista = [almacen.filas.every((f) => h.TIPOS_HECHO.includes(f.type)), JSON.stringify(almacen.filas).includes('hunter2') || JSON.stringify(almacen.filas).includes('4509')]
+    // The person asks to forget.
+    await decir('cuenta-a', 'olvidá mi zona')
+    out.olvida = [(await almacen.activos('cuenta-a', new Date(waClock()).toISOString())).map((f) => f.type), almacen.filas.find((f) => f.type === 'zona_habitual').invalidationReason, enContexto()]
+    // The service: invalidate, delete, history, expiry — always by account.
+    const servicio = new h.ServicioHechos(almacen, waClock)
+    out.ajeno = [await servicio.invalidar('cuenta-b', null, 'prueba'), await servicio.eliminar('cuenta-b', almacen.filas[0].factId), (await servicio.paraContexto('cuenta-b')).length, (await servicio.paraContexto(null)).length]
+    out.historial = (await servicio.historial('cuenta-a')).length
+    const activo = (await servicio.activos('cuenta-a'))[0]
+    out.eliminar = [await servicio.eliminar('cuenta-a', activo.factId), (await servicio.activos('cuenta-a')).length]
+    await servicio.registrar({ accountId: 'cuenta-a', conversationId: primera.conversationId, channel: 'web', messageId: null, text: 'Vivo en San Benito' })
+    waAdvance(h.VIGENCIA_HECHO_MS + 1000)
+    out.vencido = (await servicio.paraContexto('cuenta-a')).length
+    out.metricas = [metrics.some((m) => m.name === 'assistant.facts' && m.stored > 0), metrics.some((m) => m.name === 'assistant.facts' && m.invalidated > 0), !JSON.stringify(metrics.filter((m) => m.name === 'assistant.facts')).includes('Centro')]
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.detecta, { horario: [['horario_preferido', 'a la tarde']], zona: [['zona_habitual', 'Centro']], contacto: [['contacto_preferido', 'WhatsApp']], llamada: [['contacto_preferido', 'Llamada']] })
+  assert.deepEqual(r.noDetecta, Array(8).fill(0), 'a one-off request, a document, a password or anything outside the list is not a fact')
+  assert.deepEqual(r.olvido, ['zona_habitual', 'horario_preferido', 'todo', 'contacto_preferido', 'nada', 'nada'])
+  assert.deepEqual(r.guardado, [['cuenta-a', 'horario_preferido', 'a la tarde', true, true, 'web', 0.8, true, null]], 'the fact keeps its account, conversation, source message, channel, confidence and expiry')
+  assert.match(r.mismoTurno, /Horario preferido: a la tarde/u)
+  assert.match(r.contexto, /Horario preferido: a la tarde/u)
+  assert.match(r.contexto, /Zona habitual: Centro/u, 'the active facts of the account reach the context of later turns')
+  assert.deepEqual(r.actualiza, [true, [['a la tarde', 'reemplazado'], ['a la noche', null]], ['horario_preferido=a la noche', 'zona_habitual=Centro']], 'a new value invalidates the old fact and keeps it; repeating the same one adds nothing')
+  assert.equal(r.otraCuenta, null, 'another account has none of them')
+  assert.deepEqual(r.anonimo, [null, true], 'no account: nothing stored, nothing used')
+  assert.deepEqual(r.fueraDeLista, [true, false], 'only the closed list; never a card or a password')
+  assert.deepEqual(r.olvida.slice(0, 2), [['horario_preferido'], 'pedido_del_titular'])
+  assert.doesNotMatch(r.olvida[2] ?? '', /Zona habitual/u, 'a forgotten fact is not used again')
+  assert.deepEqual(r.ajeno, [0, false, 0, 0], 'another account can neither invalidate, delete nor read them')
+  assert.ok(r.historial >= 3, 'invalidated facts are kept as history')
+  assert.deepEqual(r.eliminar, [true, 0])
+  assert.equal(r.vencido, 0, 'an expired fact is not used')
+  assert.deepEqual(r.metricas, [true, true, true])
+})

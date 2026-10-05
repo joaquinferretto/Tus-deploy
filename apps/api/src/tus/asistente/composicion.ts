@@ -1,5 +1,6 @@
 import { PRESUPUESTO_CONTEXTO_POR_DEFECTO } from './contexto.ts'
 import { LIMITES_MEMORIA_POR_DEFECTO, ServicioMemoriaSemantica, type PuertoIndiceMemoria } from './memoria-semantica.ts'
+import { ServicioHechos, type PuertoHechos } from './hechos.ts'
 
 // A similarity threshold from the environment: a number in 0..1, or the default.
 const fraccion = (value: string | undefined, fallback: number): number => {
@@ -171,6 +172,8 @@ export function crearModuloWhatsapp(input: {
   knowledgeIndex?: PuertoIndiceConocimiento | null
   // Semantic memory of conversations (needs an embeddings provider; absent: no memory).
   memoryIndex?: PuertoIndiceMemoria | null
+  // Durable facts of an account (absent: no facts are stored or used).
+  factStore?: PuertoHechos | null
   whatsapp?: WhatsappProvider
   chat?: ChatProvider | null
   embeddings?: EmbeddingProvider | null
@@ -279,6 +282,7 @@ export function crearModuloWhatsapp(input: {
     linking: vinculacion,
     knowledge,
     memoria,
+    hechos: input.factStore ? new ServicioHechos(input.factStore, now, input.metric) : null,
     transcriptor,
     audio: limitesAudio,
     comprobantes,

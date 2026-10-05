@@ -29,6 +29,7 @@ import {
 } from '../asistente/modelo.ts'
 import type { CuentaPorDocumento, PuertoCuentasPorDocumento } from '../asistente/identificacion.ts'
 import { VERSION_INDICE_MEMORIA, type FragmentoMemoria, type PuertoIndiceMemoria } from '../asistente/memoria-semantica.ts'
+import type { HechoMemoria, PuertoHechos } from '../asistente/hechos.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from '../asistente/puertos.ts'
 import { isSerializationFailure } from './prisma-work.ts'
 import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
@@ -1004,5 +1005,77 @@ export class IndiceMemoriaPrisma implements PuertoIndiceMemoria {
 
   async deCuenta(accountId: string) {
     return (await this.client.$queryRawUnsafe<Fila[]>('SELECT * FROM public."fragmentos_memoria" WHERE "cuenta_id" = $1 ORDER BY "fecha_creacion", "desde_secuencia"', accountId)).map(mapFragmento)
+  }
+}
+
+// ---- facts of an account on PostgreSQL ------------------------------------------------------------
+const mapHecho = (row: Fila): HechoMemoria => ({
+  factId: String(row['id']),
+  accountId: String(row['cuenta_id']),
+  type: String(row['tipo']) as HechoMemoria['type'],
+  value: String(row['valor']),
+  conversationId: texto(row['conversacion_id']),
+  sourceMessageId: texto(row['mensaje_origen_id']),
+  channel: String(row['canal']) as HechoMemoria['channel'],
+  confidence: row['confianza'] === null || row['confianza'] === undefined ? null : Number(row['confianza']),
+  createdAt: iso(row['fecha_creacion'])!,
+  updatedAt: iso(row['fecha_actualizacion'])!,
+  expiresAt: iso(row['expira_en']),
+  invalidatedAt: iso(row['invalidado_en']),
+  invalidationReason: texto(row['motivo_invalidacion']),
+})
+
+export class HechosPrisma implements PuertoHechos {
+  constructor(private readonly client: ClientePrismaAsistente) {}
+
+  async activos(accountId: string, now: string) {
+    return (await this.client.$queryRawUnsafe<Fila[]>('SELECT * FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND "invalidado_en" IS NULL AND ("expira_en" IS NULL OR "expira_en" > $2::timestamptz) ORDER BY "tipo"', accountId, now)).map(mapHecho)
+  }
+
+  async historial(accountId: string) {
+    return (await this.client.$queryRawUnsafe<Fila[]>('SELECT * FROM public."hechos_memoria" WHERE "cuenta_id" = $1 ORDER BY "fecha_creacion", "id"', accountId)).map(mapHecho)
+  }
+
+  // Refresh, or invalidate + insert, in one transaction; the partial unique index decides a race.
+  async guardar(hecho: HechoMemoria): Promise<'guardado' | 'reemplazado' | 'sin_cambio'> {
+    const intento = () =>
+      this.client.$transaction(async (tx) => {
+        const [activo] = await tx.$queryRawUnsafe<Fila[]>('SELECT "id", "valor" FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND "tipo" = $2 AND "invalidado_en" IS NULL FOR UPDATE', hecho.accountId, hecho.type)
+        if (activo && String(activo['valor']) === hecho.value) {
+          await tx.$executeRawUnsafe('UPDATE public."hechos_memoria" SET "fecha_actualizacion" = $2::timestamptz, "expira_en" = $3::timestamptz WHERE "id" = $1', String(activo['id']), hecho.updatedAt, hecho.expiresAt)
+          return 'sin_cambio' as const
+        }
+        if (activo) await tx.$executeRawUnsafe('UPDATE public."hechos_memoria" SET "invalidado_en" = $2::timestamptz, "motivo_invalidacion" = $3 WHERE "id" = $1', String(activo['id']), hecho.createdAt, 'reemplazado')
+        await tx.$executeRawUnsafe(
+          `INSERT INTO public."hechos_memoria" ("id","cuenta_id","tipo","valor","conversacion_id","mensaje_origen_id","canal","confianza","fecha_creacion","fecha_actualizacion","expira_en")
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::numeric,$9::timestamptz,$10::timestamptz,$11::timestamptz)`,
+          hecho.factId, hecho.accountId, hecho.type, hecho.value, hecho.conversationId, hecho.sourceMessageId, hecho.channel, hecho.confidence, hecho.createdAt, hecho.updatedAt, hecho.expiresAt
+        )
+        return activo ? ('reemplazado' as const) : ('guardado' as const)
+      })
+    // Several writers of the same type at once: whoever loses the unique index (or finds the row
+    // it locked already replaced) tries again and sees the winner. Bounded.
+    for (let vuelta = 0; ; vuelta += 1) {
+      try {
+        return await intento()
+      } catch (error) {
+        const conflicto = /23505|P2002|40001|40P01|uq_hechos_memoria_activo/u.test(`${(error as { code?: string })?.code ?? ''} ${(error as Error)?.message ?? ''}`)
+        if (!conflicto || vuelta >= 7) throw error
+        await new Promise((resolve) => setTimeout(resolve, 5 + Math.random() * 25 * (vuelta + 1)))
+      }
+    }
+  }
+
+  async invalidar(input: { accountId: string; type: HechoMemoria['type'] | null; reason: string; now: string }) {
+    return Number(
+      await this.client.$executeRawUnsafe(
+        'UPDATE public."hechos_memoria" SET "invalidado_en" = $3::timestamptz, "motivo_invalidacion" = $4 WHERE "cuenta_id" = $1 AND "invalidado_en" IS NULL AND ($2::text IS NULL OR "tipo" = $2)',
+        input.accountId, input.type, input.now, input.reason.slice(0, 80)
+      )
+    )
+  }
+
+  async eliminar(accountId: string, factId: string) {
+    return Number(await this.client.$executeRawUnsafe('DELETE FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND "id" = $2', accountId, factId)) > 0
   }
 }

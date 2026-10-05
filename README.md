@@ -671,7 +671,7 @@ Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md
 tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
 de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
 
-**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental) y 4 (memoria semantica). Fase actual: 5 (hechos con procedencia).**
+**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica) y 5 (hechos con procedencia). Fase actual: 6 (estado real de TUS).**
 
 **Lo que funciona hoy**
 
@@ -690,7 +690,11 @@ de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los d
   su vector en `"RagEmbedding"`/pgvector) vuelven al contexto cuando la pregunta actual se relaciona.
   La busqueda filtra por cuenta en SQL antes de la similitud, aplica umbral y trae como maximo 3.
   Necesita un proveedor de embeddings; sin el queda apagada.
-- Todavia no hay hechos persistentes, ni borrado o retencion.
+- Hechos con procedencia (Fase 5): una lista cerrada (`horario_preferido`, `zona_habitual`,
+  `contacto_preferido`) que se guarda solo cuando la persona lo dice como preferencia, con mensaje,
+  conversacion y canal de origen. Un valor nuevo invalida el anterior sin borrarlo; "olvida mi zona"
+  lo invalida. Los detecta el backend, no un modelo.
+- Todavia no hay borrado ni retencion.
 
 **Arquitectura acordada (por fases)**
 
@@ -709,7 +713,7 @@ validacion integral (10).
 **Tablas y modelos.** Se reutilizan las tres tablas de historial y `"RagEmbedding"`. Creado:
 `mensajes_conversacion_whatsapp.secuencia` (migracion `20261102100000`) y `resumenes_conversacion`
 (migracion `20261103100000`) y `fragmentos_memoria` mas el indice `(tenantId, workspaceId)` de
-`"RagEmbedding"` (migracion `20261104100000`). Prevista, aun no creada: `hechos_memoria`.
+`"RagEmbedding"` (migracion `20261104100000`) y `hechos_memoria` (migracion `20261105100000`).
 Migraciones solo hacia adelante y no destructivas; sin infraestructura nueva.
 
 **Web y WhatsApp.** La memoria de largo plazo es por cuenta: la sesion en la Web, o un WhatsApp con
@@ -738,7 +742,7 @@ node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
 node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
 ```
 
-**Pendientes.** Fases 5 a 10. Para la memoria semantica en produccion hace falta un proveedor de
+**Pendientes.** Fases 6 a 10. Para la memoria semantica en produccion hace falta un proveedor de
 embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
 
 ## Limites actuales y trabajo posterior

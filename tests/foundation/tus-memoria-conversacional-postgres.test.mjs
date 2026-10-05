@@ -205,3 +205,50 @@ test('MEMORIA fase 4 PostgreSQL: fragments and their vectors (pgvector, the exis
   assert.equal(r.conocimiento, 0)
   assert.deepEqual(r.servicio, [['A: pérdida de agua'], 1, 0, 0], 'threshold applied; B gets only its own fragment; no account, no memory')
 })
+
+test('MEMORIA fase 5 PostgreSQL: one active fact per type and account, also under a race; a new value invalidates and keeps the old one; the database refuses a type outside the list; another account cannot touch them', { skip, timeout: 180000 }, () => {
+  const r = runTypeScriptScenario(`${MEMORIA_PG_SETUP}
+    const { HechosPrisma } = await import('./apps/api/src/tus/adapters/prisma-asistente.ts')
+    const { ServicioHechos } = await import('./apps/api/src/tus/asistente/hechos.ts')
+    const out = {}
+    try {
+      const almacen = new HechosPrisma(prisma)
+      const servicio = new ServicioHechos(almacen)
+      const A = run + '-cuenta-a'; const B = run + '-cuenta-b'
+      const c = await conversacion({ cuenta: A })
+      const decir = (cuenta, text) => servicio.registrar({ accountId: cuenta, conversationId: c.conversationId, channel: 'web', messageId: run + '-m', text })
+      out.guardar = [await decir(A, 'Vivo en el Centro'), await decir(A, 'vivo en el Centro'), await decir(A, 'Siempre prefiero a la tarde'), await decir(B, 'Vivo en San Benito')]
+      out.activos = (await servicio.activos(A)).map((h) => [h.type, h.value, h.conversationId === c.conversationId, h.sourceMessageId === run + '-m', h.channel, h.confidence, Boolean(h.expiresAt)])
+      out.contexto = [await servicio.paraContexto(A), await servicio.paraContexto(B), await servicio.paraContexto(run + '-nadie')]
+      // A new value: the old row stays, invalidated.
+      await decir(A, 'Ahora vivo en San Benito')
+      out.reemplazo = (await servicio.historial(A)).filter((h) => h.type === 'zona_habitual').map((h) => [h.value, h.invalidationReason])
+      // Five writers of the same type at once: exactly one active row afterwards.
+      const hecho = (valor) => ({ factId: run + '-hecho-' + Math.random().toString(36).slice(2, 10), accountId: A, type: 'contacto_preferido', value: valor, conversationId: c.conversationId, sourceMessageId: null, channel: 'web', confidence: 0.8, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), expiresAt: null, invalidatedAt: null, invalidationReason: null })
+      const carrera = await Promise.all(['WhatsApp', 'Llamada', 'Web', 'WhatsApp', 'Llamada'].map((v) => almacen.guardar(hecho(v)).then((x) => x, (e) => 'error:' + String(e?.code ?? e?.message).slice(0, 60))))
+      const filas = await prisma.$queryRawUnsafe('SELECT count(*) FILTER (WHERE "invalidado_en" IS NULL)::int AS activos, count(*)::int AS total FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND "tipo" = $2', A, 'contacto_preferido')
+      out.carrera = [carrera.some((x) => String(x).startsWith('error')), filas[0].activos, filas[0].total >= 1]
+      // The database itself.
+      const insertar = (tipo, cuenta, extra = '') => codigo(() => prisma.$executeRawUnsafe('INSERT INTO public."hechos_memoria" ("id","cuenta_id","tipo","valor","canal","fecha_creacion","fecha_actualizacion"' + (extra ? ',"invalidado_en"' : '') + ') VALUES ($1,$2,$3,$4,$5,now(),now()' + (extra ? ',now()' : '') + ')', run + '-x-' + Math.random().toString(36).slice(2, 8), cuenta, tipo, 'valor', 'web'))
+      out.checks = [await insertar('numero_de_tarjeta', A), await insertar('zona_habitual', ''), await insertar('zona_habitual', A), await insertar('zona_habitual', run + '-otra', 'invalidada-sin-motivo')].map((x) => x !== 'ok')
+      // Another account.
+      const propio = (await servicio.activos(A))[0]
+      out.ajeno = [await servicio.invalidar(B, 'horario_preferido', 'prueba'), await servicio.eliminar(B, propio.factId), (await servicio.activos(A)).length >= 3]
+      out.olvidar = [await decir(A, 'olvidá mi zona'), (await servicio.activos(A)).map((h) => h.type).sort()]
+      out.eliminar = [await servicio.eliminar(A, propio.factId), (await servicio.historial(A)).some((h) => h.factId === propio.factId)]
+      // Deleting the conversation of origin (later phases) does not delete the fact: it loses the link.
+      out.fk = (await prisma.$queryRawUnsafe("SELECT confdeltype FROM pg_constraint WHERE conname = 'fk_hechos_memoria_conversacion'"))[0].confdeltype
+    } finally { await prisma.$disconnect() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.guardar, [{ guardados: 1, invalidados: 0 }, { guardados: 0, invalidados: 0 }, { guardados: 1, invalidados: 0 }, { guardados: 1, invalidados: 0 }])
+  assert.deepEqual(r.activos, [['horario_preferido', 'a la tarde', true, true, 'web', 0.8, true], ['zona_habitual', 'Centro', true, true, 'web', 0.9, true]])
+  assert.deepEqual(r.contexto, [['Horario preferido: a la tarde', 'Zona habitual: Centro'], ['Zona habitual: San Benito'], []])
+  assert.deepEqual(r.reemplazo, [['Centro', 'reemplazado'], ['San Benito', null]], 'the old value is kept, invalidated')
+  assert.deepEqual(r.carrera, [false, 1, true], 'five simultaneous writers: no error and exactly one active fact')
+  assert.deepEqual(r.checks, [true, true, true, true], 'a type outside the list, an empty account, a second active fact of a type and an invalidation without reason are refused')
+  assert.deepEqual(r.ajeno, [0, false, true], 'another account can neither invalidate nor delete them')
+  assert.deepEqual(r.olvidar, [{ guardados: 0, invalidados: 1 }, ['contacto_preferido', 'horario_preferido']])
+  assert.deepEqual(r.eliminar, [true, false])
+  assert.equal(r.fk, 'n', 'ON DELETE SET NULL')
+})

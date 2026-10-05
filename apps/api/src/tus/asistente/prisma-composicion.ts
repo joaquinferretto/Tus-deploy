@@ -3,6 +3,7 @@ import {
   CuentasPorDocumentoPrisma,
   IndiceConocimientoPrisma,
   IndiceMemoriaPrisma,
+  HechosPrisma,
   TransaccionAsistentePrisma,
   type ClientePrismaAsistente,
 } from '../adapters/prisma-asistente.ts'
@@ -33,6 +34,7 @@ export function crearModuloWhatsappPrisma(
     ...(servicios ? { servicios } : {}),
     knowledgeIndex: new IndiceConocimientoPrisma(client),
     memoryIndex: new IndiceMemoriaPrisma(client),
+    factStore: new HechosPrisma(client),
     verificadorTelefono: verificadorTelefono ?? null,
     identidades: new CuentasPorDocumentoPrisma(prisma as ConstructorParameters<typeof CuentasPorDocumentoPrisma>[0]),
   })

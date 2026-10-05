@@ -2806,6 +2806,27 @@ model FragmentoMemoria {
   @@map("fragmentos_memoria")
 }
 
+// MEMORIA-01: a durable fact of an account (closed list of types), with provenance. One ACTIVE
+// fact per type and account (partial unique index uq_hechos_memoria_activo, in SQL).
+model HechoMemoria {
+  id                 String    @id(map: "hechos_memoria_pkey")
+  cuentaId           String    @map("cuenta_id")
+  tipo               String    @map("tipo")
+  valor              String    @map("valor")
+  conversacionId     String?   @map("conversacion_id")
+  mensajeOrigenId    String?   @map("mensaje_origen_id")
+  canal              String    @map("canal")
+  confianza          Decimal?  @map("confianza") @db.Decimal(3, 2)
+  fechaCreacion      DateTime  @map("fecha_creacion") @db.Timestamptz(6)
+  fechaActualizacion DateTime  @map("fecha_actualizacion") @db.Timestamptz(6)
+  expiraEn           DateTime? @map("expira_en") @db.Timestamptz(6)
+  invalidadoEn       DateTime? @map("invalidado_en") @db.Timestamptz(6)
+  motivoInvalidacion String?   @map("motivo_invalidacion")
+
+  @@index([cuentaId, fechaCreacion], map: "ix_hechos_memoria_cuenta")
+  @@map("hechos_memoria")
+}
+
 model ColaConversacionWhatsapp {
   id                 String    @id(map: "cola_conversacion_whatsapp_pkey")
   conversacionId     String    @map("conversacion_id")

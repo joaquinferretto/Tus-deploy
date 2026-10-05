@@ -9,6 +9,7 @@ import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, cor
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
 import { cuentaDeContacto } from './historial.ts'
 import type { ServicioMemoriaSemantica } from './memoria-semantica.ts'
+import type { ServicioHechos } from './hechos.ts'
 import { PRESUPUESTO_CONTEXTO_POR_DEFECTO, construirContexto, estimarTokens, ventanaReciente, type MensajeReciente, type PresupuestoContexto } from './contexto.ts'
 import { cuentaTrivial, detectarCambioDeHorario, detectarRestriccionProfesional, esPreguntaSuelta, expresaFrustracion, pideDetener, pideEmpezarDeNuevo, pideOtrasOpciones, sinInsultos, tieneInsultos } from './restricciones.ts'
 import { GUIA_DE_TEMA, TEMAS_AYUDA, TEMAS_DE_CUENTA, ayudaDeCuenta, detectarAyuda, enlaceGuia, enlaceTus, guiaDeCuenta, lineaDeReanudacion, pideExplicacion, rutaDeTema, type AyudaDetectada, type EstadoDesafio, type TemaAyuda } from './asistencia.ts'
@@ -208,6 +209,8 @@ export interface DependenciasOrquestador {
   knowledge: RecuperadorConocimiento | null
   // Semantic memory of the account's old conversations (null: no embeddings provider, no memory).
   memoria?: ServicioMemoriaSemantica | null
+  // Durable facts of the account (closed list of types, with provenance).
+  hechos?: ServicioHechos | null
   transcriptor: Transcriptor | null
   // Speech-to-text limits (size, timeout, duration, formats); defaults when absent.
   audio?: Partial<LimitesAudio>
@@ -670,6 +673,7 @@ export class OrquestadorConversacion {
     correlationId: string
   ): Promise<MensajeSaliente[]> {
     const text = input.text
+    if (text) await this.registrarHechos(turn, text)
     // GLOBAL INTENT ROUTER, before any step reads the message: a question, a problem or "no
     // funciona" interrupts whatever the conversation was waiting for (a name and document, a
     // time, a choice). It is answered from the real state and the flow is kept, not consumed.
@@ -2457,7 +2461,7 @@ export class OrquestadorConversacion {
     // ONE constructor of the context, under a token budget: summary, memories, facts, the recent
     // window (from the newest message back) and the current message.
     const contexto = construirContexto(
-      { fijos, resumen: await this.resumenVigente(turn.conversation), recuerdos: await this.recuerdosDe(turn, text), hechos: [], recientes: await this.recientes(turn), actual: redactarPii(text) },
+      { fijos, resumen: await this.resumenVigente(turn.conversation), recuerdos: await this.recuerdosDe(turn, text), hechos: await this.hechosDe(turn), recientes: await this.recientes(turn), actual: redactarPii(text) },
       this.limits.contexto
     )
     // Sizes and counts only: never the content of a message.
@@ -3190,6 +3194,19 @@ export class OrquestadorConversacion {
   //   unique index keeps exactly one;
   // - the newest `historyMessages` messages are left out: they are the recent window, sent as
   //   they are. Personal identifiers and secrets are removed before the model sees anything.
+
+  // Facts of the ACCOUNT of this contact (phase 5). What a message states is stored (or
+  // forgotten, when the person asks) as soon as it is read, whatever answers the turn — the
+  // detection is the backend's, no model is involved; the active ones go to the context of the
+  // model. No account: nothing is stored and nothing is used.
+  private async registrarHechos(turn: Turno, text: string): Promise<void> {
+    const accountId = this.deps.hechos ? cuentaDeContacto(turn.contact) : null
+    if (accountId) await this.deps.hechos!.registrar({ accountId, conversationId: turn.conversation.conversationId, channel: turn.canal.id, messageId: turn.pending.at(-1)?.messageId ?? null, text })
+  }
+
+  private async hechosDe(turn: Turno): Promise<string[]> {
+    return this.deps.hechos ? this.deps.hechos.paraContexto(cuentaDeContacto(turn.contact)) : []
+  }
 
   // Memories of the ACCOUNT of this contact related to what is being asked (phase 4). The account
   // is the one the backend resolved for the contact — the session on the Web, a verified link on

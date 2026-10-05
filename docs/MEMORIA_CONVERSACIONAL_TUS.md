@@ -1,7 +1,7 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0 a 4 terminadas** (diseno; historial canonico; constructor de contexto; resumen
-incremental versionado; memoria semantica). Este documento describe lo que el
+Estado: **Fases 0 a 5 terminadas** (diseno; historial canonico; constructor de contexto; resumen
+incremental versionado; memoria semantica; hechos con procedencia). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
 existe todavia.
 
@@ -187,6 +187,26 @@ resumen o el mensaje actual se recortaron.
 - Metricas sin contenido: `assistant.memory_stored`, `assistant.memory_retrieved` (recuperados,
   descartados por umbral, milisegundos) y `assistant.memory_error`.
 
+### 1.15 Hechos con procedencia (Fase 5, implementado)
+
+- **Lista cerrada de tipos** (`TIPOS_HECHO`, con CHECK en la base): `horario_preferido`,
+  `zona_habitual`, `contacto_preferido`. Nada mas se guarda como hecho.
+- **Cuando se guarda**: solo si la persona lo dice como preferencia o como algo propio ("siempre
+  prefiero a la tarde", "vivo en el Centro", "escribime por WhatsApp"). Un pedido puntual ("un plomero
+  para manana a la tarde") no es un hecho. La deteccion es del backend (`detectarHechos`, con el mismo
+  extractor de la busqueda): ningun modelo escribe hechos.
+- **Donde**: `hechos_memoria` (migracion `20261105100000_tus_memoria_hechos`): cuenta, tipo, valor,
+  conversacion y mensaje de origen, canal, confianza, fechas, vencimiento (180 dias) e invalidacion
+  con motivo. Un solo hecho ACTIVO por tipo y cuenta (indice unico parcial).
+- **Actualizar**: un valor nuevo invalida el anterior (`reemplazado`) y lo conserva; repetir el mismo
+  valor solo renueva su fecha. Bajo concurrencia queda exactamente uno activo.
+- **Olvidar**: "olvida mi zona", "borra mis preferencias" (`detectarOlvido`) invalida con motivo
+  `pedido_del_titular`. `ServicioHechos` tambien permite invalidar y eliminar, siempre por cuenta.
+- **Uso**: los hechos activos de la cuenta entran al contexto del modelo como `hechos`, con la
+  aclaracion de que si contradicen a la persona o a una herramienta, valen la persona y la herramienta.
+- Se registran al leer el mensaje, responda quien responda el turno (no hay IA en la deteccion). Sin
+  cuenta no se guarda ni se usa nada. Metrica `assistant.facts` (guardados, invalidados), sin contenido.
+
 ## 2. Que se reutiliza
 
 - Las tres tablas de historial (contacto, conversacion, mensaje) para ambos canales.
@@ -261,7 +281,7 @@ cuenta, los recuerdos y los hechos (Fase 7).
 | 3 (hecho) | `resumenes_conversacion` (conversacion, version, `desde_secuencia`, `hasta_secuencia`, mensajes, texto, modelo, fecha; unico por conversacion + version); migracion `20261103100000_tus_memoria_resumenes` | resumen incremental, versionado y regenerable |
 | 4 (hecho) | `fragmentos_memoria` + vectores en `"RagEmbedding"` (`tenantId = 'tus-memoria'`, `workspaceId = cuenta`); migracion `20261104100000_tus_memoria_fragmentos` | recuerdos semanticos por cuenta |
 | 4 (hecho) | indice `ix_rag_embedding_tenant_workspace` en `"RagEmbedding"` | filtrar por cuenta antes de la similitud |
-| 5 | `hechos_memoria` (cuenta, tipo de una lista cerrada, valor, mensaje y conversacion de origen, canal, confianza, vencimiento, invalidacion) | hechos con procedencia |
+| 5 (hecho) | `hechos_memoria` (cuenta, tipo de una lista cerrada, valor, mensaje y conversacion de origen, canal, confianza, vencimiento, invalidacion); migracion `20261105100000_tus_memoria_hechos` | hechos con procedencia |
 
 Todas las migraciones seran solo hacia adelante y no destructivas (columnas nuevas anulables o con
 valor por defecto, tablas nuevas, indices). Las columnas `resumen` y `mensajes_resumidos` se conservan.
@@ -330,7 +350,7 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | 2 | Constructor unico de contexto con presupuesto de tokens | terminada |
 | 3 | Resumen incremental y versionado | terminada |
 | 4 | Memoria semantica con pgvector | terminada |
-| 5 | Hechos con procedencia | pendiente |
+| 5 | Hechos con procedencia | terminada |
 | 6 | Resolutores contra el estado real de TUS | pendiente |
 | 7 | Continuidad Web + WhatsApp | pendiente |
 | 8 | Retencion, borrado y privacidad | pendiente |
