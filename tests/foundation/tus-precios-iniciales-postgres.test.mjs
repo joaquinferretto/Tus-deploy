@@ -65,7 +65,8 @@ test(
       const historial = (await dbFresca.query(`SELECT migration_name FROM _prisma_migrations WHERE rolled_back_at IS NULL AND finished_at IS NOT NULL ORDER BY migration_name`)).rows.map((row) => row.migration_name)
       const carpetas = readdirSync(DIRECTORIO, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort()
       assert.deepEqual(historial, carpetas, 'every migration of the repository is applied, the new one included')
-      assert.equal(historial.at(-1), MIGRACION, 'it is the last migration of the chain')
+      // Later releases added migrations after it (the conversational memory): it is applied, in its place.
+      assert.ok(historial.includes(MIGRACION), 'the price migration is part of the applied chain')
       const vacia = await precios(dbFresca)
       assert.deepEqual([vacia.servicios.length, vacia.tarifas.length], [0, 0], 'on a new database there is no current service: nothing is created')
       // No default was added: a service created later has no price until its provider sets one.

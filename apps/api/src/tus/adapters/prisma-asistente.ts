@@ -23,10 +23,13 @@ import {
   type ContactoWhatsapp,
   type ConversacionWhatsapp,
   type MensajeConversacion,
+  type ResumenConversacion,
   type TokenVinculacion,
   type TrabajoConversacion,
 } from '../asistente/modelo.ts'
 import type { CuentaPorDocumento, PuertoCuentasPorDocumento } from '../asistente/identificacion.ts'
+import { VERSION_INDICE_MEMORIA, type FragmentoMemoria, type PuertoIndiceMemoria } from '../asistente/memoria-semantica.ts'
+import type { HechoMemoria, PuertoHechos } from '../asistente/hechos.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from '../asistente/puertos.ts'
 import { isSerializationFailure } from './prisma-work.ts'
 import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
@@ -49,6 +52,7 @@ export interface ClientePrismaAsistente {
   tokenVinculacionWhatsapp: DelegadoPrismaAsistente
   confirmacionAsistente: DelegadoPrismaAsistente
   auditoriaAsistente: DelegadoPrismaAsistente
+  resumenConversacion: DelegadoPrismaAsistente
   consentimientoWhatsApp?: {
     findUnique(input: {
       where: { tenantId_tipoDestinatario_destinatarioId: { tenantId: string; tipoDestinatario: string; destinatarioId: string } }
@@ -190,6 +194,19 @@ const mapMensaje = (row: Fila): MensajeConversacion => ({
   metadata: (row['metadata'] as Record<string, unknown>) ?? {},
   correlationId: String(row['correlacionId']),
   createdAt: iso(row['fechaCreacion'])!,
+  ...(row['secuencia'] === undefined || row['secuencia'] === null ? {} : { sequence: Number(row['secuencia']) }),
+})
+
+const mapResumen = (row: Fila): ResumenConversacion => ({
+  summaryId: String(row['id']),
+  conversationId: String(row['conversacionId']),
+  version: Number(row['version']),
+  fromSequence: Number(row['desdeSecuencia']),
+  throughSequence: Number(row['hastaSecuencia']),
+  messageCount: Number(row['mensajes']),
+  text: String(row['texto']),
+  model: texto(row['modelo']),
+  createdAt: iso(row['fechaCreacion'])!,
 })
 
 const filaTrabajo = (job: TrabajoConversacion): Fila => ({
@@ -306,6 +323,7 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
         const row = await client.conversacionWhatsapp.findFirst({ where: { id } })
         return row ? mapConversacion(row) : null
       },
+      deContacto: async (contactId) => (await client.conversacionWhatsapp.findMany({ where: { contactoId: contactId }, orderBy: { abiertaEn: 'desc' } })).map(mapConversacion),
       crear: async (value) => {
         await client.conversacionWhatsapp.create({ data: filaConversacion(value) })
       },
@@ -369,6 +387,25 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
                 b.externalTimestamp ?? b.createdAt
               ) || a.createdAt.localeCompare(b.createdAt)
           ),
+      posteriores: async (conversationId, input) =>
+        (
+          await client.mensajeConversacionWhatsapp.findMany({
+            where: { conversacionId: conversationId, estado: { not: 'rate_limited' }, secuencia: { gt: BigInt(input.after) } },
+            orderBy: { secuencia: 'asc' },
+            take: input.limit,
+          })
+        ).map(mapMensaje),
+      // ix_mensajes_conversacion_whatsapp_secuencia: the page right before `before`, oldest first.
+      pagina: async (conversationId, input) =>
+        (
+          await client.mensajeConversacionWhatsapp.findMany({
+            where: { conversacionId: conversationId, estado: { not: 'rate_limited' }, ...(input.before === null ? {} : { secuencia: { lt: BigInt(input.before) } }) },
+            orderBy: { secuencia: 'desc' },
+            take: input.limit,
+          })
+        )
+          .map(mapMensaje)
+          .reverse(),
       // DISTINCT ON walks ix_mensajes_conversacion_whatsapp_historial once per conversation: the
       // newest non rate-limited message of each, like `ultimos(id, 1)`, in a single statement.
       ultimoDeConversaciones: async (ids) =>
@@ -521,6 +558,20 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
             data: sinId(filaConfirmacion(value)),
           })
         ).count === 1,
+    },
+    resumenes: {
+      vigente: async (conversationId) => {
+        const row = await client.resumenConversacion.findFirst({ where: { conversacionId: conversationId }, orderBy: { version: 'desc' } })
+        return row ? mapResumen(row) : null
+      },
+      listar: async (conversationId) => (await client.resumenConversacion.findMany({ where: { conversacionId: conversationId }, orderBy: { version: 'asc' } })).map(mapResumen),
+      crear: async (value) => {
+        await client.resumenConversacion.create({
+          data: { id: value.summaryId, conversacionId: value.conversationId, version: value.version, desdeSecuencia: BigInt(value.fromSequence), hastaSecuencia: BigInt(value.throughSequence), mensajes: value.messageCount, texto: value.text, modelo: value.model, fechaCreacion: new Date(value.createdAt) },
+        })
+      },
+      eliminar: async (conversationId, desde) =>
+        Number(await client.$executeRawUnsafe('DELETE FROM public."resumenes_conversacion" WHERE "conversacion_id" = $1 AND ($2::bigint IS NULL OR "hasta_secuencia" >= $2::bigint)', conversationId, desde)),
     },
     auditoria: {
       registrar: async (event) => {
@@ -893,5 +944,181 @@ export class IndiceConocimientoPrisma implements PuertoIndiceConocimiento {
       chunks: Number(row['chunks'] ?? 0),
       vectors: Number(row['vectors'] ?? 0),
     }
+  }
+}
+
+// ---- semantic memory of conversations on PostgreSQL + the existing "RagEmbedding" (pgvector) ---
+// The account is part of the WHERE of every query: the similarity ordering only ever sees the
+// vectors of that account (tenant 'tus-memoria', workspace = the account).
+const TENANT_MEMORIA = 'tus-memoria'
+
+const mapFragmento = (row: Fila): FragmentoMemoria => ({
+  fragmentId: String(row['id']),
+  accountId: String(row['cuenta_id']),
+  conversationId: String(row['conversacion_id']),
+  channel: String(row['canal']) as FragmentoMemoria['channel'],
+  fromSequence: Number(row['desde_secuencia']),
+  throughSequence: Number(row['hasta_secuencia']),
+  text: String(row['texto']),
+  checksum: String(row['checksum']),
+  createdAt: iso(row['fecha_creacion'])!,
+  expiresAt: iso(row['expira_en']),
+})
+
+export class IndiceMemoriaPrisma implements PuertoIndiceMemoria {
+  constructor(private readonly client: ClientePrismaAsistente) {}
+
+  // The fragment and its vector are written together or not at all.
+  async guardar(fragment: FragmentoMemoria, vector: number[], embedding: { model: string; version: string }) {
+    if (vector.length !== DIMENSION_EMBEDDINGS) throw new Error('memory vector has an unexpected dimension')
+    return this.client.$transaction(async (tx) => {
+      const insertados = await tx.$executeRawUnsafe(
+        `INSERT INTO public."fragmentos_memoria" ("id","cuenta_id","conversacion_id","canal","desde_secuencia","hasta_secuencia","texto","checksum","version_embeddings","fecha_creacion","expira_en")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::timestamptz,$11::timestamptz)
+         ON CONFLICT ("conversacion_id","desde_secuencia","hasta_secuencia") DO NOTHING`,
+        fragment.fragmentId, fragment.accountId, fragment.conversationId, fragment.channel, fragment.fromSequence, fragment.throughSequence, fragment.text, fragment.checksum, embedding.version, fragment.createdAt, fragment.expiresAt
+      )
+      if (Number(insertados) === 0) return 'existente' as const
+      await tx.$executeRawUnsafe(
+        `INSERT INTO public."RagEmbedding" ("id","tenantId","workspaceId","sourceId","chunkId","chunkIndex","embeddingModel","embeddingVersion","indexVersion","vector","sourceChecksum","sourceUri","parserVersion","chunkerVersion","retentionUntil","metadata","createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::vector,$11,$12,$13,$14,$15::timestamptz,$16::jsonb,now(),now())`,
+        `rag-memoria-${fragment.fragmentId}`, TENANT_MEMORIA, fragment.accountId, fragment.conversationId, fragment.fragmentId, fragment.fromSequence % 2_147_483_647, embedding.model, embedding.version, VERSION_INDICE_MEMORIA,
+        vectorLiteral(vector), fragment.checksum, `memoria://conversacion/${fragment.conversationId}`, 'memoria-v1', 'mensajes-v1', fragment.expiresAt, JSON.stringify({ channel: fragment.channel })
+      )
+      return 'guardado' as const
+    })
+  }
+
+  async buscar(input: { accountId: string; vector: number[]; embeddingVersion: string; limit: number; now: string }) {
+    if (!input.accountId) return []
+    const rows = await this.client.$queryRawUnsafe<Fila[]>(
+      `SELECT f.*, 1 - (e."vector" <=> $1::vector) AS score
+         FROM public."RagEmbedding" e
+         JOIN public."fragmentos_memoria" f ON f."id" = e."chunkId"
+        WHERE e."tenantId" = $2 AND e."workspaceId" = $3 AND f."cuenta_id" = $3
+          AND e."indexVersion" = $4 AND e."embeddingVersion" = $5
+          AND (f."expira_en" IS NULL OR f."expira_en" > $6::timestamptz)
+        ORDER BY e."vector" <=> $1::vector
+        LIMIT $7`,
+      vectorLiteral(input.vector), TENANT_MEMORIA, input.accountId, VERSION_INDICE_MEMORIA, input.embeddingVersion, input.now, input.limit
+    )
+    return rows.map((row) => ({ fragment: mapFragmento(row), score: Number(row['score']) }))
+  }
+
+  async deCuenta(accountId: string) {
+    return (await this.client.$queryRawUnsafe<Fila[]>('SELECT * FROM public."fragmentos_memoria" WHERE "cuenta_id" = $1 ORDER BY "fecha_creacion", "desde_secuencia"', accountId)).map(mapFragmento)
+  }
+
+  async tiene(accountId: string) {
+    if (!accountId) return false
+    return (await this.client.$queryRawUnsafe<Fila[]>('SELECT 1 AS uno FROM public."fragmentos_memoria" WHERE "cuenta_id" = $1 LIMIT 1', accountId)).length > 0
+  }
+
+  // The vectors first, then the fragments, in one transaction: neither is left without the other.
+  private async quitar(condicion: string, parametros: unknown[]): Promise<number> {
+    return this.client.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`DELETE FROM public."RagEmbedding" e USING public."fragmentos_memoria" f WHERE e."tenantId" = '${TENANT_MEMORIA}' AND e."chunkId" = f."id" AND ${condicion}`, ...parametros)
+      return Number(await tx.$executeRawUnsafe(`DELETE FROM public."fragmentos_memoria" f WHERE ${condicion}`, ...parametros))
+    })
+  }
+
+  async eliminar(input: { accountId: string; conversationId?: string; afterSequence?: number }) {
+    if (!input.accountId) return 0
+    return this.quitar('f."cuenta_id" = $1 AND ($2::text IS NULL OR f."conversacion_id" = $2) AND ($3::bigint IS NULL OR f."hasta_secuencia" > $3::bigint)', [input.accountId, input.conversationId ?? null, input.afterSequence ?? null])
+  }
+
+  async eliminarVencidos(now: string) {
+    return this.quitar('f."expira_en" IS NOT NULL AND f."expira_en" <= $1::timestamptz', [now])
+  }
+
+  async origenes(limit: number) {
+    const rows = await this.client.$queryRawUnsafe<Fila[]>('SELECT DISTINCT "cuenta_id", "conversacion_id" FROM public."fragmentos_memoria" ORDER BY "cuenta_id", "conversacion_id" LIMIT $1', limit)
+    return rows.map((row) => ({ accountId: String(row['cuenta_id']), conversationId: String(row['conversacion_id']) }))
+  }
+}
+
+// ---- facts of an account on PostgreSQL ------------------------------------------------------------
+const mapHecho = (row: Fila): HechoMemoria => ({
+  factId: String(row['id']),
+  accountId: String(row['cuenta_id']),
+  type: String(row['tipo']) as HechoMemoria['type'],
+  value: String(row['valor']),
+  conversationId: texto(row['conversacion_id']),
+  sourceMessageId: texto(row['mensaje_origen_id']),
+  channel: String(row['canal']) as HechoMemoria['channel'],
+  confidence: row['confianza'] === null || row['confianza'] === undefined ? null : Number(row['confianza']),
+  createdAt: iso(row['fecha_creacion'])!,
+  updatedAt: iso(row['fecha_actualizacion'])!,
+  expiresAt: iso(row['expira_en']),
+  invalidatedAt: iso(row['invalidado_en']),
+  invalidationReason: texto(row['motivo_invalidacion']),
+})
+
+export class HechosPrisma implements PuertoHechos {
+  constructor(private readonly client: ClientePrismaAsistente) {}
+
+  async activos(accountId: string, now: string) {
+    return (await this.client.$queryRawUnsafe<Fila[]>('SELECT * FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND "invalidado_en" IS NULL AND ("expira_en" IS NULL OR "expira_en" > $2::timestamptz) ORDER BY "tipo"', accountId, now)).map(mapHecho)
+  }
+
+  async historial(accountId: string) {
+    return (await this.client.$queryRawUnsafe<Fila[]>('SELECT * FROM public."hechos_memoria" WHERE "cuenta_id" = $1 ORDER BY "fecha_creacion", "id"', accountId)).map(mapHecho)
+  }
+
+  // Refresh, or invalidate + insert, in one transaction; the partial unique index decides a race.
+  async guardar(hecho: HechoMemoria): Promise<'guardado' | 'reemplazado' | 'sin_cambio'> {
+    const intento = () =>
+      this.client.$transaction(async (tx) => {
+        const [activo] = await tx.$queryRawUnsafe<Fila[]>('SELECT "id", "valor" FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND "tipo" = $2 AND "invalidado_en" IS NULL FOR UPDATE', hecho.accountId, hecho.type)
+        if (activo && String(activo['valor']) === hecho.value) {
+          await tx.$executeRawUnsafe('UPDATE public."hechos_memoria" SET "fecha_actualizacion" = $2::timestamptz, "expira_en" = $3::timestamptz WHERE "id" = $1', String(activo['id']), hecho.updatedAt, hecho.expiresAt)
+          return 'sin_cambio' as const
+        }
+        if (activo) await tx.$executeRawUnsafe('UPDATE public."hechos_memoria" SET "invalidado_en" = $2::timestamptz, "motivo_invalidacion" = $3 WHERE "id" = $1', String(activo['id']), hecho.createdAt, 'reemplazado')
+        await tx.$executeRawUnsafe(
+          `INSERT INTO public."hechos_memoria" ("id","cuenta_id","tipo","valor","conversacion_id","mensaje_origen_id","canal","confianza","fecha_creacion","fecha_actualizacion","expira_en")
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::numeric,$9::timestamptz,$10::timestamptz,$11::timestamptz)`,
+          hecho.factId, hecho.accountId, hecho.type, hecho.value, hecho.conversationId, hecho.sourceMessageId, hecho.channel, hecho.confidence, hecho.createdAt, hecho.updatedAt, hecho.expiresAt
+        )
+        return activo ? ('reemplazado' as const) : ('guardado' as const)
+      })
+    // Several writers of the same type at once: whoever loses the unique index (or finds the row
+    // it locked already replaced) tries again and sees the winner. Bounded.
+    for (let vuelta = 0; ; vuelta += 1) {
+      try {
+        return await intento()
+      } catch (error) {
+        const conflicto = /23505|P2002|40001|40P01|uq_hechos_memoria_activo/u.test(`${(error as { code?: string })?.code ?? ''} ${(error as Error)?.message ?? ''}`)
+        if (!conflicto || vuelta >= 7) throw error
+        await new Promise((resolve) => setTimeout(resolve, 5 + Math.random() * 25 * (vuelta + 1)))
+      }
+    }
+  }
+
+  async invalidar(input: { accountId: string; type: HechoMemoria['type'] | null; reason: string; now: string }) {
+    return Number(
+      await this.client.$executeRawUnsafe(
+        'UPDATE public."hechos_memoria" SET "invalidado_en" = $3::timestamptz, "motivo_invalidacion" = $4 WHERE "cuenta_id" = $1 AND "invalidado_en" IS NULL AND ($2::text IS NULL OR "tipo" = $2)',
+        input.accountId, input.type, input.now, input.reason.slice(0, 80)
+      )
+    )
+  }
+
+  async eliminar(accountId: string, factId: string) {
+    return Number(await this.client.$executeRawUnsafe('DELETE FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND "id" = $2', accountId, factId)) > 0
+  }
+
+  async eliminarDeOrigen(input: { accountId: string; conversationId?: string; messageId?: string }) {
+    if (!input.accountId) return 0
+    return Number(
+      await this.client.$executeRawUnsafe(
+        'DELETE FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND ($2::text IS NULL OR "conversacion_id" = $2) AND ($3::text IS NULL OR "mensaje_origen_id" = $3)',
+        input.accountId, input.conversationId ?? null, input.messageId ?? null
+      )
+    )
+  }
+
+  async depurar(antes: string) {
+    return Number(await this.client.$executeRawUnsafe('DELETE FROM public."hechos_memoria" WHERE ("invalidado_en" IS NOT NULL AND "invalidado_en" < $1::timestamptz) OR ("expira_en" IS NOT NULL AND "expira_en" < $1::timestamptz)', antes))
   }
 }

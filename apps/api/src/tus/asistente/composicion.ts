@@ -1,3 +1,14 @@
+import { PRESUPUESTO_CONTEXTO_POR_DEFECTO } from './contexto.ts'
+import { LIMITES_MEMORIA_POR_DEFECTO, ServicioMemoriaSemantica, type PuertoIndiceMemoria } from './memoria-semantica.ts'
+import { ServicioHechos, type PuertoHechos } from './hechos.ts'
+import { ServicioCicloDeVidaMemoria } from './ciclo-de-vida.ts'
+import { ObservabilidadAsistente } from './observabilidad.ts'
+
+// A similarity threshold from the environment: a number in 0..1, or the default.
+const fraccion = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value)
+  return value !== undefined && value.trim() !== '' && Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback
+}
 import type { TusApplicationService } from '../application/tus-application-service.ts'
 import { ServicioAyudaPublica } from './ayuda.ts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
@@ -61,6 +72,13 @@ export function leerLimites(env: Record<string, string | undefined>): {
       maxCompletionTokens: numero(env['WHATSAPP_AI_MAX_COMPLETION_TOKENS'], 600, 100, 2000),
       historyMessages: numero(env['WHATSAPP_AI_HISTORY_MESSAGES'], 12, 2, 40),
       summaryThreshold: numero(env['WHATSAPP_AI_SUMMARY_THRESHOLD'], 24, 8, 200),
+      // Token budget of the context (estimated, see contexto.ts). One place for every limit.
+      contexto: {
+        ...PRESUPUESTO_CONTEXTO_POR_DEFECTO,
+        recientes: numero(env['WHATSAPP_AI_CONTEXT_RECENT_TOKENS'], PRESUPUESTO_CONTEXTO_POR_DEFECTO.recientes, 200, 8000),
+        resumen: numero(env['WHATSAPP_AI_CONTEXT_SUMMARY_TOKENS'], PRESUPUESTO_CONTEXTO_POR_DEFECTO.resumen, 100, 2000),
+        recuerdos: numero(env['WHATSAPP_AI_CONTEXT_MEMORY_TOKENS'], PRESUPUESTO_CONTEXTO_POR_DEFECTO.recuerdos, 0, 4000),
+      },
       toolTimeoutMs: numero(env['WHATSAPP_AI_TOOL_TIMEOUT_MS'], 8_000, 1_000, 30_000),
       ragEnabled: env['RAG_ENABLED']?.trim() !== 'false',
       // WHATSAPP_AI_ROUTING=model: the model also routes WhatsApp turns (one more call per turn).
@@ -131,6 +149,10 @@ export interface ModuloWhatsapp {
   soporte: ServicioSoporteWhatsapp
   plantillas: WhatsappTemplateService
   orquestador: OrquestadorConversacion
+  // Borrado (mensaje, conversación, cuenta) y retención de la memoria conversacional.
+  memoria: ServicioCicloDeVidaMemoria
+  // Contadores del asistente (tokens por parte del contexto, llamadas al modelo, memoria), por canal.
+  observabilidad: ObservabilidadAsistente
   // Ayuda pública de la Web: mismo índice y mismo recuperador (filtrado por visibilidad) que WhatsApp.
   ayuda: ServicioAyudaPublica
   // Canal Web del asistente: el MISMO orquestador (modelo, tools, RAG, memoria) que WhatsApp.
@@ -154,6 +176,10 @@ export function crearModuloWhatsapp(input: {
   servicios?: ServiciosCompartidosAsistente
   domain?: PuertoDominioAsistente
   knowledgeIndex?: PuertoIndiceConocimiento | null
+  // Semantic memory of conversations (needs an embeddings provider; absent: no memory).
+  memoryIndex?: PuertoIndiceMemoria | null
+  // Durable facts of an account (absent: no facts are stored or used).
+  factStore?: PuertoHechos | null
   whatsapp?: WhatsappProvider
   chat?: ChatProvider | null
   embeddings?: EmbeddingProvider | null
@@ -172,7 +198,14 @@ export function crearModuloWhatsapp(input: {
   const env = input.env
   const config = leerConfiguracionWhatsapp(env)
   const limits = leerLimites(env)
+  const medirAfuera = input.metric
   const now = input.now ?? Date.now
+  // Every event of the assistant is counted here (in process) and then handed to the host's sink.
+  const observabilidad = new ObservabilidadAsistente(now)
+  const metric: Metrica = (name, fields) => {
+    observabilidad.registrar(name, fields)
+    medirAfuera?.(name, fields)
+  }
   const whatsapp =
     input.whatsapp ??
     (config.enabled && config.accessToken && config.phoneNumberId
@@ -240,6 +273,13 @@ export function crearModuloWhatsapp(input: {
         minLexicalScore: UMBRAL_LEXICO,
       })
     : null
+  // Semantic memory needs vectors: without an embeddings provider it stays off (the rest of the
+  // assistant works the same).
+  const memoria = input.memoryIndex && embeddings
+    ? new ServicioMemoriaSemantica(input.memoryIndex, embeddings, { topK: numero(env['WHATSAPP_AI_MEMORY_TOP_K'], LIMITES_MEMORIA_POR_DEFECTO.topK, 1, 8), minScore: fraccion(env['WHATSAPP_AI_MEMORY_MIN_SCORE'], LIMITES_MEMORIA_POR_DEFECTO.minScore) }, now, metric)
+    : null
+  // Deletion and retention work on the stores themselves: they do not need embeddings.
+  const cicloDeVida = new ServicioCicloDeVidaMemoria({ transaction: input.transaction, indice: input.memoryIndex ?? null, hechos: input.factStore ?? null, now, metric })
   const domain =
     input.domain ?? (input.application ? new DominioAsistenteTus(input.application, now, input.servicios) : null)
   if (!domain) throw new Error('the WhatsApp assistant needs the TUS application or a domain port')
@@ -256,18 +296,21 @@ export function crearModuloWhatsapp(input: {
     accounts: input.accounts,
     linking: vinculacion,
     knowledge,
+    memoria,
+    hechos: input.factStore ? new ServicioHechos(input.factStore, now, metric) : null,
+    cicloDeVida,
     transcriptor,
     audio: limitesAudio,
     comprobantes,
     limitesComprobante,
     limits: limits.asistente,
     now,
-    ...(input.metric ? { metric: input.metric } : {}),
+    metric,
     verificadorTelefono: input.verificadorTelefono ?? null,
     identidades: input.identidades ? new ServicioIdentificacionCliente(input.identidades) : null,
     webBaseUrl: env['TUS_WEB_BASE_URL']?.trim() || null,
   })
-  const ayuda = new ServicioAyudaPublica(knowledge, input.metric)
+  const ayuda = new ServicioAyudaPublica(knowledge, metric)
   const capacidades = async (): Promise<CapacidadesAsistente> => {
     const apagada = (reason = 'not_enabled'): CapacidadOpcional => ({ status: 'disabled', reason })
     const lectura = !limitesComprobante.enabled ? null : comprobantes ? await comprobantes.capacidades() : undefined
@@ -294,6 +337,9 @@ export function crearModuloWhatsapp(input: {
     soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now),
     plantillas: WhatsappTemplateService.desdeEnv(env),
     orquestador,
+    // Deletion (message, conversation, account) and retention of the memory.
+    memoria: cicloDeVida,
+    observabilidad,
     ayuda,
     asistenteWeb: new ServicioAsistenteWeb({
       transaction: input.transaction,
@@ -301,12 +347,12 @@ export function crearModuloWhatsapp(input: {
       ayuda,
       limits: { maxInboundPerMinute: limits.ingreso.maxInboundPerMinute },
       now,
-      ...(input.metric ? { metric: input.metric } : {}),
+      metric,
     }),
-    avisosTurnos: new NotificadorTurnosWhatsapp(input.transaction, whatsapp, now, input.metric),
+    avisosTurnos: new NotificadorTurnosWhatsapp(input.transaction, whatsapp, now, metric),
     platformAdminTenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null,
     crearWorker: (options = {}) =>
-      new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, ...options }),
+      new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, mantenimiento: () => cicloDeVida.depurar(), ...options }),
   }
 }
 

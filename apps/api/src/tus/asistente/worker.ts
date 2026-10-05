@@ -17,6 +17,10 @@ export class WorkerConversacionesWhatsapp {
       maxAttempts?: number
       now?: () => number
       owner?: string
+      // Housekeeping run while idle, at most once every `mantenimientoCadaMs` (retention of the
+      // memory). Its failure never stops the queue.
+      mantenimiento?: () => Promise<unknown>
+      mantenimientoCadaMs?: number
       log?: (event: string, fields: Record<string, unknown>) => void
     } = {}
   ) {
@@ -79,6 +83,20 @@ export class WorkerConversacionesWhatsapp {
     }
   }
 
+  private proximoMantenimiento = 0
+
+  // Public for the loop and for tests: runs the housekeeping when it is due.
+  async mantener(): Promise<boolean> {
+    if (!this.options.mantenimiento || this.now() < this.proximoMantenimiento) return false
+    this.proximoMantenimiento = this.now() + (this.options.mantenimientoCadaMs ?? 6 * 60 * 60 * 1000)
+    try {
+      await this.options.mantenimiento()
+    } catch {
+      this.options.log?.('whatsapp.maintenance_failed', {})
+    }
+    return true
+  }
+
   async ejecutar(options: { signal: AbortSignal; idleMs?: number }) {
     while (!options.signal.aborted) {
       let result: Awaited<ReturnType<WorkerConversacionesWhatsapp['procesarSiguiente']>>
@@ -87,6 +105,7 @@ export class WorkerConversacionesWhatsapp {
       } catch {
         result = { outcome: 'idle' }
       }
+      if (result.outcome === 'idle') await this.mantener()
       if (result.outcome === 'idle')
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, options.idleMs ?? 1_000)

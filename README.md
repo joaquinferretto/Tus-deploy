@@ -663,6 +663,104 @@ Si los gates no pasan, el sistema debe permanecer bloqueado y conservar evidenci
 - Activation controller que bloquea release jobs hasta que pasan los gates.
 - Rollback que preserva evidencia, auditoria y contratos neutrales.
 
+## Memoria conversacional de TUS
+
+Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md`.
+
+**Objetivo.** Que el asistente (Web y WhatsApp) entienda a que se refiere la persona a lo largo del
+tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
+de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
+
+**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica), 5 (hechos con procedencia), 6 (estado real de TUS), 7 (continuidad Web + WhatsApp), 8 (retencion, borrado y privacidad), 9 (observabilidad y costos) y 10 (validacion integral). Sin merge, push ni deploy.**
+
+**Lo que funciona hoy**
+
+- Un solo asistente para Web y WhatsApp, con las mismas tablas: `contactos_whatsapp`,
+  `conversaciones_whatsapp` (una activa por contacto) y `mensajes_conversacion_whatsapp`.
+- Historial canonico (Fase 1): cada mensaje tiene una secuencia estable asignada por la base; el
+  historial de una cuenta se lee paginado y aislado por cuenta (`HistorialConversacional`); la Web
+  acepta `clientMessageId` para que un reintento no duplique el mensaje ni la respuesta.
+- Contexto del modelo (Fase 2): un unico constructor (`contexto.ts`) con presupuesto de TOKENS. La
+  ventana reciente se llena desde el mensaje mas nuevo hacia atras; ya no es una cantidad fija.
+- Resumen incremental y versionado (Fase 3): `resumenes_conversacion` guarda cada version con el
+  rango exacto de mensajes que representa; solo se resume lo nuevo sobre el texto anterior, un fallo
+  se reintenta, dos procesos no duplican una version y se puede regenerar desde los mensajes
+  originales, que nunca se reemplazan.
+- Memoria semantica (Fase 4): tramos de conversaciones viejas de una cuenta (`fragmentos_memoria`, con
+  su vector en `"RagEmbedding"`/pgvector) vuelven al contexto cuando la pregunta actual se relaciona.
+  La busqueda filtra por cuenta en SQL antes de la similitud, aplica umbral y trae como maximo 3.
+  Necesita un proveedor de embeddings; sin el queda apagada.
+- Hechos con procedencia (Fase 5): una lista cerrada (`horario_preferido`, `zona_habitual`,
+  `contacto_preferido`) que se guarda solo cuando la persona lo dice como preferencia, con mensaje,
+  conversacion y canal de origen. Un valor nuevo invalida el anterior sin borrarlo; "olvida mi zona"
+  lo invalida. Los detecta el backend, no un modelo.
+- Estado real (Fase 6): "ya acepto?" o "a que hora viene?" se resuelven con el contexto y la memoria
+  (de que turno se habla) y se responden leyendo el turno real de la cuenta en ese momento. La memoria
+  nunca responde un estado; sin cuenta no se lee nada. Cubre turnos; pagos, solicitudes y trabajos
+  siguen por sus verificadores y herramientas.
+- Continuidad Web + WhatsApp (Fase 7): la misma cuenta sigue el hilo entre su sesion Web y su WhatsApp
+  vinculado, en ambos sentidos. Cada turno recibe lo ultimo de la otra conversacion de la cuenta (14
+  dias, con fecha y canal de origen). Sin vinculo verificado, sin cuenta o desde otra cuenta no pasa
+  nada; desvincular corta la continuidad en el acto.
+- Retencion y borrado (Fase 8): borrar un mensaje, una conversacion o una cuenta elimina tambien lo
+  derivado (resumenes, fragmentos con sus vectores, hechos), solo de esa cuenta y de forma idempotente.
+  La fila del mensaje queda sin contenido. "Borra todo lo que recordas de mi" elimina recuerdos y
+  hechos. Fragmentos vencen a los 365 dias y hechos a los 180; el worker depura cada 6 horas. Todavia
+  no hay pantalla ni endpoint de borrado para el usuario.
+- Observabilidad y costos (Fase 9): cada llamada al modelo emite un evento con proposito, canal y
+  tokens; `modulo.observabilidad.snapshot()` da contadores por canal (tokens por parte del contexto,
+  llamadas al modelo, memoria). Una cuenta sin recuerdos no genera llamada de embeddings. Nada de esto
+  lleva contenido de mensajes. Los contadores son del proceso; no hay endpoint para leerlos.
+
+**Arquitectura acordada (por fases)**
+
+| Capa | Que es | Fase |
+| --- | --- | --- |
+| Historial | mensajes reales, orden estable, paginacion | 1 |
+| Memoria inmediata | mensajes recientes dentro de un presupuesto de tokens | 2 |
+| Resumen | incremental y versionado: "hasta el mensaje X" | 3 |
+| Memoria semantica | recuerdos por cuenta con pgvector | 4 |
+| Hechos | lista cerrada de tipos, con procedencia | 5 |
+| Estado real | resolutores contra las entidades de TUS | 6 |
+
+Despues: continuidad Web + WhatsApp (7), retencion y borrado (8), observabilidad y costos (9),
+validacion integral (10).
+
+**Tablas y modelos.** Se reutilizan las tres tablas de historial y `"RagEmbedding"`. Creado:
+`mensajes_conversacion_whatsapp.secuencia` (migracion `20261102100000`) y `resumenes_conversacion`
+(migracion `20261103100000`) y `fragmentos_memoria` mas el indice `(tenantId, workspaceId)` de
+`"RagEmbedding"` (migracion `20261104100000`) y `hechos_memoria` (migracion `20261105100000`).
+Migraciones solo hacia adelante y no destructivas; sin infraestructura nueva.
+
+**Web y WhatsApp.** La memoria de largo plazo es por cuenta: la sesion en la Web, o un WhatsApp con
+vinculo verificado. Un visitante anonimo o un WhatsApp sin vincular solo tiene la memoria de su
+conversacion actual. Cada recuerdo conserva conversacion, canal y mensaje de origen.
+
+**Privacidad.** Toda lectura filtra por cuenta en la consulta, antes de la busqueda semantica: la
+cuenta A nunca recibe nada de la cuenta B. No se guardan como memoria ni se vectorizan contrasenas,
+codigos de verificacion, tokens, cookies, secretos, datos de tarjetas ni enlaces de autenticacion
+(`limpiarParaMemoria()`, aplicado antes de resumir). Los
+registros no llevan contenido de mensajes.
+
+**Tokens.** Estimados por caracteres (3,5 por token) en un solo lugar. Presupuesto por defecto:
+mensajes recientes 1500, resumen 400, recuerdos 500, hechos 150, mensaje actual 300 (configurable con
+`WHATSAPP_AI_CONTEXT_*`). Cada turno emite la metrica `assistant.context` con tamanos y cantidades,
+nunca contenido.
+
+**Pruebas relevantes**
+
+```bash
+node scripts/test-runner.mjs tests/foundation/tus-memoria-conversacional.test.mjs
+# PostgreSQL 16 descartable (TUS_TELEFONO_PG_URL):
+node scripts/test-runner.mjs tests/foundation/tus-memoria-conversacional-postgres.test.mjs
+node scripts/test-runner.mjs tests/foundation/whatsapp-asistente.test.mjs
+node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
+node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
+```
+
+**Pendientes.** Decidir merge y deploy (4 migraciones; revisar el backfill de `20261102100000`). Para la memoria semantica en produccion hace falta un proveedor de
+embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
+
 ## Limites actuales y trabajo posterior
 
 Estos limites son intencionales y deben permanecer visibles:
@@ -705,6 +803,7 @@ pnpm run security:scan
 ## Documentacion relacionada
 
 - `ARCHITECTURE.md`: arquitectura implementada, decisiones D2 y límites conocidos.
+- `docs/MEMORIA_CONVERSACIONAL_TUS.md`: memoria conversacional del asistente (estado real y fases).
 - `docs/DECISIONES_PRODUCTO_TUS.md`: decisiones canónicas de producto y dominio por Build.
 - `docs/ROADMAP_TUS.md`: estado de fases, pendientes y bloqueos.
 - `docs/GLOSARIO_TUS.md`: terminología normativa de TUS.

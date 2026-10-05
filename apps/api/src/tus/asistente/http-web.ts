@@ -44,7 +44,7 @@ export function crearRouterAsistenteWeb({
       response.setHeader('cache-control', 'private, no-store')
       if (!servicio) return void enviarError(response, 503, 'UNAVAILABLE', 'The assistant is not available right now')
       const body = comoRegistro(request.body)
-      const desconocidos = Object.keys(body).filter((key) => !['text', 'replyId', 'visitorId'].includes(key))
+      const desconocidos = Object.keys(body).filter((key) => !['text', 'replyId', 'visitorId', 'clientMessageId'].includes(key))
       if (desconocidos.length > 0) return void enviarError(response, 422, 'INVALID_REQUEST', 'Unknown fields', desconocidos)
       const correlationId = request.header('x-correlation-id')?.trim() || `asistente-web-${Date.now()}`
       const identidad = await identidadDe(request, sessions, body['visitorId'])
@@ -66,6 +66,7 @@ export function crearRouterAsistenteWeb({
           identidad,
           text: body['text'],
           replyId: body['replyId'],
+          clientMessageId: body['clientMessageId'],
           correlationId,
           ...(stream
             ? {

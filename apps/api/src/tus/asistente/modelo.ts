@@ -210,6 +210,23 @@ export interface MensajeConversacion {
   metadata: Record<string, unknown>
   correlationId: string
   createdAt: string
+  // Stable position in the history, assigned by the store when the message is created (never
+  // written by the code). Absent only on a message that was not stored yet.
+  sequence?: number
+}
+
+// MEMORIA-01: one version of the incremental summary of a conversation. It represents every
+// message up to `throughSequence`; the messages themselves are never replaced by it.
+export interface ResumenConversacion {
+  summaryId: string
+  conversationId: string
+  version: number
+  fromSequence: number
+  throughSequence: number
+  messageCount: number
+  text: string
+  model: string | null
+  createdAt: string
 }
 
 export interface TrabajoConversacion {
@@ -311,6 +328,25 @@ export function redactarPii(text: string): string {
     .replace(/(?:\+?54\s?9?\s?)?\(?\b\d{2,4}\)?[\s-]\d{6,8}\b/gu, '[telefono]')
     .replace(/(?<![\d[])\b\d{10}\b/gu, '[telefono]')
 }
+
+// What must never become memory (a summary, a fragment, an embedding, a fact): passwords,
+// verification codes, tokens, cookies, card data and links that authenticate. Applied on top of
+// redactarPii before anything derived from a message is stored. It errs on the side of removing.
+export function sinSecretos(text: string): string {
+  return text
+    // Links that carry a credential (reset, verification, sign-in, tokens in the query).
+    .replace(/https?:\/\/\S*(?:token|codigo|code|reset|restablecer|recover|verif|magic|auth|session|sig|signature|key|password|otp)\S*/giu, '[enlace]')
+    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gu, '[credencial]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b/gu, '[token]')
+    .replace(/\b(?:sk|pk|gsk|rk|whsec)_[A-Za-z0-9_-]{12,}\b/gu, '[token]')
+    // "VERIFICAR TUS ABCD1234", "mi código es 123456", "contraseña: hunter2", "clave 1234".
+    .replace(/\bVERIFICAR TUS\s+[A-Z0-9]{4,12}\b/giu, '[codigo]')
+    .replace(/\b(c[oó]digo|pin|otp|clave|contrase[nñ]a|password|pass|cvv|cvc|token|cookie|secreto)\b(\s*(?:de\s+\w+\s+)?(?:es|era|son|:|=)?\s*)\S{3,}/giu, '$1 [oculto]')
+    .replace(/\b\d{6}\b(?=\s*(?:es|como)?\s*(?:mi|el|tu)?\s*c[oó]digo)/giu, '[codigo]')
+}
+
+// The text of a message as memory may keep it: no personal identifiers, no secrets.
+export const limpiarParaMemoria = (text: string): string => sinSecretos(redactarPii(text))
 
 export function enmascararWaId(waId: string): string {
   return waId.length <= 4 ? '****' : `****${waId.slice(-4)}`

@@ -411,6 +411,7 @@ model RagEmbedding {
 
   @@unique([tenantId, sourceId, chunkIndex, embeddingVersion, indexVersion])
   @@index([tenantId, indexVersion])
+  @@index([tenantId, workspaceId], map: "ix_rag_embedding_tenant_workspace")
   @@index([tenantId, sourceId])
 }
 
@@ -2760,9 +2761,70 @@ model MensajeConversacionWhatsapp {
   metadata       Json      @map("metadata")
   correlacionId  String    @map("correlacion_id")
   fechaCreacion  DateTime  @map("fecha_creacion")
+  // MEMORIA-01: stable order of the history (assigned by the database, never by the code).
+  secuencia      BigInt    @unique(map: "uq_mensajes_conversacion_whatsapp_secuencia") @default(autoincrement()) @map("secuencia")
 
   @@index([conversacionId, fechaCreacion], map: "ix_mensajes_conversacion_whatsapp_historial")
+  @@index([conversacionId, secuencia], map: "ix_mensajes_conversacion_whatsapp_secuencia")
   @@map("mensajes_conversacion_whatsapp")
+}
+
+// MEMORIA-01: incremental, versioned summary of a conversation. "hasta_secuencia" is the last
+// message it represents; a new version is ADDED (uq conversacion + version), never overwritten.
+model ResumenConversacion {
+  id             String   @id(map: "resumenes_conversacion_pkey")
+  conversacionId String   @map("conversacion_id")
+  version        Int      @map("version")
+  desdeSecuencia BigInt   @map("desde_secuencia")
+  hastaSecuencia BigInt   @map("hasta_secuencia")
+  mensajes       Int      @map("mensajes")
+  texto          String   @map("texto")
+  modelo         String?  @map("modelo")
+  fechaCreacion  DateTime @map("fecha_creacion") @db.Timestamptz(6)
+
+  @@unique([conversacionId, version], map: "uq_resumenes_conversacion_version")
+  @@map("resumenes_conversacion")
+}
+
+// MEMORIA-01: a coherent stretch of a conversation kept as a memory of ONE account. Its vector
+// lives in "RagEmbedding" (tenant 'tus-memoria', workspace = the account).
+model FragmentoMemoria {
+  id                String    @id(map: "fragmentos_memoria_pkey")
+  cuentaId          String    @map("cuenta_id")
+  conversacionId    String    @map("conversacion_id")
+  canal             String    @map("canal")
+  desdeSecuencia    BigInt    @map("desde_secuencia")
+  hastaSecuencia    BigInt    @map("hasta_secuencia")
+  texto             String    @map("texto")
+  checksum          String    @map("checksum")
+  versionEmbeddings String?   @map("version_embeddings")
+  fechaCreacion     DateTime  @map("fecha_creacion") @db.Timestamptz(6)
+  expiraEn          DateTime? @map("expira_en") @db.Timestamptz(6)
+
+  @@unique([conversacionId, desdeSecuencia, hastaSecuencia], map: "uq_fragmentos_memoria_rango")
+  @@index([cuentaId, fechaCreacion], map: "ix_fragmentos_memoria_cuenta")
+  @@map("fragmentos_memoria")
+}
+
+// MEMORIA-01: a durable fact of an account (closed list of types), with provenance. One ACTIVE
+// fact per type and account (partial unique index uq_hechos_memoria_activo, in SQL).
+model HechoMemoria {
+  id                 String    @id(map: "hechos_memoria_pkey")
+  cuentaId           String    @map("cuenta_id")
+  tipo               String    @map("tipo")
+  valor              String    @map("valor")
+  conversacionId     String?   @map("conversacion_id")
+  mensajeOrigenId    String?   @map("mensaje_origen_id")
+  canal              String    @map("canal")
+  confianza          Decimal?  @map("confianza") @db.Decimal(3, 2)
+  fechaCreacion      DateTime  @map("fecha_creacion") @db.Timestamptz(6)
+  fechaActualizacion DateTime  @map("fecha_actualizacion") @db.Timestamptz(6)
+  expiraEn           DateTime? @map("expira_en") @db.Timestamptz(6)
+  invalidadoEn       DateTime? @map("invalidado_en") @db.Timestamptz(6)
+  motivoInvalidacion String?   @map("motivo_invalidacion")
+
+  @@index([cuentaId, fechaCreacion], map: "ix_hechos_memoria_cuenta")
+  @@map("hechos_memoria")
 }
 
 model ColaConversacionWhatsapp {

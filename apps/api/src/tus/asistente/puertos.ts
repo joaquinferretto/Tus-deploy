@@ -5,6 +5,7 @@ import type {
   ConversacionWhatsapp,
   EventoAuditoriaAsistente,
   MensajeConversacion,
+  ResumenConversacion,
   ModoConversacion,
   TokenVinculacion,
   TrabajoConversacion,
@@ -43,6 +44,8 @@ export interface RepositoriosAsistente {
     buscar(conversationId: string): Promise<ConversacionWhatsapp | null>
     crear(value: ConversacionWhatsapp): Promise<void>
     actualizar(value: ConversacionWhatsapp, expectedVersion: number): Promise<boolean>
+    // Every conversation of a contact, closed ones included (the history of an account).
+    deContacto(contactId: string): Promise<ConversacionWhatsapp[]>
     // `channel` keeps the WhatsApp support inbox free of Web conversations (there is no operator
     // nor Meta window on the Web).
     listar(filter: { mode?: ModoConversacion; channel?: CanalConversacion; limit?: number; offset?: number }): Promise<ConversacionWhatsapp[]>
@@ -59,6 +62,11 @@ export interface RepositoriosAsistente {
     // Inbound messages not yet handled, oldest first.
     pendientes(conversationId: string): Promise<MensajeConversacion[]>
     ultimos(conversationId: string, limit: number): Promise<MensajeConversacion[]>
+    // The `limit` messages right before sequence `before` (the newest ones when it is null),
+    // oldest first: stable order, by the sequence the store assigned.
+    pagina(conversationId: string, input: { before: number | null; limit: number }): Promise<MensajeConversacion[]>
+    // The messages right AFTER sequence `after`, oldest first (what a summary has not covered yet).
+    posteriores(conversationId: string, input: { after: number; limit: number }): Promise<MensajeConversacion[]>
     // The same message `ultimos(id, 1)` returns, for many conversations in one query.
     ultimoDeConversaciones(conversationIds: readonly string[]): Promise<MensajeConversacion[]>
     contar(conversationId: string): Promise<number>
@@ -85,6 +93,16 @@ export interface RepositoriosAsistente {
     buscar(confirmationId: string): Promise<ConfirmacionAsistente | null>
     // Conditional transition (idempotency of the decision).
     actualizar(value: ConfirmacionAsistente, expectedStatus: ConfirmacionAsistente['status']): Promise<boolean>
+  }
+  resumenes: {
+    // The newest version, or null.
+    vigente(conversationId: string): Promise<ResumenConversacion | null>
+    listar(conversationId: string): Promise<ResumenConversacion[]>
+    // Throws a unique violation (code P2002) when that version already exists.
+    crear(value: ResumenConversacion): Promise<void>
+    // Deletes the versions that reach sequence `desde` or beyond (every version when null).
+    // Returns how many.
+    eliminar(conversationId: string, desde: number | null): Promise<number>
   }
   auditoria: {
     registrar(event: EventoAuditoriaAsistente): Promise<void>
