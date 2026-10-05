@@ -2768,6 +2768,23 @@ model MensajeConversacionWhatsapp {
   @@map("mensajes_conversacion_whatsapp")
 }
 
+// MEMORIA-01: incremental, versioned summary of a conversation. "hasta_secuencia" is the last
+// message it represents; a new version is ADDED (uq conversacion + version), never overwritten.
+model ResumenConversacion {
+  id             String   @id(map: "resumenes_conversacion_pkey")
+  conversacionId String   @map("conversacion_id")
+  version        Int      @map("version")
+  desdeSecuencia BigInt   @map("desde_secuencia")
+  hastaSecuencia BigInt   @map("hasta_secuencia")
+  mensajes       Int      @map("mensajes")
+  texto          String   @map("texto")
+  modelo         String?  @map("modelo")
+  fechaCreacion  DateTime @map("fecha_creacion") @db.Timestamptz(6)
+
+  @@unique([conversacionId, version], map: "uq_resumenes_conversacion_version")
+  @@map("resumenes_conversacion")
+}
+
 model ColaConversacionWhatsapp {
   id                 String    @id(map: "cola_conversacion_whatsapp_pkey")
   conversacionId     String    @map("conversacion_id")

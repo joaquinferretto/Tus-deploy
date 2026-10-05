@@ -7,7 +7,7 @@ import { formatearPesos } from '@factory/contracts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
-import { PRESUPUESTO_CONTEXTO_POR_DEFECTO, construirContexto, ventanaReciente, type MensajeReciente, type PresupuestoContexto } from './contexto.ts'
+import { PRESUPUESTO_CONTEXTO_POR_DEFECTO, construirContexto, estimarTokens, ventanaReciente, type MensajeReciente, type PresupuestoContexto } from './contexto.ts'
 import { cuentaTrivial, detectarCambioDeHorario, detectarRestriccionProfesional, esPreguntaSuelta, expresaFrustracion, pideDetener, pideEmpezarDeNuevo, pideOtrasOpciones, sinInsultos, tieneInsultos } from './restricciones.ts'
 import { GUIA_DE_TEMA, TEMAS_AYUDA, TEMAS_DE_CUENTA, ayudaDeCuenta, detectarAyuda, enlaceGuia, enlaceTus, guiaDeCuenta, lineaDeReanudacion, pideExplicacion, rutaDeTema, type AyudaDetectada, type EstadoDesafio, type TemaAyuda } from './asistencia.ts'
 import { extracto } from './ayuda.ts'
@@ -40,6 +40,7 @@ import {
   pideHumano,
   pideVincular,
   preguntaPorCuenta,
+  limpiarParaMemoria,
   redactarPii,
   respuestaConfirmacion,
   type CanalConversacion,
@@ -48,6 +49,7 @@ import {
   type ConversacionWhatsapp,
   type EstadoConversacional,
   type MensajeConversacion,
+  type ResumenConversacion,
   type SolicitudEnCurso,
 } from './modelo.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente, VerificadorTelefonoWhatsapp } from './puertos.ts'
@@ -142,6 +144,12 @@ const REGLAS_PROMPT_SISTEMA = [
 
 // The WhatsApp prompt (kept as a named export for documentation and evaluations).
 export const PROMPT_SISTEMA = promptSistema('whatsapp')
+
+// One summary step covers at most this many messages; a regeneration walks at most this many steps.
+const MAXIMO_MENSAJES_POR_RESUMEN = 80
+const MAXIMO_PASOS_REGENERACION = 12
+const PROMPT_RESUMEN =
+  'Resumí la conversación en JSON con las claves: necesidad, zona_aproximada, categoria, preferencias, recursos_mencionados, pasos_pendientes. Sin datos personales (DNI, CUIL, teléfonos, direcciones exactas, emails), sin contraseñas, códigos ni enlaces. Si hay un resumen anterior, actualizalo con lo nuevo en vez de repetirlo. No inventes: lo que no se dijo no va. Los estados de turnos, pagos y solicitudes NO van en el resumen: los da el sistema.'
 
 export interface LimitesAsistente {
   maxToolCalls: number
@@ -2444,7 +2452,7 @@ export class OrquestadorConversacion {
     // ONE constructor of the context, under a token budget: summary, memories, facts, the recent
     // window (from the newest message back) and the current message.
     const contexto = construirContexto(
-      { fijos, resumen: turn.conversation.summary, recuerdos: [], hechos: [], recientes: await this.recientes(turn), actual: redactarPii(text) },
+      { fijos, resumen: await this.resumenVigente(turn.conversation), recuerdos: [], hechos: [], recientes: await this.recientes(turn), actual: redactarPii(text) },
       this.limits.contexto
     )
     // Sizes and counts only: never the content of a message.
@@ -3164,75 +3172,128 @@ export class OrquestadorConversacion {
     })
   }
 
-  // ---- summary memory -----------------------------------------------------------------------
+  // ---- summary memory (MEMORIA-01, phase 3) -------------------------------------------------
+  //
+  // INCREMENTAL and VERSIONED. A summary says exactly which messages it represents ("up to
+  // sequence X"); the next one summarizes only what came after, on top of the previous text, and
+  // is stored as a NEW version. The original messages are never replaced: they stay the history,
+  // and a summary can always be regenerated from them.
+  //
+  // - idempotent / retry-safe: the range comes from the stored version, so a failed attempt (the
+  //   model is down) is simply tried again later over the same messages;
+  // - concurrency-safe: two workers on the same step compute the same version number and the
+  //   unique index keeps exactly one;
+  // - the newest `historyMessages` messages are left out: they are the recent window, sent as
+  //   they are. Personal identifiers and secrets are removed before the model sees anything.
 
-  private async resumirSiCorresponde(conversationId: string) {
+  // The summary the context uses: the newest stored version (or the legacy column of a
+  // conversation summarized before versions existed).
+  private async resumenVigente(conversation: ConversacionWhatsapp): Promise<string | null> {
+    const vigente = await this.deps.transaction.ejecutar((repositories) => repositories.resumenes.vigente(conversation.conversationId))
+    return vigente?.text ?? conversation.summary ?? null
+  }
+
+  private async resumirSiCorresponde(conversationId: string): Promise<void> {
     if (!this.deps.chat) return
     const data = await this.deps.transaction.ejecutar(async (repositories) => {
       const conversation = await repositories.conversaciones.buscar(conversationId)
       if (!conversation) return null
-      const count = await repositories.mensajes.contar(conversationId)
-      if (count - conversation.summaryMessageCount < this.limits.summaryThreshold) return null
-      return {
-        conversation,
-        count,
-        messages: await repositories.mensajes.ultimos(
-          conversationId,
-          this.limits.summaryThreshold + this.limits.historyMessages
-        ),
-      }
+      const vigente = await repositories.resumenes.vigente(conversationId)
+      const pendientes = await repositories.mensajes.posteriores(conversationId, { after: vigente?.throughSequence ?? 0, limit: MAXIMO_MENSAJES_POR_RESUMEN + this.limits.historyMessages })
+      return { conversation, vigente, pendientes }
     })
-    if (!data) return
-    const older = data.messages
-      .slice(0, -this.limits.historyMessages)
-      .filter((message) => message.text)
-    if (older.length === 0) return
+    if (!data || data.pendientes.length < this.limits.summaryThreshold) return
+    // Everything not yet summarized, except the recent window.
+    const porResumir = data.pendientes.slice(0, -this.limits.historyMessages).filter((message) => message.text && message.sequence !== undefined)
+    if (porResumir.length === 0) return
+    await this.guardarResumen(conversationId, data.vigente, porResumir, data.vigente?.text ?? data.conversation.summary ?? null)
+  }
+
+  // One step: previous text + new messages -> next version. Returns the stored version, or null
+  // when nothing was stored (the model failed, or another worker stored that version first).
+  private async guardarResumen(conversationId: string, anterior: ResumenConversacion | null, mensajes: MensajeConversacion[], textoAnterior: string | null, version = (anterior?.version ?? 0) + 1): Promise<ResumenConversacion | null> {
+    if (!this.deps.chat || mensajes.length === 0) return null
     try {
       const answer = await this.deps.chat.chat({
         messages: [
-          {
-            role: 'system',
-            content:
-              'Resumí la conversación en JSON con las claves: necesidad, zona_aproximada, categoria, preferencias, recursos_mencionados, pasos_pendientes. Sin datos personales (DNI, CUIL, teléfonos, direcciones exactas). Solo JSON.',
-          },
-          ...(data.conversation.summary
-            ? [
-                {
-                  role: 'system' as const,
-                  content: `Resumen anterior: ${data.conversation.summary}`,
-                },
-              ]
-            : []),
+          { role: 'system', content: PROMPT_RESUMEN },
+          ...(textoAnterior ? [{ role: 'system' as const, content: `Resumen anterior: ${limpiarParaMemoria(textoAnterior)}` }] : []),
           {
             role: 'user',
-            content: older
-              .map(
-                (message) =>
-                  `${message.direction === 'inbound' ? 'Usuario' : 'TUS'}: ${redactarPii(message.text!).slice(0, 500)}`
-              )
+            content: mensajes
+              .map((message) => `${message.direction === 'inbound' ? 'Usuario' : 'TUS'}: ${limpiarParaMemoria(message.text!).slice(0, 500)}`)
               .join('\n')
               .slice(0, 8000),
           },
         ],
         maxTokens: 300,
       })
-      const summary = (answer.content ?? '').trim().slice(0, 1500)
-      if (!summary) return
+      const text = limpiarParaMemoria((answer.content ?? '').trim()).slice(0, 1500)
+      if (!text) return null
+      const resumen: ResumenConversacion = {
+        summaryId: `resumen-${randomUUID()}`,
+        conversationId,
+        version,
+        fromSequence: mensajes[0]!.sequence!,
+        throughSequence: mensajes.at(-1)!.sequence!,
+        messageCount: mensajes.length,
+        text,
+        model: this.deps.chat.model ?? null,
+        createdAt: new Date(this.now()).toISOString(),
+      }
       await this.deps.transaction.ejecutar(async (repositories) => {
+        await repositories.resumenes.crear(resumen)
+        // The column of the conversation is kept as a copy of the newest text (older readers).
         const conversation = await repositories.conversaciones.buscar(conversationId)
-        if (conversation)
-          await repositories.conversaciones.actualizar(
-            {
-              ...conversation,
-              summary: redactarPii(summary),
-              summaryMessageCount: data.count,
-              version: conversation.version + 1,
-            },
-            conversation.version
-          )
+        if (conversation) await repositories.conversaciones.actualizar({ ...conversation, summary: text, summaryMessageCount: conversation.summaryMessageCount + mensajes.length, version: conversation.version + 1 }, conversation.version)
       })
+      this.metric('assistant.summary', { version, messages: mensajes.length, tokens: estimarTokens(text) })
+      return resumen
+    } catch (error) {
+      // Stored by another worker (same version): that one is the summary. Anything else: best
+      // effort, the recent window still bounds the context and the step is retried later.
+      this.metric('assistant.summary_skipped', { reason: (error as { code?: string })?.code === 'P2002' ? 'already_stored' : 'failed' })
+      return null
+    }
+  }
+
+  // Rebuilds the summary from the ORIGINAL messages, up to where the current one reaches, and
+  // stores it as a new version (the previous versions stay). Bounded: a long conversation is
+  // walked in steps.
+  async regenerarResumen(conversationId: string): Promise<ResumenConversacion | null> {
+    const vigente = await this.deps.transaction.ejecutar((repositories) => repositories.resumenes.vigente(conversationId))
+    if (!vigente || !this.deps.chat) return null
+    let texto: string | null = null
+    let desde = 0
+    let primero: number | null = null
+    let total = 0
+    for (let paso = 0; paso < MAXIMO_PASOS_REGENERACION && desde < vigente.throughSequence; paso += 1) {
+      const lote = (await this.deps.transaction.ejecutar((repositories) => repositories.mensajes.posteriores(conversationId, { after: desde, limit: MAXIMO_MENSAJES_POR_RESUMEN }))).filter((message) => (message.sequence ?? 0) <= vigente.throughSequence)
+      if (lote.length === 0) break
+      desde = lote.at(-1)!.sequence!
+      const conTexto = lote.filter((message) => message.text)
+      if (conTexto.length === 0) continue
+      const answer: { content?: string | null } | null = await this.deps.chat.chat({
+        messages: [
+          { role: 'system', content: PROMPT_RESUMEN },
+          ...(texto ? [{ role: 'system' as const, content: `Resumen anterior: ${texto}` }] : []),
+          { role: 'user', content: conTexto.map((message) => `${message.direction === 'inbound' ? 'Usuario' : 'TUS'}: ${limpiarParaMemoria(message.text!).slice(0, 500)}`).join('\n').slice(0, 8000) },
+        ],
+        maxTokens: 300,
+      }).catch(() => null)
+      const parcial: string = limpiarParaMemoria((answer?.content ?? '').trim()).slice(0, 1500)
+      if (!parcial) return null
+      texto = parcial
+      primero ??= conTexto[0]!.sequence!
+      total += conTexto.length
+    }
+    if (!texto || primero === null || desde < vigente.throughSequence) return null
+    const resumen: ResumenConversacion = { summaryId: `resumen-${randomUUID()}`, conversationId, version: vigente.version + 1, fromSequence: primero, throughSequence: vigente.throughSequence, messageCount: total, text: texto, model: this.deps.chat.model ?? null, createdAt: new Date(this.now()).toISOString() }
+    try {
+      await this.deps.transaction.ejecutar((repositories) => repositories.resumenes.crear(resumen))
+      return resumen
     } catch {
-      // Best effort: the recent-history window still bounds the context.
+      return null
     }
   }
 

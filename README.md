@@ -671,7 +671,7 @@ Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md
 tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
 de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
 
-**Fases terminadas: 0 (diseno), 1 (historial canonico) y 2 (constructor de contexto). Fase actual: 3 (resumen incremental).**
+**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto) y 3 (resumen incremental). Fase actual: 4 (memoria semantica).**
 
 **Lo que funciona hoy**
 
@@ -682,8 +682,10 @@ de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los d
   acepta `clientMessageId` para que un reintento no duplique el mensaje ni la respuesta.
 - Contexto del modelo (Fase 2): un unico constructor (`contexto.ts`) con presupuesto de TOKENS. La
   ventana reciente se llena desde el mensaje mas nuevo hacia atras; ya no es una cantidad fija.
-- Resumen por conversacion: una columna que se sobrescribe cada 24 mensajes; sin versiones y se pierde
-  al cerrar la conversacion.
+- Resumen incremental y versionado (Fase 3): `resumenes_conversacion` guarda cada version con el
+  rango exacto de mensajes que representa; solo se resume lo nuevo sobre el texto anterior, un fallo
+  se reintenta, dos procesos no duplican una version y se puede regenerar desde los mensajes
+  originales, que nunca se reemplazan.
 - pgvector (`"RagEmbedding"`, 1024 dimensiones) existe y hoy solo lo usa la base de conocimiento.
 - No hay memoria semantica de conversaciones, ni hechos persistentes, ni borrado o retencion.
 
@@ -702,8 +704,8 @@ Despues: continuidad Web + WhatsApp (7), retencion y borrado (8), observabilidad
 validacion integral (10).
 
 **Tablas y modelos.** Se reutilizan las tres tablas de historial y `"RagEmbedding"`. Creado:
-`mensajes_conversacion_whatsapp.secuencia` (migracion `20261102100000`). Previstas, aun no creadas:
-`resumenes_conversacion`, `fragmentos_memoria`, `hechos_memoria`.
+`mensajes_conversacion_whatsapp.secuencia` (migracion `20261102100000`) y `resumenes_conversacion`
+(migracion `20261103100000`). Previstas, aun no creadas: `fragmentos_memoria`, `hechos_memoria`.
 Migraciones solo hacia adelante y no destructivas; sin infraestructura nueva.
 
 **Web y WhatsApp.** La memoria de largo plazo es por cuenta: la sesion en la Web, o un WhatsApp con
@@ -712,7 +714,8 @@ conversacion actual. Cada recuerdo conserva conversacion, canal y mensaje de ori
 
 **Privacidad.** Toda lectura filtra por cuenta en la consulta, antes de la busqueda semantica: la
 cuenta A nunca recibe nada de la cuenta B. No se guardan como memoria ni se vectorizan contrasenas,
-codigos de verificacion, tokens, cookies, secretos, datos de tarjetas ni enlaces de autenticacion. Los
+codigos de verificacion, tokens, cookies, secretos, datos de tarjetas ni enlaces de autenticacion
+(`limpiarParaMemoria()`, aplicado antes de resumir). Los
 registros no llevan contenido de mensajes.
 
 **Tokens.** Estimados por caracteres (3,5 por token) en un solo lugar. Presupuesto por defecto:
@@ -731,7 +734,7 @@ node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
 node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
 ```
 
-**Pendientes.** Fases 3 a 10. Para la memoria semantica en produccion hace falta un proveedor de
+**Pendientes.** Fases 4 a 10. Para la memoria semantica en produccion hace falta un proveedor de
 embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
 
 ## Limites actuales y trabajo posterior

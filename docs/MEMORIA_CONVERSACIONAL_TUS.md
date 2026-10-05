@@ -1,6 +1,7 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0, 1 y 2 terminadas** (diseno; historial canonico; constructor de contexto). Este documento describe lo que el
+Estado: **Fases 0 a 3 terminadas** (diseno; historial canonico; constructor de contexto; resumen
+incremental versionado). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
 existe todavia.
 
@@ -137,6 +138,30 @@ Metrica por turno `assistant.context` (solo numeros y banderas, nunca contenido)
 total, mensajes incluidos / omitidos / recortados, recuerdos y hechos incluidos / omitidos, y si el
 resumen o el mensaje actual se recortaron.
 
+### 1.13 Resumen incremental y versionado (Fase 3, implementado)
+
+- Tabla `resumenes_conversacion` (migracion `20261103100000_tus_memoria_resumenes`): conversacion,
+  `version`, `desde_secuencia`, `hasta_secuencia`, cantidad de mensajes, texto, modelo y fecha. Unica
+  por conversacion + version. Cada fila dice exactamente "este resumen representa hasta el mensaje X".
+- `resumirSiCorresponde()` ya no cuenta mensajes ni sobrescribe: lee con `mensajes.posteriores()` lo
+  que vino despues de `hasta_secuencia`, deja afuera la ventana reciente (los ultimos
+  `WHATSAPP_AI_HISTORY_MESSAGES`), y cuando hay `WHATSAPP_AI_SUMMARY_THRESHOLD` mensajes esperando
+  resume solo esos sobre el texto anterior y guarda una VERSION NUEVA (hasta 80 mensajes por paso).
+- Idempotente y tolerante a reintentos: el rango sale de la version guardada; si el modelo falla no
+  se guarda nada y el mismo rango se intenta en un turno posterior.
+- Concurrencia: dos procesos sobre el mismo paso calculan la misma version y el indice unico deja una.
+- Trazable y regenerable: `regenerarResumen(conversacion)` reconstruye desde los mensajes ORIGINALES
+  hasta donde llega la version vigente y lo guarda como otra version; las anteriores quedan.
+- Los mensajes originales nunca se reemplazan. La columna `conversaciones_whatsapp.resumen` se mantiene
+  como copia del texto vigente (lectores anteriores); el contexto lee la version vigente de la tabla.
+- Privacidad: antes de resumir, cada mensaje (y el resumen que vuelve) pasa por `limpiarParaMemoria()`
+  = `redactarPii` + `sinSecretos` (contrasenas, codigos de verificacion, tokens, cookies, CVV y
+  enlaces con credenciales). Los estados de turnos, pagos y solicitudes no van al resumen.
+- Metricas `assistant.summary` (version, mensajes, tokens) y `assistant.summary_skipped` (motivo), sin
+  contenido.
+- El resumen sigue siendo por conversacion. Lo que cruza conversaciones y canales llega con la
+  memoria semantica y los hechos (Fases 4, 5 y 7).
+
 ## 2. Que se reutiliza
 
 - Las tres tablas de historial (contacto, conversacion, mensaje) para ambos canales.
@@ -208,7 +233,7 @@ cuenta, los recuerdos y los hechos (Fase 7).
 | --- | --- | --- |
 | 1 (hecho) | `mensajes_conversacion_whatsapp.secuencia` (entero creciente, unico, indice `(conversacion_id, secuencia)`); migracion `20261102100000_tus_memoria_historial_canonico` | orden estable y paginacion; "hasta el mensaje X" |
 | 1 (hecho) | idempotencia de mensajes Web SIN columna nueva: la clave del cliente se guarda en `wamid` como `web:<contacto>:<clave>` (indice unico ya existente) | un reintento no duplica el mensaje |
-| 3 | `resumenes_conversacion` (conversacion, version, `hasta_secuencia`, texto, modelo, fecha; unico por conversacion + version) | resumen incremental, versionado y regenerable |
+| 3 (hecho) | `resumenes_conversacion` (conversacion, version, `desde_secuencia`, `hasta_secuencia`, mensajes, texto, modelo, fecha; unico por conversacion + version); migracion `20261103100000_tus_memoria_resumenes` | resumen incremental, versionado y regenerable |
 | 4 | `fragmentos_memoria` (cuenta, conversacion, canal, `desde_secuencia`, `hasta_secuencia`, texto redactado, checksum, vencimiento) + vectores en `"RagEmbedding"` bajo un tenant propio de memoria y `workspaceId = cuenta` | recuerdos semanticos por cuenta |
 | 4 | indice `(tenantId, workspaceId)` en `"RagEmbedding"` | filtrar por cuenta antes de la similitud |
 | 5 | `hechos_memoria` (cuenta, tipo de una lista cerrada, valor, mensaje y conversacion de origen, canal, confianza, vencimiento, invalidacion) | hechos con procedencia |
@@ -233,9 +258,10 @@ No se agrega infraestructura: PostgreSQL + pgvector alcanzan.
 
 - No se guarda como memoria ni se vectoriza: contrasenas, codigos de verificacion (OTP), tokens,
   cookies, secretos, datos de tarjetas, credenciales ni enlaces de autenticacion.
-- Base ya existente: `redactarPii` (CUIL, documento, tokens, email, tarjeta, telefono) y el
-  ocultamiento del documento en el mensaje guardado. Falta agregar codigos de verificacion y enlaces
-  con token al filtro, y aplicarlo antes de resumir, fragmentar y generar embeddings (Fases 3 a 5).
+- `limpiarParaMemoria()` (Fase 3) = `redactarPii` (CUIL, documento, tokens, email, tarjeta, telefono)
+  + `sinSecretos` (contrasenas, claves, codigos de verificacion, CVV, cookies, tokens y enlaces que
+  autentican). Se aplica antes de resumir y se aplicara igual antes de fragmentar y generar
+  embeddings (Fases 4 y 5).
 - Los registros y metricas nunca llevan contenido de mensajes, solo cantidades y tamanos.
 
 ## 7. Borrado y retencion (definicion; se implementa en la Fase 8)
@@ -277,7 +303,7 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | 0 | Auditoria y diseno | terminada |
 | 1 | Conversaciones y mensajes canonicos (secuencia, paginacion, idempotencia, aislamiento) | terminada |
 | 2 | Constructor unico de contexto con presupuesto de tokens | terminada |
-| 3 | Resumen incremental y versionado | pendiente |
+| 3 | Resumen incremental y versionado | terminada |
 | 4 | Memoria semantica con pgvector | pendiente |
 | 5 | Hechos con procedencia | pendiente |
 | 6 | Resolutores contra el estado real de TUS | pendiente |

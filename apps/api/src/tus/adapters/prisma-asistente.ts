@@ -23,6 +23,7 @@ import {
   type ContactoWhatsapp,
   type ConversacionWhatsapp,
   type MensajeConversacion,
+  type ResumenConversacion,
   type TokenVinculacion,
   type TrabajoConversacion,
 } from '../asistente/modelo.ts'
@@ -49,6 +50,7 @@ export interface ClientePrismaAsistente {
   tokenVinculacionWhatsapp: DelegadoPrismaAsistente
   confirmacionAsistente: DelegadoPrismaAsistente
   auditoriaAsistente: DelegadoPrismaAsistente
+  resumenConversacion: DelegadoPrismaAsistente
   consentimientoWhatsApp?: {
     findUnique(input: {
       where: { tenantId_tipoDestinatario_destinatarioId: { tenantId: string; tipoDestinatario: string; destinatarioId: string } }
@@ -191,6 +193,18 @@ const mapMensaje = (row: Fila): MensajeConversacion => ({
   correlationId: String(row['correlacionId']),
   createdAt: iso(row['fechaCreacion'])!,
   ...(row['secuencia'] === undefined || row['secuencia'] === null ? {} : { sequence: Number(row['secuencia']) }),
+})
+
+const mapResumen = (row: Fila): ResumenConversacion => ({
+  summaryId: String(row['id']),
+  conversationId: String(row['conversacionId']),
+  version: Number(row['version']),
+  fromSequence: Number(row['desdeSecuencia']),
+  throughSequence: Number(row['hastaSecuencia']),
+  messageCount: Number(row['mensajes']),
+  text: String(row['texto']),
+  model: texto(row['modelo']),
+  createdAt: iso(row['fechaCreacion'])!,
 })
 
 const filaTrabajo = (job: TrabajoConversacion): Fila => ({
@@ -371,6 +385,14 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
                 b.externalTimestamp ?? b.createdAt
               ) || a.createdAt.localeCompare(b.createdAt)
           ),
+      posteriores: async (conversationId, input) =>
+        (
+          await client.mensajeConversacionWhatsapp.findMany({
+            where: { conversacionId: conversationId, estado: { not: 'rate_limited' }, secuencia: { gt: BigInt(input.after) } },
+            orderBy: { secuencia: 'asc' },
+            take: input.limit,
+          })
+        ).map(mapMensaje),
       // ix_mensajes_conversacion_whatsapp_secuencia: the page right before `before`, oldest first.
       pagina: async (conversationId, input) =>
         (
@@ -534,6 +556,18 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
             data: sinId(filaConfirmacion(value)),
           })
         ).count === 1,
+    },
+    resumenes: {
+      vigente: async (conversationId) => {
+        const row = await client.resumenConversacion.findFirst({ where: { conversacionId: conversationId }, orderBy: { version: 'desc' } })
+        return row ? mapResumen(row) : null
+      },
+      listar: async (conversationId) => (await client.resumenConversacion.findMany({ where: { conversacionId: conversationId }, orderBy: { version: 'asc' } })).map(mapResumen),
+      crear: async (value) => {
+        await client.resumenConversacion.create({
+          data: { id: value.summaryId, conversacionId: value.conversationId, version: value.version, desdeSecuencia: BigInt(value.fromSequence), hastaSecuencia: BigInt(value.throughSequence), mensajes: value.messageCount, texto: value.text, modelo: value.model, fechaCreacion: new Date(value.createdAt) },
+        })
+      },
     },
     auditoria: {
       registrar: async (event) => {

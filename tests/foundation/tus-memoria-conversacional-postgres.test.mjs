@@ -95,3 +95,46 @@ test('MEMORIA fase 1 PostgreSQL: the sequence is assigned by the database, uniqu
   assert.deepEqual(r.ajenas, Array(5).fill('NOT_FOUND'))
   assert.equal(r.claveRepetida, 'P2002')
 })
+
+test('MEMORIA fase 3 PostgreSQL: summary versions are added, never overwritten; two workers on the same step store exactly one; the database refuses an impossible range; the messages are untouched', { skip, timeout: 180000 }, () => {
+  const r = runTypeScriptScenario(`${MEMORIA_PG_SETUP}
+    const out = {}
+    try {
+      const c = await conversacion({ cuenta: run + '-cuenta-r' })
+      for (let i = 1; i <= 10; i += 1) await guardar(c, 'mensaje ' + i)
+      const todos = await tx.ejecutar((repos) => repos.mensajes.posteriores(c.conversationId, { after: 0, limit: 100 }))
+      out.posteriores = [todos.length, todos.every((m, i) => i === 0 || m.sequence > todos[i - 1].sequence), (await tx.ejecutar((repos) => repos.mensajes.posteriores(c.conversationId, { after: todos[5].sequence, limit: 100 }))).map((m) => m.text)]
+      const resumen = (version, desde, hasta, extra = {}) => ({ summaryId: run + '-resumen-' + version + '-' + Math.random().toString(36).slice(2, 8), conversationId: c.conversationId, version, fromSequence: desde, throughSequence: hasta, messageCount: 3, text: 'resumen v' + version, model: 'modelo-prueba', createdAt: new Date().toISOString(), ...extra })
+      out.vacio = await tx.ejecutar((repos) => repos.resumenes.vigente(c.conversationId))
+      await tx.ejecutar((repos) => repos.resumenes.crear(resumen(1, todos[0].sequence, todos[2].sequence)))
+      // Two workers summarizing the same step at once: one row.
+      const carrera = await Promise.all([1, 2, 3].map(() => tx.ejecutar((repos) => repos.resumenes.crear(resumen(2, todos[3].sequence, todos[5].sequence))).then(() => 'ok', (e) => e.code)))
+      out.carrera = [...carrera].sort()
+      const lista = await tx.ejecutar((repos) => repos.resumenes.listar(c.conversationId))
+      const vigente = await tx.ejecutar((repos) => repos.resumenes.vigente(c.conversationId))
+      out.versiones = [lista.map((v) => [v.version, v.fromSequence === todos[v.version === 1 ? 0 : 3].sequence, v.throughSequence === todos[v.version === 1 ? 2 : 5].sequence, v.text, v.model]), vigente.version, typeof vigente.throughSequence]
+      // The database holds the invariants whatever code writes.
+      out.checks = [
+        await codigo(() => tx.ejecutar((repos) => repos.resumenes.crear(resumen(3, todos[6].sequence, todos[5].sequence)))),
+        await codigo(() => tx.ejecutar((repos) => repos.resumenes.crear(resumen(0, todos[6].sequence, todos[7].sequence)))),
+        await codigo(() => tx.ejecutar((repos) => repos.resumenes.crear(resumen(3, todos[6].sequence, todos[7].sequence, { text: '' })))),
+        await codigo(() => tx.ejecutar((repos) => repos.resumenes.crear(resumen(3, todos[6].sequence, todos[7].sequence, { conversationId: run + '-no-existe' })))),
+      ].map((x) => x !== 'ok')
+      // A conversation with summaries cannot be deleted from under them (no orphan rows).
+      out.restrict = await prisma.conversacionWhatsapp.delete({ where: { id: c.conversationId } }).then(() => 'ok', (e) => e.code ?? 'error')
+      out.mensajesIntactos = (await tx.ejecutar((repos) => repos.mensajes.posteriores(c.conversationId, { after: 0, limit: 100 }))).map((m) => m.text).join('|') === todos.map((m) => m.text).join('|')
+      // Another conversation has its own versions.
+      const otra = await conversacion({ cuenta: run + '-cuenta-s' })
+      out.otra = [await tx.ejecutar((repos) => repos.resumenes.vigente(otra.conversationId)), (await tx.ejecutar((repos) => repos.resumenes.listar(otra.conversationId))).length]
+    } finally { await prisma.$disconnect() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.posteriores, [10, true, ['mensaje 7', 'mensaje 8', 'mensaje 9', 'mensaje 10']], 'what a summary has not covered yet, in order')
+  assert.equal(r.vacio, null)
+  assert.deepEqual(r.carrera, ['P2002', 'P2002', 'ok'], 'exactly one of three simultaneous writers of version 2')
+  assert.deepEqual(r.versiones, [[[1, true, true, 'resumen v1', 'modelo-prueba'], [2, true, true, 'resumen v2', 'modelo-prueba']], 2, 'number'], 'both versions are kept; the newest is the current one')
+  assert.deepEqual(r.checks, [true, true, true, true], 'an inverted range, version 0, an empty text and an unknown conversation are refused')
+  assert.notEqual(r.restrict, 'ok', 'the conversation cannot disappear from under its summaries')
+  assert.equal(r.mensajesIntactos, true)
+  assert.deepEqual(r.otra, [null, 0])
+})

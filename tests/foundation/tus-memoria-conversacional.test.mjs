@@ -220,3 +220,106 @@ test('MEMORIA fase 2 orquestador: the model receives the context of the construc
   assert.deepEqual(r.metrica, [true, 'web', 'number', 2, 1, true])
   assert.equal(r.sinContenido, true, 'the metric never carries the text of a message')
 })
+
+test('MEMORIA fase 3 resumen: incremental and versioned — each version says "up to message X", only what came after is summarized on top of the previous text, the originals stay, a failure is retried, and it can be regenerated', () => {
+  const r = runTypeScriptScenario(`${MEMORIA_SETUP}
+    const { ENCABEZADO_RESUMEN } = await import('./apps/api/src/tus/asistente/contexto.ts')
+    const out = {}
+    const esResumen = (input) => String(input.messages[0].content).startsWith('Resumí la conversación')
+    const resumenes = []
+    let fallar = false
+    script = (input) => {
+      if (input.messages[0].content === PROMPT_ENRUTADOR) return { content: JSON.stringify({ intent: 'saludo' }) }
+      if (esResumen(input)) {
+        if (fallar) throw new Error('modelo caido')
+        resumenes.push({ anterior: input.messages.find((m) => String(m.content).startsWith('Resumen anterior:'))?.content ?? null, nuevos: input.messages.at(-1).content })
+        return { content: JSON.stringify({ necesidad: 'resumen ' + resumenes.length }) }
+      }
+      return { content: 'Respuesta ' + chat.calls.length }
+    }
+    const hablar = async (desde, hasta) => { for (let i = desde; i <= hasta; i += 1) { await enviarWeb('cuenta-a', 'mensaje numero ' + i); waAdvance(6000) } }
+    const versiones = async (id) => waTx.ejecutar((repos) => repos.resumenes.listar(id))
+    // The summary runs when 24 messages are waiting (the answer of the turn is stored after it):
+    // at the 13th message there are 25, and the 13 that left the recent window are summarized.
+    await hablar(1, 12)
+    const conversationId = (await enviarWeb('cuenta-a', 'mensaje numero 13')).conversationId; waAdvance(6000)
+    const v1 = await versiones(conversationId)
+    out.primera = v1.map((v) => [v.version, v.messageCount, v.fromSequence < v.throughSequence, v.text])
+    out.primeraEntrada = [resumenes[0].anterior, resumenes[0].nuevos.includes('mensaje numero 1'), resumenes[0].nuevos.includes('mensaje numero 12')]
+    // The model is down: nothing is stored, the turn is still answered; later the SAME range is tried again.
+    fallar = true
+    await hablar(14, 19)
+    out.conFallo = [(await versiones(conversationId)).length, [...waStore.state.mensajes.values()].filter((m) => m.conversationId === conversationId && m.direction === 'outbound').length]
+    fallar = false
+    await hablar(20, 20)
+    const v2 = await versiones(conversationId)
+    out.segunda = v2.map((v) => [v.version, v.fromSequence, v.throughSequence])
+    out.contiguas = v2[1].fromSequence > v2[0].throughSequence && v2[1].throughSequence > v2[1].fromSequence
+    const ultimo = resumenes.at(-1)
+    out.incremental = [ultimo.anterior.includes('resumen 1'), ultimo.nuevos.includes('mensaje numero 1\\n') || /mensaje numero 1(?!\\d)/u.test(ultimo.nuevos), /mensaje numero 1[0-9]/u.test(ultimo.nuevos)]
+    // The context of the next turn carries the newest version, and the originals are all there.
+    await hablar(21, 21)
+    const ultimaLlamada = chat.calls.filter((call) => call.messages[0].content !== PROMPT_ENRUTADOR && !esResumen(call)).at(-1)
+    const enContexto = ultimaLlamada.messages.find((m) => String(m.content).startsWith(ENCABEZADO_RESUMEN))
+    const vigente = await waTx.ejecutar((repos) => repos.resumenes.vigente(conversationId))
+    out.contexto = [Boolean(enContexto), enContexto.content.includes(vigente.text), vigente.version === (await versiones(conversationId)).length]
+    out.originales = (await historial.mensajes({ accountId: 'cuenta-a', conversationId, limit: 200 })).messages.filter((m) => m.direction === 'inbound').map((m) => m.text).join('|') === Array.from({ length: 21 }, (_, i) => 'mensaje numero ' + (i + 1)).join('|')
+    // Trace: every version knows its range; a repeated version is refused by the store.
+    out.repetida = await codigo(() => waTx.ejecutar((repos) => repos.resumenes.crear({ ...vigente, summaryId: 'otro-id' })))
+    // Regenerable from the original messages: a NEW version over the same reach; the others stay.
+    const antes = (await versiones(conversationId)).length
+    const regenerado = await wa.orquestador.regenerarResumen(conversationId)
+    const despues = await versiones(conversationId)
+    out.regenerado = [regenerado.version === antes + 1, regenerado.throughSequence === vigente.throughSequence, regenerado.fromSequence <= v1[0].fromSequence, despues.length === antes + 1, despues.slice(0, antes).map((v) => v.summaryId).join() === (await versiones(conversationId)).slice(0, antes).map((v) => v.summaryId).join()]
+    out.sinResumenes = await wa.orquestador.regenerarResumen('conversacion-sin-resumen')
+    out.metricas = [metrics.filter((m) => m.name === 'assistant.summary').length >= 2, metrics.some((m) => m.name === 'assistant.summary_skipped' && m.reason === 'failed'), !JSON.stringify(metrics.filter((m) => m.name.startsWith('assistant.summary'))).includes('mensaje numero')]
+    // Another account never appears in a summary input.
+    await enviarWeb('cuenta-b', 'dato privado de B')
+    out.aislado = !resumenes.some((x) => x.nuevos.includes('privado de B'))
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.primera.length, 1)
+  assert.deepEqual(r.primera[0].slice(0, 3), [1, 13, true], 'version 1 covers the 13 messages that left the recent window')
+  assert.match(r.primera[0][3], /resumen 1/u)
+  assert.deepEqual(r.primeraEntrada, [null, true, false], 'the first summary has no previous text and does not swallow the recent window')
+  assert.equal(r.conFallo[0], 1, 'a failed attempt stores nothing')
+  assert.ok(r.conFallo[1] >= 18, 'and the turns are still answered')
+  assert.deepEqual(r.segunda.map((v) => v[0]), [1, 2], 'the retry stores the next version')
+  assert.equal(r.contiguas, true, 'version 2 starts after the last message of version 1')
+  assert.deepEqual(r.incremental, [true, false, true], 'the new version is built on the previous text plus ONLY the messages after it')
+  assert.deepEqual(r.contexto, [true, true, true], 'the context uses the newest version')
+  assert.equal(r.originales, true, 'the original messages are never replaced')
+  assert.equal(r.repetida, 'P2002', 'one row per version')
+  assert.deepEqual(r.regenerado, [true, true, true, true, true], 'regenerated from the originals as a new version; the previous ones stay')
+  assert.equal(r.sinResumenes, null)
+  assert.deepEqual(r.metricas, [true, true, true], 'counts and sizes only')
+  assert.equal(r.aislado, true)
+})
+
+test('MEMORIA privacidad: passwords, verification codes, tokens, cookies, card data and authentication links never become memory', () => {
+  const r = runTypeScriptScenario(`
+    const { limpiarParaMemoria: l, sinSecretos } = await import('./apps/api/src/tus/asistente/modelo.ts')
+    const casos = {
+      contrasena: 'mi contraseña es hunter2secreta y quiero un plomero',
+      clave: 'la clave: Abc12345',
+      codigo: 'el código es 482913 gracias',
+      verificar: 'VERIFICAR TUS 7K4M9QXR',
+      enlace: 'entrá a https://tusservicios.shop/restablecer-contrasena?token=abc123DEF456 para cambiarla',
+      enlaceVerificacion: 'https://tus.test/verificar-email?code=ZZZ999',
+      bearer: 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijk',
+      apiKey: 'usa gsk_abcdefghijklmnop1234 por favor',
+      tarjeta: 'mi tarjeta es 4509 9535 6623 3704 y el cvv 123',
+      dni: 'soy Juan Pérez, DNI 30.111.222, mail juan@example.com, cel 3794 123456',
+      cookie: 'la cookie: tus_session=s%3Aabcdef123456',
+    }
+    const limpio = Object.fromEntries(Object.entries(casos).map(([k, v]) => [k, l(v)]))
+    console.log(JSON.stringify({
+      limpio,
+      fugas: ['hunter2secreta', 'Abc12345', '482913', '7K4M9QXR', 'abc123DEF456', 'ZZZ999', 'eyJhbGci', 'gsk_abcdefghijklmnop1234', '4509', '3704', '30.111.222', 'juan@example.com', '3794 123456', 's%3Aabcdef123456'].filter((secreto) => Object.values(limpio).some((texto) => texto.includes(secreto))),
+      conserva: [l('Necesito un plomero para el jueves a las 10 en el centro'), l('El turno sale $200 y la seña es de $100'), sinSecretos('mirá https://tusservicios.shop/ayuda/pagos')],
+    }))
+  `)
+  assert.deepEqual(r.fugas, [], `nothing secret survives: ${JSON.stringify(r.limpio)}`)
+  assert.match(r.limpio.contrasena, /quiero un plomero/u, 'the useful part of the message is kept')
+  assert.deepEqual(r.conserva, ['Necesito un plomero para el jueves a las 10 en el centro', 'El turno sale $200 y la seña es de $100', 'mirá https://tusservicios.shop/ayuda/pagos'], 'ordinary text, prices and plain links are untouched')
+})
