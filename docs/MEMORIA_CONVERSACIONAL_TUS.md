@@ -1,7 +1,7 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0 a 3 terminadas** (diseno; historial canonico; constructor de contexto; resumen
-incremental versionado). Este documento describe lo que el
+Estado: **Fases 0 a 4 terminadas** (diseno; historial canonico; constructor de contexto; resumen
+incremental versionado; memoria semantica). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
 existe todavia.
 
@@ -162,6 +162,31 @@ resumen o el mensaje actual se recortaron.
 - El resumen sigue siendo por conversacion. Lo que cruza conversaciones y canales llega con la
   memoria semantica y los hechos (Fases 4, 5 y 7).
 
+### 1.14 Memoria semantica (Fase 4, implementado)
+
+- **Que es un recuerdo**: un FRAGMENTO, no un mensaje. Cuando un paso de resumen cubre mensajes que
+  salieron de la ventana reciente, esos mismos mensajes se agrupan en tramos de hasta 900 caracteres
+  cortados en limites de mensaje (`fragmentarConversacion`), ya limpios con `limpiarParaMemoria()`.
+- **Donde vive**: `fragmentos_memoria` (migracion `20261104100000_tus_memoria_fragmentos`): cuenta,
+  conversacion, canal, `desde_secuencia`, `hasta_secuencia`, texto, checksum, version de embeddings,
+  fecha y vencimiento. El vector va en la tabla existente `"RagEmbedding"` (pgvector, 1024
+  dimensiones) con `tenantId = 'tus-memoria'` y `workspaceId = cuenta`. Fragmento y vector se
+  escriben en la misma transaccion; el mismo tramo de una conversacion se guarda una sola vez.
+- **De quien**: solo de contactos con cuenta (`cuentaDeContacto`). Un visitante anonimo o un WhatsApp
+  sin vincular no generan ni reciben recuerdos.
+- **Busqueda** (`ServicioMemoriaSemantica.recuperar`): 1) cuenta resuelta por el backend, 2) la
+  consulta SQL filtra `tenantId`, `workspaceId = cuenta` y `cuenta_id = cuenta` ANTES de ordenar por
+  similitud, 3) similitud coseno, 4) umbral (`WHATSAPP_AI_MEMORY_MIN_SCORE`, 0,35), 5) pocos
+  resultados (`WHATSAPP_AI_MEMORY_TOP_K`, 3). Los vencidos y los de otra version de embeddings no se
+  comparan. Como defensa adicional el servicio descarta cualquier fragmento que no sea de la cuenta.
+- **En el contexto**: entran como `recuerdos` del constructor, con fecha y canal de origen, dentro de
+  su presupuesto de tokens, marcados como datos de contexto y no como autoridad.
+- **Si falla** (proveedor caido): el turno sigue con la ventana reciente y las herramientas.
+- **Requisito**: un proveedor de embeddings (`RAG_EMBEDDING_PROVIDER`). Con `none` (valor por defecto)
+  la memoria semantica queda apagada y el resto funciona igual.
+- Metricas sin contenido: `assistant.memory_stored`, `assistant.memory_retrieved` (recuperados,
+  descartados por umbral, milisegundos) y `assistant.memory_error`.
+
 ## 2. Que se reutiliza
 
 - Las tres tablas de historial (contacto, conversacion, mensaje) para ambos canales.
@@ -234,8 +259,8 @@ cuenta, los recuerdos y los hechos (Fase 7).
 | 1 (hecho) | `mensajes_conversacion_whatsapp.secuencia` (entero creciente, unico, indice `(conversacion_id, secuencia)`); migracion `20261102100000_tus_memoria_historial_canonico` | orden estable y paginacion; "hasta el mensaje X" |
 | 1 (hecho) | idempotencia de mensajes Web SIN columna nueva: la clave del cliente se guarda en `wamid` como `web:<contacto>:<clave>` (indice unico ya existente) | un reintento no duplica el mensaje |
 | 3 (hecho) | `resumenes_conversacion` (conversacion, version, `desde_secuencia`, `hasta_secuencia`, mensajes, texto, modelo, fecha; unico por conversacion + version); migracion `20261103100000_tus_memoria_resumenes` | resumen incremental, versionado y regenerable |
-| 4 | `fragmentos_memoria` (cuenta, conversacion, canal, `desde_secuencia`, `hasta_secuencia`, texto redactado, checksum, vencimiento) + vectores en `"RagEmbedding"` bajo un tenant propio de memoria y `workspaceId = cuenta` | recuerdos semanticos por cuenta |
-| 4 | indice `(tenantId, workspaceId)` en `"RagEmbedding"` | filtrar por cuenta antes de la similitud |
+| 4 (hecho) | `fragmentos_memoria` + vectores en `"RagEmbedding"` (`tenantId = 'tus-memoria'`, `workspaceId = cuenta`); migracion `20261104100000_tus_memoria_fragmentos` | recuerdos semanticos por cuenta |
+| 4 (hecho) | indice `ix_rag_embedding_tenant_workspace` en `"RagEmbedding"` | filtrar por cuenta antes de la similitud |
 | 5 | `hechos_memoria` (cuenta, tipo de una lista cerrada, valor, mensaje y conversacion de origen, canal, confianza, vencimiento, invalidacion) | hechos con procedencia |
 
 Todas las migraciones seran solo hacia adelante y no destructivas (columnas nuevas anulables o con
@@ -304,7 +329,7 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | 1 | Conversaciones y mensajes canonicos (secuencia, paginacion, idempotencia, aislamiento) | terminada |
 | 2 | Constructor unico de contexto con presupuesto de tokens | terminada |
 | 3 | Resumen incremental y versionado | terminada |
-| 4 | Memoria semantica con pgvector | pendiente |
+| 4 | Memoria semantica con pgvector | terminada |
 | 5 | Hechos con procedencia | pendiente |
 | 6 | Resolutores contra el estado real de TUS | pendiente |
 | 7 | Continuidad Web + WhatsApp | pendiente |
@@ -316,8 +341,10 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 
 - **Embeddings apagados por defecto** (`RAG_EMBEDDING_PROVIDER=none`): la Fase 4 necesita un proveedor
   configurado en produccion; sin el, la memoria semantica queda inactiva (el resto funciona).
-- **Indice HNSW con filtro por cuenta**: con pocos recuerdos por cuenta conviene filtrar por cuenta y
-  ordenar exacto, en vez de depender del indice aproximado global. Se decide con datos en la Fase 4.
+- **Indice HNSW con filtro por cuenta**: la consulta filtra por cuenta con el indice
+  `(tenantId, workspaceId)` y ordena por distancia dentro de ese conjunto. No esta medido con volumen
+  real: si el planificador eligiera el indice HNSW global y devolviera menos filas de las esperadas,
+  habria que forzar el orden exacto para memoria.
 - **WhatsApp sin modelo**: el canal responde hoy con textos escritos por el backend; la memoria
   generada solo se usa donde hay modelo.
 - **Mensajes anteriores a la vinculacion**: lo que un contacto escribio antes de vincular la cuenta

@@ -28,6 +28,7 @@ import {
   type TrabajoConversacion,
 } from '../asistente/modelo.ts'
 import type { CuentaPorDocumento, PuertoCuentasPorDocumento } from '../asistente/identificacion.ts'
+import { VERSION_INDICE_MEMORIA, type FragmentoMemoria, type PuertoIndiceMemoria } from '../asistente/memoria-semantica.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from '../asistente/puertos.ts'
 import { isSerializationFailure } from './prisma-work.ts'
 import type { ConsentimientoWhatsApp } from '../whatsapp/consent.ts'
@@ -940,5 +941,68 @@ export class IndiceConocimientoPrisma implements PuertoIndiceConocimiento {
       chunks: Number(row['chunks'] ?? 0),
       vectors: Number(row['vectors'] ?? 0),
     }
+  }
+}
+
+// ---- semantic memory of conversations on PostgreSQL + the existing "RagEmbedding" (pgvector) ---
+// The account is part of the WHERE of every query: the similarity ordering only ever sees the
+// vectors of that account (tenant 'tus-memoria', workspace = the account).
+const TENANT_MEMORIA = 'tus-memoria'
+
+const mapFragmento = (row: Fila): FragmentoMemoria => ({
+  fragmentId: String(row['id']),
+  accountId: String(row['cuenta_id']),
+  conversationId: String(row['conversacion_id']),
+  channel: String(row['canal']) as FragmentoMemoria['channel'],
+  fromSequence: Number(row['desde_secuencia']),
+  throughSequence: Number(row['hasta_secuencia']),
+  text: String(row['texto']),
+  checksum: String(row['checksum']),
+  createdAt: iso(row['fecha_creacion'])!,
+  expiresAt: iso(row['expira_en']),
+})
+
+export class IndiceMemoriaPrisma implements PuertoIndiceMemoria {
+  constructor(private readonly client: ClientePrismaAsistente) {}
+
+  // The fragment and its vector are written together or not at all.
+  async guardar(fragment: FragmentoMemoria, vector: number[], embedding: { model: string; version: string }) {
+    if (vector.length !== DIMENSION_EMBEDDINGS) throw new Error('memory vector has an unexpected dimension')
+    return this.client.$transaction(async (tx) => {
+      const insertados = await tx.$executeRawUnsafe(
+        `INSERT INTO public."fragmentos_memoria" ("id","cuenta_id","conversacion_id","canal","desde_secuencia","hasta_secuencia","texto","checksum","version_embeddings","fecha_creacion","expira_en")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::timestamptz,$11::timestamptz)
+         ON CONFLICT ("conversacion_id","desde_secuencia","hasta_secuencia") DO NOTHING`,
+        fragment.fragmentId, fragment.accountId, fragment.conversationId, fragment.channel, fragment.fromSequence, fragment.throughSequence, fragment.text, fragment.checksum, embedding.version, fragment.createdAt, fragment.expiresAt
+      )
+      if (Number(insertados) === 0) return 'existente' as const
+      await tx.$executeRawUnsafe(
+        `INSERT INTO public."RagEmbedding" ("id","tenantId","workspaceId","sourceId","chunkId","chunkIndex","embeddingModel","embeddingVersion","indexVersion","vector","sourceChecksum","sourceUri","parserVersion","chunkerVersion","retentionUntil","metadata","createdAt","updatedAt")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::vector,$11,$12,$13,$14,$15::timestamptz,$16::jsonb,now(),now())`,
+        `rag-memoria-${fragment.fragmentId}`, TENANT_MEMORIA, fragment.accountId, fragment.conversationId, fragment.fragmentId, fragment.fromSequence % 2_147_483_647, embedding.model, embedding.version, VERSION_INDICE_MEMORIA,
+        vectorLiteral(vector), fragment.checksum, `memoria://conversacion/${fragment.conversationId}`, 'memoria-v1', 'mensajes-v1', fragment.expiresAt, JSON.stringify({ channel: fragment.channel })
+      )
+      return 'guardado' as const
+    })
+  }
+
+  async buscar(input: { accountId: string; vector: number[]; embeddingVersion: string; limit: number; now: string }) {
+    if (!input.accountId) return []
+    const rows = await this.client.$queryRawUnsafe<Fila[]>(
+      `SELECT f.*, 1 - (e."vector" <=> $1::vector) AS score
+         FROM public."RagEmbedding" e
+         JOIN public."fragmentos_memoria" f ON f."id" = e."chunkId"
+        WHERE e."tenantId" = $2 AND e."workspaceId" = $3 AND f."cuenta_id" = $3
+          AND e."indexVersion" = $4 AND e."embeddingVersion" = $5
+          AND (f."expira_en" IS NULL OR f."expira_en" > $6::timestamptz)
+        ORDER BY e."vector" <=> $1::vector
+        LIMIT $7`,
+      vectorLiteral(input.vector), TENANT_MEMORIA, input.accountId, VERSION_INDICE_MEMORIA, input.embeddingVersion, input.now, input.limit
+    )
+    return rows.map((row) => ({ fragment: mapFragmento(row), score: Number(row['score']) }))
+  }
+
+  async deCuenta(accountId: string) {
+    return (await this.client.$queryRawUnsafe<Fila[]>('SELECT * FROM public."fragmentos_memoria" WHERE "cuenta_id" = $1 ORDER BY "fecha_creacion", "desde_secuencia"', accountId)).map(mapFragmento)
   }
 }

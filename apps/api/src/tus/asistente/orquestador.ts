@@ -7,6 +7,8 @@ import { formatearPesos } from '@factory/contracts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
+import { cuentaDeContacto } from './historial.ts'
+import type { ServicioMemoriaSemantica } from './memoria-semantica.ts'
 import { PRESUPUESTO_CONTEXTO_POR_DEFECTO, construirContexto, estimarTokens, ventanaReciente, type MensajeReciente, type PresupuestoContexto } from './contexto.ts'
 import { cuentaTrivial, detectarCambioDeHorario, detectarRestriccionProfesional, esPreguntaSuelta, expresaFrustracion, pideDetener, pideEmpezarDeNuevo, pideOtrasOpciones, sinInsultos, tieneInsultos } from './restricciones.ts'
 import { GUIA_DE_TEMA, TEMAS_AYUDA, TEMAS_DE_CUENTA, ayudaDeCuenta, detectarAyuda, enlaceGuia, enlaceTus, guiaDeCuenta, lineaDeReanudacion, pideExplicacion, rutaDeTema, type AyudaDetectada, type EstadoDesafio, type TemaAyuda } from './asistencia.ts'
@@ -40,6 +42,7 @@ import {
   pideHumano,
   pideVincular,
   preguntaPorCuenta,
+  canalDe,
   limpiarParaMemoria,
   redactarPii,
   respuestaConfirmacion,
@@ -203,6 +206,8 @@ export interface DependenciasOrquestador {
   accounts: ResolutorCuentaAsistente
   linking: ServicioVinculacionWhatsapp
   knowledge: RecuperadorConocimiento | null
+  // Semantic memory of the account's old conversations (null: no embeddings provider, no memory).
+  memoria?: ServicioMemoriaSemantica | null
   transcriptor: Transcriptor | null
   // Speech-to-text limits (size, timeout, duration, formats); defaults when absent.
   audio?: Partial<LimitesAudio>
@@ -2452,7 +2457,7 @@ export class OrquestadorConversacion {
     // ONE constructor of the context, under a token budget: summary, memories, facts, the recent
     // window (from the newest message back) and the current message.
     const contexto = construirContexto(
-      { fijos, resumen: await this.resumenVigente(turn.conversation), recuerdos: [], hechos: [], recientes: await this.recientes(turn), actual: redactarPii(text) },
+      { fijos, resumen: await this.resumenVigente(turn.conversation), recuerdos: await this.recuerdosDe(turn, text), hechos: [], recientes: await this.recientes(turn), actual: redactarPii(text) },
       this.limits.contexto
     )
     // Sizes and counts only: never the content of a message.
@@ -3186,6 +3191,27 @@ export class OrquestadorConversacion {
   // - the newest `historyMessages` messages are left out: they are the recent window, sent as
   //   they are. Personal identifiers and secrets are removed before the model sees anything.
 
+  // Memories of the ACCOUNT of this contact related to what is being asked (phase 4). The account
+  // is the one the backend resolved for the contact — the session on the Web, a verified link on
+  // WhatsApp; an anonymous visitor, an unlinked WhatsApp or an identification by name + document
+  // have none, and get no memory beyond their own conversation.
+  private async recuerdosDe(turn: Turno, text: string): Promise<string[]> {
+    if (!this.deps.memoria) return []
+    return (await this.deps.memoria.recuperar({ accountId: cuentaDeContacto(turn.contact), consulta: text })).recuerdos
+  }
+
+  // What a summary step just covered also becomes memories of the account (same messages, same
+  // moment: they have left the recent window). Nothing is stored for a contact without an account.
+  private async recordar(conversationId: string, mensajes: MensajeConversacion[]): Promise<void> {
+    if (!this.deps.memoria) return
+    const origen = await this.deps.transaction.ejecutar(async (repositories) => {
+      const conversation = await repositories.conversaciones.buscar(conversationId)
+      const contact = conversation ? await repositories.contactos.buscar(conversation.contactId) : null
+      return conversation && contact ? { accountId: cuentaDeContacto(contact), channel: canalDe(conversation) } : null
+    })
+    if (origen?.accountId) await this.deps.memoria.recordar({ accountId: origen.accountId, conversationId, channel: origen.channel, mensajes })
+  }
+
   // The summary the context uses: the newest stored version (or the legacy column of a
   // conversation summarized before versions existed).
   private async resumenVigente(conversation: ConversacionWhatsapp): Promise<string | null> {
@@ -3248,6 +3274,7 @@ export class OrquestadorConversacion {
         if (conversation) await repositories.conversaciones.actualizar({ ...conversation, summary: text, summaryMessageCount: conversation.summaryMessageCount + mensajes.length, version: conversation.version + 1 }, conversation.version)
       })
       this.metric('assistant.summary', { version, messages: mensajes.length, tokens: estimarTokens(text) })
+      await this.recordar(conversationId, mensajes)
       return resumen
     } catch (error) {
       // Stored by another worker (same version): that one is the summary. Anything else: best

@@ -1,4 +1,11 @@
 import { PRESUPUESTO_CONTEXTO_POR_DEFECTO } from './contexto.ts'
+import { LIMITES_MEMORIA_POR_DEFECTO, ServicioMemoriaSemantica, type PuertoIndiceMemoria } from './memoria-semantica.ts'
+
+// A similarity threshold from the environment: a number in 0..1, or the default.
+const fraccion = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value)
+  return value !== undefined && value.trim() !== '' && Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : fallback
+}
 import type { TusApplicationService } from '../application/tus-application-service.ts'
 import { ServicioAyudaPublica } from './ayuda.ts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
@@ -162,6 +169,8 @@ export function crearModuloWhatsapp(input: {
   servicios?: ServiciosCompartidosAsistente
   domain?: PuertoDominioAsistente
   knowledgeIndex?: PuertoIndiceConocimiento | null
+  // Semantic memory of conversations (needs an embeddings provider; absent: no memory).
+  memoryIndex?: PuertoIndiceMemoria | null
   whatsapp?: WhatsappProvider
   chat?: ChatProvider | null
   embeddings?: EmbeddingProvider | null
@@ -248,6 +257,11 @@ export function crearModuloWhatsapp(input: {
         minLexicalScore: UMBRAL_LEXICO,
       })
     : null
+  // Semantic memory needs vectors: without an embeddings provider it stays off (the rest of the
+  // assistant works the same).
+  const memoria = input.memoryIndex && embeddings
+    ? new ServicioMemoriaSemantica(input.memoryIndex, embeddings, { topK: numero(env['WHATSAPP_AI_MEMORY_TOP_K'], LIMITES_MEMORIA_POR_DEFECTO.topK, 1, 8), minScore: fraccion(env['WHATSAPP_AI_MEMORY_MIN_SCORE'], LIMITES_MEMORIA_POR_DEFECTO.minScore) }, now, input.metric)
+    : null
   const domain =
     input.domain ?? (input.application ? new DominioAsistenteTus(input.application, now, input.servicios) : null)
   if (!domain) throw new Error('the WhatsApp assistant needs the TUS application or a domain port')
@@ -264,6 +278,7 @@ export function crearModuloWhatsapp(input: {
     accounts: input.accounts,
     linking: vinculacion,
     knowledge,
+    memoria,
     transcriptor,
     audio: limitesAudio,
     comprobantes,

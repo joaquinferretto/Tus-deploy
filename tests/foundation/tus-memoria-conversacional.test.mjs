@@ -323,3 +323,103 @@ test('MEMORIA privacidad: passwords, verification codes, tokens, cookies, card d
   assert.match(r.limpio.contrasena, /quiero un plomero/u, 'the useful part of the message is kept')
   assert.deepEqual(r.conserva, ['Necesito un plomero para el jueves a las 10 en el centro', 'El turno sale $200 y la seña es de $100', 'mirá https://tusservicios.shop/ayuda/pagos'], 'ordinary text, prices and plain links are untouched')
 })
+
+// Deterministic embeddings for the memory tests: the direction of a vector is its topic.
+const MEMORIA_SEMANTICA_SETUP = `${MEMORIA_SETUP}
+  const { IndiceMemoriaEnMemoria, ServicioMemoriaSemantica, fragmentarConversacion } = await import('./apps/api/src/tus/asistente/memoria-semantica.ts')
+  const { ENCABEZADO_RECUERDOS } = await import('./apps/api/src/tus/asistente/contexto.ts')
+  const TEMAS = [/agua|plomer|canilla|ba[nñ]o/iu, /enchufe|electric|luz|cable/iu, /jard[ií]n|pasto|podar/iu]
+  const temas = { id: 'temas', model: 'temas', version: 'temas-v1', dimensions: 4, embedded: [], embed: async (texts) => texts.map((text) => { temas.embedded.push(text); const v = TEMAS.map((patron) => (patron.test(text) ? 1 : 0)); return v.some(Boolean) ? [...v, 0] : [0, 0, 0, 1] }) }
+  const indiceMemoria = new IndiceMemoriaEnMemoria()
+  const conMemoria = crearModuloWhatsapp({ env: { ...waEnv, WHATSAPP_AI_MEMORY_MIN_SCORE: '0.5' }, transaction: waTx, accounts: accountResolver, application: tusApp, knowledgeIndex, memoryIndex: indiceMemoria, whatsapp: fakeWa, chat, embeddings: temas, transcriptor: null, now: waClock, metric: (name, fields) => metrics.push({ name, ...fields }) })
+  const esResumen = (input) => String(input.messages[0].content).startsWith('Resumí la conversación')
+  script = (input) => input.messages[0].content === PROMPT_ENRUTADOR ? { content: JSON.stringify({ intent: 'saludo' }) } : esResumen(input) ? { content: JSON.stringify({ necesidad: 'resumen' }) } : { content: 'Entendido.' }
+  const decir = async (cuenta, text, extra = {}) => { const r = await conMemoria.asistenteWeb.enviar({ identidad: cuenta ? { context: sesion(cuenta), visitorId: null } : { context: null, visitorId: extra.visitante ?? VISITANTE }, text, correlationId: 'corr-memoria' }); waAdvance(6000); return r }
+  // Thirteen messages on one topic: the summary step runs and what left the recent window becomes memory.
+  const charlar = async (cuenta, frase, extra) => { let ultimo; for (let i = 1; i <= 13; i += 1) ultimo = await decir(cuenta, frase + ' (' + i + ')', extra); return ultimo.conversationId }
+  const recuerdosDe = (llamada) => llamada.messages.find((m) => String(m.content).startsWith(ENCABEZADO_RECUERDOS))?.content ?? null
+  const ultimaCharla = () => chat.calls.filter((call) => call.messages[0].content !== PROMPT_ENRUTADOR && !esResumen(call)).at(-1)
+`
+
+test('MEMORIA fase 4 semántica: stretches of old conversations become memories of the ACCOUNT; a related question brings a few of them back — never another account\'s, never for an anonymous visitor, never a secret', () => {
+  const r = runTypeScriptScenario(`${MEMORIA_SEMANTICA_SETUP}
+    const out = {}
+    const convA = await charlar('cuenta-a', 'Tengo una pérdida de agua en el baño, mi contraseña es hunter2secreta y mi mail es ana@example.com')
+    const convB = await charlar('cuenta-b', 'Se me quemó un enchufe y necesito un electricista, dato privado de B')
+    const convAnonima = await charlar(null, 'Un visitante pregunta por una pérdida de agua')
+    out.guardados = [(await indiceMemoria.deCuenta('cuenta-a')).length > 0, (await indiceMemoria.deCuenta('cuenta-b')).length > 0, indiceMemoria.filas.every((f) => ['cuenta-a', 'cuenta-b'].includes(f.fragment.accountId)), indiceMemoria.filas.some((f) => f.fragment.conversationId === convAnonima)]
+    const deA = await indiceMemoria.deCuenta('cuenta-a')
+    out.procedencia = deA.map((f) => [f.conversationId === convA, f.channel, f.fromSequence <= f.throughSequence, f.checksum.length, f.text.split('\\n').length > 1])
+    out.sinSecretos = !JSON.stringify(indiceMemoria.filas).includes('hunter2secreta') && !JSON.stringify(indiceMemoria.filas).includes('ana@example.com') && !temas.embedded.some((t) => t.includes('hunter2secreta') || t.includes('ana@example.com'))
+    // Later, in a NEW conversation of account A (the Web one was closed): a related question.
+    await conMemoria.asistenteWeb.reiniciar({ context: sesion('cuenta-a'), visitorId: null })
+    const nueva = await decir('cuenta-a', '¿Te acordás de lo del agua del baño?')
+    const recuerdosA = recuerdosDe(ultimaCharla())
+    out.recupera = [nueva.conversationId !== convA, Boolean(recuerdosA), /pérdida de agua/u.test(recuerdosA ?? ''), /enchufe|privado de B/u.test(recuerdosA ?? ''), (recuerdosA ?? '').split('\\n').length - 1 <= 3, /\\[\\d{4}-\\d{2}-\\d{2}, Web\\]/u.test(recuerdosA ?? '')]
+    // The same account asking about something it never talked about: nothing is brought back.
+    await decir('cuenta-a', 'Necesito alguien para podar el jardín')
+    out.sinRelacion = recuerdosDe(ultimaCharla())
+    // Account B asking about water: it has no memory of water, and never gets A's.
+    await decir('cuenta-b', '¿Y lo de la pérdida de agua?')
+    out.cuentaB = recuerdosDe(ultimaCharla())
+    await decir('cuenta-b', 'Volviendo al enchufe quemado')
+    const recuerdosB = recuerdosDe(ultimaCharla())
+    out.propiosDeB = [/enchufe/u.test(recuerdosB ?? ''), /agua|baño/u.test(recuerdosB ?? '')]
+    // An anonymous visitor asking the same: no account, no memory.
+    await decir(null, '¿Te acordás de la pérdida de agua?', { visitante: 'visitante-otro-0123456789' })
+    out.anonimo = recuerdosDe(ultimaCharla())
+    const medidas = metrics.filter((m) => m.name.startsWith('assistant.memory'))
+    out.metricas = [medidas.some((m) => m.name === 'assistant.memory_stored' && m.fragments > 0), medidas.some((m) => m.name === 'assistant.memory_retrieved' && m.retrieved > 0), medidas.some((m) => m.name === 'assistant.memory_retrieved' && m.discarded > 0), !JSON.stringify(medidas).includes('agua')]
+    const contexto = metrics.filter((m) => m.name === 'assistant.context').at(-1)
+    out.contexto = typeof contexto.tokensRecuerdos === 'number'
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.guardados, [true, true, true, false], 'memories exist for the two accounts and for nobody else: the anonymous conversation stores none')
+  for (const fila of r.procedencia) assert.deepEqual(fila, [true, 'web', true, 64, true], 'each fragment knows its conversation, channel and message range, and holds several messages')
+  assert.equal(r.sinSecretos, true, 'a password and an email never reach a fragment or the embeddings provider')
+  assert.deepEqual(r.recupera, [true, true, true, false, true, true], 'a related question in a new conversation brings back a few memories of that account, with their origin')
+  assert.equal(r.sinRelacion, null, 'below the threshold nothing is a memory')
+  assert.equal(r.cuentaB, null, 'another account never receives them')
+  assert.deepEqual(r.propiosDeB, [true, false])
+  assert.equal(r.anonimo, null, 'no account, no memory')
+  assert.deepEqual(r.metricas, [true, true, true, true], 'stored, retrieved and discarded are counted without content')
+  assert.equal(r.contexto, true)
+})
+
+test('MEMORIA fase 4 servicio: the account restricts the search before the similarity; a threshold and a small top K choose; fragments are coherent stretches; a failure never breaks the turn', () => {
+  const r = runTypeScriptScenario(`${MEMORIA_SEMANTICA_SETUP}
+    const out = {}
+    const mensaje = (n, text, direction = 'inbound') => ({ messageId: 'm' + n, conversationId: 'c', contactId: 'k', wamid: null, direction, type: 'text', text, status: 'processed', statusAt: null, externalTimestamp: null, replyToWamid: null, actor: 'contact', metadata: {}, correlationId: 'c', createdAt: new Date(waClock()).toISOString(), sequence: n })
+    const largos = Array.from({ length: 9 }, (_, i) => mensaje(i + 1, 'pérdida de agua parte ' + (i + 1) + ' ' + 'x'.repeat(200), i % 2 ? 'outbound' : 'inbound'))
+    const fragmentos = fragmentarConversacion([...largos, mensaje(10, null), { ...mensaje(11, 'sin secuencia'), sequence: undefined }])
+    out.fragmentos = [fragmentos.length > 1, fragmentos.every((f) => f.text.length <= 900), fragmentos[0].fromSequence, fragmentos.at(-1).throughSequence, fragmentos.every((f, i) => i === 0 || f.fromSequence === fragmentos[i - 1].throughSequence + 1), fragmentos[0].text.startsWith('Usuario: '), fragmentos[0].text.includes('\\nTUS: ')]
+    const indice = new IndiceMemoriaEnMemoria()
+    const servicio = new ServicioMemoriaSemantica(indice, temas, { topK: 2, minScore: 0.5 }, waClock)
+    const recordar = (accountId, conversationId, textos) => servicio.recordar({ accountId, conversationId, channel: 'whatsapp', mensajes: textos.map((t, i) => ({ ...mensaje(i + 1, t), conversationId })) })
+    out.guardar = [await recordar('A', 'c1', ['pérdida de agua en la cocina']), await recordar('A', 'c1', ['pérdida de agua en la cocina']), await recordar('A', 'c2', ['canilla que gotea']), await recordar('A', 'c3', ['otra pérdida de agua, tercera vez']), await recordar('A', 'c4', ['enchufe quemado']), await recordar('B', 'c5', ['agua en el techo de B']), await recordar('', 'c6', ['agua sin cuenta'])]
+    const agua = await servicio.recuperar({ accountId: 'A', consulta: 'tengo otra vez agua en el piso' })
+    out.agua = [agua.recuerdos.length, agua.recuerdos.every((x) => /agua|canilla/u.test(x)), agua.recuerdos.some((x) => x.includes('de B')), agua.candidatos, agua.descartados, agua.recuerdos.every((x) => x.includes('WhatsApp'))]
+    out.luz = (await servicio.recuperar({ accountId: 'A', consulta: 'la luz no anda' })).recuerdos.map((x) => x.includes('enchufe'))
+    out.nada = (await servicio.recuperar({ accountId: 'A', consulta: 'hola buen día' })).recuerdos.length
+    out.sinCuenta = [(await servicio.recuperar({ accountId: null, consulta: 'agua' })).recuerdos.length, (await servicio.recuperar({ accountId: '', consulta: 'agua' })).recuerdos.length, (await servicio.recuperar({ accountId: 'C', consulta: 'agua' })).recuerdos.length]
+    // Whatever a store returned, a fragment of another account never goes on.
+    const tramposo = { guardar: async () => 'guardado', deCuenta: async () => [], buscar: async () => [{ fragment: { ...indice.filas.find((f) => f.fragment.accountId === 'B').fragment }, score: 0.99 }] }
+    out.defensa = (await new ServicioMemoriaSemantica(tramposo, temas, {}, waClock).recuperar({ accountId: 'A', consulta: 'agua' })).recuerdos.length
+    // Failures: the provider is down.
+    const caido = { ...temas, embed: async () => { throw new Error('caido') } }
+    out.fallos = [(await new ServicioMemoriaSemantica(indice, caido, {}, waClock).recuperar({ accountId: 'A', consulta: 'agua' })).recuerdos.length, await new ServicioMemoriaSemantica(indice, caido, {}, waClock).recordar({ accountId: 'A', conversationId: 'c9', channel: 'web', mensajes: [mensaje(1, 'agua')] })]
+    // An expired memory is not brought back.
+    indice.filas.find((f) => f.fragment.conversationId === 'c4').fragment.expiresAt = new Date(waClock() - 1000).toISOString()
+    out.vencido = (await servicio.recuperar({ accountId: 'A', consulta: 'la luz no anda' })).recuerdos.length
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.fragmentos, [true, true, 1, 9, true, true, true], 'several messages per fragment, cut at message boundaries, contiguous ranges; empty and unsaved messages are skipped')
+  assert.deepEqual(r.guardar, [1, 0, 1, 1, 1, 1, 0], 'the same stretch is stored once; nothing is stored without an account')
+  assert.deepEqual(r.agua, [2, true, false, 2, 0, true], 'top K = 2 of the account\'s own related memories')
+  assert.deepEqual(r.luz, [true])
+  assert.equal(r.nada, 0, 'nothing relevant: no memory')
+  assert.deepEqual(r.sinCuenta, [0, 0, 0])
+  assert.equal(r.defensa, 0, 'defence in depth: a foreign fragment is dropped even if a store returned it')
+  assert.deepEqual(r.fallos, [0, 0], 'the memory failing never breaks the turn')
+  assert.equal(r.vencido, 0)
+})

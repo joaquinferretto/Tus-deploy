@@ -138,3 +138,70 @@ test('MEMORIA fase 3 PostgreSQL: summary versions are added, never overwritten; 
   assert.equal(r.mensajesIntactos, true)
   assert.deepEqual(r.otra, [null, 0])
 })
+
+test('MEMORIA fase 4 PostgreSQL: fragments and their vectors (pgvector, the existing RagEmbedding) are written together; the search is restricted to the account in SQL, before the similarity; an expired or foreign fragment never comes back', { skip, timeout: 180000 }, () => {
+  const r = runTypeScriptScenario(`${MEMORIA_PG_SETUP}
+    const { IndiceMemoriaPrisma } = await import('./apps/api/src/tus/adapters/prisma-asistente.ts')
+    const { ServicioMemoriaSemantica } = await import('./apps/api/src/tus/asistente/memoria-semantica.ts')
+    const { DIMENSION_EMBEDDINGS } = await import('./apps/api/src/tus/asistente/conocimiento.ts')
+    const out = {}
+    try {
+      const indice = new IndiceMemoriaPrisma(prisma)
+      // A unit vector on one axis per topic (1024 dimensions, like the column).
+      const eje = (n, mezcla = 0) => { const v = new Array(DIMENSION_EMBEDDINGS).fill(0); v[n] = 1; if (mezcla) v[mezcla] = 0.4; return v }
+      const A = run + '-cuenta-a'; const B = run + '-cuenta-b'
+      const cA = await conversacion({ cuenta: A }); const cB = await conversacion({ cuenta: B })
+      let n = 0
+      const fragmento = (cuenta, c, desde, hasta, text, extra = {}) => ({ fragmentId: run + '-fragmento-' + (n += 1), accountId: cuenta, conversationId: c.conversationId, channel: 'web', fromSequence: desde, throughSequence: hasta, text, checksum: 'c'.repeat(64), createdAt: new Date().toISOString(), expiresAt: null, ...extra })
+      const E = { model: 'modelo-prueba', version: 'prueba-v1' }
+      out.guardar = [
+        await indice.guardar(fragmento(A, cA, 1, 4, 'A: pérdida de agua'), eje(1), E),
+        await indice.guardar(fragmento(A, cA, 1, 4, 'A: repetido'), eje(1), E),
+        await indice.guardar(fragmento(A, cA, 5, 8, 'A: enchufe quemado'), eje(2), E),
+        await indice.guardar(fragmento(A, cA, 9, 12, 'A: vencido sobre agua', { expiresAt: new Date(Date.now() - 60000).toISOString() }), eje(1, 3), E),
+        await indice.guardar(fragmento(B, cB, 1, 4, 'B: agua, secreto de B'), eje(1), E),
+      ]
+      const buscar = (cuenta, vector, limit = 5) => indice.buscar({ accountId: cuenta, vector, embeddingVersion: E.version, limit, now: new Date().toISOString() })
+      const deA = await buscar(A, eje(1))
+      out.deA = deA.map((x) => [x.fragment.text, Math.round(x.score * 100) / 100, x.fragment.accountId === A, x.fragment.conversationId === cA.conversationId, x.fragment.fromSequence, x.fragment.throughSequence])
+      out.deB = (await buscar(B, eje(1))).map((x) => x.fragment.text)
+      out.nadie = [(await buscar(run + '-otra', eje(1))).length, (await buscar('', eje(1))).length]
+      out.topK = (await buscar(A, eje(1), 1)).length
+      out.otraVersion = (await indice.buscar({ accountId: A, vector: eje(1), embeddingVersion: 'otra-version', limit: 5, now: new Date().toISOString() })).length
+      // Both rows or none: a vector of the wrong size stores nothing.
+      out.dimension = await codigo(() => indice.guardar(fragmento(A, cA, 20, 21, 'A: vector corto'), [1, 0, 0], E)).then((c) => c !== 'ok')
+      const filas = await prisma.$queryRawUnsafe('SELECT (SELECT count(*)::int FROM public."fragmentos_memoria" WHERE "cuenta_id" = $1) AS fragmentos, (SELECT count(*)::int FROM public."RagEmbedding" WHERE "tenantId" = $2 AND "workspaceId" = $1) AS vectores', A, 'tus-memoria')
+      out.filas = [filas[0].fragmentos, filas[0].vectores]
+      out.deCuenta = [(await indice.deCuenta(A)).length, (await indice.deCuenta(B)).map((f) => f.text)]
+      // The database holds the invariants.
+      out.checks = [
+        await codigo(() => prisma.$executeRawUnsafe('INSERT INTO public."fragmentos_memoria" ("id","cuenta_id","conversacion_id","canal","desde_secuencia","hasta_secuencia","texto","checksum","fecha_creacion") VALUES ($1,$2,$3,$4,5,1,$5,$6,now())', run + '-x1', A, cA.conversationId, 'web', 'x', 'c')),
+        await codigo(() => prisma.$executeRawUnsafe('INSERT INTO public."fragmentos_memoria" ("id","cuenta_id","conversacion_id","canal","desde_secuencia","hasta_secuencia","texto","checksum","fecha_creacion") VALUES ($1,$2,$3,$4,30,31,$5,$6,now())', run + '-x2', '', cA.conversationId, 'web', 'x', 'c')),
+        await codigo(() => prisma.$executeRawUnsafe('INSERT INTO public."fragmentos_memoria" ("id","cuenta_id","conversacion_id","canal","desde_secuencia","hasta_secuencia","texto","checksum","fecha_creacion") VALUES ($1,$2,$3,$4,30,31,$5,$6,now())', run + '-x3', A, cA.conversationId, 'sms', 'x', 'c')),
+        await codigo(() => prisma.$executeRawUnsafe('INSERT INTO public."fragmentos_memoria" ("id","cuenta_id","conversacion_id","canal","desde_secuencia","hasta_secuencia","texto","checksum","fecha_creacion") VALUES ($1,$2,$3,$4,30,31,$5,$6,now())', run + '-x4', A, run + '-no-existe', 'web', 'x', 'c')),
+      ].map((c) => c !== 'ok')
+      const indices = await prisma.$queryRawUnsafe("SELECT indexname FROM pg_indexes WHERE indexname IN ('ix_rag_embedding_tenant_workspace', 'ix_fragmentos_memoria_cuenta', 'uq_fragmentos_memoria_rango') ORDER BY 1")
+      out.indices = indices.map((i) => i.indexname)
+      // The knowledge base is untouched: its tenant has no memory vectors and memory has none of its own.
+      out.conocimiento = (await prisma.$queryRawUnsafe('SELECT count(*)::int AS n FROM public."RagEmbedding" WHERE "tenantId" = $1 AND "workspaceId" IN ($2, $3)', 'tus-platform', A, B))[0].n
+      // End to end with the service (threshold + own account only).
+      const proveedor = { id: 'p', model: E.model, version: E.version, dimensions: DIMENSION_EMBEDDINGS, embed: async (texts) => texts.map((t) => (/agua/u.test(t) ? eje(1) : /enchufe/u.test(t) ? eje(2) : eje(9))) }
+      const servicio = new ServicioMemoriaSemantica(indice, proveedor, { topK: 3, minScore: 0.5 })
+      out.servicio = [(await servicio.recuperar({ accountId: A, consulta: 'otra vez agua' })).recuerdos.map((x) => x.replace(/^\\[[^\\]]+\\] /u, '')), (await servicio.recuperar({ accountId: B, consulta: 'otra vez agua' })).recuerdos.length, (await servicio.recuperar({ accountId: A, consulta: 'el jardín' })).recuerdos.length, (await servicio.recuperar({ accountId: null, consulta: 'agua' })).recuerdos.length]
+    } finally { await prisma.$disconnect() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.guardar, ['guardado', 'existente', 'guardado', 'guardado', 'guardado'], 'the same stretch of a conversation is stored once')
+  assert.deepEqual(r.deA, [['A: pérdida de agua', 1, true, true, 1, 4], ['A: enchufe quemado', 0, true, true, 5, 8]], 'only fragments of that account, best first, with their origin; the expired one is not returned')
+  assert.deepEqual(r.deB, ['B: agua, secreto de B'], 'the other account only sees its own')
+  assert.deepEqual(r.nadie, [0, 0], 'an unknown or empty account gets nothing')
+  assert.equal(r.topK, 1)
+  assert.equal(r.otraVersion, 0, 'vectors of another embeddings version are never compared')
+  assert.equal(r.dimension, true)
+  assert.deepEqual(r.filas, [3, 3], 'a fragment and its vector exist together: the refused one left neither')
+  assert.deepEqual(r.deCuenta, [3, ['B: agua, secreto de B']])
+  assert.deepEqual(r.checks, [true, true, true, true], 'an inverted range, an empty account, an unknown channel and an unknown conversation are refused')
+  assert.deepEqual(r.indices, ['ix_fragmentos_memoria_cuenta', 'ix_rag_embedding_tenant_workspace', 'uq_fragmentos_memoria_rango'])
+  assert.equal(r.conocimiento, 0)
+  assert.deepEqual(r.servicio, [['A: pérdida de agua'], 1, 0, 0], 'threshold applied; B gets only its own fragment; no account, no memory')
+})
