@@ -6,6 +6,7 @@ import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../.
 import { asyncHandler, createErrorEnvelope } from '../../presentation/middleware/error.ts'
 import { getCorrelationId } from '../../presentation/middleware/correlation.ts'
 import { normalizarTelefono } from '@factory/contracts'
+import { normalizeDisplayName, normalizeEmail, validateEmail, validatePassword } from '../domain/validation.js'
 import { vistaDesafio, type ServicioVerificacionTelefono } from '../phone/servicio.ts'
 
 export interface AuthRouterDependencies {
@@ -41,6 +42,16 @@ export function createAuthRouter({ service, sessions, cookies = readSessionCooki
   // for an email already registered.
   router.post('/auth/register', asyncHandler(async (request: Request, response: Response) => {
     const body = asRecord(request.body)
+    // Format only: which field is not well formed. It says nothing about any account.
+    const malFormados = [
+      ...(validateEmail(normalizeEmail(readString(body, 'email'))) ? [] : ['email']),
+      ...(validatePassword(readString(body, 'password')) ? [] : ['password']),
+      ...(normalizeDisplayName(body['displayName']) ? [] : ['displayName']),
+    ]
+    if (malFormados.length > 0) {
+      response.status(400).json({ ...createErrorEnvelope(new Error('registration data is not valid'), getCorrelationId(request), 'INVALID_REQUEST'), fields: malFormados })
+      return
+    }
     let phone: string | null = null
     if (phones && typeof body['phone'] === 'string' && body['phone'].trim()) {
       const normalized = normalizarTelefono(body['phone'])

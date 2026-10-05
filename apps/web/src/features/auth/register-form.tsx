@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { PhoneApiError, phoneApi, type DesafioTelefonoWeb } from '@/lib/tus-phone-client'
 import { FormError, GoogleAuthButton, PasswordField, RoleIntentSelector, Separator, TextField } from './auth-fields'
-import { MIN_PASSWORD_LENGTH, registerErrorMessage, rememberReturnTo, safeInternalPath, validateRegister, withReturnTo, type FieldErrors, type RoleIntent } from './auth-validation'
+import { MIN_PASSWORD_LENGTH, nombrePersona, registerErrorMessage, registerFieldErrors, rememberReturnTo, safeInternalPath, validateRegister, withReturnTo, type FieldErrors, type RoleIntent } from './auth-validation'
 import styles from './auth.module.css'
 import { VerificacionWhatsapp } from './whatsapp-verification'
 
@@ -52,12 +52,13 @@ export function RegisterForm(): React.ReactNode {
       result = await phoneApi.registrar({
         email: values.email.trim(),
         password: values.password,
-        displayName: `${values.firstName.trim()} ${values.lastName.trim()}`,
+        displayName: `${nombrePersona(values.firstName) ?? values.firstName.trim()} ${nombrePersona(values.lastName) ?? values.lastName.trim()}`,
         phone: values.phone.trim(),
       })
     } catch (cause) {
       setSubmitting(false)
       if (cause instanceof PhoneApiError && cause.code === 'INVALID_PHONE') return setErrors({ phone: 'Revisá el número: escribilo con característica, por ejemplo 379 412-3456.' })
+      if (cause instanceof PhoneApiError && cause.code === 'INVALID_REQUEST' && cause.fields.length > 0) return setErrors(registerFieldErrors(cause.fields))
       if (cause instanceof PhoneApiError && cause.code === 'RATE_LIMITED') return setMessage('Hiciste muchos intentos seguidos. Esperá unos minutos y probá de nuevo.')
       setMessage(registerErrorMessage(cause instanceof PhoneApiError ? cause.code : undefined))
       return
@@ -113,8 +114,8 @@ export function RegisterForm(): React.ReactNode {
         <FormError message={message} />
         <RoleIntentSelector onChange={setIntent} value={intent} />
         <div className={styles.row2}>
-          <TextField autoComplete="given-name" error={errors.firstName} id="registro-nombre" label="Nombre" onChange={update('firstName')} value={values.firstName} />
-          <TextField autoComplete="family-name" error={errors.lastName} id="registro-apellido" label="Apellido" onChange={update('lastName')} value={values.lastName} />
+          <TextField autoComplete="given-name" error={errors.firstName} id="registro-nombre" label="Nombre" maxLength={60} onChange={update('firstName')} value={values.firstName} />
+          <TextField autoComplete="family-name" error={errors.lastName} id="registro-apellido" label="Apellido" maxLength={60} onChange={update('lastName')} value={values.lastName} />
         </div>
         <TextField autoComplete="tel" error={errors.phone} id="registro-telefono" inputMode="tel" label="Celular con WhatsApp" onChange={update('phone')} placeholder="379 412-3456" type="tel" value={values.phone} />
         <TextField autoComplete="email" error={errors.email} id="registro-email" inputMode="email" label="Correo electrónico" onChange={update('email')} type="email" value={values.email} />

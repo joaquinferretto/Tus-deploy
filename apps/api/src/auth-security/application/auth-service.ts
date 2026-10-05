@@ -27,7 +27,9 @@ import { failure, type AuthFailure } from '../domain/errors.js'
 import {
   GENERIC_AUTH_FAILURE_MESSAGE,
   GENERIC_RECOVERY_MESSAGE,
+  OWN_ACCOUNT_FIELDS,
   hasPrivilegeMutation,
+  normalizeDisplayName,
   normalizeEmail,
   validateEmail,
   validatePassword,
@@ -154,7 +156,7 @@ export class AuthService {
   // unverified account gets a new verification link; a verified one gets a security notice.
   async registerAccount(input: RegisterInput): Promise<RegisterOutcome> {
     const normalizedEmail = normalizeEmail(input.email)
-    if (!validateEmail(normalizedEmail) || !validatePassword(input.password) || input.displayName.trim().length === 0) {
+    if (!validateEmail(normalizedEmail) || !validatePassword(input.password) || !normalizeDisplayName(input.displayName)) {
       throw new PasswordPolicyError('VALIDATION_FAILED')
     }
     if (await this.passwordIsBreached(input.password)) throw new PasswordPolicyError('PASSWORD_BREACHED')
@@ -264,7 +266,7 @@ export class AuthService {
       id: this.dependencies.ids.next(),
       email: input.email.trim(),
       normalizedEmail,
-      displayName: input.displayName.trim(),
+      displayName: normalizeDisplayName(input.displayName) ?? input.displayName.trim(),
       tenantId: this.dependencies.ids.next(),
       roles: ['owner'],
       status: 'active',
@@ -1011,14 +1013,13 @@ export class AuthService {
       await this.record(account, AUTH_EVENT_KIND.AUTH_FAILED, 'denied', 'account_update_forbidden')
       return failure(AUTH_RESULT_CODE.FORBIDDEN, 'Account update is not permitted')
     }
+    // A closed form: a field that is not one of the account's own is refused, never ignored.
+    if (Object.keys(input.changes).some((key) => !(OWN_ACCOUNT_FIELDS as readonly string[]).includes(key)))
+      return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Unknown account field')
     const displayName = input.changes['displayName']
-    if (
-      displayName !== undefined &&
-      (typeof displayName !== 'string' || displayName.trim().length === 0)
-    ) {
-      return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Display name is invalid')
-    }
-    if (typeof displayName === 'string') account.displayName = displayName.trim()
+    const normalizedName = displayName === undefined ? undefined : normalizeDisplayName(displayName)
+    if (normalizedName === null) return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Display name is invalid')
+    if (normalizedName !== undefined) account.displayName = normalizedName
     account.updatedAt = this.dependencies.clock.now()
     await store.saveAccount(account)
     return { ok: true, account: this.safeAccount(account) }

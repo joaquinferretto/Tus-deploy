@@ -1,8 +1,14 @@
 // Client-side checks only improve UX; the API repeats every validation and remains the authority.
 
-import { normalizarTelefono } from '@factory/contracts'
+import { normalizarNombrePersona, normalizarTelefono } from '@factory/contracts'
 
 export const MIN_PASSWORD_LENGTH = 12 // Same rule as the API (auth-security validatePassword).
+export const MAX_PASSWORD_LENGTH = 256
+export const MAX_EMAIL_LENGTH = 320
+
+// The name of a person, with the rule the profile and the API use (contracts).
+export const nombrePersona = (value: string): string | null => normalizarNombrePersona(value)
+const MENSAJE_NOMBRE = 'solo letras, de 2 a 60 caracteres (podés usar tildes, ñ, espacios, apóstrofo y guion).'
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
 
@@ -31,10 +37,13 @@ export function validateRegister(input: {
 }): FieldErrors {
   const errors: FieldErrors = {}
   if (!input.firstName.trim()) errors.firstName = 'Ingresá tu nombre.'
+  else if (!nombrePersona(input.firstName)) errors.firstName = `Nombre: ${MENSAJE_NOMBRE}`
   if (!input.lastName.trim()) errors.lastName = 'Ingresá tu apellido.'
-  if (!EMAIL.test(input.email.trim())) errors.email = 'Ingresá un correo válido.'
+  else if (!nombrePersona(input.lastName)) errors.lastName = `Apellido: ${MENSAJE_NOMBRE}`
+  if (!EMAIL.test(input.email.trim()) || input.email.trim().length > MAX_EMAIL_LENGTH) errors.email = 'Ingresá un correo válido.'
   if (input.phone !== undefined && !telefonoValido(input.phone)) errors.phone = MENSAJE_TELEFONO
   if (input.password.length < MIN_PASSWORD_LENGTH) errors.password = `La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`
+  else if (input.password.length > MAX_PASSWORD_LENGTH) errors.password = `La contraseña puede tener hasta ${MAX_PASSWORD_LENGTH} caracteres.`
   if (input.confirmation !== input.password) errors.confirmation = 'Las contraseñas no coinciden.'
   if (!input.acceptedTerms) errors.terms = 'Tenés que aceptar los términos para continuar.'
   return errors
@@ -46,6 +55,15 @@ export function signInErrorMessage(status: string, code?: string): string {
   return status === 'unavailable'
     ? 'No pudimos conectar con TUS. Probá de nuevo en unos minutos.'
     : 'El correo o la contraseña no son correctos (también podés ingresar con tu celular), o todavía no verificaste tu número o tu email.'
+}
+
+// The API names the fields whose format it refused: each one gets its own message, next to it.
+export function registerFieldErrors(fields: readonly string[]): FieldErrors {
+  const errors: FieldErrors = {}
+  if (fields.includes('email')) errors.email = 'Ingresá un correo válido.'
+  if (fields.includes('password')) errors.password = `La contraseña debe tener entre ${MIN_PASSWORD_LENGTH} y ${MAX_PASSWORD_LENGTH} caracteres.`
+  if (fields.includes('displayName')) errors.firstName = `Nombre y apellido: ${MENSAJE_NOMBRE}`
+  return errors
 }
 
 export function registerErrorMessage(code?: string): string {

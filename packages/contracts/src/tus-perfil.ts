@@ -131,7 +131,22 @@ export interface ActualizarPerfilPersonal {
 export type ErroresPerfil = Partial<Record<CampoPerfil, string>>
 
 const texto = (value: unknown) => (typeof value === 'string' ? value.replace(/\s+/gu, ' ').trim() : '')
-const NOMBRE = /^[\p{L}][\p{L}\p{M}' .-]{1,59}$/u
+
+// The name or the last name of a person. Unicode letters with their marks (José, Muñoz, Ñandú),
+// words separated by ONE space, apostrophe or hyphen (María José, O'Connor, Pérez-Gómez), an
+// optional period after a word (Ma. José); 2 to 60 characters; never a digit, never a symbol,
+// never punctuation alone or doubled. The apostrophe a phone keyboard writes (U+2019 and its
+// look-alikes) is the same apostrophe. Returns the normalized text, or null.
+const APOSTROFES = /[\u2019\u2018\u02BC\u00B4`]/gu
+const PALABRAS_NOMBRE = /^[\p{L}\p{M}]+\.?(?:[ '-][\p{L}\p{M}]+\.?)*$/u
+export const LARGO_NOMBRE_PERSONA = { min: 2, max: 60 } as const
+export function normalizarNombrePersona(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const nombre = value.normalize('NFC').replace(APOSTROFES, "'").replace(/\s+/gu, ' ').trim()
+  const largo = [...nombre].length
+  if (largo < LARGO_NOMBRE_PERSONA.min || largo > LARGO_NOMBRE_PERSONA.max || !/^\p{L}/u.test(nombre) || !PALABRAS_NOMBRE.test(nombre)) return null
+  return nombre
+}
 
 export type ResultadoPerfil = { ok: true; valor: ActualizarPerfilPersonal & { pisoDepto: string | null } } | { ok: false; errores: ErroresPerfil }
 
@@ -153,10 +168,10 @@ export type ResultadoIdentidad = { ok: true; valor: IdentidadPersonal } | { ok: 
 // The same function runs in the Web form and in the API (the API is the authority).
 export function validarIdentidadPersonal(input: Record<string, unknown>): ResultadoIdentidad {
   const errores: ErroresIdentidad = {}
-  const nombre = texto(input['nombre'])
-  const apellido = texto(input['apellido'])
-  if (!NOMBRE.test(nombre)) errores.nombre = 'Ingresá el nombre: solo letras, de 2 a 60 caracteres.'
-  if (!NOMBRE.test(apellido)) errores.apellido = 'Ingresá el apellido: solo letras, de 2 a 60 caracteres.'
+  const nombre = normalizarNombrePersona(input['nombre']) ?? ''
+  const apellido = normalizarNombrePersona(input['apellido']) ?? ''
+  if (!nombre) errores.nombre = 'Ingresá el nombre: solo letras, de 2 a 60 caracteres.'
+  if (!apellido) errores.apellido = 'Ingresá el apellido: solo letras, de 2 a 60 caracteres.'
   const documento = normalizarDocumento(input['tipoDocumento'], input['numeroDocumento'])
   if (!documento.ok) {
     if (documento.motivo === 'tipo') errores.tipoDocumento = 'Elegí el tipo de documento.'
@@ -169,10 +184,10 @@ export function validarIdentidadPersonal(input: Record<string, unknown>): Result
 // Same validation in the Web form and in the API (the API is the authority and repeats it).
 export function validarPerfilPersonal(input: Record<string, unknown>): ResultadoPerfil {
   const errores: ErroresPerfil = {}
-  const nombre = texto(input['nombre'])
-  const apellido = texto(input['apellido'])
-  if (!NOMBRE.test(nombre)) errores.nombre = 'Ingresá tu nombre (2 a 60 letras).'
-  if (!NOMBRE.test(apellido)) errores.apellido = 'Ingresá tu apellido (2 a 60 letras).'
+  const nombre = normalizarNombrePersona(input['nombre']) ?? ''
+  const apellido = normalizarNombrePersona(input['apellido']) ?? ''
+  if (!nombre) errores.nombre = 'Ingresá tu nombre (2 a 60 letras).'
+  if (!apellido) errores.apellido = 'Ingresá tu apellido (2 a 60 letras).'
   const documento = normalizarDocumento(input['tipoDocumento'], input['numeroDocumento'])
   if (!documento.ok) {
     if (documento.motivo === 'tipo') errores.tipoDocumento = 'Elegí el tipo de documento.'
