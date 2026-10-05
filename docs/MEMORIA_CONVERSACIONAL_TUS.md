@@ -1,6 +1,6 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0 a 10 terminadas; sin merge, push ni deploy** (diseno; historial canonico; constructor de contexto; resumen
+Estado: **Fases 0 a 10 terminadas; integrada en `main` y publicada el 2026-10-05** (diseno; historial canonico; constructor de contexto; resumen
 incremental versionado; memoria semantica; hechos con procedencia; estado real; continuidad Web +
 WhatsApp; retencion y borrado; observabilidad y costos). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
@@ -483,14 +483,20 @@ Corrida el 2026-10-05 sobre la rama `feat/memoria-conversacional`:
 - Suite completa contra PostgreSQL descartable: 233 archivos, 1237 tests: 1235 pasan, 1 omitido, 1 falla. El unico fallo fue un test de
   precios que afirmaba que su migracion era la ultima de la cadena; quedo viejo por las cuatro
   migraciones de memoria. Se corrigio la asercion (la migracion sigue aplicada, en su lugar) y ese
-  archivo se volvio a correr en verde. No se repitio la suite completa despues de ese cambio.
+  archivo se volvio a correr en verde.
+- Antes de integrar, la suite completa se repitio sobre la combinacion con
+  `fix/admin-identidad-contacto`: 236 archivos, 1243 tests, 1242 pasan, 1 omitido, 0 fallas. Build de
+  la Web y smoke Admin contra API real local (40/40) en verde.
+- `tus-memoria-migracion-postgres.test.mjs` cubre las 4 migraciones como actualizacion de una base
+  con historial: numeracion determinista y sin duplicados, nada mas cambia, tabla vacia, segundo
+  deploy sin cambios, y 200.000 mensajes numerados en 6,4 s (el deploy completo).
 - Build de la Web: no se corrio; la rama no toca `apps/web` ni `packages`.
 - Sin probar: proveedor real de embeddings, Groq real y WhatsApp real con memoria.
 
 ## 11. Riesgos y decisiones abiertas
 
-- **Migracion `20261102100000`**: incluye un `UPDATE` que numera los mensajes existentes. Revisar el
-  tamano de `mensajes_conversacion_whatsapp` en produccion antes de aplicarla.
+- **Migracion `20261102100000`**: incluye un `UPDATE` que numera los mensajes existentes dentro de una
+  transaccion que bloquea la tabla. Medido: 200.000 mensajes en segundos.
 - **Depuracion automatica**: el worker borra memoria vencida mientras esta ocioso.
 - **Sin endpoint**: borrar memoria y leer los contadores solo es posible desde el backend.
 

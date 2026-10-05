@@ -671,7 +671,7 @@ Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md
 tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
 de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
 
-**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica), 5 (hechos con procedencia), 6 (estado real de TUS), 7 (continuidad Web + WhatsApp), 8 (retencion, borrado y privacidad), 9 (observabilidad y costos) y 10 (validacion integral). Sin merge, push ni deploy.**
+**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica), 5 (hechos con procedencia), 6 (estado real de TUS), 7 (continuidad Web + WhatsApp), 8 (retencion, borrado y privacidad), 9 (observabilidad y costos) y 10 (validacion integral). Integrada en `main` y publicada el 2026-10-05.**
 
 **Lo que funciona hoy**
 
@@ -758,7 +758,7 @@ node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
 node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
 ```
 
-**Pendientes.** Decidir merge y deploy (4 migraciones; revisar el backfill de `20261102100000`). Para la memoria semantica en produccion hace falta un proveedor de
+**Pendientes.** Para la memoria semantica en produccion hace falta un proveedor de
 embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
 
 ## Limites actuales y trabajo posterior
