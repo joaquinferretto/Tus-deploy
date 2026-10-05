@@ -71,3 +71,15 @@ test('VALIDACIONES trabajos: a budget is in a supported currency, with bounded a
   assert.deepEqual(r.presupuesto, ['issued', '100000', ['description', 'lineId', 'quantity', 'totalAmountMinor', 'unitAmountMinor'], 'Mano de obra', 'provider-user'], 'a line keeps only its own fields; the author is the session')
   assert.deepEqual(r.evidencia, ['none', 'INVALID', 'INVALID', 'INVALID', 'INVALID', 'INVALID', 'INVALID', 'INVALID'], 'an evidence has a known phase, bounded reference and metadata, a clean id and a moment that already happened')
 })
+
+test('VALIDACIONES publicaciones: a publication has a bounded name and description and a real, bounded price', () => {
+  const r = runTypeScriptScenario(`
+    const { createTusApplication } = await import('./apps/api/src/tus/composition/index.ts')
+    const application = createTusApplication()
+    const provider = { sessionId: 's', subjectId: 'provider-user', tenantId: 'provider-tenant', roles: ['merchant'], permissions: ['tus:marketplace:write', 'tus:marketplace:read'], correlationId: 'c' }
+    await application.marketplace.onboard(provider, { merchantId: 'provider-1', cohort: 'repairs-trades', locationId: 'location-1', timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'], operatingPolicyVersion: 'policy-1' })
+    const crear = async (extra = {}) => { try { await application.marketplace.createListing(provider, { merchantId: 'provider-1', kind: 'service', name: 'Plomería a domicilio', description: 'Reparación de pérdidas', cohort: 'repairs-trades', locationId: 'location-1', currency: 'ARS', price: 1000, bookingMode: 'requiere_presupuesto', priceMode: 'requires_budget', capacity: 1, workingHours: [{ day: 1, start: '09:00', end: '12:00' }], ...extra }); return 'ok' } catch (error) { return error?.code ?? String(error?.message).slice(0, 40) } }
+    console.log(JSON.stringify([await crear(), await crear({ name: 'x'.repeat(121) }), await crear({ description: 'x'.repeat(2001) }), await crear({ name: '   ' }), await crear({ name: { $ne: '' } }), await crear({ price: -1 }), await crear({ price: 0 }), await crear({ price: Number.NaN }), await crear({ price: Infinity }), await crear({ price: 100000001 }), await crear({ currency: 'pesos' }), await crear({ name: 'ñ'.repeat(120) })]))
+  `)
+  assert.deepEqual(r, ['ok', 'INVALID_LISTING', 'INVALID_LISTING', 'INVALID_LISTING', 'INVALID_LISTING', 'INVALID_LISTING', 'INVALID_LISTING', 'INVALID_LISTING', 'INVALID_LISTING', 'INVALID_LISTING', 'INVALID_LISTING', 'ok'])
+})
