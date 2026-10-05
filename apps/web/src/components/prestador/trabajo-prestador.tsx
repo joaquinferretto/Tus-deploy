@@ -896,6 +896,12 @@ function validateBudgetDraft(draft: BudgetDraft):
   const validUntil = draft.validUntil === '' ? undefined : toIsoTimestamp(draft.validUntil)
   if (currency.length !== 3 || scope.length === 0 || description.length === 0)
     return 'Currency, scope, and line description are required.'
+  // The limits the API enforces (it is the authority): say which field is wrong before sending.
+  if (currency !== 'ARS') return 'Currency: budgets are issued in ARS.'
+  if (scope.length > 2000) return 'Scope: up to 2000 characters.'
+  if (description.length > 300) return 'Line description: up to 300 characters.'
+  if (draft.totalMinor.length > 13 || draft.unitAmountMinor.length > 13) return 'Amounts: the value is too large.'
+  if (draft.quantity.length > 6 || Number(draft.quantity) > 100000) return 'Quantity: up to 100000 units.'
   if (
     !/^\d+$/u.test(draft.totalMinor) ||
     !/^\d+$/u.test(draft.unitAmountMinor) ||

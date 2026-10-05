@@ -3981,6 +3981,7 @@ function readWorkMutation(
   const idempotencyKey = headerKey || bodyKey || ''
   const requestHash = readString(body, 'requestHash')
   if (!idempotencyKey || !requestHash) return null
+  if (idempotencyKey.length > 200 || requestHash.length > 200) return null
   return {
     idempotencyKey,
     requestHash,
