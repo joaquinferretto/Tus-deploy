@@ -58,6 +58,11 @@ export interface PuertoHechos {
   invalidar(input: { accountId: string; type: TipoHecho | null; reason: string; now: string }): Promise<number>
   // Hard delete of one fact of THAT account.
   eliminar(accountId: string, factId: string): Promise<boolean>
+  // Hard delete of the facts of THAT account that came from a message or from a conversation
+  // (every fact of the account when neither is given). Returns how many.
+  eliminarDeOrigen(input: { accountId: string; conversationId?: string; messageId?: string }): Promise<number>
+  // Retention: hard delete of what was invalidated or expired before that moment.
+  depurar(antes: string): Promise<number>
 }
 
 export class HechosEnMemoria implements PuertoHechos {
@@ -102,6 +107,21 @@ export class HechosEnMemoria implements PuertoHechos {
     if (indice < 0) return false
     this.filas.splice(indice, 1)
     return true
+  }
+
+  private quitar(sobra: (hecho: HechoMemoria) => boolean) {
+    const antes = this.filas.length
+    for (let i = this.filas.length - 1; i >= 0; i -= 1) if (sobra(this.filas[i]!)) this.filas.splice(i, 1)
+    return antes - this.filas.length
+  }
+
+  async eliminarDeOrigen(input: { accountId: string; conversationId?: string; messageId?: string }) {
+    if (!input.accountId) return 0
+    return this.quitar((h) => h.accountId === input.accountId && (input.conversationId === undefined || h.conversationId === input.conversationId) && (input.messageId === undefined || h.sourceMessageId === input.messageId))
+  }
+
+  async depurar(antes: string) {
+    return this.quitar((h) => (h.invalidatedAt !== null && h.invalidatedAt < antes) || (h.expiresAt !== null && h.expiresAt < antes))
   }
 }
 

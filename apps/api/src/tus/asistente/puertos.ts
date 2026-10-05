@@ -100,6 +100,9 @@ export interface RepositoriosAsistente {
     listar(conversationId: string): Promise<ResumenConversacion[]>
     // Throws a unique violation (code P2002) when that version already exists.
     crear(value: ResumenConversacion): Promise<void>
+    // Deletes the versions that reach sequence `desde` or beyond (every version when null).
+    // Returns how many.
+    eliminar(conversationId: string, desde: number | null): Promise<number>
   }
   auditoria: {
     registrar(event: EventoAuditoriaAsistente): Promise<void>

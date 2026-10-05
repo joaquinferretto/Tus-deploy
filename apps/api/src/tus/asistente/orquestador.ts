@@ -9,7 +9,8 @@ import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, cor
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
 import { contactosDeCuenta, cuentaDeContacto } from './historial.ts'
 import type { ServicioMemoriaSemantica } from './memoria-semantica.ts'
-import type { ServicioHechos } from './hechos.ts'
+import { detectarOlvido, type ServicioHechos } from './hechos.ts'
+import type { ServicioCicloDeVidaMemoria } from './ciclo-de-vida.ts'
 import { SIN_TURNOS_PROPIOS, detectarConsultaOperativa, elegirTurnoReferido, preguntarCualTurno, responderEstadoDeTurno } from './estado-real.ts'
 import { PRESUPUESTO_CONTEXTO_POR_DEFECTO, construirContexto, estimarTokens, ventanaReciente, type MensajeReciente, type PresupuestoContexto } from './contexto.ts'
 import { cuentaTrivial, detectarCambioDeHorario, detectarRestriccionProfesional, esPreguntaSuelta, expresaFrustracion, pideDetener, pideEmpezarDeNuevo, pideOtrasOpciones, sinInsultos, tieneInsultos } from './restricciones.ts'
@@ -217,6 +218,8 @@ export interface DependenciasOrquestador {
   memoria?: ServicioMemoriaSemantica | null
   // Durable facts of the account (closed list of types, with provenance).
   hechos?: ServicioHechos | null
+  // Deletion and retention of the memory (phase 8).
+  cicloDeVida?: ServicioCicloDeVidaMemoria | null
   transcriptor: Transcriptor | null
   // Speech-to-text limits (size, timeout, duration, formats); defaults when absent.
   audio?: Partial<LimitesAudio>
@@ -3245,8 +3248,12 @@ export class OrquestadorConversacion {
   // detection is the backend's, no model is involved; the active ones go to the context of the
   // model. No account: nothing is stored and nothing is used.
   private async registrarHechos(turn: Turno, text: string): Promise<void> {
-    const accountId = this.deps.hechos ? cuentaDeContacto(turn.contact) : null
-    if (accountId) await this.deps.hechos!.registrar({ accountId, conversationId: turn.conversation.conversationId, channel: turn.canal.id, messageId: turn.pending.at(-1)?.messageId ?? null, text })
+    const accountId = cuentaDeContacto(turn.contact)
+    if (!accountId) return
+    if (this.deps.hechos) await this.deps.hechos.registrar({ accountId, conversationId: turn.conversation.conversationId, channel: turn.canal.id, messageId: turn.pending.at(-1)?.messageId ?? null, text })
+    // "Olvidá todo lo que sabés de mí": besides the facts, the memories of old conversations go.
+    if (this.deps.cicloDeVida && detectarOlvido(text) === null)
+      await this.deps.cicloDeVida.olvidarMemoria({ accountId, correlationId: turn.pending.at(-1)?.correlationId ?? `memoria-${randomUUID()}` }).catch(() => this.metric('assistant.memory_error', { stage: 'forget' }))
   }
 
   private async hechosDe(turn: Turno): Promise<string[]> {
@@ -3260,9 +3267,21 @@ export class OrquestadorConversacion {
   private async recuerdosDe(turn: Turno, text: string): Promise<string[]> {
     // The thread of the account's other conversation (the other channel) comes first; then the
     // older memories related to the question.
-    const continuidad = await this.continuidadDeCuenta(turn)
+    const accountId = cuentaDeContacto(turn.contact)
+    if (!accountId) return []
+    // What belongs to the account is decided NOW, with the links in force: a conversation of a
+    // WhatsApp that was unlinked is not read, and neither are the memories that came from it.
+    // If that cannot be read there is no memory in this turn (never a guess).
+    const propias = await this.deps.transaction
+      .ejecutar(async (repositories) => (await Promise.all((await contactosDeCuenta(repositories, accountId)).map((contact) => repositories.conversaciones.deContacto(contact.contactId)))).flat())
+      .catch(() => null)
+    if (!propias) {
+      this.metric('assistant.memory_error', { stage: 'continuity' })
+      return []
+    }
+    const continuidad = await this.continuidadDeCuenta(turn, propias)
     if (!this.deps.memoria) return continuidad
-    return [...continuidad, ...(await this.deps.memoria.recuperar({ accountId: cuentaDeContacto(turn.contact), consulta: text })).recuerdos]
+    return [...continuidad, ...(await this.deps.memoria.recuperar({ accountId, consulta: text, conversaciones: new Set(propias.map((conversation) => conversation.conversationId)) })).recuerdos]
   }
 
   // CONTINUITY between Web and WhatsApp (phase 7). The same ACCOUNT may be talking on both: its
@@ -3271,15 +3290,11 @@ export class OrquestadorConversacion {
   // origin (date and channel). It needs no model and no embeddings: it is read from the history,
   // already cleaned. A contact without an account (anonymous visitor, WhatsApp that is not linked,
   // identification by name + document) has no other conversation: nothing is read for it.
-  private async continuidadDeCuenta(turn: Turno): Promise<string[]> {
-    const accountId = cuentaDeContacto(turn.contact)
-    if (!accountId) return []
+  private async continuidadDeCuenta(turn: Turno, propias: readonly ConversacionWhatsapp[]): Promise<string[]> {
     const desde = new Date(this.now() - CONTINUIDAD_VIGENTE_MS).toISOString()
     try {
       return await this.deps.transaction.ejecutar(async (repositories) => {
-        const contactos = await contactosDeCuenta(repositories, accountId)
-        const conversaciones = (await Promise.all(contactos.map((contact) => repositories.conversaciones.deContacto(contact.contactId))))
-          .flat()
+        const conversaciones = propias
           .filter((conversation) => conversation.conversationId !== turn.conversation.conversationId && conversation.lastMessageAt >= desde)
           .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
           .slice(0, CONTINUIDAD_CONVERSACIONES)

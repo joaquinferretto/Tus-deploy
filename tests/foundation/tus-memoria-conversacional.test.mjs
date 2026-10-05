@@ -671,3 +671,125 @@ test('MEMORIA fase 7 Web + WhatsApp: the same account keeps the thread across ch
   assert.equal(r.erroresWeb, 0)
   assert.equal(r.traza, true)
 })
+
+test('MEMORIA fase 8 ciclo de vida: deleting a message, a conversation or an account deletes what was derived from it (summary, fragment, vector, fact) — only of that account, idempotently, leaving nothing orphaned; what expired is purged', () => {
+  const r = runTypeScriptScenario(`${MEMORIA_SEMANTICA_SETUP}
+    const { HechosEnMemoria } = await import('./apps/api/src/tus/asistente/hechos.ts')
+    const out = {}
+    const indice = new IndiceMemoriaEnMemoria()
+    const hechos = new HechosEnMemoria()
+    const mod = crearModuloWhatsapp({ env: { ...waEnv, WHATSAPP_AI_MEMORY_MIN_SCORE: '0.5' }, transaction: waTx, accounts: accountResolver, application: tusApp, knowledgeIndex, memoryIndex: indice, factStore: hechos, whatsapp: fakeWa, chat, embeddings: temas, transcriptor: null, now: waClock, metric: (name, fields) => metrics.push({ name, ...fields }) })
+    const hablar = async (cuenta, text) => { const x = await mod.asistenteWeb.enviar({ identidad: { context: sesion(cuenta), visitorId: null }, text, correlationId: 'corr-8' }); waAdvance(6000); return x.conversationId }
+    // The first message states a preference (a fact); twelve more make the summary step run.
+    const conversar = async (cuenta, primero, frase) => { let id = await hablar(cuenta, primero); for (let i = 2; i <= 13; i += 1) id = await hablar(cuenta, frase + ' (' + i + ')'); return id }
+    const mensajesDe = (conversationId) => [...waStore.state.mensajes.values()].filter((m) => m.conversationId === conversationId).sort((a, b) => a.sequence - b.sequence)
+    const resumenesDe = (conversationId) => waTx.ejecutar((repos) => repos.resumenes.listar(conversationId))
+    const conversacion = (conversationId) => waTx.ejecutar((repos) => repos.conversaciones.buscar(conversationId))
+    const fragmentosDe = (cuenta, conversationId) => indice.filas.filter((f) => f.fragment.accountId === cuenta && (!conversationId || f.fragment.conversationId === conversationId)).length
+    const hechosDe = (cuenta) => hechos.filas.filter((h) => h.accountId === cuenta).length
+    const estado = async (cuenta, conversationId) => [mensajesDe(conversationId).filter((m) => m.text).length, (await resumenesDe(conversationId)).length, fragmentosDe(cuenta, conversationId), hechosDe(cuenta)]
+
+    const convA = await conversar('cuenta-a', 'Siempre prefiero a la tarde, tengo una pérdida de agua en el baño', 'Sigue la pérdida de agua del baño')
+    const convB = await conversar('cuenta-b', 'Siempre prefiero a la noche, se me quemó un enchufe', 'Sigue el enchufe quemado')
+    const antesA = await estado('cuenta-a', convA); const antesB = await estado('cuenta-b', convB)
+    out.inicio = [antesA.every((n) => n > 0), antesB.every((n) => n > 0), indice.filas.every((f) => f.fragment.expiresAt > new Date(waClock()).toISOString())]
+    const primeroA = mensajesDe(convA)[0]
+    out.origenDelHecho = hechos.filas.find((h) => h.accountId === 'cuenta-a').sourceMessageId === primeroA.messageId
+
+    // ---- Nobody deletes what is not theirs: same answer as "it does not exist", nothing changes.
+    out.ajeno = [
+      await codigo(() => mod.memoria.borrarMensaje({ accountId: 'cuenta-b', messageId: primeroA.messageId })),
+      await codigo(() => mod.memoria.borrarConversacion({ accountId: 'cuenta-b', conversationId: convA })),
+      await codigo(() => mod.memoria.borrarMensaje({ accountId: '', messageId: primeroA.messageId })),
+      await codigo(() => mod.memoria.borrarMensaje({ accountId: 'cuenta-a', messageId: 'no-existe' })),
+      await codigo(() => mod.memoria.borrarConversacion({ accountId: 'cuenta-a', conversationId: 'no-existe' })),
+    ]
+    out.intacto = JSON.stringify(await estado('cuenta-a', convA)) === JSON.stringify(antesA)
+
+    // ---- One message: its content, the summaries that covered it, the fragments of that stretch
+    // (with their vectors) and the fact it stated.
+    const borrado = await mod.memoria.borrarMensaje({ accountId: 'cuenta-a', messageId: primeroA.messageId })
+    const trasBorrar = mensajesDe(convA)[0]
+    out.mensaje = [borrado.messages, borrado.summaries > 0, borrado.fragments > 0, borrado.facts, trasBorrar.text, trasBorrar.sequence === primeroA.sequence, trasBorrar.metadata.deleted, mensajesDe(convA).length === antesA[0]]
+    out.derivados = [(await resumenesDe(convA)).length, (await conversacion(convA)).summary, fragmentosDe('cuenta-a'), hechosDe('cuenta-a')]
+    out.otraCuenta = JSON.stringify(await estado('cuenta-b', convB)) === JSON.stringify(antesB)
+    out.idempotente = Object.values(await mod.memoria.borrarMensaje({ accountId: 'cuenta-a', messageId: primeroA.messageId }))
+    // The next turn rebuilds the summary and the memories from the messages that are LEFT.
+    const llamadas = chat.calls.length; const embebidos = temas.embedded.length
+    await hablar('cuenta-a', 'Sigue la pérdida de agua del baño (14)')
+    const rehecho = chat.calls.slice(llamadas).filter(esResumen)
+    out.rehecho = [rehecho.length, (await resumenesDe(convA)).length, fragmentosDe('cuenta-a', convA) > 0, JSON.stringify(rehecho).includes('prefiero a la tarde'), temas.embedded.slice(embebidos).some((t) => t.includes('prefiero a la tarde')), indice.filas.some((f) => f.fragment.text.includes('prefiero a la tarde'))]
+
+    // ---- "Olvidá lo que sabés de mí": the memory of the account goes, its conversation stays.
+    await hablar('cuenta-a', 'Prefiero a la siesta')
+    const conHecho = hechos.filas.filter((h) => h.accountId === 'cuenta-a' && !h.invalidatedAt).length
+    const textosAntes = mensajesDe(convA).filter((m) => m.text).length
+    await hablar('cuenta-a', 'Borrá todo lo que recordás de mí')
+    out.olvido = [conHecho, fragmentosDe('cuenta-a'), hechosDe('cuenta-a'), mensajesDe(convA).filter((m) => m.text).length > textosAntes, (await resumenesDe(convA)).length, fragmentosDe('cuenta-b') > 0, hechosDe('cuenta-b')]
+
+    // ---- One conversation.
+    const sinB = await mod.memoria.borrarConversacion({ accountId: 'cuenta-b', conversationId: convB })
+    out.conversacion = [sinB.messages === antesB[0], sinB.summaries === antesB[1], sinB.fragments === antesB[2], sinB.facts === antesB[3], await estado('cuenta-b', convB), mensajesDe(convB).length === antesB[0], (await conversacion(convB)).summary, mensajesDe(convA).filter((m) => m.text).length > 0]
+    out.conversacionIdempotente = Object.values(await mod.memoria.borrarConversacion({ accountId: 'cuenta-b', conversationId: convB }))
+
+    // ---- A whole account: Web + linked WhatsApp, and what was stored from a WhatsApp it had before.
+    const fragmento = (cuenta, conversationId, extra = {}) => indice.guardar({ fragmentId: 'f-' + cuenta + '-' + conversationId + '-' + (extra.desde ?? 1), accountId: cuenta, conversationId, channel: 'whatsapp', fromSequence: extra.desde ?? 1, throughSequence: (extra.desde ?? 1) + 1, text: 'Usuario: agua de ' + cuenta, checksum: 'x', createdAt: new Date(waClock()).toISOString(), expiresAt: extra.expira ?? null }, [1, 0, 0, 0], { model: 'temas', version: 'temas-v1' })
+    const hecho = (cuenta, extra = {}) => hechos.filas.push({ factId: 'h-' + hechos.filas.length, accountId: cuenta, type: 'zona_habitual', value: 'Centro', conversationId: null, sourceMessageId: null, channel: 'whatsapp', confidence: 0.9, createdAt: new Date(waClock()).toISOString(), updatedAt: new Date(waClock()).toISOString(), expiresAt: null, invalidatedAt: null, invalidationReason: null, ...extra })
+    const webC = await conversar('cuenta-c', 'Siempre prefiero a la mañana, quiero podar el jardín', 'Sigue lo del jardín')
+    const waC = await conversacionWhatsapp('5493794811111', { cuenta: 'cuenta-c', textos: ['hola por WhatsApp', 'respuesta'] })
+    const viejoC = await conversacionWhatsapp('5493794811112', { textos: ['un WhatsApp que estuvo vinculado'] })
+    await fragmento('cuenta-c', waC); await fragmento('cuenta-c', viejoC)
+    const sinC = await mod.memoria.borrarCuenta({ accountId: 'cuenta-c' })
+    out.cuenta = [sinC.messages > 13, sinC.summaries > 0, sinC.fragments >= 3, sinC.facts, fragmentosDe('cuenta-c'), hechosDe('cuenta-c'), mensajesDe(webC).some((m) => m.text), mensajesDe(waC).some((m) => m.text), mensajesDe(viejoC).every((m) => m.text), (await resumenesDe(webC)).length]
+    out.sinCuenta = Object.values(await mod.memoria.borrarCuenta({ accountId: '' }))
+
+    // ---- Retention: what expired, what was stored for an account that no longer owns the
+    // conversation, and facts that stopped counting long ago.
+    const waD = await conversacionWhatsapp('5493794811113', { cuenta: 'cuenta-d', textos: ['hola'] })
+    const sueltoD = await conversacionWhatsapp('5493794811114', { textos: ['hola'] })
+    await fragmento('cuenta-d', waD); await fragmento('cuenta-d', waD, { desde: 5, expira: new Date(waClock() - 1000).toISOString() }); await fragmento('cuenta-d', sueltoD)
+    const dias = (n) => new Date(waClock() - n * 24 * 3600_000).toISOString()
+    hecho('cuenta-d'); hecho('cuenta-d', { invalidatedAt: dias(31), invalidationReason: 'reemplazado' }); hecho('cuenta-d', { invalidatedAt: dias(2), invalidationReason: 'reemplazado' }); hecho('cuenta-d', { expiresAt: dias(40) })
+    // Before the purge: a memory of a conversation that is not the account's any more is not used.
+    const servicio = new ServicioMemoriaSemantica(indice, temas, { topK: 5, minScore: 0.5 }, waClock)
+    out.guardia = [(await servicio.recuperar({ accountId: 'cuenta-d', consulta: 'agua' })).recuerdos.length, (await servicio.recuperar({ accountId: 'cuenta-d', consulta: 'agua', conversaciones: new Set([waD]) })).recuerdos.length]
+    const depurado = await mod.memoria.depurar()
+    out.depurado = [depurado, fragmentosDe('cuenta-d', waD), fragmentosDe('cuenta-d', sueltoD), hechos.filas.filter((h) => h.accountId === 'cuenta-d').map((h) => h.invalidatedAt ? 'invalidado' : 'activo'), Object.values(await mod.memoria.depurar())]
+    // The worker runs it while idle, not on every pass.
+    let corridas = 0
+    const cola = mod.crearWorker({ owner: 'fase-8', mantenimiento: async () => { corridas += 1 } })
+    const pasadas = [await cola.mantener(), await cola.mantener()]
+    waAdvance(7 * 3600_000)
+    out.worker = [...pasadas, await cola.mantener(), corridas]
+
+    // ---- Nothing orphaned; the trace has quantities only.
+    const existentes = new Set([...waStore.state.conversaciones.values()].map((c) => c.conversationId))
+    out.sinHuerfanos = indice.filas.every((f) => existentes.has(f.fragment.conversationId)) && (waStore.state.resumenes ?? []).every((x) => existentes.has(x.conversationId))
+    const auditoria = waStore.state.auditoria.filter((e) => e.action.startsWith('memory.'))
+    out.auditoria = [[...new Set(auditoria.map((e) => e.action))].sort(), auditoria.every((e) => Object.values(e.metadata).every((v) => typeof v === 'number')), JSON.stringify(auditoria).includes('agua')]
+    const medidas = metrics.filter((m) => m.name === 'assistant.memory_deleted' || m.name === 'assistant.memory_purged')
+    out.metricas = [[...new Set(medidas.map((m) => m.scope ?? 'purge'))].sort(), /agua|enchufe|jard/u.test(JSON.stringify(medidas))]
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.inicio, [true, true, true], 'both accounts have messages, a summary, fragments and a fact; every fragment has an expiry')
+  assert.equal(r.origenDelHecho, true)
+  assert.deepEqual(r.ajeno, ['NOT_FOUND', 'NOT_FOUND', 'NOT_FOUND', 'NOT_FOUND', 'NOT_FOUND'], 'another account, no account or something that does not exist: not found')
+  assert.equal(r.intacto, true, 'a refused deletion changes nothing')
+  assert.deepEqual(r.mensaje, [1, true, true, 1, null, true, true, true], 'the content of the message is gone; its row and its sequence stay')
+  assert.deepEqual(r.derivados, [0, null, 0, 0], 'no summary, fragment or fact derived from the deleted message is left')
+  assert.equal(r.otraCuenta, true, 'the other account is untouched')
+  assert.deepEqual(r.idempotente, [0, 0, 0, 0], 'deleting again does nothing')
+  assert.deepEqual(r.rehecho, [1, 1, true, false, false, false], 'the summary and the memories are rebuilt from what is left, without the deleted content')
+  assert.deepEqual(r.olvido.slice(0, 3), [1, 0, 0], 'asked to forget everything: no fragment and no fact of the account is left')
+  assert.deepEqual(r.olvido.slice(3), [true, 1, true, 1], 'its conversation stays, and so does the other account')
+  assert.deepEqual(r.conversacion, [true, true, true, true, [0, 0, 0, 0], true, null, true], 'a deleted conversation keeps its rows and nothing else')
+  assert.deepEqual(r.conversacionIdempotente, [0, 0, 0, 0])
+  assert.deepEqual(r.cuenta, [true, true, true, 1, 0, 0, false, false, true, 0], 'the account: every conversation it has and all its memory; a conversation of somebody else is not touched')
+  assert.deepEqual(r.sinCuenta, [0, 0, 0, 0])
+  assert.deepEqual(r.guardia, [2, 1], 'a fragment of a conversation that is no longer the account\'s is not a memory of it')
+  assert.deepEqual(r.depurado, [{ expired: 1, orphaned: 1, facts: 2 }, 1, 0, ['activo', 'invalidado'], [0, 0, 0]], 'expired and orphaned fragments and long-dead facts are purged; the rest stays')
+  assert.deepEqual(r.worker, [true, false, true, 2], 'the housekeeping runs while idle, once per period')
+  assert.equal(r.sinHuerfanos, true)
+  assert.deepEqual(r.auditoria, [['memory.account_deleted', 'memory.conversation_deleted', 'memory.forgotten', 'memory.message_deleted'], true, false], 'every deletion is audited with quantities, never content')
+  assert.deepEqual(r.metricas, [['account', 'conversation', 'memory', 'message', 'purge'], false])
+})

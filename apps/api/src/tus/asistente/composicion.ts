@@ -1,6 +1,7 @@
 import { PRESUPUESTO_CONTEXTO_POR_DEFECTO } from './contexto.ts'
 import { LIMITES_MEMORIA_POR_DEFECTO, ServicioMemoriaSemantica, type PuertoIndiceMemoria } from './memoria-semantica.ts'
 import { ServicioHechos, type PuertoHechos } from './hechos.ts'
+import { ServicioCicloDeVidaMemoria } from './ciclo-de-vida.ts'
 
 // A similarity threshold from the environment: a number in 0..1, or the default.
 const fraccion = (value: string | undefined, fallback: number): number => {
@@ -147,6 +148,8 @@ export interface ModuloWhatsapp {
   soporte: ServicioSoporteWhatsapp
   plantillas: WhatsappTemplateService
   orquestador: OrquestadorConversacion
+  // Borrado (mensaje, conversación, cuenta) y retención de la memoria conversacional.
+  memoria: ServicioCicloDeVidaMemoria
   // Ayuda pública de la Web: mismo índice y mismo recuperador (filtrado por visibilidad) que WhatsApp.
   ayuda: ServicioAyudaPublica
   // Canal Web del asistente: el MISMO orquestador (modelo, tools, RAG, memoria) que WhatsApp.
@@ -265,6 +268,8 @@ export function crearModuloWhatsapp(input: {
   const memoria = input.memoryIndex && embeddings
     ? new ServicioMemoriaSemantica(input.memoryIndex, embeddings, { topK: numero(env['WHATSAPP_AI_MEMORY_TOP_K'], LIMITES_MEMORIA_POR_DEFECTO.topK, 1, 8), minScore: fraccion(env['WHATSAPP_AI_MEMORY_MIN_SCORE'], LIMITES_MEMORIA_POR_DEFECTO.minScore) }, now, input.metric)
     : null
+  // Deletion and retention work on the stores themselves: they do not need embeddings.
+  const cicloDeVida = new ServicioCicloDeVidaMemoria({ transaction: input.transaction, indice: input.memoryIndex ?? null, hechos: input.factStore ?? null, now, ...(input.metric ? { metric: input.metric } : {}) })
   const domain =
     input.domain ?? (input.application ? new DominioAsistenteTus(input.application, now, input.servicios) : null)
   if (!domain) throw new Error('the WhatsApp assistant needs the TUS application or a domain port')
@@ -283,6 +288,7 @@ export function crearModuloWhatsapp(input: {
     knowledge,
     memoria,
     hechos: input.factStore ? new ServicioHechos(input.factStore, now, input.metric) : null,
+    cicloDeVida,
     transcriptor,
     audio: limitesAudio,
     comprobantes,
@@ -321,6 +327,8 @@ export function crearModuloWhatsapp(input: {
     soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now),
     plantillas: WhatsappTemplateService.desdeEnv(env),
     orquestador,
+    // Deletion (message, conversation, account) and retention of the memory.
+    memoria: cicloDeVida,
     ayuda,
     asistenteWeb: new ServicioAsistenteWeb({
       transaction: input.transaction,
@@ -333,7 +341,7 @@ export function crearModuloWhatsapp(input: {
     avisosTurnos: new NotificadorTurnosWhatsapp(input.transaction, whatsapp, now, input.metric),
     platformAdminTenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null,
     crearWorker: (options = {}) =>
-      new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, ...options }),
+      new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, mantenimiento: () => cicloDeVida.depurar(), ...options }),
   }
 }
 

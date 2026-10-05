@@ -1,8 +1,8 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0 a 7 terminadas** (diseno; historial canonico; constructor de contexto; resumen
+Estado: **Fases 0 a 8 terminadas** (diseno; historial canonico; constructor de contexto; resumen
 incremental versionado; memoria semantica; hechos con procedencia; estado real; continuidad Web +
-WhatsApp). Este documento describe lo que el
+WhatsApp; retencion y borrado). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
 existe todavia.
 
@@ -251,10 +251,47 @@ resumen o el mensaje actual se recortaron.
   turno con el vinculo vigente, no se copia.
 - Decision: al vincular un WhatsApp, su conversacion entera pasa a contar para la cuenta, incluidos
   los mensajes anteriores al vinculo (son del mismo numero, que la cuenta verifico). Al desvincular,
-  esa conversacion deja de contar; los fragmentos semanticos ya indexados de ese numero se tratan en
-  la Fase 8.
+  esa conversacion deja de contar: sus fragmentos semanticos dejan de usarse en el acto (filtro por
+  conversaciones vigentes) y la depuracion los elimina (Fase 8).
 - Si la lectura falla, el turno sigue sin continuidad (metrica `assistant.memory_error`,
   `stage: continuity`).
+
+### 1.18 Retencion, borrado y privacidad (Fase 8, implementado)
+
+`ciclo-de-vida.ts`, `ServicioCicloDeVidaMemoria` (expuesto como `memoria` en el modulo del asistente).
+Cadena: mensaje -> resumen -> fragmento -> embedding -> hecho. Borrar un eslabon borra lo derivado.
+
+| Operacion | Que borra |
+| --- | --- |
+| `borrarMensaje({ accountId, messageId })` | el contenido del mensaje; los resumenes que lo alcanzaban; los fragmentos (con su vector) posteriores a lo que sigue resumido; los hechos que ese mensaje declaro |
+| `borrarConversacion({ accountId, conversationId })` | el contenido de todos sus mensajes, sus resumenes, sus fragmentos con vectores y los hechos que salieron de ella |
+| `borrarCuenta({ accountId })` | todas las conversaciones de la cuenta (Web y WhatsApp vinculado) y TODA su memoria, incluidos fragmentos de un WhatsApp que tuvo vinculado antes |
+| `olvidarMemoria({ accountId })` | solo lo que el asistente recuerda fuera de la conversacion: fragmentos con vectores y hechos. Lo dispara "borra todo lo que recordas de mi" |
+| `depurar()` | fragmentos vencidos, fragmentos de una conversacion que ya no es de esa cuenta (WhatsApp desvinculado) y hechos invalidados o vencidos hace mas de 30 dias |
+
+- La fila de un mensaje borrado se conserva (secuencia, direccion, fecha, estado): mantiene el orden
+  de la conversacion y las referencias del negocio. Su contenido se elimina (`texto = NULL`,
+  `metadata = { deleted: true }`). No se borran filas de conversaciones ni de mensajes.
+- Todo parte de una cuenta resuelta por el backend. Un mensaje o conversacion de otra cuenta, sin
+  cuenta o inexistente responde lo mismo: `NOT_FOUND`, sin cambios.
+- Idempotente y reintentable: primero se elimina el contenido (nada puede volver a derivarse) y
+  despues los derivados; repetir la operacion no hace nada. Varias a la vez no fallan.
+- Vector y fragmento se borran en la misma transaccion: no queda uno sin el otro. La base de
+  conocimiento (otros tenants de `"RagEmbedding"`) no se toca.
+- Tras borrar un mensaje, el paso de resumen siguiente reconstruye resumen y fragmentos con los
+  mensajes que quedan.
+- Vencimientos: fragmento 365 dias desde que se crea (`expira_en`); hecho 180 dias desde la ultima
+  vez que se dijo. Vencido: no se usa y la depuracion lo elimina.
+- La recuperacion semantica solo usa fragmentos de conversaciones que HOY son de la cuenta.
+- La depuracion corre sola en el worker de conversaciones cuando esta ocioso, como maximo una vez
+  cada 6 horas; su fallo no detiene la cola. Es acotada (1000 origenes por corrida).
+- Auditoria (`memory.message_deleted`, `memory.conversation_deleted`, `memory.account_deleted`,
+  `memory.forgotten`) y metricas (`assistant.memory_deleted`, `assistant.memory_purged`): solo
+  cantidades, nunca contenido.
+- Sin migracion: usa las tablas existentes.
+- No hay todavia una pantalla ni un endpoint para que el usuario borre: las operaciones son del
+  backend (pedido por chat de olvidar, soporte, futura baja de cuenta). El borrado de la cuenta en
+  identidad no existe en TUS; cuando exista debe llamar a `borrarCuenta`.
 
 ## 2. Que se reutiliza
 
@@ -358,7 +395,7 @@ No se agrega infraestructura: PostgreSQL + pgvector alcanzan.
   embeddings (Fases 4 y 5).
 - Los registros y metricas nunca llevan contenido de mensajes, solo cantidades y tamanos.
 
-## 7. Borrado y retencion (definicion; se implementa en la Fase 8)
+## 7. Borrado y retencion (implementado en la Fase 8, ver 1.18)
 
 Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho.
 
@@ -366,8 +403,8 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
   fragmentos y vectores eliminados, hechos con ese origen invalidados).
 - Borrar una cuenta elimina toda su memoria derivada.
 - Recuerdos y hechos pueden tener vencimiento.
-- Hoy las claves foraneas son `RESTRICT` y no existe ningun borrado: no hay datos huerfanos, pero
-  tampoco ciclo de vida.
+- Las claves foraneas siguen siendo `RESTRICT`: las filas de conversaciones no se borran; se borra
+  el contenido y todo lo derivado. No quedan datos huerfanos.
 
 ## 8. Tokens
 
@@ -402,7 +439,7 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | 5 | Hechos con procedencia | terminada |
 | 6 | Resolutores contra el estado real de TUS | terminada (turnos) |
 | 7 | Continuidad Web + WhatsApp | terminada |
-| 8 | Retencion, borrado y privacidad | pendiente |
+| 8 | Retencion, borrado y privacidad | terminada |
 | 9 | Observabilidad y costos | pendiente |
 | 10 | Validacion integral | pendiente |
 

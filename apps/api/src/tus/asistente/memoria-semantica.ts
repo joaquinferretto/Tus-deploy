@@ -37,6 +37,13 @@ export interface PuertoIndiceMemoria {
   // The fragments of THAT account closest to the vector, best first. Never another account's.
   buscar(input: { accountId: string; vector: number[]; embeddingVersion: string; limit: number; now: string }): Promise<ResultadoMemoria[]>
   deCuenta(accountId: string): Promise<FragmentoMemoria[]>
+  // Deletes fragments of THAT account WITH their vectors: all of them, those of one conversation,
+  // or those of one conversation that end after a sequence. Returns how many.
+  eliminar(input: { accountId: string; conversationId?: string; afterSequence?: number }): Promise<number>
+  // Deletes what expired, with its vectors.
+  eliminarVencidos(now: string): Promise<number>
+  // The (account, conversation) pairs that have fragments: what the retention checks.
+  origenes(limit: number): Promise<{ accountId: string; conversationId: string }[]>
 }
 
 export interface LimitesMemoriaSemantica {
@@ -50,9 +57,11 @@ export interface LimitesMemoriaSemantica {
   maxMensaje: number
   // Characters of one memory inside the context.
   maxRecuerdo: number
+  // How long a fragment lives. After that it is not returned and the retention deletes it.
+  retencionMs: number
 }
 
-export const LIMITES_MEMORIA_POR_DEFECTO: LimitesMemoriaSemantica = { topK: 3, minScore: 0.35, maxFragmento: 900, maxMensaje: 320, maxRecuerdo: 420 }
+export const LIMITES_MEMORIA_POR_DEFECTO: LimitesMemoriaSemantica = { topK: 3, minScore: 0.35, maxFragmento: 900, maxMensaje: 320, maxRecuerdo: 420, retencionMs: 365 * 24 * 60 * 60 * 1000 }
 
 export const VERSION_INDICE_MEMORIA = 'memoria-tus-v1'
 
@@ -115,6 +124,27 @@ export class IndiceMemoriaEnMemoria implements PuertoIndiceMemoria {
   async deCuenta(accountId: string) {
     return this.filas.filter((fila) => fila.fragment.accountId === accountId).map((fila) => ({ ...fila.fragment }))
   }
+
+  private quitar(sobra: (fragment: FragmentoMemoria) => boolean) {
+    const antes = this.filas.length
+    for (let i = this.filas.length - 1; i >= 0; i -= 1) if (sobra(this.filas[i]!.fragment)) this.filas.splice(i, 1)
+    return antes - this.filas.length
+  }
+
+  async eliminar(input: { accountId: string; conversationId?: string; afterSequence?: number }) {
+    if (!input.accountId) return 0
+    return this.quitar((f) => f.accountId === input.accountId && (input.conversationId === undefined || f.conversationId === input.conversationId) && (input.afterSequence === undefined || f.throughSequence > input.afterSequence))
+  }
+
+  async eliminarVencidos(now: string) {
+    return this.quitar((f) => f.expiresAt !== null && f.expiresAt <= now)
+  }
+
+  async origenes(limit: number) {
+    const pares = new Map<string, { accountId: string; conversationId: string }>()
+    for (const fila of this.filas) pares.set(`${fila.fragment.accountId}|${fila.fragment.conversationId}`, { accountId: fila.fragment.accountId, conversationId: fila.fragment.conversationId })
+    return [...pares.values()].slice(0, limit)
+  }
 }
 
 export interface RecuperacionMemoria {
@@ -153,7 +183,7 @@ export class ServicioMemoriaSemantica {
         const vector = vectores[indice]
         if (!vector) continue
         const resultado = await this.indice.guardar(
-          { fragmentId: `fragmento-memoria-${randomUUID()}`, accountId: input.accountId, conversationId: input.conversationId, channel: input.channel, fromSequence: fragmento.fromSequence, throughSequence: fragmento.throughSequence, text: fragmento.text, checksum: checksum(fragmento.text), createdAt: new Date(this.now()).toISOString(), expiresAt: null },
+          { fragmentId: `fragmento-memoria-${randomUUID()}`, accountId: input.accountId, conversationId: input.conversationId, channel: input.channel, fromSequence: fragmento.fromSequence, throughSequence: fragmento.throughSequence, text: fragmento.text, checksum: checksum(fragmento.text), createdAt: new Date(this.now()).toISOString(), expiresAt: new Date(this.now() + this.limits.retencionMs).toISOString() },
           vector,
           { model: this.embeddings.model, version: this.embeddings.version }
         )
@@ -170,7 +200,9 @@ export class ServicioMemoriaSemantica {
 
   // 1. the account (resolved by the backend)  2. only its fragments  3. similarity
   // 4. threshold  5. a few results. No account: no memory.
-  async recuperar(input: { accountId: string | null; consulta: string }): Promise<RecuperacionMemoria> {
+  // `conversaciones`: the conversations that belong to the account NOW. A fragment of any other
+  // (a WhatsApp that was unlinked since) is not a memory of this account any more.
+  async recuperar(input: { accountId: string | null; consulta: string; conversaciones?: ReadonlySet<string> }): Promise<RecuperacionMemoria> {
     if (!input.accountId) return SIN_RECUERDOS
     const consulta = limpiarParaMemoria(input.consulta).trim()
     if (consulta.length < 3) return SIN_RECUERDOS
@@ -180,7 +212,7 @@ export class ServicioMemoriaSemantica {
       if (!vector) return SIN_RECUERDOS
       const candidatos = await this.indice.buscar({ accountId: input.accountId, vector, embeddingVersion: this.embeddings.version, limit: this.limits.topK, now: new Date(this.now()).toISOString() })
       // Defence in depth: whatever the store returned, nothing of another account goes on.
-      const propios = candidatos.filter((resultado) => resultado.fragment.accountId === input.accountId)
+      const propios = candidatos.filter((resultado) => resultado.fragment.accountId === input.accountId && (!input.conversaciones || input.conversaciones.has(resultado.fragment.conversationId)))
       const relevantes = propios.filter((resultado) => resultado.score >= this.limits.minScore)
       const recuperacion: RecuperacionMemoria = {
         recuerdos: relevantes.map((resultado) => `[${resultado.fragment.createdAt.slice(0, 10)}, ${resultado.fragment.channel === 'web' ? 'Web' : 'WhatsApp'}] ${resultado.fragment.text.replace(/\n/gu, ' / ').slice(0, this.limits.maxRecuerdo)}`),

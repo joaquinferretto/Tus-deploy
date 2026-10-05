@@ -570,6 +570,8 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
           data: { id: value.summaryId, conversacionId: value.conversationId, version: value.version, desdeSecuencia: BigInt(value.fromSequence), hastaSecuencia: BigInt(value.throughSequence), mensajes: value.messageCount, texto: value.text, modelo: value.model, fechaCreacion: new Date(value.createdAt) },
         })
       },
+      eliminar: async (conversationId, desde) =>
+        Number(await client.$executeRawUnsafe('DELETE FROM public."resumenes_conversacion" WHERE "conversacion_id" = $1 AND ($2::bigint IS NULL OR "hasta_secuencia" >= $2::bigint)', conversationId, desde)),
     },
     auditoria: {
       registrar: async (event) => {
@@ -1006,6 +1008,28 @@ export class IndiceMemoriaPrisma implements PuertoIndiceMemoria {
   async deCuenta(accountId: string) {
     return (await this.client.$queryRawUnsafe<Fila[]>('SELECT * FROM public."fragmentos_memoria" WHERE "cuenta_id" = $1 ORDER BY "fecha_creacion", "desde_secuencia"', accountId)).map(mapFragmento)
   }
+
+  // The vectors first, then the fragments, in one transaction: neither is left without the other.
+  private async quitar(condicion: string, parametros: unknown[]): Promise<number> {
+    return this.client.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`DELETE FROM public."RagEmbedding" e USING public."fragmentos_memoria" f WHERE e."tenantId" = '${TENANT_MEMORIA}' AND e."chunkId" = f."id" AND ${condicion}`, ...parametros)
+      return Number(await tx.$executeRawUnsafe(`DELETE FROM public."fragmentos_memoria" f WHERE ${condicion}`, ...parametros))
+    })
+  }
+
+  async eliminar(input: { accountId: string; conversationId?: string; afterSequence?: number }) {
+    if (!input.accountId) return 0
+    return this.quitar('f."cuenta_id" = $1 AND ($2::text IS NULL OR f."conversacion_id" = $2) AND ($3::bigint IS NULL OR f."hasta_secuencia" > $3::bigint)', [input.accountId, input.conversationId ?? null, input.afterSequence ?? null])
+  }
+
+  async eliminarVencidos(now: string) {
+    return this.quitar('f."expira_en" IS NOT NULL AND f."expira_en" <= $1::timestamptz', [now])
+  }
+
+  async origenes(limit: number) {
+    const rows = await this.client.$queryRawUnsafe<Fila[]>('SELECT DISTINCT "cuenta_id", "conversacion_id" FROM public."fragmentos_memoria" ORDER BY "cuenta_id", "conversacion_id" LIMIT $1', limit)
+    return rows.map((row) => ({ accountId: String(row['cuenta_id']), conversationId: String(row['conversacion_id']) }))
+  }
 }
 
 // ---- facts of an account on PostgreSQL ------------------------------------------------------------
@@ -1077,5 +1101,19 @@ export class HechosPrisma implements PuertoHechos {
 
   async eliminar(accountId: string, factId: string) {
     return Number(await this.client.$executeRawUnsafe('DELETE FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND "id" = $2', accountId, factId)) > 0
+  }
+
+  async eliminarDeOrigen(input: { accountId: string; conversationId?: string; messageId?: string }) {
+    if (!input.accountId) return 0
+    return Number(
+      await this.client.$executeRawUnsafe(
+        'DELETE FROM public."hechos_memoria" WHERE "cuenta_id" = $1 AND ($2::text IS NULL OR "conversacion_id" = $2) AND ($3::text IS NULL OR "mensaje_origen_id" = $3)',
+        input.accountId, input.conversationId ?? null, input.messageId ?? null
+      )
+    )
+  }
+
+  async depurar(antes: string) {
+    return Number(await this.client.$executeRawUnsafe('DELETE FROM public."hechos_memoria" WHERE ("invalidado_en" IS NOT NULL AND "invalidado_en" < $1::timestamptz) OR ("expira_en" IS NOT NULL AND "expira_en" < $1::timestamptz)', antes))
   }
 }

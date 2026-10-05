@@ -252,3 +252,91 @@ test('MEMORIA fase 5 PostgreSQL: one active fact per type and account, also unde
   assert.deepEqual(r.eliminar, [true, false])
   assert.equal(r.fk, 'n', 'ON DELETE SET NULL')
 })
+
+test('MEMORIA fase 8 PostgreSQL: deleting a message, a conversation or an account removes the summaries, the fragments WITH their vectors and the facts derived from it, only of that account, also when several deletions run at once; the retention purges what expired; no vector is left without its fragment', { skip, timeout: 180000 }, () => {
+  const r = runTypeScriptScenario(`${MEMORIA_PG_SETUP}
+    const { IndiceMemoriaPrisma, HechosPrisma } = await import('./apps/api/src/tus/adapters/prisma-asistente.ts')
+    const { ServicioCicloDeVidaMemoria } = await import('./apps/api/src/tus/asistente/ciclo-de-vida.ts')
+    const { DIMENSION_EMBEDDINGS } = await import('./apps/api/src/tus/asistente/conocimiento.ts')
+    const out = {}
+    try {
+      const indice = new IndiceMemoriaPrisma(prisma); const almacen = new HechosPrisma(prisma)
+      const ciclo = new ServicioCicloDeVidaMemoria({ transaction: tx, indice, hechos: almacen })
+      const eje = (n) => { const v = new Array(DIMENSION_EMBEDDINGS).fill(0); v[n] = 1; return v }
+      const E = { model: 'modelo-prueba', version: 'prueba-v1' }
+      const A = run + '-cuenta-a'; const B = run + '-cuenta-b'; const C = run + '-cuenta-c'; const D = run + '-cuenta-d'
+      let n = 0
+      const fragmento = (cuenta, c, desde, hasta, extra = {}) => indice.guardar({ fragmentId: run + '-fragmento-' + (n += 1), accountId: cuenta, conversationId: c.conversationId, channel: 'web', fromSequence: desde, throughSequence: hasta, text: 'fragmento de ' + cuenta, checksum: 'c'.repeat(64), createdAt: new Date().toISOString(), expiresAt: null, ...extra }, eje(1), E)
+      const hecho = (cuenta, tipo, extra = {}) => prisma.$executeRawUnsafe('INSERT INTO public."hechos_memoria" ("id","cuenta_id","tipo","valor","conversacion_id","mensaje_origen_id","canal","fecha_creacion","fecha_actualizacion","expira_en","invalidado_en","motivo_invalidacion") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),now(),$8::timestamptz,$9::timestamptz,$10)', run + '-hecho-' + (n += 1), cuenta, tipo, 'valor', extra.conversacion ?? null, extra.mensaje ?? null, 'web', extra.expira ?? null, extra.invalidado ?? null, extra.invalidado ? 'reemplazado' : null)
+      const resumen = (c, version, desde, hasta) => tx.ejecutar((repos) => repos.resumenes.crear({ summaryId: run + '-resumen-' + (n += 1), conversationId: c.conversationId, version, fromSequence: desde, throughSequence: hasta, messageCount: 2, text: 'resumen v' + version, model: null, createdAt: new Date().toISOString() }))
+      const mensajesDe = (c) => tx.ejecutar((repos) => repos.mensajes.posteriores(c.conversationId, { after: 0, limit: 100 }))
+      const copiaResumen = async (c, text) => tx.ejecutar(async (repos) => { const x = await repos.conversaciones.buscar(c.conversationId); await repos.conversaciones.actualizar({ ...x, summary: text, summaryMessageCount: 4, version: x.version + 1 }, x.version) })
+      const cuenta = async (cuentaId) => (await prisma.$queryRawUnsafe('SELECT (SELECT count(*)::int FROM public."fragmentos_memoria" WHERE "cuenta_id" = $1) AS fragmentos, (SELECT count(*)::int FROM public."RagEmbedding" WHERE "tenantId" = $2 AND "workspaceId" = $1) AS vectores, (SELECT count(*)::int FROM public."hechos_memoria" WHERE "cuenta_id" = $1) AS hechos', cuentaId, 'tus-memoria')).map((f) => [f.fragmentos, f.vectores, f.hechos])[0]
+      const resumenesDe = (c) => tx.ejecutar((repos) => repos.resumenes.listar(c.conversationId)).then((x) => x.map((s) => s.version))
+      const sembrar = async (cuentaId, c) => {
+        for (let i = 1; i <= 6; i += 1) await guardar(c, 'mensaje ' + i + ' de ' + cuentaId)
+        const s = (await mensajesDe(c)).map((m) => m.sequence)
+        await resumen(c, 1, s[0], s[1]); await resumen(c, 2, s[0], s[3]); await copiaResumen(c, 'resumen v2')
+        await fragmento(cuentaId, c, s[0], s[1]); await fragmento(cuentaId, c, s[2], s[3])
+        return s
+      }
+      const conocimientoAntes = (await prisma.$queryRawUnsafe('SELECT count(*)::int AS n FROM public."RagEmbedding" WHERE "tenantId" <> $1', 'tus-memoria'))[0].n
+      const cA = await conversacion({ cuenta: A }); const cB = await conversacion({ cuenta: B })
+      const sA = await sembrar(A, cA); await sembrar(B, cB)
+      const mA = await mensajesDe(cA)
+      await hecho(A, 'horario_preferido', { conversacion: cA.conversationId, mensaje: mA[0].messageId }); await hecho(B, 'horario_preferido', { conversacion: cB.conversationId })
+      out.inicio = [await cuenta(A), await cuenta(B)]
+
+      // Somebody else's.
+      out.ajeno = [await codigo(() => ciclo.borrarMensaje({ accountId: B, messageId: mA[3].messageId })), await codigo(() => ciclo.borrarConversacion({ accountId: B, conversationId: cA.conversationId })), await cuenta(A)]
+
+      // The fourth message: the summary that reached it goes, the older one stays; the fragment
+      // after what is still summarized goes with its vector; the fact of the first message stays.
+      const cuarto = await ciclo.borrarMensaje({ accountId: A, messageId: mA[3].messageId })
+      const fila = (await prisma.$queryRawUnsafe('SELECT "texto", "secuencia"::text AS secuencia, "metadata" FROM public."mensajes_conversacion_whatsapp" WHERE "id" = $1', mA[3].messageId))[0]
+      out.cuarto = [cuarto, fila.texto, fila.secuencia === String(sA[3]), fila.metadata, await resumenesDe(cA), (await tx.ejecutar((repos) => repos.conversaciones.buscar(cA.conversationId))).summary, await cuenta(A)]
+      // The first message: everything that is left of that conversation's memory.
+      const primero = await ciclo.borrarMensaje({ accountId: A, messageId: mA[0].messageId })
+      out.primero = [primero, await resumenesDe(cA), (await tx.ejecutar((repos) => repos.conversaciones.buscar(cA.conversationId))).summary, await cuenta(A), Object.values(await ciclo.borrarMensaje({ accountId: A, messageId: mA[0].messageId }))]
+      out.otraCuenta = [await cuenta(B), await resumenesDe(cB)]
+
+      // Four deletions of the same conversation at once.
+      const carrera = await Promise.all([1, 2, 3, 4].map(() => ciclo.borrarConversacion({ accountId: B, conversationId: cB.conversationId }).then((x) => x, (e) => 'error:' + String(e?.code ?? e?.message).slice(0, 80))))
+      out.carrera = [carrera.filter((x) => typeof x === 'string'), await cuenta(B), await resumenesDe(cB), (await mensajesDe(cB)).map((m) => m.text).filter(Boolean).length, (await mensajesDe(cB)).length]
+
+      // A whole account: Web and linked WhatsApp, plus a fragment of a WhatsApp it had before.
+      const webC = await conversacion({ cuenta: C }); const waC = await conversacion({ canal: 'whatsapp', cuenta: C }); const viejoC = await conversacion({ canal: 'whatsapp' })
+      await sembrar(C, webC); await guardar(waC, 'hola por WhatsApp'); await guardar(viejoC, 'de un WhatsApp anterior')
+      await fragmento(C, waC, 1, 2); await fragmento(C, viejoC, 1, 2); await hecho(C, 'zona_habitual')
+      const sinC = await ciclo.borrarCuenta({ accountId: C })
+      out.cuenta = [sinC, await cuenta(C), (await mensajesDe(webC)).filter((m) => m.text).length, (await mensajesDe(waC)).filter((m) => m.text).length, (await mensajesDe(viejoC)).filter((m) => m.text).length, await resumenesDe(webC)]
+
+      // Retention.
+      const waD = await conversacion({ canal: 'whatsapp', cuenta: D }); const sueltoD = await conversacion({ canal: 'whatsapp' })
+      const dias = (d) => new Date(Date.now() - d * 24 * 3600_000).toISOString()
+      await fragmento(D, waD, 1, 2); await fragmento(D, waD, 3, 4, { expiresAt: dias(1) }); await fragmento(D, sueltoD, 1, 2)
+      await hecho(D, 'zona_habitual'); await hecho(D, 'horario_preferido', { invalidado: dias(31) }); await hecho(D, 'horario_preferido', { invalidado: dias(2) }); await hecho(D, 'contacto_preferido', { expira: dias(40) })
+      const depurado = await ciclo.depurar()
+      out.depurado = [depurado.expired >= 1, depurado.orphaned >= 1, depurado.facts >= 2, await cuenta(D), (await indice.deCuenta(D)).map((f) => [f.conversationId === waD.conversationId, f.fromSequence])]
+
+      // Invariants of the whole run.
+      const huerfanos = await prisma.$queryRawUnsafe('SELECT (SELECT count(*)::int FROM public."RagEmbedding" e WHERE e."tenantId" = $1 AND e."workspaceId" LIKE $2 AND NOT EXISTS (SELECT 1 FROM public."fragmentos_memoria" f WHERE f."id" = e."chunkId")) AS vectores, (SELECT count(*)::int FROM public."fragmentos_memoria" f WHERE f."cuenta_id" LIKE $2 AND NOT EXISTS (SELECT 1 FROM public."RagEmbedding" e WHERE e."chunkId" = f."id" AND e."tenantId" = $1)) AS fragmentos', 'tus-memoria', run + '%')
+      out.huerfanos = [huerfanos[0].vectores, huerfanos[0].fragmentos]
+      out.conocimiento = (await prisma.$queryRawUnsafe('SELECT count(*)::int AS n FROM public."RagEmbedding" WHERE "tenantId" <> $1', 'tus-memoria'))[0].n === conocimientoAntes
+      const auditoria = await prisma.$queryRawUnsafe('SELECT "accion", "metadata" FROM public."auditoria_asistente" WHERE "accion" LIKE $1 AND ("conversacion_id" LIKE $2 OR "actor_id" LIKE $2)', 'memory.%', run + '%')
+      out.auditoria = [[...new Set(auditoria.map((e) => e.accion))].sort(), auditoria.every((e) => Object.values(e.metadata).every((v) => typeof v === 'number'))]
+    } finally { await prisma.$disconnect() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.inicio, [[2, 2, 1], [2, 2, 1]])
+  assert.deepEqual(r.ajeno, ['NOT_FOUND', 'NOT_FOUND', [2, 2, 1]], 'another account deletes nothing')
+  assert.deepEqual(r.cuarto, [{ messages: 1, summaries: 1, fragments: 1, facts: 0 }, null, true, { deleted: true }, [1], 'resumen v1', [1, 1, 1]], 'the content is gone, the row and its sequence stay; the older summary and what it covers stay')
+  assert.deepEqual(r.primero, [{ messages: 1, summaries: 1, fragments: 1, facts: 1 }, [], null, [0, 0, 0], [0, 0, 0, 0]], 'nothing derived from the deleted messages is left; deleting again does nothing')
+  assert.deepEqual(r.otraCuenta, [[2, 2, 1], [1, 2]], 'the other account is untouched')
+  assert.deepEqual(r.carrera, [[], [0, 0, 0], [], 0, 6], 'four simultaneous deletions: no error, no content, no memory, every row still there')
+  assert.deepEqual(r.cuenta, [{ messages: 7, summaries: 2, fragments: 4, facts: 1 }, [0, 0, 0], 0, 0, 1, []], 'the account: all its conversations and all its memory; a conversation of nobody is not touched')
+  assert.deepEqual(r.depurado, [true, true, true, [1, 1, 2], [[true, 1]]], 'expired and orphaned fragments (with their vectors) and long-dead facts are purged')
+  assert.deepEqual(r.huerfanos, [0, 0], 'no vector without its fragment and no fragment without its vector')
+  assert.equal(r.conocimiento, true, 'the knowledge base is never touched')
+  assert.deepEqual(r.auditoria, [['memory.account_deleted', 'memory.conversation_deleted', 'memory.message_deleted'], true])
+})

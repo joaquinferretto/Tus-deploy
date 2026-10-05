@@ -233,6 +233,11 @@ export class AlmacenAsistenteEnMemoria {
           if (s().resumenes!.some((r) => r.conversationId === value.conversationId && r.version === value.version)) throw unique()
           s().resumenes!.push(clone(value))
         },
+        eliminar: async (conversationId, desde) => {
+          const antes = (s().resumenes ?? []).length
+          s().resumenes = (s().resumenes ?? []).filter((r) => !(r.conversationId === conversationId && (desde === null || r.throughSequence >= desde)))
+          return antes - s().resumenes!.length
+        },
       },
       auditoria: {
         registrar: async (event) => {
