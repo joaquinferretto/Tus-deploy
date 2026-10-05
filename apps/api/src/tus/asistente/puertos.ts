@@ -43,6 +43,8 @@ export interface RepositoriosAsistente {
     buscar(conversationId: string): Promise<ConversacionWhatsapp | null>
     crear(value: ConversacionWhatsapp): Promise<void>
     actualizar(value: ConversacionWhatsapp, expectedVersion: number): Promise<boolean>
+    // Every conversation of a contact, closed ones included (the history of an account).
+    deContacto(contactId: string): Promise<ConversacionWhatsapp[]>
     // `channel` keeps the WhatsApp support inbox free of Web conversations (there is no operator
     // nor Meta window on the Web).
     listar(filter: { mode?: ModoConversacion; channel?: CanalConversacion; limit?: number; offset?: number }): Promise<ConversacionWhatsapp[]>
@@ -59,6 +61,9 @@ export interface RepositoriosAsistente {
     // Inbound messages not yet handled, oldest first.
     pendientes(conversationId: string): Promise<MensajeConversacion[]>
     ultimos(conversationId: string, limit: number): Promise<MensajeConversacion[]>
+    // The `limit` messages right before sequence `before` (the newest ones when it is null),
+    // oldest first: stable order, by the sequence the store assigned.
+    pagina(conversationId: string, input: { before: number | null; limit: number }): Promise<MensajeConversacion[]>
     // The same message `ultimos(id, 1)` returns, for many conversations in one query.
     ultimoDeConversaciones(conversationIds: readonly string[]): Promise<MensajeConversacion[]>
     contar(conversationId: string): Promise<number>

@@ -210,6 +210,9 @@ export interface MensajeConversacion {
   metadata: Record<string, unknown>
   correlationId: string
   createdAt: string
+  // Stable position in the history, assigned by the store when the message is created (never
+  // written by the code). Absent only on a message that was not stored yet.
+  sequence?: number
 }
 
 export interface TrabajoConversacion {

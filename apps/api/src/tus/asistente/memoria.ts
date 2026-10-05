@@ -23,6 +23,8 @@ export interface EstadoAsistenteEnMemoria {
   confirmaciones: Map<string, ConfirmacionAsistente>
   auditoria: EventoAuditoriaAsistente[]
   consentimientosWhatsapp: Map<string, ConsentimientoWhatsApp>
+  // Last sequence handed out (the database does this with a sequence).
+  secuencia?: number
 }
 
 const unique = () => Object.assign(new Error('unique violation'), { code: 'P2002' })
@@ -82,6 +84,7 @@ export class AlmacenAsistenteEnMemoria {
         activaDeContacto: async (contactId) =>
           clone([...s().conversaciones.values()].find((c) => c.contactId === contactId && c.status === 'active') ?? null),
         buscar: async (id) => clone(s().conversaciones.get(id) ?? null),
+        deContacto: async (contactId) => [...s().conversaciones.values()].filter((c) => c.contactId === contactId).map(clone),
         crear: async (value) => {
           if (value.status === 'active' && [...s().conversaciones.values()].some((c) => c.contactId === value.contactId && c.status === 'active')) throw unique()
           s().conversaciones.set(value.conversationId, clone(value))
@@ -108,12 +111,20 @@ export class AlmacenAsistenteEnMemoria {
         crear: async (value) => {
           if (s().mensajes.has(value.messageId)) throw unique()
           if (value.wamid && [...s().mensajes.values()].some((m) => m.wamid === value.wamid)) throw unique()
-          s().mensajes.set(value.messageId, clone(value))
+          s().secuencia = (s().secuencia ?? 0) + 1
+          s().mensajes.set(value.messageId, { ...clone(value), sequence: s().secuencia })
         },
         actualizar: async (value) => {
           if (value.wamid && [...s().mensajes.values()].some((m) => m.wamid === value.wamid && m.messageId !== value.messageId)) throw unique()
-          s().mensajes.set(value.messageId, clone(value))
+          // The sequence of a stored message never changes.
+          s().mensajes.set(value.messageId, { ...clone(value), sequence: s().mensajes.get(value.messageId)?.sequence ?? value.sequence })
         },
+        pagina: async (conversationId, input) =>
+          [...s().mensajes.values()]
+            .filter((m) => m.conversationId === conversationId && m.status !== 'rate_limited' && (input.before === null || (m.sequence ?? 0) < input.before))
+            .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0))
+            .slice(-input.limit)
+            .map(clone),
         pendientes: async (conversationId) =>
           [...s().mensajes.values()]
             .filter((m) => m.conversationId === conversationId && m.direction === 'inbound' && m.status === 'received')

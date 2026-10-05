@@ -1,7 +1,8 @@
 # Memoria conversacional de TUS
 
-Estado: **Fase 0 terminada (auditoria y diseno)**. Este documento describe lo que el codigo hace HOY y
-la arquitectura acordada para las fases siguientes. Nada de lo marcado como "previsto" existe todavia.
+Estado: **Fases 0 y 1 terminadas** (diseno; historial canonico). Este documento describe lo que el
+codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
+existe todavia.
 
 Regla que ordena todo lo demas: **la memoria ayuda a entender a que se refiere la persona; el estado
 real de TUS (PostgreSQL) decide los datos**. Si la memoria dice que un turno era a las 16:00 y la
@@ -19,7 +20,7 @@ herramientas, la misma base de conocimiento y las mismas tablas. Solo cambia la 
 | Entrada | `ingreso.ts` (webhook de Meta, cola + worker) | `web.ts` / `http-web.ts` (respuesta en la misma peticion) |
 | Identidad externa del contacto | `wa_id` de Meta | `web:acct:<cuentaId>` (sesion) o `web:anon:<id de navegador>` |
 | Cuenta | `contactos_whatsapp.cuenta_vinculada_id` (vinculo verificado) o identificacion por nombre + documento (24 h, `conversaciones_whatsapp.cuenta_identificada_id`) | la sesion autenticada |
-| Idempotencia de entrada | `wamid` unico | un mensaje por peticion (sin clave de idempotencia del cliente) |
+| Idempotencia de entrada | `wamid` unico | `clientMessageId` opcional (Fase 1): un reintento devuelve el intercambio ya guardado |
 
 ### 1.2 Historial (A)
 
@@ -28,8 +29,9 @@ herramientas, la misma base de conocimiento y las mismas tablas. Solo cambia la 
   `estado` (`active` / `closed`), `version` (concurrencia optimista) y el estado estructurado.
 - `mensajes_conversacion_whatsapp`: mensajes reales de ambos canales (`direccion`, `tipo`, `texto`,
   `actor`, `metadata`, `fecha_externa`, `fecha_creacion`). Indice `(conversacion_id, fecha_creacion)`.
-- Repositorio (`puertos.ts`): `mensajes.ultimos(conversacion, limite)`, `contar`, `pendientes`. No hay
-  paginacion hacia atras ni un numero de secuencia: el orden es por `fecha_creacion`.
+- Repositorio (`puertos.ts`): `mensajes.ultimos(conversacion, limite)`, `contar`, `pendientes` y, desde
+  la Fase 1, `mensajes.pagina(conversacion, { before, limit })` por secuencia y
+  `conversaciones.deContacto(contacto)`.
 - Los mensajes y las conversaciones **no tienen columna de cuenta**: la cuenta se obtiene del contacto.
 - El documento de identidad se borra del texto guardado (`ocultarDocumento`); un audio no se guarda,
   solo su transcripcion.
@@ -92,6 +94,25 @@ de tokens; el unico limite de salida es `WHATSAPP_AI_MAX_COMPLETION_TOKENS` (600
 30 suites en `tests/foundation` cubren asistente, WhatsApp y RAG (por ejemplo `whatsapp-asistente`,
 `tus-asistente-web`, `tus-asistente-contexto*`, `whatsapp-rag`, `tus-rag-evaluacion`). Ninguna prueba
 aislamiento de memoria entre cuentas, porque hoy no hay memoria por cuenta.
+
+### 1.11 Historial canonico (Fase 1, implementado)
+
+- **Secuencia**: cada mensaje recibe de la base un numero creciente y unico (`secuencia`). Los mensajes
+  existentes se numeraron por fecha de creacion. Un cambio de estado de un mensaje no mueve su lugar.
+- **Lectura por cuenta** (`apps/api/src/tus/asistente/historial.ts`, `HistorialConversacional`):
+  `conversaciones(cuenta)` y `mensajes({ accountId, conversationId, before, limit })`, paginado hacia
+  atras por secuencia (50 por defecto, 200 como maximo). Es la unica via por la que la memoria leera
+  mensajes.
+- **Que cuenta como "de la cuenta"** (`cuentaDeContacto`): el contacto Web `web:acct:<cuenta>` y los
+  WhatsApp con vinculo verificado. Un visitante anonimo, un WhatsApp sin vincular y una conversacion
+  identificada por nombre + documento NO pertenecen a ninguna cuenta para la memoria.
+- **Aislamiento**: una conversacion ajena o inexistente responde lo mismo (`NOT_FOUND`).
+- **Idempotencia Web**: `POST /tus/v1/asistente/mensajes` acepta `clientMessageId` (8 a 64 caracteres
+  `[A-Za-z0-9_-]`). Repetirlo devuelve el mismo mensaje y la misma respuesta sin llamar otra vez al
+  modelo; si la respuesta todavia se esta generando responde 409 `TURN_IN_PROGRESS`. La clave es por
+  contacto: dos personas pueden usar la misma.
+- La paginacion existe a nivel de servicio; la Web todavia no la expone por HTTP (sigue mostrando la
+  ventana reciente).
 
 ## 2. Que se reutiliza
 
@@ -162,8 +183,8 @@ cuenta, los recuerdos y los hechos (Fase 7).
 
 | Fase | Cambio | Para que |
 | --- | --- | --- |
-| 1 | `mensajes_conversacion_whatsapp.secuencia` (entero creciente, indice `(conversacion_id, secuencia)`) | orden estable y paginacion; "hasta el mensaje X" |
-| 1 | clave de idempotencia opcional para mensajes de la Web (indice unico parcial) | un reintento no duplica el mensaje |
+| 1 (hecho) | `mensajes_conversacion_whatsapp.secuencia` (entero creciente, unico, indice `(conversacion_id, secuencia)`); migracion `20261102100000_tus_memoria_historial_canonico` | orden estable y paginacion; "hasta el mensaje X" |
+| 1 (hecho) | idempotencia de mensajes Web SIN columna nueva: la clave del cliente se guarda en `wamid` como `web:<contacto>:<clave>` (indice unico ya existente) | un reintento no duplica el mensaje |
 | 3 | `resumenes_conversacion` (conversacion, version, `hasta_secuencia`, texto, modelo, fecha; unico por conversacion + version) | resumen incremental, versionado y regenerable |
 | 4 | `fragmentos_memoria` (cuenta, conversacion, canal, `desde_secuencia`, `hasta_secuencia`, texto redactado, checksum, vencimiento) + vectores en `"RagEmbedding"` bajo un tenant propio de memoria y `workspaceId = cuenta` | recuerdos semanticos por cuenta |
 | 4 | indice `(tenantId, workspaceId)` en `"RagEmbedding"` | filtrar por cuenta antes de la similitud |
@@ -230,7 +251,7 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | Fase | Contenido | Estado |
 | --- | --- | --- |
 | 0 | Auditoria y diseno | terminada |
-| 1 | Conversaciones y mensajes canonicos (secuencia, paginacion, idempotencia, aislamiento) | pendiente |
+| 1 | Conversaciones y mensajes canonicos (secuencia, paginacion, idempotencia, aislamiento) | terminada |
 | 2 | Constructor unico de contexto con presupuesto de tokens | pendiente |
 | 3 | Resumen incremental y versionado | pendiente |
 | 4 | Memoria semantica con pgvector | pendiente |

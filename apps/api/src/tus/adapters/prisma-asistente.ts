@@ -190,6 +190,7 @@ const mapMensaje = (row: Fila): MensajeConversacion => ({
   metadata: (row['metadata'] as Record<string, unknown>) ?? {},
   correlationId: String(row['correlacionId']),
   createdAt: iso(row['fechaCreacion'])!,
+  ...(row['secuencia'] === undefined || row['secuencia'] === null ? {} : { sequence: Number(row['secuencia']) }),
 })
 
 const filaTrabajo = (job: TrabajoConversacion): Fila => ({
@@ -306,6 +307,7 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
         const row = await client.conversacionWhatsapp.findFirst({ where: { id } })
         return row ? mapConversacion(row) : null
       },
+      deContacto: async (contactId) => (await client.conversacionWhatsapp.findMany({ where: { contactoId: contactId }, orderBy: { abiertaEn: 'desc' } })).map(mapConversacion),
       crear: async (value) => {
         await client.conversacionWhatsapp.create({ data: filaConversacion(value) })
       },
@@ -369,6 +371,17 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
                 b.externalTimestamp ?? b.createdAt
               ) || a.createdAt.localeCompare(b.createdAt)
           ),
+      // ix_mensajes_conversacion_whatsapp_secuencia: the page right before `before`, oldest first.
+      pagina: async (conversationId, input) =>
+        (
+          await client.mensajeConversacionWhatsapp.findMany({
+            where: { conversacionId: conversationId, estado: { not: 'rate_limited' }, ...(input.before === null ? {} : { secuencia: { lt: BigInt(input.before) } }) },
+            orderBy: { secuencia: 'desc' },
+            take: input.limit,
+          })
+        )
+          .map(mapMensaje)
+          .reverse(),
       // DISTINCT ON walks ix_mensajes_conversacion_whatsapp_historial once per conversation: the
       // newest non rate-limited message of each, like `ultimos(id, 1)`, in a single statement.
       ultimoDeConversaciones: async (ids) =>

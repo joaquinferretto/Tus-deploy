@@ -2760,8 +2760,11 @@ model MensajeConversacionWhatsapp {
   metadata       Json      @map("metadata")
   correlacionId  String    @map("correlacion_id")
   fechaCreacion  DateTime  @map("fecha_creacion")
+  // MEMORIA-01: stable order of the history (assigned by the database, never by the code).
+  secuencia      BigInt    @unique(map: "uq_mensajes_conversacion_whatsapp_secuencia") @default(autoincrement()) @map("secuencia")
 
   @@index([conversacionId, fechaCreacion], map: "ix_mensajes_conversacion_whatsapp_historial")
+  @@index([conversacionId, secuencia], map: "ix_mensajes_conversacion_whatsapp_secuencia")
   @@map("mensajes_conversacion_whatsapp")
 }
 

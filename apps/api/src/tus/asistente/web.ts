@@ -61,6 +61,9 @@ export interface EntradaMensajeWeb {
   identidad: IdentidadAsistenteWeb
   text?: unknown
   replyId?: unknown
+  // Optional idempotency key of the client (one per message it sends). A retry with the same key
+  // gets the exchange already stored: the message is never recorded, nor answered, twice.
+  clientMessageId?: unknown
   correlationId: string
   // Live progress for a streaming response. All optional: the same data is in the result.
   onAccepted?: (data: { conversationId: string; userMessage: MensajeAsistenteDTO }) => void
@@ -123,20 +126,29 @@ export class ServicioAsistenteWeb {
   }
 
   async enviar(input: EntradaMensajeWeb): Promise<RespuestaMensajeAsistente> {
-    const entrada = validarEntrada(input.text, input.replyId)
+    const entrada = { ...validarEntrada(input.text, input.replyId), clientMessageId: validarClaveCliente(input.clientMessageId) }
     const key = this.clave(input.identidad)
     const authenticated = Boolean(input.identidad.context)
 
-    let accepted: { conversation: ConversacionWhatsapp; contact: ContactoWhatsapp; inbound: MensajeConversacion }
+    let accepted: { conversation: ConversacionWhatsapp; contact: ContactoWhatsapp; inbound: MensajeConversacion; repetido?: boolean }
     try {
       accepted = await this.deps.transaction.ejecutar((repositories) => this.registrarEntrante(repositories, key, input.identidad, entrada, input.correlationId))
     } catch (error) {
-      // Two first messages of the same person raced to create the contact: the loser retries once.
+      // Two first messages of the same person raced to create the contact (or two copies of the
+      // same message raced on its idempotency key): the loser retries once.
       if ((error as { code?: string })?.code !== 'P2002') throw error
       accepted = await this.deps.transaction.ejecutar((repositories) => this.registrarEntrante(repositories, key, input.identidad, entrada, input.correlationId))
     }
     const conversationId = accepted.conversation.conversationId
     const userMessage = aDTO(accepted.inbound)
+    if (accepted.repetido) {
+      // The same message again: what was stored for it is returned, nothing runs a second time.
+      const stored = await this.deps.transaction.ejecutar((repositories) => repositories.mensajes.ultimos(conversationId, 40))
+      const replies = stored.filter((message) => message.direction === 'outbound' && Array.isArray(message.metadata['inReplyTo']) && (message.metadata['inReplyTo'] as unknown[]).includes(accepted.inbound.messageId))
+      if (replies.length === 0) throw new ErrorAsistente(409, 'TURN_IN_PROGRESS', 'this message is already being answered')
+      this.deps.metric?.('assistant.web_duplicate', { authenticated })
+      return { conversationId, authenticated, userMessage, messages: replies.map(aDTO), activity: [], degraded: replies.some((message) => message.metadata['fallback'] === true) }
+    }
     input.onAccepted?.({ conversationId, userMessage })
 
     const activity: ActividadAsistenteDTO[] = []
@@ -209,9 +221,9 @@ export class ServicioAsistenteWeb {
     repositories: RepositoriosAsistente,
     key: string,
     identidad: IdentidadAsistenteWeb,
-    entrada: { text: string; replyId: string | null },
+    entrada: { text: string; replyId: string | null; clientMessageId?: string | null },
     correlationId: string
-  ) {
+  ): Promise<{ conversation: ConversacionWhatsapp; contact: ContactoWhatsapp; inbound: MensajeConversacion; repetido?: boolean }> {
     const nowMs = this.now()
     const nowIso = new Date(nowMs).toISOString()
     let contact = await repositories.contactos.buscarPorWaId(key)
@@ -243,6 +255,14 @@ export class ServicioAsistenteWeb {
       await repositories.contactos.crear(contact)
     }
     if (canalDe(contact) !== 'web') throw new ErrorAsistente(409, 'CONFLICT', 'contact does not belong to the Web channel')
+    // Idempotency: the key is stored where WhatsApp stores Meta's message id (unique in the table),
+    // scoped to this contact, so the same key of two people never collides.
+    const claveMensaje = entrada.clientMessageId ? `web:${contact.contactId}:${entrada.clientMessageId}` : null
+    if (claveMensaje) {
+      const previo = await repositories.mensajes.buscarPorWamid(claveMensaje)
+      const suya = previo && previo.contactId === contact.contactId ? await repositories.conversaciones.buscar(previo.conversationId) : null
+      if (previo && suya) return { conversation: suya, contact, inbound: previo, repetido: true }
+    }
     const recent = await repositories.mensajes.contarEntrantesDesde(contact.contactId, new Date(nowMs - 60_000).toISOString())
     if ((contact.blockedUntil && Date.parse(contact.blockedUntil) > nowMs) || recent >= this.limits.maxInboundPerMinute)
       throw new ErrorAsistente(429, 'RATE_LIMITED', 'too many messages; wait a moment')
@@ -272,7 +292,7 @@ export class ServicioAsistenteWeb {
       messageId: `mensaje-web-${randomUUID()}`,
       conversationId: conversation.conversationId,
       contactId: contact.contactId,
-      wamid: null,
+      wamid: claveMensaje,
       direction: 'inbound',
       type: entrada.replyId ? 'interactive' : 'text',
       text: entrada.text,
@@ -339,6 +359,12 @@ export class ServicioAsistenteWeb {
     })
     return record
   }
+}
+
+function validarClaveCliente(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/u.test(value)) throw new ErrorAsistente(400, 'INVALID_INPUT', 'clientMessageId must be 8 to 64 letters, digits, dashes or underscores')
+  return value
 }
 
 function validarEntrada(text: unknown, replyId: unknown): { text: string; replyId: string | null } {

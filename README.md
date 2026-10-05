@@ -671,12 +671,15 @@ Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md
 tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
 de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
 
-**Fase actual: 0 terminada (auditoria y diseno). Todavia no hay memoria nueva implementada.**
+**Fases terminadas: 0 (diseno) y 1 (historial canonico). Fase actual: 2 (constructor de contexto).**
 
 **Lo que funciona hoy**
 
 - Un solo asistente para Web y WhatsApp, con las mismas tablas: `contactos_whatsapp`,
   `conversaciones_whatsapp` (una activa por contacto) y `mensajes_conversacion_whatsapp`.
+- Historial canonico (Fase 1): cada mensaje tiene una secuencia estable asignada por la base; el
+  historial de una cuenta se lee paginado y aislado por cuenta (`HistorialConversacional`); la Web
+  acepta `clientMessageId` para que un reintento no duplique el mensaje ni la respuesta.
 - Memoria reciente: los ultimos 12 mensajes de la conversacion (cantidad fija, no tokens).
 - Resumen por conversacion: una columna que se sobrescribe cada 24 mensajes; sin versiones y se pierde
   al cerrar la conversacion.
@@ -697,8 +700,9 @@ de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los d
 Despues: continuidad Web + WhatsApp (7), retencion y borrado (8), observabilidad y costos (9),
 validacion integral (10).
 
-**Tablas y modelos.** Se reutilizan las tres tablas de historial y `"RagEmbedding"`. Previstas, aun no
-creadas: secuencia de mensajes, `resumenes_conversacion`, `fragmentos_memoria`, `hechos_memoria`.
+**Tablas y modelos.** Se reutilizan las tres tablas de historial y `"RagEmbedding"`. Creado:
+`mensajes_conversacion_whatsapp.secuencia` (migracion `20261102100000`). Previstas, aun no creadas:
+`resumenes_conversacion`, `fragmentos_memoria`, `hechos_memoria`.
 Migraciones solo hacia adelante y no destructivas; sin infraestructura nueva.
 
 **Web y WhatsApp.** La memoria de largo plazo es por cuenta: la sesion en la Web, o un WhatsApp con
@@ -717,12 +721,15 @@ inicial propuesto esta en el documento tecnico y todavia no esta medido.
 **Pruebas relevantes**
 
 ```bash
+node scripts/test-runner.mjs tests/foundation/tus-memoria-conversacional.test.mjs
+# PostgreSQL 16 descartable (TUS_TELEFONO_PG_URL):
+node scripts/test-runner.mjs tests/foundation/tus-memoria-conversacional-postgres.test.mjs
 node scripts/test-runner.mjs tests/foundation/whatsapp-asistente.test.mjs
 node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
 node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
 ```
 
-**Pendientes.** Fases 1 a 10. Para la memoria semantica en produccion hace falta un proveedor de
+**Pendientes.** Fases 2 a 10. Para la memoria semantica en produccion hace falta un proveedor de
 embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
 
 ## Limites actuales y trabajo posterior
