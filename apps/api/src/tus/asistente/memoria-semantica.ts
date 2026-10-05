@@ -37,6 +37,8 @@ export interface PuertoIndiceMemoria {
   // The fragments of THAT account closest to the vector, best first. Never another account's.
   buscar(input: { accountId: string; vector: number[]; embeddingVersion: string; limit: number; now: string }): Promise<ResultadoMemoria[]>
   deCuenta(accountId: string): Promise<FragmentoMemoria[]>
+  // Whether THAT account has any fragment (a cheap read that saves an embeddings call).
+  tiene(accountId: string): Promise<boolean>
   // Deletes fragments of THAT account WITH their vectors: all of them, those of one conversation,
   // or those of one conversation that end after a sequence. Returns how many.
   eliminar(input: { accountId: string; conversationId?: string; afterSequence?: number }): Promise<number>
@@ -125,6 +127,10 @@ export class IndiceMemoriaEnMemoria implements PuertoIndiceMemoria {
     return this.filas.filter((fila) => fila.fragment.accountId === accountId).map((fila) => ({ ...fila.fragment }))
   }
 
+  async tiene(accountId: string) {
+    return Boolean(accountId) && this.filas.some((fila) => fila.fragment.accountId === accountId)
+  }
+
   private quitar(sobra: (fragment: FragmentoMemoria) => boolean) {
     const antes = this.filas.length
     for (let i = this.filas.length - 1; i >= 0; i -= 1) if (sobra(this.filas[i]!.fragment)) this.filas.splice(i, 1)
@@ -208,6 +214,11 @@ export class ServicioMemoriaSemantica {
     if (consulta.length < 3) return SIN_RECUERDOS
     const inicio = this.now()
     try {
+      // An account without memories costs nothing: no embeddings call is made for it.
+      if (!(await this.indice.tiene(input.accountId))) {
+        this.metric('assistant.memory_skipped', { reason: 'no_memories' })
+        return SIN_RECUERDOS
+      }
       const [vector] = await this.embeddings.embed([consulta])
       if (!vector) return SIN_RECUERDOS
       const candidatos = await this.indice.buscar({ accountId: input.accountId, vector, embeddingVersion: this.embeddings.version, limit: this.limits.topK, now: new Date(this.now()).toISOString() })

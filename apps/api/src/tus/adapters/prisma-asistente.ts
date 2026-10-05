@@ -1009,6 +1009,11 @@ export class IndiceMemoriaPrisma implements PuertoIndiceMemoria {
     return (await this.client.$queryRawUnsafe<Fila[]>('SELECT * FROM public."fragmentos_memoria" WHERE "cuenta_id" = $1 ORDER BY "fecha_creacion", "desde_secuencia"', accountId)).map(mapFragmento)
   }
 
+  async tiene(accountId: string) {
+    if (!accountId) return false
+    return (await this.client.$queryRawUnsafe<Fila[]>('SELECT 1 AS uno FROM public."fragmentos_memoria" WHERE "cuenta_id" = $1 LIMIT 1', accountId)).length > 0
+  }
+
   // The vectors first, then the fragments, in one transaction: neither is left without the other.
   private async quitar(condicion: string, parametros: unknown[]): Promise<number> {
     return this.client.$transaction(async (tx) => {

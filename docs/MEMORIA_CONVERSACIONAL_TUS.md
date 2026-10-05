@@ -1,8 +1,8 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0 a 8 terminadas** (diseno; historial canonico; constructor de contexto; resumen
+Estado: **Fases 0 a 9 terminadas** (diseno; historial canonico; constructor de contexto; resumen
 incremental versionado; memoria semantica; hechos con procedencia; estado real; continuidad Web +
-WhatsApp; retencion y borrado). Este documento describe lo que el
+WhatsApp; retencion y borrado; observabilidad y costos). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
 existe todavia.
 
@@ -293,6 +293,36 @@ Cadena: mensaje -> resumen -> fragmento -> embedding -> hecho. Borrar un eslabon
   backend (pedido por chat de olvidar, soporte, futura baja de cuenta). El borrado de la cuenta en
   identidad no existe en TUS; cuando exista debe llamar a `borrarCuenta`.
 
+### 1.19 Observabilidad y costos (Fase 9, implementado)
+
+- Hallazgo: en produccion el modulo del asistente se componia sin destino de metricas, asi que los
+  eventos (`assistant.*`) no llegaban a ningun lado. Ahora todos pasan por
+  `ObservabilidadAsistente` (`observabilidad.ts`), un sumidero en proceso que siempre existe, y
+  despues por el destino del host si hay uno.
+- `assistant.model_call`: TODA llamada al modelo del orquestador pasa por `llamarModelo()` y emite
+  un evento con proposito (`routing`, `answer`, `search_wording`, `help_classification`,
+  `help_answer`, `summary`, `summary_regeneration`), canal, exito, milisegundos y tokens de entrada
+  y salida. Si el proveedor informa el uso se usa ese; si no, la misma estimacion del presupuesto,
+  marcada con `measured: false`. Una llamada fallida tambien es un evento.
+- Contadores (`modulo.observabilidad.snapshot()`), separados para Web y WhatsApp:
+  contextos construidos y tokens por parte (fijos, resumen, recuerdos, hechos, recientes, actual,
+  total), mensajes y recuerdos omitidos por presupuesto, llamadas al modelo, errores, tokens y
+  milisegundos, en total y por proposito. De la memoria: resumenes hechos y omitidos, fragmentos
+  guardados, busquedas, recuerdos recuperados y descartados, busquedas salteadas, hechos guardados
+  e invalidados, borrados, depurados y errores por etapa. Del estado real: resultados.
+- Control de costo:
+  - presupuesto de tokens por parte del contexto (Fase 2);
+  - pocos recuerdos y con umbral (Fase 4);
+  - una cuenta sin recuerdos no genera llamada de embeddings: se consulta antes si tiene fragmentos
+    (`assistant.memory_skipped`);
+  - la continuidad entre canales y los hechos no usan modelo ni embeddings;
+  - el resumen corre recien al pasar el umbral y de a pasos acotados.
+- Privacidad: eventos y contadores llevan solo nombres de listas cerradas, numeros y booleanos.
+  Nunca un prompt, una respuesta ni texto de un mensaje. Un valor libre se cuenta como `other`.
+- Limites: los contadores viven en el proceso y se reinician con el; no son contabilidad ni se
+  comparten entre instancias. No se agrego endpoint HTTP para leerlos (decision pendiente: quien
+  puede verlos y donde).
+
 ## 2. Que se reutiliza
 
 - Las tres tablas de historial (contacto, conversacion, mensaje) para ambos canales.
@@ -440,7 +470,7 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | 6 | Resolutores contra el estado real de TUS | terminada (turnos) |
 | 7 | Continuidad Web + WhatsApp | terminada |
 | 8 | Retencion, borrado y privacidad | terminada |
-| 9 | Observabilidad y costos | pendiente |
+| 9 | Observabilidad y costos | terminada |
 | 10 | Validacion integral | pendiente |
 
 ## 10. Riesgos y decisiones abiertas

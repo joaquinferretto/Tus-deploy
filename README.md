@@ -671,7 +671,7 @@ Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md
 tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
 de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
 
-**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica), 5 (hechos con procedencia), 6 (estado real de TUS), 7 (continuidad Web + WhatsApp) y 8 (retencion, borrado y privacidad). Fase actual: 9 (observabilidad y costos).**
+**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica), 5 (hechos con procedencia), 6 (estado real de TUS), 7 (continuidad Web + WhatsApp), 8 (retencion, borrado y privacidad) y 9 (observabilidad y costos). Fase actual: 10 (validacion integral).**
 
 **Lo que funciona hoy**
 
@@ -707,6 +707,10 @@ de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los d
   La fila del mensaje queda sin contenido. "Borra todo lo que recordas de mi" elimina recuerdos y
   hechos. Fragmentos vencen a los 365 dias y hechos a los 180; el worker depura cada 6 horas. Todavia
   no hay pantalla ni endpoint de borrado para el usuario.
+- Observabilidad y costos (Fase 9): cada llamada al modelo emite un evento con proposito, canal y
+  tokens; `modulo.observabilidad.snapshot()` da contadores por canal (tokens por parte del contexto,
+  llamadas al modelo, memoria). Una cuenta sin recuerdos no genera llamada de embeddings. Nada de esto
+  lleva contenido de mensajes. Los contadores son del proceso; no hay endpoint para leerlos.
 
 **Arquitectura acordada (por fases)**
 
@@ -754,7 +758,7 @@ node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
 node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
 ```
 
-**Pendientes.** Fases 9 y 10. Para la memoria semantica en produccion hace falta un proveedor de
+**Pendientes.** Fase 10. Para la memoria semantica en produccion hace falta un proveedor de
 embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
 
 ## Limites actuales y trabajo posterior

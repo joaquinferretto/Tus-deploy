@@ -405,7 +405,7 @@ test('MEMORIA fase 4 servicio: the account restricts the search before the simil
     out.nada = (await servicio.recuperar({ accountId: 'A', consulta: 'hola buen día' })).recuerdos.length
     out.sinCuenta = [(await servicio.recuperar({ accountId: null, consulta: 'agua' })).recuerdos.length, (await servicio.recuperar({ accountId: '', consulta: 'agua' })).recuerdos.length, (await servicio.recuperar({ accountId: 'C', consulta: 'agua' })).recuerdos.length]
     // Whatever a store returned, a fragment of another account never goes on.
-    const tramposo = { guardar: async () => 'guardado', deCuenta: async () => [], buscar: async () => [{ fragment: { ...indice.filas.find((f) => f.fragment.accountId === 'B').fragment }, score: 0.99 }] }
+    const tramposo = { guardar: async () => 'guardado', deCuenta: async () => [], tiene: async () => true, buscar: async () => [{ fragment: { ...indice.filas.find((f) => f.fragment.accountId === 'B').fragment }, score: 0.99 }] }
     out.defensa = (await new ServicioMemoriaSemantica(tramposo, temas, {}, waClock).recuperar({ accountId: 'A', consulta: 'agua' })).recuerdos.length
     // Failures: the provider is down.
     const caido = { ...temas, embed: async () => { throw new Error('caido') } }
@@ -792,4 +792,106 @@ test('MEMORIA fase 8 ciclo de vida: deleting a message, a conversation or an acc
   assert.equal(r.sinHuerfanos, true)
   assert.deepEqual(r.auditoria, [['memory.account_deleted', 'memory.conversation_deleted', 'memory.forgotten', 'memory.message_deleted'], true, false], 'every deletion is audited with quantities, never content')
   assert.deepEqual(r.metricas, [['account', 'conversation', 'memory', 'message', 'purge'], false])
+})
+
+test('MEMORIA fase 9 observabilidad: every model call is one event with its purpose, channel and cost; the context is measured part by part, per channel; an account without memories costs no embeddings call; no event and no counter ever carries content', () => {
+  const r = runTypeScriptScenario(`${MEMORIA_SEMANTICA_SETUP}
+    const { ObservabilidadAsistente, PROPOSITOS_MODELO } = await import('./apps/api/src/tus/asistente/observabilidad.ts')
+    const out = {}
+    const indice = new IndiceMemoriaEnMemoria()
+    const eventos = []
+    const mod = crearModuloWhatsapp({ env: { ...waEnv, WHATSAPP_AI_MEMORY_MIN_SCORE: '0.5' }, transaction: waTx, accounts: accountResolver, application: tusApp, knowledgeIndex, memoryIndex: indice, whatsapp: fakeWa, chat, embeddings: temas, transcriptor: null, now: waClock, metric: (name, fields) => eventos.push({ name, ...fields }) })
+    const cola = mod.crearWorker({ owner: 'fase-9', mantenimiento: async () => {} })
+    const web = async (cuenta, text) => { await mod.asistenteWeb.enviar({ identidad: { context: sesion(cuenta), visitorId: null }, text, correlationId: 'corr-9' }); waAdvance(6000) }
+    const whatsapp = async (waId, text) => { await mod.ingreso.procesar(parsearWebhookMeta(inbound(waId, text), PHONE_ID), 'corr-9'); for (let i = 0; i < 6; i += 1) if ((await cola.procesarSiguiente()).outcome === 'idle') break; waAdvance(6000) }
+    const llamadas = (filtro = () => true) => eventos.filter((e) => e.name === 'assistant.model_call' && filtro(e))
+
+    // ---- An account with no memories: the search is skipped before any embeddings call.
+    const embebidosAntes = temas.embedded.length
+    await web('cuenta-a', 'Tengo una pérdida de agua en el baño, mi contraseña es hunter2secreta')
+    out.sinRecuerdos = [temas.embedded.length - embebidosAntes, eventos.filter((e) => e.name === 'assistant.memory_skipped').map((e) => e.reason), mod.observabilidad.snapshot().memory.skipped]
+    // Twelve more: the summary step runs and the stretch becomes memory.
+    for (let i = 2; i <= 13; i += 1) await web('cuenta-a', 'Sigue la pérdida de agua del baño (' + i + ')')
+    const antesDeBuscar = temas.embedded.length
+    await web('cuenta-a', '¿Te acordás de lo del agua?')
+    out.conRecuerdos = [temas.embedded.length > antesDeBuscar, eventos.some((e) => e.name === 'assistant.memory_retrieved')]
+
+    // ---- WhatsApp, measured apart. The provider reports its real usage here.
+    const W = '5493794900001'
+    await whatsapp(W, 'hola')
+    await linkContact(W, 'customer-user')
+    const guion = script
+    script = async (input) => ({ ...(await guion(input)), usage: { promptTokens: 111, completionTokens: 7 } })
+    const antesWa = llamadas().length
+    await whatsapp(W, 'Contame cómo funciona TUS')
+    await whatsapp(W, 'Sigue la pérdida de agua del baño')
+    script = guion
+    const deWa = llamadas().slice(antesWa)
+    out.whatsapp = [deWa.length > 0, deWa.every((e) => e.channel === 'whatsapp' && e.measured === true && e.promptTokens === 111 && e.completionTokens === 7)]
+    // Without usage from the provider the cost is the estimate: never zero, and flagged.
+    const estimadas = llamadas((e) => e.channel === 'web')
+    out.estimadas = [estimadas.length > 0, estimadas.every((e) => e.measured === false && e.promptTokens > 0 && e.ok === true && typeof e.ms === 'number')]
+    out.propositos = [...new Set(llamadas().map((e) => e.purpose))].sort()
+    out.propositosValidos = llamadas().every((e) => PROPOSITOS_MODELO.includes(e.purpose))
+    // One event per call of the provider: nothing reaches the model around the measurement.
+    out.unaPorLlamada = llamadas().length === chat.calls.length
+
+    // ---- A failing provider: the call is counted as an error and the turn still answers.
+    script = () => { throw new Error('caido') }
+    const antesFallo = llamadas().length
+    await web('cuenta-b', 'Hola, ¿qué es TUS?')
+    script = guion
+    const fallidas = llamadas().slice(antesFallo)
+    out.fallo = [fallidas.length > 0, fallidas.every((e) => e.ok === false && e.promptTokens === 0)]
+
+    // ---- The counters.
+    const s = mod.observabilidad.snapshot()
+    const partes = (c) => c.contextTokens.tokensFijos + c.contextTokens.tokensResumen + c.contextTokens.tokensRecuerdos + c.contextTokens.tokensHechos + c.contextTokens.tokensRecientes + c.contextTokens.tokensActual
+    const suma = (canal, campo) => llamadas((e) => e.channel === canal).reduce((n, e) => n + e[campo], 0)
+    out.contadores = [
+      s.channels.web.contexts > 0 && s.channels.whatsapp.contexts > 0,
+      partes(s.channels.web) === s.channels.web.contextTokens.tokensTotal && partes(s.channels.whatsapp) === s.channels.whatsapp.contextTokens.tokensTotal,
+      s.channels.web.contextTokens.tokensResumen > 0 && s.channels.web.contextTokens.tokensRecuerdos > 0,
+      s.channels.web.model.calls === llamadas((e) => e.channel === 'web').length && s.channels.whatsapp.model.calls === llamadas((e) => e.channel === 'whatsapp').length,
+      s.channels.web.model.promptTokens === suma('web', 'promptTokens') && s.channels.whatsapp.model.promptTokens === suma('whatsapp', 'promptTokens'),
+      s.channels.web.model.errors === fallidas.filter((e) => e.channel === 'web').length,
+      Object.values(s.channels.web.byPurpose).reduce((n, p) => n + p.calls, 0) === s.channels.web.model.calls,
+      s.channels.web.byPurpose.summary.calls >= 1 && s.channels.web.byPurpose.answer.calls >= 13,
+      s.memory.summaries >= 1 && s.memory.fragmentsStored >= 1 && s.memory.retrievals >= 1 && s.memory.retrieved >= 1,
+      s.channels.unknown.model.calls,
+    ]
+
+    // ---- No content, anywhere.
+    const textos = ['pérdida', 'agua', 'contraseña', 'hunter2', 'Contame', 'funciona', 'Entendido']
+    const valores = eventos.flatMap((e) => Object.entries(e).filter(([k]) => k !== 'name').map(([, v]) => v))
+    out.sinContenido = [
+      valores.every((v) => typeof v === 'number' || typeof v === 'boolean' || (typeof v === 'string' && v.length <= 40 && !v.includes(' '))),
+      textos.filter((t) => JSON.stringify(eventos).includes(t)),
+      textos.filter((t) => JSON.stringify(s).includes(t)),
+    ]
+    // The sink itself: free text never becomes a key, garbage never throws, it can be reset.
+    const o = new ObservabilidadAsistente(waClock)
+    o.registrar('assistant.memory_error', { stage: 'Juan Pérez, DNI 30111222' }); o.registrar('assistant.memory_error', { stage: 'store' })
+    o.registrar('assistant.real_state', { outcome: 'resolved' }); o.registrar('assistant.real_state', { outcome: 'un texto libre' })
+    o.registrar('assistant.model_call', { purpose: 'mi contraseña', channel: 'sms', ok: true, promptTokens: -5, completionTokens: Number.NaN, ms: 'x' })
+    o.registrar('assistant.context', { channel: 'web', tokensTotal: 10, tokensActual: 10 }); o.registrar('otra.cosa', { a: 1 }); o.registrar('assistant.context')
+    const propio = o.snapshot()
+    out.sumidero = [propio.memory.errors, propio.realState, propio.channels.unknown.model, Object.keys(propio.channels.unknown.byPurpose), propio.channels.web.contexts, propio.channels.web.contextTokens.tokensTotal, JSON.stringify(propio).includes('Juan') || JSON.stringify(propio).includes('contraseña')]
+    propio.channels.web.contexts = 99
+    o.reiniciar()
+    out.reinicio = [o.snapshot().channels.web.contexts, o.snapshot().memory.errors]
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.sinRecuerdos, [0, ['no_memories'], 1], 'an account without memories: no embeddings call, and it is counted')
+  assert.deepEqual(r.conRecuerdos, [true, true], 'with memories the search runs')
+  assert.deepEqual(r.whatsapp, [true, true], 'WhatsApp calls are measured as WhatsApp, with the usage the provider reported')
+  assert.deepEqual(r.estimadas, [true, true], 'without reported usage the cost is estimated and flagged as such')
+  assert.deepEqual(r.propositos, ['answer', 'help_answer', 'summary'], 'the answer of the turn, a help answer phrased from the knowledge base and the summary step')
+  assert.equal(r.propositosValidos, true)
+  assert.equal(r.unaPorLlamada, true, 'every call of the provider is exactly one event')
+  assert.deepEqual(r.fallo, [true, true], 'a failed call is an event too')
+  assert.deepEqual(r.contadores, [true, true, true, true, true, true, true, true, true, 0], 'the counters match the events, per channel and per purpose; the parts of the context add up to its total')
+  assert.deepEqual(r.sinContenido, [true, [], []], 'events and counters hold names and numbers only')
+  assert.deepEqual(r.sumidero, [{ other: 1, store: 1 }, { resolved: 1, other: 1 }, { calls: 1, errors: 0, promptTokens: 0, completionTokens: 0, ms: 0 }, ['other'], 1, 10, false], 'free text is counted as "other" and garbage never throws')
+  assert.deepEqual(r.reinicio, [0, {}], 'a snapshot is a copy; the counters can be reset')
 })
