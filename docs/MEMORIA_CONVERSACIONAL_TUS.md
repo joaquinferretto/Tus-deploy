@@ -1,7 +1,8 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0 a 6 terminadas** (diseno; historial canonico; constructor de contexto; resumen
-incremental versionado; memoria semantica; hechos con procedencia; estado real). Este documento describe lo que el
+Estado: **Fases 0 a 7 terminadas** (diseno; historial canonico; constructor de contexto; resumen
+incremental versionado; memoria semantica; hechos con procedencia; estado real; continuidad Web +
+WhatsApp). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
 existe todavia.
 
@@ -228,6 +229,33 @@ resumen o el mensaje actual se recortaron.
   de referencias cubre hoy los turnos.
 - Metrica `assistant.real_state` (consulta, resultado: resuelta / ambigua / ninguna / no disponible).
 
+### 1.17 Continuidad Web + WhatsApp (Fase 7, implementado)
+
+- La identidad canonica de la memoria es la CUENTA. Una cuenta tiene un contacto Web (el de su
+  sesion) y los contactos de WhatsApp con vinculo verificado. Cada canal conserva su propia
+  conversacion; no se fusionan filas.
+- `continuidadDeCuenta()` del orquestador agrega al contexto de cada turno lo ultimo de las OTRAS
+  conversaciones de la misma cuenta: hasta 2 conversaciones con actividad en los ultimos 14 dias,
+  sus ultimos 6 mensajes (ya limpios de secretos y datos personales, 160 caracteres por mensaje) y
+  su resumen vigente si existe. Cada linea lleva su origen: fecha y canal (`[2026-09-25, WhatsApp]`).
+- Va en el bloque de recuerdos del constructor de contexto, antes de los recuerdos semanticos y
+  dentro del mismo presupuesto de tokens. No usa modelo ni embeddings: funciona aunque la memoria
+  semantica este apagada.
+- Funciona en los dos sentidos (Web -> WhatsApp y WhatsApp -> Web) y alimenta al resolutor de estado
+  real: "ya acepto?" por WhatsApp se entiende con lo hablado en la Web y se responde con el turno real.
+- Sin cuenta no hay continuidad: visitante anonimo, WhatsApp sin vincular e identificacion por
+  nombre + documento no leen ni aportan nada. Otra cuenta nunca recibe el hilo.
+- Los hechos (Fase 5) y los fragmentos (Fase 4) ya eran de la cuenta: valen en ambos canales y
+  conservan el canal de origen.
+- Desvincular corta la continuidad en el acto, en ambos sentidos: la pertenencia se evalua en cada
+  turno con el vinculo vigente, no se copia.
+- Decision: al vincular un WhatsApp, su conversacion entera pasa a contar para la cuenta, incluidos
+  los mensajes anteriores al vinculo (son del mismo numero, que la cuenta verifico). Al desvincular,
+  esa conversacion deja de contar; los fragmentos semanticos ya indexados de ese numero se tratan en
+  la Fase 8.
+- Si la lectura falla, el turno sigue sin continuidad (metrica `assistant.memory_error`,
+  `stage: continuity`).
+
 ## 2. Que se reutiliza
 
 - Las tres tablas de historial (contacto, conversacion, mensaje) para ambos canales.
@@ -373,7 +401,7 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | 4 | Memoria semantica con pgvector | terminada |
 | 5 | Hechos con procedencia | terminada |
 | 6 | Resolutores contra el estado real de TUS | terminada (turnos) |
-| 7 | Continuidad Web + WhatsApp | pendiente |
+| 7 | Continuidad Web + WhatsApp | terminada |
 | 8 | Retencion, borrado y privacidad | pendiente |
 | 9 | Observabilidad y costos | pendiente |
 | 10 | Validacion integral | pendiente |

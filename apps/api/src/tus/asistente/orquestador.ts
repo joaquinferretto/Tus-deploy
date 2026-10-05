@@ -7,7 +7,7 @@ import { formatearPesos } from '@factory/contracts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
-import { cuentaDeContacto } from './historial.ts'
+import { contactosDeCuenta, cuentaDeContacto } from './historial.ts'
 import type { ServicioMemoriaSemantica } from './memoria-semantica.ts'
 import type { ServicioHechos } from './hechos.ts'
 import { SIN_TURNOS_PROPIOS, detectarConsultaOperativa, elegirTurnoReferido, preguntarCualTurno, responderEstadoDeTurno } from './estado-real.ts'
@@ -150,6 +150,11 @@ const REGLAS_PROMPT_SISTEMA = [
 // The WhatsApp prompt (kept as a named export for documentation and evaluations).
 export const PROMPT_SISTEMA = promptSistema('whatsapp')
 
+// Continuity between channels: how far back the account's other conversations count, how many of
+// them and how many of their last messages are read.
+const CONTINUIDAD_VIGENTE_MS = 14 * 24 * 60 * 60 * 1000
+const CONTINUIDAD_CONVERSACIONES = 2
+const CONTINUIDAD_MENSAJES = 6
 // One summary step covers at most this many messages; a regeneration walks at most this many steps.
 const MAXIMO_MENSAJES_POR_RESUMEN = 80
 const MAXIMO_PASOS_REGENERACION = 12
@@ -3253,8 +3258,45 @@ export class OrquestadorConversacion {
   // WhatsApp; an anonymous visitor, an unlinked WhatsApp or an identification by name + document
   // have none, and get no memory beyond their own conversation.
   private async recuerdosDe(turn: Turno, text: string): Promise<string[]> {
-    if (!this.deps.memoria) return []
-    return (await this.deps.memoria.recuperar({ accountId: cuentaDeContacto(turn.contact), consulta: text })).recuerdos
+    // The thread of the account's other conversation (the other channel) comes first; then the
+    // older memories related to the question.
+    const continuidad = await this.continuidadDeCuenta(turn)
+    if (!this.deps.memoria) return continuidad
+    return [...continuidad, ...(await this.deps.memoria.recuperar({ accountId: cuentaDeContacto(turn.contact), consulta: text })).recuerdos]
+  }
+
+  // CONTINUITY between Web and WhatsApp (phase 7). The same ACCOUNT may be talking on both: its
+  // session on the Web, a WhatsApp with a verified link. What was said recently in the account's
+  // other conversation — its last messages and its summary — is context for this one, with its
+  // origin (date and channel). It needs no model and no embeddings: it is read from the history,
+  // already cleaned. A contact without an account (anonymous visitor, WhatsApp that is not linked,
+  // identification by name + document) has no other conversation: nothing is read for it.
+  private async continuidadDeCuenta(turn: Turno): Promise<string[]> {
+    const accountId = cuentaDeContacto(turn.contact)
+    if (!accountId) return []
+    const desde = new Date(this.now() - CONTINUIDAD_VIGENTE_MS).toISOString()
+    try {
+      return await this.deps.transaction.ejecutar(async (repositories) => {
+        const contactos = await contactosDeCuenta(repositories, accountId)
+        const conversaciones = (await Promise.all(contactos.map((contact) => repositories.conversaciones.deContacto(contact.contactId))))
+          .flat()
+          .filter((conversation) => conversation.conversationId !== turn.conversation.conversationId && conversation.lastMessageAt >= desde)
+          .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt))
+          .slice(0, CONTINUIDAD_CONVERSACIONES)
+        const lineas: string[] = []
+        for (const conversation of conversaciones) {
+          const origen = `[${conversation.lastMessageAt.slice(0, 10)}, ${canalDe(conversation) === 'web' ? 'Web' : 'WhatsApp'}]`
+          const ultimos = (await repositories.mensajes.pagina(conversation.conversationId, { before: null, limit: CONTINUIDAD_MENSAJES })).filter((message) => message.text)
+          if (ultimos.length > 0) lineas.push(`${origen} Ultimos mensajes de tu otra conversación: ${ultimos.map((message) => `${message.direction === 'inbound' ? 'Usuario' : 'TUS'}: ${limpiarParaMemoria(message.text!).replace(/\s+/gu, ' ').slice(0, 160)}`).join(' / ')}`.slice(0, 700))
+          const resumen = await repositories.resumenes.vigente(conversation.conversationId)
+          if (resumen) lineas.push(`${origen} Resumen de esa conversación: ${resumen.text}`.slice(0, 500))
+        }
+        return lineas
+      })
+    } catch {
+      this.metric('assistant.memory_error', { stage: 'continuity' })
+      return []
+    }
   }
 
   // What a summary step just covered also becomes memories of the account (same messages, same

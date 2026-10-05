@@ -351,7 +351,9 @@ test('MEMORIA fase 4 semántica: stretches of old conversations become memories 
     const deA = await indiceMemoria.deCuenta('cuenta-a')
     out.procedencia = deA.map((f) => [f.conversationId === convA, f.channel, f.fromSequence <= f.throughSequence, f.checksum.length, f.text.split('\\n').length > 1])
     out.sinSecretos = !JSON.stringify(indiceMemoria.filas).includes('hunter2secreta') && !JSON.stringify(indiceMemoria.filas).includes('ana@example.com') && !temas.embedded.some((t) => t.includes('hunter2secreta') || t.includes('ana@example.com'))
-    // Later, in a NEW conversation of account A (the Web one was closed): a related question.
+    // Later — beyond the window in which the last conversation is carried over as it is (phase 7) —
+    // in a NEW conversation of account A (the Web one was closed): a related question.
+    waAdvance(15 * 24 * 3600_000)
     await conMemoria.asistenteWeb.reiniciar({ context: sesion('cuenta-a'), visitorId: null })
     const nueva = await decir('cuenta-a', '¿Te acordás de lo del agua del baño?')
     const recuerdosA = recuerdosDe(ultimaCharla())
@@ -579,4 +581,93 @@ test('MEMORIA fase 6 estado real: "¿ya aceptó?" and "¿a qué hora viene?" are
   assert.equal(r.caido, 'No pude consultar tus turnos en este momento. Probá de nuevo en unos minutos.', 'when TUS cannot be read nothing is invented')
   assert.deepEqual(r.eleccion, [[null, 0], [null, 0], ['a', 1], [null, 2], ['b', 2], ['a', 2], ['b', 1], [null, 2]], 'one live turno is the one; otherwise the strongest hint that points at exactly one; a tie is ambiguous')
   assert.deepEqual(r.metricas, [true, true, true])
+})
+
+test('MEMORIA fase 7 Web + WhatsApp: the same account keeps the thread across channels — in both directions — only through a verified link; an unlinked number or another account gets nothing; every memory keeps its origin', () => {
+  const r = runTypeScriptScenario(`${MEMORIA_SETUP}
+    const { ENCABEZADO_RECUERDOS } = await import('./apps/api/src/tus/asistente/contexto.ts')
+    const { HechosEnMemoria } = await import('./apps/api/src/tus/asistente/hechos.ts')
+    const out = {}
+    const en = (horas) => new Date(waClock() + horas * 3600_000).toISOString()
+    // Real state: the account has TWO turnos, so "¿ya aceptó?" needs to know which one is meant.
+    const REAL = { 'customer-user': [{ id: 't1', providerName: 'Juan Pérez', service: 'Plomería', startsAt: en(30), status: 'pending', statusLabel: 'Pendiente' }, { id: 't2', providerName: 'Laura Gómez', service: 'Electricidad', startsAt: en(50), status: 'awaiting_payment', statusLabel: 'Esperando la seña' }], 'other-user': [] }
+    const { DominioAsistenteTus } = await import('./apps/api/src/tus/asistente/dominio.ts')
+    const base = new DominioAsistenteTus(tusApp, waClock)
+    const propios = { misTurnos: async (context) => (REAL[context.subjectId] ?? []).map((t) => ({ ...t })) }
+    const dominioReal = new Proxy(base, { get: (target, prop) => propios[prop] ?? (typeof target[prop] === 'function' ? target[prop].bind(target) : target[prop]) })
+    const hechos = new HechosEnMemoria()
+    const mod = crearModuloWhatsapp({ env: waEnv, transaction: waTx, accounts: accountResolver, domain: dominioReal, knowledgeIndex, factStore: hechos, whatsapp: fakeWa, chat, embeddings, transcriptor: null, now: waClock, metric: (name, fields) => metrics.push({ name, ...fields }) })
+    const cola = mod.crearWorker({ owner: 'fase-7' })
+    const contextoWeb = (cuenta) => ({ subjectId: cuenta, sessionId: 's-' + cuenta, tenantId: accounts.get(cuenta).tenantId, roles: ['owner'], permissions: ['tus:read'], correlationId: 'corr' })
+    const web = async (cuenta, text) => { const x = await mod.asistenteWeb.enviar({ identidad: { context: contextoWeb(cuenta), visitorId: null }, text, correlationId: 'corr-7' }); waAdvance(6000); return x }
+    const whatsapp = async (waId, text) => {
+      const antes = fakeWa.sent.length
+      await mod.ingreso.procesar(parsearWebhookMeta(inbound(waId, text), PHONE_ID), 'corr-7')
+      for (let i = 0; i < 6; i += 1) { const paso = await cola.procesarSiguiente(); if (paso.outcome === 'idle') break; resultados.push(paso.outcome) }
+      waAdvance(6000)
+      return fakeWa.sent.slice(antes).filter((item) => item.to === waId).at(-1)?.message ?? { type: null, text: '' }
+    }
+    const resultados = []
+    const recuerdos = () => chat.calls.filter((call) => call.messages[0].content !== PROMPT_ENRUTADOR).at(-1).messages.find((m) => String(m.content).startsWith(ENCABEZADO_RECUERDOS))?.content ?? null
+
+    // ---- Web -> WhatsApp. On the Web the account talks about the electrician.
+    await web('customer-user', 'Pedí un turno con Laura, la electricista, por un enchufe quemado')
+    await web('customer-user', 'Siempre prefiero a la tarde')
+    const W = '5493794800001'; const SUELTO = '5493794800002'; const AJENO = '5493794800003'
+    // The same person writes from a WhatsApp that is NOT linked yet: nothing of the account.
+    const sinVinculo = await whatsapp(W, '¿Ya aceptó?')
+    out.sinVinculo = [/Laura|Juan|Plomería|Electricidad|seña/u.test(sinVinculo.text ?? ''), sinVinculo.type]
+    // Linked (the verified link of the fixture): the same question is understood and answered.
+    await linkContact(W, 'customer-user')
+    const vinculado = await whatsapp(W, '¿Ya aceptó?')
+    out.vinculado = [vinculado.text.startsWith('Ya aceptó tu solicitud. Falta pagar la seña'), vinculado.text.includes('Laura Gómez'), vinculado.text.includes('Juan')]
+    // Another number (not linked) and a number linked to ANOTHER account: nothing of this account.
+    const suelto = await whatsapp(SUELTO, '¿Ya aceptó?')
+    await whatsapp(AJENO, 'hola')
+    await linkContact(AJENO, 'other-user')
+    const ajeno = await whatsapp(AJENO, '¿Ya aceptó?')
+    out.otros = [/Laura|Juan|Electricidad|Plomería/u.test(suelto.text ?? ''), ajeno.text, /Laura|Juan/u.test(ajeno.text)]
+    // The fact stated on the Web belongs to the account, whatever the channel; its origin is kept.
+    out.hechos = hechos.filas.map((f) => [f.accountId, f.type, f.value, f.channel])
+
+    // ---- WhatsApp -> Web. Something said on the linked WhatsApp reaches the next Web turn.
+    await whatsapp(W, 'El enchufe quemado es el de la cocina, al lado de la heladera')
+    await web('customer-user', '¿Te acordás qué te conté?')
+    const enWeb = recuerdos()
+    out.haciaWeb = [Boolean(enWeb), /\\[\\d{4}-\\d{2}-\\d{2}, WhatsApp\\]/u.test(enWeb ?? ''), /al lado de la heladera/u.test(enWeb ?? '')]
+    // Another account on the Web never gets that thread.
+    await web('other-user', '¿Te acordás qué te conté?')
+    out.otraCuentaWeb = /heladera|Laura|enchufe/u.test(recuerdos() ?? '')
+    // Secrets said in the other channel do not travel.
+    await whatsapp(W, 'mi contraseña es hunter2secreta')
+    await web('customer-user', 'seguimos')
+    out.sinSecretos = !(recuerdos() ?? '').includes('hunter2secreta')
+    // Unlinking ends the continuity: the WhatsApp is nobody's again.
+    const contacto = await contactOf(W)
+    await waTx.ejecutar((repos) => repos.contactos.actualizar({ ...contacto, linkedAccountId: null, linkedTenantId: null, linkedAt: null, version: contacto.version + 1 }, contacto.version))
+    const desvinculado = await whatsapp(W, '¿Ya aceptó?')
+    const llamadas = chat.calls.length
+    await web('customer-user', 'seguimos')
+    out.desvinculado = [/Laura|Juan|Electricidad|seña/u.test(desvinculado.text ?? ''), chat.calls.length > llamadas, /WhatsApp\\]/u.test(recuerdos() ?? '')]
+    out.resultados = [...new Set(resultados)]
+    out.erroresWeb = metrics.filter((m) => m.name === 'assistant.web_turn_error').length
+    // Trace of origin on every stored message: conversation, channel, sequence.
+    const mensajes = [...waStore.state.mensajes.values()]
+    const conversaciones = new Map([...waStore.state.conversaciones.values()].map((c) => [c.conversationId, c]))
+    out.traza = mensajes.every((m) => conversaciones.has(m.conversationId) && Number.isInteger(m.sequence)) && new Set([...conversaciones.values()].map((c) => c.channel ?? 'whatsapp')).size === 2
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.sinVinculo[0], false, 'a WhatsApp that is not linked is nobody: it is asked to link, nothing of the account is said')
+  assert.deepEqual(r.vinculado, [true, true, false], 'linked to the same account: "¿ya aceptó?" is the turno talked about on the Web, with its real state')
+  assert.equal(r.otros[0], false, 'another unlinked number gets nothing')
+  assert.equal(r.otros[1], 'No encontré turnos tuyos pendientes ni próximos.', 'a WhatsApp linked to another account only sees that account')
+  assert.equal(r.otros[2], false)
+  assert.deepEqual(r.hechos, [['customer-user', 'horario_preferido', 'a la tarde', 'web']], 'a fact belongs to the account and remembers the channel it came from')
+  assert.deepEqual(r.haciaWeb, [true, true, true], 'what was said on the linked WhatsApp is context on the Web, with its origin')
+  assert.equal(r.otraCuentaWeb, false, 'another account on the Web gets none of it (only the thread of its own WhatsApp)')
+  assert.equal(r.sinSecretos, true)
+  assert.deepEqual(r.desvinculado, [false, true, false], 'without the link the continuity ends in both directions')
+  assert.deepEqual(r.resultados, ['processed'], 'every WhatsApp turn of the scenario was really processed')
+  assert.equal(r.erroresWeb, 0)
+  assert.equal(r.traza, true)
 })

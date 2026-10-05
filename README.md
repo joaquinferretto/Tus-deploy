@@ -671,7 +671,7 @@ Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md
 tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
 de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
 
-**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica), 5 (hechos con procedencia) y 6 (estado real de TUS). Fase actual: 7 (continuidad Web + WhatsApp).**
+**Fases terminadas: 0 (diseno), 1 (historial canonico), 2 (constructor de contexto), 3 (resumen incremental), 4 (memoria semantica), 5 (hechos con procedencia), 6 (estado real de TUS) y 7 (continuidad Web + WhatsApp). Fase actual: 8 (retencion, borrado y privacidad).**
 
 **Lo que funciona hoy**
 
@@ -698,6 +698,10 @@ de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los d
   (de que turno se habla) y se responden leyendo el turno real de la cuenta en ese momento. La memoria
   nunca responde un estado; sin cuenta no se lee nada. Cubre turnos; pagos, solicitudes y trabajos
   siguen por sus verificadores y herramientas.
+- Continuidad Web + WhatsApp (Fase 7): la misma cuenta sigue el hilo entre su sesion Web y su WhatsApp
+  vinculado, en ambos sentidos. Cada turno recibe lo ultimo de la otra conversacion de la cuenta (14
+  dias, con fecha y canal de origen). Sin vinculo verificado, sin cuenta o desde otra cuenta no pasa
+  nada; desvincular corta la continuidad en el acto.
 - Todavia no hay borrado ni retencion.
 
 **Arquitectura acordada (por fases)**
@@ -746,7 +750,7 @@ node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
 node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
 ```
 
-**Pendientes.** Fases 7 a 10. Para la memoria semantica en produccion hace falta un proveedor de
+**Pendientes.** Fases 8 a 10. Para la memoria semantica en produccion hace falta un proveedor de
 embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
 
 ## Limites actuales y trabajo posterior
