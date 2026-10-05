@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { CODIGO_SOLICITUD_SIN_HORARIO, etiquetaEstadoTurno, etiquetaSenaTurno, formatearPesos, type DetalleTurno, type ServicioTurnosDTO } from '@factory/contracts'
+import { CODIGO_SOLICITUD_SIN_HORARIO, etiquetaEstadoTurno, etiquetaSenaTurno, formatearPesos, normalizarTelefono, type DetalleTurno, type ServicioTurnosDTO } from '@factory/contracts'
 import { TurnosError, diaTurno, horaTurno, turnosApi, turnosErrorDe, turnosFetch } from '../../lib/tus-turnos-client'
 import { claseEstadoTurno } from '../turnos/estado-turno'
 import { ProviderAvailability } from './provider-availability'
@@ -123,6 +123,24 @@ export function ProviderTurnos(): React.ReactNode {
       setErrorManual('Servicio, inicio y nombre de cliente son obligatorios.')
       return
     }
+    // The same rules the API applies (it is the authority): each problem names its field.
+    const nombreCliente = manualCliente.replace(/\s+/gu, ' ').trim()
+    if (nombreCliente.length < 2 || nombreCliente.length > 120) {
+      setErrorManual('Nombre del cliente: ingresá entre 2 y 120 caracteres.')
+      return
+    }
+    if (manualTelefono.trim() && !normalizarTelefono(manualTelefono).ok) {
+      setErrorManual('Teléfono: ingresalo con código de área, por ejemplo 3794 123456.')
+      return
+    }
+    if (manualPrecio.trim() && !/^\d{1,9}$/u.test(manualPrecio.trim())) {
+      setErrorManual('Precio final: ingresá un número entero de pesos, sin decimales ni signos.')
+      return
+    }
+    if (manualNotas.trim().length > 500) {
+      setErrorManual('Notas: hasta 500 caracteres.')
+      return
+    }
 
     setGuardandoManual(true)
     setErrorManual(null)
@@ -134,9 +152,9 @@ export function ProviderTurnos(): React.ReactNode {
           oficioId: manualOficio.trim(),
           // The field is Argentina local time; the API stores the instant.
           inicio: new Date(`${manualInicio}:00.000-03:00`).toISOString(),
-          clienteNombre: manualCliente.trim(),
+          clienteNombre: nombreCliente,
           clienteTelefono: manualTelefono.trim() || undefined,
-          precioFinal: manualPrecio ? Number(manualPrecio) : undefined,
+          precioFinal: manualPrecio.trim() ? Number(manualPrecio.trim()) : undefined,
           notas: manualNotas.trim() || undefined,
         }),
       })
@@ -157,6 +175,14 @@ export function ProviderTurnos(): React.ReactNode {
     e.preventDefault()
     if (!bloqueoInicio || !bloqueoFin) {
       setErrorBloqueo('Inicio y fin son obligatorios.')
+      return
+    }
+    if (bloqueoFin <= bloqueoInicio) {
+      setErrorBloqueo('Fin: debe ser posterior al inicio.')
+      return
+    }
+    if (bloqueoMotivo.trim().length > 200) {
+      setErrorBloqueo('Motivo: hasta 200 caracteres.')
       return
     }
 
@@ -405,6 +431,9 @@ export function ProviderTurnos(): React.ReactNode {
                   value={manualCliente}
                   onChange={(e) => setManualCliente(e.target.value)}
                   placeholder="Nombre y apellido"
+                  minLength={2}
+                  maxLength={120}
+                  autoComplete="off"
                   className={styles.bookingControl}
                 />
               </div>
@@ -413,9 +442,12 @@ export function ProviderTurnos(): React.ReactNode {
                 <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Teléfono</label>
                 <input
                   type="tel"
+                  inputMode="tel"
                   value={manualTelefono}
                   onChange={(e) => setManualTelefono(e.target.value)}
-                  placeholder="3794..."
+                  placeholder="3794 123456"
+                  maxLength={40}
+                  autoComplete="off"
                   className={styles.bookingControl}
                 />
               </div>
@@ -423,10 +455,12 @@ export function ProviderTurnos(): React.ReactNode {
               <div>
                 <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Precio final ($ ARS)</label>
                 <input
-                  type="number"
-                  min="0"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={9}
                   value={manualPrecio}
-                  onChange={(e) => setManualPrecio(e.target.value)}
+                  onChange={(e) => setManualPrecio(e.target.value.replace(/\D/gu, ''))}
                   placeholder="ej. 25000"
                   className={styles.bookingControl}
                 />
@@ -439,6 +473,7 @@ export function ProviderTurnos(): React.ReactNode {
                   value={manualNotas}
                   onChange={(e) => setManualNotas(e.target.value)}
                   placeholder="Detalles sobre el turno o trabajo..."
+                  maxLength={500}
                   className={styles.bookingControl}
                   style={{ minHeight: 80, resize: 'vertical' }}
                 />
@@ -508,6 +543,7 @@ export function ProviderTurnos(): React.ReactNode {
                   value={bloqueoMotivo}
                   onChange={(e) => setBloqueoMotivo(e.target.value)}
                   placeholder="ej. Médico, Trámites, Vacaciones"
+                  maxLength={200}
                   className={styles.bookingControl}
                 />
               </div>

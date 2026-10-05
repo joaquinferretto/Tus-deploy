@@ -167,8 +167,12 @@ test('TURNOS admin PostgreSQL + HTTP: providers, services and clients are found 
       const lista = await call('GET', '/tus/v1/admin/turnos?prestadorId=' + p.perfilId + '&tamano=10', 'tok-admin')
       out.lista = [lista.body.total, lista.body.items.every((t) => t.prestadorNombre.startsWith('Beto Ruiz') && t.oficioNombre === oficio.nombre && t.prestadorId === p.perfilId)]
       out.listaDesconocido = (await call('GET', '/tus/v1/admin/turnos?prestadorId=no-existe', 'tok-admin')).body.total
-      // Provider endpoints act on the profile of THEIR tenant: a profile id in the body is ignored.
-      const config = await call('PUT', '/tus/v1/prestador/servicios/' + oficio.id + '/turnos-config', 'tok-otro-prestador', { perfilId: p.perfilId, duracionMinutos: 30 })
+      // Provider endpoints act on the profile of THEIR tenant: a profile id in the body is refused
+      // (and changes nothing); without it the change lands on the profile of the session.
+      const ajeno = await call('PUT', '/tus/v1/prestador/servicios/' + oficio.id + '/turnos-config', 'tok-otro-prestador', { perfilId: p.perfilId, duracionMinutos: 30 })
+      const trasAjeno = await prisma.perfilServicio.findMany({ where: { perfilId: { in: [p.perfilId, p2.perfilId] } } })
+      out.idorRechazado = [ajeno.status, trasAjeno.every((s) => s.duracionMinutos === 60)]
+      const config = await call('PUT', '/tus/v1/prestador/servicios/' + oficio.id + '/turnos-config', 'tok-otro-prestador', { duracionMinutos: 30 })
       const duraciones = await prisma.perfilServicio.findMany({ where: { perfilId: { in: [p.perfilId, p2.perfilId] } }, orderBy: { perfilId: 'asc' } })
       out.idor = [config.status, duraciones.find((s) => s.perfilId === p.perfilId).duracionMinutos, duraciones.find((s) => s.perfilId === p2.perfilId).duracionMinutos]
       out.propios = (await call('GET', '/tus/v1/prestador/turnos/servicios', 'tok-prestador')).body.items.length
@@ -198,7 +202,8 @@ test('TURNOS admin PostgreSQL + HTTP: providers, services and clients are found 
   assert.match(r.checkForzado, /23514|ck_reservas_forzado_auditado|check/iu)
   assert.deepEqual(r.lista, [2, true])
   assert.equal(r.listaDesconocido, 0)
-  assert.deepEqual(r.idor, [200, 60, 30], 'the body cannot point a provider at another provider\'s profile')
+  assert.deepEqual(r.idorRechazado, [400, true], 'a profile id in the body is refused and nothing changes')
+  assert.deepEqual(r.idor, [200, 60, 30], 'the change always lands on the profile of the session')
   assert.equal(r.propios, 1)
   assert.equal(r.propiaDisponibilidad, 200)
 })

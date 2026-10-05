@@ -133,7 +133,7 @@ test('TURNOS solicitud API surface: requesting needs a session and reads no iden
   assert.match(solicitar, /clienteId: context\.subjectId,\n\s+clienteTenantId: context\.tenantId,/u, 'the client is the session')
   assert.doesNotMatch(solicitar, /body\['(clienteId|userId|clienteNombre|nombre|clienteTelefono|telefono|clienteEmail|email|estado)'\]/u, 'identity and state fields of the body are never read')
   assert.match(http, /router\.post\('\/tus\/v1\/prestadores\/:id\/turnos\/solicitudes', solicitar\)\n  router\.post\('\/tus\/v1\/public\/prestadores\/:id\/turnos\/reservar', solicitar\)/u)
-  assert.match(http, /if \(!\['cancelled', 'completed', 'no-show'\]\.includes\(nuevoEstado\)\)/u, 'the generic state change of the provider cannot confirm')
+  assert.match(http, /if \(!\['cancelled', 'completed', 'no-show'\]\.includes\(entrada\.valor\.estado\)\)/u, 'the generic state change of the provider cannot confirm')
   const servicio = read('apps/api/src/tus/calendar/turnos-service.ts')
   assert.match(servicio, /estado: solicitud \? 'pending' : 'confirmed'/u)
   assert.match(servicio, /clienteNombre: solicitud \? null :/u, 'a request stores no copy of the person')
