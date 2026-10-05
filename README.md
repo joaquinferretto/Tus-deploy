@@ -671,7 +671,7 @@ Resumen canonico. El detalle tecnico esta en `docs/MEMORIA_CONVERSACIONAL_TUS.md
 tiempo sin reenviar conversaciones enteras al modelo. La memoria ayuda a interpretar; **el estado real
 de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los datos**.
 
-**Fases terminadas: 0 (diseno) y 1 (historial canonico). Fase actual: 2 (constructor de contexto).**
+**Fases terminadas: 0 (diseno), 1 (historial canonico) y 2 (constructor de contexto). Fase actual: 3 (resumen incremental).**
 
 **Lo que funciona hoy**
 
@@ -680,7 +680,8 @@ de TUS en PostgreSQL (turnos, solicitudes, trabajos, pagos) siempre decide los d
 - Historial canonico (Fase 1): cada mensaje tiene una secuencia estable asignada por la base; el
   historial de una cuenta se lee paginado y aislado por cuenta (`HistorialConversacional`); la Web
   acepta `clientMessageId` para que un reintento no duplique el mensaje ni la respuesta.
-- Memoria reciente: los ultimos 12 mensajes de la conversacion (cantidad fija, no tokens).
+- Contexto del modelo (Fase 2): un unico constructor (`contexto.ts`) con presupuesto de TOKENS. La
+  ventana reciente se llena desde el mensaje mas nuevo hacia atras; ya no es una cantidad fija.
 - Resumen por conversacion: una columna que se sobrescribe cada 24 mensajes; sin versiones y se pierde
   al cerrar la conversacion.
 - pgvector (`"RagEmbedding"`, 1024 dimensiones) existe y hoy solo lo usa la base de conocimiento.
@@ -714,9 +715,10 @@ cuenta A nunca recibe nada de la cuenta B. No se guardan como memoria ni se vect
 codigos de verificacion, tokens, cookies, secretos, datos de tarjetas ni enlaces de autenticacion. Los
 registros no llevan contenido de mensajes.
 
-**Tokens.** Hoy el limite es por cantidad de mensajes. La Fase 2 introduce un constructor unico de
-contexto con presupuesto de tokens estimado por caracteres y limites en un solo lugar; el presupuesto
-inicial propuesto esta en el documento tecnico y todavia no esta medido.
+**Tokens.** Estimados por caracteres (3,5 por token) en un solo lugar. Presupuesto por defecto:
+mensajes recientes 1500, resumen 400, recuerdos 500, hechos 150, mensaje actual 300 (configurable con
+`WHATSAPP_AI_CONTEXT_*`). Cada turno emite la metrica `assistant.context` con tamanos y cantidades,
+nunca contenido.
 
 **Pruebas relevantes**
 
@@ -729,7 +731,7 @@ node scripts/test-runner.mjs tests/foundation/tus-asistente-web.test.mjs
 node scripts/test-runner.mjs tests/foundation/whatsapp-rag.test.mjs
 ```
 
-**Pendientes.** Fases 2 a 10. Para la memoria semantica en produccion hace falta un proveedor de
+**Pendientes.** Fases 3 a 10. Para la memoria semantica en produccion hace falta un proveedor de
 embeddings configurado (`RAG_EMBEDDING_PROVIDER`, hoy `none`).
 
 ## Limites actuales y trabajo posterior

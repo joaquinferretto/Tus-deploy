@@ -137,3 +137,86 @@ test('MEMORIA fase 1 idempotencia Web: the same client message key is one messag
   assert.deepEqual(r.invalida, ['INVALID_INPUT', 'INVALID_INPUT', 'INVALID_INPUT'])
   assert.deepEqual(r.carrera, [1, true, true], 'a race stores the message once')
 })
+
+test('MEMORIA fase 2 contexto: one constructor, a budget of TOKENS — the recent window is filled from the newest message back; long parts are cut, never the newest turn; the metrics carry sizes only', () => {
+  const r = runTypeScriptScenario(`
+    const c = await import('./apps/api/src/tus/asistente/contexto.ts')
+    const P = { ...c.PRESUPUESTO_CONTEXTO_POR_DEFECTO, recientes: 100, porMensaje: 40, resumen: 20, recuerdos: 30, hechos: 10, actual: 15 }
+    const texto = (n, letra = 'a') => letra.repeat(Math.floor(n * c.CARACTERES_POR_TOKEN))
+    // Twelve messages of 30 tokens each: only the newest three fit in 100 tokens.
+    const recientes = Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: 'm' + String(i).padStart(2, '0') + texto(29) }))
+    const fijos = [{ role: 'system', content: texto(50, 's') }]
+    const x = c.construirContexto({ fijos, resumen: texto(60, 'r'), recuerdos: [texto(20, 'x'), texto(20, 'y'), texto(5, 'z')], hechos: [texto(8, 'h'), texto(8, 'i')], recientes, actual: 'SECRETO-' + texto(40, 'q') }, P)
+    const ventana = x.messages.filter((m) => m.role !== 'system').slice(0, -1)
+    const out = {
+      orden: x.messages.map((m) => m.role),
+      ventana: ventana.map((m) => m.content.slice(0, 3)),
+      tokensVentana: ventana.reduce((s, m) => s + c.estimarTokens(m.content), 0) <= P.recientes,
+      resumen: [c.estimarTokens(x.messages[1].content.split('\\n')[1]) <= P.resumen, x.messages[1].content.startsWith(c.ENCABEZADO_RESUMEN)],
+      recuerdos: x.messages[2].content.split('\\n').length - 1,
+      hechos: x.messages[3].content.split('\\n').length - 1,
+      actual: [x.messages.at(-1).role, c.estimarTokens(x.messages.at(-1).content) <= P.actual, x.messages.at(-1).content.startsWith('SECRETO-')],
+      metricas: x.metricas,
+      sinContenido: !JSON.stringify(x.metricas).includes('SECRETO') && Object.values(x.metricas).every((v) => typeof v === 'number' || typeof v === 'boolean'),
+      total: x.metricas.tokensTotal === x.metricas.tokensFijos + x.metricas.tokensResumen + x.metricas.tokensRecuerdos + x.metricas.tokensHechos + x.metricas.tokensRecientes + x.metricas.tokensActual,
+    }
+    // One huge newest message: it is cut and kept; nothing older fits.
+    const largo = c.ventanaReciente([{ role: 'user', content: 'viejo' }, { role: 'assistant', content: 'ULTIMO' + texto(500) }], { recientes: 30, porMensaje: 40 })
+    out.largo = [largo.mensajes.length, largo.mensajes[0].content.startsWith('ULTIMO'), c.estimarTokens(largo.mensajes[0].content) <= 40, largo.omitidos, largo.recortados]
+    // Short messages: more than twelve fit — the window is not a count of messages.
+    const cortos = c.ventanaReciente(Array.from({ length: 40 }, (_, i) => ({ role: 'user', content: 'ok ' + i })), c.PRESUPUESTO_CONTEXTO_POR_DEFECTO)
+    out.cortos = [cortos.mensajes.length, cortos.mensajes.at(-1).content, cortos.mensajes[0].content]
+    const vacio = c.construirContexto({ fijos: [], resumen: null, recuerdos: [], hechos: [], recientes: [], actual: 'hola' })
+    out.vacio = [vacio.messages.map((m) => m.role), vacio.metricas.mensajesIncluidos, vacio.metricas.tokensResumen]
+    out.estimacion = [c.estimarTokens(''), c.estimarTokens('a'), c.estimarTokens('a'.repeat(35)), c.estimarTokens('a'.repeat(36))]
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.orden, ['system', 'system', 'system', 'system', 'assistant', 'user', 'assistant', 'user'], 'fixed instructions, summary, memories, facts, the recent window, the current message')
+  assert.deepEqual(r.ventana, ['m09', 'm10', 'm11'], 'the newest messages, oldest first')
+  assert.equal(r.tokensVentana, true)
+  assert.deepEqual(r.resumen, [true, true], 'a long summary is cut to its budget')
+  assert.equal(r.recuerdos, 1, 'memories are taken in order while they fit')
+  assert.equal(r.hechos, 1)
+  assert.deepEqual(r.actual, ['user', true, true], 'the current message is last and bounded')
+  assert.deepEqual([r.metricas.mensajesIncluidos, r.metricas.mensajesOmitidos, r.metricas.recuerdosIncluidos, r.metricas.recuerdosOmitidos, r.metricas.hechosIncluidos, r.metricas.hechosOmitidos, r.metricas.resumenRecortado, r.metricas.actualRecortado], [3, 9, 1, 2, 1, 1, true, true], 'what was included and what was left out is measured')
+  assert.equal(r.sinContenido, true, 'numbers and flags only')
+  assert.equal(r.total, true)
+  assert.deepEqual(r.largo, [1, true, true, 1, 1])
+  assert.deepEqual(r.cortos, [40, 'ok 39', 'ok 0'], 'a budget of tokens, not a number of messages')
+  assert.deepEqual(r.vacio, [['user'], 0, 0])
+  assert.deepEqual(r.estimacion, [0, 1, 10, 11])
+})
+
+test('MEMORIA fase 2 orquestador: the model receives the context of the constructor — its own conversation only, the window chosen by tokens — and the turn reports its sizes without content', () => {
+  const r = runTypeScriptScenario(`${MEMORIA_SETUP}
+    const out = {}
+    const conversacion = (llamada) => llamada.messages.filter((m) => m.role !== 'system')
+    const charla = () => chat.calls.filter((call) => call.messages[0].content !== PROMPT_ENRUTADOR).at(-1)
+    // Twenty short exchanges of account A: more than the old fixed window of twelve messages.
+    for (let i = 1; i <= 20; i += 1) { await enviarWeb('cuenta-a', 'mensaje A ' + i); waAdvance(6000) }
+    await enviarWeb('cuenta-b', 'mensaje privado de B con un dato-de-b')
+    await enviarWeb('cuenta-a', 'pregunta final de A')
+    const deA = conversacion(charla())
+    out.ventana = [deA.length > 13, deA.at(-1).content, deA[0].content, deA.some((m) => /dato-de-b|privado de B/u.test(m.content))]
+    // A long answer is cut to the per-message limit, and the turn after it still reaches the model.
+    const guion = script
+    script = (input) => input.messages[0].content === PROMPT_ENRUTADOR ? guion(input) : { content: 'x'.repeat(3900) }
+    await enviarWeb('cuenta-c', 'contame todo')
+    script = guion
+    await enviarWeb('cuenta-c', 'y la última')
+    const deC = conversacion(charla())
+    out.largo = [deC.map((m) => m.role), deC[1].content.length < 1100, deC.at(-1).content]
+    const medidas = metrics.filter((m) => m.name === 'assistant.context')
+    const ultima = medidas.at(-1)
+    out.metrica = [medidas.length >= 3, ultima.channel, typeof ultima.tokensTotal, ultima.mensajesIncluidos, ultima.mensajesRecortados, ultima.tokensTotal === ultima.tokensFijos + ultima.tokensResumen + ultima.tokensRecuerdos + ultima.tokensHechos + ultima.tokensRecientes + ultima.tokensActual]
+    out.sinContenido = !JSON.stringify(medidas).includes('mensaje A') && !JSON.stringify(medidas).includes('xxxx')
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.ventana[0], true, 'more than twelve short messages reach the model: the limit is tokens')
+  assert.equal(r.ventana[1], 'pregunta final de A', 'the current message is last')
+  assert.match(r.ventana[2], /^mensaje A |^Respuesta /u)
+  assert.equal(r.ventana[3], false, 'nothing of another account is ever in the context')
+  assert.deepEqual(r.largo, [['user', 'assistant', 'user'], true, 'y la última'], 'a long message is cut to its limit; the turn after it is intact')
+  assert.deepEqual(r.metrica, [true, 'web', 'number', 2, 1, true])
+  assert.equal(r.sinContenido, true, 'the metric never carries the text of a message')
+})

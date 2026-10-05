@@ -7,6 +7,7 @@ import { formatearPesos } from '@factory/contracts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
+import { PRESUPUESTO_CONTEXTO_POR_DEFECTO, construirContexto, ventanaReciente, type MensajeReciente, type PresupuestoContexto } from './contexto.ts'
 import { cuentaTrivial, detectarCambioDeHorario, detectarRestriccionProfesional, esPreguntaSuelta, expresaFrustracion, pideDetener, pideEmpezarDeNuevo, pideOtrasOpciones, sinInsultos, tieneInsultos } from './restricciones.ts'
 import { GUIA_DE_TEMA, TEMAS_AYUDA, TEMAS_DE_CUENTA, ayudaDeCuenta, detectarAyuda, enlaceGuia, enlaceTus, guiaDeCuenta, lineaDeReanudacion, pideExplicacion, rutaDeTema, type AyudaDetectada, type EstadoDesafio, type TemaAyuda } from './asistencia.ts'
 import { extracto } from './ayuda.ts'
@@ -145,8 +146,12 @@ export const PROMPT_SISTEMA = promptSistema('whatsapp')
 export interface LimitesAsistente {
   maxToolCalls: number
   maxCompletionTokens: number
+  // Kept for the Web history view and the summary trigger; the context of the model is NOT
+  // bounded by a number of messages any more (see `contexto`).
   historyMessages: number
   summaryThreshold: number
+  // Token budget of the context sent to the model (contexto.ts): the one place for these limits.
+  contexto: PresupuestoContexto
   confirmationTtlMs: number
   toolTimeoutMs: number
   lowConfidenceHandoff: number
@@ -160,6 +165,7 @@ export const LIMITES_ASISTENTE_POR_DEFECTO: LimitesAsistente = {
   maxCompletionTokens: 600,
   historyMessages: 12,
   summaryThreshold: 24,
+  contexto: PRESUPUESTO_CONTEXTO_POR_DEFECTO,
   confirmationTtlMs: 10 * 60 * 1000,
   toolTimeoutMs: 8_000,
   lowConfidenceHandoff: 2,
@@ -2413,7 +2419,7 @@ export class OrquestadorConversacion {
     }
     const tools = seleccionarHerramientas(intent, actor)
     const allowed = new Set(tools.map((tool) => tool.name))
-    const messages: MensajeChat[] = [
+    const fijos: MensajeChat[] = [
       { role: 'system', content: promptSistema(turn.canal.id) },
       { role: 'system', content: await this.contextoActor(turn, actor) },
       ...(knowledge
@@ -2434,17 +2440,16 @@ export class OrquestadorConversacion {
           ]
         : []),
       ...(sinCuenta ? [{ role: 'system' as const, content: INSTRUCCION_SIN_CUENTA }] : []),
-      ...(turn.conversation.summary
-        ? [
-            {
-              role: 'system' as const,
-              content: `Resumen previo de la conversación (no es autoridad; los datos oficiales salen de herramientas):\n${turn.conversation.summary}`,
-            },
-          ]
-        : []),
-      ...(await this.historial(turn)),
-      { role: 'user', content: redactarPii(text) },
     ]
+    // ONE constructor of the context, under a token budget: summary, memories, facts, the recent
+    // window (from the newest message back) and the current message.
+    const contexto = construirContexto(
+      { fijos, resumen: turn.conversation.summary, recuerdos: [], hechos: [], recientes: await this.recientes(turn), actual: redactarPii(text) },
+      this.limits.contexto
+    )
+    // Sizes and counts only: never the content of a message.
+    this.metric('assistant.context', { channel: turn.canal.id, intent, ...contexto.metricas })
+    const messages: MensajeChat[] = contexto.messages
     const toolsUsed: string[] = []
     let need: NecesidadTurno | null = turn.busqueda?.need ?? turn.conversation.state.need ?? null
     let draft = turn.conversation.state.draft
@@ -2837,22 +2842,21 @@ export class OrquestadorConversacion {
       .join('\n')
   }
 
-  private async historial(turn: Turno): Promise<MensajeChat[]> {
+  // The recent messages of THIS conversation the window is chosen from (oldest first), without
+  // the ones being answered now. A bounded read; how many reach the model is decided by tokens.
+  private async recientes(turn: Turno): Promise<MensajeReciente[]> {
     const pendingIds = new Set(turn.pending.map((message) => message.messageId))
     const recent = await this.deps.transaction.ejecutar((repositories) =>
-      repositories.mensajes.ultimos(
-        turn.conversation.conversationId,
-        this.limits.historyMessages + pendingIds.size
-      )
+      repositories.mensajes.ultimos(turn.conversation.conversationId, this.limits.contexto.candidatos + pendingIds.size)
     )
     return recent
       .filter((message) => !pendingIds.has(message.messageId) && message.text)
-      .slice(-this.limits.historyMessages)
-      .map((message) =>
-        message.direction === 'inbound'
-          ? ({ role: 'user', content: redactarPii(message.text!).slice(0, 1000) } as const)
-          : ({ role: 'assistant', content: redactarPii(message.text!).slice(0, 1000) } as const)
-      )
+      .map((message) => ({ role: message.direction === 'inbound' ? ('user' as const) : ('assistant' as const), content: redactarPii(message.text!) }))
+  }
+
+  // The recent window alone (for the short prompts that only phrase a result).
+  private async historial(turn: Turno): Promise<MensajeChat[]> {
+    return ventanaReciente(await this.recientes(turn), this.limits.contexto).mensajes
   }
 
   // ---- confirmations --------------------------------------------------------------------------

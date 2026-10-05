@@ -1,6 +1,6 @@
 # Memoria conversacional de TUS
 
-Estado: **Fases 0 y 1 terminadas** (diseno; historial canonico). Este documento describe lo que el
+Estado: **Fases 0, 1 y 2 terminadas** (diseno; historial canonico; constructor de contexto). Este documento describe lo que el
 codigo hace HOY y la arquitectura acordada para las fases siguientes. Lo marcado como "previsto" no
 existe todavia.
 
@@ -38,9 +38,10 @@ herramientas, la misma base de conocimiento y las mismas tablas. Solo cambia la 
 
 ### 1.3 Memoria inmediata (B)
 
-`historial()` del orquestador: los ultimos **12 mensajes** (`WHATSAPP_AI_HISTORY_MESSAGES`), cada uno
-recortado a 1000 caracteres y pasado por `redactarPii`. Es una cantidad fija de mensajes, **no un
-presupuesto de tokens**.
+Desde la Fase 2 la ventana reciente es un **presupuesto de tokens** (ver 1.12): se leen hasta 60
+mensajes de la conversacion, con `redactarPii`, y se incluyen desde el mas nuevo hacia atras hasta
+agotar el presupuesto. `WHATSAPP_AI_HISTORY_MESSAGES` ya no limita el contexto del modelo (sigue
+usandose para el disparador del resumen).
 
 ### 1.4 Resumen (C)
 
@@ -78,9 +79,8 @@ datos oficiales salen de herramientas"). `diagnose_user_issue` devuelve estados,
 
 ### 1.8 Donde se arma el contexto del modelo
 
-En `conversar()` del orquestador, en linea: reglas del sistema → contexto del actor → documentos
-recuperados (RAG) → resumen → `historial()` → mensaje actual. No hay un constructor unico ni medicion
-de tokens; el unico limite de salida es `WHATSAPP_AI_MAX_COMPLETION_TOKENS` (600).
+Desde la Fase 2, en `construirContexto()` (`apps/api/src/tus/asistente/contexto.ts`), llamado por
+`conversar()`. El limite de salida sigue siendo `WHATSAPP_AI_MAX_COMPLETION_TOKENS` (600).
 
 ### 1.9 Borrado y retencion
 
@@ -113,6 +113,29 @@ aislamiento de memoria entre cuentas, porque hoy no hay memoria por cuenta.
   contacto: dos personas pueden usar la misma.
 - La paginacion existe a nivel de servicio; la Web todavia no la expone por HTTP (sigue mostrando la
   ventana reciente).
+
+### 1.12 Constructor de contexto (Fase 2, implementado)
+
+`construirContexto(partes, presupuesto)` es el unico lugar donde se arma lo que recibe el modelo:
+
+1. partes fijas (prompt del sistema, contexto del actor, documentos de conocimiento, avisos), armadas
+   por el orquestador y solo medidas aca;
+2. resumen (recortado a su presupuesto);
+3. recuerdos de la cuenta y 4. hechos (listas en el orden recibido, mientras entren) — vacias hasta
+   las Fases 4 y 5;
+5. ventana reciente: desde el mensaje mas nuevo hacia atras hasta agotar `recientes`; un mensaje
+   largo se recorta a `porMensaje`, y el mas nuevo nunca se descarta;
+6. mensaje actual (recortado a `actual`).
+
+No lee la base ni conoce cuentas: recibe texto que el backend ya acoto a la cuenta y conversacion
+correctas. Presupuesto por defecto (`PRESUPUESTO_CONTEXTO_POR_DEFECTO`, tokens estimados a 3,5
+caracteres por token): recientes 1500, por mensaje 300, resumen 400, recuerdos 500, hechos 150,
+actual 300, candidatos leidos 60. Configurable con `WHATSAPP_AI_CONTEXT_RECENT_TOKENS`,
+`WHATSAPP_AI_CONTEXT_SUMMARY_TOKENS` y `WHATSAPP_AI_CONTEXT_MEMORY_TOKENS`.
+
+Metrica por turno `assistant.context` (solo numeros y banderas, nunca contenido): tokens por parte y
+total, mensajes incluidos / omitidos / recortados, recuerdos y hechos incluidos / omitidos, y si el
+resumen o el mensaje actual se recortaron.
 
 ## 2. Que se reutiliza
 
@@ -228,9 +251,10 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 
 ## 8. Tokens
 
-- No hay tokenizador en el repositorio. La Fase 2 usa una estimacion conservadora por caracteres
-  (alrededor de 3,5 caracteres por token en espanol), centralizada en un solo lugar.
-- Presupuesto inicial propuesto para la ENTRADA (a medir y ajustar en la Fase 2; hoy no esta medido):
+- No hay tokenizador en el repositorio: se usa una estimacion conservadora por caracteres (3,5
+  caracteres por token), centralizada en `estimarTokens()`.
+- Presupuesto de ENTRADA implementado (las partes fijas se miden pero no se recortan; los documentos
+  de conocimiento los acota el recuperador):
 
 | Parte | Tokens aprox. |
 | --- | --- |
@@ -252,7 +276,7 @@ Cadena de dependencia: mensaje → resumen → fragmento → embedding → hecho
 | --- | --- | --- |
 | 0 | Auditoria y diseno | terminada |
 | 1 | Conversaciones y mensajes canonicos (secuencia, paginacion, idempotencia, aislamiento) | terminada |
-| 2 | Constructor unico de contexto con presupuesto de tokens | pendiente |
+| 2 | Constructor unico de contexto con presupuesto de tokens | terminada |
 | 3 | Resumen incremental y versionado | pendiente |
 | 4 | Memoria semantica con pgvector | pendiente |
 | 5 | Hechos con procedencia | pendiente |

@@ -1,3 +1,4 @@
+import { PRESUPUESTO_CONTEXTO_POR_DEFECTO } from './contexto.ts'
 import type { TusApplicationService } from '../application/tus-application-service.ts'
 import { ServicioAyudaPublica } from './ayuda.ts'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
@@ -61,6 +62,13 @@ export function leerLimites(env: Record<string, string | undefined>): {
       maxCompletionTokens: numero(env['WHATSAPP_AI_MAX_COMPLETION_TOKENS'], 600, 100, 2000),
       historyMessages: numero(env['WHATSAPP_AI_HISTORY_MESSAGES'], 12, 2, 40),
       summaryThreshold: numero(env['WHATSAPP_AI_SUMMARY_THRESHOLD'], 24, 8, 200),
+      // Token budget of the context (estimated, see contexto.ts). One place for every limit.
+      contexto: {
+        ...PRESUPUESTO_CONTEXTO_POR_DEFECTO,
+        recientes: numero(env['WHATSAPP_AI_CONTEXT_RECENT_TOKENS'], PRESUPUESTO_CONTEXTO_POR_DEFECTO.recientes, 200, 8000),
+        resumen: numero(env['WHATSAPP_AI_CONTEXT_SUMMARY_TOKENS'], PRESUPUESTO_CONTEXTO_POR_DEFECTO.resumen, 100, 2000),
+        recuerdos: numero(env['WHATSAPP_AI_CONTEXT_MEMORY_TOKENS'], PRESUPUESTO_CONTEXTO_POR_DEFECTO.recuerdos, 0, 4000),
+      },
       toolTimeoutMs: numero(env['WHATSAPP_AI_TOOL_TIMEOUT_MS'], 8_000, 1_000, 30_000),
       ragEnabled: env['RAG_ENABLED']?.trim() !== 'false',
       // WHATSAPP_AI_ROUTING=model: the model also routes WhatsApp turns (one more call per turn).
