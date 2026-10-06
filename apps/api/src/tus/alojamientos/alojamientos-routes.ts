@@ -4,6 +4,7 @@ import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../p
 import { AlojamientosService, ErrorAlojamiento } from './alojamientos-service.ts'
 import { CheckoutAlojamientosService } from './checkout-service.ts'
 import type { PrismaClient } from '@prisma/client'
+import { GestionAlojamientos, hoyCalendario, leerAlojamientoPropio, leerCancelacion, leerOrdenImagenes, puntoAproximado } from './alojamientos-gestion.ts'
 import { leerAlojamiento, leerBloqueoUnidad, leerCalificacion, leerImagen, leerReserva, leerTarifaAlojamiento, leerUnidad, type Entrada } from './alojamientos-entrada.ts'
 
 // The body as an object, whatever was sent (nothing, a list, a text): reading a field never throws.
@@ -32,6 +33,7 @@ export interface OpcionesRutasAlojamientos {
 export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesRutasAlojamientos): Router {
   const router = Router()
   const alojamientosService = new AlojamientosService(prisma)
+  const gestion = new GestionAlojamientos(prisma)
   const checkoutService = new CheckoutAlojamientosService(alojamientosService, {
     simulado: opciones.pagoSimuladoHabilitado === true,
     ...(process.env['TUS_WEB_BASE_URL']?.trim() ? { webBaseUrl: process.env['TUS_WEB_BASE_URL'].trim() } : {}),
@@ -136,21 +138,230 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     }
   })
 
+  // What anyone may see of an alojamiento: never who owns it nor the exact address, and the
+  // point is approximate. The exact location reaches the guest with a confirmed reservation.
+  const publico = <T extends { id: string; propietarioId: string | null; direccion: string | null; latitud: number; longitud: number }>(item: T): T => ({ ...item, propietarioId: null, direccion: null, ...puntoAproximado(item.id, item.latitud, item.longitud) })
+
+  // Dates of a stay as calendar dates: both or none, in order, not in the past, up to a year.
+  const estadia = (query: Request['query']): { ok: true; checkIn?: string; checkOut?: string } | { ok: false; campo: string; mensaje: string } => {
+    const checkIn = typeof query['checkIn'] === 'string' && query['checkIn'] ? query['checkIn'] : undefined
+    const checkOut = typeof query['checkOut'] === 'string' && query['checkOut'] ? query['checkOut'] : undefined
+    if (checkIn === undefined && checkOut === undefined) return { ok: true }
+    const fecha = (valor: string | undefined) => valor !== undefined && /^\d{4}-\d{2}-\d{2}$/u.test(valor) && !Number.isNaN(Date.parse(`${valor}T00:00:00.000Z`)) && new Date(`${valor}T00:00:00.000Z`).toISOString().slice(0, 10) === valor
+    if (!fecha(checkIn)) return { ok: false, campo: 'checkIn', mensaje: 'La fecha de entrada no es válida.' }
+    if (!fecha(checkOut)) return { ok: false, campo: 'checkOut', mensaje: 'La fecha de salida no es válida.' }
+    if (checkOut! <= checkIn!) return { ok: false, campo: 'checkOut', mensaje: 'La salida debe ser posterior a la entrada.' }
+    if (checkIn! < hoyCalendario(new Date())) return { ok: false, campo: 'checkIn', mensaje: 'La fecha de entrada ya pasó.' }
+    if (Date.parse(checkOut!) - Date.parse(checkIn!) > 366 * 24 * 60 * 60 * 1000) return { ok: false, campo: 'checkOut', mensaje: 'La estadía puede tener como máximo un año.' }
+    return { ok: true, checkIn: checkIn!, checkOut: checkOut! }
+  }
+  const numero = (valor: unknown, min: number, max: number): number | undefined | null => {
+    if (valor === undefined || valor === '') return undefined
+    const leido = typeof valor === 'string' && /^\d{1,9}$/u.test(valor) ? Number(valor) : NaN
+    return Number.isInteger(leido) && leido >= min && leido <= max ? leido : null
+  }
+
+  // ---- ALOJAMIENTOS-GESTION-01: the guest's reservations and the owner's alojamientos ----------
+  // (before the routes with a free first segment)
+
+  // Mis alojamientos: the ones of the account of the session, published or not.
+  router.get('/mios', async (req: Request, res: Response) => {
+    try {
+      const context = await autenticar(req, res)
+      if (!context) return
+      return res.json({ items: await gestion.misAlojamientos(context.subjectId) })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  // A new alojamiento of the account of the session, as a draft. The owner is never in the body.
+  router.post('/mios', async (req: Request, res: Response) => {
+    try {
+      const context = await autenticar(req, res)
+      if (!context) return
+      const entrada = leerAlojamientoPropio(cuerpo(req))
+      if (!entrada.ok) return rechazar(res, entrada)
+      return res.status(201).json(await gestion.crearPropio(context.subjectId, entrada.valor))
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  router.put('/mios/:id', async (req: Request, res: Response) => {
+    try {
+      const alojamientoId = req.params['id']!
+      if (!(await autorizarGestion(req, res, () => alojamientosService.propietarioDeAlojamiento(alojamientoId)))) return
+      const entrada = leerAlojamientoPropio(cuerpo(req))
+      if (!entrada.ok) return rechazar(res, entrada)
+      await gestion.editarPropio(alojamientoId, entrada.valor)
+      return res.json({ ok: true })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  // Publish / unpublish (owner or admin).
+  router.post('/:id/publicacion', async (req: Request, res: Response) => {
+    try {
+      const alojamientoId = req.params['id']!
+      const context = await autorizarGestion(req, res, () => alojamientosService.propietarioDeAlojamiento(alojamientoId))
+      if (!context) return
+      const body = cuerpo(req)
+      if (Object.keys(body).some((key) => key !== 'publicado') || typeof body['publicado'] !== 'boolean') return res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'publicado debe ser verdadero o falso', fields: ['publicado'] } })
+      return res.json(await gestion.publicar(alojamientoId, body['publicado'], esAdmin(context)))
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  // Mis reservas: the ones of the account of the session.
+  router.get('/reservas/mias', async (req: Request, res: Response) => {
+    try {
+      const context = await autenticar(req, res)
+      if (!context) return
+      return res.json({ items: await gestion.misReservas(context.subjectId) })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  // Reserve: a signed-in account reserves and the reservation is confirmed at once (it is paid
+  // at the place; there is no online payment). The total is computed here, never read.
+  router.post('/reservas', async (req: Request, res: Response) => {
+    try {
+      const context = await autenticar(req, res)
+      if (!context) return
+      const entrada = leerReserva(cuerpo(req), Date.now())
+      if (!entrada.ok) return rechazar(res, entrada)
+      if (new Date(entrada.valor.fechaInicio).toISOString().slice(0, 10) < hoyCalendario(new Date())) return rechazar(res, { ok: false, campo: 'fechaInicio', mensaje: 'La fecha de entrada ya pasó.' })
+      const reserva = await alojamientosService.crearHoldReserva({ ...entrada.valor, clienteId: context.subjectId, inmediata: true })
+      return res.status(201).json(reserva)
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  // The guest cancels its own reservation (until the day before the stay starts).
+  router.post('/reservas/:id/cancelar', async (req: Request, res: Response) => {
+    try {
+      const context = await autenticar(req, res)
+      if (!context) return
+      const entrada = leerCancelacion(cuerpo(req))
+      if (!entrada.ok) return rechazar(res, entrada)
+      await gestion.cancelarComoCliente(req.params['id']!, context.subjectId, entrada.valor.motivo)
+      return res.json({ ok: true })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  // History of a reservation (admin or owner of its alojamiento).
+  router.get('/reservas/:id/historial', async (req: Request, res: Response) => {
+    try {
+      const reservaId = req.params['id']!
+      if (!(await autorizarGestion(req, res, () => alojamientosService.titularidadDeReserva(reservaId)))) return
+      return res.json({ items: await gestion.historial(reservaId) })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  // Blocked dates of a unit: list and remove (admin or owner).
+  router.get('/unidades/:unidadId/bloqueos', async (req: Request, res: Response) => {
+    try {
+      const unidadId = req.params['unidadId']!
+      if (!(await autorizarGestion(req, res, () => alojamientosService.propietarioDeUnidad(unidadId)))) return
+      return res.json({ items: await gestion.bloqueosDeUnidad(unidadId) })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  router.delete('/bloqueos/:id', async (req: Request, res: Response) => {
+    try {
+      const bloqueoId = req.params['id']!
+      if (!(await autorizarGestion(req, res, () => gestion.propietarioDeBloqueo(bloqueoId)))) return
+      await gestion.quitarBloqueo(bloqueoId)
+      return res.json({ ok: true })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  // Photos: upload the raw image (application/octet-stream), serve it, remove it, order them.
+  router.post('/:id/fotos', async (req: Request, res: Response) => {
+    try {
+      const alojamientoId = req.params['id']!
+      if (!(await autorizarGestion(req, res, () => alojamientosService.propietarioDeAlojamiento(alojamientoId)))) return
+      if (!Buffer.isBuffer(req.body)) return enviarError(res, 415, 'PHOTO_TYPE_NOT_ALLOWED', 'Enviá la foto como application/octet-stream')
+      return res.status(201).json(await gestion.subirImagen(alojamientoId, req.body))
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  router.get('/imagenes/:id/archivo', async (req: Request, res: Response) => {
+    try {
+      const archivo = await gestion.archivoImagen(req.params['id']!)
+      if (!archivo) return enviarError(res, 404, 'NOT_FOUND', 'Foto no encontrada')
+      res.setHeader('content-type', archivo.tipoMime)
+      res.setHeader('content-length', String(archivo.contenido.length))
+      res.setHeader('x-content-type-options', 'nosniff')
+      res.setHeader('content-security-policy', "default-src 'none'; sandbox")
+      res.setHeader('cross-origin-resource-policy', 'cross-origin')
+      res.setHeader('cache-control', 'public, max-age=31536000, immutable')
+      res.setHeader('etag', `"${archivo.sha256}"`)
+      return res.status(200).end(archivo.contenido)
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  router.delete('/imagenes/:id', async (req: Request, res: Response) => {
+    try {
+      const imagenId = req.params['id']!
+      if (!(await autorizarGestion(req, res, () => gestion.propietarioDeImagen(imagenId)))) return
+      await gestion.quitarImagen(imagenId)
+      return res.json({ ok: true })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
+  router.put('/:id/imagenes/orden', async (req: Request, res: Response) => {
+    try {
+      const alojamientoId = req.params['id']!
+      if (!(await autorizarGestion(req, res, () => alojamientosService.propietarioDeAlojamiento(alojamientoId)))) return
+      const entrada = leerOrdenImagenes(cuerpo(req))
+      if (!entrada.ok) return rechazar(res, entrada)
+      await gestion.ordenarImagenes(alojamientoId, entrada.valor.orden)
+      return res.json({ ok: true })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
   // 2. Búsqueda pública de alojamientos
   router.get('/', async (req: Request, res: Response) => {
     try {
+      const fechas = estadia(req.query)
+      if (!fechas.ok) return rechazar(res, fechas)
+      const personasLeidas = numero(req.query['personas'], 1, 100)
+      if (personasLeidas === null) return rechazar(res, { ok: false, campo: 'personas', mensaje: 'La cantidad de huéspedes debe ser un número de 1 a 100.' })
       const filtros = {
+        q: typeof req.query['q'] === 'string' ? req.query['q'].trim().slice(0, 80) : undefined,
         zonaId: typeof req.query['zonaId'] === 'string' ? req.query['zonaId'] : undefined,
         barrioId: typeof req.query['barrioId'] === 'string' ? req.query['barrioId'] : undefined,
         tipoSlug: typeof req.query['tipoSlug'] === 'string' ? req.query['tipoSlug'] : undefined,
-        checkIn: typeof req.query['checkIn'] === 'string' ? req.query['checkIn'] : undefined,
-        checkOut: typeof req.query['checkOut'] === 'string' ? req.query['checkOut'] : undefined,
-        personas: req.query['personas'] ? Number(req.query['personas']) : undefined,
+        checkIn: fechas.checkIn,
+        checkOut: fechas.checkOut,
+        personas: personasLeidas,
         precioMin: req.query['precioMin'] ? Number(req.query['precioMin']) : undefined,
         precioMax: req.query['precioMax'] ? Number(req.query['precioMax']) : undefined,
       }
 
-      const items = await alojamientosService.buscarAlojamientosPublico(filtros)
+      const items = (await alojamientosService.buscarAlojamientosPublico(filtros)).map(publico)
       return res.json({ items, total: items.length })
     } catch (err) {
       return manejarError(err, res)
@@ -168,7 +379,7 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
       }
 
       const detalle = await alojamientosService.obtenerDetallePublico(req.params['idOrSlug']!, opciones)
-      return res.json(detalle)
+      return res.json(publico(detalle))
     } catch (err) {
       return manejarError(err, res)
     }
@@ -367,7 +578,8 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
   router.patch('/reservas/:id/estado', async (req: Request, res: Response) => {
     try {
       const reservaId = req.params['id']!
-      if (!(await autorizarGestion(req, res, () => alojamientosService.titularidadDeReserva(reservaId)))) return
+      const context = await autorizarGestion(req, res, () => alojamientosService.titularidadDeReserva(reservaId))
+      if (!context) return
       const cuerpoEstado = cuerpo(req)
       const estado = cuerpoEstado['estado']
       if (Object.keys(cuerpoEstado).some((key) => key !== 'estado') || typeof estado !== 'string' || !['checked_in', 'completed', 'cancelled'].includes(estado)) {
@@ -376,7 +588,10 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
         })
       }
 
-      await alojamientosService.actualizarEstadoReserva(reservaId, estado as 'checked_in' | 'completed' | 'cancelled')
+      // The change and who made it are kept in the history of the reservation.
+      const nuevo = estado as 'checked_in' | 'completed' | 'cancelled'
+      const origenes = nuevo === 'checked_in' ? ['pending_payment', 'confirmed'] : ['pending_payment', 'confirmed', 'checked_in']
+      await gestion.cambiarEstado(reservaId, nuevo, { id: context.subjectId, rol: esAdmin(context) ? 'admin' : 'propietario' }, origenes)
       return res.json({ ok: true })
     } catch (err) {
       return manejarError(err, res)

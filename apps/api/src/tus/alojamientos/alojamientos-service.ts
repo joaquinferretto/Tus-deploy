@@ -34,7 +34,7 @@ const esUnicoViolado = (error: unknown, indice: string): boolean =>
 
 // A reservation in one of these states keeps its dates (the same list as the exclusion
 // constraint ex_reservas_alojamiento_sin_solapamiento).
-const ESTADOS_QUE_OCUPAN = ['pending_payment', 'confirmed', 'checked_in']
+export const ESTADOS_QUE_OCUPAN = ['pending_payment', 'confirmed', 'checked_in']
 
 // Life of a reservation: which states may move to each one. A finished reservation (completed,
 // cancelled, expired) never comes back to life: its dates may already belong to someone else.
@@ -116,6 +116,12 @@ export class AlojamientosService {
     if (filtros.tipoSlug) {
       where['tipo'] = { slug: filtros.tipoSlug }
     }
+    // Destination as written: the name, the neighbourhood or the zone. Never the exact address.
+    const destino = filtros.q?.trim()
+    if (destino) {
+      const contiene = { contains: destino, mode: 'insensitive' as const }
+      where['OR'] = [{ nombre: contiene }, { barrio: { nombre: contiene } }, { zona: { nombre: contiene } }]
+    }
 
     const ahora = new Date()
     const checkInDate = filtros.checkIn ? new Date(filtros.checkIn) : null
@@ -185,6 +191,10 @@ export class AlojamientosService {
 
       // Si se buscaron fechas específicas y no quedan unidades disponibles, omitir
       if (checkInDate && checkOutDate && unidadesDisponibles.length === 0) {
+        continue
+      }
+      // Sin una unidad activa para esa cantidad de huéspedes no hay nada que reservar.
+      if (filtros.personas && unidadesDisponibles.length === 0) {
         continue
       }
 
@@ -473,7 +483,9 @@ export class AlojamientosService {
    * Si dos clientes intentan reservar la misma unidad en un período solapado,
    * exactamente uno tiene éxito y el segundo recibe 409 CONFLICT.
    */
-  async crearHoldReserva(input: CrearHoldReservaInput): Promise<ReservaAlojamientoDTO> {
+  // `inmediata`: the reservation of a signed-in account is confirmed at once (no online payment:
+  // it is paid at the place). Without it, the hold of the payment flow (15 minutes).
+  async crearHoldReserva(input: CrearHoldReservaInput & { inmediata?: boolean }): Promise<ReservaAlojamientoDTO> {
     const inicio = new Date(input.fechaInicio)
     const fin = new Date(input.fechaFin)
 
@@ -492,6 +504,11 @@ export class AlojamientosService {
     })
 
     if (!unidad || unidad.estado !== 'activa') {
+      throw new ErrorAlojamiento(404, 'NOT_FOUND', 'Unidad no encontrada o inactiva')
+    }
+    // Only what the search shows can be reserved: a draft, a paused or a suspended alojamiento
+    // takes no reservation, whoever knows its id.
+    if (unidad.alojamiento.publicado === false || (unidad.alojamiento.estado !== undefined && unidad.alojamiento.estado !== 'publicado')) {
       throw new ErrorAlojamiento(404, 'NOT_FOUND', 'Unidad no encontrada o inactiva')
     }
 
@@ -542,7 +559,7 @@ export class AlojamientosService {
         if (bloqueosSolapados.length > 0) {
           throw new ErrorAlojamiento(409, 'UNIT_BLOCKED', 'La unidad se encuentra bloqueada por mantenimiento o administración')
         }
-        return tx.reservaAlojamiento.create({
+        const creada = await tx.reservaAlojamiento.create({
           data: {
             id: reservaId,
             unidadId: input.unidadId,
@@ -561,13 +578,20 @@ export class AlojamientosService {
             precioFinalSnapshot: BigInt(precioCalculado),
             // The amount is in the currency of the tarifa it was computed from.
             moneda: tarifa.moneda,
-            estado: 'pending_payment',
-            holdExpiracion,
+            estado: input.inmediata ? 'confirmed' : 'pending_payment',
+            holdExpiracion: input.inmediata ? null : holdExpiracion,
+            ...(input.inmediata ? { metodoPago: 'en_alojamiento' } : {}),
             notas: input.notas ?? null,
             creadoEn: ahora,
             actualizadoEn: ahora,
           },
         })
+        if (input.inmediata) {
+          await tx.historialReservaAlojamiento.create({
+            data: { id: `hra-${randomUUID()}`, reservaId, estadoAnterior: null, estadoNuevo: 'confirmed', actorId: input.clienteId ?? null, actorRol: 'cliente', creadoEn: ahora },
+          })
+        }
+        return creada
       })
 
       return {
