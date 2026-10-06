@@ -153,7 +153,8 @@ test('receipts on PostgreSQL, turnos: the image only ranks the client\'s own pen
       out.aprobados = Number((await db.query("SELECT count(*) AS n FROM eventos_webhook_pago WHERE obligacion_id = $1 AND estado = 'applied'", [e2.obligacion.obligacionId])).rows[0].n)
       out.persistido = JSON.stringify([...waStore.state.mensajes.values()]).includes('base64') || JSON.stringify([...waStore.state.conversaciones.values()]).includes('base64') || JSON.stringify([...waStore.state.mensajes.values()]).includes('iVBOR')
     } catch (error) {
-      out.error = String(error?.stack ?? error)
+      // With the failure behind a generic 503 (its code and where it came from), when there is one.
+      out.error = String(error?.stack ?? error) + (error?.cause ? ' | CAUSE code=' + String(error.cause.code ?? '') + ' ' + String(error.cause.stack ?? error.cause).slice(0, 900) : '')
     } finally {
       await cerrar()
     }
@@ -280,7 +281,8 @@ test('receipts on PostgreSQL, works: the receipt picks the deposit or the balanc
       out.split = [senaSplit.length, trasSplit.length, await tramos(t3), await filas(con), await estadoTurno(turnoDana)]
       out.persistido = JSON.stringify([...waStore.state.mensajes.values()]).includes('base64') || JSON.stringify([...waStore.state.conversaciones.values()]).includes('base64') || JSON.stringify([...waStore.state.mensajes.values()]).includes('iVBOR')
     } catch (error) {
-      out.error = String(error?.stack ?? error)
+      // With the failure behind a generic 503 (its code and where it came from), when there is one.
+      out.error = String(error?.stack ?? error) + (error?.cause ? ' | CAUSE code=' + String(error.cause.code ?? '') + ' ' + String(error.cause.stack ?? error.cause).slice(0, 900) : '')
     } finally {
       await cerrar()
     }
