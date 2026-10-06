@@ -132,7 +132,9 @@ export interface AlojamientoPublicoDTO {
     nombre: string
   }
   descripcion: string | null
-  direccion: string
+  // Public answers never carry the exact address (null) and the point is approximate: the exact
+  // location belongs to whoever holds a confirmed reservation and to the owner.
+  direccion: string | null
   latitud: number
   longitud: number
   barrioNombre: string | null
@@ -187,6 +189,8 @@ export interface ReservaAlojamientoDTO {
 }
 
 export interface FiltrosBusquedaAlojamientos {
+  // Destination as the person writes it: name, neighbourhood or zone.
+  q?: string
   zonaId?: string
   barrioId?: string
   tipoSlug?: string
@@ -234,3 +238,66 @@ export interface CalificarAlojamientoInput {
   puntuacion: number
   comentario?: string
 }
+
+// ---- ALOJAMIENTOS-GESTION-01 ---------------------------------------------------------------------
+
+// A reservation as its guest sees it ("Mis reservas"). The exact address is only there while the
+// reservation is confirmed, in course or completed.
+export interface MiReservaAlojamientoDTO extends ReservaAlojamientoDTO {
+  noches: number
+  direccion: string | null
+  zona: string | null
+  checkInHora: string
+  checkOutHora: string
+  imagenUrl: string | null
+  puedeCancelar: boolean
+}
+
+export interface BloqueoUnidadDTO {
+  id: string
+  unidadId: string
+  fechaInicio: string
+  fechaFin: string
+  motivo: string
+}
+
+export interface UnidadPropiaDTO {
+  id: string
+  nombre: string
+  descripcion: string | null
+  capacidadPersonas: number
+  camasDetalle: string | null
+  banosCantidad: number
+  estado: EstadoUnidadAlojamiento
+  precioNoche: number | null
+  moneda: string
+  bloqueos: BloqueoUnidadDTO[]
+}
+
+// An alojamiento as its owner manages it ("Mis alojamientos"), published or not.
+export interface AlojamientoPropioDTO {
+  id: string
+  nombre: string
+  slug: string
+  tipoId: string
+  tipoNombre: string
+  descripcion: string | null
+  direccion: string
+  latitud: number
+  longitud: number
+  barrioId: string | null
+  zonaId: string | null
+  checkInHora: string
+  checkOutHora: string
+  politicas: string | null
+  comodidades: string[]
+  estado: EstadoAlojamiento
+  publicado: boolean
+  // Publishing needs an active unit with a price per night.
+  puedePublicarse: boolean
+  imagenes: ImagenAlojamientoDTO[]
+  unidades: UnidadPropiaDTO[]
+  reservasVigentes: number
+}
+
+export const MAXIMO_IMAGENES_ALOJAMIENTO = 12
