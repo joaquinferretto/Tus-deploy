@@ -229,3 +229,132 @@ test(
     assert.notEqual(r.codigoViejo, 'vinculado', 'the cancelled code verifies nothing')
   }
 )
+
+test(
+  'PHONE PostgreSQL admin contact: the administration assigns, verifies and links the WhatsApp of an account without the owner of the number writing — the SAME contact and field a verification by message writes; conflicts change nothing; replacing, unlinking and removing leave one coherent state; the turno notice resolves the linked contact',
+  { skip: !url && 'TUS_TELEFONO_PG_URL not set (disposable PostgreSQL 16 only)', timeout: 180000 },
+  () => {
+    const r = runTypeScriptScenario(`${SETUP}
+      try {
+        const { TransaccionAsistentePrisma } = await import('./apps/api/src/tus/adapters/prisma-asistente.ts')
+        const { NotificadorTurnosWhatsapp } = await import('./apps/api/src/tus/asistente/avisos-turnos.ts')
+        const { FakeWhatsappProvider } = await import('./apps/api/src/tus/asistente/meta.ts')
+        const contacto = (waId) => prisma.contactoWhatsapp.findUnique({ where: { waId } })
+        const estado = async (id) => { const e = await almacen.estado(id); return [e.phoneNumber, e.phonePending, e.phoneVerifiedAt !== null] }
+        const vista = (x) => x.ok ? [x.cambio, x.telefono.verificado, x.telefono.pendiente !== null, x.telefono.whatsappVinculado] : x.code
+        const eventos = async (cuentaId) => (await prisma.$queryRawUnsafe('SELECT "kind", "metadata"::text AS m, "actorId" FROM public."SecurityEvent" WHERE "metadata"::text LIKE $1 ORDER BY "occurredAt", "id"', '%' + cuentaId + '%').catch(() => []))
+        const out = {}
+        const ADMIN = 'admin-contacto'
+        const tenantDe = async (id) => (await prisma.account.findUnique({ where: { id } })).tenantId
+
+        // ---- 1-5. Pending, verify, save + verify, link, the three at once.
+        const a = await cuenta('cw-a'); const pa = phone(40); const waA = pa.slice(1)
+        out.pendiente = [(await tel.fijarPendientePorAdmin(ADMIN, a, pa)).ok, await estado(a)]
+        out.verificar = vista(await tel.verificarPorAdmin(ADMIN, a))
+        out.sinContactoTodavia = (await contacto(waA)) === null
+        const vinculada = await tel.vincularWhatsappPorAdmin(ADMIN, a)
+        const filaA = await contacto(waA)
+        out.vincular = [vista(vinculada), filaA?.cuentaVinculadaId === a, filaA?.tenantVinculadoId === await tenantDe(a), filaA?.vinculadoEn !== null, (await almacen.waIdVinculado(a)) === waA]
+        // 6. Again: nothing changes, one contact.
+        out.repetir = [vista(await tel.vincularWhatsappPorAdmin(ADMIN, a)), await prisma.contactoWhatsapp.count({ where: { cuentaVinculadaId: a } })]
+        const b = await cuenta('cw-b'); const pb = phone(41); const waB = pb.slice(1)
+        out.guardarVerificar = [vista(await tel.asignarPorAdmin(ADMIN, b, { telefono: pb, vincular: false })), await estado(b), (await contacto(waB)) === null]
+        const c = await cuenta('cw-c'); const pc = phone(42); const waC = pc.slice(1)
+        out.todoJunto = [vista(await tel.asignarPorAdmin(ADMIN, c, { telefono: ' 0379 15 ' + pc.slice(-7, -4) + '-' + pc.slice(-4), vincular: true })), await estado(c), (await contacto(waC))?.cuentaVinculadaId === c]
+        // Pending -> verify and link in one step.
+        const d = await cuenta('cw-d'); const pd = phone(43)
+        await tel.fijarPendientePorAdmin(ADMIN, d, pd)
+        out.verificarVincular = [vista(await tel.asignarPorAdmin(ADMIN, d, { vincular: true })), await estado(d), (await contacto(pd.slice(1)))?.cuentaVinculadaId === d]
+
+        // ---- 7-8. Conflicts: the number or the WhatsApp of ANOTHER account. Nothing changes.
+        const e = await cuenta('cw-e')
+        out.telefonoAjeno = [(await tel.asignarPorAdmin(ADMIN, e, { telefono: pa, vincular: true })).code, await estado(e)]
+        // A WhatsApp already linked to another account (the person linked it by token), whose number is nobody's verified phone.
+        const pf = phone(44); const waF = pf.slice(1)
+        await prisma.contactoWhatsapp.create({ data: { id: run + '-contacto-f', waId: waF, cuentaVinculadaId: a, tenantVinculadoId: await tenantDe(a), vinculadoEn: new Date(), version: 1, fechaCreacion: new Date() } })
+        const conflictoWa = await tel.asignarPorAdmin(ADMIN, e, { telefono: pf, vincular: true })
+        out.whatsappAjeno = [conflictoWa.code, await estado(e), (await contacto(waF)).cuentaVinculadaId === a, JSON.stringify(conflictoWa).includes(a)]
+        await prisma.contactoWhatsapp.delete({ where: { waId: waF } })
+        out.invalido = [(await tel.asignarPorAdmin(ADMIN, e, { telefono: '12ab', vincular: true })).code, (await tel.asignarPorAdmin(ADMIN, e, { vincular: true })).code, (await tel.vincularWhatsappPorAdmin(ADMIN, e)).code, (await tel.asignarPorAdmin(ADMIN, 'no-existe', { telefono: phone(45), vincular: true })).code]
+
+        // ---- 20. The turno notice resolves the provider's WhatsApp linked by the administration.
+        const tx = new TransaccionAsistentePrisma(prisma)
+        const wa = new FakeWhatsappProvider()
+        const avisos = new NotificadorTurnosWhatsapp(tx, wa)
+        const aviso = (cuentaId, reservaId) => avisos.solicitudRecibida({ reservaId, prestadorTenantId: 't', prestadorCuentaId: cuentaId, clienteNombre: 'Cliente B', servicio: 'Electricidad', inicio: new Date(Date.now() + 86400000), duracionMinutos: 60, expiraEn: new Date(Date.now() + 3600000) })
+        const vinculados = await tx.ejecutar((repos) => repos.contactos.vinculadosA(a))
+        out.resuelve = [vinculados.length, vinculados[0]?.waId === waA]
+        // Meta only allows free text inside the 24 h after the person's last message: a number that
+        // never wrote has no open window, so nothing is sent yet (a template is needed for that).
+        await aviso(a, run + '-res-1')
+        out.sinVentana = wa.sent.length
+        // The person writes once (any message): the same notice now goes to that very number.
+        const ahora = new Date()
+        await prisma.conversacionWhatsapp.create({ data: { id: run + '-conv-a', contactoId: filaA.id, estado: 'active', modo: 'bot', abiertaEn: ahora, ultimoMensajeEn: ahora, ultimoEntranteEn: ahora, noLeidos: 0, mensajesResumidos: 0, estadoConversacional: {}, version: 1 } })
+        await aviso(a, run + '-res-2')
+        out.conVentana = [wa.sent.length, wa.sent[0]?.to === waA, /Cliente B te solicitó un turno/u.test(wa.sent[0]?.message?.text ?? '')]
+
+        // ---- 9. Unlink: only the relation goes.
+        const desvinculada = await tel.desvincularWhatsappPorAdmin(ADMIN, a)
+        out.desvincular = [vista(desvinculada), (await contacto(waA)).cuentaVinculadaId, await estado(a), await prisma.conversacionWhatsapp.count({ where: { id: run + '-conv-a' } }), vista(await tel.desvincularWhatsappPorAdmin(ADMIN, a))]
+        await aviso(a, run + '-res-3')
+        out.yaNoRecibe = wa.sent.length
+        await tel.vincularWhatsappPorAdmin(ADMIN, a)
+
+        // ---- 11-14. Replace a verified + linked number: the old one stops resolving, the new one does.
+        const pa2 = phone(46); const waA2 = pa2.slice(1)
+        out.reemplazo = [vista(await tel.asignarPorAdmin(ADMIN, a, { telefono: pa2, vincular: true })), await estado(a), (await contacto(waA)).cuentaVinculadaId, (await contacto(waA2)).cuentaVinculadaId === a, (await tx.ejecutar((repos) => repos.contactos.vinculadosA(a))).map((x) => x.waId === waA2), (await almacen.cuentaPorTelefono(pa))]
+        // Replaced only as pending: the verified + linked one keeps working until the new one is verified.
+        const pa3 = phone(47)
+        out.reemplazoPendiente = [(await tel.fijarPendientePorAdmin(ADMIN, a, pa3)).ok, await estado(a), (await almacen.waIdVinculado(a)) === waA2]
+        // 15. Removing the verification invalidates the link (a link needs a verified phone).
+        out.desverificar = [vista(await tel.quitarVerificacionPorAdmin(ADMIN, a)), (await contacto(waA2)).cuentaVinculadaId, await estado(a)]
+
+        // ---- 10. Remove the number altogether; the account and its history stay.
+        await tel.asignarPorAdmin(ADMIN, c, { telefono: pc, vincular: true })
+        const desafio = await tel.iniciar(c, { telefono: phone(48) })
+        const antes = [await prisma.account.count({ where: { id: c } }), await prisma.contactoWhatsapp.count({ where: { waId: waC } })]
+        const quitada = await tel.quitarNumeroPorAdmin(ADMIN, c)
+        out.quitar = [vista(quitada), await estado(c), (await contacto(waC)).cuentaVinculadaId, antes, [await prisma.account.count({ where: { id: c } }), await prisma.contactoWhatsapp.count({ where: { waId: waC } })], desafio.ok ? (await almacen.desafio(desafio.challengeId))?.invalidatedAt !== null : 'sin-desafio', vista(await tel.quitarNumeroPorAdmin(ADMIN, c))]
+        // The freed number can be given to another account.
+        out.liberado = vista(await tel.asignarPorAdmin(ADMIN, e, { telefono: pc, vincular: true }))
+        out.liberadoContacto = (await contacto(waC)).cuentaVinculadaId === e
+
+        // ---- Two administrators giving the same number to two accounts at once: one wins.
+        const x = await cuenta('cw-x'); const y = await cuenta('cw-y'); const pr = phone(49)
+        const carrera = await Promise.all([tel.asignarPorAdmin(ADMIN, x, { telefono: pr, vincular: true }), tel.asignarPorAdmin(ADMIN, y, { telefono: pr, vincular: true })].map((p) => p.then((z) => z.ok ? 'ok' : z.code, (err) => 'error:' + code(err))))
+        const duenos = [(await almacen.estado(x)).phoneNumber, (await almacen.estado(y)).phoneNumber].filter(Boolean).length
+        const filaR = await contacto(pr.slice(1))
+        out.carrera = [[...carrera].sort(), duenos, [x, y].includes(filaR?.cuentaVinculadaId), await prisma.contactoWhatsapp.count({ where: { waId: pr.slice(1) } })]
+
+        // ---- 18. Audit: the administrator, the target account, masked numbers.
+        const auditoria = await prisma.auditoriaAsistente.findMany({ where: { actorId: ADMIN, accion: { in: ['whatsapp.linked', 'whatsapp.unlinked'] } } })
+        out.auditoriaAsistente = [auditoria.some((ev) => ev.accion === 'whatsapp.linked' && ev.metadata.origin === 'admin'), auditoria.some((ev) => ev.accion === 'whatsapp.unlinked'), JSON.stringify(auditoria).includes(waA), JSON.stringify(auditoria).includes(waA2)]
+        console.log(JSON.stringify(out))
+      } finally { await prisma.$disconnect() }
+    `)
+    assert.deepEqual(r.pendiente[0], true)
+    assert.deepEqual(r.verificar, [true, true, false, false], 'verifying is not linking')
+    assert.equal(r.sinContactoTodavia, true, 'no WhatsApp contact exists before the administration links it')
+    assert.deepEqual(r.vincular, [[true, true, false, true], true, true, true, true], 'the link is the contact of the assistant, with its account, tenant and date: the same field a verification by message writes')
+    assert.deepEqual(r.repetir, [[false, true, false, true], 1], 'linking again changes nothing')
+    assert.deepEqual([r.guardarVerificar[0], r.guardarVerificar[1].slice(1), r.guardarVerificar[2]], [[true, true, false, false], [null, true], true], 'save + verify: verified, nothing pending, WhatsApp not linked')
+    assert.deepEqual([r.todoJunto[0], r.todoJunto[1].slice(1), r.todoJunto[2]], [[true, true, false, true], [null, true], true], 'save + verify + link, from a number typed the local way')
+    assert.deepEqual([r.verificarVincular[0], r.verificarVincular[1].slice(1), r.verificarVincular[2]], [[true, true, false, true], [null, true], true])
+    assert.deepEqual(r.telefonoAjeno, ['PHONE_IN_USE', [null, null, false]], 'the verified phone of another account: refused, nothing changes')
+    assert.deepEqual(r.whatsappAjeno, ['WHATSAPP_IN_USE', [null, null, false], true, false], 'a WhatsApp of another account: refused, the whole operation is undone, nothing about that account is told')
+    assert.deepEqual(r.invalido, ['INVALID_PHONE', 'NO_PHONE', 'PHONE_NOT_VERIFIED', 'NOT_FOUND'])
+    assert.deepEqual(r.resuelve, [1, true], 'the notices read the contact linked by the administration')
+    assert.equal(r.sinVentana, 0, 'outside Meta\'s 24 h window (the number never wrote) no free text is sent')
+    assert.deepEqual(r.conVentana, [1, true, true], 'inside the window the notice goes to that very number')
+    assert.deepEqual([r.desvincular[0], r.desvincular[1], r.desvincular[2].slice(1), r.desvincular[3], r.desvincular[4]], [[true, true, false, false], null, [null, true], 1, [false, true, false, false]], 'unlinking keeps the phone verified and the conversation; repeating it changes nothing')
+    assert.equal(r.yaNoRecibe, 1, 'an unlinked WhatsApp receives nothing more')
+    assert.deepEqual([r.reemplazo[0], r.reemplazo[1].slice(1), r.reemplazo[2], r.reemplazo[3], r.reemplazo[4], r.reemplazo[5]], [[true, true, false, true], [null, true], null, true, [true], null], 'replaced: the old number resolves to nobody, the new one to the account, and only one is operative')
+    assert.deepEqual([r.reemplazoPendiente[0], r.reemplazoPendiente[1][2], r.reemplazoPendiente[2]], [true, true, true], 'a replacement that is only pending leaves the verified, linked number working')
+    assert.deepEqual([r.desverificar[0], r.desverificar[1], r.desverificar[2][0]], [[true, false, true, false], null, null], 'removing the verification unlinks the WhatsApp of that number')
+    assert.deepEqual([r.quitar[0], r.quitar[1], r.quitar[2], r.quitar[3], r.quitar[4], r.quitar[5], r.quitar[6]], [[true, false, false, false], [null, null, false], null, [1, 1], [1, 1], true, [false, false, false, false]], 'the number is gone, its WhatsApp unlinked, the pending challenge cancelled; the account and the contact row remain')
+    assert.deepEqual([r.liberado, r.liberadoContacto], [[true, true, false, true], true], 'a removed number is free for another account')
+    assert.deepEqual(r.carrera, [['PHONE_IN_USE', 'ok'], 1, true, 1], 'two accounts racing for one number: one gets the phone and the WhatsApp, the other nothing')
+    assert.deepEqual(r.auditoriaAsistente, [true, true, false, false], 'the link and the unlink are audited with the administrator and a masked number')
+  }
+)

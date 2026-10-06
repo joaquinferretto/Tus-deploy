@@ -39,6 +39,9 @@ export interface EntradaVinculoWhatsapp {
   telefonoAnterior: string | null
   correlationId: string
   now: number
+  // An administrator certifies the link (the person did not write): the audit names the
+  // administrator, and every OTHER WhatsApp of the account is unlinked (one number per account).
+  admin?: { actorId: string }
 }
 export type ResultadoVinculoWhatsapp = 'vinculado' | 'ya_vinculado' | 'conflicto' | 'no_disponible'
 export type VinculadorWhatsapp = (entrada: EntradaVinculoWhatsapp) => Promise<Exclude<ResultadoVinculoWhatsapp, 'no_disponible'>>
@@ -58,6 +61,8 @@ export interface EntradaDesvinculoWhatsapp {
   actorId: string
   correlationId: string
   now: number
+  // Why (audit). Default: the verification of the phone was removed by the administration.
+  motivo?: string
 }
 
 export interface AlmacenTelefonos {
