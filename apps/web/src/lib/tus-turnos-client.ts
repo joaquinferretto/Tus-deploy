@@ -81,6 +81,10 @@ export const turnosApi = {
     ),
   miAgenda: (oficioId: string, desde: string) => json<AgendaSemanal>(`/tus/v1/prestador/turnos/agenda?${query({ oficioId, desde })}`, undefined, 'No pudimos consultar la agenda.'),
   misBloqueos: () => json<{ items: BloqueoAgendaDTO[] }>('/tus/v1/prestador/turnos/bloqueos').then((result) => result.items),
+  // An absence: a whole day, some hours or several days. The API refuses one over a taken turno.
+  bloquear: (cuerpo: { inicio: string; fin: string; motivo?: string }) => json<{ ok: true; id: string }>('/tus/v1/prestador/turnos/bloquear', { method: 'POST', body: JSON.stringify(cuerpo) }, 'No pudimos guardar la ausencia.'),
+  editarBloqueo: (id: string, cuerpo: { inicio: string; fin: string; motivo?: string }) =>
+    json<{ ok: true; id: string }>(`/tus/v1/prestador/turnos/bloqueos/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(cuerpo) }, 'No pudimos guardar la ausencia.'),
   quitarBloqueo: (id: string) => json<{ ok: true }>(`/tus/v1/prestador/turnos/bloqueos/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'No pudimos quitar el bloqueo.'),
   // Requests waiting for this provider's answer. Acceptance opens the deposit payment step.
   misSolicitudes: () => json<{ items: DetalleTurno[]; pendientes: number }>('/tus/v1/prestador/turnos/solicitudes', undefined, 'No pudimos cargar las solicitudes de reserva.'),

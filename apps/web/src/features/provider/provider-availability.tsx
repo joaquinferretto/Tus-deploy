@@ -11,8 +11,9 @@ import {
 } from '@factory/contracts'
 
 import ui from '../../components/admin/admin-usuarios.module.css'
-import { fechaTurno, horaTurno, turnosApi } from '../../lib/tus-turnos-client'
+import { turnosApi } from '../../lib/tus-turnos-client'
 import { AgendaSemanal } from '../turnos/agenda-semanal'
+import { ProviderAusencias } from './provider-ausencias'
 import styles from '../turnos/agenda.module.css'
 
 // Monday first, Sunday last (the API uses 0 = Sunday).
@@ -57,7 +58,6 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
   const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [bloqueos, setBloqueos] = useState<BloqueoAgendaDTO[]>([])
-  const [avisoBloqueo, setAvisoBloqueo] = useState('')
   // Bumped after saving or removing a block: the agenda below is asked again.
   const [cambios, setCambios] = useState(0)
 
@@ -111,17 +111,6 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
       setAviso({ kind: 'error', text: error instanceof Error ? error.message : 'No pudimos guardar tu disponibilidad.' })
     } finally {
       setGuardando(false)
-    }
-  }
-
-  async function quitarBloqueo(id: string) {
-    setAvisoBloqueo('')
-    try {
-      await turnosApi.quitarBloqueo(id)
-      cargarBloqueos()
-      setCambios((value) => value + 1)
-    } catch (error) {
-      setAvisoBloqueo(error instanceof Error ? error.message : 'No pudimos quitar el bloqueo.')
     }
   }
 
@@ -210,9 +199,17 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
         </div>
       </section>
 
+      <ProviderAusencias
+        bloqueos={bloqueos}
+        onCambio={() => {
+          cargarBloqueos()
+          setCambios((value) => value + 1)
+        }}
+      />
+
       <section aria-labelledby="agenda-titulo" className={ui.panel}>
         <h2 id="agenda-titulo">Tu agenda</h2>
-        <p className={ui.muted}>Así ven tus clientes los horarios: tu disponibilidad semanal, menos los turnos tomados y los bloqueos.</p>
+        <p className={ui.muted}>Así ven tus clientes los horarios: tu disponibilidad semanal, menos los turnos tomados y tus ausencias.</p>
         {conTurnos.length === 0 ? (
           <p className={ui.alertWarn}>Todavía no tenés servicios con turnos habilitados.</p>
         ) : (
@@ -230,28 +227,6 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
             {oficioId ? <AgendaSemanal origen={{ tipo: 'propia', oficioId }} soloLectura version={cambios + version} /> : null}
           </>
         )}
-        {bloqueos.length > 0 ? (
-          <div>
-            <h3 style={{ fontSize: '0.95rem', margin: '4px 0 8px' }}>Bloqueos y días sin atención</h3>
-            <ul className={styles.blocks}>
-              {bloqueos.map((bloqueo) => (
-                <li key={bloqueo.id}>
-                  <span>
-                    <strong>{bloqueo.motivo}</strong> · {fechaTurno(bloqueo.inicio)} {horaTurno(bloqueo.inicio)} a {fechaTurno(bloqueo.fin)} {horaTurno(bloqueo.fin)}
-                  </span>
-                  <button className={styles.textButton} onClick={() => void quitarBloqueo(bloqueo.id)} type="button">
-                    Quitar<span className={styles.srOnly}>{` bloqueo ${bloqueo.motivo}`}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-            {avisoBloqueo ? (
-              <p className={ui.alertError} role="alert">
-                {avisoBloqueo}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
       </section>
     </>
   )
