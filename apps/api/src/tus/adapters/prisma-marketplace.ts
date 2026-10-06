@@ -363,7 +363,10 @@ function toMerchant(row: Record<string, unknown>): PerfilPrestador {
     timezone: String(row['zonaHoraria']),
     staffRoles: Array.isArray(row['rolesPersonal']) ? row['rolesPersonal'].map(String) : [],
     operatingPolicyVersion: String(row['versionPoliticaOperativa']),
-    status: 'approved',
+    // The state the administration set. It used to be read as 'approved' whatever the row said,
+    // so a suspension was written and never seen again. Only an explicit suspension suspends:
+    // any other stored value keeps meaning an approved provider, as it always did.
+    status: row['estado'] === 'suspended' ? 'suspended' : 'approved',
     createdAt: new Date(String(row['fechaCreacion'])).toISOString(),
     updatedAt: new Date(String(row['fechaActualizacion'])).toISOString(),
   }

@@ -89,6 +89,19 @@ test(
           // Five simultaneous switches of the same session: no error, one of the two modes.
           const carrera = await Promise.all(['CLIENT', 'PROVIDER', 'CLIENT', 'PROVIDER', 'CLIENT'].map((modo) => servicio.cambiar(ctx(joaquin, sJoaquin), modo).then((x) => x.ok, () => 'error')))
           out.carrera = [carrera, ['CLIENT', 'PROVIDER'].includes((await almacen.leer(sJoaquin, joaquin)).activeMode)]
+          // The provider state the administration sets is what the store reads back (it used to
+          // answer 'approved' whatever the row said, so a suspension was never seen again).
+          const { PrismaMarketplaceStore } = await import('./apps/api/src/tus/adapters/prisma-marketplace.ts')
+          const mercado = new PrismaMarketplaceStore(prisma)
+          const ahora = new Date().toISOString()
+          await prisma.tusTenant.create({ data: { id: 't-estado', slug: 't-estado', name: 'Estado', status: 'active', createdAt: new Date(), updatedAt: new Date() } })
+          const perfil = { tenantId: 't-estado', merchantId: 'prestador-estado', cohort: 'repairs-trades', locationId: 'ubicacion', timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'], operatingPolicyVersion: 'v1', status: 'approved', createdAt: ahora, updatedAt: ahora }
+          await mercado.merchant.save(perfil)
+          const aprobado = (await mercado.merchant.find('t-estado')).status
+          await mercado.merchant.save({ ...perfil, status: 'suspended' })
+          const suspendido = (await mercado.merchant.find('t-estado')).status
+          await mercado.merchant.save({ ...perfil, status: 'approved' })
+          out.estadoPrestador = [aprobado, suspendido, m.estadoPrestadorDeCuenta(await mercado.merchant.find('t-estado')), m.estadoPrestadorDeCuenta(await mercado.merchant.find('t-no-existe').catch(() => null)), (await prisma.$queryRawUnsafe('SELECT count(*)::int AS n FROM public."prestadores" WHERE "tenant_id" = $1', 't-estado'))[0].n]
           // The identity service keeps working with the new columns (sign-in, a new session with NULL).
           const auth = createPrismaAuthService(prisma)
           const otra = await auth.service.signIn({ email: 'joaquin@example.com', password: 'una-clave-larga-123', device: {} })
@@ -103,6 +116,7 @@ test(
       assert.deepEqual(r.check, [true, true], 'the database refuses a mode outside the list')
       assert.deepEqual(r.carrera, [[true, true, true, true, true], true], 'simultaneous switches do not fail')
       assert.deepEqual(r.nuevaSesion, [true, 1], 'a new sign-in creates a session without a mode')
+      assert.deepEqual(r.estadoPrestador, ['approved', 'suspended', 'approved', 'none', 1], 'a suspension is read back as a suspension, a reactivation as approved, on the same row')
     } finally {
       await db?.end().catch(() => {})
       await admin.query(`DROP DATABASE IF EXISTS ${base} WITH (FORCE)`).catch(() => {})
