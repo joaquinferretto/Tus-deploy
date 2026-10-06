@@ -1,5 +1,8 @@
 // Generated from the CSS module class names. Regenerate when classes change.
 declare const styles: {
+  readonly accountButton: string
+  readonly accountList: string
+  readonly accountListInline: string
   readonly assistantBot: string
   readonly assistantChip: string
   readonly assistantClose: string
@@ -65,6 +68,9 @@ declare const styles: {
   readonly markerCount: string
   readonly menuButton: string
   readonly mobileMenu: string
+  readonly modeChip: string
+  readonly modeLine: string
+  readonly modeNotice: string
   readonly nav: string
   readonly navButton: string
   readonly page: string

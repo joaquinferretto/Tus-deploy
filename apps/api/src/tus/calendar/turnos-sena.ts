@@ -284,7 +284,9 @@ export class ServicioSenaTurnos {
       if (code === 'IN_PROGRESS') throw new ErrorCalendario(409, 'IN_PROGRESS', 'El pago se está preparando. Probá de nuevo en unos segundos.')
       if (code === 'APPOINTMENT_NOT_PAYABLE' || code === 'WORK_CANCELLED' || code === 'OBLIGATION_CLOSED' || code === 'INCONSISTENT_COMMERCIAL_CHAIN' || code === 'OBLIGATION_STALE')
         throw new ErrorCalendario(409, CODIGO_SENA_NO_PAGABLE, 'La seña de ese turno no se puede pagar ahora.')
-      throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'No pudimos preparar el pago en este momento. Probá de nuevo en unos minutos.')
+      // The person gets a generic answer; the original failure travels as the cause, for logs and
+      // tests. Nothing of it is ever sent over HTTP (only the code and the message are).
+      throw Object.assign(new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'No pudimos preparar el pago en este momento. Probá de nuevo en unos minutos.'), { cause: error })
     }
     // Only a hosted Mercado Pago HTTPS address ever leaves the backend.
     if (!esUrlMercadoPago(url)) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'No pudimos preparar el pago en este momento. Probá de nuevo en unos minutos.')

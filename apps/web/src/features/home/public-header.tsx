@@ -5,9 +5,10 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 
-import { accountLinks, createTusWebAuthClient } from '@/lib/tus-auth-client'
+import { accountLinks, createTusWebAuthClient, modeOf } from '@/lib/tus-auth-client'
 import { withReturnTo } from '../auth/auth-validation'
 
+import { AccountMenu } from '../session/account-menu'
 import { useAccountView } from '../session/use-account-view'
 import { HowItWorksDialog } from './how-it-works'
 import styles from './home.module.css'
@@ -38,7 +39,7 @@ const MANUAL_PRESTADOR = { href: '/ayuda/prestadores', label: 'Manual del presta
 // "Solicitudes" goes to the REAL page of requests for whoever is looking: the provider's inbox,
 // the client's own requests, or the form to publish one.
 const solicitudesPara = (auth: ReturnType<typeof useAccountView>): string =>
-  auth.status !== 'signed-in' ? '/publicar' : auth.capabilities.provider ? '/prestador/solicitudes' : auth.capabilities.platformAdmin ? '/tus/admin/solicitudes' : '/mis-solicitudes'
+  auth.status !== 'signed-in' ? '/publicar' : auth.capabilities.platformAdmin ? (auth.capabilities.provider ? '/prestador/solicitudes' : '/tus/admin/solicitudes') : modeOf(auth.capabilities) === 'PROVIDER' ? '/prestador/solicitudes' : '/mis-solicitudes'
 
 export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNode {
   // Session and REAL role come from the API; "Ir a mi panel" goes to that role's dashboard.
@@ -68,7 +69,12 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
       document.removeEventListener('mousedown', onPointer)
     }
   }, [helpOpen])
-  const esPrestador = auth.status === 'signed-in' && auth.capabilities.provider === true
+  // The provider's manual shows while the person is using TUS as a provider.
+  const esPrestador = auth.status === 'signed-in' && auth.capabilities.provider === true && (auth.capabilities.platformAdmin || modeOf(auth.capabilities) === 'PROVIDER')
+  // A provider that fell back to client (suspended by the administration): said once, clearly.
+  const [avisoUrl, setAvisoUrl] = useState(false)
+  useEffect(() => { setAvisoUrl(new URLSearchParams(window.location.search).get('aviso') === 'prestador-suspendido') }, [])
+  const suspendido = auth.status === 'signed-in' && auth.capabilities.providerStatus === 'suspended' && (avisoUrl || auth.capabilities.modeNotice === 'provider_unavailable')
   const ayuda = esPrestador ? [AYUDA[0], MANUAL_PRESTADOR, ...AYUDA.slice(1)] : AYUDA
   const solicitudes = solicitudesPara(auth)
   // From the assistant or a worker profile, signing in comes back to the same screen.
@@ -101,7 +107,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
             {link.label}
           </Link>
         ))}
-        <button className={styles.buttonGhost} onClick={() => void signOut()} type="button">Cerrar sesión</button>
+        <AccountMenu capabilities={auth.capabilities} onSignOut={() => void signOut()} />
       </>
     ) : (
       <>
@@ -184,7 +190,7 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
                   {link.label}
                 </Link>
               ))}
-              <button className={styles.buttonGhost} onClick={() => void signOut()} type="button">Cerrar sesión</button>
+              <AccountMenu capabilities={auth.capabilities} inline onSignOut={() => void signOut()} />
             </>
           ) : (
             <>
@@ -197,6 +203,11 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
             </>
           )}
         </nav>
+      ) : null}
+      {suspendido ? (
+        <p className={styles.modeNotice} data-aviso-suspension role="status">
+          Tu perfil de prestador está suspendido. Podés seguir usando TUS como cliente.
+        </p>
       ) : null}
       <HowItWorksDialog onClose={() => setHowOpen(false)} open={howOpen} />
     </header>

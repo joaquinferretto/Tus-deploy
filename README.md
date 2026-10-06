@@ -805,6 +805,7 @@ pnpm run security:scan
 - `ARCHITECTURE.md`: arquitectura implementada, decisiones D2 y límites conocidos.
 - `docs/MEMORIA_CONVERSACIONAL_TUS.md`: memoria conversacional del asistente (estado real y fases).
 - `docs/VALIDACIONES_DATOS_TUS.md`: que dato se valida, donde (Web y API) y con que reglas; la API es la autoridad.
+- `docs/MODOS_CLIENTE_PRESTADOR_TUS.md`: una cuenta, dos modos (Cliente / Prestador); el modo es contexto y nunca autoriza; suspension del prestador separada de la de la cuenta.
 - `docs/DECISIONES_PRODUCTO_TUS.md`: decisiones canónicas de producto y dominio por Build.
 - `docs/ROADMAP_TUS.md`: estado de fases, pendientes y bloqueos.
 - `docs/GLOSARIO_TUS.md`: terminología normativa de TUS.

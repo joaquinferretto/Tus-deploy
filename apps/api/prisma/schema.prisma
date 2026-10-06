@@ -50,6 +50,8 @@ model Account {
   id                 String               @id
   userId             String
   tenantId           String
+  // MODOS-01: preference for the next sign-in (CLIENT | PROVIDER). Never an authorization.
+  lastMode           String?
   roles              String[]             @default([])
   status             String
   emailVerifiedAt    DateTime?
@@ -157,6 +159,8 @@ model Session {
   createdAt         DateTime
   expiresAt         DateTime
   revokedAt         DateTime?
+  // MODOS-01: how this session is using TUS (CLIENT | PROVIDER). Context, never an authorization.
+  activeMode        String?
   account           Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
   mfaElevation      MfaSessionElevation?
 

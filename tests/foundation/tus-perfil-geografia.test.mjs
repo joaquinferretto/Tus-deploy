@@ -188,7 +188,7 @@ test('ONBOARDING and navigation: incomplete profile -> /mi-perfil with returnTo 
   assert.deepEqual(result.abierto, ['/mi-perfil', '/mi-perfil', '/mi-perfil'], 'returnTo is an internal path only')
   assert.deepEqual(result.exentas, [true, true, true, true, true, true, true, true, true], 'the Help Center is public: the guide that explains the profile is never behind it')
   assert.deepEqual(result.protegidas, [false, false, false, false, false, false, false])
-  assert.deepEqual(result.links, [['Panel admin', 'Mi perfil'], ['Panel admin', 'Mi perfil', 'Mis turnos', 'Mis trabajos', 'Manual del prestador'], ['Mis solicitudes', 'Mi perfil', 'Mis turnos', 'Mis trabajos']])
+  assert.deepEqual(result.links, [['Panel admin', 'Mi perfil'], ['Panel admin', 'Mi perfil', 'Mis turnos', 'Mis trabajos', 'Manual del prestador'], ['Mis solicitudes', 'Mis turnos', 'Mis trabajos', 'Mi perfil']])
   assert.deepEqual(result.platformOnly, [true, false, false, false])
 
   // Header (desktop + mobile menu) and footer render that one list; the route itself answers.

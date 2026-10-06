@@ -30,6 +30,12 @@ export interface SessionCapabilities {
   profileComplete?: boolean
   profileRequired?: boolean
   mapCenter?: { latitud: number; longitud: number; origen: 'localidad' | 'predeterminado'; etiqueta: string }
+  // MODOS-01: how the account can use TUS and how this session is using it. `provider` above is
+  // true only for an APPROVED provider; a suspended one keeps providerStatus 'suspended'.
+  availableModes?: ('CLIENT' | 'PROVIDER')[]
+  activeMode?: 'CLIENT' | 'PROVIDER' | null
+  providerStatus?: 'none' | 'approved' | 'suspended'
+  modeNotice?: 'provider_unavailable'
 }
 
 export function createAuthRouter({ service, sessions, cookies = readSessionCookieSettings(), now = () => Date.now(), describeCapabilities, phones }: AuthRouterDependencies): Router {
