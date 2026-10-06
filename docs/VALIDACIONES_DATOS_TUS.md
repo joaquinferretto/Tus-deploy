@@ -4,7 +4,7 @@ Referencia de qué se valida, dónde y con qué reglas. La API es la autoridad: 
 ayudar a la persona, pero una llamada directa con datos inválidos se rechaza igual.
 
 Estado: auditoría del 2026-10-05 (rama `audit/validaciones-formularios`). "corregido" = tenía un
-hueco real y se arregló en esta auditoría; "ok" = revisado, ya validaba; "pendiente" = ver §6.
+hueco real y se arregló en esta auditoría; "ok" = revisado, ya validaba; "pendiente" = ver §9.
 
 ## 1. Reglas generales
 
@@ -99,13 +99,55 @@ No hizo falta ninguna migración nueva en esta auditoría.
 - Los mensajes de error de agenda y alojamientos llegan en castellano desde la API junto con el
   campo (`fields`); la Web de agenda los muestra tal cual.
 
-## 6. Pendientes
+## 6. Smoke de navegador
+
+`node scripts/dev/validaciones-browser-smoke.mjs` (Web de producción local + API real local +
+PostgreSQL 16 descartable; requiere `next build` con `NEXT_PUBLIC_API_URL=http://localhost:3101`).
+Recorre en escritorio (1280) y móvil (390): registro, perfil personal, turno manual y bloqueo de
+agenda. Comprueba dato inválido con su mensaje junto al campo (o que nombra el campo), dato válido
+guardado y normalizado, llamada directa a la API rechazada con su campo, ninguna respuesta 5xx,
+consola limpia y sin desborde horizontal. Resultado del 2026-10-05: 55 de 55.
+
+No cubre en navegador: presupuesto, publicación y alojamientos (necesitan un trabajo, una
+publicación o un alojamiento sembrados); sus reglas están cubiertas por los tests de API.
+
+## 7. Módulos heredados (fuera de alcance)
+
+POS (`/tus/v1/pos/*`), entregas (`/tus/v1/delivery/*`, `/entrega/*`), finanzas de plataforma
+(`/tus/v1/finance/*`, `/finanzas/*`) y casos de soporte (`/tus/v1/support/*`, `/soporte/*`) tienen
+rutas montadas, pero ninguna sesión real puede usarlas: exigen los permisos `tus:pos:write`,
+`tus:delivery:write`, `tus:finance:write` y `tus:support:write`, y las cuentas solo reciben
+`tus:checkout`, `tus:marketplace:read`, `tus:read`, `tus:marketplace:write` (titular) y los cuatro
+permisos de administración de plataforma. Para un usuario actual responden 403. Además dependen de
+capacidades de habilitación (`fleet`, `settlement`). No se auditaron campo por campo; si alguna vez
+se otorgan esos permisos, hay que auditarlas antes.
+
+## 8. Código muerto
+
+Eliminado (sin imports ni referencias en apps, packages, tests, scripts o docs, y sin ruta, worker,
+CLI o flag que lo conecte): `apps/web/src/features/home/request-map.tsx`,
+`apps/api/src/presentation/middleware/circuit-breaker.ts` con `apps/api/src/types/opossum.d.ts`, y
+`apps/api/src/ai/registry/composition.ts`.
+
+Candidatos NO eliminados (no se pudo demostrar que sobren):
+
+- `auth-security/passkeys/http/passkey-router.ts`, `auth-security/oauth-oidc/http/oauth-router.ts` y
+  `auth-security/account-linking/http/account-linking-router.ts`: routers que el servidor no monta,
+  pero son la superficie HTTP de capacidades documentadas (passkeys, OAuth/OIDC, vinculación de
+  cuentas) cuyos servicios sí tienen tests.
+- `auth-security/adapters/postgres/sql/refresh-rotation-store.ts`: nadie lo importa en la
+  aplicación, pero tiene test propio y figura en la documentación de estructura.
+- Dependencia `opossum` de la API: quedó sin uso al quitar el middleware; quitarla toca el lockfile.
+
+La búsqueda fue por archivo (archivos que nadie importa). No se hizo un análisis símbolo por
+símbolo de exports sin consumidores.
+
+## 9. Pendientes
 
 - **`createdAt` informado por el cliente** en las mutaciones de trabajos (diagnóstico, presupuesto,
-  evidencia): la API lo acepta como parte del contrato de idempotencia y los tests lo usan con
-  fechas fijas. Permite fechar una operación en el pasado. Acotarlo exige cambiar ese contrato.
-- **Formularios Web de alojamientos y de presupuestos**: validan lo básico; los de alojamientos no
-  muestran todavía el campo que la API devuelve en `fields`.
-- **Módulos heredados sin pantalla en la Web de TUS** (POS, entregas, finanzas de plataforma,
-  plantillas de WhatsApp): tienen rutas activas y no se auditaron campo por campo.
-- **Smoke de navegador** de los formularios corregidos: no se corrió en esta auditoría.
+  evidencia): decisión de producto y de contrato pendiente. La API lo acepta como parte del contrato
+  de idempotencia y los tests lo usan con fechas fijas; permite fechar una operación en el pasado.
+  No se cambió el comportamiento.
+- **Formularios Web de alojamientos**: muestran el mensaje que devuelve la API (que ya nombra el
+  problema) como aviso del formulario, no junto al campo.
+- **Smoke de navegador** de presupuesto, publicación y alojamientos: no existe (ver §6).
