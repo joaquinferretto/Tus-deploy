@@ -267,7 +267,10 @@ test('TURNOS solicitud PostgreSQL concurrency: several clients requesting the sa
       out.carrera = [carrera.filter((x) => x.status === 201).length, carrera.filter((x) => x.status === 409 && x.body.code === 'SLOT_OCCUPIED').length, await prisma.reserva.count({ where: { tenantId: p.tenantId, estado: 'pending' } })]
       // Different starts that overlap each other (a 60 minute turno every 15 minutes): one request.
       const solapadas = await Promise.all(['14:00', '14:15', '14:30', '14:45'].map((hora, i) => solicitar('tok-c' + i, 0, hora)))
-      out.solapadas = [solapadas.filter((x) => x.status === 201).length, solapadas.filter((x) => x.body?.code === 'SLOT_OCCUPIED').length]
+      // Which refusal a loser gets depends on who arrived first: after the winner it is "occupied";
+      // a start that is not a turno of the service (14:15) checked BEFORE the winner exists is "not
+      // available". Both are a 409 and neither creates a turno; the order is not part of the contract.
+      out.solapadas = [solapadas.filter((x) => x.status === 201).length, solapadas.filter((x) => x.status === 409 && ['SLOT_OCCUPIED', 'SLOT_NOT_AVAILABLE'].includes(x.body?.code)).length, await prisma.reserva.count({ where: { tenantId: p.tenantId, estado: 'pending', fechaInicio: { gte: new Date(a(0, '14:00')), lte: new Date(a(0, '14:45')) } } })]
 
       // 12. The provider answers the same request from several tabs at once.
       const aceptar = (id) => call('POST', '/tus/v1/prestador/turnos/' + id + '/aceptar', 'tok-p')
@@ -298,7 +301,7 @@ test('TURNOS solicitud PostgreSQL concurrency: several clients requesting the sa
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.carrera, [1, 5, 1], 'six simultaneous requests for one time: one request, five 409')
-  assert.deepEqual(r.solapadas, [1, 3])
+  assert.deepEqual(r.solapadas, [1, 3, 1], 'overlapping starts at once: one request, three refusals (409), one row')
   assert.deepEqual(r.dobles, [[200, 200, 200, 200, 200], true, 'confirmed', 2, 1], 'the same answer five times at once: accepted once, one change, one notice')
   assert.equal(r.unaReserva, 1)
   assert.deepEqual(r.duelos, [['200,409', true, 1], ['200,409', true, 1], ['200,409', true, 1]], 'accept against reject: exactly one wins and the loser is told the request was already answered')
