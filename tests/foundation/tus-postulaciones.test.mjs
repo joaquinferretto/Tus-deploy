@@ -253,3 +253,42 @@ test('POSTULACIONES Web: provider applies from the open list, client accepts or 
   for (const file of ['features/home/recent-requests.tsx'])
     assert.match(readFileSync(join(root, 'apps/web/src', file), 'utf8'), /href="\/prestador\/solicitudes#abiertas"/, file)
 })
+
+test('MODOS contratar: a provider is also a client with the same account — it hires another trade, it hires its own trade, it never hires itself; a suspended provider keeps hiring as a client and stops operating as a provider', () => {
+  const result = runTypeScriptScenario(`${SETUP}
+    // Joaquín: ONE account. It is an electrician (a provider on its own tenant) and a client.
+    const joaquin = await cliente('joaquin@example.com', 'Joaquín Sosa')
+    await prestador(joaquin.tenantId, { displayName: 'Joaquín Electricista', profession: 'electricidad' })
+    await prestador('t-plomero', { displayName: 'Pablo Plomero', profession: 'plomeria' })
+    await prestador('t-electricista', { displayName: 'Elena Electricista', profession: 'electricidad', zone: 'La Rosada' })
+    const yo = { tenantId: joaquin.tenantId, cuentaId: joaquin.id }
+    const laura = await cliente('laura-modos@example.com')
+    const out = {}
+    // As a client: a plumber, and another electrician (his own trade).
+    const plomeria = await solicitudes.publicar(joaquin.id, valida)
+    const electricidad = await solicitudes.publicar(joaquin.id, { ...valida, category: 'electricidad', title: 'Se quemó el tablero del taller', description: 'Necesito otro electricista.' })
+    out.publica = [plomeria.ok, electricidad.ok]
+    out.leOfrecen = [(await solicitudes.postular(actor('t-plomero'), plomeria.solicitud.id, {})).ok, (await solicitudes.postular(actor('t-electricista'), electricidad.solicitud.id, {})).ok]
+    // Never himself: his own provider cannot apply to his own request.
+    out.aSiMismo = [(await solicitudes.postular(yo, plomeria.solicitud.id, {})).code, (await solicitudes.postular(yo, electricidad.solicitud.id, {})).code]
+    // As a provider: he applies to somebody else's request.
+    const deLaura = await solicitudes.publicar(laura.id, { ...valida, category: 'electricidad', title: 'No anda un enchufe del living', description: 'Salta la térmica.' })
+    out.comoPrestador = (await solicitudes.postular(yo, deLaura.solicitud.id, {})).ok
+    // The administration suspends his PROVIDER (not his account).
+    merchants.set(joaquin.tenantId, { merchantId: 'm-' + joaquin.tenantId, status: 'suspended' })
+    const otraDeLaura = await solicitudes.publicar(laura.id, { ...valida, category: 'electricidad', title: 'Colocar dos luminarias en el patio', description: 'Ya tengo los artefactos.' })
+    const suspendidoPostula = await solicitudes.postular(yo, otraDeLaura.solicitud.id, {})
+    const sigueComoCliente = await solicitudes.publicar(joaquin.id, { ...valida, title: 'Pierde el flexible del baño', description: 'Hay que cambiarlo.' })
+    out.suspendido = [suspendidoPostula.ok, suspendidoPostula.code !== 'SELF_REQUEST', sigueComoCliente.ok, (await solicitudes.postular(actor('t-plomero'), sigueComoCliente.solicitud.id, {})).ok]
+    // Approved again: the same account operates as a provider again.
+    merchants.set(joaquin.tenantId, { merchantId: 'm-' + joaquin.tenantId, status: 'approved' })
+    out.reactivado = (await solicitudes.postular(yo, otraDeLaura.solicitud.id, {})).ok
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(result.publica, [true, true], 'a provider publishes requests as a client: another trade and his own trade')
+  assert.deepEqual(result.leOfrecen, [true, true], 'other providers — also of his own trade — can be hired')
+  assert.deepEqual(result.aSiMismo, ['SELF_REQUEST', 'SELF_REQUEST'], 'he can never hire himself')
+  assert.equal(result.comoPrestador, true)
+  assert.deepEqual(result.suspendido, [false, true, true, true], 'suspended as a provider: no professional activity, and still a client')
+  assert.equal(result.reactivado, true)
+})
