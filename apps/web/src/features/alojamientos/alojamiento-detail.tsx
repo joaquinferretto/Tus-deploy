@@ -341,7 +341,7 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
                         cursor: u.disponible ? 'pointer' : 'not-allowed',
                       }}
                     >
-                      {u.disponible ? 'Reservar unidad' : 'No disponible'}
+                      {u.disponible ? 'Reservar' : 'No disponible'}
                     </button>
                   </div>
                 </div>

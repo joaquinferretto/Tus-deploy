@@ -180,7 +180,7 @@ test('ALOJAMIENTOS reservas PostgreSQL: search by dates and guests is decided by
       // 9-10, 16-18. reserve: session required, ranges, total by the backend
       out.sinSesion = (await pedir('POST', '/reservas', null, reserva(unidadId, id, 0, 3))).status
       const invalidas = {}
-      for (const [nombre, cuerpo] of Object.entries({ alReves: reserva(unidadId, id, 3, 0), ceroNoches: reserva(unidadId, id, 2, 2), pasada: { ...reserva(unidadId, id, 0, 2), fechaInicio: '2020-01-01', fechaFin: '2020-01-03' }, imposible: { ...reserva(unidadId, id, 0, 2), fechaInicio: 'mañana' }, capacidad: reserva(unidadId, id, 0, 2, { cantidadPersonas: 5 }), total: reserva(unidadId, id, 0, 2, { precioFinalSnapshot: 1 }), estado: reserva(unidadId, id, 0, 2, { estado: 'completed' }), cliente: reserva(unidadId, id, 0, 2, { clienteIdFalso: beto }) })) {
+      for (const [nombre, cuerpo] of Object.entries({ alReves: reserva(unidadId, id, 3, 0), ceroNoches: reserva(unidadId, id, 2, 2), pasada: { ...reserva(unidadId, id, 0, 2), fechaInicio: '2020-01-01', fechaFin: '2020-01-03' }, imposible: { ...reserva(unidadId, id, 0, 2), fechaInicio: 'mañana' }, conHora: { ...reserva(unidadId, id, 0, 2), fechaInicio: dia(0) + 'T14:00:00.000-03:00' }, capacidad: reserva(unidadId, id, 0, 2, { cantidadPersonas: 5 }), total: reserva(unidadId, id, 0, 2, { precioFinalSnapshot: 1 }), estado: reserva(unidadId, id, 0, 2, { estado: 'completed' }), cliente: reserva(unidadId, id, 0, 2, { clienteIdFalso: beto }) })) {
         const res = await pedir('POST', '/reservas', 'tok-beto', cuerpo)
         invalidas[nombre] = res.status + ':' + (res.body.error?.fields?.[0] ?? res.body.error?.code)
       }
@@ -250,7 +250,7 @@ test('ALOJAMIENTOS reservas PostgreSQL: search by dates and guests is decided by
   `)
   assert.deepEqual(r.busca, { libre: [50000], fechas: [150000], cuatro: [50000], cinco: [], alReves: '400:checkOut', ceroNoches: '400:checkOut', soloEntrada: '400:checkOut', imposible: '400:checkIn', pasado: '400:checkIn', personasTexto: '400:personas', otroDestino: 0 }, 'three nights are three times the price per night; the API decides who fits')
   assert.equal(r.sinSesion, 401)
-  assert.deepEqual(r.invalidas, { alReves: '400:fechaFin', ceroNoches: '400:fechaFin', pasada: '400:fechaInicio', imposible: '400:fechaInicio', capacidad: '400:CAPACITY_EXCEEDED', total: '400:precioFinalSnapshot', estado: '400:estado', cliente: '400:clienteIdFalso' })
+  assert.deepEqual(r.invalidas, { alReves: '400:fechaFin', ceroNoches: '400:fechaFin', pasada: '400:fechaInicio', imposible: '400:fechaInicio', conHora: '400:fechaInicio', capacidad: '400:CAPACITY_EXCEEDED', total: '400:precioFinalSnapshot', estado: '400:estado', cliente: '400:clienteIdFalso' })
   assert.deepEqual(r.reserva, { status: 201, estado: 'confirmed', total: 150000, moneda: 'ARS', cliente: true, hold: null }, 'nights x price per night, computed by the backend; the guest is the session')
   assert.equal(r.solapada, 'SLOT_OCCUPIED')
   assert.equal(r.contenida, 'SLOT_OCCUPIED')

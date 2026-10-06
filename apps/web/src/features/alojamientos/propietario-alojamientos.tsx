@@ -136,8 +136,9 @@ export function PropietarioAlojamientosView(): React.ReactNode {
     setError(null)
     try {
       await hacer()
-      setAviso(hecho)
+      // The message arrives with the list already showing what changed.
       await cargar()
+      setAviso(hecho)
       return true
     } catch (causa) {
       setError(causa instanceof Error ? causa.message : 'No pudimos completar la operación.')

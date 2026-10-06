@@ -244,6 +244,11 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
       if (!context) return
       const entrada = leerReserva(cuerpo(req), Date.now())
       if (!entrada.ok) return rechazar(res, entrada)
+      // A stay is made of calendar dates (the day of arrival and the day of departure), the same
+      // the search uses: an instant with a time would not line up with the other reservations.
+      for (const campo of ['fechaInicio', 'fechaFin'] as const) {
+        if (entrada.valor[campo].length !== 10) return rechazar(res, { ok: false, campo, mensaje: 'Indicá la fecha como AAAA-MM-DD.' })
+      }
       if (new Date(entrada.valor.fechaInicio).toISOString().slice(0, 10) < hoyCalendario(new Date())) return rechazar(res, { ok: false, campo: 'fechaInicio', mensaje: 'La fecha de entrada ya pasó.' })
       const reserva = await alojamientosService.crearHoldReserva({ ...entrada.valor, clienteId: context.subjectId, inmediata: true })
       return res.status(201).json(reserva)
