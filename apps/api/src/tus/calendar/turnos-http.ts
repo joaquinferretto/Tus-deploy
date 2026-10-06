@@ -275,6 +275,22 @@ export function crearRouterTurnos({
     })
   )
 
+  // Only a block of the session's own tenant can be changed.
+  router.put(
+    '/tus/v1/prestador/turnos/bloqueos/:id',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      const entrada = leerBloqueo(comoRegistro(request.body), Date.now())
+      if (!entrada.ok) return void rechazar(response, entrada)
+      try {
+        response.status(200).json(await servicio.editarBloqueo({ prestadorTenantId: context.tenantId, id: String(request.params['id'] ?? ''), ...entrada.valor }))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
   // Only a block of the session's own tenant can be removed.
   router.delete(
     '/tus/v1/prestador/turnos/bloqueos/:id',

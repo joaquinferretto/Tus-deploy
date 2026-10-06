@@ -1002,6 +1002,10 @@ export class ServicioTurnos {
 
     try {
       const row = await this.conAgendaBloqueada(calendario, async (tx) => {
+        // The provider's own block also holds for the turnos it loads by hand: the block is
+        // removed first, so a turno and a block never cover the same time.
+        const bloqueado = await tx.excepcionCalendario.findFirst({ where: { calendarioId: calendario.id, estado: 'active', fechaInicio: { lt: fin }, fechaFin: { gt: inicio } }, select: { id: true } })
+        if (bloqueado) throw new ErrorCalendario(409, 'SLOT_BLOCKED', 'Ese horario está bloqueado en tu agenda. Quitá el bloqueo para cargar el turno.')
         return tx.reserva.create({
           data: {
             id: reservaId,
@@ -1062,8 +1066,11 @@ export class ServicioTurnos {
     const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
     const id = `exc-${randomUUID()}`
 
-    await this.conAgendaBloqueada(calendario, (tx) =>
-      tx.excepcionCalendario.create({
+    // With the agenda taken: a turno that is being booked right now and this block are decided
+    // one after the other, never both.
+    await this.conAgendaBloqueada(calendario, async (tx) => {
+      await this.exigirSinTurnos(tx, calendario.id, inicio, fin)
+      await tx.excepcionCalendario.create({
         data: {
           id,
           tenantId: perfil.tenantId,
@@ -1075,9 +1082,44 @@ export class ServicioTurnos {
           fechaCreacion: new Date(),
         },
       })
-    )
+    })
 
     return { ok: true, id }
+  }
+
+  /**
+   * Un bloqueo nunca tapa un turno ya tomado ni lo cancela: primero se resuelve el turno
+   * (reprogramar o cancelar, avisando a la persona) y después se bloquea. Una solicitud todavía
+   * sin responder no lo impide: aceptarla vuelve a mirar los bloqueos.
+   */
+  private async exigirSinTurnos(tx: Prisma.TransactionClient, calendarioId: string, inicio: Date, fin: Date): Promise<void> {
+    const afectados = await tx.reserva.count({
+      where: { calendarioId, estado: { notIn: [...ESTADOS_LIBERAN, 'pending'] }, NOT: { estado: 'awaiting_payment', solicitudExpiraEn: { lte: new Date() } }, fechaInicio: { lt: fin }, fechaFin: { gt: inicio } },
+    })
+    if (afectados > 0) {
+      throw new ErrorCalendario(409, 'BLOCK_HAS_BOOKINGS', afectados === 1 ? 'Tenés un turno tomado en ese horario. Reprogramalo o cancelalo antes de bloquear.' : `Tenés ${afectados} turnos tomados en ese horario. Reprogramalos o cancelalos antes de bloquear.`)
+    }
+  }
+
+  /**
+   * Cambia un bloqueo propio (rango o motivo) con las mismas reglas que al crearlo.
+   */
+  async editarBloqueo(input: { prestadorTenantId: string; id: string; inicio: string; fin: string; motivo: string }): Promise<{ ok: true; id: string }> {
+    const inicio = new Date(input.inicio)
+    const fin = new Date(input.fin)
+    if (Number.isNaN(inicio.getTime()) || Number.isNaN(fin.getTime()) || fin <= inicio) {
+      throw new ErrorCalendario(400, 'INVALID_DATE', 'El fin del bloqueo debe ser posterior al inicio')
+    }
+    const actual = await this.prisma.excepcionCalendario.findFirst({ where: { id: input.id, tenantId: input.prestadorTenantId, estado: 'active' } })
+    if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Bloqueo no encontrado')
+    const calendario = await this.prisma.calendario.findFirst({ where: { id: actual.calendarioId, tenantId: input.prestadorTenantId } })
+    if (!calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Bloqueo no encontrado')
+    await this.conAgendaBloqueada(calendario, async (tx) => {
+      await this.exigirSinTurnos(tx, calendario.id, inicio, fin)
+      const { count } = await tx.excepcionCalendario.updateMany({ where: { id: input.id, tenantId: input.prestadorTenantId, estado: 'active' }, data: { fechaInicio: inicio, fechaFin: fin, motivo: input.motivo.trim().slice(0, 200) || 'Bloqueo manual' } })
+      if (count === 0) throw new ErrorCalendario(404, 'NOT_FOUND', 'Bloqueo no encontrado')
+    })
+    return { ok: true, id: input.id }
   }
 
   /**
