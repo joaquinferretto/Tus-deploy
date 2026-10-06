@@ -14,6 +14,7 @@ import { createTusIntegrationRouter } from './tus/integration/index.ts'
 import { createTusHttpRouter } from './tus/http/router.ts'
 import { createPrismaTusApplication } from './tus/composition/index.ts'
 import { crearModuloWhatsappPrisma } from './tus/asistente/prisma-composicion.ts'
+import { AlmacenModosPrisma, ServicioModos, createModeRouter, createProviderSuspensionGuard, estadoPrestadorDeCuenta } from './auth-security/modes/modos.ts'
 import { crearServicioSolicitudes } from './tus/solicitudes/composicion.ts'
 import { crearRouterSolicitudes } from './tus/solicitudes/http.ts'
 import { crearRouterMensajesTrabajo } from './tus/work/http-mensajes.ts'
@@ -226,6 +227,12 @@ export function createApp(options: CreateAppOptions = {}): Application {
       : healthRouter
   )
   app.use(createVersionRouter())
+  // MODOS-01: the real provider state of the tenant of a session, the modes of a session and the
+  // refusal of professional writes while the provider is suspended.
+  const estadoPrestador = async (context: { tenantId: string }) => estadoPrestadorDeCuenta(await application.marketplace?.store.merchant.find(context.tenantId).catch(() => null))
+  const modos_ = new ServicioModos(new AlmacenModosPrisma(prisma as never), estadoPrestador)
+  app.use(createProviderSuspensionGuard({ sessions, estadoPrestador }))
+  app.use(createModeRouter({ servicio: modos_, sessions }))
   app.use(
     createAuthRouter({
       service: auth.service,
@@ -234,12 +241,14 @@ export function createApp(options: CreateAppOptions = {}): Application {
       cookies: sessionCookies,
       describeCapabilities: async (accessToken, correlationId, context) => {
         const raw = await rawSessions.resolve(accessToken, correlationId)
-        const merchant = await application.marketplace?.store.merchant.find(context.tenantId).catch(() => null)
         const platformAdmin = raw ? await sessions.isAdminCandidate(raw) : false
-        const provider = Boolean(merchant)
+        // MODOS-01: the provider side counts only when the provider is APPROVED; the modes come
+        // from that real state (a stored mode is a preference, never an authorization).
+        const modos = await modos_.deSesion(context)
+        const provider = modos.providerStatus === 'approved'
         const perfil = await perfiles.estado(context.subjectId)
         // A platform administration account that is not a provider is never sent to onboarding.
-        return { platformAdmin, provider, profileComplete: perfil.profileComplete, profileRequired: !(platformAdmin && !provider), mapCenter: perfil.mapCenter }
+        return { platformAdmin, provider, profileComplete: perfil.profileComplete, profileRequired: !(platformAdmin && !provider), mapCenter: perfil.mapCenter, ...modos }
       },
     })
   )
