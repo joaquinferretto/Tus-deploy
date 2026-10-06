@@ -325,7 +325,9 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
       res.setHeader('x-content-type-options', 'nosniff')
       res.setHeader('content-security-policy', "default-src 'none'; sandbox")
       res.setHeader('cross-origin-resource-policy', 'cross-origin')
-      res.setHeader('cache-control', 'public, max-age=31536000, immutable')
+      // Only the browser caches it: a shared cache would keep serving a photo that was removed.
+      res.setHeader('cache-control', 'private, max-age=3600')
+      res.setHeader('content-disposition', 'inline')
       res.setHeader('etag', `"${archivo.sha256}"`)
       return res.status(200).end(archivo.contenido)
     } catch (err) {
