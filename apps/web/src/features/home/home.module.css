@@ -1539,3 +1539,56 @@
 .nav .helpList a[aria-current='page'] {
   background: var(--tus-orange-soft);
 }
+
+/* MODOS-01: account menu and mode (Cliente / Prestador). Discreet: a chip next to "Mi cuenta". */
+.accountButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modeChip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 90, 0, 0.12);
+  color: var(--tus-orange, #ff5a00);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.accountList {
+  right: 0;
+  left: auto;
+  min-width: 220px;
+}
+
+.accountList li > span,
+.accountListInline li > span {
+  display: block;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: #6b6b6b;
+}
+
+.accountListInline {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.modeLine {
+  margin: 8px 0 4px;
+  font-size: 0.9rem;
+}
+
+.modeNotice {
+  margin: 0;
+  padding: 10px 16px;
+  background: #fff4e5;
+  color: #6b3b00;
+  font-size: 0.92rem;
+  text-align: center;
+}

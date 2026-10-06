@@ -381,7 +381,7 @@ test('AYUDA navegación: "Ayuda" is the Help Center for everyone; "Solicitudes" 
   assert.match(header, /const esPrestador = auth\.status === 'signed-in' && auth\.capabilities\.provider === true/u, 'the capability comes from the API, and only "true" counts')
   assert.match(header, /const ayuda = esPrestador \? \[AYUDA\[0\], MANUAL_PRESTADOR, \.\.\.AYUDA\.slice\(1\)\] : AYUDA/u)
   // Solicitudes: the functional page of whoever is looking, never an invented one.
-  assert.match(header, /auth\.status !== 'signed-in' \? '\/publicar' : auth\.capabilities\.provider \? '\/prestador\/solicitudes' : auth\.capabilities\.platformAdmin \? '\/tus\/admin\/solicitudes' : '\/mis-solicitudes'/u)
+  assert.match(header, /modeOf\(auth\.capabilities\) === 'PROVIDER' \? '\/prestador\/solicitudes' : '\/mis-solicitudes'/u, '"Solicitudes" goes to the page of the mode the person is using')
   for (const ruta of ['/publicar', '/prestador/solicitudes', '/tus/admin/solicitudes', '/mis-solicitudes', '/ayuda', '/asistente']) assert.ok(paginas.includes(ruta), `${ruta} is a real page`)
   assert.ok(paginas.includes('/ayuda/[...slug]'))
   assert.equal((header.match(/>Solicitudes<\/a>/gu) ?? []).length, 2, 'desktop navigation and mobile menu')
@@ -413,7 +413,9 @@ test('AYUDA navegación: "Ayuda" is the Help Center for everyone; "Solicitudes" 
   assert.equal(r.soloMenu, true, 'in the menu, not among the header buttons')
   assert.deepEqual(r.publica, [true, true, true], 'a guide is never behind the profile onboarding')
   assert.deepEqual(r.noPublica, [false, false])
-  for (const nombre of ['pagos', 'perfil-publico', 'turnos', 'ubicacion', 'solicitudes']) assert.match(web(`app/prestador/${nombre}/page.tsx`), /\/ayuda\/prestadores/u, `prestador/${nombre} links to the manual`)
+  // Every provider screen shows the one provider navigation, which links to the manual.
+  for (const nombre of ['pagos', 'perfil-publico', 'turnos', 'ubicacion', 'solicitudes']) assert.ok(web(`app/prestador/${nombre}/page.tsx`).includes('<ProviderNav />'), `prestador/${nombre} shows the provider navigation`)
+  assert.ok(web('features/provider/provider-nav.tsx').includes("href: '/ayuda/prestadores'"), 'the provider navigation links to the manual')
   assert.ok(existsSync(join(root, 'apps/web/src/features/help/help.module.css.d.ts')))
 })
 

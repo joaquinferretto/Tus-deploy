@@ -74,6 +74,8 @@ test('FASE6 Web: /prestador/pagos shows only safe data (masked account), never a
   // The browser never handles credentials: no inputs for tokens, secrets or CBU.
   assert.doesNotMatch(panel, /<input|accessToken|refreshToken|clientSecret|CBU"/u)
   assert.match(read('apps/web/src/app/prestador/pagos/page.tsx'), /<ProviderPayments \/>/u)
+  // The provider navigation is ONE component (it used to be written by hand on every page).
   for (const page of ['apps/web/src/app/prestador/solicitudes/page.tsx', 'apps/web/src/app/prestador/perfil-publico/page.tsx'])
-    assert.match(read(page), /href="\/prestador\/pagos">Pagos</u)
+    assert.ok(read(page).includes('<ProviderNav />'), page)
+  assert.ok(read('apps/web/src/features/provider/provider-nav.tsx').includes("{ href: '/prestador/pagos', label: 'Pagos' }"))
 })

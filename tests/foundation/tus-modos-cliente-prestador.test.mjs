@@ -129,3 +129,42 @@ test('MODOS sesión y cambio (API): a client cannot become a provider by asking;
   assert.deepEqual(r.loginTrasSuspension, ['PROVIDER', ['CLIENT', 'CLIENT', 'suspended', null]], 'a last mode that is no longer valid is ignored at the next sign-in')
   assert.deepEqual(r.siempreSuspendida, [['CLIENT', 'CLIENT', 'suspended', null], 403])
 })
+
+test('MODOS Web: the interface follows the mode the API reports — the home and the navigation of each mode, the choice after signing in, the provider surface only for a real provider — and the administration stays outside of the selector', () => {
+  const r = runTypeScriptScenario(`
+    const a = await import('./apps/web/src/lib/tus-auth-client.ts')
+    const cliente = { platformAdmin: false, provider: false, availableModes: ['CLIENT'], activeMode: 'CLIENT', providerStatus: 'none' }
+    const sinElegir = { platformAdmin: false, provider: true, availableModes: ['CLIENT', 'PROVIDER'], activeMode: null, providerStatus: 'approved' }
+    const comoPrestador = { ...sinElegir, activeMode: 'PROVIDER' }
+    const comoCliente = { ...sinElegir, activeMode: 'CLIENT' }
+    const suspendido = { platformAdmin: false, provider: false, availableModes: ['CLIENT'], activeMode: 'CLIENT', providerStatus: 'suspended', modeNotice: 'provider_unavailable' }
+    const admin = { platformAdmin: true, provider: false }
+    const adminPrestador = { platformAdmin: true, provider: true, availableModes: ['CLIENT', 'PROVIDER'], activeMode: null, providerStatus: 'approved' }
+    const antigua = { platformAdmin: false, provider: true }
+    const todas = { cliente, sinElegir, comoPrestador, comoCliente, suspendido, admin, adminPrestador, antigua }
+    const de = (f) => Object.fromEntries(Object.entries(todas).map(([k, v]) => [k, f(v)]))
+    console.log(JSON.stringify({
+      modo: de(a.modeOf),
+      cambia: de(a.canSwitchMode),
+      inicio: de(a.getDefaultRouteForUser),
+      trasLogin: de((c) => a.resolvePostLoginRoute({ ...c, profileRequired: false }, '/trabajadores')),
+      prestadorUrl: de((c) => a.canAccessReturnTo('/prestador/turnos', c)),
+      elegirUrl: de((c) => a.canAccessReturnTo('/elegir-modo', c)),
+      enlaces: de((c) => a.accountLinks(c).map((l) => l.href)),
+      panel: de((c) => a.panelFor(c).href),
+      etiquetas: [a.MODE_LABEL.CLIENT, a.MODE_LABEL.PROVIDER, a.homeOfMode('CLIENT'), a.homeOfMode('PROVIDER'), a.isTusMode('ADMIN'), a.isTusMode('PROVIDER')],
+    }))
+  `)
+  assert.deepEqual(r.modo, { cliente: 'CLIENT', sinElegir: null, comoPrestador: 'PROVIDER', comoCliente: 'CLIENT', suspendido: 'CLIENT', admin: 'CLIENT', adminPrestador: null, antigua: 'PROVIDER' }, 'the mode is the one the API reports; an API without modes behaves as before')
+  assert.deepEqual(r.cambia, { cliente: false, sinElegir: true, comoPrestador: true, comoCliente: true, suspendido: false, admin: false, adminPrestador: false, antigua: true }, 'the switch exists only with both modes, and never for the administration')
+  assert.deepEqual(r.inicio, { cliente: '/', sinElegir: '/elegir-modo', comoPrestador: '/prestador/solicitudes', comoCliente: '/', suspendido: '/', admin: '/tus/admin', adminPrestador: '/tus/admin', antigua: '/prestador/solicitudes' }, 'each mode has its home; without a choice the person is asked; the administration goes to its panel')
+  assert.deepEqual(r.trasLogin, { cliente: '/trabajadores', sinElegir: '/elegir-modo', comoPrestador: '/trabajadores', comoCliente: '/trabajadores', suspendido: '/trabajadores', admin: '/trabajadores', adminPrestador: '/trabajadores', antigua: '/trabajadores' }, 'who has to choose chooses first; everybody else goes where they were going')
+  assert.deepEqual(r.prestadorUrl, { cliente: false, sinElegir: true, comoPrestador: true, comoCliente: true, suspendido: false, admin: false, adminPrestador: true, antigua: true }, 'the provider surface is a destination only for a real provider, also when it is using TUS as a client')
+  assert.deepEqual(r.elegirUrl, { cliente: false, sinElegir: true, comoPrestador: true, comoCliente: true, suspendido: false, admin: false, adminPrestador: false, antigua: true })
+  assert.deepEqual(r.enlaces.comoPrestador, ['/prestador/solicitudes', '/prestador/turnos', '/trabajos', '/prestador/perfil-publico', '/prestador/pagos', '/mi-perfil', '/ayuda/prestadores'], 'provider mode: the provider navigation only')
+  for (const caso of ['cliente', 'comoCliente', 'suspendido']) assert.deepEqual(r.enlaces[caso], ['/mis-solicitudes', '/mis-turnos', '/trabajos', '/mi-perfil'], `${caso}: the client navigation only`)
+  assert.deepEqual(r.enlaces.sinElegir, r.enlaces.cliente, 'before choosing nothing of the provider side is shown')
+  assert.deepEqual([r.enlaces.admin[0], r.enlaces.adminPrestador[0]], ['/tus/admin', '/tus/admin'], 'the administration keeps its own navigation')
+  assert.deepEqual(r.panel, { cliente: '/mis-solicitudes', sinElegir: '/mis-solicitudes', comoPrestador: '/prestador/solicitudes', comoCliente: '/mis-solicitudes', suspendido: '/mis-solicitudes', admin: '/tus/admin', adminPrestador: '/tus/admin', antigua: '/prestador/solicitudes' })
+  assert.deepEqual(r.etiquetas, ['Cliente', 'Prestador', '/', '/prestador/solicitudes', false, true])
+})

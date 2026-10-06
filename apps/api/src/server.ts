@@ -231,7 +231,9 @@ export function createApp(options: CreateAppOptions = {}): Application {
   // refusal of professional writes while the provider is suspended.
   const estadoPrestador = async (context: { tenantId: string }) => estadoPrestadorDeCuenta(await application.marketplace?.store.merchant.find(context.tenantId).catch(() => null))
   const modos_ = new ServicioModos(new AlmacenModosPrisma(prisma as never), estadoPrestador)
-  app.use(createProviderSuspensionGuard({ sessions, estadoPrestador }))
+  // With the server's own routers only: an injected TUS router brings its own session resolver,
+  // which this guard cannot read.
+  if (!options.tusRouter) app.use(createProviderSuspensionGuard({ sessions, estadoPrestador }))
   app.use(createModeRouter({ servicio: modos_, sessions }))
   app.use(
     createAuthRouter({

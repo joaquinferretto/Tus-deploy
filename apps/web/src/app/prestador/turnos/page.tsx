@@ -5,6 +5,7 @@ import { SitePage } from '@/features/home/site-page'
 import { HelpLink } from '@/features/help/help-link'
 import { ProviderTurnos } from '@/features/provider/provider-turnos'
 import styles from '@/features/directory/directory.module.css'
+import { ProviderNav } from '@/features/provider/provider-nav'
 
 export const metadata: Metadata = {
   title: 'Turnos y Agenda | TUS',
@@ -16,14 +17,7 @@ export default function Page(): React.ReactNode {
     <SitePage logo={<TusLogo variant="header" />}>
       <div className={styles.narrow}>
         <h1 className={styles.title}>Mis Turnos y Agenda</h1>
-        <nav aria-label="Prestador" style={{ marginBottom: 16 }}>
-          <a href="/prestador/solicitudes">Solicitudes</a> ·{' '}
-          <a href="/prestador/turnos" style={{ fontWeight: 700, color: 'var(--tus-orange, #ff5a00)' }}>Turnos y Agenda</a> ·{' '}
-          <a href="/trabajos">Mis trabajos</a> ·{' '}
-          <a href="/prestador/pagos">Pagos</a> ·{' '}
-          <a href="/prestador/ubicacion">Ubicación</a> ·{' '}
-          <a href="/ayuda/prestadores">Manual</a>
-        </nav>
+        <ProviderNav />
         <p className={styles.subtitle}>
           Gestioná tus citas agendadas, registrá turnos presenciales y bloqueá horarios no disponibles.
         </p>

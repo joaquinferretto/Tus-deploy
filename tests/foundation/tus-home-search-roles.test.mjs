@@ -76,8 +76,10 @@ test('ROLES: "Ir a mi panel" follows the server-side role; admin gets "Panel adm
   // Navigation follows real capabilities: a platform administration account has no works.
   assert.deepEqual(result.links.platformOnly, ['/tus/admin', '/mi-perfil'])
   assert.deepEqual(result.links.adminProvider, ['/tus/admin', '/mi-perfil', '/mis-turnos', '/trabajos', '/ayuda/prestadores'])
-  assert.deepEqual(result.links.provider, ['/prestador/solicitudes', '/mi-perfil', '/mis-turnos', '/trabajos', '/ayuda/prestadores'], 'only a provider gets the provider manual')
-  assert.deepEqual(result.links.client, ['/mis-solicitudes', '/mi-perfil', '/mis-turnos', '/trabajos'])
+  // MODOS-01: one navigation per mode, never mixed. A provider (in provider mode) gets the provider
+  // side; a client the client side. The administration keeps its own list.
+  assert.deepEqual(result.links.provider, ['/prestador/solicitudes', '/prestador/turnos', '/trabajos', '/prestador/perfil-publico', '/prestador/pagos', '/mi-perfil', '/ayuda/prestadores'], 'only a provider gets the provider navigation and its manual')
+  assert.deepEqual(result.links.client, ['/mis-solicitudes', '/mis-turnos', '/trabajos', '/mi-perfil'])
   const header = read('apps/web/src/features/home/public-header.tsx')
   assert.doesNotMatch(header, /href="\/mi-perfil">\s*(?:<span[^]*?<\/span>\s*)?Ir a mi panel/u, 'the panel is not /mi-perfil')
   // The header builds its account links from ONE capability-based list (accountLinks), whose first

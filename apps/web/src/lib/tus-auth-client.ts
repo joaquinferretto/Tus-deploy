@@ -37,6 +37,7 @@ export interface TusWebAuthRequest {
     | '/auth/oauth/signup/preview'
     | '/auth/oauth/link'
     | '/auth/oauth/link/preview'
+    | '/auth/session/mode'
   correlationId: string
   accessToken?: string
   body?: unknown
@@ -70,6 +71,8 @@ export interface TusWebAuthClient {
   restore(returnTo?: string): Promise<TusSessionState>
   // Server-resolved capabilities of the signed-in account (null without a session).
   capabilities(): Promise<TusAccountCapabilities | null>
+  // MODOS-01: asks the API to use TUS in that mode; null when the API refuses it.
+  setMode(mode: TusMode): Promise<TusMode | null>
   signOut(): Promise<void>
   clearLocalSession(): void
   // Google (OpenID Connect through the TUS API). The API validates Google and issues the SAME
@@ -243,7 +246,7 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
     async capabilities() {
       const credential = readCredential(storage)
       try {
-        const response = await transport.request<{ capabilities?: { platformAdmin?: unknown; provider?: unknown; profileComplete?: unknown; profileRequired?: unknown; mapCenter?: unknown } }>({ method: 'GET', path: '/auth/session', correlationId: createCorrelationId(), ...(credential === null || credential.expiresAt <= now() ? {} : { accessToken: credential.accessToken }) })
+        const response = await transport.request<{ capabilities?: { platformAdmin?: unknown; provider?: unknown; profileComplete?: unknown; profileRequired?: unknown; mapCenter?: unknown; availableModes?: unknown; activeMode?: unknown; providerStatus?: unknown; modeNotice?: unknown } }>({ method: 'GET', path: '/auth/session', correlationId: createCorrelationId(), ...(credential === null || credential.expiresAt <= now() ? {} : { accessToken: credential.accessToken }) })
         const raw = response?.capabilities
         const center = raw?.mapCenter as Partial<CentroMapaDTO> | undefined
         return {
@@ -255,7 +258,24 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
           ...(center && typeof center.latitud === 'number' && typeof center.longitud === 'number'
             ? { mapCenter: { latitud: center.latitud, longitud: center.longitud, origen: center.origen === 'localidad' ? 'localidad' as const : 'predeterminado' as const, etiqueta: String(center.etiqueta ?? '') } }
             : {}),
+          // MODOS-01: decided by the API; the Web only reflects it.
+          ...(Array.isArray(raw?.availableModes) ? { availableModes: raw.availableModes.filter(isTusMode) } : {}),
+          ...(isTusMode(raw?.activeMode) ? { activeMode: raw.activeMode } : raw?.activeMode === null ? { activeMode: null } : {}),
+          ...(raw?.providerStatus === 'none' || raw?.providerStatus === 'approved' || raw?.providerStatus === 'suspended' ? { providerStatus: raw.providerStatus } : {}),
+          ...(raw?.modeNotice === 'provider_unavailable' ? { modeNotice: 'provider_unavailable' as const } : {}),
         }
+      } catch {
+        return null
+      }
+    },
+
+    // The person chooses how to use TUS. The API validates it against the real capability and
+    // stores it in the session; `null`: refused (the mode is not available for this account).
+    async setMode(mode: TusMode): Promise<TusMode | null> {
+      const credential = readCredential(storage)
+      try {
+        const response = await transport.request<{ activeMode?: unknown }>({ method: 'POST', path: '/auth/session/mode', correlationId: createCorrelationId(), body: { mode }, ...(credential ? { accessToken: credential.accessToken } : {}) })
+        return isTusMode(response?.activeMode) ? response.activeMode : null
       } catch {
         return null
       }
@@ -285,9 +305,20 @@ export function tusGoogleStartUrl(): string {
   return `${baseUrl}/auth/oauth/google/start`
 }
 
+// MODOS-01: how ONE account uses TUS. Context for the interface (home, navigation, the view of
+// shared screens): it never grants anything, the API authorizes every operation by itself.
+export type TusMode = 'CLIENT' | 'PROVIDER'
+export const isTusMode = (value: unknown): value is TusMode => value === 'CLIENT' || value === 'PROVIDER'
+
 export interface TusAccountCapabilities {
   platformAdmin: boolean
+  // True only for an APPROVED provider.
   provider: boolean
+  availableModes?: TusMode[]
+  // null: both modes are available and the person has not chosen yet.
+  activeMode?: TusMode | null
+  providerStatus?: 'none' | 'approved' | 'suspended'
+  modeNotice?: 'provider_unavailable'
   // Personal profile (onboarding) and map centre of the person's locality, decided by the API.
   profileComplete?: boolean
   profileRequired?: boolean
@@ -315,13 +346,31 @@ export function profileRoute(destination: string): string {
   return safe && !exemptFromProfile(safe) ? `${PROFILE_ROUTE}?returnTo=${encodeURIComponent(safe)}` : PROFILE_ROUTE
 }
 
+// The mode the interface shows. The API says it; an API that does not report modes yet behaves as
+// before (a provider sees the provider side). null: the person has to choose.
+export function modeOf(capabilities: TusAccountCapabilities | null): TusMode | null {
+  if (!capabilities) return 'CLIENT'
+  if (capabilities.activeMode !== undefined) return capabilities.activeMode
+  return capabilities.provider ? 'PROVIDER' : 'CLIENT'
+}
+// The switch exists only for an account with both modes. The platform administration is outside
+// of it: it keeps its own entry and navigation.
+export function canSwitchMode(capabilities: TusAccountCapabilities | null): boolean {
+  if (!capabilities || capabilities.platformAdmin) return false
+  const modes = capabilities.availableModes ?? (capabilities.provider ? ['CLIENT', 'PROVIDER'] : ['CLIENT'])
+  return modes.includes('CLIENT') && modes.includes('PROVIDER')
+}
+export const MODE_CHOICE_ROUTE = '/elegir-modo'
+export const homeOfMode = (mode: TusMode): '/' | '/prestador/solicitudes' => (mode === 'PROVIDER' ? '/prestador/solicitudes' : '/')
+export const MODE_LABEL: Record<TusMode, string> = { CLIENT: 'Cliente', PROVIDER: 'Prestador' }
+
 // A platform administration account that is not a provider has no work of its own.
 export function isPlatformOnly(capabilities: TusAccountCapabilities | null): boolean {
   return capabilities?.platformAdmin === true && capabilities.provider !== true
 }
 
 export interface AccountLink {
-  href: '/tus/admin' | '/prestador/solicitudes' | '/mis-solicitudes' | '/mi-perfil' | '/mis-turnos' | '/trabajos' | '/ayuda/prestadores'
+  href: '/tus/admin' | '/prestador/solicitudes' | '/prestador/turnos' | '/prestador/perfil-publico' | '/prestador/pagos' | '/mis-solicitudes' | '/mi-perfil' | '/mis-turnos' | '/trabajos' | '/ayuda/prestadores'
   label: string
   primary?: boolean
   // Shown in the mobile menu and the footer, not among the buttons of the desktop header.
@@ -331,6 +380,26 @@ export interface AccountLink {
 // Account links of the header, the mobile menu and the footer: ONE list derived from the real
 // capabilities. "Mis trabajos" exists only for accounts that can have works (clients, providers).
 export function accountLinks(capabilities: TusAccountCapabilities | null): AccountLink[] {
+  // One list per mode: the navigation of a provider and the navigation of a client never mix.
+  // The platform administration keeps its own (below).
+  if (capabilities && !capabilities.platformAdmin) {
+    if (modeOf(capabilities) === 'PROVIDER')
+      return [
+        { href: '/prestador/solicitudes', label: 'Solicitudes', primary: true },
+        { href: '/prestador/turnos', label: 'Agenda' },
+        { href: '/trabajos', label: 'Trabajos' },
+        { href: '/prestador/perfil-publico', label: 'Servicios y perfil', soloMenu: true },
+        { href: '/prestador/pagos', label: 'Pagos y ganancias', soloMenu: true },
+        { href: '/mi-perfil', label: 'Mi perfil', soloMenu: true },
+        { href: '/ayuda/prestadores', label: 'Manual del prestador', soloMenu: true },
+      ]
+    return [
+      { href: '/mis-solicitudes', label: 'Mis solicitudes', primary: true },
+      { href: '/mis-turnos', label: 'Mis turnos', soloMenu: true },
+      { href: '/trabajos', label: 'Mis trabajos' },
+      { href: '/mi-perfil', label: 'Mi perfil', soloMenu: true },
+    ]
+  }
   return [
     { ...panelFor(capabilities), primary: true },
     { href: '/mi-perfil', label: 'Mi perfil' },
@@ -341,24 +410,31 @@ export function accountLinks(capabilities: TusAccountCapabilities | null): Accou
   ]
 }
 
-export type TusDefaultRoute = '/' | '/tus/admin' | '/prestador/solicitudes'
+export type TusDefaultRoute = '/' | '/tus/admin' | '/prestador/solicitudes' | '/elegir-modo'
 
+// After signing in: the administration to its panel (as always); an account with both modes that
+// has not chosen is asked; everybody else to the home of their mode.
 export function getDefaultRouteForUser(capabilities: TusAccountCapabilities | null): TusDefaultRoute {
   if (capabilities?.platformAdmin) return '/tus/admin'
-  if (capabilities?.provider) return '/prestador/solicitudes'
-  return '/'
+  const mode = modeOf(capabilities)
+  if (mode === null) return MODE_CHOICE_ROUTE
+  return homeOfMode(mode)
 }
 
 export function canAccessReturnTo(path: string, capabilities: TusAccountCapabilities | null): boolean {
   if (path === '/sign-in' || path.startsWith('/sign-in?') || path.startsWith('/auth/') || path.startsWith('/ingresar/')) return false
   if (path === '/tus/admin' || path.startsWith('/tus/admin/')) return capabilities?.platformAdmin === true
-  if (path === '/prestador/solicitudes' || path.startsWith('/prestador/solicitudes/')) return capabilities?.provider === true
+  // The provider surface: only for an account that can really be a provider.
+  if (path === '/prestador' || path.startsWith('/prestador/')) return capabilities?.provider === true
+  if (path === MODE_CHOICE_ROUTE) return canSwitchMode(capabilities)
   return true
 }
 
 export function resolvePostLoginRoute(capabilities: TusAccountCapabilities | null, requested?: string | null): string {
   const safe = requested ? sanitizeTusReturnTo(requested, '') : ''
-  const destination = safe && canAccessReturnTo(safe, capabilities) ? safe : getDefaultRouteForUser(capabilities)
+  // An account that still has to choose a mode chooses first (the administration never does).
+  const mustChoose = capabilities?.platformAdmin !== true && modeOf(capabilities) === null
+  const destination = !mustChoose && safe && canAccessReturnTo(safe, capabilities) ? safe : getDefaultRouteForUser(capabilities)
   // Incomplete personal profile: complete it first, then continue to the destination.
   return needsProfile(capabilities) && !exemptFromProfile(destination) ? profileRoute(destination) : destination
 }
@@ -366,7 +442,7 @@ export function resolvePostLoginRoute(capabilities: TusAccountCapabilities | nul
 // "Ir a mi panel" goes to the dashboard of the account's real role (decided by the API).
 export function panelFor(capabilities: TusAccountCapabilities | null): { href: '/tus/admin' | '/prestador/solicitudes' | '/mis-solicitudes'; label: string } {
   if (capabilities?.platformAdmin) return { href: '/tus/admin', label: 'Panel admin' }
-  if (capabilities?.provider) return { href: '/prestador/solicitudes', label: 'Panel prestador' }
+  if (capabilities?.provider && modeOf(capabilities) === 'PROVIDER') return { href: '/prestador/solicitudes', label: 'Panel prestador' }
   return { href: '/mis-solicitudes', label: 'Mis solicitudes' }
 }
 

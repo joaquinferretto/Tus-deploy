@@ -12,6 +12,7 @@ import { createWorkIntent } from '../../lib/tus-work-intent'
 import type { TusWebSession } from '../../lib/tus-ui-contract'
 import { useTusSession } from '../session/use-tus-session'
 import { useAccountView } from '../session/use-account-view'
+import { modeOf } from '../../lib/tus-auth-client'
 import { isPlatformOnly } from '../../lib/tus-auth-client'
 import { tradeOf, useCatalog } from '../catalog/use-catalog'
 import { PrivateImages } from '../provider/provider-inbox'
@@ -98,7 +99,7 @@ export function WorkList({ session }: { session: TusWebSession }): React.ReactNo
       ) : (
         <WorkListContent
           items={items}
-          provider={account.status === 'signed-in' && account.capabilities.provider}
+          provider={account.status === 'signed-in' && account.capabilities.provider && (account.capabilities.platformAdmin || modeOf(account.capabilities) === 'PROVIDER')}
         />
       )}
     </>
