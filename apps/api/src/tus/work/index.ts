@@ -134,6 +134,27 @@ export interface ComandoTransicionTrabajo extends TrabajoContext {
 
 export const LARGO_MAXIMO_MOTIVO_CANCELACION = 500
 
+// What a diagnosis, a budget and an evidence may carry. The service is the authority: these
+// limits hold for every caller (the Web, a direct call to the API, the assistant).
+export const LIMITES_TRABAJO = {
+  monedas: ['ARS'] as readonly string[],
+  // Minor units (cents): up to 13 digits is 99.999.999.999,99.
+  digitosMonto: 13,
+  lineasPresupuesto: 50,
+  cantidadPorLinea: 100_000,
+  descripcionLinea: 300,
+  alcance: 2000,
+  descripcionDiagnostico: 4000,
+  // Serialized size of the free-form objects (structured diagnosis data, evidence metadata).
+  datosEstructurados: 8000,
+  metadataEvidencia: 4000,
+  referenciaEvidencia: 500,
+  // How far ahead of the server's clock a client-reported moment may be (clients report their own
+  // time; a day covers a wrong clock or time zone, not an invented date).
+  futuroMs: 24 * 60 * 60_000,
+} as const
+const ID_ENTRADA = /^[A-Za-z0-9._:-]{1,120}$/u
+
 // Platform support (MFA admin): the only way to cancel a work that already has a payment. It never
 // moves money; refunds stay a separate, explicit admin operation.
 export interface ComandoCancelacionSoporte {
@@ -654,6 +675,8 @@ export class ServicioTrabajo {
   ): TrabajoMutation<{ diagnosis: Diagnostico; work: Trabajo }> {
     validateMutationContext(input)
     requireText(input.descripcionOriginal, 'descripcionOriginal')
+    requireLength(input.descripcionOriginal, LIMITES_TRABAJO.descripcionDiagnostico, 'descripcionOriginal')
+    requireSerializedSize(input.datosEstructurados, LIMITES_TRABAJO.datosEstructurados, 'structuredData')
     const fingerprint = {
       operation: 'work.diagnosis.create',
       payload: {
@@ -793,9 +816,13 @@ export class ServicioTrabajo {
   ): TrabajoMutation<{ budget: Presupuesto; work: Trabajo }> {
     validateMutationContext(input)
     requireText(input.currency, 'currency')
+    if (!LIMITES_TRABAJO.monedas.includes(input.currency)) throw new TrabajoError(400, 'INVALID', 'currency is not supported')
     requireText(input.scope, 'scope')
+    requireLength(input.scope, LIMITES_TRABAJO.alcance, 'scope')
     validateMinorAmount(input.totalMinor, 'totalMinor')
     validateBudgetLines(input.lines, input.totalMinor)
+    // Only the fields of a line are kept: anything else a caller added is not part of a budget.
+    input = { ...input, lines: input.lines.map((line) => ({ lineId: line.lineId, description: line.description.trim(), quantity: line.quantity, unitAmountMinor: line.unitAmountMinor, totalAmountMinor: line.totalAmountMinor })) }
     if (
       input.validUntil !== undefined &&
       input.validUntil !== null &&
@@ -1291,11 +1318,16 @@ export class ServicioTrabajo {
   ): TrabajoMutation<{ evidence: EvidenciaTrabajo }> {
     validateMutationContext(input)
     requireText(input.evidenceId, 'evidenceId')
+    if (!ID_ENTRADA.test(input.evidenceId)) throw new TrabajoError(400, 'INVALID', 'evidenceId is invalid')
     requireText(input.reference, 'reference')
+    requireLength(input.reference, LIMITES_TRABAJO.referenciaEvidencia, 'reference')
+    requireSerializedSize(input.metadata, LIMITES_TRABAJO.metadataEvidencia, 'metadata')
     if (!Object.values(FASES_EVIDENCIA_TRABAJO).includes(input.phase))
       throw new TrabajoError(400, 'INVALID', 'phase is invalid')
     if (!isIsoTimestamp(input.occurredAt))
       throw new TrabajoError(400, 'INVALID', 'occurredAt must be a valid timestamp')
+    if (Date.parse(input.occurredAt) > this.now() + LIMITES_TRABAJO.futuroMs)
+      throw new TrabajoError(400, 'INVALID', 'occurredAt cannot be in the future')
     const fingerprint = {
       operation: 'work.evidence.record',
       payload: {
@@ -2095,25 +2127,49 @@ function requireText(value: string, field: string): void {
   if (!value.trim()) throw new TrabajoError(400, 'INVALID', `${field} is required`)
 }
 
+function requireLength(value: string, max: number, field: string): void {
+  if ([...value.trim()].length > max) throw new TrabajoError(400, 'INVALID', `${field} is too long (${max} characters at most)`)
+}
+
+// A free-form object travels and is stored as JSON: bounded, and really an object.
+function requireSerializedSize(value: unknown, max: number, field: string): void {
+  if (value === undefined || value === null) return
+  if (typeof value !== 'object' || Array.isArray(value)) throw new TrabajoError(400, 'INVALID', `${field} must be an object`)
+  let size: number
+  try {
+    size = JSON.stringify(value).length
+  } catch {
+    throw new TrabajoError(400, 'INVALID', `${field} is not valid`)
+  }
+  if (size > max) throw new TrabajoError(400, 'INVALID', `${field} is too large`)
+}
+
 function requirePositiveInteger(value: number, field: string): void {
   if (!Number.isInteger(value) || value < 1)
     throw new TrabajoError(400, 'INVALID', `${field} must be a positive integer`)
 }
 
 function validateMinorAmount(value: string, field: string): void {
-  if (!/^(0|[1-9]\d*)$/.test(value))
+  if (typeof value !== 'string' || !/^(0|[1-9]\d*)$/.test(value) || value.length > LIMITES_TRABAJO.digitosMonto)
     throw new TrabajoError(400, 'INVALID', `${field} must be a non-negative minor-unit amount`)
 }
 
 function validateBudgetLines(lines: LineaPresupuesto[], totalMinor: string): void {
   if (!Array.isArray(lines) || lines.length === 0)
     throw new TrabajoError(400, 'INVALID', 'at least one budget line is required')
+  if (lines.length > LIMITES_TRABAJO.lineasPresupuesto)
+    throw new TrabajoError(400, 'INVALID', `a budget has at most ${LIMITES_TRABAJO.lineasPresupuesto} lines`)
   let total = 0n
   const ids = new Set<string>()
   for (const line of lines) {
+    if (typeof line !== 'object' || line === null || typeof line.lineId !== 'string' || typeof line.description !== 'string')
+      throw new TrabajoError(400, 'INVALID', 'budget line is invalid')
     requireText(line.lineId, 'lineId')
+    if (!ID_ENTRADA.test(line.lineId)) throw new TrabajoError(400, 'INVALID', 'lineId is invalid')
     requireText(line.description, 'description')
+    requireLength(line.description, LIMITES_TRABAJO.descripcionLinea, 'description')
     requirePositiveInteger(line.quantity, 'quantity')
+    if (line.quantity > LIMITES_TRABAJO.cantidadPorLinea) throw new TrabajoError(400, 'INVALID', 'quantity is too large')
     validateMinorAmount(line.unitAmountMinor, 'unitAmountMinor')
     validateMinorAmount(line.totalAmountMinor, 'totalAmountMinor')
     if (ids.has(line.lineId))

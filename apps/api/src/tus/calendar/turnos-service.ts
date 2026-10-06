@@ -156,6 +156,10 @@ function esSolapamiento(error: unknown): boolean {
 
 const esFecha = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/u.test(value) && !Number.isNaN(new Date(`${value}T12:00:00.000Z`).getTime())
 
+// An amount the agenda stores: whole pesos, never negative, never absurd.
+const MONTO_MAXIMO_TURNO = 100_000_000n
+const montoValido = (value: unknown): value is bigint => typeof value === 'bigint' && value >= 0n && value <= MONTO_MAXIMO_TURNO
+
 const horarioOcupado = (mensaje = 'El horario seleccionado ya fue reservado. Por favor elegí otro horario.') => new ErrorCalendario(409, 'SLOT_OCCUPIED', mensaje)
 
 export interface ReglaHorarioInput {
@@ -983,6 +987,16 @@ export class ServicioTurnos {
 
     const inicio = new Date(input.inicio)
     const fin = input.fin ? new Date(input.fin) : new Date(inicio.getTime() + duracion * 60_000)
+    // The service is the authority: whoever calls it, a turno has a real range, a sane duration
+    // and a price that is a non-negative amount.
+    if (input.tarifaId && !tarifa) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Esa tarifa no pertenece al servicio')
+    if (!Number.isInteger(duracion) || duracion < 5 || duracion > 24 * 60) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'La duración no es válida')
+    if (Number.isNaN(inicio.getTime())) throw new ErrorCalendario(400, 'INVALID_DATE', 'Fecha de inicio inválida')
+    if (Number.isNaN(fin.getTime()) || fin <= inicio || fin.getTime() - inicio.getTime() > 24 * 60 * 60_000) throw new ErrorCalendario(400, 'INVALID_DATE', 'El fin del turno debe ser posterior al inicio')
+    if (!montoValido(precio)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'El precio no es válido')
+    const nombreCliente = String(input.clienteNombre ?? '').trim()
+    if (nombreCliente.length < 2 || nombreCliente.length > 120) throw new ErrorCalendario(400, 'CLIENT_REQUIRED', 'Ingresá el nombre del cliente.')
+    if ((input.notas ?? '').length > 500) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Las notas admiten hasta 500 caracteres.')
     const reservaId = `res-${randomUUID()}`
     const now = new Date()
 
@@ -1163,6 +1177,7 @@ export class ServicioTurnos {
         'El motivo de modificación de precio es obligatorio (mínimo 5 caracteres).'
       )
     }
+    if (!montoValido(input.nuevoPrecio)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'El precio no es válido')
 
     const reserva = await this.prisma.reserva.findFirst({
       where: {
@@ -1562,6 +1577,8 @@ export class ServicioTurnos {
     aceptaTurnos?: boolean
     aceptaSolicitudes?: boolean
   }) {
+    for (const campo of ['aceptaTurnos', 'aceptaSolicitudes'] as const) if (input[campo] !== undefined && typeof input[campo] !== 'boolean') throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Valor no válido')
+    if (!(await this.prisma.perfilPublicoPrestador.findUnique({ where: { id: input.perfilId }, select: { id: true } }))) throw new ErrorCalendario(404, 'NOT_FOUND', 'Prestador no encontrado')
     return await this.prisma.perfilPublicoPrestador.update({
       where: { id: input.perfilId },
       data: {
@@ -1585,6 +1602,13 @@ export class ServicioTurnos {
     bufferMinutos?: number
     modalidad?: string
   }) {
+    if (input.precioBase !== undefined && !montoValido(input.precioBase)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'El precio no es válido')
+    if (input.duracionMinutos !== undefined && (!Number.isInteger(input.duracionMinutos) || input.duracionMinutos < 5 || input.duracionMinutos > 24 * 60)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'La duración no es válida')
+    if (input.bufferMinutos !== undefined && (!Number.isInteger(input.bufferMinutos) || input.bufferMinutos < 0 || input.bufferMinutos > 240)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'El descanso entre turnos no es válido')
+    if (input.modalidad !== undefined && !['local', 'domicilio', 'mixto'].includes(input.modalidad)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'La modalidad no es válida')
+    for (const campo of ['turnosHabilitados', 'solicitudesHabilitadas'] as const) if (input[campo] !== undefined && typeof input[campo] !== 'boolean') throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Valor no válido')
+    const ofrecido = await this.prisma.perfilServicio.findUnique({ where: { perfilId_oficioId: { perfilId: input.perfilId, oficioId: input.oficioId } }, select: { oficioId: true } })
+    if (!ofrecido) throw new ErrorCalendario(404, 'NOT_FOUND', 'Ese prestador no ofrece ese servicio')
     return await this.prisma.perfilServicio.update({
       where: { perfilId_oficioId: { perfilId: input.perfilId, oficioId: input.oficioId } },
       data: {

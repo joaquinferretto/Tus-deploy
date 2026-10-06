@@ -35,7 +35,8 @@ export interface EstadoTelefonoCuentaWeb {
 }
 
 export class PhoneApiError extends Error {
-  constructor(readonly status: number, readonly code: string, readonly reason: string | null = null) {
+  // `fields`: the fields whose format the API refused (empty when it named none).
+  constructor(readonly status: number, readonly code: string, readonly reason: string | null = null, readonly fields: readonly string[] = []) {
     super(code)
   }
 }
@@ -52,7 +53,8 @@ async function call<T>(path: string, init: { method?: 'GET' | 'POST'; body?: unk
   const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null
   if (!response.ok) {
     const error = (payload?.['error'] ?? {}) as { code?: unknown; reason?: unknown }
-    throw new PhoneApiError(response.status, typeof error.code === 'string' ? error.code : 'ERROR', typeof error.reason === 'string' ? error.reason : null)
+    const fields = Array.isArray(payload?.['fields']) ? (payload['fields'] as unknown[]).filter((field): field is string => typeof field === 'string') : []
+    throw new PhoneApiError(response.status, typeof error.code === 'string' ? error.code : 'ERROR', typeof error.reason === 'string' ? error.reason : null, fields)
   }
   return payload as T
 }

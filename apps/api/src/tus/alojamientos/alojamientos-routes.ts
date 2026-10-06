@@ -4,6 +4,12 @@ import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../p
 import { AlojamientosService, ErrorAlojamiento } from './alojamientos-service.ts'
 import { CheckoutAlojamientosService } from './checkout-service.ts'
 import type { PrismaClient } from '@prisma/client'
+import { leerAlojamiento, leerBloqueoUnidad, leerCalificacion, leerImagen, leerReserva, leerTarifaAlojamiento, leerUnidad, type Entrada } from './alojamientos-entrada.ts'
+
+// The body as an object, whatever was sent (nothing, a list, a text): reading a field never throws.
+const cuerpo = (req: Request): Record<string, unknown> => (typeof req.body === 'object' && req.body !== null && !Array.isArray(req.body) ? (req.body as Record<string, unknown>) : {})
+// A refused body: 400 with the field that failed, in the envelope these routes always used.
+const rechazar = (res: Response, entrada: Extract<Entrada<unknown>, { ok: false }>) => res.status(400).json({ error: { code: 'BAD_REQUEST', message: entrada.mensaje, fields: [entrada.campo] } })
 
 // Administración de plataforma: el mismo permiso del panel admin. Solo existe en una sesión de
 // admin con MFA elevado (MfaAdminSessionResolver).
@@ -172,44 +178,12 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
   // un clienteId enviado en el body se ignora.
   router.post('/reservas/hold', async (req: Request, res: Response) => {
     try {
-      const {
-        unidadId,
-        alojamientoId,
-        clienteNombre,
-        clienteEmail,
-        clienteTelefono,
-        fechaInicio,
-        fechaFin,
-        modalidad,
-        cantidadPersonas,
-        tarifaId,
-        notas,
-      } = req.body
-
-      if (!unidadId || !fechaInicio || !fechaFin || !clienteNombre) {
-        return res.status(400).json({
-          error: {
-            code: 'BAD_REQUEST',
-            message: 'unidadId, fechaInicio, fechaFin y clienteNombre son obligatorios',
-          },
-        })
-      }
+      const entrada = leerReserva(cuerpo(req), Date.now())
+      if (!entrada.ok) return rechazar(res, entrada)
 
       const context = await sesionOpcional(req)
-      const reserva = await alojamientosService.crearHoldReserva({
-        unidadId,
-        alojamientoId,
-        clienteId: context?.subjectId,
-        clienteNombre,
-        clienteEmail,
-        clienteTelefono,
-        fechaInicio,
-        fechaFin,
-        modalidad,
-        cantidadPersonas: cantidadPersonas ? Number(cantidadPersonas) : 1,
-        tarifaId,
-        notas,
-      })
+      // Who reserves is the session, when there is one: a client id in the body does not exist.
+      const reserva = await alojamientosService.crearHoldReserva({ ...entrada.valor, clienteId: context?.subjectId })
 
       return res.status(201).json(reserva)
     } catch (err) {
@@ -264,12 +238,9 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     try {
       const context = await autenticar(req, res)
       if (!context) return
-      const { reservaId, puntuacion, comentario } = req.body
-      if (!reservaId || !puntuacion) {
-        return res.status(400).json({
-          error: { code: 'BAD_REQUEST', message: 'reservaId y puntuacion son obligatorios' },
-        })
-      }
+      const entrada = leerCalificacion(cuerpo(req))
+      if (!entrada.ok) return rechazar(res, entrada)
+      const { reservaId, puntuacion, comentario } = entrada.valor
 
       const reserva = await alojamientosService.titularidadDeReserva(String(reservaId))
       if (!reserva || reserva.clienteId !== context.subjectId) {
@@ -278,7 +249,7 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
 
       await alojamientosService.calificarAlojamiento({
         reservaId,
-        puntuacion: Number(puntuacion),
+        puntuacion,
         comentario,
         clienteId: context.subjectId,
       })
@@ -294,50 +265,9 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
   router.post('/', async (req: Request, res: Response) => {
     try {
       if (!(await soloAdmin(req, res))) return
-      const {
-        propietarioId,
-        tipoId,
-        nombre,
-        slug,
-        descripcion,
-        direccion,
-        latitud,
-        longitud,
-        barrioId,
-        zonaId,
-        checkInHora,
-        checkOutHora,
-        politicas,
-        comodidades,
-        publicado,
-      } = req.body
-
-      if (!tipoId || !nombre || !slug || !direccion || latitud == null || longitud == null) {
-        return res.status(400).json({
-          error: {
-            code: 'BAD_REQUEST',
-            message: 'tipoId, nombre, slug, direccion, latitud y longitud son obligatorios',
-          },
-        })
-      }
-
-      const creado = await alojamientosService.crearAlojamiento({
-        propietarioId: typeof propietarioId === 'string' && propietarioId.trim() ? propietarioId.trim() : undefined,
-        tipoId,
-        nombre,
-        slug,
-        descripcion,
-        direccion,
-        latitud: Number(latitud),
-        longitud: Number(longitud),
-        barrioId,
-        zonaId,
-        checkInHora,
-        checkOutHora,
-        politicas,
-        comodidades,
-        publicado,
-      })
+      const entrada = leerAlojamiento(cuerpo(req))
+      if (!entrada.ok) return rechazar(res, entrada)
+      const creado = await alojamientosService.crearAlojamiento(entrada.valor)
 
       return res.status(201).json(creado)
     } catch (err) {
@@ -350,22 +280,9 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     try {
       const alojamientoId = req.params['id']!
       if (!(await autorizarGestion(req, res, () => alojamientosService.propietarioDeAlojamiento(alojamientoId)))) return
-      const { nombre, descripcion, capacidadPersonas, camasDetalle, banosCantidad, comodidades } = req.body
-      if (!nombre) {
-        return res.status(400).json({
-          error: { code: 'BAD_REQUEST', message: 'nombre es obligatorio' },
-        })
-      }
-
-      const unidad = await alojamientosService.crearUnidad({
-        alojamientoId,
-        nombre,
-        descripcion,
-        capacidadPersonas: capacidadPersonas ? Number(capacidadPersonas) : 2,
-        camasDetalle,
-        banosCantidad: banosCantidad ? Number(banosCantidad) : 1,
-        comodidades,
-      })
+      const entrada = leerUnidad(cuerpo(req))
+      if (!entrada.ok) return rechazar(res, entrada)
+      const unidad = await alojamientosService.crearUnidad({ alojamientoId, ...entrada.valor })
 
       return res.status(201).json(unidad)
     } catch (err) {
@@ -378,23 +295,9 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     try {
       const unidadId = req.params['unidadId']!
       if (!(await autorizarGestion(req, res, () => alojamientosService.propietarioDeUnidad(unidadId)))) return
-      const { modalidad, duracionHoras, precio, moneda, diasSemana, minimoEstadia, maximoEstadia } = req.body
-      if (precio == null) {
-        return res.status(400).json({
-          error: { code: 'BAD_REQUEST', message: 'precio es obligatorio' },
-        })
-      }
-
-      const tarifa = await alojamientosService.crearTarifa({
-        unidadId,
-        modalidad,
-        duracionHoras: duracionHoras ? Number(duracionHoras) : undefined,
-        precio: Number(precio),
-        moneda,
-        diasSemana,
-        minimoEstadia: minimoEstadia ? Number(minimoEstadia) : 1,
-        maximoEstadia: maximoEstadia ? Number(maximoEstadia) : undefined,
-      })
+      const entrada = leerTarifaAlojamiento(cuerpo(req))
+      if (!entrada.ok) return rechazar(res, entrada)
+      const tarifa = await alojamientosService.crearTarifa({ unidadId, ...entrada.valor, precio: Number(entrada.valor.precio) })
 
       return res.status(201).json(tarifa)
     } catch (err) {
@@ -407,21 +310,9 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     try {
       const alojamientoId = req.params['id']!
       if (!(await autorizarGestion(req, res, () => alojamientosService.propietarioDeAlojamiento(alojamientoId)))) return
-      const { url, alt, categoria, orden, esPrincipal } = req.body
-      if (!url) {
-        return res.status(400).json({
-          error: { code: 'BAD_REQUEST', message: 'url es obligatoria' },
-        })
-      }
-
-      const img = await alojamientosService.agregarImagen({
-        alojamientoId,
-        url,
-        alt,
-        categoria,
-        orden: orden ? Number(orden) : 0,
-        esPrincipal: Boolean(esPrincipal),
-      })
+      const entrada = leerImagen(cuerpo(req), true)
+      if (!entrada.ok) return rechazar(res, entrada)
+      const img = await alojamientosService.agregarImagen({ alojamientoId, ...entrada.valor })
 
       return res.status(201).json(img)
     } catch (err) {
@@ -433,20 +324,9 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     try {
       const unidadId = req.params['unidadId']!
       if (!(await autorizarGestion(req, res, () => alojamientosService.propietarioDeUnidad(unidadId)))) return
-      const { url, alt, orden, esPrincipal } = req.body
-      if (!url) {
-        return res.status(400).json({
-          error: { code: 'BAD_REQUEST', message: 'url es obligatoria' },
-        })
-      }
-
-      const img = await alojamientosService.agregarImagen({
-        unidadId,
-        url,
-        alt,
-        orden: orden ? Number(orden) : 0,
-        esPrincipal: Boolean(esPrincipal),
-      })
+      const entrada = leerImagen(cuerpo(req), false)
+      if (!entrada.ok) return rechazar(res, entrada)
+      const img = await alojamientosService.agregarImagen({ unidadId, ...entrada.valor })
 
       return res.status(201).json(img)
     } catch (err) {
@@ -460,20 +340,9 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
       const unidadId = req.params['unidadId']!
       const context = await autorizarGestion(req, res, () => alojamientosService.propietarioDeUnidad(unidadId))
       if (!context) return
-      const { fechaInicio, fechaFin, motivo } = req.body
-      if (!fechaInicio || !fechaFin || !motivo) {
-        return res.status(400).json({
-          error: { code: 'BAD_REQUEST', message: 'fechaInicio, fechaFin y motivo son obligatorios' },
-        })
-      }
-
-      const bloqueo = await alojamientosService.crearBloqueoUnidad({
-        unidadId,
-        fechaInicio,
-        fechaFin,
-        motivo,
-        creadoPorUsuarioId: context.subjectId,
-      })
+      const entrada = leerBloqueoUnidad(cuerpo(req), Date.now())
+      if (!entrada.ok) return rechazar(res, entrada)
+      const bloqueo = await alojamientosService.crearBloqueoUnidad({ unidadId, ...entrada.valor, creadoPorUsuarioId: context.subjectId })
 
       return res.status(201).json(bloqueo)
     } catch (err) {
@@ -499,14 +368,15 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     try {
       const reservaId = req.params['id']!
       if (!(await autorizarGestion(req, res, () => alojamientosService.titularidadDeReserva(reservaId)))) return
-      const { estado } = req.body
-      if (!['checked_in', 'completed', 'cancelled'].includes(estado)) {
+      const cuerpoEstado = cuerpo(req)
+      const estado = cuerpoEstado['estado']
+      if (Object.keys(cuerpoEstado).some((key) => key !== 'estado') || typeof estado !== 'string' || !['checked_in', 'completed', 'cancelled'].includes(estado)) {
         return res.status(400).json({
           error: { code: 'BAD_REQUEST', message: 'estado inválido' },
         })
       }
 
-      await alojamientosService.actualizarEstadoReserva(reservaId, estado)
+      await alojamientosService.actualizarEstadoReserva(reservaId, estado as 'checked_in' | 'completed' | 'cancelled')
       return res.json({ ok: true })
     } catch (err) {
       return manejarError(err, res)

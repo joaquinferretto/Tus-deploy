@@ -4,6 +4,8 @@ import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../p
 import { ServicioTurnos } from './turnos-service.ts'
 import { ErrorCalendario } from './bookings.ts'
 import { CODIGO_SESION_REQUERIDA, type ClienteTurnoAdmin } from '@factory/contracts'
+import { leerContactoInvitado, leerBloqueo, leerCambioDeEstado, leerCambioDePrecio, leerConfiguracionServicio, leerSwitches, leerTarifas, leerTurnoEscrito, type Entrada } from './turnos-entrada.ts'
+import { esInvalido, identificador, texto } from '../validacion/entrada.ts'
 
 const CAMPOS_SOLICITUD_CLIENTE = new Set(['oficioId', 'inicio', 'tarifaId', 'notas'])
 
@@ -234,37 +236,11 @@ export function crearRouterTurnos({
     asyncHandler(async (request: Request, response: Response) => {
       const context = await autenticar(request, response, sessions)
       if (!context) return
-
-      const body = comoRegistro(request.body)
-      const oficioId = String(body['oficioId'] ?? '')
-      const inicio = String(body['inicio'] ?? '')
-      const clienteNombre = String(body['clienteNombre'] ?? '').trim()
-
-      if (!oficioId || !inicio || !clienteNombre) {
-        enviarError(
-          response,
-          400,
-          'INVALID_PARAMS',
-          'oficioId, inicio y clienteNombre son obligatorios'
-        )
-        return
-      }
-
+      const entrada = leerTurnoEscrito(comoRegistro(request.body), Date.now())
+      if (!entrada.ok) return void rechazar(response, entrada)
       try {
-        const turno = await servicio.crearTurnoManual({
-          prestadorTenantId: context.tenantId,
-          oficioId,
-          tarifaId: body['tarifaId'] ? String(body['tarifaId']) : undefined,
-          inicio,
-          fin: body['fin'] ? String(body['fin']) : undefined,
-          duracionMinutos: body['duracionMinutos'] ? Number(body['duracionMinutos']) : undefined,
-          precioFinal: body['precioFinal'] != null ? BigInt(body['precioFinal'] as number | string) : undefined,
-          clienteNombre,
-          clienteTelefono: body['clienteTelefono'] ? String(body['clienteTelefono']) : undefined,
-          clienteEmail: body['clienteEmail'] ? String(body['clienteEmail']) : undefined,
-          notas: body['notas'] ? String(body['notas']) : undefined,
-        })
-        response.status(201).json(turno)
+        // The agenda is the one of the session's tenant: a provider id in the body does not exist.
+        response.status(201).json(await servicio.crearTurnoManual({ prestadorTenantId: context.tenantId, ...entrada.valor }))
       } catch (error) {
         manejarError(response, error)
       }
@@ -276,25 +252,10 @@ export function crearRouterTurnos({
     asyncHandler(async (request: Request, response: Response) => {
       const context = await autenticar(request, response, sessions)
       if (!context) return
-
-      const body = comoRegistro(request.body)
-      const inicio = String(body['inicio'] ?? '')
-      const fin = String(body['fin'] ?? '')
-      const motivo = String(body['motivo'] ?? 'Bloqueo manual')
-
-      if (!inicio || !fin) {
-        enviarError(response, 400, 'INVALID_PARAMS', 'inicio y fin son obligatorios')
-        return
-      }
-
+      const entrada = leerBloqueo(comoRegistro(request.body), Date.now())
+      if (!entrada.ok) return void rechazar(response, entrada)
       try {
-        const res = await servicio.bloquearHorario({
-          prestadorTenantId: context.tenantId,
-          inicio,
-          fin,
-          motivo,
-        })
-        response.status(201).json(res)
+        response.status(201).json(await servicio.bloquearHorario({ prestadorTenantId: context.tenantId, ...entrada.valor }))
       } catch (error) {
         manejarError(response, error)
       }
@@ -335,11 +296,9 @@ export function crearRouterTurnos({
       if (!context) return
 
       const reservaId = String(request.params['id'] ?? '')
-      const body = comoRegistro(request.body)
-      const nuevoEstado = String(body['estado'] ?? '')
-      const motivo = body['motivo'] ? String(body['motivo']) : undefined
-
-      if (!['cancelled', 'completed', 'no-show'].includes(nuevoEstado)) {
+      const entrada = leerCambioDeEstado(comoRegistro(request.body))
+      if (!entrada.ok) return void rechazar(response, entrada, entrada.campo === 'estado' ? 'INVALID_STATUS' : 'INVALID_PARAMS')
+      if (!['cancelled', 'completed', 'no-show'].includes(entrada.valor.estado)) {
         enviarError(response, 400, 'INVALID_STATUS', 'Estado no reconocido')
         return
       }
@@ -348,8 +307,8 @@ export function crearRouterTurnos({
         const turno = await servicio.cambiarEstadoTurno({
           reservaId,
           tenantId: context.tenantId,
-          nuevoEstado,
-          motivo,
+          nuevoEstado: entrada.valor.estado,
+          motivo: entrada.valor.motivo,
         })
         response.status(200).json(turno)
       } catch (error) {
@@ -450,24 +409,16 @@ export function crearRouterTurnos({
       const context = await autenticar(request, response, sessions)
       if (!context) return
 
-      const oficioId = String(request.params['oficioId'] ?? '')
-      const body = comoRegistro(request.body)
-      // The profile is the one of the session's tenant (a profile id in the body is ignored).
+      const oficioId = identificador(request.params['oficioId'])
+      if (esInvalido(oficioId)) return void enviarError(response, 400, 'INVALID_PARAMS', 'Servicio no válido')
+      const entrada = leerConfiguracionServicio(comoRegistro(request.body))
+      if (!entrada.ok) return void rechazar(response, entrada)
+      // The profile is the one of the session's tenant (a profile id in the body is refused).
       const perfil = await servicio.perfilDeTenant(context.tenantId)
       if (!perfil) return void enviarError(response, 404, 'NOT_FOUND', 'Perfil de prestador no encontrado')
-      const perfilId = perfil.id
 
       try {
-        const updated = await servicio.actualizarServicioPrestador({
-          perfilId,
-          oficioId,
-          turnosHabilitados: body['turnosHabilitados'] !== undefined ? Boolean(body['turnosHabilitados']) : undefined,
-          solicitudesHabilitadas: body['solicitudesHabilitadas'] !== undefined ? Boolean(body['solicitudesHabilitadas']) : undefined,
-          precioBase: body['precioBase'] != null ? BigInt(body['precioBase'] as number | string) : undefined,
-          duracionMinutos: body['duracionMinutos'] != null ? Number(body['duracionMinutos']) : undefined,
-          bufferMinutos: body['bufferMinutos'] != null ? Number(body['bufferMinutos']) : undefined,
-          modalidad: body['modalidad'] ? String(body['modalidad']) : undefined,
-        })
+        const updated = await servicio.actualizarServicioPrestador({ perfilId: perfil.id, oficioId, ...entrada.valor })
         // precio_base is a bigint: JSON cannot carry it as such.
         response.status(200).json({ ok: true, config: { ...updated, precioBase: updated.precioBase === null ? null : Number(updated.precioBase) } })
       } catch (error) {
@@ -482,34 +433,15 @@ export function crearRouterTurnos({
       const context = await autenticar(request, response, sessions)
       if (!context) return
 
-      const oficioId = String(request.params['oficioId'] ?? '')
-      const body = comoRegistro(request.body)
+      const oficioId = identificador(request.params['oficioId'])
+      if (esInvalido(oficioId)) return void enviarError(response, 400, 'INVALID_PARAMS', 'Servicio no válido')
+      const entrada = leerTarifas(comoRegistro(request.body))
+      if (!entrada.ok) return void rechazar(response, entrada)
       const perfil = await servicio.perfilDeTenant(context.tenantId)
       if (!perfil) return void enviarError(response, 404, 'NOT_FOUND', 'Perfil de prestador no encontrado')
-      const perfilId = perfil.id
-      const tarifasRaw = Array.isArray(body['tarifas']) ? body['tarifas'] : []
-
-      let tarifas
-      try {
-        tarifas = tarifasRaw.map((t: Record<string, unknown>, idx: number) => ({
-          id: t['id'] ? String(t['id']) : undefined,
-          nombre: String(t['nombre'] ?? 'Tarifa'),
-          duracionMinutos: Number(t['duracionMinutos'] ?? 60),
-          precio: BigInt(t['precio'] as number | string),
-          orden: t['orden'] != null ? Number(t['orden']) : idx,
-        }))
-      } catch {
-        // BigInt of something that is not an integer amount.
-        return void enviarError(response, 400, 'INVALID_PARAMS', 'El precio de cada tarifa debe ser un número entero')
-      }
 
       try {
-        const guardadas = await servicio.guardarTarifasPrestador({
-          tenantId: context.tenantId,
-          perfilId,
-          oficioId,
-          tarifas,
-        })
+        const guardadas = await servicio.guardarTarifasPrestador({ tenantId: context.tenantId, perfilId: perfil.id, oficioId, tarifas: entrada.valor })
         response.status(200).json({ ok: true, tarifas: guardadas })
       } catch (error) {
         manejarError(response, error)
@@ -646,20 +578,14 @@ export function crearRouterTurnos({
       if (!adminCtx) return
 
       const reservaId = String(request.params['id'] ?? '')
-      const body = comoRegistro(request.body)
-      const nuevoPrecio = body['precioFinal'] != null ? BigInt(body['precioFinal'] as number | string) : undefined
-      const motivo = String(body['motivo'] ?? '')
-
-      if (nuevoPrecio === undefined) {
-        enviarError(response, 400, 'INVALID_PARAMS', 'precioFinal es obligatorio')
-        return
-      }
+      const entrada = leerCambioDePrecio(comoRegistro(request.body))
+      if (!entrada.ok) return void rechazar(response, entrada, entrada.campo === 'motivo' ? 'MOTIVO_REQUIRED' : 'INVALID_PARAMS')
 
       try {
         const turno = await servicio.adminModificarPrecio({
           reservaId,
-          nuevoPrecio,
-          motivo,
+          nuevoPrecio: entrada.valor.precioFinal,
+          motivo: entrada.valor.motivo,
           adminId: adminCtx.subjectId,
         })
         response.status(200).json(turno)
@@ -676,37 +602,21 @@ export function crearRouterTurnos({
       if (!adminCtx) return
 
       const body = comoRegistro(request.body)
-      const prestadorId = String(body['prestadorId'] ?? '')
-      const oficioId = String(body['oficioId'] ?? '')
-      const inicio = String(body['inicio'] ?? '')
-      const clienteNombre = String(body['clienteNombre'] ?? '').trim()
-      const motivoForzado = String(body['motivoForzado'] ?? '').trim()
-
-      if (!prestadorId || !oficioId || !inicio || !clienteNombre || !motivoForzado) {
-        enviarError(
-          response,
-          400,
-          'INVALID_PARAMS',
-          'prestadorId, oficioId, inicio, clienteNombre y motivoForzado son obligatorios'
-        )
-        return
-      }
+      const entrada = leerTurnoEscrito(body, Date.now(), ['prestadorId', 'motivoForzado'])
+      if (!entrada.ok) return void rechazar(response, entrada)
+      const prestadorId = identificador(body['prestadorId'])
+      if (esInvalido(prestadorId)) return void enviarError(response, 400, 'INVALID_PARAMS', 'Elegí el prestador.')
+      const motivoForzado = texto(body['motivoForzado'], { min: 5, max: 300 })
+      if (esInvalido(motivoForzado)) return void enviarError(response, 400, 'MOTIVO_REQUIRED', 'El motivo de forzado es obligatorio (5 a 300 caracteres).')
 
       try {
         const turno = await servicio.adminForzarTurno({
           prestadorId,
-          oficioId,
-          inicio,
-          fin: body['fin'] ? String(body['fin']) : undefined,
-          duracionMinutos: body['duracionMinutos'] ? Number(body['duracionMinutos']) : undefined,
-          precioFinal: body['precioFinal'] != null ? BigInt(body['precioFinal'] as number | string) : undefined,
-          clienteNombre,
-          clienteTelefono: body['clienteTelefono'] ? String(body['clienteTelefono']) : undefined,
-          clienteEmail: body['clienteEmail'] ? String(body['clienteEmail']) : undefined,
+          ...entrada.valor,
           motivoForzado,
+          // The administrator is the one of the session, never a field of the body.
           adminId: adminCtx.subjectId,
           correlationId: adminCtx.correlationId,
-          notas: body['notas'] ? String(body['notas']) : undefined,
         })
         response.status(201).json(turno)
       } catch (error) {
@@ -721,16 +631,15 @@ export function crearRouterTurnos({
       if (!(await adminAuth(request, response))) return
 
       const reservaId = String(request.params['id'] ?? '')
-      const body = comoRegistro(request.body)
-      const nuevoEstado = String(body['estado'] ?? '')
-      const motivo = body['motivo'] ? String(body['motivo']) : undefined
+      const entrada = leerCambioDeEstado(comoRegistro(request.body))
+      if (!entrada.ok) return void rechazar(response, entrada, entrada.campo === 'estado' ? 'INVALID_STATUS' : 'INVALID_PARAMS')
 
       try {
         const turno = await servicio.cambiarEstadoTurno({
           reservaId,
           isAdmin: true,
-          nuevoEstado,
-          motivo,
+          nuevoEstado: entrada.valor.estado,
+          motivo: entrada.valor.motivo,
         })
         response.status(200).json(turno)
       } catch (error) {
@@ -744,15 +653,13 @@ export function crearRouterTurnos({
     asyncHandler(async (request: Request, response: Response) => {
       if (!(await adminAuth(request, response))) return
 
-      const perfilId = String(request.params['id'] ?? '')
-      const body = comoRegistro(request.body)
+      const perfilId = identificador(request.params['id'])
+      if (esInvalido(perfilId)) return void enviarError(response, 400, 'INVALID_PARAMS', 'Prestador no válido')
+      const entrada = leerSwitches(comoRegistro(request.body))
+      if (!entrada.ok) return void rechazar(response, entrada)
 
       try {
-        const updated = await servicio.actualizarSwitchesPrestador({
-          perfilId,
-          aceptaTurnos: body['aceptaTurnos'] !== undefined ? Boolean(body['aceptaTurnos']) : undefined,
-          aceptaSolicitudes: body['aceptaSolicitudes'] !== undefined ? Boolean(body['aceptaSolicitudes']) : undefined,
-        })
+        const updated = await servicio.actualizarSwitchesPrestador({ perfilId, ...entrada.valor })
         response.status(200).json({ ok: true, perfil: updated })
       } catch (error) {
         manejarError(response, error)
@@ -800,6 +707,12 @@ function enviarError(response: Response, status: number, code: string, error: st
   response.status(status).json({ code, error })
 }
 
+// A body that was refused: the field that failed travels with the message, so the form can point at it.
+function rechazar(response: Response, entrada: Extract<Entrada<unknown>, { ok: false }>, code = 'INVALID_PARAMS'): void {
+  // A date that is not one keeps the code the agenda always answered with.
+  response.status(400).json({ code: code === 'INVALID_PARAMS' && ['inicio', 'fin'].includes(entrada.campo) ? 'INVALID_DATE' : code, error: entrada.mensaje, fields: [entrada.campo] })
+}
+
 function manejarError(response: Response, error: unknown): void {
   if (error instanceof ErrorCalendario) {
     enviarError(response, error.status, error.code, error.message)
@@ -813,12 +726,17 @@ function manejarError(response: Response, error: unknown): void {
 function clienteAdmin(value: unknown): ClienteTurnoAdmin | null {
   const cliente = comoRegistro(value)
   if (cliente['tipo'] === 'registrado' && typeof cliente['cuentaId'] === 'string' && /^[A-Za-z0-9._:-]{3,120}$/u.test(cliente['cuentaId'])) return { tipo: 'registrado', cuentaId: cliente['cuentaId'] }
-  if (cliente['tipo'] === 'invitado' && typeof cliente['nombre'] === 'string' && cliente['nombre'].trim().length >= 2)
+  if (cliente['tipo'] === 'invitado') {
+    // Same rules as a turno written by the provider: a real name, and a phone / email only when
+    // they are valid (the phone in the canonical format).
+    const invitado = leerContactoInvitado({ clienteNombre: cliente['nombre'], clienteTelefono: cliente['telefono'], clienteEmail: cliente['email'] })
+    if (!invitado.ok) return null
     return {
       tipo: 'invitado',
-      nombre: cliente['nombre'].trim().slice(0, 120),
-      ...(typeof cliente['telefono'] === 'string' && cliente['telefono'].trim() ? { telefono: cliente['telefono'].trim().slice(0, 32) } : {}),
-      ...(typeof cliente['email'] === 'string' && cliente['email'].trim() ? { email: cliente['email'].trim().slice(0, 254) } : {}),
+      nombre: invitado.valor.clienteNombre,
+      ...(invitado.valor.clienteTelefono ? { telefono: invitado.valor.clienteTelefono } : {}),
+      ...(invitado.valor.clienteEmail ? { email: invitado.valor.clienteEmail } : {}),
     }
+  }
   return null
 }

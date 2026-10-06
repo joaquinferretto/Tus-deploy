@@ -48,10 +48,13 @@ export function turnosFetch(path: string, init: RequestInit = {}): Promise<Respo
 // Message for a failed turnos response: the friendly text of its code (409 SLOT_OCCUPIED is
 // "Este horario acaba de ser ocupado. Elegí otro."), never a raw server string.
 export async function turnosErrorDe(response: Response, fallback?: string): Promise<TurnosError> {
-  const body = (await response.json().catch(() => null)) as { code?: string; error?: unknown } | null
+  const body = (await response.json().catch(() => null)) as { code?: string; error?: unknown; fields?: unknown } | null
   const nested = typeof body?.error === 'object' && body.error !== null ? (body.error as { code?: string }).code : undefined
   const code = body?.code ?? nested ?? (response.status === 401 ? 'UNAUTHORIZED' : response.status === 403 ? 'FORBIDDEN' : 'ERROR')
-  const message = code === 'UNAUTHORIZED' ? 'Tu sesión venció. Volvé a iniciar sesión.' : mensajeErrorTurno(code, fallback)
+  // A refused field: the API says which one and why, in the words of the form. That beats the
+  // generic text of the code ("revisá los datos") every time.
+  const deCampo = response.status === 400 && Array.isArray(body?.fields) && body.fields.length > 0 && typeof body.error === 'string' && body.error.trim() ? body.error.trim() : null
+  const message = code === 'UNAUTHORIZED' ? 'Tu sesión venció. Volvé a iniciar sesión.' : (deCampo ?? mensajeErrorTurno(code, fallback))
   return new TurnosError(response.status, code, message)
 }
 

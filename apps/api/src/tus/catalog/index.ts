@@ -1221,8 +1221,17 @@ function esCohorteMercado(value: unknown): value is Cohorte {
   return MARKETPLACE_COHORTS.includes(value as Cohorte)
 }
 
+// What a publication may carry: bounded texts and a price that is a real, bounded amount.
+export const LIMITES_PUBLICACION = { nombre: 120, descripcion: 2000, precioMaximo: 100_000_000 } as const
+
 function validateListingInput(input: EntradaPublicacion, merchant: PerfilPrestador): void {
   if (
+    typeof input.name !== 'string' ||
+    typeof input.description !== 'string' ||
+    typeof input.currency !== 'string' ||
+    [...input.name.trim()].length > LIMITES_PUBLICACION.nombre ||
+    [...input.description.trim()].length > LIMITES_PUBLICACION.descripcion ||
+    (typeof input.price === 'number' && input.price > LIMITES_PUBLICACION.precioMaximo) ||
     !input.name.trim() ||
     !input.description.trim() ||
     input.locationId !== merchant.locationId ||
