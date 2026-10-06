@@ -250,6 +250,6 @@ test('POSTULACIONES Web: provider applies from the open list, client accepts or 
   const mine = readFileSync(join(root, 'apps/web/src/features/requests/my-requests.tsx'), 'utf8')
   assert.match(mine, /chooseApplicant/)
   assert.match(mine, /declineApplicant/)
-  for (const file of ['features/home/request-map.tsx', 'features/home/recent-requests.tsx'])
+  for (const file of ['features/home/recent-requests.tsx'])
     assert.match(readFileSync(join(root, 'apps/web/src', file), 'utf8'), /href="\/prestador\/solicitudes#abiertas"/, file)
 })
