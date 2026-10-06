@@ -256,3 +256,53 @@ test('IDENTIDAD Web: the identity card is read-only until "Editar identidad"; it
   const servidor = read('apps/api/src/server.ts')
   assert.match(servidor, /identidadUsuario: crearIdentidadUsuarioAdmin\(\{ perfiles, auditar: \(input\) => auth\.service\.recordAdminIdentityChange\(input\) \}\)/u, 'the real server wires the same operation the tests exercise')
 })
+
+test('ADMIN contacto HTTP: a closed list of actions — save + verify, link, the three at once, unlink, remove — for the administration only; the body carries a number or nothing; conflicts are a 409 that says nothing of the other account; every action is audited with the administrator and a masked number', () => {
+  const r = runTypeScriptScenario(`${HTTP}
+    const out = {}
+    try {
+      const P = await persona('p-contacto@example.com'); const Q = await persona('q-contacto@example.com')
+      const vista = (x) => [x.status, x.body?.telefono ? [x.body.telefono.verificado, x.body.telefono.pendiente !== null, x.body.telefono.whatsappVinculado] : (x.body?.error?.code ?? null)]
+      // Only the administration.
+      out.permisos = [(await telefono(P, { accion: 'guardar_verificar_vincular', telefono: '379 455-4001' }, null)).status, (await telefono(P, { accion: 'guardar_verificar_vincular', telefono: '379 455-4001' }, 'cliente')).status, (await telefono(P, { accion: 'vincular_whatsapp' }, 'prestador')).status, (await almacenTel.estado(P)).phoneNumber]
+      // Input.
+      out.entrada = [
+        await telefono(P, { accion: 'guardar_verificar', telefono: 'abc' }), await telefono(P, { accion: 'guardar_verificar' }), await telefono(P, { accion: 'inventada' }), await telefono(P, {}),
+        await telefono(P, { accion: 'vincular_whatsapp', telefono: '379 455-4001' }), await telefono(P, { accion: 'guardar_verificar_vincular', telefono: '379 455-4001', verifiedAt: '2020-01-01T00:00:00.000Z' }),
+        await telefono(P, { accion: 'guardar_verificar_vincular', telefono: '379 455-4001', waId: '5491100000000' }), await telefono(P, { accion: 'verificar', adminId: 'otro-admin' }), await telefono(P, { accion: 'quitar', accountId: Q }),
+        await telefono(P, { accion: 'vincular_whatsapp' }), await telefono('no-existe', { accion: 'guardar_verificar', telefono: '379 455-4001' }),
+      ].map((x) => [x.status, x.body?.error?.code ?? null])
+      out.sinCambios = [(await almacenTel.estado(P)).phoneNumber, (await almacenTel.estado(P)).phonePending, await almacenTel.waIdVinculado(P)]
+      // The flow of the card.
+      out.guardarVerificar = vista(await telefono(P, { accion: 'guardar_verificar', telefono: '379 455-4001' }))
+      out.vincular = [vista(await telefono(P, { accion: 'vincular_whatsapp' })), await almacenTel.waIdVinculado(P)]
+      out.repetir = vista(await telefono(P, { accion: 'vincular_whatsapp' }))
+      out.desvincular = [vista(await telefono(P, { accion: 'desvincular_whatsapp' })), await almacenTel.waIdVinculado(P), (await almacenTel.estado(P)).phoneNumber !== null]
+      out.todoJunto = [vista(await telefono(P, { accion: 'guardar_verificar_vincular', telefono: '379 455-4002' })), await almacenTel.waIdVinculado(P)]
+      // Another account: its phone and its WhatsApp are not available, and nothing of it is told.
+      const ajeno = await telefono(Q, { accion: 'guardar_verificar_vincular', telefono: '+54 9 379 455-4002' })
+      out.ajeno = [ajeno.status, ajeno.body.error.code, /p-contacto|Persona/u.test(ajeno.text), (await almacenTel.estado(Q)).phoneNumber]
+      out.pendienteYVincular = [(await telefono(Q, { accion: 'pendiente', telefono: '379 455-4003' })).status, vista(await telefono(Q, { accion: 'verificar_vincular' })), await almacenTel.waIdVinculado(Q)]
+      out.quitar = [vista(await telefono(P, { accion: 'quitar' })), await almacenTel.waIdVinculado(P), (await almacenTel.estado(P)).phoneNumber, vista(await telefono(P, { accion: 'quitar' }))]
+      // The account is the same one, with everything else it had.
+      out.cuenta = [(await auth.service.getAccountAsAdmin(P)).email, (await call('GET', '/tus/v1/admin/usuarios/' + P, null, 'admin')).body.usuario?.telefono?.whatsappVinculado ?? (await call('GET', '/tus/v1/admin/usuarios/' + P, null, 'admin')).status]
+      const kinds = ['phone.assigned_by_admin', 'phone.verified_by_admin', 'phone.removed_by_admin', 'whatsapp.linked_by_admin', 'whatsapp.unlinked_by_admin']
+      const registrados = kinds.map((kind) => eventos(kind))
+      out.auditoria = [registrados.map((lista) => lista.length > 0), registrados.flat().every((e) => e.actorId === 'admin-1'), /3794554001|3794554002|3794554003/u.test(JSON.stringify(registrados)), registrados.flat().every((e) => typeof (e.metadata?.target ?? e.target) === 'string' || JSON.stringify(e).includes(P) || JSON.stringify(e).includes(Q))]
+    } finally { server.close() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.permisos, [401, 403, 403, null], 'no session, a client or a provider: refused, nothing changes')
+  assert.deepEqual(r.entrada, [[422, 'INVALID_PHONE'], [422, 'INVALID_PHONE'], [422, 'INVALID_ACTION'], [422, 'INVALID_ACTION'], [422, 'INVALID_CHANGE'], [422, 'INVALID_CHANGE'], [422, 'INVALID_CHANGE'], [422, 'INVALID_CHANGE'], [422, 'INVALID_CHANGE'], [422, 'PHONE_NOT_VERIFIED'], [404, 'NOT_FOUND']], 'a closed body: a number only where the action takes one; never a date, a wa_id, an actor or an account')
+  assert.deepEqual(r.sinCambios, [null, null, null])
+  assert.deepEqual(r.guardarVerificar, [200, [true, false, false]])
+  assert.deepEqual(r.vincular, [[200, [true, false, true]], '5493794554001'], 'the WhatsApp of the account is the contact of its verified number')
+  assert.deepEqual(r.repetir, [200, [true, false, true]], 'idempotent')
+  assert.deepEqual(r.desvincular, [[200, [true, false, false]], null, true], 'unlinked; the phone stays verified')
+  assert.deepEqual(r.todoJunto, [[200, [true, false, true]], '5493794554002'], 'a new number, verified and linked in one action; the previous one is no longer the account\'s')
+  assert.deepEqual(r.ajeno, [409, 'PHONE_IN_USE', false, null])
+  assert.deepEqual(r.pendienteYVincular, [200, [200, [true, false, true]], '5493794554003'])
+  assert.deepEqual(r.quitar, [[200, [false, false, false]], null, null, [200, [false, false, false]]], 'the number leaves the account, with its WhatsApp; repeating it changes nothing')
+  assert.equal(r.cuenta[0], 'p-contacto@example.com', 'the account is untouched')
+  assert.deepEqual(r.auditoria.slice(0, 3), [[true, true, true, true, true], true, false], 'every action is audited with the administrator, never a whole number')
+})

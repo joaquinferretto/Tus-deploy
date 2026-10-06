@@ -204,7 +204,7 @@ async function ficha(browser, viewport) {
 }
 
 // HTTP errors the smoke provokes on purpose (a rejected value sent straight to the API).
-const ESPERADOS = ['/identidad 422']
+const ESPERADOS = ['/identidad 422', '/telefono 422']
 
 // 1-3. The identity card against the real API: edit, an invalid DNI is refused (by the form AND
 // by the API), a valid one is saved and shown without a page reload. The second viewport finds the
@@ -246,33 +246,83 @@ async function identidad({ page, etiqueta, llamar, id }) {
 }
 
 const numeroDe = (etiqueta) => (etiqueta.startsWith('desktop') ? '379 455-1001' : '379 455-1002')
+const numeroNuevoDe = (etiqueta) => (etiqueta.startsWith('desktop') ? '379 455-1003' : '379 455-1004')
 
+// The contact card: the administration certifies the phone and the WhatsApp of the account, with
+// only the actions of the current state on screen.
 async function pasos({ page, contacto, etiqueta, http }) {
   const aviso = (texto) => page.getByText(texto).first().waitFor()
   const confirmar = async (boton) => {
     const modal = page.getByRole('dialog')
     await modal.waitFor()
-    await modal.getByRole('button', { name: boton }).click()
+    await modal.getByRole('button', { name: boton, exact: true }).click()
   }
-  // 4. a phone is loaded: it is PENDING, never verified by itself.
-  await contacto.getByLabel('Número a verificar').fill(numeroDe(etiqueta))
-  await contacto.getByRole('button', { name: 'Cargar como pendiente' }).click()
-  await aviso('Teléfono cargado como pendiente de verificación.')
+  const estado = (valor) => contacto.locator(`[data-contacto-estado="${valor}"]`).waitFor()
+  const acciones = async () => (await contacto.locator('[data-contacto-estado] > div').first().locator('button').allInnerTexts()).map((texto) => texto.trim())
+  const boton = (nombre) => contacto.locator(`[data-contacto="${nombre}"]`)
+  // The replacement form stays folded until asked for (and stays open once it was used).
+  const abrirReemplazo = async () => {
+    const plegado = contacto.locator('[data-contacto="reemplazar"]')
+    if (!(await plegado.evaluate((nodo) => nodo.open))) await plegado.locator('summary').click()
+  }
+  const sinDesborde = async (donde) => check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${etiqueta}: ${donde} does not scroll sideways`)
+  // 4. no phone: the number is saved as PENDING, never verified by itself.
+  await estado('sin_telefono')
+  check((await contacto.innerText()).includes('Sin teléfono'), `${etiqueta}: the account starts without a phone`)
+  await boton('numero').fill(numeroDe(etiqueta))
+  await boton('pendiente').click()
+  await aviso('Número cargado como pendiente de verificación.')
+  await estado('pendiente')
   check((await contacto.innerText()).includes('Pendiente'), `${etiqueta}: the number is pending`)
-  check(http.some((linea) => linea === `POST ${linea.split(' ')[1]} 200` && linea.includes('/telefono')), `${etiqueta}: the real API accepted the pending number`)
-  // 5. mark it as verified.
-  await contacto.getByRole('button', { name: 'Marcar como verificado' }).click()
+  check(JSON.stringify(await acciones()) === JSON.stringify(['Verificar y vincular WhatsApp', 'Verificar', 'Quitar número']), `${etiqueta}: a pending phone offers verify, verify + link and remove (${JSON.stringify(await acciones())})`)
+  check(http.some((linea) => linea.startsWith('POST ') && linea.includes('/telefono') && linea.endsWith(' 200')), `${etiqueta}: the real API accepted the pending number`)
+  // 5. verify it: verifying is not linking.
+  await boton('verificar').click()
   await confirmar('Verificar teléfono')
-  await contacto.getByRole('button', { name: 'Quitar verificación' }).waitFor()
+  await estado('verificado')
   const verificado = await contacto.innerText()
   check(verificado.includes('Verificado') && verificado.includes('No vinculado'), `${etiqueta}: verified, WhatsApp not linked`)
-  check((await contacto.getByRole('button', { name: 'Marcar como verificado' }).count()) === 0, `${etiqueta}: never both actions`)
+  check(JSON.stringify(await acciones()) === JSON.stringify(['Vincular WhatsApp', 'Quitar verificación', 'Quitar número']), `${etiqueta}: a verified phone offers link, remove verification and remove (${JSON.stringify(await acciones())})`)
   await contacto.screenshot({ path: join(artifacts, `${etiqueta}-verificado.png`) })
-  // 6. remove the verification.
-  await contacto.getByRole('button', { name: 'Quitar verificación' }).click()
-  await confirmar('Quitar verificación')
-  await contacto.getByRole('button', { name: 'Marcar como verificado' }).waitFor()
-  check((await contacto.innerText()).includes('Pendiente'), `${etiqueta}: back to pending`)
+  // 6. link its WhatsApp, with nobody writing from that number.
+  await boton('vincular_whatsapp').click()
+  await confirmar('Vincular WhatsApp')
+  await aviso('WhatsApp vinculado.')
+  await estado('vinculado')
+  check((await contacto.innerText()).includes('Vinculado'), `${etiqueta}: WhatsApp linked`)
+  check(JSON.stringify(await acciones()) === JSON.stringify(['Desvincular WhatsApp', 'Quitar número']), `${etiqueta}: a linked WhatsApp offers unlink and remove only (${JSON.stringify(await acciones())})`)
+  await sinDesborde('the contact card with a linked WhatsApp')
+  await contacto.screenshot({ path: join(artifacts, `${etiqueta}-vinculado.png`) })
+  // 7. unlink: the phone stays verified.
+  await boton('desvincular_whatsapp').click()
+  await confirmar('Desvincular WhatsApp')
+  await aviso('WhatsApp desvinculado.')
+  await estado('verificado')
+  check((await contacto.innerText()).includes('No vinculado') && (await contacto.innerText()).includes('Verificado'), `${etiqueta}: unlinked, the phone is still verified`)
+  // 8. replace the number: save, verify and link in one action.
+  await abrirReemplazo()
+  await boton('numero').fill(numeroNuevoDe(etiqueta))
+  await boton('guardar_verificar_vincular').click()
+  await confirmar('Guardar, verificar y vincular')
+  await aviso('Número guardado, verificado y WhatsApp vinculado.')
+  await estado('vinculado')
+  const reemplazado = await contacto.innerText()
+  check(reemplazado.includes(numeroNuevoDe(etiqueta).slice(-4)) && !reemplazado.includes(numeroDe(etiqueta).slice(-4)), `${etiqueta}: the card shows the new number, not the old one`)
+  // An invalid number is explained and changes nothing.
+  await abrirReemplazo()
+  await boton('numero').fill('12ab')
+  await boton('pendiente').click()
+  await aviso('Revisá el número: con característica, por ejemplo 379 412-3456.')
+  await estado('vinculado')
+  // 9. remove the number altogether.
+  await boton('quitar').first().click()
+  await confirmar('Quitar número')
+  await aviso('Se quitó el número de la cuenta.')
+  await estado('sin_telefono')
+  check((await contacto.innerText()).includes('Sin teléfono'), `${etiqueta}: the account has no phone again`)
+  check((await contacto.locator('[data-contacto-estado] > div').first().locator('button').count()) === 0, `${etiqueta}: without a phone there is nothing to verify, link or remove`)
+  await sinDesborde('the contact card')
+  check(!http.some((linea) => / 5\d\d$/u.test(linea)), `${etiqueta}: no request answered 5xx (${http.filter((l) => / 5\d\d$/u.test(l)).join(', ')})`)
   check(readFileSync(join(artifacts, 'api.log'), 'utf8').length >= 0, 'the API log is kept with the artifacts')
 }
 

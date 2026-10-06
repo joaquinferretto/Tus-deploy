@@ -252,6 +252,9 @@ export interface EntradaVinculoPorVerificacion {
   telefonoAnterior: string | null
   correlationId: string
   now: number
+  // Certified by an administrator instead of proven by a message of the person. Same contact,
+  // same field; the audit names the administrator and no other WhatsApp of the account stays linked.
+  admin?: { actorId: string }
 }
 
 export type ResultadoVinculoPorVerificacion = 'vinculado' | 'ya_vinculado' | 'conflicto'
@@ -271,7 +274,7 @@ export async function vincularContactoPorVerificacion(
       action,
       contactId: contact.contactId,
       conversationId: null,
-      actorId: input.accountId,
+      actorId: input.admin?.actorId ?? input.accountId,
       correlationId: input.correlationId,
       metadata: { waId: enmascararWaId(contact.waId), ...metadata },
       createdAt: nowIso,
@@ -310,17 +313,26 @@ export async function vincularContactoPorVerificacion(
     }
     // Optimistic version check: of two accounts racing for one wa_id, only one update lands.
     if (!(await repositories.contactos.actualizar(next, contact.version))) continue
-    await auditar('whatsapp.linked', next, { tenantId: input.tenantId, origin: 'phone_verification' })
+    await auditar('whatsapp.linked', next, { tenantId: input.tenantId, origin: input.admin ? 'admin' : 'phone_verification', ...(input.admin ? { accountId: input.accountId } : {}) })
     if (!(await repositories.consentimientosWhatsapp.buscar(input.tenantId, 'customer', next.waId)))
       await repositories.consentimientosWhatsapp.guardar(
         crearConsentimientoWhatsApp({
           tenantId: input.tenantId,
           recipientType: 'customer',
           recipientId: next.waId,
-          source: WHATSAPP_CONSENT_ORIGINS.WHATSAPP_INBOUND,
+          // The person wrote to TUS, or an operator recorded the link: never presented as the other.
+          source: input.admin ? WHATSAPP_CONSENT_ORIGINS.OPERATOR_CONSOLE : WHATSAPP_CONSENT_ORIGINS.WHATSAPP_INBOUND,
           now: input.now,
         })
       )
+    // Linked by the administration: it is THE WhatsApp of the account. Any other one it had stops
+    // being a destination (two numbers never stay operative for one account).
+    if (input.admin)
+      for (const other of await repositories.contactos.vinculadosA(input.accountId)) {
+        if (other.contactId === next.contactId || (other.channel ?? 'whatsapp') !== 'whatsapp') continue
+        if (!(await repositories.contactos.actualizar({ ...other, linkedAccountId: null, linkedTenantId: null, linkedAt: null, version: other.version + 1 }, other.version))) continue
+        await auditar('whatsapp.unlinked', other, { reason: 'replaced_by_admin' })
+      }
     // A number change must not leave the account linked to the number it just gave up.
     if (input.telefonoAnterior)
       for (const other of await repositories.contactos.vinculadosA(input.accountId)) {
@@ -343,7 +355,7 @@ export function crearPuenteAsistente(repositories: RepositoriosAsistente) {
     // The verification of a phone was revoked: the WhatsApp of THAT number stops being linked to
     // THAT account. Compared with the canonical phone of the wa_id (Argentina with or without 9).
     // Conversations and messages are untouched.
-    desvincular: async (input: { accountId: string; telefono: string; actorId: string; correlationId: string; now: number }): Promise<number> => {
+    desvincular: async (input: { accountId: string; telefono: string; actorId: string; correlationId: string; now: number; motivo?: string }): Promise<number> => {
       let cantidad = 0
       for (const contact of await repositories.contactos.vinculadosA(input.accountId)) {
         if ((contact.channel ?? 'whatsapp') !== 'whatsapp' || telefonoDesdeWaId(contact.waId) !== input.telefono) continue
@@ -356,7 +368,7 @@ export function crearPuenteAsistente(repositories: RepositoriosAsistente) {
           conversationId: null,
           actorId: input.actorId,
           correlationId: input.correlationId,
-          metadata: { waId: enmascararWaId(contact.waId), reason: 'phone_unverified_by_admin' },
+          metadata: { waId: enmascararWaId(contact.waId), reason: input.motivo ?? 'phone_unverified_by_admin' },
           createdAt: new Date(input.now).toISOString(),
         })
         cantidad += 1

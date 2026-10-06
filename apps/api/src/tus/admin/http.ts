@@ -130,6 +130,12 @@ export interface DependenciasAdmin {
     verificarPorAdmin?(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string; telefono?: TelefonoAdminDTO }>
     quitarVerificacionPorAdmin?(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string; telefono?: TelefonoAdminDTO }>
     estadoParaAdmin?(accountId: string): Promise<TelefonoAdminDTO>
+    // Certifies a number (the one given, or the pending one) as verified and, when asked, links
+    // its WhatsApp; links / unlinks the WhatsApp of the verified phone; removes the number.
+    asignarPorAdmin?(adminId: string, accountId: string, entrada: { telefono?: unknown; vincular: boolean }): Promise<{ ok: boolean; code?: string; motivo?: string; telefono?: TelefonoAdminDTO }>
+    vincularWhatsappPorAdmin?(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string; telefono?: TelefonoAdminDTO }>
+    desvincularWhatsappPorAdmin?(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string; telefono?: TelefonoAdminDTO }>
+    quitarNumeroPorAdmin?(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string; telefono?: TelefonoAdminDTO }>
   }
   accionUsuario?: (input: { actorId: string; accountId: string; action: unknown }) => Promise<{ ok: boolean; code?: string }>
   // Identity of an account (names + document), loaded or corrected by the administration. The
@@ -273,6 +279,10 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     })
   }))
 
+  // Contact of an account, by explicit actions (the administration certifies it; no OTP, no
+  // message from the owner of the number): pendiente / guardar_verificar /
+  // guardar_verificar_vincular (with `telefono`), verificar, verificar_vincular, desverificar,
+  // vincular_whatsapp, desvincular_whatsapp, quitar. Earlier description:
   // Phone identity: { accion: 'pendiente', telefono } leaves the number PENDING (the person
   // verifies it from WhatsApp); { accion: 'quitar' } frees the verified number;
   // { accion: 'verificar' } marks the pending number as verified and { accion: 'desverificar' }
@@ -285,22 +295,35 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     const body = cuerpo(request)
     const accountId = String(request.params['id'] ?? '')
     const accion = body['accion']
-    if (accion === 'verificar' || accion === 'desverificar') {
-      // Explicit operations: no field of the body is a value to store.
-      if (Object.keys(body).some((key) => key !== 'accion')) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'the verification state is not written from the request' } })
-      const operacion = accion === 'verificar' ? deps.telefonoAdmin.verificarPorAdmin : deps.telefonoAdmin.quitarVerificacionPorAdmin
-      if (!operacion) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'phone administration unavailable' } })
-      const hecho = await operacion.call(deps.telefonoAdmin, context.subjectId, accountId)
-      if (!hecho.ok) return void response.status(hecho.code === 'NOT_FOUND' ? 404 : hecho.code === 'PHONE_IN_USE' ? 409 : 422).json({ error: { code: hecho.code ?? 'INVALID_ACTION', message: 'phone change rejected' } })
-      return void response.status(200).json({ done: true, telefono: hecho.telefono })
+    const telefonos = deps.telefonoAdmin
+    // A closed list of actions. Only the three that carry a number accept `telefono`; nothing else
+    // of the body is ever a value to store (no state, no date, no wa_id, no actor).
+    const CON_NUMERO = ['pendiente', 'guardar_verificar', 'guardar_verificar_vincular']
+    const SIN_NUMERO = ['verificar', 'verificar_vincular', 'desverificar', 'vincular_whatsapp', 'desvincular_whatsapp', 'quitar']
+    if (typeof accion !== 'string' || ![...CON_NUMERO, ...SIN_NUMERO].includes(accion)) return void response.status(422).json({ error: { code: 'INVALID_ACTION', message: 'phone change rejected' } })
+    const permitidos = CON_NUMERO.includes(accion) ? ['accion', 'telefono'] : ['accion']
+    const sobran = Object.keys(body).filter((key) => !permitidos.includes(key))
+    if (sobran.length > 0) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'the phone state is not written from the request', fields: sobran } })
+    const admin = context.subjectId
+    const operacion: (() => Promise<{ ok: boolean; code?: string; motivo?: string; telefono?: TelefonoAdminDTO }>) | undefined =
+      accion === 'pendiente' ? () => telefonos.fijarPendientePorAdmin(admin, accountId, body['telefono'])
+      : accion === 'guardar_verificar' ? telefonos.asignarPorAdmin && (() => telefonos.asignarPorAdmin!(admin, accountId, { telefono: body['telefono'] ?? '', vincular: false }))
+      : accion === 'guardar_verificar_vincular' ? telefonos.asignarPorAdmin && (() => telefonos.asignarPorAdmin!(admin, accountId, { telefono: body['telefono'] ?? '', vincular: true }))
+      : accion === 'verificar' ? telefonos.verificarPorAdmin && (() => telefonos.verificarPorAdmin!(admin, accountId))
+      : accion === 'verificar_vincular' ? telefonos.asignarPorAdmin && (() => telefonos.asignarPorAdmin!(admin, accountId, { vincular: true }))
+      : accion === 'desverificar' ? telefonos.quitarVerificacionPorAdmin && (() => telefonos.quitarVerificacionPorAdmin!(admin, accountId))
+      : accion === 'vincular_whatsapp' ? telefonos.vincularWhatsappPorAdmin && (() => telefonos.vincularWhatsappPorAdmin!(admin, accountId))
+      : accion === 'desvincular_whatsapp' ? telefonos.desvincularWhatsappPorAdmin && (() => telefonos.desvincularWhatsappPorAdmin!(admin, accountId))
+      // "Quitar número": the whole number leaves the account (its WhatsApp too).
+      : telefonos.quitarNumeroPorAdmin ? () => telefonos.quitarNumeroPorAdmin!(admin, accountId) : () => telefonos.quitarVerificadoPorAdmin(admin, accountId)
+    if (!operacion) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'phone administration unavailable' } })
+    const hecho = await operacion()
+    if (!hecho.ok) {
+      // A number or a WhatsApp of ANOTHER account: a conflict, and nothing about that account.
+      const status = hecho.code === 'NOT_FOUND' ? 404 : hecho.code === 'PHONE_IN_USE' || hecho.code === 'WHATSAPP_IN_USE' ? 409 : hecho.code === 'UNAVAILABLE' ? 503 : 422
+      return void response.status(status).json({ error: { code: hecho.code ?? 'INVALID_ACTION', ...(hecho.motivo ? { reason: hecho.motivo } : {}), message: 'phone change rejected' } })
     }
-    const resultado = accion === 'pendiente'
-      ? await deps.telefonoAdmin.fijarPendientePorAdmin(context.subjectId, accountId, body['telefono'])
-      : accion === 'quitar'
-        ? await deps.telefonoAdmin.quitarVerificadoPorAdmin(context.subjectId, accountId)
-        : { ok: false, code: 'INVALID_ACTION' }
-    if (!resultado.ok) return void response.status(resultado.code === 'NOT_FOUND' ? 404 : resultado.code === 'PHONE_IN_USE' ? 409 : 422).json({ error: { code: resultado.code ?? 'INVALID_ACTION', ...('motivo' in resultado && resultado.motivo ? { reason: resultado.motivo } : {}), message: 'phone change rejected' } })
-    response.status(200).json({ done: true })
+    response.status(200).json({ done: true, ...(hecho.telefono ? { telefono: hecho.telefono } : telefonos.estadoParaAdmin ? { telefono: await telefonos.estadoParaAdmin(accountId) } : {}) })
   }))
 
   // Identity (first name, last name, document type and number) loaded or corrected by an

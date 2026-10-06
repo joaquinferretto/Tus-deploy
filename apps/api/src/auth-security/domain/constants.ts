@@ -42,6 +42,12 @@ export const AUTH_EVENT_KIND = {
   PHONE_ADMIN_PENDING_SET: 'phone.admin_pending_set',
   PHONE_ADMIN_CLEARED: 'phone.admin_cleared',
   PHONE_VERIFIED_BY_ADMIN: 'phone.verified_by_admin',
+  // The administration assigned a number as the verified identity phone, links or unlinks the
+  // WhatsApp of the account, or removes the number altogether.
+  PHONE_ASSIGNED_BY_ADMIN: 'phone.assigned_by_admin',
+  PHONE_REMOVED_BY_ADMIN: 'phone.removed_by_admin',
+  WHATSAPP_LINKED_BY_ADMIN: 'whatsapp.linked_by_admin',
+  WHATSAPP_UNLINKED_BY_ADMIN: 'whatsapp.unlinked_by_admin',
   ACCOUNT_ADMIN_IDENTITY_UPDATED: 'account.admin_identity_updated',
   PHONE_UNVERIFIED_BY_ADMIN: 'phone.unverified_by_admin',
 } as const

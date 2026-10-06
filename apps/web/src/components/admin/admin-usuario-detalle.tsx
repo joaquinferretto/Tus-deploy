@@ -14,6 +14,10 @@ const ROL: Record<string, string> = { admin: 'Administrador', prestador: 'Presta
 function errorEdicion(cause: unknown): string {
   if (cause instanceof AdminApiError) {
     if (cause.status === 409 && cause.code === 'PHONE_IN_USE') return 'Ese número ya es el teléfono verificado de otra cuenta.'
+    if (cause.status === 409 && cause.code === 'WHATSAPP_IN_USE') return 'El WhatsApp de ese número ya está vinculado a otra cuenta. No se cambió nada.'
+    if (cause.status === 422 && cause.code === 'PHONE_NOT_VERIFIED') return 'Para vincular WhatsApp la cuenta necesita un teléfono verificado.'
+    if (cause.status === 422 && cause.code === 'NO_PHONE') return 'La cuenta no tiene un número cargado.'
+    if (cause.status === 503 && cause.code === 'UNAVAILABLE') return 'La vinculación de WhatsApp no está disponible en este momento.'
     if (cause.status === 422 && cause.code === 'NO_PHONE') return 'Esta cuenta todavía no tiene un teléfono cargado.'
     if (cause.status === 409) return 'Ese email ya pertenece a otra cuenta.'
     if (cause.status === 403) return 'Esa cuenta es de administración o es tu propia cuenta: su email y verificación se gestionan desde la configuración y Seguridad.'
@@ -343,81 +347,173 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
               </div>
             ) : null}
           </dl>
-          {/* One action at a time, by the real state: verify the pending number, or remove the
-              verification of the verified one. The API decides; nothing is written from here. */}
-          <div className={styles.actions}>
-            {cuenta.telefono.verificado ? (
+          {/* Only the actions that make sense for the real state. The administration certifies the
+              contact: no code, no message from the owner of the number. The API decides and
+              answers the new state; nothing is written from here. */}
+          {(() => {
+            const tel = cuenta.telefono
+            const estado = tel.verificado ? (tel.whatsappVinculado ? 'vinculado' : 'verificado') : tel.pendiente ? 'pendiente' : 'sin_telefono'
+            const contacto = (body: Parameters<typeof adminApi.contactoUsuario>[1], ok: string) => ejecutar(() => adminApi.contactoUsuario(cuenta.id, body), ok)
+            const quitar = (
               <button
                 className={styles.buttonDanger}
+                data-contacto="quitar"
                 disabled={busy}
                 onClick={() =>
                   pedir({
-                    titulo: '¿Quitar la verificación de este teléfono?',
-                    detalle: 'El número dejará de considerarse verificado y las funciones que dependan de esa identidad podrán requerir una nueva verificación. Si su WhatsApp estaba vinculado a esta cuenta, se desvincula. Queda auditado.',
-                    confirmar: 'Quitar verificación',
-                    onConfirm: () => ejecutar(() => adminApi.verificacionTelefonoUsuario(cuenta.id, 'desverificar'), 'Se quitó la verificación del teléfono.'),
+                    titulo: '¿Quitar el número de esta cuenta?',
+                    detalle: 'La cuenta queda sin teléfono: se desvincula su WhatsApp, se cancela lo que estaba pendiente de verificar y el número queda libre para otra cuenta. La cuenta y su historial no cambian. Queda auditado.',
+                    confirmar: 'Quitar número',
+                    onConfirm: () => contacto({ accion: 'quitar' }, 'Se quitó el número de la cuenta.'),
                   })
                 }
                 type="button"
               >
-                Quitar verificación
+                Quitar número
               </button>
-            ) : cuenta.telefono.pendiente ? (
-              <button
-                className={styles.buttonPrimary}
-                disabled={busy}
-                onClick={() =>
-                  pedir({
-                    titulo: '¿Marcar este teléfono como verificado?',
-                    detalle: 'Esta acción confirma administrativamente que el número pertenece a esta cuenta. No vincula WhatsApp. Queda auditado.',
-                    confirmar: 'Verificar teléfono',
-                    onConfirm: () => ejecutar(() => adminApi.verificacionTelefonoUsuario(cuenta.id, 'verificar'), 'Teléfono marcado como verificado.'),
-                  })
-                }
-                type="button"
-              >
-                Marcar como verificado
-              </button>
-            ) : (
-              <p className={styles.muted}>Esta cuenta todavía no tiene un teléfono cargado.</p>
-            )}
-          </div>
-          <form
-            className={styles.formGrid}
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (!telefono.trim()) return
-              void ejecutar(() => adminApi.telefonoUsuario(cuenta.id, { accion: 'pendiente', telefono: telefono.trim() }), 'Teléfono cargado como pendiente de verificación.').then(() => setTelefono(''))
-            }}
-          >
-            <label className={`${styles.field} ${styles.wide}`}>
-              <span>{cuenta.telefono.verificado ? 'Nuevo número (queda pendiente)' : 'Número a verificar'}</span>
-              <input inputMode="tel" maxLength={32} onChange={(event) => setTelefono(event.target.value)} placeholder="379 412-3456" type="tel" value={telefono} />
-              <span className={styles.hint}>{cuenta.telefono.verificado ? 'El teléfono verificado actual no cambia hasta que el nuevo número se verifique.' : 'Queda pendiente hasta que la persona lo verifique por WhatsApp, o hasta que lo marques como verificado.'}</span>
-            </label>
-            <div className={`${styles.actions} ${styles.wide}`}>
-              <button className={styles.buttonSecondary} disabled={busy || !telefono.trim()} type="submit">
-                Cargar como pendiente
-              </button>
-              {cuenta.telefono.verificado ? (
-                <button
-                  className={styles.buttonDanger}
-                  disabled={busy}
-                  onClick={() =>
-                    pedir({
-                      titulo: '¿Liberar el teléfono verificado?',
-                      detalle: 'La cuenta queda sin teléfono de identidad y ese número podrá verificarse en otra cuenta. Usalo si el número cambió de dueño. Queda auditado.',
-                      confirmar: 'Liberar teléfono',
-                      onConfirm: () => ejecutar(() => adminApi.telefonoUsuario(cuenta.id, { accion: 'quitar' }), 'Teléfono liberado.'),
-                    })
-                  }
-                  type="button"
-                >
-                  Liberar teléfono verificado
-                </button>
-              ) : null}
-            </div>
-          </form>
+            )
+            const guardar = (accion: 'pendiente' | 'guardar_verificar' | 'guardar_verificar_vincular') => {
+              const numero = telefono.trim()
+              if (!numero) return
+              const hecho = { pendiente: 'Número cargado como pendiente de verificación.', guardar_verificar: 'Número guardado y verificado.', guardar_verificar_vincular: 'Número guardado, verificado y WhatsApp vinculado.' }[accion]
+              const enviar = () => contacto({ accion, telefono: numero }, hecho).then(() => setTelefono(''))
+              if (accion === 'pendiente') return void enviar()
+              pedir({
+                titulo: accion === 'guardar_verificar' ? '¿Guardar y verificar este número?' : '¿Guardar, verificar y vincular WhatsApp?',
+                detalle: `Confirmás administrativamente que ${numero} pertenece a esta cuenta${accion === 'guardar_verificar_vincular' ? ' y que su WhatsApp es el de la cuenta: TUS le va a escribir a ese número' : ''}.${tel.verificado ? ' Reemplaza al teléfono actual, cuyo WhatsApp deja de estar vinculado.' : ''} Queda auditado.`,
+                confirmar: accion === 'guardar_verificar' ? 'Guardar y verificar' : 'Guardar, verificar y vincular',
+                onConfirm: enviar,
+              })
+            }
+            const formulario = (
+              <form className={styles.formGrid} data-contacto-formulario onSubmit={(event) => { event.preventDefault(); guardar('guardar_verificar_vincular') }}>
+                <label className={`${styles.field} ${styles.wide}`}>
+                  <span>{estado === 'sin_telefono' ? 'Número' : 'Nuevo número'}</span>
+                  <input autoComplete="off" data-contacto="numero" inputMode="tel" maxLength={32} onChange={(event) => setTelefono(event.target.value)} placeholder="379 412-3456" type="tel" value={telefono} />
+                  <span className={styles.hint}>Con característica. Vos certificás que el número es de esta cuenta: no se le pide ningún código a la persona.</span>
+                </label>
+                <div className={`${styles.actions} ${styles.wide}`}>
+                  <button className={styles.buttonPrimary} data-contacto="guardar_verificar_vincular" disabled={busy || !telefono.trim()} type="submit">
+                    Guardar, verificar y vincular WhatsApp
+                  </button>
+                  <button className={styles.buttonSecondary} data-contacto="guardar_verificar" disabled={busy || !telefono.trim()} onClick={() => guardar('guardar_verificar')} type="button">
+                    Guardar y verificar
+                  </button>
+                  <button className={styles.buttonSecondary} data-contacto="pendiente" disabled={busy || !telefono.trim()} onClick={() => guardar('pendiente')} type="button">
+                    Guardar como pendiente
+                  </button>
+                </div>
+              </form>
+            )
+            return (
+              <div data-contacto-estado={estado}>
+                <div className={styles.actions}>
+                  {estado === 'pendiente' ? (
+                    <>
+                      <button
+                        className={styles.buttonPrimary}
+                        data-contacto="verificar_vincular"
+                        disabled={busy}
+                        onClick={() =>
+                          pedir({
+                            titulo: '¿Verificar este teléfono y vincular su WhatsApp?',
+                            detalle: 'Confirmás administrativamente que el número pertenece a esta cuenta y que su WhatsApp es el de la cuenta: TUS le va a escribir a ese número. Queda auditado.',
+                            confirmar: 'Verificar y vincular',
+                            onConfirm: () => contacto({ accion: 'verificar_vincular' }, 'Teléfono verificado y WhatsApp vinculado.'),
+                          })
+                        }
+                        type="button"
+                      >
+                        Verificar y vincular WhatsApp
+                      </button>
+                      <button
+                        className={styles.buttonSecondary}
+                        data-contacto="verificar"
+                        disabled={busy}
+                        onClick={() =>
+                          pedir({
+                            titulo: '¿Marcar este teléfono como verificado?',
+                            detalle: 'Esta acción confirma administrativamente que el número pertenece a esta cuenta. No vincula WhatsApp. Queda auditado.',
+                            confirmar: 'Verificar teléfono',
+                            onConfirm: () => contacto({ accion: 'verificar' }, 'Teléfono marcado como verificado.'),
+                          })
+                        }
+                        type="button"
+                      >
+                        Verificar
+                      </button>
+                      {quitar}
+                    </>
+                  ) : estado === 'verificado' ? (
+                    <>
+                      <button
+                        className={styles.buttonPrimary}
+                        data-contacto="vincular_whatsapp"
+                        disabled={busy}
+                        onClick={() =>
+                          pedir({
+                            titulo: '¿Vincular el WhatsApp de este teléfono?',
+                            detalle: 'El WhatsApp del teléfono verificado pasa a ser el de esta cuenta: TUS le va a escribir a ese número. No hace falta que la persona escriba primero. Queda auditado.',
+                            confirmar: 'Vincular WhatsApp',
+                            onConfirm: () => contacto({ accion: 'vincular_whatsapp' }, 'WhatsApp vinculado.'),
+                          })
+                        }
+                        type="button"
+                      >
+                        Vincular WhatsApp
+                      </button>
+                      <button
+                        className={styles.buttonDanger}
+                        data-contacto="desverificar"
+                        disabled={busy}
+                        onClick={() =>
+                          pedir({
+                            titulo: '¿Quitar la verificación de este teléfono?',
+                            detalle: 'El número dejará de considerarse verificado y vuelve a quedar pendiente. Queda auditado.',
+                            confirmar: 'Quitar verificación',
+                            onConfirm: () => contacto({ accion: 'desverificar' }, 'Se quitó la verificación del teléfono.'),
+                          })
+                        }
+                        type="button"
+                      >
+                        Quitar verificación
+                      </button>
+                      {quitar}
+                    </>
+                  ) : estado === 'vinculado' ? (
+                    <>
+                      <button
+                        className={styles.buttonDanger}
+                        data-contacto="desvincular_whatsapp"
+                        disabled={busy}
+                        onClick={() =>
+                          pedir({
+                            titulo: '¿Desvincular el WhatsApp de esta cuenta?',
+                            detalle: 'TUS deja de escribirle a ese WhatsApp por esta cuenta. El teléfono sigue verificado; el email, la identidad, las sesiones y las conversaciones no cambian. Queda auditado.',
+                            confirmar: 'Desvincular WhatsApp',
+                            onConfirm: () => contacto({ accion: 'desvincular_whatsapp' }, 'WhatsApp desvinculado.'),
+                          })
+                        }
+                        type="button"
+                      >
+                        Desvincular WhatsApp
+                      </button>
+                      {quitar}
+                    </>
+                  ) : (
+                    <p className={styles.muted}>Esta cuenta todavía no tiene un teléfono cargado.</p>
+                  )}
+                </div>
+                {/* With a number already there, replacing it stays folded until it is needed. */}
+                {estado === 'sin_telefono' ? formulario : (
+                  <details data-contacto="reemplazar">
+                    <summary>Reemplazar número</summary>
+                    {formulario}
+                  </details>
+                )}
+              </div>
+            )
+          })()}
         </section>
 
         <section aria-labelledby="usuario-residencia" className={styles.sheetCard}>
