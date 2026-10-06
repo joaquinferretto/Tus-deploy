@@ -1,5 +1,8 @@
 import type {
+  AlojamientoPropioDTO,
   AlojamientoPublicoDTO,
+  BloqueoUnidadDTO,
+  MiReservaAlojamientoDTO,
   DetalleAlojamientoPublicoDTO,
   FiltrosBusquedaAlojamientos,
   ReservaAlojamientoDTO,
@@ -10,6 +13,18 @@ import type {
 
 import { resolveWebApiBaseUrl } from '../../lib/api-url'
 import { fetchWithSession } from '../../lib/session-credentials'
+
+// What the API answered when it refused: the status and the code decide what the screen offers
+// (sign in, pick other dates); the message is already written for a person.
+export class ErrorAlojamientos extends Error {
+  constructor(message: string, readonly status: number, readonly code: string, readonly campo: string | null = null) {
+    super(message)
+  }
+}
+
+// Uploaded photos are served by the API: their stored path becomes a full address here.
+const RUTA_FOTOS = '/api/alojamientos/imagenes/'
+const conFotos = <T>(data: T, baseUrl: string): T => JSON.parse(JSON.stringify(data), (_clave, valor) => (typeof valor === 'string' && valor.startsWith(RUTA_FOTOS) ? `${baseUrl}${valor}` : valor)) as T
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   // `path` is the full API path (/api/alojamientos/...), never a Web route.
@@ -26,16 +41,16 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   })
 
   if (!res.ok) {
-    let errorData = { error: { code: 'UNKNOWN', message: 'Error de servidor' } }
+    let errorData: { error?: { code?: string; message?: string; fields?: string[] } } = {}
     try {
       errorData = await res.json()
     } catch {
       // fallback
     }
-    throw new Error(errorData.error?.message || `HTTP ${res.status}`)
+    throw new ErrorAlojamientos(errorData.error?.message || 'No pudimos completar la operación. Probá de nuevo.', res.status, errorData.error?.code ?? 'UNKNOWN', errorData.error?.fields?.[0] ?? null)
   }
 
-  return res.json()
+  return conFotos((await res.json()) as T, baseUrl)
 }
 
 export async function listarTiposAlojamiento(): Promise<TipoAlojamientoDTO[]> {
@@ -48,6 +63,7 @@ export async function buscarAlojamientos(
   opciones: { signal?: AbortSignal } = {}
 ): Promise<AlojamientoPublicoDTO[]> {
   const params = new URLSearchParams()
+  if (filtros.q?.trim()) params.set('q', filtros.q.trim())
   if (filtros.zonaId) params.set('zonaId', filtros.zonaId)
   if (filtros.barrioId) params.set('barrioId', filtros.barrioId)
   if (filtros.tipoSlug) params.set('tipoSlug', filtros.tipoSlug)
@@ -181,3 +197,121 @@ export async function adminListarReservas(alojamientoId: string): Promise<Reserv
   const data = await apiFetch<{ items: ReservaAlojamientoDTO[] }>(`/api/alojamientos/${alojamientoId}/reservas`)
   return data.items
 }
+
+// ---- ALOJAMIENTOS-GESTION-01: the guest's reservations and the owner's alojamientos -------------
+
+export interface ReservarAlojamientoInput {
+  unidadId: string
+  alojamientoId: string
+  clienteNombre: string
+  clienteEmail?: string
+  clienteTelefono?: string
+  // Calendar dates (YYYY-MM-DD): the day of arrival and the day of departure.
+  fechaInicio: string
+  fechaFin: string
+  cantidadPersonas: number
+  notas?: string
+}
+
+// Reserves with the account of the session: confirmed at once, paid at the place.
+export async function reservarAlojamiento(input: ReservarAlojamientoInput): Promise<ReservaAlojamientoDTO> {
+  return apiFetch<ReservaAlojamientoDTO>('/api/alojamientos/reservas', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function misReservasAlojamiento(): Promise<MiReservaAlojamientoDTO[]> {
+  return (await apiFetch<{ items: MiReservaAlojamientoDTO[] }>('/api/alojamientos/reservas/mias')).items
+}
+
+export async function cancelarMiReserva(reservaId: string, motivo?: string): Promise<void> {
+  await apiFetch(`/api/alojamientos/reservas/${encodeURIComponent(reservaId)}/cancelar`, { method: 'POST', body: JSON.stringify(motivo?.trim() ? { motivo: motivo.trim() } : {}) })
+}
+
+export interface AlojamientoPropioForm {
+  tipoId: string
+  nombre: string
+  descripcion?: string
+  direccion: string
+  barrioId: string
+  checkInHora: string
+  checkOutHora: string
+  politicas?: string
+  comodidades: string[]
+  capacidadPersonas: number
+  camasDetalle?: string
+  banosCantidad: number
+  precioNoche: number
+}
+
+export async function listarBarriosAlojamiento(): Promise<Array<{ id: string; nombre: string; zona: string | null }>> {
+  return (await apiFetch<{ items: Array<{ id: string; nombre: string; zona: string | null }> }>('/api/alojamientos/barrios')).items
+}
+
+export async function misAlojamientos(): Promise<AlojamientoPropioDTO[]> {
+  return (await apiFetch<{ items: AlojamientoPropioDTO[] }>('/api/alojamientos/mios')).items
+}
+
+export async function crearMiAlojamiento(form: AlojamientoPropioForm): Promise<{ id: string; slug: string }> {
+  return apiFetch('/api/alojamientos/mios', { method: 'POST', body: JSON.stringify(form) })
+}
+
+export async function editarMiAlojamiento(id: string, form: AlojamientoPropioForm): Promise<void> {
+  await apiFetch(`/api/alojamientos/mios/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(form) })
+}
+
+export async function publicarMiAlojamiento(id: string, publicado: boolean): Promise<{ estado: string; publicado: boolean }> {
+  return apiFetch(`/api/alojamientos/${encodeURIComponent(id)}/publicacion`, { method: 'POST', body: JSON.stringify({ publicado }) })
+}
+
+// The photo travels as raw bytes: the API decides its type by its content.
+export async function subirFotoAlojamiento(id: string, archivo: Blob): Promise<{ id: string; url: string }> {
+  return apiFetch(`/api/alojamientos/${encodeURIComponent(id)}/fotos`, { method: 'POST', body: archivo, headers: { 'Content-Type': 'application/octet-stream' } })
+}
+
+export async function quitarFotoAlojamiento(imagenId: string): Promise<void> {
+  await apiFetch(`/api/alojamientos/imagenes/${encodeURIComponent(imagenId)}`, { method: 'DELETE' })
+}
+
+export async function ordenarFotosAlojamiento(id: string, orden: string[]): Promise<void> {
+  await apiFetch(`/api/alojamientos/${encodeURIComponent(id)}/imagenes/orden`, { method: 'PUT', body: JSON.stringify({ orden }) })
+}
+
+export async function bloquearFechas(unidadId: string, input: { fechaInicio: string; fechaFin: string; motivo: string }): Promise<{ id: string }> {
+  return apiFetch(`/api/alojamientos/unidades/${encodeURIComponent(unidadId)}/bloquear`, { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function bloqueosDeUnidad(unidadId: string): Promise<BloqueoUnidadDTO[]> {
+  return (await apiFetch<{ items: BloqueoUnidadDTO[] }>(`/api/alojamientos/unidades/${encodeURIComponent(unidadId)}/bloqueos`)).items
+}
+
+export async function quitarBloqueoFechas(bloqueoId: string): Promise<void> {
+  await apiFetch(`/api/alojamientos/bloqueos/${encodeURIComponent(bloqueoId)}`, { method: 'DELETE' })
+}
+
+export async function reservasDeMiAlojamiento(id: string): Promise<ReservaAlojamientoDTO[]> {
+  return (await apiFetch<{ items: ReservaAlojamientoDTO[] }>(`/api/alojamientos/${encodeURIComponent(id)}/reservas`)).items
+}
+
+export async function cambiarEstadoReserva(reservaId: string, estado: 'checked_in' | 'completed' | 'cancelled'): Promise<void> {
+  await apiFetch(`/api/alojamientos/reservas/${encodeURIComponent(reservaId)}/estado`, { method: 'PATCH', body: JSON.stringify({ estado }) })
+}
+
+// ---- what every lodging screen says the same way -------------------------------------------------
+
+export const ESTADO_RESERVA: Record<string, string> = {
+  pending_payment: 'Pendiente de pago',
+  confirmed: 'Confirmada',
+  checked_in: 'En curso',
+  completed: 'Finalizada',
+  cancelled: 'Cancelada',
+  expired: 'Vencida',
+}
+
+export const pesos = (monto: number): string => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(monto)
+
+// A calendar date as people read it ("5 oct 2026"), without moving it between time zones.
+export const fechaCorta = (valor: string): string => new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${valor.slice(0, 10)}T00:00:00.000Z`))
+
+// Today as a calendar date in Argentina (the first day a stay may start).
+export const hoyAlojamientos = (): string => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+
+export const sumarDiasFecha = (fecha: string, dias: number): string => new Date(Date.parse(`${fecha}T00:00:00.000Z`) + dias * 86_400_000).toISOString().slice(0, 10)

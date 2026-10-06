@@ -138,6 +138,16 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     }
   })
 
+  // Barrios of the catalogue (id and name): where an owner says its alojamiento is.
+  router.get('/barrios', async (_req: Request, res: Response) => {
+    try {
+      const filas = await prisma.barrio.findMany({ where: { activo: true }, select: { id: true, nombre: true, zona: { select: { nombre: true } } }, orderBy: [{ orden: 'asc' }, { nombre: 'asc' }], take: 1000 })
+      return res.json({ items: filas.map((fila) => ({ id: fila.id, nombre: fila.nombre, zona: fila.zona?.nombre ?? null })) })
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
   // What anyone may see of an alojamiento: never who owns it nor the exact address, and the
   // point is approximate. The exact location reaches the guest with a confirmed reservation.
   const publico = <T extends { id: string; propietarioId: string | null; direccion: string | null; latitud: number; longitud: number }>(item: T): T => ({ ...item, propietarioId: null, direccion: null, ...puntoAproximado(item.id, item.latitud, item.longitud) })
