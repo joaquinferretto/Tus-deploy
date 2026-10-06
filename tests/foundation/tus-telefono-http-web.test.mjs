@@ -315,7 +315,17 @@ test('PHONE HTTP admin verification: an authorized administrator marks the PENDI
   const ficha = read('apps/web/src/components/admin/admin-usuario-detalle.tsx')
   assert.match(ficha, /titulo: '¿Marcar este teléfono como verificado\?'[\s\S]{0,260}confirmar: 'Verificar teléfono'/u)
   assert.match(ficha, /titulo: '¿Quitar la verificación de este teléfono\?'[\s\S]{0,420}confirmar: 'Quitar verificación'/u)
-  assert.match(ficha, /cuenta\.telefono\.verificado \? \([\s\S]{0,900}Quitar verificación\s*<\/button>\s*\) : cuenta\.telefono\.pendiente \? \([\s\S]{0,900}Marcar como verificado\s*<\/button>\s*\) : \(\s*<p className=\{styles\.muted\}>Esta cuenta todavía no tiene un teléfono cargado\.<\/p>/u, 'never both buttons at once')
+  // One state, and only the actions of that state: verify (pending), remove the verification
+  // (verified, not linked), unlink (linked). Never two contradictory buttons at once.
+  const rama = (desde, hasta) => ficha.slice(ficha.indexOf(desde), ficha.indexOf(hasta))
+  assert.ok(ficha.includes("const estado = tel.verificado ? (tel.whatsappVinculado ? 'vinculado' : 'verificado') : tel.pendiente ? 'pendiente' : 'sin_telefono'"), 'the card derives ONE state from what the API answered')
+  const pendiente = rama("{estado === 'pendiente' ? (", ") : estado === 'verificado' ? (")
+  const verificado = rama(") : estado === 'verificado' ? (", ") : estado === 'vinculado' ? (")
+  const vinculado = rama(") : estado === 'vinculado' ? (", '<p className={styles.muted}>Esta cuenta todavía no tiene un teléfono cargado.</p>')
+  assert.ok(pendiente.includes('data-contacto="verificar"') && !pendiente.includes('desverificar') && !pendiente.includes('desvincular_whatsapp'), 'pending: verify, never remove a verification that does not exist')
+  assert.ok(verificado.includes('data-contacto="vincular_whatsapp"') && verificado.includes('data-contacto="desverificar"') && !verificado.includes('data-contacto="verificar"') && !verificado.includes('desvincular_whatsapp'), 'verified: link or remove the verification')
+  assert.ok(vinculado.includes('data-contacto="desvincular_whatsapp"') && !vinculado.includes('data-contacto="vincular_whatsapp"') && !vinculado.includes('desverificar'), 'linked: unlink, never both buttons at once')
+  assert.doesNotMatch(ficha, /window\.confirm|[^.\w]alert\(/u, 'the administrative dialog, never the browser\'s')
   assert.doesNotMatch(ficha, /window\.confirm|\bconfirm\(|alert\(/u)
   assert.match(read('apps/web/src/lib/tus-admin-api.ts'), /verificacionTelefonoUsuario: \(id: string, accion: 'verificar' \| 'desverificar'\) => call<\{ done: true; telefono: AdminTelefono \}>\(`\/tus\/v1\/admin\/usuarios\/\$\{encodeURIComponent\(id\)\}\/telefono`, \{ accion \}\)/u, 'the request only names the action')
   // Not a flow for the public: the Help Center never tells a client to ask for it.
@@ -379,6 +389,7 @@ test('PHONE Web: phone-first sign-up, one verification component (WhatsApp butto
   assert.match(admin, /Teléfono verificado/u)
   assert.match(admin, /Sin teléfono/u)
   const detalle = read('apps/web/src/components/admin/admin-usuario-detalle.tsx')
-  assert.match(detalle, /Cargar como pendiente/u)
+  assert.match(detalle, /Guardar como pendiente/u)
+  assert.match(detalle, /Guardar, verificar y vincular WhatsApp/u)
   assert.doesNotMatch(detalle, /Marcar (teléfono|número) como verificado/u)
 })

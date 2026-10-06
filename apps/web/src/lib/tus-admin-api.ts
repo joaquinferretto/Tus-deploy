@@ -301,6 +301,10 @@ export const adminApi = {
     call<{ perfil: PerfilUsuarioAdminDTO }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/identidad`, body, 'PUT'),
   // Explicit administrative operations: the request only names the action (never a state or a
   // date) and the API answers the updated phone identity.
+  // The contact of an account, by explicit actions (the administration certifies it). Only the
+  // three that save a number carry it; the API answers the updated phone identity.
+  contactoUsuario: (id: string, body: { accion: 'pendiente' | 'guardar_verificar' | 'guardar_verificar_vincular'; telefono: string } | { accion: 'verificar' | 'verificar_vincular' | 'desverificar' | 'vincular_whatsapp' | 'desvincular_whatsapp' | 'quitar' }) =>
+    call<{ done: true; telefono?: AdminTelefono }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/telefono`, body),
   verificacionTelefonoUsuario: (id: string, accion: 'verificar' | 'desverificar') => call<{ done: true; telefono: AdminTelefono }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/telefono`, { accion }),
   crearUsuario: (body: { displayName: string; email: string; password: string; role: 'cliente' }) => call<{ created: true }>('/tus/v1/admin/usuarios', body),
   actualizarUsuario: (id: string, body: { displayName?: string; status?: 'active' | 'suspended'; reason?: string; email?: string; emailVerified?: boolean }) => call<{ updated: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`, body, 'PATCH'),
