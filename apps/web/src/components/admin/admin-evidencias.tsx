@@ -8,7 +8,9 @@ import styles from './admin.module.css'
 // Readiness evidence of the platform (service payments and settlement). The page only sends what
 // the administrator types; tenant, actor, scope and status are decided by the API, which also
 // refuses anything that looks like a credential or personal data.
-const CAPACIDAD: Record<string, string> = { 'service-payments': 'Pagos de servicios (señas)', settlement: 'Marketplace general (settlement)' }
+// The evidence stored as `service-payments` is the readiness for the public launch: shown, never
+// a blocker of a payment (PAGOS-HABILITACION-TECNICA-01).
+const CAPACIDAD: Record<string, string> = { 'service-payments': 'Readiness para lanzamiento público', settlement: 'Marketplace general (settlement)' }
 const REQUISITO: Record<string, string> = {
   legal: 'Legal',
   tax: 'Fiscal',
@@ -24,7 +26,7 @@ const NO_REQUERIDO: Record<string, string> = {
   not_required_in_runtime: 'No requerido en este runtime',
   not_required_for_flow: 'No requerido para este flujo',
 }
-const ESTADO: Record<string, string> = { current: 'Vigente', revoked: 'Revocada', expired: 'Vencida', not_yet_valid: 'Todavía no vigente' }
+const ESTADO: Record<string, string> = { current: 'Vigente', revoked: 'Revocada', expired: 'Vencido', not_yet_valid: 'Todavía no vigente' }
 const CAMPO: Record<string, string> = { owner: 'Responsable', evidenceType: 'Tipo', evidenceRef: 'Referencia', policyVersion: 'Versión de política', issuedAt: 'Emitida', expiresAt: 'Vence', reason: 'Motivo', capability: 'Capacidad', gate: 'Requisito' }
 
 function mensajeDe(cause: unknown): string {
@@ -131,7 +133,7 @@ export function AdminEvidencias({ onChange }: { onChange: () => void }): React.R
             <tbody>
               {requisitos.map((requisito) => {
                 const registros = actual?.evidence.filter((item) => item.gate === requisito) ?? []
-                if (registros.length === 0) return <tr key={requisito}><td>{REQUISITO[requisito] ?? requisito}</td><td colSpan={6}><span className={styles.badgeOff}>Sin evidencia</span></td></tr>
+                if (registros.length === 0) return <tr key={requisito}><td>{REQUISITO[requisito] ?? requisito}</td><td colSpan={6}><span className={styles.badgeOff}>Pendiente</span></td></tr>
                 return registros.map((item) => (
                   <tr key={item.evidenceId}>
                     <td>{REQUISITO[requisito] ?? requisito}</td>

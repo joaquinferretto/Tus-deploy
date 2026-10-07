@@ -167,12 +167,15 @@ async function runtime(records, { env = productionEnv, legacy } = {}) {
   }
 }
 
-test('production without evidence: no boolean or environment flag authorizes real money; the status names the gate and each missing requirement', async () => {
+// PAGOS-HABILITACION-TECNICA-01: the evidence is the readiness for the public launch. It is
+// reported requirement by requirement and it no longer decides whether a payment can be charged.
+test('production without evidence: the missing approvals are reported as public launch readiness and are not a blocker of the payment engine; no flag marks them as held', async () => {
   const { availability, status } = await runtime([])
-  assert.deepEqual(availability, { available: false, reason: 'PRODUCTION_NOT_AUTHORIZED' })
-  assert.ok(status.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'))
+  assert.deepEqual(availability, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }, 'what is missing is a real control: nobody to collect for this provider')
+  assert.equal(status.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'), false)
   assert.equal(status.readiness.gate, 'service-payments')
-  assert.equal(status.readiness.requiredNow, true)
+  assert.equal(status.readiness.requiredNow, false)
+  assert.deepEqual(status.publicLaunchReadiness, { capability: 'public-launch-readiness', ready: false, gates: SERVICE_PAYMENT_GATES.map((gate) => ({ gate, status: 'pending' })) })
   assert.deepEqual(status.readiness.servicePayments, { capability: 'service-payments', authorized: false, blockers: SERVICE_PAYMENT_GATES.map((gate) => `${gate}:evidence_missing`) })
   assert.deepEqual(status.readiness.settlement, { capability: 'settlement', authorized: false, blockers: SETTLEMENT_GATES.map((gate) => `${gate}:evidence_missing`) })
   assert.equal(JSON.stringify(status).includes('fictitious'), false, 'the status never carries a configured value')
@@ -180,26 +183,29 @@ test('production without evidence: no boolean or environment flag authorizes rea
   // A legacy "everything approved" boolean record cannot stand in for evidence either.
   const allTrue = { enabled: true, failedGates: [] }
   const withLegacy = await runtime([], { legacy: allTrue })
-  assert.equal(withLegacy.availability.reason, 'PRODUCTION_NOT_AUTHORIZED')
+  assert.equal(withLegacy.availability.reason, 'PROVIDER_ACCOUNT_NOT_CONNECTED')
   assert.equal(withLegacy.status.readiness.servicePayments.authorized, false)
+  assert.equal(withLegacy.status.publicLaunchReadiness.ready, false, 'and it never marks the public launch as ready')
 })
 
-test('production with the six service-payments records: the gate opens for service payments only, and the next condition is the provider', async () => {
+test('production with the six service-payments records: the public launch readiness is complete, settlement is still its own gate, and the payment still depends on the provider', async () => {
   const { availability, status } = await runtime(evidence('service-payments', SERVICE_PAYMENT_GATES))
   // Past the readiness gate: what is missing now is a fact of the provider, not of the platform.
   assert.deepEqual(availability, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' })
   assert.equal(status.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'), false)
   assert.deepEqual(status.readiness.servicePayments, { capability: 'service-payments', authorized: true, blockers: [] })
+  assert.deepEqual(status.publicLaunchReadiness, { capability: 'public-launch-readiness', ready: true, gates: SERVICE_PAYMENT_GATES.map((gate) => ({ gate, status: 'current' })) })
   assert.equal(status.readiness.settlement.authorized, false, 'settlement is still blocked')
   assert.deepEqual(status.readiness.settlement.blockers, SETTLEMENT_GATES.map((gate) => `${gate}:evidence_missing`))
 })
 
-test('production with settlement fully evidenced but no service-payments evidence: service payments stay blocked', async () => {
+test('production with settlement fully evidenced but no service-payments evidence: the public launch readiness stays incomplete; settlement evidence never counts for it', async () => {
   const { availability, status } = await runtime(evidence('settlement', SETTLEMENT_GATES))
-  assert.equal(availability.reason, 'PRODUCTION_NOT_AUTHORIZED')
+  assert.equal(availability.reason, 'PROVIDER_ACCOUNT_NOT_CONNECTED')
   assert.equal(status.readiness.settlement.authorized, true)
   assert.equal(status.readiness.servicePayments.authorized, false)
-  assert.ok(status.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'))
+  assert.equal(status.publicLaunchReadiness.ready, false)
+  assert.equal(status.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'), false)
 })
 
 test('sandbox: the gate is reported but does not block, because no real money moves', async () => {

@@ -361,7 +361,7 @@ test('WEB-09E HTTP: checkout route, public webhook with raw body and signature, 
   assert.equal(result.rawStored, true)
 })
 
-test('WEB-09E runtime without full configuration keeps the unavailable provider; production needs readiness evidence', () => {
+test('WEB-09E runtime without full configuration keeps the unavailable provider; production depends on the real controls, not on readiness evidence', () => {
   const result = runTypeScriptScenario(`${SETUP}
     const partial = crearModuloPagosServicio({ env: { ...mpEnv, MERCADO_PAGO_NOTIFICATION_URL: '' }, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: mpClock })
     const unset = crearModuloPagosServicio({ env: { ...mpEnv, MERCADO_PAGO_ENVIRONMENT: '' }, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: mpClock })
@@ -377,11 +377,12 @@ test('WEB-09E runtime without full configuration keeps the unavailable provider;
   assert.equal(result.partial, 'held-no-provider')
   assert.equal(result.unset, 'held-no-provider')
   assert.deepEqual(result.production, ['authorized', 'production'])
+  // PAGOS-HABILITACION-TECNICA-01: with no evidence at all, what blocks is the next real control.
   assert.deepEqual(result.productionReason, {
     available: false,
-    reason: 'PRODUCTION_NOT_AUTHORIZED',
+    reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED',
   })
-  assert.ok(result.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'))
+  assert.equal(result.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'), false)
 })
 
 test('WEB-09E migration is additive, forward-only and accepted by the migration gate', async () => {

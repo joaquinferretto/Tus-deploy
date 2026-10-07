@@ -14,14 +14,18 @@ export const REQUISITOS_HABILITACION_REQUERIDOS = CLAVES_REQUISITOS_HABILITACION
 
 const REQUISITOS_POR_CAPACIDAD: Record<CapacidadHabilitacionContrato, readonly ClaveRequisitoHabilitacionContrato[]> = {
   publication: ['legal', 'kyb', 'tax', 'runtimeProvider'],
-  'provider-actions': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'aws', 'groqMigration', 'runtimeProvider'],
+  // PROVIDER-ACTIONS-GATES-01. Payment intents, evidence, provider webhooks and deterministic
+  // WhatsApp actions: none of them runs a model, so the migration of Groq is not asked. `aws`
+  // is conditional on the runtime (REQUISITOS_CONDICIONALES below).
+  'provider-actions': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'],
   // SETTLEMENT-GATES-01. The core every settlement needs. `aws` and `posPilot` are added only
   // when the runtime or the flow really involves them (REQUISITOS_CONDICIONALES below); the
   // migration of Groq belongs to the assistant's capability and never takes part in money.
   settlement: ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'],
-  // Service payments (deposit of a turno, deposit and balance of a request-born work) through
-  // Mercado Pago Split 1:1. No POS, no AWS target and no Groq migration take part in that money
-  // flow, so those gates belong to `settlement` and are not asked here.
+  // PAGOS-HABILITACION-TECNICA-01. The evidence kept under this key is the readiness for the
+  // PUBLIC LAUNCH of service payments (`public-launch-readiness` for an operator): commercial and
+  // legal approvals. It is reported, and it does not decide whether a payment can be charged:
+  // that depends on the real controls of the payment engine (finance/servicios/configuracion.ts).
   'service-payments': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'],
   fleet: ['legal', 'kyc', 'kyb', 'tax', 'posPilot', 'runtimeProvider'],
   'release-jobs': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'posPilot', 'runtimeProvider'],
@@ -49,6 +53,9 @@ const REQUISITOS_CONDICIONALES: Partial<Record<CapacidadHabilitacionContrato, re
   settlement: [
     { gate: 'aws', requerido: (contexto) => contexto.profile === 'aws-terraform', motivo: 'not_required_in_runtime' },
     { gate: 'posPilot', requerido: (contexto) => contexto.flow === 'pos', motivo: 'not_required_for_flow' },
+  ],
+  'provider-actions': [
+    { gate: 'aws', requerido: (contexto) => contexto.profile === 'aws-terraform', motivo: 'not_required_in_runtime' },
   ],
 }
 

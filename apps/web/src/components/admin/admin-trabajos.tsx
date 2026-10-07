@@ -220,6 +220,9 @@ export function AdminTablaPagos({ items }: { items: AdminPago[] }): React.ReactN
   )
 }
 
+// PAGOS-HABILITACION-TECNICA-01: the approvals for the public launch, as an operator reads them.
+const REQUISITO_LANZAMIENTO: Record<string, string> = { legal: 'Legal', kyc: 'KYC (proceso de identidad)', kyb: 'KYB', tax: 'Fiscal', mercadoPago: 'Mercado Pago (aprobación)', runtimeProvider: 'Runtime de producción' }
+const ESTADO_LANZAMIENTO: Record<string, string> = { current: 'Vigente', pending: 'Pendiente', expired: 'Vencido', revoked: 'Revocado', invalid: 'No válido' }
 const FILTROS_PAGO = [['', 'Todos'], ['pending', 'Pendientes'], ['approved', 'Aprobados'], ['rejected', 'Rechazados'], ['refunded', 'Reembolsados']] as const
 
 export function AdminPagos(): React.ReactNode {
@@ -242,17 +245,33 @@ export function AdminPagos(): React.ReactNode {
     <>
       <AdminPageHeader subtitle="Cobros de trabajos con Mercado Pago: monto, comisión TUS, neto del Prestador y estado" title="Pagos" />
       {estadoPagos ? (
-        <section aria-label="Estado de los pagos online" className={styles.card}>
+        <section aria-label="Estado de los pagos online" className={styles.card} data-pagos-tecnicos={estadoPagos.productEnabled && estadoPagos.blockers.length === 0 ? 'habilitados' : 'no'}>
+          <h3>Pagos técnicamente habilitados</h3>
           <p>
-            <strong>{estadoPagos.productEnabled && estadoPagos.blockers.length === 0 ? 'Pagos online habilitados' : 'Pagos online no disponibles'}</strong>
+            <strong>{estadoPagos.productEnabled && estadoPagos.blockers.length === 0 ? 'Sí: se pueden cobrar pagos online' : 'No: los pagos online no están disponibles'}</strong>
             {' · '}entorno {estadoPagos.operational.environment} · comisión TUS {(estadoPagos.globalPolicy.rateBps / 100).toLocaleString('es-AR')}%
             {estadoPagos.globalPolicy.persisted ? '' : ' (por defecto)'}
           </p>
           {estadoPagos.blockers.length ? <p className={styles.muted}>Falta: {estadoPagos.blockers.join(', ')}</p> : null}
-          {estadoPagos.readiness && !estadoPagos.readiness.servicePayments.authorized ? (
-            <p className={styles.muted}>
-              Habilitación de pagos de servicios{estadoPagos.readiness.requiredNow ? '' : ' (no se exige en sandbox)'}: falta evidencia de {estadoPagos.readiness.servicePayments.blockers.join(', ')}
-            </p>
+          <p className={styles.muted}>
+            Depende de controles reales: Mercado Pago encendido y configurado, webhook, política de comisión, y por cada prestador su identidad verificada y una cuenta de cobro (la suya o la de TUS).
+          </p>
+          {estadoPagos.publicLaunchReadiness ? (
+            <div data-lanzamiento-publico={estadoPagos.publicLaunchReadiness.ready ? 'listo' : 'pendiente'}>
+              <h3>Readiness para lanzamiento público</h3>
+              <p>
+                <strong>{estadoPagos.publicLaunchReadiness.ready ? 'Completo' : 'Incompleto'}</strong>
+                <span className={styles.muted}> · no bloquea los pagos: indica si TUS tiene las aprobaciones para abrir los cobros al público.</span>
+              </p>
+              <ul>
+                {estadoPagos.publicLaunchReadiness.gates.map((item) => (
+                  <li key={item.gate}>
+                    {REQUISITO_LANZAMIENTO[item.gate] ?? item.gate}:{' '}
+                    <span className={item.status === 'current' ? styles.badgeOk : styles.badgeOff}>{ESTADO_LANZAMIENTO[item.status] ?? 'Pendiente'}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
           {estadoPagos.readiness ? (
             <p className={styles.muted}>

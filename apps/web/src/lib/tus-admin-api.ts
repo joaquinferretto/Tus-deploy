@@ -418,7 +418,7 @@ export const adminApi = {
   trabajos: (input: { q: string; estado: string; page: number; pageSize: number }) => call<AdminPage<AdminTrabajo>>(`/tus/v1/admin/trabajos?${new URLSearchParams({ q: input.q, estado: input.estado, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   trabajo: (id: string) => call<AdminTrabajoDetalle>(`/tus/v1/admin/trabajos/${encodeURIComponent(id)}`),
   // Readiness of online payments: booleans and missing items only, never secret values.
-  pagosEstado: () => call<{ productEnabled: boolean; blockers: string[]; operational: { environment: string }; globalPolicy: { rateBps: number; persisted: boolean }; readiness?: { gate: string; requiredNow: boolean; servicePayments: { authorized: boolean; blockers: string[] }; settlement: { authorized: boolean; blockers: string[] } } }>('/tus/v1/admin/payments/status'),
+  pagosEstado: () => call<{ productEnabled: boolean; blockers: string[]; operational: { environment: string }; globalPolicy: { rateBps: number; persisted: boolean }; readiness?: { gate: string; requiredNow: boolean; servicePayments: { authorized: boolean; blockers: string[] }; settlement: { authorized: boolean; blockers: string[] } }; technicallyEnabled?: boolean; publicLaunchReadiness?: { capability: string; ready: boolean; gates: { gate: string; status: string }[] } }>('/tus/v1/admin/payments/status'),
   // Readiness evidence of the platform: tenant, actor, scope and status are decided by the API.
   evidenciasHabilitacion: () => call<AdminEvidenciasHabilitacion>('/tus/v1/admin/payments/readiness/evidence'),
   registrarEvidenciaHabilitacion: (input: { capability: string; gate: string; owner: string; evidenceType: string; evidenceRef: string; policyVersion: string; expiresAt?: string }) =>

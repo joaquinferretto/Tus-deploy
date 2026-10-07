@@ -196,6 +196,40 @@ export interface EstadoHabilitacionPagos {
   blockers: string[]
 }
 
+// PAGOS-HABILITACION-TECNICA-01. Readiness for the public launch of service payments: the
+// commercial and legal approvals (legal, kyc, kyb, tax, mercadoPago, runtimeProvider), each with
+// the state of its evidence. It never decides whether a payment can be charged.
+export const REQUISITOS_LANZAMIENTO_PUBLICO = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'] as const
+export type EstadoRequisitoLanzamiento = 'current' | 'pending' | 'expired' | 'revoked' | 'invalid'
+export interface EstadoLanzamientoPublico {
+  capability: 'public-launch-readiness'
+  ready: boolean
+  gates: { gate: string; status: EstadoRequisitoLanzamiento }[]
+}
+
+const ESTADO_POR_MOTIVO: Record<string, EstadoRequisitoLanzamiento> = {
+  evidence_missing: 'pending',
+  evidence_out_of_scope: 'pending',
+  evidence_not_yet_valid: 'pending',
+  evidence_expired: 'expired',
+  evidence_revoked: 'revoked',
+}
+
+// From the evaluation of the stored evidence (`gate:reason` for what is not valid).
+export function lanzamientoPublicoDesde(evaluacion: EstadoHabilitacionPagos): EstadoLanzamientoPublico {
+  const motivos = new Map(evaluacion.blockers.filter((item) => item.includes(':')).map((item) => item.split(':') as [string, string]))
+  // The evaluation itself failed: nothing can be said to be current.
+  const sinDetalle = !evaluacion.authorized && motivos.size === 0
+  return {
+    capability: 'public-launch-readiness',
+    ready: evaluacion.authorized,
+    gates: REQUISITOS_LANZAMIENTO_PUBLICO.map((gate) => ({
+      gate,
+      status: evaluacion.authorized ? 'current' : sinDetalle ? 'pending' : motivos.has(gate) ? (ESTADO_POR_MOTIVO[motivos.get(gate)!] ?? 'invalid') : 'current',
+    })),
+  }
+}
+
 // `servicePayments` is the gate service payments depend on. `settlement` is the gate of the
 // general marketplace, reported only so the two are never confused.
 export interface EstadoHabilitacionesPagos {
@@ -241,10 +275,10 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     private readonly store: PuertoConfiguracionPagos,
     private readonly operativo: () => EstadoOperativoPagos,
     private readonly cuentaConectada: (prestadorTenantId: string) => Promise<boolean>,
-    // Production money also needs the evidence-based readiness decision of the
-    // `service-payments` capability (legal, tax, KYC, KYB, Mercado Pago, runtime). No environment
-    // variable can bypass it. Sandbox does not move real money.
-    private readonly produccionAutorizada: () => Promise<boolean> = async () => false,
+    // PAGOS-HABILITACION-TECNICA-01. Readiness for the public launch (legal, tax, KYC, KYB,
+    // Mercado Pago and runtime approvals, by evidence). Reported; it does NOT decide whether a
+    // payment can be charged: that is every real control checked in `disponibilidad`.
+    private readonly lanzamientoPublico: () => Promise<boolean> = async () => false,
     // IDENTITY-NOSIS: a provider receives money only after its identity is verified.
     private readonly identidadVerificada:
       ((prestadorTenantId: string) => Promise<boolean>) | null = null,
@@ -271,8 +305,6 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     const operativo = this.operativo()
     if (!proveedorOperativo(operativo))
       return { available: false, reason: 'PROVIDER_NOT_CONFIGURED' }
-    if (operativo.environment === 'production' && !(await this.produccionAutorizada()))
-      return { available: false, reason: 'PRODUCTION_NOT_AUTHORIZED' }
     const rule = await this.reglaComision(input)
     if (rule.pspFeeBearer === 'undetermined')
       return { available: false, reason: 'PSP_FEE_POLICY_UNDECIDED' }
@@ -285,6 +317,11 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     if (!(await this.cuentaConectada(input.prestadorTenantId)))
       return this.cobroPlataforma() ? { available: true, reason: null, mode: 'plataforma' } : { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }
     return { available: true, reason: null, mode: 'split' }
+  }
+
+  // Whether TUS holds every approval for the public launch. Information for an operator.
+  async listoParaLanzamientoPublico(): Promise<boolean> {
+    return this.lanzamientoPublico().catch(() => false)
   }
 }
 
@@ -440,9 +477,13 @@ export class ServicioConfiguracionPagos {
       pspFeeBearer: ResponsableFeePsp
       persisted: boolean
     }
-    // `gate` names the capability service payments are evaluated against; `requiredNow` is
-    // false in sandbox, where no real money moves and the gate does not block.
+    // The evidence registries, as stored. `requiredNow` is always false since
+    // PAGOS-HABILITACION-TECNICA-01: no evidence decides whether a payment can be charged.
     readiness: { gate: 'service-payments'; requiredNow: boolean } & EstadoHabilitacionesPagos
+    // Every real control of the payment engine passes (`blockers` is empty) and the switch is on.
+    technicallyEnabled: boolean
+    // The approvals for the public launch, each pending, current or expired. Never a blocker.
+    publicLaunchReadiness: EstadoLanzamientoPublico
     blockers: string[]
   }> {
     const operational = this.operativo()
@@ -469,9 +510,6 @@ export class ServicioConfiguracionPagos {
     const habilitaciones = this.habilitaciones
       ? await this.habilitaciones()
       : await this.habilitacionesSinDetalle()
-    const requiredNow = operational.environment === 'production'
-    if (requiredNow && !habilitaciones.servicePayments.authorized)
-      blockers.push('PRODUCTION_READINESS_NOT_AUTHORIZED')
     return {
       checkedAt: new Date(this.now()).toISOString(),
       productEnabled: configuracion?.paymentsEnabled ?? false,
@@ -484,7 +522,9 @@ export class ServicioConfiguracionPagos {
         pspFeeBearer: global.pspFeeBearer,
         persisted: global.politicaId !== null,
       },
-      readiness: { gate: 'service-payments', requiredNow, ...habilitaciones },
+      readiness: { gate: 'service-payments', requiredNow: false, ...habilitaciones },
+      technicallyEnabled: blockers.length === 0,
+      publicLaunchReadiness: lanzamientoPublicoDesde(habilitaciones.servicePayments),
       blockers,
     }
   }

@@ -88,7 +88,7 @@ test('SETTLEMENT posPilot: an ordinary payment (Web, WhatsApp, deposit, settleme
   assert.match(readFileSync(join(root, 'apps/api/src/tus/pos/index.ts'), 'utf8'), /capability: 'fleet'/u)
 })
 
-test('SETTLEMENT groq: the migration of Groq is not a requirement of settlement in any runtime or flow, so the assistant being down or not configured changes nothing; it stays a requirement of the assistant\'s own capability', async () => {
+test('SETTLEMENT groq: the migration of Groq is not a requirement of settlement in any runtime or flow, so the assistant being down or not configured changes nothing; the assistant reports its own state apart', async () => {
   for (const contexto of [{}, { profile: 'render-native' }, { profile: 'aws-terraform' }, { profile: 'aws-terraform', flow: 'pos' }])
     assert.equal(requisitosDeCapacidad('settlement', contexto).includes('groqMigration'), false, JSON.stringify(contexto))
   assert.equal(requisitosNoRequeridos('settlement', { profile: 'render-native' }).some(({ gate }) => gate === 'groqMigration'), false, 'not listed at all, not even as "not required"')
@@ -98,7 +98,9 @@ test('SETTLEMENT groq: the migration of Groq is not a requirement of settlement 
   const conGroqRevocado = [...evidencia(NUCLEO, 'render-native'), { ...evidencia(['groqMigration'], 'render-native')[0], revoked: true }]
   assert.equal(evaluarHabilitacion({ tenantId: TENANT, capability: 'settlement', scope: SCOPE, now: NOW, evidence: conGroqRevocado, profile: 'render-native' }).enabled, true)
   // The readiness of the assistant's actions keeps it.
-  assert.ok(requisitosDeCapacidad('provider-actions').includes('groqMigration'))
+  // PROVIDER-ACTIONS-GATES-01: no capability that moves money or records a transaction asks for it.
+  for (const capacidad of ['settlement', 'provider-actions', 'service-payments', 'release-jobs', 'fleet', 'publication'])
+    assert.equal(requisitosDeCapacidad(capacidad, { profile: 'aws-terraform', flow: 'pos' }).includes('groqMigration'), false, capacidad)
   // Nothing of the model takes part in the decision of money.
   for (const archivo of ['apps/api/src/tus/readiness/index.ts', 'apps/api/src/tus/finance/servicios/habilitacion-pagos.ts'])
     assert.doesNotMatch(readFileSync(join(root, archivo), 'utf8'), /GROQ_|groq\.ts|ChatProvider/u, archivo)
@@ -119,11 +121,39 @@ test('SETTLEMENT in Admin: the status of payments reports settlement without AWS
   assert.doesNotMatch(pantalla, /groq/iu, 'Groq is not shown inside Marketplace / Settlement')
 })
 
-test('SETTLEMENT keeps the operational protections of a payment: provider identity, a valid collection account, the commission policy and the production gate are still decided in order', () => {
+test('SETTLEMENT keeps the operational protections of a payment: provider identity, a valid collection account, and the commission policy are still decided in order', () => {
   const fuente = readFileSync(join(root, 'apps/api/src/tus/finance/servicios/configuracion.ts'), 'utf8')
   // The runtime policy (the one production composes), not the fixed one of isolated tests.
   const politica = fuente.slice(fuente.indexOf('export class PoliticaCobroPersistida'))
-  const orden = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PRODUCTION_NOT_AUTHORIZED', 'PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', 'PROVIDER_IDENTITY_NOT_VERIFIED', 'PROVIDER_ACCOUNT_NOT_CONNECTED'].map((motivo) => politica.indexOf(`reason: '${motivo}'`))
+  const orden = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', 'PROVIDER_IDENTITY_NOT_VERIFIED', 'PROVIDER_ACCOUNT_NOT_CONNECTED'].map((motivo) => politica.indexOf(`reason: '${motivo}'`))
   assert.ok(orden.every((posicion) => posicion > 0), 'every protection is still there')
   assert.deepEqual([...orden].sort((a, b) => a - b), orden, 'and in the same order')
+})
+
+// PROVIDER-ACTIONS-GATES-01. Payment intents, evidence, provider webhooks and deterministic
+// WhatsApp actions: no model takes part, so Groq cannot hold them; AWS only on the AWS runtime.
+test('PROVIDER-ACTIONS: its core is legal, kyc, kyb, tax, mercadoPago and runtimeProvider; aws is asked only on the AWS runtime and the migration of Groq never; every other protection is the same', async () => {
+  const decidirAcciones = async (profile, gates) => {
+    const evaluador = new EvaluadorHabilitacion(new PuertoMemoriaHabilitacion({ evidence: evidencia(gates, profile, 'provider-actions'), now: NOW }))
+    try {
+      await evaluador.require({ tenantId: TENANT, actorId: 'system:test', correlationId: 'corr-pa', capability: 'provider-actions', profile, scope: SCOPE })
+      return []
+    } catch (error) {
+      return error.decision.failedGates.map(({ gate, reason }) => `${gate}:${reason}`)
+    }
+  }
+  assert.deepEqual([...requisitosDeCapacidad('provider-actions', { profile: 'render-native' })], NUCLEO)
+  assert.deepEqual([...requisitosDeCapacidad('provider-actions', { profile: 'aws-terraform' })], [...NUCLEO, 'aws'])
+  assert.deepEqual(requisitosNoRequeridos('provider-actions', { profile: 'render-native' }), [{ gate: 'aws', reason: 'not_required_in_runtime' }])
+  // Hostinger, without AWS or Groq evidence: authorized. Each requirement of the core still blocks.
+  assert.deepEqual(await decidirAcciones('render-native', NUCLEO), [])
+  for (const falta of NUCLEO) assert.deepEqual(await decidirAcciones('render-native', NUCLEO.filter((gate) => gate !== falta)), [`${falta}:evidence_missing`], falta)
+  // On AWS the evidence is required again.
+  assert.deepEqual(await decidirAcciones('aws-terraform', NUCLEO), ['aws:evidence_missing'])
+  assert.deepEqual(await decidirAcciones('aws-terraform', [...NUCLEO, 'aws']), [])
+  // The operations it guards did not change.
+  const finanzas = readFileSync(join(root, 'apps/api/src/tus/finance/index.ts'), 'utf8')
+  assert.equal(finanzas.match(/requerirHabilitacion\(input, 'provider-actions'\)/gu)?.length, 2, 'payment intents and evidence')
+  assert.match(readFileSync(join(root, 'apps/api/src/tus/whatsapp/index.ts'), 'utf8'), /capability: 'provider-actions'/u)
+  assert.match(readFileSync(join(root, 'apps/api/src/tus/integration/index.ts'), 'utf8'), /capability: 'provider-actions'/u)
 })

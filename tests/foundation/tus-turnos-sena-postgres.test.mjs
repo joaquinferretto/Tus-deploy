@@ -657,7 +657,10 @@ test('TURNOS seña PostgreSQL estados: pending -> awaiting_payment -> confirmed 
   assert.deepEqual(r.base, ['ck_reservas_estado', 'ck_reservas_solicitud_vigencia'])
 })
 
-test('TURNOS seña PostgreSQL habilitación: the deposit depends on the service-payments readiness gate, never on settlement; in production without it a priced turno cannot be accepted (never confirmed without its deposit) and no checkout exists; with it, and in sandbox, accepting opens the payment and only the verified notification confirms', { skip, timeout: 300000 }, () => {
+// PAGOS-HABILITACION-TECNICA-01: the approvals kept as evidence are the readiness for the public
+// launch. Before, in production without them a priced turno could not be accepted; now the deposit
+// depends on the real controls only (Mercado Pago, the provider's identity and collection account).
+test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit does not depend on the launch approvals (missing or revoked evidence blocks nothing), but an unverified provider cannot accept a priced turno; accepting opens the payment and only the verified notification confirms; an unavailable check never confirms', { skip, timeout: 300000 }, () => {
   const r = runTypeScriptScenario(`${SETUP}
     const { PoliticaCobroPersistida, AlmacenConfiguracionPagosEnMemoria } = await import('./apps/api/src/tus/finance/servicios/configuracion.ts')
     const { crearHabilitacionPagosServicio } = await import('./apps/api/src/tus/finance/servicios/habilitacion-pagos.ts')
@@ -674,7 +677,8 @@ test('TURNOS seña PostgreSQL habilitación: the deposit depends on the service-
       await configuracion.agregarConfiguracion({ configuracionId: run + '-config', version: 1, paymentsEnabled: true, provider: 'mercado-pago', currency: 'ARS', reason: 'test', actorId: 'admin', correlationId: 'c', createdAt: new Date().toISOString() })
       let entorno = 'production'
       const operativo = () => ({ mercadoPagoEnabled: true, environment: entorno, clientIdConfigured: true, clientSecretConfigured: true, webhookSecretConfigured: true, redirectUriConfigured: true, credentialsKeyConfigured: true, webBaseUrlConfigured: true, notificationUrlConfigured: true, realProviderAdapterAvailable: true })
-      const real = new PoliticaCobroPersistida(configuracion, operativo, async (tenantId) => conCobro.has(tenantId), gate.autorizada, async () => true)
+      let identidad = true
+      const real = new PoliticaCobroPersistida(configuracion, operativo, async (tenantId) => conCobro.has(tenantId), gate.autorizada, async () => identidad)
       politica.disponibilidad = (input) => real.disponibilidad(input)
       const gates = async () => { const estado = await gate.estado(); return [estado.servicePayments.authorized, estado.settlement.authorized] }
 
@@ -687,31 +691,36 @@ test('TURNOS seña PostgreSQL habilitación: the deposit depends on the service-
       out.persistido = [persistido.servicePayments.blockers, persistido.settlement.blockers.length, decisiones.map((d) => [d.capability, d.enabled, d.outcome, d.actorId, d.scope]), await prisma.evidenciaHabilitacion.count({ where: { tenantId: plataforma } })]
       const anunciada = async () => (await turnos.serviciosDePrestador({ perfilId: p.perfilId }))[0].senaRequerida
 
-      // 1. Production, settlement fully evidenced and service-payments not. The provider is
-      //    connected and verified; it is the platform that may not charge. A priced turno can be
-      //    requested, but nobody can accept it: it is never confirmed without its deposit.
-      registrar('settlement', ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'posPilot', 'aws', 'groqMigration', 'runtimeProvider'])
-      out.soloSettlement = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null }), await anunciada()]
-      const pagosAlEmpezar = await prisma.intencionPago.count()
+      // 1. Production with NO approval for the launch (and settlement evidenced, which never
+      //    counts for it). The provider is connected and verified: a priced turno can be requested.
+      registrar('settlement', ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'])
+      out.sinAprobaciones = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null }), await anunciada()]
       const t1 = await solicitar('tok-ana', p, 2, '10:00', 'Espalda completa')
-      const a1 = await aceptar('tok-p', t1.body.id)
-      const p1 = await pagar('tok-ana', t1.body.id)
-      out.sinGate = [t1.status, t1.body.sena ?? null, a1.status, a1.body.code, (await fila(t1.body.id)).estado, p1.status, p1.body.code, await orden(t1.body.reservaId), (await prisma.intencionPago.count()) === pagosAlEmpezar, avisos.filter((x) => x.reservaId === t1.body.id).length]
+      // The provider's identity is still required: unverified, it cannot accept a priced turno.
+      identidad = false
+      const aSinIdentidad = await aceptar('tok-p', t1.body.id)
+      out.sinIdentidad = [await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null }), aSinIdentidad.status, aSinIdentidad.body.code, (await fila(t1.body.id)).estado, await orden(t1.body.reservaId)]
+      identidad = true
       // If the check itself cannot be made, the acceptance fails; it never falls back to "no deposit".
       politica.disponibilidad = async () => { throw new Error('database unavailable') }
       const aRoto = await aceptar('tok-p', t1.body.id)
       out.sinVerificar = [aRoto.status, aRoto.body.code, (await fila(t1.body.id)).estado]
       politica.disponibilidad = (input) => real.disponibilidad(input)
-      // A service WITHOUT a price has no deposit: it keeps working as it always did.
+      // Verified, and with no approval recorded: accepting opens the payment of the deposit.
+      const a1 = await aceptar('tok-p', t1.body.id)
+      await avisoDe(t1.body.id)
+      const p1 = await pagar('tok-ana', t1.body.id)
+      out.sinEvidencia = [t1.status, t1.body.sena ?? null, a1.status, a1.body.estado, a1.body.sena, p1.status, p1.body.monto, (await fila(t1.body.id)).estado]
+      // A service WITHOUT a published price, for a provider that can charge: no turno with a deposit
+      // can be requested for it (the rule that already applied wherever deposits were chargeable).
       const sinPrecio = await prestador('gatesinprecio', 'A Convenir Gate ' + run, [])
       conCobro.add(sinPrecio.tenantId)
       sesion('tok-gsp', 'u-' + sinPrecio.tenantId, sinPrecio.tenantId)
-      const t0 = await solicitar('tok-ana', sinPrecio, 2, '10:00', null)
-      const a0 = await aceptar('tok-gsp', t0.body.id)
-      out.sinPrecio = [t0.status, t0.body.sena ?? null, a0.status, a0.body.estado, a0.body.sena ?? null, await orden(t0.body.reservaId)]
+      // Another client: Ana already has a turno waiting for its deposit.
+      const t0 = await solicitar('tok-beto', sinPrecio, 2, '10:00', null)
+      out.sinPrecio = [t0.status, t0.body.code ?? null]
 
-      // 1b. SANDBOX with the same missing authorization: no real money moves, the gate does not
-      //     block, and the whole circuit can be exercised.
+      // 1b. SANDBOX: the same circuit.
       entorno = 'sandbox'
       const ts = await solicitar('tok-beto', p, 2, '15:00', 'Masaje base')
       const as = await aceptar('tok-p', ts.body.id)
@@ -722,13 +731,10 @@ test('TURNOS seña PostgreSQL habilitación: the deposit depends on the service-
       out.sandboxAprobado = [resultadoDe(await notificar(pagoSandbox.pagoId, 'mp-' + run + '-sbx', 'approved', '10000.00', run + '-evt-sbx')), (await fila(ts.body.id)).estado]
       entorno = 'production'
 
-      // 2. The six records of service-payments, and nothing of posPilot, aws or groqMigration.
+      // 2. The six approvals of the launch are recorded: reported as complete, nothing else changes.
       evidencia.length = 0
       registrar('service-payments', ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'])
       out.soloServicios = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null }), await anunciada()]
-      // The request that could not be accepted before can be accepted now, and it waits for its deposit.
-      const a1b = await aceptar('tok-p', t1.body.id)
-      out.luegoHabilitado = [a1b.status, a1b.body.estado, a1b.body.sena]
       const t2 = await solicitar('tok-beto', p, 2, '11:00', 'Masaje base')
       const a2 = await aceptar('tok-p', t2.body.id)
       await avisoDe(t2.body.id)
@@ -745,21 +751,14 @@ test('TURNOS seña PostgreSQL habilitación: the deposit depends on the service-
       await aceptar('tok-p', t3.body.id)
       await avisoDe(t3.body.id)
 
-      // 3. The authorization is lost (one record is revoked): no checkout is handed out, nothing
-      //    is created, and the turno waiting for its deposit is NOT confirmed.
+      // 3. An approval is revoked: the launch is no longer ready, and the deposit can still be paid.
       const mp = evidencia.findIndex((item) => item.gate === 'mercadoPago')
       evidencia[mp] = { ...evidencia[mp], revoked: true }
-      const pagosAntes = await prisma.intencionPago.count()
       const p3 = await pagar('tok-ana', t3.body.id)
-      const o2 = await orden(t2.body.reservaId)
-      out.revocada = [
-        await gates(), p3.status, p3.body.code, (await prisma.intencionPago.count()) === pagosAntes, (await fila(t3.body.id)).estado, (await senaDe('tok-ana', t3.body.id)).estado,
-        await codeOf(() => fin.iniciarCheckout({ tenantId: beto.tenantId, actorId: beto.id, correlationId: 'c', trabajoId: o2.trabajoId, idempotencyKey: run + '-otra-clave' })),
-      ]
+      out.revocada = [await gates(), p3.status, p3.body.monto, (await fila(t3.body.id)).estado]
 
-      // 4. Authorized again. Coming back from the checkout confirms nothing, a forged notification
+      // 4. Coming back from the checkout confirms nothing, a forged notification
       //    neither; only the verified approval does.
-      evidencia[mp] = { ...evidencia[mp], revoked: false }
       const pago = await pagoDe(t2.body.reservaId)
       const vuelta = await call('GET', '/tus/v1/cliente/turnos?pago=retorno&status=approved&payment_id=123', 'tok-beto')
       out.vuelta = [vuelta.status, (await fila(t2.body.id)).estado]
@@ -770,21 +769,22 @@ test('TURNOS seña PostgreSQL habilitación: the deposit depends on the service-
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.persistido, [
-    ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'].map((gate) => gate + ':evidence_missing'), 9,
+    ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'].map((gate) => gate + ':evidence_missing'), 6,
     [['service-payments', false, 'blocked', 'system:service-payments', 'argentina-stage-1'], ['settlement', false, 'blocked', 'system:service-payments', 'argentina-stage-1']], 0,
-  ], 'the persisted evaluator blocks both gates without evidence, audits each decision and writes no evidence')
-  assert.deepEqual(r.soloSettlement, [[false, true], { available: false, reason: 'PRODUCTION_NOT_AUTHORIZED' }, true], 'settlement evidence does not authorize a service payment; the deposit is still what confirms a priced turno')
-  assert.deepEqual(r.sinGate, [201, { monto: 12500, moneda: 'ARS', estado: 'not_due' }, 409, 'SERVICE_PAYMENTS_NOT_AUTHORIZED', 'pending', 409, 'DEPOSIT_NOT_PAYABLE', null, true, 0], 'production without the authorization: the priced request cannot be accepted, stays pending, and nothing is confirmed, charged, created or announced')
+  ], 'the persisted evaluator reports both registries without evidence (settlement on its six core requirements), audits each decision and writes no evidence')
+  assert.deepEqual(r.sinAprobaciones, [[false, true], { available: true, reason: null, mode: 'split' }, true], 'no approval for the launch: the deposit is technically chargeable, and it is still what confirms a priced turno')
+  assert.deepEqual(r.sinIdentidad, [{ available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }, 409, 'PROVIDER_IDENTITY_REQUIRED', 'pending', null], 'an unverified provider cannot accept a priced turno: it stays pending, nothing is created')
+  assert.deepEqual(r.sinEvidencia, [201, { monto: 12500, moneda: 'ARS', estado: 'not_due' }, 200, 'awaiting_payment', { monto: 12500, moneda: 'ARS', estado: 'pending' }, 200, 12500, 'awaiting_payment'], 'production without any approval: accepting opens the payment of the deposit; neither accepting nor the checkout confirms')
   assert.deepEqual(r.sinVerificar, [503, 'PAYMENT_NOT_AVAILABLE', 'pending'], 'an unavailable check never turns into a confirmation')
-  assert.deepEqual(r.sinPrecio, [201, null, 200, 'confirmed', null, null], 'a price-less service has no deposit and keeps its rule: accepting confirms')
-  assert.deepEqual(r.sandbox, [[false, true], { available: true, reason: null, mode: 'split' }, 200, 'awaiting_payment', 200, 10000, 'awaiting_payment'], 'sandbox does not ask for the production authorization; accepting and the checkout still do not confirm')
+  // Before, production without the approvals fell back to "no deposit" and this request was confirmed for free.
+  assert.deepEqual(r.sinPrecio, [409, 'SERVICE_PRICE_REQUIRED'], 'where the deposit is chargeable, a service needs a published price to take a turno')
+  assert.deepEqual(r.sandbox, [[false, true], { available: true, reason: null, mode: 'split' }, 200, 'awaiting_payment', 200, 10000, 'awaiting_payment'], 'sandbox: accepting and the checkout still do not confirm')
   assert.deepEqual(r.sandboxAprobado, ['recorded:applied', 'confirmed'], 'in sandbox too, only the verified notification confirms')
-  assert.deepEqual(r.luegoHabilitado, [200, 'awaiting_payment', { monto: 12500, moneda: 'ARS', estado: 'pending' }], 'production with the authorization: the provider can accept, and accepting opens the payment instead of confirming')
-  assert.deepEqual(r.soloServicios, [[true, false], { available: true, reason: null, mode: 'split' }, true], 'service-payments is authorized without posPilot, aws or groqMigration, while settlement stays blocked')
+  assert.deepEqual(r.soloServicios, [[true, false], { available: true, reason: null, mode: 'split' }, true], 'the six approvals of the launch are complete; settlement is its own registry')
   assert.deepEqual(r.conGate, [{ monto: 10000, moneda: 'ARS', estado: 'not_due' }, 'awaiting_payment', { monto: 10000, moneda: 'ARS', estado: 'pending' }, 400, 'UNTRUSTED_PAYMENT_FIELDS', 200, 10000, true])
   assert.equal(r.checkoutNoConfirma, 'awaiting_payment', 'creating the checkout does not confirm the turno')
   assert.deepEqual(r.prestadorSinCuenta, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' })
-  assert.deepEqual(r.revocada, [[false, false], 503, 'PAYMENT_NOT_AVAILABLE', true, 'awaiting_payment', 'unavailable', 'PRODUCTION_NOT_AUTHORIZED'], 'authorization lost: a clear domain error, nothing created, the turno is not confirmed')
+  assert.deepEqual(r.revocada, [[false, false], 200, 15000, 'awaiting_payment'], 'a revoked approval makes the launch not ready; the deposit can still be paid and nothing is confirmed by it')
   assert.deepEqual(r.vuelta, [200, 'awaiting_payment'], 'coming back from Mercado Pago confirms nothing')
   assert.deepEqual(r.firmaInvalida, ['invalid:INVALID_SIGNATURE', 'awaiting_payment'])
   assert.deepEqual(r.aprobado, ['recorded:applied', 'confirmed', 'paid'], 'only the verified notification confirms')

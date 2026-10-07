@@ -501,3 +501,99 @@ test('WEB-09D migration is additive, forward-only, append-only for policies and 
   ])
     assert.match(schema, new RegExp(`@@map\\("${table}"\\)`, 'u'))
 })
+
+// PAGOS-HABILITACION-TECNICA-01. Whether a service payment can be charged depends on the real
+// controls of the payment engine. The commercial and legal approvals (legal, kyc, kyb, tax,
+// mercadoPago, runtimeProvider) are the readiness for the PUBLIC LAUNCH: reported, never a blocker.
+test('PAGOS habilitación técnica: in production, missing legal/kyb/tax approvals do not block a technically valid payment; an unverified provider, an incomplete Mercado Pago, an invalid commission and a second charge still do; the public launch readiness keeps reporting what is missing', () => {
+  const r = runTypeScriptScenario(`${SERVICE_SETUP}${PAYMENTS_SETUP}
+    const { EvaluadorHabilitacion, crearEvidenciaHabilitacion } = await import('./apps/api/src/tus/readiness/index.ts')
+    const { crearHabilitacionPagosServicio } = await import('./apps/api/src/tus/finance/servicios/habilitacion-pagos.ts')
+    const out = {}
+    const ctx = { actorId: 'admin', correlationId: 'c' }
+    const evidencia = []
+    const registrar = (gate, extra = {}) => evidencia.push(crearEvidenciaHabilitacion({ tenantId: 'tus-platform', capability: 'service-payments', gate, owner: 'owner', scope: 'argentina-stage-1', evidenceType: 'approval-record', evidenceRef: 'ref-' + gate, evidenceId: 'ev-' + gate, policyVersion: 'v1', issuedAt: '2026-01-01T00:00:00.000Z', expiresAt: null, revoked: false, source: 'authorized-external', profile: 'render-native', ...extra }))
+    const gate = crearHabilitacionPagosServicio(new EvaluadorHabilitacion({ listEvidence: (tenantId, capability) => evidencia.filter((item) => item.tenantId === tenantId && item.capability === capability) }), { tenantId: 'tus-platform', profile: 'render-native' })
+    // Production, with every variable of Mercado Pago present and the real adapter.
+    const produccion = (extra = {}, adaptador = true) => () => leerEstadoOperativoPagos({ ...readyEnv, MERCADO_PAGO_ENVIRONMENT: 'production', ...extra }, adaptador)
+    const config = new AlmacenConfiguracionPagosEnMemoria()
+    const admin = new ServicioConfiguracionPagos(config, produccion(), clock, gate.autorizada, gate.estado)
+    await admin.registrarConfiguracion(ctx, { paymentsEnabled: true, reason: 'closed test', expectedVersion: 0 })
+    await admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1000, pspFeeBearer: 'provider', reason: 'launch', expectedVersion: 0 })
+    let identidad = true
+    let cuenta = true
+    const politica = (operativo = produccion(), plataforma = false) => new PoliticaCobroPersistida(config, operativo, async () => cuenta, gate.autorizada, async () => identidad, () => plataforma)
+    const cobro = (p = politica()) => p.disponibilidad({ prestadorTenantId: provider.tenantId, prestadorId: 'provider-1', categoria: null })
+    const lanzamiento = async () => (await admin.estado()).publicLaunchReadiness
+
+    // 1. No approval at all: the payment is technically available; the launch is not ready.
+    const estado = await admin.estado()
+    out.sinEvidencia = [await cobro(), estado.technicallyEnabled, estado.blockers, estado.publicLaunchReadiness, await politica().listoParaLanzamientoPublico()]
+    // A real payment goes through: intent, checkout, verified notification.
+    const fin = financeWith(politica())
+    const trabajo = await payableWork('tecnica', '990000')
+    const creado = await fin.crearIntencionPago({ ...customer, trabajoId: trabajo.work.trabajoId, idempotencyKey: 'pay-tecnica' })
+    const despachado = await fin.despacharIntencionPago({ tenantId: customer.tenantId, paymentId: creado.payment.paymentId, correlationId: 'd-tecnica' })
+    const evento = providerEvent('evt-tecnica', despachado.payment, '9900.00', '500.00')
+    const primera = await fin.ingerirEventoProveedor(evento)
+    const obligacion = () => [...financeStore.state.obligaciones.values()].find((item) => item.obligacionId === creado.obligation.obligacionId).status
+    out.pago = [creado.payment.providerStatus ?? null, primera.status, primera.result ?? null, obligacion()]
+    // 5. Double charge: the same notification again changes nothing, the same key returns the same
+    //    intent, and a new key for a paid work is refused.
+    const intenciones = financeStore.state.intenciones.size
+    const repetida = await fin.ingerirEventoProveedor(evento)
+    const mismaClave = await fin.crearIntencionPago({ ...customer, trabajoId: trabajo.work.trabajoId, idempotencyKey: 'pay-tecnica' }).then((x) => x.payment.paymentId === creado.payment.paymentId, (e) => e.code)
+    out.dobleCobro = [repetida.status, repetida.result ?? null, mismaClave, await codeOf(() => fin.crearIntencionPago({ ...customer, trabajoId: trabajo.work.trabajoId, idempotencyKey: 'pay-tecnica-otra' })), financeStore.state.intenciones.size === intenciones, obligacion()]
+
+    // 6. Some approvals arrive, one is expired: reported one by one, still not a blocker.
+    registrar('mercadoPago'); registrar('runtimeProvider'); registrar('tax', { expiresAt: '2026-02-01T00:00:00.000Z' })
+    out.parcial = [await lanzamiento(), await cobro()]
+
+    // 2. The provider's own identity is what counts: with every approval current (the global kyc
+    //    among them) an unverified provider still cannot charge.
+    evidencia.length = 0
+    for (const requisito of ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider']) registrar(requisito)
+    identidad = false
+    const otro = await payableWork('sinidentidad', '500000')
+    out.sinIdentidad = [(await lanzamiento()).ready, await cobro(), await codeOf(() => financeWith(politica()).crearIntencionPago({ ...customer, trabajoId: otro.work.trabajoId, idempotencyKey: 'pay-sin-identidad' }))]
+    identidad = true
+    out.conIdentidad = await cobro()
+    evidencia.length = 0
+
+    // 3. Mercado Pago incomplete: each missing piece blocks by itself.
+    out.mercadoPago = {}
+    for (const clave of ['MERCADO_PAGO_CLIENT_ID', 'MERCADO_PAGO_CLIENT_SECRET', 'MERCADO_PAGO_WEBHOOK_SECRET', 'MERCADO_PAGO_OAUTH_REDIRECT_URI', 'MERCADO_PAGO_NOTIFICATION_URL', 'TUS_PAYMENT_CREDENTIALS_KEY', 'TUS_WEB_BASE_URL', 'MERCADO_PAGO_ENVIRONMENT'])
+      out.mercadoPago[clave] = (await cobro(politica(produccion({ [clave]: '' })))).reason
+    out.mercadoPago.apagado = (await cobro(politica(produccion({ TUS_MERCADOPAGO_ENABLED: 'false' })))).reason
+    out.mercadoPago.sinAdaptador = (await cobro(politica(produccion({}, false)))).reason
+    out.mercadoPago.webhookSinHttps = (await cobro(politica(produccion({ MERCADO_PAGO_NOTIFICATION_URL: 'http://api.example.test/webhooks' })))).reason
+
+    // 4. An invalid commission policy blocks.
+    await admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1000, pspFeeBearer: 'undetermined', reason: 'draft', expectedVersion: 1 })
+    const indefinida = (await cobro()).reason
+    await admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1000, pspFeeBearer: 'platform', reason: 'platform', expectedVersion: 2 })
+    const noSoportada = (await cobro()).reason
+    await admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1000, pspFeeBearer: 'provider', reason: 'back', expectedVersion: 3 })
+    out.comision = [indefinida, noSoportada, (await cobro()).available]
+
+    // The collection account: the provider's own, or TUS's as a fallback; none of them blocks.
+    cuenta = false
+    out.cuenta = [await cobro(), await cobro(politica(produccion(), true))]
+    cuenta = true
+    // The switch of the platform still turns everything off.
+    out.interruptor = await new PoliticaCobroPersistida(new AlmacenConfiguracionPagosEnMemoria(), produccion(), async () => true, gate.autorizada, async () => true).disponibilidad({ prestadorTenantId: provider.tenantId, prestadorId: 'provider-1', categoria: null })
+    console.log(JSON.stringify(out))
+  `)
+  const pendientes = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'].map((gate) => ({ gate, status: 'pending' }))
+  assert.deepEqual(r.sinEvidencia, [{ available: true, reason: null, mode: 'split' }, true, [], { capability: 'public-launch-readiness', ready: false, gates: pendientes }, false], 'no approval: technically enabled, and not ready for the public launch')
+  assert.equal(r.pago[3], 'paid', 'a real payment is charged and confirmed by its verified notification')
+  assert.deepEqual(r.dobleCobro.slice(2), [true, 'OBLIGATION_NOT_PAYABLE', true, 'paid'], 'the same key is the same intent, a paid work takes no second charge, nothing is created')
+  assert.deepEqual([r.pago[1], r.dobleCobro[0]], ['recorded', 'duplicate'], 'the repeated notification is a duplicate: it is not applied again')
+  assert.deepEqual(r.parcial, [{ capability: 'public-launch-readiness', ready: false, gates: [{ gate: 'legal', status: 'pending' }, { gate: 'kyc', status: 'pending' }, { gate: 'kyb', status: 'pending' }, { gate: 'tax', status: 'expired' }, { gate: 'mercadoPago', status: 'current' }, { gate: 'runtimeProvider', status: 'current' }] }, { available: true, reason: null, mode: 'split' }], 'legal, kyc, kyb pending and tax expired are reported and block nothing')
+  assert.deepEqual(r.sinIdentidad, [true, { available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }, 'PROVIDER_IDENTITY_NOT_VERIFIED'], 'the global kyc approval never stands in for the identity of the provider')
+  assert.deepEqual(r.conIdentidad, { available: true, reason: null, mode: 'split' })
+  assert.deepEqual(r.mercadoPago, { MERCADO_PAGO_CLIENT_ID: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_CLIENT_SECRET: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_WEBHOOK_SECRET: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_OAUTH_REDIRECT_URI: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_NOTIFICATION_URL: 'PROVIDER_NOT_CONFIGURED', TUS_PAYMENT_CREDENTIALS_KEY: 'PROVIDER_NOT_CONFIGURED', TUS_WEB_BASE_URL: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_ENVIRONMENT: 'PROVIDER_NOT_CONFIGURED', apagado: 'PROVIDER_NOT_CONFIGURED', sinAdaptador: 'PROVIDER_NOT_CONFIGURED', webhookSinHttps: 'PROVIDER_NOT_CONFIGURED' }, 'every piece of Mercado Pago, the webhook among them, is required')
+  assert.deepEqual(r.comision, ['PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', true])
+  assert.deepEqual(r.cuenta, [{ available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }, { available: true, reason: null, mode: 'plataforma' }], 'somebody has to be able to collect: the provider or TUS')
+  assert.deepEqual(r.interruptor, { available: false, reason: 'PAYMENTS_DISABLED' })
+})

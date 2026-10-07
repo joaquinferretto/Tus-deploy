@@ -338,14 +338,15 @@ test('HTTP: the registry is behind the platform administration (permission + MFA
   ], 'tenant, actor, roles, scope, source and status in the request are refused; so are a capability outside the platform tenant and a requirement of another capability')
   assert.deepEqual(r.secreto, [422, 'SENSITIVE_EVIDENCE_VALUE', ['evidenceRef'], false])
   assert.deepEqual(r.sigueVacio, [0, 0])
-  assert.deepEqual(r.antes, ['service-payments', false, 6, 6, true])
+  // PAGOS-HABILITACION-TECNICA-01: the missing evidence is no longer a blocker of the payments.
+  assert.deepEqual(r.antes, ['service-payments', false, 6, 6, false])
   for (const gate of ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'])
     assert.deepEqual(r['creada_' + gate], [201, 'current', 'argentina-stage-1', false], gate)
   assert.deepEqual(r.despues, [{ capability: 'service-payments', authorized: true, blockers: [] }, false, 6, false], 'six real records open service payments; settlement stays blocked on its own six')
   assert.deepEqual(r.guardado, [6, ['platform-tenant|argentina-stage-1|authorized-external|render-native'], ['acc-admin|corr-http|readiness.evidence_registered']], 'tenant, scope, source and profile are the server\'s; the actor is the session\'s')
   assert.deepEqual(r.lista, [200, [['service-payments', 6, 6], ['settlement', 6, 0]]])
   assert.deepEqual(r.duplicada, [409, 'EVIDENCE_ALREADY_CURRENT'])
-  assert.deepEqual(r.revocacion, [403, [400, 'UNTRUSTED_EVIDENCE_FIELDS'], [200, 'revoked'], { capability: 'service-payments', authorized: false, blockers: ['tax:evidence_revoked'] }, true])
+  assert.deepEqual(r.revocacion, [403, [400, 'UNTRUSTED_EVIDENCE_FIELDS'], [200, 'revoked'], { capability: 'service-payments', authorized: false, blockers: ['tax:evidence_revoked'] }, false])
 })
 
 const pgUrl = process.env.TUS_PERFIL_TURNOS_PG_URL
