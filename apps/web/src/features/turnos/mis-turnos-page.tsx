@@ -1,5 +1,6 @@
 'use client'
 
+import { FotosTurno } from './fotos-turno'
 import type { Route } from 'next'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
@@ -156,6 +157,7 @@ export function MisTurnosPage(): React.ReactNode {
                     </span>
                   ) : null}
                   {detalle ? <span className={styles.muted} style={{ fontSize: '0.9rem' }}>{detalle}</span> : null}
+                  <FotosTurno cantidad={turno.imagenes ?? 0} puedeAgregar={turno.estado === 'pending' && futuro} turnoId={turno.id} />
                   {turno.estado === 'awaiting_payment' && turno.expiraEn ? (
                     <span className={styles.muted} style={{ fontSize: '0.9rem' }}>Tenés tiempo para abonarla hasta el {venceEl(turno.expiraEn)}; después el horario se libera.</span>
                   ) : null}
