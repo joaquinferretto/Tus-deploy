@@ -231,6 +231,19 @@ no es la fuente del mapa principal.
 - Anti-abuso: 5 publicaciones por cuenta cada 24 h, 10 abiertas a la vez, vigencia 30 días, más el rate limit global.
   Solo la dueña puede cerrar su solicitud.
 - La Web nunca habla con la base: todo pasa por la API (Prisma). No hay claves de Supabase en el frontend.
+- **Data API de Supabase cerrada (SEGURIDAD-DATA-API-01).** TUS usa Supabase solo como PostgreSQL, pero Supabase publica
+  el esquema `public` por PostgREST/GraphQL y les da permisos a los roles `anon` y `authenticated`: con la clave pública
+  se podía leer y escribir cualquier tabla (alertas `rls_disabled_in_public` y `sensitive_columns_exposed`). La
+  migración `20261110100000_tus_data_api_cerrada` les revoca todo permiso sobre tablas, secuencias y funciones de
+  `public`, también sobre lo que creen migraciones futuras, y habilita RLS sin ninguna política en todas las tablas
+  (deny by default). No se crean políticas: nada tiene que ser público. La API es la propietaria de las tablas y no
+  queda sujeta a RLS; nunca se usa `FORCE ROW LEVEL SECURITY`. Una migración posterior que cree una tabla tiene que
+  habilitarle RLS (lo exige `tests/foundation/tus-data-api-cerrada-postgres.test.mjs`).
+  - Antes de aplicarla en producción: correr el bloque 8 de `scripts/db/auditoria-prestadores.sql` con la URL de
+    runtime y comprobar que el rol es el propietario de las tablas (`tablas_de_otro_propietario = 0`).
+  - Después: el bloque 7 no debe devolver filas, y el Security Advisor de Supabase no debe listar esas dos alertas.
+  - Recomendado además, fuera de SQL: Project Settings → Data API → quitar `public` de "Exposed schemas" (o apagar la
+    Data API). Los logs de PostgREST del proyecto son la única fuente para saber si alguien usó ese acceso.
 
 ## Buscar trabajador, asistente y solicitudes dirigidas
 

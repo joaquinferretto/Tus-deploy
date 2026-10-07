@@ -86,9 +86,11 @@ export function AdminPrestadoresLista(): React.ReactNode {
       ) : null}
       {items && items.length > 0 && visibles.length === 0 ? <AdminEmpty text="No hay prestadores con ese filtro." /> : null}
       {visibles.length > 0 ? (
+        // A wide table scrolls inside its own box; the page itself never scrolls sideways.
+        <div data-tabla-prestadores style={{ maxWidth: '100%', overflowX: 'auto' }}>
         <table className={styles.table}>
           <thead>
-            <tr><th>Nombre público</th><th>Cuenta</th><th>Teléfono</th><th>WhatsApp</th><th>Oficio</th><th>Zona</th><th>Mapa</th><th>Identidad</th><th>Mercado Pago</th><th>Reputación</th><th>Alta</th><th /></tr>
+            <tr><th>Nombre público</th><th>Cuenta</th><th>Teléfono y WhatsApp</th><th>Oficio y zona</th><th>Mapa</th><th>Identidad</th><th>Mercado Pago</th><th>Reputación</th><th>Alta</th><th /></tr>
           </thead>
           <tbody>
             {visibles.map((item) => (
@@ -104,7 +106,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
                     </>
                   ) : item.cuenta === null ? <span className={`${styles.badge} ${styles.badgeOff}`} data-cuenta-problema={item.cuentaProblema?.motivo ?? 'sin_vincular'} title={PROBLEMA_CUENTA[item.cuentaProblema?.motivo ?? 'sin_vincular']}>{item.cuentaProblema?.motivo === 'ambiguo' ? 'Vínculo ambiguo' : item.cuentaProblema?.motivo === 'cuenta_invalida' ? 'Cuenta inválida' : 'Sin cuenta vinculada'}</span> : '—'}
                 </td>
-                <td data-label="Teléfono">
+                <td data-label="Teléfono y WhatsApp">
                   {item.cuenta?.telefono.numero ? (
                     <>
                       {item.cuenta.telefono.numero}
@@ -118,12 +120,12 @@ export function AdminPrestadoresLista(): React.ReactNode {
                       <span className={`${styles.badge} ${styles.badgeWarn}`}>Sin verificar</span>
                     </>
                   ) : <span className={styles.muted}>Sin teléfono</span>}
+                  <br />
+                  <span data-whatsapp-destino={item.whatsappDestino ?? ''}>
+                    {item.whatsappDestino ? <>WhatsApp: <span className={`${styles.badge} ${DESTINO_WHATSAPP[item.whatsappDestino].tono === 'ok' ? styles.badgeOk : DESTINO_WHATSAPP[item.whatsappDestino].tono === 'warn' ? styles.badgeWarn : styles.badgeOff}`} title={DESTINO_WHATSAPP[item.whatsappDestino].detalle}>{DESTINO_WHATSAPP[item.whatsappDestino].texto}</span></> : null}
+                  </span>
                 </td>
-                <td data-label="WhatsApp" data-whatsapp-destino={item.whatsappDestino ?? ''}>
-                  {item.whatsappDestino ? <span className={`${styles.badge} ${DESTINO_WHATSAPP[item.whatsappDestino].tono === 'ok' ? styles.badgeOk : DESTINO_WHATSAPP[item.whatsappDestino].tono === 'warn' ? styles.badgeWarn : styles.badgeOff}`} title={DESTINO_WHATSAPP[item.whatsappDestino].detalle}>{DESTINO_WHATSAPP[item.whatsappDestino].texto}</span> : '—'}
-                </td>
-                <td data-label="Oficio">{item.oficioLabel}</td>
-                <td data-label="Zona">{item.zona ?? '—'}{item.zonasCobertura.length > 1 ? <span className={styles.muted}> +{item.zonasCobertura.length - 1}</span> : null}</td>
+                <td data-label="Oficio y zona">{item.oficioLabel}<br /><span className={styles.muted}>{item.zona ?? '—'}</span>{item.zonasCobertura.length > 1 ? <span className={styles.muted}> +{item.zonasCobertura.length - 1}</span> : null}</td>
                 <td data-label="Mapa">
                   {item.enMapa ? <span className={`${styles.badge} ${styles.badgeOk}`}>En el mapa</span> : (
                     <>
@@ -149,6 +151,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
             ))}
           </tbody>
         </table>
+        </div>
       ) : null}
       {items ? <AdminPagination onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1) }} page={page} pageSize={pageSize} totalPages={totalPages} /> : null}
       <AdminConfirm onClose={cerrar} value={confirmacion} />

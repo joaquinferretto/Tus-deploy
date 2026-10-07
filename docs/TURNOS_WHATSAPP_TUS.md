@@ -48,8 +48,8 @@ PostgreSQL es la fuente de verdad: WhatsApp y la Web leen y cambian ese estado, 
 
 ## Aviso al prestador
 
-Destinatario: la cuenta del prestador, resuelta por ids (perfil → tenant → cuenta activa más
-antigua), y los WhatsApp vinculados a esa cuenta. Nunca por nombre ni por un dato de la solicitud.
+Destinatario: la cuenta vinculada al prestador (`prestadores.cuenta_id`), y los WhatsApp
+vinculados a esa cuenta. Un prestador sin cuenta vinculada no recibe el aviso. Nunca por nombre ni por un dato de la solicitud.
 
 - **Dentro de las 24 horas** desde su último mensaje: mensaje interactivo de WhatsApp con dos
   botones de respuesta, y las fotos de la solicitud a continuación.
@@ -62,7 +62,8 @@ dice quién responde.
 
 ## Responder desde WhatsApp
 
-1. Quién responde es la cuenta vinculada a ese número, y tiene que ser un prestador aprobado. Un
+1. Quién responde es la cuenta vinculada a ese número, y tiene que ser LA cuenta de ese
+   prestador (`prestadores.cuenta_id`) y un prestador aprobado. Un
    número sin vínculo, un cliente o un prestador suspendido no pueden responder.
 2. Se llama al mismo caso de uso que usa el panel, con el tenant de esa cuenta. Una solicitud de
    otra agenda responde "no encontré esa solicitud".

@@ -137,7 +137,7 @@ test('ADMIN prestador-cuenta: the table and the sheet show the account, the phon
   const lista = leer('../../apps/web/src/components/admin/admin-prestadores-lista.tsx')
   const ficha = leer('../../apps/web/src/components/admin/admin-prestador-detalle.tsx')
   const api = leer('../../apps/api/src/tus/admin/http.ts')
-  assert.match(lista, /<th>Nombre público<\/th><th>Cuenta<\/th><th>Teléfono<\/th><th>WhatsApp<\/th>/u)
+  assert.match(lista, /<th>Nombre público<\/th><th>Cuenta<\/th><th>Teléfono y WhatsApp<\/th>/u)
   assert.match(lista, /data-whatsapp-destino=\{item\.whatsappDestino/u)
   assert.match(lista, /Sin cuenta vinculada/u)
   assert.match(lista, /data-cuenta-problema/u)

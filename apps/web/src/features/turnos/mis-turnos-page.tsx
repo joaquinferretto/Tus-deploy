@@ -134,7 +134,7 @@ export function MisTurnosPage(): React.ReactNode {
             const futuro = Date.parse(turno.inicio) > Date.now()
             const detalle = explicacion(turno)
             return (
-              <li className={`${styles.panel} ${styles.turnoCard} ${turno.estado === 'pending' ? styles.turnoCardNew : ''}`} data-turno={turno.estado} key={turno.id}>
+              <li className={`${styles.panel} ${styles.turnoCard} ${turno.estado === 'pending' ? styles.turnoCardNew : ''}`} data-turno={turno.estado} data-turno-id={turno.id} key={turno.id}>
                 <div style={{ display: 'grid', gap: 4 }}>
                   <strong>
                     {servicio} — {diaTurno(turno.inicio)} — {horaTurno(turno.inicio)}
