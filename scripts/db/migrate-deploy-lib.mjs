@@ -250,3 +250,40 @@ export function redact(text) {
     .replace(/postgres(?:ql)?:\/\/[^\s'"`]+/giu, 'postgresql://<redacted>')
     .replace(/(password|passwd|pwd)=[^\s&'"]+/giu, '$1=<redacted>')
 }
+
+// ---- SEGURIDAD-DATA-API-01: a migration that enables row level security -------------------------
+//
+// RLS with no policy denies every row to any role that is not the owner of the table (and is not
+// a superuser nor has BYPASSRLS). The migrations run with DIRECT_URL and the API runs with
+// DATABASE_URL: if those were two different roles, enabling RLS would leave the API reading empty
+// tables while every request still "works". So before such a migration is applied, the role of the
+// RUNTIME url is asked, with its real credentials, whether it is the one that owns the schema TUS
+// manages (the owner of `_prisma_migrations`, the role every migration ran as).
+export const RUNTIME_ROLE_GUARD_CODE = 'TUS_RUNTIME_ROLE_NOT_OWNER'
+export const RUNTIME_ROLE_GUARD_SQL = `DO $$
+DECLARE
+  libre boolean;
+  propietario text;
+BEGIN
+  SELECT rolsuper OR rolbypassrls INTO libre FROM pg_roles WHERE rolname = current_user;
+  SELECT pg_get_userbyid(c.relowner) INTO propietario
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public' AND c.relname = '_prisma_migrations' AND c.relkind = 'r';
+  -- A database with no history yet has nothing an API could be locked out of.
+  IF propietario IS NULL OR propietario = current_user OR coalesce(libre, false) THEN RETURN; END IF;
+  RAISE EXCEPTION '${RUNTIME_ROLE_GUARD_CODE}: the API connects as "%" but the tables belong to "%"; with row level security enabled it would read nothing', current_user, propietario;
+END $$;
+`
+
+// The datasource of the API at runtime, and nothing else: the guard connects as the API does.
+export const RUNTIME_SCHEMA = `datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+`
+
+// Does this migration turn row level security on? (comments are not SQL)
+export function enablesRowLevelSecurity(sql) {
+  const codigo = String(sql).split(/\r?\n/u).filter((linea) => !linea.trim().startsWith('--')).join('\n')
+  return /ENABLE\s+ROW\s+LEVEL\s+SECURITY/iu.test(codigo)
+}

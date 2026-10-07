@@ -239,7 +239,11 @@ no es la fuente del mapa principal.
   (deny by default). No se crean políticas: nada tiene que ser público. La API es la propietaria de las tablas y no
   queda sujeta a RLS; nunca se usa `FORCE ROW LEVEL SECURITY`. Una migración posterior que cree una tabla tiene que
   habilitarle RLS (lo exige `tests/foundation/tus-data-api-cerrada-postgres.test.mjs`).
-  - Antes de aplicarla en producción: correr el bloque 8 de `scripts/db/auditoria-prestadores.sql` con la URL de
+  - El despliegue lo comprueba solo: antes de aplicar una migración que habilita RLS, `scripts/db/migrate-deploy.mjs`
+    se conecta con `DATABASE_URL` (las credenciales reales de la API) y exige que ese rol sea el propietario de las
+    tablas, superusuario o `BYPASSRLS`. Si no lo es, no aplica nada y el despliegue falla (`runtime-role-not-owner`):
+    sigue corriendo la API anterior en lugar de una nueva que leería tablas vacías.
+  - A mano, lo mismo: correr el bloque 8 de `scripts/db/auditoria-prestadores.sql` con la URL de
     runtime y comprobar que el rol es el propietario de las tablas (`tablas_de_otro_propietario = 0`).
   - Después: el bloque 7 no debe devolver filas, y el Security Advisor de Supabase no debe listar esas dos alertas.
   - Recomendado además, fuera de SQL: Project Settings → Data API → quitar `public` de "Exposed schemas" (o apagar la
