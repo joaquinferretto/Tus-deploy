@@ -240,9 +240,14 @@ no es la fuente del mapa principal.
   queda sujeta a RLS; nunca se usa `FORCE ROW LEVEL SECURITY`. Una migración posterior que cree una tabla tiene que
   habilitarle RLS (lo exige `tests/foundation/tus-data-api-cerrada-postgres.test.mjs`).
   - El despliegue lo comprueba solo: antes de aplicar una migración que habilita RLS, `scripts/db/migrate-deploy.mjs`
-    se conecta con `DATABASE_URL` (las credenciales reales de la API) y exige que ese rol sea el propietario de las
-    tablas, superusuario o `BYPASSRLS`. Si no lo es, no aplica nada y el despliegue falla (`runtime-role-not-owner`):
-    sigue corriendo la API anterior en lugar de una nueva que leería tablas vacías.
+    exige que el rol de `DATABASE_URL` (la API) sea el propietario de las tablas, superusuario o `BYPASSRLS`. Si las dos
+    URLs usan el mismo rol (el caso de producción: `postgres`), queda decidido sin abrir ninguna conexión. Si son roles
+    distintos, se le pregunta a la base con `pg`, el driver de la API, con un límite de 30 segundos. Si no se cumple,
+    no aplica nada y el despliegue falla (`runtime-role-not-owner`): sigue corriendo la API anterior.
+  - Nunca se corre un comando de Prisma sobre `DATABASE_URL`: es una conexión por pooler y el motor de esquema de
+    Prisma no está hecho para eso (para eso existe `DIRECT_URL`). El despliegue del 2026-10-07 quedó colgado diez
+    minutos por hacerlo; no llegó a aplicar ninguna migración. Cada paso del script ahora dice su nombre, cuánto
+    esperó y qué alcanzó a imprimir cuando no termina, sin datos de la conexión.
   - A mano, lo mismo: correr el bloque 8 de `scripts/db/auditoria-prestadores.sql` con la URL de
     runtime y comprobar que el rol es el propietario de las tablas (`tablas_de_otro_propietario = 0`).
   - Después: el bloque 7 no debe devolver filas, y el Security Advisor de Supabase no debe listar esas dos alertas.

@@ -15,14 +15,15 @@ import {
   PRISMA_MIGRATIONS_BOOTSTRAP_SQL,
   RUNTIME_ROLE_GUARD_CODE,
   RUNTIME_ROLE_GUARD_SQL,
-  RUNTIME_SCHEMA,
   UNMANAGED_GUARD_CODE,
   UNMANAGED_GUARD_SQL,
   deriveConformanceSql,
+  describeStepFailure,
   enablesRowLevelSecurity,
   parseMigrateStatus,
   planDeploy,
   redact,
+  runtimeRoleCheck,
   validateTargets,
 } from './migrate-deploy-lib.mjs'
 
@@ -37,16 +38,19 @@ const log = (message) => console.log(`[migrate] ${message}`)
 
 class MigrationError extends Error {}
 
-function prisma(args, { schema = SCHEMA, allowFailure = false } = {}) {
+// `step`: what this call is for, in the words of the log. A step that does not finish says which
+// one it was, how long it waited and what it printed (never the connection).
+function prisma(args, { schema = SCHEMA, allowFailure = false, step = `prisma ${args[0]} ${args[1] ?? ''}`.trim(), timeout = STEP_TIMEOUT_MS } = {}) {
+  const inicio = Date.now()
   const result = spawnSync(process.execPath, [PRISMA_CLI, ...args, '--schema', schema], {
     cwd: API,
     env: process.env,
     encoding: 'utf8',
-    timeout: STEP_TIMEOUT_MS,
+    timeout,
     windowsHide: true,
   })
   const output = redact(`${result.stdout ?? ''}${result.stderr ?? ''}`)
-  if (result.error) throw new MigrationError(`prisma ${args[0]} ${args[1] ?? ''} did not finish (${result.error.name})`)
+  if (result.error) throw new MigrationError(describeStepFailure(step, result.error, { timeoutMs: timeout, elapsedMs: Date.now() - inicio, output }))
   if (result.status !== 0 && !allowFailure) {
     process.stderr.write(output.slice(-4000))
     throw new MigrationError(`prisma ${args.join(' ')} failed with exit code ${result.status}`)
@@ -74,7 +78,7 @@ function subsetSchema(work, names) {
 // `migrate status` devuelve 1 con pendientes (caso normal): se interpreta la salida completa, no
 // solo el código. Todo lo que no sea un estado conocido corta antes de escribir.
 function status(names) {
-  const result = prisma(['migrate', 'status'], { allowFailure: true })
+  const result = prisma(['migrate', 'status'], { allowFailure: true, step: 'reading the migration history (prisma migrate status, DIRECT_URL)' })
   return parseMigrateStatus(result.output, result.code, names)
 }
 
@@ -82,7 +86,7 @@ function status(names) {
 function assertPublicSchemaManagedOrEmpty(work) {
   const file = join(work, 'preflight.sql')
   writeFileSync(file, UNMANAGED_GUARD_SQL)
-  const result = prisma(['db', 'execute', '--file', file], { allowFailure: true })
+  const result = prisma(['db', 'execute', '--file', file], { allowFailure: true, step: 'preflight of the public schema (prisma db execute, DIRECT_URL)' })
   if (result.code === 0) return
   if (result.output.includes(UNMANAGED_GUARD_CODE))
     throw new MigrationError('database-not-empty-and-unmanaged: the public schema has objects but no Prisma history; refusing to initialize over existing data')
@@ -91,25 +95,55 @@ function assertPublicSchemaManagedOrEmpty(work) {
 }
 
 // SEGURIDAD-DATA-API-01. Before a pending migration turns row level security on, the role the API
-// really connects with (DATABASE_URL, its own credentials) must be the owner of the tables TUS
-// manages, a superuser or BYPASSRLS. Read only. If it is not, nothing is applied: the deploy fails
-// and the API that is running keeps running, instead of a new one that reads empty tables.
-function assertRuntimeRoleSurvivesRls(work, pending) {
+// really connects with (DATABASE_URL) must be the owner of the tables TUS manages, a superuser or
+// BYPASSRLS. If it is not, nothing is applied: the deploy fails and the API that is running keeps
+// running, instead of a new one that reads empty tables.
+//
+// The check never runs a Prisma command over DATABASE_URL: that is a pooled connection, and the
+// schema engine of Prisma (migrate, db execute) is not made for one — that is what DIRECT_URL is
+// for. On Hostinger it simply never answered and the deploy waited ten minutes for it. Now:
+// same role in both URLs -> decided without connecting; different roles -> asked with `pg`, the
+// driver the API itself uses over that pooler, with a short limit.
+const RUNTIME_CHECK_TIMEOUT_MS = Number(process.env['TUS_MIGRATE_RUNTIME_CHECK_TIMEOUT_MS'] ?? 30_000)
+
+async function askRuntimeRole() {
+  const { Client } = createRequire(join(API, 'package.json'))('pg')
+  const url = new URL(process.env['DATABASE_URL'])
+  // Same TLS as the API pool: Supabase certificates are signed by Supabase's own CA.
+  if (/^(?:db\.[a-z0-9]+\.supabase\.co|aws-[a-z0-9-]+\.pooler\.supabase\.com)$/u.test(url.hostname) && ['require', 'verify-ca', 'verify-full'].includes(url.searchParams.get('sslmode') ?? '')) {
+    url.searchParams.set('sslmode', 'verify-full')
+    url.searchParams.delete('uselibpqcompat')
+    if (!url.searchParams.has('sslrootcert')) url.searchParams.set('sslrootcert', join(API, 'certs', 'supabase-ca.crt'))
+  }
+  const client = new Client({ connectionString: url.toString(), connectionTimeoutMillis: RUNTIME_CHECK_TIMEOUT_MS, statement_timeout: RUNTIME_CHECK_TIMEOUT_MS, query_timeout: RUNTIME_CHECK_TIMEOUT_MS })
+  await client.connect()
+  try {
+    await client.query(RUNTIME_ROLE_GUARD_SQL)
+  } finally {
+    await client.end().catch(() => undefined)
+  }
+}
+
+async function assertRuntimeRoleSurvivesRls(pending) {
   const conRls = pending.filter((name) => enablesRowLevelSecurity(readFileSync(join(MIGRATIONS, name, 'migration.sql'), 'utf8')))
   if (conRls.length === 0) return
-  const dir = join(work, 'runtime')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'schema.prisma'), RUNTIME_SCHEMA)
-  writeFileSync(join(dir, 'guard.sql'), RUNTIME_ROLE_GUARD_SQL)
-  const result = prisma(['db', 'execute', '--file', join(dir, 'guard.sql')], { schema: join(dir, 'schema.prisma'), allowFailure: true })
-  if (result.code === 0) {
-    log(`runtime role check passed for ${conRls.join(', ')} (the API role owns the tables or bypasses row level security)`)
+  const check = runtimeRoleCheck(process.env)
+  if (check.mode === 'unknown') throw new MigrationError(`runtime-role-unknown: ${conRls.join(', ')} enables row level security and DATABASE_URL / DIRECT_URL do not name a role. Nothing was applied`)
+  if (check.mode === 'same-role') {
+    log(`runtime role check passed for ${conRls.join(', ')}: the API and the migrations use the same role ("${check.runtime}"), the owner of what the migrations create`)
     return
   }
-  if (result.output.includes(RUNTIME_ROLE_GUARD_CODE))
-    throw new MigrationError(`runtime-role-not-owner: ${conRls.join(', ')} enables row level security, and the role of DATABASE_URL is not the owner of the tables (nor superuser/BYPASSRLS): the API would read nothing. Nothing was applied. Use the same role in DATABASE_URL and DIRECT_URL`)
-  process.stderr.write(result.output.slice(-2000))
-  throw new MigrationError('runtime role check could not run (see output above); nothing was applied')
+  log(`runtime role check: the API role ("${check.runtime}") is not the migration role ("${check.direct}"); asking the database (limit ${Math.round(RUNTIME_CHECK_TIMEOUT_MS / 1000)}s)`)
+  const inicio = Date.now()
+  try {
+    await askRuntimeRole()
+  } catch (error) {
+    const mensaje = redact(error instanceof Error ? error.message : String(error))
+    if (mensaje.includes(RUNTIME_ROLE_GUARD_CODE))
+      throw new MigrationError(`runtime-role-not-owner: ${conRls.join(', ')} enables row level security, and the role of DATABASE_URL ("${check.runtime}") is not the owner of the tables (nor superuser/BYPASSRLS): the API would read nothing. Nothing was applied. Use the same role in DATABASE_URL and DIRECT_URL`)
+    throw new MigrationError(`runtime role check could not run after ${Math.round((Date.now() - inicio) / 1000)}s (${mensaje.slice(0, 300)}). Nothing was applied`)
+  }
+  log(`runtime role check passed for ${conRls.join(', ')} (the API role owns the tables or bypasses row level security)`)
 }
 
 export async function main() {
@@ -138,7 +172,7 @@ export async function main() {
   const work = mkdtempSync(join(tmpdir(), 'tus-migrate-'))
   try {
     assertPublicSchemaManagedOrEmpty(work)
-    assertRuntimeRoleSurvivesRls(work, initial.pending)
+    await assertRuntimeRoleSurvivesRls(initial.pending)
     if (plan.bootstrap) {
       const file = join(work, 'bootstrap.sql')
       writeFileSync(file, PRISMA_MIGRATIONS_BOOTSTRAP_SQL)
@@ -156,7 +190,8 @@ export async function main() {
       prisma(['migrate', 'resolve', '--applied', CONFORMANCE_REPAIR])
       log(`${CONFORMANCE_REPAIR} applied (derived, in one transaction) and recorded with its real checksum`)
     }
-    prisma(['migrate', 'deploy'])
+    log(`applying ${initial.pending.length} migration(s): ${initial.pending.join(', ')}`)
+    prisma(['migrate', 'deploy'], { step: 'applying the pending migrations (prisma migrate deploy, DIRECT_URL)' })
   } finally {
     rmSync(work, { recursive: true, force: true })
   }

@@ -275,15 +275,39 @@ BEGIN
 END $$;
 `
 
-// The datasource of the API at runtime, and nothing else: the guard connects as the API does.
-export const RUNTIME_SCHEMA = `datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+// The PostgreSQL role a connection URL signs in with. A Supabase pooler names it `<role>.<ref>`.
+export function roleOfUrl(databaseUrl) {
+  try {
+    const usuario = decodeURIComponent(new URL(databaseUrl).username)
+    return usuario ? usuario.split('.')[0] : null
+  } catch {
+    return null
+  }
 }
-`
+
+// How the runtime role is checked before a migration enables row level security:
+// - 'same-role': DATABASE_URL and DIRECT_URL sign in as the SAME role. The migrations run as that
+//   role and only enable RLS on the tables it owns, so the API (that same role) is their owner.
+//   Nothing has to be asked to the database, and no new connection is opened.
+// - 'ask': two different roles: the runtime one is asked, with the driver the API itself uses.
+// - 'unknown': a URL without a role cannot be judged: refused.
+export function runtimeRoleCheck(environment) {
+  const runtime = roleOfUrl(environment['DATABASE_URL'] ?? '')
+  const direct = roleOfUrl(environment['DIRECT_URL'] ?? '')
+  if (!runtime || !direct) return { mode: 'unknown', runtime, direct }
+  return { mode: runtime === direct ? 'same-role' : 'ask', runtime, direct }
+}
 
 // Does this migration turn row level security on? (comments are not SQL)
 export function enablesRowLevelSecurity(sql) {
   const codigo = String(sql).split(/\r?\n/u).filter((linea) => !linea.trim().startsWith('--')).join('\n')
   return /ENABLE\s+ROW\s+LEVEL\s+SECURITY/iu.test(codigo)
+}
+
+// Why a step did not finish, in words a person can act on, without anything of the connection.
+export function describeStepFailure(step, error, { timeoutMs, elapsedMs, output } = {}) {
+  const code = typeof error?.code === 'string' ? error.code : error?.name ?? 'unknown'
+  const porTiempo = code === 'ETIMEDOUT' || (typeof timeoutMs === 'number' && typeof elapsedMs === 'number' && elapsedMs >= timeoutMs - 1000)
+  const cola = redact(String(output ?? '')).trim().split(/\r?\n/u).filter(Boolean).slice(-6).join(' | ')
+  return `${step} did not finish: ${porTiempo ? `it was stopped after ${Math.round((elapsedMs ?? timeoutMs ?? 0) / 1000)}s without an answer (limit ${Math.round((timeoutMs ?? 0) / 1000)}s): the database did not respond on that connection (a pooler that cannot run this command, a lock, or the network)` : `the process could not run (${code})`}${cola ? `. Last output: ${cola}` : ''}`
 }
