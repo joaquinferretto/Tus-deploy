@@ -6,7 +6,7 @@ import authStyles from '../auth/auth.module.css'
 import styles from '../directory/directory.module.css'
 import homeStyles from '../home/home.module.css'
 import { useTusSession } from '../session/use-tus-session'
-import { createUrgentClient, type UrgentOffer } from '../urgent/urgent-client'
+import { createUrgentClient, type UrgentOffer, type UrgentPreference } from '../urgent/urgent-client'
 
 const RETURN_TO = '/prestador/solicitudes'
 
@@ -25,7 +25,7 @@ const OFFER_LABEL: Record<UrgentOffer['offer'], string> = {
 // it can still say it cannot go, and it is offered again to the others.
 export function ProviderUrgent(): React.ReactNode {
   const session = useTusSession(RETURN_TO)
-  const [accepts, setAccepts] = useState<boolean | null | undefined>(undefined)
+  const [preference, setPreference] = useState<UrgentPreference | null | undefined>(undefined)
   const [offers, setOffers] = useState<UrgentOffer[]>([])
   const [working, setWorking] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
@@ -35,8 +35,8 @@ export function ProviderUrgent(): React.ReactNode {
     if (session.status !== 'authenticated') return
     const client = createUrgentClient(session.session)
     try {
-      const [preference, items] = await Promise.all([client.preference(), client.offers()])
-      setAccepts(preference)
+      const [current, items] = await Promise.all([client.preference(), client.offers()])
+      setPreference(current)
       setOffers(items)
       setFailed(false)
     } catch {
@@ -51,15 +51,15 @@ export function ProviderUrgent(): React.ReactNode {
     return () => window.clearInterval(timer)
   }, [load])
 
-  if (session.status !== 'authenticated' || accepts === undefined) return failed ? <p className={authStyles.formError} role="alert">No pudimos cargar los servicios urgentes.</p> : null
+  if (session.status !== 'authenticated' || preference === undefined) return failed ? <p className={authStyles.formError} role="alert">No pudimos cargar los servicios urgentes.</p> : null
   // No provider profile yet: nothing to configure here.
-  if (accepts === null) return null
+  if (preference === null) return null
 
-  async function toggle(next: boolean) {
+  async function toggle(change: { acceptsUrgent?: boolean; wholeCity?: boolean }) {
     if (session.status !== 'authenticated') return
     setWorking('preferencia')
     try {
-      setAccepts(await createUrgentClient(session.session).savePreference(next))
+      setPreference(await createUrgentClient(session.session).savePreference(change))
       setNotice('')
     } catch {
       setNotice('No pudimos guardar el cambio. Probá de nuevo.')
@@ -90,7 +90,7 @@ export function ProviderUrgent(): React.ReactNode {
         Servicios urgentes
       </h2>
       <label style={{ alignItems: 'flex-start', display: 'flex', gap: 10, marginTop: 8 }}>
-        <input checked={accepts} data-acepta-urgencias disabled={working === 'preferencia'} onChange={(event) => void toggle(event.target.checked)} style={{ height: 20, marginTop: 2, width: 20 }} type="checkbox" />
+        <input checked={preference.acceptsUrgent} data-acepta-urgencias disabled={working === 'preferencia'} onChange={(event) => void toggle({ acceptsUrgent: event.target.checked })} style={{ height: 20, marginTop: 2, width: 20 }} type="checkbox" />
         <span>
           <strong>Aceptar servicios urgentes</strong>
           <span className={styles.muted} style={{ display: 'block', fontSize: '0.9rem' }}>
@@ -98,6 +98,29 @@ export function ProviderUrgent(): React.ReactNode {
           </span>
         </span>
       </label>
+      {preference.acceptsUrgent ? (
+        <>
+          {/* Coverage is what the provider DECLARED: its neighbourhoods, its radius, or the whole
+              city if it says so here. Nothing is assumed. */}
+          <label style={{ alignItems: 'flex-start', display: 'flex', gap: 10, marginTop: 10 }}>
+            <input checked={preference.wholeCity} data-toda-la-ciudad disabled={working === 'preferencia'} onChange={(event) => void toggle({ wholeCity: event.target.checked })} style={{ height: 20, marginTop: 2, width: 20 }} type="checkbox" />
+            <span>
+              <strong>Atiendo urgencias en toda la ciudad</strong>
+              <span className={styles.muted} style={{ display: 'block', fontSize: '0.9rem' }}>Marcalo solo si podés ir a cualquier barrio. Si no, te avisamos únicamente de los barrios que declaraste.</span>
+            </span>
+          </label>
+          <p className={styles.muted} data-cobertura-urgencias={preference.wholeCity ? 'ciudad' : preference.zones.length > 0 || preference.radiusKm !== null ? 'zonas' : 'ninguna'} style={{ fontSize: '0.9rem', marginTop: 8 }}>
+            {preference.wholeCity
+              ? 'Vas a recibir urgencias de toda la ciudad.'
+              : preference.zones.length > 0
+                ? `Vas a recibir urgencias de: ${preference.zones.join(', ')}${preference.radiusKm !== null ? ` y hasta ${preference.radiusKm} km de tu barrio` : ''}. `
+                : preference.radiusKm !== null
+                  ? `Vas a recibir urgencias hasta ${preference.radiusKm} km de tu barrio. `
+                  : 'Todavía no declaraste ningún barrio, así que no vas a recibir urgencias. '}
+            {preference.wholeCity ? null : <a href="/prestador/perfil-publico">Editar mis barrios</a>}
+          </p>
+        </>
+      ) : null}
       {notice ? (
         <p className={styles.resultCount} data-urgente-aviso role="status" style={{ marginTop: 10 }}>
           {notice}

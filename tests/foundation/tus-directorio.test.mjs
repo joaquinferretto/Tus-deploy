@@ -423,20 +423,27 @@ test('MAP N+1 (deterministic): the directory asks for the same reads for 1, 40 a
   }
 })
 
-// SERVICIO-URGENTE-01: who an urgent request of a service in a zone can be offered to. EVERY
-// compatible provider (never a short list: the client does not choose here).
-test('DIRECTORIO urgent candidates: every approved visible provider of that service, unless it declared other zones and not this one; never an unapproved or other-service one', () => {
+// SERVICIO-URGENTE-01: what every provider of a service DECLARED about a zone. Nothing is inferred:
+// having only its own neighbourhood on file means it works there, never "anywhere".
+test('DIRECTORIO urgent candidates: every approved visible provider of that service with the coverage it really declared — its zones, its radius, another zone, or nothing on file; never an unapproved or other-service one', () => {
   const result = runTypeScriptScenario(`${SETUP}
-    for (let i = 0; i < 7; i += 1) await prestador('t-u' + i, { displayName: 'Electricista ' + i, profession: 'electricidad', zone: 'Centro' })
+    for (let i = 0; i < 6; i += 1) await prestador('t-u' + i, { displayName: 'En Sur ' + i, profession: 'electricidad', zone: 'Barrio Sur' })
     await prestador('t-cubre', { displayName: 'Cubre Sur', profession: 'electricidad', zone: 'Libertad', serviceZones: ['Barrio Sur'] })
+    await prestador('t-centro', { displayName: 'Solo Centro', profession: 'electricidad', zone: 'Centro' })
     await prestador('t-otra', { displayName: 'Otra Zona', profession: 'electricidad', zone: 'Libertad', serviceZones: ['Camba Cuá'] })
-    await prestador('t-base', { displayName: 'Vive En Sur', profession: 'electricidad', zone: 'Barrio Sur', serviceZones: ['Camba Cuá'] })
+    await prestador('t-radio', { displayName: 'Con Radio', profession: 'electricidad', zone: 'Centro', coverageRadiusKm: 100 })
+    await prestador('t-nada', { displayName: 'Sin Barrio', profession: 'electricidad', zone: null })
     await prestador('t-plomero', { displayName: 'Plomero', profession: 'plomeria', zone: 'Barrio Sur' })
     await prestador('t-pendiente', { displayName: 'Sin Aprobar', profession: 'electricidad', zone: 'Barrio Sur' }, { status: 'pending' })
     const aptos = await directorio.aptosParaUrgencia({ oficio: 'electricidad', zona: 'Barrio Sur' })
-    console.log(JSON.stringify({ nombres: aptos.map((item) => item.nombrePublico).sort(), forma: Object.keys(aptos[0]).sort(), invalido: await directorio.aptosParaUrgencia({ oficio: 'magia', zona: 'Centro' }) }))
+    const por = (cobertura) => aptos.filter((item) => item.cobertura === cobertura).map((item) => item.nombrePublico).sort()
+    console.log(JSON.stringify({ zonas: por('zonas'), radio: por('radio'), noCubre: por('no_cubre'), sinConfigurar: por('sin_configurar'), total: aptos.length, forma: Object.keys(aptos[0]).sort(), invalido: await directorio.aptosParaUrgencia({ oficio: 'magia', zona: 'Centro' }) }))
   `)
-  assert.deepEqual(result.nombres, ['Cubre Sur', 'Electricista 0', 'Electricista 1', 'Electricista 2', 'Electricista 3', 'Electricista 4', 'Electricista 5', 'Electricista 6', 'Vive En Sur'], 'all nine: more than the five a normal search lists')
-  assert.deepEqual(result.forma, ['nombrePublico', 'perfilId', 'prestadorId', 'tenantId'], 'no contact data travels with a candidate')
+  assert.deepEqual(result.zonas, ['Cubre Sur', 'En Sur 0', 'En Sur 1', 'En Sur 2', 'En Sur 3', 'En Sur 4', 'En Sur 5'], 'its own neighbourhood or one it lists: all seven, more than the five a normal search shows')
+  assert.deepEqual(result.radio, ['Con Radio'], 'a radius it gave, with the zone inside it')
+  assert.deepEqual(result.noCubre, ['Otra Zona', 'Solo Centro'], 'only another neighbourhood on file is NOT coverage of this one')
+  assert.deepEqual(result.sinConfigurar, ['Sin Barrio'], 'nothing on file is told apart from "does not cover"')
+  assert.equal(result.total, 11, 'never the unapproved one nor the plumber')
+  assert.deepEqual(result.forma, ['cobertura', 'nombrePublico', 'perfilId', 'prestadorId', 'tenantId'], 'no contact data travels with a candidate')
   assert.deepEqual(result.invalido, [])
 })

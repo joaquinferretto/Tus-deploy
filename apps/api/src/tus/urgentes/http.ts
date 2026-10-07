@@ -12,7 +12,8 @@ import type { ServicioUrgentes } from './servicio.ts'
 // - GET  /tus/v1/urgentes/mias                         its urgent requests, with their real state.
 // - GET  /tus/v1/prestador/urgentes                    the offers of the provider of the session
 //                                                      (address and zone included).
-// - GET|PUT /tus/v1/prestador/urgentes/preferencia     "Aceptar servicios urgentes" (opt-in).
+// - GET|PUT /tus/v1/prestador/urgentes/preferencia     "Aceptar servicios urgentes" (opt-in) and
+//                                                      "Atiendo en toda la ciudad" (explicit).
 // - POST /tus/v1/prestador/urgentes/:id/asistir        "Puedo asistir": the first one wins.
 // - POST /tus/v1/prestador/urgentes/:id/no-puedo       "No puedo" (from the assigned provider:
 //                                                      gives the assignment back; `reason` optional).
@@ -73,7 +74,8 @@ export function crearRouterUrgentes({ servicio, sessions, admin = {} }: { servic
       if (!context) return
       const resultado = await servicio.preferencia(context.tenantId)
       if (!resultado.ok) return void enviarError(response, 409, resultado.code, 'A provider profile is required')
-      response.status(200).json({ acceptsUrgent: resultado.acceptsUrgent })
+      const { ok: _ok, ...preferencia } = resultado
+      response.status(200).json(preferencia)
     })
   )
 
@@ -82,9 +84,11 @@ export function crearRouterUrgentes({ servicio, sessions, admin = {} }: { servic
     asyncHandler(async (request: Request, response: Response) => {
       const context = await autenticar(request, response, sessions)
       if (!context) return
-      const resultado = await servicio.guardarPreferencia(context.tenantId, comoRegistro(request.body)['acceptsUrgent'])
-      if (!resultado.ok) return void enviarError(response, resultado.code === 'INVALID_REQUEST' ? 422 : 409, resultado.code, resultado.code === 'INVALID_REQUEST' ? 'acceptsUrgent must be true or false' : 'A provider profile is required')
-      response.status(200).json({ acceptsUrgent: resultado.acceptsUrgent })
+      const body = comoRegistro(request.body)
+      const resultado = await servicio.guardarPreferencia(context.tenantId, { acceptsUrgent: body['acceptsUrgent'], wholeCity: body['wholeCity'] })
+      if (!resultado.ok) return void enviarError(response, resultado.code === 'INVALID_REQUEST' ? 422 : 409, resultado.code, resultado.code === 'INVALID_REQUEST' ? 'acceptsUrgent and wholeCity must be true or false' : 'A provider profile is required')
+      const { ok: _ok, ...preferencia } = resultado
+      response.status(200).json(preferencia)
     })
   )
 

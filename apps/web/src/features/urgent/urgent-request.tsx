@@ -211,6 +211,24 @@ export function UrgentRequest(): React.ReactNode {
                             : ''}
                 </span>
                 {item.workId ? <a href={`/trabajos/${encodeURIComponent(item.workId)}`}>Ver el trabajo</a> : null}
+                {/* Its work was cancelled (never swapped by itself): another urgent provider is
+                    searched only if the client asks for it, with a NEW request it sends itself. */}
+                {item.workCancelled && !abierta ? (
+                  <div data-urgente-reintentar style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+                    <span>El trabajo se canceló. ¿Querés que busquemos otro prestador urgente?</span>
+                    <button
+                      className={styles.primary}
+                      onClick={() => {
+                        setDraft({ category: item.category, description: item.description ?? '', address: item.address, zone: item.zone })
+                        setSent(null)
+                        document.querySelector('[data-urgente-form]')?.scrollIntoView({ behavior: 'smooth' })
+                      }}
+                      type="button"
+                    >
+                      Sí, preparar un nuevo pedido urgente
+                    </button>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>

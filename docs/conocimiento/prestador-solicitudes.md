@@ -52,4 +52,8 @@ tocá **No puedo asistir** en Solicitudes. Mientras no hayas enviado presupuesto
 otros prestadores y le avisamos al cliente. Si el trabajo ya avanzó, cancelalo desde [Trabajos](/trabajos) indicando
 el motivo.
 
+Te avisamos de las urgencias de los barrios que declaraste en [Servicios y perfil](/prestador/perfil-publico): el tuyo y
+los que hayas sumado. Si podés ir a cualquier barrio, marcá **Atiendo urgencias en toda la ciudad**. Si no declaraste
+ningún barrio, no vas a recibir urgencias.
+
 Para recibir estos avisos necesitás tener tu WhatsApp vinculado a tu cuenta.

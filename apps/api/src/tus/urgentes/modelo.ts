@@ -154,6 +154,7 @@ export interface VistaUrgentePropia {
   reopenings: number
   provider: { name: string } | null
   workId: string | null
+  workCancelled: boolean
 }
 
 // What a candidate sees of an offer: the address and the zone from the first notice.

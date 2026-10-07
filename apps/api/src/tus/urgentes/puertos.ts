@@ -43,15 +43,19 @@ export interface AlmacenUrgentes {
   // Open broadcasts past their time, oldest first.
   vencidas(input: { ahora: number; limite: number }): Promise<string[]>
   abiertaDeCuenta(cuentaId: string, ahora: number): Promise<SolicitudServicio | null>
+  // The state of the work of a request ('requested', 'cancelled'…), or null without one.
+  estadoDeTrabajo(solicitudId: string): Promise<string | null>
   deCuenta(cuentaId: string, limite: number): Promise<SolicitudServicio[]>
   // The offers of a provider with their request, newest first.
   ofertasDePrestador(prestadorTenantId: string, limite: number): Promise<{ oferta: OfertaUrgente; solicitud: SolicitudServicio }[]>
   listarAdmin(input: { pagina: number; tamano: number }): Promise<{ items: { solicitud: SolicitudServicio; ofertas: OfertaUrgente[] }[]; total: number }>
-  // The preference of a provider (null: that tenant has no public profile).
-  preferencia(prestadorTenantId: string): Promise<boolean | null>
-  guardarPreferencia(prestadorTenantId: string, acepta: boolean, ahora: number): Promise<boolean>
-  // Of those tenants: who opted in, and the account linked to each provider (null: none to be sure of).
-  aceptanUrgencias(tenantIds: readonly string[]): Promise<Set<string>>
+  // What a provider declared (null: that tenant has no public profile): whether it takes urgent
+  // requests, whether it goes anywhere in the city, and the coverage it has on file.
+  preferencia(prestadorTenantId: string): Promise<PreferenciaUrgencias | null>
+  guardarPreferencia(prestadorTenantId: string, cambio: { acepta?: boolean; todaLaCiudad?: boolean }, ahora: number): Promise<boolean>
+  // Of those tenants: who opted in (and whether each one declared the whole city), and the account
+  // linked to each provider (null: none to be sure of).
+  aceptanUrgencias(tenantIds: readonly string[]): Promise<Map<string, { todaLaCiudad: boolean }>>
   cuentasDePrestadores(tenantIds: readonly string[]): Promise<Map<string, string | null>>
 }
 
@@ -76,7 +80,16 @@ export interface DatosTrabajoUrgente {
 
 // Every provider that can take an urgent request of a service in a zone (ServicioDirectorio).
 export interface CandidatosUrgentes {
-  aptosParaUrgencia(input: { oficio: unknown; zona: string }): Promise<{ tenantId: string; prestadorId: string; perfilId: string; nombrePublico: string }[]>
+  // `cobertura`: what that provider declared about the zone (never inferred).
+  aptosParaUrgencia(input: { oficio: unknown; zona: string }): Promise<{ tenantId: string; prestadorId: string; perfilId: string; nombrePublico: string; cobertura: 'zonas' | 'radio' | 'no_cubre' | 'sin_configurar' }[]>
+}
+
+export interface PreferenciaUrgencias {
+  acepta: boolean
+  todaLaCiudad: boolean
+  // What is on file: its own neighbourhood and the ones it lists, and its radius.
+  zonas: string[]
+  radioKm: number | null
 }
 
 export interface AvisoOfertaUrgente {

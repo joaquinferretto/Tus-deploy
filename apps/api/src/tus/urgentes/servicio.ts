@@ -42,6 +42,15 @@ export interface RespuestaUrgente {
   trabajoId: string | null
 }
 
+export interface VistaPreferenciaUrgencias {
+  acceptsUrgent: boolean
+  // Explicit: it goes anywhere in the city.
+  wholeCity: boolean
+  // The neighbourhoods it has on file (its own and the ones it lists) and its radius.
+  zones: string[]
+  radiusKm: number | null
+}
+
 export interface DependenciasUrgentes {
   almacen: AlmacenUrgentes
   cuentas: CuentasUrgentes
@@ -225,14 +234,19 @@ export class ServicioUrgentes {
     return asignada ? { solicitudId: asignada.solicitud.id, servicio: oficio(asignada.solicitud.categoria).label, aceptadaEn: asignada.oferta.aceptadaEn ?? asignada.oferta.actualizadaEn } : null
   }
 
-  async preferencia(prestadorTenantId: string): Promise<{ ok: true; acceptsUrgent: boolean } | { ok: false; code: 'PROVIDER_REQUIRED' }> {
+  // The provider's own switches, and the coverage it has on file (what urgent requests respect).
+  async preferencia(prestadorTenantId: string): Promise<({ ok: true } & VistaPreferenciaUrgencias) | { ok: false; code: 'PROVIDER_REQUIRED' }> {
     const valor = await this.deps.almacen.preferencia(prestadorTenantId)
-    return valor === null ? { ok: false, code: 'PROVIDER_REQUIRED' } : { ok: true, acceptsUrgent: valor }
+    return valor === null ? { ok: false, code: 'PROVIDER_REQUIRED' } : { ok: true, acceptsUrgent: valor.acepta, wholeCity: valor.todaLaCiudad, zones: valor.zonas, radiusKm: valor.radioKm }
   }
 
-  async guardarPreferencia(prestadorTenantId: string, valor: unknown): Promise<{ ok: true; acceptsUrgent: boolean } | { ok: false; code: 'PROVIDER_REQUIRED' | 'INVALID_REQUEST' }> {
-    if (typeof valor !== 'boolean') return { ok: false, code: 'INVALID_REQUEST' }
-    return (await this.deps.almacen.guardarPreferencia(prestadorTenantId, valor, this.now())) ? { ok: true, acceptsUrgent: valor } : { ok: false, code: 'PROVIDER_REQUIRED' }
+  // `acceptsUrgent` and / or `wholeCity`; a field that is not sent is not changed.
+  async guardarPreferencia(prestadorTenantId: string, body: { acceptsUrgent?: unknown; wholeCity?: unknown } | boolean): Promise<({ ok: true } & VistaPreferenciaUrgencias) | { ok: false; code: 'PROVIDER_REQUIRED' | 'INVALID_REQUEST' }> {
+    const pedido = typeof body === 'boolean' ? { acceptsUrgent: body } : body
+    const campos = (['acceptsUrgent', 'wholeCity'] as const).filter((campo) => pedido[campo] !== undefined)
+    if (campos.length === 0 || campos.some((campo) => typeof pedido[campo] !== 'boolean')) return { ok: false, code: 'INVALID_REQUEST' }
+    const guardado = await this.deps.almacen.guardarPreferencia(prestadorTenantId, { ...(pedido.acceptsUrgent !== undefined ? { acepta: pedido.acceptsUrgent as boolean } : {}), ...(pedido.wholeCity !== undefined ? { todaLaCiudad: pedido.wholeCity as boolean } : {}) }, this.now())
+    return guardado ? this.preferencia(prestadorTenantId) : { ok: false, code: 'PROVIDER_REQUIRED' }
   }
 
   // ---- expiry ----------------------------------------------------------------------------------
@@ -262,12 +276,19 @@ export class ServicioUrgentes {
   // ---- internals -------------------------------------------------------------------------------
 
   // Every provider that can be offered this request NOW, checked again each time it is offered:
-  // of that service, visible and approved, covering the zone, that opted in, not the client's own
-  // tenant, and not one already left out of this request.
+  // of that service, visible and approved, that opted in, not the client's own tenant, not one
+  // already left out of this request — and that DECLARED it covers that zone: the zone is among
+  // its neighbourhoods, or inside its radius, or it said it goes anywhere in the city. A provider
+  // with only its own neighbourhood on file gets the urgent requests of that neighbourhood.
   private async candidatos(solicitud: SolicitudServicio, clienteTenantId: string, excluidos: ReadonlySet<string>) {
     const aptos = (await this.deps.candidatos.aptosParaUrgencia({ oficio: solicitud.categoria, zona: solicitud.zona })).filter((item) => item.tenantId !== clienteTenantId && !excluidos.has(item.tenantId))
     const aceptan = await this.deps.almacen.aceptanUrgencias(aptos.map((item) => item.tenantId))
-    const elegidos = aptos.filter((item) => aceptan.has(item.tenantId)).slice(0, CANDIDATOS_URGENTE_MAXIMOS)
+    const elegidos = aptos
+      .filter((item) => {
+        const preferencia = aceptan.get(item.tenantId)
+        return Boolean(preferencia) && (item.cobertura === 'zonas' || item.cobertura === 'radio' || preferencia!.todaLaCiudad)
+      })
+      .slice(0, CANDIDATOS_URGENTE_MAXIMOS)
     const cuentas = await this.deps.almacen.cuentasDePrestadores(elegidos.map((item) => item.tenantId))
     return elegidos.map((item) => ({ ...item, cuentaId: cuentas.get(item.tenantId) ?? null }))
   }
@@ -401,6 +422,9 @@ export class ServicioUrgentes {
       reopenings: solicitud.reaperturasUrgente ?? 0,
       provider: nombre ? { name: nombre } : null,
       workId: asignada ? solicitud.trabajoId : null,
+      // Its work was cancelled afterwards (the normal cancellation, never an automatic swap): the
+      // client may ask, explicitly, for another urgent provider. Nothing is created by itself.
+      workCancelled: Boolean(asignada && solicitud.trabajoId) && (await this.deps.almacen.estadoDeTrabajo(solicitud.id)) === 'cancelled',
     }
   }
 }

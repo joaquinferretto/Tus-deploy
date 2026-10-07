@@ -307,6 +307,11 @@ export class AlmacenUrgentesPrisma implements AlmacenUrgentes {
     return fila ? desdeFila(fila) : null
   }
 
+  async estadoDeTrabajo(solicitudId: string) {
+    const fila = await this.client.trabajo.findFirst({ where: { solicitudId }, select: { estado: true } })
+    return fila ? String(fila['estado']) : null
+  }
+
   async deCuenta(cuentaId: string, limite: number) {
     return (await this.client.solicitudServicio.findMany({ where: { cuentaId, difusionUrgente: true }, orderBy: { creadaEn: 'desc' }, take: limite, include: CON_IMAGENES })).map(desdeFila)
   }
@@ -330,18 +335,21 @@ export class AlmacenUrgentesPrisma implements AlmacenUrgentes {
   }
 
   async preferencia(prestadorTenantId: string) {
-    const fila = await this.client.perfilPublicoPrestador.findFirst({ where: { tenantId: prestadorTenantId }, select: { aceptaUrgencias: true } })
-    return fila ? fila['aceptaUrgencias'] === true : null
+    const fila = await this.client.perfilPublicoPrestador.findFirst({ where: { tenantId: prestadorTenantId }, select: { aceptaUrgencias: true, coberturaTodaLaCiudad: true, zona: true, zonasCobertura: true, radioCoberturaKm: true } })
+    if (!fila) return null
+    const zonas = [fila['zona'], ...(Array.isArray(fila['zonasCobertura']) ? fila['zonasCobertura'] : [])].filter((value): value is string => typeof value === 'string' && value.length > 0)
+    return { acepta: fila['aceptaUrgencias'] === true, todaLaCiudad: fila['coberturaTodaLaCiudad'] === true, zonas: [...new Set(zonas)], radioKm: fila['radioCoberturaKm'] === null || fila['radioCoberturaKm'] === undefined ? null : Number(fila['radioCoberturaKm']) }
   }
 
-  async guardarPreferencia(prestadorTenantId: string, acepta: boolean, ahora: number) {
-    return (await this.client.perfilPublicoPrestador.updateMany({ where: { tenantId: prestadorTenantId }, data: { aceptaUrgencias: acepta, fechaActualizacion: aFecha(ahora) } })).count === 1
+  async guardarPreferencia(prestadorTenantId: string, cambio: { acepta?: boolean; todaLaCiudad?: boolean }, ahora: number) {
+    const data = { ...(cambio.acepta !== undefined ? { aceptaUrgencias: cambio.acepta } : {}), ...(cambio.todaLaCiudad !== undefined ? { coberturaTodaLaCiudad: cambio.todaLaCiudad } : {}), fechaActualizacion: aFecha(ahora) }
+    return (await this.client.perfilPublicoPrestador.updateMany({ where: { tenantId: prestadorTenantId }, data })).count === 1
   }
 
   async aceptanUrgencias(tenantIds: readonly string[]) {
-    if (tenantIds.length === 0) return new Set<string>()
-    const filas = await this.client.perfilPublicoPrestador.findMany({ where: { tenantId: { in: [...tenantIds] }, aceptaUrgencias: true }, select: { tenantId: true } })
-    return new Set(filas.map((fila) => String(fila['tenantId'])))
+    if (tenantIds.length === 0) return new Map<string, { todaLaCiudad: boolean }>()
+    const filas = await this.client.perfilPublicoPrestador.findMany({ where: { tenantId: { in: [...tenantIds] }, aceptaUrgencias: true }, select: { tenantId: true, coberturaTodaLaCiudad: true } })
+    return new Map(filas.map((fila) => [String(fila['tenantId']), { todaLaCiudad: fila['coberturaTodaLaCiudad'] === true }]))
   }
 
   // The same resolver every notice to a provider uses (prestadores.cuenta_id): never a guess.

@@ -29,7 +29,9 @@ const URGENTES = `
   const { crearServicioUrgentes } = await import('./apps/api/src/tus/urgentes/composicion.ts')
   const { TEXTOS_URGENTE } = await import('./apps/api/src/tus/urgentes/modelo.ts')
   const { NotificadorUrgentesWhatsapp, idRespuestaUrgente, PLANTILLA_SERVICIO_URGENTE } = await import('./apps/api/src/tus/asistente/avisos-urgentes.ts')
-  const candidatos = { aptosParaUrgencia: async ({ oficio: o, zona }) => (await prisma.perfilPublicoPrestador.findMany({ where: { visible: true, oficio: o, id: { startsWith: run } } })).map((p) => ({ tenantId: p.tenantId, prestadorId: p.prestadorId, perfilId: p.id, nombrePublico: p.nombrePublico })) }
+  // Stand-in of the directory: the visible profiles of that service; every provider of this
+  // scenario lists the zones the requests are in (the coverage rule has its own tests).
+  const candidatos = { aptosParaUrgencia: async ({ oficio: o, zona }) => (await prisma.perfilPublicoPrestador.findMany({ where: { visible: true, oficio: o, id: { startsWith: run } } })).map((p) => ({ tenantId: p.tenantId, prestadorId: p.prestadorId, perfilId: p.id, nombrePublico: p.nombrePublico, cobertura: 'zonas' })) }
   const urgentes = crearServicioUrgentes({ prisma, cuentas: auth.store, candidatos, trabajos: work, notificador: modulo.avisosUrgentes, env: {}, now: () => reloj })
   compartidos.urgentes = urgentes
   // A provider with its account, its WhatsApp linked (window open) and urgent requests on.
@@ -62,9 +64,6 @@ test('URGENTE WhatsApp PostgreSQL: the acceptance conversation — the client wr
       const juan = await prestadorWa('j', 'Juan Diaz ' + run)
       const joaquin = await clienteWa('joaquin')
 
-      // "plomero urgente ahora" with no address is NOT a broadcast: it stays the search it was.
-      const sinDireccion = await decir(joaquin.wa, 'busco un plomero urgente ahora')
-      out.sinDireccion = [(await urgenteDe(joaquin.cuenta.id)) === null, sinDireccion.join(' ').includes('pedido urgente')]
 
       // 1. One message with the service, the address, the zone and what happened.
       let marca = fakeWa.sent.length
@@ -119,7 +118,6 @@ test('URGENTE WhatsApp PostgreSQL: the acceptance conversation — the client wr
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.sinDireccion, [true, false], '"urgente ahora" without an address keeps showing the first free turnos')
   assert.equal(r.creada.respuesta.length, 1)
   assert.match(r.creada.respuesta[0], /^Listo\. Envié tu pedido urgente de Plomería a 3 prestadores\. El primero que acepte queda asignado y te aviso enseguida\. Si nadie responde en 15 minutos, te lo digo\.$/u)
   assert.deepEqual({ ...r.creada, respuesta: undefined }, { respuesta: undefined, categoria: true, direccion: 'Av. 3 de Abril 1850', zona: 'Barrio Sur', motivo: 'Se me rompió un caño y se inunda la cocina', origen: 'whatsapp', urgencia: 'urgente', difusion: true }, 'the backend read the service, the address, the zone and what happened')
@@ -163,14 +161,18 @@ test('URGENTE WhatsApp PostgreSQL: only what is missing is asked (service, addre
       const gabi = await prestadorWa('g', 'Gabriela Lopez ' + run)
       const flor = await prestadorWa('f', 'Flor Perez ' + run)
       const ana = await clienteWa('ana')
-      // Said as the product names it, with nothing else: the rest is asked, one thing at a time.
-      out.paso1 = await decir(ana.wa, 'Quiero un servicio urgente de plomería')
+      const repos0 = waStore.repositorios()
+      // Urgency and service, no address: the conversation stays urgent and asks ONLY the address.
+      const consultasAntes = await prisma.reserva.count()
+      out.paso1 = await decir(ana.wa, 'Necesito un plomero urgente ahora')
       out.sinCrear = (await urgenteDe(ana.cuenta.id)) === null
-      out.paso2 = await decir(ana.wa, 'Junín 1234, Centro')
+      const borrador = (await repos0.conversaciones.activaDeContacto((await repos0.contactos.buscarPorWaId(ana.wa)).contactId)).state.urgent
+      out.contexto = [borrador.profession === oficio.id, borrador.address, borrador.zone]
       let marca = fakeWa.sent.length
-      out.paso3 = await decir(ana.wa, 'Se rompió un caño del baño')
+      out.paso2 = await decir(ana.wa, 'San Martín 1234, barrio Centro')
       const solicitud = await urgenteDe(ana.cuenta.id)
-      out.creada = [solicitud.direccion, solicitud.zona, solicitud.descripcion, enviadosA(gabi.wa, marca).length, enviadosA(flor.wa, marca).length]
+      out.creada = [solicitud.categoria === oficio.id, solicitud.urgencia, solicitud.difusionUrgente, solicitud.direccion, solicitud.zona, solicitud.descripcion, enviadosA(gabi.wa, marca).length, enviadosA(flor.wa, marca).length]
+      out.sinTurnos = (await prisma.reserva.count()) === consultasAntes
       // Both say no.
       out.no1 = await decir(gabi.wa, '', tocar('nopuedo', solicitud.id))
       marca = fakeWa.sent.length
@@ -183,8 +185,31 @@ test('URGENTE WhatsApp PostgreSQL: only what is missing is asked (service, addre
       contactos += 1
       const anonimo = '5491155911' + String(Date.now()).slice(-4) + contactos
       await decir(anonimo, 'hola')
+      marca = fakeWa.sent.length
       out.anonimo = await decir(anonimo, 'Necesito un plomero urgente en San Martín 450, Centro. Pierde agua el termotanque.')
       out.anonimoSinSolicitud = await prisma.solicitudServicio.count({ where: { direccion: 'San Martín 450' } })
+      out.nadieAvisado = enviadosA(gabi.wa, marca).length + enviadosA(flor.wa, marca).length
+      // "listo" without having linked: still nobody to send it for.
+      out.listoSinVincular = await decir(anonimo, 'listo')
+      // The WhatsApp gets linked to an account (as Mi perfil does): the request is recovered whole.
+      const nueva = await cliente('recien')
+      await prisma.account.update({ where: { id: nueva.id }, data: { emailVerifiedAt: new Date() } })
+      cuentas.set(nueva.id, nueva)
+      const contactoAnonimo = await repos0.contactos.buscarPorWaId(anonimo)
+      await waTx.ejecutar((x) => x.contactos.actualizar({ ...contactoAnonimo, linkedAccountId: nueva.id, linkedTenantId: nueva.tenantId, linkedAt: new Date().toISOString(), version: contactoAnonimo.version + 1 }, contactoAnonimo.version))
+      // Any other message does not send an address to providers: it asks first.
+      out.trasVincular = await decir(anonimo, 'hola, ya estoy')
+      out.todaviaNo = await prisma.solicitudServicio.count({ where: { direccion: 'San Martín 450' } })
+      marca = fakeWa.sent.length
+      out.confirmado = await decir(anonimo, 'sí')
+      const recuperada = await prisma.solicitudServicio.findFirst({ where: { direccion: 'San Martín 450' } })
+      out.recuperada = [recuperada.cuentaId === nueva.id, recuperada.categoria === oficio.id, recuperada.zona, recuperada.descripcion, enviadosA(gabi.wa, marca).length + enviadosA(flor.wa, marca).length]
+      // A request that is waiting is dropped when the person asks for something else in so many words.
+      contactos += 1
+      const otro = await clienteWa('otro' + contactos)
+      await decir(otro.wa, 'Necesito un plomero urgente')
+      await decir(otro.wa, 'mejor quiero reservar un turno para mañana')
+      out.cambioDeIntencion = [(await repos0.conversaciones.activaDeContacto((await repos0.contactos.buscarPorWaId(otro.wa)).contactId)).state.urgent ?? null, (await urgenteDe(otro.cuenta.id)) === null]
 
       // Outside the 24 hour window: the template, or nothing.
       const plantillaMeta = (aprobadas) => new NotificadorUrgentesWhatsapp(waTx, fakeWa, () => reloj, undefined, new WhatsappTemplateService(new Set(aprobadas)))
@@ -206,17 +231,25 @@ test('URGENTE WhatsApp PostgreSQL: only what is missing is asked (service, addre
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.paso1, ['Para enviar tu pedido urgente de Plomería necesito la dirección (calle y número) y el barrio.'])
-  assert.equal(r.sinCrear, true, 'nothing is created while something is missing')
-  assert.deepEqual(r.paso2, ['Contame en una línea qué pasó, así el prestador sabe a qué va.'])
-  assert.match(r.paso3[0], /^Listo\. Envié tu pedido urgente de Plomería a 2 prestadores\./u)
-  assert.deepEqual(r.creada, ['Junín 1234', 'Centro', 'Se rompió un caño del baño', 1, 1])
+  assert.deepEqual(r.paso1, ['Claro. ¿En qué dirección necesitás el servicio? Indicame calle, altura y barrio si lo sabés.'], '"plomero urgente ahora": the urgent context is kept and only the address is asked, never turnos')
+  assert.equal(r.sinCrear, true, 'nothing is created while the address is missing')
+  assert.deepEqual(r.contexto, [true, null, null], 'the service stays plumbing and the request stays urgent')
+  assert.match(r.paso2[0], /^Listo\. Envié tu pedido urgente de Plomería a 2 prestadores\./u)
+  assert.deepEqual(r.creada, [true, 'urgente', true, 'San Martín 1234', 'Centro', 'Pedido urgente de Plomería', 1, 1], 'with the address and the zone it is created and offered; what happened is optional')
+  assert.equal(r.sinTurnos, true)
   assert.deepEqual(r.no1, ['Listo, registré que no podés asistir. Gracias por responder.'])
   assert.deepEqual(r.no2, ['Listo, registré que no podés asistir. Gracias por responder.'])
   assert.deepEqual(r.cerrada, ['cerrada', 'todos_rechazaron', ['Ningún prestador pudo tomar tu solicitud urgente de Plomería. Podés pedirme los prestadores de Plomería y elegir uno.'], 0], 'everybody said no: closed, the client told, no work')
   assert.deepEqual(r.tarde, ['Esta solicitud urgente ya no está disponible.'])
   assert.match(r.anonimo[0], /^Tengo todo para tu pedido urgente de Plomería\. Para enviarlo necesito saber quién sos/u)
   assert.equal(r.anonimoSinSolicitud, 0, 'an address is never sent to providers for somebody TUS cannot identify')
+  assert.equal(r.nadieAvisado, 0)
+  assert.match(r.listoSinVincular[0], /^Tengo todo para tu pedido urgente de Plomería\. Para enviarlo necesito saber quién sos/u)
+  assert.deepEqual(r.trasVincular, ['Ya te identifiqué. Tengo tu pedido urgente de Plomería en San Martín 450, Centro. ¿Lo envío a los prestadores?'], 'after linking, the request is recovered: service, address and reason are not asked again')
+  assert.equal(r.todaviaNo, 0, 'and it only leaves when the person says so')
+  assert.match(r.confirmado[0], /^Listo\. Envié tu pedido urgente de Plomería a 2 prestadores\./u)
+  assert.deepEqual(r.recuperada, [true, true, 'Centro', 'Pierde agua el termotanque', 2])
+  assert.deepEqual(r.cambioDeIntencion, [null, true], 'asking for a turno in so many words leaves the urgent request')
   assert.deepEqual(r.sinPlantilla, [{ enviada: false, motivo: 'requiere_plantilla' }, 0], 'outside the window and without the approved template nothing is written (never free text)')
   assert.deepEqual(r.plantilla, {
     resultado: { enviada: true },

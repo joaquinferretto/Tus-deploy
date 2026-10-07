@@ -24,7 +24,17 @@ export interface OwnUrgentRequest {
   reopenings: number
   provider: { name: string } | null
   workId: string | null
+  // Its work was cancelled afterwards: the client may ask for another urgent provider.
+  workCancelled: boolean
   message?: string
+}
+
+// What the provider declared: the switch, "toda la ciudad", and the coverage it has on file.
+export interface UrgentPreference {
+  acceptsUrgent: boolean
+  wholeCity: boolean
+  zones: string[]
+  radiusKm: number | null
 }
 
 // What a provider sees of an offer: the address and the zone from the first moment.
@@ -93,16 +103,17 @@ export function createUrgentClient(session: TusWebSession, fetchImpl: Fetch = fe
     mine: () => items<OwnUrgentRequest>('/tus/v1/urgentes/mias'),
     offers: () => items<UrgentOffer>('/tus/v1/prestador/urgentes'),
     // null: this account has no provider profile.
-    async preference(): Promise<boolean | null> {
+    async preference(): Promise<UrgentPreference | null> {
       const { status, body } = await request('/tus/v1/prestador/urgentes/preferencia')
       if (status === 409) return null
-      if (status !== 200) throw new Error(`urgent preference failed (${status})`)
-      return body?.['acceptsUrgent'] === true
+      if (status !== 200 || !body) throw new Error(`urgent preference failed (${status})`)
+      return toPreference(body)
     },
-    async savePreference(acceptsUrgent: boolean): Promise<boolean> {
-      const { status, body } = await request('/tus/v1/prestador/urgentes/preferencia', { method: 'PUT', body: JSON.stringify({ acceptsUrgent }) })
-      if (status !== 200) throw new Error(`urgent preference failed (${status})`)
-      return body?.['acceptsUrgent'] === true
+    // Only the field that is sent changes.
+    async savePreference(change: { acceptsUrgent?: boolean; wholeCity?: boolean }): Promise<UrgentPreference> {
+      const { status, body } = await request('/tus/v1/prestador/urgentes/preferencia', { method: 'PUT', body: JSON.stringify(change) })
+      if (status !== 200 || !body) throw new Error(`urgent preference failed (${status})`)
+      return toPreference(body)
     },
     // The answer always carries what happened in words ("ya fue tomada…"), also when it lost.
     async answer(id: string, decision: 'asistir' | 'no-puedo', reason?: string): Promise<UrgentAnswer> {
@@ -110,6 +121,15 @@ export function createUrgentClient(session: TusWebSession, fetchImpl: Fetch = fe
       if (typeof body?.['message'] !== 'string') throw new Error(`urgent answer failed (${status})`)
       return { status: String(body['status'] ?? ''), message: body['message'], workId: typeof body['workId'] === 'string' ? body['workId'] : null }
     },
+  }
+}
+
+function toPreference(body: Record<string, unknown>): UrgentPreference {
+  return {
+    acceptsUrgent: body['acceptsUrgent'] === true,
+    wholeCity: body['wholeCity'] === true,
+    zones: Array.isArray(body['zones']) ? body['zones'].filter((zone): zone is string => typeof zone === 'string') : [],
+    radiusKm: typeof body['radiusKm'] === 'number' ? body['radiusKm'] : null,
   }
 }
 

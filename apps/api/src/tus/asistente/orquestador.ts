@@ -1997,60 +1997,78 @@ export class OrquestadorConversacion {
     }
   }
 
-  // SERVICIO-URGENTE-01. A client asks for an urgent service: the service, the address, the zone
-  // and what happened are read from the message by the backend; only what is missing is asked;
-  // with everything, the request is created and offered to every compatible provider at once.
-  // It starts when the message asks for a service with urgency AND gives an address, or names the
-  // urgent service as such; "plomero urgente ahora" alone still shows the first free turnos.
+  // SERVICIO-URGENTE-01. A client asks for an urgent service. The service, the address, the zone
+  // and what happened are read from the message by the backend; only what is missing is asked
+  // (the address first); with the service, the address and the zone, the request is created and
+  // offered to every compatible provider at once.
+  // It starts when the message asks for a service with urgency ("necesito un plomero urgente
+  // ahora"), with or without an address. From then on the conversation stays urgent — it does not
+  // fall back to turnos — until the request is sent, the person drops it, or asks for something
+  // else in so many words.
   private async pedidoUrgente(turn: Turno, actor: ActorAsistente, input: { text: string; replyId: string | null }, correlationId: string): Promise<MensajeSaliente[] | null> {
     const domain = this.deps.domain
     const text = input.text
     if (!text || input.replyId || typeof domain.crearUrgente !== 'function') return null
     const state = turn.conversation.state
     const ahora = this.now()
-    const borrador = state.urgent && ahora - state.urgent.at <= 15 * 60_000 ? state.urgent : null
+    // Kept for an hour: long enough to link the WhatsApp and come back.
+    const borrador = state.urgent && ahora - state.urgent.at <= 60 * 60_000 ? state.urgent : null
     const datos = extraerNecesidad(text, ahora)
     const leido = leerUrgente(text, { zona: datos.zone ?? null, suelta: Boolean(borrador && !borrador.address) })
-    const inicia = Boolean(datos.profession) && leido.urgente && Boolean(leido.direccion || leido.explicito)
+    const inicia = leido.urgente && Boolean(datos.profession || leido.explicito)
     if (!borrador && !inicia) return null
     const conversationId = turn.conversation.conversationId
-    if (borrador && !inicia && /^\s*(?:no|cancelar|cancela|dejalo|dej[aá]|olvidalo|nada)\b[\s.!]*$/iu.test(text)) {
-      await this.actualizarEstado(conversationId, { urgent: null })
-      return [{ type: 'text', text: 'Listo, no envié ningún pedido urgente.' }]
+    if (borrador && !inicia) {
+      if (/^\s*(?:no gracias|no|cancelar|cancela|dejalo|dej[aá]|olvidalo|nada)(?![\p{L}\p{N}])[\s.!]*$/iu.test(text)) {
+        await this.actualizarEstado(conversationId, { urgent: null })
+        return [{ type: 'text', text: 'Listo, no envié ningún pedido urgente.' }]
+      }
+      // The person asks for something else in so many words (a turno, a payment, its works…):
+      // the urgent request is dropped and that message is handled as what it is.
+      const otra = detectarIntencion(text)
+      if (!leido.direccion && !datos.zone && ['reserva', 'trabajos', 'presupuesto', 'pago', 'identidad', 'postulaciones', 'conocimiento'].includes(otra)) {
+        await this.actualizarEstado(conversationId, { urgent: null })
+        return null
+      }
     }
-    // While the address is being asked, a message that is a street and a number is the address.
-    const direccion = leido.direccion ?? borrador?.address ?? null
-    // ...and once the rest is known, what the person writes is what happened.
-    const eraRespuesta = Boolean(borrador) && !inicia && !leido.direccion && !datos.zone && !datos.profession
     const pedido = {
       profession: datos.profession ?? borrador?.profession ?? null,
-      address: direccion,
+      address: leido.direccion ?? borrador?.address ?? null,
       zone: datos.zone ?? borrador?.zone ?? null,
-      problem: leido.problema ?? (eraRespuesta && borrador?.address && borrador.zone && text.trim().length >= 5 ? text.trim().slice(0, 300) : null) ?? borrador?.problem ?? null,
+      // What happened is read from the message that asks or that gives the address; a loose
+      // follow-up ("listo", "hola, ya estoy") is never taken as the reason.
+      problem: (inicia || leido.direccion ? leido.problema : null) ?? borrador?.problem ?? null,
       at: ahora,
+      awaiting: borrador?.awaiting ?? null,
     }
     turn.intencion = 'buscar'
     turn.canal.evento?.({ type: 'routing', intent: 'buscar' })
-    const preguntar = async (texto: string): Promise<MensajeSaliente[]> => {
-      await this.actualizarEstado(conversationId, { urgent: pedido, currentIntent: 'buscar', lowConfidenceCount: 0, suggestion: null, pendingConfirmationId: null })
+    const preguntar = async (texto: string, awaiting: 'account' | null = null): Promise<MensajeSaliente[]> => {
+      await this.actualizarEstado(conversationId, { urgent: { ...pedido, awaiting }, currentIntent: 'buscar', lowConfidenceCount: 0, suggestion: null, pendingConfirmationId: null })
       return [{ type: 'text', text: texto }]
     }
     if (!pedido.profession) return preguntar('¿Qué servicio urgente necesitás? Por ejemplo: electricista, plomero, gasista.')
     const servicio = oficio(pedido.profession).label
-    if (!pedido.address && !pedido.zone) return preguntar(`Para enviar tu pedido urgente de ${servicio} necesito la dirección (calle y número) y el barrio.`)
-    if (!pedido.address) return preguntar(`¿Cuál es la dirección (calle y número) en ${pedido.zone}?`)
+    // Only what is missing, the address first.
+    if (!pedido.address) return preguntar('Claro. ¿En qué dirección necesitás el servicio? Indicame calle, altura y barrio si lo sabés.')
     if (!pedido.zone) return preguntar(`¿En qué barrio queda ${pedido.address}?`)
-    if (!pedido.problem) return preguntar('Contame en una línea qué pasó, así el prestador sabe a qué va.')
     const cuenta = cuentaDeSolicitud(actor)
     if (!cuenta) {
-      // The request is kept: once the person is identified, any message sends it.
-      await this.actualizarEstado(conversationId, { urgent: pedido, currentIntent: 'buscar', lowConfidenceCount: 0 })
-      return turn.canal.id === 'whatsapp'
-        ? [{ type: 'text', text: `Tengo todo para tu pedido urgente de ${servicio}. Para enviarlo necesito saber quién sos: vinculá este WhatsApp con tu cuenta TUS (Mi perfil → Vincular este WhatsApp) y escribime "listo".` }]
-        : [{ type: 'text', text: `Tengo todo para tu pedido urgente de ${servicio}. Iniciá sesión en TUS y escribime "listo" para enviarlo.` }]
+      // Kept, and NOTHING is sent: an address never reaches providers for somebody TUS cannot
+      // identify. Once the person is identified the request is recovered as it is.
+      return preguntar(
+        turn.canal.id === 'whatsapp'
+          ? `Tengo todo para tu pedido urgente de ${servicio}. Para enviarlo necesito saber quién sos: vinculá este WhatsApp con tu cuenta TUS (Mi perfil → Vincular este WhatsApp) y escribime "listo".`
+          : `Tengo todo para tu pedido urgente de ${servicio}. Iniciá sesión en TUS y escribime "listo" para enviarlo.`,
+        'account'
+      )
     }
+    // It was waiting for the person to be identified: the request is recovered whole (nothing is
+    // asked again) and it leaves when the person says so — never because of an unrelated message.
+    if (pedido.awaiting === 'account' && !inicia && !/^\s*(?:listo|lista|ya|dale|s[ií]|ok|okay|okey|hecho|envi[aá]lo|envi[aá]|mand[aá]lo|mand[aá]|ya est[aá]|ya (?:lo |la |me )?vincul[eé]|confirmo|adelante)(?![\p{L}\p{N}])/iu.test(text))
+      return preguntar(`Ya te identifiqué. Tengo tu pedido urgente de ${servicio} en ${pedido.address}, ${pedido.zone}. ¿Lo envío a los prestadores?`, 'account')
     try {
-      const creado = await domain.crearUrgente(cuenta, { profession: pedido.profession, description: pedido.problem, address: pedido.address, zone: pedido.zone, origin: turn.canal.id === 'whatsapp' ? 'whatsapp' : 'web_assistant' })
+      const creado = await domain.crearUrgente(cuenta, { profession: pedido.profession, description: pedido.problem ?? `Pedido urgente de ${servicio}`, address: pedido.address, zone: pedido.zone, origin: turn.canal.id === 'whatsapp' ? 'whatsapp' : 'web_assistant' })
       if (creado.ok) {
         await this.actualizarEstado(conversationId, { urgent: null, currentIntent: 'buscar', lowConfidenceCount: 0, suggestion: null, pendingConfirmationId: null })
         this.metric('whatsapp.urgent_request', { created: true, state: creado.estado })
@@ -2059,9 +2077,18 @@ export class OrquestadorConversacion {
       this.metric('whatsapp.urgent_request', { created: false, code: creado.code })
       if (creado.code === 'INVALID_REQUEST') {
         const campos = creado.fields ?? []
-        if (campos.includes('address')) return preguntar('No pude leer la dirección. Decime la calle y el número, por ejemplo "Av. 3 de Abril 1850".')
-        if (campos.includes('zone')) return preguntar('No reconozco ese barrio. ¿En qué barrio de la ciudad es?')
-        if (campos.includes('description')) return preguntar('Contame en una línea qué pasó, sin teléfonos ni links.')
+        if (campos.includes('address')) {
+          pedido.address = null
+          return preguntar('No pude leer la dirección. Decime la calle y la altura, por ejemplo "Av. 3 de Abril 1850".')
+        }
+        if (campos.includes('zone')) {
+          pedido.zone = null
+          return preguntar('No reconozco ese barrio. ¿En qué barrio de la ciudad es?')
+        }
+        if (campos.includes('description')) {
+          pedido.problem = null
+          return preguntar('Contame en una línea qué pasó, sin teléfonos ni links.')
+        }
       }
       await this.actualizarEstado(conversationId, { urgent: null })
       const motivo =

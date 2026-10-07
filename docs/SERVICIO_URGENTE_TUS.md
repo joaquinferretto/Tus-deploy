@@ -28,7 +28,8 @@ No hay una arquitectura paralela.
 Lo nuevo (migración `20261112100000_tus_servicio_urgente`):
 
 - `solicitudes_servicio`: `direccion`, `difusion_urgente`, `cierre_urgente`, `reaperturas_urgente`.
-- `perfiles_publicos_prestador.acepta_urgencias` (por defecto **no**).
+- `perfiles_publicos_prestador.acepta_urgencias` (por defecto **no**) y
+  `cobertura_toda_la_ciudad` (por defecto **no**).
 - `ofertas_urgentes`: una fila por candidato; también es el historial de quién aceptó y quién renunció.
 - La FK `fk_trabajos_solicitud_asignada` pasa a ser diferible (sigue chequeándose al instante salvo
   en la transacción de reasignación).
@@ -46,10 +47,26 @@ Se ofrece a **todos** los que cumplen, no a una lista corta:
 
 1. del servicio pedido, con perfil visible y prestador aprobado;
 2. que activaron **Aceptar servicios urgentes**;
-3. que cubren el barrio: lo declaran (propio o de cobertura), o está dentro de su radio, o solo
-   tienen cargado su propio barrio (nunca dijeron a dónde no van). Quien declaró otras zonas y no
-   esa queda afuera;
+3. que **declararon** que cubren ese barrio;
 4. que no son el propio cliente.
+
+### Cobertura: solo lo que el prestador declaró
+
+Nada se infiere. Tener cargado solo su barrio significa que atiende **ese** barrio, no cualquiera.
+
+| Qué tiene cargado el prestador | Recibe la urgencia de un barrio |
+| --- | --- |
+| Ese barrio es el suyo (`zona`) o uno de los que lista (`zonas_cobertura`) | Sí |
+| Un radio (`radio_cobertura_km`) y el barrio queda dentro | Sí |
+| **Atiendo urgencias en toda la ciudad** (`cobertura_toda_la_ciudad`, explícito) | Sí, de cualquier barrio |
+| Otros barrios, y no ese | No |
+| Ningún barrio ni radio (cobertura sin configurar) | No |
+
+"Toda la ciudad" es un interruptor explícito del prestador, junto a "Aceptar servicios urgentes"
+(`/prestador/solicitudes`). El panel le dice de qué barrios va a recibir urgencias, o que no va a
+recibir ninguna si no declaró nada. Hoy ese interruptor se usa solo para ofrecer urgencias: la
+búsqueda normal y el perfil público siguen mostrando los barrios declarados (pendiente si se quiere
+llevarlo también ahí).
 
 Un candidato al que no se le puede escribir (sin cuenta vinculada, sin WhatsApp, fuera de 24 h sin
 plantilla, conversación tomada por un operador, fallo de envío) queda registrado con el motivo y
@@ -106,10 +123,14 @@ El historial queda en un solo expediente:
 
 Tope: 3 reaperturas por solicitud; después se cierra y se avisa al cliente.
 
-**Con avances no hay reasignación automática.** El prestador recibe que debe cancelar el trabajo
-desde Mis trabajos. Rige la cancelación normal del trabajo (motivo obligatorio; con seña pagada la
-resuelve soporte). Falta definir como política de producto si en ese caso TUS debe ofrecerle al
-cliente una nueva solicitud urgente.
+**Con avances no hay reasignación automática** (presupuesto, diagnóstico, evidencia, mensajes,
+seña o inicio). El prestador recibe que debe cancelar el trabajo desde Mis trabajos. Rige la
+cancelación normal del trabajo (motivo obligatorio; con seña pagada la resuelve soporte).
+
+Después de esa cancelación TUS **no crea otra urgencia por su cuenta**. En `/urgente` el cliente ve
+"El trabajo se canceló. ¿Querés que busquemos otro prestador urgente?" y, si acepta, se le prepara
+un pedido nuevo con los mismos datos, que envía él. El aviso equivalente por WhatsApp queda
+pendiente.
 
 ## Cierres
 
@@ -142,11 +163,34 @@ Motivo: {{5}}
 - Cada botón lleva `urgente:asistir:<id>` o `urgente:nopuedo:<id>`. Quién responde es la cuenta
   vinculada a ese número.
 
-El cliente puede pedirlo por WhatsApp en un mensaje ("Necesito un electricista urgente, estoy en
-Av. 3 de Abril 1850, Barrio Sur. Se me cortó toda la luz"): el backend lee servicio, dirección,
-barrio y motivo y solo pregunta lo que falte. Empieza cuando el mensaje pide un servicio con
-urgencia **y** da una dirección, o nombra el "servicio urgente" como tal. "Plomero urgente ahora",
-sin dirección, sigue mostrando los primeros turnos libres como siempre.
+### El pedido del cliente por WhatsApp
+
+El cliente puede pedirlo en un mensaje ("Necesito un electricista urgente, estoy en Av. 3 de Abril
+1850, Barrio Sur. Se me cortó toda la luz"): el backend lee servicio, dirección, barrio y motivo.
+
+- Empieza cuando el mensaje pide un servicio **con urgencia** ("urgente", "urgencia",
+  "emergencia"), con o sin dirección. "Ahora" o "ya" solos no son urgencia: piden el primer turno.
+- Solo se pregunta lo que falta, primero la dirección: "Necesito un plomero urgente ahora" →
+  "Claro. ¿En qué dirección necesitás el servicio? Indicame calle, altura y barrio si lo sabés." →
+  "San Martín 1234, barrio Centro" → se crea y se difunde. El motivo es opcional.
+- Mientras tanto la conversación sigue siendo urgente: no vuelve al flujo de turnos, salvo que la
+  persona lo descarte ("no", "cancelar") o pida otra cosa con todas las letras (un turno, un pago,
+  sus trabajos).
+- El pedido en armado se conserva una hora.
+
+### Cliente sin cuenta identificada
+
+Con todos los datos pero sin saber quién pide, **no se envía nada**: ni dirección ni aviso a ningún
+prestador. El pedido queda guardado y se le pide vincular el WhatsApp. Una vez vinculado se
+recupera completo (no se vuelve a preguntar servicio, dirección ni motivo) y se envía cuando la
+persona lo confirma ("listo", "sí"); un mensaje cualquiera no lo dispara: se le pregunta
+"¿Lo envío a los prestadores?".
+
+## Fotos
+
+**Pendiente, no soportado.** Una urgencia no lleva fotos todavía: ni el formulario Web ni WhatsApp
+las adjuntan y el aviso al prestador no las incluye. La tabla de fotos de solicitudes existe, pero
+este flujo no la usa.
 
 ## Pagos
 
@@ -161,7 +205,7 @@ cliente → seña del 50 % antes de iniciar → saldo al finalizar.
 | `POST /tus/v1/urgentes` | Cliente | Crea y difunde |
 | `GET /tus/v1/urgentes/mias` | Cliente | Sus urgencias con estado real |
 | `GET /tus/v1/prestador/urgentes` | Prestador | Sus ofertas (con dirección) |
-| `GET/PUT /tus/v1/prestador/urgentes/preferencia` | Prestador | Aceptar servicios urgentes |
+| `GET/PUT /tus/v1/prestador/urgentes/preferencia` | Prestador | Aceptar servicios urgentes; toda la ciudad; su cobertura cargada |
 | `POST /tus/v1/prestador/urgentes/:id/asistir` | Prestador | Puedo asistir |
 | `POST /tus/v1/prestador/urgentes/:id/no-puedo` | Prestador | No puedo / renuncia (`reason` opcional) |
 | `GET /tus/v1/admin/urgentes` | Admin | Solicitud, candidatos, respuestas, entregas |
@@ -178,8 +222,8 @@ ofertas), sección "Servicios urgentes" en Admin → Solicitudes.
 | `TUS_URGENTE_VIGENCIA_MINUTOS` | Minutos de espera (opcional; 15) |
 | `WHATSAPP_APPROVED_TEMPLATES` | Agregar `servicio_urgente_disponible` cuando Meta la apruebe |
 
-Además: cada prestador tiene que activar **Aceptar servicios urgentes** y tener su WhatsApp
-vinculado a la cuenta.
+Además: cada prestador tiene que activar **Aceptar servicios urgentes**, tener declarados sus
+barrios (o marcar toda la ciudad) y tener su WhatsApp vinculado a la cuenta.
 
 ## Verificación
 
@@ -188,6 +232,8 @@ vinculado a la cuenta.
   carrera tras la renuncia, trabajo con avances, rutas HTTP.
 - `tests/foundation/tus-urgentes-whatsapp-postgres.test.mjs` (PostgreSQL real + asistente): la
   conversación de aceptación completa y los parámetros de la plantilla.
-- `tests/foundation/tus-directorio.test.mjs`: la regla de candidatos.
+- `tests/foundation/tus-directorio.test.mjs`: qué declaró cada prestador sobre un barrio.
+- `scripts/dev/servicio-urgente-smoke.mjs`: navegador real (1280 y 390 px) contra API, Web y
+  PostgreSQL locales: preferencia del prestador, pedido del cliente, oferta, toma, renuncia y Admin.
 
 Meta es un sustituto en todos: prueban el código, no una entrega real.

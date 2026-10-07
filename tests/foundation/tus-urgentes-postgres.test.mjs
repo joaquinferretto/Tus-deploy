@@ -25,11 +25,10 @@ const SETUP = `${turnosPagosSetup(url)}
   const { zonasCorrientes } = await import('./apps/api/src/tus/solicitudes/modelo.ts')
   const ZONA = zonasCorrientes()[0].nombre
   const OTRA_ZONA = zonasCorrientes()[1].nombre
-  // The directory's rule, read from the same tables: visible profiles of that service that cover
-  // the zone (or declare no coverage).
+  // The directory's rule, read from the same tables: the visible profiles of that service, each
+  // with what it DECLARED about the zone (tus-directorio.test.mjs covers the real directory).
   const candidatos = { aptosParaUrgencia: async ({ oficio: o, zona }) => (await prisma.perfilPublicoPrestador.findMany({ where: { visible: true, oficio: o, id: { startsWith: run } } }))
-    .filter((p) => p.zonasCobertura.length === 0 || [p.zona, ...p.zonasCobertura].includes(zona))
-    .map((p) => ({ tenantId: p.tenantId, prestadorId: p.prestadorId, perfilId: p.id, nombrePublico: p.nombrePublico })) }
+    .map((p) => { const declaradas = [...(p.zona ? [p.zona] : []), ...p.zonasCobertura]; return { tenantId: p.tenantId, prestadorId: p.prestadorId, perfilId: p.id, nombrePublico: p.nombrePublico, cobertura: declaradas.includes(zona) ? 'zonas' : declaradas.length === 0 && p.radioCoberturaKm === null ? 'sin_configurar' : 'no_cubre' } }) }
   const avisos = []
   const sinWhatsapp = new Set()
   const notificador = {
@@ -49,7 +48,8 @@ const SETUP = `${turnosPagosSetup(url)}
       await prisma.prestador.updateMany({ where: { tenantId: p.tenantId }, data: { cuentaId: cuenta.id } })
     }
     if (opciones.acepta !== false) await urgentes.guardarPreferencia(p.tenantId, true)
-    if (opciones.cobertura) await prisma.perfilPublicoPrestador.updateMany({ where: { tenantId: p.tenantId }, data: { zona: opciones.cobertura[0], zonasCobertura: opciones.cobertura } })
+    if (opciones.cobertura) await prisma.perfilPublicoPrestador.updateMany({ where: { tenantId: p.tenantId }, data: { zona: opciones.cobertura[0] ?? null, zonasCobertura: opciones.cobertura } })
+    if (opciones.todaLaCiudad) await urgentes.guardarPreferencia(p.tenantId, { wholeCity: true })
     return { ...p, nombre, cuentaId: cuenta?.id ?? null, actor: { tenantId: p.tenantId, cuentaId: cuenta?.id ?? 'sin-cuenta' } }
   }
   async function clienteVerificado(tag) {
@@ -481,7 +481,7 @@ test('URGENTE HTTP PostgreSQL: the routes take who acts from the session only â€
   assert.deepEqual(r.ofertasA, [[true, 'notificada', true, 'Av. 3 de Abril 1850', true, 'Cliente A.']], 'the provider sees the address and the zone from the first moment')
   assert.equal(r.ofertasDeOtro, 0)
   assert.equal(r.clienteNoVeOfertas, 0)
-  assert.deepEqual(r.preferencia, [{ acceptsUrgent: false }, 422, { acceptsUrgent: true }, 409], 'off by default; only the provider turns it on')
+  assert.deepEqual(r.preferencia, [{ acceptsUrgent: false, wholeCity: false, zones: ['Centro'], radiusKm: null }, 422, { acceptsUrgent: true, wholeCity: false, zones: ['Centro'], radiusKm: null }, 409], 'off by default; only the provider turns it on; its coverage on file is told back')
   assert.deepEqual([r.ajeno.status, r.ajeno.body.status], [404, 'no_candidato'])
   assert.deepEqual(r.gana, [200, 'asignado', 'string'])
   assert.deepEqual(r.pierde, [409, 'ya_tomada', 'Esta solicitud ya fue tomada por otro prestador.', null])
@@ -502,4 +502,45 @@ test('URGENTE HTTP PostgreSQL: the routes take who acts from the session only â€
     // The provider that turned urgent requests on meanwhile joined the second round.
     candidatos: [['Flor Perez', 'notificada', 2, true, false, false, null], ['Gabriela Lopez', 'renuncio', 1, true, true, true, 'Me surgiÃ³ otra urgencia'], ['ReciÃ©n Llegado', 'notificada', 2, true, false, false, null]],
   }, 'Admin reads the request, its candidates, who took it and who gave it back')
+})
+
+test('URGENTE PostgreSQL cobertura: an urgent request reaches only who DECLARED that zone â€” its own neighbourhood, a neighbourhood it lists, or the whole city; a provider with only another neighbourhood on file, or with no coverage on file, is not a candidate', { skip }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const propio = await prestadorUrgente('p', 'Barrio Propio ' + run)
+      const declarado = await prestadorUrgente('d', 'Lo Declaro ' + run, { cobertura: [OTRA_ZONA, ZONA] })
+      const otro = await prestadorUrgente('o', 'Solo Otro Barrio ' + run, { cobertura: [OTRA_ZONA] })
+      const ciudad = await prestadorUrgente('c', 'Toda La Ciudad ' + run, { cobertura: [OTRA_ZONA], todaLaCiudad: true })
+      const sinConfigurar = await prestadorUrgente('s', 'Sin Cobertura ' + run, { cobertura: [] })
+      const sinConfigurarCiudad = await prestadorUrgente('t', 'Sin Barrio Pero Ciudad ' + run, { cobertura: [], todaLaCiudad: true })
+      const ana = await clienteVerificado('ana')
+      const creada = await pedir(ana)
+      const o = await ofertas(creada.solicitud.id)
+      out.candidatos = { propio: resumen(o[propio.tenantId]), declarado: resumen(o[declarado.tenantId]), otro: resumen(o[otro.tenantId]), ciudad: resumen(o[ciudad.tenantId]), sinConfigurar: resumen(o[sinConfigurar.tenantId]), sinConfigurarCiudad: resumen(o[sinConfigurarCiudad.tenantId]) }
+      out.notificados = creada.solicitud.notified
+      // What each provider is told about its own coverage.
+      const pref = async (p) => { const x = await urgentes.preferencia(p.tenantId); return [x.acceptsUrgent, x.wholeCity, x.zones, x.radiusKm] }
+      out.preferencias = { propio: await pref(propio), otro: await pref(otro), ciudad: await pref(ciudad), sinConfigurar: await pref(sinConfigurar) }
+      // The switch is the provider's and can be turned off again; a field not sent is not changed.
+      const apagada = await urgentes.guardarPreferencia(ciudad.tenantId, { wholeCity: false })
+      out.apagada = [apagada.ok, apagada.acceptsUrgent, apagada.wholeCity]
+      out.invalida = [(await urgentes.guardarPreferencia(ciudad.tenantId, {})).code, (await urgentes.guardarPreferencia(ciudad.tenantId, { wholeCity: 'si' })).code]
+      // Another request in the other zone: now it is the turn of who declared THAT one.
+      const beto = await clienteVerificado('beto')
+      const enOtra = await pedir(beto, { zone: OTRA_ZONA })
+      const o2 = await ofertas(enOtra.solicitud.id)
+      out.enOtraZona = { propio: resumen(o2[propio.tenantId]), declarado: resumen(o2[declarado.tenantId]), otro: resumen(o2[otro.tenantId]), ciudad: resumen(o2[ciudad.tenantId]), sinConfigurar: resumen(o2[sinConfigurar.tenantId]), sinConfigurarCiudad: resumen(o2[sinConfigurarCiudad.tenantId]) }
+    } finally { await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.candidatos, { propio: 'notificada', declarado: 'notificada', otro: null, ciudad: 'notificada', sinConfigurar: null, sinConfigurarCiudad: 'notificada' }, 'only who declared that zone (or the whole city) is offered the request')
+  assert.equal(r.notificados, 4)
+  assert.deepEqual(r.preferencias.propio, [true, false, ['Centro'], null])
+  assert.deepEqual(r.preferencias.otro.slice(0, 2), [true, false])
+  assert.deepEqual(r.preferencias.ciudad.slice(0, 2), [true, true])
+  assert.deepEqual(r.preferencias.sinConfigurar, [true, false, [], null], 'no coverage on file: told so, and not a candidate')
+  assert.deepEqual(r.apagada, [true, true, false])
+  assert.deepEqual(r.invalida, ['INVALID_REQUEST', 'INVALID_REQUEST'])
+  assert.deepEqual(r.enOtraZona, { propio: null, declarado: 'notificada', otro: 'notificada', ciudad: 'notificada', sinConfigurar: null, sinConfigurarCiudad: 'notificada' }, 'having only its own neighbourhood on file never means "anywhere"')
 })

@@ -3089,6 +3089,8 @@ model PerfilPublicoPrestador {
   aceptaSolicitudes      Boolean  @default(true) @map("acepta_solicitudes")
   // SERVICIO-URGENTE-01: receives the notice of urgent requests of its services (opt-in).
   aceptaUrgencias        Boolean  @default(false) @map("acepta_urgencias")
+  // Explicit declaration: it goes anywhere in the city. Used to offer urgent requests.
+  coberturaTodaLaCiudad  Boolean  @default(false) @map("cobertura_toda_la_ciudad")
   // Every service the provider offers (N:M). `oficio` is the principal one and always belongs to
   // this set (deferred FK fk_perfiles_servicio_principal, defined in SQL).
   servicios          PerfilServicio[]

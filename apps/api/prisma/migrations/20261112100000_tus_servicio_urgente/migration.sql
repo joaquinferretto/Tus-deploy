@@ -7,7 +7,9 @@
 --   1. solicitudes_servicio: the address (shown only to the providers it is offered to and to the
 --      administration, never public), the mark of a broadcast, how many times it was reopened and
 --      why it closed without a winner;
---   2. perfiles_publicos_prestador.acepta_urgencias: the provider opts in (default: no);
+--   2. perfiles_publicos_prestador.acepta_urgencias: the provider opts in (default: no), and
+--      cobertura_toda_la_ciudad: the provider says, explicitly, that it goes anywhere in the city
+--      (default: no; having only its own neighbourhood on file never means that);
 --   3. ofertas_urgentes: one row per candidate (notified or not, its answer, when), which is also
 --      the history of who accepted and who gave the assignment back;
 --   4. the FK that ties a work to the assigned provider of its request becomes DEFERRABLE (still
@@ -39,7 +41,8 @@ CREATE INDEX "ix_solicitudes_servicio_difusion_abierta"
   WHERE "difusion_urgente" AND "estado" = 'abierta';
 
 ALTER TABLE public."perfiles_publicos_prestador"
-  ADD COLUMN "acepta_urgencias" BOOLEAN NOT NULL DEFAULT false;
+  ADD COLUMN "acepta_urgencias" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN "cobertura_toda_la_ciudad" BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE public."ofertas_urgentes" (
   "id" TEXT NOT NULL,
