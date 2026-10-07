@@ -156,3 +156,52 @@ test('ASISTENTE tiempo: a stretch never shows past days or hours, skips what the
   assert.ok(ultimo(r.enero).dias.every((dia) => dia >= '2027-01-01' && dia <= '2027-01-31'))
   assert.match(ultimo(r.enero).respuesta, /^Hay disponibilidad de Masaje con Gabriela en enero de 2027:/u)
 })
+
+test('ASISTENTE tiempo: "Quiero otro turno" as a first message asks which service — with no model, with the model down and with a model that brings nothing — and the next message is searched in its stretch', () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    // No model at all.
+    out.sinModelo = await conversacion(['Quiero otro turno', 'Masajes con Gabriela para el próximo mes', 'Solo los viernes'])
+    out.variantes = []
+    for (const texto of ['quiero un turno', 'Necesito sacar un turno', 'me das un turno?', 'Hola, quisiera otro turno por favor']) out.variantes.push((await conversacion([texto]))[0].respuesta)
+    // The same pipeline with a model: down, and answering nothing usable.
+    const conModelo = crearModuloWhatsapp({ env: waEnv, transaction: waTx, accounts: accountResolver, domain: dominio, knowledgeIndex, whatsapp: fakeWa, chat, embeddings, transcriptor: null, now: waClock, metric: () => {} })
+    const colaModelo = conModelo.crearWorker({ owner: 'tiempo-modelo' })
+    const hablar = async (w, texto) => {
+      const desde = dom.consultas.length
+      await conModelo.ingreso.procesar(parsearWebhookMeta(inbound(w, texto), PHONE_ID), 'corr-tiempo')
+      for (let i = 0; i < 5; i += 1) if ((await colaModelo.procesarSiguiente()).outcome === 'idle') break
+      waAdvance(6000)
+      return { respuesta: lastSent().message.text, dias: pedidas(desde).map(([dia]) => dia), need: tramo((await conversationOf(w)).state.need) }
+    }
+    script = () => { throw new Error('model down') }
+    let w = nuevoContacto()
+    out.caido = [await hablar(w, 'Quiero otro turno'), await hablar(w, 'Masajes con Gabriela para el próximo mes')]
+    script = (input) => ({ content: input.messages.some((m) => String(m.content).includes('Clasificá')) ? '{"intent":"reserva"}' : '' })
+    w = nuevoContacto()
+    out.vacio = [await hablar(w, 'Quiero otro turno')]
+    console.log(JSON.stringify(out))
+  `)
+  const PREGUNTA = /^¿Qué servicio necesitás\?/u
+  const ERROR = /Tuve un problema procesando tu solicitud/u
+  assert.match(r.sinModelo[0].respuesta, PREGUNTA)
+  assert.deepEqual(r.sinModelo[0].dias, [], 'no service is assumed: nothing is searched yet')
+  assert.deepEqual(r.sinModelo[1].need, { ...NOVIEMBRE, weekdays: null, time: null })
+  assert.match(r.sinModelo[1].respuesta, /^Hay disponibilidad de Masaje con Gabriela en noviembre:/u)
+  assert.deepEqual(r.sinModelo[2].dias, VIERNES_DE_NOVIEMBRE)
+  for (const respuesta of r.variantes) assert.match(respuesta, PREGUNTA)
+  assert.match(r.caido[0].respuesta, PREGUNTA, 'the model being down is not an error for the person')
+  assert.deepEqual(r.caido[1].need, { ...NOVIEMBRE, weekdays: null, time: null })
+  assert.ok(r.caido[1].dias.length > 0 && r.caido[1].dias.every((dia) => dia >= '2026-11-01' && dia <= '2026-11-30'))
+  assert.match(r.vacio[0].respuesta, PREGUNTA, 'a model that brings nothing is not an error either')
+  for (const paso of [...r.sinModelo, ...r.caido, ...r.vacio]) assert.doesNotMatch(paso.respuesta, ERROR)
+})
+
+test('ASISTENTE tiempo: a message about a turno the person already has is not taken as a new request', () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = []
+    for (const texto of ['quiero cancelar mi turno', 'necesito cambiar un turno']) out.push((await conversacion([texto]))[0].respuesta)
+    console.log(JSON.stringify(out))
+  `)
+  for (const respuesta of r) assert.doesNotMatch(respuesta, /¿Qué servicio necesitás\?/u)
+})

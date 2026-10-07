@@ -325,6 +325,11 @@ type Turno = {
 
 // Asking for someone ("necesito un...", "busco una...", "quiero alguien que..."), typos included.
 // "quiero ver mis trabajos" is not: the verb has to ask for a person or a service.
+// "Quiero otro turno", "necesito sacar un turno", "me das un turno?": a turno is asked for and no
+// service is named. Not about a turno the person already has ("cancelar mi turno", "mi turno").
+const PIDE_TURNO = /\b(?:quiero|kiero|quisiera|necesito|nesecito|preciso|dame|das|sacar|pedir|reservar|agendar|otro|un|algun)\b[^.?!]*\b(?:turnos?|turnitos?|citas?)\b/iu
+const SOBRE_UN_TURNO_PROPIO = /\b(?:mis?|cancel\w*|reprogram\w*|cambi\w*|anul\w*|pag\w*|estado)\b/iu
+const pideTurnoSinServicio = (text: string): boolean => PIDE_TURNO.test(sinAcentos(text)) && !SOBRE_UN_TURNO_PROPIO.test(sinAcentos(text))
 const PIDE_SERVICIO = /\b(?:nece[sc]ito|ne[sc]e[sc]ito|busco|buscando|quiero|kiero|quisiera|preciso|me hace falta|hay|consigo|conseguir|recomend\w*|conoces)\s+(?:a\s+)?(?:un|una|unos|unas|alg[uú]n|alguna|alguien|el|la)\b/iu
 // Asking for help without saying for what: "necesito ayuda", "quiero un turno", "busco un profesional".
 const PEDIDO_SIN_SERVICIO = /^\s*(?:hola[,!. ]*)?(?:nece[sc]ito|quiero|busco|preciso|quisiera)\s+(?:una?\s+)?(?:ayuda|mano|servicio|profesional|prestador|trabajador|turno)\s*[.!?]*\s*$|^\s*ayuda\s*[.!?]*\s*$|\bme (?:pod[eé]s|puedes|podr[ií]as) ayudar\b/iu
@@ -1574,7 +1579,7 @@ export class OrquestadorConversacion {
       // From now on a time alone refers to this professional.
       await this.actualizarEstado(conversationId, { offers: { profession, items: [{ providerId: item.providerId, name: item.name, ...(item.area ? { area: item.area } : {}), starts: item.starts }], esperaHora: true }, currentIntent: 'reserva', booking: null })
       // Chosen from a list of several days: the day is told back with its times.
-      const unDia = new Set(starts.map(diaLocal)).size === 1 && turn.conversation.state.offers?.items.some((mostrada) => mostrada.day) ? ` ${describirDia(diaLocal(starts[0]!), null, this.now())}` : ''
+      const unDia = new Set(starts.map(diaLocal)).size === 1 && turn.conversation.state.offers?.items.some((mostrada) => (mostrada as { day?: string }).day) ? ` ${describirDia(diaLocal(starts[0]!), null, this.now())}` : ''
       return [{ type: 'text', text: `¿A qué hora${unDia} con ${item.name}? Tiene: ${horasDe(starts, this.now())}.` }]
     }
     // The list may be old: the start is read again from the agenda before anything is prepared.
@@ -2536,6 +2541,10 @@ export class OrquestadorConversacion {
     correlationId: string
   ): Promise<MensajeSaliente[]> {
     if (!this.deps.chat) {
+      // No model at hand: a turno asked for with no service known is still answered by the
+      // backend with the one question that is missing, never with an error.
+      const conocida = turn.busqueda?.need ?? turn.conversation.state.need ?? null
+      if (!conocida?.profession && pideTurnoSinServicio(text)) return this.preguntarServicioDelTurno(turn, conocida)
       turn.degradado = true
       return [{ type: 'text', text: MENSAJES.aiUnavailable }]
     }
@@ -2975,11 +2984,22 @@ export class OrquestadorConversacion {
     // The model gave nothing usable for a search and no service is known: asking which service
     // is still a better answer than an error. No service is ever assumed.
     if (intent === 'buscar' && !datosEnTurno && !need?.profession) return [{ type: 'text', text: preguntaFaltante(need ?? NECESIDAD_VACIA, { noEncontrado: PIDE_SERVICIO.test(text) }) }]
+    // "Quiero otro turno" (routed as a booking) and the model failed or brought nothing: the same
+    // question, never the generic error.
+    if (!datosEnTurno && !need?.profession && pideTurnoSinServicio(text)) return this.preguntarServicioDelTurno(turn, need)
     // The service is known and the model failed or brought nothing: the real search is the answer.
     if (intent === 'buscar' && !datosEnTurno && need?.profession && turn.busqueda) return this.buscarYResponder(turn, actor, need, text, correlationId)
     const pendiente = esperaHoraDe(turn.conversation.state)
     if (pendiente) return [{ type: 'text', text: preguntaHora(pendiente, this.now()) }]
     return this.bajaConfianza(turn)
+  }
+
+  // The one question missing to look for a turno: which service. The conversation stays a search.
+  private async preguntarServicioDelTurno(turn: Turno, need: NecesidadTurno | null): Promise<MensajeSaliente[]> {
+    turn.intencion = 'buscar'
+    turn.canal.evento?.({ type: 'routing', intent: 'buscar' })
+    await this.actualizarEstado(turn.conversation.conversationId, { currentIntent: 'buscar', lowConfidenceCount: 0 })
+    return [{ type: 'text', text: preguntaFaltante(need ?? NECESIDAD_VACIA) }]
   }
 
   private async bajaConfianza(turn: Turno): Promise<MensajeSaliente[]> {
