@@ -312,6 +312,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
         directorio,
         solicitudes,
         cuentas: new CuentasAdminPrisma(prisma as unknown as ConstructorParameters<typeof CuentasAdminPrisma>[0]),
+        cobroDeSenas: (tenantIds) => servicioTurnos.cobroDeSenas(tenantIds),
         cuentasDePrestadores: crearLectorCuentasPrestador(prisma as unknown as ClientePrismaCuentaPrestador, { plantillaAprobada: () => WhatsappTemplateService.desdeEnv(process.env).aprobada(PLANTILLA_SOLICITUD_TURNO) }),
         actividad: new ActividadAdminPrisma(prisma as unknown as ConstructorParameters<typeof ActividadAdminPrisma>[0]),
         adminEmails: () => leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS']),

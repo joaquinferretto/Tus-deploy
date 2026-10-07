@@ -90,6 +90,27 @@ ya aceptado, o aceptar algo ya rechazado, no cambia nada.
   un solo movimiento en el libro de ganancias. Un pago en proceso no confirma. Un pago que llega
   con el turno vencido o cancelado no lo confirma.
 
+### Quién cobra la seña y por qué puede no cobrarse
+
+El prestador **no necesita** conectar su Mercado Pago. Si no tiene cuenta conectada, TUS cobra la
+seña con la cuenta de la plataforma y la parte del prestador queda en su saldo (Pagos y
+ganancias). Con cuenta conectada se cobra con la suya.
+
+Admin → Prestadores muestra el estado de cada uno en "Cobro de señas", sin intentar nada:
+
+| Estado | Qué falta |
+| --- | --- |
+| Por plataforma / Con su cuenta | Nada: aceptar pasa el turno a esperando seña |
+| Pagos apagados | El interruptor de pagos de la plataforma (los turnos se confirman sin seña) |
+| Mercado Pago sin configurar | Las credenciales de Mercado Pago de TUS en el servidor |
+| Falta habilitación | La habilitación productiva de pagos de servicios (`MERCADO_PAGO_ENVIRONMENT=production`) |
+| Falta identidad | Que el prestador tenga la identidad verificada |
+| Falta cuenta de TUS | `MERCADO_PAGO_PLATFORM_ACCESS_TOKEN` y `MERCADO_PAGO_PLATFORM_USER_ID` |
+
+Al aceptar, el prestador recibe el motivo que le corresponde: `SERVICE_PAYMENTS_NOT_AUTHORIZED`,
+`PROVIDER_IDENTITY_REQUIRED` o `PROVIDER_PAYMENT_ACCOUNT_REQUIRED` (nadie puede cobrar). Nunca se
+le dice que tiene que conectar su propia cuenta.
+
 ## Fotos de la solicitud
 
 Hasta dos por solicitud, mientras está `pending`. JPG, PNG o WEBP de hasta 2 MB; el tipo se decide

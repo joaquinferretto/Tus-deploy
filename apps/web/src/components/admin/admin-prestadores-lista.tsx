@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
-import { DESTINO_WHATSAPP, PROBLEMA_CUENTA, adminApi, adminErrorMessage, formatFecha, type AdminPrestador } from '@/lib/tus-admin-api'
+import { DESTINO_WHATSAPP, PROBLEMA_CUENTA, textoCobroSena, adminApi, adminErrorMessage, formatFecha, type AdminPrestador } from '@/lib/tus-admin-api'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
 import { PrestadoresAdmin } from './prestadores-admin'
 import { AdminPagination } from './admin-pagination'
@@ -90,7 +90,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
         <div data-tabla-prestadores style={{ maxWidth: '100%', overflowX: 'auto' }}>
         <table className={styles.table}>
           <thead>
-            <tr><th>Nombre público</th><th>Cuenta</th><th>Teléfono y WhatsApp</th><th>Oficio y zona</th><th>Mapa</th><th>Identidad</th><th>Mercado Pago</th><th>Reputación</th><th>Alta</th><th /></tr>
+            <tr><th>Nombre público</th><th>Cuenta</th><th>Teléfono y WhatsApp</th><th>Oficio y zona</th><th>Mapa</th><th>Identidad</th><th>Cobro de señas</th><th>Reputación</th><th>Alta</th><th /></tr>
           </thead>
           <tbody>
             {visibles.map((item) => (
@@ -135,7 +135,9 @@ export function AdminPrestadoresLista(): React.ReactNode {
                   )}
                 </td>
                 <td data-label="Identidad">{item.verificado ? <span className={`${styles.badge} ${styles.badgeOk}`}>Verificada</span> : <span className={`${styles.badge} ${styles.badgeOff}`}>Pendiente</span>}</td>
-                <td data-label="Mercado Pago">{item.mercadoPago === 'connected' ? <span className={`${styles.badge} ${styles.badgeOk}`}>Sí</span> : <span className={`${styles.badge} ${styles.badgeOff}`}>{item.mercadoPago === 'not_connected' ? 'No' : 'No (reconectar)'}</span>}</td>
+                <td data-cobro-sena={item.cobroSena ? (item.cobroSena.disponible ? item.cobroSena.modo ?? 'disponible' : item.cobroSena.motivo ?? 'no') : ''} data-label="Cobro de señas">
+                  {item.cobroSena !== undefined ? (() => { const cobro = textoCobroSena(item.cobroSena); return <span className={`${styles.badge} ${cobro.tono === 'ok' ? styles.badgeOk : cobro.tono === 'warn' ? styles.badgeWarn : styles.badgeOff}`} title={cobro.detalle}>{cobro.texto}</span> })() : item.mercadoPago === 'connected' ? <span className={`${styles.badge} ${styles.badgeOk}`}>Con su cuenta</span> : '—'}
+                </td>
                 <td data-label="Reputación">{item.rating ? `★ ${item.rating.average.toFixed(1).replace('.', ',')} (${item.rating.count})` : <span className={styles.muted}>Sin calificaciones</span>}<div className={styles.muted}>{item.trabajosCompletados} completados</div></td>
                 <td className={styles.muted} data-label="Alta">{formatFecha(item.creadoEn)}</td>
                 <td>

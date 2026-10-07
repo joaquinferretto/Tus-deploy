@@ -698,9 +698,9 @@ export class ServicioFinanzasServicios {
   async disponibilidadCobroPrestador(input: {
     prestadorTenantId: string
     prestadorId: string
-  }): Promise<{ available: boolean; reason: string | null }> {
+  }): Promise<{ available: boolean; reason: string | null; mode: 'plataforma' | 'split' | null }> {
     const availability = await this.politica.disponibilidad({ ...input, categoria: null })
-    return { available: availability.available === true, reason: availability.reason ?? null }
+    return { available: availability.available === true, reason: availability.reason ?? null, mode: (availability as { mode?: 'plataforma' | 'split' }).mode ?? null }
   }
 
   // Deposit/balance state of a request-born work already authorized by the caller. Null for

@@ -43,6 +43,10 @@ const MOTIVO_PLATAFORMA_NO_HABILITADA = 'PRODUCTION_NOT_AUTHORIZED'
 export interface PagosSenaTurno {
   // Platform switch on, provider with a linked Mercado Pago account and verified identity.
   requisito(prestador: { prestadorTenantId: string; prestadorId: string }): Promise<RequisitoSena>
+  // WHY the deposit cannot be charged for that provider (the reason of the collection policy),
+  // and how it would be collected when it can: 'plataforma' (TUS collects, the provider's share
+  // becomes its balance) or 'split' (the provider's own Mercado Pago account).
+  diagnostico?(prestador: { prestadorTenantId: string; prestadorId: string }): Promise<{ disponible: boolean; motivo: string | null; modo: 'plataforma' | 'split' | null }>
   // Ensures the order of the turno and its payment intent and returns the hosted checkout. The
   // same reservation always gives the same intent: asking twice never creates two payments.
   checkout(input: {
@@ -66,7 +70,7 @@ export function pagosSenaDeAplicacion(
   servicios: {
     work?: { asegurarOrdenDeTurno(input: { tenantId: string; actorId: string; correlationId: string; reservaId: string; prestadorTenantId: string; prestadorId: string; createdAt: string }): Promise<{ work: { trabajoId: string } }> }
     serviceFinance?: {
-      disponibilidadCobroPrestador(input: { prestadorTenantId: string; prestadorId: string }): Promise<{ available: boolean; reason: string | null }>
+      disponibilidadCobroPrestador(input: { prestadorTenantId: string; prestadorId: string }): Promise<{ available: boolean; reason: string | null; mode?: 'plataforma' | 'split' | null }>
       iniciarCheckout(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string; idempotencyKey: string }): Promise<{ checkoutUrl: string }>
       verificarPagoDelTrabajo?(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string }): Promise<ResultadoVerificacionPagoServicio>
     }
@@ -81,6 +85,10 @@ export function pagosSenaDeAplicacion(
       if (cobro.available) return 'exigible'
       if (cobro.reason === MOTIVO_PLATAFORMA_NO_HABILITADA) return 'no_habilitada'
       return cobro.reason !== null && MOTIVOS_PRESTADOR_SIN_COBRO.has(cobro.reason) ? 'bloqueada' : 'sin_cobro'
+    },
+    diagnostico: async (prestador) => {
+      const cobro = await serviceFinance.disponibilidadCobroPrestador(prestador)
+      return { disponible: cobro.available, motivo: cobro.available ? null : cobro.reason, modo: cobro.available ? cobro.mode ?? null : null }
     },
     checkout: async (input) => {
       // The client of the reservation, read from the database by the caller: never a request value.
@@ -175,6 +183,13 @@ export class ServicioSenaTurnos {
     } catch {
       throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'No pudimos verificar el pago de la seña en este momento. Probá de nuevo en unos minutos.')
     }
+  }
+
+  // Why the deposit of a provider cannot be charged, to tell it apart for the provider and for
+  // the administration: null when it can, or when nothing is known.
+  async diagnosticoDe(prestador: { prestadorTenantId: string; prestadorId: string }): Promise<{ disponible: boolean; motivo: string | null; modo: 'plataforma' | 'split' | null }> {
+    if (!this.pagos?.diagnostico) return { disponible: false, motivo: 'PAYMENTS_NOT_COMPOSED', modo: null }
+    return this.pagos.diagnostico(prestador)
   }
 
   // Whether the turnos of a provider are confirmed by paying a deposit (what a client is told
