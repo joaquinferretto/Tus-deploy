@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { neighbourhoodNames, useCatalog } from '@/features/catalog/use-catalog'
 import { ServicePicker } from '@/features/catalog/service-picker'
 import { LocationEditor } from '@/features/provider/provider-location'
-import { AdminApiError, DESTINO_WHATSAPP, adminApi, adminErrorMessage, formatFecha, type AdminPrestadorDetalle, type CambiosPrestador } from '@/lib/tus-admin-api'
+import { AdminApiError, DESTINO_WHATSAPP, PROBLEMA_CUENTA, adminApi, adminErrorMessage, formatFecha, type AdminPrestadorDetalle, type CambiosPrestador } from '@/lib/tus-admin-api'
 import { AdminConfirm, useConfirmacion } from './admin-confirm'
 import { AdminPageHeader } from './admin-layout'
 import styles from './admin.module.css'
@@ -146,16 +146,16 @@ export function AdminPrestadorDetallePage({ id }: { id: string }): React.ReactNo
                 <div><dt className={styles.muted}>Estado de la cuenta</dt><dd style={{ margin: 0 }}>{cuenta.estado === 'active' ? 'Activa' : 'Suspendida'}</dd></div>
                 <div><dt className={styles.muted}>Diagnóstico</dt><dd className={styles.muted} style={{ margin: 0, overflowWrap: 'anywhere', fontSize: '0.85rem' }}>cuenta {cuenta.cuentaId}<br />usuario {cuenta.usuarioId}{detalle.tenantId ? <><br />tenant {detalle.tenantId}</> : null}</dd></div>
               </dl>
-              {cuenta.cuentasActivas > 1 ? <p className={styles.error} role="alert">Este prestador tiene {cuenta.cuentasActivas} cuentas activas. TUS usa la más antigua (la de arriba) para avisarle; conviene revisar las demás.</p> : null}
+              {cuenta.cuentasEnTenant > 1 ? <p className={styles.muted}>El titular de este prestador tiene {cuenta.cuentasEnTenant} cuentas. La vinculada es la de arriba: es la única que TUS usa para avisarle.</p> : null}
               <a className={styles.buttonSecondary} href={`/tus/admin/usuarios/${encodeURIComponent(cuenta.cuentaId)}`}>Abrir la ficha de la cuenta (nombre, email, teléfono, WhatsApp, accesos)</a>
             </>
           )
-        })() : detalle.cuenta ? (
-          <>
-            <p>{detalle.cuenta.nombre} · {detalle.cuenta.email}</p>
-            <a className={styles.buttonSecondary} href={`/tus/admin/usuarios/${encodeURIComponent(detalle.cuenta.id)}`}>Abrir la ficha de la cuenta</a>
-          </>
-        ) : <p className={styles.error} role="alert">Este perfil no tiene una cuenta activa detrás: nadie puede operarlo ni recibir sus avisos por WhatsApp. Hay que asociarle una cuenta.</p>}
+        })() : (
+          <p className={styles.error} data-cuenta-problema={detalle.cuentaProblema?.motivo ?? 'sin_vincular'} role="alert">
+            {PROBLEMA_CUENTA[detalle.cuentaProblema?.motivo ?? 'sin_vincular']} Mientras tanto no recibe avisos ni solicitudes por WhatsApp.
+            {detalle.cuentaProblema && detalle.cuentaProblema.cuentasEnTenant > 0 ? ` Su titular tiene ${detalle.cuentaProblema.cuentasEnTenant} ${detalle.cuentaProblema.cuentasEnTenant === 1 ? 'cuenta' : 'cuentas'} para revisar.` : ' No hay ninguna cuenta de ese titular.'}
+          </p>
+        )}
       </section>
 
       <form aria-label="Perfil del prestador" className={`${styles.card} ${styles.form}`} onSubmit={guardar}>

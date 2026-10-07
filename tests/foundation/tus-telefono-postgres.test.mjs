@@ -292,7 +292,7 @@ test(
         const ahora = new Date()
         await prisma.conversacionWhatsapp.create({ data: { id: run + '-conv-a', contactoId: filaA.id, estado: 'active', modo: 'bot', abiertaEn: ahora, ultimoMensajeEn: ahora, ultimoEntranteEn: ahora, noLeidos: 0, mensajesResumidos: 0, estadoConversacional: {}, version: 1 } })
         await aviso(a, run + '-res-2')
-        out.conVentana = [wa.sent.length, wa.sent[0]?.to === waA, /Cliente B te solicitó un turno/u.test(wa.sent[0]?.message?.text ?? '')]
+        out.conVentana = [wa.sent.length, wa.sent[0]?.to === waA, wa.sent[0]?.message?.type === 'buttons' && (wa.sent[0]?.message?.text ?? '').includes('Nueva solicitud de turno') && (wa.sent[0]?.message?.text ?? '').includes('Cliente: Cliente B')]
 
         // ---- 9. Unlink: only the relation goes.
         const desvinculada = await tel.desvincularWhatsappPorAdmin(ADMIN, a)

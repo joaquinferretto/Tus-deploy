@@ -293,6 +293,9 @@ function merchantRow(profile: PerfilPrestador): Record<string, unknown> {
     rolesPersonal: profile.staffRoles,
     versionPoliticaOperativa: profile.operatingPolicyVersion,
     estado: profile.status,
+    // Written only when the profile carries it: a save that does not know the account never
+    // erases a link that exists.
+    ...(profile.accountId !== undefined ? { cuentaId: profile.accountId } : {}),
     fechaCreacion: new Date(profile.createdAt),
     fechaActualizacion: new Date(profile.updatedAt),
   }
@@ -367,6 +370,7 @@ function toMerchant(row: Record<string, unknown>): PerfilPrestador {
     // so a suspension was written and never seen again. Only an explicit suspension suspends:
     // any other stored value keeps meaning an approved provider, as it always did.
     status: row['estado'] === 'suspended' ? 'suspended' : 'approved',
+    accountId: typeof row['cuentaId'] === 'string' ? row['cuentaId'] : null,
     createdAt: new Date(String(row['fechaCreacion'])).toISOString(),
     updatedAt: new Date(String(row['fechaActualizacion'])).toISOString(),
   }

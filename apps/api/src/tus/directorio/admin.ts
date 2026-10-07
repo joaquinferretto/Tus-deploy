@@ -39,7 +39,16 @@ export function crearAltaPrestadorAdmin(deps: {
     // creating a listing or publishing one still calls marketplace.onboard/readiness separately.
     const prestador = await marketplace.store.transaction(async (store) => {
       const existing = await store.merchant.find(account.tenantId)
-      if (existing) return existing
+      if (existing) {
+        // An administrator registering THIS account as the provider is an explicit decision: an
+        // old provider row with no account gets it. A row already linked is never re-pointed here.
+        if (existing.accountId === null) {
+          const vinculado = { ...existing, accountId: account.id, updatedAt: new Date().toISOString() }
+          await store.merchant.save(vinculado)
+          return vinculado
+        }
+        return existing
+      }
       const now = new Date().toISOString()
       const profile: PerfilPrestador = {
         tenantId: account.tenantId,
@@ -50,6 +59,7 @@ export function crearAltaPrestadorAdmin(deps: {
         staffRoles: ['owner'],
         operatingPolicyVersion: 'admin-manual-v1',
         status: 'approved',
+        accountId: account.id,
         createdAt: now,
         updatedAt: now,
       }

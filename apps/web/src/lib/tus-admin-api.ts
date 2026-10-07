@@ -110,7 +110,15 @@ export interface AdminCuentaPrestador {
   telefono: { numero: string | null; verificado: boolean; pendiente: string | null }
   whatsapp: { vinculado: boolean; vinculadoEn: string | null; ultimoMensajeEn: string | null; ventanaAbierta: boolean; destino: DestinoWhatsappPrestador }
   identidad: string | null
-  cuentasActivas: number
+  cuentasEnTenant: number
+}
+
+// Why a provider shows no account (reconciled by hand; TUS never picks one).
+export interface AdminProblemaCuentaPrestador { motivo: 'sin_vincular' | 'ambiguo' | 'cuenta_invalida'; cuentasEnTenant: number }
+export const PROBLEMA_CUENTA: Record<AdminProblemaCuentaPrestador['motivo'], string> = {
+  sin_vincular: 'Este prestador no tiene una cuenta vinculada. TUS no elige una por su cuenta: hay que asociarla.',
+  ambiguo: 'Este prestador figura vinculado a más de una cuenta. Hay que dejar una sola.',
+  cuenta_invalida: 'La cuenta vinculada a este prestador no existe, no está activa o es de otro titular.',
 }
 
 // What Admin reads at a glance: can this provider receive a request of turno on WhatsApp?
@@ -125,6 +133,7 @@ export const DESTINO_WHATSAPP: Record<DestinoWhatsappPrestador, { texto: string;
 export interface AdminPrestadorDetalle {
   // Present when the API resolves the account behind the profile.
   cuentaAsociada?: AdminCuentaPrestador | null
+  cuentaProblema?: AdminProblemaCuentaPrestador | null
   tenantId?: string
   perfil: {
     id: string
@@ -158,6 +167,7 @@ export interface AdminPage<T> {
 
 export interface AdminPrestador {
   cuenta?: AdminCuentaPrestador | null
+  cuentaProblema?: AdminProblemaCuentaPrestador | null
   whatsappDestino?: DestinoWhatsappPrestador
   id: string
   tenantId: string

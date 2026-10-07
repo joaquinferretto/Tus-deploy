@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
-import { DESTINO_WHATSAPP, adminApi, adminErrorMessage, formatFecha, type AdminPrestador } from '@/lib/tus-admin-api'
+import { DESTINO_WHATSAPP, PROBLEMA_CUENTA, adminApi, adminErrorMessage, formatFecha, type AdminPrestador } from '@/lib/tus-admin-api'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
 import { PrestadoresAdmin } from './prestadores-admin'
 import { AdminPagination } from './admin-pagination'
@@ -102,7 +102,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
                       <span className={styles.muted} style={{ overflowWrap: 'anywhere' }}>{item.cuenta.email}</span>
                       {item.cuenta.estado !== 'active' ? <> <span className={`${styles.badge} ${styles.badgeOff}`}>Suspendida</span></> : null}
                     </>
-                  ) : item.cuenta === null ? <span className={`${styles.badge} ${styles.badgeOff}`}>Sin cuenta</span> : '—'}
+                  ) : item.cuenta === null ? <span className={`${styles.badge} ${styles.badgeOff}`} data-cuenta-problema={item.cuentaProblema?.motivo ?? 'sin_vincular'} title={PROBLEMA_CUENTA[item.cuentaProblema?.motivo ?? 'sin_vincular']}>{item.cuentaProblema?.motivo === 'ambiguo' ? 'Vínculo ambiguo' : item.cuentaProblema?.motivo === 'cuenta_invalida' ? 'Cuenta inválida' : 'Sin cuenta vinculada'}</span> : '—'}
                 </td>
                 <td data-label="Teléfono">
                   {item.cuenta?.telefono.numero ? (

@@ -40,6 +40,7 @@ import {
   type SlotDisponible,
   type TarifaServicioPublica,
 } from '@factory/contracts'
+import { cuentaDePrestador, type ClientePrismaVinculoPrestador } from '../directorio/cuenta-prestador.ts'
 import { ErrorFotoPerfil, prepararFotoPerfil } from '../directorio/foto.ts'
 import { agendaDelDia } from './agenda.ts'
 
@@ -854,13 +855,10 @@ export class ServicioTurnos {
 
   // Backend-owned recipient resolution. Notification callers only carry the provider tenant;
   // neither HTTP input nor an LLM may choose the account or its phone number.
+  // PRESTADOR-CUENTA-01: the account LINKED to that provider (prestadores.cuenta_id), by id. A
+  // provider nobody linked resolves to nobody: nothing is inferred from the tenant.
   private async cuentaPrestadorId(tenantId: string): Promise<string | null> {
-    const cuenta = await this.prisma.account.findFirst({
-      where: { tenantId, status: 'active' },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true },
-    })
-    return cuenta?.id ?? null
+    return cuentaDePrestador(this.prisma as unknown as ClientePrismaVinculoPrestador, tenantId)
   }
 
   private async nombresDeOficio(rows: FilaReserva[]): Promise<Map<string, string>> {
@@ -903,6 +901,9 @@ export class ServicioTurnos {
   // taken from the session or from the account linked to the number, never from the message.
   private async responderSolicitud(input: { prestadorTenantId: string; reservaId: string; aceptar: boolean; actorId?: string; canal?: CanalRespuestaTurno }): Promise<DetalleTurno> {
     // Only a request of the session's own agenda (another provider's answers 404).
+    // From WhatsApp the answer comes from a number, not from a session of the panel: it counts
+    // only when the account linked to that number is THE account of that provider.
+    if (input.canal === 'whatsapp' && (!input.actorId || (await this.cuentaPrestadorId(input.prestadorTenantId)) !== input.actorId)) throw new ErrorCalendario(404, 'NOT_FOUND', 'Solicitud no encontrada')
     const reserva = await this.prisma.reserva.findFirst({
       where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], tenantId: input.prestadorTenantId },
     })
@@ -1061,7 +1062,7 @@ export class ServicioTurnos {
    * de la reserva: pedirlo dos veces (webhook y verificación) es un solo aviso.
    */
   async avisarConfirmacionDe(reservaId: string): Promise<void> {
-    const reserva = await this.prisma.reserva.findFirst({ where: { OR: [{ id: reservaId }, { reservaId }], estado: 'confirmed', esInvitado: false } })
+    const reserva = await this.prisma.reserva.findFirst({ where: { OR: [{ id: reservaId }, { reservaId }], estado: { in: ['confirmed'] }, esInvitado: false } })
     if (!reserva) return
     await this.outboxNotificaciones.encolar(this.prisma, { tenantId: reserva.tenantId, reservaId: reserva.id, version: reserva.version, evento: { kind: 'turno_confirmado', reservaId: reserva.id } })
     this.activarNotificaciones()

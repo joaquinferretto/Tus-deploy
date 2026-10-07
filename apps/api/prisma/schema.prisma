@@ -697,6 +697,10 @@ model Prestador {
   rolesPersonal            String[]      @map("roles_personal")
   versionPoliticaOperativa String        @map("version_politica_operativa")
   estado                   String        @map("estado")
+  // PRESTADOR-CUENTA-01: the account of this provider, by id. fk_prestadores_cuenta ->
+  // "Account".id and the partial unique index uq_prestadores_cuenta live in SQL. NULL: an old row
+  // nobody linked yet (reconciled by hand; nothing is inferred from the tenant).
+  cuentaId                 String?       @map("cuenta_id")
   fechaCreacion            DateTime      @map("fecha_creacion")
   fechaActualizacion       DateTime      @map("fecha_actualizacion")
   publicaciones            Publicacion[]

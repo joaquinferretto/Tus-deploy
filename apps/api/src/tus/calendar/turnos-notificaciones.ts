@@ -125,7 +125,8 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
   }
 
   async solicitudRecibida(aviso: AvisoSolicitudTurno): Promise<void> {
-    const cuenta = await this.cuentas.account.findFirst({ where: { tenantId: aviso.prestadorTenantId, status: 'active' }, include: { user: true }, orderBy: { createdAt: 'asc' } })
+    // The recipient is the account the backend resolved for that provider (its linked account).
+    const cuenta = aviso.prestadorCuentaId ? await this.cuentas.account.findFirst({ where: { id: aviso.prestadorCuentaId, status: 'active' }, include: { user: true } }) : null
     if (!cuenta) return
     await this.transporte.send({
       to: cuenta.user.email,
@@ -179,7 +180,7 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
   async turnoConfirmado(aviso: AvisoTurnoConfirmado): Promise<void> {
     const [cuenta, prestador] = await Promise.all([
       this.cuentas.account.findFirst({ where: { id: aviso.clienteCuentaId, status: 'active' }, include: { user: true } }),
-      this.cuentas.account.findFirst({ where: { tenantId: aviso.prestadorTenantId, status: 'active' }, include: { user: true }, orderBy: { createdAt: 'asc' } }),
+      aviso.prestadorCuentaId ? this.cuentas.account.findFirst({ where: { id: aviso.prestadorCuentaId, status: 'active' }, include: { user: true } }) : Promise.resolve(null),
     ])
     // Each recipient has its own provider idempotency key. If either delivery fails, the durable
     // outbox retries the event without duplicating the one Resend already accepted.
@@ -205,13 +206,8 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
 
   async turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void> {
     const canceladoPorCliente = aviso.canceladoPor === 'cliente'
-    const cuenta = await this.cuentas.account.findFirst({
-      where: canceladoPorCliente
-        ? { tenantId: aviso.prestadorTenantId, status: 'active' }
-        : { id: aviso.clienteCuentaId, status: 'active' },
-      include: { user: true },
-      ...(canceladoPorCliente ? { orderBy: { createdAt: 'asc' } } : {}),
-    })
+    const destinatario = canceladoPorCliente ? aviso.prestadorCuentaId : aviso.clienteCuentaId
+    const cuenta = destinatario ? await this.cuentas.account.findFirst({ where: { id: destinatario, status: 'active' }, include: { user: true } }) : null
     if (!cuenta) return
     await this.transporte.send({
       to: cuenta.user.email,

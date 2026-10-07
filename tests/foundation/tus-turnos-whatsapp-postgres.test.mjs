@@ -70,6 +70,8 @@ const ASISTENTE = `
   async function cuentaDe(p, tag) {
     const cuenta = await cliente(tag)
     await prisma.account.update({ where: { id: cuenta.id }, data: { tenantId: p.tenantId } })
+    // ...and linked to that provider by id (prestadores.cuenta_id): the one notices go to.
+    await prisma.prestador.updateMany({ where: { tenantId: p.tenantId }, data: { cuentaId: cuenta.id } })
     return { ...cuenta, tenantId: p.tenantId }
   }
   const boton = (decision, reservaId) => ({ type: 'interactive', body: { interactive: { type: 'button_reply', button_reply: { id: idRespuestaTurno(decision, reservaId), title: decision === 'aceptar' ? 'Aceptar' : 'Rechazar' } } } })
