@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { RUNTIME_ROLE_GUARD_CODE, RUNTIME_ROLE_GUARD_SQL, RUNTIME_SCHEMA, enablesRowLevelSecurity } from '../../scripts/db/migrate-deploy-lib.mjs'
+import { RUNTIME_ROLE_GUARD_CODE, RUNTIME_ROLE_GUARD_SQL, describeStepFailure, enablesRowLevelSecurity, roleOfUrl, runtimeRoleCheck } from '../../scripts/db/migrate-deploy-lib.mjs'
 
 // SEGURIDAD-DATA-API-01, the deploy side: a migration that enables row level security is applied
 // only when the role the API really connects with (DATABASE_URL) owns the tables or is exempt.
@@ -26,11 +26,27 @@ test('MIGRATE runtime role: the script knows which migrations enable RLS and ask
   assert.match(RUNTIME_ROLE_GUARD_SQL, new RegExp(RUNTIME_ROLE_GUARD_CODE, 'u'))
   assert.match(RUNTIME_ROLE_GUARD_SQL, /rolsuper OR rolbypassrls/u)
   assert.doesNotMatch(RUNTIME_ROLE_GUARD_SQL, /\b(UPDATE|INSERT|DELETE|ALTER|DROP|GRANT|REVOKE)\b/u, 'the check only reads')
-  assert.match(RUNTIME_SCHEMA, /env\("DATABASE_URL"\)/u)
-  assert.doesNotMatch(RUNTIME_SCHEMA, /directUrl/u, 'the check connects as the API does, never with the migration credentials')
   const script = readFileSync(join(root, 'scripts/db/migrate-deploy.mjs'), 'utf8')
-  const chequeo = script.indexOf('assertRuntimeRoleSurvivesRls(work, initial.pending)')
-  assert.ok(chequeo > 0 && chequeo < script.indexOf('PRISMA_MIGRATIONS_BOOTSTRAP_SQL)', chequeo) && chequeo < script.lastIndexOf("prisma(['migrate', 'deploy'])"), 'the check runs before anything is written or applied')
+  const chequeo = script.indexOf('await assertRuntimeRoleSurvivesRls(initial.pending)')
+  assert.ok(chequeo > 0 && chequeo < script.indexOf('PRISMA_MIGRATIONS_BOOTSTRAP_SQL)', chequeo) && chequeo < script.lastIndexOf("prisma(['migrate', 'deploy']"), 'the check runs before anything is written or applied')
+  // The deploy of 2026-10-07 hung ten minutes on `prisma db execute` over DATABASE_URL (a pooled
+  // connection the schema engine of Prisma is not made for). No Prisma command uses that URL.
+  assert.doesNotMatch(script, /env\("DATABASE_URL"\)|RUNTIME_SCHEMA/u, 'Prisma never runs over the pooled runtime URL')
+  assert.match(script, /createRequire\(join\(API, 'package\.json'\)\)\('pg'\)/u, 'a different role is asked with the driver the API uses')
+  assert.match(script, /connectionTimeoutMillis: RUNTIME_CHECK_TIMEOUT_MS/u, 'with a short limit')
+  // Same role in both URLs: decided without opening a connection.
+  const supabase = { DATABASE_URL: 'postgresql://postgres.abcdefghijklmnopqrst:x@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=require', DIRECT_URL: 'postgresql://postgres:x@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require' }
+  assert.deepEqual(runtimeRoleCheck(supabase), { mode: 'same-role', runtime: 'postgres', direct: 'postgres' }, 'the pooler names the role as <role>.<ref>')
+  assert.deepEqual(runtimeRoleCheck({ ...supabase, DATABASE_URL: supabase.DATABASE_URL.replace('postgres.abcdefghijklmnopqrst', 'tus_api.abcdefghijklmnopqrst') }), { mode: 'ask', runtime: 'tus_api', direct: 'postgres' })
+  assert.equal(runtimeRoleCheck({ DATABASE_URL: 'postgresql://host/db', DIRECT_URL: supabase.DIRECT_URL }).mode, 'unknown', 'a URL without a role is not trusted')
+  assert.equal(roleOfUrl('no es una url'), null)
+  // A step that does not finish says which one, for how long, and never the connection.
+  const mensaje = describeStepFailure('preflight of the public schema', { code: 'ETIMEDOUT' }, { timeoutMs: 600_000, elapsedMs: 600_020, output: 'Datasource "db": postgresql://postgres:secreto@host/db\nError: P1001' })
+  assert.match(mensaje, /^preflight of the public schema did not finish: it was stopped after 600s without an answer \(limit 600s\)/u)
+  assert.match(mensaje, /Last output: .*Error: P1001/u)
+  assert.doesNotMatch(mensaje, /secreto/u)
+  assert.match(describeStepFailure('x', { code: 'ENOENT' }), /the process could not run \(ENOENT\)/u)
+  for (const paso of ['reading the migration history', 'preflight of the public schema', 'applying the pending migrations']) assert.ok(script.includes(paso), `the step "${paso}" has a name in the log`)
 })
 
 test('MIGRATE runtime role PostgreSQL: when the API would connect as a role that does not own the tables, the RLS migration is NOT applied and the deploy fails; with the owner, or with a role exempt from RLS, it is applied and the API role keeps reading', { skip: !adminUrl && 'TUS_MIGRATIONS_PG_ADMIN_URL not set (disposable PostgreSQL 16 only)', timeout: 900_000 }, async () => {
