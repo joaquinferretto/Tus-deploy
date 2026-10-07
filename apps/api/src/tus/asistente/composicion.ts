@@ -332,7 +332,7 @@ export function crearModuloWhatsapp(input: {
     config,
     capacidades,
     whatsapp,
-    ingreso: new ServicioIngresoWhatsapp(input.transaction, limits.ingreso, now, input.log, input.verificadorTelefono ?? null),
+    ingreso: new ServicioIngresoWhatsapp(input.transaction, limits.ingreso, now, input.log, input.verificadorTelefono ?? null, (wamid) => void whatsapp.markReadTyping(wamid).catch(() => undefined)),
     vinculacion,
     soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now, async (ids) => (await domain.solicitudesTurnoParaAdmin?.(ids)) ?? []),
     plantillas: WhatsappTemplateService.desdeEnv(env),

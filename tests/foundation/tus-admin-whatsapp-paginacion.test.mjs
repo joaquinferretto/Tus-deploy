@@ -118,5 +118,5 @@ test('ADMIN WhatsApp avisos: the state of a notice follows the evidence — the 
 test('ADMIN WhatsApp Web: a slower answer to an older page never replaces the newer one', () => {
   const whatsapp = read('apps/web/src/components/admin/admin-whatsapp.tsx')
   assert.match(whatsapp, /const turno = \(pedido\.current \+= 1\)/u)
-  assert.match(whatsapp, /listWhatsappAdminConversations\([^\n]+\n\s*if \(turno !== pedido\.current\) return\n\s*setItems\(result\.conversations\)/u, 'a stale page is dropped before it touches the list')
+  assert.match(whatsapp, /listWhatsappAdminConversations\([^\n]+\n\s*if \(turno !== pedido\.current\) return\r?\n\s*setItems\(result\.conversations\)/u, 'a stale page is dropped before it touches the list')
 })

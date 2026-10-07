@@ -47,7 +47,10 @@ export class ServicioIngresoWhatsapp {
     private readonly limits: LimitesIngreso = LIMITES_INGRESO_POR_DEFECTO,
     private readonly now: () => number = Date.now,
     private readonly log: (event: string, fields: Record<string, unknown>) => void = () => undefined,
-    private readonly verificador: VerificadorTelefonoWhatsapp | null = null
+    private readonly verificador: VerificadorTelefonoWhatsapp | null = null,
+    // WHATSAPP-LEIDO-01. Called the moment a message is left for the assistant: the person sees
+    // the blue ticks and "escribiendo…" at once, without waiting for the queue. Best effort.
+    private readonly alRecibir: ((wamid: string) => void) | null = null
   ) {}
 
   private esVerificacion(event: MensajeEntranteMeta): boolean {
@@ -298,6 +301,14 @@ export class ServicioIngresoWhatsapp {
         correlationId,
         now: nowIso,
       })
+    // Only what the assistant will answer: a conversation an operator owns is read by a person.
+    if (updatedConversation.mode === 'bot' && !verificacion && event.wamid) {
+      try {
+        this.alRecibir?.(event.wamid)
+      } catch {
+        // Never part of the ingest.
+      }
+    }
     return 'accepted'
   }
 
