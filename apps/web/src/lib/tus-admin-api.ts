@@ -348,6 +348,37 @@ export interface AdminEvento {
   fecha: string
 }
 
+// SERVICIO-URGENTE-01: an urgent request with every provider it was offered to.
+export interface AdminUrgente {
+  id: string
+  status: 'pendiente' | 'tomada' | 'sin_candidatos' | 'todos_rechazaron' | 'vencida' | 'cancelada'
+  client: string
+  service: string
+  description: string | null
+  address: string
+  zone: string
+  origin: string
+  createdAt: string
+  expiresAt: string
+  reopenings: number
+  workId: string | null
+  winner: { name: string; acceptedAt: string | null } | null
+  counts: { candidates: number; notified: number; rejected: number; resigned: number; unanswered: number; deliveryFailed: number }
+  candidates: {
+    provider: { id: string | null; name: string }
+    status: string
+    round: number
+    notSentReason: string | null
+    notifiedAt: string | null
+    answeredAt: string | null
+    answerChannel: string | null
+    acceptedAt: string | null
+    resignedAt: string | null
+    resignationReason: string | null
+    delivery: { status: string; at: string; error: string | null; waIdMasked: string | null } | null
+  }[]
+}
+
 export const adminApi = {
   resumen: () => call<AdminResumen>('/tus/v1/admin/resumen'),
   // Search, filters and pagination run in the API (never over a downloaded list).
@@ -379,6 +410,7 @@ export const adminApi = {
   quitarUbicacionPrestador: (id: string) => call<{ location: AdminUbicacionPrestador }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/ubicacion`, undefined, 'DELETE'),
   prestadores: (input: { q: string; oficio: string; zona: string; visibilidad: string; verificacion: string; page: number; pageSize: number }) => call<AdminPage<AdminPrestador>>(`/tus/v1/admin/prestadores?${new URLSearchParams({ q: input.q, oficio: input.oficio, zona: input.zona, visibilidad: input.visibilidad, verificacion: input.verificacion, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   visibilidad: (id: string, visible: boolean) => call<{ id: string; visible: boolean }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/visibilidad`, { visible }),
+  urgentes: (input: { page: number; pageSize: number }) => call<AdminPage<AdminUrgente>>(`/tus/v1/admin/urgentes?${new URLSearchParams({ page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   solicitudes: (input: { q: string; estado: string; categoria: string; page: number; pageSize: number }) => call<AdminPage<AdminSolicitud>>(`/tus/v1/admin/solicitudes?${new URLSearchParams({ q: input.q, estado: input.estado, categoria: input.categoria, page: String(input.page), pageSize: String(input.pageSize) }).toString()}`),
   catalogo: () => call<AdminCatalogo>('/tus/v1/admin/catalogo'),
   // FASE 10: end-to-end service operations (read-only, plus the support cancellation).

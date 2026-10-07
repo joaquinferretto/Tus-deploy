@@ -18,6 +18,9 @@ export default function PublishRequestPage(): React.ReactNode {
       title="Publicá tu solicitud"
       visualTitle="Profesionales de Corrientes, cerca tuyo."
     >
+      <p style={{ margin: '0 0 16px' }}>
+        ¿Necesitás atención ya? <a href="/urgente">Pedí un servicio urgente</a>: lo ofrecemos a todos los prestadores disponibles y lo toma el primero que acepta.
+      </p>
       <PublishRequest />
     </AuthShell>
   )

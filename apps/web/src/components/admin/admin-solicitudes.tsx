@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { adminApi, adminErrorMessage, formatFecha, type AdminSolicitud } from '@/lib/tus-admin-api'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
 import { AdminPagination } from './admin-pagination'
+import { AdminUrgentes } from './admin-urgentes'
 import styles from './admin.module.css'
 
 // The request model has these states only (no "en proceso" / "cancelada"): shown as they are.
@@ -45,6 +46,7 @@ export function AdminSolicitudes(): React.ReactNode {
   return (
     <>
       <AdminPageHeader subtitle="Solicitudes creadas por clientes, ordenadas de la más reciente" title="Solicitudes" />
+      <AdminUrgentes />
       <div className={styles.toolbar}>
         <input aria-label="Buscar solicitudes" onChange={(event) => { setQ(event.target.value); setPage(1) }} placeholder="Buscar cliente, título o zona" type="search" value={q} />
         <select aria-label="Servicio" onChange={(event) => { setCategoria(event.target.value); setPage(1) }} value={categoria}><option value="">Todos los servicios</option>{oficios.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select>
