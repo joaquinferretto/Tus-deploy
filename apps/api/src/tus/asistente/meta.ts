@@ -536,15 +536,16 @@ export class MetaWhatsappCloudProvider implements WhatsappProvider {
   }
 
   async markReadTyping(wamid: string): Promise<void> {
+    const leido = { messaging_product: 'whatsapp', status: 'read', message_id: wamid }
     try {
-      await this.request('POST', `/${this.config.phoneNumberId}/messages`, {
-        messaging_product: 'whatsapp',
-        status: 'read',
-        message_id: wamid,
-        typing_indicator: { type: 'text' },
-      })
+      await this.request('POST', `/${this.config.phoneNumberId}/messages`, { ...leido, typing_indicator: { type: 'text' } })
     } catch {
-      // Best effort only.
+      // WHATSAPP-LEIDO-01. "Typing" refused must not cost the blue ticks: the read alone.
+      try {
+        await this.request('POST', `/${this.config.phoneNumberId}/messages`, leido)
+      } catch {
+        // Best effort only.
+      }
     }
   }
 
