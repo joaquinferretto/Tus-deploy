@@ -13,6 +13,23 @@ export interface NotificadorTurnos {
   turnoConfirmado(aviso: AvisoTurnoConfirmado): Promise<void>
   // A client or provider/admin cancelled a turno: only the counterpart is notified.
   turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void>
+  // The client added a picture to a request the provider was already told about.
+  imagenAgregada?(aviso: AvisoImagenTurno): Promise<void>
+}
+
+// A picture of a request, as TUS holds it (validated, without metadata).
+export interface ImagenAviso {
+  tipoMime: string
+  contenido: Buffer
+}
+
+export interface AvisoImagenTurno {
+  reservaId: string
+  prestadorCuentaId: string | null
+  clienteNombre: string
+  servicio: string
+  inicio: Date
+  imagen: ImagenAviso
 }
 
 export interface AvisoTurnoConfirmado {
@@ -37,6 +54,14 @@ export interface AvisoSolicitudTurno {
   inicio: Date
   duracionMinutos: number
   expiraEn: Date
+  // What the provider needs to decide, all computed by the backend: the price of the turno and
+  // the deposit the client will pay if it is accepted (null: nothing to pay), what the client
+  // wrote and the pictures it attached (at most two).
+  precio?: number | null
+  sena?: number | null
+  moneda?: string
+  notas?: string | null
+  imagenes?: ImagenAviso[]
 }
 
 export interface AvisoTurnoCancelado {

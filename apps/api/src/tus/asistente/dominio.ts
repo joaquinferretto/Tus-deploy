@@ -130,6 +130,15 @@ export type VerificacionSenaAsistente =
   | { estado: 'confirmed'; appliedNow: boolean; turnoConfirmado: boolean; amount: number }
   | { estado: 'pending' | 'not_approved' | 'not_found' | 'quarantined' | 'unavailable' }
 
+// What became of a request after the provider answered it.
+export interface RespuestaSolicitudTurno {
+  estado: string
+  clienteNombre: string
+  servicio: string
+  inicio: string
+  sena: number | null
+}
+
 export interface PuertoDominioAsistente {
   // Variants and real prices of a professional's service (null: it does not offer that service).
   servicioDeTurno(providerId: string, oficioId: string): Promise<ServicioTurnoAsistente | null>
@@ -181,6 +190,14 @@ export interface PuertoDominioAsistente {
   misSolicitudesTus(context: TusAuthenticatedTenantContext): Promise<SolicitudPropiaResumen[]>
   postulantes(context: TusAuthenticatedTenantContext, requestId: string): Promise<PostulanteResumen[]>
   elegirPostulante(context: TusAuthenticatedTenantContext, input: { requestId: string; applicationId: string }): Promise<{ requestId: string; assignment: string; providerName: string | null }>
+  // TURNOS-WHATSAPP-01. The provider answers a request from WhatsApp: the same use case as the
+  // panel, with the provider taken from the account linked to the number.
+  responderSolicitudTurno?(context: TusAuthenticatedTenantContext, input: { reservaId: string; aceptar: boolean }): Promise<RespuestaSolicitudTurno>
+  // Requests this provider still has to answer (nearest first).
+  solicitudesTurnoPorResponder?(context: TusAuthenticatedTenantContext): Promise<Array<{ id: string; inicio: string }>>
+  // The client's own request that still waits for an answer, if it has exactly one way to tell.
+  solicitudTurnoEnEspera?(context: TusAuthenticatedTenantContext): Promise<{ id: string; servicio: string; inicio: string } | null>
+  adjuntarImagenTurno?(context: TusAuthenticatedTenantContext, input: { reservaId: string; bytes: Buffer }): Promise<{ orden: number; total: number }>
   // Turnos y agenda: mismos contratos y servicios que la Web (/prestador/turnos y perfil del prestador)
   turnosDisponibles(providerId: string, oficioId: string, fecha: string): Promise<{
     slots: { inicio: string; fin: string; duracionMinutos: number; disponible: boolean }[]
@@ -559,6 +576,36 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
       estado: turno.estado,
       sena: turno.sena ? { monto: turno.sena.monto, estado: turno.sena.estado } : null,
     }
+  }
+
+  async responderSolicitudTurno(context: TusAuthenticatedTenantContext, input: { reservaId: string; aceptar: boolean }): Promise<RespuestaSolicitudTurno> {
+    if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    // The provider is the tenant of the linked account: a request of another agenda answers 404.
+    const pedido = { prestadorTenantId: context.tenantId, reservaId: input.reservaId, actorId: context.subjectId, canal: 'whatsapp' as const }
+    const turno = input.aceptar ? await this.compartidos.turnos.aceptarSolicitud(pedido) : await this.compartidos.turnos.rechazarSolicitud(pedido)
+    return { estado: turno.estado, clienteNombre: turno.clienteNombre ?? 'el cliente', servicio: turno.tarifaNombre ?? turno.oficioNombre ?? 'el servicio', inicio: turno.inicio, sena: turno.sena?.monto ?? null }
+  }
+
+  async solicitudesTurnoPorResponder(context: TusAuthenticatedTenantContext): Promise<Array<{ id: string; inicio: string }>> {
+    if (!this.compartidos?.turnos) return []
+    return (await this.compartidos.turnos.solicitudesPorResponder(context.tenantId)).map((fila) => ({ id: fila.id, inicio: fila.inicio.toISOString() }))
+  }
+
+  async solicitudTurnoEnEspera(context: TusAuthenticatedTenantContext): Promise<{ id: string; servicio: string; inicio: string } | null> {
+    if (!this.compartidos?.turnos) return null
+    const turnos = await this.compartidos.turnos.turnosCliente(context.subjectId)
+    // A picture is a receipt while a deposit is due: only with nothing to pay is it a picture of
+    // the request, and only when there is one request it can belong to.
+    if (turnos.some((turno) => turno.estado === 'awaiting_payment')) return null
+    const enEspera = turnos.filter((turno) => turno.estado === 'pending')
+    if (enEspera.length !== 1) return null
+    const turno = enEspera[0]!
+    return { id: turno.id, servicio: turno.tarifaNombre ?? turno.oficioNombre ?? 'el servicio', inicio: turno.inicio }
+  }
+
+  async adjuntarImagenTurno(context: TusAuthenticatedTenantContext, input: { reservaId: string; bytes: Buffer }): Promise<{ orden: number; total: number }> {
+    if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    return this.compartidos.turnos.adjuntarImagen({ clienteId: context.subjectId, reservaId: input.reservaId, bytes: input.bytes })
   }
 
   async misTurnos(context: TusAuthenticatedTenantContext) {

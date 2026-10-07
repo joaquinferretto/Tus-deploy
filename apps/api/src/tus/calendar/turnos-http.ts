@@ -17,6 +17,11 @@ export function crearRouterTurnos({
   sessions: TusSessionResolverPort
 }): Router {
   const router = express.Router()
+  // How many pictures each request carries (one grouped query, never one per turno).
+  const conImagenes = async <T extends { id: string }>(items: T[]): Promise<Array<T & { imagenes: number }>> => {
+    const cuenta = typeof servicio.imagenesDe === 'function' ? await servicio.imagenesDe(items.map((item) => item.id)).catch(() => new Map<string, number>()) : new Map<string, number>()
+    return items.map((item) => ({ ...item, imagenes: cuenta.get(item.id) ?? 0 }))
+  }
 
   // -----------------------------------------------------------------------------------------------
   // 1. PUBLIC ENDPOINTS (Buscar trabajador -> agenda) y la solicitud de turno del cliente
@@ -132,7 +137,47 @@ export function crearRouterTurnos({
       const context = await autenticar(request, response, sessions)
       if (!context) return
       try {
-        response.status(200).json({ items: await servicio.turnosCliente(context.subjectId) })
+        response.status(200).json({ items: await conImagenes(await servicio.turnosCliente(context.subjectId)) })
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
+  // TURNOS-WHATSAPP-01: up to two pictures on the client's own request while it waits for an
+  // answer. The body is the raw image; its declared type and any file name are ignored.
+  router.post(
+    '/tus/v1/cliente/turnos/:id/imagenes',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      if (!Buffer.isBuffer(request.body)) return void enviarError(response, 415, 'IMAGE_TYPE_NOT_ALLOWED', 'Enviá la foto como application/octet-stream')
+      try {
+        response.status(201).json(await servicio.adjuntarImagen({ clienteId: context.subjectId, reservaId: String(request.params['id'] ?? ''), bytes: request.body }))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
+  // A picture of a request: only its client and the provider of that turno.
+  router.get(
+    '/tus/v1/turnos/:id/imagenes/:orden',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      const orden = Number(request.params['orden'])
+      if (orden !== 0 && orden !== 1) return void enviarError(response, 404, 'NOT_FOUND', 'Foto no encontrada')
+      try {
+        const imagen = await servicio.imagenDeTurno({ reservaId: String(request.params['id'] ?? ''), orden, cuentaId: context.subjectId, tenantId: context.tenantId })
+        response.setHeader('content-type', imagen.tipoMime)
+        response.setHeader('content-length', String(imagen.contenido.length))
+        response.setHeader('cache-control', 'private, no-store')
+        response.setHeader('x-content-type-options', 'nosniff')
+        response.setHeader('content-security-policy', "default-src 'none'; sandbox")
+        response.setHeader('content-disposition', 'inline')
+        response.setHeader('cross-origin-resource-policy', 'cross-origin')
+        response.status(200).end(imagen.contenido)
       } catch (error) {
         manejarError(response, error)
       }
@@ -205,7 +250,7 @@ export function crearRouterTurnos({
       const context = await autenticar(request, response, sessions)
       if (!context) return
       try {
-        const items = await servicio.solicitudesPrestador(context.tenantId)
+        const items = await conImagenes(await servicio.solicitudesPrestador(context.tenantId))
         response.status(200).json({ items, pendientes: items.length })
       } catch (error) {
         manejarError(response, error)

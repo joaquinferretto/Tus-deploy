@@ -2096,7 +2096,28 @@ model ExcepcionCalendario {
   @@map("excepciones_calendario")
 }
 
+// TURNOS-WHATSAPP-01: up to two pictures attached by the client to its request of turno.
+// uq_imagenes_reserva_orden + ck_imagenes_reserva_orden (SQL): positions 0 and 1 only.
+model ImagenReserva {
+  id          String   @id(map: "imagenes_reserva_pkey") @map("id")
+  tenantId    String   @map("tenant_id")
+  reservaId   String   @map("reserva_id")
+  reserva     Reserva  @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_imagenes_reserva_reserva")
+  orden       Int      @map("orden") @db.SmallInt
+  tipoMime    String   @map("tipo_mime")
+  tamanoBytes Int      @map("tamano_bytes")
+  ancho       Int      @map("ancho")
+  alto        Int      @map("alto")
+  sha256      String   @map("sha256")
+  contenido   Bytes    @map("contenido")
+  creadoEn    DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  @@unique([reservaId, orden], map: "uq_imagenes_reserva_orden")
+  @@map("imagenes_reserva")
+}
+
 model Reserva {
+  imagenes                 ImagenReserva[]
   id                 String   @id(map: "reservas_pkey")
   tenantId           String   @map("tenant_id")
   clienteTenantId    String?  @map("cliente_tenant_id")

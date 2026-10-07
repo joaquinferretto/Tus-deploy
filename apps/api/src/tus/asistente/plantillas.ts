@@ -11,6 +11,8 @@ export interface DefinicionPlantilla {
   language: 'es_AR'
   parameters: string[]
   body: string
+  // Quick-reply buttons of the template, in order (titles as created in WhatsApp Manager).
+  buttons?: string[]
 }
 
 export const PLANTILLAS_WHATSAPP: DefinicionPlantilla[] = [
@@ -18,6 +20,16 @@ export const PLANTILLAS_WHATSAPP: DefinicionPlantilla[] = [
   { name: 'provider_budget_received', category: 'UTILITY', language: 'es_AR', parameters: ['servicio'], body: 'Recibiste un presupuesto para {{1}} en TUS. Revisalo y decidí desde TUS.' },
   { name: 'reservation_reminder', category: 'UTILITY', language: 'es_AR', parameters: ['servicio', 'fecha'], body: 'Recordatorio: tu reserva de {{1}} es el {{2}}.' },
   { name: 'work_status_update', category: 'UTILITY', language: 'es_AR', parameters: ['servicio', 'estado'], body: 'Tu trabajo de {{1}} cambió de estado: {{2}}.' },
+  // TURNOS-WHATSAPP-01: a request of turno for a provider whose 24 hour window is closed. The two
+  // quick replies come back with the payload TUS sent (which request, accept or reject).
+  {
+    name: 'turno_solicitud_recibida',
+    category: 'UTILITY',
+    language: 'es_AR',
+    parameters: ['cliente', 'servicio', 'fecha', 'hora', 'precio', 'sena'],
+    body: '{{1}} te solicitó un turno de {{2}} para el {{3}} a las {{4}}. Precio: {{5}}. Seña: {{6}}. ¿Lo aceptás?',
+    buttons: ['Aceptar', 'Rechazar'],
+  },
   { name: 'payment_available', category: 'UTILITY', language: 'es_AR', parameters: ['servicio'], body: 'Tu servicio {{1}} está listo para pagar en TUS.' },
 ]
 
@@ -35,13 +47,18 @@ export class WhatsappTemplateService {
     return new WhatsappTemplateService(new Set((env['WHATSAPP_APPROVED_TEMPLATES'] ?? '').split(',').map((name) => name.trim()).filter(Boolean)))
   }
 
-  construir(name: string, values: Record<string, string>): MensajeSaliente {
+  aprobada(name: string): boolean {
+    return this.approved.has(name) && PLANTILLAS_WHATSAPP.some((item) => item.name === name)
+  }
+
+  construir(name: string, values: Record<string, string>, buttonPayloads?: string[]): MensajeSaliente {
     const template = PLANTILLAS_WHATSAPP.find((item) => item.name === name)
     if (!template) throw new ErrorPlantillaWhatsapp('TEMPLATE_UNKNOWN', 'unknown template')
     if (!this.approved.has(name)) throw new ErrorPlantillaWhatsapp('TEMPLATE_NOT_APPROVED', 'template is not approved in WhatsApp Manager')
     const parameters = template.parameters.map((key) => values[key])
     if (parameters.some((value) => typeof value !== 'string' || !value.trim() || value.length > 120))
       throw new ErrorPlantillaWhatsapp('TEMPLATE_PARAMETERS', 'template parameters are invalid')
-    return { type: 'template', name, language: template.language, parameters: parameters as string[] }
+    if ((template.buttons?.length ?? 0) !== (buttonPayloads?.length ?? 0)) throw new ErrorPlantillaWhatsapp('TEMPLATE_PARAMETERS', 'template buttons do not match')
+    return { type: 'template', name, language: template.language, parameters: parameters as string[], ...(buttonPayloads?.length ? { buttonPayloads } : {}) }
   }
 }

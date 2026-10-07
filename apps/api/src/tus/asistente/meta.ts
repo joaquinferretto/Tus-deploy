@@ -326,7 +326,11 @@ export type MensajeSaliente =
   | { type: 'text'; text: string; attachment?: AdjuntoAsistente }
   | { type: 'buttons'; text: string; buttons: BotonRespuesta[] }
   | { type: 'cta_url'; text: string; label: string; url: string }
-  | { type: 'template'; name: string; language: string; parameters: string[] }
+  // `buttonPayloads`: the payload of each quick-reply button of the template, in order (what
+  // comes back when the person taps it).
+  | { type: 'template'; name: string; language: string; parameters: string[]; buttonPayloads?: string[] }
+  // A picture TUS holds (validated bytes), uploaded to Meta and sent; `text` is its caption.
+  | { type: 'image'; text: string; mimeType: string; bytes: Buffer }
 
 export interface ResultadoEnvioMeta {
   wamid: string
@@ -395,7 +399,9 @@ export function mapearErrorMeta(status: number, body: unknown): ErrorMetaWhatsap
 export function cuerpoMensajeMeta(
   to: string,
   message: MensajeSaliente,
-  replyToWamid?: string
+  replyToWamid?: string,
+  // Id Meta gave to the uploaded picture of an `image` message.
+  mediaId?: string
 ): Record<string, unknown> {
   const base: Record<string, unknown> = {
     messaging_product: 'whatsapp',
@@ -438,22 +444,30 @@ export function cuerpoMensajeMeta(
         },
       },
     }
+  if (message.type === 'image')
+    return {
+      ...base,
+      type: 'image',
+      image: { id: mediaId ?? '', ...(message.text ? { caption: text(message.text, 1024) } : {}) },
+    }
+  const components = [
+    ...(message.parameters.length > 0
+      ? [{ type: 'body', parameters: message.parameters.map((value) => ({ type: 'text', text: value })) }]
+      : []),
+    ...(message.buttonPayloads ?? []).map((payload, index) => ({
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: String(index),
+      parameters: [{ type: 'payload', payload: text(payload, 256) }],
+    })),
+  ]
   return {
     ...base,
     type: 'template',
     template: {
       name: message.name,
       language: { code: message.language },
-      ...(message.parameters.length > 0
-        ? {
-            components: [
-              {
-                type: 'body',
-                parameters: message.parameters.map((value) => ({ type: 'text', text: value })),
-              },
-            ],
-          }
-        : {}),
+      ...(components.length > 0 ? { components } : {}),
     },
   }
 }
@@ -480,10 +494,11 @@ export class MetaWhatsappCloudProvider implements WhatsappProvider {
     message: MensajeSaliente,
     options: { replyToWamid?: string } = {}
   ): Promise<ResultadoEnvioMeta> {
+    const mediaId = message.type === 'image' ? await this.uploadMedia(message.mimeType, message.bytes) : undefined
     const payload = await this.request(
       'POST',
       `/${this.config.phoneNumberId}/messages`,
-      cuerpoMensajeMeta(to, message, options.replyToWamid)
+      cuerpoMensajeMeta(to, message, options.replyToWamid, mediaId)
     )
     const wamid = asString(asRecord(asArray(asRecord(payload)['messages'])[0])['id'])
     if (!wamid)
@@ -494,6 +509,30 @@ export class MetaWhatsappCloudProvider implements WhatsappProvider {
         true
       )
     return { wamid }
+  }
+
+  // Uploads a picture to Meta (multipart) and returns the media id to send it with.
+  private async uploadMedia(mimeType: string, bytes: Buffer): Promise<string> {
+    const form = new FormData()
+    form.append('messaging_product', 'whatsapp')
+    form.append('type', mimeType)
+    form.append('file', new Blob([new Uint8Array(bytes)], { type: mimeType }), `foto.${mimeType.split('/')[1] ?? 'jpg'}`)
+    let response: Response
+    try {
+      response = await this.fetchImpl(`${this.base}/${this.config.phoneNumberId}/media`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.config.accessToken}` },
+        body: form,
+        signal: AbortSignal.timeout(this.config.timeoutMs ?? 15_000),
+      })
+    } catch {
+      throw new ErrorMetaWhatsapp('WHATSAPP_TIMEOUT', 'Meta media upload timed out or failed')
+    }
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) throw mapearErrorMeta(response.status, payload)
+    const id = asString(asRecord(payload)['id'])
+    if (!id) throw new ErrorMetaWhatsapp('WHATSAPP_MEDIA', 'Meta did not return a media id')
+    return id
   }
 
   async markReadTyping(wamid: string): Promise<void> {

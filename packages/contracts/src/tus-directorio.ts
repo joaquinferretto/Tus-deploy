@@ -159,6 +159,8 @@ export interface SolicitudReservaTurno {
 
 export interface DetalleTurno {
   id: string
+  // Pictures the client attached to the request (0 to 2); read through the turno's image route.
+  imagenes?: number
   reservaId: string
   tenantId: string
   prestadorId: string

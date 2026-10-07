@@ -3,7 +3,8 @@ import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './conocimiento.ts'
 import { DIAS_BUSQUEDA_PRIMERA, DIAS_LISTADOS, DIAS_PANORAMA, PIDE_DIAS, PIDE_HORARIOS, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, diasDe, elegirOferta, horaLocal, horasDe, listaDeOpciones, ofertasDePanorama, ofertasDeResultado, personasDe, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDias, textoDisponibilidad, textoPanorama, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type DiaDisponible, type OfertasMostradas } from './busqueda.ts'
 import { oficio } from '../directorio/oficios.ts'
-import { formatearPesos } from '@factory/contracts'
+import { CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, formatearPesos } from '@factory/contracts'
+import { leerRespuestaTurno } from './avisos-turnos.ts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
@@ -244,6 +245,8 @@ export interface DependenciasOrquestador {
 interface ComprobanteRecibido {
   type: 'image' | 'document'
   hasCaption: boolean
+  // Media id Meta gave to the file (only used to attach a picture to a request of turno).
+  mediaId?: string
 }
 
 // Resolves with the promise or rejects with STT_TIMEOUT when it takes longer than `ms`.
@@ -616,7 +619,8 @@ export class OrquestadorConversacion {
         // A picture or a document is only ever a HINT of a payment: it is not downloaded, read or
         // shown to the model (privacy), and nothing in it is evidence of money. Its caption is text.
         if (message.text) parts.push(message.text)
-        comprobantes.push({ type: message.type, hasCaption: Boolean(message.text) })
+        const medio = (message.metadata['media'] as { id?: string } | undefined)?.id
+        comprobantes.push({ type: message.type, hasCaption: Boolean(message.text), ...(medio ? { mediaId: medio } : {}) })
       } else if (message.type === 'location') {
         notices.push(MENSAJES.locationReceived)
         parts.push('[El usuario compartió una ubicación aproximada]')
@@ -707,6 +711,13 @@ export class OrquestadorConversacion {
     correlationId: string
   ): Promise<MensajeSaliente[]> {
     const text = input.text
+    // TURNOS-WHATSAPP-01, before anything reads the message as conversation: the answer of a
+    // provider to a request of turno (a reply button, or the word when one request waits), and
+    // a picture the client adds to the request it just made.
+    const respuestaTurno = await this.respuestaASolicitudDeTurno(turn, actor, input)
+    if (respuestaTurno) return respuestaTurno
+    const fotoTurno = await this.fotoDeSolicitudDeTurno(turn, actor, input)
+    if (fotoTurno) return fotoTurno
     if (text) await this.registrarHechos(turn, text)
     // "¿Ya aceptó?", "¿a qué hora viene?": the memory says which turno is meant, the REAL state
     // of TUS answers. Before the help and the steps: it is a question about the person's own data.
@@ -1870,6 +1881,81 @@ export class OrquestadorConversacion {
   // reads the payment from Mercado Pago by TUS's own payment reference and applies it through the
   // same state machine as the webhook. The text, the audio or the picture are never read as
   // evidence: a receipt cannot confirm anything, and nothing in it is downloaded or sent to a model.
+  // ---- TURNOS-WHATSAPP-01 ---------------------------------------------------------------------
+
+  // The provider accepts or rejects a request from WhatsApp. The button only says WHICH request
+  // and WHICH answer: who answers is the account linked to this number, and the backend (the
+  // same use case as the panel) checks the request is of that agenda, that it still waits, that
+  // the time is still free, and makes the change once. Tapping twice gives the same result.
+  private async respuestaASolicitudDeTurno(turn: Turno, actor: ActorAsistente, input: { text: string; replyId: string | null }): Promise<MensajeSaliente[] | null> {
+    if (turn.canal.id !== 'whatsapp') return null
+    const domain = this.deps.domain
+    if (typeof domain.responderSolicitudTurno !== 'function') return null
+    let pedido = leerRespuestaTurno(input.replyId)
+    const palabra = /^\s*(aceptar|acepto|aceptado|rechazar|rechazo|rechazado)\s*[.!]*\s*$/iu.exec(input.text)
+    if (!pedido && !palabra) return null
+    // Only a linked account that is a provider answers requests; anybody else is not told
+    // whether that request exists.
+    if (!actor.context || !actor.isProvider) return pedido ? [{ type: 'text', text: 'Para responder solicitudes de turno este número tiene que estar vinculado a tu cuenta de prestador en TUS.' }] : null
+    if (!pedido && palabra) {
+      // The word alone: only when exactly one request waits (never a guess between two).
+      const esperando = typeof domain.solicitudesTurnoPorResponder === 'function' ? await domain.solicitudesTurnoPorResponder(actor.context).catch(() => []) : []
+      if (esperando.length === 0) return null
+      if (esperando.length > 1) return [{ type: 'text', text: `Tenés ${esperando.length} solicitudes de turno esperando respuesta. Respondé cada una con los botones de su mensaje, o desde Solicitudes de reserva en TUS.` }]
+      pedido = { aceptar: /^\s*acept/iu.test(input.text), reservaId: esperando[0]!.id }
+    }
+    if (!pedido) return null
+    try {
+      const turno = await domain.responderSolicitudTurno(actor.context, pedido)
+      this.metric('whatsapp.appointment_answer', { accepted: pedido.aceptar, state: turno.estado })
+      const cual = `el turno de ${turno.servicio} de ${turno.clienteNombre} del ${fechaLarga(new Date(turno.inicio))} a las ${horaCorta(new Date(turno.inicio))}`
+      if (turno.estado === 'rejected') return [{ type: 'text', text: `Listo: rechazaste ${cual}. Le avisamos al cliente y el horario vuelve a estar disponible.` }]
+      if (turno.estado === 'awaiting_payment') return [{ type: 'text', text: `Listo: aceptaste ${cual}. Le pedimos al cliente la seña${turno.sena ? ` de ${formatearPesos(turno.sena)}` : ''}; el turno queda confirmado cuando la pague y te avisamos.` }]
+      if (turno.estado === 'confirmed') return [{ type: 'text', text: `Listo: ${cual} quedó confirmado. Le avisamos al cliente.` }]
+      return [{ type: 'text', text: `Esa solicitud ya no está pendiente (${turno.estado}).` }]
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code
+      this.metric('whatsapp.appointment_answer', { accepted: pedido.aceptar, failed: typeof code === 'string' ? code : 'ERROR' })
+      const texto =
+        code === 'NOT_FOUND' ? 'No encontré esa solicitud en tu agenda.'
+        : code === CODIGO_SOLICITUD_NO_PENDIENTE ? 'Esa solicitud ya había sido respondida.'
+        : code === CODIGO_SOLICITUD_VENCIDA ? 'Esa solicitud venció antes de que la respondieras.'
+        : code === CODIGO_SOLICITUD_SIN_HORARIO ? 'Ese horario ya no está libre en tu agenda: la solicitud quedó rechazada y le avisamos al cliente.'
+        : code === 'PROVIDER_SUSPENDED' ? 'Tu perfil de prestador está suspendido: no podés responder solicitudes.'
+        : error instanceof Error && typeof code === 'string' && /^[A-Z_]+$/u.test(code) && error.message ? error.message
+        : 'No pude registrar tu respuesta. Probá de nuevo o respondé desde Solicitudes de reserva en TUS.'
+      return [{ type: 'text', text: texto }]
+    }
+  }
+
+  // A picture sent by a client whose only open matter is a request of turno waiting for an
+  // answer: it is a picture OF that request (up to two), never read by the model. With a deposit
+  // due, a picture is a receipt and this does not touch it.
+  private async fotoDeSolicitudDeTurno(turn: Turno, actor: ActorAsistente, input: { text: string; comprobantes: ComprobanteRecibido[] }): Promise<MensajeSaliente[] | null> {
+    if (turn.canal.id !== 'whatsapp') return null
+    const fotos = input.comprobantes.filter((item) => item.type === 'image' && item.mediaId)
+    const domain = this.deps.domain
+    const cuenta = cuentaDeSolicitud(actor)
+    if (fotos.length === 0 || !cuenta || PAGO_REALIZADO(input.text) || typeof domain.solicitudTurnoEnEspera !== 'function' || typeof domain.adjuntarImagenTurno !== 'function') return null
+    const solicitud = await domain.solicitudTurnoEnEspera(cuenta).catch(() => null)
+    if (!solicitud) return null
+    let total = 0
+    let rechazo: string | null = null
+    for (const foto of fotos) {
+      try {
+        const descargada = await this.deps.whatsapp.downloadMedia(foto.mediaId!, { maxBytes: 2 * 1024 * 1024, allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'] })
+        total = (await domain.adjuntarImagenTurno(cuenta, { reservaId: solicitud.id, bytes: descargada.bytes })).total
+      } catch (error) {
+        const code = (error as { code?: unknown } | null)?.code
+        rechazo = code === 'TOO_MANY_IMAGES' ? 'Tu solicitud ya tiene sus 2 fotos; no sumé más.' : 'No pude usar esa foto: tiene que ser JPG, PNG o WEBP de hasta 2 MB.'
+      }
+    }
+    this.metric('whatsapp.appointment_picture', { attached: total > 0 })
+    const cual = `tu solicitud de ${solicitud.servicio} del ${fechaLarga(new Date(solicitud.inicio))} a las ${horaCorta(new Date(solicitud.inicio))}`
+    if (total === 0) return [{ type: 'text', text: rechazo ?? 'No pude usar esa foto.' }]
+    return [{ type: 'text', text: `Sumé la foto a ${cual} (${total} de 2). El prestador la ve junto con la solicitud.${rechazo ? ` ${rechazo}` : ''}` }]
+  }
+
   private async verificacionDePago(
     turn: Turno,
     actor: ActorAsistente,
@@ -3675,6 +3761,7 @@ export async function enviarMensajeSaliente(input: {
     metadata: {
       inReplyTo: input.inReplyTo,
       ...(input.message.type === 'cta_url' ? { cta: true } : {}),
+      ...(input.message.type === 'image' ? { image: true } : {}),
     },
     correlationId: input.correlationId,
     createdAt: nowIso,

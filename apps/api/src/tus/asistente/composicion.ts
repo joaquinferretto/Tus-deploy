@@ -349,7 +349,7 @@ export function crearModuloWhatsapp(input: {
       now,
       metric,
     }),
-    avisosTurnos: new NotificadorTurnosWhatsapp(input.transaction, whatsapp, now, metric),
+    avisosTurnos: new NotificadorTurnosWhatsapp(input.transaction, whatsapp, now, metric, WhatsappTemplateService.desdeEnv(env)),
     platformAdminTenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null,
     crearWorker: (options = {}) =>
       new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, mantenimiento: () => cicloDeVida.depurar(), ...options }),
