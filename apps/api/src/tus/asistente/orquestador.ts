@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './conocimiento.ts'
-import { DIAS_BUSQUEDA_PRIMERA, DIAS_LISTADOS, DIAS_PANORAMA, PIDE_DIAS, PIDE_HORARIOS, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, diasDe, elegirOferta, horaLocal, horasDe, listaDeOpciones, ofertasDePanorama, ofertasDeResultado, personasDe, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDias, textoDisponibilidad, textoPanorama, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type DiaDisponible, type OfertasMostradas } from './busqueda.ts'
+import { DIAS_BUSQUEDA_PRIMERA, DIAS_LISTADOS, DIAS_PANORAMA, DIAS_TRAMO_MAXIMO, PIDE_DIAS, PIDE_HORARIOS, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, diasDe, elegirOferta, horaLocal, horasDe, listaDeOpciones, ofertasDePanorama, ofertasDeResultado, personasDe, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDias, textoDisponibilidad, textoPanorama, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type DiaDisponible, type OfertasMostradas } from './busqueda.ts'
 import { oficio } from '../directorio/oficios.ts'
 import { CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, formatearPesos } from '@factory/contracts'
 import { leerRespuestaTurno } from './avisos-turnos.ts'
@@ -21,7 +21,8 @@ import { extracto } from './ayuda.ts'
 import { BOTONES_SOLICITUD, elegirServicio, elegirServicioPorNombre, enlaceRegistro, fechaLarga, horaCorta, preguntaServicio, resumenSolicitud, retornoDeSolicitud, sinIdentificadores, textoPrecio, type OpcionServicio } from './solicitud-turno.ts'
 import { ErrorChat, type ChatProvider, type MensajeChat, type RespuestaChat, type Transcriptor } from './groq.ts'
 import { ErrorAudio, LIMITES_AUDIO_POR_DEFECTO, validarAudio, type LimitesAudio, type ResultadoTranscripcion } from './audio.ts'
-import { NECESIDAD_VACIA, combinarNecesidad, describirDia, describirVentana, diaSiguiente, extraerNecesidad, faltantes, horaArgentina, hoyArgentina, horasPosibles, limitesVentana, mencionaAlgo, pareceHora, ventanaDesde, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
+import { NECESIDAD_VACIA, combinarNecesidad, describirDia, describirTramo, describirVentana, diaSiguiente, extraerNecesidad, faltantes, horaArgentina, hoyArgentina, horasPosibles, limitesVentana, mencionaAlgo, pareceHora, ventanaDesde, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
+import { diaSemana } from './fechas.ts'
 import {
   HERRAMIENTAS,
   PROMPT_ENRUTADOR,
@@ -324,6 +325,11 @@ type Turno = {
 
 // Asking for someone ("necesito un...", "busco una...", "quiero alguien que..."), typos included.
 // "quiero ver mis trabajos" is not: the verb has to ask for a person or a service.
+// "Quiero otro turno", "necesito sacar un turno", "me das un turno?": a turno is asked for and no
+// service is named. Not about a turno the person already has ("cancelar mi turno", "mi turno").
+const PIDE_TURNO = /\b(?:quiero|kiero|quisiera|necesito|nesecito|preciso|dame|das|sacar|pedir|reservar|agendar|otro|un|algun)\b[^.?!]*\b(?:turnos?|turnitos?|citas?)\b/iu
+const SOBRE_UN_TURNO_PROPIO = /\b(?:mis?|cancel\w*|reprogram\w*|cambi\w*|anul\w*|pag\w*|estado)\b/iu
+const pideTurnoSinServicio = (text: string): boolean => PIDE_TURNO.test(sinAcentos(text)) && !SOBRE_UN_TURNO_PROPIO.test(sinAcentos(text))
 const PIDE_SERVICIO = /\b(?:nece[sc]ito|ne[sc]e[sc]ito|busco|buscando|quiero|kiero|quisiera|preciso|me hace falta|hay|consigo|conseguir|recomend\w*|conoces)\s+(?:a\s+)?(?:un|una|unos|unas|alg[uú]n|alguna|alguien|el|la)\b/iu
 // Asking for help without saying for what: "necesito ayuda", "quiero un turno", "busco un profesional".
 const PEDIDO_SIN_SERVICIO = /^\s*(?:hola[,!. ]*)?(?:nece[sc]ito|quiero|busco|preciso|quisiera)\s+(?:una?\s+)?(?:ayuda|mano|servicio|profesional|prestador|trabajador|turno)\s*[.!?]*\s*$|^\s*ayuda\s*[.!?]*\s*$|\bme (?:pod[eé]s|puedes|podr[ií]as) ayudar\b/iu
@@ -889,7 +895,7 @@ export class OrquestadorConversacion {
           providerName: elegida?.name ?? null,
           anyProvider: !elegida,
           // Anybody else, the first real turno: unless a day was asked for (then, that day).
-          asap: Boolean(datos.asap) || base.asap || (!datos.day && !datos.since && (Boolean(booking) || Boolean(propuesta) || !combinada.day)),
+          asap: Boolean(datos.asap) || base.asap || (!datos.day && !datos.since && !datos.weekdays?.length && (Boolean(booking) || Boolean(propuesta) || !combinada.day)),
           excludedProviderIds: [...new Set([...(base.excludedProviderIds ?? []), ...excluidos])],
         }
         marcar('buscar', 'exclude_provider')
@@ -940,7 +946,7 @@ export class OrquestadorConversacion {
       const dia = diaLocal(booking.startsAt)
       const ella = { profession: booking.profession, providerId: booking.providerId, providerName: booking.providerName }
       const datos = extraerNecesidad(text, ahora)
-      const cambio = detectarCambioDeHorario(text) ?? (!datos.profession && !datos.anyProvider && (datos.day || datos.since || datos.time || datos.asap) ? 'otro_horario' : null)
+      const cambio = detectarCambioDeHorario(text) ?? (!datos.profession && !datos.anyProvider && (datos.day || datos.since || datos.weekdays?.length || datos.time || datos.asap) ? 'otro_horario' : null)
       if (cambio) {
         const minutos = Number(horaLocal(booking.startsAt).slice(0, 2)) * 60 + Number(horaLocal(booking.startsAt).slice(3, 5))
         const hhmm = (valor: number) => `${String(Math.floor(valor / 60)).padStart(2, '0')}:${String(valor % 60).padStart(2, '0')}`
@@ -1147,7 +1153,11 @@ export class OrquestadorConversacion {
 
     // 4. Choosing one of the professionals shown ("el segundo", a name, a time, "Melina ya mismo").
     //    Named for ANOTHER day than the one listed ("quiero a Melina mañana"): her own search (5).
-    const elegida = mantenerDia ? null : elegirOferta(text, datos, state.offers)
+    //    Named with a stretch of the calendar ("con Gabriela para el próximo mes", "solo los viernes"):
+    //    what was shown is not that stretch, so it is a search of her agenda in it (5), never a
+    //    choice among the turnos on the table.
+    const pideTramo = Boolean(datos.since || datos.weekdays?.length)
+    const elegida = mantenerDia || pideTramo ? null : elegirOferta(text, datos, state.offers)
     const eleccion = elegida && elegida.starts.length === 0 && (datos.day || datos.asap) ? null : elegida
     // "Melina" and then "mejor a la tarde" (a window, not one of her exact times) when she has
     // nothing then: the time asked is kept in
@@ -1173,7 +1183,7 @@ export class OrquestadorConversacion {
     //    a Melina mañana", "lo antes posible con Melina"): her real availability is searched.
     const candidatos: { providerId: string; name: string }[] = lista?.items ?? state.draft?.candidates ?? []
     const nombrado = !datos.anyProvider && !datos.profession && candidatos.length > 0 ? profesionalNombrado(text, candidatos) : null
-    if (nombrado && vigente?.profession && (datos.asap || datos.day || datos.time)) {
+    if (nombrado && vigente?.profession && (datos.asap || datos.day || datos.since || datos.weekdays?.length || datos.time)) {
       datos.providerId = nombrado.providerId
       datos.providerName = nombrado.name
     }
@@ -1186,10 +1196,10 @@ export class OrquestadorConversacion {
     // "mis trabajos de plomería", "¿cómo pago mañana?": another area of TUS, not a search.
     const otraArea = intencionPrivada(detectada) || detectada === 'conocimiento'
     const nombraOficio = Boolean(datos.profession || datos.alternatives?.length)
-    const cambiaAlgo = Boolean(datos.day || datos.since || datos.time || datos.zone || datos.anyZone || datos.clientTravels || datos.asap || datos.anyProvider || datos.providerId)
+    const cambiaAlgo = Boolean(datos.day || datos.since || datos.weekdays?.length || datos.time || datos.zone || datos.anyZone || datos.clientTravels || datos.asap || datos.anyProvider || datos.providerId)
     const sigueBusqueda = enCurso && cambiaAlgo
     // "mañana a las 18" as a first message: a day or a time for something still to be said.
-    const soloCuando = !enCurso && Boolean(datos.day || datos.since || datos.time || datos.asap) && (detectada === 'reserva' || detectada === 'otro' || detectada === 'buscar')
+    const soloCuando = !enCurso && Boolean(datos.day || datos.since || datos.weekdays?.length || datos.time || datos.asap) && (detectada === 'reserva' || detectada === 'otro' || detectada === 'buscar')
     // "¿Qué horarios tiene?" about the service being talked about: its real times (of the day
     // known, or of the next days with free turnos). About one professional when she is the one
     // being talked about.
@@ -1283,12 +1293,21 @@ export class OrquestadorConversacion {
   // the real days with free turnos are kept (`dias`), DIAS_LISTADOS of them at most (every day of
   // the stretch with `todosLosDias`). The first DIAS_PANORAMA days are walked; the next ones only
   // when those had nothing.
+  //
+  // ASISTENTE-TIEMPO-01. A stretch of the calendar ("el próximo mes", "solo los viernes"): the walk
+  // stays inside it. It starts at its first day, ends at its last one (`until`) and reads only the
+  // days of the week asked for (`weekdays`); it never falls back to today's agenda. Every day is
+  // still one call to the same backend search: there is no second agenda here.
   private async consultarDisponibilidad(turn: Turno, need: NecesidadTurno, correlationId: string, opciones: { desde?: string; todosLosDias?: boolean } = {}): Promise<BusquedaHecha | null> {
     turn.canal.evento?.({ type: 'tool', tool: 'find_appointments', phase: 'start' })
     const started = this.now()
     const hoy = hoyArgentina(started)
     // "La semana que viene": the calendar is walked from that Monday, not from today.
     const desde = need.day && need.day > hoy ? need.day : need.since && need.since > hoy ? need.since : hoy
+    // A stretch that is already over (a state kept from days ago) limits nothing.
+    const hasta = !need.day && need.until && need.until >= desde ? need.until : null
+    const semana = !need.day && need.weekdays?.length ? need.weekdays : null
+    const fueraDeTramo = (dia: string) => Boolean(semana && !semana.includes(diaSemana(dia)))
     const consultar = async (day: string, dayTo: string | null, time: NecesidadTurno['time']): Promise<DisponibilidadNecesidad | null> => {
       try {
         let timer: NodeJS.Timeout | undefined
@@ -1315,9 +1334,13 @@ export class OrquestadorConversacion {
       const dias: DiaDisponible[] = []
       let primero: DisponibilidadNecesidad | null = null
       let fallo = false
-      for (let salto = 0; salto < DIAS_PANORAMA * 2 && dias.length < (opciones.todosLosDias ? DIAS_PANORAMA : DIAS_LISTADOS); salto += 1) {
-        if (salto >= DIAS_PANORAMA && dias.length > 0) break
+      const acotado = Boolean(hasta || semana)
+      const tope = hasta ? DIAS_TRAMO_MAXIMO : semana ? DIAS_PANORAMA * 4 : DIAS_PANORAMA * 2
+      for (let salto = 0; salto < tope && dias.length < (opciones.todosLosDias || semana ? DIAS_PANORAMA : DIAS_LISTADOS); salto += 1) {
+        if (!acotado && salto >= DIAS_PANORAMA && dias.length > 0) break
         const dia = sumarDiasA(inicio, salto)
+        if (hasta && dia > hasta) break
+        if (fueraDeTramo(dia)) continue
         // Today only what is still ahead of the current time.
         const ventana = dia === hoy ? ventanaDesde(need.time, horaArgentina(started)) : need.time
         if (ventana === 'pasada') continue
@@ -1336,8 +1359,10 @@ export class OrquestadorConversacion {
       }
     } else {
       let ultimo: DisponibilidadNecesidad | null = null
-      for (let salto = 0; salto < DIAS_BUSQUEDA_PRIMERA; salto += 1) {
+      for (let salto = 0; salto < (hasta ? DIAS_TRAMO_MAXIMO : semana ? DIAS_PANORAMA * 4 : DIAS_BUSQUEDA_PRIMERA); salto += 1) {
         const dia = salto === 0 ? desde : sumarDiasA(desde, salto)
+        if (hasta && dia > hasta) break
+        if (fueraDeTramo(dia)) continue
         // Today only what is still ahead of the current time.
         const ventana = dia === hoy ? ventanaDesde(need.time, horaArgentina(started)) : need.time
         if (ventana === 'pasada') continue
@@ -1460,7 +1485,8 @@ export class OrquestadorConversacion {
     if (dias.length === 0) {
       if (resultado.outcome === 'no_providers' || resultado.outcome === 'no_appointments') return [{ type: 'text', text: textoDisponibilidad(need, resultado, this.now()) }]
       const ventana = describirVentana(need.time)
-      return [{ type: 'text', text: `No encontré turnos libres de ${oficio(resultado.profession).label}${need.providerName ? ` con ${need.providerName}` : ''}${ventana ? ` ${ventana}` : ''} en los próximos ${DIAS_PANORAMA * 2} días.` }]
+      const tramo = describirTramo(need, this.now())
+      return [{ type: 'text', text: `No encontré turnos libres de ${oficio(resultado.profession).label}${need.providerName ? ` con ${need.providerName}` : ''}${ventana ? ` ${ventana}` : ''} ${tramo || `en los próximos ${DIAS_PANORAMA * 2} días`}.${tramo ? ' ¿Querés que busque en otras fechas?' : ''}` }]
     }
     const ofertas = ofertasDePanorama(resultado.profession, dias)
     const todos = profesionalesDe(busqueda)
@@ -1552,7 +1578,9 @@ export class OrquestadorConversacion {
       }
       // From now on a time alone refers to this professional.
       await this.actualizarEstado(conversationId, { offers: { profession, items: [{ providerId: item.providerId, name: item.name, ...(item.area ? { area: item.area } : {}), starts: item.starts }], esperaHora: true }, currentIntent: 'reserva', booking: null })
-      return [{ type: 'text', text: `¿A qué hora con ${item.name}? Tiene: ${horasDe(starts, this.now())}.` }]
+      // Chosen from a list of several days: the day is told back with its times.
+      const unDia = new Set(starts.map(diaLocal)).size === 1 && turn.conversation.state.offers?.items.some((mostrada) => (mostrada as { day?: string }).day) ? ` ${describirDia(diaLocal(starts[0]!), null, this.now())}` : ''
+      return [{ type: 'text', text: `¿A qué hora${unDia} con ${item.name}? Tiene: ${horasDe(starts, this.now())}.` }]
     }
     // The list may be old: the start is read again from the agenda before anything is prepared.
     if (!(await this.sigueLibre(item.providerId, profession, starts[0]!))) return this.siguienteDe(turn, profession, item.providerId, item.name, starts[0]!, HORARIO_YA_NO_DISPONIBLE, correlationId)
@@ -2513,6 +2541,10 @@ export class OrquestadorConversacion {
     correlationId: string
   ): Promise<MensajeSaliente[]> {
     if (!this.deps.chat) {
+      // No model at hand: a turno asked for with no service known is still answered by the
+      // backend with the one question that is missing, never with an error.
+      const conocida = turn.busqueda?.need ?? turn.conversation.state.need ?? null
+      if (!conocida?.profession && pideTurnoSinServicio(text)) return this.preguntarServicioDelTurno(turn, conocida)
       turn.degradado = true
       return [{ type: 'text', text: MENSAJES.aiUnavailable }]
     }
@@ -2728,7 +2760,8 @@ export class OrquestadorConversacion {
           const nombre = primero && args.providerId && typeof this.deps.domain.nombrePrestador === 'function' ? await this.deps.domain.nombrePrestador(args.providerId).catch(() => null) : null
           const datos: DatosNecesidad = {
             ...(delTexto.day ? { day: delTexto.day, dayTo: delTexto.dayTo ?? null } : {}),
-            ...(delTexto.since ? { since: delTexto.since } : {}),
+            ...(delTexto.since ? { since: delTexto.since, until: delTexto.until ?? null } : {}),
+            ...(delTexto.weekdays?.length ? { weekdays: delTexto.weekdays } : {}),
             ...(delTexto.time ? { time: delTexto.time } : {}),
             ...(delTexto.urgent ? { urgent: true } : {}),
             ...(delTexto.asap || primero ? { asap: true } : {}),
@@ -2951,11 +2984,22 @@ export class OrquestadorConversacion {
     // The model gave nothing usable for a search and no service is known: asking which service
     // is still a better answer than an error. No service is ever assumed.
     if (intent === 'buscar' && !datosEnTurno && !need?.profession) return [{ type: 'text', text: preguntaFaltante(need ?? NECESIDAD_VACIA, { noEncontrado: PIDE_SERVICIO.test(text) }) }]
+    // "Quiero otro turno" (routed as a booking) and the model failed or brought nothing: the same
+    // question, never the generic error.
+    if (!datosEnTurno && !need?.profession && pideTurnoSinServicio(text)) return this.preguntarServicioDelTurno(turn, need)
     // The service is known and the model failed or brought nothing: the real search is the answer.
     if (intent === 'buscar' && !datosEnTurno && need?.profession && turn.busqueda) return this.buscarYResponder(turn, actor, need, text, correlationId)
     const pendiente = esperaHoraDe(turn.conversation.state)
     if (pendiente) return [{ type: 'text', text: preguntaHora(pendiente, this.now()) }]
     return this.bajaConfianza(turn)
+  }
+
+  // The one question missing to look for a turno: which service. The conversation stays a search.
+  private async preguntarServicioDelTurno(turn: Turno, need: NecesidadTurno | null): Promise<MensajeSaliente[]> {
+    turn.intencion = 'buscar'
+    turn.canal.evento?.({ type: 'routing', intent: 'buscar' })
+    await this.actualizarEstado(turn.conversation.conversationId, { currentIntent: 'buscar', lowConfidenceCount: 0 })
+    return [{ type: 'text', text: preguntaFaltante(need ?? NECESIDAD_VACIA) }]
   }
 
   private async bajaConfianza(turn: Turno): Promise<MensajeSaliente[]> {

@@ -3,7 +3,7 @@ import { oficio, oficiosInterpretables } from '../directorio/oficios.ts'
 import { sinAcentos } from '../texto.ts'
 import type { DisponibilidadNecesidad, OfertaTurnos } from './dominio.ts'
 import type { AdjuntoAsistente } from './meta.ts'
-import { describirDia, describirVentana, enVentana, horasPosibles, hoyArgentina, lunesDe, nombreDia, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
+import { describirDia, describirTramo, describirVentana, enVentana, horasPosibles, hoyArgentina, lunesDe, nombreDia, type DatosNecesidad, type NecesidadTurno } from './necesidad.ts'
 
 // From a real availability result to what the person reads. Pure: every name, time and count
 // comes from the result of the domain; nothing here can add a provider, a time or a price.
@@ -88,6 +88,9 @@ export const DIAS_BUSQUEDA_PRIMERA = 14
 // has nothing) and at most this many days with free turnos are listed.
 export const DIAS_PANORAMA = 7
 export const DIAS_LISTADOS = 3
+// ASISTENTE-TIEMPO-01. A stretch said by the person ("el próximo mes") is walked whole, one real
+// day at a time, up to this many days.
+export const DIAS_TRAMO_MAXIMO = 62
 const OPCIONES_LISTADAS = 9
 
 const capitalizar = (texto: string) => texto.charAt(0).toUpperCase() + texto.slice(1)
@@ -135,9 +138,10 @@ export function textoPanorama(need: NecesidadTurno, ofertas: OfertasMostradas, a
   const ventana = describirVentana(need.time)
   const otraZona = opciones.zonaAmpliada && need.zone ? `No encontré profesionales de ${label} que atiendan en ${need.zone}; estos son de otras zonas.\n` : ''
   const dias = diasDe(ofertas)
+  const tramo = describirTramo(need, ahora)
   const cabecera = dias.length === 1
     ? `Hay disponibilidad de ${label}${need.providerName ? ` con ${need.providerName}` : ''} ${describirDia(dias[0]!, null, ahora)}${ventana ? ` ${ventana}` : ''}:`
-    : `Hay disponibilidad de ${label}${need.providerName ? ` con ${need.providerName}` : ''}${ventana ? ` ${ventana}` : ''}:`
+    : `Hay disponibilidad de ${label}${need.providerName ? ` con ${need.providerName}` : ''}${tramo ? ` ${tramo}` : ''}${ventana ? ` ${ventana}` : ''}:`
   return `${opciones.motivo ? `${opciones.motivo} ` : ''}${otraZona}${cabecera}\n\n${listaDeOpciones(ofertas, ahora)}\n\n${COMO_ELEGIR}`
 }
 

@@ -1,6 +1,6 @@
 import { interpretarNecesidad } from '../directorio/modelo.ts'
 import { oficiosInterpretables } from '../directorio/oficios.ts'
-import { DIA_MS, MESES, NOMBRES_DIA, diaSemana, horaArgentina, hoyArgentina, leerFecha, lunesDe, normalizarTexto as normalizar, sumarDias } from './fechas.ts'
+import { DIA_MS, MESES, NOMBRES_DIA, diaSemana, horaArgentina, hoyArgentina, leerDiasDeSemana, leerFecha, lunesDe, normalizarTexto as normalizar, sumarDias, ultimoDiaDelMes } from './fechas.ts'
 
 // The clock and the calendar live in fechas.ts; these are re-exported for the callers of this module.
 export { horaArgentina, hoyArgentina, lunesDe }
@@ -33,6 +33,12 @@ export interface NecesidadTurno {
   dayTo: string | null
   // "la semana que viene": no single day, the calendar is walked from this day on.
   since?: string | null
+  // ASISTENTE-TIEMPO-01. Last day of a stretch of the calendar ("el próximo mes": its last day).
+  // Resolved ONCE by the backend when the person said it and carried as absolute dates: the
+  // phrase is never interpreted again on a later message.
+  until?: string | null
+  // "solo los viernes": days of the week the stretch is narrowed to (0 = Sunday).
+  weekdays?: number[] | null
   // "el viernes que viene" said when it may be this week's or the next: the two days the person
   // is asked to choose between. Never a day chosen for the person.
   dayOptions?: string[] | null
@@ -310,11 +316,18 @@ export function extraerNecesidad(mensaje: string, ahora: number): DatosNecesidad
 
   const { ventana, resto } = leerVentana(texto)
   // The date is resolved by the calendar of the backend (fechas.ts), with its documented rules.
-  const fecha = leerFecha(resto, hoy)
+  // "solo los viernes" narrows a stretch; it is not "el viernes" (one day), so it leaves the text
+  // before the date is read.
+  const semana = leerDiasDeSemana(resto)
+  if (semana) datos.weekdays = semana.dias
+  const fecha = leerFecha(semana ? semana.resto : resto, hoy)
   if (fecha?.tipo === 'exact') {
     datos.day = fecha.day!
     datos.dayTo = fecha.dayTo
-  } else if (fecha?.tipo === 'range') datos.since = fecha.day
+  } else if (fecha?.tipo === 'range') {
+    datos.since = fecha.day
+    datos.until = fecha.dayTo
+  }
   else if (fecha?.tipo === 'ambiguous') datos.dayOptions = fecha.options
   const franja = ventana ? null : leerFranja(texto)
   if (ventana) datos.time = ventana
@@ -347,9 +360,20 @@ export function combinarNecesidad(previa: NecesidadTurno | null, datos: DatosNec
     siguiente.day = datos.day
     siguiente.dayTo = datos.dayTo ?? null
     siguiente.since = null
+    siguiente.until = null
+    siguiente.weekdays = null
   } else if (datos.since) {
-    // A stretch of the calendar replaces the day said before.
+    // A stretch of the calendar replaces the day said before (and the days of the week of the
+    // previous stretch, unless this message names them again).
     siguiente.since = datos.since
+    siguiente.until = datos.until ?? null
+    siguiente.weekdays = datos.weekdays ?? null
+    siguiente.day = null
+    siguiente.dayTo = null
+  } else if (datos.weekdays?.length) {
+    // "Solo los viernes" keeps the stretch being talked about and narrows it; said about one
+    // day, the search goes back to walking the calendar on those days.
+    siguiente.weekdays = datos.weekdays
     siguiente.day = null
     siguiente.dayTo = null
   }
@@ -428,6 +452,24 @@ export function describirDia(day: string, dayTo: string | null, ahora: number): 
     return `el ${nombreDia(fecha, ahora)}`
   }
   return dayTo ? `${uno(day)} y ${uno(dayTo)}` : uno(day)
+}
+
+// ASISTENTE-TIEMPO-01. The stretch of the calendar a search is limited to, as it is told back:
+// "los viernes entre el domingo 1 y el lunes 30 de noviembre". Empty when there is none.
+export function describirTramo(need: Pick<NecesidadTurno, 'since' | 'until' | 'weekdays'>, ahora: number): string {
+  const semana = need.weekdays?.length ? `los ${need.weekdays.map((dia) => (dia === 0 || dia === 6 ? `${NOMBRES_DIA[dia]}s` : NOMBRES_DIA[dia])).join(need.weekdays.length === 2 ? ' y ' : ', ')}` : ''
+  const hoy = hoyArgentina(ahora)
+  if (!need.until || need.until < hoy) return semana
+  const desde = need.since && need.since > hoy ? need.since : hoy
+  // A whole calendar month is named as one: "en noviembre".
+  const [anio, mes] = [Number(need.until.slice(0, 4)), Number(need.until.slice(5, 7))]
+  const mesEntero = desde.slice(0, 7) === need.until.slice(0, 7) && desde.endsWith('-01') && Number(need.until.slice(8, 10)) === ultimoDiaDelMes(anio, mes)
+  const tramo = mesEntero
+    ? `en ${MESES[mes - 1]}${anio !== Number(hoy.slice(0, 4)) ? ` de ${anio}` : ''}`
+    : desde === need.until
+      ? describirDia(desde, null, ahora)
+      : `${desde === hoy ? 'desde hoy hasta' : `entre el ${nombreDia(desde, ahora)} y`} el ${nombreDia(need.until, ahora)}`
+  return [semana, tramo].filter(Boolean).join(' ')
 }
 
 export function describirVentana(time: VentanaHoraria | null): string {
