@@ -511,7 +511,8 @@ export class MetaWhatsappCloudProvider implements WhatsappProvider {
         null,
         true
       )
-    return { wamid, waId: asString(asRecord(asArray(asRecord(payload)['contacts'])[0])['wa_id']) }
+    const waId = asString(asRecord(asArray(asRecord(payload)['contacts'])[0])['wa_id'])
+    return { wamid, ...(waId ? { waId } : {}) }
   }
 
   // Uploads a picture to Meta (multipart) and returns the media id to send it with.
