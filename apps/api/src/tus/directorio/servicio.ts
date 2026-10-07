@@ -380,15 +380,29 @@ export class ServicioDirectorio {
   }
 
   // SERVICIO-URGENTE-01. EVERY provider that can take an urgent request of a service in a zone
-  // (the client does not choose here): visible, approved and of that service. Coverage: a
-  // provider that declares the zones it covers (zonasCobertura) must cover that one; one that declares none is
-  // kept (TUS does not know, the provider decides when it reads the address).
+  // (the client does not choose here): visible, approved and of that service. Coverage, from what
+  // the provider really declared:
+  // - it lists that zone (its own or one it covers): yes;
+  // - it gave a radius: yes when the zone is inside it;
+  // - it listed OTHER zones it covers and not this one: no;
+  // - it only has its own neighbourhood on file: yes — it never said where it does not go, and it
+  //   decides when it reads the address.
   async aptosParaUrgencia(input: { oficio: unknown; zona: string }): Promise<{ tenantId: string; prestadorId: string; perfilId: string; nombrePublico: string }[]> {
     if (!esOficio(input.oficio)) return []
     const normalizarZona = (value: string) => normalizarTexto(value).replace(/^barrio\s+/u, '')
     const lugares = barriosDeUbicacion(input.zona).map(normalizarZona)
+    const cubre = (perfil: PerfilPublico): boolean => {
+      const propia = perfil.zona ? normalizarZona(perfil.zona) : null
+      const declaradas = perfil.zonasCobertura.map(normalizarZona)
+      if ([...(propia ? [propia] : []), ...declaradas].some((value) => lugares.includes(value))) return true
+      if (perfil.radioCoberturaKm !== null && perfil.zona) {
+        const distancia = distanciaEntreZonas(input.zona, perfil.zona)
+        return distancia !== null && distancia <= perfil.radioCoberturaKm
+      }
+      return declaradas.every((value) => value === propia)
+    }
     return (await this.enriquecerVisibles([input.oficio as OficioId]))
-      .filter((item) => item.perfil.zonasCobertura.length === 0 || [item.perfil.zona ?? '', ...item.perfil.zonasCobertura].some((value) => lugares.includes(normalizarZona(value))))
+      .filter((item) => cubre(item.perfil))
       .map((item) => ({ tenantId: item.perfil.tenantId, prestadorId: item.perfil.prestadorId, perfilId: item.perfil.id, nombrePublico: item.perfil.nombrePublico }))
   }
 

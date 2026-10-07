@@ -81,6 +81,15 @@ La Web administrativa esta en `/tus/admin/whatsapp`.
   prestador elegido, con `origen = whatsapp`. Queda pendiente hasta que el prestador la acepta en `/prestador/solicitudes`.
 - No hay reglas propias de WhatsApp: ambas herramientas delegan en `ServicioDirectorio` y `ServicioSolicitudes`.
 
+### Servicio urgente (la única excepción a "el cliente elige")
+
+- El cliente pide un servicio con urgencia y da su dirección; el backend lee servicio, dirección, barrio y motivo y
+  pregunta solo lo que falte. La solicitud se ofrece a la vez a todos los prestadores compatibles que aceptan urgencias.
+- Cada prestador recibe el aviso con dirección y barrio y los botones `Puedo asistir` / `No puedo` (dentro de 24 h, mensaje
+  interactivo; fuera, la plantilla aprobada `servicio_urgente_disponible`). El primero que acepta queda asignado.
+- El asignado puede escribir que finalmente no puede ir: la solicitud se ofrece de nuevo a los demás.
+- Detalle y garantías: `docs/SERVICIO_URGENTE_TUS.md`.
+
 ### Postulaciones a solicitudes públicas (TUS recomienda, el cliente elige)
 
 - `search_open_requests` (prestador vinculado): solicitudes públicas abiertas del mapa, opcionalmente por oficio y barrio. El

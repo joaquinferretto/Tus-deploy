@@ -403,3 +403,103 @@ test('URGENTE PostgreSQL renuncia en carrera y con avances: after the assigned p
   assert.deepEqual(r.conAvances, ['con_avances', true, 'aceptada', true, 0, 'acepto', 'in_diagnosis', 0], 'with progress on the work nothing is reopened: the cancellation flow of the work applies')
   assert.equal(r.noAsignado, 'no_asignado')
 })
+
+test('URGENTE HTTP PostgreSQL: the routes take who acts from the session only — a body cannot name an account or a winner, another provider cannot answer for the assigned one, the preference is the provider\'s own, and the administration list needs the admin permission', { skip }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const express = (await import('./apps/api/node_modules/express/index.js')).default
+    const { crearRouterUrgentes } = await import('./apps/api/src/tus/urgentes/http.ts')
+    const out = {}
+    let servidor
+    try {
+      const A = await prestadorUrgente('a', 'Gabriela Lopez ' + run)
+      const B = await prestadorUrgente('b', 'Flor Perez ' + run)
+      const nuevo = await prestadorUrgente('n', 'Recién Llegado ' + run, { acepta: false })
+      const ana = await clienteVerificado('ana')
+      const sesiones = new Map([
+        ['t-ana', { tenantId: ana.tenantId, subjectId: ana.id, permissions: [] }],
+        ['t-a', { tenantId: A.tenantId, subjectId: A.cuentaId, permissions: [] }],
+        ['t-b', { tenantId: B.tenantId, subjectId: B.cuentaId, permissions: [] }],
+        ['t-n', { tenantId: nuevo.tenantId, subjectId: nuevo.cuentaId, permissions: [] }],
+        ['t-admin', { tenantId: 'platform', subjectId: 'admin-1', permissions: ['tus:providers:admin'] }],
+      ])
+      const sessions = { resolve: async (token, correlationId) => (sesiones.has(token) ? { ...sesiones.get(token), sessionId: 's', roles: [], correlationId } : null) }
+      const app = express()
+      app.use(express.json())
+      app.use(crearRouterUrgentes({ servicio: urgentes, sessions, admin: { nombres: async (ids) => new Map((await prisma.perfilPublicoPrestador.findMany({ where: { tenantId: { in: [...ids] } } })).map((p) => [p.tenantId, { id: p.id, nombrePublico: p.nombrePublico }])) } }))
+      servidor = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)) })
+      const base = 'http://127.0.0.1:' + servidor.address().port
+      const llamar = async (token, method, path, body) => {
+        const res = await fetch(base + path, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token, 'x-correlation-id': 'corr-http' } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+        return { status: res.status, body: await res.json().catch(() => null), cache: res.headers.get('cache-control') }
+      }
+      const pedido = { category: oficio.id, description: 'Se cortó toda la luz de la casa', address: 'Av. 3 de Abril 1850', zone: ZONA }
+
+      out.sinSesion = (await llamar(null, 'POST', '/tus/v1/urgentes', pedido)).status
+      out.autoridad = (await llamar('t-ana', 'POST', '/tus/v1/urgentes', { ...pedido, prestadorId: A.prestadorId })).status
+      out.invalida = await llamar('t-ana', 'POST', '/tus/v1/urgentes', { ...pedido, address: 'x' })
+      const creada = await llamar('t-ana', 'POST', '/tus/v1/urgentes', pedido)
+      const id = creada.body.id
+      out.creada = [creada.status, creada.body.status, creada.body.notified, creada.body.address, typeof creada.body.message, creada.cache]
+      const repetida = await llamar('t-ana', 'POST', '/tus/v1/urgentes', pedido)
+      out.repetida = [repetida.status, repetida.body.code]
+      out.mias = (await llamar('t-ana', 'GET', '/tus/v1/urgentes/mias')).body.items.map((x) => [x.id === id, x.status])
+
+      // The provider side: its own offers, with the address.
+      const ofertasA = await llamar('t-a', 'GET', '/tus/v1/prestador/urgentes')
+      out.ofertasA = ofertasA.body.items.map((x) => [x.id === id, x.offer, x.open, x.address, x.zone === ZONA, x.client])
+      out.ofertasDeOtro = (await llamar('t-n', 'GET', '/tus/v1/prestador/urgentes')).body.items.length
+      out.clienteNoVeOfertas = (await llamar('t-ana', 'GET', '/tus/v1/prestador/urgentes')).body.items.length
+      // The preference is the provider's own.
+      out.preferencia = [(await llamar('t-n', 'GET', '/tus/v1/prestador/urgentes/preferencia')).body, (await llamar('t-n', 'PUT', '/tus/v1/prestador/urgentes/preferencia', { acceptsUrgent: 'si' })).status, (await llamar('t-n', 'PUT', '/tus/v1/prestador/urgentes/preferencia', { acceptsUrgent: true })).body, (await llamar('t-ana', 'GET', '/tus/v1/prestador/urgentes/preferencia')).status]
+      // Somebody the request was not offered to.
+      out.ajeno = await llamar('t-n', 'POST', '/tus/v1/prestador/urgentes/' + id + '/asistir', {})
+      const gana = await llamar('t-a', 'POST', '/tus/v1/prestador/urgentes/' + id + '/asistir', {})
+      out.gana = [gana.status, gana.body.status, typeof gana.body.workId]
+      const pierde = await llamar('t-b', 'POST', '/tus/v1/prestador/urgentes/' + id + '/asistir', {})
+      out.pierde = [pierde.status, pierde.body.status, pierde.body.message, pierde.body.workId]
+      // B cannot give back what belongs to A; A can, from the Web, with a reason.
+      out.bNoRenuncia = (await llamar('t-b', 'POST', '/tus/v1/prestador/urgentes/' + id + '/no-puedo', { reason: 'no es mío' })).body.status
+      const renuncia = await llamar('t-a', 'POST', '/tus/v1/prestador/urgentes/' + id + '/no-puedo', { reason: 'Me surgió otra urgencia' })
+      out.renuncia = [renuncia.status, renuncia.body.status]
+      const oferta = await prisma.ofertaUrgente.findFirst({ where: { solicitudId: id, prestadorTenantId: A.tenantId } })
+      out.ofertaA = [oferta.estado, oferta.canalRenuncia, oferta.motivoRenuncia]
+
+      // Administration.
+      out.adminSinPermiso = [(await llamar('t-a', 'GET', '/tus/v1/admin/urgentes')).status, (await llamar(null, 'GET', '/tus/v1/admin/urgentes')).status]
+      const admin = await llamar('t-admin', 'GET', '/tus/v1/admin/urgentes?page=1&pageSize=10')
+      const fila = admin.body.items.find((x) => x.id === id)
+      out.admin = { status: admin.status, total: admin.body.total >= 1 && admin.body.page === 1 && admin.body.pageSize === 10, estado: fila.status, cliente: fila.client, direccion: fila.address, zona: fila.zone === ZONA, origen: fila.origin, reaperturas: fila.reopenings, conteos: fila.counts, candidatos: fila.candidates.map((c) => [c.provider.name.split(' ').slice(0, 2).join(' '), c.status, c.round, Boolean(c.notifiedAt), Boolean(c.acceptedAt), Boolean(c.resignedAt), c.resignationReason]).sort() }
+    } finally { await new Promise((resolve) => (servidor ? servidor.close(resolve) : resolve())); await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.sinSesion, 401)
+  assert.equal(r.autoridad, 403, 'a body cannot say who the provider is')
+  assert.deepEqual([r.invalida.status, r.invalida.body.code, r.invalida.body.fields], [422, 'INVALID_REQUEST', ['address']])
+  assert.deepEqual(r.creada, [201, 'pendiente', 2, 'Av. 3 de Abril 1850', 'string', 'no-store'])
+  assert.deepEqual(r.repetida, [409, 'URGENT_ALREADY_OPEN'])
+  assert.deepEqual(r.mias, [[true, 'pendiente']])
+  assert.deepEqual(r.ofertasA, [[true, 'notificada', true, 'Av. 3 de Abril 1850', true, 'Cliente A.']], 'the provider sees the address and the zone from the first moment')
+  assert.equal(r.ofertasDeOtro, 0)
+  assert.equal(r.clienteNoVeOfertas, 0)
+  assert.deepEqual(r.preferencia, [{ acceptsUrgent: false }, 422, { acceptsUrgent: true }, 409], 'off by default; only the provider turns it on')
+  assert.deepEqual([r.ajeno.status, r.ajeno.body.status], [404, 'no_candidato'])
+  assert.deepEqual(r.gana, [200, 'asignado', 'string'])
+  assert.deepEqual(r.pierde, [409, 'ya_tomada', 'Esta solicitud ya fue tomada por otro prestador.', null])
+  assert.equal(r.bNoRenuncia, 'ya_tomada', 'only the assigned provider can give the request back')
+  assert.deepEqual(r.renuncia, [200, 'renuncia'])
+  assert.deepEqual(r.ofertaA, ['renuncio', 'web', 'Me surgió otra urgencia'])
+  assert.deepEqual(r.adminSinPermiso, [403, 401])
+  assert.deepEqual(r.admin, {
+    status: 200,
+    total: true,
+    estado: 'pendiente',
+    cliente: 'Cliente A.',
+    direccion: 'Av. 3 de Abril 1850',
+    zona: true,
+    origen: 'web_publica',
+    reaperturas: 1,
+    conteos: { candidates: 3, notified: 3, rejected: 0, resigned: 1, unanswered: 2, deliveryFailed: 0 },
+    // The provider that turned urgent requests on meanwhile joined the second round.
+    candidatos: [['Flor Perez', 'notificada', 2, true, false, false, null], ['Gabriela Lopez', 'renuncio', 1, true, true, true, 'Me surgió otra urgencia'], ['Recién Llegado', 'notificada', 2, true, false, false, null]],
+  }, 'Admin reads the request, its candidates, who took it and who gave it back')
+})

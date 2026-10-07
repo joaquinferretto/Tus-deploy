@@ -729,6 +729,26 @@ seña en ese caso).
   teléfono de identidad del que copiar y no se eligen ganadores ante duplicados. Si se quisiera, sería una campaña
   consciente con auditoría previa de duplicados.
 
+## URGENTE: servicio urgente (2026-10-07)
+
+Regla general, que no cambia: **TUS no elige prestadores**. El cliente busca, compara y elige; el
+prestador elegido acepta o rechaza.
+
+Excepción explícita, y la única: el **servicio urgente**. El cliente pide atención inmediata y
+autoriza a TUS a ofrecer la solicitud, al mismo tiempo, a todos los prestadores compatibles que
+activaron "Aceptar servicios urgentes". El primero que acepta queda asignado; los demás dejan de
+verla como disponible. TUS tampoco elige acá: gana quien acepta primero.
+
+- Solo aplica a solicitudes marcadas explícitamente como urgentes (`difusion_urgente`).
+- En este flujo el prestador ve dirección y barrio desde el primer aviso. La dirección nunca es
+  pública.
+- El prestador asignado puede avisar que finalmente no puede asistir mientras su trabajo no haya
+  avanzado: la misma solicitud se vuelve a ofrecer a los demás y el mismo trabajo pasa a quien la
+  tome. Con presupuesto, mensajes o pagos no hay reasignación automática.
+- Pagos: sin lógica propia; el trabajo sigue el flujo de presupuesto, seña y saldo.
+
+Detalle: `docs/SERVICIO_URGENTE_TUS.md`.
+
 ## Alcance de la Build
 
 Incluido:

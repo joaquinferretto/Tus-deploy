@@ -36,3 +36,20 @@ entre tus recibidas como aceptada; si elige a otro profesional, figura como no e
 
 Se crea un trabajo, que seguís desde [Trabajos](/trabajos): diagnóstico, presupuesto si hace falta, ejecución y cierre.
 De un cliente solo ves su nombre reducido y su barrio aproximado.
+
+## Servicios urgentes
+
+En [Solicitudes](/prestador/solicitudes) podés activar **Aceptar servicios urgentes**. Si lo activás, cuando un cliente
+necesita atención rápida de alguno de tus servicios te avisamos al instante por WhatsApp, con su dirección y su barrio,
+para que puedas decidir si llegás.
+
+El pedido les llega al mismo tiempo a todos los prestadores disponibles y lo toma el primero que responde **Puedo
+asistir**. Si otro lo toma antes, te avisamos que ya fue tomado. Si respondés **No puedo**, no pasa nada: sigue disponible
+para los demás.
+
+Si tomaste un servicio urgente y finalmente no podés ir, avisá cuanto antes: respondé "no puedo asistir" por WhatsApp o
+tocá **No puedo asistir** en Solicitudes. Mientras no hayas enviado presupuesto ni mensajes, lo ofrecemos de nuevo a
+otros prestadores y le avisamos al cliente. Si el trabajo ya avanzó, cancelalo desde [Trabajos](/trabajos) indicando
+el motivo.
+
+Para recibir estos avisos necesitás tener tu WhatsApp vinculado a tu cuenta.

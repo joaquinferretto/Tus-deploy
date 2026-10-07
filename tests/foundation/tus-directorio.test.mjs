@@ -422,3 +422,21 @@ test('MAP N+1 (deterministic): the directory asks for the same reads for 1, 40 a
     assert.deepEqual(r[cantidad].llamadas, ['perfiles.findMany:-', `prestadores.findMany:${cantidad}`, `publicaciones.findMany:${cantidad}`, `trabajos.groupBy:${cantidad}`])
   }
 })
+
+// SERVICIO-URGENTE-01: who an urgent request of a service in a zone can be offered to. EVERY
+// compatible provider (never a short list: the client does not choose here).
+test('DIRECTORIO urgent candidates: every approved visible provider of that service, unless it declared other zones and not this one; never an unapproved or other-service one', () => {
+  const result = runTypeScriptScenario(`${SETUP}
+    for (let i = 0; i < 7; i += 1) await prestador('t-u' + i, { displayName: 'Electricista ' + i, profession: 'electricidad', zone: 'Centro' })
+    await prestador('t-cubre', { displayName: 'Cubre Sur', profession: 'electricidad', zone: 'Libertad', serviceZones: ['Barrio Sur'] })
+    await prestador('t-otra', { displayName: 'Otra Zona', profession: 'electricidad', zone: 'Libertad', serviceZones: ['Camba Cuá'] })
+    await prestador('t-base', { displayName: 'Vive En Sur', profession: 'electricidad', zone: 'Barrio Sur', serviceZones: ['Camba Cuá'] })
+    await prestador('t-plomero', { displayName: 'Plomero', profession: 'plomeria', zone: 'Barrio Sur' })
+    await prestador('t-pendiente', { displayName: 'Sin Aprobar', profession: 'electricidad', zone: 'Barrio Sur' }, { status: 'pending' })
+    const aptos = await directorio.aptosParaUrgencia({ oficio: 'electricidad', zona: 'Barrio Sur' })
+    console.log(JSON.stringify({ nombres: aptos.map((item) => item.nombrePublico).sort(), forma: Object.keys(aptos[0]).sort(), invalido: await directorio.aptosParaUrgencia({ oficio: 'magia', zona: 'Centro' }) }))
+  `)
+  assert.deepEqual(result.nombres, ['Cubre Sur', 'Electricista 0', 'Electricista 1', 'Electricista 2', 'Electricista 3', 'Electricista 4', 'Electricista 5', 'Electricista 6', 'Vive En Sur'], 'all nine: more than the five a normal search lists')
+  assert.deepEqual(result.forma, ['nombrePublico', 'perfilId', 'prestadorId', 'tenantId'], 'no contact data travels with a candidate')
+  assert.deepEqual(result.invalido, [])
+})

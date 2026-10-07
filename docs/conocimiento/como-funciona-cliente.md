@@ -40,6 +40,18 @@ Tenés dos caminos y en los dos decidís vos:
 
 TUS nunca muestra tu dirección, teléfono ni email en una solicitud.
 
+## Servicio urgente
+
+Si necesitás atención ya, pedí un [servicio urgente](/urgente) o escribilo por WhatsApp con tu dirección y tu barrio
+(por ejemplo: "Necesito un electricista urgente, estoy en Av. 3 de Abril 1850, Barrio Sur. Se cortó la luz").
+
+Es distinto del pedido normal: en vez de elegir vos, TUS ofrece tu pedido al mismo tiempo a todos los prestadores
+disponibles de ese servicio y queda asignado el primero que acepta. Para que puedan decidir si llegan, esos prestadores
+ven tu dirección y tu barrio. Tu dirección no se publica en el mapa.
+
+Te avisamos cuando alguien acepta. Si nadie puede en unos minutos, también te lo decimos, y podés elegir un profesional
+de la forma habitual. Después sigue como cualquier trabajo: presupuesto, seña y pago.
+
 ## Si el prestador no responde
 
 Una solicitud enviada a un profesional sigue pendiente mientras no la acepte ni la rechace. Podés cancelarla desde Mis
