@@ -379,6 +379,19 @@ export class ServicioDirectorio {
     }
   }
 
+  // SERVICIO-URGENTE-01. EVERY provider that can take an urgent request of a service in a zone
+  // (the client does not choose here): visible, approved and of that service. Coverage: a
+  // provider that declares the zones it covers (zonasCobertura) must cover that one; one that declares none is
+  // kept (TUS does not know, the provider decides when it reads the address).
+  async aptosParaUrgencia(input: { oficio: unknown; zona: string }): Promise<{ tenantId: string; prestadorId: string; perfilId: string; nombrePublico: string }[]> {
+    if (!esOficio(input.oficio)) return []
+    const normalizarZona = (value: string) => normalizarTexto(value).replace(/^barrio\s+/u, '')
+    const lugares = barriosDeUbicacion(input.zona).map(normalizarZona)
+    return (await this.enriquecerVisibles([input.oficio as OficioId]))
+      .filter((item) => item.perfil.zonasCobertura.length === 0 || [item.perfil.zona ?? '', ...item.perfil.zonasCobertura].some((value) => lugares.includes(normalizarZona(value))))
+      .map((item) => ({ tenantId: item.perfil.tenantId, prestadorId: item.perfil.prestadorId, perfilId: item.perfil.id, nombrePublico: item.perfil.nombrePublico }))
+  }
+
   // ---- internos -------------------------------------------------------------------------------
 
   private async hechosConCalificacion(tenantId: string): Promise<HechosPrestador> {

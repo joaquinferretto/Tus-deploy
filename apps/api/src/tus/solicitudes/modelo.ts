@@ -85,6 +85,14 @@ export interface SolicitudServicio {
   imagenes: number[]
   // Trabajo nacido del match (a lo sumo uno); derivado de trabajos.solicitud_id, nunca una columna.
   trabajoId: string | null
+  // SERVICIO-URGENTE-01. Una difusión urgente: se ofrece a la vez a todos los prestadores
+  // compatibles y el primero que acepta queda asignado. `direccion` solo la ven ellos y la
+  // administración (nunca es pública). `cierreUrgente`: por qué cerró sin ganador.
+  direccion?: string | null
+  difusionUrgente?: boolean
+  cierreUrgente?: 'sin_candidatos' | 'todos_rechazaron' | 'vencida' | null
+  // Cuántas veces volvió a ofrecerse porque el prestador asignado avisó que no podía asistir.
+  reaperturasUrgente?: number
 }
 
 export interface PostulacionSolicitud {

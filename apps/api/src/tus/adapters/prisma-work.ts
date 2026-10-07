@@ -140,6 +140,24 @@ export class PrismaTrabajoStore implements TrabajoStorePort {
     return result.count === 0 ? null : input.work
   }
 
+  // The work of a request moves to another provider. fk_trabajos_solicitud_asignada is deferred
+  // by the caller's transaction: the request moves to the same provider before it commits.
+  async reassignWork(input: { tenantId: string; trabajoId: string; expectedVersion: number; work: Trabajo }): Promise<Trabajo | null> {
+    const result = await this.client.trabajo.updateMany({
+      where: { tenantId: input.tenantId, trabajoId: input.trabajoId, version: input.expectedVersion, origen: 'solicitud' },
+      data: {
+        prestadorTenantId: input.work.prestadorTenantId,
+        prestadorId: input.work.prestadorId,
+        estado: input.work.status,
+        version: input.work.version,
+        canceladoPorRol: input.work.cancelledByRole ?? null,
+        motivoCancelacion: input.work.cancellationReason ?? null,
+        fechaActualizacion: new Date(input.work.updatedAt),
+      },
+    })
+    return result.count === 0 ? null : input.work
+  }
+
   async appendTransition(transition: TransicionTrabajo): Promise<void> {
     await this.client.transicionTrabajo.create({
       data: {

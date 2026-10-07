@@ -46,7 +46,7 @@ export class AlmacenSolicitudesEnMemoria implements AlmacenSolicitudes {
 
   async listarAbiertas(input: { ahora: number; categoria?: CategoriaSolicitud; limite: number }) {
     return [...this.solicitudes.values()]
-      .filter((item) => item.visibilidad === 'publica' && item.estado === 'abierta' && item.expiraEn > input.ahora && (!input.categoria || item.categoria === input.categoria))
+      .filter((item) => item.visibilidad === 'publica' && !item.difusionUrgente && item.estado === 'abierta' && item.expiraEn > input.ahora && (!input.categoria || item.categoria === input.categoria))
       .sort((a, b) => b.creadaEn - a.creadaEn)
       .slice(0, input.limite)
       .map((item) => this.copia(item))
@@ -237,7 +237,7 @@ export interface ClientePrismaSolicitudes extends DelegadosSolicitudes {
 class SinCambios extends Error {}
 
 // Solo el orden de las fotos (nunca los bytes) y el id del trabajo del match, al listar solicitudes.
-const CON_IMAGENES = { imagenes: { select: { orden: true } }, trabajos: { select: { trabajoId: true } } }
+export const CON_IMAGENES = { imagenes: { select: { orden: true } }, trabajos: { select: { trabajoId: true } } }
 
 const aFecha = (value: number) => new Date(value)
 const desdeFecha = (value: unknown) => (value instanceof Date ? value.getTime() : Number(value))
@@ -256,7 +256,7 @@ function desdeFilaPostulacion(fila: Fila): PostulacionSolicitud {
   }
 }
 
-function desdeFila(fila: Fila): SolicitudServicio {
+export function desdeFila(fila: Fila): SolicitudServicio {
   const imagenes = Array.isArray(fila['imagenes']) ? (fila['imagenes'] as Fila[]).map((imagen) => Number(imagen['orden'])) : []
   return {
     id: String(fila['id']),
@@ -282,6 +282,10 @@ function desdeFila(fila: Fila): SolicitudServicio {
     respondidaEn: opcionalFecha(fila['respondidaEn']),
     canceladaEn: opcionalFecha(fila['canceladaEn']),
     canceladaPor: (fila['canceladaPor'] as string | null | undefined) ?? null,
+    direccion: (fila['direccion'] as string | null | undefined) ?? null,
+    difusionUrgente: fila['difusionUrgente'] === true,
+    cierreUrgente: (fila['cierreUrgente'] as SolicitudServicio['cierreUrgente'] | undefined) ?? null,
+    reaperturasUrgente: Number(fila['reaperturasUrgente'] ?? 0),
     imagenes,
     trabajoId: Array.isArray(fila['trabajos']) && fila['trabajos'].length > 0 ? String((fila['trabajos'] as Fila[])[0]!['trabajoId']) : null,
   }
@@ -323,7 +327,8 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
 
   async listarAbiertas(input: { ahora: number; categoria?: CategoriaSolicitud; limite: number }) {
     const filas = await this.client.solicitudServicio.findMany({
-      where: { visibilidad: 'publica', estado: 'abierta', expiraEn: { gt: aFecha(input.ahora) }, ...(input.categoria ? { categoria: input.categoria } : {}) },
+      // Una difusión urgente nunca es pública (lleva una dirección): no sale en el mapa.
+      where: { visibilidad: 'publica', difusionUrgente: false, estado: 'abierta', expiraEn: { gt: aFecha(input.ahora) }, ...(input.categoria ? { categoria: input.categoria } : {}) },
       orderBy: { creadaEn: 'desc' },
       take: input.limite,
       include: CON_IMAGENES,
@@ -502,7 +507,7 @@ export class AlmacenSolicitudesPrisma implements AlmacenSolicitudes {
         // El UPDATE condicional toma el lock de la fila: una segunda aceptación concurrente
         // re-evalúa el WHERE, ya no encuentra la solicitud pública y revierte.
         const solicitud = await tx.solicitudServicio.updateMany({
-          where: { id: input.solicitudId, cuentaId: input.cuentaId, visibilidad: 'publica', estado: 'abierta', expiraEn: { gt: ahora } },
+          where: { id: input.solicitudId, cuentaId: input.cuentaId, visibilidad: 'publica', difusionUrgente: false, estado: 'abierta', expiraEn: { gt: ahora } },
           data: {
             visibilidad: 'dirigida',
             prestadorTenantId: elegida['prestadorTenantId'],

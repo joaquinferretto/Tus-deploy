@@ -79,7 +79,7 @@ export class ServicioSolicitudes {
       limite: LIMITES_SOLICITUD.listadoPublicoMax,
       ...(categoria ? { categoria } : {}),
     })
-    return solicitudes.filter((solicitud) => solicitud.visibilidad === 'publica').map(vistaPublica)
+    return solicitudes.filter((solicitud) => solicitud.visibilidad === 'publica' && !solicitud.difusionUrgente).map(vistaPublica)
   }
 
   // `providerId` (id público del perfil) convierte la solicitud en dirigida a ese prestador.
@@ -266,7 +266,8 @@ export class ServicioSolicitudes {
     if (!mensaje.ok) return { ok: false, code: 'INVALID_REQUEST', fields: ['message'] }
     const ahora = this.now()
     const solicitud = await this.deps.almacen.obtener(id)
-    if (!solicitud || solicitud.visibilidad !== 'publica' || solicitud.estado !== 'abierta' || solicitud.expiraEn <= ahora) return { ok: false, code: 'NOT_FOUND' }
+    // A una difusión urgente no se postula nadie: se ofrece, y el primero que acepta la toma.
+    if (!solicitud || solicitud.visibilidad !== 'publica' || solicitud.difusionUrgente || solicitud.estado !== 'abierta' || solicitud.expiraEn <= ahora) return { ok: false, code: 'NOT_FOUND' }
     if (solicitud.cuentaId === actor.cuentaId) return { ok: false, code: 'SELF_REQUEST' }
     const duena = await this.deps.cuentas.getAccount(solicitud.cuentaId)
     if (duena?.tenantId === actor.tenantId) return { ok: false, code: 'SELF_REQUEST' }
@@ -428,7 +429,7 @@ export class ServicioSolicitudes {
     const encontrada = await this.buscarImagen(id, orden)
     if (!encontrada) return null
     const { solicitud, imagen } = encontrada
-    return solicitud.visibilidad === 'publica' && solicitud.estado === 'abierta' && solicitud.expiraEn > this.now() ? imagen : null
+    return solicitud.visibilidad === 'publica' && !solicitud.difusionUrgente && solicitud.estado === 'abierta' && solicitud.expiraEn > this.now() ? imagen : null
   }
 
   // Foto de cualquier solicitud para su dueña o para el prestador destino.

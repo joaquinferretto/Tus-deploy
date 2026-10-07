@@ -241,6 +241,10 @@ export interface TrabajoStorePort {
     expectedVersion: number
     work: Trabajo
   }): Promise<Trabajo | null>
+  // SERVICIO-URGENTE-01. The ONE work of a request moves to another provider (the assigned one
+  // gave the assignment back and somebody else took it). Conditional on the version, like
+  // updateWork; it also writes who the provider is now.
+  reassignWork(input: { tenantId: string; trabajoId: string; expectedVersion: number; work: Trabajo }): Promise<Trabajo | null>
   appendTransition(transition: TransicionTrabajo): Promise<void>
   listTransitions(input: { tenantId: string; trabajoId: string }): Promise<TransicionTrabajo[]>
   findDiagnosis(input: {
@@ -566,6 +570,98 @@ export class ServicioTrabajo {
     })
     await this.publish(repos, work, 'tus.work.created_from_request', { solicitudId: input.solicitudId })
     return { work, created: true }
+  }
+
+  // SERVICIO-URGENTE-01. The provider that took an urgent request says it cannot go after all.
+  // Its work is released ONLY while nothing happened on it: requested, with no diagnosis, budget
+  // or evidence (payments, messages and ratings are checked by the caller, which owns those
+  // tables' view). Released = cancelled by the provider with its reason, through the same
+  // transition every cancellation writes: nothing is deleted and the history stays.
+  // 'con_avances': the work already moved on; the normal cancellation flow applies, never this.
+  async liberarPorRenuncia(
+    repositories: Pick<TrabajoTransactionRepositories, 'work' | 'outbox'>,
+    input: TrabajoContext & { solicitudId: string; prestadorTenantId: string; reason: string; createdAt: string }
+  ): Promise<{ resultado: 'liberado'; work: Trabajo } | { resultado: 'con_avances' | 'sin_trabajo' | 'ya_liberado'; work: Trabajo | null }> {
+    const work = await repositories.work.findBySolicitud({ solicitudId: input.solicitudId })
+    if (!work) return { resultado: 'sin_trabajo', work: null }
+    if (work.prestadorTenantId !== input.prestadorTenantId) throw new TrabajoError(409, 'CONFLICT', 'the work belongs to another provider')
+    if (work.status === ESTADOS_TRABAJO.CANCELADO && work.cancelledByRole === 'prestador') return { resultado: 'ya_liberado', work }
+    const [diagnosticos, presupuestos, evidencias] = await Promise.all([
+      repositories.work.listDiagnoses({ tenantId: work.tenantId, trabajoId: work.trabajoId }),
+      repositories.work.listBudgets({ tenantId: work.tenantId, trabajoId: work.trabajoId }),
+      repositories.work.listEvidence({ tenantId: work.tenantId, trabajoId: work.trabajoId }),
+    ])
+    if (work.status !== ESTADOS_TRABAJO.SOLICITADO || diagnosticos.length > 0 || presupuestos.length > 0 || evidencias.length > 0) return { resultado: 'con_avances', work }
+    const repos = repositories as TrabajoTransactionRepositories
+    const reason = (normalizarMotivo(input.reason) || 'El prestador avisó que no puede asistir').slice(0, 500)
+    // Written by hand (not `transition`): a request can be released more than once along its
+    // life (A gives it back, B takes it, B gives it back), so its audit id carries the version.
+    const cancelado: Trabajo = { ...work, status: ESTADOS_TRABAJO.CANCELADO, cancelledByRole: 'prestador', cancellationReason: reason, version: work.version + 1, updatedAt: input.createdAt }
+    const liberado = await repositories.work.updateWork({ tenantId: work.tenantId, trabajoId: work.trabajoId, expectedVersion: work.version, work: cancelado })
+    if (!liberado) throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
+    await repositories.work.appendTransition({
+      transitionId: `transicion-${liberado.trabajoId}-${liberado.version}`,
+      tenantId: liberado.tenantId,
+      trabajoId: liberado.trabajoId,
+      previousStatus: work.status,
+      status: liberado.status,
+      version: liberado.version,
+      actorId: input.actorId,
+      correlationId: input.correlationId,
+      reason: 'work.released_by_provider',
+      createdAt: input.createdAt,
+    })
+    await this.recordChange(repos, input, liberado, 'work.released_by_provider', 'work', `${liberado.trabajoId}:v${liberado.version}`, { role: 'prestador', reason, solicitudId: input.solicitudId, previousStatus: work.status })
+    await this.publish(repos, liberado, 'tus.work.released_by_provider', { solicitudId: input.solicitudId })
+    return { resultado: 'liberado', work: liberado }
+  }
+
+  // ...and another provider takes the request: the SAME work (one per request, always) becomes
+  // requested again with that provider. Only a work released by liberarPorRenuncia can move.
+  async reasignarDesdeSolicitud(
+    repositories: Pick<TrabajoTransactionRepositories, 'work' | 'outbox'>,
+    input: ComandoCrearTrabajoDesdeSolicitud
+  ): Promise<{ work: Trabajo }> {
+    validateContext(input)
+    const work = await repositories.work.findBySolicitud({ solicitudId: input.solicitudId })
+    if (!work) throw new TrabajoError(404, 'NOT_FOUND', 'the request has no work to reassign')
+    if (work.tenantId !== input.tenantId) throw new TrabajoError(409, 'CONFLICT', 'the request already has a work with another party')
+    if (work.status !== ESTADOS_TRABAJO.CANCELADO || work.cancelledByRole !== 'prestador')
+      throw new TrabajoError(409, 'INVALID_STATE', 'only a work released by its provider can be reassigned')
+    if (input.prestadorTenantId === work.prestadorTenantId) throw new TrabajoError(409, 'CONFLICT', 'the provider that released the work cannot take it again')
+    if (input.prestadorTenantId === input.tenantId) throw new TrabajoError(409, 'SELF_WORK', 'a client cannot hire its own provider tenant')
+    const reasignado: Trabajo = {
+      ...work,
+      prestadorTenantId: input.prestadorTenantId,
+      prestadorId: input.prestadorId,
+      status: ESTADOS_TRABAJO.SOLICITADO,
+      cancelledByRole: null,
+      cancellationReason: null,
+      version: work.version + 1,
+      updatedAt: input.createdAt,
+    }
+    const persisted = await repositories.work.reassignWork({ tenantId: work.tenantId, trabajoId: work.trabajoId, expectedVersion: work.version, work: reasignado })
+    if (!persisted) throw new TrabajoError(409, 'VERSION_CONFLICT', 'work version is stale')
+    const repos = repositories as TrabajoTransactionRepositories
+    await repositories.work.appendTransition({
+      transitionId: `transicion-${persisted.trabajoId}-${persisted.version}`,
+      tenantId: persisted.tenantId,
+      trabajoId: persisted.trabajoId,
+      previousStatus: work.status,
+      status: persisted.status,
+      version: persisted.version,
+      actorId: input.actorId,
+      correlationId: input.correlationId,
+      reason: 'work.reassigned_from_request',
+      createdAt: input.createdAt,
+    })
+    await this.recordChange(repos, input, persisted, 'work.reassigned_from_request', 'work', `${persisted.trabajoId}:v${persisted.version}`, {
+      solicitudId: input.solicitudId,
+      previousProviderTenantId: work.prestadorTenantId,
+      prestadorTenantId: input.prestadorTenantId,
+    })
+    await this.publish(repos, persisted, 'tus.work.reassigned_from_request', { solicitudId: input.solicitudId })
+    return { work: persisted }
   }
 
   // Same operation in its own work transaction (in-memory compositions and tests).
@@ -1654,6 +1750,10 @@ export class InMemoryTrabajoStore implements TrabajoStorePort {
     if (!current || current.version !== input.expectedVersion) return null
     this.works.set(workKey(current.tenantId, current.trabajoId), structuredClone(input.work))
     return structuredClone(input.work)
+  }
+
+  async reassignWork(input: { tenantId: string; trabajoId: string; expectedVersion: number; work: Trabajo }): Promise<Trabajo | null> {
+    return this.updateWork(input)
   }
 
   async appendTransition(transition: TransicionTrabajo): Promise<void> {

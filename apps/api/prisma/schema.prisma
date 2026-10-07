@@ -711,6 +711,7 @@ model Prestador {
   perfilPublico       PerfilPublicoPrestador?
   solicitudesDirigidas SolicitudServicio[]
   postulaciones       PostulacionSolicitud[]
+  ofertasUrgentes     OfertaUrgente[]
   solicitudesLiquidacion SolicitudLiquidacion[]
   movimientosGanancia    MovimientoGananciaPrestador[]
 
@@ -3030,6 +3031,13 @@ model SolicitudServicio {
   // Cancelled by its owner (estado 'cerrada' + who/when); CHECK ck_solicitudes_servicio_cancelacion.
   canceladaEn        DateTime? @map("cancelada_en")
   canceladaPor       String?   @map("cancelada_por")
+  // SERVICIO-URGENTE-01 (20261112100000): a broadcast to every compatible provider. The address is
+  // shown only to them and to the administration. CHECKs of coherence in SQL.
+  direccion          String?   @map("direccion")
+  difusionUrgente    Boolean   @default(false) @map("difusion_urgente")
+  cierreUrgente      String?   @map("cierre_urgente")
+  reaperturasUrgente Int       @default(0) @map("reaperturas_urgente")
+  ofertasUrgentes    OfertaUrgente[]
   cuenta             Account  @relation(fields: [cuentaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_cuenta")
   prestador          Prestador? @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_solicitudes_servicio_prestador")
   imagenes           ImagenSolicitud[]
@@ -3079,6 +3087,8 @@ model PerfilPublicoPrestador {
   // Switches de modalidades
   aceptaTurnos           Boolean  @default(true) @map("acepta_turnos")
   aceptaSolicitudes      Boolean  @default(true) @map("acepta_solicitudes")
+  // SERVICIO-URGENTE-01: receives the notice of urgent requests of its services (opt-in).
+  aceptaUrgencias        Boolean  @default(false) @map("acepta_urgencias")
   // Every service the provider offers (N:M). `oficio` is the principal one and always belongs to
   // this set (deferred FK fk_perfiles_servicio_principal, defined in SQL).
   servicios          PerfilServicio[]
@@ -3141,6 +3151,36 @@ model PostulacionSolicitud {
   @@unique([solicitudId, prestadorTenantId], map: "uq_postulaciones_solicitud_prestador")
   @@index([prestadorTenantId, fechaCreacion], map: "ix_postulaciones_solicitud_prestador_fecha")
   @@map("postulaciones_solicitud")
+}
+
+// SERVICIO-URGENTE-01: one candidate of a broadcast (20261112100000). Unique per provider and
+// request; a partial unique index allows ONE 'acepto' per request.
+model OfertaUrgente {
+  id                 String    @id(map: "ofertas_urgentes_pkey")
+  solicitudId        String    @map("solicitud_id")
+  prestadorTenantId  String    @map("prestador_tenant_id")
+  prestadorId        String    @map("prestador_id")
+  cuentaId           String?   @map("cuenta_id")
+  estado             String    @map("estado")
+  canal              String?   @map("canal")
+  motivoNoEnviada    String?   @map("motivo_no_enviada")
+  ronda              Int       @default(1) @map("ronda")
+  notificadaEn       DateTime? @map("notificada_en")
+  respondidaEn       DateTime? @map("respondida_en")
+  canalRespuesta     String?   @map("canal_respuesta")
+  // History of the assignment: took it at `aceptadaEn`; gave it back at `renunciaEn`.
+  aceptadaEn         DateTime? @map("aceptada_en")
+  renunciaEn         DateTime? @map("renuncia_en")
+  canalRenuncia      String?   @map("canal_renuncia")
+  motivoRenuncia     String?   @map("motivo_renuncia")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
+  solicitud          SolicitudServicio @relation(fields: [solicitudId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_ofertas_urgentes_solicitud")
+  prestador          Prestador @relation(fields: [prestadorTenantId, prestadorId], references: [tenantId, prestadorId], onDelete: Restrict, onUpdate: NoAction, map: "fk_ofertas_urgentes_prestador")
+
+  @@unique([solicitudId, prestadorTenantId], map: "uq_ofertas_urgentes_prestador")
+  @@index([prestadorTenantId, estado, fechaCreacion], map: "ix_ofertas_urgentes_prestador")
+  @@map("ofertas_urgentes")
 }
 
 // Second factor (TOTP) of an account. Required for platform administration. The secret is stored
