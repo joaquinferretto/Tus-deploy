@@ -281,6 +281,8 @@ export class AlmacenPrismaEvidenciaHabilitacion implements PuertoEvidenciaHabili
       scope: request.scope,
       now: request.now ?? new Date().toISOString(),
       evidence: evidence.filter((item) => item.profile === undefined || item.profile === request.profile),
+      profile: request.profile,
+      flow: request.flow,
     })
   }
 

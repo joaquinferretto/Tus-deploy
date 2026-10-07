@@ -15,7 +15,10 @@ export const REQUISITOS_HABILITACION_REQUERIDOS = CLAVES_REQUISITOS_HABILITACION
 const REQUISITOS_POR_CAPACIDAD: Record<CapacidadHabilitacionContrato, readonly ClaveRequisitoHabilitacionContrato[]> = {
   publication: ['legal', 'kyb', 'tax', 'runtimeProvider'],
   'provider-actions': ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'aws', 'groqMigration', 'runtimeProvider'],
-  settlement: REQUISITOS_HABILITACION_REQUERIDOS,
+  // SETTLEMENT-GATES-01. The core every settlement needs. `aws` and `posPilot` are added only
+  // when the runtime or the flow really involves them (REQUISITOS_CONDICIONALES below); the
+  // migration of Groq belongs to the assistant's capability and never takes part in money.
+  settlement: ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'],
   // Service payments (deposit of a turno, deposit and balance of a request-born work) through
   // Mercado Pago Split 1:1. No POS, no AWS target and no Groq migration take part in that money
   // flow, so those gates belong to `settlement` and are not asked here.
@@ -28,10 +31,46 @@ const REQUISITOS_POR_CAPACIDAD: Record<CapacidadHabilitacionContrato, readonly C
 // (evidencias-admin.ts). `settlement` and the rest are deliberately not here.
 const CAPACIDADES_RENOVABLES: ReadonlySet<CapacidadHabilitacionContrato> = new Set(['service-payments'])
 
+// Where and how an operation runs: what decides the conditional requirements.
+//   profile  the deployment profile the process really runs with (never a manual switch)
+//   flow     'pos' for an operation processed through the point of sale
+export type FlujoHabilitacion = 'pos'
+export interface ContextoRequisitosHabilitacion {
+  profile?: string
+  flow?: FlujoHabilitacion
+}
+
+export type MotivoRequisitoNoRequerido = 'not_required_in_runtime' | 'not_required_for_flow'
+
+// SETTLEMENT-GATES-01. Requirements that apply only in some runtime or flow. The moment the
+// condition holds (TUS runs on AWS, an operation goes through the POS) the gate is required
+// again, with valid evidence, without anybody switching anything.
+const REQUISITOS_CONDICIONALES: Partial<Record<CapacidadHabilitacionContrato, readonly { gate: ClaveRequisitoHabilitacionContrato; requerido: (contexto: ContextoRequisitosHabilitacion) => boolean; motivo: MotivoRequisitoNoRequerido }[]>> = {
+  settlement: [
+    { gate: 'aws', requerido: (contexto) => contexto.profile === 'aws-terraform', motivo: 'not_required_in_runtime' },
+    { gate: 'posPilot', requerido: (contexto) => contexto.flow === 'pos', motivo: 'not_required_for_flow' },
+  ],
+}
+
 export function requisitosDeCapacidad(
   capability: CapacidadHabilitacionContrato,
+  contexto: ContextoRequisitosHabilitacion = {},
 ): readonly ClaveRequisitoHabilitacionContrato[] {
-  return REQUISITOS_POR_CAPACIDAD[capability]
+  const condicionales = (REQUISITOS_CONDICIONALES[capability] ?? []).filter((item) => item.requerido(contexto)).map((item) => item.gate)
+  return condicionales.length === 0 ? REQUISITOS_POR_CAPACIDAD[capability] : [...REQUISITOS_POR_CAPACIDAD[capability], ...condicionales]
+}
+
+// The conditional requirements that do NOT apply in that context, with why (for an operator).
+export function requisitosNoRequeridos(
+  capability: CapacidadHabilitacionContrato,
+  contexto: ContextoRequisitosHabilitacion = {},
+): { gate: ClaveRequisitoHabilitacionContrato; reason: MotivoRequisitoNoRequerido }[] {
+  return (REQUISITOS_CONDICIONALES[capability] ?? []).filter((item) => !item.requerido(contexto)).map((item) => ({ gate: item.gate, reason: item.motivo }))
+}
+
+// Every requirement the capability can ever ask for (its core and its conditional ones).
+export function requisitosPosiblesDeCapacidad(capability: CapacidadHabilitacionContrato): readonly ClaveRequisitoHabilitacionContrato[] {
+  return [...REQUISITOS_POR_CAPACIDAD[capability], ...(REQUISITOS_CONDICIONALES[capability] ?? []).map((item) => item.gate)]
 }
 
 const CLAVES_REQUISITO_LEGACY = [
@@ -132,13 +171,16 @@ export interface EntradaEvaluarHabilitacion {
   scope?: string
   now: string
   evidence: readonly EvidenciaHabilitacionContrato[]
+  // What decides the conditional requirements of the capability (see requisitosDeCapacidad).
+  profile?: string
+  flow?: FlujoHabilitacion
 }
 
 export function evaluarHabilitacion(input: EntradaEvaluarHabilitacion): DecisionHabilitacionContrato {
   const failures: FallaRequisitoHabilitacionContrato[] = []
   const evidenceIds: string[] = []
   const conflicts: ConflictoHabilitacionContrato[] = []
-  const requiredGates = REQUISITOS_POR_CAPACIDAD[input.capability]
+  const requiredGates = requisitosDeCapacidad(input.capability, { profile: input.profile, flow: input.flow })
   const now = Date.parse(input.now)
   if (!Number.isFinite(now)) throw new Error('readiness evaluation requires a valid ISO timestamp')
 
@@ -314,6 +356,8 @@ export interface SolicitudHabilitacion {
   capability: CapacidadHabilitacionContrato
   profile: PerfilHabilitacion
   scope: string
+  // 'pos' when the operation is processed through the point of sale.
+  flow?: FlujoHabilitacion
   jobId?: string
   now?: string
 }
@@ -386,6 +430,8 @@ export class PuertoMemoriaHabilitacion implements PuertoEvidenciaHabilitacion {
       scope: request.scope,
       now: request.now ?? this.now ?? new Date().toISOString(),
       evidence: profileEvidence,
+      profile: request.profile,
+      flow: request.flow,
     })
     return this.legacy === undefined ? canonical : conciliarDecisionHabilitacion(canonical, this.legacy)
   }
@@ -469,6 +515,8 @@ export class EvaluadorHabilitacion {
       scope: request.scope,
       now: request.now ?? new Date().toISOString(),
       evidence,
+      profile: request.profile,
+      flow: request.flow,
     })
   }
 }

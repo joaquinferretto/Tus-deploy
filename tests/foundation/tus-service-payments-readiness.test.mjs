@@ -17,7 +17,7 @@ import { crearModuloPagosServicio } from '../../apps/api/src/tus/finance/servici
 import { crearHabilitacionPagosServicio } from '../../apps/api/src/tus/finance/servicios/habilitacion-pagos.ts'
 
 // Service payments (deposit of a turno, deposit and balance of a request-born work) have their
-// own readiness capability: `service-payments`. `settlement` keeps the nine requirements of the
+// own readiness capability: `service-payments`. `settlement` is the gate of the
 // general marketplace and never authorizes a service payment, nor the other way around.
 const root = join(import.meta.dirname, '..', '..')
 const TENANT = 'tus-platform'
@@ -25,7 +25,9 @@ const SCOPE = 'argentina-stage-1'
 const PROFILE = 'render-native'
 const NOW = '2026-10-02T12:00:00.000Z'
 const SERVICE_PAYMENT_GATES = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider']
-const SETTLEMENT_GATES = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'posPilot', 'aws', 'groqMigration', 'runtimeProvider']
+// SETTLEMENT-GATES-01: the core of settlement. `aws` (only on the AWS runtime) and `posPilot` (only
+// for an operation through the POS) are conditional; the migration of Groq is not part of it.
+const SETTLEMENT_GATES = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider']
 
 function evidence(capability, gates, overrides = {}) {
   return gates.map((gate) =>
@@ -52,9 +54,13 @@ function evidence(capability, gates, overrides = {}) {
 const decide = (capability, records) => evaluarHabilitacion({ tenantId: TENANT, capability, scope: SCOPE, now: NOW, evidence: records })
 const missing = (decision) => decision.failedGates.filter(({ reason }) => reason === 'evidence_missing').map(({ gate }) => gate)
 
-test('service-payments asks for legal, kyc, kyb, tax, mercadoPago and runtimeProvider; settlement keeps its nine requirements', () => {
+test('service-payments asks for legal, kyc, kyb, tax, mercadoPago and runtimeProvider; settlement asks for the same core, plus aws only on the AWS runtime and posPilot only for a POS operation, and never for the migration of Groq', () => {
   assert.deepEqual([...requisitosDeCapacidad('service-payments')], SERVICE_PAYMENT_GATES)
-  assert.deepEqual([...requisitosDeCapacidad('settlement')], SETTLEMENT_GATES, 'settlement was not relaxed')
+  assert.deepEqual([...requisitosDeCapacidad('settlement')], SETTLEMENT_GATES)
+  assert.deepEqual([...requisitosDeCapacidad('settlement', { profile: 'render-native' })], SETTLEMENT_GATES, 'not on AWS: aws is not asked')
+  assert.deepEqual([...requisitosDeCapacidad('settlement', { profile: 'aws-terraform' })], [...SETTLEMENT_GATES, 'aws'], 'on AWS it is required again')
+  assert.deepEqual([...requisitosDeCapacidad('settlement', { profile: 'render-native', flow: 'pos' })], [...SETTLEMENT_GATES, 'posPilot'], 'an operation through the POS needs the pilot')
+  assert.equal(requisitosDeCapacidad('settlement', { profile: 'aws-terraform', flow: 'pos' }).includes('groqMigration'), false, 'the assistant never gates money')
   for (const gate of ['posPilot', 'aws', 'groqMigration'])
     assert.equal(requisitosDeCapacidad('service-payments').includes(gate), false, `${gate} is not a requirement of service payments`)
   // The other capabilities are untouched.
@@ -62,17 +68,17 @@ test('service-payments asks for legal, kyc, kyb, tax, mercadoPago and runtimePro
   assert.deepEqual([...requisitosDeCapacidad('fleet')], ['legal', 'kyc', 'kyb', 'tax', 'posPilot', 'runtimeProvider'])
 })
 
-test('service-payments is authorized with its six records and without posPilot, aws or groqMigration; the same six records do not authorize settlement', () => {
+test('service-payments is authorized with its six records and without posPilot, aws or groqMigration; settlement, with the same six requirements under its own capability, is authorized too outside AWS and the POS', () => {
   const authorized = decide('service-payments', evidence('service-payments', SERVICE_PAYMENT_GATES))
   assert.equal(authorized.enabled, true)
   assert.equal(authorized.disposition, 'authorized')
   assert.deepEqual(authorized.failedGates, [])
   assert.doesNotThrow(() => validarDecisionHabilitacion(authorized))
 
-  // Settlement, given the very same requirements under its own capability, still lacks its three.
+  // SETTLEMENT-GATES-01: before, settlement still lacked posPilot, aws and groqMigration here.
   const settlement = decide('settlement', evidence('settlement', SERVICE_PAYMENT_GATES))
-  assert.equal(settlement.enabled, false)
-  assert.deepEqual(missing(settlement), ['posPilot', 'aws', 'groqMigration'])
+  assert.equal(settlement.enabled, true)
+  assert.deepEqual(settlement.failedGates, [])
 })
 
 test('evidence is specific to its capability: settlement evidence does not authorize service payments and service-payments evidence does not authorize settlement', () => {
@@ -83,7 +89,7 @@ test('evidence is specific to its capability: settlement evidence does not autho
   assert.deepEqual(missing(servicePayments), SERVICE_PAYMENT_GATES)
 
   const serviceOnly = evidence('service-payments', SERVICE_PAYMENT_GATES)
-  assert.deepEqual(missing(decide('settlement', serviceOnly)), SETTLEMENT_GATES, 'settlement stays blocked on all nine')
+  assert.deepEqual(missing(decide('settlement', serviceOnly)), SETTLEMENT_GATES, 'evidence of another capability never counts')
 })
 
 test('service-payments is blocked when any one of its requirements has no evidence', () => {

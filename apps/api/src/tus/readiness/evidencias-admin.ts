@@ -5,7 +5,7 @@ import {
   type ClaveRequisitoHabilitacion,
   type EvidenciaHabilitacion,
 } from '@factory/contracts'
-import { requisitosDeCapacidad, type PerfilHabilitacion } from './index.ts'
+import { requisitosDeCapacidad, requisitosNoRequeridos, requisitosPosiblesDeCapacidad, type MotivoRequisitoNoRequerido, type PerfilHabilitacion } from './index.ts'
 
 // Administrative registry of readiness evidence. It is the only writer of
 // `evidencias_habilitacion`: a platform administrator (MFA-elevated session, checked by the
@@ -153,7 +153,7 @@ export class ServicioEvidenciasHabilitacion {
 
   async listar(): Promise<{
     scope: string
-    capabilities: { capability: CapacidadEvidenciaPlataforma; requiredGates: readonly ClaveRequisitoHabilitacion[]; evidence: VistaEvidencia[] }[]
+    capabilities: { capability: CapacidadEvidenciaPlataforma; requiredGates: readonly ClaveRequisitoHabilitacion[]; notRequired: { gate: ClaveRequisitoHabilitacion; reason: MotivoRequisitoNoRequerido }[]; evidence: VistaEvidencia[] }[]
   }> {
     const registros = await this.store.listar(this.opciones.tenantId)
     const ahora = this.now()
@@ -161,7 +161,9 @@ export class ServicioEvidenciasHabilitacion {
       scope: this.opciones.scope,
       capabilities: CAPACIDADES_EVIDENCIA_PLATAFORMA.map((capability) => ({
         capability,
-        requiredGates: requisitosDeCapacidad(capability),
+        // For the runtime this process really runs with, and the ordinary (non POS) flow.
+        requiredGates: requisitosDeCapacidad(capability, { profile: this.opciones.profile }),
+        notRequired: requisitosNoRequeridos(capability, { profile: this.opciones.profile }),
         evidence: registros
           .filter((item) => item.capability === capability && item.scope === this.opciones.scope)
           .sort((left, right) => left.gate.localeCompare(right.gate) || right.createdAt.localeCompare(left.createdAt))
@@ -175,7 +177,8 @@ export class ServicioEvidenciasHabilitacion {
     const capability = input['capability']
     if (!CAPACIDADES_EVIDENCIA_PLATAFORMA.includes(capability as CapacidadEvidenciaPlataforma))
       throw new ErrorEvidenciaHabilitacion(400, 'INVALID', 'capability must be service-payments or settlement', ['capability'])
-    const requisitos = requisitosDeCapacidad(capability as CapacidadEvidenciaPlataforma)
+    // Evidence of a conditional requirement can be recorded before it is asked for.
+    const requisitos = requisitosPosiblesDeCapacidad(capability as CapacidadEvidenciaPlataforma)
     const gate = input['gate']
     if (!requisitos.includes(gate as ClaveRequisitoHabilitacion))
       throw new ErrorEvidenciaHabilitacion(400, 'INVALID', 'gate is not a requirement of that capability', ['gate'])

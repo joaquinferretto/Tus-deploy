@@ -79,6 +79,10 @@ for `posPilot`, `aws` or `groqMigration`. Evidence is per capability and must
 be real and owner-authorized; sandbox can be exercised without it, production
 money cannot. See `docs/activation-gates.md`.
 
+Updated 2026-10-07 (SETTLEMENT-GATES-01): `settlement` no longer keeps nine
+requirements. Its core is the same six; `aws` is asked only on the AWS runtime,
+`posPilot` only for a POS operation, and `groqMigration` is not part of it.
+
 ## Argentina-first boundaries and non-goals
 
 This matrix covers only the Argentina-first Stage 1 pilot boundary. Financial

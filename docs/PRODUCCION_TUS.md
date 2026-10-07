@@ -800,7 +800,9 @@ adaptador esté configurado.
 
 Los pagos de servicios (seña de un turno, seña y saldo de un trabajo de solicitud) tienen su **propia** capacidad de
 habilitación: `service-payments`. `settlement` es el gate del marketplace general (productos, entrega, POS) y **no** es
-el gate de las señas; conserva sus nueve requisitos.
+el gate de las señas. Su núcleo son los mismos seis requisitos; `aws` solo se exige cuando el proceso corre con el
+perfil de despliegue de AWS y `posPilot` solo para una operación procesada por POS (SETTLEMENT-GATES-01). La migración
+de Groq no es requisito de `settlement`.
 
 | Requisito         | `service-payments` | `settlement` | Qué respalda en pagos de servicios                                          |
 | ----------------- | :----------------: | :----------: | --------------------------------------------------------------------------- |
@@ -810,9 +812,9 @@ el gate de las señas; conserva sus nueve requisitos.
 | `kyb`             |         sí         |      sí      | verificación comercial del prestador (ver el gap abajo)                     |
 | `mercadoPago`     |         sí         |      sí      | cuenta/aplicación/producto Split 1:1 validados y prueba sandbox completa    |
 | `runtimeProvider` |         sí         |      sí      | runtime en producción sano (health, ready, webhook alcanzable) y su smoke   |
-| `posPilot`        |         no         |      sí      | no aplica: no hay POS en un pago de servicio                                |
-| `aws`             |         no         |      sí      | no aplica: no hay un target AWS en el camino del dinero                     |
-| `groqMigration`   |         no         |      sí      | no aplica: el modelo no decide importes, pagos ni estados                   |
+| `posPilot`        |         no         | solo por POS | no aplica: no hay POS en un pago de servicio                                |
+| `aws`             |         no         | solo en AWS  | no aplica: no hay un target AWS en el camino del dinero                     |
+| `groqMigration`   |         no         |      no      | no aplica: el modelo no decide importes, pagos ni estados                   |
 
 - La evidencia es **por capacidad**: una fila de `settlement` no habilita `service-payments` ni al revés.
 - Se evalúa para el tenant de plataforma (`TUS_PLATFORM_ADMIN_TENANT_ID`, o `tus-platform` si está vacía), alcance

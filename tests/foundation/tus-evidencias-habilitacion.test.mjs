@@ -25,7 +25,9 @@ const TENANT = 'platform-tenant'
 const PROFILE = 'render-native'
 const SCOPE = 'argentina-stage-1'
 const SERVICE_PAYMENT_GATES = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider']
-const SETTLEMENT_GATES = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'posPilot', 'aws', 'groqMigration', 'runtimeProvider']
+// SETTLEMENT-GATES-01: the core of settlement. `aws` (only on the AWS runtime) and `posPilot` (only
+// for an operation through the POS) are conditional; the migration of Groq is not part of it.
+const SETTLEMENT_GATES = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider']
 const admin = { actorId: 'platform-admin', correlationId: 'corr-admin' }
 
 function registry(nowIso = '2026-10-02T12:00:00.000Z') {
@@ -79,15 +81,20 @@ test('only the capabilities of the platform tenant and their own requirements ca
   const { store, service } = registry()
   for (const capability of ['publication', 'provider-actions', 'fleet', 'release-jobs', 'servicePayments', '', null, 7])
     assert.deepEqual((await failure(() => service.registrar(admin, valid({ capability }))))?.fields, ['capability'], String(capability))
-  // posPilot, aws and groqMigration are requirements of settlement, never of service payments.
+  // posPilot and aws are (conditional) requirements of settlement, never of service payments.
   for (const gate of ['posPilot', 'aws', 'groqMigration', 'unknown', '']) {
     const result = await failure(() => service.registrar(admin, valid({ gate })))
     assert.deepEqual([result?.status, result?.fields], [400, ['gate']], gate)
   }
+  // SETTLEMENT-GATES-01: the migration of Groq is no longer a requirement of settlement.
+  assert.deepEqual((await failure(() => service.registrar(admin, valid({ capability: 'settlement', gate: 'groqMigration' }))))?.fields, ['gate'])
   assert.equal(store.registros.length, 0)
+  // Evidence of a conditional requirement can be recorded before it is asked for.
   await service.registrar(admin, valid({ capability: 'settlement', gate: 'posPilot', evidenceRef: 'PILOTO-POS-2026-01' }))
   const listed = await service.listar()
   assert.deepEqual(listed.capabilities.map((item) => [item.capability, [...item.requiredGates], item.evidence.length]), [['service-payments', SERVICE_PAYMENT_GATES, 0], ['settlement', SETTLEMENT_GATES, 1]])
+  // What does not apply to this runtime and flow is told as such, never as something missing.
+  assert.deepEqual(listed.capabilities.map((item) => item.notRequired), [[], [{ gate: 'aws', reason: 'not_required_in_runtime' }, { gate: 'posPilot', reason: 'not_required_for_flow' }]])
 })
 
 test('values that look like a credential, a provider payload or personal data are refused, named by field and never echoed', async () => {
@@ -185,7 +192,7 @@ test('a record of another tenant cannot be revoked from the registry of the plat
   assert.equal(store.registros[0].revoked, false)
 })
 
-test('renewal in the evaluator, for service-payments only: history (revoked, expired) does not block one current record; anything else beside it still does; settlement keeps its nine requirements and its original rule', () => {
+test('renewal in the evaluator, for service-payments only: history (revoked, expired) does not block one current record; anything else beside it still does; settlement keeps its original rule', () => {
   const now = '2026-10-02T12:00:00.000Z'
   const record = (gate, overrides = {}, capability = 'service-payments') => crearEvidenciaHabilitacion({ tenantId: TENANT, capability, gate, owner: 'owner', scope: SCOPE, evidenceType: 'approval-record', evidenceRef: 'ref-' + gate, evidenceId: 'id-' + gate, policyVersion: 'v1', issuedAt: '2026-01-01T00:00:00.000Z', expiresAt: null, revoked: false, source: 'authorized-external', profile: PROFILE, ...overrides })
   const others = SERVICE_PAYMENT_GATES.filter((gate) => gate !== 'legal').map((gate) => record(gate))
@@ -331,12 +338,12 @@ test('HTTP: the registry is behind the platform administration (permission + MFA
   ], 'tenant, actor, roles, scope, source and status in the request are refused; so are a capability outside the platform tenant and a requirement of another capability')
   assert.deepEqual(r.secreto, [422, 'SENSITIVE_EVIDENCE_VALUE', ['evidenceRef'], false])
   assert.deepEqual(r.sigueVacio, [0, 0])
-  assert.deepEqual(r.antes, ['service-payments', false, 6, 9, true])
+  assert.deepEqual(r.antes, ['service-payments', false, 6, 6, true])
   for (const gate of ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'])
     assert.deepEqual(r['creada_' + gate], [201, 'current', 'argentina-stage-1', false], gate)
-  assert.deepEqual(r.despues, [{ capability: 'service-payments', authorized: true, blockers: [] }, false, 9, false], 'six real records open service payments; settlement stays blocked on its nine')
+  assert.deepEqual(r.despues, [{ capability: 'service-payments', authorized: true, blockers: [] }, false, 6, false], 'six real records open service payments; settlement stays blocked on its own six')
   assert.deepEqual(r.guardado, [6, ['platform-tenant|argentina-stage-1|authorized-external|render-native'], ['acc-admin|corr-http|readiness.evidence_registered']], 'tenant, scope, source and profile are the server\'s; the actor is the session\'s')
-  assert.deepEqual(r.lista, [200, [['service-payments', 6, 6], ['settlement', 9, 0]]])
+  assert.deepEqual(r.lista, [200, [['service-payments', 6, 6], ['settlement', 6, 0]]])
   assert.deepEqual(r.duplicada, [409, 'EVIDENCE_ALREADY_CURRENT'])
   assert.deepEqual(r.revocacion, [403, [400, 'UNTRUSTED_EVIDENCE_FIELDS'], [200, 'revoked'], { capability: 'service-payments', authorized: false, blockers: ['tax:evidence_revoked'] }, true])
 })

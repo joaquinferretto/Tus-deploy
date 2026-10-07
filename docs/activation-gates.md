@@ -165,9 +165,9 @@ fake, or partial authorized record cannot promote the overall report.
 | `kyb` | Marketplace Operations / Compliance | Publication and all money-moving capabilities | Merchant business verification reference |
 | `tax` | Finance and Tax | Publication and all money-moving capabilities | Country tax and invoicing approval reference |
 | `mercadoPago` | Payments / Provider Operations | Provider actions, settlement, service payments, and release jobs | Approved account/product/contract validation |
-| `posPilot` | POS Product and Operations | Settlement, fleet, and release jobs (never service payments) | Authorized hardware and operational pilot evidence |
-| `aws` | AI Platform / Runtime | Provider actions and settlement (never service payments) | Approved AWS target/provider evidence |
-| `groqMigration` | AI Platform / Runtime | Provider actions and settlement (never service payments) | Transitional parity, fallback, and retirement backlog |
+| `posPilot` | POS Product and Operations | Fleet and release jobs; settlement only for an operation processed through the POS (never service payments) | Authorized hardware and operational pilot evidence |
+| `aws` | AI Platform / Runtime | Provider actions; settlement only when the process runs with the AWS deployment profile (never service payments) | Approved AWS target/provider evidence |
+| `groqMigration` | AI Platform / Runtime | Provider actions only (never settlement, never service payments) | Transitional parity, fallback, and retirement backlog |
 | `runtimeProvider` | Runtime Operations | Publication and all operational capabilities | Runtime/provider readiness and smoke evidence |
 
 Every readiness evidence record preserves `owner`, `scope`, `evidenceType`,
@@ -186,8 +186,20 @@ their own capability: `service-payments`.
 
 | Capability | Required gates |
 | --- | --- |
-| `settlement` | `legal`, `kyc`, `kyb`, `tax`, `mercadoPago`, `posPilot`, `aws`, `groqMigration`, `runtimeProvider` (unchanged) |
+| `settlement` | `legal`, `kyc`, `kyb`, `tax`, `mercadoPago`, `runtimeProvider`; plus `aws` on the AWS runtime and `posPilot` for a POS operation (SETTLEMENT-GATES-01) |
 | `service-payments` | `legal`, `kyc`, `kyb`, `tax`, `mercadoPago`, `runtimeProvider` |
+
+Conditional gates of `settlement` (SETTLEMENT-GATES-01):
+
+- `aws` is required only when the deployment profile of the process
+  (`TUS_DEPLOYMENT_PROFILE`) is `aws-terraform`. On any other runtime it is
+  reported as "not required in this runtime". The day TUS runs on AWS it is
+  required again, with valid evidence, without anybody switching anything.
+- `posPilot` is required only for an operation whose readiness request says
+  `flow: 'pos'`. The POS itself is gated by `fleet`, where the pilot is always
+  required.
+- `groqMigration` is not a requirement of `settlement`: the assistant cannot
+  block charges, commissions or settlements. It stays in `provider-actions`.
 
 Gates that do not apply to `service-payments`, and why:
 

@@ -16,9 +16,13 @@ const REQUISITO: Record<string, string> = {
   kyb: 'Verificación comercial (KYB)',
   mercadoPago: 'Mercado Pago',
   runtimeProvider: 'Runtime de producción',
-  posPilot: 'Piloto POS',
+  posPilot: 'POS Pilot',
   aws: 'AWS',
-  groqMigration: 'Migración de Groq',
+}
+// A conditional requirement that does not apply here: shown as such, never as a missing one.
+const NO_REQUERIDO: Record<string, string> = {
+  not_required_in_runtime: 'No requerido en este runtime',
+  not_required_for_flow: 'No requerido para este flujo',
 }
 const ESTADO: Record<string, string> = { current: 'Vigente', revoked: 'Revocada', expired: 'Vencida', not_yet_valid: 'Todavía no vigente' }
 const CAMPO: Record<string, string> = { owner: 'Responsable', evidenceType: 'Tipo', evidenceRef: 'Referencia', policyVersion: 'Versión de política', issuedAt: 'Emitida', expiresAt: 'Vence', reason: 'Motivo', capability: 'Capacidad', gate: 'Requisito' }
@@ -151,6 +155,12 @@ export function AdminEvidencias({ onChange }: { onChange: () => void }): React.R
                   </tr>
                 ))
               })}
+              {(actual?.notRequired ?? []).map((item) => (
+                <tr data-no-requerido={item.gate} key={item.gate}>
+                  <td>{REQUISITO[item.gate] ?? item.gate}</td>
+                  <td colSpan={6}><span className={styles.badgeOk}>{NO_REQUERIDO[item.reason] ?? 'No requerido'}</span></td>
+                </tr>
+              ))}
             </tbody>
           </table>
           <h3>Registrar evidencia</h3>

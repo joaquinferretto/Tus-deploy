@@ -94,7 +94,9 @@ test('complete authorized evidence enables a scoped readiness capability', () =>
   assert.equal(decision.enabled, true)
   assert.equal(decision.disposition, 'authorized')
   assert.deepEqual(decision.failedGates, [])
-  assert.deepEqual(decision.evidenceIds, evidence.map(({ evidenceId }) => evidenceId))
+  // SETTLEMENT-GATES-01: only the evidence of what settlement asks for here is part of the decision
+  // (aws and posPilot are conditional; the migration of Groq is not a requirement of it).
+  assert.deepEqual(decision.evidenceIds, evidence.filter(({ gate }) => !['posPilot', 'aws', 'groqMigration'].includes(gate)).map(({ evidenceId }) => evidenceId))
   assert.equal(decision.deterministic, false)
   assert.deepEqual(validarDecisionHabilitacion(decision), decision)
 })
@@ -129,6 +131,8 @@ test('missing, expired, or revoked evidence fails closed with exact gate reasons
     scope: 'argentina-stage-1',
     now: '2026-08-26T12:00:00.000Z',
     evidence,
+    // SETTLEMENT-GATES-01: posPilot is asked only for an operation through the POS.
+    flow: 'pos',
   })
 
   assert.equal(decision.enabled, false)

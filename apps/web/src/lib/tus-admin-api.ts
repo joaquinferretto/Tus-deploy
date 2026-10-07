@@ -51,7 +51,8 @@ export interface AdminEvidenciaHabilitacion {
 
 export interface AdminEvidenciasHabilitacion {
   scope: string
-  capabilities: { capability: string; requiredGates: string[]; evidence: AdminEvidenciaHabilitacion[] }[]
+  // `notRequired`: conditional requirements that do not apply to this runtime or flow, and why.
+  capabilities: { capability: string; requiredGates: string[]; notRequired?: { gate: string; reason: string }[]; evidence: AdminEvidenciaHabilitacion[] }[]
 }
 
 export interface AdminResumen {
