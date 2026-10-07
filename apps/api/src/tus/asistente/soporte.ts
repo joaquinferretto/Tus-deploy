@@ -7,6 +7,8 @@ import {
   ventanaServicioAbierta,
   type ConversacionWhatsapp,
 } from './modelo.ts'
+import type { SolicitudTurnoParaAdmin } from '../calendar/turnos-service.ts'
+import { ACCION_AVISO_NO_ENVIADO, correlacionAvisoSolicitud, type MotivoAvisoNoEnviado } from './avisos-turnos.ts'
 import { enviarMensajeSaliente } from './orquestador.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
 import type { ServicioVinculacionWhatsapp } from './vinculacion.ts'
@@ -23,7 +25,9 @@ export class ServicioSoporteWhatsapp {
     private readonly transaction: PuertoTransaccionAsistente,
     private readonly whatsapp: WhatsappProvider,
     private readonly linking: ServicioVinculacionWhatsapp,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    // The requests of turno a conversation made, read from the agenda (never kept here).
+    private readonly solicitudesDeTurno: (reservaIds: readonly string[]) => Promise<SolicitudTurnoParaAdmin[]> = async () => []
   ) {}
 
   // One page of the inbox (LIMIT/OFFSET in the store) + the filtered total.
@@ -87,6 +91,70 @@ export class ServicioSoporteWhatsapp {
   }
 
   async detalle(conversationId: string, context: ContextoOperador) {
+    const detalle = await this.leerDetalle(conversationId, context)
+    return { ...detalle, providerNotices: await this.avisosAPrestadores(conversationId).catch(() => []) }
+  }
+
+  // ADMIN-WHATSAPP-AVISOS-01. "¿TUS le avisó al prestador?" for every request of turno this
+  // conversation made, from what the system really has:
+  // - the message(s) of the notice in the provider's own conversation, with the status Meta
+  //   reported (sent, delivered, read, failed);
+  // - the record of a notice that was not sent at all, with its reason;
+  // - the answer of the provider, from the state of the turno and its audit.
+  // Nothing is inferred from the request having been created.
+  async avisosAPrestadores(conversationId: string): Promise<AvisoAPrestador[]> {
+    const pedidos = await this.transaction.ejecutar(async (repositories) =>
+      (await repositories.confirmaciones.ejecutadasDe(conversationId, 'book_appointment')).flatMap((confirmacion) => {
+        const id = (confirmacion.result?.['appointment'] as { id?: unknown } | undefined)?.id
+        return typeof id === 'string' && id ? [id] : []
+      })
+    )
+    if (pedidos.length === 0) return []
+    const solicitudes = await this.solicitudesDeTurno(pedidos)
+    if (solicitudes.length === 0) return []
+    const correlaciones = solicitudes.map((solicitud) => correlacionAvisoSolicitud(solicitud.reservaId))
+    return this.transaction.ejecutar(async (repositories) => {
+      const [mensajes, noEnviados] = await Promise.all([
+        repositories.mensajes.porCorrelaciones(correlaciones),
+        repositories.auditoria.porCorrelaciones({ action: ACCION_AVISO_NO_ENVIADO, correlationIds: correlaciones }),
+      ])
+      const contactos = new Map((await repositories.contactos.buscarVarios([...new Set(mensajes.map((mensaje) => mensaje.contactId))])).map((contacto) => [contacto.contactId, contacto]))
+      return solicitudes
+        .sort((a, b) => a.creadaEn.localeCompare(b.creadaEn))
+        .map((solicitud) => {
+          const correlacion = correlacionAvisoSolicitud(solicitud.reservaId)
+          // The notice itself (buttons inside the window, the template outside it); its pictures
+          // are other messages of the same correlation and say nothing about the notice.
+          const deliveries = mensajes
+            .filter((mensaje) => mensaje.correlationId === correlacion && mensaje.direction === 'outbound' && mensaje.type !== 'image')
+            .map((mensaje) => ({
+              conversationId: mensaje.conversationId,
+              waIdMasked: contactos.has(mensaje.contactId) ? enmascararWaId(contactos.get(mensaje.contactId)!.waId) : null,
+              kind: mensaje.type === 'template' ? ('template' as const) : ('message' as const),
+              status: mensaje.status,
+              at: mensaje.statusAt ?? mensaje.createdAt,
+              // Why the send failed, as the provider of WhatsApp classified it (never its body).
+              error: mensaje.status === 'failed' && typeof mensaje.metadata['errorCode'] === 'string' ? mensaje.metadata['errorCode'] : null,
+            }))
+          const fallo = noEnviados.filter((evento) => evento.correlationId === correlacion).at(-1)
+          const notSent = deliveries.length === 0 && fallo ? { reason: String(fallo.metadata['reason']) as MotivoAvisoNoEnviado, at: fallo.createdAt } : null
+          return {
+            reservaId: solicitud.reservaId,
+            service: solicitud.servicio,
+            startsAt: solicitud.inicio,
+            requestedAt: solicitud.creadaEn,
+            appointmentStatus: solicitud.estado,
+            provider: { name: solicitud.prestadorNombre, hasAccount: Boolean(solicitud.prestadorCuentaId) },
+            deliveries,
+            notSent,
+            answer: solicitud.respuesta ? { result: solicitud.respuesta.resultado === 'aceptada' ? ('accepted' as const) : ('rejected' as const), at: solicitud.respuesta.en, channel: solicitud.respuesta.canal } : null,
+            state: estadoDelAviso(deliveries.map((entrega) => entrega.status), notSent?.reason ?? null, solicitud.respuesta?.resultado ?? null),
+          }
+        })
+    })
+  }
+
+  private async leerDetalle(conversationId: string, context: ContextoOperador) {
     return this.transaction.ejecutar(async (repositories) => {
       const conversation = await this.requerir(repositories, conversationId)
       const contact = await repositories.contactos.buscar(conversation.contactId)
@@ -120,6 +188,8 @@ export class ServicioSoporteWhatsapp {
           type: message.type,
           text: message.text,
           status: message.status,
+          // When Meta reported that status (null: nothing was reported yet).
+          statusAt: message.statusAt,
           createdAt: message.createdAt,
           // Location coordinates are shown rounded (approximate area only).
           ...(message.metadata['location']
@@ -278,6 +348,34 @@ export class ServicioSoporteWhatsapp {
       createdAt: new Date(this.now()).toISOString(),
     })
   }
+}
+
+// ADMIN-WHATSAPP-AVISOS-01. One state for the notice of a request, in the order Admin asks it:
+// did the provider answer; if not, how far did the notice get; if nothing was sent, why.
+export type EstadoAvisoPrestador = 'accepted' | 'rejected' | 'read' | 'delivered' | 'sent' | 'sending' | 'failed' | 'template_required' | 'not_sent' | 'pending'
+
+export interface AvisoAPrestador {
+  reservaId: string
+  service: string
+  startsAt: string
+  requestedAt: string
+  appointmentStatus: string
+  provider: { name: string; hasAccount: boolean }
+  deliveries: { conversationId: string; waIdMasked: string | null; kind: 'template' | 'message'; status: string; at: string; error: string | null }[]
+  notSent: { reason: MotivoAvisoNoEnviado; at: string } | null
+  answer: { result: 'accepted' | 'rejected'; at: string; channel: string } | null
+  state: EstadoAvisoPrestador
+}
+
+// The furthest any of its numbers got wins ("read" on one phone is read); a failure counts only
+// when no number got the notice. No message and no record: the notice is still to be processed.
+export function estadoDelAviso(entregas: readonly string[], motivo: MotivoAvisoNoEnviado | null, respuesta: 'aceptada' | 'rechazada' | null): EstadoAvisoPrestador {
+  if (respuesta) return respuesta === 'aceptada' ? 'accepted' : 'rejected'
+  for (const estado of ['read', 'delivered', 'sent'] as const) if (entregas.includes(estado)) return estado
+  if (entregas.includes('pending_send') || entregas.includes('unknown')) return 'sending'
+  if (entregas.includes('failed')) return 'failed'
+  if (motivo) return motivo === 'template_required' ? 'template_required' : 'not_sent'
+  return 'pending'
 }
 
 function redondearUbicacion(value: unknown) {

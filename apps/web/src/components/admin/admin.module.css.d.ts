@@ -19,6 +19,7 @@ declare const styles: {
   readonly cardLabel: string
   readonly cardValue: string
   readonly cards: string
+  readonly chatBadges: string
   readonly chatForm: string
   readonly chatHeader: string
   readonly chatLayout: string
@@ -27,6 +28,7 @@ declare const styles: {
   readonly chatName: string
   readonly chatPanel: string
   readonly chatPreview: string
+  readonly chatSide: string
   readonly chips: string
   readonly confirmActions: string
   readonly confirmDialog: string
@@ -34,8 +36,8 @@ declare const styles: {
   readonly empty: string
   readonly error: string
   readonly filters: string
-  readonly formGrid: string
   readonly form: string
+  readonly formGrid: string
   readonly iconBadge: string
   readonly iconPicker: string
   readonly iconSelected: string
@@ -44,9 +46,17 @@ declare const styles: {
   readonly listItem: string
   readonly menuButton: string
   readonly muted: string
+  readonly notice: string
+  readonly noticeLink: string
+  readonly noticeList: string
+  readonly noticeState: string
   readonly overlay: string
   readonly pageHeader: string
   readonly pagination: string
+  readonly paginationCompact: string
+  readonly paginationLong: string
+  readonly paginationPages: string
+  readonly paginationShort: string
   readonly section: string
   readonly shell: string
   readonly sidebar: string

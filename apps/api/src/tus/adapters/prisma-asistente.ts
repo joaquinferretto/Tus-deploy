@@ -395,6 +395,9 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
             take: input.limit,
           })
         ).map(mapMensaje),
+      // ix_mensajes_conversacion_whatsapp_correlacion.
+      porCorrelaciones: async (ids) =>
+        ids.length === 0 ? [] : (await client.mensajeConversacionWhatsapp.findMany({ where: { correlacionId: { in: [...ids] } }, orderBy: { secuencia: 'asc' } })).map(mapMensaje),
       // ix_mensajes_conversacion_whatsapp_secuencia: the page right before `before`, oldest first.
       pagina: async (conversationId, input) =>
         (
@@ -558,6 +561,9 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
             data: sinId(filaConfirmacion(value)),
           })
         ).count === 1,
+      // ix_confirmaciones_asistente_conversacion.
+      ejecutadasDe: async (conversationId, tool) =>
+        (await client.confirmacionAsistente.findMany({ where: { conversacionId: conversationId, herramienta: tool, estado: 'executed' }, orderBy: { fechaCreacion: 'asc' } })).map(mapConfirmacion),
     },
     resumenes: {
       vigente: async (conversationId) => {
@@ -588,6 +594,20 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
           },
         })
       },
+      // ix_auditoria_asistente_correlacion.
+      porCorrelaciones: async (input) =>
+        input.correlationIds.length === 0
+          ? []
+          : (await client.auditoriaAsistente.findMany({ where: { accion: input.action, correlacionId: { in: [...input.correlationIds] } }, orderBy: { fechaCreacion: 'asc' } })).map((row: Fila) => ({
+              eventId: String(row['id']),
+              action: String(row['accion']),
+              contactId: row['contactoId'] === null ? null : String(row['contactoId']),
+              conversationId: row['conversacionId'] === null ? null : String(row['conversacionId']),
+              actorId: String(row['actorId']),
+              correlationId: String(row['correlacionId']),
+              metadata: (row['metadata'] ?? {}) as Record<string, unknown>,
+              createdAt: (row['fechaCreacion'] as Date).toISOString(),
+            })),
       contarDesde: async (input) =>
         client.auditoriaAsistente.count({ where: { conversacionId: input.conversationId, accion: input.action, fechaCreacion: { gte: new Date(input.since) } } }),
     },

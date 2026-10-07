@@ -189,6 +189,20 @@ type ClienteAgenda = PrismaClient | Prisma.TransactionClient
 type CalendarioAgenda = { id: string; granularidadMinutos: number; bufferMinutos: number }
 type FilaReserva = Prisma.ReservaGetPayload<object>
 
+// ADMIN-WHATSAPP-AVISOS-01. A request as Admin reads it next to the notice sent to its provider.
+export interface SolicitudTurnoParaAdmin {
+  reservaId: string
+  // The id it was asked by (the one a conversation kept).
+  pedidoId: string
+  prestadorNombre: string
+  prestadorCuentaId: string | null
+  servicio: string
+  inicio: string
+  estado: string
+  creadaEn: string
+  respuesta: { resultado: 'aceptada' | 'rechazada'; en: string; canal: string } | null
+}
+
 export class ServicioTurnos {
   private readonly notificadores: NotificadorTurnos[]
   private readonly outboxNotificaciones: OutboxNotificacionesTurnos
@@ -708,6 +722,42 @@ export class ServicioTurnos {
 
   crearWorkerNotificaciones(): ReturnType<OutboxNotificacionesTurnos['crearWorker']> {
     return this.outboxNotificaciones.crearWorker()
+  }
+
+  // ADMIN-WHATSAPP-AVISOS-01. What Admin needs to know of some requests: whose agenda they went
+  // to, the account behind it and what the provider answered (the state of the turno plus the
+  // audit of the answer). Read only; ids that are not a request are simply left out.
+  async solicitudesParaAdmin(reservaIds: readonly string[]): Promise<SolicitudTurnoParaAdmin[]> {
+    const ids = [...new Set(reservaIds)].slice(0, 50)
+    if (ids.length === 0) return []
+    const rows = await this.prisma.reserva.findMany({ where: { OR: [{ id: { in: ids } }, { reservaId: { in: ids } }] } })
+    if (rows.length === 0) return []
+    const tenants = [...new Set(rows.map((row) => row.tenantId))]
+    const [perfiles, oficios, respuestas, cuentas] = await Promise.all([
+      this.prisma.perfilPublicoPrestador.findMany({ where: { tenantId: { in: tenants } } }),
+      this.nombresDeOficio(rows),
+      this.prisma.auditEvent.findMany({ where: { tenantId: { in: tenants }, eventType: 'turnos.solicitud_respondida', OR: rows.map((row) => ({ metadata: { path: ['reservaId'], equals: row.id } })) }, orderBy: { occurredAt: 'asc' } }),
+      Promise.all(tenants.map(async (tenantId) => [tenantId, await this.cuentaPrestadorId(tenantId)] as const)),
+    ])
+    const nombreDe = new Map(perfiles.map((perfil) => [perfil.tenantId, perfil.nombrePublico]))
+    const cuentaDe = new Map(cuentas)
+    return rows.map((row) => {
+      const respuesta = respuestas.filter((evento) => (evento.metadata as { reservaId?: unknown } | null)?.reservaId === row.id).at(-1)
+      const datos = (respuesta?.metadata ?? null) as { pedido?: unknown; canal?: unknown; a?: unknown } | null
+      return {
+        reservaId: row.id,
+        pedidoId: ids.includes(row.id) ? row.id : row.reservaId,
+        prestadorNombre: nombreDe.get(row.tenantId) ?? 'El profesional',
+        prestadorCuentaId: cuentaDe.get(row.tenantId) ?? null,
+        servicio: row.tarifaNombre ?? (row.servicioId ? oficios.get(row.servicioId) : null) ?? 'el servicio',
+        inicio: row.fechaInicio.toISOString(),
+        estado: row.estado,
+        creadaEn: row.fechaCreacion.toISOString(),
+        respuesta: respuesta && (datos?.pedido === 'aceptar' || datos?.pedido === 'rechazar')
+          ? { resultado: datos.pedido === 'aceptar' ? ('aceptada' as const) : ('rechazada' as const), en: respuesta.occurredAt.toISOString(), canal: typeof datos.canal === 'string' ? datos.canal : 'web' }
+          : null,
+      }
+    })
   }
 
   procesarNotificacionesPendientes(limit?: number): Promise<number> {

@@ -153,6 +153,7 @@ export class AlmacenAsistenteEnMemoria {
             return last ? [clone(last)] : []
           }),
         contar: async (conversationId) => [...s().mensajes.values()].filter((m) => m.conversationId === conversationId).length,
+        porCorrelaciones: async (ids) => [...s().mensajes.values()].filter((m) => ids.includes(m.correlationId)).sort(byTime).map(clone),
         contarEntrantesDesde: async (contactId, since, types) =>
           [...s().mensajes.values()].filter((m) => m.contactId === contactId && m.direction === 'inbound' && m.createdAt >= since && (!types || types.includes(m.type))).length,
       },
@@ -224,6 +225,8 @@ export class AlmacenAsistenteEnMemoria {
           s().confirmaciones.set(value.confirmationId, clone(value))
           return true
         },
+        ejecutadasDe: async (conversationId, tool) =>
+          [...s().confirmaciones.values()].filter((c) => c.conversationId === conversationId && c.tool === tool && c.status === 'executed').sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(clone),
       },
       resumenes: {
         vigente: async (conversationId) => clone((s().resumenes ?? []).filter((r) => r.conversationId === conversationId).sort((a, b) => b.version - a.version)[0] ?? null),
@@ -243,6 +246,7 @@ export class AlmacenAsistenteEnMemoria {
         registrar: async (event) => {
           s().auditoria.push(clone(event))
         },
+        porCorrelaciones: async (input) => s().auditoria.filter((event) => event.action === input.action && input.correlationIds.includes(event.correlationId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(clone),
         contarDesde: async (input) => s().auditoria.filter((event) => event.action === input.action && event.conversationId === input.conversationId && event.createdAt >= input.since).length,
       },
       consentimientosWhatsapp: {
