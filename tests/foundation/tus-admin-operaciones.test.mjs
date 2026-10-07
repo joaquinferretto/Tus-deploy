@@ -84,7 +84,9 @@ test('FASE10 Web: admin navigation, request -> work link, providers columns and 
   assert.match(layout, /\/tus\/admin\/pagos', label: 'Pagos'/u)
   assert.match(read('apps/web/src/components/admin/admin-solicitudes.tsx'), /\/tus\/admin\/trabajos\?id=\$\{encodeURIComponent\(item\.trabajoId\)\}/u)
   const prestadores = read('apps/web/src/components/admin/admin-prestadores-lista.tsx')
-  assert.match(prestadores, /Mercado Pago<\/th>/u)
+  // The column says whether the deposit can be charged (by the platform or with the provider's
+  // own account), not only whether a Mercado Pago account is linked.
+  assert.match(prestadores, /Cobro de señas<\/th>/u)
   assert.match(prestadores, /item\.rating/u)
   const trabajos = read('apps/web/src/components/admin/admin-trabajos.tsx')
   for (const label of ['Comisión TUS', 'Neto Prestador', 'Referencia MP', 'Historial', 'Calificación', 'Cancelación de soporte'])
