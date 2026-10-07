@@ -35,6 +35,10 @@ export interface RepositoriosAsistente {
     buscar(contactId: string): Promise<ContactoWhatsapp | null>
     // Batch read for the support inbox (one query per page, never one per conversation).
     buscarVarios(contactIds: readonly string[]): Promise<ContactoWhatsapp[]>
+    // ADMIN-WHATSAPP-BUSQUEDA-01. The WhatsApp contacts whose profile name contains `nombre`
+    // (without case) or whose number contains any of `telefonos` (digits). Ids only.
+    // `telefonosArgentinos` only match numbers stored as Argentine (54…).
+    buscarIds(busqueda: { nombre: string | null; telefonos: readonly string[]; telefonosArgentinos: readonly string[] }, limite: number): Promise<string[]>
     crear(value: ContactoWhatsapp): Promise<void>
     actualizar(value: ContactoWhatsapp, expectedVersion: number): Promise<boolean>
     vinculadosA(accountId: string): Promise<ContactoWhatsapp[]>
@@ -48,8 +52,9 @@ export interface RepositoriosAsistente {
     deContacto(contactId: string): Promise<ConversacionWhatsapp[]>
     // `channel` keeps the WhatsApp support inbox free of Web conversations (there is no operator
     // nor Meta window on the Web).
-    listar(filter: { mode?: ModoConversacion; channel?: CanalConversacion; limit?: number; offset?: number }): Promise<ConversacionWhatsapp[]>
-    contar(filter: { mode?: ModoConversacion; channel?: CanalConversacion }): Promise<number>
+    // `contactIds`: only the conversations of those contacts (a search); absent: every contact.
+    listar(filter: { mode?: ModoConversacion; channel?: CanalConversacion; contactIds?: readonly string[]; limit?: number; offset?: number }): Promise<ConversacionWhatsapp[]>
+    contar(filter: { mode?: ModoConversacion; channel?: CanalConversacion; contactIds?: readonly string[] }): Promise<number>
     // Active conversations that identified that account by name + document.
     identificadasPor(accountId: string): Promise<ConversacionWhatsapp[]>
   }

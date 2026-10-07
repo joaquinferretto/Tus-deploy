@@ -197,6 +197,8 @@ export function crearModuloWhatsapp(input: {
   // TURNOS-SENA-01: accounts by document, to identify a client by full name + document on a
   // channel without a TUS session. Absent: that channel asks for the account link instead.
   identidades?: PuertoCuentasPorDocumento | null
+  // The display name of an operator account (the support panel shows who took a conversation).
+  nombreOperador?: (accountId: string) => Promise<string | null>
 }): ModuloWhatsapp {
   const env = input.env
   const config = leerConfiguracionWhatsapp(env)
@@ -337,7 +339,7 @@ export function crearModuloWhatsapp(input: {
     whatsapp,
     ingreso: new ServicioIngresoWhatsapp(input.transaction, limits.ingreso, now, input.log, input.verificadorTelefono ?? null, (wamid) => void whatsapp.markReadTyping(wamid).catch(() => undefined)),
     vinculacion,
-    soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now, async (ids) => (await domain.solicitudesTurnoParaAdmin?.(ids)) ?? []),
+    soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now, async (ids) => (await domain.solicitudesTurnoParaAdmin?.(ids)) ?? [], WhatsappTemplateService.desdeEnv(env), input.nombreOperador ?? (async () => null), input.log),
     plantillas: WhatsappTemplateService.desdeEnv(env),
     orquestador,
     // Deletion (message, conversation, account) and retention of the memory.

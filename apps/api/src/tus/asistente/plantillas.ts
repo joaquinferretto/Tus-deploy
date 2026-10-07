@@ -13,6 +13,9 @@ export interface DefinicionPlantilla {
   body: string
   // Quick-reply buttons of the template, in order (titles as created in WhatsApp Manager).
   buttons?: string[]
+  // ADMIN-WHATSAPP-RESPUESTA-01: an operator may send it by hand from the support panel to
+  // contact somebody whose 24 hour window is closed.
+  manual?: boolean
 }
 
 export const PLANTILLAS_WHATSAPP: DefinicionPlantilla[] = [
@@ -40,6 +43,18 @@ export const PLANTILLAS_WHATSAPP: DefinicionPlantilla[] = [
     body: 'Hola, {{1}} necesita un servicio urgente de {{2}}.\nDirección: {{3}}\nBarrio/Zona: {{4}}\nMotivo: {{5}}\n¿Podés asistir ahora?',
     buttons: ['Puedo asistir', 'No puedo'],
   },
+  // ADMIN-WHATSAPP-RESPUESTA-01: continuity of a conversation an operator is attending, when the
+  // 24 hour window is closed. Its answer opens the window again for free text. The category is
+  // Meta's decision; it is only usable once it is approved AND listed in the configuration.
+  {
+    name: 'continuar_atencion_tus',
+    category: 'UTILITY',
+    language: 'es_AR',
+    parameters: ['nombre'],
+    body: 'Hola, {{1}}. Queremos continuar con tu solicitud en TUS. Respondé este mensaje y seguimos con la atención por acá.',
+    buttons: ['Continuar atención'],
+    manual: true,
+  },
   { name: 'payment_available', category: 'UTILITY', language: 'es_AR', parameters: ['servicio'], body: 'Tu servicio {{1}} está listo para pagar en TUS.' },
 ]
 
@@ -55,6 +70,11 @@ export class WhatsappTemplateService {
 
   static desdeEnv(env: Record<string, string | undefined>): WhatsappTemplateService {
     return new WhatsappTemplateService(new Set((env['WHATSAPP_APPROVED_TEMPLATES'] ?? '').split(',').map((name) => name.trim()).filter(Boolean)))
+  }
+
+  // The templates an operator can send by hand: defined here, marked manual and approved.
+  manualesAprobadas(): DefinicionPlantilla[] {
+    return PLANTILLAS_WHATSAPP.filter((item) => item.manual === true && this.approved.has(item.name))
   }
 
   aprobada(name: string): boolean {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { waIdEquivalentes } from '@factory/contracts'
 import type { WhatsappProvider } from './meta.ts'
 import {
   ErrorAsistente,
@@ -9,7 +10,9 @@ import {
 } from './modelo.ts'
 import type { SolicitudTurnoParaAdmin } from '../calendar/turnos-service.ts'
 import { ACCION_AVISO_NO_ENVIADO, correlacionAvisoSolicitud, type MotivoAvisoNoEnviado } from './avisos-turnos.ts'
+import { interpretarBusqueda } from './busqueda-contactos.ts'
 import { enviarMensajeSaliente } from './orquestador.ts'
+import type { WhatsappTemplateService } from './plantillas.ts'
 import type { PuertoTransaccionAsistente, RepositoriosAsistente } from './puertos.ts'
 import type { ServicioVinculacionWhatsapp } from './vinculacion.ts'
 
@@ -20,6 +23,35 @@ export interface ContextoOperador {
 
 // Human support panel (platform admins only; the HTTP layer checks the authority). Operators
 // answer from TUS's official number through the backend; their identity is audited.
+// What is known about a send that failed: the class of the failure (never the raw payload) and
+// the error number Meta gave, either when it refused the request or later, by webhook.
+function errorDeEnvio(metadata: Record<string, unknown>): { code: string; metaCode: number | null } {
+  const numero = [metadata['metaCode'], metadata['metaErrorCode']].find((valor) => typeof valor === 'number')
+  return {
+    // No class of its own: Meta accepted the request and reported the failure later.
+    code: typeof metadata['errorCode'] === 'string' ? metadata['errorCode'] : typeof metadata['metaErrorCode'] === 'number' ? 'WHATSAPP_DELIVERY_FAILED' : 'SEND_FAILED',
+    metaCode: typeof numero === 'number' ? numero : null,
+  }
+}
+
+// WHATSAPP-DESTINO-01. Where a message TUS sent really went, masked: the `to` of the request, the
+// account Meta resolved it into and the recipient of its status webhooks. `recipientMismatch`:
+// any of them is NOT the number of the contact of this conversation (its two Argentine forms,
+// with and without the 9, are the same number).
+function destinoDeEnvio(metadata: Record<string, unknown>, waIdContacto: string | null): { recipient?: { to: string | null; meta: string | null; status: string | null }; recipientMismatch?: true } {
+  const texto = (clave: string) => (typeof metadata[clave] === 'string' ? (metadata[clave] as string) : null)
+  const to = texto('sentTo')
+  const meta = texto('metaWaId')
+  const status = texto('statusRecipient')
+  if (!to && !meta && !status) return {}
+  const propios = waIdContacto ? waIdEquivalentes(waIdContacto) : []
+  const ajeno = [to, meta, status].some((valor) => valor !== null && !propios.includes(valor.replace(/\D/gu, '')))
+  return {
+    recipient: { to: to ? enmascararWaId(to) : null, meta: meta ? enmascararWaId(meta) : null, status: status ? enmascararWaId(status) : null },
+    ...(ajeno ? { recipientMismatch: true as const } : {}),
+  }
+}
+
 export class ServicioSoporteWhatsapp {
   constructor(
     private readonly transaction: PuertoTransaccionAsistente,
@@ -27,26 +59,38 @@ export class ServicioSoporteWhatsapp {
     private readonly linking: ServicioVinculacionWhatsapp,
     private readonly now: () => number = Date.now,
     // The requests of turno a conversation made, read from the agenda (never kept here).
-    private readonly solicitudesDeTurno: (reservaIds: readonly string[]) => Promise<SolicitudTurnoParaAdmin[]> = async () => []
+    private readonly solicitudesDeTurno: (reservaIds: readonly string[]) => Promise<SolicitudTurnoParaAdmin[]> = async () => [],
+    // ADMIN-WHATSAPP-RESPUESTA-01: the approved templates (the only way to write when the 24 hour
+    // window is closed) and the name of the operator that took a conversation.
+    private readonly plantillas: WhatsappTemplateService | null = null,
+    private readonly nombreOperador: (accountId: string) => Promise<string | null> = async () => null,
+    private readonly log: (event: string, fields: Record<string, unknown>) => void = () => undefined
   ) {}
 
   // One page of the inbox (LIMIT/OFFSET in the store) + the filtered total.
-  async pagina(filter: { mode?: unknown; pagina: number; tamano: number }) {
+  // `search` (ADMIN-WHATSAPP-BUSQUEDA-01): a piece of the contact's name or of its number, looked
+  // up in the STORE over every conversation (never only the page on screen); it combines with
+  // `mode` and with the page.
+  async pagina(filter: { mode?: unknown; search?: unknown; pagina: number; tamano: number }) {
     const mode = filter.mode === 'bot' || filter.mode === 'human' ? filter.mode : undefined
+    const busqueda = interpretarBusqueda(filter.search)
+    const contactIds = busqueda ? await this.transaction.ejecutar((repositories) => repositories.contactos.buscarIds(busqueda, 5_000)) : undefined
+    if (contactIds && contactIds.length === 0) return { items: [], total: 0 }
     const [items, total] = await Promise.all([
-      this.listar({ ...(mode ? { mode } : {}), limit: filter.tamano, offset: (filter.pagina - 1) * filter.tamano }),
-      this.transaction.ejecutar((repositories) => repositories.conversaciones.contar({ channel: 'whatsapp', ...(mode ? { mode } : {}) })),
+      this.listar({ ...(mode ? { mode } : {}), ...(contactIds ? { contactIds } : {}), limit: filter.tamano, offset: (filter.pagina - 1) * filter.tamano }),
+      this.transaction.ejecutar((repositories) => repositories.conversaciones.contar({ channel: 'whatsapp', ...(mode ? { mode } : {}), ...(contactIds ? { contactIds } : {}) })),
     ])
     return { items, total }
   }
 
-  async listar(filter: { mode?: unknown; limit?: unknown; offset?: number }) {
+  async listar(filter: { mode?: unknown; contactIds?: readonly string[]; limit?: unknown; offset?: number }) {
     const mode = filter.mode === 'bot' || filter.mode === 'human' ? filter.mode : undefined
     return this.transaction.ejecutar(async (repositories) => {
       const conversations = await repositories.conversaciones.listar({
         // The inbox is the WhatsApp line: Web conversations have no operator and no Meta window.
         channel: 'whatsapp',
         ...(mode ? { mode } : {}),
+        ...(filter.contactIds ? { contactIds: filter.contactIds } : {}),
         limit: Math.min(Math.max(Number(filter.limit) || 50, 1), 200),
         ...(filter.offset ? { offset: filter.offset } : {}),
       })
@@ -92,7 +136,14 @@ export class ServicioSoporteWhatsapp {
 
   async detalle(conversationId: string, context: ContextoOperador) {
     const detalle = await this.leerDetalle(conversationId, context)
-    return { ...detalle, providerNotices: await this.avisosAPrestadores(conversationId).catch(() => []) }
+    return {
+      ...detalle,
+      // Who is attending it, by name when the account is known (the id alone otherwise).
+      operator: detalle.operatorId ? { id: detalle.operatorId, name: await this.nombreOperador(detalle.operatorId).catch(() => null) } : null,
+      // The approved templates an operator can send by hand: what is left when the window is closed.
+      templates: (this.plantillas?.manualesAprobadas() ?? []).map((plantilla) => ({ name: plantilla.name, body: plantilla.body, buttons: plantilla.buttons ?? [] })),
+      providerNotices: await this.avisosAPrestadores(conversationId).catch(() => []),
+    }
   }
 
   // ADMIN-WHATSAPP-AVISOS-01. "¿TUS le avisó al prestador?" for every request of turno this
@@ -212,6 +263,9 @@ export class ServicioSoporteWhatsapp {
           // When Meta reported that status (null: nothing was reported yet).
           statusAt: message.statusAt,
           createdAt: message.createdAt,
+          // Why it failed, as reported: the class TUS gave it and Meta's own error number.
+          ...(message.status === 'failed' ? { error: errorDeEnvio(message.metadata) } : {}),
+          ...(message.direction === 'outbound' ? destinoDeEnvio(message.metadata, contact?.waId ?? null) : {}),
           // Location coordinates are shown rounded (approximate area only).
           ...(message.metadata['location']
             ? { location: redondearUbicacion(message.metadata['location']) }
@@ -263,13 +317,60 @@ export class ServicioSoporteWhatsapp {
       inReplyTo: [],
       replyToWamid: undefined,
       now: this.now,
+      log: this.log,
     })
     await this.transaction.ejecutar((repositories) =>
       this.auditar(repositories, 'support.operator_reply', conversation, context, {
         status: sent.status,
       })
     )
+    this.exigirEnviado(sent)
     return { messageId: sent.messageId, status: sent.status }
+  }
+
+  // ADMIN-WHATSAPP-RESPUESTA-01. The 24 hour window is closed: free text is not allowed, so the
+  // operator contacts the person with an APPROVED template (never text dressed up as one). When
+  // the person answers, the window opens again and the operator writes freely; the conversation
+  // stays with the operator (an inbound message never hands it back to the assistant).
+  async contactarConPlantilla(conversationId: string, context: ContextoOperador, nombrePlantilla: unknown) {
+    const { conversation, contact } = await this.transaction.ejecutar(async (repositories) => {
+      const conversation = await this.requerir(repositories, conversationId)
+      if (conversation.mode !== 'human') throw new ErrorAsistente(409, 'TAKE_OVER_FIRST', 'take over the conversation before answering')
+      const contact = await repositories.contactos.buscar(conversation.contactId)
+      if (!contact) throw new ErrorAsistente(404, 'NOT_FOUND', 'contact was not found')
+      return { conversation, contact }
+    })
+    // Inside the window the operator simply writes: a template there would only cost money.
+    if (ventanaServicioAbierta(conversation.lastInboundAt, this.now())) throw new ErrorAsistente(409, 'SERVICE_WINDOW_OPEN', 'the 24h window is open; write the message instead')
+    const plantilla = (this.plantillas?.manualesAprobadas() ?? []).find((item) => item.name === nombrePlantilla)
+    if (!plantilla || !this.plantillas) throw new ErrorAsistente(409, 'TEMPLATE_NOT_APPROVED', 'that template is not approved for manual use')
+    // {{1}}: the first name of the WhatsApp profile; a neutral word when there is none.
+    const nombre = (contact.displayName ?? '').replace(/[^\p{L}\s'-]/gu, ' ').trim().split(/\s+/u)[0]?.slice(0, 40) || 'cómo estás'
+    const mensaje = this.plantillas.construir(plantilla.name, Object.fromEntries(plantilla.parameters.map((clave) => [clave, nombre])), (plantilla.buttons ?? []).map((_, indice) => `soporte:continuar:${indice}`))
+    const sent = await enviarMensajeSaliente({
+      transaction: this.transaction,
+      whatsapp: this.whatsapp,
+      conversationId: conversation.conversationId,
+      contact,
+      message: mensaje,
+      actor: `operator:${context.actorId}`,
+      correlationId: context.correlationId,
+      inReplyTo: [],
+      replyToWamid: undefined,
+      now: this.now,
+      log: this.log,
+    })
+    await this.transaction.ejecutar((repositories) => this.auditar(repositories, 'support.operator_template', conversation, context, { status: sent.status, template: plantilla.name }))
+    this.exigirEnviado(sent)
+    return { messageId: sent.messageId, status: sent.status, template: plantilla.name }
+  }
+
+  // A send Meta refused is never reported as sent: the message stays recorded as failed (with
+  // the class of the failure) and the operator is told what happened, so it can try again.
+  private exigirEnviado(sent: { status: string; metadata?: Record<string, unknown> }): void {
+    if (sent.status !== 'failed') return
+    const { code, metaCode } = errorDeEnvio(sent.metadata ?? {})
+    throw new ErrorAsistente(502, code, `WhatsApp did not accept the message (${code}${metaCode === null ? '' : `, Meta ${metaCode}`})`)
   }
 
   async desvincular(conversationId: string, context: ContextoOperador) {

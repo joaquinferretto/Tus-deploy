@@ -36,6 +36,7 @@ export function crearModuloWhatsappPrisma(
     memoryIndex: new IndiceMemoriaPrisma(client),
     factStore: new HechosPrisma(client),
     verificadorTelefono: verificadorTelefono ?? null,
+    nombreOperador: async (accountId) => (await (identityStore as unknown as { getAccount?: (id: string) => Promise<{ displayName?: string } | undefined> }).getAccount?.(accountId))?.displayName ?? null,
     identidades: new CuentasPorDocumentoPrisma(prisma as ConstructorParameters<typeof CuentasPorDocumentoPrisma>[0]),
   })
 }

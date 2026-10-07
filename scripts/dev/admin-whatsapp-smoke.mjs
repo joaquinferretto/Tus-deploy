@@ -122,7 +122,7 @@ async function main() {
       TUS_PLATFORM_ADMIN_EMAILS: ADMIN.email, TUS_ADMIN_BOOTSTRAP_CODE: BOOTSTRAP,
       TUS_MFA_ENCRYPTION_KEY: process.env.TUS_MFA_ENCRYPTION_KEY || Buffer.alloc(32, 7).toString('base64'),
       // Nothing external: no Meta credentials (the module records what it would send), no model.
-      WHATSAPP_ENABLED: 'false', WHATSAPP_ACCESS_TOKEN: '', WHATSAPP_PHONE_NUMBER_ID: '', WHATSAPP_AI_ENABLED: 'false', GROQ_API_KEY: '', RAG_EMBEDDING_PROVIDER: 'none',
+      WHATSAPP_ENABLED: 'false', WHATSAPP_APPROVED_TEMPLATES: 'continuar_atencion_tus', WHATSAPP_ACCESS_TOKEN: '', WHATSAPP_PHONE_NUMBER_ID: '', WHATSAPP_AI_ENABLED: 'false', GROQ_API_KEY: '', RAG_EMBEDDING_PROVIDER: 'none',
     }
     writeFileSync(join(raiz, '.env'), `DATABASE_URL="${databaseUrl}"\nDIRECT_URL="${databaseUrl}"\n`)
     copyFileSync(join(root, 'pnpm-workspace.yaml'), join(raiz, 'pnpm-workspace.yaml'))
@@ -382,6 +382,136 @@ async function recorrer(browser, viewport, estado) {
     check((await page.locator('ul[aria-label="Avisos a prestadores"]').count()) === 0, `${e}: the provider's own conversation has no notice block`)
     await sinDesborde('the conversation of the provider')
     await page.screenshot({ path: join(artifacts, `${e}-prestador.png`), fullPage: true })
+
+    // ---- 6. Search by name or number: on the server, with the filter and the pages.
+    const buscador = page.locator('#admin-whatsapp-search')
+    const filasSon = (n) => page.waitForFunction((n) => document.querySelectorAll('ul[aria-label^="Conversaciones"] li').length === n, n)
+    const conBusqueda = () => http.filter((linea) => /conversations\?.*search=/u.test(linea)).length
+    await siguiente.click()
+    await paginaDice(2, 4)
+    let antesDeBuscar = conBusqueda()
+    await buscador.pressSequentially('contacto 0', { delay: 25 })
+    await filasSon(9)
+    await paginaDice(1, 1)
+    await page.waitForTimeout(500)
+    check(conBusqueda() - antesDeBuscar === 1, `${e}: typing asks the server once, after the pause (${conBusqueda() - antesDeBuscar} requests)`)
+    check(http.some((linea) => /conversations\?.*search=contacto\+0.*page=1.*pageSize=10.* 200$/u.test(linea)), `${e}: the search goes to the API, back on the first page, with the page size`)
+    check((await lista.innerText()).includes('Contacto 09') && !(await lista.innerText()).includes('Contacto 10'), `${e}: a piece of the name, in any case, finds its conversations`)
+    // The number as people write it in Argentina (national 0 and the local 15).
+    await buscador.fill('0379 15 4001007')
+    await filasSon(1)
+    check((await filas.first().innerText()).includes('Contacto 07'), `${e}: "0379 15 4001007" finds the conversation of 5493794001007`)
+    await buscador.fill('+54 9 379 400-1007')
+    await page.waitForResponse((response) => response.url().includes('search=%2B54+9+379+400-1007') && response.status() === 200)
+    await filasSon(1)
+    check((await filas.first().innerText()).includes('Contacto 07') && (await buscador.inputValue()) === '+54 9 379 400-1007', `${e}: the international way finds it too, and the field keeps what was typed`)
+    // With "Requieren intervención".
+    await buscador.fill('Contacto')
+    await filasSon(10)
+    await page.getByRole('button', { name: 'Requieren intervención' }).click()
+    await filasSon(HUMANAS)
+    check((await buscador.inputValue()) === 'Contacto' && http.some((linea) => /conversations\?.*mode=human.*search=Contacto.*page=1.* 200$/u.test(linea)), `${e}: the search combines with the filter`)
+    await page.getByRole('button', { name: 'Todas' }).click()
+    await filasSon(10)
+    // No result: a message, not an error; the layout and the field stay.
+    await buscador.fill('zzzz nadie')
+    const sinResultados = page.getByText('No encontramos conversaciones con ese nombre o celular.')
+    await sinResultados.waitFor()
+    check((await filas.count()) === 0 && (await page.locator('main [role="alert"]').count()) === 0 && (await buscador.isVisible()) && (await page.locator('section[aria-label="Conversación seleccionada"]').isVisible()), `${e}: no result is told plainly, without an error and without breaking the layout`)
+    await sinDesborde('the empty search')
+    await page.screenshot({ path: join(artifacts, `${e}-busqueda-vacia.png`), fullPage: true })
+    await page.getByRole('button', { name: 'Limpiar la búsqueda' }).click()
+    await filasSon(10)
+    await paginaDice(1, 4)
+    check((await buscador.inputValue()) === '' && (await sinResultados.count()) === 0, `${e}: the X clears the search and the normal list is back`)
+
+    // ---- 7. Manual answer. What only WhatsApp writes is seeded once: a conversation whose 24
+    // hour window closed and a message Meta could not deliver.
+    if (!estado.respuesta) {
+      const sembrado = estado.sembrar(`
+        await prisma.conversacionWhatsapp.update({ where: { id: 'smoke-v02' }, data: { ultimoEntranteEn: new Date(Date.now() - 48 * 3600_000) } })
+        await prisma.mensajeConversacionWhatsapp.create({ data: { id: 'smoke-fallido', conversacionId: 'smoke-v01', contactoId: 'smoke-c01', wamid: 'wamid.smoke-fallido', direccion: 'outbound', tipo: 'text', texto: 'Mensaje que Meta no pudo entregar', estado: 'failed', estadoEn: ahora, actor: 'operator:alguien', metadata: { sentTo: '5493794001001', metaErrorCode: 131026 }, correlacionId: 'smoke-fallido', fechaCreacion: ahora } })
+        console.log('LISTO')
+      `)
+      check(/LISTO/u.test(sembrado.stdout), `the closed window and the failed message are seeded (${(sembrado.stderr || sembrado.stdout).slice(-900)})`)
+      estado.respuesta = true
+    }
+    const panel = page.locator('section[aria-label="Conversación seleccionada"]')
+    const cabecera = panel.locator('header')
+    const abrir = async (nombre) => {
+      await buscador.fill(nombre)
+      await page.waitForFunction((nombre) => { const filas = document.querySelectorAll('ul[aria-label^="Conversaciones"] li'); return filas.length === 1 && filas[0].textContent.includes(nombre) }, nombre)
+      await filas.first().locator('button').click()
+      await page.waitForFunction((nombre) => document.querySelector('section[aria-label="Conversación seleccionada"] header strong')?.textContent === nombre, nombre)
+    }
+    await abrir('Contacto 01')
+    // Taken by this administrator: persisted, with the name.
+    if (await panel.getByRole('button', { name: 'Devolver al asistente' }).count()) {
+      await panel.getByRole('button', { name: 'Devolver al asistente' }).click()
+      await panel.getByRole('button', { name: 'Tomar conversación' }).waitFor()
+      check((await cabecera.innerText()).includes('Asistente · Ventana abierta') && (await panel.locator('textarea').count()) === 0, `${e}: with the assistant attending there is nothing to write in (${(await cabecera.innerText()).replace(/\s+/gu, ' ')})`)
+    }
+    await panel.getByRole('button', { name: 'Tomar conversación' }).click()
+    await panel.getByRole('button', { name: 'Devolver al asistente' }).waitFor()
+    check((await cabecera.innerText()).includes(`Atendida por ${ADMIN.displayName} · Ventana abierta`), `${e}: the header says who attends it and that the window is open (${(await cabecera.innerText()).replace(/\s+/gu, ' ')})`)
+    check((await cabecera.innerText()).includes('••••1001') && !(await panel.innerText()).includes('5493794001001'), `${e}: the number the answer goes to is shown masked`)
+    check((await panel.innerText()).replace(/\s+/gu, ' ').includes('Falló: Meta aceptó el mensaje pero no pudo entregarlo (código de Meta 131026)'), `${e}: a message Meta could not deliver says so, with Meta's number`)
+    // Shift+Enter is a new line; Enter sends.
+    const texto = panel.locator('#admin-whatsapp-reply')
+    const burbujas = panel.locator('[class*="bubbleAdmin"]')
+    const enviadas = await burbujas.count()
+    await texto.click()
+    await texto.pressSequentially(`Hola ${e}`)
+    await texto.press('Shift+Enter')
+    await texto.pressSequentially('segunda línea')
+    check((await texto.inputValue()) === `Hola ${e}\nsegunda línea` && (await burbujas.count()) === enviadas, `${e}: Shift+Enter adds a line and sends nothing`)
+    check(await texto.evaluate((el) => { const caja = el.getBoundingClientRect(); return caja.left >= 0 && caja.right <= window.innerWidth && caja.width >= 180 }), `${e}: the field fits the screen`)
+    await page.screenshot({ path: join(artifacts, `${e}-respuesta.png`), fullPage: true })
+    await texto.press('Enter')
+    await page.waitForFunction((n) => document.querySelectorAll('section[aria-label="Conversación seleccionada"] [class*="bubbleAdmin"]').length === n, enviadas + 1)
+    const ultima = (await burbujas.last().innerText())
+    check(ultima.includes(`Hola ${e}\nsegunda línea`) && /Admin · .* · Enviado/u.test(ultima.replace(/\s+/gu, ' ')), `${e}: Enter sends; the message shows its lines, who sent it, when and its state (${ultima.replace(/\s+/gu, ' ')})`)
+    check((await texto.inputValue()) === '', `${e}: the field is cleared once it was sent`)
+    check(http.some((linea) => /POST \/tus\/v1\/admin\/whatsapp\/conversations\/smoke-v01\/reply 202$/u.test(linea)), `${e}: the answer went through the support API`)
+    // Meta refuses (its answer is stood in for here; the real refusal is covered over HTTP in
+    // tus-admin-whatsapp-entrega.test.mjs): the reason is shown and the text stays to retry.
+    await page.route('**/conversations/smoke-v01/reply', (route) => route.request().method() === 'POST'
+      ? route.fulfill({ status: 502, contentType: 'application/json', headers: { 'access-control-allow-origin': web, 'access-control-allow-credentials': 'true' }, body: JSON.stringify({ code: 'WHATSAPP_INVALID_REQUEST', error: 'WhatsApp did not accept the message (WHATSAPP_INVALID_REQUEST, Meta 131030)' }) })
+      : route.fallback())
+    await texto.fill(`Reintento ${e}`)
+    await texto.press('Enter')
+    const aviso = panel.locator('[role="alert"]')
+    await aviso.waitFor()
+    check((await aviso.innerText()) === 'No se envió: Meta rechazó el mensaje (código de Meta 131030). Podés reintentar.', `${e}: the real reason of the refusal is shown (${await aviso.innerText()})`)
+    check((await texto.inputValue()) === `Reintento ${e}` && (await burbujas.count()) === enviadas + 1, `${e}: nothing is drawn as sent and the text stays to try again`)
+    await page.screenshot({ path: join(artifacts, `${e}-error-meta.png`), fullPage: true })
+    await page.unroute('**/conversations/smoke-v01/reply')
+    await texto.press('Enter')
+    await page.waitForFunction((n) => document.querySelectorAll('section[aria-label="Conversación seleccionada"] [class*="bubbleAdmin"]').length === n, enviadas + 2)
+    check((await aviso.count()) === 0 && (await burbujas.last().innerText()).includes(`Reintento ${e}`), `${e}: the retry sends it and the error goes away`)
+    // Reloading: the state is the server's (taken, by whom, and the messages).
+    await page.goto(`${web}/tus/admin/whatsapp`, { waitUntil: 'networkidle' })
+    await filas.first().waitFor()
+    await abrir('Contacto 01')
+    check((await cabecera.innerText()).includes(`Atendida por ${ADMIN.displayName}`) && (await panel.innerText()).includes(`Reintento ${e}`), `${e}: after reloading the conversation is still taken by the same person, with its messages`)
+
+    // The window closed: no free text, only the approved template.
+    await abrir('Contacto 02')
+    const cerrada = panel.locator('[data-ventana="cerrada"]')
+    await cerrada.waitFor()
+    check((await cabecera.innerText()).includes('Ventana cerrada') && (await panel.locator('textarea').count()) === 0, `${e}: with the window closed there is no free text (${(await cabecera.innerText()).replace(/\s+/gu, ' ')})`)
+    const plantillas = cerrada.getByRole('button', { name: 'Contactar con plantilla' })
+    check((await plantillas.count()) === 1 && (await plantillas.first().getAttribute('data-plantilla')) === 'continuar_atencion_tus', `${e}: only the approved template is offered`)
+    check((await cerrada.innerText()).replace(/\s+/gu, ' ').includes('Hola, Contacto. Queremos continuar con tu solicitud en TUS. Respondé este mensaje y seguimos con la atención por acá. [Continuar atención]'), `${e}: the template is shown as the person will read it`)
+    await sinDesborde('the closed window')
+    await page.screenshot({ path: join(artifacts, `${e}-ventana-cerrada.png`), fullPage: true })
+    const conPlantilla = await burbujas.count()
+    await plantillas.first().click()
+    await page.waitForFunction((n) => document.querySelectorAll('section[aria-label="Conversación seleccionada"] [class*="bubbleAdmin"]').length === n, conPlantilla + 1)
+    check((await burbujas.last().innerText()).includes('[plantilla continuar_atencion_tus]') && (await cerrada.count()) === 1, `${e}: the template is sent and recorded; the window stays closed until the person answers`)
+    check(http.some((linea) => /POST \/tus\/v1\/admin\/whatsapp\/conversations\/smoke-v02\/template 202$/u.test(linea)), `${e}: the template went through the support API`)
+    await buscador.fill('')
+    await filasSon(25)
     await salir('the administrator')
 
     const fallidas = http.filter((linea) => /\s(4\d\d|5\d\d)$/u.test(linea) && !ESPERADOS.some((esperado) => esperado.test(linea)))
@@ -396,6 +526,6 @@ async function recorrer(browser, viewport, estado) {
   }
 }
 
-const ESPERADOS = [/\/auth\/session 401$/u, /\/auth\/refresh 401$/u]
+const ESPERADOS = [/\/auth\/session 401$/u, /\/auth\/refresh 401$/u, /\/smoke-v01\/reply 502$/u]
 
 await main()

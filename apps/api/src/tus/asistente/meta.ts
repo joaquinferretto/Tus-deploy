@@ -334,6 +334,9 @@ export type MensajeSaliente =
 
 export interface ResultadoEnvioMeta {
   wamid: string
+  // The WhatsApp account Meta resolved the `to` into (`contacts[0].wa_id` of its answer): the
+  // number the message is really going to. Absent when Meta did not say.
+  waId?: string | null
 }
 
 export interface MediaMeta {
@@ -508,7 +511,7 @@ export class MetaWhatsappCloudProvider implements WhatsappProvider {
         null,
         true
       )
-    return { wamid }
+    return { wamid, waId: asString(asRecord(asArray(asRecord(payload)['contacts'])[0])['wa_id']) }
   }
 
   // Uploads a picture to Meta (multipart) and returns the media id to send it with.

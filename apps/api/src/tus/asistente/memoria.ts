@@ -1,3 +1,4 @@
+import { contactoCoincide } from './busqueda-contactos.ts'
 import {
   canalDe,
   type ConfirmacionAsistente,
@@ -70,6 +71,7 @@ export class AlmacenAsistenteEnMemoria {
         buscarPorWaId: async (waId) => clone([...s().contactos.values()].find((c) => c.waId === waId) ?? null),
         buscar: async (id) => clone(s().contactos.get(id) ?? null),
         buscarVarios: async (ids) => ids.flatMap((id) => (s().contactos.has(id) ? [clone(s().contactos.get(id)!)] : [])),
+        buscarIds: async (busqueda, limite) => [...s().contactos.values()].filter((c) => canalDe(c) === 'whatsapp' && contactoCoincide(c, { nombre: busqueda.nombre, telefonos: [...busqueda.telefonos], telefonosArgentinos: [...busqueda.telefonosArgentinos] })).slice(0, limite).map((c) => c.contactId),
         crear: async (value) => {
           if ([...s().contactos.values()].some((c) => c.waId === value.waId)) throw unique()
           s().contactos.set(value.contactId, clone(value))
@@ -99,12 +101,12 @@ export class AlmacenAsistenteEnMemoria {
         },
         listar: async (filter) =>
           [...s().conversaciones.values()]
-            .filter((c) => (!filter.mode || c.mode === filter.mode) && (!filter.channel || canalDe(c) === filter.channel))
+            .filter((c) => (!filter.mode || c.mode === filter.mode) && (!filter.channel || canalDe(c) === filter.channel) && (!filter.contactIds || filter.contactIds.includes(c.contactId)))
             .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt) || b.conversationId.localeCompare(a.conversationId))
             .slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 100))
             .map(clone),
         contar: async (filter) =>
-          [...s().conversaciones.values()].filter((c) => (!filter.mode || c.mode === filter.mode) && (!filter.channel || canalDe(c) === filter.channel)).length,
+          [...s().conversaciones.values()].filter((c) => (!filter.mode || c.mode === filter.mode) && (!filter.channel || canalDe(c) === filter.channel) && (!filter.contactIds || filter.contactIds.includes(c.contactId))).length,
         identificadasPor: async (accountId) => [...s().conversaciones.values()].filter((c) => c.status === 'active' && c.identifiedAccountId === accountId).map(clone),
       },
       mensajes: {

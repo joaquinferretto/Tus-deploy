@@ -598,7 +598,17 @@ export interface TusWhatsappAdminDetail {
     createdAt: string
     location?: { latitude: number; longitude: number } | null
     hasMedia?: boolean
+    // Only on a failed send: the class of the failure and Meta's error number, when known.
+    error?: { code: string; metaCode: number | null }
+    // Where a message TUS sent went, masked: the `to` of the request, the account Meta resolved
+    // and the recipient of its statuses. `recipientMismatch`: one is not this contact's number.
+    recipient?: { to: string | null; meta: string | null; status: string | null }
+    recipientMismatch?: boolean
   }[]
+  // Who took the conversation (null: the assistant attends it). `name` null: account not found.
+  operator: { id: string; name: string | null } | null
+  // The approved templates an operator can send by hand when the 24 h window is closed.
+  templates: readonly { name: string; body: string; buttons: readonly string[] }[]
   // The notice TUS sent to the provider of each request of turno this conversation made.
   providerNotices: readonly TusWhatsappProviderNotice[]
 }
@@ -649,7 +659,7 @@ function parseTusWhatsappProviderNotices(value: unknown): TusWhatsappProviderNot
   })
 }
 
-export type TusWhatsappAdminAction = 'takeover' | 'release' | 'reply' | 'unlink' | 'block'
+export type TusWhatsappAdminAction = 'takeover' | 'release' | 'reply' | 'template' | 'unlink' | 'block'
 
 export interface TusWebClient {
   register(input: TusRegistrationInput): Promise<unknown>
@@ -720,7 +730,8 @@ export interface TusWebClient {
     context: TusWebContext,
     mode?: 'bot' | 'human',
     page?: number,
-    pageSize?: number
+    pageSize?: number,
+    search?: string
   ): Promise<TusWhatsappAdminConversationPage>
   getWhatsappAdminConversation(
     context: TusWebContext,
@@ -984,6 +995,7 @@ export function parseTusWhatsappAdminConversations(payload: unknown): TusWhatsap
 export function parseTusWhatsappAdminDetail(payload: unknown): TusWhatsappAdminDetail {
   const item = asRecord(payload)
   const contact = asRecord(item['contact'])
+  const operator = asRecord(item['operator'])
   const mode = item['mode']
   const status = item['status']
   if (
@@ -1006,6 +1018,9 @@ export function parseTusWhatsappAdminDetail(payload: unknown): TusWhatsappAdminD
         )
           return []
         const location = asRecord(message['location'])
+        const failure = asRecord(message['error'])
+        const recipient = asRecord(message['recipient'])
+        const masked = (value: unknown) => (typeof value === 'string' ? value : null)
         return [
           {
             messageId: message['messageId'],
@@ -1021,6 +1036,11 @@ export function parseTusWhatsappAdminDetail(payload: unknown): TusWhatsappAdminD
               ? { location: { latitude: location['latitude'], longitude: location['longitude'] } }
               : {}),
             ...(message['hasMedia'] === true ? { hasMedia: true } : {}),
+            ...(typeof failure['code'] === 'string'
+              ? { error: { code: failure['code'], metaCode: typeof failure['metaCode'] === 'number' ? failure['metaCode'] : null } }
+              : {}),
+            ...(message['recipient'] ? { recipient: { to: masked(recipient['to']), meta: masked(recipient['meta']), status: masked(recipient['status']) } } : {}),
+            ...(message['recipientMismatch'] === true ? { recipientMismatch: true } : {}),
           },
         ]
       })
@@ -1043,6 +1063,14 @@ export function parseTusWhatsappAdminDetail(payload: unknown): TusWhatsappAdminD
     operatorId: typeof item['operatorId'] === 'string' ? item['operatorId'] : null,
     summary: typeof item['summary'] === 'string' ? item['summary'] : null,
     messages,
+    operator: typeof operator['id'] === 'string' ? { id: operator['id'], name: typeof operator['name'] === 'string' ? operator['name'] : null } : null,
+    templates: Array.isArray(item['templates'])
+      ? item['templates'].flatMap((value) => {
+          const template = asRecord(value)
+          if (typeof template['name'] !== 'string' || typeof template['body'] !== 'string') return []
+          return [{ name: template['name'], body: template['body'], buttons: Array.isArray(template['buttons']) ? template['buttons'].filter((button): button is string => typeof button === 'string') : [] }]
+        })
+      : [],
     providerNotices: parseTusWhatsappProviderNotices(item['providerNotices']),
   }
 }
@@ -1242,11 +1270,11 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         path: '/tus/v1/whatsapp/support-handoff',
         body: { senderId, reason },
       }),
-    listWhatsappAdminConversations: async (context, mode, page = 1, pageSize = 25) => {
+    listWhatsappAdminConversations: async (context, mode, page = 1, pageSize = 25, search = '') => {
       const response = await transport.request<unknown>({
         ...context,
         method: 'GET',
-        path: `/tus/v1/admin/whatsapp/conversations?${new URLSearchParams({ ...(mode ? { mode } : {}), page: String(page), pageSize: String(pageSize) }).toString()}`,
+        path: `/tus/v1/admin/whatsapp/conversations?${new URLSearchParams({ ...(mode ? { mode } : {}), ...(search.trim() ? { search: search.trim() } : {}), page: String(page), pageSize: String(pageSize) }).toString()}`,
       })
       return parseTusWhatsappAdminConversations(response)
     },

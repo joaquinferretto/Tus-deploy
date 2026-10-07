@@ -1482,7 +1482,7 @@ export function createTusHttpRouter({
       if (!auth) return
       try {
         const { pagina, tamano } = paginacion(request.query)
-        const page = await auth.module.soporte.pagina({ mode: readQueryString(request.query['mode']) || undefined, pagina, tamano })
+        const page = await auth.module.soporte.pagina({ mode: readQueryString(request.query['mode']) || undefined, search: readQueryString(request.query['search']) || undefined, pagina, tamano })
         const { items, ...meta } = paginaJson(page.items, pagina, tamano, page.total)
         response.status(200).json({ conversations: items, ...meta })
       } catch (error) {
@@ -1519,6 +1519,8 @@ export function createTusHttpRouter({
           response.status(200).json(await auth.module.soporte.devolver(id, auth.ctx))
         else if (action === 'reply')
           response.status(202).json(await auth.module.soporte.responder(id, auth.ctx, body['text']))
+        else if (action === 'template')
+          response.status(202).json(await auth.module.soporte.contactarConPlantilla(id, auth.ctx, body['template']))
         else if (action === 'unlink')
           response.status(200).json(await auth.module.soporte.desvincular(id, auth.ctx))
         else if (action === 'block')

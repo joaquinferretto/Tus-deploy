@@ -166,3 +166,40 @@ Verificación: `tests/foundation/tus-admin-whatsapp-avisos-postgres.test.mjs`,
 `tests/foundation/tus-admin-whatsapp-paginacion.test.mjs` y, en navegador (1280 y 390 px),
 `node scripts/dev/admin-whatsapp-smoke.mjs`. Meta es un sustituto en todos: prueban el código, no
 una entrega real.
+
+## Buscar y responder a mano (ADMIN-WHATSAPP-BUSQUEDA-01, ADMIN-WHATSAPP-RESPUESTA-01)
+
+### Buscador
+
+`GET /tus/v1/admin/whatsapp/conversations?search=…` busca en la base, sobre todas las conversaciones (no solo la página visible), y se combina con `mode` y con `page`/`pageSize`. Sin resultados responde 200 con una página vacía.
+
+- Texto con letras: parte del nombre de perfil, sin distinguir mayúsculas.
+- Solo dígitos y puntuación de teléfono (mínimo 3 dígitos): parte del `wa_id`.
+- Formas argentinas: lo guardado nunca se modifica; se normaliza **la búsqueda**. Para `5493794123456` encuentran `5493794123456`, `+54 9 379 412-3456`, `3794123456`, `0379 15 4123456`, `0379154123456` y `+54 379 4123456`. Las reescrituras (quitar el `0` y el `15`, agregar el `9`) solo coinciden con números guardados como argentinos (`54…`); un número de otro país se busca tal cual se escribió.
+
+En la pantalla el campo espera 300 ms tras la última tecla, vuelve a la página 1 y conserva el filtro; la X lo limpia.
+
+### Respuesta manual
+
+Lo que ya existía y se reutiliza: tomar la conversación (`takeover`) persiste `modo = human` y el operador en la conversación, el ingreso no encola al asistente mientras esté en `human`, y `reply` envía texto libre solo con la ventana de 24 h abierta y lo guarda como mensaje saliente del operador. Lo agregado:
+
+- **Ventana cerrada → plantilla.** `POST …/conversations/:id/template` con `{ "template": "continuar_atencion_tus" }`. Exige conversación tomada (`TAKE_OVER_FIRST`), ventana cerrada (`SERVICE_WINDOW_OPEN` si está abierta) y que la plantilla sea de uso manual y esté en `WHATSAPP_APPROVED_TEMPLATES` (`TEMPLATE_NOT_APPROVED`). No hay forma de mandar texto libre fuera de la ventana.
+- **`continuar_atencion_tus`** (UTILITY, `es_AR`): «Hola, {{1}}. Queremos continuar con tu solicitud en TUS. Respondé este mensaje y seguimos con la atención por acá.» + respuesta rápida «Continuar atención». `{{1}}` es el primer nombre del perfil de WhatsApp. Hay que crearla en Meta con ese texto exacto y, **recién cuando Meta la apruebe**, agregarla a `WHATSAPP_APPROVED_TEMPLATES`.
+- Cuando la persona responde, la ventana vuelve a abrirse; la conversación sigue tomada y el asistente no contesta hasta que alguien la devuelva.
+- El detalle trae `operator` (id y nombre de quien la tomó) y `templates` (solo las aprobadas y configuradas).
+- Un envío que Meta rechaza responde 502 con la clase del error y el número de Meta; el mensaje queda guardado como `failed`. Reintentar crea un mensaje nuevo.
+- En la pantalla: Enter envía, Shift+Enter agrega una línea; el texto no se borra si el envío falla.
+
+### A dónde va el mensaje y cómo se sigue (WHATSAPP-DESTINO-01)
+
+- El destino de una respuesta manual es siempre el `wa_id` del contacto de **esa** conversación. No se vuelve a resolver por cuenta, prestador, teléfono de perfil ni nombre. (El aviso a un prestador es otro recorrido: va al WhatsApp vinculado a su cuenta.)
+- `Enviado` solo existe después de que Meta aceptó el pedido y devolvió su id (`wamid`), que se guarda en el mensaje. Rechazo → `Falló`. Sin respuesta clara (timeout) → `Sin confirmación de Meta`, y no se reenvía solo.
+- Los estados de Meta (`sent`, `delivered`, `read`, `failed`) se aplican únicamente al mensaje con ese `wamid`, lo haya escrito el asistente o un operador. Nunca por conversación, teléfono, orden ni hora.
+- Cada mensaje saliente guarda en `metadata` la evidencia del destino: `sentTo` (el `to` del pedido), `metaWaId` (la cuenta que Meta resolvió, `contacts[0].wa_id`) y `statusRecipient` (el `recipient_id` del estado). Si alguno no es el número del contacto, el panel lo marca en el mensaje.
+- Registro (sin textos, números completos ni credenciales): `whatsapp.send` (id interno, conversación, `to` enmascarado, `wamid`, estado, error) y `whatsapp.status` / `whatsapp.status_unmatched` (id interno, `wamid`, estado anterior, entrante y resultante, hora, destinatario enmascarado, código de Meta).
+
+### Validación
+
+- `tests/foundation/tus-admin-whatsapp-respuesta.test.mjs` y `tests/foundation/tus-admin-whatsapp-entrega.test.mjs`.
+- `node scripts/dev/admin-whatsapp-smoke.mjs` (navegador, 1280 y 390 px; Meta simulado).
+- No verificado: Meta real. El estado de aprobación de `continuar_atencion_tus` solo se ve en el panel de Meta.

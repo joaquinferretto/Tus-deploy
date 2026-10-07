@@ -69,7 +69,7 @@ test('ADMIN WhatsApp Web: the pagination is a compact footer of the panel (never
   assert.match(whatsapp, /className=\{styles\.chatSide\}/u)
   // Real pagination: page, page size and filter go to the API; a filter or another size goes back
   // to the first page; a page that no longer exists falls back to the last real one.
-  assert.match(whatsapp, /listWhatsappAdminConversations\(current, filtro === 'human' \? 'human' : undefined, page, pageSize\)/u)
+  assert.match(whatsapp, /listWhatsappAdminConversations\(current, filtro === 'human' \? 'human' : undefined, page, pageSize, busqueda\)/u)
   assert.match(whatsapp, /const setFiltro = \(value: 'todas' \| 'human'\) => \{ setFiltroState\(value\); setPage\(1\) \}/u)
   assert.match(whatsapp, /onPageSize=\{\(size\) => \{ setPageSize\(size\); setPage\(1\) \}\}/u)
   assert.match(whatsapp, /if \(page > result\.totalPages\) setPage\(Math\.max\(1, result\.totalPages\)\)/u)

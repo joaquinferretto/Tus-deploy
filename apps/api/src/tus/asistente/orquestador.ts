@@ -3929,6 +3929,8 @@ export async function enviarMensajeSaliente(input: {
   inReplyTo: string[]
   replyToWamid: string | undefined
   now: () => number
+  // Safe trace of the send (ids, masked destination, outcome): never the text nor a credential.
+  log?: (event: string, fields: Record<string, unknown>) => void
 }): Promise<MensajeConversacion> {
   const nowIso = new Date(input.now()).toISOString()
   const text =
@@ -3984,6 +3986,9 @@ export async function enviarMensajeSaliente(input: {
       wamid: sent.wamid,
       status: 'sent',
       statusAt: new Date(input.now()).toISOString(),
+      // WHATSAPP-DESTINO-01. The evidence of where it went: the `to` of the request (always the
+      // wa_id of the contact of THIS conversation) and the account Meta resolved it into.
+      metadata: { ...record.metadata, sentTo: input.contact.waId, ...(sent.waId ? { metaWaId: sent.waId } : {}) },
     }
   } catch (error) {
     const meta = error instanceof ErrorMetaWhatsapp ? error : null
@@ -3992,11 +3997,25 @@ export async function enviarMensajeSaliente(input: {
       status: meta?.ambiguous ? 'unknown' : 'failed',
       metadata: {
         ...record.metadata,
+        sentTo: input.contact.waId,
         errorCode: meta?.code ?? 'SEND_FAILED',
         ...(meta?.metaCode ? { metaCode: meta.metaCode } : {}),
       },
     }
   }
+  input.log?.('whatsapp.send', {
+    messageId: next.messageId,
+    conversationId: next.conversationId,
+    actor: next.actor.startsWith('operator:') ? 'operator' : next.actor,
+    type: next.type,
+    to: enmascararWaId(input.contact.waId),
+    wamid: next.wamid,
+    status: next.status,
+    ...(typeof next.metadata['metaWaId'] === 'string' ? { metaWaId: enmascararWaId(next.metadata['metaWaId']) } : {}),
+    ...(next.metadata['errorCode'] ? { errorCode: next.metadata['errorCode'] } : {}),
+    ...(next.metadata['metaCode'] ? { metaCode: next.metadata['metaCode'] } : {}),
+    correlationId: input.correlationId,
+  })
   await input.transaction.ejecutar(async (repositories) => {
     const current = await repositories.mensajes.buscar(record.messageId)
     // A fast status webhook may already have advanced it: only fill what is missing.

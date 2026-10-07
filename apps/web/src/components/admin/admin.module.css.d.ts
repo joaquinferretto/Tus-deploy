@@ -20,7 +20,13 @@ declare const styles: {
   readonly cardValue: string
   readonly cards: string
   readonly chatBadges: string
+  readonly bubbleWarn: string
+  readonly chatClosed: string
   readonly chatForm: string
+  readonly chatNoResults: string
+  readonly chatSearch: string
+  readonly chatSendError: string
+  readonly templateOption: string
   readonly chatHeader: string
   readonly chatLayout: string
   readonly chatList: string

@@ -100,24 +100,41 @@ export class ServicioIngresoWhatsapp {
     for (const event of events) {
       if (event.kind === 'status') {
         const applied = await this.transaction.ejecutar(async (repositories) => {
+          // Only by Meta's own id of the message: never by conversation, phone, order or time.
           const message = await repositories.mensajes.buscarPorWamid(event.wamid)
-          if (!message || message.direction !== 'outbound') return false
+          if (!message || message.direction !== 'outbound') return { applied: false, message: null, next: null }
           const next = aplicarEstadoEntrega(message, {
             status: event.status,
             at: new Date(event.timestamp).toISOString(),
           })
-          if (!next) return false
+          if (!next) return { applied: false, message, next: null }
           await repositories.mensajes.actualizar({
             ...message,
             ...next,
             metadata: {
               ...message.metadata,
               ...(event.errorCode !== null ? { metaErrorCode: event.errorCode } : {}),
+              // WHATSAPP-DESTINO-01. Who Meta says this status is about (`recipient_id`).
+              ...(event.recipientWaId ? { statusRecipient: event.recipientWaId } : {}),
             },
           })
-          return true
+          return { applied: true, message, next }
         })
-        if (applied) result.statusesApplied += 1
+        // Safe trace of the route of a message: ids, states and Meta's error number only.
+        this.log(applied.message ? 'whatsapp.status' : 'whatsapp.status_unmatched', {
+          messageId: applied.message?.messageId ?? null,
+          wamid: event.wamid,
+          actor: applied.message ? (applied.message.actor.startsWith('operator:') ? 'operator' : applied.message.actor) : null,
+          previous: applied.message?.status ?? null,
+          incoming: event.status,
+          status: applied.next?.status ?? applied.message?.status ?? null,
+          applied: applied.applied,
+          at: new Date(event.timestamp).toISOString(),
+          recipient: event.recipientWaId ? enmascararWaId(event.recipientWaId) : null,
+          ...(event.errorCode !== null ? { metaErrorCode: event.errorCode } : {}),
+          correlationId,
+        })
+        if (applied.applied) result.statusesApplied += 1
         else result.statusesIgnored += 1
         continue
       }

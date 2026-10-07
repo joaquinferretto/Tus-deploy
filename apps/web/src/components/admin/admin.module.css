@@ -641,13 +641,107 @@
   padding: 10px;
 }
 
-.chatForm input {
+.chatForm {
+  align-items: flex-end;
+}
+
+.chatForm textarea {
   border: 1px solid var(--tus-line);
   border-radius: var(--tus-control-radius);
   flex: 1;
   font: inherit;
+  line-height: 1.4;
+  max-height: 9em;
   min-width: 0;
   padding: 8px 10px;
+  resize: none;
+}
+
+/* Search of the inbox: above the list, inside the left column. */
+.chatSearch {
+  border-bottom: 1px solid var(--tus-line);
+  flex: none;
+  padding: 8px;
+  position: relative;
+}
+
+.chatSearch input {
+  background: #ffffff;
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-control-radius);
+  font: inherit;
+  padding: 8px 34px 8px 10px;
+  width: 100%;
+}
+
+.chatSearch button {
+  background: none;
+  border: 0;
+  color: var(--tus-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.2rem;
+  height: 32px;
+  line-height: 1;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+}
+
+.chatNoResults {
+  color: var(--tus-muted);
+  font-size: 0.88rem;
+  margin: 0;
+  padding: 16px 12px;
+  text-align: center;
+}
+
+/* Why a manual send did not leave: next to the composer, the text stays to try again. */
+.chatSendError {
+  background: #fef2f2;
+  border-top: 1px solid #fecaca;
+  color: #991b1b;
+  font-size: 0.86rem;
+  margin: 0;
+  padding: 8px 14px;
+}
+
+.chatClosed {
+  border-top: 1px solid var(--tus-line);
+  color: var(--tus-muted);
+  display: grid;
+  font-size: 0.88rem;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 14px;
+}
+
+.chatClosed p {
+  margin: 0;
+}
+
+.templateOption {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.templateOption blockquote {
+  background: #f7f8fa;
+  border: 1px solid var(--tus-line);
+  border-radius: var(--tus-control-radius);
+  color: var(--tus-ink, #14213d);
+  flex: 1 1 260px;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.bubble small.bubbleWarn {
+  color: #991b1b;
+  font-weight: 600;
 }
 
 /* Existing admin components (identity, security, provider form) inherit TUS styles here. */

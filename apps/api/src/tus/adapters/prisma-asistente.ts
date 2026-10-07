@@ -83,9 +83,10 @@ const sinId = (row: Fila) => {
 
 // Rows written before the Web channel existed (and the column default) are WhatsApp.
 const canal = (value: unknown): CanalConversacion => (value === 'web' ? 'web' : 'whatsapp')
-const filtroPanel = (filter: { mode?: string; channel?: CanalConversacion }): Fila => ({
+const filtroPanel = (filter: { mode?: string; channel?: CanalConversacion; contactIds?: readonly string[] }): Fila => ({
   ...(filter.mode ? { modo: filter.mode } : {}),
   ...(filter.channel ? { canal: filter.channel } : {}),
+  ...(filter.contactIds ? { contactoId: { in: [...filter.contactIds] } } : {}),
 })
 
 const filaContacto = (value: ContactoWhatsapp): Fila => ({
@@ -297,6 +298,17 @@ export function repositoriosAsistentePrisma(client: ClientePrismaAsistente): Rep
         ids.length === 0
           ? []
           : (await client.contactoWhatsapp.findMany({ where: { id: { in: [...ids] } } })).map(mapContacto),
+      // The name without case (ILIKE), the number by its digits (wa_id is stored as digits).
+      buscarIds: async (busqueda, limite) => {
+        const condiciones: Fila[] = [
+          ...(busqueda.nombre ? [{ nombrePerfil: { contains: busqueda.nombre, mode: 'insensitive' } }] : []),
+          ...busqueda.telefonos.map((telefono) => ({ waId: { contains: telefono } })),
+          // Rewritten from an Argentine shape: only a number stored as Argentine can be that one.
+          ...busqueda.telefonosArgentinos.map((telefono) => ({ AND: [{ waId: { startsWith: '54' } }, { waId: { contains: telefono } }] })),
+        ]
+        if (condiciones.length === 0) return []
+        return (await client.contactoWhatsapp.findMany({ where: { canal: 'whatsapp', OR: condiciones }, take: limite })).map((row: Fila) => String(row['id']))
+      },
       crear: async (value) => {
         await client.contactoWhatsapp.create({ data: filaContacto(value) })
       },
