@@ -13,9 +13,13 @@ import { fileURLToPath } from 'node:url'
 import {
   CONFORMANCE_REPAIR,
   PRISMA_MIGRATIONS_BOOTSTRAP_SQL,
+  RUNTIME_ROLE_GUARD_CODE,
+  RUNTIME_ROLE_GUARD_SQL,
+  RUNTIME_SCHEMA,
   UNMANAGED_GUARD_CODE,
   UNMANAGED_GUARD_SQL,
   deriveConformanceSql,
+  enablesRowLevelSecurity,
   parseMigrateStatus,
   planDeploy,
   redact,
@@ -86,6 +90,28 @@ function assertPublicSchemaManagedOrEmpty(work) {
   throw new MigrationError('preflight failed before any write (see output above)')
 }
 
+// SEGURIDAD-DATA-API-01. Before a pending migration turns row level security on, the role the API
+// really connects with (DATABASE_URL, its own credentials) must be the owner of the tables TUS
+// manages, a superuser or BYPASSRLS. Read only. If it is not, nothing is applied: the deploy fails
+// and the API that is running keeps running, instead of a new one that reads empty tables.
+function assertRuntimeRoleSurvivesRls(work, pending) {
+  const conRls = pending.filter((name) => enablesRowLevelSecurity(readFileSync(join(MIGRATIONS, name, 'migration.sql'), 'utf8')))
+  if (conRls.length === 0) return
+  const dir = join(work, 'runtime')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'schema.prisma'), RUNTIME_SCHEMA)
+  writeFileSync(join(dir, 'guard.sql'), RUNTIME_ROLE_GUARD_SQL)
+  const result = prisma(['db', 'execute', '--file', join(dir, 'guard.sql')], { schema: join(dir, 'schema.prisma'), allowFailure: true })
+  if (result.code === 0) {
+    log(`runtime role check passed for ${conRls.join(', ')} (the API role owns the tables or bypasses row level security)`)
+    return
+  }
+  if (result.output.includes(RUNTIME_ROLE_GUARD_CODE))
+    throw new MigrationError(`runtime-role-not-owner: ${conRls.join(', ')} enables row level security, and the role of DATABASE_URL is not the owner of the tables (nor superuser/BYPASSRLS): the API would read nothing. Nothing was applied. Use the same role in DATABASE_URL and DIRECT_URL`)
+  process.stderr.write(result.output.slice(-2000))
+  throw new MigrationError('runtime role check could not run (see output above); nothing was applied')
+}
+
 export async function main() {
   const targets = validateTargets(process.env)
   if (!targets.ok) throw new MigrationError(`configuration: ${targets.problems.join('; ')}`)
@@ -112,6 +138,7 @@ export async function main() {
   const work = mkdtempSync(join(tmpdir(), 'tus-migrate-'))
   try {
     assertPublicSchemaManagedOrEmpty(work)
+    assertRuntimeRoleSurvivesRls(work, initial.pending)
     if (plan.bootstrap) {
       const file = join(work, 'bootstrap.sql')
       writeFileSync(file, PRISMA_MIGRATIONS_BOOTSTRAP_SQL)
