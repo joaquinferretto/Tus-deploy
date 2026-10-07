@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { neighbourhoodNames, useCatalog } from '@/features/catalog/use-catalog'
 import { ServicePicker } from '@/features/catalog/service-picker'
 import { LocationEditor } from '@/features/provider/provider-location'
-import { AdminApiError, adminApi, adminErrorMessage, formatFecha, type AdminPrestadorDetalle, type CambiosPrestador } from '@/lib/tus-admin-api'
+import { AdminApiError, DESTINO_WHATSAPP, adminApi, adminErrorMessage, formatFecha, type AdminPrestadorDetalle, type CambiosPrestador } from '@/lib/tus-admin-api'
 import { AdminConfirm, useConfirmacion } from './admin-confirm'
 import { AdminPageHeader } from './admin-layout'
 import styles from './admin.module.css'
@@ -119,19 +119,47 @@ export function AdminPrestadorDetallePage({ id }: { id: string }): React.ReactNo
       {aviso ? <p className={styles.success} role="status">{aviso}</p> : null}
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
 
-      <section aria-labelledby="prestador-cuenta" className={styles.card}>
-        <h2 id="prestador-cuenta">Cuenta</h2>
-        {detalle.cuenta ? (
+      <section aria-labelledby="prestador-cuenta" className={styles.card} data-cuenta-asociada={detalle.cuentaAsociada?.cuentaId ?? detalle.cuenta?.id ?? 'sin-cuenta'}>
+        <h2 id="prestador-cuenta">Cuenta asociada</h2>
+        <p className={styles.muted}>La persona real detrás de este perfil. Su identidad, su teléfono y su WhatsApp son los de la cuenta, no los del perfil profesional.</p>
+        {detalle.cuentaAsociada ? (() => {
+          const cuenta = detalle.cuentaAsociada
+          const destino = DESTINO_WHATSAPP[cuenta.whatsapp.destino]
+          const si = (valor: boolean, textoSi: string, textoNo: string) => <span className={`${styles.badge} ${valor ? styles.badgeOk : styles.badgeWarn}`}>{valor ? textoSi : textoNo}</span>
+          return (
+            <>
+              <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: '0.75rem', margin: '0.5rem 0' }}>
+                <div><dt className={styles.muted}>Nombre real</dt><dd style={{ margin: 0 }}>{cuenta.nombre}</dd></div>
+                <div><dt className={styles.muted}>Email</dt><dd style={{ margin: 0, overflowWrap: 'anywhere' }}>{cuenta.email} {si(cuenta.emailVerificado, 'Confirmado', 'Sin confirmar')}</dd></div>
+                <div><dt className={styles.muted}>Documento</dt><dd style={{ margin: 0 }}>{cuenta.documento ? `${cuenta.documento.tipo} ${cuenta.documento.numero}` : 'Sin cargar'}</dd></div>
+                <div><dt className={styles.muted}>Identidad</dt><dd style={{ margin: 0 }}>{cuenta.identidad ? cuenta.identidad : 'Sin verificación iniciada'}</dd></div>
+                <div><dt className={styles.muted}>Teléfono</dt><dd style={{ margin: 0 }}>{cuenta.telefono.numero ?? cuenta.telefono.pendiente ?? 'Sin teléfono'} {cuenta.telefono.numero ? si(true, 'Verificado', '') : cuenta.telefono.pendiente ? si(false, '', 'Sin verificar') : null}</dd></div>
+                <div data-whatsapp-destino={cuenta.whatsapp.destino}>
+                  <dt className={styles.muted}>WhatsApp</dt>
+                  <dd style={{ margin: 0 }}>
+                    {si(cuenta.whatsapp.vinculado, 'Vinculado', 'No vinculado')}{' '}
+                    <span className={`${styles.badge} ${destino.tono === 'ok' ? styles.badgeOk : destino.tono === 'warn' ? styles.badgeWarn : styles.badgeOff}`}>{destino.texto}</span>
+                    <br />
+                    <span className={styles.muted}>{destino.detalle}</span>
+                  </dd>
+                </div>
+                <div><dt className={styles.muted}>Estado de la cuenta</dt><dd style={{ margin: 0 }}>{cuenta.estado === 'active' ? 'Activa' : 'Suspendida'}</dd></div>
+                <div><dt className={styles.muted}>Diagnóstico</dt><dd className={styles.muted} style={{ margin: 0, overflowWrap: 'anywhere', fontSize: '0.85rem' }}>cuenta {cuenta.cuentaId}<br />usuario {cuenta.usuarioId}{detalle.tenantId ? <><br />tenant {detalle.tenantId}</> : null}</dd></div>
+              </dl>
+              {cuenta.cuentasActivas > 1 ? <p className={styles.error} role="alert">Este prestador tiene {cuenta.cuentasActivas} cuentas activas. TUS usa la más antigua (la de arriba) para avisarle; conviene revisar las demás.</p> : null}
+              <a className={styles.buttonSecondary} href={`/tus/admin/usuarios/${encodeURIComponent(cuenta.cuentaId)}`}>Abrir la ficha de la cuenta (nombre, email, teléfono, WhatsApp, accesos)</a>
+            </>
+          )
+        })() : detalle.cuenta ? (
           <>
             <p>{detalle.cuenta.nombre} · {detalle.cuenta.email}</p>
-            <p>Estado de la cuenta: {detalle.cuenta.estado === 'active' ? 'activa' : 'suspendida'} · Email {detalle.cuenta.verificado ? 'confirmado' : 'sin confirmar'} · Teléfono {detalle.cuenta.telefonoVerificado ? `verificado (${detalle.cuenta.telefono ?? ''})` : 'sin verificar'}</p>
-            <a className={styles.buttonSecondary} href={`/tus/admin/usuarios/${encodeURIComponent(detalle.cuenta.id)}`}>Editar nombre, email, estado y accesos de la cuenta</a>
+            <a className={styles.buttonSecondary} href={`/tus/admin/usuarios/${encodeURIComponent(detalle.cuenta.id)}`}>Abrir la ficha de la cuenta</a>
           </>
-        ) : <p className={styles.muted}>No encontramos la cuenta titular.</p>}
+        ) : <p className={styles.error} role="alert">Este perfil no tiene una cuenta activa detrás: nadie puede operarlo ni recibir sus avisos por WhatsApp. Hay que asociarle una cuenta.</p>}
       </section>
 
       <form aria-label="Perfil del prestador" className={`${styles.card} ${styles.form}`} onSubmit={guardar}>
-        <h2>Datos del perfil</h2>
+        <h2>Perfil profesional</h2>
         <label>Nombre público<input maxLength={60} minLength={2} onChange={(event) => setForm({ ...form, displayName: event.target.value })} required value={form.displayName} />{campo('displayName')}</label>
         <label>Descripción<textarea maxLength={600} onChange={(event) => setForm({ ...form, description: event.target.value })} rows={4} value={form.description} />{campo('description')}</label>
         <label>Años de experiencia<input max={70} min={0} onChange={(event) => setForm({ ...form, yearsOfExperience: event.target.value })} type="number" value={form.yearsOfExperience} />{campo('yearsOfExperience')}</label>

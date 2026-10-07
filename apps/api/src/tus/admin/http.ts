@@ -1,5 +1,6 @@
 import express, { type Request, type Response, type Router } from 'express'
 
+import type { CuentaPrestadorAdmin } from './cuenta-prestador.ts'
 import { enmascararTelefono } from '@factory/contracts'
 
 import { asyncHandler } from '../../presentation/middleware/error.ts'
@@ -142,6 +143,8 @@ export interface DependenciasAdmin {
   // actor is the session; the composition validates, saves and audits.
   identidadUsuario?: (input: { actorId: string; accountId: string; body: Record<string, unknown> }) => Promise<{ ok: true; perfil: PerfilUsuarioAdminDTO } | { ok: false; code: string; errores?: Record<string, string> }>
   // Provider edition (directorio/admin.ts crearEdicionPrestadorAdmin).
+  // PRESTADOR-CUENTA-01: the account behind each provider tenant (phone, WhatsApp, identity).
+  cuentasDePrestadores?: (tenantIds: readonly string[]) => Promise<Map<string, CuentaPrestadorAdmin>>
   prestadorAdmin?: {
     leer(id: string): Promise<{ perfil: Record<string, unknown>; tenantId: string; prestador: { estado: string; aprobado: boolean } | null } | null>
     guardar(admin: TusAuthenticatedTenantContext, id: string, body: Record<string, unknown>): Promise<{ status: number; code?: string; fields?: string[] } & Record<string, unknown>>
@@ -372,15 +375,18 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
   const detallePrestador = async (id: string) => {
     const leido = await deps.prestadorAdmin?.leer(id)
     if (!leido) return null
-    const [cuenta, ubicacion] = await Promise.all([
+    const [cuenta, ubicacion, asociadas] = await Promise.all([
       deps.cuentas.porTenant ? deps.cuentas.porTenant(leido.tenantId) : Promise.resolve(null),
       deps.directorio.ubicacionDePerfil(id),
+      deps.cuentasDePrestadores ? deps.cuentasDePrestadores([leido.tenantId]) : Promise.resolve(null),
     ])
     return {
       perfil: leido.perfil,
       prestador: leido.prestador,
       cuenta: cuenta ? { id: cuenta.id, nombre: cuenta.nombre, email: cuenta.email, estado: cuenta.estado, verificado: cuenta.verificado, telefonoVerificado: cuenta.telefono?.verificado ?? false, telefono: cuenta.telefono?.numero ?? null } : null,
       ubicacion,
+      // The account behind the profile, with the evidence of its phone, WhatsApp and identity.
+      ...(asociadas ? { cuentaAsociada: asociadas.get(leido.tenantId) ?? null, tenantId: leido.tenantId } : {}),
     }
   }
 
@@ -407,6 +413,11 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     const { pagina, tamano } = paginacion(request.query)
     const visibilidad = String(request.query['visibilidad'] ?? '')
     const verificacion = String(request.query['verificacion'] ?? '')
+    // PRESTADOR-CUENTA-01: the account behind each profile of the page (one batch of queries).
+    const conCuenta = async <T extends { tenantId: string }>(items: T[]) => {
+      const cuentas = deps.cuentasDePrestadores ? await deps.cuentasDePrestadores(items.map((item) => item.tenantId)) : null
+      return items.map((item) => ({ ...item, cuenta: cuentas ? cuentas.get(item.tenantId) ?? null : undefined, whatsappDestino: cuentas ? cuentas.get(item.tenantId)?.whatsapp.destino ?? 'sin_cuenta' : undefined }))
+    }
     const resultado = await deps.directorio.paginaParaAdmin({
       pagina,
       tamano,
@@ -416,7 +427,7 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
       visible: visibilidad === 'visible' ? true : visibilidad === 'oculto' ? false : null,
       verificado: verificacion === 'verificado' ? true : verificacion === 'pendiente' ? false : null,
     })
-    response.status(200).json(paginaJson(resultado.items, pagina, tamano, resultado.total))
+    response.status(200).json(paginaJson(await conCuenta(resultado.items), pagina, tamano, resultado.total))
   }))
 
   router.post('/tus/v1/admin/prestadores/:id/visibilidad', asyncHandler(async (request, response) => {

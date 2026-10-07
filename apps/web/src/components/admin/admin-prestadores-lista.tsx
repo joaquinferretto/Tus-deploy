@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
-import { adminApi, adminErrorMessage, formatFecha, type AdminPrestador } from '@/lib/tus-admin-api'
+import { DESTINO_WHATSAPP, adminApi, adminErrorMessage, formatFecha, type AdminPrestador } from '@/lib/tus-admin-api'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
 import { PrestadoresAdmin } from './prestadores-admin'
 import { AdminPagination } from './admin-pagination'
@@ -88,12 +88,40 @@ export function AdminPrestadoresLista(): React.ReactNode {
       {visibles.length > 0 ? (
         <table className={styles.table}>
           <thead>
-            <tr><th>Nombre</th><th>Oficio</th><th>Zona</th><th>Mapa</th><th>Identidad</th><th>Mercado Pago</th><th>Reputación</th><th>Alta</th><th /></tr>
+            <tr><th>Nombre público</th><th>Cuenta</th><th>Teléfono</th><th>WhatsApp</th><th>Oficio</th><th>Zona</th><th>Mapa</th><th>Identidad</th><th>Mercado Pago</th><th>Reputación</th><th>Alta</th><th /></tr>
           </thead>
           <tbody>
             {visibles.map((item) => (
               <tr key={item.id}>
-                <td data-label="Nombre"><strong>{item.nombre}</strong></td>
+                <td data-label="Nombre público"><strong>{item.nombre}</strong></td>
+                <td data-label="Cuenta" data-prestador-cuenta={item.cuenta ? item.cuenta.cuentaId : 'sin-cuenta'}>
+                  {item.cuenta ? (
+                    <>
+                      <a href={`/tus/admin/usuarios/${encodeURIComponent(item.cuenta.cuentaId)}`}>{item.cuenta.nombre}</a>
+                      <br />
+                      <span className={styles.muted} style={{ overflowWrap: 'anywhere' }}>{item.cuenta.email}</span>
+                      {item.cuenta.estado !== 'active' ? <> <span className={`${styles.badge} ${styles.badgeOff}`}>Suspendida</span></> : null}
+                    </>
+                  ) : item.cuenta === null ? <span className={`${styles.badge} ${styles.badgeOff}`}>Sin cuenta</span> : '—'}
+                </td>
+                <td data-label="Teléfono">
+                  {item.cuenta?.telefono.numero ? (
+                    <>
+                      {item.cuenta.telefono.numero}
+                      <br />
+                      <span className={`${styles.badge} ${styles.badgeOk}`}>Verificado</span>
+                    </>
+                  ) : item.cuenta?.telefono.pendiente ? (
+                    <>
+                      {item.cuenta.telefono.pendiente}
+                      <br />
+                      <span className={`${styles.badge} ${styles.badgeWarn}`}>Sin verificar</span>
+                    </>
+                  ) : <span className={styles.muted}>Sin teléfono</span>}
+                </td>
+                <td data-label="WhatsApp" data-whatsapp-destino={item.whatsappDestino ?? ''}>
+                  {item.whatsappDestino ? <span className={`${styles.badge} ${DESTINO_WHATSAPP[item.whatsappDestino].tono === 'ok' ? styles.badgeOk : DESTINO_WHATSAPP[item.whatsappDestino].tono === 'warn' ? styles.badgeWarn : styles.badgeOff}`} title={DESTINO_WHATSAPP[item.whatsappDestino].detalle}>{DESTINO_WHATSAPP[item.whatsappDestino].texto}</span> : '—'}
+                </td>
                 <td data-label="Oficio">{item.oficioLabel}</td>
                 <td data-label="Zona">{item.zona ?? '—'}{item.zonasCobertura.length > 1 ? <span className={styles.muted}> +{item.zonasCobertura.length - 1}</span> : null}</td>
                 <td data-label="Mapa">
