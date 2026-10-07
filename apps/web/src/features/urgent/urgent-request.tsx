@@ -35,7 +35,9 @@ export function UrgentRequest(): React.ReactNode {
   const [errors, setErrors] = useState<UrgentField[]>([])
   const [formError, setFormError] = useState('')
   const [sending, setSending] = useState(false)
-  const [sent, setSent] = useState<string | null>(null)
+  // What happened with the request just sent. `found: false`: it was received but nobody could be
+  // told (no provider takes urgent requests there yet) — a normal answer, never shown as an error.
+  const [sent, setSent] = useState<{ text: string; found: boolean } | null>(null)
   const [items, setItems] = useState<OwnUrgentRequest[] | null>(null)
 
   useEffect(() => {
@@ -95,7 +97,11 @@ export function UrgentRequest(): React.ReactNode {
       else setFormError(RESULT_MESSAGES[result.kind])
       return
     }
-    setSent(result.request.message ?? 'Enviamos tu pedido urgente.')
+    setSent(
+      result.request.status === 'sin_candidatos'
+        ? { found: false, text: `En este momento no hay prestadores de ${result.request.service} que tomen servicios urgentes en ${result.request.zone}. No se envió tu dirección a nadie.` }
+        : { found: true, text: result.request.message ?? 'Enviamos tu pedido urgente.' }
+    )
     setDraft({ category: '', description: '', address: '', zone: '' })
     void load()
   }
@@ -105,8 +111,13 @@ export function UrgentRequest(): React.ReactNode {
   return (
     <>
       {sent ? (
-        <div className={styles.success} data-urgente-enviado role="status">
-          {sent}
+        <div className={sent.found ? styles.success : styles.notice} data-urgente-enviado={sent.found ? 'difundido' : 'sin-prestadores'} role="status" style={{ marginBottom: 16 }}>
+          {sent.text}
+          {sent.found ? null : (
+            <span style={{ display: 'block', marginTop: 6 }}>
+              Podés <a href="/buscar-trabajador">buscar un profesional</a> y elegirlo vos, o intentar de nuevo más tarde.
+            </span>
+          )}
         </div>
       ) : null}
 

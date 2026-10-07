@@ -203,7 +203,12 @@ async function recorrer(browser, viewport, estado) {
     check((await llamar('POST', '/auth/sign-in', { email: cuenta.email, password: cuenta.password })).status === 200, `${e}: ${quien} signs in`)
     if (modo) check((await llamar('POST', '/auth/session/mode', { mode: modo })).status === 200, `${e}: ${quien} works as ${modo}`)
   }
-  const salir = async (quien) => check((await llamar('POST', '/auth/sign-out')).status < 300, `${e}: ${quien} signs out`)
+  // The page is left first: a screen that refreshes itself must not fire with the NEXT account's
+  // session while this script swaps accounts under it.
+  const salir = async (quien) => {
+    await page.goto(`${web}/ayuda`, { waitUntil: 'domcontentloaded' })
+    check((await llamar('POST', '/auth/sign-out')).status < 300, `${e}: ${quien} signs out`)
+  }
   const completarPerfil = async (nombre, apellido, documento) => {
     const pais = (await llamar('GET', '/tus/v1/geografia/paises')).body.items[0]
     const provincia = (await llamar('GET', `/tus/v1/geografia/provincias?paisId=${encodeURIComponent(pais.id)}`)).body.items[0]
@@ -229,6 +234,31 @@ async function recorrer(browser, viewport, estado) {
         await salir(nombre)
       }
       estado.perfiles = true
+    }
+
+    // ---- 0 (once). Nobody takes urgent requests yet: the client gets a clear answer, not an error.
+    if (!estado.sinPrestadores) {
+      await entrar(CLIENTE, 'the client')
+      await page.goto(`${web}/urgente`, { waitUntil: 'networkidle' })
+      await page.waitForFunction((id) => [...document.querySelectorAll('#urgente-servicio option')].some((option) => option.value === id), oficioId)
+      await page.selectOption('#urgente-servicio', oficioId)
+      await page.fill('#urgente-direccion', 'Belgrano 100')
+      await page.selectOption('#urgente-barrio', 'Centro')
+      await page.fill('#urgente-motivo', 'Pierde agua el tanque')
+      await page.locator('[data-urgente-form]').getByRole('button', { name: /Pedir servicio urgente/u }).click()
+      const respuesta = page.locator('[data-urgente-enviado="sin-prestadores"]')
+      await respuesta.waitFor()
+      const texto = (await respuesta.innerText()).replace(/\s+/gu, ' ')
+      check(/no hay prestadores de .+ que tomen servicios urgentes en Centro/u.test(texto) && texto.includes('No se envió tu dirección a nadie') && texto.includes('buscar un profesional'), `${e}: with no provider taking urgent requests the client is told so, with what to do next (${texto})`)
+      // (Next keeps an empty route announcer with role="alert": only alerts that say something count.)
+      check((await page.evaluate(() => [...document.querySelectorAll('main [role="alert"], [data-urgente-form] [role="alert"]')].filter((el) => el.textContent.trim()).length)) === 0, `${e}: it is not shown as an error`)
+      const cerrada = page.locator('[data-urgentes-propios] li').filter({ hasText: 'Belgrano 100' })
+      await cerrada.waitFor()
+      check((await cerrada.getAttribute('data-urgente-estado')) === 'sin_candidatos' && (await cerrada.innerText()).includes('Sin prestadores disponibles'), `${e}: the request is closed at once, and another one can be asked`)
+      check(await page.locator('[data-urgente-form]').getByRole('button', { name: /Pedir servicio urgente/u }).isEnabled(), `${e}: it does not block the next request`)
+      await page.screenshot({ path: join(artifacts, `${e}-cliente-sin-prestadores.png`), fullPage: true })
+      await salir('the client')
+      estado.sinPrestadores = true
     }
 
     // ---- 1. The provider turns "Aceptar servicios urgentes" on and off, and reads its coverage.
@@ -271,7 +301,7 @@ async function recorrer(browser, viewport, estado) {
     await page.selectOption('#urgente-barrio', 'Centro')
     await page.fill('#urgente-motivo', 'Se cortó toda la luz y está saltando la térmica')
     await formulario.getByRole('button', { name: /Pedir servicio urgente/u }).click()
-    const enviado = page.locator('[data-urgente-enviado]')
+    const enviado = page.locator('[data-urgente-enviado="difundido"]')
     await enviado.waitFor()
     check(/Envié tu pedido urgente de .+ a 2 prestadores/u.test(await enviado.innerText()), `${e}: the request was offered to the two providers (${await enviado.innerText()})`)
     const propia = page.locator('[data-urgentes-propios] li').filter({ hasText: direccion })

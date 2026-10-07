@@ -129,7 +129,7 @@ export const TEXTOS_URGENTE = {
     `${aviso.prestador} aceptó tu solicitud urgente de ${aviso.servicio} y se pone en contacto para coordinar la llegada. Seguí el trabajo, el presupuesto y el pago desde Mis trabajos en TUS.`,
   clienteRenuncia: (aviso: { prestador: string }) => `${aviso.prestador} finalmente no puede asistir. Estamos buscando otro prestador disponible.`,
   clienteSinCandidatos: (aviso: { servicio: string; zona: string }) =>
-    `En este momento no hay prestadores de ${aviso.servicio} disponibles para urgencias en ${aviso.zona}. Podés pedirme los prestadores de ${aviso.servicio} y elegir uno.`,
+    `En este momento no hay prestadores de ${aviso.servicio} que tomen servicios urgentes en ${aviso.zona}, así que no envié tu dirección a nadie. Si querés, te muestro los prestadores de ${aviso.servicio} para que elijas uno.`,
   clienteTodosRechazaron: (aviso: { servicio: string }) =>
     `Ningún prestador pudo tomar tu solicitud urgente de ${aviso.servicio}. Podés pedirme los prestadores de ${aviso.servicio} y elegir uno.`,
   clienteVencida: (aviso: { servicio: string }) =>

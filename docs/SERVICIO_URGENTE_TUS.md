@@ -237,3 +237,22 @@ barrios (o marcar toda la ciudad) y tener su WhatsApp vinculado a la cuenta.
   PostgreSQL locales: preferencia del prestador, pedido del cliente, oferta, toma, renuncia y Admin.
 
 Meta es un sustituto en todos: prueban el código, no una entrega real.
+
+## Arranque
+
+`acepta_urgencias` nace en **no** para todos y no se activa a nadie de forma automática. Hasta que
+algún prestador lo active (y tenga declarado el barrio), toda urgencia cierra al instante como
+`sin_candidatos`. El cliente recibe una respuesta normal, no un error: que no hay prestadores que
+tomen urgencias de ese servicio en ese barrio, que su dirección no se envió a nadie y que puede
+elegir un profesional de la forma habitual.
+
+`WHATSAPP_APPROVED_TEMPLATES` es una lista separada por comas, sin comillas. Con las dos plantillas:
+`turno_solicitud_recibida,servicio_urgente_disponible`. Solo se lista una plantilla que Meta ya
+aprobó.
+
+## Pendientes conocidos
+
+- Fotos en una urgencia (ni Web ni WhatsApp).
+- Ofrecer por WhatsApp "¿buscamos otro prestador urgente?" después de una cancelación con avances
+  (hoy solo en `/urgente`).
+- "Toda la ciudad" en la búsqueda normal y en el perfil público.
