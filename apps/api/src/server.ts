@@ -20,6 +20,9 @@ import { crearModuloWhatsappPrisma } from './tus/asistente/prisma-composicion.ts
 import { AlmacenModosPrisma, ServicioModos, createModeRouter, createProviderSuspensionGuard, estadoPrestadorDeCuenta } from './auth-security/modes/modos.ts'
 import { crearServicioSolicitudes } from './tus/solicitudes/composicion.ts'
 import { crearRouterSolicitudes } from './tus/solicitudes/http.ts'
+import { crearServicioUrgentes } from './tus/urgentes/composicion.ts'
+import { crearRouterUrgentes } from './tus/urgentes/http.ts'
+import type { ClientePrismaUrgentes } from './tus/urgentes/almacen.ts'
 import { crearRouterMensajesTrabajo } from './tus/work/http-mensajes.ts'
 import { crearRouterResumenTrabajo } from './tus/work/http-resumen.ts'
 import { PrismaWorkSummarySource, ServicioResumenTrabajo } from './tus/work/resumen.ts'
@@ -173,6 +176,16 @@ export function createApp(options: CreateAppOptions = {}): Application {
   // Every match (client picks an application / provider accepts a direct request) creates the
   // work in the same PostgreSQL transaction that assigns the request.
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
+  // SERVICIO-URGENTE-01: an urgent request is a service request offered at once to every compatible
+  // provider; the first that accepts gets it and its ONE work, in the same transaction.
+  const urgentes = crearServicioUrgentes({
+    prisma: prisma as unknown as ClientePrismaUrgentes,
+    cuentas: auth.store,
+    candidatos: directorio,
+    ...(application.work ? { trabajos: application.work } : {}),
+    publicadasDesde: (cuentaId, desde) => (prisma as unknown as { solicitudServicio: { count(input: unknown): Promise<number> } }).solicitudServicio.count({ where: { cuentaId, creadaEn: { gte: new Date(desde) } } }),
+  })
+  app.locals['tusUrgentes'] = urgentes
   // Turno requests notify by email through the transport of the account emails (when configured).
   const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient, NotificadorTurnosEmail.desdeEnv(prisma as unknown as PrismaClient, process.env))
   app.locals['tusTurnosNotificationWorkerFactory'] = () => servicioTurnos.crearWorkerNotificaciones()
@@ -183,12 +196,14 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const perfiles = new ServicioPerfil(new AlmacenPerfilPrisma(prisma as unknown as ClientePrismaPerfil))
   const whatsapp = options.tusRouter
     ? undefined
-    : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes, turnos: servicioTurnos }, telefonos)
+    : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes, turnos: servicioTurnos, urgentes }, telefonos)
   const tusRouter = options.tusRouter ?? createTusHttpRouter({ application, sessions, whatsapp, onTurnoConfirmed: (trabajoId) => servicioTurnos.avisarTurnoConfirmado(trabajoId) })
   if (whatsapp) app.locals['tusWhatsappAssistant'] = whatsapp
   // The client that asked for a turno from WhatsApp hears the provider's answer there too (with
   // the payment link of the deposit once accepted), besides the email and "Mis turnos".
   if (whatsapp) servicioTurnos.agregarNotificador(whatsapp.avisosTurnos)
+  // The providers of an urgent request are told on WhatsApp, through the same notifier rules.
+  if (whatsapp) urgentes.conNotificador(whatsapp.avisosUrgentes)
 
   // Security middleware
   app.use(correlationMiddleware)
@@ -280,6 +295,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     options.providerRoutesEnabled ?? process.env['TUS_PROVIDER_ACTIONS_ENABLED'] === 'true'
   if (tusRoutesEnabled) {
     app.use(crearRouterSolicitudes({ servicio: solicitudes, sessions }))
+    app.use(crearRouterUrgentes({ servicio: urgentes, sessions, admin: { nombres: (tenantIds) => directorio.perfilesPorTenants(tenantIds), ...(whatsapp ? { entregas: (correlaciones) => whatsapp.soporte.entregasPorCorrelacion(correlaciones) } : {}) } }))
     // Private chat of each work (client <-> chosen provider), authorized against the work.
     const trabajosAccesibles = new PrismaTrabajoStore(prisma)
     app.use(crearRouterResumenTrabajo({ sessions, servicio: new ServicioResumenTrabajo(trabajosAccesibles, new PrismaWorkSummarySource(prisma as unknown as ConstructorParameters<typeof PrismaWorkSummarySource>[0]), Date.now, application.serviceFinance ?? null, calificaciones) }))
@@ -402,6 +418,26 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       lifecycle.register('appointment-notification-worker', async () => {
         notificationAbort.abort()
         await notificationPromise
+      })
+    }
+    // SERVICIO-URGENTE-01: urgent requests nobody took expire. The state is in PostgreSQL
+    // (expira_en): this only wakes up to look, so a restart loses nothing.
+    const urgentesVivos = app.locals['tusUrgentes'] as { procesarVencidas(): Promise<number> } | undefined
+    if (urgentesVivos) {
+      let barriendo = false
+      const barrido = setInterval(() => {
+        if (barriendo) return
+        barriendo = true
+        void urgentesVivos
+          .procesarVencidas()
+          .catch((error: unknown) => logger.error('urgent request sweep failed', { details: { error: error instanceof Error ? error.name : 'unknown' } }))
+          .finally(() => {
+            barriendo = false
+          })
+      }, 30_000)
+      barrido.unref()
+      lifecycle.register('urgent-request-sweep', async () => {
+        clearInterval(barrido)
       })
     }
     if (whatsapp?.config.enabled) {

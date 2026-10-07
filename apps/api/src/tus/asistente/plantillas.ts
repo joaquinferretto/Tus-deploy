@@ -30,6 +30,16 @@ export const PLANTILLAS_WHATSAPP: DefinicionPlantilla[] = [
     body: '{{1}} te solicitó un turno de {{2}} para el {{3}} a las {{4}}. Precio: {{5}}. Seña: {{6}}. ¿Lo aceptás?',
     buttons: ['Aceptar', 'Rechazar'],
   },
+  // SERVICIO-URGENTE-01: an urgent request offered to a provider whose 24 hour window is closed.
+  // The quick replies come back with the payload TUS sent (which request, can or cannot go).
+  {
+    name: 'servicio_urgente_disponible',
+    category: 'UTILITY',
+    language: 'es_AR',
+    parameters: ['cliente', 'servicio', 'direccion', 'zona', 'motivo'],
+    body: 'Hola, {{1}} necesita un servicio urgente de {{2}}.\nDirección: {{3}}\nBarrio/Zona: {{4}}\nMotivo: {{5}}\n¿Podés asistir ahora?',
+    buttons: ['Puedo asistir', 'No puedo'],
+  },
   { name: 'payment_available', category: 'UTILITY', language: 'es_AR', parameters: ['servicio'], body: 'Tu servicio {{1}} está listo para pagar en TUS.' },
 ]
 

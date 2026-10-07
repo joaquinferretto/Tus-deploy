@@ -68,6 +68,13 @@ export class ServicioUrgentes {
     this.vigenciaMinutos = Number.isFinite(minutos) && minutos >= 1 && minutos <= 24 * 60 ? Math.round(minutos) : VIGENCIA_URGENTE_MINUTOS
   }
 
+  // The notifier is born after this service (the WhatsApp module needs it to answer providers):
+  // it is plugged in once both exist, like the notifier of turnos.
+  conNotificador(notificador: NotificadorUrgentes | null): this {
+    this.deps.notificador = notificador
+    return this
+  }
+
   // ---- the client ------------------------------------------------------------------------------
 
   // Creates the request and offers it, at once, to every compatible provider. The address travels
@@ -213,9 +220,9 @@ export class ServicioUrgentes {
 
   // The request this provider is assigned to right now, if any (the newest): what "no puedo
   // asistir" written in a chat refers to.
-  async asignadaA(prestadorTenantId: string): Promise<{ solicitudId: string; servicio: string } | null> {
+  async asignadaA(prestadorTenantId: string): Promise<{ solicitudId: string; servicio: string; aceptadaEn: number } | null> {
     const asignada = (await this.deps.almacen.ofertasDePrestador(prestadorTenantId, 30)).find(({ oferta, solicitud }) => oferta.estado === 'acepto' && solicitud.estado === 'abierta' && solicitud.estadoAsignacion === 'aceptada')
-    return asignada ? { solicitudId: asignada.solicitud.id, servicio: oficio(asignada.solicitud.categoria).label } : null
+    return asignada ? { solicitudId: asignada.solicitud.id, servicio: oficio(asignada.solicitud.categoria).label, aceptadaEn: asignada.oferta.aceptadaEn ?? asignada.oferta.actualizadaEn } : null
   }
 
   async preferencia(prestadorTenantId: string): Promise<{ ok: true; acceptsUrgent: boolean } | { ok: false; code: 'PROVIDER_REQUIRED' }> {

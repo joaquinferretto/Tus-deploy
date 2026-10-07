@@ -25,13 +25,15 @@ export const ACCION_AVISO_NO_ENVIADO = 'whatsapp.appointment_notice_not_sent'
 export type MotivoAvisoNoEnviado = 'provider_without_account' | 'no_whatsapp_linked' | 'template_required' | 'conversation_with_operator'
 
 export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
+  // `protected`: the notices of urgent requests (avisos-urgentes.ts) reach providers and clients
+  // through these same rules.
   constructor(
-    private readonly transaction: PuertoTransaccionAsistente,
-    private readonly whatsapp: WhatsappProvider,
-    private readonly now: () => number = Date.now,
-    private readonly metric?: Metrica,
+    protected readonly transaction: PuertoTransaccionAsistente,
+    protected readonly whatsapp: WhatsappProvider,
+    protected readonly now: () => number = Date.now,
+    protected readonly metric?: Metrica,
     // Approved templates: the only way to write first to a number whose 24 hour window is closed.
-    private readonly plantillas?: WhatsappTemplateService
+    protected readonly plantillas?: WhatsappTemplateService
   ) {}
 
   // TURNOS-WHATSAPP-01. The provider is told with everything it needs to decide and answers
@@ -124,7 +126,7 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
 
   // The WhatsApp numbers of an account: the ones that can be written to now (an active
   // conversation in bot mode inside the 24 hour window) and the linked ones that cannot.
-  private async destinos(cuentaId: string): Promise<{ abiertos: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }[]; cerrados: ContactoWhatsapp[]; vinculados: number }> {
+  protected async destinos(cuentaId: string): Promise<{ abiertos: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }[]; cerrados: ContactoWhatsapp[]; vinculados: number }> {
     return this.transaction.ejecutar(async (repositories) => {
       const abiertos: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }[] = []
       const cerrados: ContactoWhatsapp[] = []
@@ -143,7 +145,7 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
 
   // The conversation a template is recorded in: the active one, or a new one for a number that
   // was linked (by its owner or by the administration) and never wrote.
-  private async conversacionDe(contacto: ContactoWhatsapp): Promise<ConversacionWhatsapp | null> {
+  protected async conversacionDe(contacto: ContactoWhatsapp): Promise<ConversacionWhatsapp | null> {
     return this.transaction.ejecutar(async (repositories) => {
       const activa = await repositories.conversaciones.activaDeContacto(contacto.contactId)
       if (activa) return activa.mode === 'bot' ? activa : null
@@ -154,7 +156,7 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
     })
   }
 
-  private async entregar(clienteCuentaId: string, message: MensajeSaliente, correlationId: string): Promise<void> {
+  protected async entregar(clienteCuentaId: string, message: MensajeSaliente, correlationId: string): Promise<void> {
     const destinos = await this.transaction.ejecutar(async (repositories) => {
       const conversaciones = new Map<string, ConversacionWhatsapp>()
       for (const contacto of await repositories.contactos.vinculadosA(clienteCuentaId)) {
@@ -173,7 +175,7 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
     for (const destino of destinos) await this.enviar(destino, message, correlationId)
   }
 
-  private async enviar(destino: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }, message: MensajeSaliente, correlationId: string) {
+  protected async enviar(destino: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }, message: MensajeSaliente, correlationId: string) {
     const enviado = await enviarMensajeSaliente({
       transaction: this.transaction,
       whatsapp: this.whatsapp,
@@ -188,6 +190,7 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
       now: this.now,
     })
     this.metric?.('whatsapp.appointment_notice', { sent: enviado.status === 'sent', type: message.type })
+    return enviado
   }
 }
 

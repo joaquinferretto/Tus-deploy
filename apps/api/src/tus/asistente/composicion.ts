@@ -22,6 +22,7 @@ import {
   type PuertoIndiceConocimiento,
 } from './conocimiento.ts'
 import { NotificadorTurnosWhatsapp } from './avisos-turnos.ts'
+import { NotificadorUrgentesWhatsapp } from './avisos-urgentes.ts'
 import { DominioAsistenteTus, type PuertoDominioAsistente, type ServiciosCompartidosAsistente } from './dominio.ts'
 import { ServicioIdentificacionCliente, type PuertoCuentasPorDocumento } from './identificacion.ts'
 import { GroqChatProvider, TranscriptorGroq, type ChatProvider, type Transcriptor } from './groq.ts'
@@ -160,6 +161,8 @@ export interface ModuloWhatsapp {
   // Aviso al cliente por WhatsApp cuando el prestador responde su solicitud de turno (con el link
   // de pago de la seña si fue aceptada).
   avisosTurnos: NotificadorTurnosWhatsapp
+  // SERVICIO-URGENTE-01: the notices of urgent requests, through the same rules.
+  avisosUrgentes: NotificadorUrgentesWhatsapp
   platformAdminTenantId: string | null
   crearWorker(options?: {
     owner?: string
@@ -350,6 +353,7 @@ export function crearModuloWhatsapp(input: {
       metric,
     }),
     avisosTurnos: new NotificadorTurnosWhatsapp(input.transaction, whatsapp, now, metric, WhatsappTemplateService.desdeEnv(env)),
+    avisosUrgentes: new NotificadorUrgentesWhatsapp(input.transaction, whatsapp, now, metric, WhatsappTemplateService.desdeEnv(env)),
     platformAdminTenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null,
     crearWorker: (options = {}) =>
       new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, mantenimiento: () => cicloDeVida.depurar(), ...options }),

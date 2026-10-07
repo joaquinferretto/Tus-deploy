@@ -95,6 +95,9 @@ export interface EstadoConversacional {
   // authoritative: the provider, the service, its price and the time are read again from the
   // backend at every step, and it holds no account and no price.
   booking?: SolicitudEnCurso | null
+  // SERVICIO-URGENTE-01: an urgent request being put together (what is still missing is asked).
+  // Never authoritative: the backend validates everything again when it creates the request.
+  urgent?: { profession: string | null; address: string | null; zone: string | null; problem: string | null; at: number } | null
   // The conversation asked for name + document for something that is not a booking (the payment
   // link of a deposit) and is waiting for them.
   identityFor?: { purpose: 'deposit' | 'payment_check'; at: number } | null

@@ -5,6 +5,7 @@ import { DIAS_BUSQUEDA_PRIMERA, DIAS_LISTADOS, DIAS_PANORAMA, DIAS_TRAMO_MAXIMO,
 import { oficio } from '../directorio/oficios.ts'
 import { CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, formatearPesos } from '@factory/contracts'
 import { leerRespuestaTurno } from './avisos-turnos.ts'
+import { esRenuncia, leerRespuestaUrgente, leerUrgente } from './urgente-texto.ts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
 import { sinDocumento, type ServicioIdentificacionCliente } from './identificacion.ts'
@@ -724,6 +725,10 @@ export class OrquestadorConversacion {
     if (respuestaTurno) return respuestaTurno
     const fotoTurno = await this.fotoDeSolicitudDeTurno(turn, actor, input)
     if (fotoTurno) return fotoTurno
+    // SERVICIO-URGENTE-01, also before the conversation: a provider answering an urgent request
+    // (a button, or "no puedo ir" from the one assigned to it) and a client asking for one.
+    const urgente = (await this.respuestaAUrgente(turn, actor, input, correlationId)) ?? (await this.pedidoUrgente(turn, actor, input, correlationId))
+    if (urgente) return urgente
     if (text) await this.registrarHechos(turn, text)
     // "¿Ya aceptó?", "¿a qué hora viene?": the memory says which turno is meant, the REAL state
     // of TUS answers. Before the help and the steps: it is a question about the person's own data.
@@ -1953,6 +1958,120 @@ export class OrquestadorConversacion {
         : error instanceof Error && typeof code === 'string' && /^[A-Z_]+$/u.test(code) && error.message ? error.message
         : 'No pude registrar tu respuesta. Probá de nuevo o respondé desde Solicitudes de reserva en TUS.'
       return [{ type: 'text', text: texto }]
+    }
+  }
+
+  // SERVICIO-URGENTE-01. A provider answers an urgent request. A button says which request and
+  // whether it can go; WHO answers is the account linked to this number. "No puedo ir" written by
+  // the provider currently assigned to one (within the last day) gives that assignment back: it
+  // is not a rejection of a pending offer, and it needs no exact phrase.
+  private async respuestaAUrgente(turn: Turno, actor: ActorAsistente, input: { text: string; replyId: string | null }, correlationId: string): Promise<MensajeSaliente[] | null> {
+    if (turn.canal.id !== 'whatsapp') return null
+    const domain = this.deps.domain
+    const boton = leerRespuestaUrgente(input.replyId)
+    if (boton) {
+      if (typeof domain.responderUrgente !== 'function') return null
+      // Only a linked account that is a provider answers; anybody else is not told whether that
+      // request exists.
+      if (!actor.context || !actor.isProvider) return [{ type: 'text', text: 'Para responder servicios urgentes este número tiene que estar vinculado a tu cuenta de prestador en TUS.' }]
+      try {
+        const respuesta = await domain.responderUrgente(actor.context, { solicitudId: boton.solicitudId, asistir: boton.asistir, correlationId })
+        this.metric('whatsapp.urgent_answer', { can: boton.asistir, state: respuesta.estado })
+        return [{ type: 'text', text: respuesta.mensaje }]
+      } catch {
+        this.metric('whatsapp.urgent_answer', { can: boton.asistir, failed: true })
+        return [{ type: 'text', text: 'No pude registrar tu respuesta. Probá de nuevo en un momento.' }]
+      }
+    }
+    if (!input.text || !actor.context || !actor.isProvider || typeof domain.urgenteAsignada !== 'function' || typeof domain.renunciarUrgente !== 'function') return null
+    const dicho = esRenuncia(input.text)
+    if (!dicho.renuncia) return null
+    const asignada = await domain.urgenteAsignada(actor.context).catch(() => null)
+    if (!asignada || this.now() - asignada.aceptadaEn > 24 * 60 * 60 * 1000) return null
+    try {
+      const respuesta = await domain.renunciarUrgente(actor.context, { solicitudId: asignada.solicitudId, motivo: dicho.motivo, correlationId })
+      this.metric('whatsapp.urgent_resignation', { state: respuesta.estado })
+      return [{ type: 'text', text: respuesta.mensaje }]
+    } catch {
+      return [{ type: 'text', text: 'No pude registrar que no podés asistir. Probá de nuevo en un momento.' }]
+    }
+  }
+
+  // SERVICIO-URGENTE-01. A client asks for an urgent service: the service, the address, the zone
+  // and what happened are read from the message by the backend; only what is missing is asked;
+  // with everything, the request is created and offered to every compatible provider at once.
+  // It starts when the message asks for a service with urgency AND gives an address, or names the
+  // urgent service as such; "plomero urgente ahora" alone still shows the first free turnos.
+  private async pedidoUrgente(turn: Turno, actor: ActorAsistente, input: { text: string; replyId: string | null }, correlationId: string): Promise<MensajeSaliente[] | null> {
+    const domain = this.deps.domain
+    const text = input.text
+    if (!text || input.replyId || typeof domain.crearUrgente !== 'function') return null
+    const state = turn.conversation.state
+    const ahora = this.now()
+    const borrador = state.urgent && ahora - state.urgent.at <= 15 * 60_000 ? state.urgent : null
+    const datos = extraerNecesidad(text, ahora)
+    const leido = leerUrgente(text, { zona: datos.zone ?? null, suelta: Boolean(borrador && !borrador.address) })
+    const inicia = Boolean(datos.profession) && leido.urgente && Boolean(leido.direccion || leido.explicito)
+    if (!borrador && !inicia) return null
+    const conversationId = turn.conversation.conversationId
+    if (borrador && !inicia && /^\s*(?:no|cancelar|cancela|dejalo|dej[aá]|olvidalo|nada)\b[\s.!]*$/iu.test(text)) {
+      await this.actualizarEstado(conversationId, { urgent: null })
+      return [{ type: 'text', text: 'Listo, no envié ningún pedido urgente.' }]
+    }
+    // While the address is being asked, a message that is a street and a number is the address.
+    const direccion = leido.direccion ?? borrador?.address ?? null
+    // ...and once the rest is known, what the person writes is what happened.
+    const eraRespuesta = Boolean(borrador) && !inicia && !leido.direccion && !datos.zone && !datos.profession
+    const pedido = {
+      profession: datos.profession ?? borrador?.profession ?? null,
+      address: direccion,
+      zone: datos.zone ?? borrador?.zone ?? null,
+      problem: leido.problema ?? (eraRespuesta && borrador?.address && borrador.zone && text.trim().length >= 5 ? text.trim().slice(0, 300) : null) ?? borrador?.problem ?? null,
+      at: ahora,
+    }
+    turn.intencion = 'buscar'
+    turn.canal.evento?.({ type: 'routing', intent: 'buscar' })
+    const preguntar = async (texto: string): Promise<MensajeSaliente[]> => {
+      await this.actualizarEstado(conversationId, { urgent: pedido, currentIntent: 'buscar', lowConfidenceCount: 0, suggestion: null, pendingConfirmationId: null })
+      return [{ type: 'text', text: texto }]
+    }
+    if (!pedido.profession) return preguntar('¿Qué servicio urgente necesitás? Por ejemplo: electricista, plomero, gasista.')
+    const servicio = oficio(pedido.profession).label
+    if (!pedido.address && !pedido.zone) return preguntar(`Para enviar tu pedido urgente de ${servicio} necesito la dirección (calle y número) y el barrio.`)
+    if (!pedido.address) return preguntar(`¿Cuál es la dirección (calle y número) en ${pedido.zone}?`)
+    if (!pedido.zone) return preguntar(`¿En qué barrio queda ${pedido.address}?`)
+    if (!pedido.problem) return preguntar('Contame en una línea qué pasó, así el prestador sabe a qué va.')
+    const cuenta = cuentaDeSolicitud(actor)
+    if (!cuenta) {
+      // The request is kept: once the person is identified, any message sends it.
+      await this.actualizarEstado(conversationId, { urgent: pedido, currentIntent: 'buscar', lowConfidenceCount: 0 })
+      return turn.canal.id === 'whatsapp'
+        ? [{ type: 'text', text: `Tengo todo para tu pedido urgente de ${servicio}. Para enviarlo necesito saber quién sos: vinculá este WhatsApp con tu cuenta TUS (Mi perfil → Vincular este WhatsApp) y escribime "listo".` }]
+        : [{ type: 'text', text: `Tengo todo para tu pedido urgente de ${servicio}. Iniciá sesión en TUS y escribime "listo" para enviarlo.` }]
+    }
+    try {
+      const creado = await domain.crearUrgente(cuenta, { profession: pedido.profession, description: pedido.problem, address: pedido.address, zone: pedido.zone, origin: turn.canal.id === 'whatsapp' ? 'whatsapp' : 'web_assistant' })
+      if (creado.ok) {
+        await this.actualizarEstado(conversationId, { urgent: null, currentIntent: 'buscar', lowConfidenceCount: 0, suggestion: null, pendingConfirmationId: null })
+        this.metric('whatsapp.urgent_request', { created: true, state: creado.estado })
+        return [{ type: 'text', text: creado.mensaje }]
+      }
+      this.metric('whatsapp.urgent_request', { created: false, code: creado.code })
+      if (creado.code === 'INVALID_REQUEST') {
+        const campos = creado.fields ?? []
+        if (campos.includes('address')) return preguntar('No pude leer la dirección. Decime la calle y el número, por ejemplo "Av. 3 de Abril 1850".')
+        if (campos.includes('zone')) return preguntar('No reconozco ese barrio. ¿En qué barrio de la ciudad es?')
+        if (campos.includes('description')) return preguntar('Contame en una línea qué pasó, sin teléfonos ni links.')
+      }
+      await this.actualizarEstado(conversationId, { urgent: null })
+      const motivo =
+        creado.code === 'URGENT_ALREADY_OPEN' ? 'Ya tenés un pedido urgente en curso: esperá a que un prestador lo tome o a que venza antes de pedir otro.'
+        : creado.code === 'RATE_LIMITED' ? 'Llegaste al máximo de pedidos por día. Probá más tarde.'
+        : creado.code === 'ACCOUNT_NOT_ALLOWED' ? 'Tu cuenta todavía no está verificada, así que no puedo enviar pedidos urgentes. Verificá tu email o tu celular desde Mi perfil.'
+        : 'No pude enviar tu pedido urgente en este momento. Probá de nuevo en unos minutos.'
+      return [{ type: 'text', text: motivo }]
+    } catch {
+      return [{ type: 'text', text: 'No pude enviar tu pedido urgente en este momento. Probá de nuevo en unos minutos.' }]
     }
   }
 

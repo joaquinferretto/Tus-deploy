@@ -154,6 +154,27 @@ export class ServicioSoporteWhatsapp {
     })
   }
 
+  // What WhatsApp reported for the notices sent under some correlations (the offers of an urgent
+  // request): one row per notice, with the account its number is linked to and the number masked.
+  async entregasPorCorrelacion(correlaciones: readonly string[]): Promise<{ correlationId: string; cuentaId: string | null; waIdMasked: string | null; status: string; at: string; error: string | null }[]> {
+    if (correlaciones.length === 0) return []
+    return this.transaction.ejecutar(async (repositories) => {
+      const mensajes = (await repositories.mensajes.porCorrelaciones(correlaciones)).filter((mensaje) => mensaje.direction === 'outbound' && mensaje.type !== 'image')
+      const contactos = new Map((await repositories.contactos.buscarVarios([...new Set(mensajes.map((mensaje) => mensaje.contactId))])).map((contacto) => [contacto.contactId, contacto]))
+      return mensajes.map((mensaje) => {
+        const contacto = contactos.get(mensaje.contactId)
+        return {
+          correlationId: mensaje.correlationId,
+          cuentaId: contacto?.linkedAccountId ?? null,
+          waIdMasked: contacto ? enmascararWaId(contacto.waId) : null,
+          status: mensaje.status,
+          at: mensaje.statusAt ?? mensaje.createdAt,
+          error: mensaje.status === 'failed' && typeof mensaje.metadata['errorCode'] === 'string' ? mensaje.metadata['errorCode'] : null,
+        }
+      })
+    })
+  }
+
   private async leerDetalle(conversationId: string, context: ContextoOperador) {
     return this.transaction.ejecutar(async (repositories) => {
       const conversation = await this.requerir(repositories, conversationId)

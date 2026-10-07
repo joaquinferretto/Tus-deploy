@@ -16,7 +16,8 @@ export const ASISTENTE_TURNOS = `
   const fakeWa = new FakeWhatsappProvider()
   const cuentas = new Map()
   const resolver = { contexto: async (accountId, tenantId, correlationId) => { const cuenta = cuentas.get(accountId); return cuenta && cuenta.tenantId === tenantId ? { subjectId: cuenta.id, sessionId: 'wa:' + cuenta.id, tenantId, correlationId, roles: ['owner'], permissions: ['tus:checkout', 'tus:read', 'tus:marketplace:read'] } : null } }
-  const dominio = new DominioAsistenteTus({ work, serviceFinance: fin }, () => Date.now(), { directorio: null, solicitudes: null, turnos })
+  const compartidos = { directorio: null, solicitudes: null, turnos }
+  const dominio = new DominioAsistenteTus({ work, serviceFinance: fin }, () => Date.now(), compartidos)
   // Who is a provider: the real rule reads the marketplace store (an approved merchant of that
   // tenant); this scenario has no marketplace, so it reads the same fact from its table.
   dominio.esPrestador = async (context) => (await prisma.prestador.count({ where: { tenantId: context.tenantId, estado: 'approved' } })) > 0

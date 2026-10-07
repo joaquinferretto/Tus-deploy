@@ -6,6 +6,7 @@ import type { CandidatoPrestador } from '../directorio/modelo.ts'
 import type { ServicioDirectorio } from '../directorio/servicio.ts'
 import type { ServicioSolicitudes } from '../solicitudes/servicio.ts'
 import type { ServicioTurnos, SolicitudTurnoParaAdmin } from '../calendar/turnos-service.ts'
+import type { ServicioUrgentes } from '../urgentes/servicio.ts'
 import { etiquetaEstadoTurno } from '@factory/contracts'
 import { senaDePrecio } from '../calendar/turnos-sena.ts'
 
@@ -193,6 +194,13 @@ export interface PuertoDominioAsistente {
   // TURNOS-WHATSAPP-01. The provider answers a request from WhatsApp: the same use case as the
   // panel, with the provider taken from the account linked to the number.
   responderSolicitudTurno?(context: TusAuthenticatedTenantContext, input: { reservaId: string; aceptar: boolean }): Promise<RespuestaSolicitudTurno>
+  // SERVICIO-URGENTE-01. The same use cases as the Web: create and broadcast an urgent request,
+  // the answer of a provider it was offered to, and the assigned provider giving it back. Who
+  // acts is the account of the context (linked to the number), never a name or a button's text.
+  crearUrgente?(context: TusAuthenticatedTenantContext, input: { profession: string; description: string; address: string; zone: string; origin: 'whatsapp' | 'web_assistant' }): Promise<{ ok: true; mensaje: string; solicitudId: string; estado: string } | { ok: false; code: string; fields?: string[] }>
+  responderUrgente?(context: TusAuthenticatedTenantContext, input: { solicitudId: string; asistir: boolean; motivo?: string | null; correlationId?: string }): Promise<{ estado: string; mensaje: string }>
+  urgenteAsignada?(context: TusAuthenticatedTenantContext): Promise<{ solicitudId: string; servicio: string; aceptadaEn: number } | null>
+  renunciarUrgente?(context: TusAuthenticatedTenantContext, input: { solicitudId: string; motivo: string | null; correlationId?: string }): Promise<{ estado: string; mensaje: string }>
   // ADMIN-WHATSAPP-AVISOS-01. The requests Admin looks at (provider, account, state, answer).
   solicitudesTurnoParaAdmin?(reservaIds: readonly string[]): Promise<SolicitudTurnoParaAdmin[]>
   // Requests this provider still has to answer (nearest first).
@@ -258,6 +266,7 @@ export interface ServiciosCompartidosAsistente {
   directorio: ServicioDirectorio
   solicitudes: ServicioSolicitudes
   turnos?: ServicioTurnos
+  urgentes?: ServicioUrgentes
 }
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -586,6 +595,32 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     const pedido = { prestadorTenantId: context.tenantId, reservaId: input.reservaId, actorId: context.subjectId, canal: 'whatsapp' as const }
     const turno = input.aceptar ? await this.compartidos.turnos.aceptarSolicitud(pedido) : await this.compartidos.turnos.rechazarSolicitud(pedido)
     return { estado: turno.estado, clienteNombre: turno.clienteNombre ?? 'el cliente', servicio: turno.tarifaNombre ?? turno.oficioNombre ?? 'el servicio', inicio: turno.inicio, sena: turno.sena?.monto ?? null }
+  }
+
+  async crearUrgente(context: TusAuthenticatedTenantContext, input: { profession: string; description: string; address: string; zone: string; origin: 'whatsapp' | 'web_assistant' }) {
+    if (!this.compartidos?.urgentes) return { ok: false as const, code: 'UNAVAILABLE' }
+    const resultado = await this.compartidos.urgentes.crear(context.subjectId, { category: input.profession, description: input.description, address: input.address, zone: input.zone }, { origen: input.origin })
+    if (!resultado.ok) return { ok: false as const, code: resultado.code, ...(resultado.fields ? { fields: resultado.fields as string[] } : {}) }
+    return { ok: true as const, mensaje: resultado.mensaje, solicitudId: resultado.solicitud.id, estado: resultado.solicitud.status }
+  }
+
+  async responderUrgente(context: TusAuthenticatedTenantContext, input: { solicitudId: string; asistir: boolean; motivo?: string | null; correlationId?: string }) {
+    if (!this.compartidos?.urgentes) throw Object.assign(new Error('urgent requests unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    const actor = { tenantId: context.tenantId, cuentaId: context.subjectId }
+    const respuesta = input.asistir
+      ? await this.compartidos.urgentes.asistir(actor, input.solicitudId, 'whatsapp', input.correlationId)
+      : await this.compartidos.urgentes.noPuede(actor, input.solicitudId, 'whatsapp', { motivo: input.motivo ?? null, ...(input.correlationId ? { correlationId: input.correlationId } : {}) })
+    return { estado: respuesta.estado, mensaje: respuesta.mensaje }
+  }
+
+  async urgenteAsignada(context: TusAuthenticatedTenantContext) {
+    return this.compartidos?.urgentes ? this.compartidos.urgentes.asignadaA(context.tenantId) : null
+  }
+
+  async renunciarUrgente(context: TusAuthenticatedTenantContext, input: { solicitudId: string; motivo: string | null; correlationId?: string }) {
+    if (!this.compartidos?.urgentes) throw Object.assign(new Error('urgent requests unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    const respuesta = await this.compartidos.urgentes.renunciar({ tenantId: context.tenantId, cuentaId: context.subjectId }, input.solicitudId, 'whatsapp', { motivo: input.motivo, ...(input.correlationId ? { correlationId: input.correlationId } : {}) })
+    return { estado: respuesta.estado, mensaje: respuesta.mensaje }
   }
 
   async solicitudesTurnoParaAdmin(reservaIds: readonly string[]): Promise<SolicitudTurnoParaAdmin[]> {
