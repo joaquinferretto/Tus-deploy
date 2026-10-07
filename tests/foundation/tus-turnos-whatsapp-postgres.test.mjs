@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
 import { turnosPagosSetup } from './fixtures/turnos-pagos-pg.mjs'
@@ -365,4 +366,56 @@ test('TURNOS WhatsApp PostgreSQL: rejecting from WhatsApp frees the time, tells 
   assert.equal(r.sinPlantillaAprobada, 0, 'a template that Meta did not approve is never sent')
   assert.deepEqual(r.plantilla, { tipo: 'template', nombre: 'turno_solicitud_recibida', parametros: 6, botones: ['quick_reply:turno:aceptar', 'quick_reply:turno:rechazar'] })
   assert.deepEqual(r.respuestaPlantilla, [true, 'awaiting_payment'])
+})
+
+test('TURNOS cobro de señas PostgreSQL: a provider WITHOUT its own Mercado Pago is charged through the platform (its share becomes its balance); what blocks an acceptance is told apart — identity not verified vs nobody able to collect — and the provider is never told it must link its own account; the administration reads the same diagnosis', { skip, timeout: 600_000 }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const sin = await prestador('sin', 'Sin Cuenta ' + run, [['Reparación', 30000]])
+      const con = await prestador('con', 'Con Cuenta ' + run, [['Reparación', 30000]])
+      await conectarMercadoPago(con, '8811')
+      const ana = await cliente('ana')
+      ${ASISTENTE}
+      const cuentaSin = await cuentaDe(sin, 'sin')
+      const waSin = await vincular(cuentaSin)
+      // The diagnosis the administration reads, with nothing attempted.
+      const cobros = await turnos.cobroDeSenas([sin.tenantId, con.tenantId])
+      out.diagnostico = { sin: cobros.get(sin.tenantId), con: cobros.get(con.tenantId) }
+      // No own account: accepting works, the platform collects, the share becomes balance.
+      const t = await turnoConCheckout(sin, ana, 0, '10:00', 'Reparación')
+      mpPayment('9301', t.preferencia)
+      await ingerir(notification('9301', { userId: '555', notificationId: run + '-c1' }))
+      out.porPlataforma = { estado: await estadoTurno(t), cobrador: t.preferencia.token === PLATFORM_TOKEN || String(mp.payments.get('9301').collector_id) === '555', movimientos: await filas(sin), saldo: (await saldo(sin)).disponible }
+      // Identity not verified: refused with ITS reason, by the panel and from WhatsApp.
+      verificados.delete(sin.tenantId)
+      out.diagnosticoSinIdentidad = (await turnos.cobroDeSenas([sin.tenantId])).get(sin.tenantId)
+      const pedido = await turnos.solicitarTurno({ prestadorId: sin.perfilId, oficioId: oficio.id, inicio: a(1, '10:00'), tarifaId: sin.tarifas['Reparación'], clienteId: ana.id, clienteTenantId: ana.tenantId })
+      const error = await turnos.aceptarSolicitud({ prestadorTenantId: sin.tenantId, reservaId: pedido.id }).then(() => null, (e) => ({ code: e.code, message: e.message, status: e.statusCode ?? e.status }))
+      const porWhatsapp = await decir(waSin, 'Aceptar', boton('aceptar', pedido.id))
+      out.sinIdentidad = { code: error?.code, status: error?.status, diceIdentidad: /verificar tu identidad/u.test(error?.message ?? ''), noExigeMercadoPago: /No hace falta que conectes/u.test(error?.message ?? ''), estado: (await fila(pedido.id)).estado, whatsapp: porWhatsapp.join(' ').includes('verificar tu identidad') }
+      verificados.add(sin.tenantId)
+      out.vuelveAAceptar = (await turnos.aceptarSolicitud({ prestadorTenantId: sin.tenantId, reservaId: pedido.id })).estado
+      console.log(JSON.stringify(out))
+    } finally { await cerrar() }
+  `)
+  assert.deepEqual(r.diagnostico.sin, { disponible: true, motivo: null, modo: 'plataforma' }, 'no own account: collected by the platform')
+  assert.deepEqual(r.diagnostico.con, { disponible: true, motivo: null, modo: 'split' }, 'own account linked: collected with it')
+  assert.equal(r.porPlataforma.estado, 'confirmed')
+  assert.equal(r.porPlataforma.cobrador, true, 'the platform account collected')
+  assert.ok(r.porPlataforma.movimientos.some(([tipo]) => tipo === 'earning_credit'), `the provider's share is an earning (${JSON.stringify(r.porPlataforma.movimientos)})`)
+  assert.ok(Number(r.porPlataforma.saldo) > 0, `the provider has balance (${r.porPlataforma.saldo})`)
+  assert.deepEqual(r.diagnosticoSinIdentidad, { disponible: false, motivo: 'PROVIDER_IDENTITY_NOT_VERIFIED', modo: null })
+  assert.deepEqual(r.sinIdentidad, { code: 'PROVIDER_IDENTITY_REQUIRED', status: 409, diceIdentidad: true, noExigeMercadoPago: true, estado: 'pending', whatsapp: true }, 'identity is what is missing, and the provider is told exactly that')
+  assert.equal(r.vuelveAAceptar, 'awaiting_payment')
+})
+
+test('TURNOS cobro de señas: every reason has its own wording for the administration and for the provider', () => {
+  const contratos = readFileSync(new URL('../../packages/contracts/src/tus-turnos.ts', import.meta.url), 'utf8')
+  const admin = readFileSync(new URL('../../apps/web/src/lib/tus-admin-api.ts', import.meta.url), 'utf8')
+  assert.match(contratos, /CODIGO_PRESTADOR_SIN_IDENTIDAD = 'PROVIDER_IDENTITY_REQUIRED'/u)
+  assert.doesNotMatch(contratos, /primero tenés que conectar tu cuenta de Mercado Pago/u, 'a provider is never told it must link its own account')
+  for (const motivo of ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PRODUCTION_NOT_AUTHORIZED', 'PROVIDER_IDENTITY_NOT_VERIFIED', 'PROVIDER_ACCOUNT_NOT_CONNECTED']) assert.ok(admin.includes(motivo), motivo)
+  assert.match(admin, /Por plataforma/u)
+  assert.doesNotMatch(admin, /ACCESS_TOKEN\s*[:=]\s*['"][A-Za-z0-9_-]{10,}/u, 'names of settings only, never a value')
 })

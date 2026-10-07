@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { neighbourhoodNames, useCatalog } from '@/features/catalog/use-catalog'
 import { ServicePicker } from '@/features/catalog/service-picker'
 import { LocationEditor } from '@/features/provider/provider-location'
-import { AdminApiError, DESTINO_WHATSAPP, PROBLEMA_CUENTA, adminApi, adminErrorMessage, formatFecha, type AdminPrestadorDetalle, type CambiosPrestador } from '@/lib/tus-admin-api'
+import { AdminApiError, DESTINO_WHATSAPP, PROBLEMA_CUENTA, textoCobroSena, adminApi, adminErrorMessage, formatFecha, type AdminPrestadorDetalle, type CambiosPrestador } from '@/lib/tus-admin-api'
 import { AdminConfirm, useConfirmacion } from './admin-confirm'
 import { AdminPageHeader } from './admin-layout'
 import styles from './admin.module.css'
@@ -157,6 +157,16 @@ export function AdminPrestadorDetallePage({ id }: { id: string }): React.ReactNo
           </p>
         )}
       </section>
+
+      {detalle.cobroSena !== undefined ? (() => {
+        const cobro = textoCobroSena(detalle.cobroSena)
+        return (
+          <section aria-labelledby="prestador-cobro" className={styles.card} data-cobro-sena={detalle.cobroSena ? (detalle.cobroSena.disponible ? detalle.cobroSena.modo ?? 'disponible' : detalle.cobroSena.motivo ?? 'no') : ''}>
+            <h2 id="prestador-cobro">Cobro de señas</h2>
+            <p><span className={`${styles.badge} ${cobro.tono === 'ok' ? styles.badgeOk : cobro.tono === 'warn' ? styles.badgeWarn : styles.badgeOff}`}>{cobro.texto}</span> {cobro.detalle}</p>
+          </section>
+        )
+      })() : null}
 
       <form aria-label="Perfil del prestador" className={`${styles.card} ${styles.form}`} onSubmit={guardar}>
         <h2>Perfil profesional</h2>

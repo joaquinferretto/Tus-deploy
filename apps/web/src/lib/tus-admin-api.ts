@@ -113,6 +113,26 @@ export interface AdminCuentaPrestador {
   cuentasEnTenant: number
 }
 
+// Whether the deposit of a provider's turnos can be charged, and why not.
+export interface AdminCobroSena { disponible: boolean; motivo: string | null; modo: 'plataforma' | 'split' | null }
+export function textoCobroSena(cobro: AdminCobroSena | null | undefined): { texto: string; detalle: string; tono: 'ok' | 'warn' | 'danger' } {
+  if (!cobro) return { texto: 'Sin dato', detalle: 'No se pudo consultar el estado de cobro.', tono: 'warn' }
+  if (cobro.disponible) return cobro.modo === 'split'
+    ? { texto: 'Con su cuenta', detalle: 'El prestador conectó su Mercado Pago: la seña se cobra con su cuenta.', tono: 'ok' }
+    : { texto: 'Por plataforma', detalle: 'TUS cobra la seña con su cuenta y la parte del prestador queda en su saldo. No necesita conectar Mercado Pago.', tono: 'ok' }
+  const motivos: Record<string, [string, string]> = {
+    PAYMENTS_DISABLED: ['Pagos apagados', 'El interruptor de pagos de la plataforma está apagado: los turnos se confirman sin seña.'],
+    PROVIDER_NOT_CONFIGURED: ['Mercado Pago sin configurar', 'Faltan las credenciales de Mercado Pago de TUS en el servidor.'],
+    PRODUCTION_NOT_AUTHORIZED: ['Falta habilitación', 'Falta la habilitación productiva de pagos de servicios: no se pueden aceptar turnos con seña.'],
+    PROVIDER_IDENTITY_NOT_VERIFIED: ['Falta identidad', 'El prestador no tiene la identidad verificada: no se le puede cobrar una seña.'],
+    PROVIDER_ACCOUNT_NOT_CONNECTED: ['Falta cuenta de TUS', 'TUS no tiene configurada su cuenta de cobro (MERCADO_PAGO_PLATFORM_ACCESS_TOKEN y MERCADO_PAGO_PLATFORM_USER_ID) y el prestador no conectó la suya.'],
+    PSP_FEE_POLICY_UNDECIDED: ['Comisión sin definir', 'Falta definir quién paga la comisión de Mercado Pago en la política de comisiones.'],
+    PSP_FEE_POLICY_UNSUPPORTED: ['Comisión no soportada', 'La política de comisiones actual no se puede cobrar.'],
+  }
+  const [texto, detalle] = motivos[cobro.motivo ?? ''] ?? ['No disponible', `No se puede cobrar la seña (${cobro.motivo ?? 'sin motivo'}).`]
+  return { texto, detalle, tono: cobro.motivo === 'PAYMENTS_DISABLED' ? 'warn' : 'danger' }
+}
+
 // Why a provider shows no account (reconciled by hand; TUS never picks one).
 export interface AdminProblemaCuentaPrestador { motivo: 'sin_vincular' | 'ambiguo' | 'cuenta_invalida'; cuentasEnTenant: number }
 export const PROBLEMA_CUENTA: Record<AdminProblemaCuentaPrestador['motivo'], string> = {
@@ -133,6 +153,7 @@ export const DESTINO_WHATSAPP: Record<DestinoWhatsappPrestador, { texto: string;
 export interface AdminPrestadorDetalle {
   // Present when the API resolves the account behind the profile.
   cuentaAsociada?: AdminCuentaPrestador | null
+  cobroSena?: AdminCobroSena | null
   cuentaProblema?: AdminProblemaCuentaPrestador | null
   tenantId?: string
   perfil: {
@@ -166,6 +187,7 @@ export interface AdminPage<T> {
 }
 
 export interface AdminPrestador {
+  cobroSena?: AdminCobroSena | null
   cuenta?: AdminCuentaPrestador | null
   cuentaProblema?: AdminProblemaCuentaPrestador | null
   whatsappDestino?: DestinoWhatsappPrestador

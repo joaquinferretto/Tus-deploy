@@ -145,6 +145,8 @@ export interface DependenciasAdmin {
   // Provider edition (directorio/admin.ts crearEdicionPrestadorAdmin).
   // PRESTADOR-CUENTA-01: the account behind each provider tenant (phone, WhatsApp, identity).
   cuentasDePrestadores?: (tenantIds: readonly string[]) => Promise<CuentasPrestadores>
+  // Whether the deposit of each provider can be charged, and why not (never a secret).
+  cobroDeSenas?: (tenantIds: readonly string[]) => Promise<Map<string, { disponible: boolean; motivo: string | null; modo: 'plataforma' | 'split' | null }>>
   prestadorAdmin?: {
     leer(id: string): Promise<{ perfil: Record<string, unknown>; tenantId: string; prestador: { estado: string; aprobado: boolean } | null } | null>
     guardar(admin: TusAuthenticatedTenantContext, id: string, body: Record<string, unknown>): Promise<{ status: number; code?: string; fields?: string[] } & Record<string, unknown>>
@@ -380,12 +382,14 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
       deps.directorio.ubicacionDePerfil(id),
       deps.cuentasDePrestadores ? deps.cuentasDePrestadores([leido.tenantId]) : Promise.resolve(null),
     ])
+    const cobros = deps.cobroDeSenas ? await deps.cobroDeSenas([leido.tenantId]).catch(() => null) : null
     return {
       perfil: leido.perfil,
       prestador: leido.prestador,
       cuenta: cuenta ? { id: cuenta.id, nombre: cuenta.nombre, email: cuenta.email, estado: cuenta.estado, verificado: cuenta.verificado, telefonoVerificado: cuenta.telefono?.verificado ?? false, telefono: cuenta.telefono?.numero ?? null } : null,
       ubicacion,
       // The account behind the profile, with the evidence of its phone, WhatsApp and identity.
+      ...(cobros ? { cobroSena: cobros.get(leido.tenantId) ?? null } : {}),
       ...(asociadas ? { cuentaAsociada: asociadas.cuentas.get(leido.tenantId) ?? null, cuentaProblema: asociadas.problemas.get(leido.tenantId) ?? null, tenantId: leido.tenantId } : {}),
     }
   }
@@ -416,8 +420,9 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     // PRESTADOR-CUENTA-01: the account behind each profile of the page (one batch of queries).
     const conCuenta = async <T extends { tenantId: string }>(items: T[]) => {
       const leidas = deps.cuentasDePrestadores ? await deps.cuentasDePrestadores(items.map((item) => item.tenantId)) : null
-      if (!leidas) return items
-      return items.map((item) => ({ ...item, cuenta: leidas.cuentas.get(item.tenantId) ?? null, cuentaProblema: leidas.problemas.get(item.tenantId) ?? null, whatsappDestino: leidas.cuentas.get(item.tenantId)?.whatsapp.destino ?? 'sin_cuenta' }))
+      const cobros = deps.cobroDeSenas ? await deps.cobroDeSenas(items.map((item) => item.tenantId)).catch(() => null) : null
+      if (!leidas) return items.map((item) => ({ ...item, ...(cobros ? { cobroSena: cobros.get(item.tenantId) ?? null } : {}) }))
+      return items.map((item) => ({ ...item, ...(cobros ? { cobroSena: cobros.get(item.tenantId) ?? null } : {}), cuenta: leidas.cuentas.get(item.tenantId) ?? null, cuentaProblema: leidas.problemas.get(item.tenantId) ?? null, whatsappDestino: leidas.cuentas.get(item.tenantId)?.whatsapp.destino ?? 'sin_cuenta' }))
     }
     const resultado = await deps.directorio.paginaParaAdmin({
       pagina,
