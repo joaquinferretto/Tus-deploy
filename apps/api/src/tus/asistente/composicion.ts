@@ -334,7 +334,7 @@ export function crearModuloWhatsapp(input: {
     whatsapp,
     ingreso: new ServicioIngresoWhatsapp(input.transaction, limits.ingreso, now, input.log, input.verificadorTelefono ?? null),
     vinculacion,
-    soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now),
+    soporte: new ServicioSoporteWhatsapp(input.transaction, whatsapp, vinculacion, now, async (ids) => (await domain.solicitudesTurnoParaAdmin?.(ids)) ?? []),
     plantillas: WhatsappTemplateService.desdeEnv(env),
     orquestador,
     // Deletion (message, conversation, account) and retention of the memory.

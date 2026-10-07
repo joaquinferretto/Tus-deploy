@@ -2795,6 +2795,7 @@ model MensajeConversacionWhatsapp {
 
   @@index([conversacionId, fechaCreacion], map: "ix_mensajes_conversacion_whatsapp_historial")
   @@index([conversacionId, secuencia], map: "ix_mensajes_conversacion_whatsapp_secuencia")
+  @@index([correlacionId], map: "ix_mensajes_conversacion_whatsapp_correlacion")
   @@map("mensajes_conversacion_whatsapp")
 }
 
@@ -2917,6 +2918,7 @@ model AuditoriaAsistente {
   fechaCreacion  DateTime @map("fecha_creacion")
 
   @@index([conversacionId, fechaCreacion], map: "ix_auditoria_asistente_conversacion")
+  @@index([correlacionId, accion], map: "ix_auditoria_asistente_correlacion")
   @@map("auditoria_asistente")
 }
 

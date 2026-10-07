@@ -18,6 +18,12 @@ import { fechaLarga, horaCorta } from './solicitud-turno.ts'
 // it by name + document), and only inside Meta's customer service window (a free-form message
 // more than 24 hours after the person's last one needs an approved template, which TUS does not
 // have): outside it the email and "Mis turnos" carry the notice.
+// ADMIN-WHATSAPP-AVISOS-01. The correlation every message of the notice of one request carries,
+// and why a notice was not sent at all.
+export const correlacionAvisoSolicitud = (reservaId: string): string => `turno-solicitado:${reservaId}`
+export const ACCION_AVISO_NO_ENVIADO = 'whatsapp.appointment_notice_not_sent'
+export type MotivoAvisoNoEnviado = 'provider_without_account' | 'no_whatsapp_linked' | 'template_required' | 'conversation_with_operator'
+
 export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
   constructor(
     private readonly transaction: PuertoTransaccionAsistente,
@@ -33,8 +39,8 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
   // window, an interactive message and the pictures; outside it, the approved template (if TUS
   // has it) with the same two answers as quick replies.
   async solicitudRecibida(aviso: AvisoSolicitudTurno): Promise<void> {
-    if (!aviso.prestadorCuentaId) return
-    const { abiertos, cerrados } = await this.destinos(aviso.prestadorCuentaId)
+    if (!aviso.prestadorCuentaId) return this.noEnviado(aviso.reservaId, 'provider_without_account')
+    const { abiertos, cerrados, vinculados } = await this.destinos(aviso.prestadorCuentaId)
     const botones = [
       { id: idRespuestaTurno('aceptar', aviso.reservaId), title: 'Aceptar' },
       { id: idRespuestaTurno('rechazar', aviso.reservaId), title: 'Rechazar' },
@@ -44,10 +50,15 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
       for (const [indice, imagen] of (aviso.imagenes ?? []).slice(0, 2).entries())
         await this.enviar(destino, { type: 'image', text: `Foto ${indice + 1} de la solicitud de ${aviso.clienteNombre}`, mimeType: imagen.tipoMime, bytes: imagen.contenido }, `turno-solicitado-foto-${indice}:${aviso.reservaId}`)
     }
-    if (cerrados.length === 0) return
+    if (cerrados.length === 0) {
+      // No number at all, or every number is in a conversation an operator took.
+      if (abiertos.length === 0) await this.noEnviado(aviso.reservaId, vinculados === 0 ? 'no_whatsapp_linked' : 'conversation_with_operator')
+      return
+    }
     if (!this.plantillas?.aprobada(PLANTILLA_SOLICITUD_TURNO)) {
       // Nothing can be written first to these numbers: the email and the panel carry the notice.
       this.metric?.('whatsapp.appointment_notice', { sent: false, type: 'template', reason: 'template_not_approved' })
+      if (abiertos.length === 0) await this.noEnviado(aviso.reservaId, 'template_required')
       return
     }
     const plantilla = this.plantillas.construir(
@@ -55,10 +66,33 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
       { cliente: aviso.clienteNombre.slice(0, 60), servicio: aviso.servicio.slice(0, 60), fecha: fechaLarga(aviso.inicio), hora: horaCorta(aviso.inicio), precio: aviso.precio ? formatearPesos(aviso.precio) : 'a convenir', sena: aviso.sena ? formatearPesos(aviso.sena) : 'sin seña' },
       botones.map((boton) => boton.id)
     )
+    let enviados = abiertos.length
     for (const contacto of cerrados) {
       const conversacion = await this.conversacionDe(contacto)
-      if (conversacion) await this.enviar({ conversacion, contacto }, plantilla, `turno-solicitado:${aviso.reservaId}`)
+      if (!conversacion) continue
+      await this.enviar({ conversacion, contacto }, plantilla, `turno-solicitado:${aviso.reservaId}`)
+      enviados += 1
     }
+    if (enviados === 0) await this.noEnviado(aviso.reservaId, 'conversation_with_operator')
+  }
+
+  // ADMIN-WHATSAPP-AVISOS-01. A notice that was NOT sent leaves no message, so the reason is
+  // recorded (never a phone number): Admin tells "nothing was sent" from "it is on its way".
+  // What WAS sent needs nothing here: its message carries the status Meta reports.
+  private async noEnviado(reservaId: string, reason: MotivoAvisoNoEnviado): Promise<void> {
+    this.metric?.('whatsapp.appointment_notice', { sent: false, reason })
+    await this.transaction.ejecutar((repositories) =>
+      repositories.auditoria.registrar({
+        eventId: `auditoria-asistente-${randomUUID()}`,
+        action: ACCION_AVISO_NO_ENVIADO,
+        contactId: null,
+        conversationId: null,
+        actorId: 'assistant',
+        correlationId: correlacionAvisoSolicitud(reservaId),
+        metadata: { reservaId, reason },
+        createdAt: new Date(this.now()).toISOString(),
+      })
+    )
   }
 
   // A picture added after the provider was told: it follows, inside the window only.
@@ -90,18 +124,20 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
 
   // The WhatsApp numbers of an account: the ones that can be written to now (an active
   // conversation in bot mode inside the 24 hour window) and the linked ones that cannot.
-  private async destinos(cuentaId: string): Promise<{ abiertos: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }[]; cerrados: ContactoWhatsapp[] }> {
+  private async destinos(cuentaId: string): Promise<{ abiertos: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }[]; cerrados: ContactoWhatsapp[]; vinculados: number }> {
     return this.transaction.ejecutar(async (repositories) => {
       const abiertos: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }[] = []
       const cerrados: ContactoWhatsapp[] = []
+      let vinculados = 0
       for (const contacto of await repositories.contactos.vinculadosA(cuentaId)) {
         if (canalDe(contacto) !== 'whatsapp') continue
+        vinculados += 1
         const conversacion = await repositories.conversaciones.activaDeContacto(contacto.contactId)
         if (conversacion && canalDe(conversacion) === 'whatsapp' && conversacion.mode === 'bot' && ventanaServicioAbierta(conversacion.lastInboundAt, this.now())) abiertos.push({ conversacion, contacto })
         // A conversation an operator took is left alone; any other closed window needs a template.
         else if (!conversacion || conversacion.mode === 'bot') cerrados.push(contacto)
       }
-      return { abiertos, cerrados }
+      return { abiertos, cerrados, vinculados }
     })
   }
 

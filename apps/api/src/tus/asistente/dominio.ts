@@ -5,7 +5,7 @@ import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import type { CandidatoPrestador } from '../directorio/modelo.ts'
 import type { ServicioDirectorio } from '../directorio/servicio.ts'
 import type { ServicioSolicitudes } from '../solicitudes/servicio.ts'
-import type { ServicioTurnos } from '../calendar/turnos-service.ts'
+import type { ServicioTurnos, SolicitudTurnoParaAdmin } from '../calendar/turnos-service.ts'
 import { etiquetaEstadoTurno } from '@factory/contracts'
 import { senaDePrecio } from '../calendar/turnos-sena.ts'
 
@@ -193,6 +193,8 @@ export interface PuertoDominioAsistente {
   // TURNOS-WHATSAPP-01. The provider answers a request from WhatsApp: the same use case as the
   // panel, with the provider taken from the account linked to the number.
   responderSolicitudTurno?(context: TusAuthenticatedTenantContext, input: { reservaId: string; aceptar: boolean }): Promise<RespuestaSolicitudTurno>
+  // ADMIN-WHATSAPP-AVISOS-01. The requests Admin looks at (provider, account, state, answer).
+  solicitudesTurnoParaAdmin?(reservaIds: readonly string[]): Promise<SolicitudTurnoParaAdmin[]>
   // Requests this provider still has to answer (nearest first).
   solicitudesTurnoPorResponder?(context: TusAuthenticatedTenantContext): Promise<Array<{ id: string; inicio: string }>>
   // The client's own request that still waits for an answer, if it has exactly one way to tell.
@@ -584,6 +586,10 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     const pedido = { prestadorTenantId: context.tenantId, reservaId: input.reservaId, actorId: context.subjectId, canal: 'whatsapp' as const }
     const turno = input.aceptar ? await this.compartidos.turnos.aceptarSolicitud(pedido) : await this.compartidos.turnos.rechazarSolicitud(pedido)
     return { estado: turno.estado, clienteNombre: turno.clienteNombre ?? 'el cliente', servicio: turno.tarifaNombre ?? turno.oficioNombre ?? 'el servicio', inicio: turno.inicio, sena: turno.sena?.monto ?? null }
+  }
+
+  async solicitudesTurnoParaAdmin(reservaIds: readonly string[]): Promise<SolicitudTurnoParaAdmin[]> {
+    return this.compartidos?.turnos ? this.compartidos.turnos.solicitudesParaAdmin(reservaIds) : []
   }
 
   async solicitudesTurnoPorResponder(context: TusAuthenticatedTenantContext): Promise<Array<{ id: string; inicio: string }>> {

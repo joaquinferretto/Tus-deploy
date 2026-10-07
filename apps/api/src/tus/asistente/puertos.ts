@@ -72,6 +72,9 @@ export interface RepositoriosAsistente {
     contar(conversationId: string): Promise<number>
     // `types`: only inbound messages of those types (media limits); absent: every type.
     contarEntrantesDesde(contactId: string, since: string, types?: readonly string[]): Promise<number>
+    // ADMIN-WHATSAPP-AVISOS-01. The messages sent for those correlations (the notice of a turno
+    // request to its provider), oldest first.
+    porCorrelaciones(correlationIds: readonly string[]): Promise<MensajeConversacion[]>
   }
   cola: {
     // One queued job per conversation: a new inbound message only pushes `availableAt`
@@ -93,6 +96,8 @@ export interface RepositoriosAsistente {
     buscar(confirmationId: string): Promise<ConfirmacionAsistente | null>
     // Conditional transition (idempotency of the decision).
     actualizar(value: ConfirmacionAsistente, expectedStatus: ConfirmacionAsistente['status']): Promise<boolean>
+    // What a conversation really did with one tool (executed confirmations), oldest first.
+    ejecutadasDe(conversationId: string, tool: string): Promise<ConfirmacionAsistente[]>
   }
   resumenes: {
     // The newest version, or null.
@@ -108,6 +113,8 @@ export interface RepositoriosAsistente {
     registrar(event: EventoAuditoriaAsistente): Promise<void>
     // Events of one action in a conversation since a moment (rate limits decided by the backend).
     contarDesde(input: { action: string; conversationId: string; since: string }): Promise<number>
+    // The events of one action recorded under those correlations, oldest first.
+    porCorrelaciones(input: { action: string; correlationIds: readonly string[] }): Promise<EventoAuditoriaAsistente[]>
   }
   consentimientosWhatsapp: {
     buscar(tenantId: string, recipientType: ConsentimientoWhatsApp['recipientType'], recipientId: string): Promise<ConsentimientoWhatsApp | null>

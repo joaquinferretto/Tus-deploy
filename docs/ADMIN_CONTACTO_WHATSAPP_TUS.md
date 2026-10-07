@@ -129,3 +129,40 @@ y WhatsApp; la ficha separa **Cuenta asociada** de **Perfil profesional**.
 - `tests/foundation/tus-admin-identidad.test.mjs`: contrato HTTP de la ruta.
 - `tests/foundation/tus-telefono-http-web.test.mjs`: la tarjeta.
 - `scripts/dev/admin-usuario-real-smoke.mjs`: navegador contra API y PostgreSQL reales, 1280 y 390.
+
+## Aviso al prestador (ADMIN-WHATSAPP-AVISOS-01)
+
+Admin → WhatsApp responde "¿TUS le avisó al prestador?" sin mirar logs ni Meta. Al abrir la
+conversación de un cliente, cada solicitud de turno hecha desde esa conversación muestra un bloque
+con el prestador, su WhatsApp enmascarado, el estado real del aviso, la hora y, si respondió,
+"Aceptó" o "Rechazó". "Ver mensajes" abre la conversación del prestador con el mensaje tal como
+salió y su estado.
+
+Fuentes (no hay otra fuente de verdad):
+
+| Qué se muestra | De dónde sale |
+| --- | --- |
+| Enviado / Entregado / Leído / Falló | El mensaje del aviso en la conversación del prestador (`mensajes_conversacion_whatsapp`, correlación `turno-solicitado:<reserva>`) con el estado que informa Meta por webhook |
+| Se intentó enviar, sin confirmación | El mismo mensaje en `pending_send` / `unknown` |
+| No enviado + motivo | `auditoria_asistente`, acción `whatsapp.appointment_notice_not_sent` (sin teléfonos) |
+| Aceptó / Rechazó | Estado del turno + auditoría `turnos.solicitud_respondida` |
+| Qué solicitudes son de la conversación | Confirmaciones ejecutadas de `book_appointment` de esa conversación |
+
+"Enviado" significa que Meta aceptó el mensaje, no que llegó al teléfono: eso es "Entregado".
+Nada se infiere de que la solicitud exista: sin mensaje ni registro, el aviso figura "Pendiente".
+
+Motivos de "No enviado": `no_whatsapp_linked` (la cuenta del prestador no tiene WhatsApp
+vinculado), `template_required` (fuera de la ventana de 24 h y sin plantilla aprobada),
+`conversation_with_operator` (su conversación está tomada por una persona de TUS) y
+`provider_without_account` (el prestador no tiene cuenta asociada).
+
+La migración `20261111100000_tus_whatsapp_avisos_correlacion` solo agrega dos índices.
+
+La bandeja pagina de verdad (página, tamaño, filtro y total los resuelve el backend) y su
+paginación es un pie compacto del panel: una fila en escritorio, dos como máximo en 390 px. Cambiar
+de página, de tamaño o de filtro conserva la conversación abierta.
+
+Verificación: `tests/foundation/tus-admin-whatsapp-avisos-postgres.test.mjs`,
+`tests/foundation/tus-admin-whatsapp-paginacion.test.mjs` y, en navegador (1280 y 390 px),
+`node scripts/dev/admin-whatsapp-smoke.mjs`. Meta es un sustituto en todos: prueban el código, no
+una entrega real.

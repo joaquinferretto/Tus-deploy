@@ -593,10 +593,60 @@ export interface TusWhatsappAdminDetail {
     type: string
     text: string | null
     status: string
+    // When Meta reported that status (null: nothing reported).
+    statusAt: string | null
     createdAt: string
     location?: { latitude: number; longitude: number } | null
     hasMedia?: boolean
   }[]
+  // The notice TUS sent to the provider of each request of turno this conversation made.
+  providerNotices: readonly TusWhatsappProviderNotice[]
+}
+
+export type TusWhatsappProviderNoticeState = 'accepted' | 'rejected' | 'read' | 'delivered' | 'sent' | 'sending' | 'failed' | 'template_required' | 'not_sent' | 'pending'
+
+export interface TusWhatsappProviderNotice {
+  reservaId: string
+  service: string
+  startsAt: string
+  provider: { name: string; hasAccount: boolean }
+  deliveries: readonly { conversationId: string; waIdMasked: string | null; kind: 'template' | 'message'; status: string; at: string; error: string | null }[]
+  notSent: { reason: string; at: string } | null
+  answer: { result: 'accepted' | 'rejected'; at: string; channel: string } | null
+  state: TusWhatsappProviderNoticeState
+}
+
+const ESTADOS_AVISO: readonly TusWhatsappProviderNoticeState[] = ['accepted', 'rejected', 'read', 'delivered', 'sent', 'sending', 'failed', 'template_required', 'not_sent', 'pending']
+
+// Anything that is not a well formed notice is left out: the conversation still opens.
+function parseTusWhatsappProviderNotices(value: unknown): TusWhatsappProviderNotice[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((raw) => {
+    const item = asRecord(raw)
+    const provider = asRecord(item['provider'])
+    const state = item['state'] as TusWhatsappProviderNoticeState
+    if (typeof item['reservaId'] !== 'string' || typeof provider['name'] !== 'string' || !ESTADOS_AVISO.includes(state)) return []
+    const notSent = asRecord(item['notSent'])
+    const answer = asRecord(item['answer'])
+    return [
+      {
+        reservaId: item['reservaId'],
+        service: typeof item['service'] === 'string' ? item['service'] : '',
+        startsAt: typeof item['startsAt'] === 'string' ? item['startsAt'] : '',
+        provider: { name: provider['name'], hasAccount: provider['hasAccount'] === true },
+        deliveries: Array.isArray(item['deliveries'])
+          ? item['deliveries'].flatMap((entry) => {
+              const delivery = asRecord(entry)
+              if (typeof delivery['conversationId'] !== 'string' || typeof delivery['status'] !== 'string' || typeof delivery['at'] !== 'string') return []
+              return [{ conversationId: delivery['conversationId'], waIdMasked: typeof delivery['waIdMasked'] === 'string' ? delivery['waIdMasked'] : null, kind: delivery['kind'] === 'template' ? ('template' as const) : ('message' as const), status: delivery['status'], at: delivery['at'], error: typeof delivery['error'] === 'string' ? delivery['error'] : null }]
+            })
+          : [],
+        notSent: typeof notSent['reason'] === 'string' && typeof notSent['at'] === 'string' ? { reason: notSent['reason'], at: notSent['at'] } : null,
+        answer: (answer['result'] === 'accepted' || answer['result'] === 'rejected') && typeof answer['at'] === 'string' ? { result: answer['result'], at: answer['at'], channel: typeof answer['channel'] === 'string' ? answer['channel'] : 'web' } : null,
+        state,
+      },
+    ]
+  })
 }
 
 export type TusWhatsappAdminAction = 'takeover' | 'release' | 'reply' | 'unlink' | 'block'
@@ -964,6 +1014,7 @@ export function parseTusWhatsappAdminDetail(payload: unknown): TusWhatsappAdminD
             type: message['type'],
             text: typeof message['text'] === 'string' ? message['text'] : null,
             status: message['status'],
+            statusAt: typeof message['statusAt'] === 'string' ? message['statusAt'] : null,
             createdAt: message['createdAt'],
             ...(typeof location['latitude'] === 'number' &&
             typeof location['longitude'] === 'number'
@@ -992,6 +1043,7 @@ export function parseTusWhatsappAdminDetail(payload: unknown): TusWhatsappAdminD
     operatorId: typeof item['operatorId'] === 'string' ? item['operatorId'] : null,
     summary: typeof item['summary'] === 'string' ? item['summary'] : null,
     messages,
+    providerNotices: parseTusWhatsappProviderNotices(item['providerNotices']),
   }
 }
 
