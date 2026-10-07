@@ -1,5 +1,6 @@
 'use client'
 
+import { FotosTurno } from '../turnos/fotos-turno'
 import { useState, useEffect, useCallback } from 'react'
 import { CODIGO_SOLICITUD_SIN_HORARIO, etiquetaEstadoTurno, etiquetaSenaTurno, formatearPesos, normalizarTelefono, type DetalleTurno, type ServicioTurnosDTO } from '@factory/contracts'
 import { TurnosError, diaTurno, horaTurno, turnosApi, turnosErrorDe, turnosFetch } from '../../lib/tus-turnos-client'
@@ -233,6 +234,7 @@ export function ProviderTurnos(): React.ReactNode {
               <article className={`${styles.panel} ${styles.turnoCard} ${styles.turnoCardNew}`} data-solicitud={solicitud.id} key={solicitud.id}>
                 <div style={{ display: 'grid', gap: 8 }}>
                   <strong>Nueva solicitud</strong>
+                  <FotosTurno cantidad={solicitud.imagenes ?? 0} turnoId={solicitud.id} />
                   <dl className={styles.turnoData}>
                     <div>
                       <dt>Cliente:</dt>

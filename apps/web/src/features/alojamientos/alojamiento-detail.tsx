@@ -10,8 +10,10 @@ import type {
 } from '@factory/contracts'
 import {
   obtenerDetalleAlojamiento,
-  crearHoldReserva,
-  simularPagoReserva,
+  ErrorAlojamientos,
+  hoyAlojamientos,
+  reservarAlojamiento,
+  sumarDiasFecha,
 } from './alojamientos-client'
 import styles from './alojamientos.module.css'
 
@@ -42,14 +44,18 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
   const [submittingHold, setSubmittingHold] = useState(false)
   const [holdError, setHoldError] = useState<string | null>(null)
   const [reservaConfirmada, setReservaConfirmada] = useState<ReservaAlojamientoDTO | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
+  const [faltaSesion, setFaltaSesion] = useState(false)
 
   const cargarDetalle = async () => {
     setLoading(true)
     setError(null)
     try {
+      // Availability is asked only for a complete stay; until then, the place without dates.
+      const conFechas = Boolean(checkIn && checkOut && checkOut > checkIn)
       const data = await obtenerDetalleAlojamiento(idOrSlug, {
-        checkIn: checkIn || undefined,
-        checkOut: checkOut || undefined,
+        checkIn: conFechas ? checkIn : undefined,
+        checkOut: conFechas ? checkOut : undefined,
         personas,
       })
       setDetalle(data)
@@ -66,9 +72,15 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
 
   const handleIniciarReserva = (unidad: UnidadDisponibleDTO) => {
     if (!checkIn || !checkOut) {
-      alert('Por favor selecciona las fechas de Check-in y Check-out arriba antes de reservar.')
+      setAviso('Elegí la fecha de entrada y la de salida para reservar.')
       return
     }
+    if (checkOut <= checkIn) {
+      setAviso('La salida debe ser posterior a la entrada.')
+      return
+    }
+    setAviso(null)
+    setFaltaSesion(false)
     setUnidadSeleccionada(unidad)
     setHoldError(null)
     setReservaConfirmada(null)
@@ -82,24 +94,23 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
     setHoldError(null)
 
     try {
-      // 1. Crear hold físico protegido por PostgreSQL 16 GiST
-      const hold = await crearHoldReserva({
+      // Calendar dates: the API computes the nights and the total, and confirms the reservation.
+      const reserva = await reservarAlojamiento({
         unidadId: unidadSeleccionada.id,
         alojamientoId: detalle.id,
         clienteNombre,
-        clienteEmail: clienteEmail || undefined,
-        clienteTelefono: clienteTelefono || undefined,
-        fechaInicio: new Date(`${checkIn}T${detalle.checkInHora || '14:00'}:00.000-03:00`).toISOString(),
-        fechaFin: new Date(`${checkOut}T${detalle.checkOutHora || '10:00'}:00.000-03:00`).toISOString(),
+        ...(clienteEmail.trim() ? { clienteEmail: clienteEmail.trim() } : {}),
+        ...(clienteTelefono.trim() ? { clienteTelefono: clienteTelefono.trim() } : {}),
+        fechaInicio: checkIn,
+        fechaFin: checkOut,
         cantidadPersonas: personas,
-        notas: notas || undefined,
+        ...(notas.trim() ? { notas: notas.trim() } : {}),
       })
-
-      // 2. Procesar confirmación de pago (simulado para desarrollo y tests locales)
-      const resPago = await simularPagoReserva(hold.id)
-      setReservaConfirmada(resPago.reserva)
+      setReservaConfirmada(reserva)
+      void cargarDetalle()
     } catch (err: unknown) {
-      setHoldError(err instanceof Error ? err.message : 'Error al procesar la reserva')
+      if (err instanceof ErrorAlojamientos && err.status === 401) setFaltaSesion(true)
+      setHoldError(err instanceof ErrorAlojamientos && err.status === 401 ? 'Para reservar necesitás iniciar sesión con tu cuenta de TUS.' : err instanceof Error ? err.message : 'No pudimos completar la reserva.')
     } finally {
       setSubmittingHold(false)
     }
@@ -187,24 +198,41 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
         <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.75rem' }}>
           Consultá disponibilidad y tarifas
         </h2>
+        {aviso ? (
+          <p data-estadia="aviso" role="alert" style={{ background: '#fff7ed', border: '1px solid #fed7aa', color: '#9a3412', borderRadius: 8, padding: '0.6rem 0.8rem', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
+            {aviso}
+          </p>
+        ) : null}
         <div className={styles.filterGrid}>
           <div className={styles.formGroup}>
-            <label className={styles.formLabel}>Check-in</label>
+            <label className={styles.formLabel} htmlFor="estadia-entrada">Entrada</label>
             <input
               type="date"
+              id="estadia-entrada"
               className={styles.formInput}
+              min={hoyAlojamientos()}
               value={checkIn}
-              onChange={(e) => setCheckIn(e.target.value)}
+              onChange={(e) => {
+                setCheckIn(e.target.value)
+                setAviso(null)
+                // The departure never stays before the arrival.
+                if (e.target.value && checkOut && checkOut <= e.target.value) setCheckOut(sumarDiasFecha(e.target.value, 1))
+              }}
             />
           </div>
 
           <div className={styles.formGroup}>
-            <label className={styles.formLabel}>Check-out</label>
+            <label className={styles.formLabel} htmlFor="estadia-salida">Salida</label>
             <input
               type="date"
+              id="estadia-salida"
               className={styles.formInput}
+              min={checkIn ? sumarDiasFecha(checkIn, 1) : hoyAlojamientos()}
               value={checkOut}
-              onChange={(e) => setCheckOut(e.target.value)}
+              onChange={(e) => {
+                setCheckOut(e.target.value)
+                setAviso(null)
+              }}
             />
           </div>
 
@@ -313,7 +341,7 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
                         cursor: u.disponible ? 'pointer' : 'not-allowed',
                       }}
                     >
-                      {u.disponible ? 'Reservar unidad' : 'No disponible'}
+                      {u.disponible ? 'Reservar' : 'No disponible'}
                     </button>
                   </div>
                 </div>
@@ -399,17 +427,12 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
                     <p><strong>Alojamiento:</strong> {reservaConfirmada.alojamientoNombre}</p>
                     <p><strong>Unidad:</strong> {reservaConfirmada.unidadNombre}</p>
                     <p><strong>Titular:</strong> {reservaConfirmada.clienteNombre}</p>
-                    <p><strong>Total abonado:</strong> {formatPrice(reservaConfirmada.precioFinalSnapshot)}</p>
+                    <p><strong>Total a pagar en el alojamiento:</strong> {formatPrice(reservaConfirmada.precioFinalSnapshot)}</p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className={styles.btnSearch}
-                  style={{ width: '100%' }}
-                  onClick={() => setUnidadSeleccionada(null)}
-                >
-                  Entendido
-                </button>
+                <Link href={'/alojamientos/reservas' as Route} className={styles.btnSearch} data-reserva="ver" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}>
+                  Ver mis reservas
+                </Link>
               </div>
             ) : (
               <form onSubmit={handleConfirmarHoldYPago}>
@@ -423,11 +446,20 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
                       Total: {formatPrice(unidadSeleccionada.precioCalculado.total)}
                     </p>
                   )}
+                  <p style={{ fontSize: '0.8rem', color: '#4b5563', marginTop: '0.35rem' }}>La reserva queda confirmada al instante y se paga en el alojamiento.</p>
                 </div>
 
                 {holdError && (
                   <div style={{ background: '#fee2e2', color: '#b91c1c', padding: '0.75rem', borderRadius: 8, marginBottom: '1rem', fontSize: '0.875rem' }}>
                     {holdError}
+                    {faltaSesion ? (
+                      <>
+                        {' '}
+                        <a href={`/sign-in?returnTo=${encodeURIComponent(`/alojamientos/${idOrSlug}`)}`} style={{ color: '#b91c1c', fontWeight: 700 }}>
+                          Iniciar sesión
+                        </a>
+                      </>
+                    ) : null}
                   </div>
                 )}
 
@@ -444,10 +476,9 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
                 </div>
 
                 <div className={styles.formGroup} style={{ marginBottom: '1rem' }}>
-                  <label className={styles.formLabel}>Email de contacto *</label>
+                  <label className={styles.formLabel}>Email de contacto (opcional)</label>
                   <input
                     type="email"
-                    required
                     className={styles.formInput}
                     value={clienteEmail}
                     onChange={(e) => setClienteEmail(e.target.value)}
@@ -456,10 +487,9 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
                 </div>
 
                 <div className={styles.formGroup} style={{ marginBottom: '1rem' }}>
-                  <label className={styles.formLabel}>Teléfono / WhatsApp *</label>
+                  <label className={styles.formLabel}>Teléfono / WhatsApp (opcional)</label>
                   <input
                     type="tel"
-                    required
                     className={styles.formInput}
                     value={clienteTelefono}
                     onChange={(e) => setClienteTelefono(e.target.value)}
@@ -484,7 +514,7 @@ export function AlojamientoDetail({ idOrSlug }: { idOrSlug: string }): React.Rea
                   className={styles.btnSearch}
                   style={{ width: '100%', minHeight: 48 }}
                 >
-                  {submittingHold ? 'Procesando reserva y pago...' : 'Confirmar y Pagar'}
+                  {submittingHold ? 'Reservando...' : 'Confirmar reserva'}
                 </button>
               </form>
             )}

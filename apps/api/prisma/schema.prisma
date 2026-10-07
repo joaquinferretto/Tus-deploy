@@ -697,6 +697,10 @@ model Prestador {
   rolesPersonal            String[]      @map("roles_personal")
   versionPoliticaOperativa String        @map("version_politica_operativa")
   estado                   String        @map("estado")
+  // PRESTADOR-CUENTA-01: the account of this provider, by id. fk_prestadores_cuenta ->
+  // "Account".id and the partial unique index uq_prestadores_cuenta live in SQL. NULL: an old row
+  // nobody linked yet (reconciled by hand; nothing is inferred from the tenant).
+  cuentaId                 String?       @map("cuenta_id")
   fechaCreacion            DateTime      @map("fecha_creacion")
   fechaActualizacion       DateTime      @map("fecha_actualizacion")
   publicaciones            Publicacion[]
@@ -2096,7 +2100,28 @@ model ExcepcionCalendario {
   @@map("excepciones_calendario")
 }
 
+// TURNOS-WHATSAPP-01: up to two pictures attached by the client to its request of turno.
+// uq_imagenes_reserva_orden + ck_imagenes_reserva_orden (SQL): positions 0 and 1 only.
+model ImagenReserva {
+  id          String   @id(map: "imagenes_reserva_pkey") @map("id")
+  tenantId    String   @map("tenant_id")
+  reservaId   String   @map("reserva_id")
+  reserva     Reserva  @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_imagenes_reserva_reserva")
+  orden       Int      @map("orden") @db.SmallInt
+  tipoMime    String   @map("tipo_mime")
+  tamanoBytes Int      @map("tamano_bytes")
+  ancho       Int      @map("ancho")
+  alto        Int      @map("alto")
+  sha256      String   @map("sha256")
+  contenido   Bytes    @map("contenido")
+  creadoEn    DateTime @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  @@unique([reservaId, orden], map: "uq_imagenes_reserva_orden")
+  @@map("imagenes_reserva")
+}
+
 model Reserva {
+  imagenes                 ImagenReserva[]
   id                 String   @id(map: "reservas_pkey")
   tenantId           String   @map("tenant_id")
   clienteTenantId    String?  @map("cliente_tenant_id")
@@ -3506,8 +3531,41 @@ model ImagenAlojamiento {
   esPrincipal   Boolean     @default(false) @map("es_principal")
   creadoEn      DateTime    @default(now()) @map("creado_en")
 
+  archivo       ArchivoImagenAlojamiento?
+
   @@index([alojamientoId, orden], map: "ix_imagenes_alojamiento_orden")
   @@map("imagenes_alojamiento")
+}
+
+// ALOJAMIENTOS-GESTION-01: bytes of an uploaded photo (magic bytes checked, metadata removed).
+model ArchivoImagenAlojamiento {
+  imagenId    String            @id(map: "archivos_imagen_alojamiento_pkey") @map("imagen_id")
+  imagen      ImagenAlojamiento @relation(fields: [imagenId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_archivos_imagen_alojamiento_imagen")
+  tipoMime    String            @map("tipo_mime")
+  tamanoBytes Int               @map("tamano_bytes")
+  ancho       Int               @map("ancho")
+  alto        Int               @map("alto")
+  sha256      String            @map("sha256")
+  contenido   Bytes             @map("contenido")
+  creadoEn    DateTime          @default(now()) @map("creado_en")
+
+  @@map("archivos_imagen_alojamiento")
+}
+
+// ALOJAMIENTOS-GESTION-01: every change of state of a reservation, with who did it.
+model HistorialReservaAlojamiento {
+  id             String             @id(map: "historial_reservas_alojamiento_pkey") @map("id")
+  reservaId      String             @map("reserva_id")
+  reserva        ReservaAlojamiento @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_historial_reservas_alojamiento_reserva")
+  estadoAnterior String?            @map("estado_anterior")
+  estadoNuevo    String             @map("estado_nuevo")
+  actorId        String?            @map("actor_id")
+  actorRol       String             @map("actor_rol")
+  motivo         String?            @map("motivo")
+  creadoEn       DateTime           @default(now()) @map("creado_en") @db.Timestamptz(3)
+
+  @@index([reservaId, creadoEn], map: "ix_historial_reservas_alojamiento_reserva")
+  @@map("historial_reservas_alojamiento")
 }
 
 model UnidadAlojamiento {
@@ -3618,6 +3676,7 @@ model ReservaAlojamiento {
   creadoEn            DateTime                 @default(now()) @map("creado_en")
   actualizadoEn       DateTime                 @updatedAt @map("actualizado_en")
   calificacion        CalificacionAlojamiento?
+  historial           HistorialReservaAlojamiento[]
 
   // INTEGRIDAD-01 (SQL, NOT VALID): ck_reservas_alojamiento_rango, _estado, _modalidad, _personas,
   // _precios, _moneda, _hold; fk_reservas_alojamiento_unidad_alojamiento (unidad_id, alojamiento_id)
@@ -3627,6 +3686,7 @@ model ReservaAlojamiento {
   @@index([alojamientoId, fechaInicio], map: "ix_reservas_alojamiento_alojamiento")
   @@index([unidadId, fechaInicio, fechaFin], map: "ix_reservas_alojamiento_unidad_rango")
   @@index([estado, holdExpiracion], map: "ix_reservas_alojamiento_hold")
+  @@index([clienteId, fechaInicio], map: "ix_reservas_alojamiento_cliente")
   @@map("reservas_alojamiento")
 }
 

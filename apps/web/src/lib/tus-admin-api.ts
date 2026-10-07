@@ -97,7 +97,44 @@ export interface AdminUsuarioDetalle {
 // Same view the provider sees on its own location page.
 export type AdminUbicacionPrestador = UbicacionPrestadorWeb
 
+// PRESTADOR-CUENTA-01: the account behind a provider profile, as the API resolved it by ids.
+export type DestinoWhatsappPrestador = 'listo' | 'plantilla' | 'ventana_cerrada' | 'no_vinculado' | 'sin_cuenta'
+export interface AdminCuentaPrestador {
+  cuentaId: string
+  usuarioId: string
+  nombre: string
+  email: string
+  estado: string
+  emailVerificado: boolean
+  documento: { tipo: string; numero: string } | null
+  telefono: { numero: string | null; verificado: boolean; pendiente: string | null }
+  whatsapp: { vinculado: boolean; vinculadoEn: string | null; ultimoMensajeEn: string | null; ventanaAbierta: boolean; destino: DestinoWhatsappPrestador }
+  identidad: string | null
+  cuentasEnTenant: number
+}
+
+// Why a provider shows no account (reconciled by hand; TUS never picks one).
+export interface AdminProblemaCuentaPrestador { motivo: 'sin_vincular' | 'ambiguo' | 'cuenta_invalida'; cuentasEnTenant: number }
+export const PROBLEMA_CUENTA: Record<AdminProblemaCuentaPrestador['motivo'], string> = {
+  sin_vincular: 'Este prestador no tiene una cuenta vinculada. TUS no elige una por su cuenta: hay que asociarla.',
+  ambiguo: 'Este prestador figura vinculado a más de una cuenta. Hay que dejar una sola.',
+  cuenta_invalida: 'La cuenta vinculada a este prestador no existe, no está activa o es de otro titular.',
+}
+
+// What Admin reads at a glance: can this provider receive a request of turno on WhatsApp?
+export const DESTINO_WHATSAPP: Record<DestinoWhatsappPrestador, { texto: string; detalle: string; tono: 'ok' | 'warn' | 'danger' }> = {
+  listo: { texto: 'Listo', detalle: 'WhatsApp vinculado y con conversación abierta: recibe las solicitudes con sus botones.', tono: 'ok' },
+  plantilla: { texto: 'Por plantilla', detalle: 'WhatsApp vinculado; fuera de las 24 horas recibe la solicitud como plantilla aprobada.', tono: 'ok' },
+  ventana_cerrada: { texto: 'No recibe ahora', detalle: 'WhatsApp vinculado, pero pasaron más de 24 horas de su último mensaje y la plantilla de solicitudes no está aprobada en Meta: no se le puede escribir hasta que escriba.', tono: 'warn' },
+  no_vinculado: { texto: 'No vinculado', detalle: 'La cuenta no tiene un WhatsApp vinculado (tener teléfono no alcanza).', tono: 'danger' },
+  sin_cuenta: { texto: 'Sin cuenta', detalle: 'Este perfil no tiene una cuenta activa detrás: nadie puede operarlo ni recibir sus avisos.', tono: 'danger' },
+}
+
 export interface AdminPrestadorDetalle {
+  // Present when the API resolves the account behind the profile.
+  cuentaAsociada?: AdminCuentaPrestador | null
+  cuentaProblema?: AdminProblemaCuentaPrestador | null
+  tenantId?: string
   perfil: {
     id: string
     displayName: string
@@ -129,6 +166,9 @@ export interface AdminPage<T> {
 }
 
 export interface AdminPrestador {
+  cuenta?: AdminCuentaPrestador | null
+  cuentaProblema?: AdminProblemaCuentaPrestador | null
+  whatsappDestino?: DestinoWhatsappPrestador
   id: string
   tenantId: string
   nombre: string

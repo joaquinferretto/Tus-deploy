@@ -1,4 +1,7 @@
 import express from 'express'
+import { crearLectorCuentasPrestador, type ClientePrismaCuentaPrestador } from './tus/admin/cuenta-prestador.ts'
+import { PLANTILLA_SOLICITUD_TURNO } from './tus/asistente/avisos-turnos.ts'
+import { WhatsappTemplateService } from './tus/asistente/plantillas.ts'
 import type { Application, Router } from 'express'
 import type { Server } from 'node:http'
 import { helmetMiddleware } from './presentation/middleware/helmet.ts'
@@ -309,6 +312,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
         directorio,
         solicitudes,
         cuentas: new CuentasAdminPrisma(prisma as unknown as ConstructorParameters<typeof CuentasAdminPrisma>[0]),
+        cuentasDePrestadores: crearLectorCuentasPrestador(prisma as unknown as ClientePrismaCuentaPrestador, { plantillaAprobada: () => WhatsappTemplateService.desdeEnv(process.env).aprobada(PLANTILLA_SOLICITUD_TURNO) }),
         actividad: new ActividadAdminPrisma(prisma as unknown as ConstructorParameters<typeof ActividadAdminPrisma>[0]),
         adminEmails: () => leerAdminsPlataforma(process.env['TUS_PLATFORM_ADMIN_EMAILS']),
         crearUsuario: (input) => auth.service.createAccountAsAdmin(input),

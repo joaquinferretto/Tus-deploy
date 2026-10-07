@@ -240,7 +240,7 @@ test('ADMIN WEB: user and provider detail pages, linked from the lists; category
   assert.match(usuario, /Forzar cambio de contraseña/)
   assert.doesNotMatch(usuario, /type="password"/)
   // Provider sections: data, services (picker by category), coverage, state, account and location.
-  for (const text of ['Datos del perfil', 'Servicios', 'Cobertura', 'Aprobación del prestador', 'Cuenta', 'Ubicación en el mapa']) assert.ok(prestador.includes(text), text)
+  for (const text of ['Perfil profesional', 'Servicios', 'Cobertura', 'Aprobación del prestador', 'Cuenta', 'Ubicación en el mapa']) assert.ok(prestador.includes(text), text)
   assert.match(prestador, /<ServicePicker/)
   assert.match(prestador, /<LocationEditor/)
   assert.match(catalogo, /function ServiciosDeCategoria/)

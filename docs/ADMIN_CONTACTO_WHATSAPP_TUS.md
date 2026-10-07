@@ -93,6 +93,34 @@ mensaje de la persona. Un número que nunca escribió queda vinculado y **no rec
 escriba una vez. Escribirle primero requiere plantillas aprobadas por Meta, que no están
 implementadas.
 
+## Prestadores: la cuenta detrás de cada perfil
+
+La identidad es la cuenta. Un prestador está vinculado a UNA cuenta por id:
+`prestadores.cuenta_id → "Account".id` (migración `20261109100000_tus_prestador_cuenta`, FK e
+índice único: una cuenta es la de un solo prestador). Ese vínculo es el único que usan los avisos
+de turnos, el email, la respuesta por WhatsApp, Admin y la auditoría
+(`apps/api/src/tus/directorio/cuenta-prestador.ts`). No se elige una cuenta por antigüedad, nombre
+ni email: un prestador sin vínculo, con un vínculo ambiguo o con una cuenta inactiva o de otro
+titular no resuelve a nadie, no recibe avisos y Admin muestra el motivo.
+
+El vínculo se escribe cuando una cuenta se registra como prestador y cuando Admin da de alta un
+prestador para una cuenta. Los prestadores anteriores se vincularon solos únicamente donde no
+había nada que elegir (un tenant con una sola cuenta y un solo prestador); el resto queda para
+reconciliar a mano. `scripts/db/auditoria-prestadores.sql` (solo lectura) los lista.
+
+En Admin, la tabla de Prestadores muestra nombre público, cuenta (nombre real y email), teléfono
+y WhatsApp; la ficha separa **Cuenta asociada** de **Perfil profesional**.
+
+| Dato | Evidencia |
+| --- | --- |
+| Teléfono verificado | `User.phoneNumber` con `phoneVerifiedAt` (código respondido, o certificado por Admin). Un número pendiente no cuenta |
+| WhatsApp vinculado | Contacto de WhatsApp con esa cuenta en `cuenta_vinculada_id`. Tener teléfono no alcanza |
+| Listo | Vinculado y con un mensaje suyo en las últimas 24 horas: recibe solicitudes con botones |
+| Por plantilla | Vinculado, fuera de las 24 horas, con `turno_solicitud_recibida` aprobada |
+| No recibe ahora | Vinculado, fuera de las 24 horas y sin plantilla aprobada |
+| Sin cuenta vinculada | El prestador no tiene `cuenta_id`: hay que asociarle una cuenta a mano |
+| Vínculo ambiguo / Cuenta inválida | Más de una cuenta vinculada en el tenant, o la vinculada no existe, no está activa o es de otro titular |
+
 ## Validación
 
 - `tests/foundation/tus-telefono-postgres.test.mjs` (PostgreSQL real): vínculo canónico,

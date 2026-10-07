@@ -13,6 +13,23 @@ export interface NotificadorTurnos {
   turnoConfirmado(aviso: AvisoTurnoConfirmado): Promise<void>
   // A client or provider/admin cancelled a turno: only the counterpart is notified.
   turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void>
+  // The client added a picture to a request the provider was already told about.
+  imagenAgregada?(aviso: AvisoImagenTurno): Promise<void>
+}
+
+// A picture of a request, as TUS holds it (validated, without metadata).
+export interface ImagenAviso {
+  tipoMime: string
+  contenido: Buffer
+}
+
+export interface AvisoImagenTurno {
+  reservaId: string
+  prestadorCuentaId: string | null
+  clienteNombre: string
+  servicio: string
+  inicio: Date
+  imagen: ImagenAviso
 }
 
 export interface AvisoTurnoConfirmado {
@@ -37,6 +54,14 @@ export interface AvisoSolicitudTurno {
   inicio: Date
   duracionMinutos: number
   expiraEn: Date
+  // What the provider needs to decide, all computed by the backend: the price of the turno and
+  // the deposit the client will pay if it is accepted (null: nothing to pay), what the client
+  // wrote and the pictures it attached (at most two).
+  precio?: number | null
+  sena?: number | null
+  moneda?: string
+  notas?: string | null
+  imagenes?: ImagenAviso[]
 }
 
 export interface AvisoTurnoCancelado {
@@ -100,7 +125,8 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
   }
 
   async solicitudRecibida(aviso: AvisoSolicitudTurno): Promise<void> {
-    const cuenta = await this.cuentas.account.findFirst({ where: { tenantId: aviso.prestadorTenantId, status: 'active' }, include: { user: true }, orderBy: { createdAt: 'asc' } })
+    // The recipient is the account the backend resolved for that provider (its linked account).
+    const cuenta = aviso.prestadorCuentaId ? await this.cuentas.account.findFirst({ where: { id: aviso.prestadorCuentaId, status: 'active' }, include: { user: true } }) : null
     if (!cuenta) return
     await this.transporte.send({
       to: cuenta.user.email,
@@ -154,7 +180,7 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
   async turnoConfirmado(aviso: AvisoTurnoConfirmado): Promise<void> {
     const [cuenta, prestador] = await Promise.all([
       this.cuentas.account.findFirst({ where: { id: aviso.clienteCuentaId, status: 'active' }, include: { user: true } }),
-      this.cuentas.account.findFirst({ where: { tenantId: aviso.prestadorTenantId, status: 'active' }, include: { user: true }, orderBy: { createdAt: 'asc' } }),
+      aviso.prestadorCuentaId ? this.cuentas.account.findFirst({ where: { id: aviso.prestadorCuentaId, status: 'active' }, include: { user: true } }) : Promise.resolve(null),
     ])
     // Each recipient has its own provider idempotency key. If either delivery fails, the durable
     // outbox retries the event without duplicating the one Resend already accepted.
@@ -180,13 +206,8 @@ export class NotificadorTurnosEmail implements NotificadorTurnos {
 
   async turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void> {
     const canceladoPorCliente = aviso.canceladoPor === 'cliente'
-    const cuenta = await this.cuentas.account.findFirst({
-      where: canceladoPorCliente
-        ? { tenantId: aviso.prestadorTenantId, status: 'active' }
-        : { id: aviso.clienteCuentaId, status: 'active' },
-      include: { user: true },
-      ...(canceladoPorCliente ? { orderBy: { createdAt: 'asc' } } : {}),
-    })
+    const destinatario = canceladoPorCliente ? aviso.prestadorCuentaId : aviso.clienteCuentaId
+    const cuenta = destinatario ? await this.cuentas.account.findFirst({ where: { id: destinatario, status: 'active' }, include: { user: true } }) : null
     if (!cuenta) return
     await this.transporte.send({
       to: cuenta.user.email,

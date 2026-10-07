@@ -9,7 +9,7 @@ import type {
   FiltrosBusquedaAlojamientos,
   TipoAlojamientoDTO,
 } from '@factory/contracts'
-import { buscarAlojamientos, listarTiposAlojamiento } from './alojamientos-client'
+import { buscarAlojamientos, hoyAlojamientos, listarTiposAlojamiento, sumarDiasFecha } from './alojamientos-client'
 import styles from './alojamientos.module.css'
 
 const AlojamientosMap = dynamic(() => import('./alojamientos-map'), {
@@ -31,8 +31,10 @@ export function AlojamientosDirectory(): React.ReactNode {
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'split' | 'list' | 'map'>('split')
+  const [aviso, setAviso] = useState<string | null>(null)
 
   const [filtros, setFiltros] = useState<FiltrosBusquedaAlojamientos>({
+    q: '',
     tipoSlug: '',
     checkIn: '',
     checkOut: '',
@@ -46,12 +48,23 @@ export function AlojamientosDirectory(): React.ReactNode {
   }, [])
 
   const cargarAlojamientos = async () => {
+    // A stay has both dates, in order: the API refuses anything else, so it is said here first.
+    if (Boolean(filtros.checkIn) !== Boolean(filtros.checkOut)) {
+      setAviso('Elegí la fecha de entrada y la de salida.')
+      return
+    }
+    if (filtros.checkIn && filtros.checkOut && filtros.checkOut <= filtros.checkIn) {
+      setAviso('La salida debe ser posterior a la entrada.')
+      return
+    }
+    setAviso(null)
     setLoading(true)
     try {
       const items = await buscarAlojamientos(filtros)
       setAlojamientos(items)
-    } catch {
-      // error handled
+    } catch (error) {
+      setAlojamientos([])
+      setAviso(error instanceof Error ? error.message : 'No pudimos buscar alojamientos. Probá de nuevo.')
     } finally {
       setLoading(false)
     }
@@ -73,11 +86,33 @@ export function AlojamientosDirectory(): React.ReactNode {
         <p className={styles.subtitle}>
           Hoteles, cabañas, departamentos y habitaciones verificados para tu estadía o escapada.
         </p>
+        <p style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', margin: '0.5rem 0 0', fontSize: '0.95rem' }}>
+          <Link href={'/alojamientos/reservas' as Route} style={{ color: '#c2410c', fontWeight: 600 }}>Mis reservas</Link>
+          <Link href={'/propietario/alojamientos' as Route} style={{ color: '#c2410c', fontWeight: 600 }}>Publicar mi alojamiento</Link>
+        </p>
       </header>
 
       {/* Barra de Filtros */}
       <form onSubmit={handleSubmit} className={styles.filterBar}>
+        {aviso ? (
+          <p data-busqueda="aviso" role="alert" style={{ background: '#fff7ed', border: '1px solid #fed7aa', color: '#9a3412', borderRadius: 8, padding: '0.6rem 0.8rem', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
+            {aviso}
+          </p>
+        ) : null}
         <div className={styles.filterGrid}>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel} htmlFor="busqueda-destino">Destino</label>
+            <input
+              type="search"
+              id="busqueda-destino"
+              className={styles.formInput}
+              maxLength={80}
+              placeholder="Barrio, zona o nombre"
+              value={filtros.q || ''}
+              onChange={(e) => setFiltros({ ...filtros, q: e.target.value })}
+            />
+          </div>
+
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>Tipo de alojamiento</label>
             <select
@@ -95,9 +130,11 @@ export function AlojamientosDirectory(): React.ReactNode {
           </div>
 
           <div className={styles.formGroup}>
-            <label className={styles.formLabel}>Check-in</label>
+            <label className={styles.formLabel} htmlFor="busqueda-entrada">Entrada</label>
             <input
               type="date"
+              id="busqueda-entrada"
+              min={hoyAlojamientos()}
               className={styles.formInput}
               value={filtros.checkIn || ''}
               onChange={(e) => setFiltros({ ...filtros, checkIn: e.target.value })}
@@ -105,9 +142,11 @@ export function AlojamientosDirectory(): React.ReactNode {
           </div>
 
           <div className={styles.formGroup}>
-            <label className={styles.formLabel}>Check-out</label>
+            <label className={styles.formLabel} htmlFor="busqueda-salida">Salida</label>
             <input
               type="date"
+              id="busqueda-salida"
+              min={filtros.checkIn ? sumarDiasFecha(filtros.checkIn, 1) : hoyAlojamientos()}
               className={styles.formInput}
               value={filtros.checkOut || ''}
               onChange={(e) => setFiltros({ ...filtros, checkOut: e.target.value })}

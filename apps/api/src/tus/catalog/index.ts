@@ -52,6 +52,9 @@ export interface PerfilPrestador {
   staffRoles: string[]
   operatingPolicyVersion: string
   status: MarketplaceMerchantStatus
+  // PRESTADOR-CUENTA-01: the account of this provider (prestadores.cuenta_id). Undefined when a
+  // store does not track it; null for an old provider nobody linked yet.
+  accountId?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -592,6 +595,8 @@ export class TusMarketplaceService {
       staffRoles: [...input.staffRoles!],
       operatingPolicyVersion: input.operatingPolicyVersion!,
       status: MARKETPLACE_MERCHANT_STATUSES.APPROVED,
+      // Who registers as a provider is the account of the session: its provider, by id.
+      accountId: context.subjectId,
       createdAt: now,
       updatedAt: now,
     }

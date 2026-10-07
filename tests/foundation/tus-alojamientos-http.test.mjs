@@ -193,6 +193,9 @@ function crearMockPrisma() {
       findMany: async () => calificaciones
     },
   }
+  // History of the reservations (every change of state leaves a line).
+  const historial = []
+  db.historialReservaAlojamiento = { create: async ({ data }) => { historial.push(data); return data }, findMany: async ({ where }) => historial.filter((linea) => linea.reservaId === where.reservaId) }
   db.$transaction = async (fn) => fn(db)
   // SELECT ... FOR UPDATE (row locks): nothing to serialize in a single-threaded double.
   db.$queryRaw = async () => [{ ok: 1 }]

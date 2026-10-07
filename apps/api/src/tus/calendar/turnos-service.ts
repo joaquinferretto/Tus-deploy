@@ -40,7 +40,15 @@ import {
   type SlotDisponible,
   type TarifaServicioPublica,
 } from '@factory/contracts'
+import { cuentaDePrestador, type ClientePrismaVinculoPrestador } from '../directorio/cuenta-prestador.ts'
+import { ErrorFotoPerfil, prepararFotoPerfil } from '../directorio/foto.ts'
 import { agendaDelDia } from './agenda.ts'
+
+// Where a provider answered a request from.
+export type CanalRespuestaTurno = 'web' | 'whatsapp'
+
+// Pictures a client may attach to a request of turno.
+export const MAXIMO_IMAGENES_TURNO = 2
 import { ErrorCalendario } from './bookings.ts'
 import { dateWeekday } from './rules.ts'
 import { SIN_NOTIFICADOR_TURNOS, type NotificadorTurnos } from './turnos-notificaciones.ts'
@@ -734,7 +742,19 @@ export class ServicioTurnos {
       inicio: row.fechaInicio,
     }
     if (evento.kind === 'solicitud_recibida') {
-      const aviso = { ...comun, duracionMinutos: row.duracionMinutos ?? 60, expiraEn: row.solicitudExpiraEn ?? row.fechaInicio }
+      const precio = row.precioFinal !== null && row.precioFinal !== undefined && row.precioFinal > 0n ? Number(row.precioFinal) : null
+      const conSena = precio !== null && this.senas ? await this.senas.requeridaPara(row.tenantId).catch(() => false) : false
+      const imagenes = await this.prisma.imagenReserva.findMany({ where: { reservaId: row.id }, orderBy: { orden: 'asc' }, select: { tipoMime: true, contenido: true } })
+      const aviso = {
+        ...comun,
+        duracionMinutos: row.duracionMinutos ?? 60,
+        expiraEn: row.solicitudExpiraEn ?? row.fechaInicio,
+        precio,
+        sena: conSena && precio !== null ? senaDePrecio(precio, row.moneda ?? 'ARS') : null,
+        moneda: row.moneda ?? 'ARS',
+        notas: row.notas ?? null,
+        imagenes: imagenes.map((imagen) => ({ tipoMime: imagen.tipoMime, contenido: Buffer.from(imagen.contenido) })),
+      }
       await Promise.all(this.notificadores.map((notificador) => notificador.solicitudRecibida(aviso)))
       return
     }
@@ -764,15 +784,81 @@ export class ServicioTurnos {
     await Promise.all(this.notificadores.map((notificador) => notificador.turnoCancelado({ ...comun, canceladoPor: evento.canceladoPor })))
   }
 
+  // ---- pictures of a request (TURNOS-WHATSAPP-01) --------------------------------------------
+
+  /**
+   * El cliente suma una foto a SU solicitud mientras espera respuesta: hasta dos. El archivo no es
+   * confiable: tipo por contenido (JPEG, PNG, WebP), sin metadata y con tamaño acotado, la misma
+   * preparación que la foto de perfil. Si el prestador ya fue avisado, se le avisa de la foto.
+   */
+  async adjuntarImagen(input: { clienteId: string; reservaId: string; bytes: unknown }): Promise<{ orden: number; total: number }> {
+    let foto: ReturnType<typeof prepararFotoPerfil>
+    try {
+      foto = prepararFotoPerfil(input.bytes)
+    } catch (error) {
+      if (!(error instanceof ErrorFotoPerfil)) throw error
+      if (error.code === 'PHOTO_TOO_LARGE') throw new ErrorCalendario(413, 'IMAGE_TOO_LARGE', 'Usá una foto de hasta 2 MB.')
+      if (error.code === 'PHOTO_TYPE_NOT_ALLOWED') throw new ErrorCalendario(415, 'IMAGE_TYPE_NOT_ALLOWED', 'Usá una foto JPG, PNG o WEBP.')
+      throw new ErrorCalendario(422, 'IMAGE_INVALID', 'Usá una foto JPG, PNG o WEBP de entre 96 y 4096 píxeles por lado.')
+    }
+    const guardada = await this.prisma.$transaction(async (tx) => {
+      // The row of the request is taken: two uploads at once never leave three pictures.
+      await tx.$queryRaw`SELECT 1 AS ok FROM public."reservas" WHERE "id" = ${input.reservaId} FOR UPDATE`
+      const row = await tx.reserva.findFirst({ where: { id: input.reservaId, clienteId: input.clienteId, esInvitado: false } })
+      // Someone else's request answers like one that does not exist.
+      if (!row) throw new ErrorCalendario(404, 'NOT_FOUND', 'Solicitud no encontrada')
+      if (row.estado !== 'pending' || (row.solicitudExpiraEn && row.solicitudExpiraEn.getTime() <= Date.now())) throw new ErrorCalendario(409, CODIGO_SOLICITUD_NO_PENDIENTE, 'Solo se pueden sumar fotos mientras la solicitud espera respuesta.')
+      const existentes = await tx.imagenReserva.findMany({ where: { reservaId: row.id }, select: { orden: true, sha256: true } })
+      const repetida = existentes.find((imagen) => imagen.sha256 === foto.sha256)
+      if (repetida) return { row, orden: repetida.orden, total: existentes.length, nueva: false }
+      if (existentes.length >= MAXIMO_IMAGENES_TURNO) throw new ErrorCalendario(409, 'TOO_MANY_IMAGES', `Una solicitud admite hasta ${MAXIMO_IMAGENES_TURNO} fotos.`)
+      const orden = existentes.some((imagen) => imagen.orden === 0) ? 1 : 0
+      await tx.imagenReserva.create({ data: { id: `img-res-${randomUUID()}`, tenantId: row.tenantId, reservaId: row.id, orden, tipoMime: foto.tipoMime, tamanoBytes: foto.tamanoBytes, ancho: foto.ancho, alto: foto.alto, sha256: foto.sha256, contenido: foto.contenido } })
+      return { row, orden, total: existentes.length + 1, nueva: true }
+    })
+    if (guardada.nueva) void this.avisarImagen(guardada.row, { tipoMime: foto.tipoMime, contenido: foto.contenido }).catch(() => undefined)
+    return { orden: guardada.orden, total: guardada.total }
+  }
+
+  private async avisarImagen(row: FilaReserva, imagen: { tipoMime: string; contenido: Buffer }): Promise<void> {
+    const [prestadorCuentaId, oficios, clientes] = await Promise.all([this.cuentaPrestadorId(row.tenantId), this.nombresDeOficio([row]), this.clientesDe([row])])
+    const aviso = { reservaId: row.id, prestadorCuentaId, clienteNombre: clientes.get(row.clienteId)?.nombre ?? 'Tu cliente', servicio: row.tarifaNombre ?? (row.servicioId ? oficios.get(row.servicioId) : null) ?? 'el servicio', inicio: row.fechaInicio, imagen }
+    await Promise.all(this.notificadores.map((notificador) => notificador.imagenAgregada?.(aviso)))
+  }
+
+  /**
+   * Una foto de una solicitud la leen solo su cliente y el prestador de ese turno.
+   */
+  async imagenDeTurno(input: { reservaId: string; orden: number; cuentaId: string; tenantId: string }): Promise<{ tipoMime: string; contenido: Buffer; sha256: string }> {
+    const row = await this.prisma.reserva.findFirst({ where: { id: input.reservaId }, select: { id: true, clienteId: true, tenantId: true } })
+    if (!row || (row.clienteId !== input.cuentaId && row.tenantId !== input.tenantId)) throw new ErrorCalendario(404, 'NOT_FOUND', 'Foto no encontrada')
+    const imagen = await this.prisma.imagenReserva.findFirst({ where: { reservaId: row.id, orden: input.orden } })
+    if (!imagen) throw new ErrorCalendario(404, 'NOT_FOUND', 'Foto no encontrada')
+    return { tipoMime: imagen.tipoMime, contenido: Buffer.from(imagen.contenido), sha256: imagen.sha256 }
+  }
+
+  /** Cuántas fotos tiene cada solicitud (para mostrarlas en los paneles). */
+  async imagenesDe(reservaIds: string[]): Promise<Map<string, number>> {
+    if (reservaIds.length === 0) return new Map()
+    const filas = await this.prisma.imagenReserva.groupBy({ by: ['reservaId'], where: { reservaId: { in: reservaIds } }, _count: { _all: true } })
+    return new Map(filas.map((fila) => [fila.reservaId, fila._count._all]))
+  }
+
+  /**
+   * Solicitudes que este prestador todavía tiene que responder (para responder por WhatsApp sin
+   * abrir el panel): las suyas, vigentes, de la más próxima a la más lejana.
+   */
+  async solicitudesPorResponder(prestadorTenantId: string): Promise<Array<{ id: string; inicio: Date }>> {
+    const filas = await this.prisma.reserva.findMany({ where: { tenantId: prestadorTenantId, estado: 'pending', solicitudExpiraEn: { gt: new Date() } }, orderBy: { fechaInicio: 'asc' }, select: { id: true, fechaInicio: true }, take: 20 })
+    return filas.map((fila) => ({ id: fila.id, inicio: fila.fechaInicio }))
+  }
+
   // Backend-owned recipient resolution. Notification callers only carry the provider tenant;
   // neither HTTP input nor an LLM may choose the account or its phone number.
+  // PRESTADOR-CUENTA-01: the account LINKED to that provider (prestadores.cuenta_id), by id. A
+  // provider nobody linked resolves to nobody: nothing is inferred from the tenant.
   private async cuentaPrestadorId(tenantId: string): Promise<string | null> {
-    const cuenta = await this.prisma.account.findFirst({
-      where: { tenantId, status: 'active' },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true },
-    })
-    return cuenta?.id ?? null
+    return cuentaDePrestador(this.prisma as unknown as ClientePrismaVinculoPrestador, tenantId)
   }
 
   private async nombresDeOficio(rows: FilaReserva[]): Promise<Map<string, string>> {
@@ -800,19 +886,24 @@ export class ServicioTurnos {
    * agenda bloqueada y volviendo a mirar el horario: si mientras tanto quedó bloqueado u ocupado,
    * no se acepta y la solicitud queda rechazada.
    */
-  async aceptarSolicitud(input: { prestadorTenantId: string; reservaId: string }): Promise<DetalleTurno> {
+  async aceptarSolicitud(input: { prestadorTenantId: string; reservaId: string; actorId?: string; canal?: CanalRespuestaTurno }): Promise<DetalleTurno> {
     return this.responderSolicitud({ ...input, aceptar: true })
   }
 
   /**
    * El prestador RECHAZA una solicitud: el horario vuelve a ofrecerse.
    */
-  async rechazarSolicitud(input: { prestadorTenantId: string; reservaId: string }): Promise<DetalleTurno> {
+  async rechazarSolicitud(input: { prestadorTenantId: string; reservaId: string; actorId?: string; canal?: CanalRespuestaTurno }): Promise<DetalleTurno> {
     return this.responderSolicitud({ ...input, aceptar: false })
   }
 
-  private async responderSolicitud(input: { prestadorTenantId: string; reservaId: string; aceptar: boolean }): Promise<DetalleTurno> {
+  // One use case for every channel: the panel and WhatsApp both end here, with the provider
+  // taken from the session or from the account linked to the number, never from the message.
+  private async responderSolicitud(input: { prestadorTenantId: string; reservaId: string; aceptar: boolean; actorId?: string; canal?: CanalRespuestaTurno }): Promise<DetalleTurno> {
     // Only a request of the session's own agenda (another provider's answers 404).
+    // From WhatsApp the answer comes from a number, not from a session of the panel: it counts
+    // only when the account linked to that number is THE account of that provider.
+    if (input.canal === 'whatsapp' && (!input.actorId || (await this.cuentaPrestadorId(input.prestadorTenantId)) !== input.actorId)) throw new ErrorCalendario(404, 'NOT_FOUND', 'Solicitud no encontrada')
     const reserva = await this.prisma.reserva.findFirst({
       where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], tenantId: input.prestadorTenantId },
     })
@@ -850,6 +941,19 @@ export class ServicioTurnos {
           reservaId: row.id,
           version: row.version,
           evento: { kind: 'solicitud_respondida', reservaId: row.id, resultado: estado },
+        })
+        // Who answered, from where and what it became: in the same transaction as the change.
+        await tx.auditEvent.create({
+          data: {
+            id: randomUUID(),
+            tenantId: row.tenantId,
+            actorId: input.actorId ?? input.prestadorTenantId,
+            correlationId: randomUUID(),
+            eventType: 'turnos.solicitud_respondida',
+            outcome: 'success',
+            metadata: { reservaId: row.id, de: 'pending', a: estado, pedido: input.aceptar ? 'aceptar' : 'rechazar', canal: input.canal ?? 'web' },
+            occurredAt: ahora,
+          },
         })
         return row
       }
@@ -946,7 +1050,22 @@ export class ServicioTurnos {
   /** El estado real del pago de la seña de SU turno (lo informa Mercado Pago; nada que diga el cliente lo cambia). */
   async verificarPagoSena(input: { clienteId: string; reservaId: string; correlationId: string }) {
     if (!this.senas) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'El pago online todavía no está disponible.')
-    return this.senas.verificarPago(input)
+    const resultado = await this.senas.verificarPago(input)
+    // The payment may have been verified here before Mercado Pago's notification arrived: the
+    // confirmation is told from whichever path confirmed it (the notice is the same one, once).
+    await this.avisarConfirmacionDe(input.reservaId).catch(() => undefined)
+    return resultado
+  }
+
+  /**
+   * Encola el aviso de turno confirmado si esa reserva está confirmada. El aviso lleva la versión
+   * de la reserva: pedirlo dos veces (webhook y verificación) es un solo aviso.
+   */
+  async avisarConfirmacionDe(reservaId: string): Promise<void> {
+    const reserva = await this.prisma.reserva.findFirst({ where: { OR: [{ id: reservaId }, { reservaId }], estado: { in: ['confirmed'] }, esInvitado: false } })
+    if (!reserva) return
+    await this.outboxNotificaciones.encolar(this.prisma, { tenantId: reserva.tenantId, reservaId: reserva.id, version: reserva.version, evento: { kind: 'turno_confirmado', reservaId: reserva.id } })
+    this.activarNotificaciones()
   }
 
   /**
@@ -1002,6 +1121,10 @@ export class ServicioTurnos {
 
     try {
       const row = await this.conAgendaBloqueada(calendario, async (tx) => {
+        // The provider's own block also holds for the turnos it loads by hand: the block is
+        // removed first, so a turno and a block never cover the same time.
+        const bloqueado = await tx.excepcionCalendario.findFirst({ where: { calendarioId: calendario.id, estado: 'active', fechaInicio: { lt: fin }, fechaFin: { gt: inicio } }, select: { id: true } })
+        if (bloqueado) throw new ErrorCalendario(409, 'SLOT_BLOCKED', 'Ese horario está bloqueado en tu agenda. Quitá el bloqueo para cargar el turno.')
         return tx.reserva.create({
           data: {
             id: reservaId,
@@ -1062,8 +1185,11 @@ export class ServicioTurnos {
     const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
     const id = `exc-${randomUUID()}`
 
-    await this.conAgendaBloqueada(calendario, (tx) =>
-      tx.excepcionCalendario.create({
+    // With the agenda taken: a turno that is being booked right now and this block are decided
+    // one after the other, never both.
+    await this.conAgendaBloqueada(calendario, async (tx) => {
+      await this.exigirSinTurnos(tx, calendario.id, inicio, fin)
+      await tx.excepcionCalendario.create({
         data: {
           id,
           tenantId: perfil.tenantId,
@@ -1075,9 +1201,44 @@ export class ServicioTurnos {
           fechaCreacion: new Date(),
         },
       })
-    )
+    })
 
     return { ok: true, id }
+  }
+
+  /**
+   * Un bloqueo nunca tapa un turno ya tomado ni lo cancela: primero se resuelve el turno
+   * (reprogramar o cancelar, avisando a la persona) y después se bloquea. Una solicitud todavía
+   * sin responder no lo impide: aceptarla vuelve a mirar los bloqueos.
+   */
+  private async exigirSinTurnos(tx: Prisma.TransactionClient, calendarioId: string, inicio: Date, fin: Date): Promise<void> {
+    const afectados = await tx.reserva.count({
+      where: { calendarioId, estado: { notIn: [...ESTADOS_LIBERAN, 'pending'] }, NOT: { estado: 'awaiting_payment', solicitudExpiraEn: { lte: new Date() } }, fechaInicio: { lt: fin }, fechaFin: { gt: inicio } },
+    })
+    if (afectados > 0) {
+      throw new ErrorCalendario(409, 'BLOCK_HAS_BOOKINGS', afectados === 1 ? 'Tenés un turno tomado en ese horario. Reprogramalo o cancelalo antes de bloquear.' : `Tenés ${afectados} turnos tomados en ese horario. Reprogramalos o cancelalos antes de bloquear.`)
+    }
+  }
+
+  /**
+   * Cambia un bloqueo propio (rango o motivo) con las mismas reglas que al crearlo.
+   */
+  async editarBloqueo(input: { prestadorTenantId: string; id: string; inicio: string; fin: string; motivo: string }): Promise<{ ok: true; id: string }> {
+    const inicio = new Date(input.inicio)
+    const fin = new Date(input.fin)
+    if (Number.isNaN(inicio.getTime()) || Number.isNaN(fin.getTime()) || fin <= inicio) {
+      throw new ErrorCalendario(400, 'INVALID_DATE', 'El fin del bloqueo debe ser posterior al inicio')
+    }
+    const actual = await this.prisma.excepcionCalendario.findFirst({ where: { id: input.id, tenantId: input.prestadorTenantId, estado: 'active' } })
+    if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Bloqueo no encontrado')
+    const calendario = await this.prisma.calendario.findFirst({ where: { id: actual.calendarioId, tenantId: input.prestadorTenantId } })
+    if (!calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Bloqueo no encontrado')
+    await this.conAgendaBloqueada(calendario, async (tx) => {
+      await this.exigirSinTurnos(tx, calendario.id, inicio, fin)
+      const { count } = await tx.excepcionCalendario.updateMany({ where: { id: input.id, tenantId: input.prestadorTenantId, estado: 'active' }, data: { fechaInicio: inicio, fechaFin: fin, motivo: input.motivo.trim().slice(0, 200) || 'Bloqueo manual' } })
+      if (count === 0) throw new ErrorCalendario(404, 'NOT_FOUND', 'Bloqueo no encontrado')
+    })
+    return { ok: true, id: input.id }
   }
 
   /**

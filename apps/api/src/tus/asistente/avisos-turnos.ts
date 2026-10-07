@@ -1,7 +1,10 @@
 import { formatearPesos } from '@factory/contracts'
-import type { AvisoRespuestaTurno, AvisoSolicitudTurno, AvisoTurnoCancelado, AvisoTurnoConfirmado, NotificadorTurnos } from '../calendar/turnos-notificaciones.ts'
+import type { AvisoImagenTurno, AvisoRespuestaTurno, AvisoSolicitudTurno, AvisoTurnoCancelado, AvisoTurnoConfirmado, NotificadorTurnos } from '../calendar/turnos-notificaciones.ts'
+import type { WhatsappTemplateService } from './plantillas.ts'
 import type { WhatsappProvider, MensajeSaliente } from './meta.ts'
-import { canalDe, ventanaServicioAbierta, type ContactoWhatsapp, type ConversacionWhatsapp } from './modelo.ts'
+import { createHash, randomUUID } from 'node:crypto'
+
+import { ESTADO_CONVERSACIONAL_INICIAL, canalDe, ventanaServicioAbierta, type ContactoWhatsapp, type ConversacionWhatsapp } from './modelo.ts'
 import { enviarMensajeSaliente, type Metrica } from './orquestador.ts'
 import type { PuertoTransaccionAsistente } from './puertos.ts'
 import { fechaLarga, horaCorta } from './solicitud-turno.ts'
@@ -20,16 +23,50 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
     private readonly transaction: PuertoTransaccionAsistente,
     private readonly whatsapp: WhatsappProvider,
     private readonly now: () => number = Date.now,
-    private readonly metric?: Metrica
+    private readonly metric?: Metrica,
+    // Approved templates: the only way to write first to a number whose 24 hour window is closed.
+    private readonly plantillas?: WhatsappTemplateService
   ) {}
 
+  // TURNOS-WHATSAPP-01. The provider is told with everything it needs to decide and answers
+  // right there: two reply buttons that carry which request and which answer. Inside the 24 hour
+  // window, an interactive message and the pictures; outside it, the approved template (if TUS
+  // has it) with the same two answers as quick replies.
   async solicitudRecibida(aviso: AvisoSolicitudTurno): Promise<void> {
     if (!aviso.prestadorCuentaId) return
-    await this.entregar(
-      aviso.prestadorCuentaId,
-      { type: 'text', text: `${aviso.clienteNombre} te solicitó un turno de ${aviso.servicio} para el ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)}. Podés aceptarlo o rechazarlo desde Solicitudes de reserva.` },
-      `turno-solicitado:${aviso.reservaId}`
+    const { abiertos, cerrados } = await this.destinos(aviso.prestadorCuentaId)
+    const botones = [
+      { id: idRespuestaTurno('aceptar', aviso.reservaId), title: 'Aceptar' },
+      { id: idRespuestaTurno('rechazar', aviso.reservaId), title: 'Rechazar' },
+    ]
+    for (const destino of abiertos) {
+      await this.enviar(destino, { type: 'buttons', text: textoSolicitud(aviso), buttons: botones }, `turno-solicitado:${aviso.reservaId}`)
+      for (const [indice, imagen] of (aviso.imagenes ?? []).slice(0, 2).entries())
+        await this.enviar(destino, { type: 'image', text: `Foto ${indice + 1} de la solicitud de ${aviso.clienteNombre}`, mimeType: imagen.tipoMime, bytes: imagen.contenido }, `turno-solicitado-foto-${indice}:${aviso.reservaId}`)
+    }
+    if (cerrados.length === 0) return
+    if (!this.plantillas?.aprobada(PLANTILLA_SOLICITUD_TURNO)) {
+      // Nothing can be written first to these numbers: the email and the panel carry the notice.
+      this.metric?.('whatsapp.appointment_notice', { sent: false, type: 'template', reason: 'template_not_approved' })
+      return
+    }
+    const plantilla = this.plantillas.construir(
+      PLANTILLA_SOLICITUD_TURNO,
+      { cliente: aviso.clienteNombre.slice(0, 60), servicio: aviso.servicio.slice(0, 60), fecha: fechaLarga(aviso.inicio), hora: horaCorta(aviso.inicio), precio: aviso.precio ? formatearPesos(aviso.precio) : 'a convenir', sena: aviso.sena ? formatearPesos(aviso.sena) : 'sin seña' },
+      botones.map((boton) => boton.id)
     )
+    for (const contacto of cerrados) {
+      const conversacion = await this.conversacionDe(contacto)
+      if (conversacion) await this.enviar({ conversacion, contacto }, plantilla, `turno-solicitado:${aviso.reservaId}`)
+    }
+  }
+
+  // A picture added after the provider was told: it follows, inside the window only.
+  async imagenAgregada(aviso: AvisoImagenTurno): Promise<void> {
+    if (!aviso.prestadorCuentaId) return
+    const { abiertos } = await this.destinos(aviso.prestadorCuentaId)
+    for (const destino of abiertos)
+      await this.enviar(destino, { type: 'image', text: `${aviso.clienteNombre} sumó una foto a su solicitud de ${aviso.servicio} del ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)}.`, mimeType: aviso.imagen.tipoMime, bytes: aviso.imagen.contenido }, `turno-foto:${aviso.reservaId}:${createHash('sha256').update(aviso.imagen.contenido).digest('hex').slice(0, 24)}`)
   }
 
   async solicitudRespondida(aviso: AvisoRespuestaTurno): Promise<void> {
@@ -49,6 +86,36 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
       return
     }
     await this.entregar(aviso.clienteCuentaId, { type: 'text', text: `${aviso.prestadorNombre} canceló tu turno de ${aviso.servicio} del ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)}. Podés pedirme otro horario u otro profesional.` }, `turno-cancelado-cliente:${aviso.reservaId}`)
+  }
+
+  // The WhatsApp numbers of an account: the ones that can be written to now (an active
+  // conversation in bot mode inside the 24 hour window) and the linked ones that cannot.
+  private async destinos(cuentaId: string): Promise<{ abiertos: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }[]; cerrados: ContactoWhatsapp[] }> {
+    return this.transaction.ejecutar(async (repositories) => {
+      const abiertos: { conversacion: ConversacionWhatsapp; contacto: ContactoWhatsapp }[] = []
+      const cerrados: ContactoWhatsapp[] = []
+      for (const contacto of await repositories.contactos.vinculadosA(cuentaId)) {
+        if (canalDe(contacto) !== 'whatsapp') continue
+        const conversacion = await repositories.conversaciones.activaDeContacto(contacto.contactId)
+        if (conversacion && canalDe(conversacion) === 'whatsapp' && conversacion.mode === 'bot' && ventanaServicioAbierta(conversacion.lastInboundAt, this.now())) abiertos.push({ conversacion, contacto })
+        // A conversation an operator took is left alone; any other closed window needs a template.
+        else if (!conversacion || conversacion.mode === 'bot') cerrados.push(contacto)
+      }
+      return { abiertos, cerrados }
+    })
+  }
+
+  // The conversation a template is recorded in: the active one, or a new one for a number that
+  // was linked (by its owner or by the administration) and never wrote.
+  private async conversacionDe(contacto: ContactoWhatsapp): Promise<ConversacionWhatsapp | null> {
+    return this.transaction.ejecutar(async (repositories) => {
+      const activa = await repositories.conversaciones.activaDeContacto(contacto.contactId)
+      if (activa) return activa.mode === 'bot' ? activa : null
+      const ahora = new Date(this.now()).toISOString()
+      const nueva: ConversacionWhatsapp = { conversationId: `conversacion-whatsapp-${randomUUID()}`, contactId: contacto.contactId, status: 'active', mode: 'bot', handoffReason: null, handoffAt: null, operatorId: null, openedAt: ahora, lastMessageAt: ahora, lastInboundAt: null, unreadCount: 0, summary: null, summaryMessageCount: 0, state: { ...ESTADO_CONVERSACIONAL_INICIAL }, version: 1 }
+      await repositories.conversaciones.crear(nueva)
+      return nueva
+    })
   }
 
   private async entregar(clienteCuentaId: string, message: MensajeSaliente, correlationId: string): Promise<void> {
@@ -102,4 +169,35 @@ export function mensajeRespuesta(aviso: AvisoRespuestaTurno): MensajeSaliente {
     return { type: 'cta_url', text: `El prestador aceptó tu solicitud: ${turno}. Para confirmar definitivamente el turno tenés que abonar la seña de ${monto}.`, label: 'Pagar seña', url: sena.url }
   if (sena.pagable) return { type: 'text', text: `El prestador aceptó tu solicitud: ${turno}. Para confirmar definitivamente el turno tenés que abonar la seña de ${monto}: escribime "pagar la seña" y te paso el link.` }
   return { type: 'text', text: `El prestador aceptó tu solicitud: ${turno}. La seña de ${monto} sigue pendiente; el pago online todavía no está disponible.` }
+}
+
+// ---- TURNOS-WHATSAPP-01: the provider answers a request from WhatsApp ---------------------------
+
+// Utility template (created and approved in WhatsApp Manager) for a provider outside the window.
+export const PLANTILLA_SOLICITUD_TURNO = 'turno_solicitud_recibida'
+
+// What a reply button carries: which answer and which request. Nothing else is trusted from it:
+// who answers is the account linked to the number, and the backend checks the request is theirs.
+export const idRespuestaTurno = (decision: 'aceptar' | 'rechazar', reservaId: string): string => `turno:${decision}:${reservaId}`
+
+export function leerRespuestaTurno(replyId: string | null | undefined): { aceptar: boolean; reservaId: string } | null {
+  const partes = /^turno:(aceptar|rechazar):([A-Za-z0-9_-]{6,80})$/u.exec(replyId ?? '')
+  return partes ? { aceptar: partes[1] === 'aceptar', reservaId: partes[2]! } : null
+}
+
+// Everything the provider needs to decide, as TUS computed it.
+export function textoSolicitud(aviso: AvisoSolicitudTurno): string {
+  const lineas = [
+    'Nueva solicitud de turno',
+    `Cliente: ${aviso.clienteNombre}`,
+    `Servicio: ${aviso.servicio}`,
+    `Fecha: ${fechaLarga(aviso.inicio)}`,
+    `Hora: ${horaCorta(aviso.inicio)}`,
+    `Precio: ${aviso.precio ? formatearPesos(aviso.precio) : 'a convenir'}`,
+    `Seña: ${aviso.sena ? `${formatearPesos(aviso.sena)} (la paga el cliente si aceptás)` : 'sin seña'}`,
+    ...(aviso.notas?.trim() ? [`Observación: ${aviso.notas.trim().slice(0, 400)}`] : []),
+    ...((aviso.imagenes?.length ?? 0) > 0 ? [`Fotos adjuntas: ${aviso.imagenes!.length}`] : []),
+    `Tenés tiempo de responder hasta el ${fechaLarga(aviso.expiraEn)} a las ${horaCorta(aviso.expiraEn)}.`,
+  ]
+  return lineas.join('\n')
 }
