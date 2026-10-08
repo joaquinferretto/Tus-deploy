@@ -29,6 +29,19 @@ const SETUP = `${turnosPagosSetup(url)}
   const liquidacion = async (t) => { const fila = await prisma.liquidacionServicio.findFirst({ where: { obligacionId: t.obligacion.obligacionId } }); return [fila.estado, fila.retencionActiva, fila.liberadaEn !== null] }
   const cierreDe = async (t) => { const fila = await prisma.cierreTrabajo.findFirst({ where: { trabajoId: t.trabajoId } }); return fila ? [fila.confirmacionOrigen, fila.confirmadoEn !== null, fila.observadoEn !== null && fila.observacionResueltaEn === null] : null }
   const EVIDENCIA = 'Sesión de masaje realizada completa, 60 minutos.'
+  // The checkout of another part of the same turno ('total' instead of the deposit, or its balance).
+  async function checkoutDe(t, cuenta, tramo) {
+    let checkout = null
+    for (let i = 0; !checkout; i += 1) {
+      try { checkout = await turnos.pagarTurno({ clienteId: cuenta.id, reservaId: t.pedido.id, correlationId: 'c', tramo }) } catch (e) { if (e?.code !== 'IN_PROGRESS' || i >= 40) throw e; await new Promise((resolve) => setTimeout(resolve, 250)) }
+    }
+    const obligacion = await prisma.obligacionPagoServicio.findFirst({ where: { trabajoId: t.trabajoId, tramo } })
+    const pago = await prisma.intencionPago.findFirst({ where: { obligacionId: obligacion.obligacionId }, orderBy: { fechaCreacion: 'desc' } })
+    return { checkout, obligacion, pago, preferencia: mp.preferences.find((item) => item.body.external_reference === pago.pagoId) }
+  }
+  const aprobar = async (preferencia) => { pagos += 1; mpPayment(String(pagos), preferencia); return ingerir(notification(String(pagos), { userId: '555', notificationId: run + '-n-' + pagos })) }
+  const tramos = async (t) => (await prisma.obligacionPagoServicio.findMany({ where: { trabajoId: t.trabajoId }, orderBy: { tramo: 'asc' } })).map((o) => [o.tramo, o.estado, String(o.monto)])
+  const liquidaciones = async (t) => (await prisma.liquidacionServicio.findMany({ where: { trabajoId: t.trabajoId }, orderBy: { obligacionId: 'asc' } })).map((l) => [l.estado, l.liberadaEn !== null, String(l.montoComision)])
 `
 
 test('CIERRE turnos PostgreSQL: the provider finishes a delivered turno with evidence; the client confirms, or observes (which blocks everything until it is resolved); a confirmation with only the deposit paid releases nothing; the absence of a balance obligation never counts as paid', { skip, timeout: 600000 }, () => {
@@ -139,4 +152,95 @@ test('CIERRE turnos PostgreSQL automatic confirmation: nothing before the stored
   assert.deepEqual(r.idempotente, [0, 0, 1], 'the automatic confirmation is idempotent')
   assert.deepEqual(r.restricciones, ['ck_cierres_trabajo_confirmacion', 'ck_cierres_trabajo_evidencia', 'ck_liquidaciones_servicio_liberacion'])
   assert.equal(r.rls, true, 'the table is not exposed outside the API')
+})
+
+// PAGOS-MODALIDAD-01 for turnos. The balance is the price minus what was paid, payable only after
+// the turno was delivered and its closing confirmed; everything is released together when the
+// total is covered. The total at once needs no balance.
+test('MODALIDAD turnos PostgreSQL seña + saldo: the balance is refused until the turno is delivered and confirmed; then its checkout exists once, its approval (and only it) covers the total and releases deposit and balance together; the provider can withdraw; nothing more can be charged', { skip, timeout: 600000 }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const p = await prestador('saldo', 'Saldo ' + run, [['Masaje', 30000]])
+      const ana = await cliente('ana')
+      const t = await turnoPagado(p, ana, 0, '10:00')
+      out.conSena = [await tramos(t), await liquidaciones(t), (await saldo(p)).disponible]
+      // The balance cannot be paid before the service, nor before the closing is confirmed.
+      out.saldoAntes = [await codeOf(() => turnos.pagarTurno({ clienteId: ana.id, reservaId: t.pedido.id, correlationId: 'c', tramo: 'saldo' })), await codeOf(() => turnos.pagarTurno({ clienteId: ana.id, reservaId: t.pedido.id, correlationId: 'c', tramo: 'total' }))]
+      adelantar(9 * 24 * HORA)
+      await cierre.finalizar(p.ctx, t.trabajoId, { evidence: EVIDENCIA })
+      out.saldoSinConfirmar = await codeOf(() => turnos.pagarTurno({ clienteId: ana.id, reservaId: t.pedido.id, correlationId: 'c', tramo: 'saldo' }))
+      const confirmado = await cierre.confirmar(ctxCliente(ana), t.trabajoId)
+      out.confirmado = [confirmado.pagos, await tramos(t), await liquidaciones(t)]
+      // The second checkout: the balance, computed from what is left.
+      const s1 = await checkoutDe(t, ana, 'saldo')
+      const s2 = await checkoutDe(t, ana, 'saldo')
+      out.checkoutSaldo = [s1.checkout.monto, s1.checkout.checkoutUrl === s2.checkout.checkoutUrl, s1.pago.pagoId === s2.pago.pagoId, s1.pago.modoCobro, s1.preferencia.body.items[0].unit_price, await tramos(t), (await saldo(p)).disponible]
+      const aprobado = await aprobar(s1.preferencia)
+      const repetido = await ingerir(notification(String(pagos), { userId: '555', notificationId: run + '-n-' + pagos }))
+      out.saldoAprobado = [aprobado.result, repetido.status, await tramos(t), await liquidaciones(t), await filas(p), await estadoTurno(t)]
+      out.economia = await fin.estadoEconomico({ tenantId: ana.tenantId, trabajoId: t.trabajoId }).then((e) => [String(e.totalMinor), String(e.paidMinor), String(e.pendingMinor), e.fullyPaid, e.modality])
+      out.nadaMas = [await codeOf(() => turnos.pagarTurno({ clienteId: ana.id, reservaId: t.pedido.id, correlationId: 'c', tramo: 'saldo' })), await codeOf(() => turnos.pagarTurno({ clienteId: ana.id, reservaId: t.pedido.id, correlationId: 'c', tramo: 'total' })), await prisma.obligacionPagoServicio.count({ where: { trabajoId: t.trabajoId } })]
+      // The provider links its Mercado Pago account and withdraws what was released.
+      await conectarMercadoPago(p, '881')
+      const disponible = await saldo(p)
+      const retiro = await ganancias.solicitar(p.ctx, run + '-retiro-saldo', { destinationEmail: 'prestador@example.test' })
+      out.retiro = [disponible.disponible, disponible.puede, retiro.status, retiro.payout.amountMinor, (await saldo(p)).disponible]
+    } finally { await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.conSena, [[['sena', 'paid', '1500000']], [['held', false, '150000']], '0'])
+  assert.deepEqual(r.saldoAntes, ['BALANCE_NOT_AVAILABLE', 'PAYMENT_MODALITY_FIXED'], 'no balance before the service, and the deposit fixed the way of paying')
+  assert.equal(r.saldoSinConfirmar, 'BALANCE_NOT_AVAILABLE', 'finished by the provider is not enough: the closing must be confirmed')
+  assert.deepEqual(r.confirmado, [{ released: 0, pending: 'not_fully_paid' }, [['sena', 'paid', '1500000']], [['held', false, '150000']]], 'confirmed with the deposit only: nothing released, no balance obligation is invented')
+  assert.deepEqual(r.checkoutSaldo, [15000, true, true, 'plataforma', 15000, [['saldo', 'pending_payment', '1500000'], ['sena', 'paid', '1500000']], '0'], 'the balance is the price minus what was paid, collected by TUS, one checkout however many times it is asked')
+  assert.deepEqual(r.saldoAprobado, ['applied', 'duplicate', [['saldo', 'paid', '1500000'], ['sena', 'paid', '1500000']], [['eligible', true, '150000'], ['eligible', true, '150000']], [['earning_credit', '1350000'], ['earning_credit', '1350000']], 'completed'], 'the approved balance covers the total: deposit and balance are released together, each commission once')
+  assert.deepEqual(r.economia, ['3000000', '3000000', '0', true, 'sena'])
+  assert.deepEqual(r.nadaMas, ['ALREADY_PAID', 'ALREADY_PAID', 2], 'nothing above the price can be charged')
+  assert.deepEqual(r.retiro, ['2700000', true, 'created', '2700000', '0'], 'after closing and full payment the provider withdraws the net of both payments')
+})
+
+test('MODALIDAD turnos PostgreSQL pago total: the client pays the whole price instead of the deposit (switching before paying voids the other); it confirms the turno and stays held; no balance ever exists; the automatic confirmation of a turno paid in total releases it, the one of a turno with only its deposit does not', { skip, timeout: 600000 }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const p = await prestador('total', 'Total ' + run, [['Masaje', 30000]])
+      const ana = await cliente('ana')
+      // The checkout of the deposit exists (the acceptance prepared it); the client chooses the total.
+      const t = await turnoConCheckout(p, ana, 0, '10:00', 'Masaje')
+      const total = await checkoutDe(t, ana, 'total')
+      out.elegido = [total.checkout.monto, total.pago.modoCobro, total.preferencia.body.items[0].unit_price, await tramos(t), (await prisma.intencionPago.findMany({ where: { obligacionId: { startsWith: 'obligacion-' + t.trabajoId } }, orderBy: { monto: 'asc' } })).map((i) => [String(i.monto), i.estadoProveedor])]
+      // The link of the deposit that was replaced is paid anyway: quarantined, the turno is not confirmed by it.
+      pagos += 1
+      mpPayment(String(pagos), t.preferencia)
+      const anulado = await ingerir(notification(String(pagos), { userId: '555', notificationId: run + '-anulado' }))
+      out.pagoDeLaSenaAnulada = [anulado.result, anulado.reason, await estadoTurno(t), await filas(p)]
+      const aprobado = await aprobar(total.preferencia)
+      out.totalAprobado = [aprobado.result, await estadoTurno(t), await tramos(t), await liquidaciones(t), await filas(p), (await saldo(p)).disponible]
+      out.sinSaldo = [await codeOf(() => turnos.pagarTurno({ clienteId: ana.id, reservaId: t.pedido.id, correlationId: 'c', tramo: 'saldo' })), await codeOf(() => turnos.pagarSena({ clienteId: ana.id, reservaId: t.pedido.id, correlationId: 'c' }))]
+      // A second turno with only its deposit, to compare the automatic confirmation.
+      const soloSena = await turnoPagado(p, ana, 0, '11:00')
+      adelantar(9 * 24 * HORA)
+      await cierre.finalizar(p.ctx, t.trabajoId, { evidence: EVIDENCIA })
+      await cierre.finalizar(p.ctx, soloSena.trabajoId, { evidence: EVIDENCIA })
+      out.antesDeConfirmar = [await liquidaciones(t), await codeOf(() => turnos.pagarTurno({ clienteId: ana.id, reservaId: t.pedido.id, correlationId: 'c', tramo: 'saldo' }))]
+      adelantar(73 * HORA)
+      const corrida = await cierre.procesarVencidos()
+      out.autoConfirmacion = [corrida.confirmados.length, await estadoTurno(t), await liquidaciones(t), await tramos(t), await estadoTurno(soloSena), await liquidaciones(soloSena), (await saldo(p)).disponible]
+      const otra = await cierre.procesarVencidos()
+      out.repetida = [otra.confirmados.length, (await saldo(p)).disponible, await prisma.obligacionPagoServicio.count({ where: { trabajoId: t.trabajoId, tramo: 'saldo' } })]
+      await conectarMercadoPago(p, '882')
+      const retiro = await ganancias.solicitar(p.ctx, run + '-retiro-total', { destinationEmail: 'prestador@example.test' })
+      out.retiro = [retiro.status, retiro.payout.amountMinor]
+    } finally { await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.elegido, [30000, 'plataforma', 30000, [['sena', 'voided', '1500000'], ['total', 'pending_payment', '3000000']], [['1500000', 'cancelled'], ['3000000', 'pending']]], 'the total replaces the unpaid deposit: one way of paying at a time')
+  assert.deepEqual(r.pagoDeLaSenaAnulada, ['quarantined', 'obligation_voided', 'awaiting_payment', []], 'the replaced link confirms nothing and books nothing')
+  assert.deepEqual(r.totalAprobado, ['applied', 'confirmed', [['sena', 'voided', '1500000'], ['total', 'paid', '3000000']], [['held', false, '300000']], [['earning_credit', '2700000']], '0'], 'the total confirms the turno; one commission, for the total; paid in advance it is held')
+  assert.deepEqual(r.sinSaldo, ['ALREADY_PAID', 'DEPOSIT_NOT_PAYABLE'], 'a turno paid in total has no balance, and its deposit can no longer be paid')
+  assert.deepEqual(r.antesDeConfirmar, [[['held', false, '300000']], 'ALREADY_PAID'], 'finished and not confirmed: still held')
+  assert.deepEqual(r.autoConfirmacion, [2, 'completed', [['eligible', true, '300000']], [['sena', 'voided', '1500000'], ['total', 'paid', '3000000']], 'completed', [['held', false, '150000']], '2700000'], 'the window confirms both; only the one paid in total is released, and no balance is created for it')
+  assert.deepEqual(r.repetida, [0, '2700000', 0])
+  assert.deepEqual(r.retiro, ['created', '2700000'])
 })

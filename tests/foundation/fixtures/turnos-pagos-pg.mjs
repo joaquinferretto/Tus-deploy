@@ -51,6 +51,10 @@ export const turnosPagosSetup = (url) => `
     completarReserva: (input) => cierres.completarReserva(input),
     evaluarPagos: (input) => fin.evaluarCierreEconomico(input),
     bloqueos: (trabajo) => fin.bloqueosDeCierre({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId }),
+    completarSiPagado: async ({ trabajo, correlationId, at }) => {
+      if (!(await fin.estadoEconomico({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId })).fullyPaid) return false
+      return (await work.completarPorPagoFinal({ work: new PrismaTrabajoStore(prisma), outbox: new PrismaTrabajoOutboxStore(prisma) }, { tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId, paymentId: 'confirmacion-del-cierre', correlationId, createdAt: at })) === 'completed'
+    },
   }, () => Date.now() + adelanto)
   const turnos = new ServicioTurnos(prisma, { solicitudRecibida: async () => {}, solicitudRespondida: async () => {}, turnoConfirmado: async () => {}, turnoCancelado: async () => {} })
   turnos.conSenas(new ServicioSenaTurnos(prisma, pagosSenaDeAplicacion({ work, serviceFinance: fin })))

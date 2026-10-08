@@ -56,7 +56,10 @@ export interface PagosSenaTurno {
     prestadorTenantId: string
     prestadorId: string
     correlationId: string
-  }): Promise<{ url: string }>
+    // PAGOS-MODALIDAD-01. 'sena' (default): the 50% deposit. 'total': the whole price at once.
+    // 'saldo': what is left after the deposit, once the turno was delivered and confirmed.
+    tramo?: 'sena' | 'total' | 'saldo'
+  }): Promise<{ url: string; amountMinor?: string; currency?: string }>
   // TUS-WHATSAPP-MULTIMODAL-01: the REAL state of the payment of the turno's order, read from
   // Mercado Pago and applied through the same state machine as the webhook (idempotent).
   verificar?(input: { trabajoId: string; clienteTenantId: string; clienteCuentaId: string; correlationId: string }): Promise<ResultadoVerificacionPagoServicio>
@@ -71,7 +74,9 @@ export function pagosSenaDeAplicacion(
     work?: { asegurarOrdenDeTurno(input: { tenantId: string; actorId: string; correlationId: string; reservaId: string; prestadorTenantId: string; prestadorId: string; createdAt: string }): Promise<{ work: { trabajoId: string } }> }
     serviceFinance?: {
       disponibilidadCobroPrestador(input: { prestadorTenantId: string; prestadorId: string }): Promise<{ available: boolean; reason: string | null; mode?: 'plataforma' | 'split' | null }>
-      iniciarCheckout(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string; idempotencyKey: string }): Promise<{ checkoutUrl: string }>
+      iniciarCheckout(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string; idempotencyKey: string; modalidad?: 'sena' | 'total' }): Promise<{ checkoutUrl: string; obligation?: { amountMinor: string; currency: string } }>
+      // PAGOS-MODALIDAD-01: total, paid and pending of the order (what is left to charge).
+      estadoEconomico?(input: { tenantId: string; trabajoId: string }): Promise<{ fullyPaid: boolean }>
       verificarPagoDelTrabajo?(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string }): Promise<ResultadoVerificacionPagoServicio>
     }
   },
@@ -94,8 +99,14 @@ export function pagosSenaDeAplicacion(
       // The client of the reservation, read from the database by the caller: never a request value.
       const contexto = { tenantId: input.clienteTenantId, actorId: input.clienteCuentaId, correlationId: input.correlationId }
       const { work: orden } = await work.asegurarOrdenDeTurno({ ...contexto, reservaId: input.reservaId, prestadorTenantId: input.prestadorTenantId, prestadorId: input.prestadorId, createdAt: new Date(now()).toISOString() })
-      const resultado = await serviceFinance.iniciarCheckout({ ...contexto, trabajoId: orden.trabajoId, idempotencyKey: `sena-turno:${input.reservaId}` })
-      return { url: resultado.checkoutUrl }
+      const tramo = input.tramo ?? 'sena'
+      // Nothing is left to pay: never hand out again the checkout of a payment already made.
+      if (tramo !== 'sena' && (await serviceFinance.estadoEconomico?.({ tenantId: input.clienteTenantId, trabajoId: orden.trabajoId }))?.fullyPaid)
+        throw Object.assign(new Error('the turno is fully paid'), { code: 'ALREADY_PAID' })
+      // One key per part of the same reservation: asking again returns the same payment. The
+      // balance is what the finance service finds left; only deposit and total are a choice.
+      const resultado = await serviceFinance.iniciarCheckout({ ...contexto, trabajoId: orden.trabajoId, idempotencyKey: `${tramo}-turno:${input.reservaId}`, ...(tramo === 'saldo' ? {} : { modalidad: tramo }) })
+      return { url: resultado.checkoutUrl, ...(resultado.obligation ? { amountMinor: resultado.obligation.amountMinor, currency: resultado.obligation.currency } : {}) }
     },
     verificar: serviceFinance.verificarPagoDelTrabajo
       ? (input) => serviceFinance.verificarPagoDelTrabajo!({ tenantId: input.clienteTenantId, actorId: input.clienteCuentaId, correlationId: input.correlationId, trabajoId: input.trabajoId })
@@ -230,6 +241,36 @@ export class ServicioSenaTurnos {
     // Somebody else's turno does not exist for this account.
     if (!row) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
     return this.checkoutDe(row, input.correlationId)
+  }
+
+  /**
+   * PAGOS-MODALIDAD-01. El cliente paga SU turno de otra forma que la seña: el total de una vez
+   * (mientras espera el pago) o el saldo (cuando el turno ya se prestó y quedó confirmado). El
+   * monto lo decide el backend con el precio de la reserva y lo que ya está pagado; nunca supera
+   * el total. Con un pago aprobado la forma de pago queda fijada.
+   */
+  async iniciarPagoDe(input: { clienteId: string; reservaId: string; correlationId: string; tramo: 'total' | 'saldo' }): Promise<CheckoutSenaTurnoDTO> {
+    const row = await this.prisma.reserva.findFirst({
+      where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false },
+    })
+    if (!row || !row.clienteTenantId) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+    if (!this.pagos) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'El pago online todavía no está disponible para ese profesional.')
+    const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: row.tenantId } })
+    if (!perfil) throw new ErrorCalendario(409, CODIGO_SENA_NO_PAGABLE, 'Ese turno no se puede pagar ahora.')
+    try {
+      const pago = await this.conReintento(() => this.pagos!.checkout({ reservaId: row.reservaId, clienteTenantId: row.clienteTenantId!, clienteCuentaId: row.clienteId, prestadorTenantId: row.tenantId, prestadorId: perfil.prestadorId, correlationId: input.correlationId, tramo: input.tramo }))
+      if (!esUrlMercadoPago(pago.url) || !pago.amountMinor) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'No pudimos preparar el pago en este momento. Probá de nuevo en unos minutos.')
+      return { checkoutUrl: pago.url, monto: Number(pago.amountMinor) / 100, moneda: pago.currency ?? row.moneda ?? 'ARS' }
+    } catch (error) {
+      if (error instanceof ErrorCalendario) throw error
+      const code = String((error as { code?: unknown })?.code ?? '')
+      if (code === 'PAYMENT_MODALITY_FIXED') throw new ErrorCalendario(409, 'PAYMENT_MODALITY_FIXED', 'Ya hay un pago aprobado para este turno: la forma de pago no se puede cambiar.')
+      if (code === 'ALREADY_PAID' || code === 'OBLIGATION_NOT_PAYABLE') throw new ErrorCalendario(409, 'ALREADY_PAID', 'Ese turno ya está pagado por completo.')
+      if (code === 'WORK_NOT_FINISHED') throw new ErrorCalendario(409, 'BALANCE_NOT_AVAILABLE', 'El saldo se puede pagar cuando el turno se haya prestado y esté confirmado.')
+      if (code === 'IN_PROGRESS') throw new ErrorCalendario(409, 'IN_PROGRESS', 'El pago se está preparando. Probá de nuevo en unos segundos.')
+      if (['APPOINTMENT_NOT_PAYABLE', 'WORK_CANCELLED', 'OBLIGATION_CLOSED', 'INCONSISTENT_COMMERCIAL_CHAIN', 'OBLIGATION_STALE'].includes(code)) throw new ErrorCalendario(409, CODIGO_SENA_NO_PAGABLE, 'Ese turno no se puede pagar ahora.')
+      throw Object.assign(new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'No pudimos preparar el pago en este momento. Probá de nuevo en unos minutos.'), { cause: error })
+    }
   }
 
   /**

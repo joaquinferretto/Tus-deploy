@@ -316,6 +316,9 @@ export const ESTADOS_OBLIGACION_PAGO_SERVICIO = {
   PAGADA: 'paid',
   REINTEGRADA: 'refunded',
   CONTRACARGO: 'charged_back',
+  // PAGOS-MODALIDAD-01: replaced by the other way of paying (deposit <-> total) before anything
+  // of it was paid. It is not owed and it is not paid; it comes back if the client chooses it again.
+  ANULADA: 'voided',
 } as const
 
 export type EstadoObligacionPagoServicio = (typeof ESTADOS_OBLIGACION_PAGO_SERVICIO)[keyof typeof ESTADOS_OBLIGACION_PAGO_SERVICIO]
@@ -521,7 +524,7 @@ export interface ResumenFinancieroTrabajoServicio {
 // provider finished (WORK_NOT_FINISHED before that).
 // Order of a turno: its deposit is payable while the turno is awaiting payment and has not started
 // (APPOINTMENT_NOT_PAYABLE otherwise: still pending, already started, expired, or without a price).
-export const MOTIVOS_NO_COBRABLE_SERVICIO = ['WORK_CANCELLED', 'WORK_NOT_COMPLETED', 'WORK_NOT_FINISHED', 'BUDGET_REQUIRED', 'BUDGET_INCONSISTENT', 'INCONSISTENT_COMMERCIAL_CHAIN', 'ALREADY_PAID', 'OBLIGATION_CLOSED', 'APPOINTMENT_NOT_PAYABLE'] as const
+export const MOTIVOS_NO_COBRABLE_SERVICIO = ['WORK_CANCELLED', 'WORK_NOT_COMPLETED', 'WORK_NOT_FINISHED', 'BUDGET_REQUIRED', 'BUDGET_INCONSISTENT', 'INCONSISTENT_COMMERCIAL_CHAIN', 'ALREADY_PAID', 'OBLIGATION_CLOSED', 'APPOINTMENT_NOT_PAYABLE', 'PAYMENT_MODALITY_FIXED'] as const
 export type MotivoNoCobrableServicio = (typeof MOTIVOS_NO_COBRABLE_SERVICIO)[number]
 export const MOTIVOS_PAGO_NO_DISPONIBLE = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PRODUCTION_NOT_AUTHORIZED', 'PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'PROVIDER_IDENTITY_NOT_VERIFIED', 'PLATFORM_ACCOUNT_REQUIRED'] as const
 export type MotivoPagoNoDisponible = (typeof MOTIVOS_PAGO_NO_DISPONIBLE)[number]

@@ -235,6 +235,11 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
     completarReserva: (input) => cierres.completarReserva(input),
     evaluarPagos: (input) => serviceFinance.evaluarCierreEconomico(input),
     bloqueos: (trabajo) => serviceFinance.bloqueosDeCierre({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId }),
+    // The total was paid in advance: the confirmed closing is what completes the work.
+    completarSiPagado: async ({ trabajo, correlationId, at }) => {
+      if (!(await serviceFinance.estadoEconomico({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId })).fullyPaid) return false
+      return (await work.completarPorPagoFinal({ work: new PrismaTrabajoStore(client), outbox: new PrismaTrabajoOutboxStore(client) }, { tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId, paymentId: 'confirmacion-del-cierre', correlationId, createdAt: at })) === 'completed'
+    },
   })
   return new TusApplicationService({
     commitments: commitmentStore,

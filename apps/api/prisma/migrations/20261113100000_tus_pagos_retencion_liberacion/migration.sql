@@ -51,3 +51,20 @@ CREATE INDEX "ix_cierres_trabajo_vencimiento" ON public."cierres_trabajo" ("conf
 
 -- Same exposure rule as every table of TUS: only the API reaches it.
 ALTER TABLE public."cierres_trabajo" ENABLE ROW LEVEL SECURITY;
+
+-- PAGOS-MODALIDAD-01. A turno and a request-born work can be paid with a deposit and its balance
+-- or with one payment for the total. The two constraints below are replaced by wider ones: every
+-- existing row already satisfies them, no row is touched.
+--   * state: 'voided' is an obligation replaced by the other way of paying before it was paid.
+--   * parts: 'sena', 'saldo' and 'total' for a work without a marketplace commitment, whose amount
+--     comes from its accepted budget or from the price booked on the reservation of its turno.
+ALTER TABLE public."obligaciones_pago_servicio" DROP CONSTRAINT "ck_obligaciones_pago_estado";
+ALTER TABLE public."obligaciones_pago_servicio"
+  ADD CONSTRAINT "ck_obligaciones_pago_estado" CHECK ("estado" IN ('pending_payment', 'paid', 'refunded', 'charged_back', 'voided'));
+
+ALTER TABLE public."obligaciones_pago_servicio" DROP CONSTRAINT "ck_obligaciones_pago_tramo_cadena";
+ALTER TABLE public."obligaciones_pago_servicio"
+  ADD CONSTRAINT "ck_obligaciones_pago_tramo_cadena" CHECK (
+    ("tramo" = 'total' AND "publicacion_id" IS NOT NULL AND "compromiso_id" IS NOT NULL AND "origen_importe" <> 'booked_price')
+    OR ("tramo" IN ('sena', 'saldo', 'total') AND "publicacion_id" IS NULL AND "compromiso_id" IS NULL AND "origen_importe" IN ('accepted_budget', 'booked_price'))
+  );

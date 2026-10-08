@@ -107,7 +107,9 @@ export async function confirmarReservaPorPagoPrisma(
   } })
   if (!row || typeof row['precioFinal'] !== 'bigint' || row['precioFinal'] <= 0n || row['moneda'] !== input.currency ||
       !(row['solicitudExpiraEn'] instanceof Date) || row['solicitudExpiraEn'].getTime() <= Date.now()) return false
-  if (montoSenaReserva(row['precioFinal'], input.currency) !== input.amountMinor) return false
+  // PAGOS-MODALIDAD-01: the payment that confirms a turno is its 50% deposit or its whole price.
+  const total = majorDecimalToMinorUnits(row['precioFinal'].toString(10), input.currency)
+  if (montoSenaReserva(row['precioFinal'], input.currency) !== input.amountMinor && total !== input.amountMinor) return false
   const updated = await client.reserva.updateMany({
     where: { id: row['id'], estado: 'awaiting_payment', clienteTenantId: input.clienteTenantId, tenantId: input.prestadorTenantId },
     // Confirmed: it no longer has a window that can run out.

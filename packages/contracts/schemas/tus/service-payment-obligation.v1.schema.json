@@ -39,7 +39,7 @@
     "budgetVersion": { "type": ["integer", "null"], "minimum": 1 },
     "amountMinor": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
     "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
-    "status": { "enum": ["pending_payment", "paid", "refunded", "charged_back"] },
+    "status": { "enum": ["pending_payment", "paid", "refunded", "charged_back", "voided"] },
     "version": { "type": "integer", "minimum": 1 },
     "createdAt": { "type": "string", "minLength": 1 },
     "updatedAt": { "type": "string", "minLength": 1 }

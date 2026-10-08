@@ -38,6 +38,10 @@ const SETUP = `${SERVICE_SETUP}
     trabajo: (input) => workStore.findAccessible(input),
     evaluarPagos: (input) => fin.evaluarCierreEconomico(input),
     bloqueos: (trabajo) => fin.bloqueosDeCierre({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId }),
+    completarSiPagado: async ({ trabajo, correlationId, at }) => {
+      if (!(await fin.estadoEconomico({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId })).fullyPaid) return false
+      return (await work.completarPorPagoFinal({ work: workStore, outbox: new Outbox() }, { tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId, paymentId: 'confirmacion-del-cierre', correlationId, createdAt: at })) === 'completed'
+    },
   }, clock)
   work.conPagos(pagosTrabajo(fin))
   // The earnings service over the SAME ledger the finance service writes, told which settlements
@@ -70,7 +74,11 @@ const SETUP = `${SERVICE_SETUP}
     const raw = JSON.stringify({ id: eventId ?? 'evt-' + eventSeq, data: { id: 'fake-mp-' + paymentId, external_reference: paymentId, status, currency_id: 'ARS', transaction_amount: amount, date_last_updated: new Date(Date.parse('2026-09-23T11:00:00.000Z') + eventSeq * 1000).toISOString() } })
     return fin.ingerirEventoProveedor({ rawBody: raw, signature: proveedorPagos.firmar(raw), receivedAt: '2026-09-23T11:00:00.000Z' })
   }
-  const pagar = async (id, clave, monto, evento) => { const c = await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: clave }); const r = await notify(c.payment.paymentId, 'approved', monto, evento); return { pago: c.payment, resultado: r } }
+  const pagar = async (id, clave, monto, evento, modalidad) => { const c = await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: clave, ...(modalidad ? { modalidad } : {}) }); const r = await notify(c.payment.paymentId, 'approved', monto, evento); return { pago: c.payment, resultado: r, obligacion: c.obligation } }
+  const obligaciones = (id) => [...store.state.obligaciones.values()].filter((o) => o.trabajoId === id).map((o) => [o.part, o.status, o.amountMinor.toString()]).sort()
+  const comisiones = (id) => [...store.state.comisiones.values()].filter((c) => [...store.state.obligaciones.values()].some((o) => o.trabajoId === id && o.obligacionId === c.obligacionId)).map((c) => c.commissionMinor.toString())
+  const proveedorCtx = { tenantId: provider.tenantId, actorId: 'provider-user', correlationId: 'c-p' }
+  const clienteCtx = { tenantId: customer.tenantId, actorId: 'customer-user', correlationId: 'c-c' }
 `
 
 test('RETENCION deposit + balance: the approved deposit books the earning and leaves it held (not withdrawable, not in a payout); finishing the work does not release; the approved balance closes the work and releases both, once; repeating the webhook or the release changes nothing', () => {
@@ -217,7 +225,6 @@ test('RETENCION y cierre de un trabajo: the client confirming a finished work wi
     const id = await requestWork('c', '2000000')
     await pagar(id, 'kc-sena', '10000.00', 'evt-c-sena')
     const proveedor = { tenantId: provider.tenantId, actorId: 'provider-user', correlationId: 'c-p' }
-    const clienteCtx = { tenantId: customer.tenantId, actorId: 'customer-user', correlationId: 'c-c' }
     out.sinTerminar = await cierre.finalizar(proveedor, id, { evidence: 'Trabajo terminado y probado.' }).then(() => 'none', (e) => e.code)
     await step('startWork', id)
     await step('completeWork', id)
@@ -236,7 +243,6 @@ test('RETENCION y cierre de un trabajo: the client confirming a finished work wi
     const id = await requestWork('o', '2000000')
     await pagar(id, 'ko-sena', '10000.00', 'evt-o-sena')
     const proveedor = { tenantId: provider.tenantId, actorId: 'provider-user', correlationId: 'c-p' }
-    const clienteCtx = { tenantId: customer.tenantId, actorId: 'customer-user', correlationId: 'c-c' }
     await step('startWork', id)
     await step('completeWork', id)
     await cierre.finalizar(proveedor, id, { evidence: 'Trabajo terminado, falta revisar un detalle.' })
@@ -253,4 +259,86 @@ test('RETENCION y cierre de un trabajo: the client confirming a finished work wi
   assert.deepEqual(s.pagadoConObservacion, ['completed', [['held', true, false, '900000'], ['held', true, false, '900000']], { ganado: '1800000', disponible: '0', retenido: '1800000', negativo: '0', puede: false, motivo: 'NO_FUNDS' }], 'a claim of the client holds the money even with the work completed and fully paid')
   assert.deepEqual(s.evaluar, { released: 0, pending: 'observation_open' })
   assert.deepEqual(s.resuelto, [{ released: 2, pending: null }, [['eligible', true, true, '900000'], ['eligible', true, true, '900000']], '1800000', { released: 0, pending: null }], 'settled: both payments are released together, once')
+})
+
+// PAGOS-MODALIDAD-01. Before the first approved payment the client chooses a 50% deposit or the
+// total at once; an approved payment fixes the choice. The balance is always
+// total - what was paid, never a fixed half, never negative, and the sum of what is charged
+// never goes above the total.
+test('MODALIDAD presupuesto pagado en total: one obligation for the whole budget, no deposit and no balance ever; the commission is the one of the total; paid in advance it stays held until the provider finishes and the client confirms, which completes the work and releases it once', () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    const id = await requestWork('t', '2000000')
+    out.vistaTotal = await fin.consultarVistaPreviaPago({ ...customer, trabajoId: id, modalidad: 'total' }).then((v) => [v.part, v.amountMinor])
+    out.vistaSena = await fin.consultarVistaPreviaPago({ ...customer, trabajoId: id }).then((v) => [v.part, v.amountMinor])
+    const total = await pagar(id, 'kt-total', '20000.00', 'evt-t-total', 'total')
+    out.pagado = { resultado: total.resultado.result, obligaciones: obligaciones(id), comisiones: comisiones(id), liquidaciones: liquidaciones(), saldo: await saldo(), economia: await fin.estadoEconomico({ tenantId: customer.tenantId, trabajoId: id }).then((e) => [String(e.totalMinor), String(e.paidMinor), String(e.pendingMinor), e.fullyPaid, e.modality]) }
+    // Nothing else can be charged: neither a deposit, nor the total again, nor a balance.
+    out.nadaMas = [
+      await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'kt-sena' }).then(() => 'none', (e) => e.code),
+      await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'kt-sena-2', modalidad: 'sena' }).then(() => 'none', (e) => e.code),
+      await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'kt-total-2', modalidad: 'total' }).then(() => 'none', (e) => e.code),
+    ]
+    // The work starts (the total covers what a deposit would) and the provider finishes it.
+    await step('startWork', id)
+    await step('completeWork', id)
+    const estado = await fin.estadoPagosTrabajo(await current(id))
+    out.terminado = [(await current(id)).status, estado.deposit.status, estado.balance.status, String(estado.balance.amountMinor), estado.modality, String(estado.pendingMinor), await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'kt-saldo' }).then(() => 'none', (e) => e.code), liquidaciones(), (await saldo()).disponible]
+    await cierre.finalizar(proveedorCtx, id, { evidence: 'Trabajo terminado y entregado al cliente.' })
+    const confirmado = await cierre.confirmar(clienteCtx, id)
+    out.confirmado = [confirmado.status, confirmado.pagos, (await current(id)).status, obligaciones(id), liquidaciones(), await saldo()]
+    const otra = await cierre.confirmar(clienteCtx, id)
+    out.repetido = [otra.status, otra.pagos, (await saldo()).disponible, store.state.auditoria.filter((a) => a.action === 'settlement.eligible').length]
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.vistaTotal, ['total', '2000000'])
+  assert.deepEqual(r.vistaSena, ['sena', '1000000'], 'the deposit is the default')
+  assert.deepEqual(r.pagado, { resultado: 'applied', obligaciones: [['total', 'paid', '2000000']], comisiones: ['200000'], liquidaciones: [['held', true, false, '1800000']], saldo: { ganado: '1800000', disponible: '0', retenido: '1800000', negativo: '0', puede: false, motivo: 'NO_FUNDS' }, economia: ['2000000', '2000000', '0', true, 'total'] }, 'one obligation and one commission for the total; paid in advance it is held')
+  assert.deepEqual(r.nadaMas, ['ALREADY_PAID', 'PAYMENT_MODALITY_FIXED', 'ALREADY_PAID'], 'the way of paying is fixed and nothing is left to pay')
+  assert.deepEqual(r.terminado, ['in_progress', 'paid', 'paid', '0', 'total', '0', 'ALREADY_PAID', [['held', true, false, '1800000']], '0'], 'finished by the provider: no balance exists and the money is still held')
+  assert.deepEqual(r.confirmado, ['confirmed', { released: 1, pending: null }, 'completed', [['total', 'paid', '2000000']], [['eligible', true, true, '1800000']], { ganado: '1800000', disponible: '1800000', retenido: '0', negativo: '0', puede: true, motivo: null }], 'the confirmed closing completes the work and releases the total, with no balance obligation')
+  assert.deepEqual(r.repetido, ['already_confirmed', { released: 0, pending: null }, '1800000', 1], 'confirming again releases nothing twice')
+})
+
+test('MODALIDAD cambio de elección: before any approved payment the client may switch between deposit and total (the replaced obligation is voided and its checkout cancelled; a payment that still arrives for it is quarantined, never applied); after an approved payment the switch is refused; deposit + balance charge exactly the total and the same commission as one payment', () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    const id = await requestWork('m', '2000100')
+    const intenciones = () => [...store.state.intenciones.values()].filter((i) => i.trabajoId === id).map((i) => [i.amountMinor.toString(), i.providerStatus]).sort()
+    const sena1 = await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'km-sena' })
+    const repetido = await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'km-sena' })
+    out.dobleCheckout = [repetido.payment.paymentId === sena1.payment.paymentId, intenciones().length]
+    // The client changes its mind: the total instead.
+    const total = await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'km-total', modalidad: 'total' })
+    out.aTotal = [obligaciones(id), intenciones()]
+    // ...and back to the deposit: the same obligation comes back, the total is voided.
+    const sena2 = await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'km-sena-otra', modalidad: 'sena' })
+    out.aSena = [obligaciones(id), sena2.obligation.obligacionId === sena1.obligation.obligacionId]
+    // A payment made on the checkout that was replaced: never applied.
+    const tarde = await notify(total.payment.paymentId, 'approved', '20001.00', 'evt-m-tarde')
+    out.pagoAnulado = [tarde.result, tarde.reason, obligaciones(id), movimientos().length]
+    // The deposit is approved: the choice is fixed.
+    const aprobada = await notify(sena2.payment.paymentId, 'approved', '10000.50', 'evt-m-sena')
+    const duplicada = await notify(sena2.payment.paymentId, 'approved', '10000.50', 'evt-m-sena')
+    out.senaAprobada = [aprobada.result, duplicada.status, obligaciones(id)]
+    out.cambioTarde = [await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'km-total-tarde', modalidad: 'total' }).then(() => 'none', (e) => e.code), obligaciones(id)]
+    // The balance is what is left of the total, to the cent (an odd total: 20.001,00).
+    await step('startWork', id)
+    out.saldoAntes = await fin.estadoPagosTrabajo(await current(id)).then((e) => [e.modality, String(e.paidMinor), String(e.pendingMinor), String(e.balance.amountMinor), e.balance.status])
+    await step('completeWork', id)
+    const saldoPago = await pagar(id, 'km-saldo', '10000.50', 'evt-m-saldo')
+    const economia = await fin.estadoEconomico({ tenantId: customer.tenantId, trabajoId: id })
+    out.cerrado = [saldoPago.resultado.result, (await current(id)).status, obligaciones(id), comisiones(id).sort(), [String(economia.totalMinor), String(economia.paidMinor), String(economia.pendingMinor), economia.fullyPaid], liquidaciones().map((l) => l[0]), (await saldo()).disponible]
+    out.nadaMas = await fin.iniciarCheckout({ ...customer, trabajoId: id, idempotencyKey: 'km-otro' }).then(() => 'none', (e) => e.code)
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.dobleCheckout, [true, 1], 'the same checkout asked twice is the same payment')
+  assert.deepEqual(r.aTotal, [[['sena', 'voided', '1000050'], ['total', 'pending_payment', '2000100']], [['1000050', 'cancelled'], ['2000100', 'pending']]], 'choosing the total voids the unpaid deposit and cancels its checkout')
+  assert.deepEqual(r.aSena, [[['sena', 'pending_payment', '1000050'], ['total', 'voided', '2000100']], true], 'choosing the deposit again brings the same obligation back')
+  assert.deepEqual(r.pagoAnulado, ['quarantined', 'obligation_voided', [['sena', 'pending_payment', '1000050'], ['total', 'voided', '2000100']], 0], 'a payment for the replaced way of paying is quarantined: nothing is marked paid, no earning is booked')
+  assert.deepEqual(r.senaAprobada, ['applied', 'duplicate', [['sena', 'paid', '1000050'], ['total', 'voided', '2000100']]])
+  assert.deepEqual(r.cambioTarde, ['PAYMENT_MODALITY_FIXED', [['sena', 'paid', '1000050'], ['total', 'voided', '2000100']]], 'after an approved payment the way of paying cannot change')
+  assert.deepEqual(r.saldoAntes, ['sena', '1000050', '1000050', '1000050', 'not_created'], 'the balance is total - paid, known before its obligation exists')
+  assert.deepEqual(r.cerrado, ['applied', 'completed', [['saldo', 'paid', '1000050'], ['sena', 'paid', '1000050'], ['total', 'voided', '2000100']], ['100005', '100005'], ['2000100', '2000100', '0', true], ['eligible', 'eligible'], '1800090'], 'deposit + balance = the total, two commissions that add up to the one of the total, both released together')
+  assert.equal(r.nadaMas, 'ALREADY_PAID')
 })

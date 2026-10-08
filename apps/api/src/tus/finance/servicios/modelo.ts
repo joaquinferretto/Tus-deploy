@@ -157,7 +157,13 @@ export function derivarObligacionSenaTurno(input: {
   trabajo: Trabajo
   reserva: ReservaTurnoFinanciera | null
   now: string
+  // PAGOS-MODALIDAD-01. The deposit (default), the total paid at once, or the balance left after
+  // the turno was delivered and confirmed. `amountMinor` is what the canonical evaluation decided
+  // (total - what was already paid); absent: the deposit of the booked price.
+  part?: TramoPagoServicio
+  amountMinor?: bigint
 }): ObligacionServicio {
+  const part = input.part ?? 'sena'
   const { trabajo, reserva } = input
   if (
     trabajo.origin !== 'turno' ||
@@ -173,15 +179,23 @@ export function derivarObligacionSenaTurno(input: {
       'INCONSISTENT_COMMERCIAL_CHAIN',
       'the order does not match the reservation of its turno'
     )
-  if (reserva.status !== 'awaiting_payment' || !reserva.expiresAt || Date.parse(reserva.expiresAt) <= Date.parse(input.now) || reserva.priceMajor === null || reserva.priceMajor <= 0n)
+  if (part === 'saldo') {
+    // The balance is paid after the service: its turno is done, nothing is waiting to be confirmed.
+    if (reserva.status !== 'completed' || reserva.priceMajor === null || reserva.priceMajor <= 0n || !input.amountMinor || input.amountMinor <= 0n)
+      throw new ErrorFinanzasServicio(409, 'APPOINTMENT_NOT_PAYABLE', 'the turno has no balance to pay')
+  } else if (reserva.status !== 'awaiting_payment' || !reserva.expiresAt || Date.parse(reserva.expiresAt) <= Date.parse(input.now) || reserva.priceMajor === null || reserva.priceMajor <= 0n)
     throw new ErrorFinanzasServicio(
       409,
       'APPOINTMENT_NOT_PAYABLE',
       'the turno has no deposit to pay'
     )
-  const money = createNonNegativeMoney(reserva.currency, montoSenaReserva(reserva.priceMajor, reserva.currency))
+  const total = majorDecimalToMinorUnits(reserva.priceMajor!.toString(10), reserva.currency)
+  const amount = input.amountMinor ?? (part === 'total' ? total : montoSenaReserva(reserva.priceMajor!, reserva.currency))
+  // Never above the price of the turno, whoever computed it.
+  if (amount <= 0n || amount > total) throw new ErrorFinanzasServicio(409, 'INVALID_AMOUNT', 'the amount exceeds the price of the turno')
+  const money = createNonNegativeMoney(reserva.currency, amount)
   return {
-    obligacionId: identificadorObligacion(trabajo.trabajoId, 'sena'),
+    obligacionId: identificadorObligacion(trabajo.trabajoId, part),
     tenantId: trabajo.tenantId,
     clienteId: trabajo.clienteId ?? trabajo.tenantId,
     prestadorTenantId: trabajo.prestadorTenantId,
@@ -189,7 +203,7 @@ export function derivarObligacionSenaTurno(input: {
     publicacionId: null,
     commitmentId: null,
     trabajoId: trabajo.trabajoId,
-    part: 'sena',
+    part,
     amountSource: ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRECIO_RESERVA,
     budgetId: null,
     budgetVersion: null,
@@ -210,7 +224,11 @@ export function derivarObligacionTramo(input: {
   context: ContextoFinanzasServicio
   trabajo: Trabajo
   presupuesto: PresupuestoFinanciero | null
-  part: 'sena' | 'saldo'
+  // PAGOS-MODALIDAD-01: also 'total' (the whole budget at once).
+  part: 'sena' | 'saldo' | 'total'
+  // What the canonical evaluation decided (the balance is total - what was paid). Absent: half
+  // of the budget for the deposit, the rest for the balance, everything for the total.
+  amountMinor?: bigint
   now: string
 }): ObligacionServicio {
   const { trabajo, presupuesto } = input
@@ -244,6 +262,9 @@ export function derivarObligacionTramo(input: {
     )
   const money = createNonNegativeMoney(presupuesto.currency, presupuesto.totalMinor)
   const amounts = montosSenaSaldo(money.minor)
+  const amount = input.amountMinor ?? (input.part === 'total' ? money.minor : input.part === 'sena' ? amounts.sena : amounts.saldo)
+  // Never above the accepted budget, whoever computed it.
+  if (amount <= 0n || amount > money.minor) throw new ErrorFinanzasServicio(409, 'INVALID_AMOUNT', 'the amount exceeds the accepted budget')
   return {
     obligacionId: identificadorObligacion(trabajo.trabajoId, input.part),
     tenantId: trabajo.tenantId,
@@ -257,7 +278,7 @@ export function derivarObligacionTramo(input: {
     amountSource: ORIGENES_IMPORTE_OBLIGACION_SERVICIO.PRESUPUESTO_ACEPTADO,
     budgetId: presupuesto.presupuestoId,
     budgetVersion: presupuesto.version,
-    amountMinor: input.part === 'sena' ? amounts.sena : amounts.saldo,
+    amountMinor: amount,
     currency: money.currency,
     status: ESTADOS_OBLIGACION_PAGO_SERVICIO.PENDIENTE_PAGO,
     version: 1,
@@ -392,10 +413,12 @@ export function derivarObligacionServicio(input: {
 const TRANSICIONES_OBLIGACION: Readonly<
   Record<EstadoObligacionPagoServicio, readonly EstadoObligacionPagoServicio[]>
 > = {
-  pending_payment: ['paid'],
+  pending_payment: ['paid', 'voided'],
   paid: ['refunded', 'charged_back'],
   refunded: [],
   charged_back: [],
+  // Chosen again by the client before anything was paid.
+  voided: ['pending_payment'],
 }
 
 export function esTransicionObligacionPermitida(

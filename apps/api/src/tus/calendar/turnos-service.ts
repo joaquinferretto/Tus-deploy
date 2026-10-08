@@ -1118,6 +1118,12 @@ export class ServicioTurnos {
     return this.senas.iniciarPago(input)
   }
 
+  /** PAGOS-MODALIDAD-01: el total de una vez (en lugar de la seña) o el saldo de SU turno. */
+  async pagarTurno(input: { clienteId: string; reservaId: string; correlationId: string; tramo: 'total' | 'saldo' }): Promise<CheckoutSenaTurnoDTO> {
+    if (!this.senas) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'El pago online todavía no está disponible.')
+    return this.senas.iniciarPagoDe(input)
+  }
+
   /** El estado real del pago de la seña de SU turno (lo informa Mercado Pago; nada que diga el cliente lo cambia). */
   async verificarPagoSena(input: { clienteId: string; reservaId: string; correlationId: string }) {
     if (!this.senas) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'El pago online todavía no está disponible.')
