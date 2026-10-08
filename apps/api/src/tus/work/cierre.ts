@@ -69,6 +69,8 @@ export interface PuertoCierres {
   resolverObservacion(input: { tenantId: string; trabajoId: string; at: string }): Promise<boolean>
   // Finished, not confirmed, without an open observation, whose window ran out; oldest first.
   vencidos(input: { now: string; limit: number }): Promise<CierreTrabajo[]>
+  // Every work with an observation the platform has not settled yet, oldest first.
+  observacionesAbiertas(input: { limit: number }): Promise<CierreTrabajo[]>
 }
 
 export class AlmacenCierresEnMemoria implements PuertoCierres {
@@ -101,6 +103,9 @@ export class AlmacenCierresEnMemoria implements PuertoCierres {
   }
   async resolverObservacion(input: { tenantId: string; trabajoId: string; at: string }): Promise<boolean> {
     return this.cambiar(input.tenantId, input.trabajoId, observacionAbierta, (fila) => ({ ...fila, observationResolvedAt: input.at, updatedAt: input.at }))
+  }
+  async observacionesAbiertas(input: { limit: number }): Promise<CierreTrabajo[]> {
+    return [...this.filas.values()].filter(observacionAbierta).sort((a, b) => a.observedAt!.localeCompare(b.observedAt!)).slice(0, input.limit).map((fila) => ({ ...fila }))
   }
   async vencidos(input: { now: string; limit: number }): Promise<CierreTrabajo[]> {
     return [...this.filas.values()]
@@ -269,7 +274,10 @@ export class ServicioCierreTrabajo {
     if (!observacionAbierta(cierre)) throw new ErrorCierreTrabajo(409, 'NO_OPEN_OBSERVATION', 'the work has no open observation')
     await this.store.resolverObservacion({ ...input, at: this.iso() })
     void context
-    return { cierre: (await this.store.buscar(input))!, status: 'resolved', pagos: null }
+    // Nothing blocks it any more: what the work already paid for is evaluated again (a work that
+    // was completed and fully paid while it was observed is released now).
+    const pagos = this.dependencias.evaluarPagos ? await this.dependencias.evaluarPagos({ ...input, correlationId: context.correlationId }) : null
+    return { cierre: (await this.store.buscar(input))!, status: 'resolved', pagos }
   }
 
   // The windows that ran out. Each work is confirmed at most once (the conditional write of the
@@ -297,6 +305,11 @@ export class ServicioCierreTrabajo {
       }
     }
     return resultado
+  }
+
+  // What the platform has to settle: every open observation, oldest first.
+  async observacionesAbiertas(limit = 100): Promise<CierreTrabajo[]> {
+    return this.store.observacionesAbiertas({ limit: Math.min(200, Math.max(1, Math.trunc(limit) || 100)) })
   }
 
   // For the finance service: what the closing of that work says.

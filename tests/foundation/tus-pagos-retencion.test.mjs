@@ -251,8 +251,9 @@ test('RETENCION y cierre de un trabajo: the client confirming a finished work wi
     await pagar(id, 'ko-saldo', '10000.00', 'evt-o-saldo')
     out.pagadoConObservacion = [(await current(id)).status, liquidaciones(), await saldo()]
     out.evaluar = await fin.evaluarCierreEconomico({ tenantId: customer.tenantId, trabajoId: id, correlationId: 'e1' })
-    await cierre.resolverObservacion({ tenantId: 'platform', actorId: 'admin', correlationId: 'a' }, { tenantId: customer.tenantId, trabajoId: id })
-    out.resuelto = [await fin.evaluarCierreEconomico({ tenantId: customer.tenantId, trabajoId: id, correlationId: 'e2' }), liquidaciones(), (await saldo()).disponible, await fin.evaluarCierreEconomico({ tenantId: customer.tenantId, trabajoId: id, correlationId: 'e3' })]
+    // Settling it evaluates the payments again at once: nothing has to be asked for separately.
+    const resuelta = await cierre.resolverObservacion({ tenantId: 'platform', actorId: 'admin', correlationId: 'a' }, { tenantId: customer.tenantId, trabajoId: id })
+    out.resuelto = [resuelta.pagos, liquidaciones(), (await saldo()).disponible, await fin.evaluarCierreEconomico({ tenantId: customer.tenantId, trabajoId: id, correlationId: 'e3' })]
     console.log(JSON.stringify(out))
   `)
   assert.equal(s.observado, 'observed')
@@ -341,4 +342,23 @@ test('MODALIDAD cambio de elección: before any approved payment the client may 
   assert.deepEqual(r.saldoAntes, ['sena', '1000050', '1000050', '1000050', 'not_created'], 'the balance is total - paid, known before its obligation exists')
   assert.deepEqual(r.cerrado, ['applied', 'completed', [['saldo', 'paid', '1000050'], ['sena', 'paid', '1000050'], ['total', 'voided', '2000100']], ['100005', '100005'], ['2000100', '2000100', '0', true], ['eligible', 'eligible'], '1800090'], 'deposit + balance = the total, two commissions that add up to the one of the total, both released together')
   assert.equal(r.nadaMas, 'ALREADY_PAID')
+})
+
+test('MODALIDAD rutas: the work checkout takes only the way of paying; the observations of clients are listed and settled behind the payment administration; the closing routes take only the evidence or the reason', () => {
+  const router = readFileSync(join(root, 'apps/api/src/tus/http/router.ts'), 'utf8').replace(/\r\n/gu, '\n')
+  assert.match(router, /if \(modalidad !== undefined && modalidad !== 'sena' && modalidad !== 'total'\) \{\s+sendError\(response, 400, 'INVALID', 'modalidad must be sena or total'\)/u, 'anything else than sena or total is refused')
+  assert.match(router, /idempotencyKey: headerKey,\s+\.\.\.\(modalidad \? \{ modalidad \} : \{\}\),/u, 'the choice reaches the finance service; no amount does')
+  for (const ruta of ["router.get(['/tus/v1/admin/payments/observations']", "router.post(['/tus/v1/admin/payments/observations/resolve']"]) {
+    const desde = router.indexOf(ruta)
+    assert.ok(desde > 0, ruta)
+    assert.match(router.slice(desde, desde + 400), /isPlatformPaymentsAdmin\(context, application\)\) \{\s+sendError\(response, 403, 'FORBIDDEN'/u, `${ruta} is behind the payment administration`)
+  }
+  assert.match(router, /const ajenos = Object\.keys\(body\)\.filter\(\(campo\) => campo !== 'clientTenantId' && campo !== 'workId'\)/u, 'settling takes the work and nothing else')
+  const cierres = readFileSync(join(root, 'apps/api/src/tus/work/cierre-http.ts'), 'utf8')
+  assert.match(cierres, /const CAMPOS = \{ finalizacion: \['evidence'\], observacion: \['reason'\] \} as const/u)
+  assert.match(cierres, /if \(!cuerpo\(request, response, \[\]\)\) return/u, 'a confirmation carries no body at all')
+  const turnos = readFileSync(join(root, 'apps/api/src/tus/calendar/turnos-http.ts'), 'utf8')
+  assert.match(turnos, /'\/tus\/v1\/cliente\/turnos\/:id\/pago\/checkout'/u)
+  assert.match(turnos, /const ajenos = Object\.keys\(body\)\.filter\(\(campo\) => campo !== 'tramo'\)/u, 'the turno checkout takes only the part')
+  assert.match(readFileSync(join(root, 'apps/api/src/server.ts'), 'utf8'), /app\.use\(crearRouterCierres\(\{/u, 'the closing routes are mounted')
 })

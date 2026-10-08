@@ -219,6 +219,32 @@ export function crearRouterTurnos({
     })
   )
 
+  // PAGOS-MODALIDAD-01. The checkout of a turno of the session's own account, in the way the
+  // client chooses: its 50% deposit ('sena'), the whole price at once ('total') or, after the
+  // turno was delivered and confirmed, what is left of it ('saldo'). The body carries ONLY that
+  // choice: the turno is the one of the path, the client is the session and every amount is
+  // computed by the backend (never above the price). Opening the checkout pays nothing.
+  router.post(
+    '/tus/v1/cliente/turnos/:id/pago/checkout',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      response.setHeader('cache-control', 'private, no-store')
+      const body = comoRegistro(request.body)
+      const ajenos = Object.keys(body).filter((campo) => campo !== 'tramo')
+      if (ajenos.length > 0) return void response.status(400).json({ code: 'UNTRUSTED_PAYMENT_FIELDS', error: 'El importe y los datos del pago los determina TUS.', fields: ajenos })
+      const tramo = body['tramo'] ?? 'sena'
+      if (tramo !== 'sena' && tramo !== 'total' && tramo !== 'saldo') return void response.status(400).json({ code: 'INVALID_PARAMS', error: 'tramo debe ser sena, total o saldo', fields: ['tramo'] })
+      const entrada = { clienteId: context.subjectId, reservaId: String(request.params['id'] ?? ''), correlationId: context.correlationId }
+      try {
+        const checkout = tramo === 'sena' ? await servicio.pagarSena(entrada) : await servicio.pagarTurno({ ...entrada, tramo })
+        response.status(200).json({ ...checkout, tramo })
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
   // -----------------------------------------------------------------------------------------------
   // 2. PRESTADOR ENDPOINTS (Gestión de sus turnos y agenda)
   // -----------------------------------------------------------------------------------------------

@@ -252,8 +252,8 @@ export class ServicioTurnos {
   // The deposit of each turno, derived (never stored on the reservation): one batch for the list.
   private async agregarSenas(rows: FilaReserva[], turnos: DetalleTurno[]): Promise<DetalleTurno[]> {
     if (!this.senas || rows.length === 0) return turnos
-    const senas = await this.senas.senasDe(rows)
-    return turnos.map((turno) => ({ ...turno, sena: senas.get(turno.id) ?? null }))
+    const [senas, pagos] = await Promise.all([this.senas.senasDe(rows), this.senas.pagosDe(rows)])
+    return turnos.map((turno) => ({ ...turno, sena: senas.get(turno.id) ?? null, pago: pagos.get(turno.id) ?? null }))
   }
 
   /**

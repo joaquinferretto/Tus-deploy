@@ -196,6 +196,18 @@ export interface DetalleTurno {
   fechaCreacion: string
   // Deposit of the turno (tus-turnos.ts): derived by the backend, never stored on the reservation.
   sena?: { monto: number; moneda: string; estado: string } | null
+  // PAGOS-MODALIDAD-01: the whole financial state (PagoTurnoDTO of tus-turnos). null: no online payment applies.
+  pago?: {
+    moneda: string
+    modalidad: 'sena' | 'total' | null
+    total: number
+    pagado: number
+    saldoPendiente: number
+    proximo: { tramo: 'sena' | 'total' | 'saldo'; monto: number } | null
+    opciones: ('sena' | 'total')[]
+    cierre: { finalizadoEn: string; confirmacionVenceEn: string; confirmadoEn: string | null; confirmacionOrigen: 'cliente' | 'automatica' | 'pago_final' | null; observacionAbierta: boolean; observacionMotivo: string | null } | null
+    fondos: 'retenidos' | 'liberados' | null
+  } | null
 }
 
 export interface PerfilPrestadorPublico extends PrestadorPublico {

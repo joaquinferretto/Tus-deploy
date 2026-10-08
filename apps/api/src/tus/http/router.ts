@@ -858,6 +858,13 @@ export function createTusHttpRouter({
         sendError(response, 400, 'INVALID', 'idempotency-key is required')
         return
       }
+      // PAGOS-MODALIDAD-01: the only thing the client chooses is HOW it pays (a 50% deposit, the
+      // default, or the total at once). Every amount is still derived by the server.
+      const modalidad = body['modalidad']
+      if (modalidad !== undefined && modalidad !== 'sena' && modalidad !== 'total') {
+        sendError(response, 400, 'INVALID', 'modalidad must be sena or total')
+        return
+      }
       try {
         const result = await application.serviceFinance.iniciarCheckout({
           tenantId: context.tenantId,
@@ -865,6 +872,7 @@ export function createTusHttpRouter({
           correlationId: context.correlationId,
           trabajoId: request.params['workId'] ?? '',
           idempotencyKey: headerKey,
+          ...(modalidad ? { modalidad } : {}),
         })
         response.status(result.status === 'created' ? 201 : 200).json(result)
       } catch (error) {
@@ -1794,6 +1802,52 @@ export function createTusHttpRouter({
       }
     }
   )
+
+  // CIERRE-TRABAJO-01. Observations of clients the platform has to settle. Same authority as the
+  // rest of the payment administration (they hold money): `tus:payments:admin` on an MFA-elevated
+  // session of an allowlisted account. Settling one re-evaluates what the work already paid.
+  router.get(['/tus/v1/admin/payments/observations'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!isPlatformPaymentsAdmin(context, application)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized')
+      return
+    }
+    if (!application.workClosing) {
+      sendError(response, 503, 'UNAVAILABLE', 'work closing is not available')
+      return
+    }
+    response.setHeader('cache-control', 'no-store')
+    const abiertas = await application.workClosing.observacionesAbiertas()
+    response.status(200).json({ observations: abiertas.map((cierre) => ({ clientTenantId: cierre.tenantId, workId: cierre.trabajoId, providerTenantId: cierre.prestadorTenantId, finishedAt: cierre.finishedAt, evidence: cierre.evidence, observedAt: cierre.observedAt, reason: cierre.observationReason })) })
+  })
+
+  router.post(['/tus/v1/admin/payments/observations/resolve'], async (request: Request, response: Response) => {
+    const context = await authenticate(request, sessions)
+    if (!context || !isPlatformPaymentsAdmin(context, application)) {
+      sendError(response, 403, 'FORBIDDEN', 'TUS payment administration is not authorized')
+      return
+    }
+    if (!application.workClosing) {
+      sendError(response, 503, 'UNAVAILABLE', 'work closing is not available')
+      return
+    }
+    const body = asRecord(request.body)
+    const ajenos = Object.keys(body).filter((campo) => campo !== 'clientTenantId' && campo !== 'workId')
+    const clientTenantId = body['clientTenantId']
+    const workId = body['workId']
+    if (ajenos.length > 0 || typeof clientTenantId !== 'string' || !clientTenantId || typeof workId !== 'string' || !workId) {
+      sendError(response, 400, 'INVALID', 'clientTenantId and workId are required, and nothing else')
+      return
+    }
+    try {
+      const resultado = await application.workClosing.resolverObservacion({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId }, { tenantId: clientTenantId, trabajoId: workId })
+      response.status(200).json({ status: resultado.status, workId, payments: resultado.pagos })
+    } catch (error) {
+      const fallo = error as { status?: number; code?: string; message?: string }
+      if (typeof fallo?.status === 'number' && typeof fallo.code === 'string') response.status(fallo.status).json({ code: fallo.code, error: fallo.message })
+      else sendError(response, 500, 'UNAVAILABLE', 'the observation was not resolved')
+    }
+  })
 
   // Readiness evidence of the platform tenant (`service-payments`, `settlement`). Same authority
   // as the rest of the payment administration: `tus:payments:admin`, honored only on an

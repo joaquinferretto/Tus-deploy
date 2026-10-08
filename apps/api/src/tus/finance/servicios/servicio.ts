@@ -1807,7 +1807,9 @@ export class ServicioFinanzasServicios {
   ): Promise<ResultadoEvaluacionLiquidacion[]> {
     const obligaciones = await repositories.obligaciones.listarPorTrabajo({ tenantId: input.tenantId, trabajoId: input.trabajoId })
     const resultados: ResultadoEvaluacionLiquidacion[] = []
-    for (const obligation of obligaciones)
+    // A voided obligation (replaced by the other way of paying) was never paid: it has nothing
+    // to release and it is not something pending either.
+    for (const obligation of obligaciones.filter((item) => item.status !== 'voided'))
       resultados.push(await this.evaluarLiquidacionEn(repositories, obligation, input.correlationId))
     return resultados
   }

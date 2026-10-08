@@ -244,3 +244,125 @@ test('MODALIDAD turnos PostgreSQL pago total: the client pays the whole price in
   assert.deepEqual(r.repetida, [0, '2700000', 0])
   assert.deepEqual(r.retiro, ['created', '2700000'])
 })
+
+// The same flow through HTTP: the routes a client and a provider really call, and what the turno
+// tells them about its money.
+const HTTP = `${SETUP}
+  const express = (await import('./apps/api/node_modules/express/index.js')).default
+  const { crearRouterTurnos } = await import('./apps/api/src/tus/calendar/turnos-http.ts')
+  const { crearRouterCierres } = await import('./apps/api/src/tus/work/cierre-http.ts')
+  const app = express()
+  app.use(express.json())
+  const sesiones = {}
+  const sesion = (token, subjectId, tenantId) => { sesiones[token] = { subjectId, sessionId: 's', tenantId, roles: ['owner'], permissions: [], correlationId: 'c-' + token } }
+  const sessions = { resolve: async (token) => sesiones[token] ?? null }
+  app.use(crearRouterTurnos({ servicio: turnos, sessions }))
+  app.use(crearRouterCierres({ cierre, sessions, ordenDeTurno: async ({ reservaId, tenantId }) => (await prisma.trabajo.findFirst({ where: { OR: [{ tenantId }, { prestadorTenantId: tenantId }], reserva: { id: reservaId } }, select: { trabajoId: true } }).catch(() => null))?.trabajoId ?? (await ordenPorReserva(reservaId, tenantId)) }))
+  // The order of a turno by the id the client sees (the row id of the reservation).
+  async function ordenPorReserva(id, tenantId) {
+    const reserva = await prisma.reserva.findFirst({ where: { OR: [{ id }, { reservaId: id }] } })
+    if (!reserva) return null
+    const orden = await prisma.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: reserva.tenantId, reservaId: reserva.reservaId, OR: [{ tenantId }, { prestadorTenantId: tenantId }] } })
+    return orden?.trabajoId ?? null
+  }
+  const servidor = await new Promise((resolve) => { const srv = app.listen(0, '127.0.0.1', () => resolve(srv)) })
+  const call = async (method, path, token, body) => {
+    const response = await fetch('http://127.0.0.1:' + servidor.address().port + path, { method, headers: { 'content-type': 'application/json', 'x-correlation-id': 'c', ...(token ? { authorization: 'Bearer ' + token } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })
+    return { status: response.status, body: await response.json().catch(() => null) }
+  }
+  const cerrarTodo = async () => { await new Promise((resolve) => servidor.close(resolve)); await cerrar() }
+  const turnoDe = async (token, t) => (await call('GET', '/tus/v1/cliente/turnos', token)).body.items.find((item) => item.id === t.pedido.id)
+  const checkout = async (token, t, body) => { for (let i = 0; ; i += 1) { const r = await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/pago/checkout', token, body); if (r.body?.code !== 'IN_PROGRESS' || i >= 40) return r; await new Promise((resolve) => setTimeout(resolve, 250)) } }
+  const preferenciaDe = async (t, tramo) => { const o = await prisma.obligacionPagoServicio.findFirst({ where: { trabajoId: t.trabajoId, tramo } }); const pago = await prisma.intencionPago.findFirst({ where: { obligacionId: o.obligacionId }, orderBy: { fechaCreacion: 'desc' } }); return mp.preferences.find((item) => item.body.external_reference === pago.pagoId) }
+`
+
+test('HTTP turnos: the client chooses deposit or total on one checkout route (only that choice travels in the body); the turno tells its whole financial state; a turno paid in total is never shown as a pending deposit; the provider finishes with evidence, the client confirms or observes, the balance is paid on the same route', { skip, timeout: 600000 }, () => {
+  const r = runTypeScriptScenario(`${HTTP}
+    const out = {}
+    try {
+      const p = await prestador('http', 'Http ' + run, [['Masaje', 30000]])
+      const ana = await cliente('ana')
+      const beto = await cliente('beto')
+      sesion('tok-ana', ana.id, ana.tenantId); sesion('tok-beto', beto.id, beto.tenantId); sesion('tok-p', 'u-' + p.tenantId, p.tenantId)
+
+      // ---- A. Paid in total.
+      const t = await turnoConCheckout(p, ana, 0, '10:00', 'Masaje')
+      const antes = await turnoDe('tok-ana', t)
+      out.antes = [antes.estado, antes.sena, antes.pago]
+      out.rechazos = [
+        (await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/pago/checkout', null, { tramo: 'total' })).status,
+        (await checkout('tok-beto', t, { tramo: 'total' })).status,
+        (await checkout('tok-ana', t, { tramo: 'total', monto: 1 })).body,
+        (await checkout('tok-ana', t, { tramo: 'mitad' })).body.code,
+        (await checkout('tok-ana', t, { tramo: 'saldo' })).body.code,
+      ]
+      const total = await checkout('tok-ana', t, { tramo: 'total' })
+      const elegido = await turnoDe('tok-ana', t)
+      out.total = [total.status, total.body.tramo, total.body.monto, total.body.checkoutUrl.startsWith('https://') && total.body.checkoutUrl.includes('mercadopago.com'), elegido.sena?.estado, elegido.pago.modalidad, elegido.pago.proximo, elegido.pago.opciones]
+      // The client changes its mind and back: the deposit, then the total again.
+      const aSena = await checkout('tok-ana', t, { tramo: 'sena' })
+      const otraVez = await checkout('tok-ana', t, { tramo: 'total' })
+      out.cambio = [aSena.status, aSena.body.monto, otraVez.status, otraVez.body.monto, (await turnoDe('tok-ana', t)).pago.modalidad]
+      await aprobar(await preferenciaDe(t, 'total'))
+      const pagado = await turnoDe('tok-ana', t)
+      out.pagadoEnTotal = [pagado.estado, pagado.sena ?? null, pagado.pago]
+      out.yaPagado = [(await checkout('tok-ana', t, { tramo: 'sena' })).body.code, (await checkout('tok-ana', t, { tramo: 'saldo' })).body.code, (await checkout('tok-ana', t, { tramo: 'total' })).body.code]
+      // The provider finishes it, the client confirms.
+      adelantar(9 * 24 * HORA)
+      out.finalizar = [
+        (await call('POST', '/tus/v1/prestador/turnos/' + t.pedido.id + '/finalizar', 'tok-ana', { evidence: EVIDENCIA })).status,
+        (await call('POST', '/tus/v1/prestador/turnos/' + t.pedido.id + '/finalizar', 'tok-p', { evidence: EVIDENCIA, confirmedAt: 'ahora' })).body.code,
+        (await call('POST', '/tus/v1/prestador/turnos/' + t.pedido.id + '/finalizar', 'tok-p', {})).body.code,
+      ]
+      const fin1 = await call('POST', '/tus/v1/prestador/turnos/' + t.pedido.id + '/finalizar', 'tok-p', { evidence: EVIDENCIA })
+      const visto = await turnoDe('tok-ana', t)
+      out.finalizado = [fin1.status, fin1.body.status, fin1.body.closing.evidence === EVIDENCIA, visto.pago.cierre.confirmadoEn, visto.pago.cierre.observacionAbierta, visto.pago.fondos]
+      out.confirmaAjeno = [(await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/confirmar', 'tok-beto')).status, (await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/confirmar', 'tok-p')).status]
+      const conf = await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/confirmar', 'tok-ana')
+      const cerrado = await turnoDe('tok-ana', t)
+      out.confirmado = [conf.status, conf.body.status, conf.body.payments, cerrado.estado, cerrado.pago.cierre.confirmacionOrigen, cerrado.pago.fondos, cerrado.pago.proximo]
+
+      // ---- B. Deposit, observation, balance.
+      const s = await turnoPagado(p, ana, 0, '11:00')
+      const conSena = await turnoDe('tok-ana', s)
+      out.conSena = [conSena.estado, conSena.sena.estado, conSena.pago.modalidad, conSena.pago.pagado, conSena.pago.saldoPendiente, conSena.pago.proximo, conSena.pago.opciones, conSena.pago.fondos]
+      await call('POST', '/tus/v1/prestador/turnos/' + s.pedido.id + '/finalizar', 'tok-p', { evidence: EVIDENCIA })
+      const obs = await call('POST', '/tus/v1/cliente/turnos/' + s.pedido.id + '/observar', 'tok-ana', { reason: 'El masaje terminó veinte minutos antes.' })
+      const observado = await turnoDe('tok-ana', s)
+      out.observado = [obs.status, obs.body.status, observado.pago.cierre.observacionAbierta, observado.pago.cierre.observacionMotivo, (await call('POST', '/tus/v1/cliente/turnos/' + s.pedido.id + '/confirmar', 'tok-ana')).body.code, (await call('POST', '/tus/v1/cliente/turnos/' + s.pedido.id + '/observar', 'tok-ana', { reason: 'corta' })).body.code]
+      // The platform sees it and settles it.
+      const abiertas = await cierre.observacionesAbiertas()
+      out.admin = [abiertas.filter((x) => x.trabajoId === s.trabajoId).map((x) => [x.observationReason, x.evidence === EVIDENCIA]), (await cierre.resolverObservacion(admin, { tenantId: ana.tenantId, trabajoId: s.trabajoId })).pagos, (await cierre.observacionesAbiertas()).some((x) => x.trabajoId === s.trabajoId)]
+      const conf2 = await call('POST', '/tus/v1/cliente/turnos/' + s.pedido.id + '/confirmar', 'tok-ana')
+      const conSaldo = await turnoDe('tok-ana', s)
+      out.saldoHabilitado = [conf2.body.payments, conSaldo.estado, conSaldo.pago.proximo, conSaldo.pago.fondos]
+      const saldoCheckout = await checkout('tok-ana', s, { tramo: 'saldo' })
+      out.checkoutSaldo = [saldoCheckout.status, saldoCheckout.body.tramo, saldoCheckout.body.monto]
+      await aprobar(await preferenciaDe(s, 'saldo'))
+      const final = await turnoDe('tok-ana', s)
+      out.final = [final.pago.pagado, final.pago.saldoPendiente, final.pago.proximo, final.pago.fondos, final.sena.estado]
+      // The provider reads the same state of its turnos.
+      const delPrestador = (await call('GET', '/tus/v1/prestador/turnos', 'tok-p')).body.items
+      out.prestador = delPrestador.filter((x) => [t.pedido.id, s.pedido.id].includes(x.id)).map((x) => [x.pago.modalidad, x.pago.pagado, x.pago.fondos]).sort()
+    } finally { await cerrarTodo() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.antes, ['awaiting_payment', { monto: 15000, moneda: 'ARS', estado: 'pending' }, { moneda: 'ARS', modalidad: 'sena', total: 30000, pagado: 0, saldoPendiente: 30000, proximo: { tramo: 'sena', monto: 15000 }, opciones: ['sena', 'total'], cierre: null, fondos: null }], 'accepted: the deposit is the default, both ways of paying are offered')
+  assert.deepEqual(r.rechazos.slice(0, 2), [401, 404], 'no session, and somebody else\'s turno')
+  assert.deepEqual([r.rechazos[2].code, r.rechazos[2].fields, r.rechazos[3], r.rechazos[4]], ['UNTRUSTED_PAYMENT_FIELDS', ['monto'], 'INVALID_PARAMS', 'BALANCE_NOT_AVAILABLE'], 'the body carries only the choice; no amount, no unknown part, no balance before the service')
+  assert.deepEqual(r.total, [200, 'total', 30000, true, 'pending', 'total', { tramo: 'total', monto: 30000 }, ['sena', 'total']], 'the total is chosen: the next payment is the whole price')
+  assert.deepEqual(r.cambio, [200, 15000, 200, 30000, 'total'], 'before paying the client may switch as often as it wants')
+  assert.deepEqual(r.pagadoEnTotal, ['confirmed', null, { moneda: 'ARS', modalidad: 'total', total: 30000, pagado: 30000, saldoPendiente: 0, proximo: null, opciones: [], cierre: null, fondos: 'retenidos' }], 'paid in total: confirmed, NO deposit shown, nothing pending, the money held')
+  assert.deepEqual(r.yaPagado, ['DEPOSIT_NOT_PAYABLE', 'ALREADY_PAID', 'ALREADY_PAID'])
+  assert.deepEqual(r.finalizar, [403, 'UNTRUSTED_FIELDS', 'EVIDENCE_REQUIRED'], 'only the provider finishes it, with evidence and nothing else in the body')
+  assert.deepEqual(r.finalizado, [201, 'created', true, null, false, 'retenidos'], 'finished: the client sees it waits for its confirmation, the money still held')
+  assert.deepEqual(r.confirmaAjeno, [404, 403])
+  assert.deepEqual(r.confirmado, [200, 'confirmed', { released: 1, pending: null }, 'completed', 'cliente', 'liberados', null], 'confirmed and fully paid: released')
+  assert.deepEqual(r.conSena, ['confirmed', 'paid', 'sena', 15000, 15000, null, [], 'retenidos'], 'a deposit: half paid, half pending, nothing payable yet, the way of paying fixed')
+  assert.deepEqual(r.observado, [200, 'observed', true, 'El masaje terminó veinte minutos antes.', 'OBSERVATION_OPEN', 'REASON_REQUIRED'])
+  assert.deepEqual(r.admin, [[['El masaje terminó veinte minutos antes.', true]], { released: 0, pending: 'work_not_completed' }, false], 'the platform lists the open observation with its evidence and settles it')
+  assert.deepEqual(r.saldoHabilitado, [{ released: 0, pending: 'not_fully_paid' }, 'completed', { tramo: 'saldo', monto: 15000 }, 'retenidos'], 'confirmed with the deposit only: the balance is what can be paid now, everything still held')
+  assert.deepEqual(r.checkoutSaldo, [200, 'saldo', 15000])
+  assert.deepEqual(r.final, [30000, 0, null, 'liberados', 'paid'], 'the balance approved: fully paid and released')
+  assert.deepEqual(r.prestador, [['sena', 30000, 'liberados'], ['total', 30000, 'liberados']], 'the provider reads the same financial state')
+})

@@ -88,6 +88,11 @@ export class AlmacenCierresPrisma implements PuertoCierres {
     return count === 1
   }
 
+  async observacionesAbiertas(input: { limit: number }): Promise<CierreTrabajo[]> {
+    const filas = await this.client.cierreTrabajo.findMany({ where: { observadoEn: { not: null }, observacionResueltaEn: null }, orderBy: [{ observadoEn: 'asc' }, { trabajoId: 'asc' }], take: input.limit })
+    return filas.map(cierreDe)
+  }
+
   async vencidos(input: { now: string; limit: number }): Promise<CierreTrabajo[]> {
     const filas = await this.client.cierreTrabajo.findMany({ where: { ...ABIERTO, confirmacionVenceEn: { lte: new Date(input.now) } }, orderBy: [{ confirmacionVenceEn: 'asc' }, { trabajoId: 'asc' }], take: input.limit })
     return filas.map(cierreDe).filter((cierre) => !observacionAbierta(cierre))

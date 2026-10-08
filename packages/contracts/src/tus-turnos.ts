@@ -129,6 +129,37 @@ export interface SenaTurnoDTO {
   estado: EstadoSenaTurno
 }
 
+// PAGOS-MODALIDAD-01. The whole financial state of a turno, derived by the backend from its
+// obligations, its closing and its settlements. Amounts in pesos (they may carry cents).
+//   modalidad       how it is being paid: fixed once a payment is approved; before that, the one
+//                   whose checkout is prepared (null: nothing chosen yet, the deposit is the default)
+//   saldoPendiente  total - pagado, never negative
+//   proximo         what can be paid NOW (the active obligation), null when nothing can
+//   opciones        the ways of paying the client may still choose (empty once a payment is approved)
+//   cierre          finished by the provider / confirmed / observed (null: not finished yet)
+//   fondos          'retenidos' while TUS holds what was paid, 'liberados' once the provider can
+//                   withdraw it (null: nothing was paid through TUS)
+export type TramoPagoTurno = 'sena' | 'total' | 'saldo'
+export interface CierreTurnoDTO {
+  finalizadoEn: string
+  confirmacionVenceEn: string
+  confirmadoEn: string | null
+  confirmacionOrigen: 'cliente' | 'automatica' | 'pago_final' | null
+  observacionAbierta: boolean
+  observacionMotivo: string | null
+}
+export interface PagoTurnoDTO {
+  moneda: string
+  modalidad: 'sena' | 'total' | null
+  total: number
+  pagado: number
+  saldoPendiente: number
+  proximo: { tramo: TramoPagoTurno; monto: number } | null
+  opciones: ('sena' | 'total')[]
+  cierre: CierreTurnoDTO | null
+  fondos: 'retenidos' | 'liberados' | null
+}
+
 // Answer of "pay the deposit": the hosted Mercado Pago checkout of THAT deposit. Opening it pays
 // nothing by itself: the turno shows `paid` only after the verified notification.
 export interface CheckoutSenaTurnoDTO {

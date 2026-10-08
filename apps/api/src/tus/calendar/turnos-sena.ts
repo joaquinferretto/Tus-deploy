@@ -5,6 +5,7 @@ import {
   CODIGO_SENA_YA_PAGADA,
   type CheckoutSenaTurnoDTO,
   type EstadoSenaTurno,
+  type PagoTurnoDTO,
   type SenaTurnoDTO,
 } from '@factory/contracts'
 import { montoSenaReserva } from '../finance/servicios/modelo.ts'
@@ -74,9 +75,9 @@ export function pagosSenaDeAplicacion(
     work?: { asegurarOrdenDeTurno(input: { tenantId: string; actorId: string; correlationId: string; reservaId: string; prestadorTenantId: string; prestadorId: string; createdAt: string }): Promise<{ work: { trabajoId: string } }> }
     serviceFinance?: {
       disponibilidadCobroPrestador(input: { prestadorTenantId: string; prestadorId: string }): Promise<{ available: boolean; reason: string | null; mode?: 'plataforma' | 'split' | null }>
-      iniciarCheckout(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string; idempotencyKey: string; modalidad?: 'sena' | 'total' }): Promise<{ checkoutUrl: string; obligation?: { amountMinor: string; currency: string } }>
+      iniciarCheckout(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string; idempotencyKey: string; modalidad?: 'sena' | 'total' }): Promise<{ checkoutUrl: string; obligation?: { amountMinor: string; currency: string; part?: string } }>
       // PAGOS-MODALIDAD-01: total, paid and pending of the order (what is left to charge).
-      estadoEconomico?(input: { tenantId: string; trabajoId: string }): Promise<{ fullyPaid: boolean }>
+      estadoEconomico?(input: { tenantId: string; trabajoId: string }): Promise<{ fullyPaid: boolean; modality: 'sena' | 'total' | null }>
       verificarPagoDelTrabajo?(input: { tenantId: string; actorId: string; correlationId: string; trabajoId: string }): Promise<ResultadoVerificacionPagoServicio>
     }
   },
@@ -101,11 +102,16 @@ export function pagosSenaDeAplicacion(
       const { work: orden } = await work.asegurarOrdenDeTurno({ ...contexto, reservaId: input.reservaId, prestadorTenantId: input.prestadorTenantId, prestadorId: input.prestadorId, createdAt: new Date(now()).toISOString() })
       const tramo = input.tramo ?? 'sena'
       // Nothing is left to pay: never hand out again the checkout of a payment already made.
-      if (tramo !== 'sena' && (await serviceFinance.estadoEconomico?.({ tenantId: input.clienteTenantId, trabajoId: orden.trabajoId }))?.fullyPaid)
-        throw Object.assign(new Error('the turno is fully paid'), { code: 'ALREADY_PAID' })
+      const economia = tramo === 'sena' ? null : await serviceFinance.estadoEconomico?.({ tenantId: input.clienteTenantId, trabajoId: orden.trabajoId })
+      if (economia?.fullyPaid) throw Object.assign(new Error('the turno is fully paid'), { code: 'ALREADY_PAID' })
+      // A balance only exists after a deposit: asked for before that, it is never turned into
+      // the checkout of something else.
+      if (tramo === 'saldo' && economia?.modality !== 'sena') throw Object.assign(new Error('the turno has no balance yet'), { code: 'WORK_NOT_FINISHED' })
       // One key per part of the same reservation: asking again returns the same payment. The
       // balance is what the finance service finds left; only deposit and total are a choice.
       const resultado = await serviceFinance.iniciarCheckout({ ...contexto, trabajoId: orden.trabajoId, idempotencyKey: `${tramo}-turno:${input.reservaId}`, ...(tramo === 'saldo' ? {} : { modalidad: tramo }) })
+      // The checkout handed out is always the one of the part that was asked for.
+      if (resultado.obligation?.part && resultado.obligation.part !== tramo) throw Object.assign(new Error('another part of the turno is what can be paid now'), { code: 'APPOINTMENT_NOT_PAYABLE' })
       return { url: resultado.checkoutUrl, ...(resultado.obligation ? { amountMinor: resultado.obligation.amountMinor, currency: resultado.obligation.currency } : {}) }
     },
     verificar: serviceFinance.verificarPagoDelTrabajo
@@ -140,9 +146,13 @@ export class ServicioSenaTurnos {
     if (conSena.length === 0) return senas
     const ordenes = await this.prisma.trabajo.findMany({ where: { origen: 'turno', reservaId: { in: conSena.map((row) => row.reservaId) } } })
     const obligaciones = ordenes.length
-      ? await this.prisma.obligacionPagoServicio.findMany({ where: { tramo: 'sena', trabajoId: { in: ordenes.map((orden) => orden.trabajoId) } } })
+      ? await this.prisma.obligacionPagoServicio.findMany({ where: { tramo: { in: ['sena', 'total'] }, estado: { not: 'voided' }, trabajoId: { in: ordenes.map((orden) => orden.trabajoId) } } })
       : []
-    const estadoDeOrden = new Map(obligaciones.map((obligacion) => [obligacion.trabajoId, obligacion.estado]))
+    // PAGOS-MODALIDAD-01. A turno paid in total has no deposit at all: it is never shown as a
+    // deposit pending or paid (its payment is in `pago`).
+    const enTotal = new Set(obligaciones.filter((obligacion) => obligacion.tramo === 'total' && obligacion.estado !== 'pending_payment').map((obligacion) => obligacion.trabajoId))
+    const estadoDeOrden = new Map(obligaciones.filter((obligacion) => obligacion.tramo === 'sena').map((obligacion) => [obligacion.trabajoId, obligacion.estado]))
+    const sinSena = new Set(ordenes.filter((orden) => enTotal.has(orden.trabajoId)).map((orden) => `${orden.reservaTenantId}\u0000${orden.reservaId}`))
     const estadoDeReserva = new Map(ordenes.map((orden) => [`${orden.reservaTenantId}\u0000${orden.reservaId}`, estadoDeOrden.get(orden.trabajoId) ?? null]))
 
     // Online payment is a fact of each provider: asked once per provider of the list.
@@ -150,6 +160,7 @@ export class ServicioSenaTurnos {
     const requisito = await this.requisitos([...new Set(abiertas.map((row) => row.tenantId))])
 
     for (const row of conSena) {
+      if (sinSena.has(`${row.tenantId}\u0000${row.reservaId}`)) continue
       const obligacion = estadoDeReserva.get(`${row.tenantId}\u0000${row.reservaId}`) ?? null
       const vigente = row.solicitudExpiraEn === null || row.solicitudExpiraEn.getTime() > this.now()
       const estado: EstadoSenaTurno | null =
@@ -168,6 +179,70 @@ export class ServicioSenaTurnos {
       if (estado) senas.set(row.id, { monto: senaDePrecio(row.precioFinal!, row.moneda ?? 'ARS'), moneda: row.moneda ?? 'ARS', estado })
     }
     return senas
+  }
+
+  // PAGOS-MODALIDAD-01. The whole financial state of each turno with a price and a registered
+  // client: what it costs, what was paid, what is left, what can be paid now, its closing and
+  // whether TUS still holds the money. Derived in a fixed number of queries; nothing is stored.
+  async pagosDe(rows: FilaReserva[]): Promise<Map<string, PagoTurnoDTO>> {
+    const aplican = rows.filter((row) => this.aplica(row))
+    const pagos = new Map<string, PagoTurnoDTO>()
+    if (aplican.length === 0) return pagos
+    const senas = await this.senasDe(aplican)
+    const ordenes = await this.prisma.trabajo.findMany({ where: { origen: 'turno', reservaId: { in: aplican.map((row) => row.reservaId) } } })
+    const ids = ordenes.map((orden) => orden.trabajoId)
+    const [obligaciones, cierres, liquidaciones] = ids.length
+      ? await Promise.all([
+          this.prisma.obligacionPagoServicio.findMany({ where: { trabajoId: { in: ids } } }),
+          this.prisma.cierreTrabajo.findMany({ where: { trabajoId: { in: ids } } }),
+          this.prisma.liquidacionServicio.findMany({ where: { trabajoId: { in: ids } } }),
+        ])
+      : [[], [], []]
+    const pesos = (minor: bigint): number => Number(minor) / 100
+    for (const row of aplican) {
+      const orden = ordenes.find((item) => item.reservaTenantId === row.tenantId && item.reservaId === row.reservaId)
+      const moneda = row.moneda ?? 'ARS'
+      const totalMinor = BigInt(Math.round(Number(row.precioFinal!) * 100))
+      const vivas = orden ? obligaciones.filter((item) => item.trabajoId === orden.trabajoId && item.tenantId === orden.tenantId && item.estado !== 'voided') : []
+      const pagadas = vivas.filter((item) => item.estado === 'paid')
+      const pagadoMinor = pagadas.reduce((suma, item) => suma + item.monto, 0n)
+      const pendienteMinor = pagadoMinor >= totalMinor ? 0n : totalMinor - pagadoMinor
+      const fijada = pagadas.some((item) => item.tramo === 'total') ? 'total' : pagadas.some((item) => item.tramo === 'sena') ? 'sena' : null
+      const preparada = vivas.some((item) => item.estado === 'pending_payment' && item.tramo === 'total') ? 'total' : vivas.some((item) => item.estado === 'pending_payment' && item.tramo === 'sena') ? 'sena' : null
+      const fila = orden ? cierres.find((item) => item.trabajoId === orden.trabajoId && item.tenantId === orden.tenantId) : undefined
+      const cierre = fila
+        ? {
+            finalizadoEn: fila.finalizadoEn.toISOString(),
+            confirmacionVenceEn: fila.confirmacionVenceEn.toISOString(),
+            confirmadoEn: fila.confirmadoEn?.toISOString() ?? null,
+            confirmacionOrigen: (fila.confirmacionOrigen as 'cliente' | 'automatica' | 'pago_final' | null) ?? null,
+            observacionAbierta: fila.observadoEn !== null && fila.observacionResueltaEn === null,
+            observacionMotivo: fila.observadoEn !== null && fila.observacionResueltaEn === null ? fila.observacionMotivo : null,
+          }
+        : null
+      // What can be paid now. Before any approved payment: the deposit or the total, while the
+      // turno waits for it and the provider can charge. After a deposit: the balance, once the
+      // turno was delivered and its closing is confirmed with nothing open.
+      const cobrableAhora = senas.get(row.id)?.estado === 'pending'
+      let proximo: PagoTurnoDTO['proximo'] = null
+      if (fijada === null && cobrableAhora)
+        proximo = preparada === 'total' ? { tramo: 'total', monto: pesos(totalMinor) } : { tramo: 'sena', monto: senaDePrecio(row.precioFinal!, moneda) }
+      else if (fijada === 'sena' && pendienteMinor > 0n && row.estado === 'completed' && cierre?.confirmadoEn && !cierre.observacionAbierta)
+        proximo = { tramo: 'saldo', monto: pesos(pendienteMinor) }
+      const propias = orden ? liquidaciones.filter((item) => item.trabajoId === orden.trabajoId && item.tenantId === orden.tenantId && item.retencionActiva) : []
+      pagos.set(row.id, {
+        moneda,
+        modalidad: fijada ?? preparada,
+        total: pesos(totalMinor),
+        pagado: pesos(pagadoMinor),
+        saldoPendiente: pesos(pendienteMinor),
+        proximo,
+        opciones: fijada === null && cobrableAhora ? ['sena', 'total'] : [],
+        cierre,
+        fondos: propias.length === 0 ? null : propias.every((item) => item.liberadaEn !== null) ? 'liberados' : 'retenidos',
+      })
+    }
+    return pagos
   }
 
   // `estricto`: a check that fails is an error of the caller (deciding what an acceptance means
