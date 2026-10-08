@@ -323,7 +323,7 @@ async function recorrer(browser, viewport, estado, indice) {
 
     // ---- 2. Two turnos of the priced service; the provider accepts both.
     const pedidos = {}
-    for (const [clave, hora] of [['total', '10:00'], ['sena', '11:00']]) {
+    for (const [clave, hora] of [['total', '10:00'], ['sena', '11:00'], ['tarde', '13:00']]) {
       const pedido = await llamar('POST', '/tus/v1/prestadores/smoke-perfil/turnos/solicitudes', { oficioId, inicio: inicio(hora) })
       check(pedido.status === 201 && pedido.body.estado === 'pending', `${e}: the request of ${hora} is pending (${pedido.status} ${pedido.body?.code ?? ''})`)
       pedidos[clave] = pedido.body.id
@@ -399,7 +399,7 @@ async function recorrer(browser, viewport, estado, indice) {
       await page.getByRole('button', { name: 'Confirmar finalización' }).click()
       await page.waitForFunction((n) => document.querySelectorAll('[data-turno-cierre]').length >= n && !document.querySelector('textarea'), yaFinalizados + _ + 1)
     }
-    check((await page.locator('[data-finalizar]').count()) === 0 && (await page.getByRole('button', { name: 'Cancelar', exact: true }).count()) === 0, `${e}: a finished turno is not finished twice nor cancelled from the list`)
+    check((await page.locator('[data-finalizar]').count()) === 0 && (await page.getByRole('button', { name: 'Cancelar', exact: true }).count()) <= 1, `${e}: a finished turno is not finished twice nor cancelled from the list (the only one left belongs to the turno still waiting for its payment)`)
     check((await texto(page.locator('[data-turno-cierre="esperando"]').first())).includes('Esperando la confirmación del cliente'), `${e}: finished, waiting for the client (with the date it confirms itself)`)
     check((await page.locator('[data-turno-cobro="liberados"]').count()) === indice, `${e}: finishing releases nothing by itself`)
     await sinDesborde('the provider turnos')
@@ -434,6 +434,32 @@ async function recorrer(browser, viewport, estado, indice) {
     await page.waitForFunction((id) => !document.querySelector(`[data-turno-id="${id}"] [data-turno-cierre="por-confirmar"]`), pedidos.total)
     await sinDesborde('Mis turnos after the closing')
     await page.screenshot({ path: join(artifacts, `${e}-cliente-cierre.png`), fullPage: true })
+
+    // ---- 5b. TURNOS-CANCELACION-01: a late cancellation on the Web. A third turno, paid with its
+    // deposit, starts in 3 hours (moved in the disposable database): cancelling asks for the loss
+    // to be confirmed, going back cancels nothing, confirming cancels it without refund.
+    await misTurnos(pedidos.tarde)
+    await elTurno(pedidos.tarde).locator('[data-pagar="sena"]').click()
+    await elTurno(pedidos.tarde).locator('[data-aceptar-politica]').click()
+    await page.locator('#checkout-simulado').waitFor()
+    await aprobar('the deposit of the third turno')
+    check(estado.psql(`UPDATE public."reservas" SET "fecha_inicio" = (now() AT TIME ZONE 'utc') + interval '3 hours', "fecha_fin" = (now() AT TIME ZONE 'utc') + interval '4 hours' WHERE "id" = '${pedidos.tarde}' RETURNING 'ok'`).stdout.includes('ok'), `${e}: the third turno starts in 3 hours`)
+    await misTurnos(pedidos.tarde)
+    await elTurno(pedidos.tarde).getByRole('button', { name: 'Cancelar turno' }).click()
+    const tardia = elTurno(pedidos.tarde).locator('[data-cancelacion-tardia]')
+    await tardia.waitFor()
+    check((await texto(tardia)).includes('Este turno comienza dentro de las próximas 24 horas. Si cancelás ahora, la seña no será reembolsada. ¿Querés continuar?') && (await elTurno(pedidos.tarde).getAttribute('data-turno')) === 'confirmed', `${e}: cancelling inside the 24 hours asks first, naming the loss (${await texto(tardia)})`)
+    await sinDesborde('Mis turnos with the late cancellation')
+    await page.screenshot({ path: join(artifacts, `${e}-cliente-cancelacion-tardia.png`), fullPage: true })
+    await tardia.getByRole('button', { name: 'Volver' }).click()
+    await misTurnos(pedidos.tarde)
+    check((await elTurno(pedidos.tarde).getAttribute('data-turno')) === 'confirmed', `${e}: going back cancels nothing`)
+    await elTurno(pedidos.tarde).getByRole('button', { name: 'Cancelar turno' }).click()
+    await elTurno(pedidos.tarde).locator('[data-confirmar-perdida]').click()
+    await elTurno(pedidos.tarde).locator('[data-turno-cancelacion="no_reembolsable"]').waitFor()
+    check((await elTurno(pedidos.tarde).getAttribute('data-turno')) === 'cancelled-late' && (await texto(elTurno(pedidos.tarde))).includes('lo que pagaste no es reembolsable'), `${e}: confirmed: a late cancellation, not refundable`)
+    check(estado.psql(`SELECT "cancelada_por" || '|' || "tardia" || '|' || "devolucion" || '|' || "canal" FROM public."cancelaciones_turno" WHERE "reserva_id" = '${pedidos.tarde}'`).stdout.trim() === 'cliente|true|no_reembolsable|web', `${e}: the cancellation is recorded with who, late and not refundable`)
+    check(Number(estado.psql(`SELECT count(*) FROM public."aceptaciones_politica_cancelacion" WHERE "canal" = 'web'`).stdout.trim()) >= 3, `${e}: the acceptances of the policy are stored`)
     await salir('the client')
 
     // ---- 6. The provider: one released, the other observed and still retained.
@@ -460,40 +486,6 @@ async function recorrer(browser, viewport, estado, indice) {
     await fila.getByRole('button', { name: 'Marcar como resuelto' }).click()
     await page.waitForFunction((marca) => ![...document.querySelectorAll('[data-observaciones] tr')].some((tr) => tr.textContent.includes(marca)), `(${e})`)
     await salir('the administrator')
-    // ---- 8. TURNOS-CANCELACION-01: a late cancellation on the Web. A third turno, paid with its
-    // deposit, starts in 3 hours (moved in the disposable database): cancelling asks for the loss
-    // to be confirmed, going back cancels nothing, confirming cancels it without refund.
-    await entrar(CLIENTE, 'the client')
-    const tercero = await llamar('POST', '/tus/v1/prestadores/smoke-perfil/turnos/solicitudes', { oficioId, inicio: inicio('13:00') })
-    check(tercero.status === 201, `${e}: a third request (${tercero.status} ${tercero.body?.code ?? ''})`)
-    await salir('the client')
-    await entrar(PRESTADOR, 'the provider', 'PROVIDER')
-    check((await llamar('POST', `/tus/v1/prestador/turnos/${tercero.body.id}/aceptar`)).status === 200, `${e}: the provider accepts it`)
-    await salir('the provider')
-    await entrar(CLIENTE, 'the client')
-    await misTurnos(tercero.body.id)
-    await elTurno(tercero.body.id).locator('[data-pagar="sena"]').click()
-    await elTurno(tercero.body.id).locator('[data-aceptar-politica]').click()
-    await page.locator('#checkout-simulado').waitFor()
-    await aprobar('the deposit of the third turno')
-    check(estado.psql(`UPDATE public."reservas" SET "fecha_inicio" = now() + interval '3 hours', "fecha_fin" = now() + interval '4 hours' WHERE "id" = '${tercero.body.id}' RETURNING 'ok'`).stdout.includes('ok'), `${e}: the third turno starts in 3 hours`)
-    await misTurnos(tercero.body.id)
-    await elTurno(tercero.body.id).getByRole('button', { name: 'Cancelar turno' }).click()
-    const tardia = elTurno(tercero.body.id).locator('[data-cancelacion-tardia]')
-    await tardia.waitFor()
-    check((await texto(tardia)).includes('Este turno comienza dentro de las próximas 24 horas. Si cancelás ahora, la seña no será reembolsada. ¿Querés continuar?') && (await elTurno(tercero.body.id).getAttribute('data-turno')) === 'confirmed', `${e}: cancelling inside the 24 hours asks first, naming the loss (${await texto(tardia)})`)
-    await sinDesborde('Mis turnos with the late cancellation')
-    await page.screenshot({ path: join(artifacts, `${e}-cliente-cancelacion-tardia.png`), fullPage: true })
-    await tardia.getByRole('button', { name: 'Volver' }).click()
-    await misTurnos(tercero.body.id)
-    check((await elTurno(tercero.body.id).getAttribute('data-turno')) === 'confirmed', `${e}: going back cancels nothing`)
-    await elTurno(tercero.body.id).getByRole('button', { name: 'Cancelar turno' }).click()
-    await elTurno(tercero.body.id).locator('[data-confirmar-perdida]').click()
-    await elTurno(tercero.body.id).locator('[data-turno-cancelacion="no_reembolsable"]').waitFor()
-    check((await elTurno(tercero.body.id).getAttribute('data-turno')) === 'cancelled-late' && (await texto(elTurno(tercero.body.id))).includes('lo que pagaste no es reembolsable'), `${e}: confirmed: a late cancellation, not refundable`)
-    check(estado.psql(`SELECT "cancelada_por" || '|' || "tardia" || '|' || "devolucion" || '|' || "canal" FROM public."cancelaciones_turno" WHERE "reserva_id" = '${tercero.body.id}'`).stdout.trim() === 'cliente|true|no_reembolsable|web', `${e}: the cancellation is recorded with who, late and not refundable`)
-    check(Number(estado.psql(`SELECT count(*) FROM public."aceptaciones_politica_cancelacion" WHERE "canal" = 'web'`).stdout.trim()) >= 3, `${e}: the acceptances of the policy are stored`)
-    await salir('the client')
     const cierres = estado.psql(`SELECT count(*) FILTER (WHERE "confirmado_en" IS NOT NULL) || '/' || count(*) FROM public."cierres_trabajo"`).stdout.trim()
     const liquidaciones = estado.psql(`SELECT count(*) FILTER (WHERE "liberada_en" IS NOT NULL) || '/' || count(*) FROM public."liquidaciones_servicio"`).stdout.trim()
     console.log(`${e}: cierres confirmados ${cierres}, liquidaciones liberadas ${liquidaciones}`)
