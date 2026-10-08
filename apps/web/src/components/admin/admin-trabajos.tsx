@@ -225,6 +225,63 @@ const REQUISITO_LANZAMIENTO: Record<string, string> = { legal: 'Legal', kyc: 'KY
 const ESTADO_LANZAMIENTO: Record<string, string> = { current: 'Vigente', pending: 'Pendiente', expired: 'Vencido', revoked: 'Revocado', invalid: 'No válido' }
 const FILTROS_PAGO = [['', 'Todos'], ['pending', 'Pendientes'], ['approved', 'Aprobados'], ['rejected', 'Rechazados'], ['refunded', 'Reembolsados']] as const
 
+// CIERRE-TRABAJO-01. Problems clients reported on finished works or turnos. While one is open
+// nothing confirms that work and none of its payments is released; settling it evaluates the
+// payments again at once.
+export function AdminObservaciones(): React.ReactNode {
+  const [items, setItems] = useState<Awaited<ReturnType<typeof adminApi.observaciones>>['observations'] | null>(null)
+  const [error, setError] = useState('')
+  const [aviso, setAviso] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const cargar = useCallback(() => { adminApi.observaciones().then((result) => { setItems(result.observations); setError('') }).catch((cause) => setError(adminErrorMessage(cause))) }, [])
+  useEffect(() => { cargar() }, [cargar])
+  async function resolver(clientTenantId: string, workId: string) {
+    setBusy(workId)
+    setAviso('')
+    try {
+      const resultado = await adminApi.resolverObservacion(clientTenantId, workId)
+      setAviso(resultado.payments && resultado.payments.released > 0 ? 'Observación resuelta: los pagos de ese trabajo quedaron liberados.' : 'Observación resuelta. Los pagos siguen retenidos hasta que el trabajo esté confirmado y pagado por completo.')
+      cargar()
+    } catch (cause) {
+      setError(adminErrorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+  if (items === null && !error) return null
+  return (
+    <section aria-label="Problemas reportados por clientes" className={styles.card} data-observaciones={items?.length ?? 0}>
+      <h3>Problemas reportados por clientes</h3>
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      {aviso ? <p className={styles.muted} role="status">{aviso}</p> : null}
+      {items && items.length === 0 ? <p className={styles.muted}>No hay problemas abiertos.</p> : null}
+      {items && items.length > 0 ? (
+        <table className={styles.table}>
+          <thead>
+            <tr><th>Trabajo</th><th>Reportado</th><th>Problema del cliente</th><th>Lo que dijo el prestador</th><th></th></tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={`${item.clientTenantId}:${item.workId}`}>
+                <td>{item.workId}</td>
+                <td>{item.observedAt ? formatFecha(item.observedAt) : '—'}</td>
+                <td>{item.reason}</td>
+                <td>{item.evidence}</td>
+                <td>
+                  <button className={styles.buttonPrimary} disabled={busy === item.workId} onClick={() => void resolver(item.clientTenantId, item.workId)} type="button">
+                    {busy === item.workId ? 'Resolviendo…' : 'Marcar como resuelto'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      <p className={styles.muted}>Mientras un problema está abierto ese trabajo no se confirma y no se libera ningún pago suyo. Resolverlo no devuelve dinero: un reembolso se hace aparte.</p>
+    </section>
+  )
+}
+
 export function AdminPagos(): React.ReactNode {
   const [items, setItems] = useState<AdminPago[] | null>(null)
   const [error, setError] = useState('')
@@ -280,6 +337,7 @@ export function AdminPagos(): React.ReactNode {
           ) : null}
         </section>
       ) : null}
+      <AdminObservaciones />
       {estadoPagos?.readiness ? <AdminEvidencias onChange={cargarEstadoPagos} /> : null}
       <div className={styles.toolbar}>
         <div className={styles.chips}>

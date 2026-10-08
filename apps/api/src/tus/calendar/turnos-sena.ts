@@ -303,6 +303,15 @@ export class ServicioSenaTurnos {
     return Boolean(await this.prisma.obligacionPagoServicio.findFirst({ where: { tenantId: orden.tenantId, trabajoId: orden.trabajoId, tramo: 'sena' } }))
   }
 
+  // CIERRE-TRABAJO-01. The turno was paid through TUS (it has an order with something charged or
+  // to charge): it is closed through its finalization (evidence, confirmation of the client),
+  // never by just changing its state.
+  async tienePagoOnline(row: FilaReserva): Promise<boolean> {
+    const orden = await this.prisma.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: row.tenantId, reservaId: row.reservaId } })
+    if (!orden) return false
+    return Boolean(await this.prisma.obligacionPagoServicio.findFirst({ where: { tenantId: orden.tenantId, trabajoId: orden.trabajoId, estado: { not: 'voided' } } }))
+  }
+
   /**
    * El cliente paga la seña de SU turno confirmado: devuelve el checkout de Mercado Pago de esa
    * seña. El cliente es la cuenta de la sesión (o la identificada por el asistente), nunca un

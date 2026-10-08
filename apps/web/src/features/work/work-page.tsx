@@ -431,6 +431,9 @@ export function WorkDetail({
               onRefresh={() => refresh().catch(() => undefined)}
             />
           ) : null}
+          {work.payment && (work.finishedAt || work.status === 'completed') ? (
+            <WorkClosingSection work={work} session={session} onRefresh={() => refresh().catch(() => undefined)} />
+          ) : null}
           <WorkChat id={id} session={session} canSend={work.actions.canSendMessage} />
         </>
       )}
@@ -674,7 +677,9 @@ export function WorkPaymentSection({
     return () => window.clearInterval(timer)
   }, [])
 
-  async function pay(part: 'deposit' | 'balance') {
+  // PAGOS-MODALIDAD-01: while nothing was paid the client chooses the 50% deposit or the total.
+  const [modalidad, setModalidad] = useState<'sena' | 'total'>('sena')
+  async function pay(part: 'deposit' | 'total' | 'balance') {
     if (busy) return
     setBusy(true)
     setError('')
@@ -685,6 +690,7 @@ export function WorkPaymentSection({
         ...session,
         workId: work.id,
         idempotencyKey: keys.current[part]!,
+        ...(part === 'balance' ? {} : { modalidad: part === 'total' ? ('total' as const) : ('sena' as const) }),
       })
       if (!isMercadoPagoAuthorizationUrl(result.checkoutUrl)) {
         setError('TUS devolvió una dirección de pago no válida.')
@@ -711,14 +717,23 @@ export function WorkPaymentSection({
     <section className={styles.card} aria-labelledby="pago-trabajo">
       <h2 id="pago-trabajo">Pago</h2>
       <p>
-        Total {money(payment.totalMinor, payment.currency)}: seña del 50% antes de empezar y saldo del 50% al
-        terminar, con Mercado Pago.
+        Total {money(payment.totalMinor, payment.currency)}, con Mercado Pago: una seña del 50% antes de empezar y el
+        saldo al terminar, o el total de una vez.
       </p>
-      <p>
-        Seña: {money(payment.deposit.amountMinor, payment.currency)} · {PAYMENT_STATUS[payment.deposit.status]}
-        <br />
-        Saldo: {money(payment.balance.amountMinor, payment.currency)} · {PAYMENT_STATUS[payment.balance.status]}
-      </p>
+      {payment.modality === 'total' ? (
+        <p data-pago-modalidad="total">Pagado en total: {money(payment.paidMinor ?? payment.totalMinor, payment.currency)}. No queda saldo.</p>
+      ) : (
+        <p data-pago-modalidad={payment.modality ?? 'sin-elegir'}>
+          Seña: {money(payment.deposit.amountMinor, payment.currency)} · {PAYMENT_STATUS[payment.deposit.status]}
+          <br />
+          Saldo: {money(payment.balance.amountMinor, payment.currency)} · {PAYMENT_STATUS[payment.balance.status]}
+        </p>
+      )}
+      {payment.paidMinor !== undefined && payment.pendingMinor !== undefined ? (
+        <p>
+          Pagado: {money(payment.paidMinor, payment.currency)} · Saldo pendiente: {money(payment.pendingMinor, payment.currency)}
+        </p>
+      ) : null}
       {returning && work.status !== 'completed' ? (
         <p role="status">Estamos confirmando tu pago con Mercado Pago. Esta pantalla se actualiza sola.</p>
       ) : null}
@@ -746,16 +761,29 @@ export function WorkPaymentSection({
       {!client && payment.required && payment.deposit.status !== 'paid' && ['accepted', 'in_progress'].includes(work.status) ? (
         <p>Podés iniciar el trabajo cuando se acredite la seña.</p>
       ) : null}
-      {payment.deposit.status === 'paid' && work.status !== 'completed' ? <p>Seña pagada.</p> : null}
+      {payment.deposit.status === 'paid' && payment.modality !== 'total' && work.status !== 'completed' ? <p>Seña pagada.</p> : null}
       {work.status === 'completed' && payment.balance.status === 'paid' ? (
         <p>Pago confirmado. Trabajo completado.</p>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
       <div className={styles.actions}>
         {work.actions.canPayDeposit ? (
-          <button disabled={busy} onClick={() => void pay('deposit')} type="button">
-            {busy ? 'Abriendo Mercado Pago…' : 'Pagar seña con Mercado Pago'}
-          </button>
+          <>
+            <fieldset data-pago-eleccion style={{ border: 0, display: 'grid', gap: 6, margin: 0, padding: 0 }}>
+              <legend>¿Cómo querés pagar?</legend>
+              <label>
+                <input checked={modalidad === 'sena'} name={`modalidad-${work.id}`} onChange={() => setModalidad('sena')} type="radio" /> Pagar seña (50%) —{' '}
+                {money(payment.deposit.amountMinor, payment.currency)} ahora y el saldo al terminar
+              </label>
+              <label>
+                <input checked={modalidad === 'total'} name={`modalidad-${work.id}`} onChange={() => setModalidad('total')} type="radio" /> Pagar total —{' '}
+                {money(payment.totalMinor, payment.currency)} ahora, sin saldo después
+              </label>
+            </fieldset>
+            <button data-pagar={modalidad} disabled={busy} onClick={() => void pay(modalidad === 'total' ? 'total' : 'deposit')} type="button">
+              {busy ? 'Abriendo Mercado Pago…' : modalidad === 'total' ? 'Pagar total con Mercado Pago' : 'Pagar seña con Mercado Pago'}
+            </button>
+          </>
         ) : null}
         {work.actions.canPayBalance ? (
           <button disabled={busy} onClick={() => void pay('balance')} type="button">
@@ -763,6 +791,123 @@ export function WorkPaymentSection({
           </button>
         ) : null}
       </div>
+    </section>
+  )
+}
+
+interface WorkClosing {
+  finishedAt: string
+  evidence: string
+  confirmationDueAt: string
+  confirmedAt: string | null
+  confirmationOrigin: string | null
+  observation: { at: string; reason: string | null; open: boolean } | null
+}
+
+// CIERRE-TRABAJO-01. After the provider finished the work: it leaves a note of what was done, the
+// client confirms it or reports a problem, and with no answer TUS confirms it when its 72 hours
+// run out. Confirming does not release money by itself; the backend decides with what was paid.
+export function WorkClosingSection({ work, session, onRefresh }: { work: WorkSummary; session: TusWebSession; onRefresh: () => Promise<unknown> }): React.ReactNode {
+  const [closing, setClosing] = useState<WorkClosing | null | undefined>(undefined)
+  const [text, setText] = useState('')
+  const [reporting, setReporting] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const transport = useRef(createTusWebFetchTransport())
+  const load = useCallback(async () => {
+    try {
+      const result = await transport.current.request<{ closing: WorkClosing | null }>({ ...session, method: 'GET', path: `/tus/v1/trabajos/${encodeURIComponent(work.id)}/cierre` })
+      setClosing(result.closing)
+    } catch {
+      setClosing(null)
+    }
+  }, [session, work.id])
+  useEffect(() => { void load() }, [load, work.version])
+
+  async function send(path: 'finalizacion' | 'confirmacion' | 'observacion', body: Record<string, unknown>) {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      await transport.current.request<unknown>({ ...session, method: 'POST', path: `/tus/v1/trabajos/${encodeURIComponent(work.id)}/${path}`, body })
+      setText('')
+      setReporting(false)
+      await Promise.all([load(), onRefresh()])
+    } catch (e) {
+      const code = e instanceof TusRequestError ? e.code : undefined
+      setError(
+        code === 'EVIDENCE_REQUIRED' ? 'Contá qué se hizo en al menos 10 caracteres.'
+          : code === 'REASON_REQUIRED' ? 'Contanos el problema en al menos 10 caracteres.'
+            : code === 'OBSERVATION_OPEN' ? 'Hay un problema reportado que TUS está revisando.'
+              : 'No pudimos guardar el cambio. Volvé a intentar.'
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (closing === undefined) return null
+  const client = work.role === 'cliente'
+  const due = closing ? new Date(closing.confirmationDueAt).toLocaleString('es-AR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Argentina/Buenos_Aires' }) : ''
+  return (
+    <section aria-labelledby="cierre-trabajo" className={styles.card} data-cierre={!closing ? 'sin-finalizar' : closing.observation?.open ? 'observado' : closing.confirmedAt ? 'confirmado' : 'por-confirmar'}>
+      <h2 id="cierre-trabajo">Finalización</h2>
+      {!closing ? (
+        client ? (
+          <p>El prestador terminó el trabajo. Cuando registre qué se hizo vas a poder confirmarlo o reportar un problema.</p>
+        ) : (
+          <>
+            <label>
+              Contá qué se hizo (lo ve el cliente y queda como evidencia)
+              <textarea maxLength={1000} onChange={(e) => setText(e.target.value)} rows={3} value={text} />
+            </label>
+            <div className={styles.actions}>
+              <button disabled={busy || text.trim().length < 10} onClick={() => void send('finalizacion', { evidence: text.trim() })} type="button">
+                {busy ? 'Guardando…' : 'Registrar finalización'}
+              </button>
+            </div>
+          </>
+        )
+      ) : (
+        <>
+          <p>Lo que hizo el prestador: {closing.evidence}</p>
+          {closing.observation?.open ? (
+            <p role="status">{client ? 'Reportaste un problema.' : 'El cliente reportó un problema.'} TUS lo está revisando; mientras tanto no se libera ningún pago.</p>
+          ) : closing.confirmedAt ? (
+            <p>{closing.confirmationOrigin === 'automatica' ? 'Se confirmó automáticamente al vencer el plazo del cliente.' : 'El cliente confirmó que el trabajo se realizó.'}</p>
+          ) : client ? (
+            <>
+              <p>Confirmá que el trabajo se realizó o contanos si hubo un problema. Si no respondés antes del {due}, se confirma automáticamente.</p>
+              {reporting ? (
+                <label>
+                  Contanos qué pasó (lo revisa el equipo de TUS)
+                  <textarea maxLength={1000} onChange={(e) => setText(e.target.value)} rows={3} value={text} />
+                </label>
+              ) : null}
+              <div className={styles.actions}>
+                {reporting ? (
+                  <>
+                    <button disabled={busy || text.trim().length < 10} onClick={() => void send('observacion', { reason: text.trim() })} type="button">
+                      {busy ? 'Enviando…' : 'Enviar el problema'}
+                    </button>
+                    <button onClick={() => { setReporting(false); setText('') }} type="button">Volver</button>
+                  </>
+                ) : (
+                  <>
+                    <button disabled={busy} onClick={() => void send('confirmacion', {})} type="button">
+                      {busy ? 'Confirmando…' : 'Confirmar que se realizó'}
+                    </button>
+                    <button onClick={() => setReporting(true)} type="button">Reportar un problema</button>
+                  </>
+                )}
+              </div>
+            </>
+          ) : (
+            <p>Esperando la confirmación del cliente. Si no responde antes del {due}, se confirma automáticamente.</p>
+          )}
+        </>
+      )}
+      {error ? <p role="alert">{error}</p> : null}
     </section>
   )
 }

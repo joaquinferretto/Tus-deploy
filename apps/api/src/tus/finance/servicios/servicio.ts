@@ -1875,7 +1875,9 @@ export class ServicioFinanzasServicios {
       //    when its client confirmed it (or its window ran out) and its reservation is completed.
       const terminado = trabajo?.origin === 'turno' ? reserva?.status === 'completed' : trabajo?.status === ESTADOS_TRABAJO.COMPLETADO
       if (!terminado) return sinLiberar('work_not_completed')
-      if (trabajo?.origin === 'turno' && cierre && !cierre.confirmed) return sinLiberar('client_confirmation_pending')
+      // The closing must exist and be confirmed (by the client or by its window): a reservation
+      // marked completed some other way never releases what TUS holds.
+      if (trabajo?.origin === 'turno' && repositories.cierreTrabajo?.estadoCierre && !cierre?.confirmed) return sinLiberar('client_confirmation_pending')
       // 2. Nothing blocks it: an open observation or claim of the client.
       if (cierre?.blocked) return sinLiberar(cierre.blocked)
       // 3. The economic condition. What was paid for the work is at least its final total: the

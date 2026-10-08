@@ -1374,6 +1374,11 @@ export class ServicioTurnos {
       const permitidos: readonly string[] = esEstadoTurno(actual.estado) ? TRANSICIONES_TURNO[actual.estado] : []
       if (!permitidos.includes(nuevo) || nuevo === 'expired' || nuevo === 'confirmed' || nuevo === 'awaiting_payment')
         throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no admite ese cambio de estado.')
+      // CIERRE-TRABAJO-01. A turno paid through TUS holds money until it is closed: it is
+      // finished with evidence and confirmed by its client (or by its window). Marking it
+      // "completed" by hand would skip both, so it is refused for those turnos.
+      if (nuevo === 'completed' && this.senas && (await this.senas.tienePagoOnline(actual)))
+        throw new ErrorCalendario(409, 'FINALIZATION_REQUIRED', 'Este turno se pagó por TUS: finalizalo contando qué se hizo, y el cliente lo confirma.')
       const row = await tx.reserva.update({
         where: { id: actual.id },
         data: {

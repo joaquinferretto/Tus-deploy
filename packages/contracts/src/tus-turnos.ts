@@ -36,6 +36,18 @@ export function mensajeErrorTurno(code: string | undefined, fallback = 'No pudim
   if (code === CODIGO_SENA_YA_PAGADA) return 'La seña de ese turno ya está pagada.'
   if (code === CODIGO_PAGO_NO_DISPONIBLE) return 'El pago online todavía no está disponible para ese profesional. Coordiná la seña directamente con él.'
   if (code === CODIGO_SENA_YA_EMITIDA) return 'Ese turno ya tiene su seña emitida: el precio no se puede modificar.'
+  // PAGOS-MODALIDAD-01 / CIERRE-TRABAJO-01.
+  if (code === 'PAYMENT_MODALITY_FIXED') return 'Ya hay un pago aprobado para este turno: la forma de pago no se puede cambiar.'
+  if (code === 'ALREADY_PAID') return 'Ese turno ya está pagado por completo.'
+  if (code === 'BALANCE_NOT_AVAILABLE') return 'El saldo se puede pagar cuando el turno se haya prestado y esté confirmado.'
+  if (code === 'FINALIZATION_REQUIRED') return 'Este turno se pagó por TUS: finalizalo contando qué se hizo, y el cliente lo confirma.'
+  if (code === 'EVIDENCE_REQUIRED') return 'Contá qué se hizo en al menos 10 caracteres.'
+  if (code === 'REASON_REQUIRED') return 'Contanos el problema en al menos 10 caracteres.'
+  if (code === 'OBSERVATION_OPEN') return 'Hay un problema reportado que TUS está revisando.'
+  if (code === 'ALREADY_CONFIRMED') return 'Ya estaba confirmado.'
+  if (code === 'APPOINTMENT_NOT_STARTED') return 'El turno todavía no empezó.'
+  if (code === 'APPOINTMENT_NOT_CONFIRMED') return 'Solo se puede finalizar un turno confirmado.'
+  if (code === 'WORK_NOT_FINISHED') return 'El prestador todavía no lo marcó como finalizado.'
   return fallback
 }
 

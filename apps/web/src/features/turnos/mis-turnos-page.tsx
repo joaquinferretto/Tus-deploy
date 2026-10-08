@@ -26,6 +26,15 @@ const EXPLICACION: Record<string, string> = {
 // paid deposit, or by the acceptance when it had no deposit.
 function explicacion(turno: DetalleTurno): string | null {
   const pagada = turno.sena?.estado === 'paid'
+  const pago = turno.pago ?? null
+  // PAGOS-MODALIDAD-01: what the backend says about the money, never computed here.
+  if (turno.estado === 'awaiting_payment' && pago && pago.opciones.length > 0) return 'El prestador aceptó tu solicitud. Para confirmar el turno elegí cómo pagarlo: una seña ahora y el resto después del servicio, o el total de una vez.'
+  if (turno.estado === 'confirmed' && pago?.modalidad === 'total') return 'El pago total fue aprobado. ¡Tu turno quedó confirmado!'
+  if (turno.estado === 'completed' && pago) {
+    if (pago.cierre?.observacionAbierta) return 'Reportaste un problema con este turno. TUS lo está revisando.'
+    if (pago.proximo?.tramo === 'saldo') return 'El turno ya figura como realizado. Ya podés pagar el saldo.'
+    if (pago.saldoPendiente === 0) return 'Turno realizado y pagado por completo.'
+  }
   if (turno.estado === 'confirmed') return pagada ? 'El pago de la seña fue aprobado. ¡Tu turno quedó confirmado!' : 'El prestador aceptó tu solicitud: el turno está confirmado.'
   if (turno.estado === 'awaiting_payment' && turno.sena?.estado === 'unavailable') return 'El prestador aceptó tu solicitud, pero el pago online de la seña no está disponible en este momento. Probá más tarde.'
   if ((turno.estado === 'expired' || turno.estado === 'cancelled') && pagada) return 'Recibimos el pago de la seña cuando el turno ya no estaba vigente. TUS lo va a revisar para reintegrarlo.'
@@ -42,6 +51,12 @@ export function MisTurnosPage(): React.ReactNode {
   const [error, setError] = useState<string | null>(null)
   const [cancelando, setCancelando] = useState<string | null>(null)
   const [pagando, setPagando] = useState<string | null>(null)
+  // The way of paying chosen for each turno that still offers both (the deposit by default).
+  const [eleccion, setEleccion] = useState<Record<string, 'sena' | 'total'>>({})
+  // The closing of a finished turno: confirming it, or reporting a problem (its text per turno).
+  const [cerrando, setCerrando] = useState<string | null>(null)
+  const [problema, setProblema] = useState<Record<string, string>>({})
+  const [reportando, setReportando] = useState<string | null>(null)
   // Back from Mercado Pago. The return never confirms anything: the turno is confirmed only when
   // TUS receives the verified notification, so the list is read again a few times.
   const [retornoPago, setRetornoPago] = useState(false)
@@ -83,22 +98,52 @@ export function MisTurnosPage(): React.ReactNode {
     }
   }
 
-  async function pagar(turno: DetalleTurno) {
+  // The part to pay is the one the backend offers (deposit, total or balance); only the choice
+  // between deposit and total is the client's, while nothing was paid.
+  async function pagar(turno: DetalleTurno, tramo: 'sena' | 'total' | 'saldo') {
     setPagando(turno.id)
     setError(null)
     try {
-      const checkout = await turnosApi.pagarSena(turno.id)
+      const checkout = await turnosApi.pagarTurno(turno.id, tramo)
       window.location.assign(checkout.checkoutUrl)
     } catch (causa: unknown) {
-      setError(causa instanceof Error ? causa.message : 'No pudimos preparar el pago de la seña.')
+      setError(causa instanceof Error ? causa.message : 'No pudimos preparar el pago.')
       setPagando(null)
+      cargar()
+    }
+  }
+
+  async function confirmar(turno: DetalleTurno) {
+    setCerrando(turno.id)
+    setError(null)
+    try {
+      await turnosApi.confirmarTurno(turno.id)
+      cargar()
+    } catch (causa: unknown) {
+      setError(causa instanceof Error ? causa.message : 'No pudimos confirmar el turno.')
+    } finally {
+      setCerrando(null)
+    }
+  }
+
+  async function reportar(turno: DetalleTurno) {
+    setCerrando(turno.id)
+    setError(null)
+    try {
+      await turnosApi.observarTurno(turno.id, (problema[turno.id] ?? '').trim())
+      setReportando(null)
+      cargar()
+    } catch (causa: unknown) {
+      setError(causa instanceof Error ? causa.message : 'No pudimos registrar el problema.')
+    } finally {
+      setCerrando(null)
     }
   }
 
   return (
     <div className={styles.narrow}>
       <h1 className={styles.title}>Mis turnos</h1>
-      <p className={styles.subtitle}>Solicitás el turno, el prestador lo acepta y el pago de la seña lo confirma.</p>
+      <p className={styles.subtitle}>Solicitás el turno, el prestador lo acepta y tu pago (la seña o el total) lo confirma.</p>
       <div className={styles.stateActions} style={{ justifyContent: 'flex-start', margin: '16px 0 8px' }}>
         <a className={homeStyles.buttonPrimary} href="/trabajadores">
           Buscar trabajador
@@ -133,6 +178,11 @@ export function MisTurnosPage(): React.ReactNode {
             const servicio = [turno.oficioNombre, turno.tarifaNombre].filter((nombre, indice, lista) => nombre && lista.indexOf(nombre) === indice).join(' · ') || 'Turno'
             const futuro = Date.parse(turno.inicio) > Date.now()
             const detalle = explicacion(turno)
+            const pago = turno.pago ?? null
+            const elegida = eleccion[turno.id] ?? (pago?.modalidad === 'total' ? 'total' : 'sena')
+            const eligiendo = turno.estado === 'awaiting_payment' && pago !== null && pago.opciones.length > 0 && Boolean(turno.sena)
+            const cierre = pago?.cierre ?? null
+            const porConfirmar = cierre !== null && !cierre.confirmadoEn && !cierre.observacionAbierta
             return (
               <li className={`${styles.panel} ${styles.turnoCard} ${turno.estado === 'pending' ? styles.turnoCardNew : ''}`} data-turno={turno.estado} data-turno-id={turno.id} key={turno.id}>
                 <div style={{ display: 'grid', gap: 4 }}>
@@ -156,7 +206,47 @@ export function MisTurnosPage(): React.ReactNode {
                       ) : null}
                     </span>
                   ) : null}
+                  {pago && (pago.pagado > 0 || pago.modalidad !== null) ? (
+                    <span data-turno-pago={pago.modalidad ?? 'sin-elegir'}>
+                      Pagado: <strong>{formatearPesos(pago.pagado)}</strong> de {formatearPesos(pago.total)}
+                      {pago.saldoPendiente > 0 && pago.pagado > 0 ? (
+                        <>
+                          {' '}
+                          · Saldo pendiente: <strong>{formatearPesos(pago.saldoPendiente)}</strong>
+                        </>
+                      ) : null}
+                    </span>
+                  ) : null}
                   {detalle ? <span className={styles.muted} style={{ fontSize: '0.9rem' }}>{detalle}</span> : null}
+                  {eligiendo ? (
+                    <fieldset data-turno-modalidad style={{ border: 0, display: 'grid', gap: 6, margin: '4px 0 0', padding: 0 }}>
+                      <legend className={styles.muted} style={{ fontSize: '0.9rem', padding: 0 }}>¿Cómo querés pagar?</legend>
+                      <label style={{ alignItems: 'center', display: 'flex', gap: 8 }}>
+                        <input checked={elegida === 'sena'} name={`modalidad-${turno.id}`} onChange={() => setEleccion({ ...eleccion, [turno.id]: 'sena' })} type="radio" />
+                        Pagar seña — {formatearPesos(turno.sena!.monto)} ahora y el resto después del servicio
+                      </label>
+                      <label style={{ alignItems: 'center', display: 'flex', gap: 8 }}>
+                        <input checked={elegida === 'total'} name={`modalidad-${turno.id}`} onChange={() => setEleccion({ ...eleccion, [turno.id]: 'total' })} type="radio" />
+                        Pagar total — {formatearPesos(pago!.total)} ahora, sin saldo después
+                      </label>
+                    </fieldset>
+                  ) : null}
+                  {porConfirmar ? (
+                    <span data-turno-cierre="por-confirmar" style={{ fontSize: '0.9rem' }}>
+                      El prestador marcó el turno como finalizado. Confirmá que se realizó o contanos si hubo un problema. Si no respondés antes del {venceEl(cierre!.confirmacionVenceEn)}, se confirma automáticamente.
+                    </span>
+                  ) : null}
+                  {cierre?.confirmadoEn ? (
+                    <span className={styles.muted} data-turno-cierre="confirmado" style={{ fontSize: '0.9rem' }}>
+                      {cierre.confirmacionOrigen === 'automatica' ? 'Se confirmó automáticamente porque pasó el plazo para responder.' : 'Confirmaste que el turno se realizó.'}
+                    </span>
+                  ) : null}
+                  {reportando === turno.id ? (
+                    <label style={{ display: 'grid', gap: 4 }}>
+                      <span className={styles.muted} style={{ fontSize: '0.9rem' }}>Contanos qué pasó (lo revisa el equipo de TUS)</span>
+                      <textarea maxLength={1000} onChange={(event) => setProblema({ ...problema, [turno.id]: event.target.value })} rows={3} value={problema[turno.id] ?? ''} />
+                    </label>
+                  ) : null}
                   <FotosTurno cantidad={turno.imagenes ?? 0} puedeAgregar={turno.estado === 'pending' && futuro} turnoId={turno.id} />
                   {turno.estado === 'awaiting_payment' && turno.expiraEn ? (
                     <span className={styles.muted} style={{ fontSize: '0.9rem' }}>Tenés tiempo para abonarla hasta el {venceEl(turno.expiraEn)}; después el horario se libera.</span>
@@ -164,14 +254,48 @@ export function MisTurnosPage(): React.ReactNode {
                 </div>
                 {(turno.estado === 'pending' || turno.estado === 'awaiting_payment' || turno.estado === 'confirmed') && futuro ? (
                   <div className={styles.turnoActions}>
-                    {turno.estado === 'awaiting_payment' && turno.sena?.estado === 'pending' ? (
-                      <button className={homeStyles.buttonPrimary} disabled={pagando === turno.id} onClick={() => void pagar(turno)} type="button">
+                    {eligiendo ? (
+                      <button className={homeStyles.buttonPrimary} data-pagar={elegida} disabled={pagando === turno.id} onClick={() => void pagar(turno, elegida)} type="button">
+                        {pagando === turno.id ? 'Preparando pago…' : elegida === 'total' ? `Pagar total — ${formatearPesos(pago!.total)}` : `Pagar seña — ${formatearPesos(turno.sena!.monto)}`}
+                      </button>
+                    ) : turno.estado === 'awaiting_payment' && turno.sena?.estado === 'pending' ? (
+                      <button className={homeStyles.buttonPrimary} data-pagar="sena" disabled={pagando === turno.id} onClick={() => void pagar(turno, 'sena')} type="button">
                         {pagando === turno.id ? 'Preparando pago…' : `Pagar seña — ${formatearPesos(turno.sena.monto)}`}
                       </button>
                     ) : null}
                     <button className={homeStyles.buttonSecondary} disabled={cancelando === turno.id} onClick={() => void cancelar(turno)} type="button">
                       {cancelando === turno.id ? 'Cancelando…' : turno.estado === 'pending' ? 'Retirar solicitud' : 'Cancelar turno'}
                     </button>
+                  </div>
+                ) : null}
+                {/* After the service: confirm it or report a problem, and pay what is left. */}
+                {porConfirmar || pago?.proximo?.tramo === 'saldo' ? (
+                  <div className={styles.turnoActions} data-turno-acciones-cierre>
+                    {pago?.proximo?.tramo === 'saldo' ? (
+                      <button className={homeStyles.buttonPrimary} data-pagar="saldo" disabled={pagando === turno.id} onClick={() => void pagar(turno, 'saldo')} type="button">
+                        {pagando === turno.id ? 'Preparando pago…' : `Pagar saldo — ${formatearPesos(pago.proximo.monto)}`}
+                      </button>
+                    ) : null}
+                    {porConfirmar && reportando !== turno.id ? (
+                      <>
+                        <button className={homeStyles.buttonPrimary} disabled={cerrando === turno.id} onClick={() => void confirmar(turno)} type="button">
+                          {cerrando === turno.id ? 'Confirmando…' : 'Confirmar que se realizó'}
+                        </button>
+                        <button className={homeStyles.buttonSecondary} onClick={() => setReportando(turno.id)} type="button">
+                          Reportar un problema
+                        </button>
+                      </>
+                    ) : null}
+                    {porConfirmar && reportando === turno.id ? (
+                      <>
+                        <button className={homeStyles.buttonPrimary} disabled={cerrando === turno.id || (problema[turno.id] ?? '').trim().length < 10} onClick={() => void reportar(turno)} type="button">
+                          {cerrando === turno.id ? 'Enviando…' : 'Enviar el problema'}
+                        </button>
+                        <button className={homeStyles.buttonSecondary} onClick={() => setReportando(null)} type="button">
+                          Volver
+                        </button>
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
               </li>

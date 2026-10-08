@@ -104,6 +104,26 @@ export function ProviderTurnos(): React.ReactNode {
     }
   }
 
+  // CIERRE-TRABAJO-01. A turno paid through TUS is finished with a note of what was done; the
+  // client then confirms it (or TUS does when its 72 hours run out).
+  const [finalizando, setFinalizando] = useState<string | null>(null)
+  const [evidencia, setEvidencia] = useState('')
+  const [enviandoCierre, setEnviandoCierre] = useState(false)
+  async function finalizar(id: string) {
+    setEnviandoCierre(true)
+    setError(null)
+    try {
+      await turnosApi.finalizarTurno(id, evidencia.trim())
+      setFinalizando(null)
+      setEvidencia('')
+      cargarTurnos()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'No pudimos registrar la finalización.')
+    } finally {
+      setEnviandoCierre(false)
+    }
+  }
+
   async function cambiarEstado(id: string, nuevoEstado: string) {
     try {
       const res = await turnosFetch(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/estado`, {
@@ -365,13 +385,50 @@ export function ProviderTurnos(): React.ReactNode {
                     {t.oficioNombre || t.tarifaNombre || t.oficioId} · {t.duracionMinutos} min · ${PESOS.format(t.precioFinal ?? 0)}
                     {t.sena ? ` · Seña ${formatearPesos(t.sena.monto)}: ${etiquetaSenaTurno(t.sena.estado)}` : ''}
                   </div>
+                  {t.pago && t.pago.pagado > 0 ? (
+                    <div data-turno-cobro={t.pago.fondos ?? 'sin-fondos'} style={{ color: '#374151', fontSize: '0.85rem', marginTop: 2 }}>
+                      Cobrado por TUS: <strong>{formatearPesos(t.pago.pagado)}</strong> de {formatearPesos(t.pago.total)}
+                      {t.pago.saldoPendiente > 0 ? ` · Saldo pendiente del cliente: ${formatearPesos(t.pago.saldoPendiente)}` : ''}
+                      {t.pago.fondos === 'retenidos' ? ' · Retenido hasta que el turno se cierre y esté pagado por completo' : t.pago.fondos === 'liberados' ? ' · Liberado: ya está en tus ganancias disponibles' : ''}
+                    </div>
+                  ) : null}
+                  {t.pago?.cierre ? (
+                    <div data-turno-cierre={t.pago.cierre.observacionAbierta ? 'observado' : t.pago.cierre.confirmadoEn ? 'confirmado' : 'esperando'} style={{ color: '#374151', fontSize: '0.85rem', marginTop: 2 }}>
+                      {t.pago.cierre.observacionAbierta
+                        ? 'El cliente reportó un problema. TUS lo está revisando; los fondos siguen retenidos.'
+                        : t.pago.cierre.confirmadoEn
+                          ? t.pago.cierre.confirmacionOrigen === 'automatica' ? 'Confirmado automáticamente al vencer el plazo del cliente.' : 'El cliente confirmó que se realizó.'
+                          : `Finalizado. Esperando la confirmación del cliente (se confirma solo el ${new Date(t.pago.cierre.confirmacionVenceEn).toLocaleString('es-AR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Argentina/Buenos_Aires' })}).`}
+                    </div>
+                  ) : null}
+                  {finalizando === t.id ? (
+                    <label style={{ display: 'grid', gap: 4, marginTop: 6 }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Contá qué se hizo (lo ve el cliente y queda como evidencia)</span>
+                      <textarea maxLength={1000} onChange={(event) => setEvidencia(event.target.value)} rows={3} value={evidencia} />
+                    </label>
+                  ) : null}
                   {t.notas ? <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: 4 }}>Nota: {t.notas}</div> : null}
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <span className={claseEstadoTurno(t.estado)}>{etiquetaEstadoTurno(t.estado)}</span>
 
-                  {t.estado === 'confirmed' ? (
+                  {t.estado === 'confirmed' && t.pago && t.pago.pagado > 0 ? (
+                    finalizando === t.id ? (
+                      <>
+                        <button className={homeStyles.buttonPrimary} disabled={enviandoCierre || evidencia.trim().length < 10} onClick={() => void finalizar(t.id)} type="button">
+                          {enviandoCierre ? 'Guardando…' : 'Confirmar finalización'}
+                        </button>
+                        <button className={homeStyles.buttonSecondary} onClick={() => { setFinalizando(null); setEvidencia('') }} type="button">
+                          Volver
+                        </button>
+                      </>
+                    ) : Date.parse(t.inicio) <= Date.now() ? (
+                      <button className={homeStyles.buttonPrimary} data-finalizar onClick={() => { setFinalizando(t.id); setEvidencia('') }} type="button">
+                        Finalizar turno
+                      </button>
+                    ) : null
+                  ) : t.estado === 'confirmed' ? (
                     <button
                       type="button"
                       onClick={() => cambiarEstado(t.id, 'completed')}

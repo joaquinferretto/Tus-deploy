@@ -95,7 +95,8 @@ test('TURNOS solicitud Web: the client follows the real state in "Mis turnos"; t
   assert.match(mios, /etiquetaEstadoTurno\(turno\.estado\)/u)
   assert.match(mios, /\{servicio\} — \{diaTurno\(turno\.inicio\)\} — \{horaTurno\(turno\.inicio\)\}/u, '"Masaje — viernes 2 de octubre — 09:45"')
   assert.match(mios, /Para confirmar definitivamente el turno tenés que abonar la seña/u)
-  assert.match(mios, /turnosApi\.pagarSena\(turno\.id\)/u)
+  // PAGOS-MODALIDAD-01: one checkout for the deposit, the total or the balance; only the part travels.
+  assert.match(mios, /turnosApi\.pagarTurno\(turno\.id, tramo\)/u)
   assert.match(mios, /turnosApi\.cancelarMiTurno\(turno\.id\)/u)
   assert.match(mios, /sign-in\?returnTo=\$\{encodeURIComponent\(RETURN_TO\)\}/u, 'a visitor is sent to sign in')
 
@@ -216,7 +217,9 @@ test('TURNOS seña Web: price and deposit come from the API, awaiting_payment is
   // "Mis turnos": every state says what it is; "confirmed" only for a confirmed turno.
   assert.match(mios, /awaiting_payment: 'El prestador aceptó tu solicitud\. Para confirmar definitivamente el turno tenés que abonar la seña\.'/u)
   assert.match(mios, /if \(turno\.estado === 'confirmed'\) return pagada \? 'El pago de la seña fue aprobado\. ¡Tu turno quedó confirmado!' : 'El prestador aceptó tu solicitud: el turno está confirmado\.'/u)
-  assert.equal((mios.match(/quedó confirmado|está confirmado/gu) ?? []).length, 2, 'no other text of the page says confirmed')
+  // PAGOS-MODALIDAD-01: a third one, for a turno confirmed by its total payment.
+  assert.match(mios, /if \(turno\.estado === 'confirmed' && pago\?\.modalidad === 'total'\) return 'El pago total fue aprobado\. ¡Tu turno quedó confirmado!'/u)
+  assert.equal((mios.match(/quedó confirmado|está confirmado/gu) ?? []).length, 3, 'no other text of the page says confirmed')
   assert.match(mios, /turno\.estado === 'awaiting_payment' && turno\.sena\?\.estado === 'pending' \?/u, 'the pay button exists only while the deposit is due')
   assert.match(mios, /Pagar seña — \$\{formatearPesos\(turno\.sena\.monto\)\}/u)
   assert.match(mios, /Seña: <strong>\{formatearPesos\(turno\.sena\.monto\)\}<\/strong> \(\{etiquetaSenaTurno\(turno\.sena\.estado\)\}\)/u, 'amount and payment state of the deposit')

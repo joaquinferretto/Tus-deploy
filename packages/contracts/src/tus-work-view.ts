@@ -38,6 +38,11 @@ export interface WorkPayment {
   totalMinor: string
   deposit: WorkPaymentPart
   balance: WorkPaymentPart
+  // PAGOS-MODALIDAD-01. How it is being paid (null until a payment is approved: the client may
+  // still choose a 50% deposit or the total), what was paid and what is left of the total.
+  modality?: 'sena' | 'total' | null
+  paidMinor?: string
+  pendingMinor?: string
 }
 
 export interface WorkSummary {

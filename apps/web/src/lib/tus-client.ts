@@ -747,8 +747,9 @@ export interface TusWebClient {
   createWorkPaymentIntent(
     input: TusWebContext & { workId: string; idempotencyKey: string }
   ): Promise<TusPaymentIntentResponse>
+  // `modalidad`: 'sena' (the 50% deposit, default) or 'total'. The amounts are the server's.
   startWorkCheckout(
-    input: TusWebContext & { workId: string; idempotencyKey: string }
+    input: TusWebContext & { workId: string; idempotencyKey: string; modalidad?: 'sena' | 'total' }
   ): Promise<TusCheckoutStartResponse>
   workFinance(context: TusWebContext, workId: string): Promise<TusWorkFinanceResponse>
   paymentAccount(context: TusWebContext): Promise<TusPaymentAccount>
@@ -1307,13 +1308,13 @@ export function createTusWebClient(transport: TusWebTransport): TusWebClient {
         path: `/tus/v1/work/${encodeURIComponent(workId)}/payment-intents`,
         body: {},
       }),
-    startWorkCheckout: ({ workId, idempotencyKey, ...context }) =>
+    startWorkCheckout: ({ workId, idempotencyKey, modalidad, ...context }) =>
       transport.request<TusCheckoutStartResponse>({
         ...context,
         idempotencyKey,
         method: 'POST',
         path: `/tus/v1/work/${encodeURIComponent(workId)}/checkout`,
-        body: {},
+        body: modalidad ? { modalidad } : {},
       }),
     workFinance: (context, workId) =>
       transport.request<TusWorkFinanceResponse>({

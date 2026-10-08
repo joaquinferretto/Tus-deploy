@@ -311,7 +311,8 @@ test(
       await page.getByRole('button', { name: 'Pagar seña con Mercado Pago', exact: true }).click()
       await page.waitForURL('https://www.mercadopago.com.ar/**')
       assert.equal(checkouts.length, 1)
-      assert.deepEqual(checkouts[0].body, {})
+      // PAGOS-MODALIDAD-01: the only thing the client says is how it pays (the deposit by default).
+      assert.deepEqual(checkouts[0].body, { modalidad: 'sena' })
       assert.match(checkouts[0].key, /^w1:deposit:/u)
       // Back from Mercado Pago the page only observes; it never confirms the payment itself.
       await page.goto('https://tus.test/?pago=retorno')

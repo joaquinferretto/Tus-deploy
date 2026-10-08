@@ -76,6 +76,9 @@ export interface PagosResumenTrabajo {
     totalMinor: bigint
     deposit: { amountMinor: bigint; status: WorkPayment['deposit']['status'] }
     balance: { amountMinor: bigint; status: WorkPayment['balance']['status'] }
+    modality?: 'sena' | 'total' | null
+    paidMinor?: bigint
+    pendingMinor?: bigint
   } | null>
 }
 
@@ -220,6 +223,9 @@ export class ServicioResumenTrabajo {
           totalMinor: String(estado.totalMinor),
           deposit: { amountMinor: String(estado.deposit.amountMinor), status: estado.deposit.status },
           balance: { amountMinor: String(estado.balance.amountMinor), status: estado.balance.status },
+          modality: estado.modality ?? null,
+          ...(estado.paidMinor !== undefined ? { paidMinor: String(estado.paidMinor) } : {}),
+          ...(estado.pendingMinor !== undefined ? { pendingMinor: String(estado.pendingMinor) } : {}),
         }
       : null
     const rating = this.calificaciones && work.status === 'completed' ? await this.calificaciones.deTrabajo(work) : null
