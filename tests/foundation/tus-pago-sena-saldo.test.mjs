@@ -232,9 +232,11 @@ test('FASE7 provider without Mercado Pago blocks the start (never free); global 
   assert.equal(result.unknown, 'unmatched')
   assert.equal(result.stillPending, 'pending_payment')
   assert.equal(result.ok, 'applied')
-  // The deposit keeps the 10% frozen at its checkout even though the policy moved to 15%.
+  // COMISION-TRABAJO-01: the commission is frozen for the WORK when it is contracted. The deposit
+  // keeps its 10% and so does the balance, although the policy moved to 15% in between (before,
+  // each checkout froze its own rate and the balance took the new one).
   assert.deepEqual(result.senaCommission, [1000, '5000'])
-  assert.equal(result.saldoCommission, '7500')
+  assert.equal(result.saldoCommission, '5000')
   assert.equal(result.tooSmall, 'BUDGET_TOO_SMALL')
   assert.deepEqual(result.minState, ['1', '1'])
   assert.deepEqual(result.http.amount, [400, 'CLIENT_AUTHORITY_FIELDS'])

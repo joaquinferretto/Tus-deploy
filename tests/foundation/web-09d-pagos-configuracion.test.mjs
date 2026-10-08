@@ -137,7 +137,8 @@ test('WEB-09D commission is configurable, bounded, scoped and frozen in each sna
     const admin = new ServicioConfiguracionPagos(config, () => leerEstadoOperativoPagos(readyEnv, true), clock)
     const ctx = { actorId: 'admin', correlationId: 'c' }
     const invalid = []
-    for (const rateBps of [-1, 3001, 12.5, '1000', null]) invalid.push(await codeOf(() => admin.registrarPolitica(ctx, { scope: 'global', rateBps, pspFeeBearer: 'provider', reason: 'r', expectedVersion: 0 })))
+    // (COMISION-TRABAJO-01: the range is 0% to 100% now; it was capped at 30%.)
+    for (const rateBps of [-1, 10001, 12.5, '1000', null]) invalid.push(await codeOf(() => admin.registrarPolitica(ctx, { scope: 'global', rateBps, pspFeeBearer: 'provider', reason: 'r', expectedVersion: 0 })))
     const badBearer = await codeOf(() => admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1000, pspFeeBearer: 'customer', reason: 'r', expectedVersion: 0 }))
     const noReason = await codeOf(() => admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1000, expectedVersion: 0 }))
     const scopedWithoutRef = await codeOf(() => admin.registrarPolitica(ctx, { scope: 'prestador', rateBps: 1000, reason: 'r', expectedVersion: 0 }))
@@ -340,7 +341,7 @@ test('WEB-09D HTTP: preview is customer-only, the Web cannot send money, admin a
     const fakeAdmin = await call('GET', '/tus/v1/admin/payments/status', 'fake-admin-token')
     const customerAdmin = await call('POST', '/tus/v1/admin/payments/commission-policies', 'customer-token', { scope: 'global', rateBps: 0, reason: 'x', expectedVersion: 0 })
     const policy = await call('POST', '/tus/v1/admin/payments/commission-policies', 'admin-token', { scope: 'global', rateBps: 1000, pspFeeBearer: 'provider', reason: 'launch', expectedVersion: 0 })
-    const invalidPolicy = await call('POST', '/tus/v1/admin/payments/commission-policies', 'admin-token', { scope: 'global', rateBps: 9000, reason: 'too much', expectedVersion: 1 })
+    const invalidPolicy = await call('POST', '/tus/v1/admin/payments/commission-policies', 'admin-token', { scope: 'global', rateBps: 10001, reason: 'too much', expectedVersion: 1 })
     const configuration = await call('POST', '/tus/v1/admin/payments/configuration', 'admin-token', { paymentsEnabled: true, reason: 'enable product', expectedVersion: 0 })
     const afterEnable = await call('GET', path + '/payment-preview', 'customer-token')
     await new Promise((resolve) => server.close(resolve))
