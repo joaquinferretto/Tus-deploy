@@ -411,8 +411,10 @@ test('TURNOS seña PostgreSQL seguridad: only the client of the turno gets its c
     segundaOrden: 'unique:reserva_tenant_id,reserva_id',
     reservaDeOtroPrestador: 'ck_trabajos_origen_coherente',
     conPresupuesto: 'ck_trabajos_origen_coherente',
-    saldoDeTurno: 'ck_obligaciones_pago_tramo_cadena',
-    totalDeTurno: 'ck_obligaciones_pago_tramo_cadena',
+    // PAGOS-MODALIDAD-01: a turno can now be paid in total, or with a deposit and its balance. Before,
+    // the database refused both parts ('ck_obligaciones_pago_tramo_cadena').
+    saldoDeTurno: 'ok',
+    totalDeTurno: 'ok',
     senaConPresupuesto: 'ck_obligaciones_pago_origen_importe',
     cuentaInexistente: 'foreign_key',
     sinFecha: 'ck_conversaciones_whatsapp_identificacion',
