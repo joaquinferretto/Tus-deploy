@@ -1118,6 +1118,8 @@ export class ServicioTurnos {
       if (actual.estado === 'cancelled') return { row: actual, cambio: false }
       if ((actual.estado !== 'pending' && actual.estado !== 'awaiting_payment' && actual.estado !== 'confirmed') || actual.fechaInicio.getTime() <= ahora.getTime())
         throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no se puede cancelar.')
+      // A finished turno is confirmed or reported by its client, never withdrawn.
+      if (await this.finalizado(tx, actual)) throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no se puede cancelar.')
       const row = await tx.reserva.update({ where: { id: actual.id }, data: { estado: 'cancelled', version: { increment: 1 }, fechaActualizacion: ahora } })
       await this.outboxNotificaciones.encolar(tx, {
         tenantId: row.tenantId,
@@ -1383,6 +1385,12 @@ export class ServicioTurnos {
     return { ok: true }
   }
 
+  /** CIERRE-TRABAJO-01: its provider already finished this turno (its closing exists). */
+  private async finalizado(tx: Prisma.TransactionClient, reserva: { tenantId: string; reservaId: string }): Promise<boolean> {
+    const orden = await tx.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: reserva.tenantId, reservaId: reserva.reservaId }, select: { tenantId: true, trabajoId: true } })
+    return Boolean(orden) && (await tx.cierreTrabajo.count({ where: { tenantId: orden!.tenantId, trabajoId: orden!.trabajoId } })) > 0
+  }
+
   /**
    * Cambia el estado de un turno (confirmado, cancelado, no-show, completado).
    */
@@ -1422,6 +1430,11 @@ export class ServicioTurnos {
       // "completed" by hand would skip both, so it is refused for those turnos.
       if (nuevo === 'completed' && this.senas && (await this.senas.tienePagoOnline(actual)))
         throw new ErrorCalendario(409, 'FINALIZATION_REQUIRED', 'Este turno se pagó por TUS: finalizalo contando qué se hizo, y el cliente lo confirma.')
+      // Once its provider finished it, the turno waits for its client (or for TUS, if a problem
+      // was reported) and its money is held on that closing: its provider cannot cancel it or
+      // call it a no-show any more. This rule lives here, not in what the Web shows.
+      if (!input.isAdmin && (await this.finalizado(tx, actual)))
+        throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Este turno ya fue finalizado: lo confirma el cliente o lo revisa TUS.')
       const row = await tx.reserva.update({
         where: { id: actual.id },
         data: {

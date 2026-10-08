@@ -317,9 +317,19 @@ test('HTTP turnos: the client chooses deposit or total on one checkout route (on
       const fin1 = await call('POST', '/tus/v1/prestador/turnos/' + t.pedido.id + '/finalizar', 'tok-p', { evidence: EVIDENCIA })
       const visto = await turnoDe('tok-ana', t)
       out.finalizado = [fin1.status, fin1.body.status, fin1.body.closing.evidence === EVIDENCIA, visto.pago.cierre.confirmadoEn, visto.pago.cierre.observacionAbierta, visto.pago.fondos]
+      // A finished turno cannot go back through the API: its provider cannot cancel it, call it a
+      // no-show or complete it by hand; its client cannot withdraw it; finishing again changes nothing.
+      const estadoDe = async (token, id, estado) => { const x = await call('PATCH', '/tus/v1/prestador/turnos/' + id + '/estado', token, { estado }); return [x.status, x.body.code ?? null] }
+      const fin1b = await call('POST', '/tus/v1/prestador/turnos/' + t.pedido.id + '/finalizar', 'tok-p', { evidence: 'Otra evidencia distinta de la primera.' })
+      const cancelaCliente = await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/cancelar', 'tok-ana')
+      out.finalizadoNoVuelve = [await estadoDe('tok-p', t.pedido.id, 'cancelled'), await estadoDe('tok-p', t.pedido.id, 'no-show'), await estadoDe('tok-p', t.pedido.id, 'completed'), [cancelaCliente.status, cancelaCliente.body.code], [fin1b.status, fin1b.body.closing.evidence === EVIDENCIA], (await turnoDe('tok-ana', t)).estado, (await turnoDe('tok-ana', t)).pago.fondos]
       out.confirmaAjeno = [(await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/confirmar', 'tok-beto')).status, (await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/confirmar', 'tok-p')).status]
       const conf = await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/confirmar', 'tok-ana')
       const cerrado = await turnoDe('tok-ana', t)
+      // Confirmed twice: the same closing. A completed turno is final for everybody.
+      const conf2x = await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/confirmar', 'tok-ana')
+      const obsTarde = await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/observar', 'tok-ana', { reason: 'Me arrepentí después de confirmar.' })
+      out.cerradoNoVuelve = [conf2x.status, (await turnoDe('tok-ana', t)).pago.cierre.confirmadoEn === cerrado.pago.cierre.confirmadoEn, obsTarde.status >= 400, obsTarde.body.code ?? null, await estadoDe('tok-p', t.pedido.id, 'cancelled'), (await call('POST', '/tus/v1/cliente/turnos/' + t.pedido.id + '/cancelar', 'tok-ana')).status, (await turnoDe('tok-ana', t)).estado, (await turnoDe('tok-ana', t)).pago.fondos]
       out.confirmado = [conf.status, conf.body.status, conf.body.payments, cerrado.estado, cerrado.pago.cierre.confirmacionOrigen, cerrado.pago.fondos, cerrado.pago.proximo]
 
       // ---- B. Deposit, observation, balance.
@@ -356,6 +366,8 @@ test('HTTP turnos: the client chooses deposit or total on one checkout route (on
   assert.deepEqual(r.yaPagado, ['DEPOSIT_NOT_PAYABLE', 'ALREADY_PAID', 'ALREADY_PAID'])
   assert.deepEqual(r.finalizar, [403, 'UNTRUSTED_FIELDS', 'EVIDENCE_REQUIRED'], 'only the provider finishes it, with evidence and nothing else in the body')
   assert.deepEqual(r.finalizado, [201, 'created', true, null, false, 'retenidos'], 'finished: the client sees it waits for its confirmation, the money still held')
+  assert.deepEqual(r.finalizadoNoVuelve, [[409, 'INVALID_TRANSITION'], [409, 'INVALID_TRANSITION'], [409, 'FINALIZATION_REQUIRED'], [409, 'INVALID_TRANSITION'], [200, true], 'confirmed', 'retenidos'], 'a finished turno is not cancelled, called a no-show or completed by hand through the API, by its provider or its client; finishing again keeps the first evidence')
+  assert.deepEqual(r.cerradoNoVuelve, [200, true, true, 'ALREADY_CONFIRMED', [409, 'INVALID_TRANSITION'], 409, 'completed', 'liberados'], 'confirming twice keeps the first confirmation; a confirmed closing takes no observation; a completed turno is final')
   assert.deepEqual(r.confirmaAjeno, [404, 403])
   assert.deepEqual(r.confirmado, [200, 'confirmed', { released: 1, pending: null }, 'completed', 'cliente', 'liberados', null], 'confirmed and fully paid: released')
   assert.deepEqual(r.conSena, ['confirmed', 'paid', 'sena', 15000, 15000, null, [], 'retenidos'], 'a deposit: half paid, half pending, nothing payable yet, the way of paying fixed')
