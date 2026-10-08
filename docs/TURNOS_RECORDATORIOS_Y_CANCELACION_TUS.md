@@ -34,8 +34,9 @@ El checkout de un pago anticipado (seña o total) solo se abre si el cliente ace
 ese turno. La aceptación se guarda en `aceptaciones_politica_cancelacion`: cuenta, turno, fecha y
 hora, canal (`web` o `whatsapp`) y versión del texto (`VERSION_POLITICA_CANCELACION`).
 
-- Sin aceptación, o con otra versión: `409 CANCELLATION_POLICY_ACCEPTANCE_REQUIRED` y no se crea
-  ningún checkout.
+- Sin aceptación, o con otra versión: `409 CANCELLATION_POLICY_ACCEPTANCE_REQUIRED` y no se le
+  entrega ningún link de pago. (La orden del turno y su pago se preparan al aceptar el prestador,
+  como siempre; lo que espera a la aceptación es la entrega del link.)
 - Web: `POST /tus/v1/cliente/turnos/:id/pago/checkout` con `{ tramo, aceptaPolitica: "<versión>" }`.
 - WhatsApp: antes del link, el asistente muestra el texto con los botones **Aceptar y pagar** y
   **Volver**.
