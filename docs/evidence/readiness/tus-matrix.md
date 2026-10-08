@@ -102,3 +102,13 @@ work, preserve audit/evidence/ledger/outbox/DLQ state, and use append-only
 financial compensation. Reverting this matrix changes documentation only; it
 does not remove readiness guards, durable records, migrations, contracts, or
 provider-disabled defaults.
+
+## Technical enablement is not launch readiness
+
+Added 2026-10-07 (PAGOS-HABILITACION-TECNICA-01, PROVIDER-ACTIONS-GATES-01).
+The evidence recorded under `service-payments` is the readiness for the public
+launch: reported as `public-launch-readiness`, never a blocker of a payment.
+Whether a service payment can be charged depends on the real controls of the
+payment engine and on the verified identity of each provider. `provider-actions`
+no longer asks for `groqMigration`, and asks for `aws` only on the AWS runtime.
+See `docs/activation-gates.md`.

@@ -512,6 +512,32 @@ async function recorrer(browser, viewport, estado) {
     check(http.some((linea) => /POST \/tus\/v1\/admin\/whatsapp\/conversations\/smoke-v02\/template 202$/u.test(linea)), `${e}: the template went through the support API`)
     await buscador.fill('')
     await filasSon(25)
+
+    // ---- 8. Admin -> Pagos: the technical enablement apart from the public launch readiness.
+    await page.goto(`${web}/tus/admin/pagos`, { waitUntil: 'networkidle' })
+    const pagos = page.locator('section[aria-label="Estado de los pagos online"]')
+    await pagos.waitFor()
+    const textoPagos = (await pagos.innerText()).replace(/\s+/gu, ' ')
+    check(textoPagos.includes('Pagos técnicamente habilitados') && textoPagos.includes('Readiness para lanzamiento público'), `${e}: the two sections are told apart (${textoPagos.slice(0, 200)})`)
+    check(textoPagos.indexOf('Pagos técnicamente habilitados') < textoPagos.indexOf('Readiness para lanzamiento público'), `${e}: the technical state comes first`)
+    // No Mercado Pago in this smoke: technically NOT enabled, with what is missing named.
+    check((await pagos.getAttribute('data-pagos-tecnicos')) === 'no' && textoPagos.includes('No: los pagos online no están disponibles') && textoPagos.includes('Falta:'), `${e}: without Mercado Pago the payments are reported as not enabled, with what is missing`)
+    check(!textoPagos.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'), `${e}: the approvals of the launch are not among what blocks a payment`)
+    const lanzamiento = pagos.locator('[data-lanzamiento-publico]')
+    const requisitos = (await lanzamiento.locator('li').allInnerTexts()).map((linea) => linea.replace(/\s+/gu, ' ').trim())
+    check((await lanzamiento.getAttribute('data-lanzamiento-publico')) === 'pendiente' && requisitos.length === 6 && requisitos.every((linea) => linea.endsWith('Pendiente')), `${e}: the six approvals are listed as pending (${requisitos.join(' | ')})`)
+    check((await lanzamiento.innerText()).includes('no bloquea los pagos'), `${e}: it says it does not block the payments`)
+    // The evidence registry: the launch readiness, and settlement with what is not required here.
+    await page.locator('details', { hasText: 'Evidencias de habilitación' }).locator('summary').click()
+    const evidencias = page.locator('details', { hasText: 'Evidencias de habilitación' })
+    await evidencias.getByRole('button', { name: 'Readiness para lanzamiento público', exact: true }).waitFor()
+    await evidencias.getByRole('button', { name: 'Marketplace general (settlement)', exact: true }).click()
+    await evidencias.locator('[data-no-requerido="aws"]').waitFor()
+    const noRequeridos = (await evidencias.locator('[data-no-requerido]').allInnerTexts()).map((linea) => linea.replace(/\s+/gu, ' ').trim())
+    check(noRequeridos.join(' | ') === 'AWS No requerido en este runtime | POS Pilot No requerido para este flujo', `${e}: AWS and POS Pilot are shown as not required, not as missing (${noRequeridos.join(' | ')})`)
+    check(!/groq/iu.test(await evidencias.innerText()), `${e}: Groq does not appear inside Marketplace / Settlement`)
+    await sinDesborde('Admin -> Pagos')
+    await page.screenshot({ path: join(artifacts, `${e}-pagos.png`), fullPage: true })
     await salir('the administrator')
 
     const fallidas = http.filter((linea) => /\s(4\d\d|5\d\d)$/u.test(linea) && !ESPERADOS.some((esperado) => esperado.test(linea)))

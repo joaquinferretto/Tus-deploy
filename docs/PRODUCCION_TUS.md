@@ -796,7 +796,28 @@ Deshabilitar (inmediato, sin redeploy): `"paymentsEnabled":false`. Corte de emer
 reinicio de la API. Los pagos registrados no se borran; los webhooks de pagos ya creados siguen conciliándose mientras el
 adaptador esté configurado.
 
-### Habilitación de producción: `service-payments` (no `settlement`)
+### Habilitación técnica y readiness de lanzamiento público (PAGOS-HABILITACION-TECNICA-01)
+
+Desde el 2026-10-07 son dos cosas separadas:
+
+- **Pagos técnicamente habilitados:** que un pago de servicio se pueda cobrar depende solo de controles reales: el
+  interruptor de pagos, `TUS_MERCADOPAGO_ENABLED`, el entorno de Mercado Pago, todas sus credenciales, el secreto y la
+  URL https del webhook, el adaptador real, una política de comisión válida, la **identidad verificada del prestador**
+  y una cuenta de cobro (la del prestador o la de TUS). Idempotencia, conciliación, notificaciones verificadas y la
+  obligación única por tramo no cambiaron.
+- **Readiness para lanzamiento público:** las seis aprobaciones (`legal`, `kyc`, `kyb`, `tax`, `mercadoPago`,
+  `runtimeProvider`). Se informan como `public-launch-readiness` (pendiente / vigente / vencido) en Admin → Pagos y
+  **no bloquean** un pago. Permiten una prueba cerrada con pagos reales de monto bajo sin declarar a TUS listo para
+  el lanzamiento.
+
+La evidencia sigue guardada bajo la clave `service-payments` (no se migró ni se borró nada). El `kyc` global no
+reemplaza la identidad individual del prestador. Donde la seña es cobrable, un servicio sin precio publicado no puede
+recibir solicitudes de turno (`SERVICE_PRICE_REQUIRED`).
+
+**Al desplegar esto, producción cobra dinero real sin el gate de evidencias.** Lo que sigue describe el registro de
+esas aprobaciones, que ahora es informativo.
+
+### Registro de aprobaciones: `service-payments` (no `settlement`)
 
 Los pagos de servicios (seña de un turno, seña y saldo de un trabajo de solicitud) tienen su **propia** capacidad de
 habilitación: `service-payments`. `settlement` es el gate del marketplace general (productos, entrega, POS) y **no** es

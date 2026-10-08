@@ -166,8 +166,8 @@ fake, or partial authorized record cannot promote the overall report.
 | `tax` | Finance and Tax | Publication and all money-moving capabilities | Country tax and invoicing approval reference |
 | `mercadoPago` | Payments / Provider Operations | Provider actions, settlement, service payments, and release jobs | Approved account/product/contract validation |
 | `posPilot` | POS Product and Operations | Fleet and release jobs; settlement only for an operation processed through the POS (never service payments) | Authorized hardware and operational pilot evidence |
-| `aws` | AI Platform / Runtime | Provider actions; settlement only when the process runs with the AWS deployment profile (never service payments) | Approved AWS target/provider evidence |
-| `groqMigration` | AI Platform / Runtime | Provider actions only (never settlement, never service payments) | Transitional parity, fallback, and retirement backlog |
+| `aws` | AI Platform / Runtime | Provider actions and settlement, only when the process runs with the AWS deployment profile (never service payments) | Approved AWS target/provider evidence |
+| `groqMigration` | AI Platform / Runtime | No capability asks for it today (PROVIDER-ACTIONS-GATES-01): nothing gated runs a model | Transitional parity, fallback, and retirement backlog |
 | `runtimeProvider` | Runtime Operations | Publication and all operational capabilities | Runtime/provider readiness and smoke evidence |
 
 Every readiness evidence record preserves `owner`, `scope`, `evidenceType`,
@@ -175,6 +175,36 @@ Every readiness evidence record preserves `owner`, `scope`, `evidenceType`,
 records the exact evidence IDs and failed gate reasons. Missing, out-of-scope,
 expired, or revoked evidence fails closed; it never falls back to a deployment
 boolean, provider credential, or client claim.
+
+### Technical enablement vs. public launch readiness (PAGOS-HABILITACION-TECNICA-01)
+
+Two different questions, answered apart since 2026-10-07:
+
+1. **Can a service payment be charged?** Only the real controls of the payment
+   engine decide (`PoliticaCobroPersistida.disponibilidad`): the platform
+   switch, `TUS_MERCADOPAGO_ENABLED`, the Mercado Pago environment, every
+   credential and setting, the webhook secret and its https notification URL,
+   the real provider adapter, a valid commission policy, the verified identity
+   of the provider, and somebody able to collect (the provider's account or
+   TUS's own). Idempotency, reconciliation, verified notifications and the
+   single obligation per part are untouched.
+2. **Is TUS ready to open payments to the public?** The six approvals recorded
+   as evidence under `service-payments` (`legal`, `kyc`, `kyb`, `tax`,
+   `mercadoPago`, `runtimeProvider`). They are reported as
+   `public-launch-readiness`, each `pending`, `current` or `expired`, and they
+   **do not block** a payment. This allows a closed test with real, low-amount
+   payments without declaring TUS ready for launch.
+
+The evidence stays stored under the `service-payments` key (nothing was
+migrated or deleted); `public-launch-readiness` is the name it is exposed with
+in `GET /tus/v1/admin/payments/status` (`technicallyEnabled`,
+`publicLaunchReadiness`) and in Admin -> Pagos. The global `kyc` approval never
+stands in for the identity of a provider: that one is checked per provider and
+is still required to accept a priced turno and to collect earnings.
+
+Where the deposit is chargeable, a service needs a published price to take a
+turno (`SERVICE_PRICE_REQUIRED`). Before this change production without the
+approvals fell back to "no deposit" and such a turno was confirmed for free.
 
 ### Service payments capability (`service-payments`)
 
@@ -199,7 +229,14 @@ Conditional gates of `settlement` (SETTLEMENT-GATES-01):
   `flow: 'pos'`. The POS itself is gated by `fleet`, where the pilot is always
   required.
 - `groqMigration` is not a requirement of `settlement`: the assistant cannot
-  block charges, commissions or settlements. It stays in `provider-actions`.
+  block charges, commissions or settlements.
+
+`provider-actions` (PROVIDER-ACTIONS-GATES-01) guards payment intents and
+evidence of the legacy marketplace, the legacy provider webhooks and the
+deterministic WhatsApp actions. None of them runs a model, so its core is
+`legal`, `kyc`, `kyb`, `tax`, `mercadoPago`, `runtimeProvider`; `aws` is
+conditional on the AWS deployment profile, exactly as in `settlement`, and
+`groqMigration` is not asked. The assistant reports its own state (`/ready`).
 
 Gates that do not apply to `service-payments`, and why:
 
