@@ -141,6 +141,8 @@ export interface DependenciasAdmin {
   accionUsuario?: (input: { actorId: string; accountId: string; action: unknown }) => Promise<{ ok: boolean; code?: string }>
   // Identity of an account (names + document), loaded or corrected by the administration. The
   // actor is the session; the composition validates, saves and audits.
+  // ADMIN-IDENTIDAD-MANUAL-01: the manual verification of the identity of a provider.
+  verificacionIdentidad?: { estado(accountId: string): Promise<unknown | null>; decidir(input: { actor: { subjectId: string; tenantId: string; correlationId: string }; accountId: string; accion: unknown; motivo: unknown }): Promise<{ ok: true; verificacion: unknown } | { ok: false; status: number; code: string }> }
   identidadUsuario?: (input: { actorId: string; accountId: string; body: Record<string, unknown> }) => Promise<{ ok: true; perfil: PerfilUsuarioAdminDTO } | { ok: false; code: string; errores?: Record<string, string> }>
   // Provider edition (directorio/admin.ts crearEdicionPrestadorAdmin).
   // PRESTADOR-CUENTA-01: the account behind each provider tenant (phone, WhatsApp, identity).
@@ -347,6 +349,29 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
       return void response.status(status).json({ error: { code: resultado.code, message: 'identity change rejected', ...(resultado.errores ? { fields: Object.keys(resultado.errores), errors: resultado.errores } : {}) } })
     }
     response.status(200).json({ perfil: resultado.perfil })
+  }))
+
+  // ADMIN-IDENTIDAD-MANUAL-01. The verification of the identity of the provider behind an account:
+  // its state, and the manual decision of an administrator (verify, reject, revoke, reopen). Behind
+  // the identity-admin permission (an MFA-elevated admin session). The body carries ONLY the action
+  // and the administrative note: the account is the one of the path, the actor is the session and
+  // the document is the one already loaded on that account.
+  router.get('/tus/v1/admin/usuarios/:id/identidad/verificacion', asyncHandler(async (request, response) => {
+    if (!(await guard(request, response, IDENTITY_ADMIN))) return
+    if (!deps.verificacionIdentidad) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'identity verification unavailable' } })
+    const verificacion = await deps.verificacionIdentidad.estado(String(request.params['id'] ?? ''))
+    if (!verificacion) return void response.status(404).json({ error: { code: 'NOT_FOUND', message: 'account not found' } })
+    response.status(200).json({ verificacion })
+  }))
+  router.post('/tus/v1/admin/usuarios/:id/identidad/verificacion', asyncHandler(async (request, response) => {
+    const context = await guard(request, response, IDENTITY_ADMIN)
+    if (!context) return
+    if (!deps.verificacionIdentidad) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'identity verification unavailable' } })
+    const body = cuerpo(request)
+    if (Object.keys(body).some((key) => key !== 'accion' && key !== 'motivo')) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'only the action and its note can be sent here' } })
+    const resultado = await deps.verificacionIdentidad.decidir({ actor: { subjectId: context.subjectId, tenantId: context.tenantId, correlationId: context.correlationId }, accountId: String(request.params['id'] ?? ''), accion: body['accion'], motivo: body['motivo'] })
+    if (!resultado.ok) return void response.status(resultado.status).json({ error: { code: resultado.code, message: 'identity verification change rejected' } })
+    response.status(200).json({ verificacion: resultado.verificacion })
   }))
 
   router.patch('/tus/v1/admin/usuarios/:id', asyncHandler(async (request, response) => {

@@ -8,6 +8,7 @@ import {
   VERSION_CONSENTIMIENTO_IDENTIDAD,
   enmascararCuil,
   enmascararDni,
+  soloDigitos,
   type AreaDomicilioVerificada,
   type EstadoVerificacionIdentidad,
 } from './modelo.ts'
@@ -474,6 +475,99 @@ export class ServicioVerificacionIdentidad {
     })
   }
 
+  // ---- ADMIN-IDENTIDAD-MANUAL-01 ----------------------------------------------------------------
+  // The administration verifies, rejects, revokes or reopens the identity of ONE provider by
+  // hand, on the same records every other reader uses (`identidadVerificada`, the payments gate,
+  // the public directory). No document is asked for and nothing parallel is stored: a manual
+  // verification is a verification of this model with method 'manual'. Every change is audited
+  // with who, when, why, the state before and after; nothing is ever deleted.
+
+  /** How the administration reads the identity of a provider: pending, verified or rejected. */
+  async estadoAdmin(tenantId: string): Promise<EstadoIdentidadAdmin> {
+    return this.transaction.ejecutar(async (repositories) => vistaAdmin(await repositories.verificaciones.deTenants([tenantId])))
+  }
+
+  async decisionManualAdmin(
+    context: ContextoIdentidad,
+    input: { tenantId: string; userId: string; documentNumber: string | null; firstName: string | null; lastName: string | null; action: unknown; reason: unknown }
+  ): Promise<EstadoIdentidadAdmin> {
+    const action = input.action
+    if (action !== 'verificar' && action !== 'rechazar' && action !== 'revocar' && action !== 'pendiente')
+      throw new ErrorIdentidad(400, 'INVALID', 'action must be verificar, rechazar, revocar or pendiente')
+    const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 500) : ''
+    if (reason.length < 5) throw new ErrorIdentidad(400, 'REASON_REQUIRED', 'an administrative note is required')
+    // Nobody decides on its own identity, whatever its permissions.
+    if (context.tenantId === input.tenantId || context.actorId === input.userId) throw new ErrorIdentidad(403, 'FORBIDDEN', 'an identity is never decided by its own account')
+    return this.transaction.ejecutar(async (repositories) => {
+      const filas = (await repositories.verificaciones.deTenants([input.tenantId])).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      const antes = vistaAdmin(filas)
+      const ultima = filas[0] ?? null
+      const nowIso = this.isoNow()
+      const quien = `admin:${context.actorId}`
+      const nueva = (campos: Partial<VerificacionIdentidad>): VerificacionIdentidad => ({
+        verificationId: `verificacion-identidad-${randomUUID()}`,
+        tenantId: input.tenantId,
+        userId: input.userId,
+        providerId: this.config.providerId,
+        documentType: 'dni',
+        documentNumber: null,
+        extractedFirstName: input.firstName,
+        extractedLastName: input.lastName,
+        extractedBirthDate: null,
+        extractedSex: null,
+        verifiedCuil: null,
+        status: 'pending_upload',
+        verificationMethod: null,
+        providerReference: quien,
+        reviewReason: null,
+        decisionNote: reason,
+        consentAcceptedAt: null,
+        consentVersion: null,
+        consentPurpose: null,
+        ocrReading: null,
+        visionReading: null,
+        externalSnapshot: null,
+        attempts: 0,
+        version: 1,
+        createdAt: nowIso,
+        queuedAt: null,
+        processingStartedAt: null,
+        verifiedAt: null,
+        rejectedAt: null,
+        updatedAt: nowIso,
+        ...campos,
+      })
+      const guardar = async (actual: VerificacionIdentidad | null, campos: Partial<VerificacionIdentidad>, evento: string): Promise<void> => {
+        const siguiente = actual ? { ...actual, ...campos, providerReference: quien, decisionNote: reason, version: actual.version + 1, updatedAt: nowIso } : nueva(campos)
+        if (actual) {
+          if (!(await repositories.verificaciones.actualizar(siguiente, actual.version))) throw new ErrorIdentidad(409, 'CONCURRENT_MODIFICATION', 'verification changed; reload it')
+        } else await repositories.verificaciones.crear(siguiente)
+        await this.auditar(repositories, evento, siguiente, context, { manual: true, channel: 'admin', reason, previousStatus: actual?.status ?? 'not_started', adminPreviousState: antes.estado })
+      }
+      if (action === 'verificar') {
+        // Already verified: nothing changes and nothing is recorded again.
+        if (antes.estado === 'verificada') return antes
+        const documentNumber = soloDigitos(ultima?.documentNumber ?? input.documentNumber)
+        if (!documentNumber) throw new ErrorIdentidad(409, 'DOCUMENT_NUMBER_REQUIRED', 'load the document of the account before verifying it')
+        if (await repositories.verificaciones.existeVerificadaDeOtro({ tenantId: input.tenantId, documentNumber, ...(ultima?.verifiedCuil ? { cuil: ultima.verifiedCuil } : {}) }))
+          throw new ErrorIdentidad(409, 'IDENTITY_ALREADY_VERIFIED', 'this identity is already verified for another provider')
+        await guardar(ultima, { status: 'verified', verificationMethod: 'manual', documentNumber, reviewReason: null, verifiedAt: nowIso, rejectedAt: null }, 'verification.manual_verified')
+      } else if (action === 'rechazar') {
+        if (antes.estado === 'verificada') throw new ErrorIdentidad(409, 'INVALID_STATE', 'a verified identity is revoked, not rejected')
+        if (antes.estado === 'rechazada') return antes
+        await guardar(ultima, { status: 'rejected', reviewReason: null, rejectedAt: nowIso, verifiedAt: null }, 'verification.manual_rejected')
+      } else if (action === 'revocar') {
+        if (antes.estado !== 'verificada') throw new ErrorIdentidad(409, 'INVALID_STATE', 'only a verified identity can be revoked')
+        // Every verified record of that provider: `identidadVerificada` reads any of them.
+        for (const fila of filas.filter((item) => item.status === 'verified')) await guardar(fila, { status: 'pending_upload', verifiedAt: null }, 'verification.manual_revoked')
+      } else {
+        if (antes.estado !== 'rechazada') throw new ErrorIdentidad(409, 'INVALID_STATE', 'only a rejected identity goes back to pending')
+        await guardar(ultima, { status: 'pending_upload', rejectedAt: null }, 'verification.manual_reopened')
+      }
+      return vistaAdmin(await repositories.verificaciones.deTenants([input.tenantId]))
+    })
+  }
+
   async estadoWorker(): Promise<{
     status: EstadoWorkerIdentidad | 'rate_limited'
     providerState: EstadoProveedorIdentidad
@@ -610,4 +704,38 @@ function sanitizarAreaDomicilio(value: AreaDomicilioVerificada | null): AreaDomi
   }
   const area = { barrio: clean(value.barrio), localidad: clean(value.localidad), provincia: clean(value.provincia) }
   return area.barrio || area.localidad || area.provincia ? area : null
+}
+
+// ADMIN-IDENTIDAD-MANUAL-01. The identity of a provider as the administration reads it: three
+// states over the records of the model (a verified one wins; otherwise the latest decides).
+export interface EstadoIdentidadAdmin {
+  estado: 'pendiente' | 'verificada' | 'rechazada'
+  // The state of the record it comes from (null: the provider never started a verification).
+  estadoInterno: string | null
+  metodo: string | null
+  documento: string | null
+  verificadaEn: string | null
+  rechazadaEn: string | null
+  // The note of the last decision and the administrator that took it (null: not a manual one).
+  nota: string | null
+  decididaPor: string | null
+  actualizadaEn: string | null
+}
+
+function vistaAdmin(filas: readonly VerificacionIdentidad[]): EstadoIdentidadAdmin {
+  const orden = [...filas].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const fila = orden.find((item) => item.status === 'verified') ?? orden[0] ?? null
+  const estado = fila?.status === 'verified' ? 'verificada' : fila?.status === 'rejected' ? 'rechazada' : 'pendiente'
+  const manual = fila?.providerReference?.startsWith('admin:') ? fila.providerReference.slice('admin:'.length) : null
+  return {
+    estado,
+    estadoInterno: fila?.status ?? null,
+    metodo: fila?.verificationMethod ?? null,
+    documento: fila?.documentNumber ? enmascararDni(fila.documentNumber) : null,
+    verificadaEn: estado === 'verificada' ? (fila?.verifiedAt ?? null) : null,
+    rechazadaEn: estado === 'rechazada' ? (fila?.rejectedAt ?? null) : null,
+    nota: manual ? (fila?.decisionNote ?? null) : null,
+    decididaPor: manual,
+    actualizadaEn: fila?.updatedAt ?? null,
+  }
 }

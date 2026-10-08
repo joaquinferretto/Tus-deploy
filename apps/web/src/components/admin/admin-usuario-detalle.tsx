@@ -4,10 +4,116 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
 import { ETIQUETA_TIPO_DOCUMENTO, TIPOS_DOCUMENTO, formatearDocumento, validarIdentidadPersonal, type ErroresIdentidad } from '@factory/contracts'
 
-import { AdminApiError, adminApi, adminErrorMessage, formatFecha, type AdminUsuarioDetalle } from '@/lib/tus-admin-api'
+import { AdminApiError, adminApi, adminErrorMessage, formatFecha, type AdminUsuarioDetalle, type VerificacionIdentidadAdmin } from '@/lib/tus-admin-api'
 import { AdminConfirm, useConfirmacion } from './admin-confirm'
 import { AdminPageHeader } from './admin-layout'
 import styles from './admin-usuarios.module.css'
+
+// ADMIN-IDENTIDAD-MANUAL-01. The verification of the identity of the provider behind this account.
+// The state is the API's (the same records payments read). Every action asks for its confirmation
+// and an administrative note; nothing is decided with one accidental click.
+type AccionIdentidad = 'verificar' | 'rechazar' | 'revocar' | 'pendiente'
+const TITULO_ESTADO: Record<VerificacionIdentidadAdmin['estado'], string> = { pendiente: 'Pendiente', verificada: 'Identidad verificada', rechazada: 'Rechazada' }
+const CONFIRMACION: Record<AccionIdentidad, { texto: string; boton: string }> = {
+  verificar: { texto: 'Vas a marcar esta identidad como verificada manualmente. Esta acción habilita funciones sensibles como el cobro de señas y ganancias del prestador.', boton: 'Sí, verificar identidad' },
+  rechazar: { texto: 'Vas a rechazar la identidad de este prestador. No va a poder cobrar señas hasta que se verifique.', boton: 'Sí, rechazar' },
+  revocar: { texto: 'Vas a revocar la verificación de esta identidad. Los cobros nuevos del prestador vuelven a bloquearse. Los pagos, ganancias y liquidaciones que ya existen no cambian.', boton: 'Sí, revocar verificación' },
+  pendiente: { texto: 'Vas a volver esta identidad a pendiente para que pueda verificarse más adelante.', boton: 'Sí, volver a pendiente' },
+}
+function errorIdentidad(cause: unknown): string {
+  if (cause instanceof AdminApiError) {
+    if (cause.code === 'DOCUMENT_NUMBER_REQUIRED') return 'Cargá primero el DNI de la cuenta en "Identidad" y después verificá.'
+    if (cause.code === 'IDENTITY_ALREADY_VERIFIED') return 'Ese documento ya está verificado para otro prestador.'
+    if (cause.code === 'REASON_REQUIRED') return 'Escribí la nota administrativa (al menos 5 caracteres).'
+    if (cause.code === 'INVALID_STATE' || cause.code === 'CONCURRENT_MODIFICATION') return 'El estado cambió mientras tanto. Recargá la página.'
+    if (cause.status === 403) return 'No podés decidir sobre tu propia identidad, o tu sesión de administración no tiene este permiso.'
+  }
+  return adminErrorMessage(cause)
+}
+
+function VerificacionIdentidad({ cuentaId }: { cuentaId: string }): React.ReactNode {
+  const [estado, setEstado] = useState<VerificacionIdentidadAdmin | null>(null)
+  const [accion, setAccion] = useState<AccionIdentidad | null>(null)
+  const [motivo, setMotivo] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+  const [aviso, setAviso] = useState('')
+  useEffect(() => {
+    let vigente = true
+    adminApi.verificacionIdentidad(cuentaId).then((respuesta) => { if (vigente) setEstado(respuesta.verificacion) }).catch((cause: unknown) => { if (vigente) setError(errorIdentidad(cause)) })
+    return () => { vigente = false }
+  }, [cuentaId])
+  const abrir = (siguiente: AccionIdentidad) => { setAccion(siguiente); setMotivo(''); setError(''); setAviso('') }
+  const confirmar = async () => {
+    if (!accion) return
+    setGuardando(true)
+    setError('')
+    try {
+      const respuesta = await adminApi.decidirIdentidad(cuentaId, accion, motivo.trim())
+      setEstado(respuesta.verificacion)
+      setAviso(accion === 'verificar' ? 'Identidad verificada. El cobro de señas del prestador ya no depende de este paso.' : accion === 'revocar' ? 'Verificación revocada.' : accion === 'rechazar' ? 'Identidad rechazada.' : 'Identidad en pendiente.')
+      setAccion(null)
+    } catch (cause: unknown) {
+      setError(errorIdentidad(cause))
+    } finally {
+      setGuardando(false)
+    }
+  }
+  return (
+    <section aria-labelledby="usuario-verificacion" className={styles.sheetCard} data-verificacion-identidad={estado?.estado ?? 'cargando'}>
+      <h2 id="usuario-verificacion">Estado de verificación</h2>
+      {estado ? (
+        <>
+          <p>
+            <strong>{TITULO_ESTADO[estado.estado]}</strong>
+            {estado.estado === 'verificada' ? ` · ${estado.verificadaEn ? formatFecha(estado.verificadaEn) : '—'}${estado.metodo === 'manual' ? ' · verificación manual' : ''}${estado.decididaPor ? ` · por ${estado.decididaPor}` : ''}` : ''}
+            {estado.estado === 'rechazada' && estado.rechazadaEn ? ` · ${formatFecha(estado.rechazadaEn)}` : ''}
+            {estado.documento ? ` · DNI ${estado.documento}` : ''}
+          </p>
+          {estado.nota ? <p className={styles.muted}>{estado.estado === 'rechazada' ? 'Motivo' : 'Nota'}: {estado.nota}</p> : null}
+          {accion ? (
+            <div data-confirmar-identidad={accion} role="group" style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, display: 'grid', gap: 8, padding: 12 }}>
+              <span>{CONFIRMACION[accion].texto}</span>
+              <label style={{ display: 'grid', gap: 4 }}>
+                <span>Motivo / nota administrativa (obligatoria)</span>
+                <textarea data-motivo-identidad maxLength={500} onChange={(event) => setMotivo(event.target.value)} placeholder="Verificación manual para piloto interno" rows={2} value={motivo} />
+              </label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <button className={styles.buttonPrimary} data-confirmar disabled={guardando || motivo.trim().length < 5} onClick={() => void confirmar()} type="button">
+                  {guardando ? 'Guardando…' : CONFIRMACION[accion].boton}
+                </button>
+                <button className={styles.buttonSecondary} disabled={guardando} onClick={() => setAccion(null)} type="button">
+                  Volver
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {estado.estado === 'pendiente' ? (
+                <>
+                  <button className={styles.buttonPrimary} data-accion-identidad="verificar" onClick={() => abrir('verificar')} type="button">Verificar identidad</button>
+                  <button className={styles.buttonSecondary} data-accion-identidad="rechazar" onClick={() => abrir('rechazar')} type="button">Rechazar</button>
+                </>
+              ) : null}
+              {estado.estado === 'verificada' ? <button className={styles.buttonSecondary} data-accion-identidad="revocar" onClick={() => abrir('revocar')} type="button">Revocar verificación</button> : null}
+              {estado.estado === 'rechazada' ? (
+                <>
+                  <button className={styles.buttonPrimary} data-accion-identidad="verificar" onClick={() => abrir('verificar')} type="button">Verificar identidad</button>
+                  <button className={styles.buttonSecondary} data-accion-identidad="pendiente" onClick={() => abrir('pendiente')} type="button">Volver a pendiente</button>
+                </>
+              ) : null}
+            </div>
+          )}
+        </>
+      ) : error ? null : (
+        <p className={styles.muted}>Consultando…</p>
+      )}
+      {error ? <p className={styles.fieldError} role="alert">{error}</p> : null}
+      {aviso ? <p className={styles.muted} role="status">{aviso}</p> : null}
+      <p className={styles.muted}>Es la verificación individual de este prestador. Queda registrada con quién la hizo, cuándo y el motivo.</p>
+    </section>
+  )
+}
 
 const ROL: Record<string, string> = { admin: 'Administrador', prestador: 'Prestador', cliente: 'Cliente' }
 
@@ -233,6 +339,7 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
           </div>
         </form>
 
+        <VerificacionIdentidad cuentaId={cuenta.id} />
         <section aria-labelledby="usuario-identidad" className={styles.sheetCard}>
           <h2 id="usuario-identidad">Identidad</h2>
           <div className={styles.badges}>

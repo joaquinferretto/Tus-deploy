@@ -402,6 +402,10 @@ export const adminApi = {
   telefonoUsuario: (id: string, body: { accion: 'pendiente'; telefono: string } | { accion: 'quitar' }) => call<{ done: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/telefono`, body),
   // Identity (names + document) loaded or corrected by the administrator. Only these fields; the
   // API validates again, keeps the document unique and audits.
+  // ADMIN-IDENTIDAD-MANUAL-01: the verification of the identity of the provider behind an account,
+  // and the manual decision of the administrator (only the action and its note travel).
+  verificacionIdentidad: (id: string) => call<{ verificacion: VerificacionIdentidadAdmin }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/identidad/verificacion`),
+  decidirIdentidad: (id: string, accion: 'verificar' | 'rechazar' | 'revocar' | 'pendiente', motivo: string) => call<{ verificacion: VerificacionIdentidadAdmin }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/identidad/verificacion`, { accion, motivo }),
   identidadUsuario: (id: string, body: { nombre: string; apellido: string; tipoDocumento: string; numeroDocumento: string; motivo?: string }) =>
     call<{ perfil: PerfilUsuarioAdminDTO }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/identidad`, body, 'PUT'),
   // Explicit administrative operations: the request only names the action (never a state or a
@@ -499,4 +503,17 @@ export const eventoLabel = (tipo: string) => {
   const catalogo = /^catalog\.([a-z]+)_([a-z_]+)$/u.exec(tipo)
   if (catalogo) return `${ENTIDADES[catalogo[1]!] ?? catalogo[1]} ${catalogo[2]!.replace(/_/gu, ' ')}`
   return EVENTOS[tipo] ?? tipo
+}
+
+// ADMIN-IDENTIDAD-MANUAL-01
+export interface VerificacionIdentidadAdmin {
+  estado: 'pendiente' | 'verificada' | 'rechazada'
+  estadoInterno: string | null
+  metodo: string | null
+  documento: string | null
+  verificadaEn: string | null
+  rechazadaEn: string | null
+  nota: string | null
+  decididaPor: string | null
+  actualizadaEn: string | null
 }
