@@ -25,59 +25,108 @@ const SETUP = `${turnosPagosSetup(url)}
   }
   const fila = (t) => prisma.reserva.findUnique({ where: { id: t.pedido.id } })
   const inicioDe = async (t) => (await fila(t)).fechaInicio.getTime()
-  const cancelacion = async (t) => { const c = await prisma.cancelacionTurno.findUnique({ where: { reservaId: t.pedido.id } }); return c ? [c.canceladaPor, c.tardia, c.devolucion, c.canal, c.politicaVersion === VERSION_POLITICA_CANCELACION] : null }
-  const dinero = async (t) => { const o = await prisma.obligacionPagoServicio.findFirst({ where: { obligacionId: t.obligacion.obligacionId } }); const l = await prisma.liquidacionServicio.findFirst({ where: { obligacionId: t.obligacion.obligacionId } }); return [o.estado, l.retencionActiva, l.liberadaEn !== null, Number((await db.query('SELECT count(*)::int AS n FROM reembolsos_servicio WHERE pago_id = $1', [t.pago.pagoId]).catch(() => ({ rows: [{ n: -1 }] }))).rows[0].n)] }
+    const dinero = async (t) => { const o = await prisma.obligacionPagoServicio.findFirst({ where: { obligacionId: t.obligacion.obligacionId } }); const l = await prisma.liquidacionServicio.findFirst({ where: { obligacionId: t.obligacion.obligacionId } }); return [o.estado, l.retencionActiva, l.liberadaEn !== null, Number((await db.query('SELECT count(*)::int AS n FROM reembolsos_servicio WHERE pago_id = $1', [t.pago.pagoId]).catch(() => ({ rows: [{ n: -1 }] }))).rows[0].n)] }
   // The clock the cancellation policy is decided with (the server's), moved for each case.
   let reloj = null
   turnos.conReloj(() => reloj ?? Date.now())
 `
 
-test('CANCELACION turnos PostgreSQL: the client cancelling more than 24 hours before keeps its right to the refund; at exactly 24 hours or less the deposit is not refundable and the loss must be confirmed; the provider cancelling inside the 24 hours never penalizes the client; nothing is refunded or released by the cancellation itself', { skip, timeout: 600000 }, () => {
+test('CANCELACION turnos PostgreSQL (dos ventanas): within 24 h of reserving the service paid is due back and the charge of TUS is kept; later the deposit is kept, or half of the service when the total was paid; 24 h or less before the turno nothing is due back, also for a reservation made today; the accounting is stored apart and adds up; nothing else is charged; the provider cancelling never penalizes; no money moves by the cancellation itself', { skip, timeout: 600000 }, () => {
   const r = runTypeScriptScenario(`${SETUP}
     const out = {}
     try {
       const p = await prestador('canc', 'Cancela ' + run, [['Masaje', 30000]])
       const ana = await cliente('ana')
       const cancelar = async (t, extra = {}) => { try { const d = await turnos.cancelarTurnoCliente({ clienteId: ana.id, reservaId: t.pedido.id, canal: 'web', ...extra }); return d.estado } catch (e) { return e?.code ?? String(e) } }
+      const creadaDe = async (t) => (await fila(t)).fechaCreacion.getTime()
+      // The whole price at once instead of the deposit, approved.
+      async function turnoPagadoEnTotal(indice, hora) {
+        const t = await turnoConCheckout(p, ana, indice, hora, 'Masaje')
+        let checkout = null
+        for (let i = 0; !checkout; i += 1) { try { checkout = await turnos.pagarTurno({ clienteId: ana.id, reservaId: t.pedido.id, correlationId: 'c', tramo: 'total' }) } catch (e) { if (e?.code !== 'IN_PROGRESS' || i >= 40) throw e; await new Promise((resolve) => setTimeout(resolve, 250)) } }
+        const obligacion = await prisma.obligacionPagoServicio.findFirst({ where: { trabajoId: t.trabajoId, tramo: 'total' } })
+        const pago = await prisma.intencionPago.findFirst({ where: { obligacionId: obligacion.obligacionId }, orderBy: { fechaCreacion: 'desc' } })
+        pagos += 1
+        mpPayment(String(pagos), mp.preferences.find((item) => item.body.external_reference === pago.pagoId))
+        await ingerir(notification(String(pagos), { userId: '555', notificationId: run + '-n-' + pagos }))
+        return { ...t, obligacion, pago }
+      }
+      // The stored accounting of a cancellation, in minor units.
+      const cuenta = async (t) => { const c = await prisma.cancelacionTurno.findUnique({ where: { reservaId: t.pedido.id } }); return c ? { por: c.canceladaPor, regla: c.regla, tardia: c.tardia, devolucion: c.devolucion, canal: c.canal, precio: Number(c.precioMinor), pagado: Number(c.pagadoMinor), cargo: Number(c.cargoTusMinor), servicio: Number(c.servicioPagadoMinor), reembolsable: Number(c.reembolsableMinor), penalizacion: Number(c.penalizacionMinor), moneda: c.moneda } : null }
+      const comision = async (t) => Number((await prisma.liquidacionServicio.findFirst({ where: { obligacionId: t.obligacion.obligacionId } })).montoComision)
+      const obligaciones = async (t) => (await prisma.obligacionPagoServicio.findMany({ where: { trabajoId: t.trabajoId }, orderBy: { tramo: 'asc' } })).map((o) => [o.tramo, o.estado, Number(o.monto)])
 
-      // 24 h + 1 minute: refund due, no second confirmation.
-      const t1 = await turnoPagado(p, ana, 0, '10:00')
-      reloj = (await inicioDe(t1)) - 24 * HORA - MINUTO
-      out.antes = [await cancelar(t1), (await fila(t1)).estado, await cancelacion(t1), await dinero(t1)]
-      // Exactly 24 hours: not refundable. Without confirming the loss nothing is cancelled.
-      const t2 = await turnoPagado(p, ana, 0, '11:00')
-      reloj = (await inicioDe(t2)) - 24 * HORA
-      const sinConfirmar = await cancelar(t2)
-      out.exactas = [sinConfirmar, (await fila(t2)).estado, await cancelacion(t2), await cancelar(t2, { confirmaPerdida: true }), (await fila(t2)).estado, await cancelacion(t2), await dinero(t2)]
-      // 23 h 59 min.
-      const t3 = await turnoPagado(p, ana, 0, '12:00')
-      reloj = (await inicioDe(t3)) - 24 * HORA + MINUTO
-      out.dentro = [await cancelar(t3), await cancelar(t3, { confirmaPerdida: true }), await cancelacion(t3)]
-      // Cancelled twice: the same state, one record.
-      out.repetida = [await cancelar(t3, { confirmaPerdida: true }), await prisma.cancelacionTurno.count({ where: { reservaId: t3.pedido.id } })]
-      // Accepted but never paid, inside the 24 hours: nothing to lose, nothing to confirm.
-      const t4 = await turnoConCheckout(p, ana, 0, '13:00', 'Masaje')
-      reloj = (await inicioDe(t4)) - HORA
-      out.sinPago = [await cancelar(t4), await cancelacion(t4)]
-      // The PROVIDER cancels 3 hours before the turno: the client loses nothing.
-      const t5 = await turnoPagado(p, ana, 0, '14:00')
-      reloj = (await inicioDe(t5)) - 3 * HORA
-      const porPrestador = await turnos.cambiarEstadoTurno({ reservaId: t5.pedido.id, tenantId: p.tenantId, nuevoEstado: 'cancelled' })
-      out.prestador = [porPrestador.estado, await cancelacion(t5), await dinero(t5)]
-      // What the client reads of each.
+      // A. Grace: 1 hour after reserving, days before the turno.
+      const gracia = await turnoPagado(p, ana, 4, '09:00')
+      reloj = (await creadaDe(gracia)) + HORA
+      const previa = await turnos.previsualizarCancelacionCliente({ clienteId: ana.id, reservaId: gracia.pedido.id })
+      out.gracia = [await cancelar(gracia), await cancelar(gracia, { confirmaPerdida: true }), await cuenta(gracia), await comision(gracia), previa.requiereConfirmacion, previa.mensaje]
+      // B. In between with a deposit: 25 hours after reserving.
+      const medioSena = await turnoPagado(p, ana, 4, '10:00')
+      reloj = (await creadaDe(medioSena)) + 25 * HORA
+      out.medioSena = [await cancelar(medioSena), await cancelar(medioSena, { confirmaPerdida: true }), await cuenta(medioSena)]
+      // B. In between paid in total.
+      const medioTotal = await turnoPagadoEnTotal(4, '11:00')
+      reloj = (await creadaDe(medioTotal)) + 25 * HORA
+      out.medioTotal = [await cancelar(medioTotal, { confirmaPerdida: true }), await cuenta(medioTotal), await comision(medioTotal), await obligaciones(medioTotal)]
+      // C. Last moment with a deposit: exactly 24 hours before.
+      const ultimoSena = await turnoPagado(p, ana, 4, '12:00')
+      reloj = (await inicioDe(ultimoSena)) - 24 * HORA
+      out.ultimoSena = [await cancelar(ultimoSena), (await fila(ultimoSena)).estado, await cancelar(ultimoSena, { confirmaPerdida: true }), await cuenta(ultimoSena), await obligaciones(ultimoSena)]
+      // C. Last moment paid in total: 1 hour before.
+      const ultimoTotal = await turnoPagadoEnTotal(4, '13:00')
+      reloj = (await inicioDe(ultimoTotal)) - HORA
+      out.ultimoTotal = [await cancelar(ultimoTotal, { confirmaPerdida: true }), await cuenta(ultimoTotal)]
+      // C prevails: reserved 2 hours ago for a turno that starts in 20 hours.
+      const hoyParaManana = await turnoPagado(p, ana, 4, '14:00')
+      const creada = await creadaDe(hoyParaManana)
+      await prisma.reserva.update({ where: { id: hoyParaManana.pedido.id }, data: { fechaInicio: new Date(creada + 22 * HORA), fechaFin: new Date(creada + 23 * HORA) } })
+      reloj = creada + 2 * HORA
+      out.hoyParaManana = [await cancelar(hoyParaManana, { confirmaPerdida: true }), await cuenta(hoyParaManana)]
+      // Nothing paid: nothing to lose, nothing to confirm.
+      const sinPago = await turnoConCheckout(p, ana, 4, '15:00', 'Masaje')
+      reloj = (await inicioDe(sinPago)) - HORA
+      out.sinPago = [await cancelar(sinPago), await cuenta(sinPago)]
+      // The PROVIDER cancels 3 hours before the turno.
+      const porPrestador = await turnoPagado(p, ana, 4, '16:00')
+      reloj = (await inicioDe(porPrestador)) - 3 * HORA
+      const cancelado = await turnos.cambiarEstadoTurno({ reservaId: porPrestador.pedido.id, tenantId: p.tenantId, nuevoEstado: 'cancelled' })
+      out.prestador = [cancelado.estado, await cuenta(porPrestador)]
+      // Twice: the same state, one record. And no money moved by any of these cancellations.
+      out.repetida = [await cancelar(ultimoSena, { confirmaPerdida: true }), await prisma.cancelacionTurno.count({ where: { reservaId: ultimoSena.pedido.id } })]
+      out.dinero = [await dinero(gracia), await dinero(ultimoSena), await dinero(porPrestador)]
       const vistos = await turnos.turnosCliente(ana.id)
-      out.vistos = [t1, t2, t5].map((t) => { const v = vistos.find((x) => x.id === t.pedido.id); return [v.estado, v.cancelacion?.por, v.cancelacion?.tardia, v.cancelacion?.devolucion] })
+      out.vistos = [gracia, medioTotal, ultimoSena, porPrestador].map((t) => { const v = vistos.find((x) => x.id === t.pedido.id); return [v.estado, v.cancelacion.regla, v.cancelacion.pagado, v.cancelacion.cargoTus, v.cancelacion.reembolsable, v.cancelacion.penalizacion, v.cancelacion.resumen] })
       out.codigo = CODIGO_CANCELACION_TARDIA
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.antes, ['cancelled', 'cancelled', ['cliente', false, 'corresponde', 'web', true], ['paid', true, false, 0]], '24 h + 1 min: cancelled, the refund is due, and nothing was refunded or released by the cancellation itself')
-  assert.deepEqual(r.exactas, [r.codigo, 'confirmed', null, 'cancelled-late', 'cancelled-late', ['cliente', true, 'no_reembolsable', 'web', true], ['paid', true, false, 0]], 'exactly 24 h: the loss is confirmed first; then a late cancellation, not refundable, with its money still traced')
-  assert.deepEqual(r.dentro, [r.codigo, 'cancelled-late', ['cliente', true, 'no_reembolsable', 'web', true]], '23 h 59 min: not refundable')
+  // The deposit of a $30.000 service is $15.000 (1.500.000 centavos); TUS's charge is inside it.
+  const cargoSena = r.gracia[3]
+  const cargoTotal = r.medioTotal[2]
+  assert.ok(cargoSena > 0 && cargoTotal === cargoSena * 2, `the charge of TUS is the commission of each payment (${cargoSena}, ${cargoTotal})`)
+  const base = (extra) => ({ canal: 'web', moneda: 'ARS', precio: 3_000_000, ...extra })
+  // A. Grace: the loss of the charge of TUS is confirmed; the service is due back.
+  assert.deepEqual(r.gracia.slice(0, 3), [r.codigo, 'cancelled', base({ por: 'cliente', regla: 'gracia', tardia: false, devolucion: 'corresponde', pagado: 1_500_000, cargo: cargoSena, servicio: 1_500_000 - cargoSena, reembolsable: 1_500_000 - cargoSena, penalizacion: 0 })])
+  assert.deepEqual([r.gracia[4], /^Estás dentro de las 24 horas de tu reserva: si cancelás ahora se te devuelve \$/u.test(r.gracia[5]), /El cargo de TUS \(\$[\d.]+\) no es reembolsable/u.test(r.gracia[5])], [true, true, true])
+  // B. In between with a deposit: the deposit is kept.
+  assert.deepEqual(r.medioSena, [r.codigo, 'cancelled', base({ por: 'cliente', regla: 'intermedia', tardia: false, devolucion: 'no_reembolsable', pagado: 1_500_000, cargo: cargoSena, servicio: 1_500_000 - cargoSena, reembolsable: 0, penalizacion: 1_500_000 - cargoSena })])
+  // B. In between paid in total: half of the service is kept, the other half is due back.
+  const mitad = Math.trunc((3_000_000 - cargoTotal) / 2)
+  assert.deepEqual(r.medioTotal.slice(0, 2), ['cancelled', base({ por: 'cliente', regla: 'intermedia', tardia: false, devolucion: 'corresponde', pagado: 3_000_000, cargo: cargoTotal, servicio: 3_000_000 - cargoTotal, reembolsable: 3_000_000 - cargoTotal - mitad, penalizacion: mitad })])
+  assert.deepEqual(r.medioTotal[3], [['sena', 'voided', 1_500_000], ['total', 'paid', 3_000_000]], 'no balance or any other charge is created by cancelling')
+  // C. Last moment.
+  assert.deepEqual(r.ultimoSena.slice(0, 4), [r.codigo, 'confirmed', 'cancelled-late', base({ por: 'cliente', regla: 'ultimo_momento', tardia: true, devolucion: 'no_reembolsable', pagado: 1_500_000, cargo: cargoSena, servicio: 1_500_000 - cargoSena, reembolsable: 0, penalizacion: 1_500_000 - cargoSena })])
+  assert.deepEqual(r.ultimoSena[4], [['sena', 'paid', 1_500_000]], 'the balance is never charged for a cancellation')
+  assert.deepEqual(r.ultimoTotal, ['cancelled-late', base({ por: 'cliente', regla: 'ultimo_momento', tardia: true, devolucion: 'no_reembolsable', pagado: 3_000_000, cargo: cargoTotal, servicio: 3_000_000 - cargoTotal, reembolsable: 0, penalizacion: 3_000_000 - cargoTotal })])
+  assert.deepEqual([r.hoyParaManana[0], r.hoyParaManana[1].regla, r.hoyParaManana[1].reembolsable, r.hoyParaManana[1].penalizacion], ['cancelled-late', 'ultimo_momento', 0, 1_500_000 - cargoSena], 'reserved today for tomorrow: the last moment prevails over the grace period')
+  assert.deepEqual(r.sinPago, ['cancelled', base({ por: 'cliente', regla: 'ultimo_momento', tardia: false, devolucion: 'sin_pago', pagado: 0, cargo: 0, servicio: 0, reembolsable: 0, penalizacion: 0 })])
+  assert.deepEqual(r.prestador, ['cancelled', { ...base({ por: 'prestador', regla: 'prestador', tardia: false, devolucion: 'corresponde', pagado: 1_500_000, cargo: cargoSena, servicio: 1_500_000 - cargoSena, reembolsable: 1_500_000 - cargoSena, penalizacion: 0 }), canal: null }], 'the provider cancelling 3 h before: the service paid is due back, with no penalty')
   assert.deepEqual(r.repetida, ['cancelled-late', 1])
-  assert.deepEqual(r.sinPago, ['cancelled', ['cliente', false, 'sin_pago', 'web', true]], 'nothing paid: nothing to lose and nothing to confirm')
-  assert.deepEqual(r.prestador, ['cancelled', ['prestador', false, 'corresponde', null, true], ['paid', true, false, 0]], 'the provider cancelling inside the 24 hours: the client is due everything back')
-  assert.deepEqual(r.vistos, [['cancelled', 'cliente', false, 'corresponde'], ['cancelled-late', 'cliente', true, 'no_reembolsable'], ['cancelled', 'prestador', false, 'corresponde']])
+  for (const estado of r.dinero) assert.deepEqual(estado, ['paid', true, false, 0], 'a cancellation moves no money: still paid, still held, nothing refunded')
+  assert.deepEqual(r.vistos.map((v) => v.slice(0, 2)), [['cancelled', 'gracia'], ['cancelled', 'intermedia'], ['cancelled-late', 'ultimo_momento'], ['cancelled', 'prestador']])
+  assert.deepEqual(r.vistos[1].slice(2, 6), [30000, cargoTotal / 100, (3_000_000 - cargoTotal - mitad) / 100, mitad / 100], 'the client reads the same accounting, in pesos')
+  assert.match(r.vistos[2][6], /^No hay devolución: se retiene lo que pagaste/u)
 })
 
 test('POLITICA de cancelación PostgreSQL: an advance payment (deposit or total) is not opened until its client accepted the policy; the acceptance is stored with who, which turno, when, channel and version; another version is not an acceptance; the balance needs none', { skip, timeout: 600000 }, () => {

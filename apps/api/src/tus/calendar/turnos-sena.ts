@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 import {
+  majorDecimalToMinorUnits,
   CODIGO_PAGO_NO_DISPONIBLE,
   CODIGO_SENA_NO_PAGABLE,
   CODIGO_SENA_YA_PAGADA,
@@ -306,6 +307,22 @@ export class ServicioSenaTurnos {
   // CIERRE-TRABAJO-01. The turno was paid through TUS (it has an order with something charged or
   // to charge): it is closed through its finalization (evidence, confirmation of the client),
   // never by just changing its state.
+  /**
+   * TURNOS-CANCELACION-01. What was paid of a turno, in minor units and in its two parts: the
+   * whole of the approved payments and, inside them, the charge of TUS (the commission of each
+   * payment, as its settlement recorded it). The value of the service is the difference.
+   */
+  async desgloseDe(row: FilaReserva): Promise<{ moneda: string; precio: number; pagado: number; cargoTus: number }> {
+    const moneda = row.moneda ?? 'ARS'
+    const precio = row.precioFinal !== null && row.precioFinal !== undefined && row.precioFinal > 0n ? Number(majorDecimalToMinorUnits(row.precioFinal.toString(10), moneda)) : 0
+    const orden = await this.prisma.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: row.tenantId, reservaId: row.reservaId } })
+    if (!orden) return { moneda, precio, pagado: 0, cargoTus: 0 }
+    const pagadas = await this.prisma.obligacionPagoServicio.findMany({ where: { tenantId: orden.tenantId, trabajoId: orden.trabajoId, estado: 'paid' } })
+    if (pagadas.length === 0) return { moneda, precio, pagado: 0, cargoTus: 0 }
+    const liquidaciones = await this.prisma.liquidacionServicio.findMany({ where: { tenantId: orden.tenantId, obligacionId: { in: pagadas.map((obligacion) => obligacion.obligacionId) } } })
+    return { moneda, precio, pagado: pagadas.reduce((suma, obligacion) => suma + Number(obligacion.monto), 0), cargoTus: liquidaciones.reduce((suma, liquidacion) => suma + Number(liquidacion.montoComision), 0) }
+  }
+
   async tienePagoOnline(row: FilaReserva): Promise<boolean> {
     const orden = await this.prisma.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: row.tenantId, reservaId: row.reservaId } })
     if (!orden) return false

@@ -4,7 +4,7 @@ import { FotosTurno } from './fotos-turno'
 import type { Route } from 'next'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
-import { CODIGO_CANCELACION_TARDIA, CODIGO_POLITICA_CANCELACION_REQUERIDA, MENSAJE_CANCELACION_TARDIA, VERSION_POLITICA_CANCELACION, etiquetaEstadoTurno, etiquetaSenaTurno, formatearPesos, type DetalleTurno } from '@factory/contracts'
+import { CODIGO_CANCELACION_TARDIA, CODIGO_POLITICA_CANCELACION_REQUERIDA, VERSION_POLITICA_CANCELACION, etiquetaEstadoTurno, textoPoliticaCancelacion, etiquetaSenaTurno, formatearPesos, type DetalleTurno } from '@factory/contracts'
 
 import styles from '../directory/directory.module.css'
 import homeStyles from '../home/home.module.css'
@@ -64,7 +64,7 @@ export function MisTurnosPage(): React.ReactNode {
   // the payment without the accepted policy, and a late cancellation without the confirmed loss);
   // this only shows them and sends the answer back.
   const [politica, setPolitica] = useState<{ id: string; tramo: 'sena' | 'total' } | null>(null)
-  const [perdida, setPerdida] = useState<string | null>(null)
+  const [perdida, setPerdida] = useState<{ id: string; mensaje: string } | null>(null)
 
   useEffect(() => {
     if (session.status === 'guest') window.location.replace(`/sign-in?returnTo=${encodeURIComponent(RETURN_TO)}`)
@@ -99,7 +99,7 @@ export function MisTurnosPage(): React.ReactNode {
       cargar()
     } catch (causa: unknown) {
       // Inside the last 24 hours with something paid: the API asks for the loss to be confirmed.
-      if (causa instanceof TurnosError && causa.code === CODIGO_CANCELACION_TARDIA) setPerdida(turno.id)
+      if (causa instanceof TurnosError && causa.code === CODIGO_CANCELACION_TARDIA) setPerdida({ id: turno.id, mensaje: causa.message })
       else setError(causa instanceof Error ? causa.message : 'No pudimos cancelar el turno.')
     } finally {
       setCancelando(null)
@@ -260,9 +260,7 @@ export function MisTurnosPage(): React.ReactNode {
                   {politica?.id === turno.id ? (
                     <div data-politica-cancelacion role="group" style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 'var(--tus-control-radius)', display: 'grid', gap: 8, padding: '10px 12px' }}>
                       <span>
-                        {politica.tramo === 'total'
-                          ? `Vas a pagar el total de ${formatearPesos(pago?.total ?? 0)}. Al continuar aceptás que, si cancelás el turno con 24 horas o menos de anticipación, no se te devolverá ningún monto de lo abonado.`
-                          : `Vas a pagar una seña de ${formatearPesos(turno.sena?.monto ?? 0)}. Al continuar aceptás que, si cancelás el turno con 24 horas o menos de anticipación, la seña no será reembolsable.`}
+                        {politica.tramo === 'total' ? `Vas a pagar el total de ${formatearPesos(pago?.total ?? 0)}.` : `Vas a pagar una seña de ${formatearPesos(turno.sena?.monto ?? 0)}.`} {textoPoliticaCancelacion(politica.tramo)} Al continuar aceptás esta política de cancelación.
                       </span>
                       <div className={styles.turnoActions}>
                         <button className={homeStyles.buttonPrimary} data-aceptar-politica disabled={pagando === turno.id} onClick={() => void pagar(turno, politica.tramo, true)} type="button">
@@ -274,9 +272,9 @@ export function MisTurnosPage(): React.ReactNode {
                       </div>
                     </div>
                   ) : null}
-                  {perdida === turno.id ? (
+                  {perdida?.id === turno.id ? (
                     <div data-cancelacion-tardia role="group" style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--tus-control-radius)', display: 'grid', gap: 8, padding: '10px 12px' }}>
-                      <span>{MENSAJE_CANCELACION_TARDIA}</span>
+                      <span>{perdida.mensaje}</span>
                       <div className={styles.turnoActions}>
                         <button className={homeStyles.buttonPrimary} data-confirmar-perdida disabled={cancelando === turno.id} onClick={() => void cancelar(turno, true)} type="button">
                           {cancelando === turno.id ? 'Cancelando…' : 'Sí, cancelar turno'}
@@ -287,14 +285,10 @@ export function MisTurnosPage(): React.ReactNode {
                       </div>
                     </div>
                   ) : null}
-                  {turno.cancelacion?.por === 'cliente' && turno.cancelacion.devolucion !== 'sin_pago' ? (
-                    <span className={styles.muted} data-turno-cancelacion={turno.cancelacion.devolucion} style={{ fontSize: '0.9rem' }}>
-                      {turno.cancelacion.devolucion === 'no_reembolsable' ? 'Cancelaste con 24 horas o menos de anticipación: lo que pagaste no es reembolsable.' : 'Cancelaste con más de 24 horas de anticipación: te corresponde la devolución de lo que pagaste. TUS la procesa y te avisa.'}
-                    </span>
-                  ) : null}
-                  {turno.cancelacion && turno.cancelacion.por !== 'cliente' && turno.cancelacion.devolucion === 'corresponde' ? (
-                    <span className={styles.muted} data-turno-cancelacion="corresponde" style={{ fontSize: '0.9rem' }}>
-                      El turno fue cancelado por {turno.cancelacion.por === 'prestador' ? 'el prestador' : 'TUS'}: te corresponde la devolución de lo que pagaste.
+                  {turno.cancelacion && turno.cancelacion.devolucion !== 'sin_pago' ? (
+                    <span className={styles.muted} data-turno-cancelacion={turno.cancelacion.devolucion} data-turno-cancelacion-regla={turno.cancelacion.regla} style={{ fontSize: '0.9rem' }}>
+                      {turno.cancelacion.por === 'cliente' ? '' : `El turno fue cancelado por ${turno.cancelacion.por === 'prestador' ? 'el prestador' : 'TUS'}. `}
+                      {turno.cancelacion.resumen}
                     </span>
                   ) : null}
                   <FotosTurno cantidad={turno.imagenes ?? 0} puedeAgregar={turno.estado === 'pending' && futuro} turnoId={turno.id} />

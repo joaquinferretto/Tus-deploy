@@ -1,5 +1,5 @@
 import {
-  mensajeErrorTurno,
+  CODIGO_CANCELACION_TARDIA, mensajeErrorTurno,
   type AgendaSemanal,
   type BloqueoAgendaDTO,
   type ClienteTurnosDTO,
@@ -54,7 +54,10 @@ export async function turnosErrorDe(response: Response, fallback?: string): Prom
   // A refused field: the API says which one and why, in the words of the form. That beats the
   // generic text of the code ("revisá los datos") every time.
   const deCampo = response.status === 400 && Array.isArray(body?.fields) && body.fields.length > 0 && typeof body.error === 'string' && body.error.trim() ? body.error.trim() : null
-  const message = code === 'UNAUTHORIZED' ? 'Tu sesión venció. Volvé a iniciar sesión.' : (deCampo ?? mensajeErrorTurno(code, fallback))
+  // TURNOS-CANCELACION-01: what a cancellation costs is computed by the API for THIS turno at this
+  // moment (amounts included): its own words are the ones to show.
+  const deCancelacion = code === CODIGO_CANCELACION_TARDIA && typeof body?.error === 'string' && body.error.trim() ? body.error.trim() : null
+  const message = code === 'UNAUTHORIZED' ? 'Tu sesión venció. Volvé a iniciar sesión.' : (deCampo ?? deCancelacion ?? mensajeErrorTurno(code, fallback))
   return new TurnosError(response.status, code, message)
 }
 

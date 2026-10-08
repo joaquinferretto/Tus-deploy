@@ -3,7 +3,7 @@ import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './conocimiento.ts'
 import { DIAS_BUSQUEDA_PRIMERA, DIAS_LISTADOS, DIAS_PANORAMA, DIAS_TRAMO_MAXIMO, PIDE_DIAS, PIDE_HORARIOS, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, diasDe, elegirOferta, horaLocal, horasDe, listaDeOpciones, ofertasDePanorama, ofertasDeResultado, personasDe, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDias, textoDisponibilidad, textoPanorama, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type DiaDisponible, type OfertasMostradas } from './busqueda.ts'
 import { oficio } from '../directorio/oficios.ts'
-import { CODIGO_CANCELACION_TARDIA, CODIGO_POLITICA_CANCELACION_REQUERIDA, CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, MENSAJE_CANCELACION_TARDIA, esCancelacionTardia, formatearPesos, textoPoliticaCancelacion } from '@factory/contracts'
+import { CODIGO_CANCELACION_TARDIA, CODIGO_POLITICA_CANCELACION_REQUERIDA, CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, MENSAJE_CANCELACION_TARDIA, formatearPesos, textoPoliticaCancelacion } from '@factory/contracts'
 import { idRecordatorio, leerRecordatorio } from '../calendar/turnos-recordatorios.ts'
 import { leerCierreTurno, leerRespuestaTurno } from './avisos-turnos.ts'
 import { esRenuncia, leerRespuestaUrgente, leerUrgente } from './urgente-texto.ts'
@@ -2023,20 +2023,23 @@ export class OrquestadorConversacion {
       if (info.turnoEstado !== 'confirmed') return [{ type: 'text', text: 'Ese turno ya no está confirmado, así que no hace falta responder.' }]
       if (boton.accion === 'asiste') return [{ type: 'text', text: `¡Gracias! Quedó registrado que asistís a ${cual(info)}.` }]
       if (info.destinatario === 'prestador') return [confirmar(`¿Querés cancelar ${cual(info)}? Se le avisa al cliente${info.conPago ? ' y corresponde devolverle lo que pagó' : ''}.`, 'cancelar')]
-      // The loss of the deposit is only ever the client's, and only inside the 24 hours.
-      if (info.conPago && esCancelacionTardia(info.inicio, this.now())) return [confirmar(MENSAJE_CANCELACION_TARDIA, 'cancelar-perdida')]
-      return [confirmar(`¿Querés cancelar ${cual(info)}?${info.conPago ? ' Como faltan más de 24 horas, corresponde la devolución de lo que pagaste.' : ''}`, 'cancelar')]
+      // What it costs is only ever the client's, and it is the backend that says it (the rule
+      // that applies right now and its words): this only shows it.
+      const previa = typeof domain.previsualizarCancelacion === 'function' ? await domain.previsualizarCancelacion(cuenta, info.reservaId).catch(() => null) : null
+      if (previa?.requiereConfirmacion) return [confirmar(previa.mensaje, 'cancelar-perdida')]
+      return [confirmar(`¿Querés cancelar ${cual(info)}?`, 'cancelar')]
     }
     try {
       const hecho = await domain.cancelarPorRecordatorio(cuenta, boton.recordatorioId, boton.accion === 'cancelar-perdida')
       if (!hecho) return ajeno
-      const cierre = hecho.devolucion === 'no_reembolsable' ? ' Como faltaban 24 horas o menos, la seña no se reembolsa.'
-        : hecho.devolucion === 'corresponde' ? (hecho.destinatario === 'cliente' ? ' Te corresponde la devolución de lo que pagaste: TUS la procesa y te avisa.' : ' Al cliente le corresponde la devolución de lo que pagó: la procesa TUS.')
-        : ''
+      const cierre = !hecho.cancelacion || hecho.cancelacion.devolucion === 'sin_pago' ? ''
+        : hecho.destinatario === 'cliente' ? ` ${hecho.cancelacion.resumen}`
+        : ' Al cliente le corresponde la devolución de lo que pagó por el servicio: la procesa TUS.'
       return [{ type: 'text', text: `Listo, cancelé ${cual(hecho)}.${cierre}` }]
     } catch (error) {
-      // The time ran into the last 24 hours since the question was shown: the loss is confirmed first.
-      if ((error as { code?: unknown } | null)?.code === CODIGO_CANCELACION_TARDIA) return [confirmar(MENSAJE_CANCELACION_TARDIA, 'cancelar-perdida')]
+      // The rule changed since the question was shown (the time went on): what it costs now is
+      // confirmed first, in the backend's own words.
+      if ((error as { code?: unknown } | null)?.code === CODIGO_CANCELACION_TARDIA) return [confirmar(error instanceof Error && error.message ? error.message : MENSAJE_CANCELACION_TARDIA, 'cancelar-perdida')]
       return [{ type: 'text', text: 'Ese turno ya no se puede cancelar desde acá. Podés verlo en "Mis turnos".' }]
     }
   }

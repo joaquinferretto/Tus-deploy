@@ -73,12 +73,30 @@ CREATE TABLE public."cancelaciones_turno" (
   "tardia" boolean NOT NULL,
   "devolucion" text NOT NULL,
   "politica_version" text NOT NULL,
+  -- Which rule of the policy applied, and the accounting of what was paid (minor units), kept
+  -- apart: the value of the service, the charge of TUS, what is refundable and the penalty.
+  "regla" text NOT NULL,
+  "moneda" text NOT NULL,
+  "reserva_creada_en" timestamp(3) NOT NULL,
+  "precio_minor" bigint NOT NULL,
+  "pagado_minor" bigint NOT NULL,
+  "cargo_tus_minor" bigint NOT NULL,
+  "servicio_pagado_minor" bigint NOT NULL,
+  "reembolsable_minor" bigint NOT NULL,
+  "penalizacion_minor" bigint NOT NULL,
   CONSTRAINT "cancelaciones_turno_pkey" PRIMARY KEY ("reserva_id"),
   CONSTRAINT "fk_cancelaciones_turno_reserva" FOREIGN KEY ("reserva_id") REFERENCES public."reservas"("id") ON DELETE RESTRICT ON UPDATE NO ACTION,
   CONSTRAINT "ck_cancelaciones_turno_por" CHECK ("cancelada_por" IN ('cliente', 'prestador', 'administracion')),
   CONSTRAINT "ck_cancelaciones_turno_devolucion" CHECK ("devolucion" IN ('corresponde', 'no_reembolsable', 'sin_pago')),
-  -- The penalty is only ever the client's: nobody else's cancellation is "late".
-  CONSTRAINT "ck_cancelaciones_turno_tardia" CHECK (NOT "tardia" OR "cancelada_por" = 'cliente'),
-  CONSTRAINT "ck_cancelaciones_turno_no_reembolsable" CHECK ("devolucion" <> 'no_reembolsable' OR "tardia")
+  CONSTRAINT "ck_cancelaciones_turno_regla" CHECK ("regla" IN ('ultimo_momento', 'gracia', 'intermedia', 'prestador', 'administracion')),
+  -- The penalty is only ever the client's: nobody else's cancellation is "late" or penalized.
+  CONSTRAINT "ck_cancelaciones_turno_tardia" CHECK (NOT "tardia" OR ("cancelada_por" = 'cliente' AND "regla" = 'ultimo_momento')),
+  CONSTRAINT "ck_cancelaciones_turno_sin_penalizar" CHECK ("cancelada_por" = 'cliente' OR "penalizacion_minor" = 0),
+  -- The parts always add up, and the penalty is never more than the service that was paid.
+  CONSTRAINT "ck_cancelaciones_turno_importes" CHECK (
+    "precio_minor" >= 0 AND "pagado_minor" >= 0 AND "cargo_tus_minor" >= 0 AND "reembolsable_minor" >= 0 AND "penalizacion_minor" >= 0
+    AND "servicio_pagado_minor" + "cargo_tus_minor" = "pagado_minor"
+    AND "reembolsable_minor" + "penalizacion_minor" = "servicio_pagado_minor"
+  )
 );
 ALTER TABLE public."cancelaciones_turno" ENABLE ROW LEVEL SECURITY;

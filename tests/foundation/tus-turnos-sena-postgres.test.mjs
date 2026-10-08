@@ -228,7 +228,11 @@ test('TURNOS seña PostgreSQL: the deposit is half of the price of the chosen se
 
       // 11. The client cancels a turno whose deposit is paid: it stays visible as paid (the refund
       //     is a platform decision, never automatic).
-      const cancelada = await call('POST', '/tus/v1/cliente/turnos/' + espalda.id + '/cancelar', 'tok-ana')
+      // TURNOS-CANCELACION-01: cancelling a paid turno costs the client something (at least the
+      // charge of TUS): the API asks for it to be confirmed, and cancels once it is.
+      const sinConfirmar = await call('POST', '/tus/v1/cliente/turnos/' + espalda.id + '/cancelar', 'tok-ana')
+      out.cancelarPideConfirmacion = [sinConfirmar.status, sinConfirmar.body.code, (await fila(espalda.id)).estado]
+      const cancelada = await call('POST', '/tus/v1/cliente/turnos/' + espalda.id + '/cancelar', 'tok-ana', { confirmaPerdida: true })
       out.canceladaPagada = [cancelada.body.estado, (await senaDe('tok-ana', espalda.id))?.estado ?? null]
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
@@ -269,6 +273,7 @@ test('TURNOS seña PostgreSQL: the deposit is half of the price of the chosen se
   assert.deepEqual(r.variantes, [['Masaje base', 20000, 10000, 'pending'], ['Espalda completa', 25000, 12500, 'paid'], ['Cuerpo completo', 30000, 15000, 'pending']])
   assert.deepEqual(r.obligaciones, ['1000000', '1500000'])
   assert.deepEqual(r.impar, [1250.5, 1250.5, '125050', '$1.250,50', '$12.500', '$25.000'])
+  assert.deepEqual(r.cancelarPideConfirmacion, [409, 'LATE_CANCELLATION_CONFIRMATION_REQUIRED', 'confirmed'], 'a paid turno is not cancelled without confirming what it costs')
   assert.deepEqual(r.canceladaPagada, ['cancelled', 'paid'])
 })
 

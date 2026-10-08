@@ -350,27 +350,97 @@ export interface AgendaSemanal {
 export type ModalidadCobroServicio = 'precio_fijo' | 'a_presupuestar'
 
 // TURNOS-CANCELACION-01. The cancellation policy of a turno paid in advance. The backend decides
-// with its own clock; the Web and WhatsApp only show these texts and send back the version shown.
-//   * the client cancels MORE than 24 hours before the turno: what it paid can be refunded;
-//   * the client cancels 24 hours or less before it (exactly 24 hours included): not refundable;
-//   * the provider (or the administration) cancels: the penalty never applies to the client.
-export const VERSION_POLITICA_CANCELACION = '2026-10-v1'
+// with its own clock, at the moment of cancelling; the Web and WhatsApp only show these texts.
+// Two windows: the time since the reservation was made and the time left until the turno.
+// What a client paid has two parts: the value of the service and the charge of TUS (its commission,
+// inside the payment). The charge of TUS is never refunded to a client that cancels.
+//   1. 'ultimo_momento' — 24 hours or less before the turno (exactly 24 included). It prevails over
+//      everything: nothing of the service is refunded.
+//   2. 'gracia' — within 24 hours of making the reservation (and more than 24 hours before the
+//      turno): the service paid is refunded.
+//   3. 'intermedia' — any other moment: the penalty is half of the value of the service; what was
+//      paid above it is refunded (a deposit is exactly that half: nothing is refunded).
+// The penalty is never more than what was paid: nothing else is ever charged for cancelling.
+// The provider or the administration cancelling never penalizes the client.
+export const VERSION_POLITICA_CANCELACION = '2026-10-v2'
 export const VENTANA_CANCELACION_MS = 24 * 60 * 60 * 1000
-export const esCancelacionTardia = (inicio: string | number | Date, ahora: number): boolean => new Date(inicio).getTime() - ahora <= VENTANA_CANCELACION_MS
-export const TEXTO_POLITICA_CANCELACION = 'La seña reserva tu turno. Si cancelás con 24 horas o menos de anticipación, la seña no es reembolsable.'
-export const TEXTO_POLITICA_CANCELACION_TOTAL = 'El pago reserva tu turno. Si cancelás con 24 horas o menos de anticipación, no se te devolverá ningún monto de lo abonado.'
+const instante = (valor: string | number | Date): number => new Date(valor).getTime()
+// 24 hours or less before the turno.
+export const esCancelacionTardia = (inicio: string | number | Date, ahora: number): boolean => instante(inicio) - ahora <= VENTANA_CANCELACION_MS
+// Within 24 hours of making the reservation.
+export const enPeriodoDeGracia = (reservaCreadaEn: string | number | Date, ahora: number): boolean => ahora <= instante(reservaCreadaEn) + VENTANA_CANCELACION_MS
+export type ReglaCancelacion = 'ultimo_momento' | 'gracia' | 'intermedia' | 'prestador' | 'administracion'
+export type DevolucionCancelacion = 'corresponde' | 'no_reembolsable' | 'sin_pago'
+// Every amount in minor units (centavos). `servicioPagado + cargoTus = pagado` and
+// `reembolsable + penalizacion = servicioPagado`, always.
+export interface DesgloseCancelacion {
+  regla: ReglaCancelacion
+  // The price of the service, what was paid of it, and the two parts of what was paid.
+  precio: number
+  pagado: number
+  cargoTus: number
+  servicioPagado: number
+  // What goes back to the client and what is kept as the penalty.
+  reembolsable: number
+  penalizacion: number
+  devolucion: DevolucionCancelacion
+}
+export function calcularCancelacion(input: { por: 'cliente' | 'prestador' | 'administracion'; ahora: number; reservaCreadaEn: string | number | Date; inicio: string | number | Date; precio: number; pagado: number; cargoTus: number }): DesgloseCancelacion {
+  const pagado = Math.max(0, Math.trunc(input.pagado))
+  const cargoTus = Math.min(pagado, Math.max(0, Math.trunc(input.cargoTus)))
+  const servicioPagado = pagado - cargoTus
+  const precio = Math.max(0, Math.trunc(input.precio))
+  const regla: ReglaCancelacion = input.por !== 'cliente' ? input.por : esCancelacionTardia(input.inicio, input.ahora) ? 'ultimo_momento' : enPeriodoDeGracia(input.reservaCreadaEn, input.ahora) ? 'gracia' : 'intermedia'
+  // Half of the value of the WHOLE service (its price without the charge of TUS on it, in the
+  // proportion of what was paid), never more than the service that was actually paid.
+  const valorServicio = pagado > 0 ? precio - Math.trunc((cargoTus * precio) / pagado) : 0
+  const penalizacion = regla === 'ultimo_momento' ? servicioPagado : regla === 'intermedia' ? Math.min(servicioPagado, Math.trunc(valorServicio / 2)) : 0
+  const reembolsable = servicioPagado - penalizacion
+  return { regla, precio, pagado, cargoTus, servicioPagado, reembolsable, penalizacion, devolucion: pagado === 0 ? 'sin_pago' : reembolsable > 0 ? 'corresponde' : 'no_reembolsable' }
+}
+// The client loses something of what it paid (the penalty, or at least the charge of TUS): the
+// cancellation needs its explicit confirmation.
+export const cancelacionRequiereConfirmacion = (desglose: DesgloseCancelacion): boolean => desglose.regla !== 'prestador' && desglose.regla !== 'administracion' && desglose.pagado > desglose.reembolsable
+const pesosDe = (minor: number): string => formatearPesos(minor / 100)
+// What the client is asked before a cancellation that costs it something.
+export const MENSAJE_CANCELACION_TARDIA = 'Este turno comienza dentro de las próximas 24 horas. Si cancelás ahora, la seña no será reembolsada. ¿Querés continuar?'
+export function mensajeConfirmacionCancelacion(desglose: DesgloseCancelacion): string {
+  const cargo = desglose.cargoTus > 0 ? ` El cargo de TUS (${pesosDe(desglose.cargoTus)}) no es reembolsable.` : ''
+  const pagoTotal = desglose.precio > 0 && desglose.pagado >= desglose.precio
+  if (desglose.regla === 'ultimo_momento') return pagoTotal ? 'Este turno comienza dentro de las próximas 24 horas. Si cancelás ahora, no se te devolverá ningún monto de lo abonado. ¿Querés continuar?' : MENSAJE_CANCELACION_TARDIA
+  if (desglose.regla === 'gracia') return `Estás dentro de las 24 horas de tu reserva: si cancelás ahora se te devuelve ${pesosDe(desglose.reembolsable)}.${cargo} ¿Querés continuar?`
+  if (desglose.reembolsable === 0) return `Ya pasaron más de 24 horas desde tu reserva: si cancelás ahora se retiene lo que pagaste (${pesosDe(desglose.pagado)}) y no hay devolución. ¿Querés continuar?`
+  return `Ya pasaron más de 24 horas desde tu reserva: si cancelás ahora se retiene la mitad del valor del servicio (${pesosDe(desglose.penalizacion)}) y se te devuelve ${pesosDe(desglose.reembolsable)}.${cargo} ¿Querés continuar?`
+}
+// What a cancelled turno means for what was paid, in words (for its client).
+export function resumenCancelacion(desglose: Pick<DesgloseCancelacion, 'regla' | 'pagado' | 'cargoTus' | 'reembolsable' | 'penalizacion' | 'devolucion'>): string {
+  if (desglose.devolucion === 'sin_pago') return ''
+  if (desglose.regla === 'prestador' || desglose.regla === 'administracion') return `Te corresponde la devolución de lo que pagaste por el servicio (${pesosDe(desglose.reembolsable)}): TUS la procesa y te avisa.`
+  const cargo = desglose.cargoTus > 0 ? ` El cargo de TUS (${pesosDe(desglose.cargoTus)}) no es reembolsable.` : ''
+  if (desglose.reembolsable === 0) return `No hay devolución: se retiene lo que pagaste (${pesosDe(desglose.pagado)}).`
+  if (desglose.penalizacion === 0) return `Te corresponde la devolución de ${pesosDe(desglose.reembolsable)}: TUS la procesa y te avisa.${cargo}`
+  return `Se retiene ${pesosDe(desglose.penalizacion)} y te corresponde la devolución de ${pesosDe(desglose.reembolsable)}: TUS la procesa y te avisa.${cargo}`
+}
+// Told BEFORE an advance payment (the client accepts it; the backend stores the acceptance).
+export const TEXTO_POLITICA_CANCELACION = 'La seña reserva tu turno. Podés cancelar con devolución dentro de las 24 horas de reservar, si faltan más de 24 horas para el turno. Después la seña no es reembolsable. El cargo de TUS nunca se devuelve.'
+export const TEXTO_POLITICA_CANCELACION_TOTAL = 'El pago reserva tu turno. Podés cancelar con devolución del servicio dentro de las 24 horas de reservar, si faltan más de 24 horas para el turno. Después se retiene la mitad del valor del servicio, y con 24 horas o menos de anticipación no se te devolverá ningún monto. El cargo de TUS nunca se devuelve.'
 export const textoPoliticaCancelacion = (tramo: 'sena' | 'total'): string => (tramo === 'total' ? TEXTO_POLITICA_CANCELACION_TOTAL : TEXTO_POLITICA_CANCELACION)
 // The checkout of an advance payment was asked without the policy accepted for that turno.
 export const CODIGO_POLITICA_CANCELACION_REQUERIDA = 'CANCELLATION_POLICY_ACCEPTANCE_REQUIRED'
-// The client asked to cancel inside the 24 hours with something paid, without confirming the loss.
+// The client asked to cancel something that costs it part of what it paid, without confirming it.
 export const CODIGO_CANCELACION_TARDIA = 'LATE_CANCELLATION_CONFIRMATION_REQUIRED'
-export const MENSAJE_CANCELACION_TARDIA = 'Este turno comienza dentro de las próximas 24 horas. Si cancelás ahora, la seña no será reembolsada. ¿Querés continuar?'
-export type DevolucionCancelacion = 'corresponde' | 'no_reembolsable' | 'sin_pago'
 export interface CancelacionTurnoDTO {
   por: 'cliente' | 'prestador' | 'administracion'
   en: string
   tardia: boolean
   devolucion: DevolucionCancelacion
+  regla: ReglaCancelacion
+  // In pesos, as every amount the Web shows.
+  pagado: number
+  cargoTus: number
+  reembolsable: number
+  penalizacion: number
+  resumen: string
 }
 // A turno was asked for a service whose price comes from a budget: the way is a request.
 export const CODIGO_SERVICIO_A_PRESUPUESTAR = 'SERVICE_REQUIRES_BUDGET'

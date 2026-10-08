@@ -6,27 +6,55 @@ Migración (aditiva, tres tablas nuevas): `20261114100000_tus_turnos_recordatori
 ## 1. Política de cancelación
 
 La decide el backend con su propio reloj, en el momento de cancelar. Nunca con la hora en que se
-mostró una pantalla o un mensaje.
+mostró una pantalla o un mensaje. Mira dos ventanas: el tiempo desde que se hizo la reserva y el
+tiempo que falta para el turno.
 
-| Quién cancela | Cuándo | Qué pasa con lo pagado |
-| --- | --- | --- |
-| Cliente | faltan **más de 24 horas** | corresponde la devolución (`corresponde`) |
-| Cliente | faltan **24 horas exactas o menos** | no es reembolsable (`no_reembolsable`); el turno queda `cancelled-late` |
-| Prestador o Administración | cualquier momento | la penalización no aplica: corresponde la devolución |
-| Cualquiera | sin nada pagado | `sin_pago` |
+Lo que pagó el cliente tiene dos partes, que se contabilizan por separado:
 
-Regla: `fechaTurno - ahora <= 24 h` → cancelación tardía del cliente (`esCancelacionTardia`, en
-`packages/contracts/src/tus-turnos.ts`).
+- **valor del servicio** pagado;
+- **cargo de TUS**: la comisión de TUS, que va dentro de cada pago. Nunca se le devuelve a un
+  cliente que cancela.
 
-- Dentro de las 24 h y con algo pagado, la API **no cancela** si el pedido no trae la
-  confirmación explícita de la pérdida: responde `409 LATE_CANCELLATION_CONFIRMATION_REQUIRED` con
-  el texto de la segunda confirmación. Con `confirmaPerdida: true` cancela.
-- Cada cancelación queda en `cancelaciones_turno`: quién, cuándo, canal, si fue tardía, qué
-  corresponde con lo pagado y la versión de la política.
+Se evalúa en este orden (la primera que aplica gana):
+
+| # | Regla | Cuándo | Qué pasa con el servicio pagado |
+| --- | --- | --- | --- |
+| 1 | `ultimo_momento` | faltan **24 horas exactas o menos** para el turno | no se devuelve nada; el turno queda `cancelled-late` |
+| 2 | `gracia` | pasaron **24 horas o menos desde la reserva** | se devuelve todo el servicio pagado |
+| 3 | `intermedia` | cualquier otro momento | se retiene la mitad del valor del servicio; se devuelve lo pagado por encima |
+
+- Con seña (la mitad del precio), la regla intermedia retiene la seña entera: no hay devolución.
+- Con pago total, la regla intermedia devuelve la otra mitad del servicio.
+- Una reserva hecha hoy para mañana cae en la regla 1: el período de gracia no la contradice.
+- La penalización nunca supera lo que se pagó: cancelar no genera ningún cobro adicional (no se
+  crea saldo ni otra obligación).
+- Si cancela el **prestador** o **Administración** no hay penalización: corresponde devolver todo
+  el servicio pagado. Queda por definir si el cargo de TUS también se devuelve o lo absorbe TUS
+  (hoy se registra aparte y no se incluye en lo reembolsable).
+
+Ejemplo, servicio de $20.000 con cargo de TUS del 10 %, reservado un lunes para el viernes:
+
+| Caso | Servicio pagado | Cargo TUS | Se devuelve | Se retiene |
+| --- | --- | --- | --- | --- |
+| Seña, cancela el lunes a la noche | $9.000 | $1.000 | $9.000 | $0 |
+| Seña, cancela el martes | $9.000 | $1.000 | $0 | $9.000 |
+| Total, cancela el martes | $18.000 | $2.000 | $9.000 | $9.000 |
+| Seña, cancela con 24 h o menos | $9.000 | $1.000 | $0 | $9.000 |
+| Total, cancela con 24 h o menos | $18.000 | $2.000 | $0 | $18.000 |
+
+Cálculo: `calcularCancelacion` en `packages/contracts/src/tus-turnos.ts` (función pura, la misma
+para la API y los tests). Siempre se cumple `servicio + cargo = pagado` y
+`reembolsable + penalización = servicio`; la base lo exige con un CHECK.
+
+- Si cancelar le cuesta algo al cliente (la penalización, o al menos el cargo de TUS), la API **no
+  cancela** sin su confirmación explícita: responde `409 LATE_CANCELLATION_CONFIRMATION_REQUIRED`
+  con el texto y los importes de ese turno en ese momento. Con `confirmaPerdida: true` cancela.
+- Cada cancelación queda en `cancelaciones_turno`: quién, cuándo, canal, regla aplicada, versión
+  de la política y los importes (precio, pagado, cargo de TUS, servicio, reembolsable,
+  penalización).
 - **La cancelación no mueve dinero.** La obligación sigue pagada y la liquidación sigue retenida;
   no se reembolsa ni se libera nada de forma automática. El reembolso sigue siendo el comando
-  auditado de Administración. Queda pendiente de decisión del dueño qué se hace con una seña no
-  reembolsable (ver §6).
+  auditado de Administración, que hoy solo sabe devolver el pago entero (ver §6).
 
 ### Aceptación antes de pagar
 
@@ -163,9 +191,12 @@ abierta y deja registrado `requiere_plantilla` para el resto.
 
 ## 6. Decisiones pendientes del dueño
 
-- **Destino de la seña no reembolsable.** Hoy queda retenida y marcada. Falta definir si se libera
-  al prestador (menos la comisión), si queda para TUS, o si lo resuelve Administración caso por caso.
-- **Devolución cuando corresponde.** Hoy queda marcada como `corresponde` y la ejecuta
-  Administración con el reembolso existente. Falta definir si debe ser automática.
-- **Pago total cancelado tarde.** El texto dice que no se devuelve ningún monto; no existe el
-  reembolso parcial.
+- **Ejecución de la devolución.** La política ya calcula cuánto corresponde devolver, pero no
+  devuelve. Dos casos (gracia y total cancelado en la regla intermedia) son devoluciones
+  **parciales** del pago, y el reembolso que existe solo devuelve el pago entero: hace falta
+  implementar el reembolso parcial contra Mercado Pago y decidir si se dispara solo o lo aprueba
+  Administración.
+- **Destino de la penalización retenida.** Hoy queda retenida y registrada. Falta definir si se
+  libera al prestador o queda para TUS.
+- **Cargo de TUS cuando cancela el prestador.** Falta definir si se le devuelve al cliente o lo
+  absorbe TUS.

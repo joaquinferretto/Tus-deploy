@@ -8,7 +8,7 @@ import type { ServicioSolicitudes } from '../solicitudes/servicio.ts'
 import type { ServicioTurnos, SolicitudTurnoParaAdmin } from '../calendar/turnos-service.ts'
 import type { ServicioUrgentes } from '../urgentes/servicio.ts'
 import type { RecordatorioRespondido, ServicioRecordatoriosTurno } from '../calendar/turnos-recordatorios.ts'
-import { VERSION_POLITICA_CANCELACION, etiquetaEstadoTurno, type DetalleTurno } from '@factory/contracts'
+import { VERSION_POLITICA_CANCELACION, etiquetaEstadoTurno, type CancelacionTurnoDTO, type DetalleTurno } from '@factory/contracts'
 import { senaDePrecio } from '../calendar/turnos-sena.ts'
 
 // The assistant reaches TUS only through this port. The adapter below delegates to the SAME
@@ -168,7 +168,9 @@ export interface PuertoDominioAsistente {
   // TURNOS-RECORDATORIOS-01: the answer to a reminder of the account's own turno, and the
   // cancellation that may follow it (never without its explicit confirmation).
   responderRecordatorio?(context: TusAuthenticatedTenantContext, recordatorioId: string, respuesta: 'asiste' | 'no_puede'): Promise<RecordatorioRespondido | null>
-  cancelarPorRecordatorio?(context: TusAuthenticatedTenantContext, recordatorioId: string, confirmaPerdida: boolean): Promise<(RecordatorioRespondido & { devolucion: 'corresponde' | 'no_reembolsable' | 'sin_pago' }) | null>
+  cancelarPorRecordatorio?(context: TusAuthenticatedTenantContext, recordatorioId: string, confirmaPerdida: boolean): Promise<(RecordatorioRespondido & { cancelacion: CancelacionTurnoDTO | null }) | null>
+  // What cancelling its own turno right now would cost the client (the backend's rule and words).
+  previsualizarCancelacion?(context: TusAuthenticatedTenantContext, ref: string): Promise<{ requiereConfirmacion: boolean; mensaje: string } | null>
   confirmarTurno?(context: TusAuthenticatedTenantContext, ref: string): Promise<{ pendiente: string | null }>
   observarTurno?(context: TusAuthenticatedTenantContext, ref: string, reason: string): Promise<void>
   // Deposits of the client's own upcoming turnos that are pending or already paid, and the real
@@ -631,7 +633,12 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     if (info.destinatario === 'cliente') await turnos.cancelarTurnoCliente({ clienteId: context.subjectId, reservaId: info.reservaId, confirmaPerdida, canal: 'whatsapp' })
     else await turnos.cambiarEstadoTurno({ reservaId: info.reservaId, tenantId: info.tenantId, nuevoEstado: 'cancelled', motivo: 'el prestador avisó que no puede asistir' })
     await recordatorios.cancelacionResultante(recordatorioId)
-    return { ...info, devolucion: (await turnos.cancelacionDe(info.reservaId))?.devolucion ?? 'sin_pago' }
+    return { ...info, cancelacion: await turnos.cancelacionDe(info.reservaId) }
+  }
+
+  async previsualizarCancelacion(context: TusAuthenticatedTenantContext, ref: string) {
+    const previa = this.compartidos?.turnos ? await this.compartidos.turnos.previsualizarCancelacionCliente({ clienteId: context.subjectId, reservaId: ref }) : null
+    return previa ? { requiereConfirmacion: previa.requiereConfirmacion, mensaje: previa.mensaje } : null
   }
 
   async reservarTurno(

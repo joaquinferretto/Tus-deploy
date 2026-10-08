@@ -181,7 +181,7 @@ test('TURNOS WhatsApp PostgreSQL: the request stays pending, the provider is tol
   // after the client accepted the cancellation policy on this channel.
   assert.deepEqual(r.avisoAceptacion.tipos, ['text'])
   assert.match(r.avisoAceptacion.texto, /aceptó tu solicitud.*seña de \$\s?15\.000.*pagar la seña/u)
-  assert.match(r.politica.texto, /La seña reserva tu turno\. Si cancelás con 24 horas o menos de anticipación, la seña no es reembolsable\./u)
+  assert.match(r.politica.texto, /La seña reserva tu turno\. Podés cancelar con devolución dentro de las 24 horas de reservar, si faltan más de 24 horas para el turno\. Después la seña no es reembolsable\. El cargo de TUS nunca se devuelve\./u)
   assert.deepEqual([r.politica.botones, r.politica.sinEnlace, r.politica.sinAceptar, r.politica.trasVolver], [['Aceptar y pagar', 'Volver'], true, 0, 0], 'reading the policy or going back opens no payment and stores no acceptance')
   assert.deepEqual(r.avisoCliente.aceptacion, [[true, 'whatsapp', 'sena']], 'accepting stores who, the channel and the way of paying')
   assert.deepEqual(r.avisoCliente.tipos, ['cta_url'])
@@ -577,7 +577,7 @@ test('RECORDATORIOS por WhatsApp PostgreSQL: outside the 24 hour window only the
   assert.deepEqual(r.pregunta, [['buttons'], 'Este turno comienza dentro de las próximas 24 horas. Si cancelás ahora, la seña no será reembolsada. ¿Querés continuar?', ['Sí, cancelar turno', 'Volver'], 'confirmed'], '"No puedo asistir" cancels nothing: it asks, naming the loss')
   assert.deepEqual(r.vuelve, ['Listo, no cancelé nada: tu turno sigue en pie.', 'confirmed', null])
   assert.deepEqual(r.sinPerdida, ['buttons', true, 'confirmed'], 'a confirmation that did not name the loss does not cancel inside the 24 hours')
-  assert.match(r.cancela[0], /^Listo, cancelé tu turno de Reparación con Wa Recuerda .* Como faltaban 24 horas o menos, la seña no se reembolsa\.$/u)
+  assert.match(r.cancela[0], /^Listo, cancelé tu turno de Reparación con Wa Recuerda .* No hay devolución: se retiene lo que pagaste \(\$\s?15\.000\)\.$/u)
   assert.deepEqual(r.cancela.slice(1), ['cancelled-late', ['cliente', true, 'no_reembolsable', 'whatsapp'], 1, true, ['no_puede', 'whatsapp', true]], 'confirmed: a late cancellation, once, recorded on the reminder')
   assert.deepEqual(r.ajeno, ['No encontré ese turno entre los tuyos.', null])
   assert.match(r.asiste[0], /^¡Gracias! Quedó registrado que asistís a tu turno de Reparación con Cliente ana/u)
@@ -588,7 +588,7 @@ test('RECORDATORIOS por WhatsApp PostgreSQL: outside the 24 hour window only the
   assert.deepEqual(r.enVentana.prestador, [1, 'buttons', false, true], 'the provider is never told about the deposit')
   assert.deepEqual(r.enVentana.vias, [['cliente', 'sent', 'ventana', null], ['prestador', 'sent', 'ventana', null]])
   assert.deepEqual(r.prestadorCancela.slice(0, 3), ['buttons', false, true])
-  assert.match(r.prestadorCancela[3], /^Listo, cancelé tu turno de Reparación con Cliente ana.* Al cliente le corresponde la devolución de lo que pagó: la procesa TUS\.$/u)
+  assert.match(r.prestadorCancela[3], /^Listo, cancelé tu turno de Reparación con Cliente ana.* Al cliente le corresponde la devolución de lo que pagó por el servicio: la procesa TUS\.$/u)
   assert.deepEqual(r.prestadorCancela.slice(4), ['cancelled', ['prestador', false, 'corresponde', null]])
 })
 

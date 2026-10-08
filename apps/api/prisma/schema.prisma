@@ -3974,6 +3974,15 @@ model CancelacionTurno {
   tardia          Boolean  @map("tardia")
   devolucion      String   @map("devolucion")
   politicaVersion String   @map("politica_version")
+  regla               String   @map("regla")
+  moneda              String   @map("moneda")
+  reservaCreadaEn     DateTime @map("reserva_creada_en")
+  precioMinor         BigInt   @map("precio_minor")
+  pagadoMinor         BigInt   @map("pagado_minor")
+  cargoTusMinor       BigInt   @map("cargo_tus_minor")
+  servicioPagadoMinor BigInt   @map("servicio_pagado_minor")
+  reembolsableMinor   BigInt   @map("reembolsable_minor")
+  penalizacionMinor   BigInt   @map("penalizacion_minor")
 
   reserva Reserva @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_cancelaciones_turno_reserva")
 
