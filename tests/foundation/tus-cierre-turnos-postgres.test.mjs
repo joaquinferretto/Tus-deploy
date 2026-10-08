@@ -351,6 +351,16 @@ test('HTTP turnos: the client chooses deposit or total on one checkout route (on
       await aprobar(await preferenciaDe(s, 'saldo'))
       const final = await turnoDe('tok-ana', s)
       out.final = [final.pago.pagado, final.pago.saldoPendiente, final.pago.proximo, final.pago.fondos, final.sena.estado]
+      // ---- C. The administration cancels a turno that was already finished: neither its client
+      // nor its window confirms it afterwards, and its money stays held.
+      const c = await turnoPagado(p, ana, 0, '13:00')
+      await call('POST', '/tus/v1/prestador/turnos/' + c.pedido.id + '/finalizar', 'tok-p', { evidence: EVIDENCIA })
+      const anulado = await turnos.cambiarEstadoTurno({ reservaId: c.pedido.id, isAdmin: true, nuevoEstado: 'cancelled', motivo: 'anulado por la administracion' })
+      const confC = await call('POST', '/tus/v1/cliente/turnos/' + c.pedido.id + '/confirmar', 'tok-ana')
+      adelantar(4 * 24 * HORA)
+      const barridoC = await cierre.procesarVencidos()
+      const vistoC = await turnoDe('tok-ana', c)
+      out.anuladoPorAdmin = [anulado.estado, confC.status, confC.body.code, barridoC.confirmados.includes(c.trabajoId), barridoC.bloqueados[c.trabajoId] ?? null, vistoC.estado, vistoC.pago.cierre.confirmadoEn, vistoC.pago.fondos]
       // The provider reads the same state of its turnos.
       const delPrestador = (await call('GET', '/tus/v1/prestador/turnos', 'tok-p')).body.items
       out.prestador = delPrestador.filter((x) => [t.pedido.id, s.pedido.id].includes(x.id)).map((x) => [x.pago.modalidad, x.pago.pagado, x.pago.fondos]).sort()
@@ -366,6 +376,7 @@ test('HTTP turnos: the client chooses deposit or total on one checkout route (on
   assert.deepEqual(r.yaPagado, ['DEPOSIT_NOT_PAYABLE', 'ALREADY_PAID', 'ALREADY_PAID'])
   assert.deepEqual(r.finalizar, [403, 'UNTRUSTED_FIELDS', 'EVIDENCE_REQUIRED'], 'only the provider finishes it, with evidence and nothing else in the body')
   assert.deepEqual(r.finalizado, [201, 'created', true, null, false, 'retenidos'], 'finished: the client sees it waits for its confirmation, the money still held')
+  assert.deepEqual(r.anuladoPorAdmin, ['cancelled', 409, 'APPOINTMENT_CANCELLED', false, ['APPOINTMENT_CANCELLED'], 'cancelled', null, 'retenidos'], 'a finished turno the administration cancelled is confirmed by nobody (client or window) and releases nothing')
   assert.deepEqual(r.finalizadoNoVuelve, [[409, 'INVALID_TRANSITION'], [409, 'INVALID_TRANSITION'], [409, 'FINALIZATION_REQUIRED'], [409, 'INVALID_TRANSITION'], [200, true], 'confirmed', 'retenidos'], 'a finished turno is not cancelled, called a no-show or completed by hand through the API, by its provider or its client; finishing again keeps the first evidence')
   assert.deepEqual(r.cerradoNoVuelve, [200, true, true, 'ALREADY_CONFIRMED', [409, 'INVALID_TRANSITION'], 409, 'completed', 'liberados'], 'confirming twice keeps the first confirmation; a confirmed closing takes no observation; a completed turno is final')
   assert.deepEqual(r.confirmaAjeno, [404, 403])

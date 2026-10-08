@@ -254,6 +254,12 @@ export class ServicioCierreTrabajo {
     const cierre = await this.store.buscar(scope)
     if (!cierre) throw new ErrorCierreTrabajo(409, 'WORK_NOT_FINISHED', 'the provider has not finished the work yet')
     if (observacionAbierta(cierre)) throw new ErrorCierreTrabajo(409, 'OBSERVATION_OPEN', 'the work has an open observation')
+    // A turno that was cancelled (or called a no-show) after it was finished is not confirmed, by
+    // its client or by its window: nothing of it is released that way.
+    if (!cierre.confirmedAt && trabajo.origin === 'turno' && trabajo.reservaId && this.dependencias.reserva) {
+      const reserva = await this.dependencias.reserva({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId })
+      if (reserva && reserva.status !== 'confirmed' && reserva.status !== 'completed') throw new ErrorCierreTrabajo(409, 'APPOINTMENT_CANCELLED', 'the turno was cancelled')
+    }
     const confirmada = cierre.confirmedAt ? false : await this.store.confirmar({ ...scope, origin, at: this.iso() })
     const actual = (await this.store.buscar(scope)) ?? cierre
     // Lost to an observation written at the same moment: it stays unconfirmed.
