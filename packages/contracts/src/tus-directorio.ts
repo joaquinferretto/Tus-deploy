@@ -197,6 +197,8 @@ export interface DetalleTurno {
   // Deposit of the turno (tus-turnos.ts): derived by the backend, never stored on the reservation.
   sena?: { monto: number; moneda: string; estado: string } | null
   // PAGOS-MODALIDAD-01: the whole financial state (PagoTurnoDTO of tus-turnos). null: no online payment applies.
+  // TURNOS-CANCELACION-01: who cancelled it and what it means for what was paid.
+  cancelacion?: { por: 'cliente' | 'prestador' | 'administracion'; en: string; tardia: boolean; devolucion: 'corresponde' | 'no_reembolsable' | 'sin_pago' } | null
   pago?: {
     moneda: string
     modalidad: 'sena' | 'total' | null

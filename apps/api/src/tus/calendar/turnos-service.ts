@@ -11,9 +11,15 @@ import {
   CODIGO_SOLICITUD_NO_PENDIENTE,
   CODIGO_SOLICITUD_SIN_HORARIO,
   CODIGO_SOLICITUD_VENCIDA,
+  CODIGO_CANCELACION_TARDIA,
+  CODIGO_POLITICA_CANCELACION_REQUERIDA,
   CODIGO_SERVICIO_A_PRESUPUESTAR,
   CODIGO_TRANSICION_INVALIDA,
+  MENSAJE_CANCELACION_TARDIA,
   MENSAJE_SERVICIO_A_PRESUPUESTAR,
+  VERSION_POLITICA_CANCELACION,
+  esCancelacionTardia,
+  textoPoliticaCancelacion,
   DIAS_AGENDA,
   ESTADOS_TURNO_LIBERAN,
   HORAS_VIGENCIA_SOLICITUD_TURNO,
@@ -219,6 +225,13 @@ export class ServicioTurnos {
     this.outboxNotificaciones = new OutboxNotificacionesTurnos(prisma, (evento) => this.entregarNotificacion(evento))
   }
 
+  // TURNOS-CANCELACION-01: the instant the cancellation policy is decided with (the server's).
+  private ahora: () => number = () => Date.now()
+  conReloj(ahora: () => number): this {
+    this.ahora = ahora
+    return this
+  }
+
   // Wired after the services they need exist (payments, the assistant's channels).
   conSenas(senas: ServicioSenaTurnos): this {
     this.senas = senas
@@ -253,9 +266,52 @@ export class ServicioTurnos {
 
   // The deposit of each turno, derived (never stored on the reservation): one batch for the list.
   private async agregarSenas(rows: FilaReserva[], turnos: DetalleTurno[]): Promise<DetalleTurno[]> {
-    if (!this.senas || rows.length === 0) return turnos
+    if (rows.length === 0) return turnos
+    // TURNOS-CANCELACION-01: who cancelled each one and what it means for what was paid.
+    const canceladas = rows.filter((row) => row.estado === 'cancelled' || row.estado === 'cancelled-late')
+    const cancelaciones = new Map((canceladas.length > 0 ? await this.prisma.cancelacionTurno.findMany({ where: { reservaId: { in: canceladas.map((row) => row.id) } } }) : []).map((fila) => [fila.reservaId, { por: fila.canceladaPor as 'cliente' | 'prestador' | 'administracion', en: fila.canceladaEn.toISOString(), tardia: fila.tardia, devolucion: fila.devolucion as 'corresponde' | 'no_reembolsable' | 'sin_pago' }]))
+    const conCancelacion = cancelaciones.size > 0 ? turnos.map((turno) => (cancelaciones.has(turno.id) ? { ...turno, cancelacion: cancelaciones.get(turno.id)! } : turno)) : turnos
+    if (!this.senas) return conCancelacion
     const [senas, pagos] = await Promise.all([this.senas.senasDe(rows), this.senas.pagosDe(rows)])
-    return turnos.map((turno) => ({ ...turno, sena: senas.get(turno.id) ?? null, pago: pagos.get(turno.id) ?? null }))
+    return conCancelacion.map((turno) => ({ ...turno, sena: senas.get(turno.id) ?? null, pago: pagos.get(turno.id) ?? null }))
+  }
+
+  /** TURNOS-CANCELACION-01: something of this turno was paid through TUS and not reversed. */
+  private async conPagoAprobado(row: FilaReserva): Promise<boolean> {
+    if (!this.senas) return false
+    return ((await this.senas.pagosDe([row])).get(row.id)?.pagado ?? 0) > 0
+  }
+
+  /**
+   * TURNOS-CANCELACION-01. An advance payment (deposit or total) is only opened once its client
+   * accepted the cancellation policy for that turno. The acceptance is stored (who, which turno,
+   * when, channel, version of the text): showing the text on a screen is not what counts.
+   */
+  private async exigirPoliticaAceptada(input: { clienteId: string; reservaId: string; tramo: 'sena' | 'total'; politica?: { version: string; canal: 'web' | 'whatsapp' } }): Promise<void> {
+    const reserva = await this.prisma.reserva.findFirst({ where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false }, select: { id: true } })
+    // (A turno that is not this client's is refused by the payment itself.)
+    if (!reserva) return
+    const clave = { reservaId_cuentaId_version: { reservaId: reserva.id, cuentaId: input.clienteId, version: VERSION_POLITICA_CANCELACION } }
+    if (await this.prisma.aceptacionPoliticaCancelacion.findUnique({ where: clave })) return
+    if (input.politica?.version !== VERSION_POLITICA_CANCELACION)
+      throw new ErrorCalendario(409, CODIGO_POLITICA_CANCELACION_REQUERIDA, textoPoliticaCancelacion(input.tramo))
+    await this.prisma.aceptacionPoliticaCancelacion.upsert({
+      where: clave,
+      update: {},
+      create: { id: `politica-${randomUUID()}`, reservaId: reserva.id, cuentaId: input.clienteId, canal: input.politica.canal, version: VERSION_POLITICA_CANCELACION, tramo: input.tramo, aceptadaEn: new Date(this.ahora()) },
+    })
+  }
+
+  /** TURNOS-CANCELACION-01: who cancelled a turno and what it means for what was paid. */
+  async cancelacionDe(reservaId: string): Promise<{ por: string; tardia: boolean; devolucion: 'corresponde' | 'no_reembolsable' | 'sin_pago' } | null> {
+    const fila = await this.prisma.cancelacionTurno.findFirst({ where: { reserva: { OR: [{ id: reservaId }, { reservaId }] } } })
+    return fila ? { por: fila.canceladaPor, tardia: fila.tardia, devolucion: fila.devolucion as 'corresponde' | 'no_reembolsable' | 'sin_pago' } : null
+  }
+
+  /** The policy this client accepted for this turno, if any (the version and when). */
+  async politicaAceptada(input: { clienteId: string; reservaId: string }): Promise<{ version: string; canal: string; aceptadaEn: string } | null> {
+    const fila = await this.prisma.aceptacionPoliticaCancelacion.findFirst({ where: { cuentaId: input.clienteId, version: VERSION_POLITICA_CANCELACION, reserva: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }] } } })
+    return fila ? { version: fila.version, canal: fila.canal, aceptadaEn: fila.aceptadaEn.toISOString() } : null
   }
 
   /**
@@ -779,6 +835,30 @@ export class ServicioTurnos {
       .catch(() => undefined)
   }
 
+  /**
+   * TURNOS-RECORDATORIOS-01: names and accounts of a turno for its reminders, read as every
+   * other notice reads them, and whether its client paid something in advance.
+   */
+  async datosDeRecordatorio(reservaId: string): Promise<{ clienteCuentaId: string; prestadorCuentaId: string | null; clienteNombre: string; prestadorNombre: string; servicio: string; conPago: boolean } | null> {
+    const row = await this.prisma.reserva.findUnique({ where: { id: reservaId } })
+    if (!row) return null
+    const [perfil, prestadorCuentaId, oficios, clientes, conPago] = await Promise.all([
+      this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: row.tenantId } }),
+      this.cuentaPrestadorId(row.tenantId),
+      this.nombresDeOficio([row]),
+      row.esInvitado ? Promise.resolve(new Map<string, { nombre: string }>()) : this.clientesDe([row]),
+      this.conPagoAprobado(row),
+    ])
+    return {
+      clienteCuentaId: row.clienteId,
+      prestadorCuentaId,
+      clienteNombre: (row.esInvitado ? row.clienteNombre : clientes.get(row.clienteId)?.nombre) ?? 'tu cliente',
+      prestadorNombre: perfil?.nombrePublico ?? 'el profesional',
+      servicio: row.tarifaNombre ?? (row.servicioId ? oficios.get(row.servicioId) : null) ?? 'el servicio',
+      conPago,
+    }
+  }
+
   private async entregarNotificacion(evento: EventoNotificacionTurno): Promise<void> {
     const row = await this.prisma.reserva.findFirst({ where: { OR: [{ id: evento.reservaId }, { reservaId: evento.reservaId }] } })
     if (!row || row.esInvitado) return
@@ -817,7 +897,11 @@ export class ServicioTurnos {
     }
     if (evento.kind === 'solicitud_respondida') {
       const [turno] = await this.agregarSenas([row], [this.mapearDetalleTurno(row, comun.prestadorNombre, { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined })])
-      const pago = evento.resultado === 'awaiting_payment' && this.senas && turno?.sena?.estado === 'pending'
+      // TURNOS-CANCELACION-01: the link travels with the notice only if this client already
+      // accepted the cancellation policy for this turno; otherwise it asks for the payment and
+      // accepts the policy first (on the Web or on WhatsApp).
+      const politica = evento.resultado === 'awaiting_payment' ? await this.politicaAceptada({ clienteId: row.clienteId, reservaId: row.id }) : null
+      const pago = politica && evento.resultado === 'awaiting_payment' && this.senas && turno?.sena?.estado === 'pending'
         ? await this.senas.enlaceAlAceptar(row, `turno-aceptado:${row.reservaId}`)
         : null
       const aviso = {
@@ -1105,22 +1189,29 @@ export class ServicioTurnos {
    * El cliente retira su solicitud o cancela su turno confirmado (solo el propio y antes de que
    * empiece). El horario vuelve a ofrecerse.
    */
-  async cancelarTurnoCliente(input: { clienteId: string; reservaId: string }): Promise<DetalleTurno> {
+  async cancelarTurnoCliente(input: { clienteId: string; reservaId: string; confirmaPerdida?: boolean; canal?: 'web' | 'whatsapp' }): Promise<DetalleTurno> {
     const reserva = await this.prisma.reserva.findFirst({
       where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false },
     })
     const calendario = reserva ? await this.prisma.calendario.findUnique({ where: { id: reserva.calendarioId } }) : null
     if (!reserva || !calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+    const pagado = await this.conPagoAprobado(reserva)
     const resultado = await this.conAgendaBloqueada(calendario, async (tx) => {
-      const ahora = new Date()
+      const ahora = new Date(this.ahora())
       const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
       if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
-      if (actual.estado === 'cancelled') return { row: actual, cambio: false }
+      if (actual.estado === 'cancelled' || actual.estado === 'cancelled-late') return { row: actual, cambio: false }
       if ((actual.estado !== 'pending' && actual.estado !== 'awaiting_payment' && actual.estado !== 'confirmed') || actual.fechaInicio.getTime() <= ahora.getTime())
         throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no se puede cancelar.')
       // A finished turno is confirmed or reported by its client, never withdrawn.
       if (await this.finalizado(tx, actual)) throw new ErrorCalendario(409, CODIGO_TRANSICION_INVALIDA, 'Ese turno ya no se puede cancelar.')
-      const row = await tx.reserva.update({ where: { id: actual.id }, data: { estado: 'cancelled', version: { increment: 1 }, fechaActualizacion: ahora } })
+      // TURNOS-CANCELACION-01. Decided here, with the server's clock at the moment of cancelling
+      // (never the moment a screen or a message was shown): 24 hours or less before the turno,
+      // what its client paid is not refundable, and that loss has to be confirmed explicitly.
+      const tardia = esCancelacionTardia(actual.fechaInicio, ahora.getTime())
+      if (tardia && pagado && input.confirmaPerdida !== true) throw new ErrorCalendario(409, CODIGO_CANCELACION_TARDIA, MENSAJE_CANCELACION_TARDIA)
+      const row = await tx.reserva.update({ where: { id: actual.id }, data: { estado: tardia && actual.estado === 'confirmed' ? 'cancelled-late' : 'cancelled', version: { increment: 1 }, fechaActualizacion: ahora } })
+      await tx.cancelacionTurno.create({ data: { reservaId: row.id, tenantId: row.tenantId, canceladaPor: 'cliente', actorId: input.clienteId, canal: input.canal ?? null, canceladaEn: ahora, turnoInicio: actual.fechaInicio, tardia: tardia && pagado, devolucion: !pagado ? 'sin_pago' : tardia ? 'no_reembolsable' : 'corresponde', politicaVersion: VERSION_POLITICA_CANCELACION } })
       await this.outboxNotificaciones.encolar(tx, {
         tenantId: row.tenantId,
         reservaId: row.id,
@@ -1139,15 +1230,18 @@ export class ServicioTurnos {
    * El cliente pide pagar la seña de SU turno aceptado: checkout de Mercado Pago de esa seña.
    * Abrirlo no paga nada: la seña figura pagada recién con la notificación verificada.
    */
-  async pagarSena(input: { clienteId: string; reservaId: string; correlationId: string }): Promise<CheckoutSenaTurnoDTO> {
+  async pagarSena(input: { clienteId: string; reservaId: string; correlationId: string; politica?: { version: string; canal: 'web' | 'whatsapp' } }): Promise<CheckoutSenaTurnoDTO> {
     if (!this.senas) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'El pago online todavía no está disponible.')
-    return this.senas.iniciarPago(input)
+    await this.exigirPoliticaAceptada({ ...input, tramo: 'sena' })
+    return this.senas.iniciarPago({ clienteId: input.clienteId, reservaId: input.reservaId, correlationId: input.correlationId })
   }
 
   /** PAGOS-MODALIDAD-01: el total de una vez (en lugar de la seña) o el saldo de SU turno. */
-  async pagarTurno(input: { clienteId: string; reservaId: string; correlationId: string; tramo: 'total' | 'saldo' }): Promise<CheckoutSenaTurnoDTO> {
+  async pagarTurno(input: { clienteId: string; reservaId: string; correlationId: string; tramo: 'total' | 'saldo'; politica?: { version: string; canal: 'web' | 'whatsapp' } }): Promise<CheckoutSenaTurnoDTO> {
     if (!this.senas) throw new ErrorCalendario(503, CODIGO_PAGO_NO_DISPONIBLE, 'El pago online todavía no está disponible.')
-    return this.senas.iniciarPagoDe(input)
+    // The balance is paid after the service: the cancellation policy is about advance payments.
+    if (input.tramo === 'total') await this.exigirPoliticaAceptada({ ...input, tramo: 'total' })
+    return this.senas.iniciarPagoDe({ clienteId: input.clienteId, reservaId: input.reservaId, correlationId: input.correlationId, tramo: input.tramo })
   }
 
   /** El estado real del pago de la seña de SU turno (lo informa Mercado Pago; nada que diga el cliente lo cambia). */
@@ -1413,6 +1507,7 @@ export class ServicioTurnos {
     }
     const nuevo = input.nuevoEstado
     if (!esEstadoTurno(nuevo)) throw new ErrorCalendario(400, 'INVALID_STATUS', 'Estado no reconocido')
+    const pagadoAntes = nuevo === 'cancelled' || nuevo === 'cancelled-late' ? await this.conPagoAprobado(reserva) : false
     const calendario = await this.prisma.calendario.findUnique({ where: { id: reserva.calendarioId } })
     if (!calendario) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
 
@@ -1444,6 +1539,14 @@ export class ServicioTurnos {
           fechaActualizacion: new Date(),
         },
       })
+      // TURNOS-CANCELACION-01: cancelled by its provider or by the administration, the penalty of
+      // the 24 hours never applies to the client: what it paid is due back.
+      if (nuevo === 'cancelled' || nuevo === 'cancelled-late')
+        await tx.cancelacionTurno.upsert({
+          where: { reservaId: row.id },
+          update: {},
+          create: { reservaId: row.id, tenantId: row.tenantId, canceladaPor: input.isAdmin ? 'administracion' : 'prestador', actorId: null, canal: null, canceladaEn: row.fechaActualizacion, turnoInicio: actual.fechaInicio, tardia: false, devolucion: pagadoAntes ? 'corresponde' : 'sin_pago', politicaVersion: VERSION_POLITICA_CANCELACION },
+        })
       if ((nuevo === 'cancelled' || nuevo === 'cancelled-late') && !row.esInvitado)
         await this.outboxNotificaciones.encolar(tx, {
           tenantId: row.tenantId,

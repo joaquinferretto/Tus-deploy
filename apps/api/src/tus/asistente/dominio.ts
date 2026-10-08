@@ -7,7 +7,8 @@ import type { ServicioDirectorio } from '../directorio/servicio.ts'
 import type { ServicioSolicitudes } from '../solicitudes/servicio.ts'
 import type { ServicioTurnos, SolicitudTurnoParaAdmin } from '../calendar/turnos-service.ts'
 import type { ServicioUrgentes } from '../urgentes/servicio.ts'
-import { etiquetaEstadoTurno, type DetalleTurno } from '@factory/contracts'
+import type { RecordatorioRespondido, ServicioRecordatoriosTurno } from '../calendar/turnos-recordatorios.ts'
+import { VERSION_POLITICA_CANCELACION, etiquetaEstadoTurno, type DetalleTurno } from '@factory/contracts'
 import { senaDePrecio } from '../calendar/turnos-sena.ts'
 
 // The assistant reaches TUS only through this port. The adapter below delegates to the SAME
@@ -156,12 +157,18 @@ export interface PuertoDominioAsistente {
   nombrePrestador(providerId: string): Promise<string | null>
   // Deposits of accepted turnos awaiting payment that the client can pay now, and the checkout of one.
   senasPendientes(context: TusAuthenticatedTenantContext): Promise<SenaPendienteAsistente[]>
-  pagarSena(context: TusAuthenticatedTenantContext, ref: string): Promise<{ url: string; amount: number }>
+  // TURNOS-CANCELACION-01: `aceptaPolitica` is the client accepting the cancellation policy on
+  // this channel (stored by the backend); without an acceptance the checkout is refused.
+  pagarSena(context: TusAuthenticatedTenantContext, ref: string, aceptaPolitica?: boolean): Promise<{ url: string; amount: number }>
   // PAGOS-MODALIDAD-01 / CIERRE-TRABAJO-01, the same backend the Web uses: the financial state of
   // the client's own turnos, the checkout of one part (deposit, total or balance), and the
   // closing of a finished turno (confirm it, or report a problem).
   pagosDeTurnos?(context: TusAuthenticatedTenantContext): Promise<PagoDeTurnoAsistente[]>
-  pagarTurno?(context: TusAuthenticatedTenantContext, ref: string, tramo: 'sena' | 'total' | 'saldo'): Promise<{ url: string; amount: number }>
+  pagarTurno?(context: TusAuthenticatedTenantContext, ref: string, tramo: 'sena' | 'total' | 'saldo', aceptaPolitica?: boolean): Promise<{ url: string; amount: number }>
+  // TURNOS-RECORDATORIOS-01: the answer to a reminder of the account's own turno, and the
+  // cancellation that may follow it (never without its explicit confirmation).
+  responderRecordatorio?(context: TusAuthenticatedTenantContext, recordatorioId: string, respuesta: 'asiste' | 'no_puede'): Promise<RecordatorioRespondido | null>
+  cancelarPorRecordatorio?(context: TusAuthenticatedTenantContext, recordatorioId: string, confirmaPerdida: boolean): Promise<(RecordatorioRespondido & { devolucion: 'corresponde' | 'no_reembolsable' | 'sin_pago' }) | null>
   confirmarTurno?(context: TusAuthenticatedTenantContext, ref: string): Promise<{ pendiente: string | null }>
   observarTurno?(context: TusAuthenticatedTenantContext, ref: string, reason: string): Promise<void>
   // Deposits of the client's own upcoming turnos that are pending or already paid, and the real
@@ -283,6 +290,7 @@ export interface ServiciosCompartidosAsistente {
   solicitudes: ServicioSolicitudes
   turnos?: ServicioTurnos
   urgentes?: ServicioUrgentes
+  recordatorios?: ServicioRecordatoriosTurno
 }
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -574,9 +582,9 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
       .map((turno) => ({ ref: turno.id, providerName: turno.prestadorNombre, service: turno.tarifaNombre ?? turno.oficioNombre ?? null, startsAt: turno.inicio, pago: turno.pago! }))
   }
 
-  async pagarTurno(context: TusAuthenticatedTenantContext, ref: string, tramo: 'sena' | 'total' | 'saldo') {
+  async pagarTurno(context: TusAuthenticatedTenantContext, ref: string, tramo: 'sena' | 'total' | 'saldo', aceptaPolitica = false) {
     if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
-    const entrada = { clienteId: context.subjectId, reservaId: ref, correlationId: context.correlationId }
+    const entrada = { clienteId: context.subjectId, reservaId: ref, correlationId: context.correlationId, ...(aceptaPolitica ? { politica: { version: VERSION_POLITICA_CANCELACION, canal: 'whatsapp' as const } } : {}) }
     const pago = tramo === 'sena' ? await this.compartidos.turnos.pagarSena(entrada) : await this.compartidos.turnos.pagarTurno({ ...entrada, tramo })
     return { url: pago.checkoutUrl, amount: pago.monto }
   }
@@ -599,11 +607,31 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     await this.application.workClosing!.observar({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId }, trabajoId, { reason })
   }
 
-  async pagarSena(context: TusAuthenticatedTenantContext, ref: string) {
+  async pagarSena(context: TusAuthenticatedTenantContext, ref: string, aceptaPolitica = false) {
     if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
     // Only a turno of that very account: another person's does not exist for it.
-    const pago = await this.compartidos.turnos.pagarSena({ clienteId: context.subjectId, reservaId: ref, correlationId: context.correlationId })
+    const pago = await this.compartidos.turnos.pagarSena({ clienteId: context.subjectId, reservaId: ref, correlationId: context.correlationId, ...(aceptaPolitica ? { politica: { version: VERSION_POLITICA_CANCELACION, canal: 'whatsapp' as const } } : {}) })
     return { url: pago.checkoutUrl, amount: pago.monto }
+  }
+
+  // TURNOS-RECORDATORIOS-01. Only a reminder sent to that very account exists for it.
+  async responderRecordatorio(context: TusAuthenticatedTenantContext, recordatorioId: string, respuesta: 'asiste' | 'no_puede') {
+    if (!this.compartidos?.recordatorios) return null
+    return this.compartidos.recordatorios.responder({ recordatorioId, cuentaId: context.subjectId, respuesta, canal: 'whatsapp' })
+  }
+
+  // The cancellation goes through the same commands as the Web: the client's own (which decides
+  // the 24 hours with the server's clock, again, at this moment) or the provider's.
+  async cancelarPorRecordatorio(context: TusAuthenticatedTenantContext, recordatorioId: string, confirmaPerdida: boolean) {
+    const turnos = this.compartidos?.turnos
+    const recordatorios = this.compartidos?.recordatorios
+    if (!turnos || !recordatorios) return null
+    const info = await recordatorios.responder({ recordatorioId, cuentaId: context.subjectId, respuesta: 'no_puede', canal: 'whatsapp' })
+    if (!info) return null
+    if (info.destinatario === 'cliente') await turnos.cancelarTurnoCliente({ clienteId: context.subjectId, reservaId: info.reservaId, confirmaPerdida, canal: 'whatsapp' })
+    else await turnos.cambiarEstadoTurno({ reservaId: info.reservaId, tenantId: info.tenantId, nuevoEstado: 'cancelled', motivo: 'el prestador avisó que no puede asistir' })
+    await recordatorios.cancelacionResultante(recordatorioId)
+    return { ...info, devolucion: (await turnos.cancelacionDe(info.reservaId))?.devolucion ?? 'sin_pago' }
   }
 
   async reservarTurno(

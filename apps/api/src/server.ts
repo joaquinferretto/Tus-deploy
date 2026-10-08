@@ -31,6 +31,7 @@ import { PrismaTrabajoStore } from './tus/adapters/prisma-work.ts'
 import type { ClientePrismaSolicitudes } from './tus/solicitudes/almacenes.ts'
 import { crearServicioDirectorio } from './tus/directorio/composicion.ts'
 import { crearRouterDirectorio } from './tus/directorio/http.ts'
+import { ServicioRecordatoriosTurno } from './tus/calendar/turnos-recordatorios.ts'
 import { ServicioTurnos } from './tus/calendar/turnos-service.ts'
 import { crearRouterTurnos } from './tus/calendar/turnos-http.ts'
 import { crearRouterCierres } from './tus/work/cierre-http.ts'
@@ -197,6 +198,10 @@ export function createApp(options: CreateAppOptions = {}): Application {
     finalizado: async (trabajo) => { if (trabajo.origin === 'turno' && trabajo.reservaId) await servicioTurnos.avisarCierreDe({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId, kind: 'turno_finalizado' }) },
     confirmado: async (trabajo, pagos) => { if (trabajo.origin === 'turno' && trabajo.reservaId && pagos?.pending === 'not_fully_paid') await servicioTurnos.avisarCierreDe({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId, kind: 'saldo_habilitado' }) },
   })
+  // TURNOS-RECORDATORIOS-01: reminders of confirmed turnos (24 and 2 hours before), computed and
+  // sent by a sweep over PostgreSQL; its channel is wired below, once WhatsApp exists.
+  const recordatorios = new ServicioRecordatoriosTurno(prisma as unknown as PrismaClient, (reservaId) => servicioTurnos.datosDeRecordatorio(reservaId), null)
+  app.locals['tusRecordatorios'] = recordatorios
   // TURNOS-SENA-01: the deposit of an accepted turno awaiting payment is charged through the same work and finance
   // services as every other payment (no parallel Mercado Pago integration).
   servicioTurnos.conSenas(new ServicioSenaTurnos(prisma as unknown as PrismaClient, pagosSenaDeAplicacion(application)))
@@ -204,7 +209,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
   const perfiles = new ServicioPerfil(new AlmacenPerfilPrisma(prisma as unknown as ClientePrismaPerfil))
   const whatsapp = options.tusRouter
     ? undefined
-    : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes, turnos: servicioTurnos, urgentes }, telefonos)
+    : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes, turnos: servicioTurnos, urgentes, recordatorios }, telefonos)
   const tusRouter = options.tusRouter ?? createTusHttpRouter({ application, sessions, whatsapp, onTurnoConfirmed: (trabajoId) => servicioTurnos.avisarTurnoConfirmado(trabajoId) })
   if (whatsapp) app.locals['tusWhatsappAssistant'] = whatsapp
   // The client that asked for a turno from WhatsApp hears the provider's answer there too (with
@@ -212,6 +217,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
   if (whatsapp) servicioTurnos.agregarNotificador(whatsapp.avisosTurnos)
   // The providers of an urgent request are told on WhatsApp, through the same notifier rules.
   if (whatsapp) urgentes.conNotificador(whatsapp.avisosUrgentes)
+  if (whatsapp) recordatorios.conCanal(whatsapp.avisosRecordatorios)
 
   // Security middleware
   app.use(correlationMiddleware)
@@ -459,6 +465,26 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       confirmaciones.unref()
       lifecycle.register('work-closing-sweep', async () => {
         clearInterval(confirmaciones)
+      })
+    }
+    // TURNOS-RECORDATORIOS-01: what is due is in PostgreSQL (programado_para); this only wakes up
+    // to look. Any process may do it and a restart neither repeats nor forgets a reminder.
+    const recordatoriosVivos = app.locals['tusRecordatorios'] as { procesar(): Promise<unknown> } | undefined
+    if (recordatoriosVivos) {
+      let recordando = false
+      const recordar = setInterval(() => {
+        if (recordando) return
+        recordando = true
+        void recordatoriosVivos
+          .procesar()
+          .catch((error: unknown) => logger.error('turno reminder sweep failed', { details: { error: error instanceof Error ? error.name : 'unknown' } }))
+          .finally(() => {
+            recordando = false
+          })
+      }, 60_000)
+      recordar.unref()
+      lifecycle.register('turno-reminder-sweep', async () => {
+        clearInterval(recordar)
       })
     }
     const urgentesVivos = app.locals['tusUrgentes'] as { procesarVencidas(): Promise<number> } | undefined

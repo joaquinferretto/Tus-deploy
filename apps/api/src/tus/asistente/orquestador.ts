@@ -3,7 +3,8 @@ import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './conocimiento.ts'
 import { DIAS_BUSQUEDA_PRIMERA, DIAS_LISTADOS, DIAS_PANORAMA, DIAS_TRAMO_MAXIMO, PIDE_DIAS, PIDE_HORARIOS, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, diasDe, elegirOferta, horaLocal, horasDe, listaDeOpciones, ofertasDePanorama, ofertasDeResultado, personasDe, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDias, textoDisponibilidad, textoPanorama, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type DiaDisponible, type OfertasMostradas } from './busqueda.ts'
 import { oficio } from '../directorio/oficios.ts'
-import { CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, formatearPesos } from '@factory/contracts'
+import { CODIGO_CANCELACION_TARDIA, CODIGO_POLITICA_CANCELACION_REQUERIDA, CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, MENSAJE_CANCELACION_TARDIA, esCancelacionTardia, formatearPesos, textoPoliticaCancelacion } from '@factory/contracts'
+import { idRecordatorio, leerRecordatorio } from '../calendar/turnos-recordatorios.ts'
 import { leerCierreTurno, leerRespuestaTurno } from './avisos-turnos.ts'
 import { esRenuncia, leerRespuestaUrgente, leerUrgente } from './urgente-texto.ts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
@@ -733,6 +734,10 @@ export class OrquestadorConversacion {
       const cierre = await this.pagoOCierreDeTurno(turn, actor, input, correlationId)
       if (cierre) return cierre
     }
+    // TURNOS-CANCELACION-01 / TURNOS-RECORDATORIOS-01, also before the conversation: the buttons
+    // of the cancellation policy (accept and pay, or go back) and of a reminder of a turno.
+    const recordatorio = await this.politicaORecordatorio(turn, actor, input, correlationId)
+    if (recordatorio) return recordatorio
     // SERVICIO-URGENTE-01, also before the conversation: a provider answering an urgent request
     // (a button, or "no puedo ir" from the one assigned to it) and a client asking for one.
     const urgente = (await this.respuestaAUrgente(turn, actor, input, correlationId)) ?? (await this.pedidoUrgente(turn, actor, input, correlationId))
@@ -1984,6 +1989,58 @@ export class OrquestadorConversacion {
   // whether it can go; WHO answers is the account linked to this number. "No puedo ir" written by
   // the provider currently assigned to one (within the last day) gives that assignment back: it
   // is not a rejection of a pending offer, and it needs no exact phrase.
+  // TURNOS-CANCELACION-01 / TURNOS-RECORDATORIOS-01. Buttons only (no language model): accepting
+  // the cancellation policy before a payment link, and answering a reminder of a turno. "No puedo
+  // asistir" cancels nothing: it asks, and the backend decides the 24 hours again when the
+  // cancellation is confirmed (never with the moment the message was shown).
+  private async politicaORecordatorio(turn: Turno, actor: ActorAsistente, input: { replyId: string | null }, _correlationId: string): Promise<MensajeSaliente[] | null> {
+    const politica = leerPolitica(input.replyId)
+    const boton = leerRecordatorio(input.replyId)
+    if (!politica && !boton) return null
+    const domain = this.deps.domain
+    const cuenta = cuentaDeSolicitud(actor)
+    if (!cuenta) return [{ type: 'text', text: 'Para eso necesito que este número esté vinculado a tu cuenta de TUS. Podés hacerlo desde "Mis turnos" en la Web.' }]
+    if (politica) {
+      turn.intencion = 'pago'
+      if (politica.accion === 'volver') return [{ type: 'text', text: 'Listo, no abrí ningún pago. Cuando quieras pagar, escribime "pagar la seña" o "pagar total".' }]
+      if (typeof domain.pagarTurno !== 'function') return null
+      try {
+        const pago = await domain.pagarTurno(cuenta, politica.ref, politica.tramo, true)
+        return [{ type: 'cta_url', text: `${politica.tramo === 'total' ? 'Pago total' : 'Seña'}: ${formatearPesos(pago.amount)}. El pago se acredita cuando Mercado Pago lo aprueba.`, label: politica.tramo === 'total' ? 'Pagar total' : 'Pagar seña', url: pago.url }]
+      } catch {
+        return [{ type: 'text', text: 'No pude generar el link de pago en este momento. Probá de nuevo en unos minutos o hacelo desde "Mis turnos".' }]
+      }
+    }
+    if (!boton || typeof domain.responderRecordatorio !== 'function' || typeof domain.cancelarPorRecordatorio !== 'function') return null
+    turn.intencion = 'reserva'
+    if (boton.accion === 'volver') return [{ type: 'text', text: 'Listo, no cancelé nada: tu turno sigue en pie.' }]
+    const cual = (t: { servicio: string; contraparte: string; inicio: Date }) => `tu turno de ${t.servicio} con ${t.contraparte} del ${fechaLarga(t.inicio)} a las ${horaCorta(t.inicio)}`
+    const confirmar = (texto: string, accion: 'cancelar' | 'cancelar-perdida'): MensajeSaliente => ({ type: 'buttons', text: texto, buttons: [{ id: idRecordatorio(accion, boton.recordatorioId), title: 'Sí, cancelar turno' }, { id: idRecordatorio('volver', boton.recordatorioId), title: 'Volver' }] })
+    const ajeno: MensajeSaliente[] = [{ type: 'text', text: 'No encontré ese turno entre los tuyos.' }]
+    if (boton.accion === 'asiste' || boton.accion === 'nopuede') {
+      const info = await domain.responderRecordatorio(cuenta, boton.recordatorioId, boton.accion === 'asiste' ? 'asiste' : 'no_puede').catch(() => null)
+      if (!info) return ajeno
+      if (info.turnoEstado !== 'confirmed') return [{ type: 'text', text: 'Ese turno ya no está confirmado, así que no hace falta responder.' }]
+      if (boton.accion === 'asiste') return [{ type: 'text', text: `¡Gracias! Quedó registrado que asistís a ${cual(info)}.` }]
+      if (info.destinatario === 'prestador') return [confirmar(`¿Querés cancelar ${cual(info)}? Se le avisa al cliente${info.conPago ? ' y corresponde devolverle lo que pagó' : ''}.`, 'cancelar')]
+      // The loss of the deposit is only ever the client's, and only inside the 24 hours.
+      if (info.conPago && esCancelacionTardia(info.inicio, this.now())) return [confirmar(MENSAJE_CANCELACION_TARDIA, 'cancelar-perdida')]
+      return [confirmar(`¿Querés cancelar ${cual(info)}?${info.conPago ? ' Como faltan más de 24 horas, corresponde la devolución de lo que pagaste.' : ''}`, 'cancelar')]
+    }
+    try {
+      const hecho = await domain.cancelarPorRecordatorio(cuenta, boton.recordatorioId, boton.accion === 'cancelar-perdida')
+      if (!hecho) return ajeno
+      const cierre = hecho.devolucion === 'no_reembolsable' ? ' Como faltaban 24 horas o menos, la seña no se reembolsa.'
+        : hecho.devolucion === 'corresponde' ? (hecho.destinatario === 'cliente' ? ' Te corresponde la devolución de lo que pagaste: TUS la procesa y te avisa.' : ' Al cliente le corresponde la devolución de lo que pagó: la procesa TUS.')
+        : ''
+      return [{ type: 'text', text: `Listo, cancelé ${cual(hecho)}.${cierre}` }]
+    } catch (error) {
+      // The time ran into the last 24 hours since the question was shown: the loss is confirmed first.
+      if ((error as { code?: unknown } | null)?.code === CODIGO_CANCELACION_TARDIA) return [confirmar(MENSAJE_CANCELACION_TARDIA, 'cancelar-perdida')]
+      return [{ type: 'text', text: 'Ese turno ya no se puede cancelar desde acá. Podés verlo en "Mis turnos".' }]
+    }
+  }
+
   private async respuestaAUrgente(turn: Turno, actor: ActorAsistente, input: { text: string; replyId: string | null }, correlationId: string): Promise<MensajeSaliente[] | null> {
     if (turn.canal.id !== 'whatsapp') return null
     const domain = this.deps.domain
@@ -2389,6 +2446,8 @@ export class OrquestadorConversacion {
         const pago = await domain.pagarTurno!(cuenta, ref, tramo)
         return { type: 'cta_url', text: `${tramo === 'total' ? 'Pago total' : 'Saldo'} de ${de}: ${formatearPesos(pago.amount)}. El pago se acredita cuando Mercado Pago lo aprueba.`, label: tramo === 'total' ? 'Pagar total' : 'Pagar saldo', url: pago.url }
       } catch (error) {
+        // TURNOS-CANCELACION-01: an advance payment needs the cancellation policy accepted first.
+        if ((error as { code?: unknown } | null)?.code === CODIGO_POLITICA_CANCELACION_REQUERIDA && tramo === 'total') return pedirPolitica(ref, 'total', `Pago total de ${de}.`)
         return { type: 'text', text: errorDe(error) }
       }
     }
@@ -2489,8 +2548,10 @@ export class OrquestadorConversacion {
         const pago = await this.deps.domain.pagarSena(cuenta, sena.ref)
         mensajes.push({ type: 'cta_url', text: `Seña de ${turno}: ${formatearPesos(pago.amount)}. El pago se acredita cuando Mercado Pago lo aprueba.`, label: 'Pagar seña', url: pago.url })
         linkEnviado = true
-      } catch {
-        mensajes.push({ type: 'text', text: `No pude generar ahora el link de pago de la seña de ${turno}. Probá de nuevo en unos minutos.` })
+      } catch (error) {
+        // TURNOS-CANCELACION-01: the deposit is only opened once the cancellation policy was accepted.
+        if ((error as { code?: unknown } | null)?.code === CODIGO_POLITICA_CANCELACION_REQUERIDA) mensajes.push(pedirPolitica(sena.ref, 'sena', `Seña de ${turno}.`))
+        else mensajes.push({ type: 'text', text: `No pude generar ahora el link de pago de la seña de ${turno}. Probá de nuevo en unos minutos.` })
       }
     }
     // A receipt that comes next is about this payment.
@@ -4155,3 +4216,15 @@ export function herramientasDisponibles(): string[] {
 }
 
 export { buscarHerramienta }
+
+// TURNOS-CANCELACION-01. Before the link of an advance payment: the cancellation policy and the
+// two answers. What the buttons carry is which turno and which way of paying; the acceptance is
+// stored by the backend for the account linked to the number.
+export const idPolitica = (accion: 'aceptar' | 'volver', tramo: 'sena' | 'total', ref: string): string => `politica:${accion}:${tramo}:${ref}`
+export function leerPolitica(replyId: string | null | undefined): { accion: 'aceptar' | 'volver'; tramo: 'sena' | 'total'; ref: string } | null {
+  const partes = /^politica:(aceptar|volver):(sena|total):([A-Za-z0-9._:-]{3,160})$/u.exec(replyId ?? '')
+  return partes ? { accion: partes[1] as 'aceptar' | 'volver', tramo: partes[2] as 'sena' | 'total', ref: partes[3]! } : null
+}
+export function pedirPolitica(ref: string, tramo: 'sena' | 'total', que: string): MensajeSaliente {
+  return { type: 'buttons', text: `${que} ${textoPoliticaCancelacion(tramo)} ¿Aceptás y seguimos con el pago?`, buttons: [{ id: idPolitica('aceptar', tramo, ref), title: 'Aceptar y pagar' }, { id: idPolitica('volver', tramo, ref), title: 'Volver' }] }
+}

@@ -37,6 +37,8 @@ export function mensajeErrorTurno(code: string | undefined, fallback = 'No pudim
   if (code === CODIGO_PAGO_NO_DISPONIBLE) return 'El pago online todavía no está disponible para ese profesional. Coordiná la seña directamente con él.'
   if (code === CODIGO_SENA_YA_EMITIDA) return 'Ese turno ya tiene su seña emitida: el precio no se puede modificar.'
   if (code === CODIGO_SERVICIO_A_PRESUPUESTAR) return MENSAJE_SERVICIO_A_PRESUPUESTAR
+  if (code === CODIGO_CANCELACION_TARDIA) return MENSAJE_CANCELACION_TARDIA
+  if (code === CODIGO_POLITICA_CANCELACION_REQUERIDA) return TEXTO_POLITICA_CANCELACION
   // PAGOS-MODALIDAD-01 / CIERRE-TRABAJO-01.
   if (code === 'PAYMENT_MODALITY_FIXED') return 'Ya hay un pago aprobado para este turno: la forma de pago no se puede cambiar.'
   if (code === 'ALREADY_PAID') return 'Ese turno ya está pagado por completo.'
@@ -346,6 +348,30 @@ export interface AgendaSemanal {
 }
 
 export type ModalidadCobroServicio = 'precio_fijo' | 'a_presupuestar'
+
+// TURNOS-CANCELACION-01. The cancellation policy of a turno paid in advance. The backend decides
+// with its own clock; the Web and WhatsApp only show these texts and send back the version shown.
+//   * the client cancels MORE than 24 hours before the turno: what it paid can be refunded;
+//   * the client cancels 24 hours or less before it (exactly 24 hours included): not refundable;
+//   * the provider (or the administration) cancels: the penalty never applies to the client.
+export const VERSION_POLITICA_CANCELACION = '2026-10-v1'
+export const VENTANA_CANCELACION_MS = 24 * 60 * 60 * 1000
+export const esCancelacionTardia = (inicio: string | number | Date, ahora: number): boolean => new Date(inicio).getTime() - ahora <= VENTANA_CANCELACION_MS
+export const TEXTO_POLITICA_CANCELACION = 'La seña reserva tu turno. Si cancelás con 24 horas o menos de anticipación, la seña no es reembolsable.'
+export const TEXTO_POLITICA_CANCELACION_TOTAL = 'El pago reserva tu turno. Si cancelás con 24 horas o menos de anticipación, no se te devolverá ningún monto de lo abonado.'
+export const textoPoliticaCancelacion = (tramo: 'sena' | 'total'): string => (tramo === 'total' ? TEXTO_POLITICA_CANCELACION_TOTAL : TEXTO_POLITICA_CANCELACION)
+// The checkout of an advance payment was asked without the policy accepted for that turno.
+export const CODIGO_POLITICA_CANCELACION_REQUERIDA = 'CANCELLATION_POLICY_ACCEPTANCE_REQUIRED'
+// The client asked to cancel inside the 24 hours with something paid, without confirming the loss.
+export const CODIGO_CANCELACION_TARDIA = 'LATE_CANCELLATION_CONFIRMATION_REQUIRED'
+export const MENSAJE_CANCELACION_TARDIA = 'Este turno comienza dentro de las próximas 24 horas. Si cancelás ahora, la seña no será reembolsada. ¿Querés continuar?'
+export type DevolucionCancelacion = 'corresponde' | 'no_reembolsable' | 'sin_pago'
+export interface CancelacionTurnoDTO {
+  por: 'cliente' | 'prestador' | 'administracion'
+  en: string
+  tardia: boolean
+  devolucion: DevolucionCancelacion
+}
 // A turno was asked for a service whose price comes from a budget: the way is a request.
 export const CODIGO_SERVICIO_A_PRESUPUESTAR = 'SERVICE_REQUIRES_BUDGET'
 export const MENSAJE_SERVICIO_A_PRESUPUESTAR = 'Este servicio no tiene un precio fijo: se presupuesta. Enviale una solicitud al profesional contándole qué necesitás y te pasa un presupuesto.'

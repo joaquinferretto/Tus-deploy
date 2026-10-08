@@ -55,6 +55,42 @@ export const PLANTILLAS_WHATSAPP: DefinicionPlantilla[] = [
     buttons: ['Continuar atención'],
     manual: true,
   },
+  // TURNOS-RECORDATORIOS-01: a scheduled reminder is usually outside the 24 hour window, so it
+  // travels as a template. The client's pair mentions the deposit (TURNOS-CANCELACION-01); the
+  // provider has its own pair, which never does. The quick replies come back with the payload TUS
+  // sent (which reminder, attends or cannot attend).
+  {
+    name: 'turno_recordatorio_24h',
+    category: 'UTILITY',
+    language: 'es_AR',
+    parameters: ['nombre', 'servicio', 'fecha', 'hora', 'contraparte'],
+    body: 'Hola, {{1}}. Te recordamos que mañana tenés un turno de {{2}} el {{3}} a las {{4}} con {{5}}. Como se informó al reservar, desde este momento la seña no es reembolsable si cancelás el turno.',
+    buttons: ['Confirmar asistencia', 'No puedo asistir'],
+  },
+  {
+    name: 'turno_recordatorio_2h',
+    category: 'UTILITY',
+    language: 'es_AR',
+    parameters: ['nombre', 'servicio', 'hora', 'contraparte'],
+    body: 'Hola, {{1}}. Te recordamos que tu turno de {{2}} es hoy a las {{3}} con {{4}}. Si cancelás ahora, la seña abonada no es reembolsable.',
+    buttons: ['Confirmar asistencia', 'No puedo asistir'],
+  },
+  {
+    name: 'turno_recordatorio_24h_prestador',
+    category: 'UTILITY',
+    language: 'es_AR',
+    parameters: ['nombre', 'servicio', 'fecha', 'hora', 'contraparte'],
+    body: 'Hola, {{1}}. Te recordamos que mañana tenés un turno de {{2}} el {{3}} a las {{4}} con {{5}}.',
+    buttons: ['Confirmar asistencia', 'No puedo asistir'],
+  },
+  {
+    name: 'turno_recordatorio_2h_prestador',
+    category: 'UTILITY',
+    language: 'es_AR',
+    parameters: ['nombre', 'servicio', 'hora', 'contraparte'],
+    body: 'Hola, {{1}}. Te recordamos que tu turno de {{2}} es hoy a las {{3}} con {{4}}.',
+    buttons: ['Confirmar asistencia', 'No puedo asistir'],
+  },
   { name: 'payment_available', category: 'UTILITY', language: 'es_AR', parameters: ['servicio'], body: 'Tu servicio {{1}} está listo para pagar en TUS.' },
 ]
 

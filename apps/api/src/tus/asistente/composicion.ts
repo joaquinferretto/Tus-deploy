@@ -22,6 +22,7 @@ import {
   type PuertoIndiceConocimiento,
 } from './conocimiento.ts'
 import { NotificadorTurnosWhatsapp } from './avisos-turnos.ts'
+import { NotificadorRecordatoriosWhatsapp } from './avisos-recordatorios.ts'
 import { NotificadorUrgentesWhatsapp } from './avisos-urgentes.ts'
 import { DominioAsistenteTus, type PuertoDominioAsistente, type ServiciosCompartidosAsistente } from './dominio.ts'
 import { ServicioIdentificacionCliente, type PuertoCuentasPorDocumento } from './identificacion.ts'
@@ -163,6 +164,8 @@ export interface ModuloWhatsapp {
   avisosTurnos: NotificadorTurnosWhatsapp
   // SERVICIO-URGENTE-01: the notices of urgent requests, through the same rules.
   avisosUrgentes: NotificadorUrgentesWhatsapp
+  // TURNOS-RECORDATORIOS-01: the reminders of a turno, through the same rules.
+  avisosRecordatorios: NotificadorRecordatoriosWhatsapp
   platformAdminTenantId: string | null
   crearWorker(options?: {
     owner?: string
@@ -356,6 +359,7 @@ export function crearModuloWhatsapp(input: {
     }),
     avisosTurnos: new NotificadorTurnosWhatsapp(input.transaction, whatsapp, now, metric, WhatsappTemplateService.desdeEnv(env)),
     avisosUrgentes: new NotificadorUrgentesWhatsapp(input.transaction, whatsapp, now, metric, WhatsappTemplateService.desdeEnv(env)),
+    avisosRecordatorios: new NotificadorRecordatoriosWhatsapp(input.transaction, whatsapp, now, metric, WhatsappTemplateService.desdeEnv(env)),
     platformAdminTenantId: env['TUS_PLATFORM_ADMIN_TENANT_ID']?.trim() || null,
     crearWorker: (options = {}) =>
       new WorkerConversacionesWhatsapp(input.transaction, orquestador, { now, mantenimiento: () => cicloDeVida.depurar(), ...options }),

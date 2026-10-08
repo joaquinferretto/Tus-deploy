@@ -191,7 +191,12 @@ export function crearRouterTurnos({
       const context = await autenticar(request, response, sessions)
       if (!context) return
       try {
-        response.status(200).json(await servicio.cancelarTurnoCliente({ clienteId: context.subjectId, reservaId: String(request.params['id'] ?? '') }))
+        // TURNOS-CANCELACION-01: the only thing the body may carry is the explicit confirmation of
+        // losing what was paid; whether it applies is decided by the backend with its own clock.
+        const cuerpo = comoRegistro(request.body)
+        const ajenos = Object.keys(cuerpo).filter((campo) => campo !== 'confirmaPerdida')
+        if (ajenos.length > 0 || (cuerpo['confirmaPerdida'] !== undefined && typeof cuerpo['confirmaPerdida'] !== 'boolean')) return void response.status(400).json({ code: 'INVALID_PARAMS', error: 'Solo se admite confirmaPerdida (verdadero o falso).', fields: ajenos.length > 0 ? ajenos : ['confirmaPerdida'] })
+        response.status(200).json(await servicio.cancelarTurnoCliente({ clienteId: context.subjectId, reservaId: String(request.params['id'] ?? ''), confirmaPerdida: cuerpo['confirmaPerdida'] === true, canal: 'web' }))
       } catch (error) {
         manejarError(response, error)
       }
@@ -208,11 +213,14 @@ export function crearRouterTurnos({
       const context = await autenticar(request, response, sessions)
       if (!context) return
       response.setHeader('cache-control', 'private, no-store')
-      if (Object.keys(comoRegistro(request.body)).length > 0) {
+      // TURNOS-CANCELACION-01: besides nothing, only the version of the cancellation policy the
+      // client accepted (the backend stores the acceptance and refuses the checkout without it).
+      const cuerpoSena = comoRegistro(request.body)
+      if (Object.keys(cuerpoSena).some((campo) => campo !== 'aceptaPolitica') || (cuerpoSena['aceptaPolitica'] !== undefined && typeof cuerpoSena['aceptaPolitica'] !== 'string')) {
         return void enviarError(response, 400, 'UNTRUSTED_PAYMENT_FIELDS', 'El importe y los datos del pago los determina TUS.')
       }
       try {
-        response.status(200).json(await servicio.pagarSena({ clienteId: context.subjectId, reservaId: String(request.params['id'] ?? ''), correlationId: context.correlationId }))
+        response.status(200).json(await servicio.pagarSena({ clienteId: context.subjectId, reservaId: String(request.params['id'] ?? ''), correlationId: context.correlationId, ...(typeof cuerpoSena['aceptaPolitica'] === 'string' ? { politica: { version: cuerpoSena['aceptaPolitica'], canal: 'web' as const } } : {}) }))
       } catch (error) {
         manejarError(response, error)
       }
@@ -231,13 +239,15 @@ export function crearRouterTurnos({
       if (!context) return
       response.setHeader('cache-control', 'private, no-store')
       const body = comoRegistro(request.body)
-      const ajenos = Object.keys(body).filter((campo) => campo !== 'tramo')
-      if (ajenos.length > 0) return void response.status(400).json({ code: 'UNTRUSTED_PAYMENT_FIELDS', error: 'El importe y los datos del pago los determina TUS.', fields: ajenos })
+      // (TURNOS-CANCELACION-01: and the version of the cancellation policy the client accepted.)
+      const ajenos = Object.keys(body).filter((campo) => campo !== 'tramo' && campo !== 'aceptaPolitica')
+      if (ajenos.length > 0 || (body['aceptaPolitica'] !== undefined && typeof body['aceptaPolitica'] !== 'string')) return void response.status(400).json({ code: 'UNTRUSTED_PAYMENT_FIELDS', error: 'El importe y los datos del pago los determina TUS.', fields: ajenos.length > 0 ? ajenos : ['aceptaPolitica'] })
+      const politica = typeof body['aceptaPolitica'] === 'string' ? { politica: { version: body['aceptaPolitica'], canal: 'web' as const } } : {}
       const tramo = body['tramo'] ?? 'sena'
       if (tramo !== 'sena' && tramo !== 'total' && tramo !== 'saldo') return void response.status(400).json({ code: 'INVALID_PARAMS', error: 'tramo debe ser sena, total o saldo', fields: ['tramo'] })
       const entrada = { clienteId: context.subjectId, reservaId: String(request.params['id'] ?? ''), correlationId: context.correlationId }
       try {
-        const checkout = tramo === 'sena' ? await servicio.pagarSena(entrada) : await servicio.pagarTurno({ ...entrada, tramo })
+        const checkout = tramo === 'sena' ? await servicio.pagarSena({ ...entrada, ...politica }) : await servicio.pagarTurno({ ...entrada, tramo, ...politica })
         response.status(200).json({ ...checkout, tramo })
       } catch (error) {
         manejarError(response, error)

@@ -2199,6 +2199,9 @@ model Reserva {
   calendario  Calendario   @relation(fields: [tenantId, calendarioId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_calendarios")
   publicacion Publicacion? @relation(fields: [tenantId, publicacionId], references: [tenantId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservas_publicaciones")
   trabajos    Trabajo[]
+  recordatorios RecordatorioTurno[]
+  aceptacionesPolitica AceptacionPoliticaCancelacion[]
+  cancelacion CancelacionTurno?
 
   @@unique([tenantId, reservaId], map: "uq_reservas_tenant_reserva")
   @@index([tenantId, calendarioId, fechaInicio, fechaFin], map: "idx_reservas_tenant_calendario_franja")
@@ -3909,4 +3912,70 @@ model ItemSolicitudLiquidacion {
 
   @@unique([prestadorTenantId, solicitudId, movimientoId], map: "uq_items_solicitud_liquidacion_solicitud_movimiento")
   @@map("items_solicitud_liquidacion")
+}
+
+// TURNOS-RECORDATORIOS-01: a reminder of a confirmed turno for one recipient and one kind,
+// computed for one start instant. CHECKs and the partial index live in SQL.
+model RecordatorioTurno {
+  id                 String    @id(map: "recordatorios_turno_pkey")
+  tenantId           String    @map("tenant_id")
+  reservaId          String    @map("reserva_id")
+  destinatario       String    @map("destinatario")
+  tipo               String    @map("tipo")
+  turnoInicio        DateTime  @map("turno_inicio")
+  programadoPara     DateTime  @map("programado_para")
+  estado             String    @map("estado")
+  motivo             String?   @map("motivo")
+  reclamadoEn        DateTime? @map("reclamado_en")
+  via                String?   @map("via")
+  plantilla          String?   @map("plantilla")
+  wamid              String?   @map("wamid")
+  enviadoEn          DateTime? @map("enviado_en")
+  respuesta          String?   @map("respuesta")
+  respuestaEn        DateTime? @map("respuesta_en")
+  respuestaActor     String?   @map("respuesta_actor")
+  respuestaCanal     String?   @map("respuesta_canal")
+  cancelacion        Boolean   @default(false) @map("cancelacion")
+  fechaCreacion      DateTime  @map("fecha_creacion")
+  fechaActualizacion DateTime  @map("fecha_actualizacion")
+
+  reserva Reserva @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_recordatorios_turno_reserva")
+
+  @@unique([reservaId, destinatario, tipo, turnoInicio], map: "uq_recordatorios_turno")
+  @@index([programadoPara], map: "ix_recordatorios_turno_pendientes")
+  @@map("recordatorios_turno")
+}
+
+// TURNOS-CANCELACION-01: the client accepted the cancellation policy before paying in advance.
+model AceptacionPoliticaCancelacion {
+  id         String   @id(map: "aceptaciones_politica_cancelacion_pkey")
+  reservaId  String   @map("reserva_id")
+  cuentaId   String   @map("cuenta_id")
+  canal      String   @map("canal")
+  version    String   @map("version")
+  tramo      String   @map("tramo")
+  aceptadaEn DateTime @map("aceptada_en")
+
+  reserva Reserva @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_aceptaciones_politica_reserva")
+
+  @@unique([reservaId, cuentaId, version], map: "uq_aceptaciones_politica")
+  @@map("aceptaciones_politica_cancelacion")
+}
+
+// TURNOS-CANCELACION-01: who cancelled a turno and what it means for what was paid.
+model CancelacionTurno {
+  reservaId       String   @id(map: "cancelaciones_turno_pkey") @map("reserva_id")
+  tenantId        String   @map("tenant_id")
+  canceladaPor    String   @map("cancelada_por")
+  actorId         String?  @map("actor_id")
+  canal           String?  @map("canal")
+  canceladaEn     DateTime @map("cancelada_en")
+  turnoInicio     DateTime @map("turno_inicio")
+  tardia          Boolean  @map("tardia")
+  devolucion      String   @map("devolucion")
+  politicaVersion String   @map("politica_version")
+
+  reserva Reserva @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_cancelaciones_turno_reserva")
+
+  @@map("cancelaciones_turno")
 }

@@ -93,6 +93,7 @@ export const turnosPagosSetup = (url) => `
   const sqlError = async (sql, params = []) => { try { await db.query(sql, params); return 'ok' } catch (e) { return e.constraint ?? (String(e.message).includes('append-only') ? 'append-only' : e.code) } }
   // Mercado Pago retries a notification TUS answered with an error (here: a serialization retry).
   const ingerir = async (notice) => { for (let i = 0; ; i += 1) { try { return await fin.ingerirEventoProveedor(notice) } catch (e) { if (e?.code !== 'CONCURRENT_MODIFICATION' || i >= 5) throw e } } }
+  const POLITICA = { version: (await import('./packages/contracts/src/tus-turnos.ts')).VERSION_POLITICA_CANCELACION, canal: 'web' }
   // A client requests a turno, the provider accepts, the client opens the deposit checkout.
   async function turnoConCheckout(p, cuenta, indice, hora, variante) {
     const pedido = await turnos.solicitarTurno({ prestadorId: p.perfilId, oficioId: oficio.id, inicio: a(indice, hora), tarifaId: p.tarifas[variante], clienteId: cuenta.id, clienteTenantId: cuenta.tenantId })
@@ -101,7 +102,8 @@ export const turnosPagosSetup = (url) => `
     // prepared the client is told to retry in a few seconds, as the Web does.
     let checkout = null
     for (let i = 0; !checkout; i += 1) {
-      try { checkout = await turnos.pagarSena({ clienteId: cuenta.id, reservaId: pedido.id, correlationId: 'c' }) } catch (e) { if (e?.code !== 'IN_PROGRESS' || i >= 40) throw e; await new Promise((resolve) => setTimeout(resolve, 250)) }
+      // (TURNOS-CANCELACION-01: the client accepts the cancellation policy when it asks to pay.)
+      try { checkout = await turnos.pagarSena({ clienteId: cuenta.id, reservaId: pedido.id, correlationId: 'c', politica: POLITICA }) } catch (e) { if (e?.code !== 'IN_PROGRESS' || i >= 40) throw e; await new Promise((resolve) => setTimeout(resolve, 250)) }
     }
     const trabajo = await prisma.trabajo.findFirst({ where: { origen: 'turno', reservaId: pedido.reservaId } })
     const obligacion = await prisma.obligacionPagoServicio.findFirst({ where: { trabajoId: trabajo.trabajoId, tramo: 'sena' } })
