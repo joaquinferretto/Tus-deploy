@@ -135,9 +135,12 @@ test('payment query on PostgreSQL: approved before the webhook, pending, missing
   assert.deepEqual(r.rechazado, [['not_approved', false, 'rejected'], 'awaiting_payment'])
   assert.equal(r.sinGananciaPorEso, true, 'no mismatching, foreign or rejected payment created an earning')
   assert.deepEqual(r.ajeno, ['NOT_FOUND', 'awaiting_payment', ['approved', true, null], 'confirmed'], 'another client cannot query or apply it; its owner can')
-  assert.equal(r.modo10, 'split')
-  assert.deepEqual(r.split, [['approved', true, null], 'confirmed', [], ['approved', 'split']], 'Split 1:1: confirmed, no earning in TUS')
-  assert.deepEqual(r.splitEnPlataforma, [['not_found', false, 'provider_has_no_payment'], 'awaiting_payment', []])
+  // PAGOS-RETENCION-01: a deposit is an advance payment, so TUS collects it with its own account even
+  // for a provider with a linked one (before: Split 1:1, paid straight to the provider).
+  assert.equal(r.modo10, 'plataforma')
+  assert.deepEqual(r.split, [['approved', true, null], 'confirmed', [['earning_credit', '1350000']], ['approved', 'plataforma']], 'provider with its own account: confirmed, the earning is booked in TUS')
+  // The payment in the account of TUS is now the expected one for that provider too.
+  assert.deepEqual(r.splitEnPlataforma, [['approved', true, null], 'confirmed', [['earning_credit', '1350000'], ['earning_credit', '1350000']]])
   assert.deepEqual(r.concurrencia[0], ['approved', 'approved', 'approved'])
   assert.deepEqual(r.concurrencia.slice(1), ['confirmed', 1, 1], 'concurrent queries and webhook: one approval, one earning')
   assert.equal(r.auditoria, true, 'every query is audited')

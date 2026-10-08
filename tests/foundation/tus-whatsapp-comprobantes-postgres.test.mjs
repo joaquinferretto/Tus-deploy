@@ -180,8 +180,10 @@ test('receipts on PostgreSQL, turnos: the image only ranks the client\'s own pen
   assert.equal(r.monto[1], 'awaiting_payment', 'a payment with another amount is quarantined, never confirmed')
   assert.doesNotMatch(r.monto[0][0], /quedó confirmado/u)
   assert.deepEqual([r.solo[1], r.solo[2], r.solo[3]], ['confirmed', 0, 2], 'one pending deposit: verified by the backend without reading the picture')
-  assert.deepEqual(r.modos, ['split', 'split'])
-  assert.deepEqual([r.split[1], r.split[2], r.split[3]], ['confirmed', 'awaiting_payment', []], 'Split 1:1: confirmed, no earning in TUS')
+  // PAGOS-RETENCION-01: a deposit is an advance payment, so TUS collects it with its own account even
+  // for a provider with a linked one (before: Split 1:1, paid straight to the provider).
+  assert.deepEqual(r.modos, ['plataforma', 'plataforma'])
+  assert.deepEqual([r.split[1], r.split[2], r.split[3]], ['confirmed', 'awaiting_payment', [['earning_credit', '1350000']]], 'provider with its own account: confirmed, and the earning is booked in TUS')
   assert.deepEqual(r.concurrencia.slice(1), ['awaiting_payment', 'confirmed', 1], 'receipt, retry and webhook together: one earning')
   assert.equal(r.aprobados, 1, 'one approval')
   assert.equal(r.persistido, false, 'no image content is persisted')
@@ -308,9 +310,11 @@ test('receipts on PostgreSQL, works: the receipt picks the deposit or the balanc
   assert.equal(r.ajeno[3], 'awaiting_payment')
   assert.doesNotMatch(r.monto[0][0], /quedó confirmad|Sí, Mercado Pago confirmó/u)
   assert.deepEqual(r.monto[1].map((x) => x[2]), ['pending_payment'], 'a payment with another amount never marks the deposit paid')
-  assert.equal(r.modo3, 'split')
+  // PAGOS-RETENCION-01: a deposit is an advance payment, so TUS collects it with its own account even
+  // for a provider with a linked one (before: Split 1:1, paid straight to the provider).
+  assert.equal(r.modo3, 'plataforma')
   assert.deepEqual(r.split[2].map((x) => x[2]), ['paid', 'paid'])
-  assert.deepEqual(r.split[3], [], 'Split 1:1: the provider was paid by Mercado Pago, TUS has no earning')
+  assert.deepEqual(r.split[3], [['earning_credit', '900000'], ['earning_credit', '900000']], 'provider with its own account: both payments are collected by TUS, one earning each')
   assert.equal(r.split[4], 'awaiting_payment')
   assert.equal(r.persistido, false)
 })

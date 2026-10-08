@@ -332,11 +332,15 @@ test('TURNOS cobro de señas PostgreSQL: a provider WITHOUT its own Mercado Pago
     } finally { await cerrar() }
   `)
   assert.deepEqual(r.diagnostico.sin, { disponible: true, motivo: null, modo: 'plataforma' }, 'no own account: collected by the platform')
-  assert.deepEqual(r.diagnostico.con, { disponible: true, motivo: null, modo: 'split' }, 'own account linked: collected with it')
+  // PAGOS-RETENCION-01: a deposit is an advance payment, so TUS collects it with its own account even
+  // for a provider with a linked one (before: Split 1:1, paid straight to the provider).
+  assert.deepEqual(r.diagnostico.con, { disponible: true, motivo: null, modo: 'plataforma' }, 'own account linked: the deposit is still collected by the platform')
   assert.equal(r.porPlataforma.estado, 'confirmed')
   assert.equal(r.porPlataforma.cobrador, true, 'the platform account collected')
   assert.ok(r.porPlataforma.movimientos.some(([tipo]) => tipo === 'earning_credit'), `the provider's share is an earning (${JSON.stringify(r.porPlataforma.movimientos)})`)
-  assert.ok(Number(r.porPlataforma.saldo) > 0, `the provider has balance (${r.porPlataforma.saldo})`)
+  // PAGOS-RETENCION-01: before, that share was withdrawable the moment the deposit was approved. Now it
+  // is booked and held until the turno is closed.
+  assert.equal(r.porPlataforma.saldo, '0', 'a deposit paid in advance is not withdrawable yet')
   assert.deepEqual(r.diagnosticoSinIdentidad, { disponible: false, motivo: 'PROVIDER_IDENTITY_NOT_VERIFIED', modo: null })
   assert.deepEqual(r.sinIdentidad, { code: 'PROVIDER_IDENTITY_REQUIRED', status: 409, diceIdentidad: true, noExigeMercadoPago: true, estado: 'pending', whatsapp: true }, 'identity is what is missing, and the provider is told exactly that')
   assert.equal(r.vuelveAAceptar, 'awaiting_payment')
