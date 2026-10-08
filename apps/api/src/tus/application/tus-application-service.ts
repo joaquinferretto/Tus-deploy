@@ -13,6 +13,7 @@ import {
 import type { TusFinanceService } from '../finance/index.ts'
 import type { ComprobanteEntrega, TareaEntrega, TusDeliveryService } from '../delivery/index.ts'
 import type { TusPosService } from '../pos/index.ts'
+import type { ServicioCierreTrabajo } from '../work/cierre.ts'
 import type { TusSupportService } from '../support/index.ts'
 import type { TusWhatsAppService } from '../whatsapp/index.ts'
 import type { TusReportingService } from '../reporting/index.ts'
@@ -77,6 +78,8 @@ export interface TusApplicationDependencies {
   readinessEvidence?: ServicioEvidenciasHabilitacion
   // TUS-GANANCIAS-01: earnings TUS owes providers and their payout requests.
   providerEarnings?: ServicioGananciasPrestador
+  // CIERRE-TRABAJO-01: finished / confirmed / observed, and the automatic confirmation.
+  workClosing?: ServicioCierreTrabajo
   // IDENTITY-NOSIS: provider identity verification (consent, DNI upload, queue, admin review).
   identity?: ServicioVerificacionIdentidad
   operationsTelemetry?: TusOperationsTelemetry
@@ -100,6 +103,7 @@ export class TusApplicationService {
   readonly servicePayments?: ModuloPagosServicio
   readonly readinessEvidence?: ServicioEvidenciasHabilitacion
   readonly providerEarnings?: ServicioGananciasPrestador
+  readonly workClosing?: ServicioCierreTrabajo
   readonly identity?: ServicioVerificacionIdentidad
   readonly contexts = TUS_BOUNDED_CONTEXTS
   private readonly dependencies: TusApplicationDependencies
@@ -122,6 +126,7 @@ export class TusApplicationService {
     this.servicePayments = dependencies.servicePayments
     this.readinessEvidence = dependencies.readinessEvidence
     this.providerEarnings = dependencies.providerEarnings
+    this.workClosing = dependencies.workClosing
     this.identity = dependencies.identity
     this.evaluadorHabilitacion = dependencies.evaluadorHabilitacion
     if (!dependencies.transaction) throw new Error('TUS transaction boundary is required')

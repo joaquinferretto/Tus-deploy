@@ -33,6 +33,7 @@ import { crearServicioDirectorio } from './tus/directorio/composicion.ts'
 import { crearRouterDirectorio } from './tus/directorio/http.ts'
 import { ServicioTurnos } from './tus/calendar/turnos-service.ts'
 import { crearRouterTurnos } from './tus/calendar/turnos-http.ts'
+import { crearRouterCierres } from './tus/work/cierre-http.ts'
 import { crearRutasAlojamientos } from './tus/alojamientos/alojamientos-routes.ts'
 import type { PrismaClient } from '@prisma/client'
 import { crearAltaPrestadorAdmin, crearEdicionPrestadorAdmin } from './tus/directorio/admin.ts'
@@ -186,6 +187,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     publicadasDesde: (cuentaId, desde) => (prisma as unknown as { solicitudServicio: { count(input: unknown): Promise<number> } }).solicitudServicio.count({ where: { cuentaId, creadaEn: { gte: new Date(desde) } } }),
   })
   app.locals['tusUrgentes'] = urgentes
+  app.locals['tusCierres'] = application.workClosing
   // Turno requests notify by email through the transport of the account emails (when configured).
   const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient, NotificadorTurnosEmail.desdeEnv(prisma as unknown as PrismaClient, process.env))
   app.locals['tusTurnosNotificationWorkerFactory'] = () => servicioTurnos.crearWorkerNotificaciones()
@@ -311,6 +313,16 @@ export function createApp(options: CreateAppOptions = {}): Application {
     app.use(crearRouterAyuda({ ayuda: whatsapp?.ayuda ?? null }))
     app.use(crearRouterAsistenteWeb({ servicio: whatsapp?.asistenteWeb ?? null, sessions }))
     app.use(crearRouterTurnos({ servicio: servicioTurnos, sessions }))
+    // CIERRE-TRABAJO-01: the closing of a work or of a turno (through its order).
+    if (application.workClosing)
+      app.use(crearRouterCierres({
+        cierre: application.workClosing,
+        sessions,
+        ordenDeTurno: async ({ reservaId, tenantId }) => {
+          const orden = await (prisma as unknown as { trabajo: { findFirst(input: unknown): Promise<{ trabajoId: string } | null> } }).trabajo.findFirst({ where: { reservaId, OR: [{ tenantId }, { prestadorTenantId: tenantId }] }, select: { trabajoId: true } })
+          return orden?.trabajoId ?? null
+        },
+      }))
     // Simulated payment confirms a booking without money: only when the runtime is explicitly
     // development or test. Production (or an unset NODE_ENV) never has it.
     app.use('/api/alojamientos', crearRutasAlojamientos(prisma as unknown as PrismaClient, {
@@ -422,6 +434,27 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     }
     // SERVICIO-URGENTE-01: urgent requests nobody took expire. The state is in PostgreSQL
     // (expira_en): this only wakes up to look, so a restart loses nothing.
+    // CIERRE-TRABAJO-01: works nobody confirmed are confirmed when their window runs out. The
+    // window is a stored instant (confirmacion_vence_en): this only wakes up to look, any process
+    // may do it and a restart loses nothing.
+    const cierresVivos = app.locals['tusCierres'] as { procesarVencidos(): Promise<unknown> } | undefined
+    if (cierresVivos) {
+      let confirmando = false
+      const confirmaciones = setInterval(() => {
+        if (confirmando) return
+        confirmando = true
+        void cierresVivos
+          .procesarVencidos()
+          .catch((error: unknown) => logger.error('work closing sweep failed', { details: { error: error instanceof Error ? error.name : 'unknown' } }))
+          .finally(() => {
+            confirmando = false
+          })
+      }, 60_000)
+      confirmaciones.unref()
+      lifecycle.register('work-closing-sweep', async () => {
+        clearInterval(confirmaciones)
+      })
+    }
     const urgentesVivos = app.locals['tusUrgentes'] as { procesarVencidas(): Promise<number> } | undefined
     if (urgentesVivos) {
       let barriendo = false

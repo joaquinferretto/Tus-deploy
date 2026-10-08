@@ -34,10 +34,24 @@ export const turnosPagosSetup = (url) => `
   const admin = { tenantId: 'platform', actorId: 'u-admin', correlationId: 'c-admin' }
   const actual = await modulo.configuracion.configuracionActual()
   await modulo.configuracion.registrarConfiguracion(admin, { paymentsEnabled: true, reason: 'pagos e2e', expectedVersion: actual.configuration?.version ?? 0, minimumPayoutMinor: '1000000' })
+  const { AlmacenCierresPrisma } = await import('./apps/api/src/tus/adapters/prisma-cierres.ts')
+  const { ServicioCierreTrabajo, observacionAbierta, VENTANA_CONFIRMACION_MS } = await import('./apps/api/src/tus/work/cierre.ts')
   const work = new ServicioTrabajo(new PrismaTrabajoTransaction(prisma), () => Date.now())
   const fin = new ServicioFinanzasServicios(
-    new TransaccionFinanzasServicioPrisma(prisma, (tx) => ({ completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: new PrismaTrabajoStore(tx), outbox: new PrismaTrabajoOutboxStore(tx) }, input), confirmarReservaPorPago: (input) => confirmarReservaPorPagoPrisma(tx, input) })),
+    new TransaccionFinanzasServicioPrisma(prisma, (tx) => ({ completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: new PrismaTrabajoStore(tx), outbox: new PrismaTrabajoOutboxStore(tx) }, input), confirmarReservaPorPago: (input) => confirmarReservaPorPagoPrisma(tx, input), estadoCierre: async (input) => { const fila = await new AlmacenCierresPrisma(tx).buscar(input); return fila ? { confirmed: Boolean(fila.confirmedAt), blocked: observacionAbierta(fila) ? 'observation_open' : null } : null } })),
     () => Date.now(), modulo.proveedor, undefined, modulo.politica)
+  // CIERRE-TRABAJO-01, wired as the composition does. Its clock can be moved forward (a turno
+  // is in the future; its window is 72 hours): 'adelantar' adds to the real time.
+  let adelanto = 0
+  const adelantar = (ms) => { adelanto += ms }
+  const cierres = new AlmacenCierresPrisma(prisma)
+  const cierre = new ServicioCierreTrabajo(cierres, {
+    trabajo: (input) => new PrismaTrabajoStore(prisma).findAccessible(input),
+    reserva: (input) => cierres.reserva(input),
+    completarReserva: (input) => cierres.completarReserva(input),
+    evaluarPagos: (input) => fin.evaluarCierreEconomico(input),
+    bloqueos: (trabajo) => fin.bloqueosDeCierre({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId }),
+  }, () => Date.now() + adelanto)
   const turnos = new ServicioTurnos(prisma, { solicitudRecibida: async () => {}, solicitudRespondida: async () => {}, turnoConfirmado: async () => {}, turnoCancelado: async () => {} })
   turnos.conSenas(new ServicioSenaTurnos(prisma, pagosSenaDeAplicacion({ work, serviceFinance: fin })))
   // As the composition wires it: minimum from the persisted configuration, strict account check.
@@ -89,7 +103,7 @@ export const turnosPagosSetup = (url) => `
     const obligacion = await prisma.obligacionPagoServicio.findFirst({ where: { trabajoId: trabajo.trabajoId, tramo: 'sena' } })
     const pago = await prisma.intencionPago.findFirst({ where: { obligacionId: obligacion.obligacionId } })
     const preferencia = mp.preferences.find((item) => item.body.external_reference === pago.pagoId)
-    return { pedido, checkout, obligacion, pago, preferencia }
+    return { pedido, checkout, obligacion, pago, preferencia, trabajoId: trabajo.trabajoId }
   }
   const estadoTurno = async (t) => (await prisma.reserva.findUnique({ where: { id: t.pedido.id } })).estado
   const filas = async (p) => (await db.query('SELECT tipo, monto::text AS monto FROM movimientos_ganancia_prestador WHERE prestador_tenant_id = $1 ORDER BY fecha_creacion, movimiento_id', [p.tenantId])).rows.map((x) => [x.tipo, x.monto])

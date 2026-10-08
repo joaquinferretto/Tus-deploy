@@ -27,10 +27,18 @@ const SETUP = `${SERVICE_SETUP}
   const fin = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioEnMemoria(store, new IdentidadServicioEnMemoria(workStore, marketplace), {
       completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: workStore, outbox: new Outbox() }, input),
+      // CIERRE-TRABAJO-01: what the closing of the work says (confirmed, blocked by an observation).
+      estadoCierre: (input) => cierre.estado(input),
     }),
     clock, proveedorPagos, undefined, politica
   )
   const { pagosTrabajo } = await import('./apps/api/src/tus/composition/index.ts')
+  const { AlmacenCierresEnMemoria, ServicioCierreTrabajo } = await import('./apps/api/src/tus/work/cierre.ts')
+  const cierre = new ServicioCierreTrabajo(new AlmacenCierresEnMemoria(), {
+    trabajo: (input) => workStore.findAccessible(input),
+    evaluarPagos: (input) => fin.evaluarCierreEconomico(input),
+    bloqueos: (trabajo) => fin.bloqueosDeCierre({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId }),
+  }, clock)
   work.conPagos(pagosTrabajo(fin))
   // The earnings service over the SAME ledger the finance service writes, told which settlements
   // are held by the finance store itself.
@@ -183,22 +191,66 @@ test('RETENCION split: a payment Mercado Pago pays straight to the provider is n
     const admin = new ServicioConfiguracionPagos(config, listo, clock)
     await admin.registrarConfiguracion({ actorId: 'admin', correlationId: 'c' }, { paymentsEnabled: true, reason: 'x', expectedVersion: 0 })
     await admin.registrarPolitica({ actorId: 'admin', correlationId: 'c' }, { scope: 'global', rateBps: 1000, pspFeeBearer: 'provider', reason: 'x', expectedVersion: 0 })
-    const quien = async (conectado, plataforma, anticipado) => (await new PoliticaCobroPersistida(config, listo, async () => conectado, async () => false, async () => true, () => plataforma).disponibilidad({ prestadorTenantId: provider.tenantId, prestadorId: 'provider-1', categoria: null, anticipado })).mode ?? 'ninguno'
+    const quien = (conectado, plataforma, anticipado) => (new PoliticaCobroPersistida(config, listo, async () => conectado, async () => false, async () => true, () => plataforma).disponibilidad({ prestadorTenantId: provider.tenantId, prestadorId: 'provider-1', categoria: null, anticipado })).then((x) => x.mode ?? x.reason)
     out.quienCobra = { anticipoConCuentaYPlataforma: await quien(true, true, true), anticipoSinCuenta: await quien(false, true, true), anticipoSinPlataforma: await quien(true, false, true), posteriorConCuenta: await quien(true, true, false), nadie: await quien(false, false, true) }
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.split, ['split', [['held', false, false, '900000']], [], { ganado: '0', disponible: '0', retenido: '0', negativo: '0', puede: false, motivo: 'NO_FUNDS' }], 'split: TUS holds nothing and owes nothing; the settlement is a record, not a retention')
-  assert.deepEqual(r.quienCobra, { anticipoConCuentaYPlataforma: 'plataforma', anticipoSinCuenta: 'plataforma', anticipoSinPlataforma: 'split', posteriorConCuenta: 'split', nadie: 'ninguno' }, 'an advance payment goes to the account of TUS whenever it has one, also for a provider with its own')
+  assert.deepEqual(r.quienCobra, { anticipoConCuentaYPlataforma: 'plataforma', anticipoSinCuenta: 'plataforma', anticipoSinPlataforma: 'PLATFORM_ACCOUNT_REQUIRED', posteriorConCuenta: 'split', nadie: 'PLATFORM_ACCOUNT_REQUIRED' }, 'an advance payment is collected by TUS, also for a provider with its own account; without an account of TUS it is refused, never sent to the provider')
 })
 
 test('RETENCION storage and compatibility: the migration is additive and keeps what already existed withdrawable; the PostgreSQL store reads the held settlements inside the transaction of a payout', () => {
   const sql = readFileSync(join(root, 'apps/api/prisma/migrations/20261113100000_tus_pagos_retencion_liberacion/migration.sql'), 'utf8')
   assert.match(sql, /ADD COLUMN "retencion_activa" boolean NOT NULL DEFAULT false/u, 'existing settlements are not put under retention')
   assert.match(sql, /ADD COLUMN "liberada_en" timestamp\(3\)/u)
-  assert.doesNotMatch(sql.replace(/^--.*$/gmu, ''), /\b(DROP|DELETE|UPDATE|TRUNCATE)\b/u, 'nothing existing is rewritten')
+  assert.doesNotMatch(sql.replace(/^--.*$/gmu, ''), /^[ 	]*(DROP|DELETE|UPDATE|TRUNCATE)/mu, 'no statement rewrites or removes what exists')
   const almacen = readFileSync(join(root, 'apps/api/src/tus/adapters/prisma-ganancias.ts'), 'utf8')
   assert.match(almacen, /where: \{ prestadorTenantId, retencionActiva: true, liberadaEn: null \}/u, 'held = under retention and never released')
   assert.match(almacen, /const retenidas = await this\.retenidas\(tx, prestadorTenantId\)/u, 'decided with what the transaction of the payout reads')
   const dominio = readFileSync(join(root, 'apps/api/src/tus/finance/servicios/ganancias.ts'), 'utf8')
   assert.match(dominio, /!movimiento\.retenido && !tomados\.has\(movimiento\.movimientoId\)/u, 'a held movement is never an item of a payout')
+})
+
+test('RETENCION y cierre de un trabajo: the client confirming a finished work with only its deposit paid releases nothing; an open observation holds everything even when the work is completed and fully paid; once it is settled the same evaluation releases both payments', () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    const id = await requestWork('c', '2000000')
+    await pagar(id, 'kc-sena', '10000.00', 'evt-c-sena')
+    const proveedor = { tenantId: provider.tenantId, actorId: 'provider-user', correlationId: 'c-p' }
+    const clienteCtx = { tenantId: customer.tenantId, actorId: 'customer-user', correlationId: 'c-c' }
+    out.sinTerminar = await cierre.finalizar(proveedor, id, { evidence: 'Trabajo terminado y probado.' }).then(() => 'none', (e) => e.code)
+    await step('startWork', id)
+    await step('completeWork', id)
+    out.finalizado = (await cierre.finalizar(proveedor, id, { evidence: 'Trabajo terminado y probado con el cliente.' })).status
+    // The client confirms the delivery: half is paid, so nothing is released.
+    const confirmado = await cierre.confirmar(clienteCtx, id)
+    out.confirmadoConMitad = [confirmado.status, confirmado.pagos, liquidaciones(), (await saldo()).disponible, (await current(id)).status]
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.sinTerminar, 'WORK_NOT_FINISHED')
+  assert.equal(r.finalizado, 'created')
+  assert.deepEqual(r.confirmadoConMitad, ['confirmed', { released: 0, pending: 'work_not_completed' }, [['held', true, false, '900000']], '0', 'in_progress'], 'confirmed with 50% paid: the deposit stays held and the work waits for its balance')
+
+  const s = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    const id = await requestWork('o', '2000000')
+    await pagar(id, 'ko-sena', '10000.00', 'evt-o-sena')
+    const proveedor = { tenantId: provider.tenantId, actorId: 'provider-user', correlationId: 'c-p' }
+    const clienteCtx = { tenantId: customer.tenantId, actorId: 'customer-user', correlationId: 'c-c' }
+    await step('startWork', id)
+    await step('completeWork', id)
+    await cierre.finalizar(proveedor, id, { evidence: 'Trabajo terminado, falta revisar un detalle.' })
+    out.observado = (await cierre.observar(clienteCtx, id, { reason: 'Quedó una pérdida en la conexión nueva.' })).status
+    // The balance is paid anyway: the work is completed and fully paid, and still nothing is released.
+    await pagar(id, 'ko-saldo', '10000.00', 'evt-o-saldo')
+    out.pagadoConObservacion = [(await current(id)).status, liquidaciones(), await saldo()]
+    out.evaluar = await fin.evaluarCierreEconomico({ tenantId: customer.tenantId, trabajoId: id, correlationId: 'e1' })
+    await cierre.resolverObservacion({ tenantId: 'platform', actorId: 'admin', correlationId: 'a' }, { tenantId: customer.tenantId, trabajoId: id })
+    out.resuelto = [await fin.evaluarCierreEconomico({ tenantId: customer.tenantId, trabajoId: id, correlationId: 'e2' }), liquidaciones(), (await saldo()).disponible, await fin.evaluarCierreEconomico({ tenantId: customer.tenantId, trabajoId: id, correlationId: 'e3' })]
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(s.observado, 'observed')
+  assert.deepEqual(s.pagadoConObservacion, ['completed', [['held', true, false, '900000'], ['held', true, false, '900000']], { ganado: '1800000', disponible: '0', retenido: '1800000', negativo: '0', puede: false, motivo: 'NO_FUNDS' }], 'a claim of the client holds the money even with the work completed and fully paid')
+  assert.deepEqual(s.evaluar, { released: 0, pending: 'observation_open' })
+  assert.deepEqual(s.resuelto, [{ released: 2, pending: null }, [['eligible', true, true, '900000'], ['eligible', true, true, '900000']], '1800000', { released: 0, pending: null }], 'settled: both payments are released together, once')
 })

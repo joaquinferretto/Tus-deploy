@@ -318,12 +318,14 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
       return { available: false, reason: 'PSP_FEE_POLICY_UNSUPPORTED' }
     if (this.identidadVerificada && !(await this.identidadVerificada(input.prestadorTenantId)))
       return { available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }
-    // PAGOS-RETENCION-01. An advance payment is collected by TUS whenever it has its own account,
-    // even for a provider with a linked one: only money TUS holds can be retained until the work
-    // reaches its release milestone. A payment Mercado Pago pays straight to the provider (split)
-    // is in its hands the moment it is approved: TUS cannot hold it. Where TUS has no account of
-    // its own the split is what is left, and that payment is not under retention.
-    if (input.anticipado && this.cobroPlataforma()) return { available: true, reason: null, mode: 'plataforma' }
+    // PAGOS-RETENCION-01. An advance payment (anything paid before the service is done) must be
+    // money TUS can hold until the work reaches its release milestone, so TUS collects it with
+    // its own account, also for a provider with a linked one. A payment Mercado Pago pays
+    // straight to the provider (split) is in its hands the moment it is approved. Without an
+    // account of TUS an advance payment is NOT sent there: it is refused as a configuration
+    // error. The split stays for payments made after the service.
+    if (input.anticipado)
+      return this.cobroPlataforma() ? { available: true, reason: null, mode: 'plataforma' } : { available: false, reason: 'PLATFORM_ACCOUNT_REQUIRED' }
     if (!(await this.cuentaConectada(input.prestadorTenantId)))
       return this.cobroPlataforma() ? { available: true, reason: null, mode: 'plataforma' } : { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }
     return { available: true, reason: null, mode: 'split' }

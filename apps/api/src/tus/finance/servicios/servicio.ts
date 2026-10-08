@@ -18,6 +18,7 @@ import {
   ORIGENES_IMPORTE_OBLIGACION_SERVICIO,
   TUS_CONTRACT_VERSION,
   formatMinorUnits,
+  majorDecimalToMinorUnits,
 } from '@factory/contracts'
 import { PoliticaCobroFija, type PuertoPoliticaCobro } from './configuracion.ts'
 import {
@@ -294,6 +295,10 @@ export interface PuertoCierreTrabajoPorPago {
     amountMinor: bigint
     currency: string
   }): Promise<boolean>
+  // CIERRE-TRABAJO-01. What is recorded about the closing of a work: whether the client confirmed
+  // it (or it was confirmed automatically when its window ran out) and whether something blocks
+  // it (an open observation or claim). null: nothing was recorded for that work.
+  estadoCierre?(input: { tenantId: string; trabajoId: string }): Promise<{ confirmed: boolean; blocked: string | null } | null>
 }
 
 // Deposit/balance state of a request-born work with an accepted budget (work summary and the
@@ -315,6 +320,9 @@ export interface EstadoPagosTrabajoServicio {
 export const MOTIVOS_PRESTADOR_SIN_COBRO: ReadonlySet<string> = new Set([
   'PROVIDER_ACCOUNT_NOT_CONNECTED',
   'PROVIDER_IDENTITY_NOT_VERIFIED',
+  // PAGOS-RETENCION-01: TUS has no account of its own to hold an advance payment with. Never
+  // "no deposit": the work is not confirmed for free and the payment is not sent elsewhere.
+  'PLATFORM_ACCOUNT_REQUIRED',
 ])
 
 export interface RepositoriosFinanzasServicio {
@@ -1687,6 +1695,35 @@ export class ServicioFinanzasServicios {
     return this.transaction.ejecutar((repositories) => this.liberarLiquidacionesEn(repositories, input))
   }
 
+  // CIERRE-TRABAJO-01. The economic side of a confirmation: releases what can be released and
+  // says what is still missing (`pending`: 'not_fully_paid', 'balance_pending', ...). Confirming
+  // a work never releases by itself; this evaluation, with what was really paid, does.
+  async evaluarCierreEconomico(input: { tenantId: string; trabajoId: string; correlationId: string }): Promise<{ released: number; pending: string | null }> {
+    const resultados = await this.liberarLiquidacionesDelTrabajo(input)
+    return {
+      released: resultados.filter((item) => item.status === 'eligible').length,
+      pending: resultados.find((item) => item.status === 'unchanged' && item.reason !== 'settlement_eligible')?.reason ?? null,
+    }
+  }
+
+  // What of the payments of a work forbids confirming it AUTOMATICALLY: a refund in progress, a
+  // payment that was reversed, a settlement frozen by a discrepancy. Read-only.
+  async bloqueosDeCierre(input: { tenantId: string; trabajoId: string }): Promise<string[]> {
+    return this.transaction.ejecutar(async (repositories) => {
+      const bloqueos = new Set<string>()
+      for (const obligation of await repositories.obligaciones.listarPorTrabajo(input)) {
+        if (obligation.status === 'refunded' || obligation.status === 'charged_back') bloqueos.add('payment_reversed')
+        const settlement = await repositories.liquidaciones.buscar({ tenantId: obligation.tenantId, obligacionId: obligation.obligacionId })
+        if (settlement?.status === 'frozen') bloqueos.add('payment_inconsistency')
+        for (const intent of await repositories.intenciones.listarPorObligacion({ tenantId: obligation.tenantId, obligacionId: obligation.obligacionId })) {
+          const reembolsos = await repositories.reembolsos.listarPorPago({ tenantId: intent.tenantId, paymentId: intent.paymentId })
+          if (reembolsos.some((refund) => refund.status !== 'failed')) bloqueos.add('refund_in_progress')
+        }
+      }
+      return [...bloqueos]
+    })
+  }
+
   protected async liberarLiquidacionesEn(
     repositories: RepositoriosFinanzasServicio,
     input: { tenantId: string; trabajoId: string; correlationId: string }
@@ -1696,6 +1733,25 @@ export class ServicioFinanzasServicios {
     for (const obligation of obligaciones)
       resultados.push(await this.evaluarLiquidacionEn(repositories, obligation, input.correlationId))
     return resultados
+  }
+
+  // The final total of a work, from its persisted commercial facts: the price booked on the
+  // reservation of a turno, the accepted budget of a request-born work, or (marketplace works,
+  // one payment for everything) the amount of its only obligation.
+  protected async totalFinalDelTrabajo(
+    repositories: RepositoriosFinanzasServicio,
+    trabajo: Trabajo,
+    reserva: ReservaTurnoFinanciera | null,
+    obligaciones: readonly ObligacionServicio[]
+  ): Promise<bigint | null> {
+    if (trabajo.origin === 'turno')
+      return reserva && reserva.priceMajor !== null && reserva.priceMajor > 0n ? majorDecimalToMinorUnits(reserva.priceMajor.toString(10), reserva.currency) : null
+    if (trabajo.origin === 'solicitud') {
+      if (!trabajo.acceptedBudgetId || !trabajo.acceptedBudgetVersion) return null
+      const presupuesto = await repositories.identidad.buscarPresupuesto({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId, presupuestoId: trabajo.acceptedBudgetId, version: trabajo.acceptedBudgetVersion })
+      return presupuesto ? presupuesto.totalMinor : null
+    }
+    return obligaciones.find((item) => item.part === 'total')?.amountMinor ?? null
   }
 
   protected async evaluarLiquidacionEn(
@@ -1728,30 +1784,36 @@ export class ServicioFinanzasServicios {
         trabajoId: obligation.trabajoId,
       })
       // The order of a turno never changes state: its turno is done when its reservation is.
-      const terminado =
+      const reserva =
         trabajo?.origin === 'turno' && trabajo.reservaId
-          ? (
-              await repositories.identidad.buscarReservaTurno({
-                prestadorTenantId: trabajo.prestadorTenantId,
-                reservaId: trabajo.reservaId,
-              })
-            )?.status === 'completed'
-          : trabajo?.status === ESTADOS_TRABAJO.COMPLETADO
-      if (!terminado)
-        return {
-          status: 'unchanged',
-          reason: 'work_not_completed',
-          settlement: proyectarLiquidacion(settlement),
-        }
-      // Something of the same work is still to be paid (its balance): the work is not fully
-      // paid, so nothing of it is released yet.
+          ? await repositories.identidad.buscarReservaTurno({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId })
+          : null
+      const cierre = trabajo && repositories.cierreTrabajo?.estadoCierre
+        ? await repositories.cierreTrabajo.estadoCierre({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId })
+        : null
+      const sinLiberar = (reason: string): ResultadoEvaluacionLiquidacion => ({ status: 'unchanged', reason, settlement: proyectarLiquidacion(settlement) })
+      // 1. The work is done AND closed. The order of a turno never changes state: it is closed
+      //    when its client confirmed it (or its window ran out) and its reservation is completed.
+      const terminado = trabajo?.origin === 'turno' ? reserva?.status === 'completed' : trabajo?.status === ESTADOS_TRABAJO.COMPLETADO
+      if (!terminado) return sinLiberar('work_not_completed')
+      if (trabajo?.origin === 'turno' && cierre && !cierre.confirmed) return sinLiberar('client_confirmation_pending')
+      // 2. Nothing blocks it: an open observation or claim of the client.
+      if (cierre?.blocked) return sinLiberar(cierre.blocked)
+      // 3. The economic condition. What was paid for the work is at least its final total: the
+      //    price of the turno or the accepted budget. A missing balance obligation is NOT "paid":
+      //    the sum of the approved payments decides, and a refund or a chargeback counts for nothing.
       const hermanas = await repositories.obligaciones.listarPorTrabajo({ tenantId: obligation.tenantId, trabajoId: obligation.trabajoId })
-      if (hermanas.some((item) => item.status === 'pending_payment'))
-        return {
-          status: 'unchanged',
-          reason: 'balance_pending',
-          settlement: proyectarLiquidacion(settlement),
-        }
+      if (hermanas.some((item) => item.status === 'pending_payment')) return sinLiberar('balance_pending')
+      const totalFinal = await this.totalFinalDelTrabajo(repositories, trabajo!, reserva, hermanas)
+      if (totalFinal === null) return sinLiberar('total_unknown')
+      const pagado = hermanas.filter((item) => item.status === 'paid').reduce((suma, item) => suma + item.amountMinor, 0n)
+      if (pagado < totalFinal) return sinLiberar('not_fully_paid')
+      // 4. No payment of the work is frozen (a discrepancy) or reversed.
+      for (const hermana of hermanas) {
+        if (hermana.obligacionId === obligation.obligacionId || hermana.status !== 'paid') continue
+        const otra = await repositories.liquidaciones.buscar({ tenantId: hermana.tenantId, obligacionId: hermana.obligacionId })
+        if (otra && (otra.status === 'frozen' || otra.status === 'reversed')) return sinLiberar(`sibling_settlement_${otra.status}`)
+      }
       const eligible = transicionarLiquidacion(
         settlement,
         'eligible',

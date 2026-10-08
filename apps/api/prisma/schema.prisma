@@ -840,6 +840,8 @@ model Trabajo {
   mensajes            MensajeTrabajo[]
   calificaciones      CalificacionTrabajo[]
 
+  cierre CierreTrabajo?
+
   @@unique([tenantId, trabajoId], map: "uq_trabajos_tenant_trabajo")
   @@unique([tenantId, trabajoId, prestadorTenantId], map: "uq_trabajos_tenant_trabajo_prestador")
   @@unique([tenantId, trabajoId, prestadorTenantId, prestadorId], map: "uq_trabajos_tenant_trabajo_prestador_id")
@@ -1170,6 +1172,30 @@ model AuditoriaFinanzasServicio {
 
 // WEB-09C: internal settlement per paid obligation. It never represents a payout: the
 // transfer state is fixed to 'not_executed' by a CHECK constraint.
+// CIERRE-TRABAJO-01: closing of a work (finished, confirmation window, confirmation, observation).
+model CierreTrabajo {
+  tenantId              String    @map("tenant_id")
+  trabajoId             String    @map("trabajo_id")
+  prestadorTenantId     String    @map("prestador_tenant_id")
+  finalizadoEn          DateTime  @map("finalizado_en")
+  finalizadoPor         String    @map("finalizado_por")
+  evidencia             String    @map("evidencia")
+  confirmacionVenceEn   DateTime  @map("confirmacion_vence_en")
+  confirmadoEn          DateTime? @map("confirmado_en")
+  confirmacionOrigen    String?   @map("confirmacion_origen")
+  observadoEn           DateTime? @map("observado_en")
+  observacionMotivo     String?   @map("observacion_motivo")
+  observacionResueltaEn DateTime? @map("observacion_resuelta_en")
+  fechaCreacion         DateTime  @map("fecha_creacion")
+  fechaActualizacion    DateTime  @map("fecha_actualizacion")
+
+  trabajo Trabajo @relation(fields: [tenantId, trabajoId], references: [tenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_cierres_trabajo_trabajo")
+
+  @@id([tenantId, trabajoId], map: "cierres_trabajo_pkey")
+  @@index([confirmacionVenceEn], map: "ix_cierres_trabajo_vencimiento")
+  @@map("cierres_trabajo")
+}
+
 model LiquidacionServicio {
   id                 String   @id(map: "liquidaciones_servicio_pkey")
   versionContrato    String   @map("version_contrato")

@@ -126,6 +126,7 @@ export function textoCobroSena(cobro: AdminCobroSena | null | undefined): { text
     PROVIDER_NOT_CONFIGURED: ['Mercado Pago sin configurar', 'Faltan las credenciales de Mercado Pago de TUS en el servidor.'],
     PRODUCTION_NOT_AUTHORIZED: ['Falta habilitación', 'Falta la habilitación productiva de pagos de servicios: no se pueden aceptar turnos con seña.'],
     PROVIDER_IDENTITY_NOT_VERIFIED: ['Falta identidad', 'El prestador no tiene la identidad verificada: no se le puede cobrar una seña.'],
+    PLATFORM_ACCOUNT_REQUIRED: ['Falta cuenta de TUS', 'Una seña o un pago anticipado se cobra con la cuenta de TUS para poder retenerlo hasta que el servicio se complete. Falta configurar MERCADO_PAGO_PLATFORM_ACCESS_TOKEN y MERCADO_PAGO_PLATFORM_USER_ID; no se envía a la cuenta del prestador.'],
     PROVIDER_ACCOUNT_NOT_CONNECTED: ['Falta cuenta de TUS', 'TUS no tiene configurada su cuenta de cobro (MERCADO_PAGO_PLATFORM_ACCESS_TOKEN y MERCADO_PAGO_PLATFORM_USER_ID) y el prestador no conectó la suya.'],
     PSP_FEE_POLICY_UNDECIDED: ['Comisión sin definir', 'Falta definir quién paga la comisión de Mercado Pago en la política de comisiones.'],
     PSP_FEE_POLICY_UNSUPPORTED: ['Comisión no soportada', 'La política de comisiones actual no se puede cobrar.'],

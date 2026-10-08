@@ -678,7 +678,8 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
       let entorno = 'production'
       const operativo = () => ({ mercadoPagoEnabled: true, environment: entorno, clientIdConfigured: true, clientSecretConfigured: true, webhookSecretConfigured: true, redirectUriConfigured: true, credentialsKeyConfigured: true, webBaseUrlConfigured: true, notificationUrlConfigured: true, realProviderAdapterAvailable: true })
       let identidad = true
-      const real = new PoliticaCobroPersistida(configuracion, operativo, async (tenantId) => conCobro.has(tenantId), gate.autorizada, async () => identidad)
+      // PAGOS-RETENCION-01: TUS has its own account, as a deposit (an advance payment) requires.
+      const real = new PoliticaCobroPersistida(configuracion, operativo, async (tenantId) => conCobro.has(tenantId), gate.autorizada, async () => identidad, () => true)
       politica.disponibilidad = (input) => real.disponibilidad(input)
       const gates = async () => { const estado = await gate.estado(); return [estado.servicePayments.authorized, estado.settlement.authorized] }
 
@@ -694,12 +695,12 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
       // 1. Production with NO approval for the launch (and settlement evidenced, which never
       //    counts for it). The provider is connected and verified: a priced turno can be requested.
       registrar('settlement', ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'])
-      out.sinAprobaciones = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null }), await anunciada()]
+      out.sinAprobaciones = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null, anticipado: true }), await anunciada()]
       const t1 = await solicitar('tok-ana', p, 2, '10:00', 'Espalda completa')
       // The provider's identity is still required: unverified, it cannot accept a priced turno.
       identidad = false
       const aSinIdentidad = await aceptar('tok-p', t1.body.id)
-      out.sinIdentidad = [await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null }), aSinIdentidad.status, aSinIdentidad.body.code, (await fila(t1.body.id)).estado, await orden(t1.body.reservaId)]
+      out.sinIdentidad = [await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null, anticipado: true }), aSinIdentidad.status, aSinIdentidad.body.code, (await fila(t1.body.id)).estado, await orden(t1.body.reservaId)]
       identidad = true
       // If the check itself cannot be made, the acceptance fails; it never falls back to "no deposit".
       politica.disponibilidad = async () => { throw new Error('database unavailable') }
@@ -727,14 +728,14 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
       await avisoDe(ts.body.id)
       const cs = await pagar('tok-beto', ts.body.id)
       const pagoSandbox = await pagoDe(ts.body.reservaId)
-      out.sandbox = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null }), as.status, as.body.estado, cs.status, cs.body.monto, (await fila(ts.body.id)).estado]
+      out.sandbox = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null, anticipado: true }), as.status, as.body.estado, cs.status, cs.body.monto, (await fila(ts.body.id)).estado]
       out.sandboxAprobado = [resultadoDe(await notificar(pagoSandbox.pagoId, 'mp-' + run + '-sbx', 'approved', '10000.00', run + '-evt-sbx')), (await fila(ts.body.id)).estado]
       entorno = 'production'
 
       // 2. The six approvals of the launch are recorded: reported as complete, nothing else changes.
       evidencia.length = 0
       registrar('service-payments', ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'])
-      out.soloServicios = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null }), await anunciada()]
+      out.soloServicios = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null, anticipado: true }), await anunciada()]
       const t2 = await solicitar('tok-beto', p, 2, '11:00', 'Masaje base')
       const a2 = await aceptar('tok-p', t2.body.id)
       await avisoDe(t2.body.id)
@@ -745,7 +746,7 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
       out.checkoutNoConfirma = (await fila(t2.body.id)).estado
       // The same gate with a provider that is not connected: it is the provider that is missing.
       const sinCuenta = await prestador('sincuenta', 'Sin Cuenta ' + run, [['Consulta', 8000]])
-      out.prestadorSinCuenta = await real.disponibilidad({ prestadorTenantId: sinCuenta.tenantId, prestadorId: sinCuenta.prestadorId, categoria: null })
+      out.prestadorSinCuenta = await real.disponibilidad({ prestadorTenantId: sinCuenta.tenantId, prestadorId: sinCuenta.prestadorId, categoria: null, anticipado: true })
       // A second turno accepted while authorized, still unpaid.
       const t3 = await solicitar('tok-ana', p, 2, '12:00', 'Cuerpo completo')
       await aceptar('tok-p', t3.body.id)
@@ -772,18 +773,19 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
     ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'].map((gate) => gate + ':evidence_missing'), 6,
     [['service-payments', false, 'blocked', 'system:service-payments', 'argentina-stage-1'], ['settlement', false, 'blocked', 'system:service-payments', 'argentina-stage-1']], 0,
   ], 'the persisted evaluator reports both registries without evidence (settlement on its six core requirements), audits each decision and writes no evidence')
-  assert.deepEqual(r.sinAprobaciones, [[false, true], { available: true, reason: null, mode: 'split' }, true], 'no approval for the launch: the deposit is technically chargeable, and it is still what confirms a priced turno')
+  assert.deepEqual(r.sinAprobaciones, [[false, true], { available: true, reason: null, mode: 'plataforma' }, true], 'no approval for the launch: the deposit is technically chargeable, and it is still what confirms a priced turno')
   assert.deepEqual(r.sinIdentidad, [{ available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }, 409, 'PROVIDER_IDENTITY_REQUIRED', 'pending', null], 'an unverified provider cannot accept a priced turno: it stays pending, nothing is created')
   assert.deepEqual(r.sinEvidencia, [201, { monto: 12500, moneda: 'ARS', estado: 'not_due' }, 200, 'awaiting_payment', { monto: 12500, moneda: 'ARS', estado: 'pending' }, 200, 12500, 'awaiting_payment'], 'production without any approval: accepting opens the payment of the deposit; neither accepting nor the checkout confirms')
   assert.deepEqual(r.sinVerificar, [503, 'PAYMENT_NOT_AVAILABLE', 'pending'], 'an unavailable check never turns into a confirmation')
   // Before, production without the approvals fell back to "no deposit" and this request was confirmed for free.
   assert.deepEqual(r.sinPrecio, [409, 'SERVICE_PRICE_REQUIRED'], 'where the deposit is chargeable, a service needs a published price to take a turno')
-  assert.deepEqual(r.sandbox, [[false, true], { available: true, reason: null, mode: 'split' }, 200, 'awaiting_payment', 200, 10000, 'awaiting_payment'], 'sandbox: accepting and the checkout still do not confirm')
+  assert.deepEqual(r.sandbox, [[false, true], { available: true, reason: null, mode: 'plataforma' }, 200, 'awaiting_payment', 200, 10000, 'awaiting_payment'], 'sandbox: accepting and the checkout still do not confirm')
   assert.deepEqual(r.sandboxAprobado, ['recorded:applied', 'confirmed'], 'in sandbox too, only the verified notification confirms')
-  assert.deepEqual(r.soloServicios, [[true, false], { available: true, reason: null, mode: 'split' }, true], 'the six approvals of the launch are complete; settlement is its own registry')
+  assert.deepEqual(r.soloServicios, [[true, false], { available: true, reason: null, mode: 'plataforma' }, true], 'the six approvals of the launch are complete; settlement is its own registry')
   assert.deepEqual(r.conGate, [{ monto: 10000, moneda: 'ARS', estado: 'not_due' }, 'awaiting_payment', { monto: 10000, moneda: 'ARS', estado: 'pending' }, 400, 'UNTRUSTED_PAYMENT_FIELDS', 200, 10000, true])
   assert.equal(r.checkoutNoConfirma, 'awaiting_payment', 'creating the checkout does not confirm the turno')
-  assert.deepEqual(r.prestadorSinCuenta, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' })
+  // A provider without its own Mercado Pago account is charged through the account of TUS.
+  assert.deepEqual(r.prestadorSinCuenta, { available: true, reason: null, mode: 'plataforma' })
   assert.deepEqual(r.revocada, [[false, false], 200, 15000, 'awaiting_payment'], 'a revoked approval makes the launch not ready; the deposit can still be paid and nothing is confirmed by it')
   assert.deepEqual(r.vuelta, [200, 'awaiting_payment'], 'coming back from Mercado Pago confirms nothing')
   assert.deepEqual(r.firmaInvalida, ['invalid:INVALID_SIGNATURE', 'awaiting_payment'])

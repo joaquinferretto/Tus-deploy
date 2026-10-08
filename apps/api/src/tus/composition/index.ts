@@ -51,6 +51,8 @@ import { InMemorySupportStore, PrismaSupportStore, TusSupportService } from '../
 import { InMemoryWhatsAppActionStore, PrismaWhatsAppActionStore, TusWhatsAppService } from '../whatsapp/index.ts'
 import { InMemoryReportingStore, PrismaReportingStore, TusReportingService } from '../reporting/index.ts'
 import { EvaluadorHabilitacion, PERFILES_HABILITACION } from '../readiness/index.ts'
+import { AlmacenCierresPrisma, type ClientePrismaCierres } from '../adapters/prisma-cierres.ts'
+import { ServicioCierreTrabajo, observacionAbierta } from '../work/cierre.ts'
 import type { ServicioVerificacionIdentidad } from '../identidad/servicio.ts'
 import { crearServicioIdentidad } from '../identidad/composicion.ts'
 import { TransaccionIdentidadPrisma, type ClientePrismaIdentidad } from '../adapters/prisma-identidad.ts'
@@ -212,6 +214,11 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
     new TransaccionFinanzasServicioPrisma(client as unknown as ClientePrismaFinanzasServicio, (tx) => ({
       completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: new PrismaTrabajoStore(tx as unknown as TusPrismaClient), outbox: new PrismaTrabajoOutboxStore(tx as unknown as TusPrismaClient) }, input),
       confirmarReservaPorPago: (input) => confirmarReservaPorPagoPrisma(tx, input),
+      // CIERRE-TRABAJO-01: what the closing of the work says, read with the same transaction.
+      estadoCierre: async (input) => {
+        const cierre = await new AlmacenCierresPrisma(tx as unknown as ClientePrismaCierres).buscar(input)
+        return cierre ? { confirmed: Boolean(cierre.confirmedAt), blocked: observacionAbierta(cierre) ? 'observation_open' : null } : null
+      },
     })),
     () => Date.now(),
     servicePayments.proveedor,
@@ -219,6 +226,16 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
     servicePayments.politica
   )
   work.conPagos(pagosTrabajo(serviceFinance))
+  // CIERRE-TRABAJO-01: finished by the provider, confirmed by the client or by its window. The
+  // confirmation only records the delivery; the finance service decides what is released.
+  const cierres = new AlmacenCierresPrisma(client as unknown as ClientePrismaCierres)
+  const workClosing = new ServicioCierreTrabajo(cierres, {
+    trabajo: (input) => new PrismaTrabajoStore(client).findAccessible(input),
+    reserva: (input) => cierres.reserva(input),
+    completarReserva: (input) => cierres.completarReserva(input),
+    evaluarPagos: (input) => serviceFinance.evaluarCierreEconomico(input),
+    bloqueos: (trabajo) => serviceFinance.bloqueosDeCierre({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId }),
+  })
   return new TusApplicationService({
     commitments: commitmentStore,
     compensations: new PrismaTusCompensationStore(client),
@@ -241,6 +258,7 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
     reporting,
     work,
     serviceFinance,
+    workClosing,
     servicePayments,
     readinessEvidence,
     // Payouts are sent through Mercado Pago Payouts with TUS's own account when configured
