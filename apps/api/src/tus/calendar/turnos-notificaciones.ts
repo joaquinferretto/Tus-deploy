@@ -19,6 +19,13 @@ export interface NotificadorTurnos {
   turnoFinalizado?(aviso: AvisoTurnoFinalizado): Promise<void>
   // PAGOS-MODALIDAD-01: the turno was delivered and confirmed; its balance can be paid now.
   saldoHabilitado?(aviso: AvisoSaldoTurno): Promise<void>
+  // TURNOS-REPROGRAMACION-01: the client moved its turno to another free time: the provider knows.
+  turnoReprogramado?(aviso: AvisoTurnoReprogramado): Promise<void>
+}
+
+export interface AvisoTurnoReprogramado extends AvisoTurnoConfirmado {
+  // When the turno was before (`inicio` is the new time).
+  anterior: Date
 }
 
 export interface AvisoTurnoFinalizado extends AvisoTurnoConfirmado {

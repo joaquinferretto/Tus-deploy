@@ -323,6 +323,26 @@ export class ServicioSenaTurnos {
     return { moneda, precio, pagado: pagadas.reduce((suma, obligacion) => suma + Number(obligacion.monto), 0), cargoTus: liquidaciones.reduce((suma, liquidacion) => suma + Number(liquidacion.montoComision), 0) }
   }
 
+  /**
+   * TURNOS-REPROGRAMACION-01. What makes changing the time of a turno unsafe: its closing was
+   * started (the provider finished it), a payment was refunded or charged back, a refund is in
+   * progress, or a settlement is frozen. Empty: nothing in its payments forbids it.
+   */
+  async bloqueosDeReprogramacion(row: FilaReserva): Promise<string[]> {
+    const orden = await this.prisma.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: row.tenantId, reservaId: row.reservaId } })
+    if (!orden) return []
+    const bloqueos = new Set<string>()
+    if ((await this.prisma.cierreTrabajo.count({ where: { tenantId: orden.tenantId, trabajoId: orden.trabajoId } })) > 0) bloqueos.add('closing_started')
+    const obligaciones = await this.prisma.obligacionPagoServicio.findMany({ where: { tenantId: orden.tenantId, trabajoId: orden.trabajoId } })
+    if (obligaciones.some((obligacion) => obligacion.estado === 'refunded' || obligacion.estado === 'charged_back')) bloqueos.add('payment_reversed')
+    const ids = obligaciones.map((obligacion) => obligacion.obligacionId)
+    if (ids.length > 0) {
+      if ((await this.prisma.liquidacionServicio.count({ where: { tenantId: orden.tenantId, obligacionId: { in: ids }, estado: { in: ['frozen', 'reversed'] } } })) > 0) bloqueos.add('payment_inconsistency')
+      if ((await this.prisma.reembolsoServicio.count({ where: { tenantId: orden.tenantId, obligacionId: { in: ids }, estado: { not: 'failed' } } })) > 0) bloqueos.add('refund_in_progress')
+    }
+    return [...bloqueos]
+  }
+
   async tienePagoOnline(row: FilaReserva): Promise<boolean> {
     const orden = await this.prisma.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: row.tenantId, reservaId: row.reservaId } })
     if (!orden) return false

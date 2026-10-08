@@ -38,6 +38,10 @@ export function mensajeErrorTurno(code: string | undefined, fallback = 'No pudim
   if (code === CODIGO_SENA_YA_EMITIDA) return 'Ese turno ya tiene su seña emitida: el precio no se puede modificar.'
   if (code === CODIGO_SERVICIO_A_PRESUPUESTAR) return MENSAJE_SERVICIO_A_PRESUPUESTAR
   if (code === CODIGO_CANCELACION_TARDIA) return MENSAJE_CANCELACION_TARDIA
+  if (code === CODIGO_REPROGRAMACION_CERRADA) return MENSAJE_REPROGRAMACION_CERRADA
+  if (code === CODIGO_REPROGRAMACION_NO_PERMITIDA) return MENSAJE_REPROGRAMACION_NO_PERMITIDA
+  if (code === CODIGO_REPROGRAMACION_DESTINO_CERCANO) return MENSAJE_REPROGRAMACION_DESTINO_CERCANO
+  if (code === CODIGO_REPROGRAMACION_BLOQUEADA) return MENSAJE_REPROGRAMACION_BLOQUEADA
   if (code === CODIGO_POLITICA_CANCELACION_REQUERIDA) return TEXTO_POLITICA_CANCELACION
   // PAGOS-MODALIDAD-01 / CIERRE-TRABAJO-01.
   if (code === 'PAYMENT_MODALITY_FIXED') return 'Ya hay un pago aprobado para este turno: la forma de pago no se puede cambiar.'
@@ -369,6 +373,31 @@ const instante = (valor: string | number | Date): number => new Date(valor).getT
 export const esCancelacionTardia = (inicio: string | number | Date, ahora: number): boolean => instante(inicio) - ahora <= VENTANA_CANCELACION_MS
 // Within 24 hours of making the reservation.
 export const enPeriodoDeGracia = (reservaCreadaEn: string | number | Date, ahora: number): boolean => ahora <= instante(reservaCreadaEn) + VENTANA_CANCELACION_MS
+// TURNOS-REPROGRAMACION-01. A client may move its own turno to another free time of the same
+// provider when the turno was booked with that possibility and more than 24 hours are left (the
+// new time must also be more than 24 hours away). Decided by the backend with its own clock.
+// Rescheduling is not cancelling: the turno, its order, its payments, its deposit, its frozen
+// commission and its accepted cancellation policy stay; only the date and the time change.
+export const CODIGO_REPROGRAMACION_CERRADA = 'RESCHEDULE_WINDOW_CLOSED'
+export const CODIGO_REPROGRAMACION_NO_PERMITIDA = 'RESCHEDULE_NOT_ALLOWED'
+export const CODIGO_REPROGRAMACION_DESTINO_CERCANO = 'RESCHEDULE_TARGET_TOO_SOON'
+export const CODIGO_REPROGRAMACION_BLOQUEADA = 'RESCHEDULE_BLOCKED'
+export const MENSAJE_REPROGRAMACION_CERRADA = 'Este turno comienza dentro de las próximas 24 horas: ya no se puede reprogramar. Podés mantenerlo o cancelarlo según la política de cancelación.'
+export const MENSAJE_REPROGRAMACION_NO_PERMITIDA = 'Este turno no admite reprogramación.'
+export const MENSAJE_REPROGRAMACION_DESTINO_CERCANO = 'El nuevo horario tiene que ser con más de 24 horas de anticipación.'
+export const MENSAJE_REPROGRAMACION_BLOQUEADA = 'Este turno ya no se puede reprogramar.'
+export type MotivoSinReprogramacion = typeof CODIGO_REPROGRAMACION_CERRADA | typeof CODIGO_REPROGRAMACION_NO_PERMITIDA | typeof CODIGO_REPROGRAMACION_BLOQUEADA
+export interface ReprogramacionTurnoDTO {
+  // Whether its client can reschedule it right now, and why not (null when it can).
+  permitida: boolean
+  motivo: MotivoSinReprogramacion | null
+  // How many times it was rescheduled, and from when the last time.
+  veces: number
+  anterior: string | null
+}
+// What the client confirms before the change.
+export const textoConfirmacionReprogramacion = (anterior: string, nuevo: string): string => `Vas a cambiar tu turno del ${anterior} al ${nuevo}. Tus pagos y tu seña se mantienen.`
+
 export type ReglaCancelacion = 'ultimo_momento' | 'gracia' | 'intermedia' | 'prestador' | 'administracion'
 export type DevolucionCancelacion = 'corresponde' | 'no_reembolsable' | 'sin_pago'
 // Every amount in minor units (centavos). `servicioPagado + cargoTus = pagado` and

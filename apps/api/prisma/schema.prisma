@@ -2079,6 +2079,8 @@ model Calendario {
   estado              String   @map("estado")
   granularidadMinutos Int      @default(15) @map("granularidad_minutos")
   bufferMinutos       Int      @default(0) @map("buffer_minutos")
+  // TURNOS-REPROGRAMACION-01: the provider lets the clients of its agenda reschedule their turnos.
+  permiteReprogramacion Boolean @default(false) @map("permite_reprogramacion")
   fechaCreacion       DateTime @map("fecha_creacion")
   fechaActualizacion  DateTime @map("fecha_actualizacion")
 
@@ -2174,6 +2176,8 @@ model Reserva {
   // Until when a pending or awaiting_payment request holds its time. The same timestamp gets a
   // fresh 24-hour bound at acceptance. ck_reservas_solicitud_vigencia and partial indexes (SQL).
   solicitudExpiraEn  DateTime? @map("solicitud_expira_en")
+  // TURNOS-REPROGRAMACION-01: what this turno was booked with (copied from its agenda, once).
+  admiteReprogramacion Boolean @default(false) @map("admite_reprogramacion")
 
   tarifaId                 String?  @map("tarifa_id")
   tarifaNombre             String?  @map("tarifa_nombre")
@@ -2203,6 +2207,7 @@ model Reserva {
   recordatorios RecordatorioTurno[]
   aceptacionesPolitica AceptacionPoliticaCancelacion[]
   cancelacion CancelacionTurno?
+  reprogramaciones ReprogramacionTurno[]
 
   @@unique([tenantId, reservaId], map: "uq_reservas_tenant_reserva")
   @@index([tenantId, calendarioId, fechaInicio, fechaFin], map: "idx_reservas_tenant_calendario_franja")
@@ -4007,4 +4012,24 @@ model ComisionTrabajo {
 
   @@id([tenantId, trabajoId], map: "comisiones_trabajo_pkey")
   @@map("comisiones_trabajo")
+}
+
+// TURNOS-REPROGRAMACION-01: the history of the reschedulings of a turno (the turno keeps its row).
+model ReprogramacionTurno {
+  id              String   @id(map: "reprogramaciones_turno_pkey")
+  reservaId       String   @map("reserva_id")
+  tenantId        String   @map("tenant_id")
+  actorId         String   @map("actor_id")
+  canal           String   @map("canal")
+  inicioAnterior  DateTime @map("inicio_anterior")
+  finAnterior     DateTime @map("fin_anterior")
+  inicioNuevo     DateTime @map("inicio_nuevo")
+  finNuevo        DateTime @map("fin_nuevo")
+  reprogramadoEn  DateTime @map("reprogramado_en")
+  politicaVersion String   @map("politica_version")
+
+  reserva Reserva @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_reprogramaciones_turno_reserva")
+
+  @@index([reservaId, reprogramadoEn], map: "ix_reprogramaciones_turno_reserva")
+  @@map("reprogramaciones_turno")
 }

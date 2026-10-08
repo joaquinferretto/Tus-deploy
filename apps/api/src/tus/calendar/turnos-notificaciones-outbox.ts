@@ -12,6 +12,8 @@ export type EventoNotificacionTurno =
   // confirm it), and its balance can be paid now.
   | { kind: 'turno_finalizado'; reservaId: string }
   | { kind: 'saldo_habilitado'; reservaId: string }
+  // TURNOS-REPROGRAMACION-01: its client moved the turno (from when; the new time is the turno's).
+  | { kind: 'turno_reprogramado'; reservaId: string; anterior: string }
 
 type ClienteOutbox = PrismaClient | Prisma.TransactionClient
 
@@ -22,6 +24,7 @@ function esEvento(value: unknown): value is EventoNotificacionTurno {
   const evento = value as Record<string, unknown>
   if (typeof evento['reservaId'] !== 'string') return false
   if (evento['kind'] === 'solicitud_recibida' || evento['kind'] === 'turno_confirmado' || evento['kind'] === 'turno_finalizado' || evento['kind'] === 'saldo_habilitado') return true
+  if (evento['kind'] === 'turno_reprogramado') return typeof evento['anterior'] === 'string' && !Number.isNaN(Date.parse(evento['anterior']))
   if (evento['kind'] === 'solicitud_respondida') return ['awaiting_payment', 'confirmed', 'rejected'].includes(String(evento['resultado']))
   return evento['kind'] === 'turno_cancelado' && ['cliente', 'prestador', 'administracion'].includes(String(evento['canceladoPor']))
 }

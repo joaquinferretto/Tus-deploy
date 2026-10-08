@@ -1,4 +1,5 @@
 import { formatearPesos } from '@factory/contracts'
+import type { AvisoTurnoReprogramado } from '../calendar/turnos-notificaciones.ts'
 import type { AvisoImagenTurno, AvisoRespuestaTurno, AvisoSaldoTurno, AvisoSolicitudTurno, AvisoTurnoCancelado, AvisoTurnoConfirmado, AvisoTurnoFinalizado, NotificadorTurnos } from '../calendar/turnos-notificaciones.ts'
 import type { WhatsappTemplateService } from './plantillas.ts'
 import type { WhatsappProvider, MensajeSaliente } from './meta.ts'
@@ -132,6 +133,13 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
   async saldoHabilitado(aviso: AvisoSaldoTurno): Promise<void> {
     const texto = `Tu turno de ${aviso.servicio} con ${aviso.prestadorNombre} quedó confirmado como realizado. Ya podés pagar el saldo de ${formatearPesos(aviso.monto)}.`
     await this.entregar(aviso.clienteCuentaId, aviso.url ? { type: 'cta_url', text: `${texto} El pago se acredita cuando Mercado Pago lo aprueba.`, label: 'Pagar saldo', url: aviso.url } : { type: 'text', text: `${texto} Escribime "pagar el saldo" y te paso el link.` }, `saldo-habilitado:${aviso.reservaId}`)
+  }
+
+  // TURNOS-REPROGRAMACION-01: the provider is told that its client moved the turno. Nothing is
+  // asked of it: the client took a time the provider itself offered as free.
+  async turnoReprogramado(aviso: AvisoTurnoReprogramado): Promise<void> {
+    if (!aviso.prestadorCuentaId) return
+    await this.entregar(aviso.prestadorCuentaId, { type: 'text', text: textoReprogramacionPrestador(aviso) }, `turno-reprogramado:${aviso.reservaId}:${aviso.inicio.getTime()}`)
   }
 
   async turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void> {
@@ -268,4 +276,9 @@ export function textoSolicitud(aviso: AvisoSolicitudTurno): string {
     `Tenés tiempo de responder hasta el ${fechaLarga(aviso.expiraEn)} a las ${horaCorta(aviso.expiraEn)}.`,
   ]
   return lineas.join('\n')
+}
+
+// TURNOS-REPROGRAMACION-01: who, which service, when it was and when it is now.
+export function textoReprogramacionPrestador(aviso: AvisoTurnoReprogramado): string {
+  return `${aviso.clienteNombre} reprogramó su turno de ${aviso.servicio}. Antes: ${fechaLarga(aviso.anterior)} a las ${horaCorta(aviso.anterior)}. Ahora: ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)}. No tenés que hacer nada: eligió un horario libre de tu agenda.`
 }

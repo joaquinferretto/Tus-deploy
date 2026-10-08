@@ -169,6 +169,11 @@ export interface PuertoDominioAsistente {
   // cancellation that may follow it (never without its explicit confirmation).
   responderRecordatorio?(context: TusAuthenticatedTenantContext, recordatorioId: string, respuesta: 'asiste' | 'no_puede'): Promise<RecordatorioRespondido | null>
   cancelarPorRecordatorio?(context: TusAuthenticatedTenantContext, recordatorioId: string, confirmaPerdida: boolean): Promise<(RecordatorioRespondido & { cancelacion: CancelacionTurnoDTO | null }) | null>
+  // TURNOS-REPROGRAMACION-01, the same backend the Web uses: the client's own turnos with whether
+  // each can be moved now, the free times one can be moved to, and the change itself.
+  turnosParaReprogramar?(context: TusAuthenticatedTenantContext): Promise<{ ref: string; providerName: string; service: string | null; startsAt: string; permitida: boolean; motivo: string | null }[]>
+  horariosDeReprogramacion?(context: TusAuthenticatedTenantContext, ref: string, cantidad: number): Promise<string[]>
+  reprogramarTurno?(context: TusAuthenticatedTenantContext, ref: string, inicio: string, canal: 'web' | 'whatsapp'): Promise<{ startsAt: string }>
   // What cancelling its own turno right now would cost the client (the backend's rule and words).
   previsualizarCancelacion?(context: TusAuthenticatedTenantContext, ref: string): Promise<{ requiereConfirmacion: boolean; mensaje: string } | null>
   confirmarTurno?(context: TusAuthenticatedTenantContext, ref: string): Promise<{ pendiente: string | null }>
@@ -634,6 +639,35 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     else await turnos.cambiarEstadoTurno({ reservaId: info.reservaId, tenantId: info.tenantId, nuevoEstado: 'cancelled', motivo: 'el prestador avisó que no puede asistir' })
     await recordatorios.cancelacionResultante(recordatorioId)
     return { ...info, cancelacion: await turnos.cancelacionDe(info.reservaId) }
+  }
+
+  async turnosParaReprogramar(context: TusAuthenticatedTenantContext) {
+    if (!this.compartidos?.turnos) return []
+    const ahora = this.now()
+    return (await this.compartidos.turnos.turnosCliente(context.subjectId))
+      .filter((turno) => turno.estado === 'confirmed' && Date.parse(turno.inicio) > ahora)
+      .sort((a, b) => a.inicio.localeCompare(b.inicio))
+      .map((turno) => ({ ref: turno.id, providerName: turno.prestadorNombre, service: turno.tarifaNombre ?? turno.oficioNombre ?? null, startsAt: turno.inicio, permitida: turno.reprogramacion?.permitida === true, motivo: turno.reprogramacion?.motivo ?? null }))
+  }
+
+  // The next free times of the same provider, week by week, as the backend's agenda gives them.
+  async horariosDeReprogramacion(context: TusAuthenticatedTenantContext, ref: string, cantidad: number) {
+    const turnos = this.compartidos?.turnos
+    if (!turnos) return []
+    const libres: string[] = []
+    const hoy = new Date(this.now() - 3 * 60 * 60_000)
+    for (let semana = 0; semana < 4 && libres.length < cantidad; semana += 1) {
+      const desde = new Date(hoy.getTime() + semana * 7 * 86_400_000).toISOString().slice(0, 10)
+      const agenda = await turnos.horariosParaReprogramar({ clienteId: context.subjectId, reservaId: ref, desde })
+      for (const dia of agenda.dias) for (const franja of dia.franjas) if (franja.estado === 'disponible') libres.push(franja.inicio)
+    }
+    return [...new Set(libres)].sort().slice(0, cantidad)
+  }
+
+  async reprogramarTurno(context: TusAuthenticatedTenantContext, ref: string, inicio: string, canal: 'web' | 'whatsapp') {
+    if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    const turno = await this.compartidos.turnos.reprogramarTurno({ clienteId: context.subjectId, reservaId: ref, inicio, canal })
+    return { startsAt: turno.inicio }
   }
 
   async previsualizarCancelacion(context: TusAuthenticatedTenantContext, ref: string) {

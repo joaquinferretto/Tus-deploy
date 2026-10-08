@@ -4,7 +4,7 @@ import { FotosTurno } from './fotos-turno'
 import type { Route } from 'next'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
-import { CODIGO_CANCELACION_TARDIA, CODIGO_POLITICA_CANCELACION_REQUERIDA, VERSION_POLITICA_CANCELACION, etiquetaEstadoTurno, textoPoliticaCancelacion, etiquetaSenaTurno, formatearPesos, type DetalleTurno } from '@factory/contracts'
+import { CODIGO_CANCELACION_TARDIA, CODIGO_POLITICA_CANCELACION_REQUERIDA, MENSAJE_REPROGRAMACION_CERRADA, VERSION_POLITICA_CANCELACION, etiquetaEstadoTurno, textoConfirmacionReprogramacion, textoPoliticaCancelacion, etiquetaSenaTurno, formatearPesos, type DetalleTurno } from '@factory/contracts'
 
 import styles from '../directory/directory.module.css'
 import homeStyles from '../home/home.module.css'
@@ -65,6 +65,39 @@ export function MisTurnosPage(): React.ReactNode {
   // this only shows them and sends the answer back.
   const [politica, setPolitica] = useState<{ id: string; tramo: 'sena' | 'total' } | null>(null)
   const [perdida, setPerdida] = useState<{ id: string; mensaje: string } | null>(null)
+  // TURNOS-REPROGRAMACION-01: the turno being moved, the week of free times the API returned for
+  // it and the time chosen (confirmed before the change). Whether a turno can be moved, which
+  // times are free and the 24 hours are the API's: nothing of that is decided here.
+  const [moviendo, setMoviendo] = useState<{ id: string; desde: string; dias: { fecha: string; franjas: { inicio: string; hora: string; estado: string }[] }[] | null; elegido: string | null } | null>(null)
+  const [guardandoCambio, setGuardandoCambio] = useState(false)
+  const semanaDe = (fecha: string, dias: number) => new Date(Date.parse(`${fecha}T12:00:00.000Z`) + dias * 86_400_000).toISOString().slice(0, 10)
+  async function verHorarios(id: string, desde: string) {
+    setError(null)
+    setMoviendo({ id, desde, dias: null, elegido: null })
+    try {
+      const agenda = await turnosApi.horariosReprogramacion(id, desde)
+      setMoviendo({ id, desde, dias: agenda.dias, elegido: null })
+    } catch (causa: unknown) {
+      setMoviendo(null)
+      setError(causa instanceof Error ? causa.message : 'No pudimos consultar los horarios.')
+      cargar()
+    }
+  }
+  async function confirmarCambio(turno: DetalleTurno, inicio: string) {
+    setGuardandoCambio(true)
+    setError(null)
+    try {
+      await turnosApi.reprogramarTurno(turno.id, inicio)
+      setMoviendo(null)
+      cargar()
+    } catch (causa: unknown) {
+      setError(causa instanceof Error ? causa.message : 'No pudimos reprogramar el turno.')
+      // The time may have been taken meanwhile: the free times are asked again.
+      void verHorarios(turno.id, moviendo?.desde ?? new Date().toISOString().slice(0, 10))
+    } finally {
+      setGuardandoCambio(false)
+    }
+  }
 
   useEffect(() => {
     if (session.status === 'guest') window.location.replace(`/sign-in?returnTo=${encodeURIComponent(RETURN_TO)}`)
@@ -257,6 +290,53 @@ export function MisTurnosPage(): React.ReactNode {
                       <textarea maxLength={1000} onChange={(event) => setProblema({ ...problema, [turno.id]: event.target.value })} rows={3} value={problema[turno.id] ?? ''} />
                     </label>
                   ) : null}
+                  {turno.estado === 'confirmed' && futuro && turno.reprogramacion?.motivo === 'RESCHEDULE_WINDOW_CLOSED' ? (
+                    <span className={styles.muted} data-reprogramacion-cerrada style={{ fontSize: '0.9rem' }}>{MENSAJE_REPROGRAMACION_CERRADA}</span>
+                  ) : null}
+                  {turno.reprogramacion && turno.reprogramacion.veces > 0 && turno.reprogramacion.anterior ? (
+                    <span className={styles.muted} data-turno-reprogramado style={{ fontSize: '0.9rem' }}>Reprogramado: antes era el {diaTurno(turno.reprogramacion.anterior)} a las {horaTurno(turno.reprogramacion.anterior)}.</span>
+                  ) : null}
+                  {moviendo?.id === turno.id ? (
+                    <div data-reprogramacion role="group" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 'var(--tus-control-radius)', display: 'grid', gap: 10, padding: '10px 12px' }}>
+                      {moviendo.elegido ? (
+                        <>
+                          <span data-reprogramacion-confirmar>{textoConfirmacionReprogramacion(`${diaTurno(turno.inicio)} a las ${horaTurno(turno.inicio)}`, `${diaTurno(moviendo.elegido)} a las ${horaTurno(moviendo.elegido)}`)}</span>
+                          <div className={styles.turnoActions}>
+                            <button className={homeStyles.buttonPrimary} data-confirmar-cambio disabled={guardandoCambio} onClick={() => void confirmarCambio(turno, moviendo.elegido!)} type="button">
+                              {guardandoCambio ? 'Guardando…' : 'Confirmar cambio'}
+                            </button>
+                            <button className={homeStyles.buttonSecondary} onClick={() => setMoviendo({ ...moviendo, elegido: null })} type="button">
+                              Volver
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <strong>Elegí el nuevo horario</strong>
+                          <span className={styles.muted} style={{ fontSize: '0.9rem' }}>Solo se muestran horarios libres con más de 24 horas de anticipación. Tus pagos y tu seña se mantienen.</span>
+                          <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                            <button className={homeStyles.buttonSecondary} disabled={moviendo.desde <= new Date().toISOString().slice(0, 10)} onClick={() => void verHorarios(turno.id, semanaDe(moviendo.desde, -7))} type="button">Semana anterior</button>
+                            <button className={homeStyles.buttonSecondary} data-semana-siguiente onClick={() => void verHorarios(turno.id, semanaDe(moviendo.desde, 7))} type="button">Semana siguiente</button>
+                            <button className={homeStyles.buttonSecondary} onClick={() => setMoviendo(null)} type="button">Cerrar</button>
+                          </div>
+                          {moviendo.dias === null ? <span className={styles.muted}>Consultando horarios…</span> : null}
+                          {moviendo.dias !== null && !moviendo.dias.some((dia) => dia.franjas.some((franja) => franja.estado === 'disponible')) ? <span data-reprogramacion-sin-horarios>No hay horarios libres esa semana. Probá con la siguiente.</span> : null}
+                          {(moviendo.dias ?? []).filter((dia) => dia.franjas.some((franja) => franja.estado === 'disponible')).map((dia) => (
+                            <div key={dia.fecha} style={{ display: 'grid', gap: 6 }}>
+                              <span style={{ fontWeight: 600 }}>{diaTurno(`${dia.fecha}T12:00:00.000-03:00`)}</span>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {dia.franjas.filter((franja) => franja.estado === 'disponible').map((franja) => (
+                                  <button className={homeStyles.buttonSecondary} data-horario-nuevo={franja.inicio} key={franja.inicio} onClick={() => setMoviendo({ ...moviendo, elegido: franja.inicio })} type="button">
+                                    {franja.hora}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  ) : null}
                   {politica?.id === turno.id ? (
                     <div data-politica-cancelacion role="group" style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 'var(--tus-control-radius)', display: 'grid', gap: 8, padding: '10px 12px' }}>
                       <span>
@@ -305,6 +385,11 @@ export function MisTurnosPage(): React.ReactNode {
                     ) : turno.estado === 'awaiting_payment' && turno.sena?.estado === 'pending' ? (
                       <button className={homeStyles.buttonPrimary} data-pagar="sena" disabled={pagando === turno.id} onClick={() => void pagar(turno, 'sena')} type="button">
                         {pagando === turno.id ? 'Preparando pago…' : `Pagar seña — ${formatearPesos(turno.sena.monto)}`}
+                      </button>
+                    ) : null}
+                    {turno.reprogramacion?.permitida && moviendo?.id !== turno.id ? (
+                      <button className={homeStyles.buttonSecondary} data-reprogramar onClick={() => void verHorarios(turno.id, new Date().toISOString().slice(0, 10))} type="button">
+                        Reprogramar turno
                       </button>
                     ) : null}
                     <button className={homeStyles.buttonSecondary} disabled={cancelando === turno.id} onClick={() => void cancelar(turno)} type="button">

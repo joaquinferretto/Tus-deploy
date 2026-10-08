@@ -46,6 +46,22 @@ export function ProviderTurnos(): React.ReactNode {
   useEffect(() => {
     void turnosApi.misServicios().then(setServicios).catch(() => setServicios([]))
   }, [])
+  // TURNOS-REPROGRAMACION-01: the provider's own switch (saved by the API before it shows).
+  const [permiteReprogramar, setPermiteReprogramar] = useState<boolean | null>(null)
+  const [guardandoReprogramar, setGuardandoReprogramar] = useState(false)
+  useEffect(() => {
+    void turnosApi.miReprogramacion().then((valor) => setPermiteReprogramar(valor.permite)).catch(() => setPermiteReprogramar(null))
+  }, [])
+  async function cambiarReprogramacion(permite: boolean) {
+    setGuardandoReprogramar(true)
+    try {
+      setPermiteReprogramar((await turnosApi.guardarMiReprogramacion(permite)).permite)
+    } catch {
+      // It stays as the API has it.
+    } finally {
+      setGuardandoReprogramar(false)
+    }
+  }
 
   const cargarTurnos = useCallback(() => {
     setLoading(true)
@@ -234,6 +250,19 @@ export function ProviderTurnos(): React.ReactNode {
 
   return (
     <div style={{ display: 'grid', gap: 20 }}>
+      {permiteReprogramar !== null ? (
+        <section aria-label="Reprogramación de turnos" className={styles.panel} data-reprogramacion-prestador>
+          <label style={{ alignItems: 'flex-start', display: 'flex', gap: 10 }}>
+            <input checked={permiteReprogramar} data-permite-reprogramacion disabled={guardandoReprogramar} onChange={(event) => void cambiarReprogramacion(event.target.checked)} style={{ marginTop: 4 }} type="checkbox" />
+            <span>
+              <strong>Permitir reprogramación de turnos</strong>
+              <span className={styles.muted} style={{ display: 'block', fontSize: '0.9rem' }}>
+                Tus clientes van a poder mover su turno a otro horario libre de tu agenda, hasta 24 horas antes. No tenés que aceptar nada: te avisamos el cambio. Vale para los turnos que se reserven desde ahora; los que ya existen conservan la condición con la que se reservaron.
+              </span>
+            </span>
+          </label>
+        </section>
+      ) : null}
       {/* Solicitudes de reserva: lo que los clientes pidieron y espera la respuesta del prestador */}
       <section aria-labelledby="solicitudes-reserva" className={styles.panel} data-solicitudes>
         <h2 className={styles.panelTitle} id="solicitudes-reserva">

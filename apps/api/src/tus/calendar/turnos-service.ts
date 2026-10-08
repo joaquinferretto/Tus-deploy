@@ -13,6 +13,14 @@ import {
   CODIGO_SOLICITUD_VENCIDA,
   CODIGO_CANCELACION_TARDIA,
   CODIGO_POLITICA_CANCELACION_REQUERIDA,
+  CODIGO_REPROGRAMACION_BLOQUEADA,
+  CODIGO_REPROGRAMACION_CERRADA,
+  CODIGO_REPROGRAMACION_DESTINO_CERCANO,
+  CODIGO_REPROGRAMACION_NO_PERMITIDA,
+  MENSAJE_REPROGRAMACION_DESTINO_CERCANO,
+  esCancelacionTardia,
+  mensajeErrorTurno,
+  type ReprogramacionTurnoDTO,
   CODIGO_SERVICIO_A_PRESUPUESTAR,
   CODIGO_TRANSICION_INVALIDA,
   calcularCancelacion,
@@ -275,9 +283,17 @@ export class ServicioTurnos {
     const canceladas = rows.filter((row) => row.estado === 'cancelled' || row.estado === 'cancelled-late')
     const cancelaciones = new Map((canceladas.length > 0 ? await this.prisma.cancelacionTurno.findMany({ where: { reservaId: { in: canceladas.map((row) => row.id) } } }) : []).map((fila) => [fila.reservaId, cancelacionDeFila(fila)]))
     const conCancelacion = cancelaciones.size > 0 ? turnos.map((turno) => (cancelaciones.has(turno.id) ? { ...turno, cancelacion: cancelaciones.get(turno.id)! } : turno)) : turnos
-    if (!this.senas) return conCancelacion
+    // TURNOS-REPROGRAMACION-01: whether each one can be moved by its client right now.
+    const historial = new Map<string, { veces: number; anterior: string | null }>()
+    const conHistoria = rows.filter((row) => row.admiteReprogramacion)
+    for (const fila of conHistoria.length > 0 ? await this.prisma.reprogramacionTurno.findMany({ where: { reservaId: { in: conHistoria.map((row) => row.id) } }, orderBy: { reprogramadoEn: 'asc' } }) : []) historial.set(fila.reservaId, { veces: (historial.get(fila.reservaId)?.veces ?? 0) + 1, anterior: fila.inicioAnterior.toISOString() })
+    const ahoraMs = this.ahora()
+    const reprogramaciones = new Map<string, ReprogramacionTurnoDTO>()
+    for (const row of rows) reprogramaciones.set(row.id, { ...(await this.reprogramacionDe(row, ahoraMs)), veces: historial.get(row.id)?.veces ?? 0, anterior: historial.get(row.id)?.anterior ?? null })
+    const conReprogramacion = conCancelacion.map((turno) => ({ ...turno, reprogramacion: reprogramaciones.get(turno.id) ?? null }))
+    if (!this.senas) return conReprogramacion
     const [senas, pagos] = await Promise.all([this.senas.senasDe(rows), this.senas.pagosDe(rows)])
-    return conCancelacion.map((turno) => ({ ...turno, sena: senas.get(turno.id) ?? null, pago: pagos.get(turno.id) ?? null }))
+    return conReprogramacion.map((turno) => ({ ...turno, sena: senas.get(turno.id) ?? null, pago: pagos.get(turno.id) ?? null }))
   }
 
   /**
@@ -304,6 +320,120 @@ export class ServicioTurnos {
     if (!reserva) return null
     const { desglose } = await this.desgloseDeCancelacion(reserva, 'cliente', this.ahora())
     return { requiereConfirmacion: cancelacionRequiereConfirmacion(desglose), mensaje: mensajeConfirmacionCancelacion(desglose), desglose }
+  }
+
+  // ---- TURNOS-REPROGRAMACION-01 -----------------------------------------------------------------
+
+  /** The provider's own switch: do the clients of its agenda reschedule their turnos? */
+  async reprogramacionPrestador(tenantId: string): Promise<{ permite: boolean }> {
+    const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId } })
+    if (!perfil) throw new ErrorCalendario(404, 'NOT_FOUND', 'Perfil de prestador no encontrado')
+    const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
+    return { permite: (await this.prisma.calendario.findUnique({ where: { id: calendario.id }, select: { permiteReprogramacion: true } }))?.permiteReprogramacion ?? false }
+  }
+
+  /** It applies to the turnos booked from now on: the ones that exist keep what they were booked with. */
+  async guardarReprogramacionPrestador(tenantId: string, permite: boolean): Promise<{ permite: boolean }> {
+    const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId } })
+    if (!perfil) throw new ErrorCalendario(404, 'NOT_FOUND', 'Perfil de prestador no encontrado')
+    const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
+    await this.prisma.calendario.update({ where: { id: calendario.id }, data: { permiteReprogramacion: permite, fechaActualizacion: new Date() } })
+    return { permite }
+  }
+
+  /**
+   * Whether the client of a turno can reschedule it at this instant (the server's clock), and
+   * why not. The turno must have been booked with that possibility, be confirmed, be more than
+   * 24 hours away, and have nothing that makes moving it unsafe (its closing started, a payment
+   * reversed, a refund in progress, a frozen settlement).
+   */
+  private async reprogramacionDe(row: FilaReserva, ahora: number): Promise<{ permitida: boolean; motivo: ReprogramacionTurnoDTO['motivo'] }> {
+    if (!row.admiteReprogramacion) return { permitida: false, motivo: CODIGO_REPROGRAMACION_NO_PERMITIDA }
+    if (row.estado !== 'confirmed' || row.esInvitado) return { permitida: false, motivo: CODIGO_REPROGRAMACION_BLOQUEADA }
+    if (esCancelacionTardia(row.fechaInicio, ahora)) return { permitida: false, motivo: CODIGO_REPROGRAMACION_CERRADA }
+    if (this.senas && (await this.senas.bloqueosDeReprogramacion(row)).length > 0) return { permitida: false, motivo: CODIGO_REPROGRAMACION_BLOQUEADA }
+    return { permitida: true, motivo: null }
+  }
+
+  private async agendaDeReserva(row: FilaReserva): Promise<{ calendario: CalendarioAgenda; duracion: number; buffer: number }> {
+    const calendarioFila = await this.prisma.calendario.findUnique({ where: { id: row.calendarioId } })
+    if (!calendarioFila) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+    const servicio = row.servicioId ? await this.prisma.perfilServicio.findFirst({ where: { oficioId: row.servicioId, perfil: { tenantId: row.tenantId } }, select: { bufferMinutos: true } }).catch(() => null) : null
+    return { calendario: calendarioFila, duracion: row.duracionMinutos ?? Math.round((row.fechaFin.getTime() - row.fechaInicio.getTime()) / 60_000), buffer: servicio?.bufferMinutos ?? calendarioFila.bufferMinutos ?? 0 }
+  }
+
+  /**
+   * The times a client can move ITS turno to, one week from `desde`: the real agenda of the same
+   * provider for the same service (the same engine every booking uses), without the time the
+   * turno itself occupies today, and only what is more than 24 hours away.
+   */
+  async horariosParaReprogramar(input: { clienteId: string; reservaId: string; desde: string }): Promise<{ desde: string; hasta: string; duracionMinutos: number; actual: string; dias: DiaAgenda[] }> {
+    if (!esFecha(input.desde)) throw new ErrorCalendario(400, 'INVALID_DATE', 'La fecha debe tener el formato YYYY-MM-DD')
+    const row = await this.prisma.reserva.findFirst({ where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false } })
+    if (!row) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+    const ahora = this.ahora()
+    const estado = await this.reprogramacionDe(row, ahora)
+    if (!estado.permitida) throw new ErrorCalendario(409, estado.motivo!, mensajeErrorTurno(estado.motivo!))
+    const hoy = fechaLocal(new Date(ahora))
+    if (input.desde < hoy || input.desde > sumarDias(hoy, MAXIMO_DIAS_ADELANTE_AGENDA)) throw new ErrorCalendario(400, 'INVALID_DATE', 'Esa semana está fuera del período que se puede consultar')
+    const { calendario, duracion, buffer } = await this.agendaDeReserva(row)
+    const fechas = Array.from({ length: DIAS_AGENDA }, (_, index) => sumarDias(input.desde, index))
+    const dias = await this.agendaDias(calendario, fechas, duracion, buffer, this.prisma, row.id)
+    // Free, but 24 hours or less away, or the time the turno already has: not a choice here.
+    const elegible = (inicio: string) => !esCancelacionTardia(inicio, ahora) && new Date(inicio).getTime() !== row.fechaInicio.getTime()
+    return { desde: input.desde, hasta: fechas.at(-1)!, duracionMinutos: duracion, actual: row.fechaInicio.toISOString(), dias: dias.map((dia) => ({ ...dia, franjas: dia.franjas.map((franja) => (franja.estado === 'disponible' && !elegible(franja.inicio) ? { ...franja, estado: 'ocupado' as const } : franja)) })) }
+  }
+
+  /**
+   * The client moves ITS turno to another free time of the same provider. The same turno: its
+   * row, its order of work, its payments, its deposit, its way of paying, its frozen commission
+   * and the cancellation policy it accepted stay as they are. Only the date, the time and the
+   * slot of the agenda change. No refund, no new obligation, no new commission.
+   *
+   * Decided with the agenda locked and the server's clock: the turno must still admit it, more
+   * than 24 hours must be left, the new time must be free in the real agenda (and also more than
+   * 24 hours away). PostgreSQL still forbids two turnos on the same time.
+   */
+  async reprogramarTurno(input: { clienteId: string; reservaId: string; inicio: string; canal: 'web' | 'whatsapp' }): Promise<DetalleTurno> {
+    const reserva = await this.prisma.reserva.findFirst({ where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false } })
+    if (!reserva) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+    const nuevoInicio = new Date(input.inicio)
+    if (typeof input.inicio !== 'string' || Number.isNaN(nuevoInicio.getTime())) throw new ErrorCalendario(400, 'INVALID_DATE', 'Fecha de inicio inválida')
+    const { calendario, duracion, buffer } = await this.agendaDeReserva(reserva)
+    let row: FilaReserva
+    try {
+      row = await this.conAgendaBloqueada(calendario, async (tx) => {
+        const ahora = new Date(this.ahora())
+        const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
+        if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
+        const estado = await this.reprogramacionDe(actual, ahora.getTime())
+        if (!estado.permitida) throw new ErrorCalendario(409, estado.motivo!, mensajeErrorTurno(estado.motivo!))
+        if (nuevoInicio.getTime() === actual.fechaInicio.getTime()) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Elegí un horario distinto al que ya tiene el turno.')
+        // The new time also respects the 24 hours: rescheduling never lands inside them.
+        if (esCancelacionTardia(nuevoInicio, ahora.getTime())) throw new ErrorCalendario(409, CODIGO_REPROGRAMACION_DESTINO_CERCANO, MENSAJE_REPROGRAMACION_DESTINO_CERCANO)
+        await this.exigirDisponible(calendario, nuevoInicio, duracion, buffer, tx, actual.id)
+        const movida = await tx.reserva.update({ where: { id: actual.id }, data: { fechaInicio: nuevoInicio, fechaFin: new Date(nuevoInicio.getTime() + duracion * 60_000), version: { increment: 1 }, fechaActualizacion: ahora } })
+        await tx.reprogramacionTurno.create({ data: { id: `reprog-${randomUUID()}`, reservaId: movida.id, tenantId: movida.tenantId, actorId: input.clienteId, canal: input.canal, inicioAnterior: actual.fechaInicio, finAnterior: actual.fechaFin, inicioNuevo: movida.fechaInicio, finNuevo: movida.fechaFin, reprogramadoEn: ahora, politicaVersion: VERSION_POLITICA_CANCELACION } })
+        // The reminders computed for the old time are never sent; the sweep computes the new ones.
+        await tx.recordatorioTurno.updateMany({ where: { reservaId: movida.id, estado: 'pending' }, data: { estado: 'invalidated', motivo: 'turno_reprogramado', fechaActualizacion: ahora } })
+        await this.outboxNotificaciones.encolar(tx, { tenantId: movida.tenantId, reservaId: movida.id, version: movida.version, evento: { kind: 'turno_reprogramado', reservaId: movida.id, anterior: actual.fechaInicio.toISOString() } })
+        return movida
+      })
+    } catch (error) {
+      if (error instanceof ErrorCalendario) throw error
+      if (esSolapamiento(error)) throw horarioOcupado('Ese horario acaba de ser ocupado. Elegí otro.')
+      throw error
+    }
+    this.activarNotificaciones()
+    const [perfil, oficios] = await Promise.all([this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: row.tenantId } }), this.nombresDeOficio([row])])
+    const [turno] = await this.agregarSenas([row], [this.mapearDetalleTurno(row, perfil?.nombrePublico ?? 'Prestador', { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined })])
+    return turno!
+  }
+
+  /** The reschedulings of a turno, oldest first (audit). */
+  async reprogramacionesDe(reservaId: string): Promise<{ actorId: string; canal: string; anterior: string; nuevo: string; en: string; politicaVersion: string }[]> {
+    const filas = await this.prisma.reprogramacionTurno.findMany({ where: { reserva: { OR: [{ id: reservaId }, { reservaId }] } }, orderBy: { reprogramadoEn: 'asc' } })
+    return filas.map((fila) => ({ actorId: fila.actorId, canal: fila.canal, anterior: fila.inicioAnterior.toISOString(), nuevo: fila.inicioNuevo.toISOString(), en: fila.reprogramadoEn.toISOString(), politicaVersion: fila.politicaVersion }))
   }
 
   /** TURNOS-CANCELACION-01: something of this turno was paid through TUS and not reversed. */
@@ -534,9 +664,10 @@ export class ServicioTurnos {
     fecha: string,
     duracion: number,
     buffer: number,
-    db: ClienteAgenda = this.prisma
+    db: ClienteAgenda = this.prisma,
+    ignorarReservaId?: string
   ): Promise<SlotDisponible[]> {
-    const [dia] = await this.agendaDias(calendario, [fecha], duracion, buffer, db)
+    const [dia] = await this.agendaDias(calendario, [fecha], duracion, buffer, db, ignorarReservaId)
     return dia!.franjas
       .filter((franja) => franja.estado === 'disponible')
       .map((franja) => ({ inicio: franja.inicio, fin: franja.fin, duracionMinutos: duracion, disponible: true }))
@@ -554,7 +685,8 @@ export class ServicioTurnos {
     fechas: string[],
     duracion: number,
     buffer: number,
-    db: ClienteAgenda = this.prisma
+    db: ClienteAgenda = this.prisma,
+    ignorarReservaId?: string
   ): Promise<DiaAgenda[]> {
     const ahora = Date.now()
     const diasSemana = [...new Set(fechas.map(dateWeekday))]
@@ -583,6 +715,7 @@ export class ServicioTurnos {
     const reservasExistentes = await db.reserva.findMany({
       where: {
         calendarioId: calendario.id,
+        ...(ignorarReservaId ? { id: { not: ignorarReservaId } } : {}),
         ...queOcupan(new Date(ahora)),
         fechaInicio: { lte: new Date(finRango.getTime() + descanso) },
         fechaFin: { gte: new Date(inicioRango.getTime() - descanso) },
@@ -603,18 +736,20 @@ export class ServicioTurnos {
     inicio: Date,
     duracion: number,
     buffer: number,
-    db: ClienteAgenda = this.prisma
+    db: ClienteAgenda = this.prisma,
+    // TURNOS-REPROGRAMACION-01: the turno that is being moved does not occupy its own time.
+    ignorarReservaId?: string
   ): Promise<void> {
     if (inicio.getTime() <= Date.now()) {
       throw new ErrorCalendario(400, 'PAST_DATE', 'El horario elegido ya pasó.')
     }
-    const libres = await this.slotsLibres(calendario, fechaLocal(inicio), duracion, buffer, db)
+    const libres = await this.slotsLibres(calendario, fechaLocal(inicio), duracion, buffer, db, ignorarReservaId)
     if (libres.some((slot) => slot.inicio === inicio.toISOString())) return
     // Taken by another turno or by the rest time around it: "occupied", not "outside the hours".
     const descanso = buffer * 60_000
     const fin = new Date(inicio.getTime() + duracion * 60_000 + descanso)
     const ocupado = await db.reserva.findFirst({
-      where: { calendarioId: calendario.id, ...queOcupan(new Date()), fechaInicio: { lt: fin }, fechaFin: { gt: new Date(inicio.getTime() - descanso) } },
+      where: { calendarioId: calendario.id, ...(ignorarReservaId ? { id: { not: ignorarReservaId } } : {}), ...queOcupan(new Date()), fechaInicio: { lt: fin }, fechaFin: { gt: new Date(inicio.getTime() - descanso) } },
     })
     if (ocupado) throw horarioOcupado()
     throw new ErrorCalendario(409, 'SLOT_NOT_AVAILABLE', 'Ese horario no está dentro de la disponibilidad del profesional.')
@@ -728,6 +863,8 @@ export class ServicioTurnos {
             fechaFin: fin,
             estado: solicitud ? 'pending' : 'confirmed',
             solicitudExpiraEn: expiraEn,
+            // TURNOS-REPROGRAMACION-01: booked with what the agenda says NOW; never changed afterwards.
+            admiteReprogramacion: (await tx.calendario.findUnique({ where: { id: calendario.id }, select: { permiteReprogramacion: true } }))?.permiteReprogramacion ?? false,
             version: 1,
             fechaCreacion: now,
             fechaActualizacion: now,
@@ -908,6 +1045,13 @@ export class ServicioTurnos {
       prestadorNombre: perfil?.nombrePublico ?? 'El profesional',
       servicio: row.tarifaNombre ?? (row.servicioId ? oficios.get(row.servicioId) : null) ?? 'el servicio',
       inicio: row.fechaInicio,
+    }
+    if (evento.kind === 'turno_reprogramado') {
+      // TURNOS-REPROGRAMACION-01: the provider is told; nothing is asked of it (the client took a
+      // time the provider itself offered as free).
+      const aviso = { ...comun, anterior: new Date(evento.anterior) }
+      await Promise.all(this.notificadores.map((notificador) => notificador.turnoReprogramado?.(aviso)))
+      return
     }
     if (evento.kind === 'solicitud_recibida') {
       const precio = row.precioFinal !== null && row.precioFinal !== undefined && row.precioFinal > 0n ? Number(row.precioFinal) : null

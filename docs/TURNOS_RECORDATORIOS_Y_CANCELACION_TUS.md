@@ -189,7 +189,64 @@ definición de TUS (nombre, idioma, cuerpo, botones) y está en `WHATSAPP_APPROV
 Sin las plantillas habilitadas el barrido funciona igual: recuerda solo a quien tenga la ventana
 abierta y deja registrado `requiere_plantilla` para el resto.
 
-## 6. Decisiones pendientes del dueño
+## 6. Reprogramación de turnos (`TURNOS-REPROGRAMACION-01`)
+
+Migración `20261116100000_tus_turnos_reprogramacion` (aditiva): `calendarios.permite_reprogramacion`
+y `reservas.admite_reprogramacion` (ambas `false` por defecto) y la tabla `reprogramaciones_turno`.
+
+**Configuración del prestador.** "Permitir reprogramación de turnos", en su agenda, apagado por
+defecto. Vale para los turnos que se reserven desde ese momento: cada turno copia el valor cuando
+se crea la reserva y no cambia más (el prestador no puede modificar las condiciones de un turno que
+ya existe, ni para dar ni para quitar).
+
+**Quién y cuándo.** El cliente puede mover su propio turno si:
+
+- el turno se reservó admitiendo reprogramación;
+- está confirmado;
+- faltan **más de 24 horas** (con 24 exactas o menos: `RESCHEDULE_WINDOW_CLOSED`);
+- no tiene nada que haga inseguro moverlo: cierre iniciado (el prestador ya lo finalizó), pago
+  reembolsado o con contracargo, reembolso en curso o liquidación congelada
+  (`RESCHEDULE_BLOCKED`).
+
+El nuevo horario también debe quedar a más de 24 horas (`RESCHEDULE_TARGET_TOO_SOON`); esos
+horarios directamente no se ofrecen. Todo se decide en el backend con su reloj.
+
+**Qué es reprogramar.** No es cancelar y crear otro turno. Es la misma reserva: conserva su orden
+de trabajo, cliente, prestador, servicio, pagos aprobados, seña, modalidad, comisión congelada y
+política de cancelación aceptada. Solo cambian fecha, hora y franja. No se crea reembolso,
+comisión, seña ni obligación.
+
+**Disponibilidad.** El mismo motor de agenda que usa toda reserva, ignorando solo la franja que el
+propio turno ocupa hoy. El cambio se hace con la agenda bloqueada y se vuelve a validar la franja
+en ese momento; además la base impide dos turnos en el mismo horario. Si dos clientes eligen la
+misma franja a la vez, uno la obtiene y el otro recibe "horario ocupado".
+
+**Prestador.** No se le pide una segunda aceptación (el cliente eligió una franja que él publicó
+como libre). Se le avisa con cliente, servicio, horario anterior y nuevo. Por WhatsApp el aviso
+sale solo si tiene la ventana de 24 h abierta: todavía no hay plantilla para este aviso.
+
+**Recordatorios.** Los pendientes de la fecha vieja se invalidan en la misma operación y nunca se
+envían; el barrido calcula los de 24 h y 2 h para la fecha nueva.
+
+**Cancelación posterior.** Reprogramar no penaliza y no reinicia el período de gracia: la gracia se
+sigue midiendo desde la creación original de la reserva; el tiempo que falta se mide contra la
+fecha nueva.
+
+**Auditoría.** `reprogramaciones_turno`: turno, quién, canal, horario anterior y nuevo, momento y
+versión de la política. Es historial: nunca se sobrescribe.
+
+**Rutas.**
+
+| Ruta | Uso |
+| --- | --- |
+| `GET` / `PUT /tus/v1/prestador/turnos/reprogramacion` | Interruptor del prestador (`{ permite }`). |
+| `GET /tus/v1/cliente/turnos/:id/reprogramacion/horarios?desde=YYYY-MM-DD` | Semana de horarios a los que ese turno se puede mover. |
+| `POST /tus/v1/cliente/turnos/:id/reprogramar` | Cuerpo: solo `inicio`. |
+
+Web ("Mis turnos": botón, selector por semana y confirmación) y WhatsApp ("quiero cambiar mi
+turno", lista numerada de horarios, confirmación con dos botones) usan esas mismas operaciones.
+
+## 7. Decisiones pendientes del dueño
 
 - **Ejecución de la devolución.** La política ya calcula cuánto corresponde devolver, pero no
   devuelve. Dos casos (gracia y total cancelado en la regla intermedia) son devoluciones

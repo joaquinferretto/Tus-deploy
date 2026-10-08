@@ -207,6 +207,69 @@ export function crearRouterTurnos({
   // that deposit. The body is never read: the turno is the one of the path, the client is the
   // session and the amount is derived from the price stored on the reservation. It pays nothing
   // by itself; only Mercado Pago's verified notification marks the deposit as paid.
+  // TURNOS-REPROGRAMACION-01. The provider's own switch (it applies to the turnos booked from now on).
+  router.get(
+    '/tus/v1/prestador/turnos/reprogramacion',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      try {
+        response.status(200).json(await servicio.reprogramacionPrestador(context.tenantId))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+  router.put(
+    '/tus/v1/prestador/turnos/reprogramacion',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      const body = comoRegistro(request.body)
+      if (Object.keys(body).some((campo) => campo !== 'permite') || typeof body['permite'] !== 'boolean') return void response.status(400).json({ code: 'INVALID_PARAMS', error: 'permite debe ser verdadero o falso.', fields: ['permite'] })
+      try {
+        response.status(200).json(await servicio.guardarReprogramacionPrestador(context.tenantId, body['permite']))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
+  // The times the client of the session can move ITS turno to (the real agenda of its provider).
+  router.get(
+    '/tus/v1/cliente/turnos/:id/reprogramacion/horarios',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      response.setHeader('cache-control', 'private, no-store')
+      try {
+        response.status(200).json(await servicio.horariosParaReprogramar({ clienteId: context.subjectId, reservaId: String(request.params['id'] ?? ''), desde: String(request.query['desde'] ?? '') }))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
+  // The change itself. The body carries ONLY the new start: the turno is the one of the path, the
+  // client is the session, and whether it is allowed, the 24 hours and the availability are decided
+  // by the backend at this moment.
+  router.post(
+    '/tus/v1/cliente/turnos/:id/reprogramar',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      response.setHeader('cache-control', 'private, no-store')
+      const body = comoRegistro(request.body)
+      const ajenos = Object.keys(body).filter((campo) => campo !== 'inicio')
+      if (ajenos.length > 0 || typeof body['inicio'] !== 'string') return void response.status(400).json({ code: 'INVALID_PARAMS', error: 'Solo se admite inicio (la nueva fecha y hora).', fields: ajenos.length > 0 ? ajenos : ['inicio'] })
+      try {
+        response.status(200).json(await servicio.reprogramarTurno({ clienteId: context.subjectId, reservaId: String(request.params['id'] ?? ''), inicio: body['inicio'], canal: 'web' }))
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
   router.post(
     '/tus/v1/cliente/turnos/:id/sena/checkout',
     asyncHandler(async (request: Request, response: Response) => {

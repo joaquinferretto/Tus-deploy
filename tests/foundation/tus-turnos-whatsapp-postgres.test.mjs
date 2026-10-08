@@ -594,3 +594,95 @@ test('RECORDATORIOS por WhatsApp PostgreSQL: outside the 24 hour window only the
   assert.deepEqual(r.prestadorCancela.slice(4), ['cancelled', ['prestador', false, 'corresponde', null]])
 })
 
+// TURNOS-REPROGRAMACION-01 through the REAL assistant: the same backend operations as the Web.
+test('REPROGRAMACION por WhatsApp PostgreSQL: "quiero cambiar mi turno" lists the real free times of the same provider; a number chooses one and the change is confirmed with two buttons before anything moves; going back changes nothing; confirming moves the SAME turno (payments untouched) and the provider is told on WhatsApp; a turno that does not admit it, or inside the 24 hours, is explained and not moved; words of a booking in progress are not taken as a rescheduling', { skip, timeout: 600000 }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const p = await prestador('rpw', 'Wa Mueve ' + run, [['Reparación', 30000]])
+      const ana = await cliente('ana')
+      const beto = await cliente('beto')
+      ${ASISTENTE}
+      const cuentaP = await cuentaDe(p, 'duena')
+      const waAna = await vincular(ana)
+      const waBeto = await vincular(beto)
+      const waP = await vincular(cuentaP)
+      turnos.conReloj(() => relojTurnos ?? Date.now())
+      let relojTurnos = null
+      const HORA = 3600_000
+      let pagos = 600000 + Math.floor(Math.random() * 300000) * 10
+      async function turnoPagado(cuenta, indice, hora) {
+        const t = await turnoConCheckout(p, cuenta, indice, hora, 'Reparación')
+        pagos += 1
+        mpPayment(String(pagos), t.preferencia)
+        await ingerir(notification(String(pagos), { userId: '555', notificationId: run + '-w-' + pagos }))
+        await avisar()
+        return t
+      }
+      const hablar = async (wa, text, extra) => { const antes = fakeWa.sent.length; await decir(wa, text, extra); return fakeWa.sent.slice(antes).filter((x) => x.to === wa).map((x) => x.message) }
+      const tocar = (b) => ({ type: 'interactive', body: { interactive: { type: 'button_reply', button_reply: { id: b.id, title: b.title } } } })
+      const inicioDe = async (t) => (await fila(t.pedido.id)).fechaInicio.toISOString()
+
+      // Beto's turno was booked while the provider did not allow rescheduling.
+      const fijo = await turnoPagado(beto, 4, '09:00')
+      await turnos.guardarReprogramacionPrestador(p.tenantId, true)
+      const t = await turnoPagado(ana, 4, '10:00')
+      const antes = await prisma.obligacionPagoServicio.findMany({ where: { trabajoId: t.trabajoId } })
+
+      // ---- A. The list of free times, as the agenda of that provider gives them.
+      const lista = await hablar(waAna, 'quiero cambiar mi turno')
+      const lineas = (lista[0]?.text ?? '').split('\\n')
+      out.lista = [lista.map((m) => m.type), /^Tu turno de Reparación con Wa Mueve .* es el /u.test(lineas[0] ?? ''), lineas.filter((l) => /^\\d+\\. /u.test(l)).length, /Respondé con el número/u.test(lineas.at(-1) ?? ''), (lista[0]?.text ?? '').includes('10:00'), await inicioDe(t)]
+      const fuera = await hablar(waAna, '99')
+      out.fueraDeRango = fuera[0]?.text
+      // ---- B. A number: the change is confirmed first.
+      const elegir = await hablar(waAna, '2')
+      const confirmacion = elegir[0]
+      out.confirmacion = [confirmacion?.type, /^Vas a cambiar tu turno del .* a las 10:00 al .* Tus pagos y tu seña se mantienen\\.$/u.test(confirmacion?.text ?? ''), confirmacion?.buttons?.map((b) => b.title), await inicioDe(t)]
+      const vuelve = await hablar(waAna, 'Volver', tocar(confirmacion.buttons[1]))
+      out.vuelve = [vuelve[0]?.text, await inicioDe(t), await prisma.reprogramacionTurno.count({ where: { reservaId: t.pedido.id } })]
+      // ---- C. Again, and this time it confirms: the SAME turno moves; the provider is told.
+      await hablar(waAna, 'reprogramar')
+      const elegir2 = await hablar(waAna, '1')
+      const marca = fakeWa.sent.length
+      const hecho = await hablar(waAna, 'Confirmar cambio', tocar(elegir2[0].buttons[0]))
+      await avisar()
+      const nuevo = await inicioDe(t)
+      const despues = await prisma.obligacionPagoServicio.findMany({ where: { trabajoId: t.trabajoId } })
+      const historia = await prisma.reprogramacionTurno.findMany({ where: { reservaId: t.pedido.id } })
+      const alPrestador = enviadosA(waP, marca).map((m) => m.text ?? m.type)
+      out.movido = [/^Listo: tu turno quedó para el .* Tus pagos y tu seña se mantienen\\.$/u.test(hecho[0]?.text ?? ''), nuevo !== a(4, '10:00'), Date.parse(nuevo) - Date.now() > 24 * HORA, (await fila(t.pedido.id)).estado, JSON.stringify(despues.map((o) => [o.obligacionId, o.estado, String(o.monto)])) === JSON.stringify(antes.map((o) => [o.obligacionId, o.estado, String(o.monto)])), historia.map((h) => [h.actorId === ana.id, h.canal, h.inicioAnterior.toISOString() === a(4, '10:00'), h.inicioNuevo.toISOString() === nuevo])]
+      out.avisoPrestador = [alPrestador.length, /^Cliente ana reprogramó su turno de Reparación\\. Antes: .* a las 10:00\\. Ahora: .*\\. No tenés que hacer nada: eligió un horario libre de tu agenda\\.$/u.test(alPrestador[0] ?? '')]
+      // The same button again: the time is the turno's own now; nothing else happens.
+      const repetido = await hablar(waAna, 'Confirmar cambio', tocar(elegir2[0].buttons[0]))
+      out.repetido = [repetido.length > 0, await prisma.reprogramacionTurno.count({ where: { reservaId: t.pedido.id } }), (await inicioDe(t)) === nuevo]
+
+      // ---- D. A turno that does not admit it; and one inside the 24 hours.
+      const noAdmite = await hablar(waBeto, 'quiero reprogramar mi turno')
+      out.noAdmite = [noAdmite[0]?.text, (await inicioDe(fijo)) === a(4, '09:00')]
+      relojTurnos = Date.parse(nuevo) - 5 * HORA
+      const cerrado = await hablar(waAna, 'necesito cambiar mi turno')
+      out.cerrado = cerrado[0]?.text
+      relojTurnos = null
+      // ---- E. Somebody that is booking is not taken for somebody rescheduling.
+      const sinTurnos = await cliente('caro')
+      const waCaro = await vincular(sinTurnos)
+      const otroHorario = await hablar(waCaro, '¿tenés otro horario?')
+      out.noSecuestra = !otroHorario.some((m) => /reprogramar/iu.test(m.text ?? ''))
+      console.log(JSON.stringify(out))
+    } finally { await cerrar() }
+  `)
+  assert.deepEqual(r.lista.slice(0, 4), [['text'], true, 8, true], 'the next free times of the same provider, numbered')
+  assert.equal(r.lista[4], true)
+  assert.match(r.fueraDeRango, /^Respondé con un número del 1 al 8\.$/u)
+  assert.deepEqual(r.confirmacion.slice(0, 3), ['buttons', true, ['Confirmar cambio', 'Volver']], 'choosing a time asks to confirm the change, saying what stays')
+  assert.equal(r.confirmacion[3], r.lista[5], 'nothing moved yet')
+  assert.deepEqual(r.vuelve, ['Listo, no cambié nada: tu turno sigue como estaba.', r.lista[5], 0])
+  assert.deepEqual(r.movido, [true, true, true, 'confirmed', true, [[true, 'whatsapp', true, true]]], 'confirmed: the same turno at its new time, its payments untouched, recorded with its channel')
+  assert.deepEqual(r.avisoPrestador, [1, true], 'the provider is told who, what, when it was and when it is')
+  assert.deepEqual(r.repetido, [true, 1, true], 'the same button twice moves it once')
+  assert.deepEqual(r.noAdmite, ['Este turno no admite reprogramación.', true])
+  assert.equal(r.cerrado, 'Este turno comienza dentro de las próximas 24 horas: ya no se puede reprogramar. Podés mantenerlo o cancelarlo según la política de cancelación.')
+  assert.equal(r.noSecuestra, true)
+})
+

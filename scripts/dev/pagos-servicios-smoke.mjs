@@ -291,7 +291,19 @@ async function recorrer(browser, viewport, estado, indice) {
   try {
     await page.goto(`${web}/ayuda`, { waitUntil: 'domcontentloaded' })
     if (!estado.listo) {
-      await entrar(PRESTADOR, 'the provider'); await completarPerfil('Gabriela', 'Lopez', '30111222'); await salir('the provider')
+      await entrar(PRESTADOR, 'the provider'); await completarPerfil('Gabriela', 'Lopez', '30111222')
+      // TURNOS-REPROGRAMACION-01: the provider turns on "Permitir reprogramación de turnos" in its agenda.
+      await llamar('POST', '/auth/session/mode', { mode: 'PROVIDER' })
+      await page.goto(`${web}/prestador/turnos`, { waitUntil: 'networkidle' })
+      const interruptor = page.locator('[data-permite-reprogramacion]')
+      await interruptor.waitFor()
+      check(!(await interruptor.isChecked()) && (await texto(page.locator('[data-reprogramacion-prestador]'))).includes('los que ya existen conservan la condición'), `${e}: rescheduling is off by default and explained`)
+      await interruptor.click()
+      await page.waitForFunction(() => document.querySelector('[data-permite-reprogramacion]')?.checked === true && !document.querySelector('[data-permite-reprogramacion]')?.disabled)
+      check((await llamar('GET', '/tus/v1/prestador/turnos/reprogramacion')).body.permite === true, `${e}: the switch is stored by the API`)
+      await sinDesborde('the provider agenda with the rescheduling switch')
+      await page.screenshot({ path: join(artifacts, `${e}-prestador-reprogramacion.png`), fullPage: true })
+      await salir('the provider')
       await entrar(CLIENTE, 'the client'); await completarPerfil('Ana', 'Cliente', '30111333'); await salir('the client')
       // The administrator turns online payments on.
       check((await llamar('POST', '/auth/register', ADMIN)).status < 300, 'the administrator registers')
@@ -379,6 +391,29 @@ async function recorrer(browser, viewport, estado, indice) {
     check((await elTurno(pedidos.sena).getAttribute('data-turno')) === 'confirmed' && conSena.includes('Saldo pendiente') && conSena.includes('10.000'), `${e}: paid the deposit: confirmed, with its balance (${conSena.slice(0, 220)})`)
     await sinDesborde('Mis turnos paid')
     await page.screenshot({ path: join(artifacts, `${e}-cliente-pagado.png`), fullPage: true })
+    // ---- 3b. TURNOS-REPROGRAMACION-01: the client moves the turno it paid a deposit for.
+    const antesDeMover = (await llamar('GET', '/tus/v1/cliente/turnos')).body.items.find((item) => item.id === pedidos.sena)
+    await elTurno(pedidos.sena).locator('[data-reprogramar]').click()
+    const selector = elTurno(pedidos.sena).locator('[data-reprogramacion]')
+    await selector.waitFor()
+    for (let i = 0; i < 4 && (await selector.locator('[data-horario-nuevo]').count()) === 0; i += 1) {
+      await page.waitForFunction((id) => !document.querySelector(`[data-turno-id="${id}"] [data-reprogramacion]`)?.textContent.includes('Consultando horarios'), pedidos.sena)
+      if ((await selector.locator('[data-horario-nuevo]').count()) === 0) await selector.locator('[data-semana-siguiente]').click()
+    }
+    await selector.locator('[data-horario-nuevo]').first().waitFor()
+    check((await texto(selector)).includes('más de 24 horas de anticipación'), `${e}: the picker says which times are offered`)
+    await sinDesborde('Mis turnos with the rescheduling picker')
+    await page.screenshot({ path: join(artifacts, `${e}-cliente-reprogramar.png`), fullPage: true })
+    const elegido = await selector.locator('[data-horario-nuevo]').first().getAttribute('data-horario-nuevo')
+    await selector.locator('[data-horario-nuevo]').first().click()
+    const confirmacion = selector.locator('[data-reprogramacion-confirmar]')
+    await confirmacion.waitFor()
+    check(/^Vas a cambiar tu turno del .+ al .+\. Tus pagos y tu seña se mantienen\.$/u.test(await texto(confirmacion)), `${e}: the change is confirmed first, saying what stays (${await texto(confirmacion)})`)
+    await selector.locator('[data-confirmar-cambio]').click()
+    await elTurno(pedidos.sena).locator('[data-turno-reprogramado]').waitFor()
+    const trasMover = (await llamar('GET', '/tus/v1/cliente/turnos')).body.items.find((item) => item.id === pedidos.sena)
+    check(trasMover.inicio === elegido && trasMover.inicio !== antesDeMover.inicio && trasMover.estado === 'confirmed' && trasMover.pago.pagado === antesDeMover.pago.pagado && trasMover.sena.estado === 'paid' && trasMover.reprogramacion.veces === 1, `${e}: the same turno at its new time, with its deposit and its payment as they were`)
+    check(estado.psql(`SELECT count(*) || '|' || (SELECT count(*) FROM public."obligaciones_pago_servicio" o JOIN public."trabajos" t ON t."trabajo_id" = o."trabajo_id" WHERE t."reserva_id" = r."reserva_id" AND o."estado" <> 'voided') FROM public."reprogramaciones_turno" x JOIN public."reservas" r ON r."id" = x."reserva_id" WHERE x."reserva_id" = '${pedidos.sena}' AND x."canal" = 'web' GROUP BY r."reserva_id"`).stdout.trim() === '1|1', `${e}: one rescheduling recorded, still one obligation (no second deposit)`)
     await salir('the client')
 
     // ---- 4. The provider: money retained, and "Finalizar turno" with evidence.

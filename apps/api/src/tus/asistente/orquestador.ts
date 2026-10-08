@@ -3,7 +3,7 @@ import type { TusAuthenticatedTenantContext } from '../ports/index.ts'
 import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './conocimiento.ts'
 import { DIAS_BUSQUEDA_PRIMERA, DIAS_LISTADOS, DIAS_PANORAMA, DIAS_TRAMO_MAXIMO, PIDE_DIAS, PIDE_HORARIOS, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, diasDe, elegirOferta, horaLocal, horasDe, listaDeOpciones, ofertasDePanorama, ofertasDeResultado, personasDe, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDias, textoDisponibilidad, textoPanorama, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type DiaDisponible, type OfertasMostradas } from './busqueda.ts'
 import { oficio } from '../directorio/oficios.ts'
-import { CODIGO_CANCELACION_TARDIA, CODIGO_POLITICA_CANCELACION_REQUERIDA, CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, MENSAJE_CANCELACION_TARDIA, formatearPesos, textoPoliticaCancelacion } from '@factory/contracts'
+import { CODIGO_CANCELACION_TARDIA, CODIGO_POLITICA_CANCELACION_REQUERIDA, CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, MENSAJE_CANCELACION_TARDIA, MENSAJE_REPROGRAMACION_CERRADA, MENSAJE_REPROGRAMACION_NO_PERMITIDA, formatearPesos, mensajeErrorTurno, textoConfirmacionReprogramacion, textoPoliticaCancelacion } from '@factory/contracts'
 import { idRecordatorio, leerRecordatorio } from '../calendar/turnos-recordatorios.ts'
 import { leerCierreTurno, leerRespuestaTurno } from './avisos-turnos.ts'
 import { esRenuncia, leerRespuestaUrgente, leerUrgente } from './urgente-texto.ts'
@@ -738,6 +738,10 @@ export class OrquestadorConversacion {
     // of the cancellation policy (accept and pay, or go back) and of a reminder of a turno.
     const recordatorio = await this.politicaORecordatorio(turn, actor, input, correlationId)
     if (recordatorio) return recordatorio
+    // TURNOS-REPROGRAMACION-01, also before the conversation: "quiero cambiar mi turno", the
+    // number of one of the times that were offered, and the buttons of its confirmation.
+    const reprogramacion = await this.reprogramacionDeTurno(turn, actor, { text, replyId: input.replyId })
+    if (reprogramacion) return reprogramacion
     // SERVICIO-URGENTE-01, also before the conversation: a provider answering an urgent request
     // (a button, or "no puedo ir" from the one assigned to it) and a client asking for one.
     const urgente = (await this.respuestaAUrgente(turn, actor, input, correlationId)) ?? (await this.pedidoUrgente(turn, actor, input, correlationId))
@@ -2042,6 +2046,80 @@ export class OrquestadorConversacion {
       if ((error as { code?: unknown } | null)?.code === CODIGO_CANCELACION_TARDIA) return [confirmar(error instanceof Error && error.message ? error.message : MENSAJE_CANCELACION_TARDIA, 'cancelar-perdida')]
       return [{ type: 'text', text: 'Ese turno ya no se puede cancelar desde acá. Podés verlo en "Mis turnos".' }]
     }
+  }
+
+  // TURNOS-REPROGRAMACION-01. No language model and no rule of its own: which turnos can be
+  // moved, which times are free and whether the change is allowed are the backend's (the same
+  // service the Web uses). This only asks which turno, lists the times and asks to confirm.
+  private async reprogramacionDeTurno(turn: Turno, actor: ActorAsistente, input: { text: string; replyId: string | null }): Promise<MensajeSaliente[] | null> {
+    const domain = this.deps.domain
+    const state = turn.conversation.state
+    const conversationId = turn.conversation.conversationId
+    const boton = leerReprogramacion(input.replyId)
+    const enCurso = state.reschedule && this.now() - state.reschedule.at <= SOLICITUD_VIGENTE_MS ? state.reschedule : null
+    const texto = input.text.trim()
+    // Said in so many words ("reprogramar", "cambiar mi turno"), or words that may also belong to
+    // a booking that is being made ("otro horario"): the latter only count for somebody that is
+    // not booking anything and has a confirmed turno to move.
+    const pideClaro = !input.replyId && /\breprogram\w*|\b(?:cambiar|mover|pasar|correr)\b[^.?!]{0,30}\bturno\b/iu.test(texto)
+    const pideAmbiguo = !input.replyId && !pideClaro && !state.booking && /\b(?:cambiar|mover)\b[^.?!]{0,30}\b(?:horario|fecha|d[ií]a|hora)\b|\botro\s+(?:horario|d[ií]a)\b/iu.test(texto)
+    const pide = pideClaro || pideAmbiguo
+    const numero = enCurso && !input.replyId ? /^\s*(?:el\s+|la\s+|opci[oó]n\s+)?(\d{1,2})\s*[.!]*\s*$/iu.exec(texto) : null
+    if (!boton && !pide && !numero) {
+      // Anything else ends the choice that was open (the conversation goes on with its own subject).
+      if (enCurso && texto) await this.actualizarEstado(conversationId, { reschedule: null })
+      return null
+    }
+    if (typeof domain.turnosParaReprogramar !== 'function' || typeof domain.horariosDeReprogramacion !== 'function' || typeof domain.reprogramarTurno !== 'function') return null
+    const cuenta = cuentaDeSolicitud(actor)
+    if (!cuenta) return pideAmbiguo ? null : [{ type: 'text', text: 'Para reprogramar un turno necesito que este número esté vinculado a tu cuenta de TUS. Podés hacerlo desde "Mis turnos" en la Web.' }]
+    const cuando = (iso: string) => `${fechaLarga(new Date(iso))} a las ${horaCorta(new Date(iso))}`
+    const turnos = await domain.turnosParaReprogramar(cuenta).catch(() => null)
+    if (pideAmbiguo && !boton && !numero && (!turnos || turnos.length === 0)) return null
+    if (!turnos) return [{ type: 'text', text: 'No pude consultar tus turnos en este momento. Probá de nuevo en unos minutos.' }]
+    turn.intencion = 'reserva'
+    const ofrecer = async (ref: string): Promise<MensajeSaliente[]> => {
+      const turno = turnos.find((item) => item.ref === ref)
+      if (!turno) return [{ type: 'text', text: 'No encontré ese turno entre los tuyos.' }]
+      if (!turno.permitida) return [{ type: 'text', text: mensajeErrorTurno(turno.motivo ?? undefined, MENSAJE_REPROGRAMACION_NO_PERMITIDA) }]
+      const libres = await domain.horariosDeReprogramacion!(cuenta, ref, 8).catch(() => null)
+      if (!libres) return [{ type: 'text', text: 'No pude consultar los horarios en este momento. Probá de nuevo en unos minutos.' }]
+      if (libres.length === 0) {
+        await this.actualizarEstado(conversationId, { reschedule: null })
+        return [{ type: 'text', text: `${turno.providerName} no tiene horarios libres en las próximas semanas para mover tu turno del ${cuando(turno.startsAt)}. Tu turno sigue como estaba.` }]
+      }
+      await this.actualizarEstado(conversationId, { reschedule: { ref, options: libres, at: this.now() } })
+      return [{ type: 'text', text: `Tu turno${turno.service ? ` de ${turno.service}` : ''} con ${turno.providerName} es el ${cuando(turno.startsAt)}. Estos son los próximos horarios libres:\n${libres.map((iso, indice) => `${indice + 1}. ${cuando(iso)}`).join('\n')}\nRespondé con el número del horario que querés.` }]
+    }
+    // 1. A button: which turno, the confirmation, or going back.
+    if (boton) {
+      if (boton.accion === 'volver') {
+        await this.actualizarEstado(conversationId, { reschedule: null })
+        return [{ type: 'text', text: 'Listo, no cambié nada: tu turno sigue como estaba.' }]
+      }
+      if (boton.accion === 'turno') return ofrecer(boton.ref)
+      try {
+        const hecho = await domain.reprogramarTurno(cuenta, boton.ref, new Date(boton.inicio!).toISOString(), turn.canal.id === 'whatsapp' ? 'whatsapp' : 'web')
+        await this.actualizarEstado(conversationId, { reschedule: null })
+        return [{ type: 'text', text: `Listo: tu turno quedó para el ${cuando(hecho.startsAt)}. Tus pagos y tu seña se mantienen.` }]
+      } catch (error) {
+        await this.actualizarEstado(conversationId, { reschedule: null })
+        return [{ type: 'text', text: `${mensajeErrorTurno(String((error as { code?: unknown } | null)?.code ?? ''), 'No pude reprogramar el turno en este momento.')} Tu turno sigue como estaba.` }]
+      }
+    }
+    // 2. The number of one of the times that were offered: the change is confirmed first.
+    if (numero && enCurso) {
+      const elegido = enCurso.options[Number(numero[1]) - 1]
+      const turno = turnos.find((item) => item.ref === enCurso.ref)
+      if (!elegido || !turno) return [{ type: 'text', text: `Respondé con un número del 1 al ${enCurso.options.length}.` }]
+      return [{ type: 'buttons', text: textoConfirmacionReprogramacion(cuando(turno.startsAt), cuando(elegido)), buttons: [{ id: idReprogramacion('confirmar', enCurso.ref, Date.parse(elegido)), title: 'Confirmar cambio' }, { id: idReprogramacion('volver', enCurso.ref), title: 'Volver' }] }]
+    }
+    // 3. "Quiero cambiar mi turno": which one (when there are several), or why none can be moved.
+    const movibles = turnos.filter((item) => item.permitida)
+    if (movibles.length === 1) return ofrecer(movibles[0]!.ref)
+    if (movibles.length > 1) return [{ type: 'buttons', text: '¿Qué turno querés reprogramar?', buttons: movibles.slice(0, 3).map((item) => ({ id: idReprogramacion('turno', item.ref), title: `${fechaLarga(new Date(item.startsAt)).split(' ').slice(0, 2).join(' ')} ${horaCorta(new Date(item.startsAt))}`.slice(0, 20) })) }]
+    if (turnos.length === 0) return [{ type: 'text', text: 'No tenés turnos confirmados para reprogramar.' }]
+    return [{ type: 'text', text: turnos.some((item) => item.motivo === 'RESCHEDULE_WINDOW_CLOSED') && !turnos.some((item) => item.motivo === 'RESCHEDULE_NOT_ALLOWED') ? MENSAJE_REPROGRAMACION_CERRADA : mensajeErrorTurno(turnos[0]!.motivo ?? undefined, MENSAJE_REPROGRAMACION_NO_PERMITIDA) }]
   }
 
   private async respuestaAUrgente(turn: Turno, actor: ActorAsistente, input: { text: string; replyId: string | null }, correlationId: string): Promise<MensajeSaliente[] | null> {
@@ -4230,4 +4308,15 @@ export function leerPolitica(replyId: string | null | undefined): { accion: 'ace
 }
 export function pedirPolitica(ref: string, tramo: 'sena' | 'total', que: string): MensajeSaliente {
   return { type: 'buttons', text: `${que} ${textoPoliticaCancelacion(tramo)} ¿Aceptás y seguimos con el pago?`, buttons: [{ id: idPolitica('aceptar', tramo, ref), title: 'Aceptar y pagar' }, { id: idPolitica('volver', tramo, ref), title: 'Volver' }] }
+}
+
+// TURNOS-REPROGRAMACION-01. What the buttons carry: which turno and, for the confirmation, the
+// new start (an instant). Whether that change is allowed is decided by the backend when it is made.
+export const idReprogramacion = (accion: 'turno' | 'confirmar' | 'volver', ref: string, inicio?: number): string => `reprog:${accion}:${inicio ?? 0}:${ref}`
+export function leerReprogramacion(replyId: string | null | undefined): { accion: 'turno' | 'confirmar' | 'volver'; ref: string; inicio: number | null } | null {
+  const partes = /^reprog:(turno|confirmar|volver):(\d{1,15}):([A-Za-z0-9._:-]{3,160})$/u.exec(replyId ?? '')
+  if (!partes) return null
+  const inicio = Number(partes[2])
+  if (partes[1] === 'confirmar' && !(inicio > 0)) return null
+  return { accion: partes[1] as 'turno' | 'confirmar' | 'volver', ref: partes[3]!, inicio: inicio > 0 ? inicio : null }
 }

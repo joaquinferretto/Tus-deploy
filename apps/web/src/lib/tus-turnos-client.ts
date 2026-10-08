@@ -107,6 +107,12 @@ export const turnosApi = {
   // CIERRE-TRABAJO-01: the provider finishes with evidence; the client confirms or reports a problem.
   finalizarTurno: (id: string, evidence: string) => json<unknown>(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/finalizar`, { method: 'POST', body: JSON.stringify({ evidence }) }, 'No pudimos registrar la finalización.'),
   confirmarTurno: (id: string) => json<unknown>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/confirmar`, { method: 'POST' }, 'No pudimos confirmar el turno.'),
+  // TURNOS-REPROGRAMACION-01: the provider's switch; the times a client can move its turno to
+  // (the real agenda of its provider) and the change itself (only the new start travels).
+  miReprogramacion: () => json<{ permite: boolean }>('/tus/v1/prestador/turnos/reprogramacion', undefined, 'No pudimos consultar la configuración.'),
+  guardarMiReprogramacion: (permite: boolean) => json<{ permite: boolean }>('/tus/v1/prestador/turnos/reprogramacion', { method: 'PUT', body: JSON.stringify({ permite }) }, 'No pudimos guardar la configuración.'),
+  horariosReprogramacion: (id: string, desde: string) => json<{ desde: string; hasta: string; duracionMinutos: number; actual: string; dias: AgendaSemanal['dias'] }>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/reprogramacion/horarios?${query({ desde })}`, undefined, 'No pudimos consultar los horarios.'),
+  reprogramarTurno: (id: string, inicio: string) => json<DetalleTurno>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/reprogramar`, { method: 'POST', body: JSON.stringify({ inicio }) }, 'No pudimos reprogramar el turno.'),
   observarTurno: (id: string, reason: string) => json<unknown>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/observar`, { method: 'POST', body: JSON.stringify({ reason }) }, 'No pudimos registrar el problema.'),
   // ---- public (booking) ----
   agendaPublica: (prestadorId: string, oficioId: string, desde: string, tarifaId?: string) =>
