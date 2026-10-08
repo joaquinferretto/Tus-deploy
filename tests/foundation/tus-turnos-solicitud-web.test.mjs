@@ -96,8 +96,9 @@ test('TURNOS solicitud Web: the client follows the real state in "Mis turnos"; t
   assert.match(mios, /\{servicio\} — \{diaTurno\(turno\.inicio\)\} — \{horaTurno\(turno\.inicio\)\}/u, '"Masaje — viernes 2 de octubre — 09:45"')
   assert.match(mios, /Para confirmar definitivamente el turno tenés que abonar la seña/u)
   // PAGOS-MODALIDAD-01: one checkout for the deposit, the total or the balance; only the part travels.
-  assert.match(mios, /turnosApi\.pagarTurno\(turno\.id, tramo\)/u)
-  assert.match(mios, /turnosApi\.cancelarMiTurno\(turno\.id\)/u)
+  // (TURNOS-CANCELACION-01: with the version of the cancellation policy once the client accepted it.)
+  assert.match(mios, /turnosApi\.pagarTurno\(turno\.id, tramo, aceptaPolitica \? VERSION_POLITICA_CANCELACION : undefined\)/u)
+  assert.match(mios, /turnosApi\.cancelarMiTurno\(turno\.id, confirmaPerdida\)/u)
   assert.match(mios, /sign-in\?returnTo=\$\{encodeURIComponent\(RETURN_TO\)\}/u, 'a visitor is sent to sign in')
 
   const panel = web('features/provider/provider-turnos.tsx')

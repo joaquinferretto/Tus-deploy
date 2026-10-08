@@ -898,13 +898,14 @@ export class ServicioTurnos {
     }
     if (evento.kind === 'solicitud_respondida') {
       const [turno] = await this.agregarSenas([row], [this.mapearDetalleTurno(row, comun.prestadorNombre, { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined })])
-      // TURNOS-CANCELACION-01: the link travels with the notice only if this client already
-      // accepted the cancellation policy for this turno; otherwise it asks for the payment and
-      // accepts the policy first (on the Web or on WhatsApp).
-      const politica = evento.resultado === 'awaiting_payment' ? await this.politicaAceptada({ clienteId: row.clienteId, reservaId: row.id }) : null
-      const pago = politica && evento.resultado === 'awaiting_payment' && this.senas && turno?.sena?.estado === 'pending'
+      // The order of the turno and its payment are prepared at the acceptance, as always.
+      const preparado = evento.resultado === 'awaiting_payment' && this.senas && turno?.sena?.estado === 'pending'
         ? await this.senas.enlaceAlAceptar(row, `turno-aceptado:${row.reservaId}`)
         : null
+      // TURNOS-CANCELACION-01: the LINK is handed with the notice only if this client already
+      // accepted the cancellation policy for this turno; otherwise it asks for the payment and
+      // accepts the policy first (on the Web or on WhatsApp).
+      const pago = preparado && (await this.politicaAceptada({ clienteId: row.clienteId, reservaId: row.id })) ? preparado : null
       const aviso = {
         reservaId: row.id,
         clienteCuentaId: row.clienteId,

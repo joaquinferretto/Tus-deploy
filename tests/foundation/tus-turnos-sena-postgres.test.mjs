@@ -181,7 +181,7 @@ test('TURNOS seña PostgreSQL: the deposit is half of the price of the chosen se
       const checkoutManipulado = await pagar('tok-ana', espalda.id, { monto: 1, precio: 1, clienteId: beto.id, tenantId: beto.tenantId, estado: 'paid' })
       out.checkoutManipulado = [checkoutManipulado.status, checkoutManipulado.body.code]
       const checkout = await pagar('tok-ana', espalda.id)
-      out.checkout = [checkout.status, checkout.body.monto, checkout.body.moneda, checkout.body.checkoutUrl === aviso.sena.url]
+      out.checkout = [checkout.status, checkout.body.monto, checkout.body.moneda, checkout.body.checkoutUrl.startsWith('https://www.mercadopago.com.ar/')]
       out.otraVez = (await pagar('tok-ana', espalda.id)).body.checkoutUrl === checkout.body.checkoutUrl
       out.pagos = await prisma.intencionPago.count({ where: { obligacionId: ob.obligacionId } })
       out.linkAbierto = [(await senaDe('tok-ana', espalda.id)).estado, (await obligacionDe(espalda.reservaId)).estado]
@@ -242,11 +242,13 @@ test('TURNOS seña PostgreSQL: the deposit is half of the price of the chosen se
   assert.deepEqual(r.enBase, ['pending', '25000', 'Espalda completa', []], 'the reservation stores its price and nothing about the deposit')
   assert.deepEqual(r.antesDeAceptar, [409, 'DEPOSIT_NOT_PAYABLE', null], 'a request has no deposit to pay and no payment order')
   assert.deepEqual(r.aceptada, [200, 'awaiting_payment', { monto: 12500, moneda: 'ARS', estado: 'pending' }])
-  assert.deepEqual(r.aviso, ['awaiting_payment', true, 12500, true, true], 'the notice of the acceptance carries the amount and the real checkout')
+  // TURNOS-CANCELACION-01: the notice carries the amount; the link is handed only once the client
+  // accepted the cancellation policy (it asks for the payment and accepts it then).
+  assert.deepEqual(r.aviso, ['awaiting_payment', true, 12500, true, false], 'the notice of the acceptance carries the amount, and no link before the cancellation policy is accepted')
   assert.deepEqual(r.orden, ['turno', 'accepted', true, true, true, false, null, null], 'the payment order of the turno: its client, its provider, its reservation')
   assert.deepEqual(r.obligacion, ['sena', 'booked_price', '1250000', 'ARS', 'pending_payment', null], '12.500,00 in cents, from the booked price')
   assert.deepEqual(r.checkoutManipulado, [400, 'UNTRUSTED_PAYMENT_FIELDS'])
-  assert.deepEqual(r.checkout, [200, 12500, 'ARS', true], 'the client gets the same checkout using the reservation and session only')
+  assert.deepEqual(r.checkout, [200, 12500, 'ARS', true], 'the client gets the checkout using the reservation and session only')
   assert.equal(r.otraVez, true)
   assert.equal(r.pagos, 1, 'asking for the payment again never creates a second payment')
   assert.deepEqual(r.linkAbierto, ['pending', 'pending_payment'], 'generating or opening the link pays nothing')

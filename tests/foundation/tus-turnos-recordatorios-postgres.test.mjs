@@ -92,18 +92,18 @@ test('POLITICA de cancelación PostgreSQL: an advance payment (deposit or total)
       const antes = mp.preferences.length
       const pagar = async (extra = {}) => { for (let i = 0; ; i += 1) { try { return (await turnos.pagarSena({ clienteId: ana.id, reservaId: pedido.id, correlationId: 'c', ...extra })).monto } catch (e) { if (e?.code !== 'IN_PROGRESS' || i >= 40) return e?.code ?? String(e); await new Promise((resolve) => setTimeout(resolve, 250)) } } }
       const total = async (extra = {}) => { try { return (await turnos.pagarTurno({ clienteId: ana.id, reservaId: pedido.id, correlationId: 'c', tramo: 'total', ...extra })).monto } catch (e) { return e?.code ?? String(e) } }
-      out.sinAceptar = [await pagar(), await total(), await pagar({ politica: { version: 'otra-version', canal: 'web' } }), mp.preferences.length - antes, await prisma.aceptacionPoliticaCancelacion.count({ where: { reservaId: pedido.id } }), await turnos.politicaAceptada({ clienteId: ana.id, reservaId: pedido.id })]
+      out.sinAceptar = [await pagar(), await total(), await pagar({ politica: { version: 'otra-version', canal: 'web' } }), (await prisma.trabajo.count({ where: { origen: 'turno', reservaId: pedido.reservaId } })), await prisma.aceptacionPoliticaCancelacion.count({ where: { reservaId: pedido.id } }), await turnos.politicaAceptada({ clienteId: ana.id, reservaId: pedido.id })]
       const monto = await pagar({ politica: { version: VERSION_POLITICA_CANCELACION, canal: 'whatsapp' } })
       const guardada = await prisma.aceptacionPoliticaCancelacion.findMany({ where: { reservaId: pedido.id } })
-      out.aceptada = [monto, guardada.map((g) => [g.cuentaId === ana.id, g.canal, g.version === VERSION_POLITICA_CANCELACION, g.tramo, g.aceptadaEn instanceof Date]), mp.preferences.length - antes]
+      out.aceptada = [monto, guardada.map((g) => [g.cuentaId === ana.id, g.canal, g.version === VERSION_POLITICA_CANCELACION, g.tramo, g.aceptadaEn instanceof Date])]
       // Accepted once for this turno: asking again needs nothing more, and stores nothing more.
       out.otraVez = [await pagar(), await prisma.aceptacionPoliticaCancelacion.count({ where: { reservaId: pedido.id } })]
       out.codigo = CODIGO_POLITICA_CANCELACION_REQUERIDA
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.sinAceptar, [r.codigo, r.codigo, r.codigo, 0, 0, null], 'without the acceptance (or with another version) no checkout is opened and nothing is stored')
-  assert.deepEqual(r.aceptada, [15000, [[true, 'whatsapp', true, 'sena', true]], 1], 'accepted: who, channel, version and way of paying are stored, and the checkout exists')
+  assert.deepEqual(r.sinAceptar, [r.codigo, r.codigo, r.codigo, 1, 0, null], 'without the acceptance (or with another version) no checkout is handed to the client and no acceptance is stored; the order of the turno exists as always')
+  assert.deepEqual(r.aceptada, [15000, [[true, 'whatsapp', true, 'sena', true]]], 'accepted: who, channel, version and way of paying are stored, and the checkout is handed')
   assert.deepEqual(r.otraVez, [15000, 1])
 })
 
