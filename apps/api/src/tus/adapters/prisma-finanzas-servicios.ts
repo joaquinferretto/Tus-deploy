@@ -725,6 +725,8 @@ export class LiquidacionesServicioPrisma implements PuertoLiquidacionesServicio 
       currency: texto(row, 'moneda'),
       status: texto(row, 'estado') as EstadoLiquidacionServicio,
       reason: texto(row, 'motivo'),
+      retained: row['retencionActiva'] === true,
+      releasedAt: row['liberadaEn'] instanceof Date ? row['liberadaEn'].toISOString() : null,
       version: Number(row['version']),
       createdAt: fecha(row, 'fechaCreacion'),
       updatedAt: fecha(row, 'fechaActualizacion'),
@@ -748,6 +750,8 @@ export class LiquidacionesServicioPrisma implements PuertoLiquidacionesServicio 
         estado: settlement.status,
         motivo: settlement.reason,
         estadoDesembolso: 'not_executed',
+        retencionActiva: settlement.retained === true,
+        liberadaEn: settlement.releasedAt ? new Date(settlement.releasedAt) : null,
         version: settlement.version,
         fechaCreacion: new Date(settlement.createdAt),
         fechaActualizacion: new Date(settlement.updatedAt),
@@ -766,6 +770,8 @@ export class LiquidacionesServicioPrisma implements PuertoLiquidacionesServicio 
       data: {
         estado: settlement.status,
         motivo: settlement.reason,
+        // The retention flag is decided when the payment is approved and never changes.
+        liberadaEn: settlement.releasedAt ? new Date(settlement.releasedAt) : null,
         version: settlement.version,
         fechaActualizacion: new Date(settlement.updatedAt),
       },

@@ -404,7 +404,10 @@ test('Mercado Pago platform collection (real adapter, offline API): without a li
   assert.deepEqual(r.conFee, ['quarantined', 'marketplace_fee_unexpected', 0])
   assert.deepEqual(r.aprobado, ['applied', 'paid', 'duplicate', [['earning_credit', '4500000', 'provider-tenant'], ['psp_fee_debit', '300000', 'provider-tenant']]], '50.000 - 5.000 TUS - 3.000 Mercado Pago = 42.000 for the provider, as in Split 1:1')
   assert.equal(r.consulta, true, 'the payment is read with the TUS account')
-  assert.deepEqual(r.liquidacion, [['held', '4500000']], 'the internal settlement hold is unchanged')
+  // PAGOS-RETENCION-01: before, this settlement stayed 'held' for ever and the earning was withdrawable
+  // anyway. Now the hold is real, and a payment TUS collects for a work that is ALREADY completed has
+  // reached its release milestone: it is released by that same approval.
+  assert.deepEqual(r.liquidacion, [['eligible', '4500000']], 'collected after the work was completed: released at once')
   assert.deepEqual(r.diferida, [[true, ['300000']], 'no_op', ['300000', '120000']], 'the late fee (1.200,00) is debited once, when reported')
   assert.deepEqual(r.reembolso[0], 'submitted')
   assert.deepEqual(r.reembolso[1], [['7002', '555']], 'refunded from the account that collected it')

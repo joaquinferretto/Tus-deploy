@@ -248,6 +248,9 @@ export interface PuertoPoliticaCobro {
     prestadorTenantId: string
     prestadorId: string
     categoria: string | null
+    // PAGOS-RETENCION-01. The payment is made before the work is completed (a deposit, a total
+    // paid in advance): TUS must be the one that collects it, so it can hold the money.
+    anticipado?: boolean
   }): Promise<{ available: boolean; reason: MotivoPagoNoDisponible | null; mode?: 'split' | 'plataforma' }>
 }
 
@@ -299,6 +302,7 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     prestadorTenantId: string
     prestadorId: string
     categoria: string | null
+    anticipado?: boolean
   }): Promise<{ available: boolean; reason: MotivoPagoNoDisponible | null; mode?: 'split' | 'plataforma' }> {
     const configuracion = await this.store.ultimaConfiguracion()
     if (!configuracion?.paymentsEnabled) return { available: false, reason: 'PAYMENTS_DISABLED' }
@@ -314,6 +318,12 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
       return { available: false, reason: 'PSP_FEE_POLICY_UNSUPPORTED' }
     if (this.identidadVerificada && !(await this.identidadVerificada(input.prestadorTenantId)))
       return { available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }
+    // PAGOS-RETENCION-01. An advance payment is collected by TUS whenever it has its own account,
+    // even for a provider with a linked one: only money TUS holds can be retained until the work
+    // reaches its release milestone. A payment Mercado Pago pays straight to the provider (split)
+    // is in its hands the moment it is approved: TUS cannot hold it. Where TUS has no account of
+    // its own the split is what is left, and that payment is not under retention.
+    if (input.anticipado && this.cobroPlataforma()) return { available: true, reason: null, mode: 'plataforma' }
     if (!(await this.cuentaConectada(input.prestadorTenantId)))
       return this.cobroPlataforma() ? { available: true, reason: null, mode: 'plataforma' } : { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }
     return { available: true, reason: null, mode: 'split' }

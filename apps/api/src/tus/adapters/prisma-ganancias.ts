@@ -48,12 +48,17 @@ export interface ClientePrismaGanancias {
   trabajo: Delegado
   reserva: Delegado
   instantaneaComision: Delegado
+  liquidacionServicio: Delegado
   $transaction<T>(callback: (tx: ClientePrismaGanancias) => Promise<T>, options?: { isolationLevel?: 'Serializable' }): Promise<T>
 }
 
 const fecha = (value: unknown): string => (value instanceof Date ? value : new Date(String(value))).toISOString()
 const fechaNula = (value: unknown): string | null => (value === null || value === undefined ? null : fecha(value))
 const textoNulo = (value: unknown): string | null => (value === null || value === undefined ? null : String(value))
+
+function conRetencion(movimiento: MovimientoGanancia, retenidas: ReadonlySet<string>): MovimientoConContexto {
+  return movimiento.obligacionId && retenidas.has(`${movimiento.obligacionTenantId}\u0000${movimiento.obligacionId}`) ? { ...movimiento, retenido: true } : movimiento
+}
 
 function movimientoDe(fila: Fila): MovimientoGanancia {
   return {
@@ -210,9 +215,17 @@ function conceptoDe(obligacion: Fila | undefined): string {
 export class AlmacenSolicitudesLiquidacionPrisma implements PuertoSolicitudesLiquidacion {
   constructor(private readonly client: ClientePrismaGanancias) {}
 
+  // PAGOS-RETENCION-01. The obligations of that provider whose settlement is held: under
+  // retention and never released (whatever its state is now).
+  private async retenidas(db: Pick<ClientePrismaGanancias, 'liquidacionServicio'>, prestadorTenantId: string): Promise<Set<string>> {
+    const filas = await db.liquidacionServicio.findMany({ where: { prestadorTenantId, retencionActiva: true, liberadaEn: null }, select: { tenantId: true, obligacionId: true } })
+    return new Set(filas.map((fila) => `${fila['tenantId']}\u0000${fila['obligacionId']}`))
+  }
+
   async movimientos(prestadorTenantId: string): Promise<MovimientoConContexto[]> {
     const filas = await this.client.movimientoGananciaPrestador.findMany({ where: { prestadorTenantId }, orderBy: [{ fechaCreacion: 'asc' }, { movimientoId: 'asc' }] })
-    const movimientos = filas.map(movimientoDe)
+    const retenidas = await this.retenidas(this.client, prestadorTenantId)
+    const movimientos = filas.map(movimientoDe).map((item) => conRetencion(item, retenidas))
     const claves = movimientos.filter((item) => item.obligacionId)
     if (claves.length === 0) return movimientos
     // Three batched reads for the words of the history (no per-row query).
@@ -325,8 +338,10 @@ export class AlmacenSolicitudesLiquidacionPrisma implements PuertoSolicitudesLiq
             tx.solicitudLiquidacion.findMany({ where: { prestadorTenantId } }),
           ])
           const propias = solicitudes.map(solicitudDe)
+          // Read in the same transaction as the movements: a payout never takes held money.
+          const retenidas = await this.retenidas(tx, prestadorTenantId)
           const decision = armar({
-            movimientos: movimientos.map(movimientoDe),
+            movimientos: movimientos.map(movimientoDe).map((item) => conRetencion(item, retenidas)),
             itemsActivos: items.map(itemDe),
             solicitudes: propias,
             abierta: propias.find((item) => item.status === 'requested' || item.status === 'processing') ?? null,

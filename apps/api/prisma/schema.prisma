@@ -1185,6 +1185,9 @@ model LiquidacionServicio {
   estado             String   @map("estado")
   motivo             String   @map("motivo")
   estadoDesembolso   String   @default("not_executed") @map("estado_desembolso")
+  // PAGOS-RETENCION-01: held until the release milestone of the work; released at "liberada_en".
+  retencionActiva    Boolean  @default(false) @map("retencion_activa")
+  liberadaEn         DateTime? @map("liberada_en")
   version            Int      @default(1) @map("version")
   fechaCreacion      DateTime @map("fecha_creacion")
   fechaActualizacion DateTime @map("fecha_actualizacion")

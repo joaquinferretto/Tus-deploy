@@ -45,6 +45,9 @@ export interface ResumenGananciasPrestador {
   // Derived from the ledger: earnings net of fees, reversals and adjustments, minus what open or
   // paid requests hold. May be negative (then `negativeMinor` is its absolute value).
   availableMinor: string
+  // PAGOS-RETENCION-01. Booked for approved payments whose work has not reached its release
+  // milestone yet: registered, and not withdrawable. Never part of `availableMinor`.
+  heldMinor: string
   negativeMinor: string
   // In a requested payout / in a payout being paid.
   reservedMinor: string

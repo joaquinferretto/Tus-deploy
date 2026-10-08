@@ -83,9 +83,20 @@ export interface LiquidacionServicioDominio {
   currency: string
   status: EstadoLiquidacionServicio
   reason: string
+  // PAGOS-RETENCION-01. `retained`: the net of this payment cannot be withdrawn until the work
+  // reaches its release milestone (false: a settlement from before retention existed, or a
+  // payment Mercado Pago paid straight to the provider, which TUS cannot hold). `releasedAt`:
+  // when it was released; null while it is held, and for ever if it never was.
+  retained?: boolean
+  releasedAt?: string | null
   version: number
   createdAt: string
   updatedAt: string
+}
+
+// Whether the earning of that settlement is out of the provider's withdrawable balance.
+export function liquidacionRetenida(settlement: Pick<LiquidacionServicioDominio, 'retained' | 'releasedAt'>): boolean {
+  return settlement.retained === true && !settlement.releasedAt
 }
 
 export function calcularInstantaneaComision(input: {
@@ -289,13 +300,17 @@ export function transicionarLiquidacion(
       'INVALID_TRANSITION',
       `settlement cannot move from ${settlement.status} to ${hacia}`
     )
-  return { ...settlement, status: hacia, reason, version: settlement.version + 1, updatedAt: now }
+  // Becoming eligible IS the release: recorded once, never moved afterwards.
+  const releasedAt = hacia === 'eligible' && settlement.retained ? (settlement.releasedAt ?? now) : (settlement.releasedAt ?? null)
+  return { ...settlement, status: hacia, reason, releasedAt, version: settlement.version + 1, updatedAt: now }
 }
 
 export function crearLiquidacion(
   obligation: ObligacionServicio,
   snapshot: InstantaneaComisionServicio,
-  now: string
+  now: string,
+  // True when TUS collected the payment with its own account: only then it can hold the money.
+  retained = false
 ): LiquidacionServicioDominio {
   return {
     liquidacionId: `liquidacion-${obligation.obligacionId}`,
@@ -309,6 +324,8 @@ export function crearLiquidacion(
     currency: snapshot.currency,
     status: 'held',
     reason: 'payment_approved_work_pending',
+    retained,
+    releasedAt: null,
     version: 1,
     createdAt: now,
     updatedAt: now,

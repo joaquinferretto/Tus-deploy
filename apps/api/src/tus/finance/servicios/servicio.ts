@@ -699,7 +699,8 @@ export class ServicioFinanzasServicios {
     prestadorTenantId: string
     prestadorId: string
   }): Promise<{ available: boolean; reason: string | null; mode: 'plataforma' | 'split' | null }> {
-    const availability = await this.politica.disponibilidad({ ...input, categoria: null })
+    // The deposit of a turno is always an advance payment.
+    const availability = await this.politica.disponibilidad({ ...input, categoria: null, anticipado: true })
     return { available: availability.available === true, reason: availability.reason ?? null, mode: (availability as { mode?: 'plataforma' | 'split' }).mode ?? null }
   }
 
@@ -783,6 +784,9 @@ export class ServicioFinanzasServicios {
       prestadorTenantId: trabajo.prestadorTenantId,
       prestadorId: trabajo.prestadorId,
       categoria: cobro.publicacion?.categoria ?? null,
+      // Paid before the work is completed: an advance payment (the order of a turno is never
+      // "completed" by itself, so its payments always are).
+      anticipado: trabajo.status !== ESTADOS_TRABAJO.COMPLETADO,
     })
     if (!availability.available)
       throw new ErrorFinanzasServicio(
@@ -1666,6 +1670,41 @@ export class ServicioFinanzasServicios {
         input.tenantId,
         input.obligacionId
       )
+      return this.evaluarLiquidacionEn(repositories, obligation, input.correlationId)
+    })
+  }
+
+  // PAGOS-RETENCION-01. The release milestone of a work, for every payment of it at once: the
+  // settlements that are held become eligible (their net becomes withdrawable) only when the
+  // work is closed and nothing of it is still to be paid. Idempotent: a settlement already
+  // released, frozen or reversed is left as it is, so repeating the closing event, the client's
+  // confirmation or the automatic confirmation never releases anything twice.
+  async liberarLiquidacionesDelTrabajo(input: {
+    tenantId: string
+    trabajoId: string
+    correlationId: string
+  }): Promise<ResultadoEvaluacionLiquidacion[]> {
+    return this.transaction.ejecutar((repositories) => this.liberarLiquidacionesEn(repositories, input))
+  }
+
+  protected async liberarLiquidacionesEn(
+    repositories: RepositoriosFinanzasServicio,
+    input: { tenantId: string; trabajoId: string; correlationId: string }
+  ): Promise<ResultadoEvaluacionLiquidacion[]> {
+    const obligaciones = await repositories.obligaciones.listarPorTrabajo({ tenantId: input.tenantId, trabajoId: input.trabajoId })
+    const resultados: ResultadoEvaluacionLiquidacion[] = []
+    for (const obligation of obligaciones)
+      resultados.push(await this.evaluarLiquidacionEn(repositories, obligation, input.correlationId))
+    return resultados
+  }
+
+  protected async evaluarLiquidacionEn(
+    repositories: RepositoriosFinanzasServicio,
+    obligation: ObligacionServicio,
+    correlationId: string
+  ): Promise<ResultadoEvaluacionLiquidacion> {
+    const input = { correlationId }
+    {
       const settlement = await repositories.liquidaciones.buscar({
         tenantId: obligation.tenantId,
         obligacionId: obligation.obligacionId,
@@ -1704,6 +1743,15 @@ export class ServicioFinanzasServicios {
           reason: 'work_not_completed',
           settlement: proyectarLiquidacion(settlement),
         }
+      // Something of the same work is still to be paid (its balance): the work is not fully
+      // paid, so nothing of it is released yet.
+      const hermanas = await repositories.obligaciones.listarPorTrabajo({ tenantId: obligation.tenantId, trabajoId: obligation.trabajoId })
+      if (hermanas.some((item) => item.status === 'pending_payment'))
+        return {
+          status: 'unchanged',
+          reason: 'balance_pending',
+          settlement: proyectarLiquidacion(settlement),
+        }
       const eligible = transicionarLiquidacion(
         settlement,
         'eligible',
@@ -1729,7 +1777,7 @@ export class ServicioFinanzasServicios {
         reason: eligible.reason,
         settlement: proyectarLiquidacion(eligible),
       }
-    })
+    }
   }
 
   // Internal reconciliation: provider evidence (verified inbox) vs local payment vs ledger vs
@@ -1870,7 +1918,9 @@ export class ServicioFinanzasServicios {
       await repositories.comisiones.crear(snapshot)
       for (const entry of movimientosAprobacion(snapshot, now))
         await repositories.ledger.agregar(entry)
-      const settlement = crearLiquidacion(obligation, snapshot, now)
+      // PAGOS-RETENCION-01. TUS collected it: the net is held until the work reaches its release
+      // milestone. A payment Mercado Pago paid straight to the provider cannot be held by TUS.
+      const settlement = crearLiquidacion(obligation, snapshot, now, intent.collectionMode === 'plataforma')
       await repositories.liquidaciones.crear(settlement)
       await this.auditar(repositories, obligation, {
         resourceType: 'settlement',
@@ -1964,6 +2014,11 @@ export class ServicioFinanzasServicios {
           metadata: { paymentId: intent.paymentId },
         })
       }
+      // PAGOS-RETENCION-01. This approval may be what closes the work (its balance) or arrive
+      // when the work is already closed: release what is held only if the milestone is reached.
+      // Only where TUS holds the money; the rest keeps its explicit evaluation step.
+      if (intent.collectionMode === 'plataforma')
+        await this.liberarLiquidacionesEn(repositories, { tenantId: obligation.tenantId, trabajoId: obligation.trabajoId, correlationId: `provider-event:${event.eventId}` })
       return
     }
     if (intent.providerStatus !== 'refunded' && intent.providerStatus !== 'charged_back') return

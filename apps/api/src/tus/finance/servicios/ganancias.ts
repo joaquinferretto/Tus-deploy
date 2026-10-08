@@ -75,7 +75,9 @@ export interface MovimientoGanancia {
 }
 
 // What the history shows of an earning's payment (read with the movements; never stored on them).
-export type MovimientoConContexto = MovimientoGanancia & { concepto?: string | null; servicio?: string | null; turno?: string | null }
+// `retenido` (PAGOS-RETENCION-01): the movement belongs to a payment whose settlement is held
+// (under retention and never released). It is booked, and it is NOT part of what can be withdrawn.
+export type MovimientoConContexto = MovimientoGanancia & { concepto?: string | null; servicio?: string | null; turno?: string | null; retenido?: boolean }
 
 export interface SolicitudLiquidacion {
   solicitudId: string
@@ -246,8 +248,12 @@ export interface SaldoGanancias {
   // Everything TUS ever collected for the provider: the sum of its earnings (before fees,
   // reversals and payouts). Historical, never decreases.
   earned: bigint
-  // What TUS owes minus what open or paid requests took (reserve - release).
+  // What TUS owes minus what open or paid requests took (reserve - release). Never includes a
+  // movement of a held settlement.
   available: bigint
+  // PAGOS-RETENCION-01. Booked for payments whose settlement is still held (net of their own
+  // fees and reversals): registered, not withdrawable.
+  held: bigint
   reserved: bigint
   processing: bigint
   paid: bigint
@@ -258,11 +264,19 @@ export interface SaldoGanancias {
 // Derived, never stored. owed = earnings and credit adjustments - fees, refunds, chargebacks and
 // debit adjustments. A request's reserve takes its amount from what is available; a release
 // gives it back; a completion turns it into "paid". available = owed - reserves + releases.
-export function calcularSaldo(movimientos: readonly MovimientoGanancia[], solicitudes: readonly SolicitudLiquidacion[]): SaldoGanancias {
-  const saldo: SaldoGanancias = { earned: 0n, available: 0n, reserved: 0n, processing: 0n, paid: 0n, fees: 0n, adjustments: 0n }
+export function calcularSaldo(movimientos: readonly MovimientoConContexto[], solicitudes: readonly SolicitudLiquidacion[]): SaldoGanancias {
+  const saldo: SaldoGanancias = { earned: 0n, available: 0n, held: 0n, reserved: 0n, processing: 0n, paid: 0n, fees: 0n, adjustments: 0n }
   const abierto = new Map<string, bigint>()
   for (const movimiento of movimientos) {
     const monto = movimiento.amountMinor
+    // Held: the earning, its fee and its reversals are kept apart, whatever they add up to. They
+    // only reach `available` once the settlement of their payment is released.
+    if (movimiento.retenido && !esMovimientoDeLiquidacion(movimiento.tipo)) {
+      if (movimiento.tipo === 'earning_credit') saldo.earned += monto
+      if (movimiento.tipo === 'psp_fee_debit') saldo.fees += monto
+      saldo.held += signoMovimiento(movimiento.tipo) * monto
+      continue
+    }
     switch (movimiento.tipo) {
       case 'payout_reserve':
         saldo.available -= monto
@@ -301,7 +315,8 @@ export function calcularSaldo(movimientos: readonly MovimientoGanancia[], solici
 
 // What a payout request reserves, decided with the state read inside the transaction.
 export interface EstadoReservable {
-  movimientos: MovimientoGanancia[]
+  // With `retenido` on the movements of held settlements, read inside the transaction.
+  movimientos: MovimientoConContexto[]
   itemsActivos: ItemLiquidacion[]
   solicitudes: SolicitudLiquidacion[]
   abierta: SolicitudLiquidacion | null
@@ -378,7 +393,16 @@ export class AlmacenSolicitudesLiquidacionEnMemoria implements PuertoSolicitudes
   readonly desglosesGuardados = new Map<string, { grossMinor: bigint; commissionMinor: bigint; pspFeeMinor: bigint | null }>()
   readonly auditoriaGuardada: EventoAuditoriaLiquidacion[] = []
 
+  // Whether the settlement of that obligation is held (wired to the finance store by whoever
+  // composes both; nothing is held by default, as before retention existed).
+  retenida: (obligacionTenantId: string, obligacionId: string) => boolean = () => false
+
   constructor(readonly ledger: LedgerGananciasEnMemoria = new LedgerGananciasEnMemoria()) {}
+
+  private conRetencion(movimiento: MovimientoGanancia): MovimientoConContexto {
+    const copia: MovimientoConContexto = this.copia(movimiento)
+    return movimiento.obligacionId && movimiento.obligacionTenantId && this.retenida(movimiento.obligacionTenantId, movimiento.obligacionId) ? { ...copia, retenido: true } : copia
+  }
 
   private copia<T>(value: T): T {
     return structuredClone(value)
@@ -389,7 +413,7 @@ export class AlmacenSolicitudesLiquidacionEnMemoria implements PuertoSolicitudes
   }
 
   async movimientos(prestadorTenantId: string) {
-    return this.ledger.movimientos.filter((item) => item.prestadorTenantId === prestadorTenantId).map((item) => this.copia(item))
+    return this.ledger.movimientos.filter((item) => item.prestadorTenantId === prestadorTenantId).map((item) => this.conRetencion(item))
   }
 
   async items(prestadorTenantId: string): Promise<ItemLiquidacion[]> {
@@ -454,7 +478,7 @@ export class AlmacenSolicitudesLiquidacionEnMemoria implements PuertoSolicitudes
   async crearAtomica(prestadorTenantId: string, idempotencyKey: string, armar: (estado: EstadoReservable) => DecisionSolicitud | SolicitudLiquidacion) {
     const propias = this.solicitudesGuardadas.filter((item) => item.prestadorTenantId === prestadorTenantId)
     const decision = armar({
-      movimientos: this.ledger.movimientos.filter((item) => item.prestadorTenantId === prestadorTenantId).map((item) => this.copia(item)),
+      movimientos: this.ledger.movimientos.filter((item) => item.prestadorTenantId === prestadorTenantId).map((item) => this.conRetencion(item)),
       itemsActivos: this.itemsGuardados.filter((item) => item.prestadorTenantId === prestadorTenantId && item.activo).map(({ solicitudId, movimientoId, activo }) => ({ solicitudId, movimientoId, activo })),
       solicitudes: propias.map((item) => this.copia(item)),
       abierta: this.copia(propias.find((item) => item.status === 'requested' || item.status === 'processing') ?? null),
@@ -667,6 +691,7 @@ export class ServicioGananciasPrestador {
       currency: 'ARS',
       earnedMinor: minor(saldo.earned),
       availableMinor: minor(saldo.available),
+      heldMinor: minor(saldo.held),
       negativeMinor: minor(saldo.available < 0n ? -saldo.available : 0n),
       reservedMinor: minor(saldo.reserved),
       processingMinor: minor(saldo.processing),
@@ -739,7 +764,8 @@ export class ServicioGananciasPrestador {
       if (monto <= 0n) throw new ErrorFinanzasServicio(409, CODIGO_SIN_FONDOS, 'no earnings are available')
       if (monto < minimo) throw new ErrorFinanzasServicio(409, CODIGO_BAJO_MINIMO, 'the available earnings are below the minimum payout')
       const tomados = new Set(estado.itemsActivos.map((item) => item.movimientoId))
-      const libres = estado.movimientos.filter((movimiento) => !esMovimientoDeLiquidacion(movimiento.tipo) && !tomados.has(movimiento.movimientoId))
+      // A held movement is never part of a payout: neither in its amount nor among its items.
+      const libres = estado.movimientos.filter((movimiento) => !esMovimientoDeLiquidacion(movimiento.tipo) && !movimiento.retenido && !tomados.has(movimiento.movimientoId))
       const nuevaSolicitud: SolicitudLiquidacion = {
         solicitudId: `liq-${randomUUID()}`,
         prestadorTenantId: context.tenantId,
