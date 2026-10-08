@@ -11,7 +11,9 @@ import {
   CODIGO_SOLICITUD_NO_PENDIENTE,
   CODIGO_SOLICITUD_SIN_HORARIO,
   CODIGO_SOLICITUD_VENCIDA,
+  CODIGO_SERVICIO_A_PRESUPUESTAR,
   CODIGO_TRANSICION_INVALIDA,
+  MENSAJE_SERVICIO_A_PRESUPUESTAR,
   DIAS_AGENDA,
   ESTADOS_TURNO_LIBERAN,
   HORAS_VIGENCIA_SOLICITUD_TURNO,
@@ -430,7 +432,10 @@ export class ServicioTurnos {
     const dias = await this.agendaDias(calendario, fechas, duracion, servicio.config.bufferMinutos ?? calendario.bufferMinutos ?? 0)
     const precio = tarifa?.precio ?? (servicio.config.precioBase === null ? null : Number(servicio.config.precioBase))
     const conSena = precio !== null && precio > 0 && this.senas ? await this.senas.requeridaPara(servicio.perfil.tenantId) : false
-    return { desde: input.desde, hasta, duracionMinutos: duracion, tarifas: servicio.tarifas, dias, precio: precio !== null && precio > 0 ? precio : null, sena: conSena ? senaDePrecio(precio!) : null }
+    const conPrecio = precio !== null && precio > 0
+    // SERVICIO-A-PRESUPUESTAR-01: told with the agenda, so nobody chooses a time that cannot be requested.
+    const requierePresupuesto = !conPrecio && this.senas ? await this.senas.exigePrecio(servicio.perfil.tenantId).catch(() => false) : false
+    return { desde: input.desde, hasta, duracionMinutos: duracion, tarifas: servicio.tarifas, dias, precio: conPrecio ? precio : null, sena: conSena ? senaDePrecio(precio!) : null, modalidadCobro: conPrecio ? 'precio_fijo' : 'a_presupuestar', requierePresupuesto }
   }
 
   /**
@@ -592,11 +597,12 @@ export class ServicioTurnos {
 
     const duracion = tarifa?.duracionMinutos ?? servicioConfig?.duracionMinutos ?? 60
     const precio = tarifa?.precio ?? servicioConfig?.precioBase ?? 0n
-    // Where a turno is confirmed by paying its deposit (online payments on), a service without a
-    // published price cannot be requested: there would be nothing to compute the deposit from and
-    // the turno could never be confirmed. With payments off a price-less service works as before.
+    // SERVICIO-A-PRESUPUESTAR-01. A service without a published price is priced by a budget.
+    // Where a turno is confirmed by paying (online payments on) there is nothing to compute a
+    // deposit from, and no price is ever invented: the turno is not created and the client is
+    // sent to the request -> budget flow. With payments off it works as it always did.
     if (solicitud && precio <= 0n && this.senas && (await this.senas.exigePrecio(perfil.tenantId)))
-      throw new ErrorCalendario(409, 'SERVICE_PRICE_REQUIRED', 'Este servicio necesita un precio publicado para solicitar un turno con seña.')
+      throw new ErrorCalendario(409, CODIGO_SERVICIO_A_PRESUPUESTAR, MENSAJE_SERVICIO_A_PRESUPUESTAR)
 
     const inicio = new Date(input.inicio)
     if (isNaN(inicio.getTime())) {
@@ -1663,7 +1669,12 @@ export class ServicioTurnos {
     })
     if (!perfil) throw new ErrorCalendario(404, 'NOT_FOUND', 'Prestador no encontrado')
     const senaRequerida = this.senas ? await this.senas.requeridaPara(perfil.tenantId) : false
+    // SERVICIO-A-PRESUPUESTAR-01: a service with neither a base price nor a priced variant.
+    const exigePrecio = this.senas ? await this.senas.exigePrecio(perfil.tenantId).catch(() => false) : false
+    const conPrecio = (servicio: (typeof perfil.servicios)[number]) => (servicio.precioBase !== null && servicio.precioBase > 0n) || perfil.tarifas.some((tarifa) => tarifa.oficioId === servicio.oficioId && tarifa.precio > 0n)
     return perfil.servicios.map((servicio) => ({
+      modalidadCobro: conPrecio(servicio) ? ('precio_fijo' as const) : ('a_presupuestar' as const),
+      requierePresupuesto: !conPrecio(servicio) && exigePrecio,
       senaRequerida,
       oficioId: servicio.oficioId,
       nombre: servicio.oficio.nombre,

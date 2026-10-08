@@ -204,7 +204,8 @@ test('ASISTENTE contexto CASO C and references: "Melina ya mismo", "melna", "la 
   assert.deepEqual(r.mananaPedida, [['2026-09-26', null]])
   assert.deepEqual(r.mananaEstado, ['Melina', '2026-09-26'])
   assert.equal(r.martes, 'Encontré 2 profesionales de Masaje con turno el martes 29:\n1. Bongio — Centro: 18:30\n2. Sabrina — San Benito: 18:00\n¿Con cuál querés solicitar el turno?')
-  assert.equal(r.segundaSinPrecio, 'El servicio Masaje todavía no tiene un precio publicado. Para solicitar un turno con seña, el prestador debe configurar el precio.')
+  // SERVICIO-A-PRESUPUESTAR-01: a price-less service derives to the request -> budget flow.
+  assert.equal(r.segundaSinPrecio, 'Masaje con Sabrina no tiene un precio fijo: se presupuesta según lo que necesites, así que no hace falta reservar un turno todavía. Pedile un presupuesto desde su perfil con "Solicitar servicio": le contás qué necesitás, te responde con el precio y después coordinan el trabajo.')
   assert.deepEqual(r.otra, ['buttons', 'Prestador: Bongio', 'Horario: 18:30'], '"la otra" after choosing Sabrina is Bongio')
   assert.equal(r.reservas, 0, 'nothing was requested without the explicit confirmation')
 })

@@ -50,6 +50,8 @@ export function TurnoBooking({
   const [duracion, setDuracion] = useState(0)
   // Price and deposit of the selection, exactly as the API computed them (never derived here).
   const [cobro, setCobro] = useState<{ precio: number | null; sena: number | null }>({ precio: null, sena: null })
+  // SERVICIO-A-PRESUPUESTAR-01: the API says this service is priced by a budget (no turno here).
+  const [requierePresupuesto, setRequierePresupuesto] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<FranjaAgenda | null>(null)
   // The time chosen before signing in, until the agenda says whether it is still available.
   const [pendienteDeElegir, setPendienteDeElegir] = useState<string | null>(inicial?.inicio ?? null)
@@ -98,6 +100,7 @@ export function TurnoBooking({
     setTarifas(agenda.tarifas)
     setDuracion(agenda.duracionMinutos)
     setCobro({ precio: agenda.precio ?? null, sena: agenda.sena ?? null })
+    setRequierePresupuesto(agenda.requierePresupuesto === true)
     if (!pendienteDeElegir) return
     // Back from sign-in: the time is chosen again only if the API still offers it.
     const franja = agenda.dias.flatMap((dia) => dia.franjas).find((item) => item.inicio === pendienteDeElegir && item.estado === 'disponible')
@@ -305,6 +308,12 @@ export function TurnoBooking({
           </div>
         )}
 
+        {requierePresupuesto ? (
+          <p data-servicio-a-presupuestar role="status" style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 'var(--tus-control-radius)', margin: 0, padding: '10px 12px' }}>
+            Este servicio no tiene un precio fijo: se presupuesta. No hace falta reservar un turno todavía: usá <strong>Solicitar servicio</strong> en este perfil, contale al profesional qué necesitás y te pasa un presupuesto.
+          </p>
+        ) : null}
+
         {/* Resumen y pedido: una solicitud, no una confirmación */}
         <div className={styles.submitRow}>
           <div aria-live="polite">
@@ -327,7 +336,7 @@ export function TurnoBooking({
             ) : null}
           </div>
 
-          <button type="submit" disabled={submitting || !selectedSlot || autenticado === null} className={homeStyles.buttonPrimary} style={{ opacity: submitting || !selectedSlot ? 0.6 : 1 }}>
+          <button type="submit" disabled={submitting || !selectedSlot || autenticado === null || requierePresupuesto} className={homeStyles.buttonPrimary} style={{ opacity: submitting || !selectedSlot ? 0.6 : 1 }}>
             {submitting ? 'Enviando solicitud...' : autenticado === false ? 'Iniciar sesión para solicitar' : 'Solicitar reserva'}
           </button>
         </div>

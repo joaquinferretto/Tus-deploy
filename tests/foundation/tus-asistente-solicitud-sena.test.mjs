@@ -273,7 +273,7 @@ test('ASISTENTE servicios y precios: one variant or none -> no question; the pri
     try {
       const sesion = { token: 'tok-cliente' }
       const lineas = (texto) => texto.split('\\n').filter((l) => /^(Prestador|Servicio|Precio|Seña)/u.test(l))
-      const cancelar = async (m) => { if (m.actions) await enviar({ replyId: m.actions[1].id }, sesion) }
+      const cancelar = async (m) => { if (m.actions?.[1]) await enviar({ replyId: m.actions[1].id }, sesion) }
       // 1. Each variant of Bongio, chosen in a different way.
       for (const [frase, variante] of [['1', 'Masaje base'], ['el segundo', 'Espalda completa'], ['cuerpo completo', 'Cuerpo completo'], ['quiero el de espalda', 'Espalda completa'], ['el masaje de cuerpo', 'Cuerpo completo'], ['la tercera', 'Cuerpo completo']]) {
         await decir(PRINCIPAL, sesion)
@@ -321,9 +321,10 @@ test('ASISTENTE servicios y precios: one variant or none -> no question; the pri
   assert.deepEqual(r.porServicio, {
     ana: [['Prestador: Ana Gómez', 'Servicio: Masaje descontracturante', 'Precio: $18.000', 'Seña: $9.000 (se abona cuando el prestador acepte)'], botones],
     beto: [['Prestador: Beto Ruiz', 'Servicio: Masaje', 'Precio: $15.001', 'Seña: $7.500,50 (se abona cuando el prestador acepte)'], botones],
-    caro: [[], null],
+    caro: [[], ['Pedir presupuesto']],
   })
-  assert.equal(r.sinPrecio, 'El servicio Masaje todavía no tiene un precio publicado. Para solicitar un turno con seña, el prestador debe configurar el precio.')
+  // SERVICIO-A-PRESUPUESTAR-01: a price-less service derives to the request -> budget flow.
+  assert.equal(r.sinPrecio, 'Masaje con Caro Sosa no tiene un precio fijo: se presupuesta según lo que necesites, así que no hace falta reservar un turno todavía. Pedile un presupuesto desde su perfil con "Solicitar servicio": le contás qué necesitás, te responde con el precio y después coordinan el trabajo.')
   assert.equal(r.reservas, 0)
 })
 

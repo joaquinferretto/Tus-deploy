@@ -1704,7 +1704,18 @@ export class OrquestadorConversacion {
         await this.actualizarEstado(conversationId, { booking: { ...pedido, tariffId: null, step: 'service', at: this.now() }, currentIntent: 'reserva', lowConfidenceCount: 0 })
         return [{ type: 'text', text: preguntaServicio(pedido.providerName, servicio.options) }]
       }
-      if (opcion.price === null || opcion.price <= 0 || opcion.deposit === null) {
+      // SERVICIO-A-PRESUPUESTAR-01. No published price: it is priced by a budget. No turno is
+      // created and no price is invented: the person is sent to the request -> budget flow.
+      if (opcion.price === null || opcion.price <= 0) {
+        await this.actualizarEstado(conversationId, { booking: null })
+        // The request to one professional is made from their profile ("Solicitar servicio"): the
+        // assistant sends there instead of promising a request it cannot create by itself.
+        const texto = `${opcion.name} con ${pedido.providerName} no tiene un precio fijo: se presupuesta según lo que necesites, así que no hace falta reservar un turno todavía. Pedile un presupuesto desde su perfil con "Solicitar servicio": le contás qué necesitás, te responde con el precio y después coordinan el trabajo.`
+        return this.deps.webBaseUrl
+          ? [{ type: 'cta_url', text: texto, label: 'Pedir presupuesto', url: `${this.deps.webBaseUrl.replace(/\/+$/u, '')}/trabajadores/${encodeURIComponent(pedido.providerId)}?solicitar=1` }]
+          : [{ type: 'text', text: texto }]
+      }
+      if (opcion.deposit === null) {
         await this.actualizarEstado(conversationId, { booking: null })
         return [{ type: 'text', text: `El servicio ${opcion.name} todavía no tiene un precio publicado. Para solicitar un turno con seña, el prestador debe configurar el precio.` }]
       }

@@ -203,6 +203,14 @@ test('TURNOS seña Web: price and deposit come from the API, awaiting_payment is
   const asistente = read('apps/web/src/features/assistant/assistant-conversation.tsx')
   const cliente = read('apps/web/src/lib/tus-turnos-client.ts')
 
+  // SERVICIO-A-PRESUPUESTAR-01: the form does not decide it; the agenda says the service is priced
+  // by a budget, the request button is disabled and the person is sent to "Solicitar servicio".
+  assert.match(form, /setRequierePresupuesto\(agenda\.requierePresupuesto === true\)/u)
+  assert.match(form, /data-servicio-a-presupuestar/u)
+  assert.match(form, /se presupuesta[\s\S]{0,160}Solicitar servicio/u)
+  assert.match(form, /disabled=\{[^}]*\|\| requierePresupuesto\}/u)
+  assert.match(cliente + read('packages/contracts/src/tus-turnos.ts'), /SERVICE_REQUIRES_BUDGET/u)
+
   // The form shows the price and the deposit of the selection as the agenda returned them.
   assert.match(form, /setCobro\(\{ precio: agenda\.precio \?\? null, sena: agenda\.sena \?\? null \}\)/u)
   assert.match(form, /Precio: <strong>\{formatearPesos\(cobro\.precio\)\}<\/strong>/u)

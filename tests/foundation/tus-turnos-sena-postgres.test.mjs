@@ -405,7 +405,8 @@ test('TURNOS seña PostgreSQL seguridad: only the client of the turno gets its c
   assert.deepEqual(r.anunciado, [[20000, 10000, true], [25000, 12500, true], [30000, 15000, true], [2501, 1250.5, true]], 'price and deposit shown before requesting are the backend\'s')
   assert.deepEqual(r.anunciadoSinPagos, [25000, null, false], 'with online payments off the price is shown and no deposit is announced')
   assert.deepEqual(r.plataformaApagada, [null, 'confirmed', null, 'confirmed', null, 409, 'DEPOSIT_NOT_PAYABLE', null, 201, 'confirmed', true], 'payments off for the platform: no deposit is announced or charged and accepting confirms, as before')
-  assert.deepEqual(r.sinSena, [409, 'SERVICE_PRICE_REQUIRED', null, 'not_due', null, null])
+  // SERVICIO-A-PRESUPUESTAR-01: the price-less service is sent to the budget flow.
+  assert.deepEqual(r.sinSena, [409, 'SERVICE_REQUIRES_BUDGET', null, 'not_due', null, null])
   assert.deepEqual(r.base, {
     sinReserva: 'ck_trabajos_origen_coherente',
     segundaOrden: 'unique:reserva_tenant_id,reserva_id',
@@ -723,6 +724,19 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
       // Another client: Ana already has a turno waiting for its deposit.
       const t0 = await solicitar('tok-beto', sinPrecio, 2, '10:00', null)
       out.sinPrecio = [t0.status, t0.body.code ?? null]
+      // SERVICIO-A-PRESUPUESTAR-01. The agenda and the service list say it BEFORE anybody asks,
+      // nothing is created (no turno, no order, no obligation) and no price or deposit is invented.
+      const modalidad = async (prestadorDe, variante) => {
+        const agenda = await turnos.agendaSemanal({ prestadorId: prestadorDe.perfilId, oficioId: oficio.id, desde: lunes, ...(variante ? { tarifaId: prestadorDe.tarifas[variante] } : {}) })
+        const [servicio] = await turnos.serviciosDePrestador({ perfilId: prestadorDe.perfilId })
+        return [agenda.modalidadCobro, agenda.requierePresupuesto, agenda.precio ?? null, agenda.sena ?? null, servicio.modalidadCobro, servicio.requierePresupuesto]
+      }
+      out.aPresupuestar = {
+        sinPrecio: await modalidad(sinPrecio, null),
+        conPrecio: await modalidad(p, 'Espalda completa'),
+        mensaje: t0.body.error ?? null,
+        creado: [await prisma.reserva.count({ where: { tenantId: sinPrecio.tenantId } }), await prisma.trabajo.count({ where: { tenantId: sinPrecio.tenantId } }), await prisma.obligacionPagoServicio.count({ where: { tenantId: sinPrecio.tenantId } })],
+      }
 
       // 1b. SANDBOX: the same circuit.
       entorno = 'sandbox'
@@ -781,7 +795,13 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
   assert.deepEqual(r.sinEvidencia, [201, { monto: 12500, moneda: 'ARS', estado: 'not_due' }, 200, 'awaiting_payment', { monto: 12500, moneda: 'ARS', estado: 'pending' }, 200, 12500, 'awaiting_payment'], 'production without any approval: accepting opens the payment of the deposit; neither accepting nor the checkout confirms')
   assert.deepEqual(r.sinVerificar, [503, 'PAYMENT_NOT_AVAILABLE', 'pending'], 'an unavailable check never turns into a confirmation')
   // Before, production without the approvals fell back to "no deposit" and this request was confirmed for free.
-  assert.deepEqual(r.sinPrecio, [409, 'SERVICE_PRICE_REQUIRED'], 'where the deposit is chargeable, a service needs a published price to take a turno')
+  assert.deepEqual(r.aPresupuestar.sinPrecio, ['a_presupuestar', true, null, null, 'a_presupuestar', true], 'a price-less service is announced as priced by a budget, without any price or deposit')
+  assert.equal(r.aPresupuestar.conPrecio[0], 'precio_fijo')
+  assert.equal(r.aPresupuestar.conPrecio[1], false)
+  assert.equal(r.aPresupuestar.conPrecio[4], 'precio_fijo')
+  assert.match(r.aPresupuestar.mensaje, /se presupuesta/u, 'the refusal explains the way: a request and its budget')
+  assert.deepEqual(r.aPresupuestar.creado, [0, 0, 0], 'nothing is created for it: no turno, no order, no obligation')
+  assert.deepEqual(r.sinPrecio, [409, 'SERVICE_REQUIRES_BUDGET'], 'where the deposit is chargeable, a price-less service is priced by a budget: no turno, no invented price')
   assert.deepEqual(r.sandbox, [[false, true], { available: true, reason: null, mode: 'plataforma' }, 200, 'awaiting_payment', 200, 10000, 'awaiting_payment'], 'sandbox: accepting and the checkout still do not confirm')
   assert.deepEqual(r.sandboxAprobado, ['recorded:applied', 'confirmed'], 'in sandbox too, only the verified notification confirms')
   assert.deepEqual(r.soloServicios, [[true, false], { available: true, reason: null, mode: 'plataforma' }, true], 'the six approvals of the launch are complete; settlement is its own registry')

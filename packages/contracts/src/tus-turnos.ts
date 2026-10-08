@@ -36,6 +36,7 @@ export function mensajeErrorTurno(code: string | undefined, fallback = 'No pudim
   if (code === CODIGO_SENA_YA_PAGADA) return 'La seña de ese turno ya está pagada.'
   if (code === CODIGO_PAGO_NO_DISPONIBLE) return 'El pago online todavía no está disponible para ese profesional. Coordiná la seña directamente con él.'
   if (code === CODIGO_SENA_YA_EMITIDA) return 'Ese turno ya tiene su seña emitida: el precio no se puede modificar.'
+  if (code === CODIGO_SERVICIO_A_PRESUPUESTAR) return MENSAJE_SERVICIO_A_PRESUPUESTAR
   // PAGOS-MODALIDAD-01 / CIERRE-TRABAJO-01.
   if (code === 'PAYMENT_MODALITY_FIXED') return 'Ya hay un pago aprobado para este turno: la forma de pago no se puede cambiar.'
   if (code === 'ALREADY_PAID') return 'Ese turno ya está pagado por completo.'
@@ -336,7 +337,18 @@ export interface AgendaSemanal {
   // (no price, or online payments off). Never computed by the Web.
   precio?: number | null
   sena?: number | null
+  // SERVICIO-A-PRESUPUESTAR-01. 'precio_fijo': it has a published price (a turno, with its deposit
+  // or total). 'a_presupuestar': it has none, so its price comes from a budget.
+  // `requierePresupuesto`: a turno cannot be requested for it here (a deposit would have to be
+  // computed from a price that does not exist): it is asked through a request and its budget.
+  modalidadCobro?: ModalidadCobroServicio
+  requierePresupuesto?: boolean
 }
+
+export type ModalidadCobroServicio = 'precio_fijo' | 'a_presupuestar'
+// A turno was asked for a service whose price comes from a budget: the way is a request.
+export const CODIGO_SERVICIO_A_PRESUPUESTAR = 'SERVICE_REQUIRES_BUDGET'
+export const MENSAJE_SERVICIO_A_PRESUPUESTAR = 'Este servicio no tiene un precio fijo: se presupuesta. Enviale una solicitud al profesional contándole qué necesitás y te pasa un presupuesto.'
 
 export const DIAS_AGENDA = 7
 // How far ahead a week of the agenda may be asked for.
@@ -374,6 +386,9 @@ export interface ServicioTurnosDTO {
   tarifas: TarifaServicioPublica[]
   // A turno of this provider is confirmed by paying its deposit (online payments are on).
   senaRequerida?: boolean
+  // SERVICIO-A-PRESUPUESTAR-01 (see AgendaSemanal).
+  modalidadCobro?: ModalidadCobroServicio
+  requierePresupuesto?: boolean
 }
 
 // ---- administration ----------------------------------------------------------------------------
