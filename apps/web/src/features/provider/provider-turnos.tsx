@@ -423,7 +423,7 @@ export function ProviderTurnos(): React.ReactNode {
                           Volver
                         </button>
                       </>
-                    ) : Date.parse(t.inicio) <= Date.now() ? (
+                    ) : t.pago.cierre ? null : Date.parse(t.inicio) <= Date.now() ? (
                       <button className={homeStyles.buttonPrimary} data-finalizar onClick={() => { setFinalizando(t.id); setEvidencia('') }} type="button">
                         Finalizar turno
                       </button>
@@ -437,7 +437,7 @@ export function ProviderTurnos(): React.ReactNode {
                       ✓ Completado
                     </button>
                   ) : null}
-                  {t.estado === 'confirmed' || t.estado === 'awaiting_payment' ? (
+                  {(t.estado === 'confirmed' || t.estado === 'awaiting_payment') && !t.pago?.cierre ? (
                     <button
                       type="button"
                       onClick={() => cambiarEstado(t.id, 'cancelled')}
