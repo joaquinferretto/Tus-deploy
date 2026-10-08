@@ -10,6 +10,7 @@ export const GRAPH_POR_DEFECTO = 'v25.0'
 // An example per variable, as Meta asks for when a template is created or edited.
 export const EJEMPLOS = {
   nombre: 'Joaquin', cliente: 'Joaquin', contraparte: 'Flor Perez', servicio: 'Masaje', fecha: '9 de octubre', hora: '15:00',
+  fechaAnterior: '10 de octubre', horaAnterior: '15:00', fechaNueva: '11 de octubre', horaNueva: '17:00',
   precio: '$20.000', sena: '$10.000', direccion: 'Junin 1234', zona: 'Centro', motivo: 'Se cortó la luz', resultado: 'aprobada', estado: 'en curso',
 }
 

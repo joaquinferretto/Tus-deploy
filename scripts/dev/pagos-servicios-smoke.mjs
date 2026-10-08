@@ -287,7 +287,7 @@ async function recorrer(browser, viewport, estado, indice) {
   const filaPrestador = (hora) => page.locator('li, article, div').filter({ has: page.locator('[data-turno-cobro]') }).filter({ hasText: hora }).last()
   // The turno already happened (a turno can only be requested in the future): its time is moved
   // back in the disposable database, as if the day had come.
-  const yaOcurrio = (id) => check(estado.psql(`UPDATE public."reservas" SET "fecha_inicio" = "fecha_inicio" - interval '21 days', "fecha_fin" = "fecha_fin" - interval '21 days' WHERE "id" = '${id}' RETURNING 'ok'`).stdout.includes('ok'), `${e}: the day of the turno arrives`)
+  const yaOcurrio = (id) => check(estado.psql(`UPDATE public."reservas" SET "fecha_inicio" = "fecha_inicio" - interval '${21 + indice * 7} days', "fecha_fin" = "fecha_fin" - interval '${21 + indice * 7} days' WHERE "id" = '${id}' RETURNING 'ok'`).stdout.includes('ok'), `${e}: the day of the turno arrives`)
   try {
     await page.goto(`${web}/ayuda`, { waitUntil: 'domcontentloaded' })
     if (!estado.listo) {

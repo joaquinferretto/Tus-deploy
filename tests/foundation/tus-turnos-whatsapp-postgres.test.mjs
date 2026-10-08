@@ -653,6 +653,30 @@ test('REPROGRAMACION por WhatsApp PostgreSQL: "quiero cambiar mi turno" lists th
       const alPrestador = enviadosA(waP, marca).map((m) => m.text ?? m.type)
       out.movido = [/^Listo: tu turno quedó para el .* Tus pagos y tu seña se mantienen\\.$/u.test(hecho[0]?.text ?? ''), nuevo !== a(4, '10:00'), Date.parse(nuevo) - Date.now() > 24 * HORA, (await fila(t.pedido.id)).estado, JSON.stringify(despues.map((o) => [o.obligacionId, o.estado, String(o.monto)])) === JSON.stringify(antes.map((o) => [o.obligacionId, o.estado, String(o.monto)])), historia.map((h) => [h.actorId === ana.id, h.canal, h.inicioAnterior.toISOString() === a(4, '10:00'), h.inicioNuevo.toISOString() === nuevo])]
       out.avisoPrestador = [alPrestador.length, /^Cliente ana reprogramó su turno de Reparación\\. Antes: .* a las 10:00\\. Ahora: .*\\. No tenés que hacer nada: eligió un horario libre de tu agenda\\.$/u.test(alPrestador[0] ?? '')]
+      // ---- C2. The notice of a rescheduling to its provider, by the state of its 24 hour window.
+      const { NotificadorTurnosWhatsapp: Notificador, correlacionAvisoReprogramacion, ACCION_AVISO_NO_ENVIADO } = await import('./apps/api/src/tus/asistente/avisos-turnos.ts')
+      const avisoR = { reservaId: t.pedido.id, clienteCuentaId: ana.id, prestadorTenantId: p.tenantId, prestadorCuentaId: cuentaP.id, clienteNombre: 'Cliente ana', prestadorNombre: 'Wa Mueve', servicio: 'Reparación', inicio: new Date(a(3, '16:00')), anterior: new Date(nuevo) }
+      const noEnviados = async () => (await waTx.ejecutar((repos) => repos.auditoria.porCorrelaciones({ action: ACCION_AVISO_NO_ENVIADO, correlationIds: [correlacionAvisoReprogramacion(avisoR.reservaId, avisoR.inicio)] }))).map((e) => e.metadata.reason)
+      const con = (aprobadas) => new Notificador(waTx, fakeWa, () => reloj, undefined, new WhatsappTemplateService(new Set(aprobadas)))
+      // Open (the provider wrote a moment ago): a normal message, with or without the template.
+      let desdeR = fakeWa.sent.length
+      await con(['turno_reprogramado_prestador']).turnoReprogramado(avisoR)
+      const abierta = enviadosA(waP, desdeR)
+      // Closed and the template NOT approved: nothing is written, and the reason is kept.
+      reloj += 25 * 3600_000
+      const cerrada = { ...avisoR, inicio: new Date(a(3, '17:00')) }
+      const noEnviadosCerrada = async () => (await waTx.ejecutar((repos) => repos.auditoria.porCorrelaciones({ action: ACCION_AVISO_NO_ENVIADO, correlationIds: [correlacionAvisoReprogramacion(cerrada.reservaId, cerrada.inicio)] }))).map((e) => e.metadata.reason)
+      desdeR = fakeWa.sent.length
+      await con([]).turnoReprogramado(cerrada)
+      const sinPlantilla = [enviadosA(waP, desdeR).length, await noEnviadosCerrada()]
+      // Closed and approved: the template; delivered again (a retry), it is still ONE message.
+      desdeR = fakeWa.sent.length
+      await con(['turno_reprogramado_prestador']).turnoReprogramado(cerrada)
+      await con(['turno_reprogramado_prestador']).turnoReprogramado(cerrada)
+      const plantillaR = enviadosA(waP, desdeR)
+      const cuerpoR = cuerpoMensajeMeta(waP, plantillaR[0])
+      out.avisoPorVentana = { abierta: [abierta.length, abierta[0]?.type, await noEnviados()], sinPlantilla, plantilla: [plantillaR.length, plantillaR[0]?.type, plantillaR[0]?.name, plantillaR[0]?.parameters, cuerpoR.template.language.code, cuerpoR.template.components.filter((x) => x.type === 'button').length] }
+      await decir(waP, 'hola')
       // The same button again: the time is the turno's own now; nothing else happens.
       const repetido = await hablar(waAna, 'Confirmar cambio', tocar(elegir2[0].buttons[0]))
       out.repetido = [repetido.length > 0, await prisma.reprogramacionTurno.count({ where: { reservaId: t.pedido.id } }), (await inicioDe(t)) === nuevo]
@@ -680,6 +704,12 @@ test('REPROGRAMACION por WhatsApp PostgreSQL: "quiero cambiar mi turno" lists th
   assert.deepEqual(r.vuelve, ['Listo, no cambié nada: tu turno sigue como estaba.', r.lista[5], 0])
   assert.deepEqual(r.movido, [true, true, true, 'confirmed', true, [[true, 'whatsapp', true, true]]], 'confirmed: the same turno at its new time, its payments untouched, recorded with its channel')
   assert.deepEqual(r.avisoPrestador, [1, true], 'the provider is told who, what, when it was and when it is')
+  assert.deepEqual(r.avisoPorVentana.abierta, [1, 'text', []], 'window open: a normal message')
+  assert.deepEqual(r.avisoPorVentana.sinPlantilla, [0, ['template_required']], 'window closed and the template not approved: nothing is written (never free text) and the reason is recorded')
+  assert.deepEqual(r.avisoPorVentana.plantilla.slice(0, 3), [1, 'template', 'turno_reprogramado_prestador'], 'window closed and the template approved: the template, once even when delivered twice')
+  assert.equal(r.avisoPorVentana.plantilla[3].length, 7)
+  assert.deepEqual([r.avisoPorVentana.plantilla[3][0], r.avisoPorVentana.plantilla[3][1], r.avisoPorVentana.plantilla[3][2], r.avisoPorVentana.plantilla[3][4], r.avisoPorVentana.plantilla[3][6]], ['Wa Mueve', 'Cliente ana', 'Reparación', r.avisoPorVentana.plantilla[3][4], '17:00'])
+  assert.deepEqual(r.avisoPorVentana.plantilla.slice(4), ['es_AR', 0], 'no button: nothing has to be accepted')
   assert.deepEqual(r.repetido, [true, 1, true], 'the same button twice moves it once')
   assert.deepEqual(r.noAdmite, ['Este turno no admite reprogramación.', true])
   assert.equal(r.cerrado, 'Este turno comienza dentro de las próximas 24 horas: ya no se puede reprogramar. Podés mantenerlo o cancelarlo según la política de cancelación.')

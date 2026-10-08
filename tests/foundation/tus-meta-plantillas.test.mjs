@@ -28,7 +28,12 @@ const remota = (definicion, extra = {}) => ({ id: 'id-' + definicion.name, name:
 test('META plantillas: the definitions of TUS (the reminders with their exact texts, variables and buttons, and a provider pair that never mentions the deposit) become the components Meta stores', async () => {
   const definiciones = await definicionesDeTus(root)
   const por = (nombre) => definiciones.find((d) => d.name === nombre)
-  assert.deepEqual(['turno_solicitud_recibida', 'servicio_urgente_disponible', 'continuar_atencion_tus', 'turno_recordatorio_24h', 'turno_recordatorio_2h', 'turno_recordatorio_24h_prestador', 'turno_recordatorio_2h_prestador'].filter((n) => !por(n)), [])
+  assert.deepEqual(['turno_solicitud_recibida', 'servicio_urgente_disponible', 'continuar_atencion_tus', 'turno_recordatorio_24h', 'turno_recordatorio_2h', 'turno_recordatorio_24h_prestador', 'turno_recordatorio_2h_prestador', 'turno_reprogramado_prestador'].filter((n) => !por(n)), [])
+  // TURNOS-REPROGRAMACION-01: the provider's notice, with no button (nothing has to be accepted).
+  const reprogramado = por('turno_reprogramado_prestador')
+  assert.equal(reprogramado.body, 'Hola, {{1}}. {{2}} reprogramó su turno de {{3}}. El horario anterior era {{4}} a las {{5}} y el nuevo horario es {{6}} a las {{7}}.')
+  assert.deepEqual([reprogramado.category, reprogramado.language, reprogramado.parameters.length, reprogramado.buttons ?? null], ['UTILITY', 'es_AR', 7, null])
+  assert.deepEqual(componentesDe(reprogramado), [{ type: 'BODY', text: reprogramado.body, example: { body_text: [['Joaquin', 'Joaquin', 'Masaje', '10 de octubre', '15:00', '11 de octubre', '17:00']] } }])
   assert.equal(por('turno_recordatorio_24h').body, 'Hola, {{1}}. Te recordamos que mañana tenés un turno de {{2}} el {{3}} a las {{4}} con {{5}}. Como se informó al reservar, desde este momento la seña no es reembolsable si cancelás el turno.')
   assert.equal(por('turno_recordatorio_2h').body, 'Hola, {{1}}. Te recordamos que tu turno de {{2}} es hoy a las {{3}} con {{4}}. Si cancelás ahora, la seña abonada no es reembolsable.')
   assert.equal(por('continuar_atencion_tus').body, 'Hola, {{1}}. Queremos continuar con tu solicitud en TUS. Respondé este mensaje y seguimos con la atención por acá.')

@@ -22,6 +22,9 @@ import { fechaLarga, horaCorta } from './solicitud-turno.ts'
 // ADMIN-WHATSAPP-AVISOS-01. The correlation every message of the notice of one request carries,
 // and why a notice was not sent at all.
 export const correlacionAvisoSolicitud = (reservaId: string): string => `turno-solicitado:${reservaId}`
+// TURNOS-REPROGRAMACION-01: the notice of ONE rescheduling (the turno and the time it was moved to).
+export const correlacionAvisoReprogramacion = (reservaId: string, nuevoInicio: Date): string => `turno-reprogramado:${reservaId}:${nuevoInicio.getTime()}`
+export const PLANTILLA_TURNO_REPROGRAMADO = 'turno_reprogramado_prestador'
 export const ACCION_AVISO_NO_ENVIADO = 'whatsapp.appointment_notice_not_sent'
 export type MotivoAvisoNoEnviado = 'provider_without_account' | 'no_whatsapp_linked' | 'template_required' | 'conversation_with_operator'
 
@@ -82,7 +85,7 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
   // ADMIN-WHATSAPP-AVISOS-01. A notice that was NOT sent leaves no message, so the reason is
   // recorded (never a phone number): Admin tells "nothing was sent" from "it is on its way".
   // What WAS sent needs nothing here: its message carries the status Meta reports.
-  private async noEnviado(reservaId: string, reason: MotivoAvisoNoEnviado): Promise<void> {
+  private async noEnviado(reservaId: string, reason: MotivoAvisoNoEnviado, correlationId: string = correlacionAvisoSolicitud(reservaId)): Promise<void> {
     this.metric?.('whatsapp.appointment_notice', { sent: false, reason })
     await this.transaction.ejecutar((repositories) =>
       repositories.auditoria.registrar({
@@ -91,7 +94,7 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
         contactId: null,
         conversationId: null,
         actorId: 'assistant',
-        correlationId: correlacionAvisoSolicitud(reservaId),
+        correlationId,
         metadata: { reservaId, reason },
         createdAt: new Date(this.now()).toISOString(),
       })
@@ -137,9 +140,41 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
 
   // TURNOS-REPROGRAMACION-01: the provider is told that its client moved the turno. Nothing is
   // asked of it: the client took a time the provider itself offered as free.
+  // Inside the 24 hour window a normal message; outside it ONLY the approved template (never free
+  // text). One notice per rescheduling: its correlation carries the turno and its new time, so a
+  // retry of the delivery is the same message. What could not be sent is recorded with its reason.
   async turnoReprogramado(aviso: AvisoTurnoReprogramado): Promise<void> {
-    if (!aviso.prestadorCuentaId) return
-    await this.entregar(aviso.prestadorCuentaId, { type: 'text', text: textoReprogramacionPrestador(aviso) }, `turno-reprogramado:${aviso.reservaId}:${aviso.inicio.getTime()}`)
+    const correlacion = correlacionAvisoReprogramacion(aviso.reservaId, aviso.inicio)
+    if (!aviso.prestadorCuentaId) return this.noEnviado(aviso.reservaId, 'provider_without_account', correlacion)
+    const { abiertos, cerrados, vinculados } = await this.destinos(aviso.prestadorCuentaId)
+    for (const destino of abiertos) await this.enviar(destino, { type: 'text', text: textoReprogramacionPrestador(aviso) }, correlacion)
+    if (cerrados.length === 0) {
+      if (abiertos.length === 0) await this.noEnviado(aviso.reservaId, vinculados === 0 ? 'no_whatsapp_linked' : 'conversation_with_operator', correlacion)
+      return
+    }
+    if (!this.plantillas?.aprobada(PLANTILLA_TURNO_REPROGRAMADO)) {
+      this.metric?.('whatsapp.appointment_notice', { sent: false, type: 'template', reason: 'template_not_approved' })
+      if (abiertos.length === 0) await this.noEnviado(aviso.reservaId, 'template_required', correlacion)
+      return
+    }
+    const recorte = (value: string): string => value.replace(/\s+/gu, ' ').trim().slice(0, 60) || '-'
+    const plantilla = this.plantillas.construir(PLANTILLA_TURNO_REPROGRAMADO, {
+      nombre: recorte(aviso.prestadorNombre),
+      cliente: recorte(aviso.clienteNombre),
+      servicio: recorte(aviso.servicio),
+      fechaAnterior: fechaLarga(aviso.anterior),
+      horaAnterior: horaCorta(aviso.anterior),
+      fechaNueva: fechaLarga(aviso.inicio),
+      horaNueva: horaCorta(aviso.inicio),
+    })
+    let enviados = abiertos.length
+    for (const contacto of cerrados) {
+      const conversacion = await this.conversacionDe(contacto)
+      if (!conversacion) continue
+      await this.enviar({ conversacion, contacto }, plantilla, correlacion)
+      enviados += 1
+    }
+    if (enviados === 0) await this.noEnviado(aviso.reservaId, 'conversation_with_operator', correlacion)
   }
 
   async turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void> {

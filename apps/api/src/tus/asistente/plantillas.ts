@@ -91,6 +91,16 @@ export const PLANTILLAS_WHATSAPP: DefinicionPlantilla[] = [
     body: 'Hola, {{1}}. Te recordamos que tu turno de {{2}} es hoy a las {{3}} con {{4}}.',
     buttons: ['Confirmar asistencia', 'No puedo asistir'],
   },
+  // TURNOS-REPROGRAMACION-01: the provider is told that a client moved its turno, also when its
+  // 24 hour window is closed. No button: the new time belongs to the availability the provider
+  // itself published, so the change is already valid.
+  {
+    name: 'turno_reprogramado_prestador',
+    category: 'UTILITY',
+    language: 'es_AR',
+    parameters: ['nombre', 'cliente', 'servicio', 'fechaAnterior', 'horaAnterior', 'fechaNueva', 'horaNueva'],
+    body: 'Hola, {{1}}. {{2}} reprogramó su turno de {{3}}. El horario anterior era {{4}} a las {{5}} y el nuevo horario es {{6}} a las {{7}}.',
+  },
   { name: 'payment_available', category: 'UTILITY', language: 'es_AR', parameters: ['servicio'], body: 'Tu servicio {{1}} está listo para pagar en TUS.' },
 ]
 

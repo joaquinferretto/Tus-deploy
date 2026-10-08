@@ -135,6 +135,7 @@ idioma **es_AR**.
 | `turno_recordatorio_2h` | 1 nombre · 2 servicio · 3 hora · 4 prestador | Confirmar asistencia · No puedo asistir |
 | `turno_recordatorio_24h_prestador` | 1 nombre · 2 servicio · 3 fecha · 4 hora · 5 cliente | Confirmar asistencia · No puedo asistir |
 | `turno_recordatorio_2h_prestador` | 1 nombre · 2 servicio · 3 hora · 4 cliente | Confirmar asistencia · No puedo asistir |
+| `turno_reprogramado_prestador` | 1 prestador · 2 cliente · 3 servicio · 4 fecha anterior · 5 hora anterior · 6 fecha nueva · 7 hora nueva | (sin botones) |
 | `continuar_atencion_tus` | 1 nombre | Continuar atención |
 
 Cuerpos:
@@ -143,6 +144,7 @@ Cuerpos:
 - `turno_recordatorio_2h`: `Hola, {{1}}. Te recordamos que tu turno de {{2}} es hoy a las {{3}} con {{4}}. Si cancelás ahora, la seña abonada no es reembolsable.`
 - `turno_recordatorio_24h_prestador`: `Hola, {{1}}. Te recordamos que mañana tenés un turno de {{2}} el {{3}} a las {{4}} con {{5}}.`
 - `turno_recordatorio_2h_prestador`: `Hola, {{1}}. Te recordamos que tu turno de {{2}} es hoy a las {{3}} con {{4}}.`
+- `turno_reprogramado_prestador`: `Hola, {{1}}. {{2}} reprogramó su turno de {{3}}. El horario anterior era {{4}} a las {{5}} y el nuevo horario es {{6}} a las {{7}}.`
 - `continuar_atencion_tus`: `Hola, {{1}}. Queremos continuar con tu solicitud en TUS. Respondé este mensaje y seguimos con la atención por acá.`
 
 Ejemplos para Meta: Joaquin · Masaje · 9 de octubre · 15:00 · Flor Perez.
@@ -182,7 +184,7 @@ definición de TUS (nombre, idioma, cuerpo, botones) y está en `WHATSAPP_APPROV
 2. Crear las plantillas en Meta (a mano o con `sincronizar --aplicar --solo=...`) y esperar la
    aprobación.
 3. Recién aprobadas, agregar sus nombres a `WHATSAPP_APPROVED_TEMPLATES` en Hostinger:
-   `turno_recordatorio_24h,turno_recordatorio_2h,turno_recordatorio_24h_prestador,turno_recordatorio_2h_prestador`
+   `turno_recordatorio_24h,turno_recordatorio_2h,turno_recordatorio_24h_prestador,turno_recordatorio_2h_prestador,turno_reprogramado_prestador`
    (y `continuar_atencion_tus`, `turno_solicitud_recibida`, `servicio_urgente_disponible` cuando
    estén aprobadas).
 
@@ -222,8 +224,11 @@ en ese momento; además la base impide dos turnos en el mismo horario. Si dos cl
 misma franja a la vez, uno la obtiene y el otro recibe "horario ocupado".
 
 **Prestador.** No se le pide una segunda aceptación (el cliente eligió una franja que él publicó
-como libre). Se le avisa con cliente, servicio, horario anterior y nuevo. Por WhatsApp el aviso
-sale solo si tiene la ventana de 24 h abierta: todavía no hay plantilla para este aviso.
+como libre). Se le avisa con cliente, servicio, horario anterior y nuevo. Por WhatsApp: con la
+ventana de 24 h abierta, un mensaje normal; con la ventana cerrada, la plantilla
+`turno_reprogramado_prestador` (sin botones: no hay nada que aceptar). Si la plantilla no está
+habilitada no se escribe texto libre fuera de ventana: queda registrado el motivo. Una
+reprogramación genera un solo aviso.
 
 **Recordatorios.** Los pendientes de la fecha vieja se invalidan en la misma operación y nunca se
 envían; el barrido calcula los de 24 h y 2 h para la fecha nueva.
