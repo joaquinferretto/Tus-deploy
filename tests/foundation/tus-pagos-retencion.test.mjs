@@ -359,6 +359,7 @@ test('MODALIDAD rutas: the work checkout takes only the way of paying; the obser
   assert.match(cierres, /if \(!cuerpo\(request, response, \[\]\)\) return/u, 'a confirmation carries no body at all')
   const turnos = readFileSync(join(root, 'apps/api/src/tus/calendar/turnos-http.ts'), 'utf8')
   assert.match(turnos, /'\/tus\/v1\/cliente\/turnos\/:id\/pago\/checkout'/u)
-  assert.match(turnos, /const ajenos = Object\.keys\(body\)\.filter\(\(campo\) => campo !== 'tramo'\)/u, 'the turno checkout takes only the part')
+  // TURNOS-CANCELACION-01: besides the part, the version of the cancellation policy the client accepted.
+  assert.match(turnos, /const ajenos = Object\.keys\(body\)\.filter\(\(campo\) => campo !== 'tramo' && campo !== 'aceptaPolitica'\)/u, 'the turno checkout takes only the part and the accepted policy')
   assert.match(readFileSync(join(root, 'apps/api/src/server.ts'), 'utf8'), /app\.use\(crearRouterCierres\(\{/u, 'the closing routes are mounted')
 })

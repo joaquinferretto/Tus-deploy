@@ -89,11 +89,23 @@ test('TURNOS WhatsApp PostgreSQL: the request stays pending, the provider is tol
       // rejecting what was accepted does not undo it
       out.rechazarAceptada = [await decir(waP, 'Rechazar', boton('rechazar', pedido.id)), (await fila(pedido.id)).estado]
       await avisar()
-      for (let i = 0; i < 40 && !enviadosA(waAna, marca).some((m) => m.type === 'cta_url'); i += 1) { await new Promise((resolve) => setTimeout(resolve, 250)); await avisar() }
+      for (let i = 0; i < 40 && enviadosA(waAna, marca).length === 0; i += 1) { await new Promise((resolve) => setTimeout(resolve, 250)); await avisar() }
       const alCliente = enviadosA(waAna, marca)
-      const enlace = alCliente.find((m) => m.type === 'cta_url')
-      out.avisoCliente = { tipos: alCliente.map((m) => m.type), texto: (enlace ?? alCliente[0])?.text, etiqueta: enlace?.label, url: Boolean(enlace?.url && enlace.url.startsWith('https://')) }
+      out.avisoAceptacion = { tipos: alCliente.map((m) => m.type), texto: alCliente[0]?.text }
       out.avisosUnaVez = alCliente.length
+      // TURNOS-CANCELACION-01: the link is not sent before the client accepts the cancellation
+      // policy. It asks to pay, reads the policy, goes back (nothing opens) and then accepts.
+      const botonDe = (b) => ({ type: 'interactive', body: { interactive: { type: 'button_reply', button_reply: { id: b.id, title: b.title } } } })
+      const mensajesDe = async (text, extra) => { const antes = fakeWa.sent.length; await decir(waAna, text, extra); return fakeWa.sent.slice(antes).filter((x) => x.to === waAna).map((x) => x.message) }
+      const pedidoDePago = await mensajesDe('pagar la seña')
+      const politica = pedidoDePago.find((m) => m.type === 'buttons')
+      const sinAceptar = await prisma.aceptacionPoliticaCancelacion.count({ where: { reservaId: pedido.id } })
+      const vuelve = await mensajesDe('Volver', botonDe(politica.buttons[1]))
+      out.politica = { texto: politica.text, botones: politica.buttons.map((b) => b.title), sinEnlace: !pedidoDePago.some((m) => m.type === 'cta_url') && !vuelve.some((m) => m.type === 'cta_url'), sinAceptar, trasVolver: await prisma.aceptacionPoliticaCancelacion.count({ where: { reservaId: pedido.id } }) }
+      const aceptado = await mensajesDe('Aceptar y pagar', botonDe(politica.buttons[0]))
+      const enlace = aceptado.find((m) => m.type === 'cta_url')
+      const politicaGuardada = await prisma.aceptacionPoliticaCancelacion.findMany({ where: { reservaId: pedido.id } })
+      out.avisoCliente = { tipos: aceptado.map((m) => m.type), texto: enlace?.text, etiqueta: enlace?.label, url: Boolean(enlace?.url && enlace.url.startsWith('https://')), aceptacion: politicaGuardada.map((g) => [g.cuentaId === ana.id, g.canal, g.tramo]) }
 
       // 6. the correlation of the payment: request -> work -> obligation -> intent -> preference
       const { obligacion, pago, preferencia } = await pagoDe(pedido.reservaId)
@@ -165,8 +177,15 @@ test('TURNOS WhatsApp PostgreSQL: the request stays pending, the provider is tol
   assert.equal(r.idempotente.version, r.aceptar.version, 'one transition only')
   assert.deepEqual(r.idempotente.auditoria, [['awaiting_payment', 'whatsapp', true]], 'one audit line: who, from where, what it became')
   assert.equal(r.rechazarAceptada[1], 'awaiting_payment')
+  // TURNOS-CANCELACION-01: the notice of the acceptance carries no link any more; the link comes
+  // after the client accepted the cancellation policy on this channel.
+  assert.deepEqual(r.avisoAceptacion.tipos, ['text'])
+  assert.match(r.avisoAceptacion.texto, /aceptó tu solicitud.*seña de \$\s?15\.000.*pagar la seña/u)
+  assert.match(r.politica.texto, /La seña reserva tu turno\. Si cancelás con 24 horas o menos de anticipación, la seña no es reembolsable\./u)
+  assert.deepEqual([r.politica.botones, r.politica.sinEnlace, r.politica.sinAceptar, r.politica.trasVolver], [['Aceptar y pagar', 'Volver'], true, 0, 0], 'reading the policy or going back opens no payment and stores no acceptance')
+  assert.deepEqual(r.avisoCliente.aceptacion, [[true, 'whatsapp', 'sena']], 'accepting stores who, the channel and the way of paying')
   assert.deepEqual(r.avisoCliente.tipos, ['cta_url'])
-  assert.match(r.avisoCliente.texto, /aceptó tu solicitud.*seña de \$\s?15\.000/u)
+  assert.match(r.avisoCliente.texto, /Seña: \$\s?15\.000/u)
   assert.equal(r.avisoCliente.etiqueta, 'Pagar seña')
   assert.equal(r.avisoCliente.url, true)
   assert.equal(r.correlacion.referencia, true)
@@ -446,3 +465,130 @@ test('TURNOS pago y cierre por WhatsApp PostgreSQL: "pagar total" sends the chec
   assert.deepEqual(r.saldoAprobado, ['applied', [['saldo', 'paid'], ['sena', 'paid']], [['eligible', true], ['eligible', true]]])
   assert.match(r.nadaMas, /No tenés saldos pendientes/u)
 })
+
+// TURNOS-RECORDATORIOS-01 / TURNOS-CANCELACION-01 through the REAL assistant and notifier.
+test('RECORDATORIOS por WhatsApp PostgreSQL: outside the 24 hour window only the approved template is sent (nothing free-form, and nothing without it); inside it an interactive message; the client is told about the deposit and the provider never is; "No puedo asistir" cancels nothing until it is confirmed, the loss is confirmed explicitly inside the 24 hours and the backend decides again at that moment; buttons repeated change nothing; somebody else\'s reminder does not exist', { skip, timeout: 600000 }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const p = await prestador('rec', 'Wa Recuerda ' + run, [['Reparación', 30000]])
+      const ana = await cliente('ana')
+      ${ASISTENTE}
+      const cuentaP = await cuentaDe(p, 'duena')
+      const waAna = await vincular(ana)
+      const waP = await vincular(cuentaP)
+      const { ServicioRecordatoriosTurno, idRecordatorio } = await import('./apps/api/src/tus/calendar/turnos-recordatorios.ts')
+      const { NotificadorRecordatoriosWhatsapp } = await import('./apps/api/src/tus/asistente/avisos-recordatorios.ts')
+      const TODAS = ['turno_recordatorio_24h', 'turno_recordatorio_2h', 'turno_recordatorio_24h_prestador', 'turno_recordatorio_2h_prestador']
+      const canalCon = (aprobadas) => new NotificadorRecordatoriosWhatsapp(waTx, fakeWa, () => reloj, undefined, new WhatsappTemplateService(new Set(aprobadas)))
+      const recordatorios = new ServicioRecordatoriosTurno(prisma, (id) => turnos.datosDeRecordatorio(id), canalCon([]), () => reloj)
+      compartidos.recordatorios = recordatorios
+      turnos.conReloj(() => reloj)
+      const HORA = 3600_000
+      let pagos = 300000 + Math.floor(Math.random() * 600000) * 10
+      async function turnoPagado(hora) {
+        const t = await turnoConCheckout(p, ana, 0, hora, 'Reparación')
+        pagos += 1
+        mpPayment(String(pagos), t.preferencia)
+        await ingerir(notification(String(pagos), { userId: '555', notificationId: run + '-r-' + pagos }))
+        await avisar()
+        return { ...t, inicio: (await fila(t.pedido.id)).fechaInicio.getTime() }
+      }
+      const hablar = async (wa, text, extra) => { const antes = fakeWa.sent.length; await decir(wa, text, extra); return fakeWa.sent.slice(antes).filter((x) => x.to === wa).map((x) => x.message) }
+      const rapida = (payload, text) => ({ type: 'button', body: { button: { payload, text } } })
+      const tocar = (b) => ({ type: 'interactive', body: { interactive: { type: 'button_reply', button_reply: { id: b.id, title: b.title } } } })
+      const filas = async (t) => (await prisma.recordatorioTurno.findMany({ where: { reservaId: t.pedido.id }, orderBy: [{ tipo: 'asc' }, { destinatario: 'asc' }] })).map((x) => [x.destinatario, x.tipo, x.estado, x.motivo, x.via, x.plantilla, x.respuesta, x.respuestaCanal, x.cancelacion])
+      const cancelacion = async (t) => { const c = await prisma.cancelacionTurno.findUnique({ where: { reservaId: t.pedido.id } }); return c ? [c.canceladaPor, c.tardia, c.devolucion, c.canal] : null }
+      const t1 = await turnoPagado('10:00')
+      const t2 = await turnoPagado('11:00')
+      const t3 = await turnoPagado('12:00')
+      await recordatorios.procesar(500)
+
+      // ---- A. Outside the window and WITHOUT an approved template: nothing is written.
+      reloj = t1.inicio - 24 * HORA
+      let marca = fakeWa.sent.length
+      await recordatorios.procesar(500)
+      out.sinPlantilla = [fakeWa.sent.length - marca, (await filas(t1)).filter((x) => x[1] === '24h').map((x) => x[2] + ':' + x[3])]
+
+      // ---- B. With the templates approved: the template, with the payloads of the two answers.
+      recordatorios.conCanal(canalCon(TODAS))
+      reloj = t2.inicio - 24 * HORA
+      marca = fakeWa.sent.length
+      await recordatorios.procesar(500)
+      const aCliente = enviadosA(waAna, marca)
+      const aPrestador = enviadosA(waP, marca)
+      const cuerpo = cuerpoMensajeMeta(waAna, aCliente[0])
+      out.plantillas = {
+        cliente: [aCliente.length, aCliente[0]?.type, aCliente[0]?.name, aCliente[0]?.parameters?.length, aCliente[0]?.parameters?.[1], aCliente[0]?.parameters?.[4].startsWith('Wa Recuerda')],
+        prestador: [aPrestador.length, aPrestador[0]?.type, aPrestador[0]?.name, aPrestador[0]?.parameters?.length],
+        botones: cuerpo.template.components.filter((x) => x.type === 'button').map((x) => x.sub_type + ':' + x.parameters[0].payload.split(':').slice(0, 2).join(':')),
+        idioma: cuerpo.template.language.code,
+      }
+      out.auditoria = (await filas(t2)).filter((x) => x[1] === '24h').map((x) => [x[0], x[2], x[4], x[5]])
+      const recCliente = await prisma.recordatorioTurno.findFirst({ where: { reservaId: t2.pedido.id, destinatario: 'cliente', tipo: '24h' } })
+      const recPrestador = await prisma.recordatorioTurno.findFirst({ where: { reservaId: t2.pedido.id, destinatario: 'prestador', tipo: '24h' } })
+      out.wamid = [Boolean(recCliente.wamid), recCliente.enviadoEn !== null]
+
+      // ---- C. The client: "No puedo asistir" asks first. Inside the 24 hours it names the loss.
+      const pregunta = await hablar(waAna, 'No puedo asistir', rapida(idRecordatorio('nopuede', recCliente.id), 'No puedo asistir'))
+      out.pregunta = [pregunta.map((m) => m.type), pregunta[0]?.text, pregunta[0]?.buttons?.map((b) => b.title), (await fila(t2.pedido.id)).estado]
+      const vuelve = await hablar(waAna, 'Volver', tocar(pregunta[0].buttons[1]))
+      out.vuelve = [vuelve[0]?.text, (await fila(t2.pedido.id)).estado, await cancelacion(t2)]
+      // A button that did NOT name the loss (shown before the 24 hours) confirmed now, inside
+      // them: the backend decides with its own clock and asks for the explicit confirmation.
+      const sinPerdida = await hablar(waAna, 'Sí, cancelar turno', tocar({ id: idRecordatorio('cancelar', recCliente.id), title: 'Sí, cancelar turno' }))
+      out.sinPerdida = [sinPerdida[0]?.type, sinPerdida[0]?.text === pregunta[0]?.text, (await fila(t2.pedido.id)).estado]
+      const cancela = await hablar(waAna, 'Sí, cancelar turno', tocar(pregunta[0].buttons[0]))
+      const otraVez = await hablar(waAna, 'Sí, cancelar turno', tocar(pregunta[0].buttons[0]))
+      out.cancela = [cancela[0]?.text, (await fila(t2.pedido.id)).estado, await cancelacion(t2), await prisma.cancelacionTurno.count({ where: { reservaId: t2.pedido.id } }), otraVez.length > 0, (await filas(t2)).find((x) => x[0] === 'cliente' && x[1] === '24h').slice(6)]
+      // Somebody else's reminder does not exist for this account.
+      const ajeno = await hablar(waAna, 'Confirmar asistencia', rapida(idRecordatorio('asiste', recPrestador.id), 'Confirmar asistencia'))
+      out.ajeno = [ajeno[0]?.text, (await prisma.recordatorioTurno.findUnique({ where: { id: recPrestador.id } })).respuesta]
+
+      // ---- D. The provider confirms it attends; later, inside the window, the reminder of 2 hours
+      // is an interactive message. It is never told about the deposit.
+      reloj = t3.inicio - 24 * HORA
+      await recordatorios.procesar(500)
+      const rec3P = await prisma.recordatorioTurno.findFirst({ where: { reservaId: t3.pedido.id, destinatario: 'prestador', tipo: '24h' } })
+      const asiste = await hablar(waP, 'Confirmar asistencia', rapida(idRecordatorio('asiste', rec3P.id), 'Confirmar asistencia'))
+      const asiste2 = await hablar(waP, 'Confirmar asistencia', rapida(idRecordatorio('asiste', rec3P.id), 'Confirmar asistencia'))
+      out.asiste = [asiste[0]?.text, asiste2.length, (await prisma.recordatorioTurno.findUnique({ where: { id: rec3P.id } })).respuesta, (await fila(t3.pedido.id)).estado]
+      await hablar(waAna, 'hola')
+      reloj = t3.inicio - 2 * HORA
+      marca = fakeWa.sent.length
+      await recordatorios.procesar(500)
+      const dosCliente = enviadosA(waAna, marca)
+      const dosPrestador = enviadosA(waP, marca)
+      out.enVentana = { cliente: [dosCliente.length, dosCliente[0]?.type, dosCliente[0]?.text, dosCliente[0]?.buttons?.map((b) => b.title)], prestador: [dosPrestador.length, dosPrestador[0]?.type, /seña|reembols/iu.test(dosPrestador[0]?.text ?? ''), /es hoy a las/u.test(dosPrestador[0]?.text ?? '')], vias: (await filas(t3)).filter((x) => x[1] === '2h').map((x) => [x[0], x[2], x[4], x[5]]) }
+      // The provider cannot go: asked first, never the wording of the client's loss; the client is due its money.
+      const preguntaP = await hablar(waP, 'No puedo asistir', tocar(dosPrestador[0].buttons[1]))
+      const cancelaP = await hablar(waP, 'Sí, cancelar turno', tocar(preguntaP[0].buttons[0]))
+      out.prestadorCancela = [preguntaP[0]?.type, /seña no será reembolsada/u.test(preguntaP[0]?.text ?? ''), /devolverle lo que pagó/u.test(preguntaP[0]?.text ?? ''), cancelaP[0]?.text, (await fila(t3.pedido.id)).estado, await cancelacion(t3)]
+      console.log(JSON.stringify(out))
+    } finally { await cerrar() }
+  `)
+  assert.deepEqual(r.sinPlantilla, [0, ['skipped:requiere_plantilla', 'skipped:requiere_plantilla']], 'outside the window and without an approved template nothing is written, and the reason is kept')
+  assert.deepEqual(r.plantillas.cliente, [1, 'template', 'turno_recordatorio_24h', 5, 'Reparación', true])
+  assert.deepEqual(r.plantillas.prestador, [1, 'template', 'turno_recordatorio_24h_prestador', 5])
+  assert.deepEqual(r.plantillas.botones, ['quick_reply:recordatorio:asiste', 'quick_reply:recordatorio:nopuede'])
+  assert.equal(r.plantillas.idioma, 'es_AR')
+  assert.deepEqual(r.auditoria, [['cliente', 'sent', 'plantilla', 'turno_recordatorio_24h'], ['prestador', 'sent', 'plantilla', 'turno_recordatorio_24h_prestador']])
+  assert.deepEqual(r.wamid, [true, true])
+  assert.deepEqual(r.pregunta, [['buttons'], 'Este turno comienza dentro de las próximas 24 horas. Si cancelás ahora, la seña no será reembolsada. ¿Querés continuar?', ['Sí, cancelar turno', 'Volver'], 'confirmed'], '"No puedo asistir" cancels nothing: it asks, naming the loss')
+  assert.deepEqual(r.vuelve, ['Listo, no cancelé nada: tu turno sigue en pie.', 'confirmed', null])
+  assert.deepEqual(r.sinPerdida, ['buttons', true, 'confirmed'], 'a confirmation that did not name the loss does not cancel inside the 24 hours')
+  assert.match(r.cancela[0], /^Listo, cancelé tu turno de Reparación con Wa Recuerda .* Como faltaban 24 horas o menos, la seña no se reembolsa\.$/u)
+  assert.deepEqual(r.cancela.slice(1), ['cancelled-late', ['cliente', true, 'no_reembolsable', 'whatsapp'], 1, true, ['no_puede', 'whatsapp', true]], 'confirmed: a late cancellation, once, recorded on the reminder')
+  assert.deepEqual(r.ajeno, ['No encontré ese turno entre los tuyos.', null])
+  assert.match(r.asiste[0], /^¡Gracias! Quedó registrado que asistís a tu turno de Reparación con Cliente ana/u)
+  assert.deepEqual(r.asiste.slice(1), [1, 'asiste', 'confirmed'])
+  assert.deepEqual(r.enVentana.cliente.slice(0, 2), [1, 'buttons'], 'inside the window: an interactive message, not a template')
+  assert.match(r.enVentana.cliente[2], /^Hola, Cliente\. Te recordamos que tu turno de Reparación es hoy a las 12:00 con Wa Recuerda .*\. Si cancelás ahora, la seña abonada no es reembolsable\.$/u)
+  assert.deepEqual(r.enVentana.cliente[3], ['Confirmar asistencia', 'No puedo asistir'])
+  assert.deepEqual(r.enVentana.prestador, [1, 'buttons', false, true], 'the provider is never told about the deposit')
+  assert.deepEqual(r.enVentana.vias, [['cliente', 'sent', 'ventana', null], ['prestador', 'sent', 'ventana', null]])
+  assert.deepEqual(r.prestadorCancela.slice(0, 3), ['buttons', false, true])
+  assert.match(r.prestadorCancela[3], /^Listo, cancelé tu turno de Reparación con Cliente ana.* Al cliente le corresponde la devolución de lo que pagó: la procesa TUS\.$/u)
+  assert.deepEqual(r.prestadorCancela.slice(4), ['cancelled', ['prestador', false, 'corresponde', null]])
+})
+

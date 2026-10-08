@@ -126,7 +126,10 @@ const SETUP = `
   sesion('tok-ana', ana.id, ana.tenantId); sesion('tok-beto', beto.id, beto.tenantId); sesion('tok-p', 'u-' + p.tenantId, p.tenantId)
   const solicitar = (token, prestadorDe, indice, hora, variante, extra = {}) => call('POST', '/tus/v1/prestadores/' + prestadorDe.perfilId + '/turnos/solicitudes', token, { oficioId: oficio.id, inicio: a(indice, hora), ...(variante ? { tarifaId: prestadorDe.tarifas[variante] } : {}), ...extra })
   const aceptar = (token, id) => call('POST', '/tus/v1/prestador/turnos/' + id + '/aceptar', token)
-  const pagar = (token, id, body) => call('POST', '/tus/v1/cliente/turnos/' + id + '/sena/checkout', token, body)
+  // TURNOS-CANCELACION-01: the client accepts the cancellation policy when it asks to pay (a body
+  // given by the test is sent as it is).
+  const POLITICA_VIGENTE = (await import('./packages/contracts/src/tus-turnos.ts')).VERSION_POLITICA_CANCELACION
+  const pagar = (token, id, body) => call('POST', '/tus/v1/cliente/turnos/' + id + '/sena/checkout', token, body ?? { aceptaPolitica: POLITICA_VIGENTE })
   const misTurnos = async (token) => (await call('GET', '/tus/v1/cliente/turnos', token)).body.items
   const senaDe = async (token, id) => (await misTurnos(token)).find((t) => t.id === id)?.sena ?? null
   const fila = (id) => prisma.reserva.findUnique({ where: { id } })

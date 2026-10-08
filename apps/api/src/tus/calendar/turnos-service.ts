@@ -288,17 +288,18 @@ export class ServicioTurnos {
    * when, channel, version of the text): showing the text on a screen is not what counts.
    */
   private async exigirPoliticaAceptada(input: { clienteId: string; reservaId: string; tramo: 'sena' | 'total'; politica?: { version: string; canal: 'web' | 'whatsapp' } }): Promise<void> {
-    const reserva = await this.prisma.reserva.findFirst({ where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false }, select: { id: true } })
-    // (A turno that is not this client's is refused by the payment itself.)
-    if (!reserva) return
+    const reserva = await this.prisma.reserva.findFirst({ where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false }, select: { id: true, estado: true } })
+    // (A turno that is not this client's, or that is not waiting for its payment, is refused by
+    // the payment itself with its own reason.)
+    if (!reserva || reserva.estado !== 'awaiting_payment') return
     const clave = { reservaId_cuentaId_version: { reservaId: reserva.id, cuentaId: input.clienteId, version: VERSION_POLITICA_CANCELACION } }
     if (await this.prisma.aceptacionPoliticaCancelacion.findUnique({ where: clave })) return
     if (input.politica?.version !== VERSION_POLITICA_CANCELACION)
       throw new ErrorCalendario(409, CODIGO_POLITICA_CANCELACION_REQUERIDA, textoPoliticaCancelacion(input.tramo))
-    await this.prisma.aceptacionPoliticaCancelacion.upsert({
-      where: clave,
-      update: {},
-      create: { id: `politica-${randomUUID()}`, reservaId: reserva.id, cuentaId: input.clienteId, canal: input.politica.canal, version: VERSION_POLITICA_CANCELACION, tramo: input.tramo, aceptadaEn: new Date(this.ahora()) },
+    // Several requests of the same payment at once accept it once (the UNIQUE index keeps one).
+    await this.prisma.aceptacionPoliticaCancelacion.createMany({
+      data: [{ id: `politica-${randomUUID()}`, reservaId: reserva.id, cuentaId: input.clienteId, canal: input.politica.canal, version: VERSION_POLITICA_CANCELACION, tramo: input.tramo, aceptadaEn: new Date(this.ahora()) }],
+      skipDuplicates: true,
     })
   }
 

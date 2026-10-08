@@ -97,10 +97,10 @@ export const turnosApi = {
   solicitarTurno: (prestadorId: string, input: { oficioId: string; inicio: string; tarifaId?: string; notas?: string }) =>
     json<DetalleTurno>(`/tus/v1/prestadores/${encodeURIComponent(prestadorId)}/turnos/solicitudes`, { method: 'POST', body: JSON.stringify(input) }, 'No pudimos enviar la solicitud. Probá con otro horario.'),
   misTurnos: () => json<{ items: DetalleTurno[] }>('/tus/v1/cliente/turnos', undefined, 'No pudimos cargar tus turnos.').then((result) => result.items),
-  cancelarMiTurno: (id: string) => json<DetalleTurno>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/cancelar`, { method: 'POST' }, 'No pudimos cancelar el turno.'),
+  cancelarMiTurno: (id: string, confirmaPerdida = false) => json<DetalleTurno>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/cancelar`, { method: 'POST', ...(confirmaPerdida ? { body: JSON.stringify({ confirmaPerdida: true }) } : {}) }, 'No pudimos cancelar el turno.'),
   pagarSena: (id: string) => json<CheckoutSenaTurnoDTO>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/sena/checkout`, { method: 'POST' }, 'No pudimos preparar el pago de la seña.'),
   // PAGOS-MODALIDAD-01: the deposit, the total at once or the balance. Only the choice travels.
-  pagarTurno: (id: string, tramo: 'sena' | 'total' | 'saldo') => json<CheckoutSenaTurnoDTO & { tramo: string }>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/pago/checkout`, { method: 'POST', body: JSON.stringify({ tramo }) }, 'No pudimos preparar el pago.'),
+  pagarTurno: (id: string, tramo: 'sena' | 'total' | 'saldo', aceptaPolitica?: string) => json<CheckoutSenaTurnoDTO & { tramo: string }>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/pago/checkout`, { method: 'POST', body: JSON.stringify({ tramo, ...(aceptaPolitica ? { aceptaPolitica } : {}) }) }, 'No pudimos preparar el pago.'),
   // CIERRE-TRABAJO-01: the provider finishes with evidence; the client confirms or reports a problem.
   finalizarTurno: (id: string, evidence: string) => json<unknown>(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/finalizar`, { method: 'POST', body: JSON.stringify({ evidence }) }, 'No pudimos registrar la finalización.'),
   confirmarTurno: (id: string) => json<unknown>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/confirmar`, { method: 'POST' }, 'No pudimos confirmar el turno.'),
