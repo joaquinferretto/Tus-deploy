@@ -593,7 +593,9 @@ export interface ReembolsoServicio {
 // Commission policy: basis points (1000 bp = 10%), versioned and append-only. 0 <= rate <= 3000
 // keeps the provider net positive before any PSP fee. `pspFeeBearer` stays `undetermined`
 // until the business decides who absorbs the payment provider fee; payments stay off meanwhile.
-export const COMISION_SERVICIO_MAXIMA_BPS = 3000
+// COMISION-TRABAJO-01: the administration may set any rate from 0% to 100% (the Web warns about
+// exceptionally high ones); it is always an integer number of basis points.
+export const COMISION_SERVICIO_MAXIMA_BPS = 10000
 export const ALCANCES_POLITICA_COMISION = ['global', 'categoria', 'prestador'] as const
 export type AlcancePoliticaComision = (typeof ALCANCES_POLITICA_COMISION)[number]
 export const RESPONSABLES_FEE_PSP = ['undetermined', 'provider', 'platform'] as const

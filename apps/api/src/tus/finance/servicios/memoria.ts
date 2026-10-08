@@ -12,6 +12,8 @@ import type {
 } from './liquidacion.ts'
 import type { ConciliacionServicio } from '@factory/contracts'
 import type {
+  ComisionTrabajo,
+  PuertoComisionTrabajo,
   PuertoComisionesServicio,
   PuertoConciliacionesServicio,
   PuertoLedgerServicio,
@@ -113,6 +115,7 @@ export interface EstadoFinanzasServicioEnMemoria {
   outbox: RegistroOutboxFinanciero[]
   auditoria: RegistroAuditoriaFinanciera[]
   comisiones: Map<string, InstantaneaComisionServicio>
+  comisionesTrabajo: Map<string, ComisionTrabajo>
   ledger: Map<string, MovimientoContableServicio>
   liquidaciones: Map<string, LiquidacionServicioDominio>
   conciliaciones: (ConciliacionServicio & { prestadorTenantId: string })[]
@@ -133,6 +136,7 @@ export class AlmacenFinanzasServicioEnMemoria {
     outbox: [],
     auditoria: [],
     comisiones: new Map(),
+    comisionesTrabajo: new Map(),
     ledger: new Map(),
     liquidaciones: new Map(),
     conciliaciones: [],
@@ -273,6 +277,18 @@ export class AlmacenFinanzasServicioEnMemoria {
         if (this.state.outbox.some((existing) => existing.eventId === record.eventId))
           throw Object.assign(new Error('unique outbox event'), { code: 'P2002' })
         this.state.outbox.push(clonar(record))
+      },
+    }
+  }
+
+  // COMISION-TRABAJO-01: one frozen commission per work, written once.
+  comisionTrabajo(): PuertoComisionTrabajo {
+    return {
+      buscar: async (input) => clonar(this.state.comisionesTrabajo.get(clave(input.tenantId, input.trabajoId)) ?? null),
+      fijar: async (snapshot) => {
+        const key = clave(snapshot.tenantId, snapshot.trabajoId)
+        if (!this.state.comisionesTrabajo.has(key)) this.state.comisionesTrabajo.set(key, clonar(snapshot))
+        return clonar(this.state.comisionesTrabajo.get(key)!)
       },
     }
   }
@@ -451,6 +467,7 @@ export class TransaccionFinanzasServicioEnMemoria implements PuertoTransaccionFi
       outbox: this.store.outbox(),
       auditoria: this.store.auditoria(),
       comisiones: this.store.comisiones(),
+      comisionTrabajo: this.store.comisionTrabajo(),
       ledger: this.store.ledger(),
       liquidaciones: this.store.liquidaciones(),
       ganancias: this.store.ganancias(),

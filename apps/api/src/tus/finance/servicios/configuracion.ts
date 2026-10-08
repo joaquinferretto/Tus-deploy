@@ -488,6 +488,11 @@ export class ServicioConfiguracionPagos {
       ruleVersion: string
       pspFeeBearer: ResponsableFeePsp
       persisted: boolean
+      version: number
+      since: string | null
+      actorId: string | null
+      reason: string | null
+      previousRateBps: number | null
     }
     // The evidence registries, as stored. `requiredNow` is always false since
     // PAGOS-HABILITACION-TECNICA-01: no evidence decides whether a payment can be charged.
@@ -500,10 +505,14 @@ export class ServicioConfiguracionPagos {
   }> {
     const operational = this.operativo()
     const configuracion = await this.store.ultimaConfiguracion()
-    const global = resolverPoliticaComision(await this.store.listarPoliticas(), {
+    const politicas = await this.store.listarPoliticas()
+    const global = resolverPoliticaComision(politicas, {
       prestadorId: '',
       categoria: null,
     })
+    const globales = politicas.filter((politica) => politica.scope === 'global').sort((a, b) => b.version - a.version)
+    const vigente = globales[0] ?? null
+    const anterior = globales[1] ?? null
     const blockers: string[] = []
     if (!configuracion?.paymentsEnabled) blockers.push('PAYMENTS_DISABLED')
     if (!operational.mercadoPagoEnabled) blockers.push('TUS_MERCADOPAGO_ENABLED_FALSE')
@@ -533,6 +542,12 @@ export class ServicioConfiguracionPagos {
         ruleVersion: global.ruleVersion,
         pspFeeBearer: global.pspFeeBearer,
         persisted: global.politicaId !== null,
+        // COMISION-TRABAJO-01: its version (to change it), since when and who set it, and what it was before.
+        version: vigente?.version ?? 0,
+        since: vigente?.createdAt ?? null,
+        actorId: vigente?.actorId ?? null,
+        reason: vigente?.reason ?? null,
+        previousRateBps: anterior?.rateBps ?? (vigente ? REGLA_COMISION_SERVICIO_POR_DEFECTO.rateBps : null),
       },
       readiness: { gate: 'service-payments', requiredNow: false, ...habilitaciones },
       technicallyEnabled: blockers.length === 0,

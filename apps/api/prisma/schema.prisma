@@ -841,6 +841,7 @@ model Trabajo {
   calificaciones      CalificacionTrabajo[]
 
   cierre CierreTrabajo?
+  comision ComisionTrabajo?
 
   @@unique([tenantId, trabajoId], map: "uq_trabajos_tenant_trabajo")
   @@unique([tenantId, trabajoId, prestadorTenantId], map: "uq_trabajos_tenant_trabajo_prestador")
@@ -3987,4 +3988,23 @@ model CancelacionTurno {
   reserva Reserva @relation(fields: [reservaId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_cancelaciones_turno_reserva")
 
   @@map("cancelaciones_turno")
+}
+
+// COMISION-TRABAJO-01: the commission of TUS frozen for a work when it is contracted. Every part
+// of the work (deposit, balance or total) is charged with this rate.
+model ComisionTrabajo {
+  tenantId       String   @map("tenant_id")
+  trabajoId      String   @map("trabajo_id")
+  tasaPuntosBase Int      @map("tasa_puntos_base")
+  versionRegla   String   @map("version_regla")
+  politicaId     String?  @map("politica_id")
+  moneda         String   @map("moneda")
+  baseMinor      BigInt   @map("base_minor")
+  comisionMinor  BigInt   @map("comision_minor")
+  fijadaEn       DateTime @map("fijada_en")
+
+  trabajo Trabajo @relation(fields: [tenantId, trabajoId], references: [tenantId, trabajoId], onDelete: Restrict, onUpdate: NoAction, map: "fk_comisiones_trabajo_trabajo")
+
+  @@id([tenantId, trabajoId], map: "comisiones_trabajo_pkey")
+  @@map("comisiones_trabajo")
 }

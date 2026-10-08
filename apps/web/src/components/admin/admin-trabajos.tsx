@@ -9,6 +9,7 @@ import {
   type AdminPago,
   type AdminTrabajo,
   type AdminTrabajoDetalle,
+  AdminApiError,
 } from '@/lib/tus-admin-api'
 import { AdminEmpty, AdminPageHeader } from './admin-layout'
 import { AdminEvidencias } from './admin-evidencias'
@@ -282,6 +283,75 @@ export function AdminObservaciones(): React.ReactNode {
   )
 }
 
+// COMISION-TRABAJO-01. What the administrator types ("7", "7,5", "12.25") as basis points, without
+// floating point: whole percent times 100 plus up to two decimals. null: not a percentage.
+export function porcentajeABps(texto: string): number | null {
+  const partes = /^(\d{1,3})(?:[.,](\d{1,2}))?$/u.exec(texto.trim())
+  if (!partes) return null
+  const bps = Number(partes[1]) * 100 + Number((partes[2] ?? '').padEnd(2, '0') || '0')
+  return bps <= 10000 ? bps : null
+}
+const porcentaje = (bps: number): string => (bps / 100).toLocaleString('es-AR', { maximumFractionDigits: 2 })
+const COMISION_ALTA_BPS = 3000
+
+type PoliticaGlobal = Awaited<ReturnType<typeof adminApi.pagosEstado>>['globalPolicy']
+
+function ComisionTus({ politica, onGuardada }: { politica: PoliticaGlobal; onGuardada: () => void }): React.ReactNode {
+  const [valor, setValor] = useState(porcentaje(politica.rateBps))
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+  const [aviso, setAviso] = useState('')
+  useEffect(() => { setValor(porcentaje(politica.rateBps)) }, [politica.rateBps, politica.version])
+  const bps = porcentajeABps(valor)
+  const guardar = async () => {
+    if (bps === null) return
+    setGuardando(true)
+    setError('')
+    setAviso('')
+    try {
+      await adminApi.cambiarComisionGlobal({ rateBps: bps, expectedVersion: politica.version ?? 0, reason: `Comisión global de ${porcentaje(politica.rateBps)}% a ${porcentaje(bps)}% desde Admin → Pagos`, pspFeeBearer: politica.pspFeeBearer ?? 'provider' })
+      setAviso(`Comisión guardada: ${porcentaje(bps)}%. Se aplica a las operaciones nuevas.`)
+      onGuardada()
+    } catch (causa: unknown) {
+      setError(causa instanceof AdminApiError && causa.code === 'VERSION_CONFLICT' ? 'Otra persona cambió la comisión recién. Revisá el valor vigente y volvé a guardar.' : causa instanceof Error ? causa.message : 'No se pudo guardar la comisión.')
+      onGuardada()
+    } finally {
+      setGuardando(false)
+    }
+  }
+  return (
+    <section aria-label="Comisión TUS" className={styles.card} data-comision-tus={politica.rateBps}>
+      <h3>Comisión TUS</h3>
+      <p>
+        Vigente: <strong>{porcentaje(politica.rateBps)}%</strong>
+        {politica.persisted ? (
+          <span className={styles.muted}>
+            {' '}· desde {politica.since ? formatFecha(politica.since) : '—'} · la modificó {politica.actorId ?? '—'}
+            {politica.previousRateBps !== null && politica.previousRateBps !== undefined ? ` · antes: ${porcentaje(politica.previousRateBps)}%` : ''}
+          </span>
+        ) : (
+          <span className={styles.muted}> · valor por defecto (nadie la modificó todavía)</span>
+        )}
+      </p>
+      <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        <label style={{ alignItems: 'center', display: 'flex', gap: 6 }}>
+          <span className={styles.muted}>Porcentaje</span>
+          <input aria-label="Porcentaje de comisión" data-comision-input inputMode="decimal" onChange={(event) => setValor(event.target.value)} style={{ width: 90 }} value={valor} />
+          <span>%</span>
+        </label>
+        <button className={styles.buttonPrimary} data-comision-guardar disabled={guardando || bps === null || bps === politica.rateBps} onClick={() => void guardar()} type="button">
+          {guardando ? 'Guardando…' : 'Guardar'}
+        </button>
+      </div>
+      {bps === null ? <p className={styles.error} role="alert">Escribí un porcentaje entre 0 y 100, con hasta dos decimales.</p> : null}
+      {bps !== null && bps > COMISION_ALTA_BPS ? <p data-comision-alta role="status" style={{ color: '#b45309' }}>Atención: {porcentaje(bps)}% es una comisión excepcionalmente alta. Revisá el valor antes de guardar.</p> : null}
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      {aviso ? <p className={styles.muted} role="status">{aviso}</p> : null}
+      <p className={styles.muted}>Los cambios se aplican a nuevas operaciones. Las operaciones existentes conservan la comisión con la que fueron contratadas.</p>
+    </section>
+  )
+}
+
 export function AdminPagos(): React.ReactNode {
   const [items, setItems] = useState<AdminPago[] | null>(null)
   const [error, setError] = useState('')
@@ -337,6 +407,7 @@ export function AdminPagos(): React.ReactNode {
           ) : null}
         </section>
       ) : null}
+      {estadoPagos ? <ComisionTus onGuardada={cargarEstadoPagos} politica={estadoPagos.globalPolicy} /> : null}
       <AdminObservaciones />
       {estadoPagos?.readiness ? <AdminEvidencias onChange={cargarEstadoPagos} /> : null}
       <div className={styles.toolbar}>

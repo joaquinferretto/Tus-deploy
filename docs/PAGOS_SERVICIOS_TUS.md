@@ -107,7 +107,45 @@ El encadenamiento turno de diagnóstico → presupuesto queda para una rama post
 - **WhatsApp**: "pagar la seña", "pagar total", "pagar el saldo"; aviso de finalización con botones
   para confirmar o reportar un problema; aviso de saldo habilitado.
 
-## 8. Antes de desplegar
+## 8. Comisión de TUS (`COMISION-TRABAJO-01`)
+
+**Una sola fuente.** La comisión es la política persistida y versionada de
+`politicas_comision_servicio` (alcance global; pueden existir además por categoría o por
+prestador, que ganan sobre la global). No se lee de variables de entorno. Mientras nadie la
+modifique rige el 10 % por defecto.
+
+**Admin → Pagos → Comisión TUS.** Un porcentaje (0 a 100, hasta dos decimales, guardado en puntos
+base enteros) y Guardar. Muestra el valor vigente, desde cuándo, quién lo modificó y el valor
+anterior, y avisa si el valor es excepcionalmente alto.
+
+- Cada cambio es una **versión nueva** (nunca se edita una existente): queda el valor, el anterior
+  (la versión previa), el administrador, el motivo y la fecha.
+- Dos administradores a la vez: se guarda un solo cambio; el otro recibe `VERSION_CONFLICT` y debe
+  recargar.
+- Ruta: `POST /tus/v1/admin/payments/commission-policies` con `{ scope: "global", rateBps,
+  expectedVersion, reason, pspFeeBearer }` (ya existía).
+
+**Instantánea por trabajo.** Cambiar la comisión no modifica ninguna operación existente. La tasa
+queda congelada en `comisiones_trabajo` cuando el trabajo se contrata: al crearse su primera
+obligación (el prestador acepta el turno, o se acepta el presupuesto), antes de cualquier cobro.
+Se guardan la tasa, la versión de la regla, la política de origen, la base (el total del trabajo)
+y el importe de comisión de esa base.
+
+- Seña, saldo y total de un mismo trabajo se cobran con esa misma tasa. El saldo nunca se recalcula
+  con una comisión global nueva.
+- Cada pago además guarda la tasa y el importe que se le aplicó (como antes), y su liquidación el
+  bruto, la comisión y el neto.
+- La política de cancelación y los reembolsos usan esos importes históricos: el cargo de TUS de un
+  turno es la comisión con la que se cobró, no la vigente.
+- Un trabajo que ya tenía pagos antes de esta migración conserva la tasa de sus pagos.
+
+Ejemplo: lunes, comisión 10 %, se contrata el turno A. Martes, Admin la cambia a 7 %. El turno A
+sigue con 10 % (seña de $10.000 → $1.000; saldo de $10.000 → $1.000). El turno B, nuevo, usa 7 %.
+
+Migración `20261115100000_tus_comision_por_trabajo`: crea `comisiones_trabajo` y reemplaza por
+otras más amplias las dos restricciones que topeaban la tasa en 30 % (ahora 100 %). No toca filas.
+
+## 9. Antes de desplegar
 
 - Configurar `MERCADO_PAGO_PLATFORM_ACCESS_TOKEN` y `MERCADO_PAGO_PLATFORM_USER_ID`: sin ellos todo
   pago anticipado se rechaza.

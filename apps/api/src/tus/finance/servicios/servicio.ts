@@ -20,7 +20,10 @@ import {
   formatMinorUnits,
   majorDecimalToMinorUnits,
 } from '@factory/contracts'
-import { PoliticaCobroFija, type PuertoPoliticaCobro } from './configuracion.ts'
+import { PoliticaCobroFija, type PuertoPoliticaCobro, type ReglaComisionAplicable } from './configuracion.ts'
+
+// The rule of a work with the moment it was frozen (null: nothing is stored for that work).
+type ReglaComisionFijada = ReglaComisionAplicable & { frozenAt: string | null }
 import {
   REGLA_COMISION_SERVICIO_POR_DEFECTO,
   calcularDesgloseCobro,
@@ -333,7 +336,27 @@ export const MOTIVOS_PRESTADOR_SIN_COBRO: ReadonlySet<string> = new Set([
   'PLATFORM_ACCOUNT_REQUIRED',
 ])
 
+// COMISION-TRABAJO-01. The commission of TUS frozen for one work. `fijar` stores it only if the
+// work has none yet and always returns the one that is stored (two requests at once agree).
+export interface ComisionTrabajo {
+  tenantId: string
+  trabajoId: string
+  rateBps: number
+  ruleVersion: string
+  politicaId: string | null
+  currency: string
+  baseMinor: bigint
+  commissionMinor: bigint
+  fixedAt: string
+}
+export interface PuertoComisionTrabajo {
+  buscar(input: { tenantId: string; trabajoId: string }): Promise<ComisionTrabajo | null>
+  fijar(snapshot: ComisionTrabajo): Promise<ComisionTrabajo>
+}
+
 export interface RepositoriosFinanzasServicio {
+  // COMISION-TRABAJO-01 (absent in narrow test compositions: the policy in force is used then).
+  comisionTrabajo?: PuertoComisionTrabajo
   // Absent in compositions without request-born works (then an approved balance only books money).
   cierreTrabajo?: PuertoCierreTrabajoPorPago
   identidad: PuertoIdentidadServicio
@@ -968,11 +991,9 @@ export class ServicioFinanzasServicios {
         const now = this.isoNow()
         // WEB-09E: the commission is converted to an amount now and frozen on the intent; it is
         // what Mercado Pago receives as `marketplace_fee` and what the approval snapshot books.
-        const rule = await this.politica.reglaComision({
-          prestadorTenantId: obligation.prestadorTenantId,
-          prestadorId: obligation.prestadorId,
-          categoria: publicacion?.categoria ?? null,
-        })
+        // COMISION-TRABAJO-01: with the rate frozen for the WORK, never the policy in force today
+        // (the balance of a work is charged with the same rate as its deposit).
+        const rule = await this.comisionDelTrabajo(repositories, obligation, publicacion?.categoria ?? null)
         const breakdown = calcularDesgloseCobro({
           grossMinor: obligation.amountMinor,
           rateBps: rule.rateBps,
@@ -1817,6 +1838,52 @@ export class ServicioFinanzasServicios {
   // The final total of a work, from its persisted commercial facts: the price booked on the
   // reservation of a turno, the accepted budget of a request-born work, or (marketplace works,
   // one payment for everything) the amount of its only obligation.
+  /**
+   * COMISION-TRABAJO-01. The commission rule of a work: the one frozen for it, for every part
+   * (deposit, balance or total) and for ever. It is frozen the first time it is asked for, which
+   * is when the first obligation of the work is created (the work was contracted; nothing was
+   * charged yet). A work that already had payment intents keeps THEIR rate. Only a work with
+   * nothing frozen anywhere reads the policy in force, once.
+   */
+  protected async comisionDelTrabajo(
+    repositories: RepositoriosFinanzasServicio,
+    obligation: Pick<ObligacionServicio, 'tenantId' | 'trabajoId' | 'prestadorTenantId' | 'prestadorId' | 'currency' | 'amountMinor'>,
+    categoria: string | null
+  ): Promise<ReglaComisionFijada> {
+    const politica = () => this.politica.reglaComision({ prestadorTenantId: obligation.prestadorTenantId, prestadorId: obligation.prestadorId, categoria })
+    if (!repositories.comisionTrabajo) return { ...(await politica()), frozenAt: null }
+    const scope = { tenantId: obligation.tenantId, trabajoId: obligation.trabajoId }
+    const fijada = await repositories.comisionTrabajo.buscar(scope)
+    if (fijada) return { politicaId: fijada.politicaId, rateBps: fijada.rateBps, ruleVersion: fijada.ruleVersion, pspFeeBearer: 'provider', frozenAt: fijada.fixedAt }
+    const hermanas = await repositories.obligaciones.listarPorTrabajo(scope)
+    // A work that was being paid before its commission was frozen here: the rate of its payments.
+    let previa: { rateBps: number; ruleVersion: string; politicaId: string | null } | null = null
+    for (const hermana of hermanas) {
+      for (const intent of await repositories.intenciones.listarPorObligacion({ tenantId: hermana.tenantId, obligacionId: hermana.obligacionId }))
+        if (intent.commission && (!previa || intent.createdAt < (previa as { createdAt?: string }).createdAt!)) previa = Object.assign({ rateBps: intent.commission.rateBps, ruleVersion: intent.commission.ruleVersion, politicaId: intent.commission.politicaId ?? null }, { createdAt: intent.createdAt })
+    }
+    const regla = previa ?? (await politica())
+    const trabajo = await repositories.identidad.buscarTrabajoAccesible(scope)
+    const reserva = trabajo?.origin === 'turno' && trabajo.reservaId ? await repositories.identidad.buscarReservaTurno({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId }) : null
+    const baseMinor = (trabajo ? await this.totalFinalDelTrabajo(repositories, trabajo, reserva, hermanas) : null) ?? obligation.amountMinor
+    const guardada = await repositories.comisionTrabajo.fijar({
+      ...scope,
+      rateBps: regla.rateBps,
+      ruleVersion: regla.ruleVersion,
+      politicaId: regla.politicaId ?? null,
+      currency: obligation.currency,
+      baseMinor,
+      commissionMinor: calcularDesgloseCobro({ grossMinor: baseMinor, rateBps: regla.rateBps, pspFeeBearer: 'provider', pspFeeMinor: null }).commissionMinor,
+      fixedAt: this.isoNow(),
+    })
+    return { politicaId: guardada.politicaId, rateBps: guardada.rateBps, ruleVersion: guardada.ruleVersion, pspFeeBearer: 'provider', frozenAt: guardada.fixedAt }
+  }
+
+  /** COMISION-TRABAJO-01: the commission frozen for a work, if any (for the administration). */
+  async comisionFijada(input: { tenantId: string; trabajoId: string }): Promise<ComisionTrabajo | null> {
+    return this.transaction.ejecutar(async (repositories) => (repositories.comisionTrabajo ? repositories.comisionTrabajo.buscar(input) : null))
+  }
+
   protected async totalFinalDelTrabajo(
     repositories: RepositoriosFinanzasServicio,
     trabajo: Trabajo,
@@ -2039,11 +2106,7 @@ export class ServicioFinanzasServicios {
             politicaId: intent.commission.politicaId,
             pspFeeBearer: 'provider' as const,
           }
-        : await this.politica.reglaComision({
-            prestadorTenantId: obligation.prestadorTenantId,
-            prestadorId: obligation.prestadorId,
-            categoria: publicacion?.categoria ?? null,
-          })
+        : await this.comisionDelTrabajo(repositories, obligation, publicacion?.categoria ?? null)
       const snapshot = calcularInstantaneaComision({
         obligation,
         intent,
@@ -2472,6 +2535,8 @@ export class ServicioFinanzasServicios {
       now: this.isoNow(),
     })
     await repositories.obligaciones.crear(obligation)
+    // COMISION-TRABAJO-01: the work is contracted: its commission is frozen now, before any charge.
+    await this.comisionDelTrabajo(repositories, obligation, null)
     await this.auditar(repositories, obligation, {
       resourceType: 'obligation',
       resourceId: obligation.obligacionId,
@@ -2534,6 +2599,8 @@ export class ServicioFinanzasServicios {
         : null
       const obligation = derivarObligacionSenaTurno({ context, trabajo, reserva, now: this.isoNow(), part, ...(amountMinor !== null ? { amountMinor } : {}) })
       await repositories.obligaciones.crear(obligation)
+      // COMISION-TRABAJO-01: the turno was accepted: its commission is frozen now, before any charge.
+      await this.comisionDelTrabajo(repositories, obligation, null)
       await this.auditar(repositories, obligation, {
         resourceType: 'obligation',
         resourceId: obligation.obligacionId,
@@ -2572,6 +2639,8 @@ export class ServicioFinanzasServicios {
       now: this.isoNow(),
     })
     await repositories.obligaciones.crear(obligation)
+    // COMISION-TRABAJO-01: the work is contracted: its commission is frozen now, before any charge.
+    await this.comisionDelTrabajo(repositories, obligation, null)
     await this.auditar(repositories, obligation, {
       resourceType: 'obligation',
       resourceId: obligation.obligacionId,

@@ -27,6 +27,8 @@ import type {
 } from '../finance/servicios/liquidacion.ts'
 import type { ConciliacionServicio, EstadoLiquidacionServicio } from '@factory/contracts'
 import type {
+  ComisionTrabajo,
+  PuertoComisionTrabajo,
   PuertoComisionesServicio,
   PuertoConciliacionesServicio,
   PuertoLedgerServicio,
@@ -80,6 +82,8 @@ export interface ClientePrismaFinanzasServicio {
   outboxEvent: DelegadoPrismaFinanzasServicio
   auditoriaFinanzasServicio: DelegadoPrismaFinanzasServicio
   instantaneaComision: DelegadoPrismaFinanzasServicio
+  // COMISION-TRABAJO-01 (absent in narrow test clients: the policy in force is used then).
+  comisionTrabajo?: DelegadoPrismaFinanzasServicio
   movimientoContable: DelegadoPrismaFinanzasServicio
   liquidacionServicio: DelegadoPrismaFinanzasServicio
   conciliacionServicio: DelegadoPrismaFinanzasServicio
@@ -483,6 +487,37 @@ export class AuditoriaFinancieraPrisma implements PuertoAuditoriaFinanciera {
 }
 
 // Service snapshots share `instantaneas_comision`; `(tenant_id, obligacion_id)` is unique.
+// COMISION-TRABAJO-01: the commission frozen for a work. Written once: a second writer (another
+// request preparing a payment of the same work) reads the row the first one stored.
+export class ComisionTrabajoPrisma implements PuertoComisionTrabajo {
+  constructor(private readonly client: ClientePrismaFinanzasServicio) {}
+
+  async buscar(input: { tenantId: string; trabajoId: string }): Promise<ComisionTrabajo | null> {
+    const row = await this.client.comisionTrabajo!.findFirst({ where: { tenantId: input.tenantId, trabajoId: input.trabajoId } })
+    return row
+      ? {
+          tenantId: texto(row, 'tenantId'),
+          trabajoId: texto(row, 'trabajoId'),
+          rateBps: Number(row['tasaPuntosBase']),
+          ruleVersion: texto(row, 'versionRegla'),
+          politicaId: typeof row['politicaId'] === 'string' ? row['politicaId'] : null,
+          currency: texto(row, 'moneda'),
+          baseMinor: parseMinorUnits(row['baseMinor']),
+          commissionMinor: parseMinorUnits(row['comisionMinor']),
+          fixedAt: (row['fijadaEn'] as Date).toISOString(),
+        }
+      : null
+  }
+
+  async fijar(snapshot: ComisionTrabajo): Promise<ComisionTrabajo> {
+    await (this.client.comisionTrabajo as unknown as { createMany(input: unknown): Promise<unknown> }).createMany({
+      data: [{ tenantId: snapshot.tenantId, trabajoId: snapshot.trabajoId, tasaPuntosBase: snapshot.rateBps, versionRegla: snapshot.ruleVersion, politicaId: snapshot.politicaId, moneda: snapshot.currency, baseMinor: snapshot.baseMinor, comisionMinor: snapshot.commissionMinor, fijadaEn: new Date(snapshot.fixedAt) }],
+      skipDuplicates: true,
+    })
+    return (await this.buscar(snapshot))!
+  }
+}
+
 export class ComisionesServicioPrisma implements PuertoComisionesServicio {
   constructor(private readonly client: ClientePrismaFinanzasServicio) {}
 
@@ -845,6 +880,7 @@ export class TransaccionFinanzasServicioPrisma implements PuertoTransaccionFinan
       outbox: new OutboxFinancieroPrisma(client),
       auditoria: new AuditoriaFinancieraPrisma(client),
       comisiones: new ComisionesServicioPrisma(client),
+      ...(client.comisionTrabajo ? { comisionTrabajo: new ComisionTrabajoPrisma(client) } : {}),
       ledger: new LedgerServicioPrisma(client),
       liquidaciones: new LiquidacionesServicioPrisma(client),
       conciliaciones: new ConciliacionesServicioPrisma(client),
