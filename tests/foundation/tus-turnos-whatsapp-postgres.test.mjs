@@ -37,6 +37,9 @@ test('TURNOS WhatsApp PostgreSQL: the request stays pending, the provider is tol
       const waAna = await vincular(ana)
 
       // 1. the request: pending in PostgreSQL, holding its time
+      // (Taken BEFORE the request: the request itself starts delivering its notice in the background,
+      // and it may already be out by the time the lines below have run.)
+      let marca = fakeWa.sent.length
       const pedido = await turnos.solicitarTurno({ prestadorId: p.perfilId, oficioId: oficio.id, inicio: a(0, '10:00'), tarifaId: p.tarifas['Reparación'], clienteId: ana.id, clienteTenantId: ana.tenantId, notas: 'Pierde la canilla de la cocina' })
       const guardada = await fila(pedido.id)
       out.pendiente = [guardada.estado, guardada.clienteId === ana.id, guardada.tenantId === p.tenantId, guardada.servicioId === oficio.id, guardada.fechaInicio.toISOString() === a(0, '10:00'), Number(guardada.precioFinal)]
@@ -45,7 +48,6 @@ test('TURNOS WhatsApp PostgreSQL: the request stays pending, the provider is tol
       out.sinObligacion = (await pagoDe(pedido.reservaId)).obligacion === null
 
       // 2. the provider is told on WhatsApp, automatically
-      let marca = fakeWa.sent.length
       await avisar()
       const aviso = enviadosA(waP, marca)
       out.aviso = { cantidad: aviso.length, tipo: aviso[0]?.type, botones: aviso[0]?.buttons?.map((b) => b.title + '=' + b.id), texto: aviso[0]?.text }
