@@ -8,6 +8,10 @@ export type EventoNotificacionTurno =
   | { kind: 'solicitud_respondida'; reservaId: string; resultado: 'awaiting_payment' | 'confirmed' | 'rejected' }
   | { kind: 'turno_confirmado'; reservaId: string }
   | { kind: 'turno_cancelado'; reservaId: string; canceladoPor: 'cliente' | 'prestador' | 'administracion' }
+  // CIERRE-TRABAJO-01 / PAGOS-MODALIDAD-01: the provider finished the turno (the client has to
+  // confirm it), and its balance can be paid now.
+  | { kind: 'turno_finalizado'; reservaId: string }
+  | { kind: 'saldo_habilitado'; reservaId: string }
 
 type ClienteOutbox = PrismaClient | Prisma.TransactionClient
 
@@ -17,7 +21,7 @@ function esEvento(value: unknown): value is EventoNotificacionTurno {
   if (!value || typeof value !== 'object') return false
   const evento = value as Record<string, unknown>
   if (typeof evento['reservaId'] !== 'string') return false
-  if (evento['kind'] === 'solicitud_recibida' || evento['kind'] === 'turno_confirmado') return true
+  if (evento['kind'] === 'solicitud_recibida' || evento['kind'] === 'turno_confirmado' || evento['kind'] === 'turno_finalizado' || evento['kind'] === 'saldo_habilitado') return true
   if (evento['kind'] === 'solicitud_respondida') return ['awaiting_payment', 'confirmed', 'rejected'].includes(String(evento['resultado']))
   return evento['kind'] === 'turno_cancelado' && ['cliente', 'prestador', 'administracion'].includes(String(evento['canceladoPor']))
 }

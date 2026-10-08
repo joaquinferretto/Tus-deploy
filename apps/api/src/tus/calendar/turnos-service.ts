@@ -832,6 +832,24 @@ export class ServicioTurnos {
       await Promise.all(this.notificadores.map((notificador) => notificador.turnoConfirmado(comun)))
       return
     }
+    if (evento.kind === 'turno_finalizado' || evento.kind === 'saldo_habilitado') {
+      // Everything of the notice is read again now: what was true when it was queued may not be.
+      const pago = this.senas ? (await this.senas.pagosDe([row])).get(row.id) ?? null : null
+      if (evento.kind === 'turno_finalizado') {
+        const cierre = pago?.cierre ?? null
+        if (!cierre || cierre.confirmadoEn || cierre.observacionAbierta) return
+        const orden = await this.prisma.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: row.tenantId, reservaId: row.reservaId } })
+        const fila = orden ? await this.prisma.cierreTrabajo.findFirst({ where: { tenantId: orden.tenantId, trabajoId: orden.trabajoId } }) : null
+        const aviso = { ...comun, evidencia: fila?.evidencia ?? '', confirmacionVenceEn: new Date(cierre.confirmacionVenceEn) }
+        await Promise.all(this.notificadores.map((notificador) => notificador.turnoFinalizado?.(aviso)))
+        return
+      }
+      if (!pago || pago.proximo?.tramo !== 'saldo' || !this.senas) return
+      const checkout = await this.senas.iniciarPagoDe({ clienteId: row.clienteId, reservaId: row.id, correlationId: `saldo-habilitado:${row.reservaId}`, tramo: 'saldo' }).catch(() => null)
+      const aviso = { ...comun, monto: pago.proximo.monto, moneda: pago.moneda, url: checkout?.checkoutUrl ?? null }
+      await Promise.all(this.notificadores.map((notificador) => notificador.saldoHabilitado?.(aviso)))
+      return
+    }
     await Promise.all(this.notificadores.map((notificador) => notificador.turnoCancelado({ ...comun, canceladoPor: evento.canceladoPor })))
   }
 
@@ -1143,6 +1161,25 @@ export class ServicioTurnos {
     if (!reserva) return
     await this.outboxNotificaciones.encolar(this.prisma, { tenantId: reserva.tenantId, reservaId: reserva.id, version: reserva.version, evento: { kind: 'turno_confirmado', reservaId: reserva.id } })
     this.activarNotificaciones()
+  }
+
+  // CIERRE-TRABAJO-01 / PAGOS-MODALIDAD-01. Notices of the closing of a turno, by the reservation
+  // of its order. Queued once per kind and version of the reservation; delivered by the same
+  // durable outbox as every other notice of a turno.
+  async avisarCierreDe(input: { prestadorTenantId: string; reservaId: string; kind: 'turno_finalizado' | 'saldo_habilitado' }): Promise<void> {
+    const reserva = await this.prisma.reserva.findFirst({ where: { tenantId: input.prestadorTenantId, reservaId: input.reservaId, esInvitado: false } })
+    if (!reserva) return
+    await this.outboxNotificaciones.encolar(this.prisma, { tenantId: reserva.tenantId, reservaId: reserva.id, version: reserva.version, evento: { kind: input.kind, reservaId: reserva.id } })
+    this.activarNotificaciones()
+  }
+
+  // The order (work) behind a turno of that client: what its closing is recorded on. null:
+  // another person's turno, or one that was never paid through TUS.
+  async ordenDeTurno(input: { clienteId: string; reservaId: string }): Promise<{ trabajoId: string; clienteTenantId: string } | null> {
+    const reserva = await this.prisma.reserva.findFirst({ where: { OR: [{ id: input.reservaId }, { reservaId: input.reservaId }], clienteId: input.clienteId, esInvitado: false } })
+    if (!reserva) return null
+    const orden = await this.prisma.trabajo.findFirst({ where: { origen: 'turno', reservaTenantId: reserva.tenantId, reservaId: reserva.reservaId } })
+    return orden ? { trabajoId: orden.trabajoId, clienteTenantId: orden.tenantId } : null
   }
 
   /**

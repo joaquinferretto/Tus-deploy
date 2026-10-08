@@ -102,6 +102,9 @@ export interface EstadoConversacional {
   // The conversation asked for name + document for something that is not a booking (the payment
   // link of a deposit) and is waiting for them.
   identityFor?: { purpose: 'deposit' | 'payment_check'; at: number } | null
+  // CIERRE-TRABAJO-01: the client said a finished turno had a problem and the next message is
+  // what happened. Only which turno and since when; the text goes to the backend, never kept here.
+  closingReport?: { ref: string; at: number } | null
   // TUS-WHATSAPP-MULTIMODAL-01: bookkeeping of "ya pagué" / receipts. Never authoritative: it only
   // paces the questions to Mercado Pago (the backend asks it again every time) and remembers which
   // deposits were offered to choose from. It holds no amount, no status and no account.

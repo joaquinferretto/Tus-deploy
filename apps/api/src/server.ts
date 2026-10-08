@@ -191,6 +191,12 @@ export function createApp(options: CreateAppOptions = {}): Application {
   // Turno requests notify by email through the transport of the account emails (when configured).
   const servicioTurnos = new ServicioTurnos(prisma as unknown as PrismaClient, NotificadorTurnosEmail.desdeEnv(prisma as unknown as PrismaClient, process.env))
   app.locals['tusTurnosNotificationWorkerFactory'] = () => servicioTurnos.crearWorkerNotificaciones()
+  // CIERRE-TRABAJO-01: the client is told when its turno was finished (to confirm it) and when
+  // its balance can be paid (confirmed with something still to pay).
+  application.workClosing?.conAvisos({
+    finalizado: async (trabajo) => { if (trabajo.origin === 'turno' && trabajo.reservaId) await servicioTurnos.avisarCierreDe({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId, kind: 'turno_finalizado' }) },
+    confirmado: async (trabajo, pagos) => { if (trabajo.origin === 'turno' && trabajo.reservaId && pagos?.pending === 'not_fully_paid') await servicioTurnos.avisarCierreDe({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId, kind: 'saldo_habilitado' }) },
+  })
   // TURNOS-SENA-01: the deposit of an accepted turno awaiting payment is charged through the same work and finance
   // services as every other payment (no parallel Mercado Pago integration).
   servicioTurnos.conSenas(new ServicioSenaTurnos(prisma as unknown as PrismaClient, pagosSenaDeAplicacion(application)))

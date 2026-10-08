@@ -163,12 +163,27 @@ export interface ResultadoVencidos {
 
 const texto = (value: unknown): string => (typeof value === 'string' ? value.replace(/\s+/gu, ' ').trim() : '')
 
+// Notices of a closing, wired by whoever has the channels (never part of the decision: a notice
+// that fails changes nothing).
+export interface AvisosCierre {
+  finalizado?(trabajo: Trabajo): Promise<void>
+  // After a confirmation, with what the economic evaluation said.
+  confirmado?(trabajo: Trabajo, pagos: ResultadoEconomicoCierre | null): Promise<void>
+}
+
 export class ServicioCierreTrabajo {
+  private avisos: AvisosCierre = {}
+
   constructor(
     private readonly store: PuertoCierres,
     private readonly dependencias: DependenciasCierre,
     private readonly now: () => number = Date.now
   ) {}
+
+  conAvisos(avisos: AvisosCierre): this {
+    this.avisos = avisos
+    return this
+  }
 
   private iso(): string {
     return new Date(this.now()).toISOString()
@@ -223,6 +238,7 @@ export class ServicioCierreTrabajo {
     }
     const creada = await this.store.crear(cierre)
     const guardada = (await this.store.buscar({ tenantId: trabajo.tenantId, trabajoId: trabajo.trabajoId })) ?? cierre
+    if (creada) await this.avisos.finalizado?.(trabajo).catch(() => undefined)
     return { cierre: guardada, status: creada ? 'created' : 'existing', pagos: null }
   }
 
@@ -247,6 +263,7 @@ export class ServicioCierreTrabajo {
     if (trabajo.origin === 'turno' && trabajo.reservaId) await this.dependencias.completarReserva?.({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId, at: actual.confirmedAt })
     if (trabajo.origin !== 'turno') await this.dependencias.completarSiPagado?.({ trabajo, correlationId, at: actual.confirmedAt })
     const pagos = this.dependencias.evaluarPagos ? await this.dependencias.evaluarPagos({ ...scope, correlationId }) : null
+    if (confirmada) await this.avisos.confirmado?.(trabajo, pagos).catch(() => undefined)
     return { cierre: actual, status: confirmada ? 'confirmed' : 'already_confirmed', pagos }
   }
 

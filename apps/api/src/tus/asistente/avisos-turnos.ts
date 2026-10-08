@@ -1,5 +1,5 @@
 import { formatearPesos } from '@factory/contracts'
-import type { AvisoImagenTurno, AvisoRespuestaTurno, AvisoSolicitudTurno, AvisoTurnoCancelado, AvisoTurnoConfirmado, NotificadorTurnos } from '../calendar/turnos-notificaciones.ts'
+import type { AvisoImagenTurno, AvisoRespuestaTurno, AvisoSaldoTurno, AvisoSolicitudTurno, AvisoTurnoCancelado, AvisoTurnoConfirmado, AvisoTurnoFinalizado, NotificadorTurnos } from '../calendar/turnos-notificaciones.ts'
 import type { WhatsappTemplateService } from './plantillas.ts'
 import type { WhatsappProvider, MensajeSaliente } from './meta.ts'
 import { createHash, randomUUID } from 'node:crypto'
@@ -115,6 +115,25 @@ export class NotificadorTurnosWhatsapp implements NotificadorTurnos {
       await this.entregar(aviso.prestadorCuentaId, { type: 'text', text: `${aviso.clienteNombre} pagó la seña: el turno de ${aviso.servicio} del ${fechaLarga(aviso.inicio)} a las ${horaCorta(aviso.inicio)} quedó confirmado.` }, `turno-confirmado-prestador:${aviso.reservaId}`)
   }
 
+  // CIERRE-TRABAJO-01. The provider finished the turno: the client confirms it or reports a
+  // problem with the buttons (or does nothing: TUS confirms when its window runs out).
+  async turnoFinalizado(aviso: AvisoTurnoFinalizado): Promise<void> {
+    await this.entregar(aviso.clienteCuentaId, {
+      type: 'buttons',
+      text: `${aviso.prestadorNombre} marcó como finalizado tu turno de ${aviso.servicio} del ${fechaLarga(aviso.inicio)}${aviso.evidencia ? `: "${aviso.evidencia.slice(0, 300)}"` : ''}. ¿Se realizó? Si no respondés antes del ${fechaLarga(aviso.confirmacionVenceEn)} a las ${horaCorta(aviso.confirmacionVenceEn)}, se confirma automáticamente.`,
+      buttons: [
+        { id: idCierreTurno('confirmar', aviso.reservaId), title: 'Confirmar' },
+        { id: idCierreTurno('problema', aviso.reservaId), title: 'Reportar problema' },
+      ],
+    }, `turno-finalizado:${aviso.reservaId}`)
+  }
+
+  // PAGOS-MODALIDAD-01. Confirmed with something left to pay: the balance and its checkout.
+  async saldoHabilitado(aviso: AvisoSaldoTurno): Promise<void> {
+    const texto = `Tu turno de ${aviso.servicio} con ${aviso.prestadorNombre} quedó confirmado como realizado. Ya podés pagar el saldo de ${formatearPesos(aviso.monto)}.`
+    await this.entregar(aviso.clienteCuentaId, aviso.url ? { type: 'cta_url', text: `${texto} El pago se acredita cuando Mercado Pago lo aprueba.`, label: 'Pagar saldo', url: aviso.url } : { type: 'text', text: `${texto} Escribime "pagar el saldo" y te paso el link.` }, `saldo-habilitado:${aviso.reservaId}`)
+  }
+
   async turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void> {
     if (aviso.canceladoPor === 'cliente') {
       if (!aviso.prestadorCuentaId) return
@@ -204,9 +223,11 @@ export function mensajeRespuesta(aviso: AvisoRespuestaTurno): MensajeSaliente {
   const sena = aviso.sena ?? null
   if (!sena) return { type: 'text', text: `El prestador aceptó tu solicitud: ${turno}. El turno sigue esperando el pago de seña.` }
   const monto = formatearPesos(sena.monto)
+  // PAGOS-MODALIDAD-01: the deposit is the default; the total at once is offered in words (asking
+  // for it replaces this link: only one way of paying is open at a time).
   if (sena.pagable && sena.url)
-    return { type: 'cta_url', text: `El prestador aceptó tu solicitud: ${turno}. Para confirmar definitivamente el turno tenés que abonar la seña de ${monto}.`, label: 'Pagar seña', url: sena.url }
-  if (sena.pagable) return { type: 'text', text: `El prestador aceptó tu solicitud: ${turno}. Para confirmar definitivamente el turno tenés que abonar la seña de ${monto}: escribime "pagar la seña" y te paso el link.` }
+    return { type: 'cta_url', text: `El prestador aceptó tu solicitud: ${turno}. Para confirmar definitivamente el turno tenés que abonar la seña de ${monto}. Si preferís pagar el total de una vez, respondé "pagar total".`, label: 'Pagar seña', url: sena.url }
+  if (sena.pagable) return { type: 'text', text: `El prestador aceptó tu solicitud: ${turno}. Para confirmar definitivamente el turno tenés que abonar la seña de ${monto}: escribime "pagar la seña" y te paso el link, o "pagar total" si preferís pagar todo de una vez.` }
   return { type: 'text', text: `El prestador aceptó tu solicitud: ${turno}. La seña de ${monto} sigue pendiente; el pago online todavía no está disponible.` }
 }
 
@@ -218,6 +239,14 @@ export const PLANTILLA_SOLICITUD_TURNO = 'turno_solicitud_recibida'
 // What a reply button carries: which answer and which request. Nothing else is trusted from it:
 // who answers is the account linked to the number, and the backend checks the request is theirs.
 export const idRespuestaTurno = (decision: 'aceptar' | 'rechazar', reservaId: string): string => `turno:${decision}:${reservaId}`
+
+// CIERRE-TRABAJO-01. What the buttons of "your turno was finished" carry: the answer and the turno.
+// WHO answers is the account linked to the number; the backend checks the turno is theirs.
+export const idCierreTurno = (accion: 'confirmar' | 'problema', reservaId: string): string => `cierre:${accion}:${reservaId}`
+export function leerCierreTurno(replyId: string | null | undefined): { accion: 'confirmar' | 'problema'; reservaId: string } | null {
+  const partes = /^cierre:(confirmar|problema):([A-Za-z0-9._:-]{3,160})$/u.exec(replyId ?? '')
+  return partes ? { accion: partes[1] as 'confirmar' | 'problema', reservaId: partes[2]! } : null
+}
 
 export function leerRespuestaTurno(replyId: string | null | undefined): { aceptar: boolean; reservaId: string } | null {
   const partes = /^turno:(aceptar|rechazar):([A-Za-z0-9_-]{6,80})$/u.exec(replyId ?? '')

@@ -17,7 +17,8 @@ export const ASISTENTE_TURNOS = `
   const cuentas = new Map()
   const resolver = { contexto: async (accountId, tenantId, correlationId) => { const cuenta = cuentas.get(accountId); return cuenta && cuenta.tenantId === tenantId ? { subjectId: cuenta.id, sessionId: 'wa:' + cuenta.id, tenantId, correlationId, roles: ['owner'], permissions: ['tus:checkout', 'tus:read', 'tus:marketplace:read'] } : null } }
   const compartidos = { directorio: null, solicitudes: null, turnos }
-  const dominio = new DominioAsistenteTus({ work, serviceFinance: fin }, () => Date.now(), compartidos)
+  // The closing of a turno is the same service the Web uses (CIERRE-TRABAJO-01).
+  const dominio = new DominioAsistenteTus({ work, serviceFinance: fin, workClosing: cierre }, () => Date.now(), compartidos)
   // Who is a provider: the real rule reads the marketplace store (an approved merchant of that
   // tenant); this scenario has no marketplace, so it reads the same fact from its table.
   dominio.esPrestador = async (context) => (await prisma.prestador.count({ where: { tenantId: context.tenantId, estado: 'approved' } })) > 0
@@ -26,6 +27,12 @@ export const ASISTENTE_TURNOS = `
   const modulo = crearModuloWhatsapp({ env: envWa, transaction: waTx, accounts: resolver, domain: dominio, knowledgeIndex: null, whatsapp: fakeWa, chat: null, embeddings: null, transcriptor: null, now: () => reloj })
   // The notices of the turnos leave through the real WhatsApp notifier of the module.
   turnos.agregarNotificador(modulo.avisosTurnos)
+  // As the server wires it: the client is told when its turno was finished and when its balance can be paid.
+  cierre.conAvisos({
+    finalizado: async (trabajo) => { if (trabajo.origin === 'turno' && trabajo.reservaId) await turnos.avisarCierreDe({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId, kind: 'turno_finalizado' }) },
+    confirmado: async (trabajo, pagos) => { if (trabajo.origin === 'turno' && trabajo.reservaId && pagos?.pending === 'not_fully_paid') await turnos.avisarCierreDe({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId, kind: 'saldo_habilitado' }) },
+  })
+  const botonCierre = (accion, reservaId) => ({ type: 'interactive', body: { interactive: { type: 'button_reply', button_reply: { id: 'cierre:' + accion + ':' + reservaId, title: accion === 'confirmar' ? 'Confirmar' : 'Reportar problema' } } } })
   const cola = modulo.crearWorker({ owner: 'pg-turnos-wa' })
   let seq = 0
   const entrante = (waId, text, extra, wamid) => { seq += 1; const message = { from: waId, id: wamid ?? 'wamid.tw-' + run + '-' + seq, timestamp: String(Math.floor(reloj / 1000)), type: extra ? extra.type : 'text', ...(extra ? extra.body : { text: { body: text } }) }; return { object: 'whatsapp_business_account', entry: [{ id: 'waba', changes: [{ field: 'messages', value: { messaging_product: 'whatsapp', metadata: { display_phone_number: '5490000000000', phone_number_id: PHONE }, contacts: [{ wa_id: waId, profile: { name: 'Persona' } }], messages: [message] } }] }] } }

@@ -15,6 +15,23 @@ export interface NotificadorTurnos {
   turnoCancelado(aviso: AvisoTurnoCancelado): Promise<void>
   // The client added a picture to a request the provider was already told about.
   imagenAgregada?(aviso: AvisoImagenTurno): Promise<void>
+  // CIERRE-TRABAJO-01: the provider finished the turno; the client confirms it or reports a problem.
+  turnoFinalizado?(aviso: AvisoTurnoFinalizado): Promise<void>
+  // PAGOS-MODALIDAD-01: the turno was delivered and confirmed; its balance can be paid now.
+  saldoHabilitado?(aviso: AvisoSaldoTurno): Promise<void>
+}
+
+export interface AvisoTurnoFinalizado extends AvisoTurnoConfirmado {
+  // What the provider says it did, and until when the client can answer before TUS confirms.
+  evidencia: string
+  confirmacionVenceEn: Date
+}
+
+export interface AvisoSaldoTurno extends AvisoTurnoConfirmado {
+  // What is left of the price, computed by the backend; `url`: its checkout when it could be prepared.
+  monto: number
+  moneda: string
+  url: string | null
 }
 
 // A picture of a request, as TUS holds it (validated, without metadata).

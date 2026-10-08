@@ -486,7 +486,7 @@ test('ASISTENTE seña: "quiero pagar la seña" gives the real checkout of the de
   assert.deepEqual(r.whatsapp[3], [['text', 'Encontré tu cuenta.', null, null], ['cta_url', textoSena, 'Pagar seña', link]])
   assert.deepEqual(r.pagos, [['customer-user', 'res-1'], ['customer-user', 'res-1']], 'the checkout is asked for the identified account and its own turno')
   assert.deepEqual(r.internos, [])
-  assert.deepEqual(r.avisoAceptado, [['5491155570002', 'cta_url', 'El prestador aceptó tu solicitud: tu turno de Masaje con Bongio del sábado 26 de septiembre a las 18:00. Para confirmar definitivamente el turno tenés que abonar la seña de $12.500.', 'Pagar seña', link]], 'only the WhatsApp conversation of that account, with the real link')
+  assert.deepEqual(r.avisoAceptado, [['5491155570002', 'cta_url', 'El prestador aceptó tu solicitud: tu turno de Masaje con Bongio del sábado 26 de septiembre a las 18:00. Para confirmar definitivamente el turno tenés que abonar la seña de $12.500. Si preferís pagar el total de una vez, respondé "pagar total".', 'Pagar seña', link]], 'only the WhatsApp conversation of that account, with the real link')
   assert.deepEqual(r.avisoConfirmado, [['5491155570002', '¡Tu turno quedó confirmado! Masaje con Bongio, sábado 26 de septiembre a las 18:00.']])
   assert.deepEqual(r.avisoRechazado, [
     ['5491155570002', 'text', 'Bongio no pudo tomar tu solicitud de turno de Masaje del sábado 26 de septiembre a las 18:00. Podés pedirme otro horario u otro profesional.'],
@@ -494,7 +494,7 @@ test('ASISTENTE seña: "quiero pagar la seña" gives the real checkout of the de
   ])
   assert.equal(r.fueraDeVentana, 0, 'outside Meta\'s 24-hour window nothing is sent (the email and "Mis turnos" carry the notice)')
   assert.deepEqual(r.textos, [
-    'El prestador aceptó tu solicitud: tu turno de Masaje con Bongio del sábado 26 de septiembre a las 18:00. Para confirmar definitivamente el turno tenés que abonar la seña de $12.500: escribime "pagar la seña" y te paso el link.',
+    'El prestador aceptó tu solicitud: tu turno de Masaje con Bongio del sábado 26 de septiembre a las 18:00. Para confirmar definitivamente el turno tenés que abonar la seña de $12.500: escribime "pagar la seña" y te paso el link, o "pagar total" si preferís pagar todo de una vez.',
     'El prestador aceptó tu solicitud: tu turno de Masaje con Bongio del sábado 26 de septiembre a las 18:00. La seña de $12.500 sigue pendiente; el pago online todavía no está disponible.',
     'El prestador aceptó tu solicitud: tu turno de Masaje con Bongio del sábado 26 de septiembre a las 18:00. El turno sigue esperando el pago de seña.',
   ])

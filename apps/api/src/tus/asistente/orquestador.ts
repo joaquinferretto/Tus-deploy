@@ -4,7 +4,7 @@ import { formatearFragmentosParaPrompt, type RecuperadorConocimiento } from './c
 import { DIAS_BUSQUEDA_PRIMERA, DIAS_LISTADOS, DIAS_PANORAMA, DIAS_TRAMO_MAXIMO, PIDE_DIAS, PIDE_HORARIOS, PIDE_OTRA, adjuntoDisponibilidad, diaLocal, diasDe, elegirOferta, horaLocal, horasDe, listaDeOpciones, ofertasDePanorama, ofertasDeResultado, personasDe, preguntaFaltante, preguntaHora, profesionalNombrado, profesionalesNombrados, resumenParaModelo, textoDias, textoDisponibilidad, textoPanorama, textoPrecios, textoPrimeraDisponibilidad, textoPropuesta, type DiaDisponible, type OfertasMostradas } from './busqueda.ts'
 import { oficio } from '../directorio/oficios.ts'
 import { CODIGO_SOLICITUD_NO_PENDIENTE, CODIGO_SOLICITUD_SIN_HORARIO, CODIGO_SOLICITUD_VENCIDA, formatearPesos } from '@factory/contracts'
-import { leerRespuestaTurno } from './avisos-turnos.ts'
+import { leerCierreTurno, leerRespuestaTurno } from './avisos-turnos.ts'
 import { esRenuncia, leerRespuestaUrgente, leerUrgente } from './urgente-texto.ts'
 import type { DisponibilidadNecesidad, OfertaTurnos, PagoVerificableAsistente, PuertoDominioAsistente, VerificacionSenaAsistente } from './dominio.ts'
 import { ErrorComprobante, EVIDENCIA_VACIA, LIMITES_COMPROBANTE_POR_DEFECTO, correlacionarComprobante, hayEvidencia, type EvidenciaComprobante, type LimitesComprobante, type PagoCandidato, type ServicioComprobantes } from './comprobantes.ts'
@@ -725,6 +725,14 @@ export class OrquestadorConversacion {
     if (respuestaTurno) return respuestaTurno
     const fotoTurno = await this.fotoDeSolicitudDeTurno(turn, actor, input)
     if (fotoTurno) return fotoTurno
+    // CIERRE-TRABAJO-01, also before the conversation: the buttons of "your turno was finished"
+    // and the message that tells what the problem was. Neither is an answer to anything else.
+    // The same for the words that confirm a finished turno: they are an answer to that notice
+    // (when no turno waits for one the handler passes and the conversation goes on).
+    if (leerCierreTurno(input.replyId) || (text && !input.replyId && (turn.conversation.state.closingReport || /\bconfirm\w*\b|\bse\s+realiz[oó]\b/iu.test(text)))) {
+      const cierre = await this.pagoOCierreDeTurno(turn, actor, input, correlationId)
+      if (cierre) return cierre
+    }
     // SERVICIO-URGENTE-01, also before the conversation: a provider answering an urgent request
     // (a button, or "no puedo ir" from the one assigned to it) and a client asking for one.
     const urgente = (await this.respuestaAUrgente(turn, actor, input, correlationId)) ?? (await this.pedidoUrgente(turn, actor, input, correlationId))
@@ -785,7 +793,7 @@ export class OrquestadorConversacion {
     if (cambio) return [...avisos, ...cambio]
     // A turno being requested (which service, who the client is) and the payment link of a deposit
     // are steps the BACKEND owns: the answer is read here, never by the model.
-    const paso = (await this.pasoDeSolicitud(turn, actor, text, correlationId)) ?? (await this.pedidoDeSena(turn, actor, text, correlationId))
+    const paso = (await this.pasoDeSolicitud(turn, actor, text, correlationId)) ?? (await this.pagoOCierreDeTurno(turn, actor, { text, replyId: input.replyId }, correlationId)) ?? (await this.pedidoDeSena(turn, actor, text, correlationId))
     if (paso) return [...avisos, ...paso]
     // MESSAGE -> facts -> conversation state -> what is still needed -> REAL search -> reply.
     // Every fact of the message is kept before anything else; when the need is complete the
@@ -2325,6 +2333,108 @@ export class OrquestadorConversacion {
       await guardado('failed', { reason: motivo })
       return { evidencia: null, fallo: true }
     }
+  }
+
+  // PAGOS-MODALIDAD-01 / CIERRE-TRABAJO-01 on the conversation, over the same backend as the Web:
+  //   "pagar total" / "pagar el saldo"   the checkout of that part of the client's turno
+  //   the buttons of "your turno was finished", or "confirmo el turno"   the client confirms it
+  //   "reportar problema" and then what happened   an observation for the platform
+  // Which turnos, which amounts and what can be paid now are the backend's; nothing is decided
+  // here, and a link pays nothing. Only a client whose account is known is served.
+  private async pagoOCierreDeTurno(turn: Turno, actor: ActorAsistente, input: { text: string; replyId: string | null }, correlationId: string): Promise<MensajeSaliente[] | null> {
+    const domain = this.deps.domain
+    if (typeof domain.pagosDeTurnos !== 'function' || typeof domain.pagarTurno !== 'function') return null
+    const state = turn.conversation.state
+    const conversationId = turn.conversation.conversationId
+    const text = input.text.trim()
+    const boton = leerCierreTurno(input.replyId)
+    const reportando = state.closingReport && this.now() - state.closingReport.at <= SOLICITUD_VIGENTE_MS ? state.closingReport : null
+    const pideTotal = /\b(?:pag\w*|abon\w*|quiero|link|enlace)\b[^.?!]{0,30}\b(?:el\s+)?total\b|\btotal\b[^.?!]{0,20}\b(?:pag\w*|abon\w*)\b/iu.test(text) || /^\s*(?:pagar\s+)?(?:el\s+)?total\s*[.!]*\s*$/iu.test(text)
+    const pideSaldo = /\bsaldo\b/iu.test(text) && /\b(?:pag\w*|abon\w*|quiero|link|enlace|c[oó]mo)\b/iu.test(text)
+    const pideConfirmar = /\bconfirm\w*\b[^.?!]{0,40}\b(?:turno|servicio|trabajo|realiz\w*|hizo)\b|^\s*(?:s[ií],?\s+)?se\s+realiz[oó]\s*[.!]*\s*$/iu.test(text)
+    const pideProblema = /\b(?:report\w*|reclam\w*)\b[^.?!]{0,30}\bproblema\b|\bhubo\s+un\s+problema\b/iu.test(text)
+    if (!boton && !reportando && !pideTotal && !pideSaldo && !pideConfirmar && !pideProblema) return null
+    const cuenta = cuentaDeSolicitud(actor)
+    if (!cuenta) return boton || reportando ? [{ type: 'text', text: 'Para eso necesito que este número esté vinculado a tu cuenta de TUS. Podés hacerlo desde "Mis turnos" en la Web.' }] : null
+    turn.intencion = 'pago'
+    turn.canal.evento?.({ type: 'routing', intent: 'pago' })
+    const cual = (t: { providerName: string; service: string | null; startsAt: string }) => `tu turno con ${t.providerName}${t.service ? ` (${t.service})` : ''} del ${fechaLarga(new Date(t.startsAt))} a las ${horaCorta(new Date(t.startsAt))}`
+    const turnos = await domain.pagosDeTurnos(cuenta).catch(() => null)
+    if (!turnos) return [{ type: 'text', text: 'No pude consultar tus turnos en este momento. Probá de nuevo en unos minutos.' }]
+    const errorDe = (error: unknown): string => {
+      const code = (error as { code?: unknown } | null)?.code
+      return code === 'PAYMENT_MODALITY_FIXED' ? 'Ya hay un pago aprobado para ese turno: la forma de pago no se puede cambiar.'
+        : code === 'ALREADY_PAID' ? 'Ese turno ya está pagado por completo.'
+        : code === 'BALANCE_NOT_AVAILABLE' ? 'El saldo se puede pagar cuando el turno se haya prestado y esté confirmado.'
+        : code === 'OBSERVATION_OPEN' ? 'Ya hay un problema reportado sobre ese turno. TUS lo está revisando.'
+        : code === 'ALREADY_CONFIRMED' ? 'Ese turno ya estaba confirmado.'
+        : code === 'WORK_NOT_FINISHED' ? 'El prestador todavía no marcó ese turno como finalizado.'
+        : code === 'REASON_REQUIRED' ? 'Contame el problema con un poco más de detalle (al menos 10 caracteres).'
+        : code === 'NOT_FOUND' ? 'No encontré ese turno entre los tuyos.'
+        : 'No pude hacerlo en este momento. Probá de nuevo en unos minutos o hacelo desde "Mis turnos".'
+    }
+    const enlace = async (ref: string, tramo: 'total' | 'saldo', de: string): Promise<MensajeSaliente> => {
+      try {
+        const pago = await domain.pagarTurno!(cuenta, ref, tramo)
+        return { type: 'cta_url', text: `${tramo === 'total' ? 'Pago total' : 'Saldo'} de ${de}: ${formatearPesos(pago.amount)}. El pago se acredita cuando Mercado Pago lo aprueba.`, label: tramo === 'total' ? 'Pagar total' : 'Pagar saldo', url: pago.url }
+      } catch (error) {
+        return { type: 'text', text: errorDe(error) }
+      }
+    }
+
+    // 1. What happened, after "reportar problema".
+    if (reportando && !boton) {
+      if (respuestaConfirmacion(text, null)?.decision === 'no') {
+        await this.actualizarEstado(conversationId, { closingReport: null })
+        return [{ type: 'text', text: 'Listo, no reporté ningún problema. Podés confirmar el turno cuando quieras.' }]
+      }
+      try {
+        await domain.observarTurno!(cuenta, reportando.ref, text)
+        await this.actualizarEstado(conversationId, { closingReport: null })
+        return [{ type: 'text', text: 'Registré el problema. El equipo de TUS lo va a revisar; mientras tanto el turno no se confirma y no se libera ningún pago.' }]
+      } catch (error) {
+        const code = (error as { code?: unknown } | null)?.code
+        if (code !== 'REASON_REQUIRED') await this.actualizarEstado(conversationId, { closingReport: null })
+        return [{ type: 'text', text: errorDe(error) }]
+      }
+    }
+    // 2. A finished turno: confirm it or report a problem.
+    const porConfirmar = turnos.filter((t) => t.pago.cierre && !t.pago.cierre.confirmadoEn && !t.pago.cierre.observacionAbierta)
+    if (boton || pideConfirmar || pideProblema) {
+      const elegido = boton ? turnos.find((t) => t.ref === boton.reservaId) ?? null : porConfirmar.length === 1 ? porConfirmar[0]! : null
+      if (!elegido) {
+        if (boton) return [{ type: 'text', text: 'No encontré ese turno entre los tuyos.' }]
+        if (porConfirmar.length === 0) return null
+        return [{ type: 'text', text: `Tenés ${porConfirmar.length} turnos finalizados esperando tu respuesta. Respondé cada uno con los botones de su mensaje, o desde "Mis turnos".` }]
+      }
+      if (boton?.accion === 'problema' || (!boton && pideProblema)) {
+        if (typeof domain.observarTurno !== 'function') return null
+        await this.actualizarEstado(conversationId, { closingReport: { ref: elegido.ref, at: this.now() } })
+        return [{ type: 'text', text: `Contame en un mensaje qué pasó con ${cual(elegido)}. Lo revisa el equipo de TUS.` }]
+      }
+      if (typeof domain.confirmarTurno !== 'function') return null
+      try {
+        const resultado = await domain.confirmarTurno(cuenta, elegido.ref)
+        const despues = (await domain.pagosDeTurnos(cuenta).catch(() => null))?.find((t) => t.ref === elegido.ref) ?? null
+        const confirmado: MensajeSaliente = { type: 'text', text: `Listo: confirmaste que se realizó ${cual(elegido)}.${resultado.pendiente === null ? ' Está pagado por completo.' : ''}` }
+        return despues?.pago.proximo?.tramo === 'saldo' ? [confirmado, await enlace(elegido.ref, 'saldo', cual(elegido))] : [confirmado]
+      } catch (error) {
+        return [{ type: 'text', text: errorDe(error) }]
+      }
+    }
+    // 3. The balance of the turnos that have one to pay now.
+    if (pideSaldo) {
+      const conSaldo = turnos.filter((t) => t.pago.proximo?.tramo === 'saldo')
+      if (conSaldo.length === 0) {
+        const pendiente = turnos.find((t) => t.pago.modalidad === 'sena' && t.pago.saldoPendiente > 0)
+        return [{ type: 'text', text: pendiente ? `El saldo de ${cual(pendiente)} es de ${formatearPesos(pendiente.pago.saldoPendiente)}. Se puede pagar cuando el turno se haya prestado y esté confirmado.` : 'No tenés saldos pendientes de pago.' }]
+      }
+      return Promise.all(conSaldo.slice(0, 3).map((t) => enlace(t.ref, 'saldo', cual(t))))
+    }
+    // 4. The total instead of the deposit, where the choice is still open.
+    const elegibles = turnos.filter((t) => t.pago.opciones.includes('total'))
+    if (elegibles.length === 0) return [{ type: 'text', text: 'No tenés turnos esperando pago en los que puedas elegir pagar el total. Se elige cuando el prestador acepta el turno y antes de pagar.' }]
+    return Promise.all(elegibles.slice(0, 3).map((t) => enlace(t.ref, 'total', cual(t))))
   }
 
   // "Quiero pagar la seña": the checkout of the deposits the client can pay now. The turnos, the

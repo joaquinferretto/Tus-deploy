@@ -7,7 +7,7 @@ import type { ServicioDirectorio } from '../directorio/servicio.ts'
 import type { ServicioSolicitudes } from '../solicitudes/servicio.ts'
 import type { ServicioTurnos, SolicitudTurnoParaAdmin } from '../calendar/turnos-service.ts'
 import type { ServicioUrgentes } from '../urgentes/servicio.ts'
-import { etiquetaEstadoTurno } from '@factory/contracts'
+import { etiquetaEstadoTurno, type DetalleTurno } from '@factory/contracts'
 import { senaDePrecio } from '../calendar/turnos-sena.ts'
 
 // The assistant reaches TUS only through this port. The adapter below delegates to the SAME
@@ -110,6 +110,15 @@ export interface SenaVerificableAsistente {
 // TUS-WHATSAPP-MULTIMODAL-02: any payment of the client that a receipt may be about: a deposit of
 // a turno or the deposit/balance of a work. Listed by the backend from the client's OWN turnos and
 // works (never from a receipt); `ref` is the turno reference or `work:<workId>`.
+// A turno of the client with everything the backend knows about its money and its closing.
+export interface PagoDeTurnoAsistente {
+  ref: string
+  providerName: string
+  service: string | null
+  startsAt: string
+  pago: NonNullable<DetalleTurno['pago']>
+}
+
 export interface PagoVerificableAsistente {
   ref: string
   kind: 'turno' | 'trabajo'
@@ -148,6 +157,13 @@ export interface PuertoDominioAsistente {
   // Deposits of accepted turnos awaiting payment that the client can pay now, and the checkout of one.
   senasPendientes(context: TusAuthenticatedTenantContext): Promise<SenaPendienteAsistente[]>
   pagarSena(context: TusAuthenticatedTenantContext, ref: string): Promise<{ url: string; amount: number }>
+  // PAGOS-MODALIDAD-01 / CIERRE-TRABAJO-01, the same backend the Web uses: the financial state of
+  // the client's own turnos, the checkout of one part (deposit, total or balance), and the
+  // closing of a finished turno (confirm it, or report a problem).
+  pagosDeTurnos?(context: TusAuthenticatedTenantContext): Promise<PagoDeTurnoAsistente[]>
+  pagarTurno?(context: TusAuthenticatedTenantContext, ref: string, tramo: 'sena' | 'total' | 'saldo'): Promise<{ url: string; amount: number }>
+  confirmarTurno?(context: TusAuthenticatedTenantContext, ref: string): Promise<{ pendiente: string | null }>
+  observarTurno?(context: TusAuthenticatedTenantContext, ref: string, reason: string): Promise<void>
   // Deposits of the client's own upcoming turnos that are pending or already paid, and the real
   // state of one deposit's payment (a turno of another account does not exist for it).
   senasVerificables?(context: TusAuthenticatedTenantContext): Promise<SenaVerificableAsistente[]>
@@ -547,6 +563,40 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
     const turnos = await this.compartidos.turnos.turnosCliente(context.subjectId)
     const turno = turnos.find((item) => item.id === ref || item.reservaId === ref)
     return { estado: 'confirmed', appliedNow: verificacion.appliedNow, turnoConfirmado: turno?.estado === 'confirmed', amount: turno?.sena?.monto ?? Number(verificacion.amountMinor ?? 0) / 100 }
+  }
+
+  async pagosDeTurnos(context: TusAuthenticatedTenantContext): Promise<PagoDeTurnoAsistente[]> {
+    if (!this.compartidos?.turnos) return []
+    const turnos = await this.compartidos.turnos.turnosCliente(context.subjectId)
+    return turnos
+      .filter((turno) => Boolean(turno.pago))
+      .sort((a, b) => a.inicio.localeCompare(b.inicio))
+      .map((turno) => ({ ref: turno.id, providerName: turno.prestadorNombre, service: turno.tarifaNombre ?? turno.oficioNombre ?? null, startsAt: turno.inicio, pago: turno.pago! }))
+  }
+
+  async pagarTurno(context: TusAuthenticatedTenantContext, ref: string, tramo: 'sena' | 'total' | 'saldo') {
+    if (!this.compartidos?.turnos) throw Object.assign(new Error('turnos unavailable'), { status: 503, code: 'UNAVAILABLE' })
+    const entrada = { clienteId: context.subjectId, reservaId: ref, correlationId: context.correlationId }
+    const pago = tramo === 'sena' ? await this.compartidos.turnos.pagarSena(entrada) : await this.compartidos.turnos.pagarTurno({ ...entrada, tramo })
+    return { url: pago.checkoutUrl, amount: pago.monto }
+  }
+
+  // The closing is recorded on the order of the turno, through the same service as the Web.
+  private async ordenDe(context: TusAuthenticatedTenantContext, ref: string): Promise<string> {
+    const orden = this.compartidos?.turnos ? await this.compartidos.turnos.ordenDeTurno({ clienteId: context.subjectId, reservaId: ref }) : null
+    if (!orden || !this.application.workClosing) throw Object.assign(new Error('turno not found'), { status: 404, code: 'NOT_FOUND' })
+    return orden.trabajoId
+  }
+
+  async confirmarTurno(context: TusAuthenticatedTenantContext, ref: string) {
+    const trabajoId = await this.ordenDe(context, ref)
+    const resultado = await this.application.workClosing!.confirmar({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId }, trabajoId)
+    return { pendiente: resultado.pagos?.pending ?? null }
+  }
+
+  async observarTurno(context: TusAuthenticatedTenantContext, ref: string, reason: string) {
+    const trabajoId = await this.ordenDe(context, ref)
+    await this.application.workClosing!.observar({ tenantId: context.tenantId, actorId: context.subjectId, correlationId: context.correlationId }, trabajoId, { reason })
   }
 
   async pagarSena(context: TusAuthenticatedTenantContext, ref: string) {

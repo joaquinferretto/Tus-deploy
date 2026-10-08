@@ -594,7 +594,8 @@ test('TURNOS seña PostgreSQL estados: pending -> awaiting_payment -> confirmed 
       out.eventos = (await prisma.outboxEvent.findMany({ where: { eventType: { startsWith: 'tus.turno.' }, aggregateId: pedido.body.reservaId } })).map((e) => e.eventType)
       out.auditoria = (await prisma.auditoriaFinanzasServicio.findMany({ where: { recursoId: o.trabajoId, accion: { startsWith: 'appointment.' } } })).map((x) => [x.accion, x.estadoNuevo])
       // A confirmed turno follows the normal flow.
-      out.luego = (await estadoPrestador(pedido.body.id, 'completed')).body.estado
+      // CIERRE-TRABAJO-01: a turno paid through TUS is not completed by hand any more.
+      out.luego = (await estadoPrestador(pedido.body.id, 'completed')).body.code
 
       // 4. The payment window runs out: the turno reads expired, cannot be paid, frees its time.
       const tarde = await solicitar('tok-ana', p, 3, '11:00', 'Masaje base')
@@ -649,7 +650,7 @@ test('TURNOS seña PostgreSQL estados: pending -> awaiting_payment -> confirmed 
   assert.deepEqual(r.avisosDeConfirmacion, [[true, true, true, 'Ana Cuenta', 'Espalda completa']], 'client and provider are told about the confirmation, once')
   assert.deepEqual(r.eventos, ['tus.turno.confirmed'])
   assert.deepEqual(r.auditoria, [['appointment.confirmed_by_deposit', 'confirmed']])
-  assert.equal(r.luego, 'completed')
+  assert.equal(r.luego, 'FINALIZATION_REQUIRED', 'a paid turno is finished with evidence and confirmed by its client, never completed by hand')
   assert.deepEqual(r.vencida, ['expired', null, 409, 'DEPOSIT_NOT_PAYABLE', 'disponible'], 'an overdue payment window: expired, not payable, its time offered again')
   assert.deepEqual(r.liberada, [201, 'pending', 'expired'], 'another client takes the time; the overdue turno is stored as expired')
   assert.equal(r.pagoTardio, 'recorded:applied', 'the money was collected: the approval is booked, never lost')

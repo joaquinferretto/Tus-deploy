@@ -355,3 +355,94 @@ test('TURNOS cobro de señas: every reason has its own wording for the administr
   assert.match(admin, /Por plataforma/u)
   assert.doesNotMatch(admin, /ACCESS_TOKEN\s*[:=]\s*['"][A-Za-z0-9_-]{10,}/u, 'names of settings only, never a value')
 })
+
+// PAGOS-MODALIDAD-01 / CIERRE-TRABAJO-01 on WhatsApp: the same backend as the Web. The client
+// chooses the total instead of the deposit, is told when its turno was finished, confirms it or
+// reports a problem with the buttons, and pays its balance; nothing is decided by the assistant.
+test('TURNOS pago y cierre por WhatsApp PostgreSQL: "pagar total" sends the checkout of the total (and replaces the deposit); the client is told when the provider finishes and confirms with the button; a reported problem is recorded and blocks; once settled the confirmation enables the balance and its link; an unlinked number is served nothing', { skip, timeout: 600_000 }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const p = await prestador('wa', 'Wa Cierre ' + run, [['Reparación', 30000]])
+      const ana = await cliente('ana')
+      ${ASISTENTE}
+      const waAna = await vincular(ana)
+      const EVIDENCIA = 'Reparación terminada y probada con el cliente.'
+      const preferenciaDe = async (trabajoId, tramo) => { const o = await prisma.obligacionPagoServicio.findFirst({ where: { trabajoId, tramo } }); const pago = await prisma.intencionPago.findFirst({ where: { obligacionId: o.obligacionId }, orderBy: { fechaCreacion: 'desc' } }); return mp.preferences.find((item) => item.body.external_reference === pago.pagoId) }
+      let pagos = 200000 + Math.floor(Math.random() * 700000) * 10
+      const aprobar = async (preferencia) => { pagos += 1; mpPayment(String(pagos), preferencia); const resultado = await ingerir(notification(String(pagos), { userId: '555', notificationId: run + '-w-' + pagos })); await avisar(); return resultado.result }
+      const tramos = async (trabajoId) => (await prisma.obligacionPagoServicio.findMany({ where: { trabajoId }, orderBy: { tramo: 'asc' } })).map((o) => [o.tramo, o.estado])
+      const liquidaciones = async (trabajoId) => (await prisma.liquidacionServicio.findMany({ where: { trabajoId }, orderBy: { obligacionId: 'asc' } })).map((l) => [l.estado, l.liberadaEn !== null])
+      const ultimo = (desde) => enviadosA(waAna, desde).at(-1)
+
+      // ---- A. The total instead of the deposit.
+      const t = await turnoConCheckout(p, ana, 0, '10:00', 'Reparación')
+      await avisar()
+      out.avisoAceptado = enviadosA(waAna).some((m) => /pagar total/u.test(m.text ?? ''))
+      let desde = fakeWa.sent.length
+      await decir(waAna, 'quiero pagar el total')
+      const linkTotal = ultimo(desde)
+      out.pagarTotal = [linkTotal.type, linkTotal.label, /\\$\\s?30\\.000/u.test(linkTotal.text), await tramos(t.trabajoId)]
+      out.totalAprobado = [await aprobar(await preferenciaDe(t.trabajoId, 'total')), await estadoTurno(t)]
+      // The provider finishes it: the client is told, with the two buttons.
+      adelantar(9 * 24 * 3600_000)
+      desde = fakeWa.sent.length
+      await cierre.finalizar(p.ctx, t.trabajoId, { evidence: EVIDENCIA })
+      await avisar()
+      const finalizado = ultimo(desde)
+      out.avisoFinalizado = [finalizado.type, finalizado.buttons.map((b) => b.id), finalizado.text.includes(EVIDENCIA), /se confirma automáticamente/u.test(finalizado.text)]
+      // A number that is not linked to the account of that turno is served nothing.
+      const ajeno = await decir('5491155900999', 'Confirmar', botonCierre('confirmar', t.pedido.id))
+      out.numeroAjeno = [ajeno.some((x) => /vinculado a tu cuenta/u.test(x)), (await prisma.cierreTrabajo.findFirst({ where: { trabajoId: t.trabajoId } })).confirmadoEn]
+      const confirmado = await decir(waAna, 'Confirmar', botonCierre('confirmar', t.pedido.id))
+      out.confirmado = [confirmado.some((x) => /confirmaste que se realizó/u.test(x) && /pagado por completo/u.test(x)), await estadoTurno(t), await liquidaciones(t.trabajoId), (await prisma.cierreTrabajo.findFirst({ where: { trabajoId: t.trabajoId } })).confirmacionOrigen]
+      out.repetido = (await decir(waAna, 'Confirmar', botonCierre('confirmar', t.pedido.id))).join(' | ')
+
+      // ---- B. Deposit, a problem, the balance.
+      const s = await turnoConCheckout(p, ana, 0, '11:00', 'Reparación')
+      await aprobar(s.preferencia)
+      desde = fakeWa.sent.length
+      out.saldoAntes = (await decir(waAna, 'quiero pagar el saldo')).join(' | ')
+      await cierre.finalizar(p.ctx, s.trabajoId, { evidence: EVIDENCIA })
+      await avisar()
+      const pideMotivo = await decir(waAna, 'Reportar problema', botonCierre('problema', s.pedido.id))
+      const registrado = await decir(waAna, 'El técnico se fue sin terminar de ajustar la canilla.')
+      const fila1 = await prisma.cierreTrabajo.findFirst({ where: { trabajoId: s.trabajoId } })
+      out.problema = [pideMotivo.some((x) => /Contame en un mensaje qué pasó/u.test(x)), registrado.some((x) => /Registré el problema/u.test(x)), fila1.observacionMotivo, fila1.confirmadoEn, (await waStore.repositorios().conversaciones.activaDeContacto((await waStore.repositorios().contactos.buscarPorWaId(waAna)).contactId)).state.closingReport ?? null]
+      out.confirmarConProblema = (await decir(waAna, 'Confirmar', botonCierre('confirmar', s.pedido.id))).join(' | ')
+      // The platform settles it; the client confirms in words; the balance is enabled and sent.
+      await cierre.resolverObservacion(admin, { tenantId: ana.tenantId, trabajoId: s.trabajoId })
+      desde = fakeWa.sent.length
+      const enPalabras = await decir(waAna, 'confirmo que el turno se realizó')
+      await avisar()
+      const enlaces = enviadosA(waAna, desde).filter((m) => m.type === 'cta_url')
+      out.saldoHabilitado = [enPalabras.some((x) => /confirmaste que se realizó/u.test(x)), enlaces.map((m) => m.label), enlaces.every((m) => /\\$\\s?15\\.000/u.test(m.text)), new Set(enlaces.map((m) => m.url)).size, await tramos(s.trabajoId), await liquidaciones(s.trabajoId)]
+      desde = fakeWa.sent.length
+      await decir(waAna, 'pasame el link para pagar el saldo')
+      out.pedirSaldo = [ultimo(desde).label, ultimo(desde).url === enlaces[0].url]
+      out.saldoAprobado = [await aprobar(await preferenciaDe(s.trabajoId, 'saldo')), await tramos(s.trabajoId), await liquidaciones(s.trabajoId)]
+      out.nadaMas = (await decir(waAna, 'quiero pagar el saldo')).join(' | ')
+      console.log(JSON.stringify(out))
+    } catch (e) { console.error('DUMP-W', JSON.stringify(out)); throw e } finally { await cerrar() }
+  `)
+  assert.equal(r.avisoAceptado, true, 'the acceptance notice offers the total in words')
+  assert.deepEqual(r.pagarTotal, ['cta_url', 'Pagar total', true, [['sena', 'voided'], ['total', 'pending_payment']]], 'the checkout of the total, with its amount; the deposit is replaced')
+  assert.deepEqual(r.totalAprobado, ['applied', 'confirmed'])
+  assert.deepEqual(r.avisoFinalizado[0], 'buttons')
+  assert.equal(r.avisoFinalizado[1].length, 2)
+  assert.match(r.avisoFinalizado[1][0], /^cierre:confirmar:/u)
+  assert.match(r.avisoFinalizado[1][1], /^cierre:problema:/u)
+  assert.deepEqual(r.avisoFinalizado.slice(2), [true, true], 'the notice carries what the provider did and says it confirms by itself')
+  assert.deepEqual(r.numeroAjeno, [true, null], 'another number confirms nothing')
+  assert.deepEqual(r.confirmado, [true, 'completed', [['eligible', true]], 'cliente'], 'the button confirms it through the backend: fully paid, released')
+  assert.match(r.repetido, /ya estaba confirmado|confirmaste que se realizó/u, 'tapping again changes nothing')
+  assert.match(r.saldoAntes, /Se puede pagar cuando el turno se haya prestado y esté confirmado/u, 'the balance is told, and not payable yet')
+  assert.deepEqual(r.problema, [true, true, 'El técnico se fue sin terminar de ajustar la canilla.', null, null], 'the problem is recorded in the backend; nothing of it stays in the conversation')
+  assert.match(r.confirmarConProblema, /problema reportado/u, 'an open problem blocks the confirmation')
+  assert.deepEqual(r.saldoHabilitado.slice(0, 4), [true, ['Pagar saldo', 'Pagar saldo'].slice(0, r.saldoHabilitado[1].length), true, 1], 'confirmed: the balance and its one checkout')
+  assert.ok(r.saldoHabilitado[1].length >= 1)
+  assert.deepEqual(r.saldoHabilitado.slice(4), [[['saldo', 'pending_payment'], ['sena', 'paid']], [['held', false]]], 'everything still held until the balance is approved')
+  assert.deepEqual(r.pedirSaldo, ['Pagar saldo', true], 'asking for it again is the same payment')
+  assert.deepEqual(r.saldoAprobado, ['applied', [['saldo', 'paid'], ['sena', 'paid']], [['eligible', true], ['eligible', true]]])
+  assert.match(r.nadaMas, /No tenés saldos pendientes/u)
+})
