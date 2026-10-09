@@ -202,6 +202,9 @@ test('CONTRASEÑA TEMPORAL, cableado, migración y pantallas: the route sits beh
   // Web.
   const login = read('apps/web/src/features/auth/login-form.tsx')
   assert.match(login, /if \(await client\.passwordChangeRequired\(\)\) \{\s*window\.location\.assign\('\/elegir-contrasena'\)/u)
+  // The profile onboarding never takes the person away from choosing its password (found by the
+  // browser smoke: it was sent to "Mi perfil", which could not answer it yet).
+  assert.match(read('apps/web/src/lib/tus-auth-client.ts'), /const PROFILE_EXEMPT = \[[^\]]*'\/elegir-contrasena'/u)
   const formulario = read('apps/web/src/features/auth/email-flows.tsx')
   assert.match(formulario, /chooseOwnPassword\(\{ currentPassword: temporal, newPassword: password \}\)/u)
   assert.match(read('apps/web/src/app/(auth)/elegir-contrasena/page.tsx'), /<ChooseOwnPasswordForm \/>/u)

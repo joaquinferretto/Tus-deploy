@@ -353,7 +353,7 @@ export function needsProfile(capabilities: TusAccountCapabilities | null): boole
 }
 
 export const PROFILE_ROUTE = '/mi-perfil'
-const PROFILE_EXEMPT = ['/mi-perfil', '/sign-in', '/registro', '/auth', '/ingresar', '/activar-admin', '/olvide-contrasena', '/recovery', '/recuperar-por-whatsapp', '/restablecer-contrasena', '/verificar-email', '/verificar-telefono', '/tus/admin', '/ayuda']
+const PROFILE_EXEMPT = ['/mi-perfil', '/sign-in', '/registro', '/auth', '/ingresar', '/activar-admin', '/olvide-contrasena', '/recovery', '/recuperar-por-whatsapp', '/restablecer-contrasena', '/elegir-contrasena', '/verificar-email', '/verificar-telefono', '/tus/admin', '/ayuda']
 
 // Routes an account with an incomplete profile may still open: the profile itself, the auth
 // screens (sign-in, sign-out, verification), the platform administration panel and the Help Center
