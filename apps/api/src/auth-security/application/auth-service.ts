@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
+import { createHash, randomInt, timingSafeEqual } from 'node:crypto'
 import type { Clock } from '../ports/clock.js'
 import type { IdentityStore } from '../ports/identity-store.js'
 import {
@@ -21,7 +21,7 @@ import type {
   Session,
 } from '../domain/models.js'
 import { ACCOUNT_STATUS, AUTH_EVENT_KIND, AUTH_RESULT_CODE, CREDENTIAL_STATUS } from '../domain/constants.js'
-import { cuentaVerificada } from '../domain/models.js'
+import { cuentaVerificada, type AccountOrigin } from '../domain/models.js'
 import { normalizarTelefono } from '@factory/contracts'
 import { failure, type AuthFailure } from '../domain/errors.js'
 import {
@@ -103,7 +103,15 @@ export interface SessionView {
   expiresAt: number
 }
 
-export type SignInResult = { ok: true; session: SessionView } | AuthFailure
+// `mustChangePassword`: the password was set by the administration (ADMIN-CONTRASENA-TEMPORAL-01).
+export type SignInResult = { ok: true; session: SessionView; mustChangePassword?: boolean } | AuthFailure
+
+// A temporary password the administration hands over once: 16 characters from an alphabet with no
+// look-alikes (no 0/O, 1/l/I), drawn with the system's secure generator. Never stored in clear.
+const ALFABETO_TEMPORAL = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
+export function generarContrasenaTemporal(): string {
+  return Array.from({ length: 16 }, () => ALFABETO_TEMPORAL[randomInt(ALFABETO_TEMPORAL.length)]).join('')
+}
 export type LifecycleResult = { ok: true } | AuthFailure
 export type AccountUpdateResult = { ok: true; account: SafeAccount } | AuthFailure
 
@@ -222,6 +230,7 @@ export class AuthService {
         emailVerifiedAt: null,
         createdAt: now,
         updatedAt: now,
+        origin: 'admin',
       }
       await store.saveAccount(account, { bootstrapTenant: true })
       await this.record(account, AUTH_EVENT_KIND.ACCOUNT_REGISTERED, 'success', 'managed_provider_account_created')
@@ -255,7 +264,7 @@ export class AuthService {
     return { accepted: true }
   }
 
-  private async registerWithinStore(input: RegisterInput, store: IdentityStore): Promise<RegisterResult> {
+  private async registerWithinStore(input: RegisterInput, store: IdentityStore, origin: AccountOrigin = 'self'): Promise<RegisterResult> {
     const normalizedEmail = normalizeEmail(input.email)
     if (await store.findAccountByEmail(normalizedEmail)) {
       throw new Error('Account already exists')
@@ -273,6 +282,7 @@ export class AuthService {
       emailVerifiedAt: null,
       createdAt: now,
       updatedAt: now,
+      origin,
     }
     const credential: PasswordCredential = {
       id: this.dependencies.ids.next(),
@@ -382,7 +392,10 @@ export class AuthService {
     credential.lastUsedAt = now
     credential.updatedAt = now
     await store.saveCredential(credential)
-    return this.issueSession(store, account, input.device, 'credential_verified', { platformAdmin: true })
+    const emitida = await this.issueSession(store, account, input.device, 'credential_verified', { platformAdmin: true })
+    // ADMIN-CONTRASENA-TEMPORAL-01: the session exists, but every router of TUS refuses it until
+    // the person chooses its own password (the resolver decides; this only tells the client).
+    return emitida.ok && account.mustChangePassword === true ? { ...emitida, mustChangePassword: true } : emitida
   }
 
   // Federated sign-in (Google): the identity was already verified by the OIDC boundary. The same
@@ -639,6 +652,11 @@ export class AuthService {
     token.consumedAt = now
     await store.saveCredential(credential)
     await store.saveRecoveryToken(token)
+    if (account.mustChangePassword === true) {
+      account.mustChangePassword = false
+      account.updatedAt = now
+      await store.saveAccount(account)
+    }
     await store.revokeSessions(account.id, now)
     await this.record(account, AUTH_EVENT_KIND.RECOVERY_COMPLETED, 'success', 'credential_reset')
     return { ok: true, accountId: account.id }
@@ -751,6 +769,12 @@ export class AuthService {
     const now = this.dependencies.clock.now()
     credential.updatedAt = now
     await store.saveCredential(credential)
+    // The person chose its own password: the temporary one of the administration is over.
+    if (account.mustChangePassword === true) {
+      account.mustChangePassword = false
+      account.updatedAt = now
+      await store.saveAccount(account)
+    }
     await store.revokeSessions(account.id, now)
     await this.record(
       account,
@@ -826,7 +850,7 @@ export class AuthService {
     if (await this.passwordIsBreached(input.password)) return failure(AUTH_RESULT_CODE.PASSWORD_BREACHED, 'Password appears in known data breaches')
     let created: RegisterResult
     try {
-      created = await this.runTransaction((store) => this.registerWithinStore(input, store))
+      created = await this.runTransaction((store) => this.registerWithinStore(input, store, 'admin'))
     } catch (error) {
       // Two concurrent creations of the same email: the second one loses on the unique email.
       if (error instanceof Error && (error.message === 'Account already exists' || (error as Error & { code?: unknown }).code === 'P2002'))
@@ -840,8 +864,46 @@ export class AuthService {
     return { ok: true, account: created.account }
   }
 
+  // ADMIN-CONTRASENA-TEMPORAL-01. The administration sets a TEMPORARY password on an account IT
+  // created (origin 'admin'), so that person can enter its own account. With the canonical hasher
+  // of the sign-in; every session of the account is closed; the person must choose its own
+  // password at its first sign-in. The same account: nothing of its business data is touched and
+  // no account is created. An account a person registered by itself is NOT reachable here (its
+  // owner uses the recovery email): this is never a way to take somebody's account over. The
+  // password and its hash never reach the audit, a log or an answer (the generated one is handed
+  // back ONCE to the administrator, to give it to the person).
+  async setTemporaryPasswordAsAdmin(input: { actorId: string; accountId: string; password?: unknown; generate?: unknown; reason: unknown }): Promise<{ ok: true; generatedPassword: string | null } | AuthFailure> {
+    const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
+    if (reason.length < 5 || reason.length > 300) return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'REASON_REQUIRED')
+    const generar = input.generate === true
+    const password = generar ? generarContrasenaTemporal() : typeof input.password === 'string' ? input.password : ''
+    if (!validatePassword(password)) return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Password does not meet policy')
+    const account = await this.dependencies.store.getAccount(input.accountId)
+    if (!account) return failure(AUTH_RESULT_CODE.VALIDATION_FAILED, 'Account not found')
+    if (input.actorId === account.id) return failure(AUTH_RESULT_CODE.FORBIDDEN, 'Use the security page for the current account')
+    if (account.origin !== 'admin') return failure(AUTH_RESULT_CODE.FORBIDDEN, 'NOT_ADMIN_CREATED')
+    if (this.isPlatformAdminEmail(account.normalizedEmail ?? account.email)) return failure(AUTH_RESULT_CODE.FORBIDDEN, 'A platform administrator sets its own password')
+    if (!generar && (await this.passwordIsBreached(password))) return failure(AUTH_RESULT_CODE.PASSWORD_BREACHED, 'Password appears in known data breaches')
+    const passwordHash = await this.dependencies.passwordHasher.hash(password)
+    await this.runTransaction(async (store) => {
+      const now = this.dependencies.clock.now()
+      const actual = await store.getAccount(account.id)
+      if (!actual) return
+      const existente = await store.findPasswordCredential(actual.id)
+      await store.saveCredential(existente
+        ? { ...existente, passwordHash, status: CREDENTIAL_STATUS.ACTIVE, updatedAt: now }
+        : { id: this.dependencies.ids.next(), accountId: actual.id, passwordHash, status: CREDENTIAL_STATUS.ACTIVE, createdAt: now, updatedAt: now, lastUsedAt: null })
+      actual.mustChangePassword = true
+      actual.updatedAt = now
+      await store.saveAccount(actual)
+      await store.revokeSessions(actual.id, now)
+    })
+    await this.recordAdminAction(input.actorId, account, AUTH_EVENT_KIND.ACCOUNT_ADMIN_UPDATED, { action: 'temporary_password_set', changedFields: 'password', reason, sessionsRevoked: true, mustChangePassword: true, generated: generar })
+    return { ok: true, generatedPassword: generar ? password : null }
+  }
+
   // Admin detail of one account: business fields only (never a hash, token or MFA secret).
-  async getAccountAsAdmin(accountId: string): Promise<(SafeAccount & { hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean; phoneNumber: string | null; phoneVerifiedAt: number | null; phonePending: string | null }) | null> {
+  async getAccountAsAdmin(accountId: string): Promise<(SafeAccount & { hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean; phoneNumber: string | null; origin: AccountOrigin; mustChangePassword: boolean; phoneVerifiedAt: number | null; phonePending: string | null }) | null> {
     const account = await this.dependencies.store.getAccount(accountId)
     if (!account) return null
     const credential = await this.dependencies.store.findPasswordCredential(account.id)
@@ -854,6 +916,8 @@ export class AuthService {
       phoneNumber: account.phoneNumber ?? null,
       phoneVerifiedAt: account.phoneVerifiedAt ?? null,
       phonePending: account.phonePending ?? null,
+      origin: account.origin ?? 'self',
+      mustChangePassword: account.mustChangePassword === true,
     }
   }
 

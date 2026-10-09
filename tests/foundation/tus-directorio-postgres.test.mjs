@@ -197,7 +197,7 @@ test(
     assert.equal(r.normalized, r.email)
     assert.equal(r.verificado, null)
     // Phone identity fields are raw here; the admin router masks them (IDN-06).
-    assert.deepEqual(r.detalle, ['createdAt', 'displayName', 'email', 'emailVerifiedAt', 'hasPassword', 'id', 'phoneNumber', 'phonePending', 'phoneVerifiedAt', 'platformAdmin', 'roles', 'status', 'tenantId', 'updatedAt'])
+    assert.deepEqual(r.detalle, ['createdAt', 'displayName', 'email', 'emailVerifiedAt', 'hasPassword', 'id', 'mustChangePassword', 'origin', 'phoneNumber', 'phonePending', 'phoneVerifiedAt', 'platformAdmin', 'roles', 'status', 'tenantId', 'updatedAt'])
     assert.equal(r.verificar, true)
     assert.equal(r.verificadoDespues, true)
   }

@@ -82,6 +82,10 @@ test('Prisma identity mapping preserves dates, scope, and token digests without 
       emailVerifiedAt: 1700000000123,
       createdAt: 1700000000000,
       updatedAt: 1700000000001,
+      // ADMIN-CONTRASENA-TEMPORAL-01: two more facts of the account; a row without them is a
+      // self-registered account with no pending password change.
+      origin: 'self',
+      mustChangePassword: false,
     },
     credential: {
       id: 'credential-a',

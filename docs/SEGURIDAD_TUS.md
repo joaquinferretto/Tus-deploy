@@ -307,3 +307,46 @@ no es la fuente del mapa principal.
 El gate es **FAIL** ante cualquier Critical/High explotable, secreto expuesto, migración no ensayada, target DB ambiguo,
 `/ready` distinto de 200, proxy no medido o pagos habilitados. No se compensa un fallo con documentación ni aceptación
 manual sin corregir o aislar técnicamente el riesgo.
+
+## Contraseña temporal fijada por Admin (ADMIN-CONTRASENA-TEMPORAL-01, 2026-10-09)
+
+**Para qué.** Una cuenta creada por la administración (un cliente cargado para gestionar sus turnos, o un prestador cargado
+sin contraseña) puede recibir una contraseña temporal para que su titular entre a esa misma cuenta.
+
+**Cómo se sabe que una cuenta la creó Admin.** Dato estructurado nuevo: `Account.origin` (`self` | `admin`). Lo escriben
+`createAccountAsAdmin` (Admin → Usuarios) y `createManagedProviderAccount` (prestador cargado por Admin). Para las cuentas que
+ya existían, la migración lo toma únicamente del registro de auditoría de su creación (`account.admin_created`, o
+`account.registered` con motivo `managed_provider_account_created`); nunca de un nombre, un email ni de tener turnos
+manuales. Una cuenta sin ese registro queda `self`.
+
+**Alcance decidido.** Solo cuentas con `origin = admin`. Una cuenta que registró su titular NO se puede alcanzar con esta
+operación (403 `NOT_ADMIN_CREATED`): conserva lo que tenía, "Forzar cambio de contraseña", que cierra sesiones y le envía a su
+dueño el email de recuperación. Tampoco la propia cuenta del administrador ni la de otro administrador de plataforma. Admin no
+es una herramienta de toma de cuentas.
+
+**Operación.** `POST /tus/v1/admin/usuarios/:id/contrasena-temporal`, detrás de `tus:identity:admin` (sesión de administración
+elevada con MFA). Cuerpo cerrado: `contrasena` + `repetir` + `motivo`, o `generar: true` + `motivo`. Motivo obligatorio (5 a
+300 caracteres). La contraseña cumple la política vigente (12 a 256 caracteres, no filtrada). Se guarda con el mismo hasher
+del inicio de sesión (scrypt); nunca en texto plano. Si la cuenta no tenía credencial, se crea en esa misma cuenta. Se
+cierran todas las sesiones de la cuenta (las sesiones son el único token; no hay refresh aparte). Una contraseña generada (16
+caracteres, generador seguro del sistema) vuelve una sola vez en esa respuesta, sin caché, y no se puede volver a leer.
+
+**Primer inicio.** `Account.mustChangePassword = true`. El inicio de sesión funciona, pero el resolvedor de sesiones que usan
+todos los routers de TUS no resuelve esa cuenta: ninguna ruta le responde. Solo el router de autenticación la ve, sin roles
+ni permisos, para elegir su contraseña (`POST /auth/credentials/password`, que vuelve a pedir la temporal), leer su sesión y
+salir. Al elegirla se apaga la obligación y se cierran las sesiones: entra de nuevo con la suya. La Web lleva a
+`/elegir-contrasena`. Completar una recuperación por email también apaga la obligación.
+
+**Lo que no cambia.** El mismo `accountId`, `userId` y tenant: turnos, reservas, pagos e historial siguen asociados; no se
+crea ni se duplica ninguna cuenta. Para iniciar sesión la cuenta sigue necesitando email o teléfono verificado (Admin ya
+puede certificarlos; fijar la contraseña no verifica nada).
+
+**Auditoría.** `account.admin_updated` con `action: temporary_password_set`, administrador, cuenta afectada, motivo, fecha,
+`sessionsRevoked`, `mustChangePassword` y si fue generada. Nunca la contraseña ni su hash.
+
+**Nota sobre turnos manuales.** En `main` un turno manual es un contacto sin cuenta (`cliente_id = 'manual'`); el vínculo de
+un turno manual con una cuenta existente llega con `feat/agenda-semanal-turnos`. Esta operación no crea cuentas a partir de
+esos contactos.
+
+**Migración.** `20261120100000_tus_cuenta_origen_contrasena_temporal`: dos columnas en `Account`, un CHECK y un único UPDATE
+que rellena la columna nueva `origin`. Tests: `tus-admin-contrasena-temporal.test.mjs` y `-postgres.test.mjs`.

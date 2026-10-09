@@ -94,6 +94,10 @@ export interface AdminUsuarioDetalle {
   verificado: boolean
   verificadoEn: string | null
   conContrasena: boolean
+  // ADMIN-CONTRASENA-TEMPORAL-01: who created the account, and whether the person still has to
+  // choose its own password (both decided by the API).
+  origen?: 'admin' | 'self'
+  debeCambiarContrasena?: boolean
   creadaEn: string
   actualizadaEn: string
   roles: ('admin' | 'prestador' | 'cliente')[]
@@ -418,6 +422,10 @@ export const adminApi = {
   crearUsuario: (body: { displayName: string; email: string; password: string; role: 'cliente' }) => call<{ created: true }>('/tus/v1/admin/usuarios', body),
   actualizarUsuario: (id: string, body: { displayName?: string; status?: 'active' | 'suspended'; reason?: string; email?: string; emailVerified?: boolean }) => call<{ updated: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`, body, 'PATCH'),
   usuario: (id: string) => call<AdminUsuarioDetalle>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}`),
+  // ADMIN-CONTRASENA-TEMPORAL-01: only for an account the administration created. The password
+  // travels once, to the API; a generated one comes back once and is never stored by the Web.
+  contrasenaTemporal: (id: string, body: { contrasena: string; repetir: string; motivo: string } | { generar: true; motivo: string }) =>
+    call<{ done: true; debeCambiarContrasena: true; contrasenaTemporal?: string }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/contrasena-temporal`, body),
   accionUsuario: (id: string, action: 'revoke_sessions' | 'password_reset') => call<{ done: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/acciones`, { action }),
   prestador: (id: string) => call<AdminPrestadorDetalle>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}`),
   editarPrestador: (id: string, body: CambiosPrestador) => call<AdminPrestadorDetalle>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}`, body, 'PUT'),

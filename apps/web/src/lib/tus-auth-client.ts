@@ -38,6 +38,7 @@ export interface TusWebAuthRequest {
     | '/auth/oauth/link'
     | '/auth/oauth/link/preview'
     | '/auth/session/mode'
+    | '/auth/credentials/password'
   correlationId: string
   accessToken?: string
   body?: unknown
@@ -69,6 +70,12 @@ export interface TusWebAuthClient {
   requestRecovery(email: string): Promise<TusAuthActionState>
   completeRecovery(input: { token: string; newPassword: string }): Promise<TusAuthActionState>
   restore(returnTo?: string): Promise<TusSessionState>
+  // ADMIN-CONTRASENA-TEMPORAL-01: the API says the person must choose its own password now (its
+  // password was set by the administration). The Web only reflects it.
+  passwordChangeRequired(): Promise<boolean>
+  // Chooses the person's own password with the temporary one. On success the API closes every
+  // session: the local one is cleared and the person signs in again.
+  chooseOwnPassword(input: { currentPassword: string; newPassword: string }): Promise<TusAuthActionState>
   // Server-resolved capabilities of the signed-in account (null without a session).
   capabilities(): Promise<TusAccountCapabilities | null>
   // MODOS-01: asks the API to use TUS in that mode; null when the API refuses it.
@@ -243,6 +250,21 @@ export function createTusWebAuthClient(options: TusWebAuthClientOptions = {}): T
       }
     },
 
+    async passwordChangeRequired() {
+      const credential = readCredential(storage)
+      try {
+        const response = await transport.request<{ context?: { passwordChangeRequired?: unknown } }>({ method: 'GET', path: '/auth/session', correlationId: createCorrelationId(), ...(credential === null || credential.expiresAt <= now() ? {} : { accessToken: credential.accessToken }) })
+        return response?.context?.passwordChangeRequired === true
+      } catch {
+        return false
+      }
+    },
+    async chooseOwnPassword(input) {
+      const credential = readCredential(storage)
+      const result = await authAction(transport, createCorrelationId, { method: 'POST', path: '/auth/credentials/password', body: { currentPassword: input.currentPassword, newPassword: input.newPassword }, ...(credential === null || credential.expiresAt <= now() ? {} : { accessToken: credential.accessToken }) })
+      if (result.status === 'accepted') storage.clear()
+      return result
+    },
     async capabilities() {
       const credential = readCredential(storage)
       try {
