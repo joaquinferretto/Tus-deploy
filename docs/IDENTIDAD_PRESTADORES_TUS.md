@@ -47,10 +47,10 @@ Estados: `pending_upload`, `queued`, `processing`, `retry_pending`, `session_req
 
 ## 2. Gates (backend)
 
-Hasta `verified` el prestador **no puede**: publicar un servicio (`PROVIDER_IDENTITY_NOT_VERIFIED` en `publishListing`),
-aceptar trabajos (`acceptServiceCommitment`), conectar Mercado Pago (`iniciarConexion`) ni recibir dinero
-(`disponibilidad` del cobro → `PROVIDER_IDENTITY_NOT_VERIFIED`, antes de mirar la cuenta conectada). En la composición
-PostgreSQL los gates están siempre activos; en la composición en memoria se activan inyectando `identity`.
+Desde el 2026-10-09 (decisión del dueño, PRESTADOR-SIN-KYC-01) la identidad verificada por TUS **no es un gate**:
+no se exige para crear el perfil, publicar, aparecer en búsquedas, recibir o aceptar solicitudes y turnos, vincular
+Mercado Pago, cobrar ni retirar. Es un dato opcional (confianza, moderación, soporte, futura insignia) que solo lee el
+directorio para mostrarlo. El requisito para cobrar es Mercado Pago vinculado (ver `docs/PAGOS_SERVICIOS_TUS.md`).
 
 ## 3. Cola, límite y worker
 

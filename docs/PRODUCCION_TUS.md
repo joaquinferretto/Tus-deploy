@@ -843,8 +843,8 @@ de Groq no es requisito de `settlement`.
 - La evidencia tiene que ser **real y autorizada** (`authorized-external`, vigente, no revocada, una sola fila por
   requisito). Ninguna variable, flag ni booleano la reemplaza. Está prohibido insertar filas a mano para simular una
   autorización.
-- **KYC/KYB:** `kyc` es el registro de plataforma de que la verificación de identidad funciona; además, en cada cobro
-  el backend exige que **ese** prestador tenga la identidad verificada (`PROVIDER_IDENTITY_NOT_VERIFIED`). `kyb` es
+- **KYC/KYB:** `kyc` es el registro de plataforma de que la verificación de identidad funciona; desde el 2026-10-09 el backend
+  ya NO exige la identidad verificada de cada prestador para cobrar: exige su Mercado Pago vinculado. `kyb` es
   "verificación del negocio": el modelo actual guarda la identidad de una persona (DNI, nombre, CUIL), no una
   entidad comercial ni una condición fiscal. Es un **gap conocido**; queda a decisión del dueño cómo se acredita para
   un prestador individual (ver `docs/activation-gates.md`). Mientras no se decida, `kyb` no se cumple.

@@ -375,7 +375,8 @@ test('TURNOS cobro de señas PostgreSQL: a provider WITHOUT its own Mercado Pago
 test('TURNOS cobro de señas: every reason has its own wording for the administration and for the provider', () => {
   const contratos = readFileSync(new URL('../../packages/contracts/src/tus-turnos.ts', import.meta.url), 'utf8')
   const admin = readFileSync(new URL('../../apps/web/src/lib/tus-admin-api.ts', import.meta.url), 'utf8')
-  assert.match(contratos, /CODIGO_PRESTADOR_SIN_IDENTIDAD = 'PROVIDER_IDENTITY_REQUIRED'/u)
+  // The code of the previous rule is gone from the contract: nothing produces it any more.
+  assert.doesNotMatch(contratos, /PROVIDER_IDENTITY_REQUIRED|CODIGO_PRESTADOR_SIN_IDENTIDAD/u)
   // PAGOS-MP-VINCULADO-01 (owner's decision): linking Mercado Pago is the one thing a provider is
   // asked for; an identity verification of TUS's own is never named as a reason.
   assert.match(contratos, /CODIGO_PRESTADOR_SIN_MERCADO_PAGO = 'PROVIDER_MERCADO_PAGO_REQUIRED'/u)

@@ -108,8 +108,8 @@ Admin → Prestadores muestra el estado de cada uno en "Cobro de señas", sin in
 | Falta cuenta de TUS | `MERCADO_PAGO_PLATFORM_ACCESS_TOKEN` y `MERCADO_PAGO_PLATFORM_USER_ID` |
 
 Al aceptar, el prestador recibe el motivo que le corresponde: `SERVICE_PAYMENTS_NOT_AUTHORIZED`,
-`PROVIDER_IDENTITY_REQUIRED` o `PROVIDER_PAYMENT_ACCOUNT_REQUIRED` (nadie puede cobrar). Nunca se
-le dice que tiene que conectar su propia cuenta.
+`PROVIDER_MERCADO_PAGO_REQUIRED` (tiene que vincular su Mercado Pago en "Cobros") o
+`PROVIDER_PAYMENT_ACCOUNT_REQUIRED` (falta la cuenta de cobro de TUS; no depende del prestador).
 
 ## Fotos de la solicitud
 
