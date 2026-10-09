@@ -284,6 +284,9 @@ async function recorrer(browser, viewport) {
     await busqueda.locator('button[type="submit"]').click()
     const tarjeta = page.locator('a[href^="/alojamientos/"]').filter({ hasText: editado }).first()
     await tarjeta.waitFor()
+    // The card is already there from the search without dates: wait for the one with dates to
+    // redraw it with the total before reading it.
+    await tarjeta.filter({ hasText: '150.000' }).waitFor({ timeout: 10_000 }).catch(() => undefined)
     check(/150\.000/u.test(await tarjeta.innerText()), `${e}: the search shows the total of the three nights`)
     check(!(await page.locator('body').innerText()).includes('Calle Smoke'), `${e}: the search does not show the exact address`)
     // Filter: more guests than the place takes.
