@@ -128,6 +128,8 @@ interface AccountCreateData {
   tenantId: string
   roles: string[]
   status: string
+  origin?: string
+  mustChangePassword?: boolean
   emailVerifiedAt: Date | null
   createdAt: Date
   updatedAt: Date
@@ -137,6 +139,8 @@ interface AccountUpdateData {
   tenantId: string
   roles: string[]
   status: string
+  origin?: string
+  mustChangePassword?: boolean
   emailVerifiedAt: Date | null
   updatedAt: Date
 }
@@ -256,6 +260,9 @@ export class PrismaIdentityStore implements IdentityStore {
           tenantId: account.tenantId,
           roles: [...account.roles],
           status: account.status,
+          // Only when the caller carries them: a partial account never resets these.
+          ...(account.origin ? { origin: account.origin } : {}),
+          ...(account.mustChangePassword === undefined ? {} : { mustChangePassword: account.mustChangePassword }),
           emailVerifiedAt: toDate(account.emailVerifiedAt),
           updatedAt: toRequiredDate(account.updatedAt),
         },
@@ -288,6 +295,8 @@ export class PrismaIdentityStore implements IdentityStore {
         tenantId: account.tenantId,
         roles: [...account.roles],
         status: account.status,
+        origin: account.origin ?? 'self',
+        mustChangePassword: account.mustChangePassword === true,
         emailVerifiedAt: toDate(account.emailVerifiedAt),
         createdAt: toRequiredDate(account.createdAt),
         updatedAt: toRequiredDate(account.updatedAt),

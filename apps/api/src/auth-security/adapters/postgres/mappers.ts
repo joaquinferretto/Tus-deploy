@@ -71,6 +71,8 @@ export function mapAccountRow(row: AccountRow): Account {
     emailVerifiedAt: row.emailVerifiedAt?.getTime() ?? null,
     createdAt: row.createdAt.getTime(),
     updatedAt: row.updatedAt.getTime(),
+    origin: (row as { origin?: string }).origin === 'admin' ? 'admin' : 'self',
+    mustChangePassword: (row as { mustChangePassword?: boolean }).mustChangePassword === true,
     // Present whenever the User row carries the phone columns (every Prisma read does).
     ...('phoneNumber' in row.user
       ? {

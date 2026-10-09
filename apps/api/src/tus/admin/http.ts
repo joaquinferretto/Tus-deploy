@@ -119,7 +119,7 @@ export interface DependenciasAdmin {
   crearUsuario?: (input: { actorId: string; email: string; password: string; displayName: string }) => Promise<{ ok: boolean; code?: string }>
   actualizarUsuario?: (input: { actorId: string; accountId: string; displayName?: unknown; status?: unknown; reason?: unknown; email?: unknown; emailVerified?: unknown }) => Promise<{ ok: boolean; code?: string }>
   // AuthService.getAccountAsAdmin: business fields only (never hashes, tokens or MFA secrets).
-  leerUsuario?: (accountId: string) => Promise<{ id: string; email: string; displayName: string; tenantId: string; status: string; emailVerifiedAt: number | null; hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean; phoneNumber?: string | null; phoneVerifiedAt?: number | null; phonePending?: string | null } | null>
+  leerUsuario?: (accountId: string) => Promise<{ id: string; email: string; displayName: string; tenantId: string; status: string; emailVerifiedAt: number | null; hasPassword: boolean; createdAt: number; updatedAt: number; platformAdmin: boolean; phoneNumber?: string | null; phoneVerifiedAt?: number | null; phonePending?: string | null; origin?: string; mustChangePassword?: boolean } | null>
   // Personal profile of an account (tus/perfil): names, document and residence, for the admin.
   perfilUsuario?: (accountId: string) => Promise<PerfilUsuarioAdminDTO | null>
   // Phone identity administration (auth-security/phone): sets a PENDING number, frees a verified
@@ -139,6 +139,8 @@ export interface DependenciasAdmin {
     quitarNumeroPorAdmin?(adminId: string, accountId: string): Promise<{ ok: boolean; code?: string; telefono?: TelefonoAdminDTO }>
   }
   accionUsuario?: (input: { actorId: string; accountId: string; action: unknown }) => Promise<{ ok: boolean; code?: string }>
+  // ADMIN-CONTRASENA-TEMPORAL-01: sets a temporary password on an account the administration created.
+  contrasenaTemporal?: (input: { actorId: string; accountId: string; password?: unknown; generate?: unknown; reason: unknown }) => Promise<{ ok: true; generatedPassword: string | null } | { ok: false; code?: string; message?: string }>
   // Identity of an account (names + document), loaded or corrected by the administration. The
   // actor is the session; the composition validates, saves and audits.
   // ADMIN-IDENTIDAD-MANUAL-01: the manual verification of the identity of a provider.
@@ -269,6 +271,10 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
       verificado: cuenta.emailVerifiedAt !== null,
       verificadoEn: cuenta.emailVerifiedAt === null ? null : new Date(cuenta.emailVerifiedAt).toISOString(),
       conContrasena: cuenta.hasPassword,
+      // ADMIN-CONTRASENA-TEMPORAL-01: who created the account ('admin' | 'self') and whether the
+      // person still has to choose its own password.
+      origen: cuenta.origin ?? 'self',
+      debeCambiarContrasena: cuenta.mustChangePassword === true,
       creadaEn: new Date(cuenta.createdAt).toISOString(),
       actualizadaEn: new Date(cuenta.updatedAt).toISOString(),
       // Admin authority is the environment allowlist (not editable here); cliente is everyone.
@@ -372,6 +378,31 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     const resultado = await deps.verificacionIdentidad.decidir({ actor: { subjectId: context.subjectId, tenantId: context.tenantId, correlationId: context.correlationId }, accountId: String(request.params['id'] ?? ''), accion: body['accion'], motivo: body['motivo'] })
     if (!resultado.ok) return void response.status(resultado.status).json({ error: { code: resultado.code, message: 'identity verification change rejected' } })
     response.status(200).json({ verificacion: resultado.verificacion })
+  }))
+
+  // ADMIN-CONTRASENA-TEMPORAL-01. The administration sets a temporary password on an account IT
+  // created. Behind the identity-admin permission (an MFA-elevated admin session). The body carries
+  // the password twice (or `generar: true`) and the mandatory administrative note; the account is
+  // the one of the path and the actor is the session. The answer is never cached; a generated
+  // password travels back ONCE, here, and can never be read again.
+  router.post('/tus/v1/admin/usuarios/:id/contrasena-temporal', asyncHandler(async (request, response) => {
+    const context = await guard(request, response, IDENTITY_ADMIN)
+    if (!context) return
+    if (!deps.contrasenaTemporal) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'temporary password unavailable' } })
+    const body = cuerpo(request)
+    const permitidos = new Set(['contrasena', 'repetir', 'generar', 'motivo'])
+    if (Object.keys(body).some((key) => !permitidos.has(key))) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'only the temporary password and its note can be sent here' } })
+    const generar = body['generar'] === true
+    if (!generar && (typeof body['contrasena'] !== 'string' || body['contrasena'] !== body['repetir'])) return void response.status(422).json({ error: { code: 'PASSWORD_MISMATCH', message: 'the two passwords must be the same' } })
+    if (generar && (body['contrasena'] !== undefined || body['repetir'] !== undefined)) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'either a password or a generated one' } })
+    const result = await deps.contrasenaTemporal({ actorId: context.subjectId, accountId: String(request.params['id'] ?? ''), ...(generar ? { generate: true } : { password: body['contrasena'] }), reason: body['motivo'] })
+    response.setHeader('cache-control', 'no-store')
+    if (!result.ok) {
+      const code = result.message === 'REASON_REQUIRED' ? 'REASON_REQUIRED' : result.message === 'NOT_ADMIN_CREATED' ? 'NOT_ADMIN_CREATED' : result.code === 'PASSWORD_BREACHED' ? 'PASSWORD_BREACHED' : result.code === 'FORBIDDEN' ? 'FORBIDDEN' : result.message === 'Account not found' ? 'NOT_FOUND' : 'WEAK_PASSWORD'
+      const status = code === 'NOT_FOUND' ? 404 : code === 'FORBIDDEN' || code === 'NOT_ADMIN_CREATED' ? 403 : 422
+      return void response.status(status).json({ error: { code, message: 'temporary password rejected' } })
+    }
+    response.status(200).json({ done: true, debeCambiarContrasena: true, ...(result.generatedPassword ? { contrasenaTemporal: result.generatedPassword } : {}) })
   }))
 
   router.patch('/tus/v1/admin/usuarios/:id', asyncHandler(async (request, response) => {

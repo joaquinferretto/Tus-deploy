@@ -54,6 +54,12 @@ model Account {
   lastMode           String?
   roles              String[]             @default([])
   status             String
+  // ADMIN-CONTRASENA-TEMPORAL-01 (20261120100000). Who created the account: 'self' (the person
+  // registered) or 'admin' (the administration created it). CHECK in SQL. Never inferred from a
+  // name, an email or a turno.
+  origin             String               @default("self")
+  // The password was set by the administration: the person must choose its own before anything else.
+  mustChangePassword Boolean              @default(false)
   emailVerifiedAt    DateTime?
   createdAt          DateTime
   updatedAt          DateTime

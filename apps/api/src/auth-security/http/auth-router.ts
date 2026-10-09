@@ -118,7 +118,8 @@ export function createAuthRouter({ service, sessions, cookies = readSessionCooki
       return
     }
     // The Web gets the token only in the HttpOnly cookie; native clients get the Bearer token.
-    response.status(200).json({ session: deliverSession(request, response, result.session, cookies, now) })
+    // ADMIN-CONTRASENA-TEMPORAL-01: the client is told the person must choose its password now.
+    response.status(200).json({ session: deliverSession(request, response, result.session, cookies, now), ...(result.mustChangePassword ? { passwordChangeRequired: true } : {}) })
   }))
 
   router.get('/auth/session', asyncHandler(async (request: Request, response: Response) => {

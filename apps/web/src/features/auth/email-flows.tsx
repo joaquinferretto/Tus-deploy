@@ -251,3 +251,59 @@ export function AdminBootstrapForm(): React.ReactNode {
     </form>
   )
 }
+
+// ADMIN-CONTRASENA-TEMPORAL-01. First sign-in with a password the administration set: the person
+// chooses its own. The API requires it (every other request is refused until then), checks the
+// temporary password again, applies the password policy and closes every session afterwards.
+export function ChooseOwnPasswordForm(): React.ReactNode {
+  const [temporal, setTemporal] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [error, setError] = useState('')
+  const [done, setDone] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!temporal) return setError('Ingresá la contraseña temporal que te dieron.')
+    if (password.length < MIN_PASSWORD_LENGTH) return setError(`La contraseña necesita al menos ${MIN_PASSWORD_LENGTH} caracteres.`)
+    if (password.length > 256) return setError('La contraseña es demasiado larga (máximo 256 caracteres).')
+    if (password !== confirmation) return setError('Las contraseñas no coinciden.')
+    if (password === temporal) return setError('Elegí una contraseña distinta de la temporal.')
+    setSubmitting(true)
+    setError('')
+    const result = await createTusWebAuthClient().chooseOwnPassword({ currentPassword: temporal, newPassword: password })
+    setSubmitting(false)
+    if (result.status === 'accepted') return setDone(true)
+    setError(
+      result.code === 'PASSWORD_BREACHED'
+        ? 'Esa contraseña apareció en filtraciones de datos conocidas. Elegí otra (una frase larga funciona bien).'
+        : result.code === 'UNAUTHORIZED'
+          ? 'Tu sesión venció. Volvé a ingresar con la contraseña temporal.'
+          : 'No pudimos guardar tu contraseña. Revisá la contraseña temporal y probá de nuevo.'
+    )
+  }
+
+  if (done)
+    return (
+      <div className={styles.form} data-contrasena-elegida>
+        <p className={styles.success} role="status">
+          Listo, ya tenés tu propia contraseña. Iniciá sesión con ella.
+        </p>
+        <Link className={styles.primary} href="/sign-in">
+          Iniciar sesión
+        </Link>
+      </div>
+    )
+  return (
+    <form className={styles.form} data-elegir-contrasena noValidate onSubmit={(event) => void submit(event)}>
+      <FormError message={error} />
+      <PasswordField autoComplete="current-password" id="elegir-temporal" label="Contraseña temporal" onChange={(event) => setTemporal(event.target.value)} value={temporal} />
+      <PasswordField autoComplete="new-password" id="elegir-password" label={`Tu contraseña nueva (mínimo ${MIN_PASSWORD_LENGTH} caracteres)`} onChange={(event) => setPassword(event.target.value)} value={password} />
+      <PasswordField autoComplete="new-password" id="elegir-confirmacion" label="Repetí la contraseña" onChange={(event) => setConfirmation(event.target.value)} value={confirmation} />
+      <button className={styles.primary} disabled={submitting} type="submit">
+        {submitting ? 'Guardando…' : 'Guardar mi contraseña'}
+      </button>
+    </form>
+  )
+}

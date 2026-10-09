@@ -48,6 +48,9 @@ export interface TusAuthenticatedTenantContext {
   roles: string[]
   permissions: string[]
   correlationId: string
+  // ADMIN-CONTRASENA-TEMPORAL-01: only ever set by the authentication router, for an account
+  // whose password was set by the administration and that has not chosen its own yet.
+  passwordChangeRequired?: boolean
 }
 
 export interface TusSessionResolverPort {

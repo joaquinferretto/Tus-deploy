@@ -115,6 +115,78 @@ function VerificacionIdentidad({ cuentaId }: { cuentaId: string }): React.ReactN
   )
 }
 
+// ADMIN-CONTRASENA-TEMPORAL-01. "Restablecer contraseña" for an account the ADMINISTRATION created
+// (a client loaded to manage its turnos): the administrator sets a temporary password, or has one
+// generated, with a mandatory note. It never sees the current password. A generated one is shown
+// ONCE, here, to hand it over; the person must choose its own at its first sign-in. An account a
+// person registered by itself is not offered this: its owner uses the recovery email above.
+function ContrasenaTemporal({ cuenta, onHecho }: { cuenta: AdminUsuarioDetalle; onHecho: () => void }): React.ReactNode {
+  const [abierto, setAbierto] = useState(false)
+  const [contrasena, setContrasena] = useState('')
+  const [repetir, setRepetir] = useState('')
+  const [motivo, setMotivo] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+  const [generada, setGenerada] = useState<string | null>(null)
+  const [aviso, setAviso] = useState('')
+  if (cuenta.origen !== 'admin')
+    return <p className={styles.muted} data-contrasena-temporal="no-disponible">Esta cuenta la registró su titular: su contraseña solo la cambia él, con el email de recuperación.</p>
+  const enviar = async (generar: boolean) => {
+    setError('')
+    if (motivo.trim().length < 5) return setError('Escribí el motivo administrativo (al menos 5 caracteres).')
+    if (!generar && contrasena.length < 12) return setError('La contraseña temporal necesita al menos 12 caracteres.')
+    if (!generar && contrasena !== repetir) return setError('Las dos contraseñas no coinciden.')
+    setGuardando(true)
+    try {
+      const respuesta = await adminApi.contrasenaTemporal(cuenta.id, generar ? { generar: true, motivo: motivo.trim() } : { contrasena, repetir, motivo: motivo.trim() })
+      setGenerada(respuesta.contrasenaTemporal ?? null)
+      setAviso('Contraseña temporal establecida. Se cerraron sus sesiones y va a tener que elegir la suya al ingresar.')
+      setContrasena(''); setRepetir(''); setMotivo(''); setAbierto(false)
+      onHecho()
+    } catch (cause: unknown) {
+      const code = cause instanceof AdminApiError ? cause.code : ''
+      setError(code === 'PASSWORD_BREACHED' ? 'Esa contraseña apareció en filtraciones conocidas. Elegí otra.' : code === 'WEAK_PASSWORD' ? 'La contraseña no cumple la política (12 a 256 caracteres).' : code === 'PASSWORD_MISMATCH' ? 'Las dos contraseñas no coinciden.' : code === 'REASON_REQUIRED' ? 'Escribí el motivo administrativo (al menos 5 caracteres).' : code === 'NOT_ADMIN_CREATED' ? 'Esta cuenta la registró su titular: no se le puede fijar una contraseña desde Admin.' : adminErrorMessage(cause))
+    } finally {
+      setGuardando(false)
+    }
+  }
+  return (
+    <div data-contrasena-temporal={cuenta.debeCambiarContrasena ? 'pendiente-de-cambio' : 'disponible'} style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+      <h3 style={{ margin: 0 }}>Restablecer contraseña</h3>
+      <p className={styles.muted} style={{ margin: 0 }}>
+        Cuenta creada por la administración.{cuenta.debeCambiarContrasena ? ' Tiene una contraseña temporal: todavía no eligió la suya.' : ''}
+        {!cuenta.verificado && !cuenta.telefono.verificado ? ' Para poder ingresar también necesita el email o el teléfono verificado.' : ''}
+      </p>
+      {aviso ? <p role="status">{aviso}</p> : null}
+      {generada ? (
+        <p data-contrasena-generada role="status" style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, overflowWrap: 'anywhere', padding: 12 }}>
+          Contraseña temporal: <strong>{generada}</strong>
+          <br />
+          Se muestra una sola vez. Entregásela al titular: no se puede volver a consultar.{' '}
+          <button className={styles.buttonSecondary} onClick={() => setGenerada(null)} type="button">Ya la copié</button>
+        </p>
+      ) : null}
+      {abierto ? (
+        <div role="group" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, display: 'grid', gap: 8, padding: 12 }}>
+          <label style={{ display: 'grid', gap: 4 }}>Nueva contraseña temporal<input autoComplete="new-password" data-temporal onChange={(event) => setContrasena(event.target.value)} type="password" value={contrasena} /></label>
+          <label style={{ display: 'grid', gap: 4 }}>Repetir contraseña<input autoComplete="new-password" data-temporal-repetir onChange={(event) => setRepetir(event.target.value)} type="password" value={repetir} /></label>
+          <label style={{ display: 'grid', gap: 4 }}>Motivo administrativo (obligatorio)<textarea data-temporal-motivo maxLength={300} onChange={(event) => setMotivo(event.target.value)} rows={2} value={motivo} /></label>
+          {error ? <p className={styles.fieldError} role="alert">{error}</p> : null}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <button className={styles.buttonPrimary} data-temporal-guardar disabled={guardando} onClick={() => void enviar(false)} type="button">{guardando ? 'Guardando…' : 'Establecer contraseña temporal'}</button>
+            <button className={styles.buttonSecondary} data-temporal-generar disabled={guardando} onClick={() => void enviar(true)} type="button">Generar contraseña temporal</button>
+            <button className={styles.buttonSecondary} disabled={guardando} onClick={() => { setAbierto(false); setError('') }} type="button">Cancelar</button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <button className={styles.buttonSecondary} data-temporal-abrir onClick={() => { setAbierto(true); setAviso(''); setGenerada(null) }} type="button">Restablecer contraseña</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const ROL: Record<string, string> = { admin: 'Administrador', prestador: 'Prestador', cliente: 'Cliente' }
 
 function errorEdicion(cause: unknown): string {
@@ -778,6 +850,7 @@ export function AdminUsuarioDetallePage({ id }: { id: string }): React.ReactNode
               Forzar cambio de contraseña
             </button>
           </div>
+          <ContrasenaTemporal cuenta={cuenta} onHecho={() => void cargar()} />
         </section>
       </div>
       <AdminConfirm onClose={cerrar} value={confirmacion} />

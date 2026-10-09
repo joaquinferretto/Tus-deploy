@@ -16,7 +16,14 @@ export interface Account {
   phoneNumber?: string | null
   phoneVerifiedAt?: number | null
   phonePending?: string | null
+  // ADMIN-CONTRASENA-TEMPORAL-01. Optional so every existing account and store keeps working:
+  // absent means 'self' and false.
+  origin?: AccountOrigin
+  mustChangePassword?: boolean
 }
+
+// Who created the account. Structured: never inferred from a name, an email or a turno.
+export type AccountOrigin = 'self' | 'admin'
 
 // An account is verified when its email OR its identity phone was proved (phone-first sign-up).
 export function cuentaVerificada(account: Pick<Account, 'emailVerifiedAt' | 'phoneVerifiedAt'>): boolean {
