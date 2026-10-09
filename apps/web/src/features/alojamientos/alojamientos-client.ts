@@ -1,5 +1,8 @@
 import type {
+  AlojamientoAdminDTO,
   AlojamientoPropioDTO,
+  PaginaAdminAlojamientos,
+  ReservaAlojamientoAdminDTO,
   AlojamientoPublicoDTO,
   BloqueoUnidadDTO,
   MiReservaAlojamientoDTO,
@@ -315,3 +318,26 @@ export const fechaCorta = (valor: string): string => new Intl.DateTimeFormat('es
 export const hoyAlojamientos = (): string => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 
 export const sumarDiasFecha = (fecha: string, dias: number): string => new Date(Date.parse(`${fecha}T00:00:00.000Z`) + dias * 86_400_000).toISOString().slice(0, 10)
+
+// ---- platform administration (ALOJAMIENTOS-ADMIN-01) ----------------------------------------------
+// Every lodging whatever its state, the reservations of every lodging, and the suspension. The
+// API decides who may ask (platform administration only).
+
+export async function adminListarAlojamientos(filtro: { estado?: string; q?: string; pagina?: number } = {}): Promise<PaginaAdminAlojamientos<AlojamientoAdminDTO>> {
+  const params = new URLSearchParams()
+  if (filtro.estado) params.set('estado', filtro.estado)
+  if (filtro.q) params.set('q', filtro.q)
+  if (filtro.pagina) params.set('pagina', String(filtro.pagina))
+  return apiFetch<PaginaAdminAlojamientos<AlojamientoAdminDTO>>(`/api/alojamientos/admin/listado?${params.toString()}`)
+}
+
+export async function adminListarReservasAlojamiento(filtro: { estado?: string; pagina?: number } = {}): Promise<PaginaAdminAlojamientos<ReservaAlojamientoAdminDTO>> {
+  const params = new URLSearchParams()
+  if (filtro.estado) params.set('estado', filtro.estado)
+  if (filtro.pagina) params.set('pagina', String(filtro.pagina))
+  return apiFetch<PaginaAdminAlojamientos<ReservaAlojamientoAdminDTO>>(`/api/alojamientos/admin/reservas?${params.toString()}`)
+}
+
+export async function adminSuspenderAlojamiento(id: string, suspendido: boolean, motivo: string): Promise<{ estado: string; publicado: boolean }> {
+  return apiFetch<{ estado: string; publicado: boolean }>(`/api/alojamientos/${encodeURIComponent(id)}/suspension`, { method: 'POST', body: JSON.stringify({ suspendido, motivo }) })
+}

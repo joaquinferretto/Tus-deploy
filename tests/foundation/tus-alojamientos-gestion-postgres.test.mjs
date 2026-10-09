@@ -285,3 +285,64 @@ test('ALOJAMIENTOS reservas PostgreSQL: search by dates and guests is decided by
   assert.equal(r.revivir, 'INVALID_STATE')
   assert.equal(r.cancelarEnCurso, 'CANCELLATION_NOT_ALLOWED')
 })
+
+// ALOJAMIENTOS-ADMIN-01. What the platform administration consults and decides.
+test('ALOJAMIENTOS Admin PostgreSQL: the administration lists every lodging whatever its state with its owner, and the reservations of every lodging (paginated, filtered); nobody else can; it suspends a lodging with a mandatory note (out of the search, no new reservation, its owner cannot publish it; the reservations already made are untouched) and lifts the suspension; audited', { skip, timeout: 240_000 }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const ana = await cuenta('ana')
+      const beto = await cuenta('beto')
+      await cuenta('huesped')
+      const admin = await cuenta('admin', ['tus:providers:admin'])
+      const crear = async (token, nombre) => { const alta = await pedir('POST', '/mios', token, { ...FORM, nombre }); const fila = await prisma.alojamiento.findUnique({ where: { id: alta.body.id }, include: { unidades: true } }); return { id: alta.body.id, unidadId: fila.unidades[0].id } }
+      const publicada = await crear('tok-ana', 'Casa Publicada ' + run)
+      const borrador = await crear('tok-ana', 'Casa Borrador ' + run)
+      const pausada = await crear('tok-beto', 'Casa Pausada ' + run)
+      await pedir('POST', '/' + publicada.id + '/publicacion', 'tok-ana', { publicado: true })
+      await pedir('POST', '/' + pausada.id + '/publicacion', 'tok-beto', { publicado: true })
+      await pedir('POST', '/' + pausada.id + '/publicacion', 'tok-beto', { publicado: false })
+      const reservada = await pedir('POST', '/reservas', 'tok-huesped', reserva(publicada.unidadId, publicada.id, 0, 3))
+      const listar = (query, token = 'tok-admin') => pedir('GET', '/admin/listado?q=' + encodeURIComponent(run) + (query ?? ''), token)
+
+      // ---- 1. Who may ask.
+      out.permisos = [(await listar('', null)).status, (await listar('', 'tok-ana')).status, (await listar('', 'tok-huesped')).status, (await pedir('GET', '/admin/reservas', 'tok-ana')).status, (await pedir('POST', '/' + publicada.id + '/suspension', 'tok-ana', { suspendido: true, motivo: 'no soy admin' })).status, (await pedir('POST', '/' + publicada.id + '/suspension', null, { suspendido: true, motivo: 'sin sesion alguna' })).status]
+      // ---- 2. Every lodging whatever its state, with its owner.
+      const todos = (await listar('')).body
+      const porNombre = Object.fromEntries(todos.items.map((item) => [item.nombre.replace(' ' + run, ''), item]))
+      out.listado = [todos.total, todos.items.length, porNombre['Casa Publicada'].estado, porNombre['Casa Borrador'].estado, porNombre['Casa Pausada'].estado, porNombre['Casa Publicada'].propietario.cuentaId === ana, porNombre['Casa Pausada'].propietario.cuentaId === beto, porNombre['Casa Publicada'].propietario.nombre, porNombre['Casa Publicada'].reservasVigentes, porNombre['Casa Borrador'].reservasVigentes, porNombre['Casa Publicada'].unidades, Boolean(borrador.id)]
+      out.publico = (await pedir('GET', '/?q=' + encodeURIComponent(run), null)).body.items.map((item) => item.nombre.replace(' ' + run, ''))
+      out.filtros = [(await listar('&estado=borrador')).body.items.map((item) => item.estado), (await listar('&estado=publicado')).body.total, (await listar('&estado=inventado')).body.total, (await listar('&tamano=2')).body.items.length, (await listar('&tamano=2')).body.totalPages, (await listar('&tamano=2&pagina=2')).body.items.length]
+      out.sinSecretos = /direccion|latitud|passwordHash|telefono/iu.test(JSON.stringify(todos))
+      // ---- 3. The reservations of every lodging.
+      const reservas = (await pedir('GET', '/admin/reservas?estado=confirmed&tamano=100', 'tok-admin')).body
+      const propia = reservas.items.find((item) => item.id === reservada.body.id)
+      out.reservas = [reservada.status, Boolean(propia), propia?.alojamientoNombre.replace(' ' + run, ''), propia?.estado, propia?.cantidadPersonas, propia?.total > 0, propia?.fechaInicio.slice(0, 10) === dia(0), (await pedir('GET', '/admin/reservas?estado=cancelled&tamano=100', 'tok-admin')).body.items.some((item) => item.id === reservada.body.id)]
+
+      // ---- 4. Suspension: note, effects, and what does not change.
+      const suspender = (id, cuerpo) => pedir('POST', '/' + id + '/suspension', 'tok-admin', cuerpo).then((x) => x.status + ':' + (x.body.error?.code ?? x.body.estado))
+      out.suspensionInvalida = [await suspender(publicada.id, { suspendido: true }), await suspender(publicada.id, { suspendido: true, motivo: 'ok' }), await suspender(publicada.id, { suspendido: 'si', motivo: 'Denuncia verificada por soporte' }), await suspender(publicada.id, { suspendido: true, motivo: 'Denuncia verificada por soporte', estado: 'publicado' }), await suspender(publicada.id, { suspendido: false, motivo: 'no estaba suspendido' }), await suspender('no-existe', { suspendido: true, motivo: 'Denuncia verificada por soporte' })]
+      out.suspendida = await suspender(publicada.id, { suspendido: true, motivo: 'Denuncia verificada por soporte' })
+      const filaSuspendida = await prisma.alojamiento.findUnique({ where: { id: publicada.id } })
+      const reservaTras = await prisma.reservaAlojamiento.findUnique({ where: { id: reservada.body.id } })
+      out.efectos = [filaSuspendida.estado, filaSuspendida.publicado, (await pedir('GET', '/?q=' + encodeURIComponent(run), null)).body.items.length, (await pedir('POST', '/reservas', 'tok-huesped', reserva(publicada.unidadId, publicada.id, 10, 12))).status, (await pedir('POST', '/' + publicada.id + '/publicacion', 'tok-ana', { publicado: true })).body.error?.code, reservaTras.estado, (await listar('&estado=suspendido')).body.items.length, await suspender(publicada.id, { suspendido: true, motivo: 'otra vez suspendida, sin sentido' })]
+      // ---- 5. Lifted: paused; its owner publishes it again.
+      out.levantada = [await suspender(publicada.id, { suspendido: false, motivo: 'Se reviso el caso y corresponde volver' }), (await prisma.alojamiento.findUnique({ where: { id: publicada.id } })).publicado, (await pedir('POST', '/' + publicada.id + '/publicacion', 'tok-ana', { publicado: true })).body.estado, (await pedir('GET', '/?q=' + encodeURIComponent(run), null)).body.items.length]
+      // ---- 6. The audit.
+      const eventos = await prisma.auditEvent.findMany({ where: { actorId: admin, eventType: { startsWith: 'lodging.' } }, orderBy: { occurredAt: 'asc' } })
+      out.auditoria = eventos.map((e) => [e.eventType, e.metadata.alojamientoId === publicada.id, e.metadata.previousState, e.metadata.newState, e.metadata.reason, e.metadata.ownerAccountId === ana])
+    } finally { ${FIN} }
+    console.log(JSON.stringify(out))
+  `)
+  assert.deepEqual(r.permisos, [401, 403, 403, 403, 403, 401], 'no session, an owner and a guest: none of them consults or suspends')
+  assert.deepEqual(r.listado, [3, 3, 'publicado', 'borrador', 'pausado', true, true, 'Persona ana', 1, 0, 1, true], 'drafts and paused lodgings too, each with its owner and its live reservations')
+  assert.deepEqual(r.publico, ['Casa Publicada'], 'the public search still shows only what is published')
+  assert.deepEqual(r.filtros, [['borrador'], 1, 3, 2, 2, 1], 'filtered by state (an unknown state filters nothing) and paginated in the store')
+  assert.equal(r.sinSecretos, false, 'the listing carries no address, no exact point and no secret')
+  assert.deepEqual(r.reservas, [201, true, 'Casa Publicada', 'confirmed', 2, true, true, false])
+  assert.deepEqual(r.suspensionInvalida, ['422:REASON_REQUIRED', '422:REASON_REQUIRED', '400:BAD_REQUEST', '400:BAD_REQUEST', '409:INVALID_STATE', '404:NOT_FOUND'], 'no note, a short note, a bad switch, an extra field, lifting what is not suspended, an unknown lodging')
+  assert.equal(r.suspendida, '200:suspendido')
+  assert.deepEqual(r.efectos, ['suspendido', false, 0, 404, 'LISTING_SUSPENDED', 'confirmed', 1, '409:INVALID_STATE'], 'suspended: out of the search, no new reservation, its owner cannot publish it; the reservation already made is untouched')
+  assert.deepEqual(r.levantada, ['200:pausado', false, 'publicado', 1], 'lifted: paused, and its owner publishes it again')
+  assert.deepEqual(r.auditoria, [['lodging.admin_suspended', true, 'publicado', 'suspendido', 'Denuncia verificada por soporte', true], ['lodging.admin_suspension_lifted', true, 'suspendido', 'pausado', 'Se reviso el caso y corresponde volver', true]])
+})
