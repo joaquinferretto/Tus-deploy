@@ -90,7 +90,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
         <div data-tabla-prestadores style={{ maxWidth: '100%', overflowX: 'auto' }}>
         <table className={styles.table}>
           <thead>
-            <tr><th>Nombre público</th><th>Cuenta</th><th>Teléfono y WhatsApp</th><th>Oficio y zona</th><th>Mapa</th><th>Mercado Pago</th><th>Identidad</th><th>Cobro de señas</th><th>Reputación</th><th>Alta</th><th /></tr>
+            <tr><th>Nombre público</th><th>Cuenta</th><th>Teléfono y WhatsApp</th><th>Oficio y zona</th><th>Mapa</th><th>Mercado Pago</th><th>Identidad TUS</th><th>Cobro de señas</th><th>Reputación</th><th>Alta</th><th /></tr>
           </thead>
           <tbody>
             {visibles.map((item) => (
@@ -135,7 +135,7 @@ export function AdminPrestadoresLista(): React.ReactNode {
                   )}
                 </td>
                 <td data-label="Mercado Pago" data-mercado-pago={vinculoMercadoPago(item.mercadoPago).estado}>{(() => { const vinculo = vinculoMercadoPago(item.mercadoPago); return <span className={`${styles.badge} ${vinculo.tono === 'ok' ? styles.badgeOk : vinculo.tono === 'warn' ? styles.badgeWarn : styles.badgeOff}`}>{vinculo.texto}</span> })()}</td>
-                <td data-label="Identidad">{item.verificado ? <span className={`${styles.badge} ${styles.badgeOk}`}>Verificada</span> : <span className={`${styles.badge} ${styles.badgeOff}`}>Pendiente</span>}</td>
+                <td data-identidad-tus={item.verificado ? 'verificada' : 'no_verificada'} data-label="Identidad TUS" title="Dato opcional: no impide publicar, aceptar trabajos ni cobrar.">{item.verificado ? <span className={`${styles.badge} ${styles.badgeOk}`}>Verificada</span> : <span className={styles.muted}>No verificada</span>}</td>
                 <td data-cobro-sena={item.cobroSena ? (item.cobroSena.disponible ? item.cobroSena.modo ?? 'disponible' : item.cobroSena.motivo ?? 'no') : ''} data-label="Cobro de señas">
                   {item.cobroSena !== undefined ? (() => { const cobro = textoCobroSena(item.cobroSena); return <span className={`${styles.badge} ${cobro.tono === 'ok' ? styles.badgeOk : cobro.tono === 'warn' ? styles.badgeWarn : styles.badgeOff}`} title={cobro.detalle}>{cobro.texto}</span> })() : item.mercadoPago === 'connected' ? <span className={`${styles.badge} ${styles.badgeOk}`}>Con su cuenta</span> : '—'}
                 </td>

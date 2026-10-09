@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
 import { test } from 'node:test'
-import { SERVICE_SETUP, runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
+import { SERVICE_SETUP, root, runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
 import { IDENTITY_SETUP } from './fixtures/identidad.mjs'
 
 const MP_ENV = `{ TUS_MERCADOPAGO_ENABLED: 'true', MERCADO_PAGO_ENVIRONMENT: 'sandbox', MERCADO_PAGO_CLIENT_ID: 'app-123', MERCADO_PAGO_CLIENT_SECRET: 'fictitious-client-secret-value', MERCADO_PAGO_WEBHOOK_SECRET: 'whsec', MERCADO_PAGO_OAUTH_REDIRECT_URI: 'https://api.tus.test/tus/v1/integrations/mercado-pago/oauth/callback', MERCADO_PAGO_NOTIFICATION_URL: 'https://api.tus.test/tus/v1/integrations/mercado-pago/webhooks', TUS_PAYMENT_CREDENTIALS_KEY: Buffer.alloc(32, 3).toString('base64'), TUS_WEB_BASE_URL: 'https://web.tus.test', TUS_PLATFORM_ADMIN_TENANT_ID: 'platform-tenant' }`
 
-test('IDENTITY-NOSIS gates: an unverified provider cannot publish services, accept work, link Mercado Pago or receive money', () => {
+// PRESTADOR-SIN-KYC-01 (owner's decision). This test used to prove the opposite (identity as a gate
+// of everything). The rule now: an active account and an approved provider are enough to publish
+// and to accept work; charging asks for the linked Mercado Pago; the identity verification of TUS is
+// optional information and changes no authorization.
+test('PRESTADOR sin KYC: a provider TUS did not verify, with no Mercado Pago, publishes its service and accepts work; linking Mercado Pago asks for nothing else; charging asks only for that link; verifying its identity afterwards changes no authorization; a provider that is not approved still cannot publish', () => {
   const result = runTypeScriptScenario(`${SERVICE_SETUP}${IDENTITY_SETUP}
     const { createTusApplication } = (await import('./apps/api/src/tus/composition/index.ts')).default
     const { crearModuloPagosServicio } = await import('./apps/api/src/tus/finance/servicios/composicion-pagos.ts')
@@ -21,25 +27,30 @@ test('IDENTITY-NOSIS gates: an unverified provider cannot publish services, acce
     await app.marketplace.store.listings.save(published)
     const commitment = { ...commitmentFor('gate-commitment', published), merchantId: 'provider-1' }
     await app.marketplace.store.commitments.saveMany([commitment])
-    const payments = crearModuloPagosServicio({ env: ${MP_ENV}, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: identityClock, identidadVerificada: (tenantId) => identity.identidadVerificada(tenantId) })
+    const payments = crearModuloPagosServicio({ env: ${MP_ENV}, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: identityClock })
     await payments.configuracion.registrarConfiguracion({ actorId: 'platform-admin', correlationId: 'corr' }, { paymentsEnabled: true, reason: 'sandbox', expectedVersion: 0 })
     const accept = () => app.acceptServiceCommitment(session, { commitmentId: commitment.commitmentId, idempotencyKey: 'accept-gate', requestHash: 'h-accept-gate', createdAt: '2026-09-24T10:00:00.000Z' })
     const before = {
-      publish: await codeOfId(() => app.marketplace.publishListing(session, draft.listingId)),
+      identidad: await identity.identidadVerificada(prestador.tenantId),
+      publish: (await app.marketplace.publishListing(session, draft.listingId)).published,
       accept: await codeOfId(accept),
       connect: await codeOfId(() => payments.cuentas.iniciarConexion(prestador)),
       money: (await payments.politica.disponibilidad({ prestadorTenantId: prestador.tenantId, prestadorId: 'provider-1', categoria: null })).reason,
       appConnect: await codeOfId(() => app.servicePayments.cuentas.iniciarConexion(prestador)),
     }
-    // Review states keep every gate closed too.
+    // The controls that stay: a provider that is not approved cannot publish.
+    const otroPrestador = ctx(3)
+    const sesionOtro = { ...session, tenantId: otroPrestador.tenantId, subjectId: otroPrestador.actorId, sessionId: 'session-3' }
+    await app.marketplace.store.merchant.save({ tenantId: otroPrestador.tenantId, merchantId: 'provider-3', cohort: 'repairs-trades', locationId: 'location-1', timezone: 'America/Argentina/Buenos_Aires', staffRoles: ['owner'], operatingPolicyVersion: 'policy-1', status: 'suspended', createdAt: '2026-09-23T09:00:00.000Z', updatedAt: '2026-09-23T09:00:00.000Z' })
+    const borradorOtro = { ...listing('gate-suspendido', { published: false, workingHours: [{ dayOfWeek: 1, start: '09:00', end: '18:00' }] }), tenantId: otroPrestador.tenantId, merchantId: 'provider-3' }
+    await app.marketplace.store.listings.save(borradorOtro)
+    const inReview = await codeOfId(() => app.marketplace.publishListing(sesionOtro, borradorOtro.listingId))
     await submitIdentity(1, '30111223|PRUEBA DEMO|JUAN')
     await drain()
-    const inReview = await codeOfId(() => app.marketplace.publishListing(session, draft.listingId))
     const v = await latest(1)
     await identity.decidir(platformAdmin, v.verificationId, { decision: 'approve', reason: 'Revisión manual con documento original' })
     const after = {
-      publish: (await app.marketplace.publishListing(session, draft.listingId)).published,
-      accept: (await accept()).work?.status ?? 'accepted',
+      identidad: await identity.identidadVerificada(prestador.tenantId),
       connect: new URL((await payments.cuentas.iniciarConexion(prestador)).authorizationUrl).hostname,
       money: (await payments.politica.disponibilidad({ prestadorTenantId: prestador.tenantId, prestadorId: 'provider-1', categoria: null })).reason,
     }
@@ -48,22 +59,27 @@ test('IDENTITY-NOSIS gates: an unverified provider cannot publish services, acce
     console.log(JSON.stringify({ before, inReview, after, other }))
   `)
   assert.deepEqual(result.before, {
-    publish: 'PROVIDER_IDENTITY_NOT_VERIFIED',
-    accept: 'PROVIDER_IDENTITY_NOT_VERIFIED',
-    // PAGOS-MP-VINCULADO-01 (owner's decision): linking Mercado Pago and charging no longer ask
-    // for an identity verification of TUS's own; charging asks for the linked account.
+    identidad: false,
+    publish: true,
+    accept: 'none',
     connect: 'none',
     money: 'PROVIDER_ACCOUNT_NOT_CONNECTED',
-    // In-memory composition without payment configuration fails closed before the gate.
+    // In-memory composition without payment configuration fails closed before anything else.
     appConnect: 'PROVIDER_NOT_CONFIGURED',
-  })
-  assert.equal(result.inReview, 'PROVIDER_IDENTITY_NOT_VERIFIED')
-  assert.equal(result.after.publish, true)
-  assert.ok(result.after.accept)
+  }, 'not verified by TUS and with no Mercado Pago: it publishes and accepts work; only charging asks for the link')
+  assert.notEqual(result.inReview, 'none', 'a provider that is not approved still cannot publish')
+  assert.notEqual(result.inReview, 'PROVIDER_IDENTITY_NOT_VERIFIED')
+  assert.equal(result.after.identidad, true)
   assert.match(result.after.connect, /mercadopago/u)
-  assert.equal(result.after.money, 'PROVIDER_ACCOUNT_NOT_CONNECTED')
-  // PAGOS-MP-VINCULADO-01: linking Mercado Pago asks for no identity verification, of any provider.
+  assert.equal(result.after.money, 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'a verified identity authorizes nothing: charging still asks for Mercado Pago')
   assert.equal(result.other, 'none')
+  // No production code outside the identity module and the directory (a badge, a filter and the
+  // order of the results) asks whether an identity is verified.
+  const fuentes = []
+  const recorrer = (dir) => { for (const item of readdirSync(dir, { withFileTypes: true })) { const ruta = join(dir, item.name); if (item.isDirectory()) recorrer(ruta); else if (/\.tsx?$/u.test(item.name)) fuentes.push(ruta) } }
+  recorrer(join(root, 'apps/api/src'))
+  const usan = fuentes.filter((ruta) => /identidadVerificada\(|PROVIDER_IDENTITY_NOT_VERIFIED/u.test(readFileSync(ruta, 'utf8'))).map((ruta) => relative(root, ruta).split(sep).join('/'))
+  assert.deepEqual(usan.filter((ruta) => !ruta.startsWith('apps/api/src/tus/identidad/')).sort(), ['apps/api/src/tus/directorio/almacenes.ts'], 'identity is read only to show it')
 })
 
 test('IDENTITY-NOSIS HTTP: provider sees only its own verification, uploads raw images, submit answers 202 queued; admin needs platform tenant + permission', () => {

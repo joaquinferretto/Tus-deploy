@@ -280,7 +280,7 @@ export function HomePage({ logo }: { logo: React.ReactNode }): React.ReactNode {
               <h2 className={styles.proTitle} id="profesionales-titulo">
                 ¿Sos profesional? Encontrá trabajos cerca tuyo.
               </h2>
-              <p className={styles.rowText}>Verificá tu identidad, publicá tus servicios y cobrá con Mercado Pago.</p>
+              <p className={styles.rowText}>Creá tu perfil, publicá tus servicios y cobrá con Mercado Pago.</p>
             </div>
             <a className={styles.buttonPrimary} href="/registro?intencion=prestador">
               Quiero ofrecer mis servicios

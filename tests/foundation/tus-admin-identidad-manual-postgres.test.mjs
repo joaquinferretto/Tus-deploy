@@ -150,7 +150,9 @@ test('IDENTIDAD manual por Admin, rutas y pantalla: behind the identity-admin pe
   assert.match(admin, /if \(cuenta\.tenantId === actor\.tenantId\) return \{ ok: false, status: 403, code: 'FORBIDDEN' \}/u)
   assert.match(servicio, /if \(context\.tenantId === input\.tenantId \|\| context\.actorId === input\.userId\) throw new ErrorIdentidad\(403, 'FORBIDDEN'/u)
   // One source: payments ask the identity service; the manual decision writes its records.
-  assert.match(composicion, /const identidadVerificada = \(tenantId: string\) => identity\.identidadVerificada\(tenantId\)/u)
+  // PRESTADOR-SIN-KYC-01 (owner's decision): the manual verification stays as optional information;
+  // the composition hands `identidadVerificada` to no service as a gate.
+  assert.doesNotMatch(composicion, /identidadVerificada\(|identidadVerificada[,} ]*\)/u)
   assert.match(servidor, /crearVerificacionIdentidadAdmin\(\{ identidad: application\.identity,/u)
   const decision = /async decisionManualAdmin\([\s\S]*?\n  \}\n/u.exec(servicio)[0]
   assert.doesNotMatch(decision, /nombrePublico|publicName|normalizarNombre|compararNombre/u, 'the public name of the provider is never compared with the identity')
