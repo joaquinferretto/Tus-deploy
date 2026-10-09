@@ -57,7 +57,12 @@ export const MERCADO_PAGO_SANDBOX_SETUP = `
   // The OAuth client also talks to the fake API.
   const { ClienteOAuthMercadoPagoHttp } = await import('./apps/api/src/tus/finance/servicios/cuentas-cobro.ts')
   const paymentsWithOauth = crearModuloPagosServicio({ env: mpEnv, configuracion: paymentsConfig, cuentas: accountsStore, now: mpClock, mercadoPago: { fetch: mpFetch }, oauth: new ClienteOAuthMercadoPagoHttp({ clientId: 'app-123', clientSecret: 'client-secret-value', testToken: true, fetch: mpFetch }) })
-  const mpFinance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioEnMemoria(financeStore, new IdentidadServicioEnMemoria(workStore, marketplace)), mpClock, paymentsWithOauth.proveedor, undefined, paymentsWithOauth.politica)
+  // COBRO-POR-PLATAFORMA-01 (owner's decision): the runtime policy collects every payment with the
+  // account of TUS and never hands one to the provider's own account (split). The split adapter
+  // still exists; these scenarios keep exercising it with a policy FIXED for that purpose, which
+  // production does not compose: every other control is the real one, and a linked provider gets 'split'.
+  const politicaSplitDePrueba = { reglaComision: (input) => paymentsWithOauth.politica.reglaComision(input), disponibilidad: async (input) => { const real = await paymentsWithOauth.politica.disponibilidad(input); if (real.available || real.reason !== 'PLATFORM_ACCOUNT_REQUIRED') return real; return (await paymentsWithOauth.cuentas.cuentaConectada(input.prestadorTenantId)) ? { available: true, reason: null, mode: 'split' } : { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' } } }
+  const mpFinance = new ServicioFinanzasServicios(new TransaccionFinanzasServicioEnMemoria(financeStore, new IdentidadServicioEnMemoria(workStore, marketplace)), mpClock, paymentsWithOauth.proveedor, undefined, politicaSplitDePrueba)
   const admin = { actorId: 'platform-admin', correlationId: 'corr-admin' }
   await paymentsWithOauth.configuracion.registrarConfiguracion(admin, { paymentsEnabled: true, reason: 'sandbox', expectedVersion: 0 })
   async function connectSeller(tenantId, userId) {

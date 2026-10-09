@@ -4,11 +4,16 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { root, runTypeScriptScenario } from './fixtures/web-09-servicio.mjs'
 
-// PAGOS-MP-VINCULADO-01 (owner's decision). To charge in TUS a provider needs ONLY its Mercado Pago
-// account linked through OAuth: no identity verification of TUS's own (KYC/KYB), whoever owns that
-// account (a person, a monotributista, a company). The link is by the ids TUS stores, never by a
-// name. Mercado Pago is a stand-in here (the OAuth port): this proves the code, not a real link.
-test('Mercado Pago vinculado: not linked a provider cannot charge; the official OAuth (single-use state, PKCE) links it with nothing else asked; a bad or reused callback links nothing; tokens are stored encrypted and never returned; reconnection, unlink and linking another account afterwards; every change is audited without secrets', () => {
+// COBRO-POR-PLATAFORMA-01 (owner's decision, 2026-10-09). The clients of a provider pay through the
+// account of TUS whether the provider linked Mercado Pago or not; its share becomes its balance in
+// TUS. The linked Mercado Pago account (OAuth) is only the DESTINATION OF ITS PAYOUTS: it is asked
+// for when the provider withdraws, never to work nor to be paid, and linking it never makes a
+// payment skip the account of TUS. Whoever owns that account (a person, a monotributista, a
+// company) and whatever its identity state in TUS. The link is by ids, never by a name.
+// (That a provider with a balance and no link cannot withdraw, and can once it links, is proved in
+// tus-ganancias-prestador.test.mjs and tus-ganancias-prestador-postgres.test.mjs.)
+// Mercado Pago is a stand-in here (the OAuth port): this proves the code, not a real link.
+test('Mercado Pago vinculado: linked or not, a provider is paid through the account of TUS; the official OAuth (single-use state, PKCE) links it with nothing else asked; a bad or reused callback links nothing; tokens are stored encrypted and never returned; reconnection, unlink and linking another account afterwards; every change is audited without secrets', () => {
   const r = runTypeScriptScenario(`
     const { AlmacenCuentasCobroEnMemoria, BovedaCredencialesAesGcm, ServicioCuentasCobro, vinculoMercadoPago } = await import('./apps/api/src/tus/finance/servicios/cuentas-cobro.ts')
     const { AlmacenConfiguracionPagosEnMemoria, PoliticaCobroPersistida, ServicioConfiguracionPagos, leerEstadoOperativoPagos } = await import('./apps/api/src/tus/finance/servicios/configuracion.ts')
@@ -39,7 +44,7 @@ test('Mercado Pago vinculado: not linked a provider cannot charge; the official 
     const vincular = async (quien, code) => { const inicio = await cuentas.iniciarConexion(quien); return cuentas.completarConexion({ code, state: estadoDe(inicio.authorizationUrl), correlationId: 'cb' }) }
     const out = {}
 
-    // 1. Not linked: no charge. Whoever the provider is.
+    // 1. Not linked: its clients pay all the same, through the account of TUS.
     out.sinVincular = [await vinculo(juan), await cobra(juan), await cobra(juan, false), await cobra(empresa)]
     // 2. The official OAuth: nothing else is asked of the provider.
     const inicio = await cuentas.iniciarConexion(juan)
@@ -73,7 +78,7 @@ test('Mercado Pago vinculado: not linked a provider cannot charge; the official 
     const vencida = await cuentas.tokenVigente('tenant-juan').then(() => 'none', (e) => e.code)
     out.requiereReconexion = [vencida, await vinculo(juan), await cobra(juan)]
     out.reconectado = [(await vincular(juan, 'code-juan')).status, await vinculo(juan), await cobra(juan)]
-    // 8. Unlink: nothing is charged any more, the tokens are gone; ANOTHER account links afterwards.
+    // 8. Unlink: its clients keep paying, the tokens are gone; ANOTHER account links afterwards.
     await cuentas.desconectar(juan)
     out.desvinculado = [await vinculo(juan), await cobra(juan), store.credenciales.has('tenant-juan')]
     out.otraCuenta = [(await vincular(juan, 'code-otra')).status, await vinculo(juan), store.cuentas.get('tenant-juan').externalAccountId, await cobra(juan)]
@@ -85,17 +90,17 @@ test('Mercado Pago vinculado: not linked a provider cannot charge; the official 
     out.auditoriaSinSecretos = /APP_USR|TG-|111222333|444555666|777888999/u.test(JSON.stringify(auditoria))
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.sinVincular, ['no_vinculado', 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'PROVIDER_ACCOUNT_NOT_CONNECTED'], 'not linked: no charge, also with the account of TUS configured')
+  assert.deepEqual(r.sinVincular, ['no_vinculado', 'plataforma', 'plataforma', 'plataforma'], 'not linked: a deposit and a payment after the work are collected by TUS all the same')
   assert.deepEqual(r.autorizacion, ['https://auth.mercadopago.com/authorization', 'app-id', 'code', 'S256', true, true, false], 'the official authorization page, with state and PKCE and no secret')
-  assert.deepEqual(r.callbacksInvalidos, [['error', 'INVALID_STATE'], ['error', 'INVALID_STATE'], ['error', 'INVALID_STATE'], ['error', 'PROVIDER_OAUTH_FAILED'], 'no_vinculado', 'PROVIDER_ACCOUNT_NOT_CONNECTED'], 'a malformed, unknown or code-less callback, or a code Mercado Pago refuses, links nothing')
-  assert.deepEqual(r.vinculado, ['connected', 'https://web.example.test/prestador/pagos?mercadoPago=connected', 'vinculado', 'plataforma', 'split', 'INVALID_STATE'], 'linked with nothing else asked (the identity check answered "not verified"); the state cannot be replayed')
+  assert.deepEqual(r.callbacksInvalidos, [['error', 'INVALID_STATE'], ['error', 'INVALID_STATE'], ['error', 'INVALID_STATE'], ['error', 'PROVIDER_OAUTH_FAILED'], 'no_vinculado', 'plataforma'], 'a malformed, unknown or code-less callback, or a code Mercado Pago refuses, links nothing')
+  assert.deepEqual(r.vinculado, ['connected', 'https://web.example.test/prestador/pagos?mercadoPago=connected', 'vinculado', 'plataforma', 'plataforma', 'INVALID_STATE'], 'linked with nothing else asked; a linked account never makes a payment skip the account of TUS (no split); the state cannot be replayed')
   assert.deepEqual(r.guardado, ['tenant-juan', '111222333', 'connected', true, true, 'cuenta-juan'], 'the link: provider of TUS, collector of Mercado Pago, state, dates and who made it')
   assert.deepEqual(r.tokens, [false, true, 'APP_USR-token-111222333', 'CREDENTIAL_UNREADABLE', false, false], 'tokens encrypted at rest and bound to their tenant; nothing of them reaches the Web')
   assert.deepEqual(r.cuentaDeOtro, ['ACCOUNT_ALREADY_LINKED', 'no_vinculado'])
-  assert.deepEqual(r.empresa, ['connected', 'vinculado', 'plataforma'], 'a company links and charges exactly the same way')
-  assert.deepEqual(r.requiereReconexion, ['PROVIDER_ACCOUNT_NOT_CONNECTED', 'requiere_reconexion', 'PROVIDER_ACCOUNT_NOT_CONNECTED'])
+  assert.deepEqual(r.empresa, ['connected', 'vinculado', 'plataforma'], 'a company links exactly the same way, and is paid the same way')
+  assert.deepEqual(r.requiereReconexion, ['PROVIDER_ACCOUNT_NOT_CONNECTED', 'requiere_reconexion', 'plataforma'], 'the link needs a reconnection; its clients keep paying')
   assert.deepEqual(r.reconectado, ['connected', 'vinculado', 'plataforma'])
-  assert.deepEqual(r.desvinculado, ['no_vinculado', 'PROVIDER_ACCOUNT_NOT_CONNECTED', false])
+  assert.deepEqual(r.desvinculado, ['no_vinculado', 'plataforma', false])
   assert.deepEqual(r.otraCuenta, ['connected', 'vinculado', '777888999', 'plataforma'], 'after unlinking, another Mercado Pago account can be linked')
   assert.equal(r.cuentaLiberada, 'connected')
   assert.deepEqual(r.auditoria, [
@@ -110,12 +115,17 @@ test('Mercado Pago vinculado: not linked a provider cannot charge; the official 
   assert.equal(r.auditoriaSinSecretos, false, 'never a token nor a whole account id in the audit')
 })
 
-test('Mercado Pago vinculado, reglas y pantallas: nothing that decides a charge reads an identity verification, a holder type or a name; the routes take no Mercado Pago id from the browser; the provider sees one step and three states; the administration sees Nombre público, Cuenta and Mercado Pago', () => {
+test('Mercado Pago vinculado, reglas y pantallas: nothing that decides a charge reads an identity verification, the link of the provider, a holder type or a name; a payout is what asks for the link; the routes take no Mercado Pago id from the browser; the provider sees one step and three states; the administration sees Nombre público, Cuenta and Mercado Pago', () => {
   const read = (path) => readFileSync(join(root, path), 'utf8').replaceAll('\r\n', '\n')
   const politica = read('apps/api/src/tus/finance/servicios/configuracion.ts')
-  const gate = politica.slice(politica.indexOf('async disponibilidad(input'), politica.indexOf('async listoParaLanzamientoPublico'))
-  assert.match(gate, /const vinculada = await this\.cuentaConectada\(input\.prestadorTenantId\)\n    if \(!vinculada\) return \{ available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' \}/u)
-  assert.doesNotMatch(gate, /identidad|kyc|kyb|nombre|holder|titular/iu, 'no identity, holder type or name decides a charge')
+  // The body of the decision (its signature still names the two modes the adapter knows).
+  const gate = politica.slice(politica.indexOf('const configuracion = await this.store.ultimaConfiguracion()', politica.indexOf('async disponibilidad(input')), politica.indexOf('async listoParaLanzamientoPublico'))
+  assert.match(gate, /return this\.cobroPlataforma\(\) \? \{ available: true, reason: null, mode: 'plataforma' \} : \{ available: false, reason: 'PLATFORM_ACCOUNT_REQUIRED' \}/u)
+  assert.doesNotMatch(gate.replace(/^\s*\/\/.*$/gmu, ''), /identidad|kyc|kyb|nombre|holder|titular|cuentaConectada|'split'|PROVIDER_ACCOUNT_NOT_CONNECTED/iu, 'no identity, link, holder type or name decides a charge; nothing is paid straight to the provider')
+  // The link is asked for where it belongs: requesting a payout.
+  const ganancias = read('apps/api/src/tus/finance/servicios/ganancias.ts')
+  assert.match(ganancias, /if \(!\(await this\.store\.cuentaParaLiquidar\(prestadorTenantId\)\)\) return 'PAYMENT_ACCOUNT_REQUIRED'/u)
+  assert.match(ganancias, /throw new ErrorFinanzasServicio\(409, CODIGO_CUENTA_REQUERIDA, 'connect a valid Mercado Pago account to request a payout'\)/u)
   const cuentas = read('apps/api/src/tus/finance/servicios/cuentas-cobro.ts')
   assert.doesNotMatch(cuentas, /identidadVerificada|PROVIDER_IDENTITY_NOT_VERIFIED|nombrePublico|displayName/u)
   assert.doesNotMatch(read('apps/api/src/tus/finance/servicios/ganancias.ts'), /this\.identidadVerificada|'IDENTITY_NOT_VERIFIED'|PROVIDER_IDENTITY_NOT_VERIFIED/u, 'a payout asks for the linked account, not for an identity verification')
@@ -130,7 +140,11 @@ test('Mercado Pago vinculado, reglas y pantallas: nothing that decides a charge 
   assert.doesNotMatch(callback, /user_id|tenantId|accessToken/u)
   // The provider's panel.
   const panel = read('apps/web/src/features/provider/provider-payments.tsx')
-  assert.match(panel, /account\.status === 'not_connected' \? 'Vincular Mercado Pago' : 'Volver a vincular Mercado Pago'/u)
+  assert.match(panel, /account\.status === 'not_connected' \? 'Vincular Mercado Pago para retirar tus ganancias' : 'Volver a vincular Mercado Pago'/u)
+  assert.match(panel, /Podés trabajar y cobrar igual\. Solo vas a necesitar Mercado Pago vinculado para retirar tu saldo\./u)
+  const retiros = read('apps/web/src/features/provider/provider-earnings.tsx')
+  assert.match(retiros, /summary\.blockedReason === 'PAYMENT_ACCOUNT_REQUIRED' && BigInt\(summary\.availableMinor\) > 0n \? \(\s*<p data-retiro-sin-mercado-pago role="status">Tenés \{formatMoney\(summary\.availableMinor, summary\.currency\)\} disponibles\. Vinculá Mercado Pago para retirar\.<\/p>/u)
+  assert.match(retiros, />\s*Vincular Mercado Pago\s*</u)
   assert.match(panel, />\s*Desvincular\s*</u)
   assert.doesNotMatch(panel, /externalAccountId|<input|accessToken|refreshToken|clientSecret|identidad/u, 'no token, no technical id and nothing to copy by hand')
   assert.match(read('apps/web/src/components/prestador/cuenta-cobro.tsx'), /connected: 'Mercado Pago vinculado'/u)
@@ -140,6 +154,7 @@ test('Mercado Pago vinculado, reglas y pantallas: nothing that decides a charge 
   assert.match(lista, /<th>Mercado Pago<\/th>/u)
   assert.match(lista, /data-mercado-pago=\{vinculoMercadoPago\(item\.mercadoPago\)\.estado\}/u)
   const adminApi = read('apps/web/src/lib/tus-admin-api.ts')
-  for (const texto of ["'Vinculado'", "'Requiere reconexión'", "'No vinculado'", 'Falta vincular Mercado Pago']) assert.ok(adminApi.includes(texto), texto)
-  assert.doesNotMatch(adminApi, /Falta identidad|Falta KYC|Falta KYB/u)
+  for (const texto of ["'Vinculado'", "'Requiere reconexión'", "'No vinculado'"]) assert.ok(adminApi.includes(texto), texto)
+  assert.doesNotMatch(adminApi, /Falta identidad|Falta KYC|Falta KYB|Falta vincular Mercado Pago/u)
+  assert.match(lista, /No vinculado no le impide trabajar ni cobrar a sus clientes/u)
 })

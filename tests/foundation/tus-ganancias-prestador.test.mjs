@@ -76,7 +76,7 @@ test('domain: the owner\'s example (15.000 -> 13.500, +20.000 = 33.500); a payou
     // 2. Without Mercado Pago, without identity, with a bad email or extra fields: nothing.
     out.sinCuenta = [(await saldo(ana)).slice(6), await codeOf(() => service.solicitar(ana, 'clave-sin-cuenta', destino))]
     store.cuentas.set('t-ana', 'cuenta-ana')
-    // PAGOS-MP-VINCULADO-01: an identity not verified by TUS blocks nothing of a payout.
+    // PRESTADOR-SIN-KYC-01 (owner's decision): an identity not verified by TUS blocks nothing of a payout.
     verificados.delete('t-ana')
     out.sinIdentidad = (await saldo(ana))[7]
     verificados.add('t-ana')
@@ -186,7 +186,7 @@ test('domain: the owner\'s example (15.000 -> 13.500, +20.000 = 33.500); a payou
   assert.equal(r.primera, '1350000', 'Ganancias disponibles $13.500')
   assert.deepEqual(r.ejemplo, ['3350000', '0'], 'Ganancias disponibles $33.500')
   assert.deepEqual(r.sinCuenta, [[false, 'PAYMENT_ACCOUNT_REQUIRED'], 'PAYMENT_ACCOUNT_REQUIRED'])
-  assert.equal(r.sinIdentidad, null, 'PAGOS-MP-VINCULADO-01: with Mercado Pago linked, an unverified identity is not a reason')
+  assert.equal(r.sinIdentidad, null, 'with Mercado Pago linked, an unverified identity is not a reason')
   assert.deepEqual(r.entradas, ['IDEMPOTENCY_KEY_REQUIRED', 'INVALID_DESTINATION_EMAIL', 'UNTRUSTED_PAYOUT_FIELDS'])
   assert.deepEqual(r.bajoMinimo, [[false, 'BELOW_MINIMUM'], 'PAYOUT_BELOW_MINIMUM'])
   assert.deepEqual(r.carrera, [1, ['PAYOUT_ALREADY_OPEN']])
@@ -339,11 +339,10 @@ test('administrative minimum: $10.000 by default, changed only by recording a pa
 test('Mercado Pago platform collection (real adapter, offline API): without a linked account TUS collects with its own token and no marketplace_fee; the approval books the earning and the reported fee; a fee reported later is debited then; a refund goes from the TUS account and books a debit; once linked, Split 1:1 is unchanged and books nothing', () => {
   const r = runTypeScriptScenario(`${SERVICE_SETUP}${MERCADO_PAGO_SANDBOX_SETUP}
     const PLATFORM_TOKEN = 'fictitious-platform-token-555'
-    let porPlataforma = false
     mp.sellers.set(PLATFORM_TOKEN, '555')
     const env = { ...mpEnv, MERCADO_PAGO_PLATFORM_ACCESS_TOKEN: PLATFORM_TOKEN, MERCADO_PAGO_PLATFORM_USER_ID: '555' }
     const modulo = crearModuloPagosServicio({ env, configuracion: paymentsConfig, cuentas: accountsStore, now: mpClock, mercadoPago: { fetch: mpFetch }, oauth: new ClienteOAuthMercadoPagoHttp({ clientId: 'app-123', clientSecret: mpEnv.MERCADO_PAGO_CLIENT_SECRET, testToken: true, fetch: mpFetch }) })
-    const fin = new ServicioFinanzasServicios(new TransaccionFinanzasServicioEnMemoria(financeStore, new IdentidadServicioEnMemoria(workStore, marketplace)), mpClock, modulo.proveedor, undefined, { reglaComision: (input) => modulo.politica.reglaComision(input), disponibilidad: async (input) => (porPlataforma ? { available: true, reason: null, mode: 'plataforma' } : modulo.politica.disponibilidad(input)) })
+    const fin = new ServicioFinanzasServicios(new TransaccionFinanzasServicioEnMemoria(financeStore, new IdentidadServicioEnMemoria(workStore, marketplace)), mpClock, modulo.proveedor, undefined, modulo.politica)
     const conecta = async (tenantId, userId) => { const s = await modulo.cuentas.iniciarConexion({ tenantId, actorId: 'seller-user', correlationId: 'c' }); return modulo.cuentas.completarConexion({ code: 'TG-code-' + userId, state: new URL(s.authorizationUrl).searchParams.get('state'), correlationId: 'c' }) }
     const out = { cobroPlataforma: modulo.cobroPlataforma, sinVariables: paymentsWithOauth.cobroPlataforma }
     const ganancias = () => [...financeStore.state.ganancias.values()].map((m) => [m.tipo, m.amountMinor.toString(), m.prestadorTenantId])
@@ -351,12 +350,6 @@ test('Mercado Pago platform collection (real adapter, offline API): without a li
     const a = await payableWork('sin-plataforma', '5000000')
     out.sinPlataforma = await codeOf(() => mpFinance.iniciarCheckout({ ...customer, trabajoId: a.work.trabajoId, idempotencyKey: 'k-a' }))
 
-    // PAGOS-MP-VINCULADO-01 (owner's decision): a provider charges only with its Mercado Pago
-    // linked. TUS collects with its own account what is paid BEFORE the work is done (to hold it);
-    // that happens with the deposits of turnos and requests (covered on PostgreSQL). Here the mode is
-    // FIXED to 'plataforma' to keep exercising the adapter and the ledger of that collection.
-    out.sinVincular = await codeOf(async () => { const x = await payableWork('sin-vincular', '5000000'); return fin.iniciarCheckout({ ...customer, trabajoId: x.work.trabajoId, idempotencyKey: 'k-x' }) })
-    porPlataforma = true
     const b = await payableWork('plataforma', '5000000')
     out.vista = (await fin.consultarVistaPreviaPago({ ...customer, trabajoId: b.work.trabajoId })).paymentAvailable
     const checkout = await fin.iniciarCheckout({ ...customer, trabajoId: b.work.trabajoId, idempotencyKey: 'k-b' })
@@ -394,20 +387,18 @@ test('Mercado Pago platform collection (real adapter, offline API): without a li
     out.reembolsado = [reembolsado.result, ganancias().filter((m) => m[0] === 'refund_debit')]
 
     const antes = ganancias().length
-    porPlataforma = false
     await conecta(provider.tenantId, '777')
     const c = await payableWork('split', '5000000')
     const split = await fin.iniciarCheckout({ ...customer, trabajoId: c.work.trabajoId, idempotencyKey: 'k-c' })
     const prefSplit = mp.preferences.find((p) => p.body.external_reference === split.payment.paymentId)
     mpPayment('7003', prefSplit)
-    const aprobadoSplit = await fin.ingerirEventoProveedor(notification('7003', { userId: '777' }))
-    out.split = [prefSplit.seller, prefSplit.body.marketplace_fee, [...financeStore.state.intenciones.values()].find((i) => i.paymentId === split.payment.paymentId).collectionMode, aprobadoSplit.result, ganancias().length - antes]
+    const aprobadoSplit = await fin.ingerirEventoProveedor(notification('7003', { userId: '555' }))
+    out.split = [prefSplit.seller, prefSplit.body.marketplace_fee, [...financeStore.state.intenciones.values()].find((i) => i.paymentId === split.payment.paymentId).collectionMode, aprobadoSplit.result, ganancias().length - antes > 0]
     out.sinSecretos = /APP_USR|TG-refresh/u.test(JSON.stringify(plain([...financeStore.state.ganancias.values(), ...financeStore.state.intenciones.values()])))
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual([r.cobroPlataforma, r.sinVariables], [true, false], 'platform collection exists only with the platform token and user configured')
   assert.equal(r.sinPlataforma, 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'unchanged without the platform account')
-  assert.equal(r.sinVincular, 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'PAGOS-MP-VINCULADO-01: also WITH the platform account, a provider that did not link its Mercado Pago cannot charge')
   assert.equal(r.vista, true)
   assert.deepEqual(r.preferencia, ['555', false, false, 50000, true], 'TUS own preference: no marketplace_fee, no split')
   assert.deepEqual(r.intencion, ['plataforma', '500000'], 'the mode and the commission are frozen on the payment')
@@ -422,7 +413,9 @@ test('Mercado Pago platform collection (real adapter, offline API): without a li
   assert.deepEqual(r.reembolso[0], 'submitted')
   assert.deepEqual(r.reembolso[1], [['7002', '555']], 'refunded from the account that collected it')
   assert.deepEqual(r.reembolsado, ['applied', [['refund_debit', '4500000', 'provider-tenant']]])
-  assert.deepEqual(r.split, ['777', 5000, 'split', 'applied', 0], 'Split 1:1 unchanged and books no earning')
+  // COBRO-POR-PLATAFORMA-01 (owner's decision): once the provider linked Mercado Pago its payments are
+  // STILL collected by TUS (before: Split 1:1 straight to the provider, booking no earning).
+  assert.deepEqual(r.split, ['555', undefined, 'plataforma', 'applied', true].map((x) => x ?? null), 'linked or not: collected by TUS, no marketplace_fee, and the share is an earning in TUS')
   assert.equal(r.sinSecretos, false)
 })
 
@@ -532,7 +525,7 @@ test('Web: /prestador/pagos shows Total histórico cobrado, Ganancias disponible
   const adminPage = readFileSync(join(root, 'apps/web/src/components/admin/admin-liquidaciones.tsx'), 'utf8')
   const adminApi = readFileSync(join(root, 'apps/web/src/lib/tus-admin-api.ts'), 'utf8')
   const layout = readFileSync(join(root, 'apps/web/src/components/admin/admin-layout.tsx'), 'utf8')
-  for (const texto of ['Total histórico cobrado', 'Ganancias disponibles', 'En liquidación', 'Pagadas', 'Saldo negativo', 'Tarifas de Mercado Pago', 'Mínimo para solicitar', 'Email de tu cuenta de Mercado Pago', 'Solicitar pago', 'Conectar Mercado Pago', 'Pendiente de procesamiento por TUS', 'Historial', 'Fecha', 'Tipo', 'Servicio', 'Turno', 'Importe', 'Estado', 'Solicitudes de pago'])
+  for (const texto of ['Total histórico cobrado', 'Ganancias disponibles', 'En liquidación', 'Pagadas', 'Saldo negativo', 'Tarifas de Mercado Pago', 'Mínimo para solicitar', 'Email de tu cuenta de Mercado Pago', 'Solicitar pago', 'Vincular Mercado Pago', 'Pendiente de procesamiento por TUS', 'Historial', 'Fecha', 'Tipo', 'Servicio', 'Turno', 'Importe', 'Estado', 'Solicitudes de pago'])
     assert.ok(panel.includes(texto), texto)
   assert.ok(contratos.includes('Vinculá tu cuenta de Mercado Pago para retirar tus ganancias.'))
   assert.match(panel, /mensajeMotivoSinLiquidacion\(summary\.blockedReason\)/u)
@@ -559,7 +552,7 @@ test('GANANCIAS-02 domain: every action on a payout request is audited in order 
     const sinCuenta = await service.resumen(ana)
     out.sinCuenta = [sinCuenta.availableMinor, sinCuenta.canRequest, sinCuenta.blockedReason, sinCuenta.paymentAccountStatus, await codeOf(() => service.solicitar(ana, 'clave-ana-0001', destino))]
     store.cuentas.set('t-ana', 'cuenta-ana')
-    // PAGOS-MP-VINCULADO-01: an identity not verified by TUS blocks nothing of a payout.
+    // PRESTADOR-SIN-KYC-01 (owner's decision): an identity not verified by TUS blocks nothing of a payout.
     verificados.delete('t-ana')
     out.sinIdentidad = (await service.resumen(ana)).blockedReason
     verificados.add('t-ana')
@@ -606,7 +599,7 @@ test('GANANCIAS-02 domain: every action on a payout request is audited in order 
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.sinCuenta, ['3050000', false, 'PAYMENT_ACCOUNT_REQUIRED', 'not_connected', 'PAYMENT_ACCOUNT_REQUIRED'], 'without Mercado Pago the earnings accumulate and cannot be withdrawn')
-  assert.equal(r.sinIdentidad, null, 'PAGOS-MP-VINCULADO-01: with Mercado Pago linked, an unverified identity is not a reason')
+  assert.equal(r.sinIdentidad, null, 'with Mercado Pago linked, an unverified identity is not a reason')
   assert.deepEqual(r.bajoMinimo, ['BELOW_MINIMUM', 'PAYOUT_BELOW_MINIMUM'])
   assert.deepEqual(r.habilitada, [true, 'connected'])
   assert.deepEqual(r.carrera, [1, ['PAYOUT_ALREADY_OPEN']])

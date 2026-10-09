@@ -135,7 +135,7 @@ export function crearModuloPagosServicio(input: {
     politica: new PoliticaCobroPersistida(
       input.configuracion,
       operativo,
-      (tenantId) => cuentas.cuentaConectada(tenantId),
+      null,
       produccionAutorizada,
       null,
       // Only with the real adapter configured: a fake or missing provider never collects for TUS.

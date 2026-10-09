@@ -95,24 +95,24 @@ test('WEB-09D provider disabled: preview still works, payment is unavailable and
   const result = runTypeScriptScenario(`${SERVICE_SETUP}${PAYMENTS_SETUP}
     const done = await payableWork('disabled', '990000')
     const config = new AlmacenConfiguracionPagosEnMemoria()
-    const off = financeWith(new PoliticaCobroPersistida(config, () => leerEstadoOperativoPagos({}, false), async () => false))
+    const off = financeWith(new PoliticaCobroPersistida(config, () => leerEstadoOperativoPagos({}, false), async () => false, undefined, null, () => true))
     const preview = await off.consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })
     const intentCode = await codeOf(() => off.crearIntencionPago({ ...customer, trabajoId: done.work.trabajoId, idempotencyKey: 'pay-off' }))
     const obligationCode = await codeOf(() => off.prepararObligacion({ ...customer, trabajoId: done.work.trabajoId, idempotencyKey: 'prep-off' }))
     const admin = new ServicioConfiguracionPagos(config, () => leerEstadoOperativoPagos(readyEnv, false), clock)
     await admin.registrarConfiguracion({ actorId: 'admin', correlationId: 'c' }, { paymentsEnabled: true, reason: 'launch', expectedVersion: 0 })
     const stillOff = await off.consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })
-    const noAdapter = financeWith(new PoliticaCobroPersistida(config, () => leerEstadoOperativoPagos(readyEnv, false), async () => true))
+    const noAdapter = financeWith(new PoliticaCobroPersistida(config, () => leerEstadoOperativoPagos(readyEnv, false), async () => true, undefined, null, () => true))
     const adapterReason = (await noAdapter.consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
     const ready = () => leerEstadoOperativoPagos(readyEnv, true)
     // WEB-09E: an explicit undetermined bearer blocks, a platform-paid fee is unsupported.
     await admin.registrarPolitica({ actorId: 'admin', correlationId: 'c' }, { scope: 'global', rateBps: 1000, pspFeeBearer: 'undetermined', reason: 'draft', expectedVersion: 0 })
-    const undecided = (await financeWith(new PoliticaCobroPersistida(config, ready, async () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
+    const undecided = (await financeWith(new PoliticaCobroPersistida(config, ready, async () => true, undefined, null, () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
     await admin.registrarPolitica({ actorId: 'admin', correlationId: 'c' }, { scope: 'global', rateBps: 1000, pspFeeBearer: 'platform', reason: 'platform', expectedVersion: 1 })
-    const unsupported = (await financeWith(new PoliticaCobroPersistida(config, ready, async () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
+    const unsupported = (await financeWith(new PoliticaCobroPersistida(config, ready, async () => true, undefined, null, () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
     await admin.registrarPolitica({ actorId: 'admin', correlationId: 'c' }, { scope: 'global', rateBps: 1000, pspFeeBearer: 'provider', reason: 'launch', expectedVersion: 2 })
-    const notLinked = (await financeWith(new PoliticaCobroPersistida(config, ready, async () => false)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
-    const linked = await financeWith(new PoliticaCobroPersistida(config, ready, async () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })
+    const notLinked = (await financeWith(new PoliticaCobroPersistida(config, ready, async () => false, undefined, null, () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })).unavailableReason
+    const linked = await financeWith(new PoliticaCobroPersistida(config, ready, async () => true, undefined, null, () => true)).consultarVistaPreviaPago({ ...customer, trabajoId: done.work.trabajoId })
     console.log(JSON.stringify({ preview, intentCode, obligationCode, stillOff: stillOff.unavailableReason, adapterReason, undecided, unsupported, notLinked, linked: [linked.paymentAvailable, linked.unavailableReason], writes: writes() }))
   `)
 
@@ -126,7 +126,9 @@ test('WEB-09D provider disabled: preview still works, payment is unavailable and
   assert.equal(result.adapterReason, 'PROVIDER_NOT_CONFIGURED')
   assert.equal(result.undecided, 'PSP_FEE_POLICY_UNDECIDED')
   assert.equal(result.unsupported, 'PSP_FEE_POLICY_UNSUPPORTED')
-  assert.equal(result.notLinked, 'PROVIDER_ACCOUNT_NOT_CONNECTED')
+  // COBRO-POR-PLATAFORMA-01 (owner's decision): a provider that did not link Mercado Pago is paid
+  // all the same (TUS collects); the link is only the destination of its payouts.
+  assert.equal(result.notLinked, null)
   assert.deepEqual(result.linked, [true, null])
   assert.equal(result.writes, 0)
 })
@@ -145,7 +147,7 @@ test('WEB-09D commission is configurable, bounded, scoped and frozen in each sna
     const v1 = await admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1000, pspFeeBearer: 'provider', reason: 'launch 10%', expectedVersion: 0 })
     const stale = await codeOf(() => admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1100, pspFeeBearer: 'provider', reason: 'stale', expectedVersion: 0 }))
     await admin.registrarConfiguracion(ctx, { paymentsEnabled: true, reason: 'launch', expectedVersion: 0 })
-    const paying = financeWith(new PoliticaCobroPersistida(config, () => leerEstadoOperativoPagos(readyEnv, true), async () => true))
+    const paying = financeWith(new PoliticaCobroPersistida(config, () => leerEstadoOperativoPagos(readyEnv, true), async () => true, undefined, null, () => true))
     async function pay(id, totalMinor, amount, fee) {
       const done = await payableWork(id, totalMinor)
       const created = await paying.crearIntencionPago({ ...customer, trabajoId: done.work.trabajoId, idempotencyKey: 'pay-' + id })
@@ -523,7 +525,7 @@ test('PAGOS habilitación técnica: in production, missing legal/kyb/tax approva
     await admin.registrarPolitica(ctx, { scope: 'global', rateBps: 1000, pspFeeBearer: 'provider', reason: 'launch', expectedVersion: 0 })
     let identidad = true
     let cuenta = true
-    const politica = (operativo = produccion(), plataforma = false) => new PoliticaCobroPersistida(config, operativo, async () => cuenta, gate.autorizada, async () => identidad, () => plataforma)
+    const politica = (operativo = produccion(), plataforma = true) => new PoliticaCobroPersistida(config, operativo, async () => cuenta, gate.autorizada, async () => identidad, () => plataforma)
     const cobro = (p = politica()) => p.disponibilidad({ prestadorTenantId: provider.tenantId, prestadorId: 'provider-1', categoria: null })
     const lanzamiento = async () => (await admin.estado()).publicLaunchReadiness
 
@@ -579,26 +581,26 @@ test('PAGOS habilitación técnica: in production, missing legal/kyb/tax approva
 
     // The collection account: the provider's own, or TUS's as a fallback; none of them blocks.
     cuenta = false
-    out.cuenta = [await cobro(), await cobro(politica(produccion(), true))]
+    out.cuenta = [await cobro(), await cobro(politica(produccion(), false))]
     cuenta = true
     // The switch of the platform still turns everything off.
-    out.interruptor = await new PoliticaCobroPersistida(new AlmacenConfiguracionPagosEnMemoria(), produccion(), async () => true, gate.autorizada, async () => true).disponibilidad({ prestadorTenantId: provider.tenantId, prestadorId: 'provider-1', categoria: null })
+    out.interruptor = await new PoliticaCobroPersistida(new AlmacenConfiguracionPagosEnMemoria(), produccion(), async () => true, gate.autorizada, async () => true, () => true).disponibilidad({ prestadorTenantId: provider.tenantId, prestadorId: 'provider-1', categoria: null })
     console.log(JSON.stringify(out))
   `)
   const pendientes = ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'].map((gate) => ({ gate, status: 'pending' }))
-  assert.deepEqual(r.sinEvidencia, [{ available: true, reason: null, mode: 'split' }, true, [], { capability: 'public-launch-readiness', ready: false, gates: pendientes }, false], 'no approval: technically enabled, and not ready for the public launch')
+  assert.deepEqual(r.sinEvidencia, [{ available: true, reason: null, mode: 'plataforma' }, true, [], { capability: 'public-launch-readiness', ready: false, gates: pendientes }, false], 'no approval: technically enabled, and not ready for the public launch')
   assert.equal(r.pago[3], 'paid', 'a real payment is charged and confirmed by its verified notification')
   assert.deepEqual(r.dobleCobro.slice(2), [true, 'OBLIGATION_NOT_PAYABLE', true, 'paid'], 'the same key is the same intent, a paid work takes no second charge, nothing is created')
   assert.deepEqual([r.pago[1], r.dobleCobro[0]], ['recorded', 'duplicate'], 'the repeated notification is a duplicate: it is not applied again')
-  assert.deepEqual(r.parcial, [{ capability: 'public-launch-readiness', ready: false, gates: [{ gate: 'legal', status: 'pending' }, { gate: 'kyc', status: 'pending' }, { gate: 'kyb', status: 'pending' }, { gate: 'tax', status: 'expired' }, { gate: 'mercadoPago', status: 'current' }, { gate: 'runtimeProvider', status: 'current' }] }, { available: true, reason: null, mode: 'split' }], 'legal, kyc, kyb pending and tax expired are reported and block nothing')
+  assert.deepEqual(r.parcial, [{ capability: 'public-launch-readiness', ready: false, gates: [{ gate: 'legal', status: 'pending' }, { gate: 'kyc', status: 'pending' }, { gate: 'kyb', status: 'pending' }, { gate: 'tax', status: 'expired' }, { gate: 'mercadoPago', status: 'current' }, { gate: 'runtimeProvider', status: 'current' }] }, { available: true, reason: null, mode: 'plataforma' }], 'legal, kyc, kyb pending and tax expired are reported and block nothing')
   // PAGOS-MP-VINCULADO-01 (owner's decision): TUS asks for no identity verification of its own to
   // charge; a linked provider charges whatever its identity state in TUS (before: refused).
-  assert.deepEqual(r.sinIdentidad, [true, { available: true, reason: null, mode: 'split' }, 'none'], 'an identity TUS did not verify is not a reason')
-  assert.deepEqual(r.conIdentidad, { available: true, reason: null, mode: 'split' })
+  assert.deepEqual(r.sinIdentidad, [true, { available: true, reason: null, mode: 'plataforma' }, 'none'], 'an identity TUS did not verify is not a reason')
+  assert.deepEqual(r.conIdentidad, { available: true, reason: null, mode: 'plataforma' })
   assert.deepEqual(r.mercadoPago, { MERCADO_PAGO_CLIENT_ID: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_CLIENT_SECRET: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_WEBHOOK_SECRET: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_OAUTH_REDIRECT_URI: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_NOTIFICATION_URL: 'PROVIDER_NOT_CONFIGURED', TUS_PAYMENT_CREDENTIALS_KEY: 'PROVIDER_NOT_CONFIGURED', TUS_WEB_BASE_URL: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_ENVIRONMENT: 'PROVIDER_NOT_CONFIGURED', apagado: 'PROVIDER_NOT_CONFIGURED', sinAdaptador: 'PROVIDER_NOT_CONFIGURED', webhookSinHttps: 'PROVIDER_NOT_CONFIGURED' }, 'every piece of Mercado Pago, the webhook among them, is required')
   assert.deepEqual(r.comision, ['PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', true])
-  // PAGOS-MP-VINCULADO-01 (owner's decision): the account of TUS never stands in for the link of the
-  // provider (before: with it, an unlinked provider could charge).
-  assert.deepEqual(r.cuenta, [{ available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }], 'a provider charges only with its Mercado Pago linked')
+  // COBRO-POR-PLATAFORMA-01 (owner's decision): a provider with no Mercado Pago linked is paid through
+  // the account of TUS; only without THAT account nobody can collect.
+  assert.deepEqual(r.cuenta, [{ available: true, reason: null, mode: 'plataforma' }, { available: false, reason: 'PLATFORM_ACCOUNT_REQUIRED' }], 'the provider needs no account of its own; TUS needs its own')
   assert.deepEqual(r.interruptor, { available: false, reason: 'PAYMENTS_DISABLED' })
 })

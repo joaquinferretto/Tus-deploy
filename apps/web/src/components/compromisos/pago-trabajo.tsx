@@ -34,7 +34,7 @@ const NOT_PAYABLE_COPY: Record<string, string> = {
 
 const UNAVAILABLE_COPY: Record<string, string> = {
   PROVIDER_ACCOUNT_NOT_CONNECTED:
-    'El prestador todavía no conectó su cuenta de Mercado Pago. Podés coordinar el pago con él.',
+    'TUS todavía no puede cobrar este trabajo online. Podés coordinar el pago con el prestador.',
 }
 
 const PAYMENT_STATUS_COPY: Record<string, string> = {

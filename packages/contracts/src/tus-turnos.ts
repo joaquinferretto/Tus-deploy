@@ -30,7 +30,6 @@ export function mensajeErrorTurno(code: string | undefined, fallback = 'No pudim
   if (code === CODIGO_TRANSICION_INVALIDA) return 'Ese turno ya no admite ese cambio.'
   if (code === CODIGO_SOLICITUD_SIN_HORARIO) return 'Ese horario ya no está libre en tu agenda: la solicitud quedó rechazada.'
   if (code === CODIGO_PRESTADOR_SIN_COBRO) return 'TUS todavía no puede cobrar la seña de tus turnos: falta configurar la cuenta de cobro de la plataforma. No es algo que tengas que resolver vos: avisale al equipo de TUS. La solicitud sigue pendiente.'
-  if (code === CODIGO_PRESTADOR_SIN_MERCADO_PAGO) return MENSAJE_PRESTADOR_SIN_MERCADO_PAGO
   if (code === CODIGO_PAGOS_SERVICIO_NO_HABILITADOS) return 'Los pagos de servicios todavía no están habilitados en TUS. Por ahora no se pueden aceptar turnos con seña; la solicitud sigue pendiente.'
   if (code === CODIGO_SENA_NO_PAGABLE) return 'La seña de ese turno no se puede pagar ahora.'
   if (code === CODIGO_SENA_YA_PAGADA) return 'La seña de ese turno ya está pagada.'
@@ -120,10 +119,6 @@ export const CODIGO_SOLICITUD_SIN_HORARIO = 'REQUEST_SLOT_UNAVAILABLE'
 // The deposit cannot be charged because TUS has no platform account configured to collect and hold
 // it with (never something the provider can solve).
 export const CODIGO_PRESTADOR_SIN_COBRO = 'PROVIDER_PAYMENT_ACCOUNT_REQUIRED'
-// PAGOS-MP-VINCULADO-01. The provider has not linked its Mercado Pago account yet: the one thing
-// TUS asks of a provider to charge (TUS makes no identity verification of its own for that).
-export const CODIGO_PRESTADOR_SIN_MERCADO_PAGO = 'PROVIDER_MERCADO_PAGO_REQUIRED'
-export const MENSAJE_PRESTADOR_SIN_MERCADO_PAGO = 'Para aceptar turnos con seña primero tenés que vincular tu Mercado Pago en "Cobros". Es un solo paso y se hace en Mercado Pago. La solicitud sigue pendiente.'
 // The turno has a deposit and TUS itself may not charge service payments yet (production without
 // the `service-payments` readiness authorization): the request stays pending, never confirmed.
 export const CODIGO_PAGOS_SERVICIO_NO_HABILITADOS = 'SERVICE_PAYMENTS_NOT_AUTHORIZED'

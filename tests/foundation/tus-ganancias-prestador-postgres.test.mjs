@@ -47,11 +47,7 @@ test('GANANCIAS E2E PostgreSQL + real Mercado Pago adapters: platform collection
   const r = runTypeScriptScenario(`${SETUP}
     const out = {}
     try {
-      // PAGOS-MP-VINCULADO-01 (owner's decision): a provider charges only with its Mercado Pago linked.
-      // This provider links it to charge and unlinks it afterwards: its earnings stay in TUS and it
-      // cannot withdraw them until it links an account again.
-      const conMp = async (p, id, op) => { await conectarMercadoPago(p, id); try { return await op() } finally { await modulo.cuentas.desconectar({ tenantId: p.tenantId, actorId: 'u', correlationId: 'c' }) } }
-      const sin = await prestador('sin', 'Sin MP ' + run, [['Masaje', 15000], ['Largo', 20000], ['Corto', 10000]], { sinMercadoPago: true })
+      const sin = await prestador('sin', 'Sin MP ' + run, [['Masaje', 15000], ['Largo', 20000], ['Corto', 10000]])
       const con = await prestador('con', 'Con MP ' + run, [['Masaje', 15000]])
       const ana = await cliente('ana')
       const beto = await cliente('beto')
@@ -81,7 +77,7 @@ test('GANANCIAS E2E PostgreSQL + real Mercado Pago adapters: platform collection
       // CASE 1: provider WITHOUT Mercado Pago: TUS collects with its own account (no split, no
       // marketplace fee); a redirect or a checkout confirms nothing; the verified notification
       // confirms the turno and books the earning (15.000 - 10% = 13.500).
-      const p1 = await conMp(sin, '8801', () => turnoTotal(sin, ana, 1, '10:00', 'Masaje'))
+      const p1 = await turnoTotal(sin, ana, 1, '10:00', 'Masaje')
       out.plataformaAntes = [p1.pago.modoCobro, p1.preferencia.seller, 'marketplace_fee' in p1.preferencia.body, p1.preferencia.body.items[0].unit_price, await estadoTurno(p1)]
       mpPayment('6001', p1.preferencia)
       const n1 = await ingerir(notification('6001', { userId: '555' }))
@@ -89,7 +85,7 @@ test('GANANCIAS E2E PostgreSQL + real Mercado Pago adapters: platform collection
       out.consultaConTokenTus = mp.requests.filter((x) => x.path === '/v1/payments/6001').every((x) => x.headers.authorization === 'Bearer ' + PLATFORM_TOKEN)
 
       // CASE 3: a second turno accumulates (20.000 - 10% = 18.000, fee 1.000 reported at once).
-      const p2 = await conMp(sin, '8801', () => turnoTotal(sin, beto, 1, '11:00', 'Largo'))
+      const p2 = await turnoTotal(sin, beto, 1, '11:00', 'Largo')
       mpPayment('6002', p2.preferencia, { fee_details: [{ type: 'mercadopago_fee', amount: 1000, fee_payer: 'collector' }] })
       await ingerir(notification('6002', { userId: '555' }))
       out.caso3 = [await estadoTurno(p2), (await saldo(sin)).disponible]
@@ -99,7 +95,7 @@ test('GANANCIAS E2E PostgreSQL + real Mercado Pago adapters: platform collection
       out.acumulado = [await filas(sin), await saldo(sin)]
 
       // CASE 18: a client cannot pay someone else's turno.
-      const t2 = await conMp(sin, '8801', () => turnoTotal(sin, ana, 1, '12:00', 'Corto'))
+      const t2 = await turnoTotal(sin, ana, 1, '12:00', 'Corto')
       out.otroCliente = await codeOf(() => turnos.pagarSena({ clienteId: beto.id, reservaId: t2.pedido.id, correlationId: 'c' }))
 
       // Without Mercado Pago nothing can be requested.
@@ -166,7 +162,7 @@ test('GANANCIAS E2E PostgreSQL + real Mercado Pago adapters: platform collection
       await modulo.cuentas.desconectar({ tenantId: sin.tenantId, actorId: 'u', correlationId: 'c' })
       const compensa = []
       for (const [indice, hora, variante, numero] of [[2, '10:00', 'Largo', '6101'], [2, '11:00', 'Largo', '6102'], [2, '12:00', 'Masaje', '6103']]) {
-        const t = await conMp(sin, '888', () => turnoTotal(sin, ana, indice, hora, variante))
+        const t = await turnoTotal(sin, ana, indice, hora, variante)
         mpPayment(numero, t.preferencia)
         await ingerir(notification(numero, { userId: '555' }))
         const s = await saldo(sin)
@@ -276,12 +272,8 @@ test('GANANCIAS-02 PostgreSQL: the collecting account must match the mode frozen
       const m = await prestador('m', 'Modo ' + run, [['Masaje', 15000]])
       const s1 = await prestador('s1', 'Split uno ' + run, [['Masaje', 15000]])
       const s2 = await prestador('s2', 'Split dos ' + run, [['Masaje', 15000]])
-      const rp = await prestador('rp', 'Reintento ' + run, [['Masaje', 15000], ['Largo', 20000]], { sinMercadoPago: true })
-      const dup = await prestador('dup', 'Duplicado ' + run, [['Masaje', 15000]], { sinMercadoPago: true })
-      // PAGOS-MP-VINCULADO-01 (owner's decision): a provider charges only with its Mercado Pago linked.
-      // This provider links it to charge and unlinks it afterwards: its earnings stay in TUS and it
-      // cannot withdraw them until it links an account again.
-      const conMp = async (p, id, op) => { await conectarMercadoPago(p, id); try { return await op() } finally { await modulo.cuentas.desconectar({ tenantId: p.tenantId, actorId: 'u', correlationId: 'c' }) } }
+      const rp = await prestador('rp', 'Reintento ' + run, [['Masaje', 15000], ['Largo', 20000]])
+      const dup = await prestador('dup', 'Duplicado ' + run, [['Masaje', 15000]])
       const ana = await cliente('ana')
 
       // A payment in the provider's OWN account carrying the reference of an intent TUS collects:
@@ -311,10 +303,10 @@ test('GANANCIAS-02 PostgreSQL: the collecting account must match the mode frozen
       out.duplicadaEnBase = await sqlError("UPDATE cuentas_cobro_prestador SET cuenta_externa_id = '902' WHERE prestador_tenant_id = $1 AND proveedor = 'mercado-pago'", [dup.tenantId])
 
       // Earnings of a provider without Mercado Pago, then it connects and asks to be paid.
-      const p1 = await conMp(rp, '9041', () => turnoTotal(rp, ana, 4, '10:00', 'Masaje'))
+      const p1 = await turnoTotal(rp, ana, 4, '10:00', 'Masaje')
       mpPayment('7401', p1.preferencia)
       await ingerir(notification('7401', { userId: '555' }))
-      const p2 = await conMp(rp, '9041', () => turnoTotal(rp, ana, 4, '11:00', 'Largo'))
+      const p2 = await turnoTotal(rp, ana, 4, '11:00', 'Largo')
       mpPayment('7402', p2.preferencia)
       await ingerir(notification('7402', { userId: '555' }))
       out.acumulado = [await filas(rp), (await saldo(rp)).disponible, (await saldo(rp)).motivo, (await ganancias.resumen(rp.ctx)).paymentAccountStatus]
@@ -383,7 +375,7 @@ test('GANANCIAS-02 PostgreSQL: the collecting account must match the mode frozen
   assert.notEqual(r.duplicadaEstado, 'connected')
   assert.equal(r.duplicadaEnBase, 'uq_cuentas_cobro_prestador_cuenta_externa', 'one Mercado Pago account, one provider: also enforced by the database')
   // Accumulation without Mercado Pago, blocked with a clear reason.
-  assert.deepEqual(r.acumulado, [[['earning_credit', '1350000'], ['earning_credit', '1800000']], '3150000', 'PAYMENT_ACCOUNT_REQUIRED', 'revoked'])
+  assert.deepEqual(r.acumulado, [[['earning_credit', '1350000'], ['earning_credit', '1800000']], '3150000', 'PAYMENT_ACCOUNT_REQUIRED', 'not_connected'])
   assert.deepEqual(r.conectado, ['connected', true])
   // Idempotency, failure, retry.
   assert.deepEqual(r.idempotencia, ['created', 'existing', true, 'requested', 'PAYOUT_ALREADY_OPEN'])

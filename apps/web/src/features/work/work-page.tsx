@@ -638,7 +638,7 @@ const PAYMENT_STATUS: Record<string, string> = {
   charged_back: 'Contracargo',
 }
 const UNAVAILABLE: Record<string, string> = {
-  PROVIDER_ACCOUNT_NOT_CONNECTED: 'El prestador debe vincular Mercado Pago antes de poder cobrar este trabajo.',
+  PROVIDER_ACCOUNT_NOT_CONNECTED: 'TUS todavía no puede cobrar este trabajo. No es algo que tengas que resolver vos: avisale al equipo de TUS.',
   PLATFORM_ACCOUNT_REQUIRED: 'TUS todavía no puede cobrar pagos anticipados. No es algo que tengas que resolver vos: avisale al equipo de TUS.',
 }
 const money = (minor: string, currency: string) =>

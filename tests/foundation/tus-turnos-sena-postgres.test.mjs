@@ -410,7 +410,7 @@ test('TURNOS seña PostgreSQL seguridad: only the client of the turno gets its c
   assert.equal(r.finanzasAjenas, 'NOT_FOUND', "another tenant cannot even see the order")
   assert.equal(r.finanzasPrestador, 'FORBIDDEN', 'only the client pays its deposit')
   assert.deepEqual(r.noEsTrabajo, [0, 0, 'NOT_FOUND', 'NOT_FOUND', 'NOT_FOUND', 0, 'accepted'], 'the order is invisible to the work screens and accepts no work command')
-  assert.deepEqual(r.sinCobro, [{ monto: 4000, moneda: 'ARS', estado: 'not_due' }, 409, 'PROVIDER_MERCADO_PAGO_REQUIRED', 'pending', 409, 'DEPOSIT_NOT_PAYABLE', null, 0], 'PAGOS-MP-VINCULADO-01: a provider that did not link its Mercado Pago cannot accept: nothing is confirmed, charged, created or announced')
+  assert.deepEqual(r.sinCobro, [{ monto: 4000, moneda: 'ARS', estado: 'not_due' }, 409, 'PROVIDER_PAYMENT_ACCOUNT_REQUIRED', 'pending', 409, 'DEPOSIT_NOT_PAYABLE', null, 0], 'a provider that cannot charge cannot accept: nothing is confirmed, charged, created or announced')
   assert.deepEqual(r.luegoConectado, [200, 'awaiting_payment', { monto: 4000, moneda: 'ARS', estado: 'pending' }])
   assert.deepEqual(r.anunciado, [[20000, 10000, true], [25000, 12500, true], [30000, 15000, true], [2501, 1250.5, true]], 'price and deposit shown before requesting are the backend\'s')
   assert.deepEqual(r.anunciadoSinPagos, [25000, null, false], 'with online payments off the price is shown and no deposit is announced')
@@ -801,7 +801,7 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
     [['service-payments', false, 'blocked', 'system:service-payments', 'argentina-stage-1'], ['settlement', false, 'blocked', 'system:service-payments', 'argentina-stage-1']], 0,
   ], 'the persisted evaluator reports both registries without evidence (settlement on its six core requirements), audits each decision and writes no evidence')
   assert.deepEqual(r.sinAprobaciones, [[false, true], { available: true, reason: null, mode: 'plataforma' }, true], 'no approval for the launch: the deposit is technically chargeable, and it is still what confirms a priced turno')
-  assert.deepEqual(r.sinIdentidad, [{ available: true, reason: null, mode: 'plataforma' }, 'pending'], 'an identity TUS did not verify is not a reason: the deposit of a linked provider can be charged')
+  assert.deepEqual(r.sinIdentidad, [{ available: true, reason: null, mode: 'plataforma' }, 'pending'], 'an identity TUS did not verify is not a reason: the deposit can be charged')
   assert.deepEqual(r.sinEvidencia, [201, { monto: 12500, moneda: 'ARS', estado: 'not_due' }, 200, 'awaiting_payment', { monto: 12500, moneda: 'ARS', estado: 'pending' }, 200, 12500, 'awaiting_payment'], 'production without any approval: accepting opens the payment of the deposit; neither accepting nor the checkout confirms')
   assert.deepEqual(r.sinVerificar, [503, 'PAYMENT_NOT_AVAILABLE', 'pending'], 'an unavailable check never turns into a confirmation')
   // Before, production without the approvals fell back to "no deposit" and this request was confirmed for free.
@@ -818,9 +818,7 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
   assert.deepEqual(r.conGate, [{ monto: 10000, moneda: 'ARS', estado: 'not_due' }, 'awaiting_payment', { monto: 10000, moneda: 'ARS', estado: 'pending' }, 400, 'UNTRUSTED_PAYMENT_FIELDS', 200, 10000, true])
   assert.equal(r.checkoutNoConfirma, 'awaiting_payment', 'creating the checkout does not confirm the turno')
   // A provider without its own Mercado Pago account is charged through the account of TUS.
-  // PAGOS-MP-VINCULADO-01 (owner's decision): a provider charges only with its Mercado Pago linked
-  // (before: TUS collected for a provider with no account).
-  assert.deepEqual(r.prestadorSinCuenta, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' })
+  assert.deepEqual(r.prestadorSinCuenta, { available: true, reason: null, mode: 'plataforma' })
   assert.deepEqual(r.revocada, [[false, false], 200, 15000, 'awaiting_payment'], 'a revoked approval makes the launch not ready; the deposit can still be paid and nothing is confirmed by it')
   assert.deepEqual(r.vuelta, [200, 'awaiting_payment'], 'coming back from Mercado Pago confirms nothing')
   assert.deepEqual(r.firmaInvalida, ['invalid:INVALID_SIGNATURE', 'awaiting_payment'])

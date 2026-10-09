@@ -223,12 +223,14 @@ export function ProviderEarningsPanel({ session }: { session: TusWebSession }): 
                 {busy ? 'Solicitando…' : 'Solicitar pago'}
               </button>
             </form>
+          ) : summary.blockedReason === 'PAYMENT_ACCOUNT_REQUIRED' && BigInt(summary.availableMinor) > 0n ? (
+            <p data-retiro-sin-mercado-pago role="status">Tenés {formatMoney(summary.availableMinor, summary.currency)} disponibles. Vinculá Mercado Pago para retirar.</p>
           ) : blocked ? (
             <p role="status">{blocked}</p>
           ) : null}
           {summary.blockedReason === 'PAYMENT_ACCOUNT_REQUIRED' ? (
             <button disabled={busy} onClick={() => void connect()} type="button">
-              Conectar Mercado Pago
+              Vincular Mercado Pago
             </button>
           ) : null}
           {summary.openPayout ? (

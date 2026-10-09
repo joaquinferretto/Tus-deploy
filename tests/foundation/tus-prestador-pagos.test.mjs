@@ -69,7 +69,8 @@ test('FASE6 Web: /prestador/pagos shows only safe data (masked account), never a
   const panel = read('apps/web/src/features/provider/provider-payments.tsx')
   // PAGOS-MP-VINCULADO-01: one step ("Vincular Mercado Pago"), three states, and no technical id
   // on screen (not even the masked account).
-  assert.match(panel, /'Vincular Mercado Pago'/u)
+  assert.match(panel, /'Vincular Mercado Pago para retirar tus ganancias'/u)
+  assert.match(panel, /Tus clientes te pagan por TUS aunque no tengas Mercado Pago vinculado/u)
   assert.match(panel, /'Volver a vincular Mercado Pago'/u)
   assert.match(panel, /Desvincular/u)
   assert.match(panel, /data-mercado-pago=\{connected \? 'vinculado' : account\.status === 'expired' \|\| account\.status === 'error' \? 'requiere_reconexion' : 'no_vinculado'\}/u)

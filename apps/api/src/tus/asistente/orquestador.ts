@@ -4098,8 +4098,6 @@ export function formatearResultadoAccion(
     const copy: Record<string, string> = {
       SLOT_REQUIRED:
         'Ese servicio necesita elegir un horario: por ahora la reserva se hace desde la Web de TUS.',
-      PROVIDER_ACCOUNT_NOT_CONNECTED:
-        'Para cobrar por TUS el prestador tiene que vincular su Mercado Pago. Se hace desde "Cobros", en la Web de TUS.',
       FORBIDDEN: 'Tu cuenta no tiene permiso para hacer eso.',
       NOT_FOUND: 'No encontré ese recurso en tu cuenta.',
       VERSION_CONFLICT: 'El estado cambió mientras tanto. Pedime que lo revise de nuevo.',

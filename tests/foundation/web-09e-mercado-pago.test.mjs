@@ -124,7 +124,8 @@ test('WEB-09E seller token is renewed before use and a failed renewal fails clos
   assert.equal(result.expired, 'expired')
   assert.deepEqual(result.stillAvailable, {
     available: false,
-    reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED',
+    // COBRO-POR-PLATAFORMA-01 (owner's decision): the runtime policy asks for the account of TUS, not for the provider's link.
+    reason: 'PLATFORM_ACCOUNT_REQUIRED',
   })
   // The client secret travels only to /oauth/token (never to payment APIs).
   assert.equal(result.secretOutsideOauth, false)
@@ -380,7 +381,8 @@ test('WEB-09E runtime without full configuration keeps the unavailable provider;
   // PAGOS-HABILITACION-TECNICA-01: with no evidence at all, what blocks is the next real control.
   assert.deepEqual(result.productionReason, {
     available: false,
-    reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED',
+    // COBRO-POR-PLATAFORMA-01 (owner's decision): the runtime policy asks for the account of TUS, not for the provider's link.
+    reason: 'PLATFORM_ACCOUNT_REQUIRED',
   })
   assert.equal(result.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'), false)
 })

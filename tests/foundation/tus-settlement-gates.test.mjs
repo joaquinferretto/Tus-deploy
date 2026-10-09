@@ -125,11 +125,14 @@ test('SETTLEMENT keeps the operational protections of a payment: provider identi
   const fuente = readFileSync(join(root, 'apps/api/src/tus/finance/servicios/configuracion.ts'), 'utf8')
   // The runtime policy (the one production composes), not the fixed one of isolated tests.
   const politica = fuente.slice(fuente.indexOf('export class PoliticaCobroPersistida'))
-  const orden = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'PLATFORM_ACCOUNT_REQUIRED'].map((motivo) => politica.indexOf(`reason: '${motivo}'`))
+  const orden = ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', 'PLATFORM_ACCOUNT_REQUIRED'].map((motivo) => politica.indexOf(`reason: '${motivo}'`))
   assert.ok(orden.every((posicion) => posicion > 0), 'every protection is still there')
   assert.deepEqual([...orden].sort((a, b) => a - b), orden, 'and in the same order')
   // PAGOS-MP-VINCULADO-01 (owner's decision): no identity verification of TUS's own decides a payment.
   assert.doesNotMatch(politica, /reason: 'PROVIDER_IDENTITY_NOT_VERIFIED'|identidadVerificada\(/u)
+  // COBRO-POR-PLATAFORMA-01 (owner's decision): nor does a linked Mercado Pago, and nothing is paid
+  // straight to the provider (no split) by the runtime policy.
+  assert.doesNotMatch(politica, /reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED'|mode: 'split'|this\.cuentaConectada/u)
 })
 
 // PROVIDER-ACTIONS-GATES-01. Payment intents, evidence, provider webhooks and deterministic

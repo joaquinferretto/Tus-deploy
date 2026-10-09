@@ -63,15 +63,17 @@ test('PRESTADOR sin KYC: a provider TUS did not verify, with no Mercado Pago, pu
     publish: true,
     accept: 'none',
     connect: 'none',
-    money: 'PROVIDER_ACCOUNT_NOT_CONNECTED',
+    // COBRO-POR-PLATAFORMA-01 (owner's decision): nothing of the provider is asked to be paid (no
+    // identity, no linked Mercado Pago); this composition has no account of TUS to collect with.
+    money: 'PLATFORM_ACCOUNT_REQUIRED',
     // In-memory composition without payment configuration fails closed before anything else.
     appConnect: 'PROVIDER_NOT_CONFIGURED',
-  }, 'not verified by TUS and with no Mercado Pago: it publishes and accepts work; only charging asks for the link')
+  }, 'not verified by TUS and with no Mercado Pago: it publishes and accepts work; nothing of the provider is missing to be paid')
   assert.notEqual(result.inReview, 'none', 'a provider that is not approved still cannot publish')
   assert.notEqual(result.inReview, 'PROVIDER_IDENTITY_NOT_VERIFIED')
   assert.equal(result.after.identidad, true)
   assert.match(result.after.connect, /mercadopago/u)
-  assert.equal(result.after.money, 'PROVIDER_ACCOUNT_NOT_CONNECTED', 'a verified identity authorizes nothing: charging still asks for Mercado Pago')
+  assert.equal(result.after.money, 'PLATFORM_ACCOUNT_REQUIRED', 'a verified identity changes nothing of what can be charged')
   assert.equal(result.other, 'none')
   // No production code outside the identity module and the directory (a badge, a filter and the
   // order of the results) asks whether an identity is verified.

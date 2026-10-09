@@ -50,7 +50,7 @@ Estados: `pending_upload`, `queued`, `processing`, `retry_pending`, `session_req
 Desde el 2026-10-09 (decisión del dueño, PRESTADOR-SIN-KYC-01) la identidad verificada por TUS **no es un gate**:
 no se exige para crear el perfil, publicar, aparecer en búsquedas, recibir o aceptar solicitudes y turnos, vincular
 Mercado Pago, cobrar ni retirar. Es un dato opcional (confianza, moderación, soporte, futura insignia) que solo lee el
-directorio para mostrarlo. El requisito para cobrar es Mercado Pago vinculado (ver `docs/PAGOS_SERVICIOS_TUS.md`).
+directorio para mostrarlo. Tampoco hace falta Mercado Pago vinculado para trabajar ni para cobrar: solo para retirar (ver `docs/PAGOS_SERVICIOS_TUS.md`).
 
 ## 3. Cola, límite y worker
 

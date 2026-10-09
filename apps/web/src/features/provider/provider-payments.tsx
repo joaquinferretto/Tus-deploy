@@ -96,7 +96,7 @@ export function PaymentAccountPanel({ session }: { session: TusWebSession }): Re
   }
 
   async function disconnect() {
-    if (busy || !window.confirm('¿Desvincular tu Mercado Pago? No vas a poder cobrar por TUS hasta volver a vincularlo.')) return
+    if (busy || !window.confirm('¿Desvincular tu Mercado Pago? Vas a seguir cobrando por TUS, pero no vas a poder retirar tu saldo hasta volver a vincularlo.')) return
     setBusy(true)
     try {
       setAccount(await client().disconnectPaymentAccount(session))
@@ -113,8 +113,9 @@ export function PaymentAccountPanel({ session }: { session: TusWebSession }): Re
     <section className={styles.card} aria-labelledby="pagos-mercado-pago">
       <h2 id="pagos-mercado-pago">Mercado Pago</h2>
       <p>
-        Para cobrar por TUS solo necesitás vincular tu Mercado Pago. Es un paso: te llevamos a Mercado Pago, autorizás
-        a TUS y volvés. Nunca te pedimos contraseñas, tokens ni claves.
+        Tus clientes te pagan por TUS aunque no tengas Mercado Pago vinculado: tu parte queda en tu saldo. Vinculá
+        Mercado Pago para retirar tus ganancias. Es un paso: te llevamos a Mercado Pago, autorizás a TUS y volvés.
+        Nunca te pedimos contraseñas, tokens ni claves.
       </p>
       {notice ? <p role="status">{notice}</p> : null}
       {failed ? (
@@ -129,14 +130,14 @@ export function PaymentAccountPanel({ session }: { session: TusWebSession }): Re
             <strong data-mercado-pago={connected ? 'vinculado' : account.status === 'expired' || account.status === 'error' ? 'requiere_reconexion' : 'no_vinculado'}>{STATUS_COPY[account.status] ?? 'Mercado Pago sin vincular'}</strong>
           </p>
           {connected && account.liveMode === false ? <p>Modo de prueba (sandbox).</p> : null}
-          {!connected ? <p>Podés seguir usando TUS, pero no vas a poder cobrar señas ni trabajos hasta vincular Mercado Pago.</p> : null}
+          {!connected ? <p>Podés trabajar y cobrar igual. Solo vas a necesitar Mercado Pago vinculado para retirar tu saldo.</p> : null}
           {connected ? (
             <button disabled={busy} onClick={() => void disconnect()} type="button">
               Desvincular
             </button>
           ) : account.connectAvailable ? (
             <button disabled={busy} onClick={() => void connect()} type="button">
-              {busy ? 'Abriendo Mercado Pago…' : account.status === 'not_connected' ? 'Vincular Mercado Pago' : 'Volver a vincular Mercado Pago'}
+              {busy ? 'Abriendo Mercado Pago…' : account.status === 'not_connected' ? 'Vincular Mercado Pago para retirar tus ganancias' : 'Volver a vincular Mercado Pago'}
             </button>
           ) : (
             <p role="status">La vinculación con Mercado Pago todavía no está habilitada en TUS.</p>

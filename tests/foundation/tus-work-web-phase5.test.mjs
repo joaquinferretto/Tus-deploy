@@ -298,7 +298,7 @@ test(
       assert.equal(await page.getByRole('button', { name: /Pagar/u }).count(), 0)
       work = { ...work, payment: { ...payment, online: false, unavailableReason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' } }
       await page.evaluate((w) => window.mount('detail', w), { ...work, role: 'cliente' })
-      await page.getByText('El prestador debe vincular Mercado Pago antes de poder cobrar este trabajo.').waitFor()
+      await page.getByText('TUS todavía no puede cobrar este trabajo. No es algo que tengas que resolver vos: avisale al equipo de TUS.').waitFor()
       await page.route('https://www.mercadopago.com.ar/**', (route) => route.fulfill({ contentType: 'text/html', body: '<p>checkout</p>' }))
       const checkouts = []
       await page.route('https://tus.test/tus/v1/work/**', (route) => {

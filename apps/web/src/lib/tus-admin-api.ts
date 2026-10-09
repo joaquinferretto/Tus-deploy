@@ -124,8 +124,9 @@ export interface AdminCuentaPrestador {
   cuentasEnTenant: number
 }
 
-// PAGOS-MP-VINCULADO-01. The link of a provider with Mercado Pago, as the administration reads it
-// (the status is the API's; never a token nor an account id).
+// The link of a provider with Mercado Pago, as the administration reads it (the status is the
+// API's; never a token nor an account id). It is the DESTINATION OF ITS PAYOUTS: "No vinculado"
+// does not mean the provider cannot work or be paid by its clients (COBRO-POR-PLATAFORMA-01).
 export type VinculoMercadoPago = 'no_vinculado' | 'vinculado' | 'requiere_reconexion'
 export function vinculoMercadoPago(status: string | null | undefined): { estado: VinculoMercadoPago; texto: string; tono: 'ok' | 'warn' | 'off' } {
   if (status === 'connected') return { estado: 'vinculado', texto: 'Vinculado', tono: 'ok' }
@@ -138,14 +139,14 @@ export interface AdminCobroSena { disponible: boolean; motivo: string | null; mo
 export function textoCobroSena(cobro: AdminCobroSena | null | undefined): { texto: string; detalle: string; tono: 'ok' | 'warn' | 'danger' } {
   if (!cobro) return { texto: 'Sin dato', detalle: 'No se pudo consultar el estado de cobro.', tono: 'warn' }
   if (cobro.disponible) return cobro.modo === 'split'
-    ? { texto: 'Con su cuenta', detalle: 'El prestador vinculó su Mercado Pago: el pago se cobra con su cuenta.', tono: 'ok' }
-    : { texto: 'Habilitado', detalle: 'El prestador vinculó su Mercado Pago. La seña la cobra y la retiene TUS hasta que el servicio se completa; después su parte queda en su saldo.', tono: 'ok' }
+    ? { texto: 'Con su cuenta', detalle: 'El pago se cobra con la cuenta de Mercado Pago del prestador.', tono: 'ok' }
+    : { texto: 'Por plataforma', detalle: 'TUS cobra con su cuenta, retiene el pago hasta que el servicio se completa y la parte del prestador queda en su saldo. El prestador no necesita Mercado Pago para cobrar: solo para retirar.', tono: 'ok' }
   const motivos: Record<string, [string, string]> = {
     PAYMENTS_DISABLED: ['Pagos apagados', 'El interruptor de pagos de la plataforma está apagado: los turnos se confirman sin seña.'],
     PROVIDER_NOT_CONFIGURED: ['Mercado Pago sin configurar', 'Faltan las credenciales de Mercado Pago de TUS en el servidor.'],
     PRODUCTION_NOT_AUTHORIZED: ['Falta habilitación', 'Falta la habilitación productiva de pagos de servicios: no se pueden aceptar turnos con seña.'],
     PLATFORM_ACCOUNT_REQUIRED: ['Falta cuenta de TUS', 'Una seña o un pago anticipado se cobra con la cuenta de TUS para poder retenerlo hasta que el servicio se complete. Falta configurar MERCADO_PAGO_PLATFORM_ACCESS_TOKEN y MERCADO_PAGO_PLATFORM_USER_ID; no se envía a la cuenta del prestador.'],
-    PROVIDER_ACCOUNT_NOT_CONNECTED: ['Falta vincular Mercado Pago', 'El prestador todavía no vinculó su Mercado Pago. Es lo único que necesita para cobrar: lo hace desde su panel, en Cobros.'],
+    PROVIDER_ACCOUNT_NOT_CONNECTED: ['Falta cuenta de TUS', 'TUS no tiene configurada su cuenta de cobro (MERCADO_PAGO_PLATFORM_ACCESS_TOKEN y MERCADO_PAGO_PLATFORM_USER_ID).'],
     PSP_FEE_POLICY_UNDECIDED: ['Comisión sin definir', 'Falta definir quién paga la comisión de Mercado Pago en la política de comisiones.'],
     PSP_FEE_POLICY_UNSUPPORTED: ['Comisión no soportada', 'La política de comisiones actual no se puede cobrar.'],
   }

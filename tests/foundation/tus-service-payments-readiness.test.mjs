@@ -171,7 +171,9 @@ async function runtime(records, { env = productionEnv, legacy } = {}) {
 // reported requirement by requirement and it no longer decides whether a payment can be charged.
 test('production without evidence: the missing approvals are reported as public launch readiness and are not a blocker of the payment engine; no flag marks them as held', async () => {
   const { availability, status } = await runtime([])
-  assert.deepEqual(availability, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }, 'what is missing is a real control: nobody to collect for this provider')
+  // COBRO-POR-PLATAFORMA-01 (owner's decision): every payment is collected by TUS with its own account; the
+  // provider needs no Mercado Pago to be paid (only to withdraw). What is missing here is the account of TUS.
+  assert.deepEqual(availability, { available: false, reason: 'PLATFORM_ACCOUNT_REQUIRED' }, 'what is missing is a real control: the account TUS collects with')
   assert.equal(status.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'), false)
   assert.equal(status.readiness.gate, 'service-payments')
   assert.equal(status.readiness.requiredNow, false)
@@ -183,7 +185,7 @@ test('production without evidence: the missing approvals are reported as public 
   // A legacy "everything approved" boolean record cannot stand in for evidence either.
   const allTrue = { enabled: true, failedGates: [] }
   const withLegacy = await runtime([], { legacy: allTrue })
-  assert.equal(withLegacy.availability.reason, 'PROVIDER_ACCOUNT_NOT_CONNECTED')
+  assert.equal(withLegacy.availability.reason, 'PLATFORM_ACCOUNT_REQUIRED')
   assert.equal(withLegacy.status.readiness.servicePayments.authorized, false)
   assert.equal(withLegacy.status.publicLaunchReadiness.ready, false, 'and it never marks the public launch as ready')
 })
@@ -191,7 +193,7 @@ test('production without evidence: the missing approvals are reported as public 
 test('production with the six service-payments records: the public launch readiness is complete, settlement is still its own gate, and the payment still depends on the provider', async () => {
   const { availability, status } = await runtime(evidence('service-payments', SERVICE_PAYMENT_GATES))
   // Past the readiness gate: what is missing now is a fact of the provider, not of the platform.
-  assert.deepEqual(availability, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' })
+  assert.deepEqual(availability, { available: false, reason: 'PLATFORM_ACCOUNT_REQUIRED' })
   assert.equal(status.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'), false)
   assert.deepEqual(status.readiness.servicePayments, { capability: 'service-payments', authorized: true, blockers: [] })
   assert.deepEqual(status.publicLaunchReadiness, { capability: 'public-launch-readiness', ready: true, gates: SERVICE_PAYMENT_GATES.map((gate) => ({ gate, status: 'current' })) })
@@ -201,7 +203,7 @@ test('production with the six service-payments records: the public launch readin
 
 test('production with settlement fully evidenced but no service-payments evidence: the public launch readiness stays incomplete; settlement evidence never counts for it', async () => {
   const { availability, status } = await runtime(evidence('settlement', SETTLEMENT_GATES))
-  assert.equal(availability.reason, 'PROVIDER_ACCOUNT_NOT_CONNECTED')
+  assert.equal(availability.reason, 'PLATFORM_ACCOUNT_REQUIRED')
   assert.equal(status.readiness.settlement.authorized, true)
   assert.equal(status.readiness.servicePayments.authorized, false)
   assert.equal(status.publicLaunchReadiness.ready, false)
@@ -210,7 +212,7 @@ test('production with settlement fully evidenced but no service-payments evidenc
 
 test('sandbox: the gate is reported but does not block, because no real money moves', async () => {
   const { availability, status } = await runtime([], { env: { ...productionEnv, MERCADO_PAGO_ENVIRONMENT: 'sandbox' } })
-  assert.equal(availability.reason, 'PROVIDER_ACCOUNT_NOT_CONNECTED')
+  assert.equal(availability.reason, 'PLATFORM_ACCOUNT_REQUIRED')
   assert.equal(status.readiness.requiredNow, false)
   assert.equal(status.readiness.servicePayments.authorized, false)
   assert.equal(status.blockers.includes('PRODUCTION_READINESS_NOT_AUTHORIZED'), false)
