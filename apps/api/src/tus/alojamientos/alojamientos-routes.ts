@@ -185,6 +185,39 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
     }
   })
 
+  // ALOJAMIENTOS-ADMIN-01. Platform administration only: every lodging (drafts, paused and
+  // suspended too) with its owner, and the reservations of every lodging. Paginated in the store.
+  const pagina = (req: Request) => ({ pagina: Math.min(Math.max(Number.parseInt(String(req.query['pagina'] ?? '1'), 10) || 1, 1), 10_000), tamano: Math.min(Math.max(Number.parseInt(String(req.query['tamano'] ?? '25'), 10) || 25, 1), 100) })
+  router.get('/admin/listado', async (req: Request, res: Response) => {
+    try {
+      if (!(await soloAdmin(req, res))) return
+      return res.json(await gestion.listarParaAdmin({ ...pagina(req), estado: String(req.query['estado'] ?? ''), q: String(req.query['q'] ?? '') }))
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+  router.get('/admin/reservas', async (req: Request, res: Response) => {
+    try {
+      if (!(await soloAdmin(req, res))) return
+      return res.json(await gestion.reservasParaAdmin({ ...pagina(req), estado: String(req.query['estado'] ?? '') }))
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+  // Suspend a lodging or lift its suspension. The body carries only the switch and the mandatory
+  // note; the actor is the session.
+  router.post('/:id/suspension', async (req: Request, res: Response) => {
+    try {
+      const context = await soloAdmin(req, res)
+      if (!context) return
+      const body = cuerpo(req)
+      if (Object.keys(body).some((key) => key !== 'suspendido' && key !== 'motivo') || typeof body['suspendido'] !== 'boolean') return res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'suspendido debe ser true o false, con su motivo' } })
+      return res.json(await gestion.suspender(req.params['id']!, body['suspendido'], { id: context.subjectId, correlationId: context.correlationId, motivo: body['motivo'] }))
+    } catch (err) {
+      return manejarError(err, res)
+    }
+  })
+
   // A new alojamiento of the account of the session, as a draft. The owner is never in the body.
   router.post('/mios', async (req: Request, res: Response) => {
     try {
