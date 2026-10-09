@@ -617,7 +617,59 @@ async function recorrer(browser, viewport, estado, indice) {
     await page.screenshot({ path: join(artifacts, `${e}-admin-observaciones.png`), fullPage: true })
     await fila.getByRole('button', { name: 'Marcar como resuelto' }).click()
     await page.waitForFunction((marca) => ![...document.querySelectorAll('[data-observaciones] tr')].some((tr) => tr.textContent.includes(marca)), `(${e})`)
+    // ---- 8. ADMIN-CONTRASENA-TEMPORAL-01: Admin -> Usuarios -> Restablecer contraseña, with the
+    //         administrator session; and ALOJAMIENTOS-ADMIN-01: Admin -> Alojamientos.
+    const temporal = { email: `temporal-${e}@example.com`, displayName: `Cliente Temporal ${e}` }
+    check((await llamar('POST', '/tus/v1/admin/usuarios', { email: temporal.email, password: CLAVE, displayName: temporal.displayName })).status === 201, `${e}: the administrator creates a client account`)
+    const cuentaTemporal = estado.psql(`SELECT a."id" || '|' || a."origin" FROM public."Account" a JOIN public."User" u ON u."id" = a."userId" WHERE u."normalizedEmail" = '${temporal.email}'`).stdout.trim().split('|')
+    check(cuentaTemporal[1] === 'admin', `${e}: the account is stored as created by the administration (${cuentaTemporal[1]})`)
+    check((await llamar('PATCH', `/tus/v1/admin/usuarios/${cuentaTemporal[0]}`, { emailVerified: true, reason: 'Email confirmado en persona' })).status === 200, `${e}: the administrator certifies its email`)
+    await page.goto(`${web}/tus/admin/usuarios/${cuentaTemporal[0]}`, { waitUntil: 'networkidle' })
+    const seccionTemporal = page.locator('[data-contrasena-temporal]')
+    await seccionTemporal.waitFor()
+    await seccionTemporal.locator('[data-temporal-abrir]').click()
+    check(await seccionTemporal.locator('[data-temporal-generar]').isVisible() && (await seccionTemporal.locator('input[type="password"]').count()) === 2, `${e}: "Restablecer contraseña" asks for the password twice and its note, or generates one`)
+    await seccionTemporal.locator('[data-temporal-generar]').click()
+    check((await texto(seccionTemporal)).includes('motivo administrativo'), `${e}: without its note nothing is set`)
+    await seccionTemporal.locator('[data-temporal-motivo]').fill('Cliente cargado para turnos: pide entrar a su cuenta')
+    await seccionTemporal.locator('[data-temporal-generar]').click()
+    await page.locator('[data-contrasena-generada] strong').waitFor()
+    const claveTemporal = (await page.locator('[data-contrasena-generada] strong').innerText()).trim()
+    check(claveTemporal.length === 16 && (await texto(page.locator('[data-contrasena-generada]'))).includes('una sola vez'), `${e}: the generated temporary password is shown once`)
+    await sinDesborde('Admin -> Usuario -> Restablecer contraseña')
+    await page.screenshot({ path: join(artifacts, `${e}-admin-contrasena-temporal.png`), fullPage: true })
+    await page.reload({ waitUntil: 'networkidle' })
+    check(!(await page.locator('body').innerText()).includes(claveTemporal) && (await page.locator('[data-contrasena-temporal]').getAttribute('data-contrasena-temporal')) === 'pendiente-de-cambio', `${e}: after reloading the password cannot be read again; the account is waiting for its owner to choose one`)
+    await page.goto(`${web}/tus/admin/alojamientos`, { waitUntil: 'networkidle' })
+    await page.locator('[data-admin-alojamientos="alojamientos"]').waitFor()
+    await page.getByRole('button', { name: 'Reservas', exact: true }).click()
+    await page.locator('[data-admin-alojamientos="reservas"]').waitFor()
+    await sinDesborde('Admin -> Alojamientos')
+    await page.screenshot({ path: join(artifacts, `${e}-admin-alojamientos.png`), fullPage: true })
     await salir('the administrator')
+    // First sign-in with the temporary password: straight to "Elegí tu contraseña"; nothing of TUS
+    // answers until the person chooses its own.
+    await page.goto(`${web}/sign-in`, { waitUntil: 'networkidle' })
+    await page.locator('#login-email').fill(temporal.email)
+    await page.locator('#login-password').fill(claveTemporal)
+    await page.locator('#login-password').press('Enter')
+    await page.waitForURL(/\/elegir-contrasena/u)
+    check((await llamar('GET', '/tus/v1/perfil')).status === 401, `${e}: with the temporary password no route of TUS answers`)
+    const elegir = page.locator('[data-elegir-contrasena]')
+    await elegir.waitFor()
+    await sinDesborde('Elegí tu contraseña')
+    const clavePropia = `mi frase propia y larga ${e}`
+    await elegir.locator('#elegir-temporal').fill(claveTemporal)
+    await elegir.locator('#elegir-password').fill(clavePropia)
+    await elegir.locator('#elegir-confirmacion').fill(clavePropia)
+    await elegir.locator('button[type="submit"]').click()
+    await page.locator('[data-contrasena-elegida]').waitFor()
+    await page.screenshot({ path: join(artifacts, `${e}-contrasena-elegida.png`), fullPage: true })
+    check((await llamar('POST', '/auth/sign-in', { email: temporal.email, password: claveTemporal })).status === 401, `${e}: the temporary password no longer works`)
+    await entrar({ email: temporal.email, password: clavePropia }, 'the client with its own password')
+    check((await llamar('GET', '/tus/v1/perfil')).status === 200, `${e}: with its own password TUS answers normally`)
+    check(estado.psql(`SELECT count(*) || '|' || count(*) FILTER (WHERE a."mustChangePassword") FROM public."Account" a JOIN public."User" u ON u."id" = a."userId" WHERE u."normalizedEmail" = '${temporal.email}'`).stdout.trim() === '1|0', `${e}: the same single account, with nothing pending`)
+    await salir('the client')
     const cierres = estado.psql(`SELECT count(*) FILTER (WHERE "confirmado_en" IS NOT NULL) || '/' || count(*) FROM public."cierres_trabajo"`).stdout.trim()
     const liquidaciones = estado.psql(`SELECT count(*) FILTER (WHERE "liberada_en" IS NOT NULL) || '/' || count(*) FROM public."liquidaciones_servicio"`).stdout.trim()
     console.log(`${e}: cierres confirmados ${cierres}, liquidaciones liberadas ${liquidaciones}`)
@@ -637,6 +689,6 @@ async function recorrer(browser, viewport, estado, indice) {
 
 // Refusals this smoke asks for on purpose.
 // (The two 409 of the checkout and of the cancellation are how the API asks for each confirmation.)
-const ESPERADOS = [/smoke-perfil\/turnos\/solicitudes 4\d\d$/u, /\/pago\/checkout 409$/u, /\/cancelar 409$/u, /\/auth\/session 401$/u, /\/auth\/refresh 401$/u, /smoke-perfil-2\/turnos\/solicitudes 409$/u, /\/turnos\/[^/]+\/estado 4\d\d$/u]
+const ESPERADOS = [/\/tus\/v1\/perfil 401$/u, /\/auth\/sign-in 401$/u, /\/contrasena-temporal 422$/u, /smoke-perfil\/turnos\/solicitudes 4\d\d$/u, /\/pago\/checkout 409$/u, /\/cancelar 409$/u, /\/auth\/session 401$/u, /\/auth\/refresh 401$/u, /smoke-perfil-2\/turnos\/solicitudes 409$/u, /\/turnos\/[^/]+\/estado 4\d\d$/u]
 
 await main()
