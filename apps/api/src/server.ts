@@ -139,6 +139,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
   // Platform admin permissions are honored only for sessions that passed the second factor:
   // every router below resolves sessions through the MFA gate (see mfa/admin-gate.ts).
   const rawSessions = new DurableIdentitySessionResolver(auth.store)
+  const sesionesConCambioPendiente = new DurableIdentitySessionResolver(auth.store, undefined, 'solo-pendientes')
   const mfa = createPrismaMfaService(prisma as unknown as PrismaMfaClient, process.env)
   // Admin = allowlist (read live, removing an email ends access on the next request) + verified
   // email + MFA elevation of this session. Google sessions never carry admin scope.
@@ -270,7 +271,10 @@ export function createApp(options: CreateAppOptions = {}): Application {
   app.use(
     createAuthRouter({
       service: auth.service,
-      sessions,
+      // ADMIN-CONTRASENA-TEMPORAL-01: the ONLY router that also resolves an account that must still
+      // choose its password (with no role and no permission), so it can do exactly that. Every other
+      // router of TUS keeps resolving it to nothing.
+      sessions: { resolve: async (accessToken, correlationId) => (await sessions.resolve(accessToken, correlationId)) ?? (await sesionesConCambioPendiente.resolve(accessToken, correlationId)) },
       phones: telefonos,
       cookies: sessionCookies,
       describeCapabilities: async (accessToken, correlationId, context) => {
@@ -361,6 +365,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
         leerUsuario: (accountId) => auth.service.getAccountAsAdmin(accountId),
         perfilUsuario: (accountId) => perfiles.perfilAdmin(accountId),
         accionUsuario: (input) => auth.service.adminAccountAction(input),
+        contrasenaTemporal: (input) => auth.service.setTemporaryPasswordAsAdmin(input),
         identidadUsuario: crearIdentidadUsuarioAdmin({ perfiles, auditar: (input) => auth.service.recordAdminIdentityChange(input) }),
         // ADMIN-IDENTIDAD-MANUAL-01: on the same identity service payments read (no parallel source).
         ...(application.identity ? { verificacionIdentidad: crearVerificacionIdentidadAdmin({ identidad: application.identity, leerUsuario: (accountId) => auth.service.getAccountAsAdmin(accountId), perfilUsuario: (accountId) => perfiles.perfilAdmin(accountId), auditar: (input) => auth.service.recordAdminIdentityChange(input) }) } : {}),

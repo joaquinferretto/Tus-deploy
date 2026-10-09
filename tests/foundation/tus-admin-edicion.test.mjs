@@ -238,7 +238,11 @@ test('ADMIN WEB: user and provider detail pages, linked from the lists; category
   // Safe actions instead of secrets; never a password field in the detail.
   assert.match(usuario, /Cerrar todas las sesiones/)
   assert.match(usuario, /Forzar cambio de contraseña/)
-  assert.doesNotMatch(usuario, /type="password"/)
+  // ADMIN-CONTRASENA-TEMPORAL-01 (owner's decision): the administration may now SET a temporary
+  // password, only on an account it created and only inside that section; it still never reads one.
+  assert.equal((usuario.match(/type="password"/gu) ?? []).length, 2, 'the two fields of the temporary password, nowhere else')
+  assert.match(usuario, /if \(cuenta\.origen !== 'admin'\)\s*return <p/u)
+  assert.doesNotMatch(usuario, /passwordHash|contrasenaActual|currentPassword/u)
   // Provider sections: data, services (picker by category), coverage, state, account and location.
   for (const text of ['Perfil profesional', 'Servicios', 'Cobertura', 'Aprobación del prestador', 'Cuenta', 'Ubicación en el mapa']) assert.ok(prestador.includes(text), text)
   assert.match(prestador, /<ServicePicker/)

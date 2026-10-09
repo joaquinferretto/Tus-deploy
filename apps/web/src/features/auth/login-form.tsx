@@ -61,6 +61,12 @@ export function LoginForm({
       setMessage(signInErrorMessage(result.status, result.code))
       return
     }
+    // ADMIN-CONTRASENA-TEMPORAL-01: a password set by the administration is only good to choose
+    // the person's own one. The API decides it; nothing else of TUS answers until then.
+    if (await client.passwordChangeRequired()) {
+      window.location.assign('/elegir-contrasena')
+      return
+    }
     if (onAuthenticated) await onAuthenticated()
     else {
       const capabilities = await client.capabilities()
