@@ -2063,7 +2063,9 @@ export class OrquestadorConversacion {
     // not booking anything and has a confirmed turno to move.
     const pideClaro = !input.replyId && /\breprogram\w*|\b(?:cambiar|mover|pasar|correr)\b[^.?!]{0,30}\bturno\b/iu.test(texto)
     const pideAmbiguo = !input.replyId && !pideClaro && !state.booking && /\b(?:cambiar|mover)\b[^.?!]{0,30}\b(?:horario|fecha|d[ií]a|hora)\b|\botro\s+(?:horario|d[ií]a)\b/iu.test(texto)
-    const pide = pideClaro || pideAmbiguo
+    const datosFecha = !input.replyId ? extraerNecesidad(texto, this.now()) : null
+    const eligeFecha = !input.replyId && !state.booking && !datosFecha?.profession && !pideTurnoSinServicio(texto) && Boolean(datosFecha?.day) && (Boolean(enCurso) || /\b(?:cambialo|cambi[aá]lo|pasalo|pas[aá]lo|moverlo)\b/iu.test(texto))
+    const pide = pideClaro || pideAmbiguo || eligeFecha
     const numero = enCurso && !input.replyId ? /^\s*(?:el\s+|la\s+|opci[oó]n\s+)?(\d{1,2})\s*[.!]*\s*$/iu.exec(texto) : null
     if (!boton && !pide && !numero) {
       // Anything else ends the choice that was open (the conversation goes on with its own subject).
@@ -2078,15 +2080,15 @@ export class OrquestadorConversacion {
     if (pideAmbiguo && !boton && !numero && (!turnos || turnos.length === 0)) return null
     if (!turnos) return [{ type: 'text', text: 'No pude consultar tus turnos en este momento. Probá de nuevo en unos minutos.' }]
     turn.intencion = 'reserva'
-    const ofrecer = async (ref: string): Promise<MensajeSaliente[]> => {
+    const ofrecer = async (ref: string, fecha?: string): Promise<MensajeSaliente[]> => {
       const turno = turnos.find((item) => item.ref === ref)
       if (!turno) return [{ type: 'text', text: 'No encontré ese turno entre los tuyos.' }]
       if (!turno.permitida) return [{ type: 'text', text: mensajeErrorTurno(turno.motivo ?? undefined, MENSAJE_REPROGRAMACION_NO_PERMITIDA) }]
-      const libres = await domain.horariosDeReprogramacion!(cuenta, ref, 8).catch(() => null)
+      const libres = await domain.horariosDeReprogramacion!(cuenta, ref, 8, fecha).catch(() => null)
       if (!libres) return [{ type: 'text', text: 'No pude consultar los horarios en este momento. Probá de nuevo en unos minutos.' }]
       if (libres.length === 0) {
         await this.actualizarEstado(conversationId, { reschedule: null })
-        return [{ type: 'text', text: `${turno.providerName} no tiene horarios libres en las próximas semanas para mover tu turno del ${cuando(turno.startsAt)}. Tu turno sigue como estaba.` }]
+        return [{ type: 'text', text: `${turno.providerName} no tiene horarios elegibles ${fecha ? `el ${fechaLarga(new Date(`${fecha}T12:00:00.000-03:00`))}` : 'en las próximas semanas'} para mover tu turno del ${cuando(turno.startsAt)}. Tu turno sigue como estaba.` }]
       }
       await this.actualizarEstado(conversationId, { reschedule: { ref, options: libres, at: this.now() } })
       return [{ type: 'text', text: `Tu turno${turno.service ? ` de ${turno.service}` : ''} con ${turno.providerName} es el ${cuando(turno.startsAt)}. Estos son los próximos horarios libres:\n${libres.map((iso, indice) => `${indice + 1}. ${cuando(iso)}`).join('\n')}\nRespondé con el número del horario que querés.` }]
@@ -2098,13 +2100,18 @@ export class OrquestadorConversacion {
         return [{ type: 'text', text: 'Listo, no cambié nada: tu turno sigue como estaba.' }]
       }
       if (boton.accion === 'turno') return ofrecer(boton.ref)
+      // A confirmation belongs to this account's live choice and its selected time, not merely
+      // to a syntactically valid button. Expired/replayed buttons never apply another change.
+      if (!enCurso || enCurso.ref !== boton.ref || enCurso.selected !== new Date(boton.inicio!).toISOString()) return [{ type: 'text', text: 'Esa confirmación ya no está vigente. Volvé a elegir el horario de tu turno.' }]
       try {
         const hecho = await domain.reprogramarTurno(cuenta, boton.ref, new Date(boton.inicio!).toISOString(), turn.canal.id === 'whatsapp' ? 'whatsapp' : 'web')
         await this.actualizarEstado(conversationId, { reschedule: null })
         return [{ type: 'text', text: `Listo: tu turno quedó para el ${cuando(hecho.startsAt)}. Tus pagos y tu seña se mantienen.` }]
       } catch (error) {
         await this.actualizarEstado(conversationId, { reschedule: null })
-        return [{ type: 'text', text: `${mensajeErrorTurno(String((error as { code?: unknown } | null)?.code ?? ''), 'No pude reprogramar el turno en este momento.')} Tu turno sigue como estaba.` }]
+        const code = String((error as { code?: unknown } | null)?.code ?? '')
+        const respuesta: MensajeSaliente[] = [{ type: 'text', text: `${mensajeErrorTurno(code, 'No pude reprogramar el turno en este momento.')} Tu turno sigue como estaba.` }]
+        return ['SLOT_OCCUPIED', 'SLOT_NOT_AVAILABLE', 'SLOT_BLOCKED'].includes(code) ? [...respuesta, ...(await ofrecer(boton.ref))] : respuesta
       }
     }
     // 2. The number of one of the times that were offered: the change is confirmed first.
@@ -2112,11 +2119,13 @@ export class OrquestadorConversacion {
       const elegido = enCurso.options[Number(numero[1]) - 1]
       const turno = turnos.find((item) => item.ref === enCurso.ref)
       if (!elegido || !turno) return [{ type: 'text', text: `Respondé con un número del 1 al ${enCurso.options.length}.` }]
+      await this.actualizarEstado(conversationId, { reschedule: { ...enCurso, selected: elegido, at: this.now() } })
       return [{ type: 'buttons', text: textoConfirmacionReprogramacion(cuando(turno.startsAt), cuando(elegido)), buttons: [{ id: idReprogramacion('confirmar', enCurso.ref, Date.parse(elegido)), title: 'Confirmar cambio' }, { id: idReprogramacion('volver', enCurso.ref), title: 'Volver' }] }]
     }
     // 3. "Quiero cambiar mi turno": which one (when there are several), or why none can be moved.
     const movibles = turnos.filter((item) => item.permitida)
-    if (movibles.length === 1) return ofrecer(movibles[0]!.ref)
+    if (eligeFecha && enCurso) return ofrecer(enCurso.ref, datosFecha?.day ?? undefined)
+    if (movibles.length === 1) return ofrecer(movibles[0]!.ref, datosFecha?.day ?? undefined)
     if (movibles.length > 1) return [{ type: 'buttons', text: '¿Qué turno querés reprogramar?', buttons: movibles.slice(0, 3).map((item) => ({ id: idReprogramacion('turno', item.ref), title: `${fechaLarga(new Date(item.startsAt)).split(' ').slice(0, 2).join(' ')} ${horaCorta(new Date(item.startsAt))}`.slice(0, 20) })) }]
     if (turnos.length === 0) return [{ type: 'text', text: 'No tenés turnos confirmados para reprogramar.' }]
     return [{ type: 'text', text: turnos.some((item) => item.motivo === 'RESCHEDULE_WINDOW_CLOSED') && !turnos.some((item) => item.motivo === 'RESCHEDULE_NOT_ALLOWED') ? MENSAJE_REPROGRAMACION_CERRADA : mensajeErrorTurno(turnos[0]!.motivo ?? undefined, MENSAJE_REPROGRAMACION_NO_PERMITIDA) }]

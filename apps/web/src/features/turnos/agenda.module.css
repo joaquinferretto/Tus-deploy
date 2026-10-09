@@ -258,12 +258,12 @@ button.time:hover {
   border: 1px solid var(--a-line);
   border-radius: 8px;
   color: var(--tus-ink, #14213d);
-  display: flex;
+  display: grid;
   font: inherit;
   font-size: 0.78rem;
   font-weight: 600;
   justify-content: center;
-  min-height: 34px;
+  min-height: 44px;
   overflow: hidden;
   padding: 2px 4px;
   text-overflow: ellipsis;
@@ -361,6 +361,14 @@ button.time[aria-pressed='true']:hover {
 .swatch[data-muestra='ocupado'] {
   background: #eef0f3;
   border-color: #d5d9e0;
+}
+
+.cell[data-estado='bloqueado'],
+.time[data-estado='bloqueado'],
+.swatch[data-muestra='bloqueado'] {
+  background: #f1f0ff;
+  border-color: #c4b5fd;
+  color: #5b21b6;
 }
 
 @container (min-width: 640px) {
@@ -597,4 +605,48 @@ button.time[aria-pressed='true']:hover {
   position: absolute;
   white-space: nowrap;
   width: 1px;
+}
+
+/* AGENDA-MATRIZ-01: the turno that occupies a time of the provider's own agenda, by its state. */
+.cell[data-estado-turno],
+.time[data-estado-turno] {
+  font-weight: 600;
+  text-align: left;
+}
+.time[data-estado-turno] span { text-decoration: none; }
+button.cell[data-estado-turno],
+button.time[data-estado-turno] {
+  cursor: pointer;
+}
+.cell[data-estado-turno] small,
+.time[data-estado-turno] small {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell[data-estado-turno='pending'],
+.time[data-estado-turno='pending'],
+.cell[data-estado-turno='awaiting_payment'],
+.time[data-estado-turno='awaiting_payment'],
+.swatch[data-muestra='pendiente'] {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+.cell[data-estado-turno='confirmed'],
+.time[data-estado-turno='confirmed'],
+.swatch[data-muestra='confirmado'] {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #065f46;
+}
+.cell[data-estado-turno='completed'],
+.time[data-estado-turno='completed'],
+.swatch[data-muestra='finalizado'] {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1e3a8a;
 }

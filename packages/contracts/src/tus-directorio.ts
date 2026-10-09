@@ -197,6 +197,8 @@ export interface DetalleTurno {
   // Deposit of the turno (tus-turnos.ts): derived by the backend, never stored on the reservation.
   sena?: { monto: number; moneda: string; estado: string } | null
   // PAGOS-MODALIDAD-01: the whole financial state (PagoTurnoDTO of tus-turnos). null: no online payment applies.
+  // AGENDA-MATRIZ-01: requested through TUS, or loaded by the provider in its own agenda.
+  origen?: 'tus' | 'manual'
   // TURNOS-REPROGRAMACION-01: whether its client can move it right now, and its history.
   reprogramacion?: { permitida: boolean; motivo: string | null; veces: number; anterior: string | null } | null
   // TURNOS-CANCELACION-01: who cancelled it and what it means for what was paid.

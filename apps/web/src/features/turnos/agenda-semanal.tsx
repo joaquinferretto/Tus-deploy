@@ -2,13 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { DIAS_AGENDA, DIAS_SEMANA, MAXIMO_DIAS_ADELANTE_AGENDA, lunesDe, sumarDias, type AgendaSemanal as Agenda, type DiaAgenda, type FranjaAgenda } from '@factory/contracts'
+import { DIAS_AGENDA, DIAS_SEMANA, MAXIMO_DIAS_ADELANTE_AGENDA, lunesDe, sumarDias, type AgendaSemanal as Agenda, type DiaAgenda, type FranjaAgenda, type TurnoDeFranja } from '@factory/contracts'
 
 import { hoyArgentina, turnosApi } from '../../lib/tus-turnos-client'
 import styles from './agenda.module.css'
 
 // Whose agenda: the public one of a provider (booking) or the own one (provider preview).
-export type OrigenAgenda = { tipo: 'publica'; prestadorId: string; oficioId: string; tarifaId?: string } | { tipo: 'propia'; oficioId: string }
+// TURNOS-REPROGRAMACION-01: the times one turno of the client can be moved to (the same agenda,
+// as the API filters it for that turno).
+export type OrigenAgenda = { tipo: 'publica'; prestadorId: string; oficioId: string; tarifaId?: string } | { tipo: 'propia'; oficioId: string } | { tipo: 'reprogramacion'; turnoId: string }
+
+// AGENDA-MATRIZ-01: how the provider reads the turno that occupies a time of its own agenda.
+const ESTADO_TURNO_FRANJA: Record<string, string> = { pending: 'Pendiente', awaiting_payment: 'Esperando pago', confirmed: 'Confirmado', completed: 'Finalizado' }
+export const etiquetaTurnoDeFranja = (turno: TurnoDeFranja): string => `${ESTADO_TURNO_FRANJA[turno.estado] ?? 'Ocupado'}${turno.origen === 'manual' ? ' · Manual' : ''}`
 
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
 const CORTOS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
@@ -22,6 +28,13 @@ const ESTADO_DIA: Record<DiaAgenda['estado'], string> = { laboral: '', no_labora
 const ESTADO_FRANJA: Record<FranjaAgenda['estado'], string> = { disponible: 'Disponible', ocupado: 'Ocupado', bloqueado: 'No disponible', pasado: '—' }
 
 const libres = (dia: DiaAgenda) => dia.franjas.filter((franja) => franja.estado === 'disponible').length
+// Merge display records returned by the own agenda, not availability calculated on the Web.
+// Actual appointments can start outside the sequence of the selected service or on a past day.
+const franjasVisibles = (dia: DiaAgenda): FranjaAgenda[] => {
+  const porHora = new Map(dia.franjas.map((franja) => [franja.hora, franja]))
+  for (const turno of dia.turnos ?? []) porHora.set(turno.hora, turno)
+  return [...porHora.values()].sort((a, b) => a.hora.localeCompare(b.hora))
+}
 
 // Weekly agenda of turnos. Wide: days across, hours down. Narrow: one day at a time. Every time
 // and its state come from the API; this component never builds one.
@@ -31,6 +44,7 @@ export function AgendaSemanal({
   seleccion = null,
   onSeleccion,
   onAgenda,
+  onTurno,
   soloLectura = false,
   semanaInicial,
 }: {
@@ -41,6 +55,8 @@ export function AgendaSemanal({
   seleccion?: string | null
   onSeleccion?: (franja: FranjaAgenda | null) => void
   onAgenda?: (agenda: Agenda) => void
+  // AGENDA-MATRIZ-01 (own agenda): a time occupied by a turno was tapped.
+  onTurno?: (turno: TurnoDeFranja, franja: FranjaAgenda) => void
   soloLectura?: boolean
   // Week to open on (any date of it), e.g. the one of a time the person had chosen before signing in.
   semanaInicial?: string
@@ -48,6 +64,7 @@ export function AgendaSemanal({
   const semanaActual = lunesDe(hoyArgentina())
   const [desde, setDesde] = useState(() => (semanaInicial && lunesDe(semanaInicial) > semanaActual ? lunesDe(semanaInicial) : semanaActual))
   const [agenda, setAgenda] = useState<Agenda | null>(null)
+  const [agendaKey, setAgendaKey] = useState('')
   const [estado, setEstado] = useState<'cargando' | 'lista' | 'error'>('cargando')
   const [error, setError] = useState('')
   const [activo, setActivo] = useState('')
@@ -58,26 +75,35 @@ export function AgendaSemanal({
 
   const tarifaId = origen.tipo === 'publica' ? origen.tarifaId : undefined
   const prestadorId = origen.tipo === 'publica' ? origen.prestadorId : ''
+  const oficioId = origen.tipo === 'reprogramacion' ? '' : origen.oficioId
+  const turnoId = origen.tipo === 'reprogramacion' ? origen.turnoId : ''
+  const pedidoKey = JSON.stringify([origen.tipo, prestadorId, oficioId, turnoId, tarifaId, desde, version])
   useEffect(() => {
-    if (!origen.oficioId) return
+    if (!oficioId && !turnoId) return
     let vigente = true
     setEstado('cargando')
-    const pedido = origen.tipo === 'publica' ? turnosApi.agendaPublica(prestadorId, origen.oficioId, desde, tarifaId) : turnosApi.miAgenda(origen.oficioId, desde)
+    const pedido: Promise<Agenda> =
+      origen.tipo === 'reprogramacion'
+        ? turnosApi.horariosReprogramacion(turnoId, desde).then((semana) => ({ ...semana, tarifas: [] }))
+        : origen.tipo === 'publica'
+          ? turnosApi.agendaPublica(prestadorId, oficioId, desde, tarifaId)
+          : turnosApi.miAgenda(oficioId, desde)
     pedido
       .then((resultado) => {
         if (!vigente) return
         const hayLibres = resultado.dias.some((dia) => libres(dia) > 0)
-        if (avanzar.current && !hayLibres && resultado.dias.length > 0 && desde === semanaActual) {
+        if (origen.tipo !== 'propia' && avanzar.current && !hayLibres && resultado.dias.length > 0 && desde === semanaActual) {
           avanzar.current = false
           setDesde(sumarDias(desde, DIAS_AGENDA))
           return
         }
         avanzar.current = false
         setAgenda(resultado)
+        setAgendaKey(pedidoKey)
         setEstado('lista')
         setActivo((actual) => {
           const mismo = resultado.dias.find((dia) => dia.fecha === actual)
-          if (mismo && libres(mismo) > 0) return actual
+          if (mismo) return actual
           return (resultado.dias.find((dia) => libres(dia) > 0) ?? resultado.dias.find((dia) => dia.estado === 'laboral') ?? resultado.dias[0])?.fecha ?? ''
         })
         avisar.current.onAgenda?.(resultado)
@@ -91,19 +117,19 @@ export function AgendaSemanal({
       vigente = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the origin is compared by its fields
-  }, [origen.tipo, prestadorId, origen.oficioId, tarifaId, desde, version])
+  }, [origen.tipo, prestadorId, oficioId, turnoId, tarifaId, desde, version, pedidoKey])
 
   // A chosen time that is no longer available (taken meanwhile, another week) is dropped.
   useEffect(() => {
-    if (!agenda || !seleccion) return
+    if (!agenda || agendaKey !== pedidoKey || !seleccion) return
     const sigue = agenda.dias.some((dia) => dia.franjas.some((franja) => franja.inicio === seleccion && franja.estado === 'disponible'))
     if (!sigue) avisar.current.onSeleccion?.(null)
-  }, [agenda, seleccion])
+  }, [agenda, agendaKey, pedidoKey, seleccion])
 
-  const horas = useMemo(() => [...new Set((agenda?.dias ?? []).flatMap((dia) => dia.franjas.map((franja) => franja.hora)))].sort(), [agenda])
+  const horas = useMemo(() => [...new Set((agenda?.dias ?? []).flatMap((dia) => franjasVisibles(dia).map((franja) => franja.hora)))].sort(), [agenda])
   // The agenda on screen is the one of the week in the title. While another week is on its way,
   // the previous one is not shown (its times would be under the wrong dates and still clickable).
-  const vigente = agenda !== null && agenda.desde === desde ? agenda : null
+  const vigente = agenda !== null && agendaKey === pedidoKey ? agenda : null
   const dias = vigente?.dias ?? []
   const diaActivo = dias.find((dia) => dia.fecha === activo) ?? dias[0]
   const hayAnterior = desde > semanaActual
@@ -131,6 +157,27 @@ export function AgendaSemanal({
           <span>{texto}</span>
         </button>
       )
+    // AGENDA-MATRIZ-01: in the provider's own agenda an occupied time says which turno it is,
+    // and opens it.
+    if (item.turno) {
+      const etiqueta = etiquetaTurnoDeFranja(item.turno)
+      const contenido = (
+        <>
+          <span>{compacta ? etiqueta : item.hora}</span>
+          {compacta ? null : <small>{etiqueta}</small>}
+          {item.turno.cliente ? <small>{item.turno.cliente}</small> : null}
+        </>
+      )
+      return onTurno ? (
+        <button aria-label={`${diaLargo(dia)}, ${item.hora}, ${etiqueta}${item.turno.cliente ? `, ${item.turno.cliente}` : ''}. Ver detalle`} className={clase} data-estado={item.estado} data-estado-turno={item.turno.estado} data-origen-turno={item.turno.origen} data-turno={item.turno.id} onClick={() => onTurno(item.turno!, item)} type="button">
+          {contenido}
+        </button>
+      ) : (
+        <span className={clase} data-estado={item.estado} data-estado-turno={item.turno.estado} data-origen-turno={item.turno.origen}>
+          {contenido}
+        </span>
+      )
+    }
     return (
       <span className={clase} data-estado={item.estado}>
         <span>{texto}</span>
@@ -139,6 +186,7 @@ export function AgendaSemanal({
       </span>
     )
   }
+  const conTurnos = origen.tipo === 'propia'
 
   return (
     <div aria-busy={estado === 'cargando'} className={styles.agenda} data-agenda={estado === 'lista' && !vigente ? 'cargando' : estado}>
@@ -188,11 +236,11 @@ export function AgendaSemanal({
           {diaActivo ? (
             <div className={styles.dayPanel}>
               <p className={styles.dayHeading}>{diaLargo(diaActivo)}</p>
-              {diaActivo.franjas.length === 0 || diaActivo.estado !== 'laboral' ? (
+              {franjasVisibles(diaActivo).length === 0 || (diaActivo.estado !== 'laboral' && !franjasVisibles(diaActivo).some((item) => item.turno)) ? (
                 <p className={styles.status}>{diaActivo.estado === 'laboral' ? 'No hay horarios para este servicio ese día.' : diaActivo.estado === 'no_laboral' ? 'No trabaja este día.' : diaActivo.estado === 'bloqueado' ? 'No disponible este día.' : 'Este día ya pasó.'}</p>
               ) : (
                 <ul className={styles.times}>
-                  {diaActivo.franjas.map((item) => (
+                  {franjasVisibles(diaActivo).map((item) => (
                     <li key={item.inicio}>{franja(diaActivo, item, styles.time, false)}</li>
                   ))}
                 </ul>
@@ -229,10 +277,10 @@ export function AgendaSemanal({
                     <tr key={hora}>
                       <th scope="row">{hora}</th>
                       {dias.map((dia) => {
-                        const item = dia.franjas.find((candidata) => candidata.hora === hora)
+                        const item = franjasVisibles(dia).find((candidata) => candidata.hora === hora)
                         return (
                           <td data-dia={dia.estado} key={dia.fecha}>
-                            {item && item.estado !== 'pasado' ? (
+                            {item && (item.estado !== 'pasado' || item.turno) ? (
                               franja(dia, item, styles.cell, true)
                             ) : (
                               <span aria-hidden="true" className={styles.empty}>
@@ -262,8 +310,28 @@ export function AgendaSemanal({
             )}
             <li>
               <span aria-hidden="true" className={styles.swatch} data-muestra="ocupado" />
-              Ocupado o no disponible
+              Ocupado
             </li>
+            <li>
+              <span aria-hidden="true" className={styles.swatch} data-muestra="bloqueado" />
+              Bloqueado
+            </li>
+            {conTurnos ? (
+              <>
+                <li>
+                  <span aria-hidden="true" className={styles.swatch} data-muestra="pendiente" />
+                  Pendiente
+                </li>
+                <li>
+                  <span aria-hidden="true" className={styles.swatch} data-muestra="confirmado" />
+                  Confirmado
+                </li>
+                <li>
+                  <span aria-hidden="true" className={styles.swatch} data-muestra="finalizado" />
+                  Finalizado
+                </li>
+              </>
+            ) : null}
           </ul>
           {estado === 'cargando' ? (
             <p className={styles.srOnly} role="status">

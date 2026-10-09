@@ -129,7 +129,7 @@ export function AdminPrestadorDetallePage({ id }: { id: string }): React.ReactNo
           return (
             <>
               <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: '0.75rem', margin: '0.5rem 0' }}>
-                <div><dt className={styles.muted}>Nombre real</dt><dd style={{ margin: 0 }}>{cuenta.nombre}</dd></div>
+                <div><dt className={styles.muted}>Nombre real del titular</dt><dd style={{ margin: 0 }}>{cuenta.nombre}</dd></div>
                 <div><dt className={styles.muted}>Email</dt><dd style={{ margin: 0, overflowWrap: 'anywhere' }}>{cuenta.email} {si(cuenta.emailVerificado, 'Confirmado', 'Sin confirmar')}</dd></div>
                 <div><dt className={styles.muted}>Documento</dt><dd style={{ margin: 0 }}>{cuenta.documento ? `${cuenta.documento.tipo} ${cuenta.documento.numero}` : 'Sin cargar'}</dd></div>
                 <div><dt className={styles.muted}>Identidad</dt><dd style={{ margin: 0 }}>{cuenta.identidad ? cuenta.identidad : 'Sin verificación iniciada'}</dd></div>

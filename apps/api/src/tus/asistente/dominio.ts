@@ -172,7 +172,7 @@ export interface PuertoDominioAsistente {
   // TURNOS-REPROGRAMACION-01, the same backend the Web uses: the client's own turnos with whether
   // each can be moved now, the free times one can be moved to, and the change itself.
   turnosParaReprogramar?(context: TusAuthenticatedTenantContext): Promise<{ ref: string; providerName: string; service: string | null; startsAt: string; permitida: boolean; motivo: string | null }[]>
-  horariosDeReprogramacion?(context: TusAuthenticatedTenantContext, ref: string, cantidad: number): Promise<string[]>
+  horariosDeReprogramacion?(context: TusAuthenticatedTenantContext, ref: string, cantidad: number, fecha?: string): Promise<string[]>
   reprogramarTurno?(context: TusAuthenticatedTenantContext, ref: string, inicio: string, canal: 'web' | 'whatsapp'): Promise<{ startsAt: string }>
   // What cancelling its own turno right now would cost the client (the backend's rule and words).
   previsualizarCancelacion?(context: TusAuthenticatedTenantContext, ref: string): Promise<{ requiereConfirmacion: boolean; mensaje: string } | null>
@@ -651,15 +651,15 @@ export class DominioAsistenteTus implements PuertoDominioAsistente {
   }
 
   // The next free times of the same provider, week by week, as the backend's agenda gives them.
-  async horariosDeReprogramacion(context: TusAuthenticatedTenantContext, ref: string, cantidad: number) {
+  async horariosDeReprogramacion(context: TusAuthenticatedTenantContext, ref: string, cantidad: number, fecha?: string) {
     const turnos = this.compartidos?.turnos
     if (!turnos) return []
     const libres: string[] = []
-    const hoy = new Date(this.now() - 3 * 60 * 60_000)
-    for (let semana = 0; semana < 4 && libres.length < cantidad; semana += 1) {
+    const hoy = fecha ? new Date(`${fecha}T00:00:00.000Z`) : new Date(this.now() - 3 * 60 * 60_000)
+    for (let semana = 0; semana < (fecha ? 1 : 4) && libres.length < cantidad; semana += 1) {
       const desde = new Date(hoy.getTime() + semana * 7 * 86_400_000).toISOString().slice(0, 10)
       const agenda = await turnos.horariosParaReprogramar({ clienteId: context.subjectId, reservaId: ref, desde })
-      for (const dia of agenda.dias) for (const franja of dia.franjas) if (franja.estado === 'disponible') libres.push(franja.inicio)
+      for (const dia of agenda.dias) if (!fecha || dia.fecha === fecha) for (const franja of dia.franjas) if (franja.estado === 'disponible') libres.push(franja.inicio)
     }
     return [...new Set(libres)].sort().slice(0, cantidad)
   }

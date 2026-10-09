@@ -10,6 +10,7 @@ import styles from '../directory/directory.module.css'
 import homeStyles from '../home/home.module.css'
 import { useTusSession } from '../session/use-tus-session'
 import { TurnosError, diaTurno, horaTurno, turnosApi } from '../../lib/tus-turnos-client'
+import { AgendaSemanal } from './agenda-semanal'
 import { claseEstadoTurno } from './estado-turno'
 
 const RETURN_TO = '/mis-turnos'
@@ -68,22 +69,10 @@ export function MisTurnosPage(): React.ReactNode {
   // TURNOS-REPROGRAMACION-01: the turno being moved, the week of free times the API returned for
   // it and the time chosen (confirmed before the change). Whether a turno can be moved, which
   // times are free and the 24 hours are the API's: nothing of that is decided here.
-  const [moviendo, setMoviendo] = useState<{ id: string; desde: string; dias: { fecha: string; franjas: { inicio: string; hora: string; estado: string }[] }[] | null; elegido: string | null } | null>(null)
+  const [moviendo, setMoviendo] = useState<{ id: string; elegido: string | null; version: number } | null>(null)
   const [guardandoCambio, setGuardandoCambio] = useState(false)
-  const semanaDe = (fecha: string, dias: number) => new Date(Date.parse(`${fecha}T12:00:00.000Z`) + dias * 86_400_000).toISOString().slice(0, 10)
-  async function verHorarios(id: string, desde: string) {
-    setError(null)
-    setMoviendo({ id, desde, dias: null, elegido: null })
-    try {
-      const agenda = await turnosApi.horariosReprogramacion(id, desde)
-      setMoviendo({ id, desde, dias: agenda.dias, elegido: null })
-    } catch (causa: unknown) {
-      setMoviendo(null)
-      setError(causa instanceof Error ? causa.message : 'No pudimos consultar los horarios.')
-      cargar()
-    }
-  }
   async function confirmarCambio(turno: DetalleTurno, inicio: string) {
+    if (guardandoCambio) return
     setGuardandoCambio(true)
     setError(null)
     try {
@@ -92,8 +81,8 @@ export function MisTurnosPage(): React.ReactNode {
       cargar()
     } catch (causa: unknown) {
       setError(causa instanceof Error ? causa.message : 'No pudimos reprogramar el turno.')
-      // The time may have been taken meanwhile: the free times are asked again.
-      void verHorarios(turno.id, moviendo?.desde ?? new Date().toISOString().slice(0, 10))
+      // The time may have been taken meanwhile: the agenda is asked again and the choice is dropped.
+      setMoviendo((actual) => (actual && actual.id === turno.id ? { ...actual, elegido: null, version: actual.version + 1 } : actual))
     } finally {
       setGuardandoCambio(false)
     }
@@ -301,11 +290,15 @@ export function MisTurnosPage(): React.ReactNode {
                       {moviendo.elegido ? (
                         <>
                           <span data-reprogramacion-confirmar>{textoConfirmacionReprogramacion(`${diaTurno(turno.inicio)} a las ${horaTurno(turno.inicio)}`, `${diaTurno(moviendo.elegido)} a las ${horaTurno(moviendo.elegido)}`)}</span>
+                          <dl className={styles.turnoData} data-resumen-reprogramacion>
+                            <div><dt>Horario actual</dt><dd>{diaTurno(turno.inicio)} · {horaTurno(turno.inicio)}</dd></div>
+                            <div><dt>Nuevo horario</dt><dd>{diaTurno(moviendo.elegido)} · {horaTurno(moviendo.elegido)}</dd></div>
+                          </dl>
                           <div className={styles.turnoActions}>
                             <button className={homeStyles.buttonPrimary} data-confirmar-cambio disabled={guardandoCambio} onClick={() => void confirmarCambio(turno, moviendo.elegido!)} type="button">
                               {guardandoCambio ? 'Guardando…' : 'Confirmar cambio'}
                             </button>
-                            <button className={homeStyles.buttonSecondary} onClick={() => setMoviendo({ ...moviendo, elegido: null })} type="button">
+                            <button className={homeStyles.buttonSecondary} disabled={guardandoCambio} onClick={() => setMoviendo({ ...moviendo, elegido: null })} type="button">
                               Volver
                             </button>
                           </div>
@@ -313,26 +306,12 @@ export function MisTurnosPage(): React.ReactNode {
                       ) : (
                         <>
                           <strong>Elegí el nuevo horario</strong>
-                          <span className={styles.muted} style={{ fontSize: '0.9rem' }}>Solo se muestran horarios libres con más de 24 horas de anticipación. Tus pagos y tu seña se mantienen.</span>
-                          <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                            <button className={homeStyles.buttonSecondary} disabled={moviendo.desde <= new Date().toISOString().slice(0, 10)} onClick={() => void verHorarios(turno.id, semanaDe(moviendo.desde, -7))} type="button">Semana anterior</button>
-                            <button className={homeStyles.buttonSecondary} data-semana-siguiente onClick={() => void verHorarios(turno.id, semanaDe(moviendo.desde, 7))} type="button">Semana siguiente</button>
+                          <span className={styles.muted} style={{ fontSize: '0.9rem' }}>Solo se pueden elegir horarios libres con más de 24 horas de anticipación. Tus pagos y tu seña se mantienen.</span>
+                          {/* The same weekly agenda as a booking: every time and its state come from the API. */}
+                          <AgendaSemanal onSeleccion={(franja) => setMoviendo({ ...moviendo, elegido: franja?.inicio ?? null })} origen={{ tipo: 'reprogramacion', turnoId: turno.id }} semanaInicial={new Date(Date.parse(turno.inicio) - 3 * 60 * 60_000).toISOString().slice(0, 10)} version={moviendo.version} />
+                          <div className={styles.turnoActions}>
                             <button className={homeStyles.buttonSecondary} onClick={() => setMoviendo(null)} type="button">Cerrar</button>
                           </div>
-                          {moviendo.dias === null ? <span className={styles.muted}>Consultando horarios…</span> : null}
-                          {moviendo.dias !== null && !moviendo.dias.some((dia) => dia.franjas.some((franja) => franja.estado === 'disponible')) ? <span data-reprogramacion-sin-horarios>No hay horarios libres esa semana. Probá con la siguiente.</span> : null}
-                          {(moviendo.dias ?? []).filter((dia) => dia.franjas.some((franja) => franja.estado === 'disponible')).map((dia) => (
-                            <div key={dia.fecha} style={{ display: 'grid', gap: 6 }}>
-                              <span style={{ fontWeight: 600 }}>{diaTurno(`${dia.fecha}T12:00:00.000-03:00`)}</span>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                {dia.franjas.filter((franja) => franja.estado === 'disponible').map((franja) => (
-                                  <button className={homeStyles.buttonSecondary} data-horario-nuevo={franja.inicio} key={franja.inicio} onClick={() => setMoviendo({ ...moviendo, elegido: franja.inicio })} type="button">
-                                    {franja.hora}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
                         </>
                       )}
                     </div>
@@ -388,7 +367,7 @@ export function MisTurnosPage(): React.ReactNode {
                       </button>
                     ) : null}
                     {turno.reprogramacion?.permitida && moviendo?.id !== turno.id ? (
-                      <button className={homeStyles.buttonSecondary} data-reprogramar onClick={() => void verHorarios(turno.id, new Date().toISOString().slice(0, 10))} type="button">
+                      <button className={homeStyles.buttonSecondary} data-reprogramar disabled={guardandoCambio} onClick={() => { setError(null); setMoviendo({ id: turno.id, elegido: null, version: 0 }) }} type="button">
                         Reprogramar turno
                       </button>
                     ) : null}

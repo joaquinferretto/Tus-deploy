@@ -107,7 +107,7 @@ export interface EstadoConversacional {
   closingReport?: { ref: string; at: number } | null
   // TURNOS-REPROGRAMACION-01: the client is choosing a new time for one of its turnos. Only
   // which turno and the times that were offered (as the backend returned them); nothing is decided here.
-  reschedule?: { ref: string; options: string[]; at: number } | null
+  reschedule?: { ref: string; options: string[]; selected?: string; at: number } | null
   // TUS-WHATSAPP-MULTIMODAL-01: bookkeeping of "ya pagué" / receipts. Never authoritative: it only
   // paces the questions to Mercado Pago (the backend asks it again every time) and remembers which
   // deposits were offered to choose from. It holds no amount, no status and no account.

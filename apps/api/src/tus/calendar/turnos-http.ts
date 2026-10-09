@@ -4,7 +4,7 @@ import type { TusAuthenticatedTenantContext, TusSessionResolverPort } from '../p
 import { ServicioTurnos } from './turnos-service.ts'
 import { ErrorCalendario } from './bookings.ts'
 import { CODIGO_SESION_REQUERIDA, type ClienteTurnoAdmin } from '@factory/contracts'
-import { leerContactoInvitado, leerBloqueo, leerCambioDeEstado, leerCambioDePrecio, leerConfiguracionServicio, leerSwitches, leerTarifas, leerTurnoEscrito, type Entrada } from './turnos-entrada.ts'
+import { leerContactoInvitado, leerBloqueo, leerCambioDeEstado, leerCambioDePrecio, leerConfiguracionServicio, leerSwitches, leerTarifas, leerTurnoEscrito, type Entrada, CAMPO_CLIENTE_VINCULADO } from './turnos-entrada.ts'
 import { esInvalido, identificador, texto } from '../validacion/entrada.ts'
 
 const CAMPOS_SOLICITUD_CLIENTE = new Set(['oficioId', 'inicio', 'tarifaId', 'notas'])
@@ -207,6 +207,23 @@ export function crearRouterTurnos({
   // that deposit. The body is never read: the turno is the one of the path, the client is the
   // session and the amount is derived from the price stored on the reservation. It pays nothing
   // by itself; only Mercado Pago's verified notification marks the deposit as paid.
+  // AGENDA-MATRIZ-01. An existing client for a manual turno, by its WHOLE phone or email only.
+  router.get(
+    '/tus/v1/prestador/turnos/clientes',
+    asyncHandler(async (request: Request, response: Response) => {
+      const context = await autenticar(request, response, sessions)
+      if (!context) return
+      response.setHeader('cache-control', 'private, no-store')
+      const telefono = typeof request.query['telefono'] === 'string' ? request.query['telefono'] : undefined
+      const email = typeof request.query['email'] === 'string' ? request.query['email'] : undefined
+      try {
+        response.status(200).json({ items: await servicio.buscarClienteParaTurno({ prestadorTenantId: context.tenantId, ...(telefono ? { telefono } : {}), ...(email ? { email } : {}) }) })
+      } catch (error) {
+        manejarError(response, error)
+      }
+    })
+  )
+
   // TURNOS-REPROGRAMACION-01. The provider's own switch (it applies to the turnos booked from now on).
   router.get(
     '/tus/v1/prestador/turnos/reprogramacion',
@@ -380,11 +397,15 @@ export function crearRouterTurnos({
     asyncHandler(async (request: Request, response: Response) => {
       const context = await autenticar(request, response, sessions)
       if (!context) return
-      const entrada = leerTurnoEscrito(comoRegistro(request.body), Date.now())
+      const cuerpo = comoRegistro(request.body)
+      const entrada = leerTurnoEscrito(cuerpo, Date.now(), [CAMPO_CLIENTE_VINCULADO])
       if (!entrada.ok) return void rechazar(response, entrada)
+      // AGENDA-MATRIZ-01: an account the provider chose from the search (checked again by the service).
+      const vinculado = cuerpo[CAMPO_CLIENTE_VINCULADO]
+      if (vinculado !== undefined && vinculado !== null && (typeof vinculado !== 'string' || !/^[A-Za-z0-9._:-]{3,120}$/u.test(vinculado))) return void enviarError(response, 400, 'INVALID_PARAMS', 'El cliente elegido no es válido.')
       try {
         // The agenda is the one of the session's tenant: a provider id in the body does not exist.
-        response.status(201).json(await servicio.crearTurnoManual({ prestadorTenantId: context.tenantId, ...entrada.valor }))
+        response.status(201).json(await servicio.crearTurnoManual({ prestadorTenantId: context.tenantId, ...entrada.valor, ...(typeof vinculado === 'string' ? { clienteCuentaId: vinculado } : {}) }))
       } catch (error) {
         manejarError(response, error)
       }
@@ -556,7 +577,7 @@ export function crearRouterTurnos({
       const desde = String(request.query['desde'] ?? '')
       if (!oficioId || !desde) return void enviarError(response, 400, 'INVALID_PARAMS', 'oficioId y desde (YYYY-MM-DD) son requeridos')
       try {
-        response.status(200).json(await servicio.agendaSemanal({ prestadorId: perfil.id, oficioId, desde, incluirNoVisible: true }))
+        response.status(200).json(await servicio.agendaSemanal({ prestadorId: perfil.id, oficioId, desde, incluirNoVisible: true, conTurnos: true }))
       } catch (error) {
         manejarError(response, error)
       }
