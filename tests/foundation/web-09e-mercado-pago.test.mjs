@@ -141,7 +141,7 @@ test('WEB-09E webhook: signature with ms timestamp, server-side lookup, approval
     const snapshotWrites = () => financeStore.state.comisiones.size + financeStore.state.ledger.size + financeStore.state.inbox.size
     const before = snapshotWrites()
     const badSignature = await mpFinance.ingerirEventoProveedor(notification('1001', { secret: 'other-secret' }))
-    const secondsTs = await mpFinance.ingerirEventoProveedor(notification('1001', { ts: Math.floor(nowMs / 1000) }))
+    const expiredSeconds = await mpFinance.ingerirEventoProveedor(notification('1001', { ts: Math.floor(nowMs / 1000) - 6 * 60 }))
     const expired = await mpFinance.ingerirEventoProveedor(notification('1001', { ts: nowMs - 6 * 60 * 1000 }))
     const wrongRequest = await mpFinance.ingerirEventoProveedor(notification('1001', { signedRequestId: 'another-request' }))
     const tampered = await mpFinance.ingerirEventoProveedor(notification('1001', { bodyDataId: '9999' }))
@@ -158,13 +158,13 @@ test('WEB-09E webhook: signature with ms timestamp, server-side lookup, approval
     // Older notification arriving late: stale, no change.
     mp.payments.set('1001', { ...mp.payments.get('1001'), status: 'pending', status_detail: 'pending_contingency', date_last_updated: '2026-09-23T10:01:00.000Z' })
     const outOfOrder = await mpFinance.ingerirEventoProveedor(notification('1001'))
-    console.log(JSON.stringify({ pendingPreview: [pendingPreview.paymentStatus, pendingPreview.obligation?.status ?? null, pendingPreview.paymentReference ?? null], before, afterRejected, badSignature, secondsTs, expired, wrongRequest, tampered, otherTopic, unknownSeller, approved: [approved.result, approved.obligation.status, approved.payment.providerReference], duplicate, snapshot, confirmed: [confirmed.paymentStatus, confirmed.paymentReference, confirmed.notPayableReason], providerCommission: providerView.commission, customerCommission: customerView.commission ?? null, outOfOrder: [outOfOrder.result, outOfOrder.reason], lookups: mp.requests.filter((request) => request.path === '/v1/payments/1001').length, checkoutUrl: checkout.checkoutUrl }))
+    console.log(JSON.stringify({ pendingPreview: [pendingPreview.paymentStatus, pendingPreview.obligation?.status ?? null, pendingPreview.paymentReference ?? null], before, afterRejected, badSignature, expiredSeconds, expired, wrongRequest, tampered, otherTopic, unknownSeller, approved: [approved.result, approved.obligation.status, approved.payment.providerReference], duplicate, snapshot, confirmed: [confirmed.paymentStatus, confirmed.paymentReference, confirmed.notPayableReason], providerCommission: providerView.commission, customerCommission: customerView.commission ?? null, outOfOrder: [outOfOrder.result, outOfOrder.reason], lookups: mp.requests.filter((request) => request.path === '/v1/payments/1001').length, checkoutUrl: checkout.checkoutUrl }))
   `)
 
   // Redirect/checkout alone never approves: still pending without a verified notification.
   assert.deepEqual(result.pendingPreview, ['pending', 'pending_payment', null])
   assert.equal(result.badSignature.reason, 'INVALID_SIGNATURE')
-  assert.equal(result.secondsTs.reason, 'EXPIRED_SIGNATURE')
+  assert.equal(result.expiredSeconds.reason, 'EXPIRED_SIGNATURE')
   assert.equal(result.expired.reason, 'EXPIRED_SIGNATURE')
   assert.equal(result.wrongRequest.reason, 'INVALID_SIGNATURE')
   assert.equal(result.tampered.reason, 'INVALID_EVENT')
@@ -336,7 +336,7 @@ test('WEB-09E HTTP: checkout route, public webhook with raw body and signature, 
     const withoutKey = await call('POST', path + '/checkout', 'customer-token', {})
     const checkout = await call('POST', path + '/checkout', 'customer-token', {}, { 'idempotency-key': 'h-1' })
     mpPayment('5001', mp.preferences[0])
-    const signed = notification('5001')
+    const signed = notification('5001', { ts: Math.floor(nowMs / 1000) })
     const webhookPath = '/tus/v1/integrations/mercado-pago/webhooks?data.id=' + signed.dataId + '&type=payment'
     const forged = await call('POST', webhookPath, null, signed.rawBody, { 'x-signature': signed.signature.replace(/v1=./u, 'v1=0'), 'x-request-id': signed.requestId })
     const webhook = await call('POST', webhookPath, null, signed.rawBody, { 'x-signature': signed.signature, 'x-request-id': signed.requestId })

@@ -365,10 +365,11 @@ export function verificarFirmaMercadoPago(input: {
   }
   const ts = parts.get('ts') ?? ''
   const v1 = parts.get('v1') ?? ''
-  const timestampMs = Number(ts)
-  if (!/^\d+$/u.test(ts) || !Number.isSafeInteger(timestampMs) || !/^[0-9a-f]{64}$/iu.test(v1))
+  // Mercado Pago sends Unix seconds (10 digits) or milliseconds (13 digits). Normalize only
+  // for the time window; the HMAC manifest below must keep the original textual `ts`.
+  const timestampMs = ts.length === 10 ? Number(ts) * 1000 : Number(ts)
+  if (!/^(?:\d{10}|\d{13})$/u.test(ts) || !Number.isSafeInteger(timestampMs) || !/^[0-9a-f]{64}$/iu.test(v1))
     throw new ErrorFinanzasServicio(401, 'INVALID_SIGNATURE', 'x-signature header is malformed')
-  // `ts` is in milliseconds (official docs); a seconds value is simply far in the past.
   if (Math.abs(input.nowMs - timestampMs) > (input.toleranceMs ?? TOLERANCIA_FIRMA_MS))
     throw new ErrorFinanzasServicio(
       401,
