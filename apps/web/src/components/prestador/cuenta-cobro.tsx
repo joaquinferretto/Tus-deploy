@@ -15,11 +15,11 @@ import { TusActionButton, TusStateMessage } from '../../app/tus/tus-ui'
 // receives tokens in the browser; it only redirects to Mercado Pago's authorization page.
 
 export const STATUS_COPY: Record<string, string> = {
-  not_connected: 'No conectado',
-  connected: 'Conectado',
-  revoked: 'Desconectado',
+  not_connected: 'Mercado Pago sin vincular',
+  connected: 'Mercado Pago vinculado',
+  revoked: 'Mercado Pago sin vincular',
   expired: 'Requiere reconexión: la autorización de Mercado Pago venció',
-  error: 'Error: la cuenta de Mercado Pago cambió; volvé a conectarla',
+  error: 'Requiere reconexión: la cuenta de Mercado Pago cambió',
 }
 
 export const CALLBACK_ERRORS: Record<string, string> = {
@@ -69,7 +69,7 @@ export function CuentaCobro({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const result = params.get('mercadoPago')
-    if (result === 'connected') setNotice('Mercado Pago quedó conectado a TUS.')
+    if (result === 'connected') setNotice('Mercado Pago vinculado.')
     if (result === 'error')
       setNotice(CALLBACK_ERRORS[params.get('reason') ?? ''] ?? 'No se pudo conectar Mercado Pago.')
     void load()
@@ -88,9 +88,7 @@ export function CuentaCobro({
     } catch (error) {
       if (errorStatus(error) === 401) onUnauthorized()
       setNotice(
-        error instanceof TusRequestError && error.code === 'PROVIDER_IDENTITY_NOT_VERIFIED'
-          ? 'Primero completá la verificación de identidad. Después vas a poder conectar Mercado Pago.'
-          : errorStatus(error) === 503
+        errorStatus(error) === 503
             ? 'La conexión con Mercado Pago todavía no está habilitada en TUS.'
             : 'No se pudo iniciar la conexión con Mercado Pago. Reintentá.'
       )
@@ -141,13 +139,10 @@ export function CuentaCobro({
           <p>
             <strong>{STATUS_COPY[account.status] ?? account.status}</strong>
           </p>
-          {account.externalAccountId ? (
-            <p>Cuenta Mercado Pago: {account.externalAccountId}</p>
-          ) : null}
           {account.liveMode === false ? <p>Modo de prueba (sandbox).</p> : null}
           {account.status === 'connected' ? (
             <TusActionButton loading={busy} onClick={() => void disconnect()} type="button">
-              Desconectar
+              Desvincular
             </TusActionButton>
           ) : account.connectAvailable ? (
             <TusActionButton
@@ -156,9 +151,9 @@ export function CuentaCobro({
               onClick={() => void connect()}
               type="button"
             >
-              {account.status === 'expired' || account.status === 'error'
-                ? 'Reconectar Mercado Pago'
-                : 'Conectar Mercado Pago'}
+              {account.status === 'not_connected'
+                ? 'Vincular Mercado Pago'
+                : 'Volver a vincular Mercado Pago'}
             </TusActionButton>
           ) : (
             <p role="status">

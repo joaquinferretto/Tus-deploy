@@ -50,8 +50,10 @@ test('IDENTITY-NOSIS gates: an unverified provider cannot publish services, acce
   assert.deepEqual(result.before, {
     publish: 'PROVIDER_IDENTITY_NOT_VERIFIED',
     accept: 'PROVIDER_IDENTITY_NOT_VERIFIED',
-    connect: 'PROVIDER_IDENTITY_NOT_VERIFIED',
-    money: 'PROVIDER_IDENTITY_NOT_VERIFIED',
+    // PAGOS-MP-VINCULADO-01 (owner's decision): linking Mercado Pago and charging no longer ask
+    // for an identity verification of TUS's own; charging asks for the linked account.
+    connect: 'none',
+    money: 'PROVIDER_ACCOUNT_NOT_CONNECTED',
     // In-memory composition without payment configuration fails closed before the gate.
     appConnect: 'PROVIDER_NOT_CONFIGURED',
   })
@@ -60,7 +62,8 @@ test('IDENTITY-NOSIS gates: an unverified provider cannot publish services, acce
   assert.ok(result.after.accept)
   assert.match(result.after.connect, /mercadopago/u)
   assert.equal(result.after.money, 'PROVIDER_ACCOUNT_NOT_CONNECTED')
-  assert.equal(result.other, 'PROVIDER_IDENTITY_NOT_VERIFIED')
+  // PAGOS-MP-VINCULADO-01: linking Mercado Pago asks for no identity verification, of any provider.
+  assert.equal(result.other, 'none')
 })
 
 test('IDENTITY-NOSIS HTTP: provider sees only its own verification, uploads raw images, submit answers 202 queued; admin needs platform tenant + permission', () => {

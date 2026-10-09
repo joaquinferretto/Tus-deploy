@@ -6,7 +6,8 @@ import {
   CODIGO_PAGO_NO_DISPONIBLE,
   CODIGO_PAGOS_SERVICIO_NO_HABILITADOS,
   CODIGO_PRESTADOR_SIN_COBRO,
-  CODIGO_PRESTADOR_SIN_IDENTIDAD,
+  CODIGO_PRESTADOR_SIN_MERCADO_PAGO,
+  MENSAJE_PRESTADOR_SIN_MERCADO_PAGO,
   CODIGO_SENA_YA_EMITIDA,
   CODIGO_SOLICITUD_NO_PENDIENTE,
   CODIGO_SOLICITUD_SIN_HORARIO,
@@ -1262,13 +1263,12 @@ export class ServicioTurnos {
     // nobody can while TUS itself is not authorized to charge service payments in production.
     const requisito = input.aceptar && reserva.estado === 'pending' && this.senas ? await this.senas.requisitoDe(reserva) : 'sin_sena'
     if (requisito === 'bloqueada') {
-      // Which of the two: the provider's identity, or nobody able to collect (no linked account
-      // and no platform account). The provider is never told to link its own Mercado Pago when
-      // what is missing is something else.
+      // Which of the two: the provider has not linked its Mercado Pago yet (its own step), or TUS
+      // has no platform account to hold the deposit with (never something of the provider).
       const perfil = await this.prisma.perfilPublicoPrestador.findFirst({ where: { tenantId: reserva.tenantId }, select: { prestadorId: true } })
       const diagnostico = this.senas && perfil ? await this.senas.diagnosticoDe({ prestadorTenantId: reserva.tenantId, prestadorId: perfil.prestadorId }).catch(() => null) : null
-      if (diagnostico?.motivo === 'PROVIDER_IDENTITY_NOT_VERIFIED') throw new ErrorCalendario(409, CODIGO_PRESTADOR_SIN_IDENTIDAD, 'Para aceptar turnos con seña primero tenés que verificar tu identidad en TUS. No hace falta que conectes una cuenta de Mercado Pago: TUS cobra la seña y tu parte queda en tu saldo. La solicitud sigue pendiente.')
-      throw new ErrorCalendario(409, CODIGO_PRESTADOR_SIN_COBRO, 'TUS todavía no puede cobrar la seña de tus turnos: falta configurar la cuenta de cobro de la plataforma. No es algo que tengas que resolver vos ni hace falta que conectes tu Mercado Pago: avisale al equipo de TUS. La solicitud sigue pendiente.')
+      if (diagnostico?.motivo === 'PROVIDER_ACCOUNT_NOT_CONNECTED') throw new ErrorCalendario(409, CODIGO_PRESTADOR_SIN_MERCADO_PAGO, MENSAJE_PRESTADOR_SIN_MERCADO_PAGO)
+      throw new ErrorCalendario(409, CODIGO_PRESTADOR_SIN_COBRO, 'TUS todavía no puede cobrar la seña de tus turnos: falta configurar la cuenta de cobro de la plataforma. No es algo que tengas que resolver vos: avisale al equipo de TUS. La solicitud sigue pendiente.')
     }
     if (requisito === 'no_habilitada') throw new ErrorCalendario(409, CODIGO_PAGOS_SERVICIO_NO_HABILITADOS, 'Los pagos de servicios todavía no están habilitados en TUS. Por ahora no se pueden aceptar turnos con seña; la solicitud sigue pendiente.')
     const aceptado: EstadoTurno = requisito === 'exigible' ? 'awaiting_payment' : 'confirmed'

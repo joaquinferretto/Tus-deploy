@@ -591,10 +591,14 @@ test('PAGOS habilitación técnica: in production, missing legal/kyb/tax approva
   assert.deepEqual(r.dobleCobro.slice(2), [true, 'OBLIGATION_NOT_PAYABLE', true, 'paid'], 'the same key is the same intent, a paid work takes no second charge, nothing is created')
   assert.deepEqual([r.pago[1], r.dobleCobro[0]], ['recorded', 'duplicate'], 'the repeated notification is a duplicate: it is not applied again')
   assert.deepEqual(r.parcial, [{ capability: 'public-launch-readiness', ready: false, gates: [{ gate: 'legal', status: 'pending' }, { gate: 'kyc', status: 'pending' }, { gate: 'kyb', status: 'pending' }, { gate: 'tax', status: 'expired' }, { gate: 'mercadoPago', status: 'current' }, { gate: 'runtimeProvider', status: 'current' }] }, { available: true, reason: null, mode: 'split' }], 'legal, kyc, kyb pending and tax expired are reported and block nothing')
-  assert.deepEqual(r.sinIdentidad, [true, { available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }, 'PROVIDER_IDENTITY_NOT_VERIFIED'], 'the global kyc approval never stands in for the identity of the provider')
+  // PAGOS-MP-VINCULADO-01 (owner's decision): TUS asks for no identity verification of its own to
+  // charge; a linked provider charges whatever its identity state in TUS (before: refused).
+  assert.deepEqual(r.sinIdentidad, [true, { available: true, reason: null, mode: 'split' }, 'none'], 'an identity TUS did not verify is not a reason')
   assert.deepEqual(r.conIdentidad, { available: true, reason: null, mode: 'split' })
   assert.deepEqual(r.mercadoPago, { MERCADO_PAGO_CLIENT_ID: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_CLIENT_SECRET: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_WEBHOOK_SECRET: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_OAUTH_REDIRECT_URI: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_NOTIFICATION_URL: 'PROVIDER_NOT_CONFIGURED', TUS_PAYMENT_CREDENTIALS_KEY: 'PROVIDER_NOT_CONFIGURED', TUS_WEB_BASE_URL: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_ENVIRONMENT: 'PROVIDER_NOT_CONFIGURED', apagado: 'PROVIDER_NOT_CONFIGURED', sinAdaptador: 'PROVIDER_NOT_CONFIGURED', webhookSinHttps: 'PROVIDER_NOT_CONFIGURED' }, 'every piece of Mercado Pago, the webhook among them, is required')
   assert.deepEqual(r.comision, ['PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', true])
-  assert.deepEqual(r.cuenta, [{ available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }, { available: true, reason: null, mode: 'plataforma' }], 'somebody has to be able to collect: the provider or TUS')
+  // PAGOS-MP-VINCULADO-01 (owner's decision): the account of TUS never stands in for the link of the
+  // provider (before: with it, an unlinked provider could charge).
+  assert.deepEqual(r.cuenta, [{ available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }, { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }], 'a provider charges only with its Mercado Pago linked')
   assert.deepEqual(r.interruptor, { available: false, reason: 'PAYMENTS_DISABLED' })
 })

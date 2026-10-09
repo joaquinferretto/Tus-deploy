@@ -53,7 +53,9 @@ test('IDENTIDAD manual por Admin PostgreSQL: a provider whose identity is pendin
 
       // ---- 1. Pending: no deposit can be charged for that provider.
       const t1 = await pedir(4, '10:00')
-      out.pendiente = [(await verificacion.estado(titular.id)).estado, await identidadReal.identidadVerificada(p.tenantId), (await puedeCobrar()).reason, await aceptar(t1)]
+      // PAGOS-MP-VINCULADO-01 (owner's decision): charging depends on the linked Mercado Pago, not on
+      // this verification (before: a pending identity refused the deposit).
+      out.pendiente = [(await verificacion.estado(titular.id)).estado, await identidadReal.identidadVerificada(p.tenantId), (await puedeCobrar()).reason, (await puedeCobrar()).available]
       // ---- 2. What is refused: no document yet, no note, its own identity, an unknown account.
       out.rechazos = [
         await decidir('verificar', 'Verificación manual para piloto interno'),
@@ -97,7 +99,7 @@ test('IDENTIDAD manual por Admin PostgreSQL: a provider whose identity is pendin
       out.noSeRechazaUnaVerificada = await decidir('rechazar', 'No corresponde rechazar una verificada')
       const revocada = await verificacion.decidir({ actor: admin, accountId: titular.id, accion: 'revocar', motivo: 'Fin del piloto interno' })
       const t2 = await pedir(4, '11:00')
-      out.revocada = [revocada.ok && revocada.verificacion.estado, await identidadReal.identidadVerificada(p.tenantId), (await puedeCobrar()).reason, await aceptar(t2), JSON.stringify(await pagado()) === JSON.stringify(historico), await decidir('revocar', 'otra vez, sin estar verificada')]
+      out.revocada = [revocada.ok && revocada.verificacion.estado, await identidadReal.identidadVerificada(p.tenantId), (await puedeCobrar()).reason, (await puedeCobrar()).available, JSON.stringify(await pagado()) === JSON.stringify(historico), await decidir('revocar', 'otra vez, sin estar verificada')]
       // ---- 5. Rejected, back to pending, rejected again and verified afterwards.
       const rechazada = await verificacion.decidir({ actor: admin, accountId: titular.id, accion: 'rechazar', motivo: 'Los datos no coinciden' })
       out.rechazada = [rechazada.ok && rechazada.verificacion.estado, rechazada.verificacion.nota, Boolean(rechazada.verificacion.rechazadaEn), await identidadReal.identidadVerificada(p.tenantId)]
@@ -112,7 +114,7 @@ test('IDENTIDAD manual por Admin PostgreSQL: a provider whose identity is pendin
     } finally { await cerrar() }
     console.log(JSON.stringify(out))
   `)
-  assert.deepEqual(r.pendiente, ['pendiente', false, 'PROVIDER_IDENTITY_NOT_VERIFIED', 'PROVIDER_IDENTITY_REQUIRED'], 'pending: the deposit cannot be charged and the provider cannot accept a priced turno')
+  assert.deepEqual(r.pendiente, ['pendiente', false, null, true], 'a pending identity is no reason not to charge: the provider has its Mercado Pago linked')
   assert.deepEqual(r.rechazos, ['DOCUMENT_NUMBER_REQUIRED', true, 'REASON_REQUIRED', 'REASON_REQUIRED', 'INVALID', 'FORBIDDEN', 'FORBIDDEN', 'NOT_FOUND', 'pendiente', false], 'no document, no note, an unknown action, its own identity, an unknown account: nothing is verified')
   assert.deepEqual(r.verificada, ['verificada', 'manual', true, 'Verificación manual para piloto interno', true, true, 'manual', true, 'Ludmila', 'Fernandez', true], 'verified by hand: on the ACCOUNT (Ludmila Fernandez), whatever the public name of the provider (Flor Perez)')
   assert.deepEqual(r.habilita, [true, true, null, 'awaiting_payment'], 'at once: the same source payments read says verified, and the provider accepts the turno with its deposit')
@@ -120,7 +122,7 @@ test('IDENTIDAD manual por Admin PostgreSQL: a provider whose identity is pendin
   assert.deepEqual(r.nombrePublico, ['verificada', true, true, true], 'changing the public name changes neither the identity nor what was paid')
   assert.equal(r.documentoDeOtro, 'IDENTITY_ALREADY_VERIFIED', 'one document verifies one provider')
   assert.equal(r.noSeRechazaUnaVerificada, 'INVALID_STATE')
-  assert.deepEqual(r.revocada, ['pendiente', false, 'PROVIDER_IDENTITY_NOT_VERIFIED', 'PROVIDER_IDENTITY_REQUIRED', true, 'INVALID_STATE'], 'revoked: new charges are blocked again; the paid deposit, its obligation and its settlement are untouched')
+  assert.deepEqual(r.revocada, ['pendiente', false, null, true, true, 'INVALID_STATE'], 'revoked: the identity is pending again; charges, the paid deposit, its obligation and its settlement are untouched')
   assert.deepEqual(r.rechazada, ['rechazada', 'Los datos no coinciden', true, false])
   assert.deepEqual(r.flujo, ['pendiente', 'INVALID_STATE', 'rechazada', 'verificada', true, true, 'awaiting_payment'], 'a rejected identity goes back to pending or is verified later')
   assert.deepEqual(r.auditoria[0], ['verification.manual_verified', 'verification.manual_revoked', 'verification.manual_rejected', 'verification.manual_reopened', 'verification.manual_rejected', 'verification.manual_verified'])
@@ -155,7 +157,7 @@ test('IDENTIDAD manual por Admin, rutas y pantalla: behind the identity-admin pe
   assert.doesNotMatch(read('apps/api/src/tus/finance/servicios/configuracion.ts'), /decisionManualAdmin|manual_verified|verificationMethod/u, 'no special case in payments')
   // The screen: state, actions by state, confirmation with a mandatory note.
   assert.match(pantalla, /<h2 id="usuario-verificacion">Estado de verificación<\/h2>/u)
-  assert.match(pantalla, /Vas a marcar esta identidad como verificada manualmente\. Esta acción habilita funciones sensibles como el cobro de señas y ganancias del prestador\./u)
+  assert.match(pantalla, /Vas a marcar esta identidad como verificada manualmente\. Habilita lo que depende de la identidad en TUS[^']*No interviene en los cobros: para cobrar alcanza con vincular Mercado Pago\./u)
   assert.match(pantalla, /Motivo \/ nota administrativa \(obligatoria\)/u)
   assert.match(pantalla, /data-confirmar disabled=\{guardando \|\| motivo\.trim\(\)\.length < 5\}/u)
   assert.match(pantalla, /estado\.estado === 'pendiente' \? \([\s\S]{0,400}Verificar identidad[\s\S]{0,300}Rechazar/u)

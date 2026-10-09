@@ -204,7 +204,7 @@ test('RETENCION split: a payment Mercado Pago pays straight to the provider is n
     console.log(JSON.stringify(out))
   `)
   assert.deepEqual(r.split, ['split', [['held', false, false, '900000']], [], { ganado: '0', disponible: '0', retenido: '0', negativo: '0', puede: false, motivo: 'NO_FUNDS' }], 'split: TUS holds nothing and owes nothing; the settlement is a record, not a retention')
-  assert.deepEqual(r.quienCobra, { anticipoConCuentaYPlataforma: 'plataforma', anticipoSinCuenta: 'plataforma', anticipoSinPlataforma: 'PLATFORM_ACCOUNT_REQUIRED', posteriorConCuenta: 'split', nadie: 'PLATFORM_ACCOUNT_REQUIRED' }, 'an advance payment is collected by TUS, also for a provider with its own account; without an account of TUS it is refused, never sent to the provider')
+  assert.deepEqual(r.quienCobra, { anticipoConCuentaYPlataforma: 'plataforma', anticipoSinCuenta: 'PROVIDER_ACCOUNT_NOT_CONNECTED', anticipoSinPlataforma: 'PLATFORM_ACCOUNT_REQUIRED', posteriorConCuenta: 'split', nadie: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }, 'PAGOS-MP-VINCULADO-01: a provider charges only with its Mercado Pago linked; then an advance payment is collected and held by TUS, and without an account of TUS it is refused, never sent to the provider')
 })
 
 test('RETENCION storage and compatibility: the migration is additive and keeps what already existed withdrawable; the PostgreSQL store reads the held settlements inside the transaction of a payout', () => {

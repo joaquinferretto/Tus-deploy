@@ -121,7 +121,11 @@ export const CODIGO_SOLICITUD_SIN_HORARIO = 'REQUEST_SLOT_UNAVAILABLE'
 // no Mercado Pago account linked AND TUS has no platform account configured. A provider never
 // needs its own account when the platform collects (its share becomes its balance).
 export const CODIGO_PRESTADOR_SIN_COBRO = 'PROVIDER_PAYMENT_ACCOUNT_REQUIRED'
-// The provider's identity is not verified yet: money is only collected for a verified person.
+// PAGOS-MP-VINCULADO-01. The provider has not linked its Mercado Pago account yet: the one thing
+// TUS asks of a provider to charge (TUS makes no identity verification of its own for that).
+export const CODIGO_PRESTADOR_SIN_MERCADO_PAGO = 'PROVIDER_MERCADO_PAGO_REQUIRED'
+export const MENSAJE_PRESTADOR_SIN_MERCADO_PAGO = 'Para aceptar turnos con seña primero tenés que vincular tu Mercado Pago en "Cobros". Es un solo paso y se hace en Mercado Pago. La solicitud sigue pendiente.'
+// Kept for clients that still know it: TUS no longer answers it (no own identity gate to charge).
 export const CODIGO_PRESTADOR_SIN_IDENTIDAD = 'PROVIDER_IDENTITY_REQUIRED'
 // The turno has a deposit and TUS itself may not charge service payments yet (production without
 // the `service-payments` readiness authorization): the request stays pending, never confirmed.

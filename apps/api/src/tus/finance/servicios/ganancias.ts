@@ -657,7 +657,9 @@ export class ServicioGananciasPrestador {
   constructor(
     private readonly store: PuertoSolicitudesLiquidacion,
     private readonly ejecucion: PuertoEjecucionLiquidacion,
-    private readonly identidadVerificada: (prestadorTenantId: string) => Promise<boolean>,
+    // PAGOS-MP-VINCULADO-01: a payout needs the linked Mercado Pago account, not a verification of
+    // TUS's own. The position is kept for the callers; whatever is passed is NOT consulted.
+    _verificacionPropiaEnDesuso: unknown,
     private readonly now: () => number = () => Date.now(),
     private readonly opciones: OpcionesGanancias
   ) {}
@@ -675,7 +677,6 @@ export class ServicioGananciasPrestador {
   private async motivo(prestadorTenantId: string, disponible: bigint, abierta: SolicitudLiquidacion | null, minimo: bigint): Promise<MotivoSinLiquidacion | null> {
     if (abierta) return 'PAYOUT_IN_PROGRESS'
     if (!(await this.store.cuentaParaLiquidar(prestadorTenantId))) return 'PAYMENT_ACCOUNT_REQUIRED'
-    if (!(await this.identidadVerificada(prestadorTenantId).catch(() => false))) return 'IDENTITY_NOT_VERIFIED'
     if (disponible <= 0n) return 'NO_FUNDS'
     if (disponible < minimo) return 'BELOW_MINIMUM'
     return null
@@ -754,7 +755,6 @@ export class ServicioGananciasPrestador {
     const cuenta = await this.store.cuentaParaLiquidar(context.tenantId)
     if (!cuenta || (this.opciones.cuentaHabilitada && !(await this.opciones.cuentaHabilitada(context.tenantId).catch(() => false))))
       throw new ErrorFinanzasServicio(409, CODIGO_CUENTA_REQUERIDA, 'connect a valid Mercado Pago account to request a payout')
-    if (!(await this.identidadVerificada(context.tenantId).catch(() => false))) throw new ErrorFinanzasServicio(409, 'PROVIDER_IDENTITY_NOT_VERIFIED', 'identity must be verified to request a payout')
     const ahora = this.iso()
     const minimo = await this.opciones.minimoLiquidacion()
     const { solicitud, nueva } = await this.store.crearAtomica(context.tenantId, key, (estado) => {

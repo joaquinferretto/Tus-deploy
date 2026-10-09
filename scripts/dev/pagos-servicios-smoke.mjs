@@ -212,6 +212,10 @@ async function main() {
           await prisma.prestador.create({ data: { id: 'smoke-p2', tenantId: 'smoke-presupuesta', prestadorId: 'smoke-prestador-2', cohorte: 'repairs-trades', ubicacionId: 'ubicacion', zonaHoraria: 'America/Argentina/Buenos_Aires', rolesPersonal: ['owner'], versionPoliticaOperativa: 'v1', estado: 'approved', fechaCreacion: ahora, fechaActualizacion: ahora } })
           await prisma.perfilPublicoPrestador.create({ data: { id: 'smoke-perfil-2', tenantId: 'smoke-presupuesta', prestadorId: 'smoke-prestador-2', nombrePublico: 'Marta A Presupuestar', oficio: oficio.id, zona: 'Centro', visible: true, fechaCreacion: ahora, fechaActualizacion: ahora, servicios: { create: [{ oficioId: oficio.id, duracionMinutos: 60 }] } } })
           await prisma.verificacionIdentidad.create({ data: { id: 'smoke-verificacion-2', tenantId: 'smoke-presupuesta', usuarioId, proveedorId: 'smoke', numeroDocumento: '30111555', metodoVerificacion: 'manual', estado: 'verified', fechaCreacion: ahora, verificadaEn: ahora, fechaActualizacion: ahora } })
+          // PAGOS-MP-VINCULADO-01: a provider charges only with its Mercado Pago linked. The link is
+          // seeded as the OAuth callback leaves it (no token: the deposits are collected by TUS).
+          for (const [id, prestadorTenantId, cuentaExternaId] of [['smoke-cuenta-mp', tenantId, '900100200'], ['smoke-cuenta-mp-2', 'smoke-presupuesta', '900100201']])
+            await prisma.cuentaCobroPrestador.create({ data: { id, prestadorTenantId, proveedor: 'mercado-pago', estado: 'connected', cuentaExternaId, modoProductivo: false, alcances: 'offline_access read write', conectadaEn: ahora, expiraEn: new Date(ahora.getTime() + 150 * 86_400_000), version: 1, actorId: usuarioId, correlacionId: 'smoke', fechaCreacion: ahora, fechaActualizacion: ahora } })
           console.log('SEMBRADO ' + oficio.id)
         } finally { await prisma.$disconnect() }
       })()`,

@@ -65,7 +65,7 @@ export const turnosPagosSetup = (url) => `
   })
 
   const [oficio] = await prisma.oficioServicio.findMany({ where: { activo: true }, orderBy: { orden: 'asc' }, take: 1 })
-  async function prestador(tag, nombre, variantes) {
+  async function prestador(tag, nombre, variantes, opciones = {}) {
     const tenantId = run + '-tenant-' + tag
     const prestadorId = run + '-prestador-' + tag
     const ahora = new Date()
@@ -81,10 +81,14 @@ export const turnosPagosSetup = (url) => `
       orden += 1
     }
     verificados.add(tenantId)
+    // PAGOS-MP-VINCULADO-01: what a provider needs to charge is its Mercado Pago linked (by the real
+    // OAuth flow). opciones.sinMercadoPago leaves a provider that never linked it.
+    if (!opciones.sinMercadoPago) await conectarMercadoPago({ tenantId }, String(700000000 + Math.floor(Math.random() * 99999999)))
     return { tenantId, prestadorId, perfilId: perfil.id, tarifas, ctx: { tenantId, actorId: 'u-' + tag, correlationId: 'c-' + tag } }
   }
   const cliente = async (tag) => (await auth.service.registerAccount({ email: run + '-' + tag + '@example.com', password: 'una frase larga y segura 2026', displayName: 'Cliente ' + tag })).created.account
   // OAuth with Mercado Pago (authorization URL with state, callback with the code).
+  const desconectarMercadoPago = (p) => modulo.cuentas.desconectar({ tenantId: p.tenantId, actorId: 'u', correlationId: 'c' })
   const conectarMercadoPago = async (p, userId) => { const s = await modulo.cuentas.iniciarConexion({ tenantId: p.tenantId, actorId: 'u', correlationId: 'c' }); return modulo.cuentas.completarConexion({ code: 'TG-code-' + userId, state: new URL(s.authorizationUrl).searchParams.get('state'), correlationId: 'c' }) }
   const hoy = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10)
   const lunes = c.sumarDias(c.lunesDe(hoy), 7)

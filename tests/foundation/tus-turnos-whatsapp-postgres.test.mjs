@@ -340,19 +340,23 @@ test('TURNOS cobro de señas PostgreSQL: a provider WITHOUT its own Mercado Pago
       mpPayment('9301', t.preferencia)
       await ingerir(notification('9301', { userId: '555', notificationId: run + '-c1' }))
       out.porPlataforma = { estado: await estadoTurno(t), cobrador: t.preferencia.token === PLATFORM_TOKEN || String(mp.payments.get('9301').collector_id) === '555', movimientos: await filas(sin), saldo: (await saldo(sin)).disponible }
-      // Identity not verified: refused with ITS reason, by the panel and from WhatsApp.
+      // PAGOS-MP-VINCULADO-01 (owner's decision): an identity not verified by TUS blocks nothing;
+      // what a provider needs is its Mercado Pago linked. Unlinked: refused with ITS reason, by the
+      // panel and from WhatsApp.
       verificados.delete(sin.tenantId)
+      out.identidadNoBloquea = (await turnos.cobroDeSenas([sin.tenantId])).get(sin.tenantId)
+      await desconectarMercadoPago(sin)
       out.diagnosticoSinIdentidad = (await turnos.cobroDeSenas([sin.tenantId])).get(sin.tenantId)
       const pedido = await turnos.solicitarTurno({ prestadorId: sin.perfilId, oficioId: oficio.id, inicio: a(1, '10:00'), tarifaId: sin.tarifas['Reparación'], clienteId: ana.id, clienteTenantId: ana.tenantId })
       const error = await turnos.aceptarSolicitud({ prestadorTenantId: sin.tenantId, reservaId: pedido.id }).then(() => null, (e) => ({ code: e.code, message: e.message, status: e.statusCode ?? e.status }))
       const porWhatsapp = await decir(waSin, 'Aceptar', boton('aceptar', pedido.id))
-      out.sinIdentidad = { code: error?.code, status: error?.status, diceIdentidad: /verificar tu identidad/u.test(error?.message ?? ''), noExigeMercadoPago: /No hace falta que conectes/u.test(error?.message ?? ''), estado: (await fila(pedido.id)).estado, whatsapp: porWhatsapp.join(' ').includes('verificar tu identidad') }
-      verificados.add(sin.tenantId)
+      out.sinIdentidad = { code: error?.code, status: error?.status, diceVincular: /vincular tu Mercado Pago/u.test(error?.message ?? ''), nombraIdentidad: /identidad/u.test(error?.message ?? ''), estado: (await fila(pedido.id)).estado, whatsapp: porWhatsapp.join(' ').includes('vincular tu Mercado Pago') }
+      await conectarMercadoPago(sin, '8832')
       out.vuelveAAceptar = (await turnos.aceptarSolicitud({ prestadorTenantId: sin.tenantId, reservaId: pedido.id })).estado
       console.log(JSON.stringify(out))
     } finally { await cerrar() }
   `)
-  assert.deepEqual(r.diagnostico.sin, { disponible: true, motivo: null, modo: 'plataforma' }, 'no own account: collected by the platform')
+  assert.deepEqual(r.diagnostico.sin, { disponible: true, motivo: null, modo: 'plataforma' }, 'linked: the deposit is collected and held by the platform')
   // PAGOS-RETENCION-01: a deposit is an advance payment, so TUS collects it with its own account even
   // for a provider with a linked one (before: Split 1:1, paid straight to the provider).
   assert.deepEqual(r.diagnostico.con, { disponible: true, motivo: null, modo: 'plataforma' }, 'own account linked: the deposit is still collected by the platform')
@@ -362,8 +366,9 @@ test('TURNOS cobro de señas PostgreSQL: a provider WITHOUT its own Mercado Pago
   // PAGOS-RETENCION-01: before, that share was withdrawable the moment the deposit was approved. Now it
   // is booked and held until the turno is closed.
   assert.equal(r.porPlataforma.saldo, '0', 'a deposit paid in advance is not withdrawable yet')
-  assert.deepEqual(r.diagnosticoSinIdentidad, { disponible: false, motivo: 'PROVIDER_IDENTITY_NOT_VERIFIED', modo: null })
-  assert.deepEqual(r.sinIdentidad, { code: 'PROVIDER_IDENTITY_REQUIRED', status: 409, diceIdentidad: true, noExigeMercadoPago: true, estado: 'pending', whatsapp: true }, 'identity is what is missing, and the provider is told exactly that')
+  assert.deepEqual(r.identidadNoBloquea, { disponible: true, motivo: null, modo: 'plataforma' }, 'an identity TUS did not verify is not a reason')
+  assert.deepEqual(r.diagnosticoSinIdentidad, { disponible: false, motivo: 'PROVIDER_ACCOUNT_NOT_CONNECTED', modo: null })
+  assert.deepEqual(r.sinIdentidad, { code: 'PROVIDER_MERCADO_PAGO_REQUIRED', status: 409, diceVincular: true, nombraIdentidad: false, estado: 'pending', whatsapp: true }, 'Mercado Pago is what is missing, and the provider is told exactly that')
   assert.equal(r.vuelveAAceptar, 'awaiting_payment')
 })
 
@@ -371,9 +376,13 @@ test('TURNOS cobro de señas: every reason has its own wording for the administr
   const contratos = readFileSync(new URL('../../packages/contracts/src/tus-turnos.ts', import.meta.url), 'utf8')
   const admin = readFileSync(new URL('../../apps/web/src/lib/tus-admin-api.ts', import.meta.url), 'utf8')
   assert.match(contratos, /CODIGO_PRESTADOR_SIN_IDENTIDAD = 'PROVIDER_IDENTITY_REQUIRED'/u)
-  assert.doesNotMatch(contratos, /primero tenés que conectar tu cuenta de Mercado Pago/u, 'a provider is never told it must link its own account')
-  for (const motivo of ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PRODUCTION_NOT_AUTHORIZED', 'PROVIDER_IDENTITY_NOT_VERIFIED', 'PROVIDER_ACCOUNT_NOT_CONNECTED']) assert.ok(admin.includes(motivo), motivo)
-  assert.match(admin, /Por plataforma/u)
+  // PAGOS-MP-VINCULADO-01 (owner's decision): linking Mercado Pago is the one thing a provider is
+  // asked for; an identity verification of TUS's own is never named as a reason.
+  assert.match(contratos, /CODIGO_PRESTADOR_SIN_MERCADO_PAGO = 'PROVIDER_MERCADO_PAGO_REQUIRED'/u)
+  assert.match(contratos, /primero tenés que vincular tu Mercado Pago/u)
+  for (const motivo of ['PAYMENTS_DISABLED', 'PROVIDER_NOT_CONFIGURED', 'PRODUCTION_NOT_AUTHORIZED', 'PROVIDER_ACCOUNT_NOT_CONNECTED']) assert.ok(admin.includes(motivo), motivo)
+  assert.doesNotMatch(admin, /PROVIDER_IDENTITY_NOT_VERIFIED|Falta identidad|Falta KYC|Falta KYB/u)
+  assert.match(admin, /Falta vincular Mercado Pago/u)
   assert.doesNotMatch(admin, /ACCESS_TOKEN\s*[:=]\s*['"][A-Za-z0-9_-]{10,}/u, 'names of settings only, never a value')
 })
 

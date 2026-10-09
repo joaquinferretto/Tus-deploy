@@ -154,3 +154,21 @@ otras más amplias las dos restricciones que topeaban la tasa en 30 % (ahora 100
 - Los servicios sin precio dejan de aceptar turnos donde la seña es cobrable.
 - Respaldo manual verificado y ensayo de `migrate-deploy` sobre el respaldo restaurado antes de
   aplicar la migración en producción.
+
+## Qué necesita un prestador para cobrar (PAGOS-MP-VINCULADO-01, decisión del dueño, 2026-10-09)
+
+Para cobrar en TUS un prestador necesita únicamente:
+
+1. su cuenta TUS activa;
+2. un perfil de prestador válido;
+3. su cuenta de Mercado Pago vinculada por OAuth.
+
+TUS no hace una verificación de identidad propia (KYC/KYB) para habilitar cobros ni retiros: la verificación regulatoria del dueño de la cuenta la hace Mercado Pago. No importa si esa cuenta es de una persona, un monotributista o una empresa. El vínculo es por ids (`cuentas_cobro_prestador.prestador_tenant_id` y `cuenta_externa_id`), nunca por nombres: el nombre público del prestador puede cambiar sin tocar el vínculo.
+
+- Regla en el código: `PoliticaCobroPersistida.disponibilidad` responde `PROVIDER_ACCOUNT_NOT_CONNECTED` si el prestador no tiene la cuenta en estado `connected`. Ya no existe el motivo `PROVIDER_IDENTITY_NOT_VERIFIED` en pagos ni `IDENTITY_NOT_VERIFIED` en retiros.
+- Vinculación: `POST /tus/v1/prestador/cuenta-cobro/mercado-pago/conectar` devuelve la URL oficial de autorización (state de un solo uso + PKCE S256); Mercado Pago vuelve a `GET /tus/v1/integrations/mercado-pago/oauth/callback`; el backend canjea el código y guarda los tokens cifrados (AES-256-GCM, `TUS_PAYMENT_CREDENTIALS_KEY`). Nada de eso pasa por el navegador ni se le pide al prestador.
+- Estados que se muestran: No vinculado (`not_connected`, `revoked`), Vinculado (`connected`), Requiere reconexión (`expired`, `error`).
+- Auditoría: `payment_account.connected`, `payment_account.reconnected` y `payment_account.disconnected` en `AuditEvent`, con actor, estado anterior y nuevo y la cuenta de Mercado Pago enmascarada. Nunca un token.
+- Para qué se usa la cuenta vinculada: (a) es el requisito para cobrar; (b) un pago hecho después de terminado el trabajo se cobra con esa cuenta (split, TUS toma su comisión como `marketplace_fee`); (c) es el destino de los retiros de ganancias.
+- Lo que no cambió: una seña o un pago anticipado lo cobra TUS con su propia cuenta y lo retiene hasta el cierre del servicio; al liberarse queda como saldo del prestador en TUS. Ese saldo NO se transfiere solo: el prestador pide el retiro y la administración lo procesa (Mercado Pago Payouts si está configurado, u otro medio con su referencia).
+- La verificación de identidad de TUS sigue existiendo para publicar servicios y aceptar trabajos de solicitudes (`PROVIDER_IDENTITY_NOT_VERIFIED` en esos dos puntos). Queda a decisión del dueño si también se quita ahí.
