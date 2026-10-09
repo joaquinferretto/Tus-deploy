@@ -8,12 +8,13 @@ import {
 } from './lectores.ts'
 import { SesionNavegadorCifrada } from './memoria.ts'
 import { NosisBrowserIdentityProvider, type ConfiguracionNosisBrowser } from './nosis-browser.ts'
+import { NosisPublicLookupAdapter } from './nosis-public.ts'
 import { NosisDemoIdentityProvider, type IdentityVerificationProvider } from './proveedor.ts'
 import type { BrowserSessionStore, PuertoTransaccionIdentidad } from './puertos.ts'
 import { ServicioVerificacionIdentidad } from './servicio.ts'
 import { WorkerVerificacionIdentidad, type LoggerWorkerIdentidad } from './worker.ts'
 
-export type TipoProveedorIdentidad = 'nosis-browser' | 'demo' | 'nosis-api'
+export type TipoProveedorIdentidad = 'nosis-browser' | 'demo' | 'nosis-api' | 'nosis-public'
 
 export interface ConfiguracionIdentidad {
   provider: TipoProveedorIdentidad
@@ -37,8 +38,8 @@ export function leerConfiguracionIdentidad(
   const raw = env['IDENTITY_PROVIDER']?.trim() || 'nosis-browser'
   const production = env['NODE_ENV']?.trim() === 'production'
   let provider: TipoProveedorIdentidad = 'nosis-browser'
-  if (raw === 'demo' || raw === 'nosis-browser' || raw === 'nosis-api') provider = raw
-  else problems.push('IDENTITY_PROVIDER must be nosis-browser or demo')
+  if (raw === 'demo' || raw === 'nosis-browser' || raw === 'nosis-api' || raw === 'nosis-public') provider = raw
+  else problems.push('IDENTITY_PROVIDER must be nosis-public, nosis-browser or demo')
   if (provider === 'demo' && production)
     problems.push('IDENTITY_PROVIDER=demo is not allowed in production')
   if (provider === 'nosis-api') problems.push('IDENTITY_PROVIDER=nosis-api is not implemented yet')
@@ -144,6 +145,8 @@ export function crearProveedorIdentidad(
   if (config.problems.length > 0)
     throw new Error(`identity configuration is invalid: ${config.problems.join('; ')}`)
   if (config.provider === 'demo') return new NosisDemoIdentityProvider()
+  // DOCUMENTO-NOSIS-PUBLICO-01: the public search over plain HTTP. No session, no browser, no login.
+  if (config.provider === 'nosis-public') return new NosisPublicLookupAdapter()
   if (!config.nosisUrlsConfigured)
     throw new Error(
       'NOSIS_BROWSER_LOGIN_URL and NOSIS_BROWSER_LOCALIZADOR_URL are required for nosis-browser'

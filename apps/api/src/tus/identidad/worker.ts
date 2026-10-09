@@ -4,6 +4,7 @@ import type { ImagenParaLectura, IdentityDocumentReader } from './lectores.ts'
 import {
   ErrorIdentidad,
   compararConFuente,
+  detalleComparacion,
   enmascararCuil,
   enmascararDni,
   proximoReintento,
@@ -362,8 +363,21 @@ export class WorkerVerificacionIdentidad {
         return this.limitado(job, verification, rateLimit)
       if (ERRORES_SESION.has(providerError.code))
         return this.sesionRequerida(job, verification, providerError.code)
+      // DOCUMENTO-NOSIS-PUBLICO-01: the public search answered something that is not its shape.
+      // Asking again would only spend queries: a person looks at this verification.
+      if (providerError.code === 'NOSIS_LAYOUT_CHANGED' && this.deps.provider.method === 'nosis_public')
+        return this.respuestaInesperada(job, verification)
       return this.fallo(job, verification, providerError.code)
     }
+  }
+
+  private async respuestaInesperada(job: TrabajoIdentidad, verification: VerificacionIdentidad): Promise<ResultadoCicloIdentidad> {
+    return this.transaction.ejecutar(async (repositories) => {
+      await this.cerrarTrabajo(repositories, job, 'done', 'NOSIS_LAYOUT_CHANGED')
+      const next = await this.guardar(repositories, verification, { ...verification, status: 'review_required', reviewReason: 'PROVIDER_RESPONSE_UNEXPECTED' })
+      await this.auditar(repositories, 'verification.review_required', next, { reason: 'PROVIDER_RESPONSE_UNEXPECTED' })
+      return { outcome: 'checked' as const, verificationId: next.verificationId, status: next.status }
+    })
   }
 
   private async resolver(
@@ -372,18 +386,18 @@ export class WorkerVerificacionIdentidad {
     results: PersonaFuenteExterna[],
     providerReference: string | null
   ): Promise<ResultadoCicloIdentidad> {
+    const publico = this.deps.provider.method === 'nosis_public'
+    const provinciaDelDocumento = verification.visionReading?.province ?? verification.ocrReading?.province ?? null
     const comparison = compararConFuente({
       documentNumber: verification.documentNumber!,
       firstName: verification.extractedFirstName,
       lastName: verification.extractedLastName,
       results,
+      // DOCUMENTO-NOSIS-PUBLICO-01: the public search also answers the province; the document's
+      // is the one the vision reader could read (the MRZ has none).
+      ...(publico ? { province: { required: true, document: provinciaDelDocumento } } : {}),
     })
-    const snapshot: {
-      resultCount: number
-      nameMatch: string | null
-      cuilValid: boolean | null
-      verifiedArea?: PersonaFuenteExterna['verifiedArea']
-    } = {
+    const snapshot: NonNullable<VerificacionIdentidad['externalSnapshot']> = {
       resultCount: results.length,
       nameMatch:
         comparison.decision === 'verified'
@@ -401,6 +415,14 @@ export class WorkerVerificacionIdentidad {
             : null,
     }
     if (comparison.decision === 'verified' && results[0]?.verifiedArea) snapshot.verifiedArea = results[0].verifiedArea
+    if (publico) {
+      // The minimal evidence: where it came from, when, the tax id shown and the three compared
+      // data. Never the answer of the source, an activity or a link to a report.
+      snapshot.source = 'nosis_public'
+      snapshot.checkedAt = this.isoNow()
+      snapshot.sourceTaxId = results.length === 1 ? (results[0]!.cuil ?? null) : null
+      snapshot.comparison = detalleComparacion({ documentNumber: verification.documentNumber, firstName: verification.extractedFirstName, lastName: verification.extractedLastName, documentProvince: provinciaDelDocumento, results })
+    }
     const base = {
       ...verification,
       providerReference,

@@ -41,9 +41,10 @@ export const IDENTITY_SETUP = `
     async leer(images) {
       readerCalls[kind] += 1
       if (readerFailures[kind] > 0) { readerFailures[kind] -= 1; return { reader: kind, documentNumber: null, firstName: null, lastName: null, birthDate: null, sex: null, nationality: null, expirationDate: null, confidence: 0, unavailable: true, transient: true } }
-      const [dni, lastName, firstName, visionDni] = tagOf(images)
+      // A fifth value, when present, is the province only the vision reader can read (the back of the card).
+      const [dni, lastName, firstName, visionDni, provincia] = tagOf(images)
       const documentNumber = kind === 'vision' && (readerOverrides.vision ?? visionDni) ? (readerOverrides.vision ?? visionDni) : dni
-      return { reader: kind, documentNumber, firstName, lastName, birthDate: '1983-04-05', sex: 'M', nationality: 'ARG', expirationDate: '2031-01-01', confidence: 0.9 }
+      return { reader: kind, documentNumber, firstName, lastName, birthDate: '1983-04-05', sex: 'M', nationality: 'ARG', expirationDate: '2031-01-01', ...(kind === 'vision' && provincia ? { province: provincia } : {}), confidence: 0.9 }
     },
   })
   const logs = []

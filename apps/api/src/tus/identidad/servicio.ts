@@ -11,6 +11,7 @@ import {
   soloDigitos,
   type AreaDomicilioVerificada,
   type EstadoVerificacionIdentidad,
+  resultadoDocumental,
 } from './modelo.ts'
 import type {
   EstadoProveedorIdentidad,
@@ -340,6 +341,9 @@ export class ServicioVerificacionIdentidad {
       const job = await repositories.cola.buscarActivo(verificationId)
       return {
         ...item,
+        // DOCUMENTO-NOSIS-PUBLICO-01: VERIFIED | MISMATCH | NOT_FOUND | MANUAL_REVIEW_REQUIRED |
+        // PROVIDER_UNAVAILABLE (null while nothing was decided).
+        documentaryResult: resultadoDocumental(item),
         documents: await this.documentos(repositories, verificationId),
         job: job
           ? {

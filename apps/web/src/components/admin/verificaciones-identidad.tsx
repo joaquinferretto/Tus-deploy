@@ -7,11 +7,14 @@ import { TusRequestError } from '@/lib/tus-client'
 import {
   ETIQUETAS_ESTADO_IDENTIDAD,
   MOTIVOS_REVISION_TEXTO,
+  RESULTADO_DOCUMENTAL_TEXTO,
   clienteIdentidad,
+  type ComparacionDocumentalWeb,
   type DetalleVerificacionAdmin,
   type EstadoWorkerWeb,
   type ItemVerificacionAdmin,
   type LecturaDocumentoWeb,
+  type ResultadoDocumentalWeb,
 } from '@/lib/tus-identidad'
 import { formatTusDate, type TusWebSession } from '@/lib/tus-ui-contract'
 import { TusActionButton, TusStateMessage } from '../../app/tus/tus-ui'
@@ -292,6 +295,11 @@ function DetalleVerificacion({
           : 'sin consulta'}
         {detail.verifiedCuil ? ` · CUIL verificado ${detail.verifiedCuil}` : ''}
       </p>
+      {detail.externalSnapshot?.comparison ? (
+        <ComparacionDocumental comparison={detail.externalSnapshot.comparison} result={detail.documentaryResult ?? null} />
+      ) : detail.documentaryResult ? (
+        <p data-resultado-documental={detail.documentaryResult}>Resultado: <strong>{RESULTADO_DOCUMENTAL_TEXTO[detail.documentaryResult]}</strong></p>
+      ) : null}
       {detail.job ? (
         <p>
           Cola: {detail.job.stage} / {detail.job.status} · intento {detail.job.attemptCount} ·
@@ -347,3 +355,35 @@ function Lectura({
 const verificacionesIdentidadAdminModule = { VerificacionesIdentidadAdmin }
 
 export default verificacionesIdentidadAdminModule
+
+// DOCUMENTO-NOSIS-PUBLICO-01. What the document says next to what the public search of Nosis
+// answered, datum by datum, with which one failed. Every value and every verdict is the API's.
+function ComparacionDocumental({ comparison, result }: { comparison: ComparacionDocumentalWeb; result: ResultadoDocumentalWeb | null }): ReactNode {
+  const marca = (estado: boolean | 'match' | 'partial' | 'mismatch' | 'unavailable') =>
+    estado === true || estado === 'match' ? '✓ Coincide' : estado === 'partial' ? '≈ Coincidencia parcial' : estado === 'unavailable' ? '— Falta el dato' : '✗ No coincide'
+  const filas: [string, string | null, string | null, boolean | 'match' | 'partial' | 'mismatch' | 'unavailable'][] = [
+    ['Documento', comparison.dni.document, comparison.dni.source, comparison.dni.match],
+    ['Nombre', comparison.name.document, comparison.name.source, comparison.name.match],
+    ['Provincia', comparison.province.document, comparison.province.source, comparison.province.match],
+  ]
+  return (
+    <div data-comparacion-documental style={{ maxWidth: '100%', overflowX: 'auto' }}>
+      <table>
+        <thead>
+          <tr><th>Dato</th><th>DNI</th><th>Nosis</th><th>Resultado</th></tr>
+        </thead>
+        <tbody>
+          {filas.map(([dato, documento, fuente, estado]) => (
+            <tr data-dato={dato.toLowerCase()} data-coincide={String(estado)} key={dato}>
+              <th scope="row">{dato}</th>
+              <td>{documento ?? '—'}</td>
+              <td>{fuente ?? '—'}</td>
+              <td>{marca(estado)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {result ? <p data-resultado-documental={result}>Resultado: <strong>{RESULTADO_DOCUMENTAL_TEXTO[result]}</strong></p> : null}
+    </div>
+  )
+}

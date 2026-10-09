@@ -247,6 +247,8 @@ export const EsquemaLecturaVision = z.object({
   sex: z.enum(['M', 'F', 'X']).nullable(),
   nationality: z.string().nullable(),
   expiration_date: z.string().nullable(),
+  // DOCUMENTO-NOSIS-PUBLICO-01: optional so an answer without it is still a valid reading.
+  province: z.string().nullable().optional(),
   confidence: z.number(),
 })
 export type LecturaVisionModelo = z.infer<typeof EsquemaLecturaVision>
@@ -269,6 +271,7 @@ const JSON_SCHEMA_LECTURA_VISION = {
     'sex',
     'nationality',
     'expiration_date',
+    'province',
     'confidence',
   ],
   properties: {
@@ -280,6 +283,7 @@ const JSON_SCHEMA_LECTURA_VISION = {
     sex: { type: ['string', 'null'], enum: ['M', 'F', 'X', null] },
     nationality: { type: ['string', 'null'] },
     expiration_date: { type: ['string', 'null'] },
+    province: { type: ['string', 'null'] },
     confidence: { type: 'number' },
   },
 } as const
@@ -289,6 +293,7 @@ const INSTRUCCION_VISION = [
   'Extract ONLY what is printed on the images. Never infer, complete or correct a value:',
   'if a field is not clearly legible, return null for it. Dates as YYYY-MM-DD.',
   'document_number: digits only. last_name / first_name exactly as printed (apellido / nombre).',
+  'province: ONLY the province printed in the DOMICILIO of the back of the card, exactly as printed; null if it is not clearly legible. Never the street, the number or the city.',
   'Set legible=false if the images are not an Argentine DNI or cannot be read.',
   'confidence is your overall confidence between 0 and 1 in the document_number reading.',
   `Answer with a single JSON object matching this JSON Schema: ${JSON.stringify(JSON_SCHEMA_LECTURA_VISION)}`,
@@ -417,6 +422,7 @@ export class VisionIdentityDocumentReader implements IdentityDocumentReader {
       sex: value.sex,
       nationality: value.nationality?.trim() || null,
       expirationDate: date(value.expiration_date),
+      province: value.province?.trim() || null,
       confidence,
     }
   }

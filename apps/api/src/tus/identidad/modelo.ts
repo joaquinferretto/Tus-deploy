@@ -27,13 +27,18 @@ export const MOTIVOS_REVISION_IDENTIDAD = [
   'NAME_PARTIAL_MATCH',
   'CUIL_INVALID',
   'CUIL_DOCUMENT_MISMATCH',
+  // DOCUMENTO-NOSIS-PUBLICO-01: the province is the third datum compared.
+  'PROVINCE_MISMATCH',
+  'PROVINCE_UNAVAILABLE',
+  // The source answered something that is not its documented shape: a person looks at it.
+  'PROVIDER_RESPONSE_UNEXPECTED',
   'IDENTITY_ALREADY_VERIFIED',
   'RETRIES_EXHAUSTED',
   'MANUAL_REVIEW_REQUESTED',
 ] as const
 export type MotivoRevisionIdentidad = (typeof MOTIVOS_REVISION_IDENTIDAD)[number]
 
-export type MetodoVerificacionIdentidad = 'nosis_browser' | 'nosis_api' | 'demo' | 'manual'
+export type MetodoVerificacionIdentidad = 'nosis_browser' | 'nosis_api' | 'nosis_public' | 'demo' | 'manual'
 
 export const VERSION_CONSENTIMIENTO_IDENTIDAD = 'identidad-prestador-v1'
 export const PROPOSITO_CONSENTIMIENTO_IDENTIDAD = 'alta_prestador'
@@ -137,6 +142,9 @@ export interface LecturaDocumento {
   sex: 'M' | 'F' | 'X' | null
   nationality: string | null
   expirationDate: string | null
+  // DOCUMENTO-NOSIS-PUBLICO-01: the province printed in the address of the document, only when
+  // the reader could read it (the MRZ carries none). Never a street or a number.
+  province?: string | null
   // 0..1. Low confidence never verifies.
   confidence: number
   unavailable?: boolean
@@ -214,7 +222,9 @@ export type ResultadoComparacion =
   | { decision: 'rejected'; reason: MotivoRevisionIdentidad }
 
 function tokens(value: string | null | undefined): string[] {
-  return normalizarNombre(String(value ?? '').replace(/,/gu, ' '))
+  // Punctuation never separates two people: a comma, a dot and a hyphen are spaces here
+  // ("PEREZ-GOMEZ" and "PEREZ GOMEZ" are the same tokens).
+  return normalizarNombre(String(value ?? '').replace(/[,.-]/gu, ' '))
     .split(' ')
     .filter(Boolean)
 }
@@ -243,11 +253,82 @@ export function compararNombre(
   return 'mismatch'
 }
 
+// ---- province (DOCUMENTO-NOSIS-PUBLICO-01) --------------------------------------------------
+
+// The 24 jurisdictions of Argentina, as compared: uppercase, no accents, no punctuation.
+const PROVINCIAS = ['BUENOS AIRES', 'CIUDAD AUTONOMA DE BUENOS AIRES', 'CATAMARCA', 'CHACO', 'CHUBUT', 'CORDOBA', 'CORRIENTES', 'ENTRE RIOS', 'FORMOSA', 'JUJUY', 'LA PAMPA', 'LA RIOJA', 'MENDOZA', 'MISIONES', 'NEUQUEN', 'RIO NEGRO', 'SALTA', 'SAN JUAN', 'SAN LUIS', 'SANTA CRUZ', 'SANTA FE', 'SANTIAGO DEL ESTERO', 'TIERRA DEL FUEGO', 'TUCUMAN'] as const
+const ALIAS_PROVINCIA: Record<string, (typeof PROVINCIAS)[number]> = {
+  CABA: 'CIUDAD AUTONOMA DE BUENOS AIRES',
+  'C A B A': 'CIUDAD AUTONOMA DE BUENOS AIRES',
+  'CAPITAL FEDERAL': 'CIUDAD AUTONOMA DE BUENOS AIRES',
+  'CIUDAD DE BUENOS AIRES': 'CIUDAD AUTONOMA DE BUENOS AIRES',
+  'TIERRA DEL FUEGO ANTARTIDA E ISLAS DEL ATLANTICO SUR': 'TIERRA DEL FUEGO',
+  'PROVINCIA DE BUENOS AIRES': 'BUENOS AIRES',
+}
+
+// A province as it is compared, or null when the text is not one of them (never approximated).
+export function normalizarProvincia(value: string | null | undefined): string | null {
+  const texto = normalizarNombre(String(value ?? '').replace(/[.'-]/gu, ' ')).replace(/\s+/gu, ' ').trim()
+  if (!texto) return null
+  const sinPrefijo = texto.replace(/^(?:PROVINCIA|PCIA|PROV)\s+(?:DE\s+|DEL\s+)?/u, '')
+  for (const candidata of [texto, sinPrefijo]) {
+    if ((PROVINCIAS as readonly string[]).includes(candidata)) return candidata
+    if (ALIAS_PROVINCIA[candidata]) return ALIAS_PROVINCIA[candidata]!
+  }
+  return null
+}
+
+// 'unavailable': one of the two sources has no province TUS can recognize.
+export function compararProvincia(documento: string | null | undefined, fuente: string | null | undefined): 'match' | 'mismatch' | 'unavailable' {
+  const a = normalizarProvincia(documento)
+  const b = normalizarProvincia(fuente)
+  if (!a || !b) return 'unavailable'
+  return a === b ? 'match' : 'mismatch'
+}
+
+// What an administrator reads next to a verification: the datum of the document, the one of the
+// source and whether they agree. Only for a single result; nothing else of the source.
+export interface DetalleComparacionDocumental {
+  dni: { document: string | null; source: string | null; match: boolean }
+  name: { document: string | null; source: string | null; match: 'match' | 'partial' | 'mismatch' }
+  province: { document: string | null; source: string | null; match: 'match' | 'mismatch' | 'unavailable' }
+}
+
+export function detalleComparacion(input: { documentNumber: string | null; firstName: string | null; lastName: string | null; documentProvince: string | null; results: PersonaFuenteExterna[] }): DetalleComparacionDocumental | null {
+  if (input.results.length !== 1) return null
+  const person = input.results[0]!
+  const dniDocumento = normalizarDni(input.documentNumber)
+  const dniFuente = normalizarDni(person.documentNumber)
+  const nombreDocumento = normalizarNombre([input.firstName, input.lastName].filter(Boolean).join(' ')) || null
+  return {
+    dni: { document: dniDocumento, source: dniFuente, match: Boolean(dniDocumento && dniFuente && dniDocumento === dniFuente) },
+    name: { document: nombreDocumento, source: normalizarNombre(String(person.fullName ?? '').replace(/,/gu, ' ')) || null, match: compararNombre({ firstName: input.firstName, lastName: input.lastName }, person.fullName) },
+    province: { document: normalizarProvincia(input.documentProvince), source: normalizarProvincia(person.verifiedArea?.provincia ?? null), match: compararProvincia(input.documentProvince, person.verifiedArea?.provincia ?? null) },
+  }
+}
+
+// The outcome of a documentary verification, in the words of the product. Derived from the stored
+// state and reason; null while nothing was decided yet.
+export type ResultadoDocumental = 'VERIFIED' | 'MISMATCH' | 'NOT_FOUND' | 'MANUAL_REVIEW_REQUIRED' | 'PROVIDER_UNAVAILABLE'
+const MOTIVOS_NO_COINCIDE: ReadonlySet<string> = new Set(['DOCUMENT_NUMBER_MISMATCH', 'NAME_MISMATCH', 'CUIL_DOCUMENT_MISMATCH', 'PROVINCE_MISMATCH'])
+export function resultadoDocumental(verificacion: { status: EstadoVerificacionIdentidad; reviewReason: string | null }): ResultadoDocumental | null {
+  if (verificacion.status === 'verified') return 'VERIFIED'
+  if (verificacion.status === 'retry_pending' || verificacion.status === 'session_required' || verificacion.status === 'failed') return 'PROVIDER_UNAVAILABLE'
+  if (verificacion.status === 'rejected') return 'MISMATCH'
+  if (verificacion.status !== 'review_required') return null
+  if (verificacion.reviewReason === 'NOSIS_NOT_FOUND') return 'NOT_FOUND'
+  return verificacion.reviewReason && MOTIVOS_NO_COINCIDE.has(verificacion.reviewReason) ? 'MISMATCH' : 'MANUAL_REVIEW_REQUIRED'
+}
+
 export function compararConFuente(input: {
   documentNumber: string
   firstName: string | null
   lastName: string | null
   results: PersonaFuenteExterna[]
+  // DOCUMENTO-NOSIS-PUBLICO-01: with `required`, the province of the document must also agree
+  // with the one of the source. Missing on either side: a person decides (never an automatic
+  // approval nor an automatic rejection). Different: it does not match.
+  province?: { required: boolean; document: string | null }
 }): ResultadoComparacion {
   if (input.results.length === 0) return { decision: 'review_required', reason: 'NOSIS_NOT_FOUND' }
   if (input.results.length > 1)
@@ -270,6 +351,11 @@ export function compararConFuente(input: {
   )
   if (name === 'partial') return { decision: 'review_required', reason: 'NAME_PARTIAL_MATCH' }
   if (name === 'mismatch') return { decision: 'rejected', reason: 'NAME_MISMATCH' }
+  if (input.province?.required) {
+    const provincia = compararProvincia(input.province.document, person.verifiedArea?.provincia ?? null)
+    if (provincia === 'unavailable') return { decision: 'review_required', reason: 'PROVINCE_UNAVAILABLE' }
+    if (provincia === 'mismatch') return { decision: 'review_required', reason: 'PROVINCE_MISMATCH' }
+  }
   return { decision: 'verified', cuil: cuil.cuil! }
 }
 

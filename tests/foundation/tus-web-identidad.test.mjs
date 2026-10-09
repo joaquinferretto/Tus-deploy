@@ -91,7 +91,8 @@ test('IDENTITY-NOSIS Web surfaces: provider section, required states and consent
     'En cola',
     'Verificando',
     'En revisión',
-    'Verificado',
+    // DOCUMENTO-NOSIS-PUBLICO-01: the document is what is verified (not who holds it).
+    'Documento verificado',
     'Rechazado',
   ])
     assert.match(lib, new RegExp(`'${label}'`, 'u'), label)

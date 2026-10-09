@@ -1,0 +1,16 @@
+{
+  "EntidadesEncontradas": [
+    {
+      "Documento": "20-30111222-0",
+      "RazonSocial": "Otra Persona Carlos",
+      "Actividad": "Servicios personales n.c.p.",
+      "Provincia": "Corrientes",
+      "UrlInforme": "/Informes/Comprar?ficticio=1",
+      "UrlClon": "/Home/Clon?ficticio=1",
+      "MensajeHabeasData": ""
+    }
+  ],
+  "ExigirCaptcha": false,
+  "HayError": false,
+  "HayMasResultados": false
+}

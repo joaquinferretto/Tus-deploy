@@ -4,6 +4,7 @@ import type {
   MetodoVerificacionIdentidad,
   MotivoRevisionIdentidad,
   AreaDomicilioVerificada,
+  DetalleComparacionDocumental,
 } from './modelo.ts'
 
 export interface VerificacionIdentidad {
@@ -34,6 +35,12 @@ export interface VerificacionIdentidad {
     nameMatch: string | null
     cuilValid: boolean | null
     verifiedArea?: AreaDomicilioVerificada | null
+    // DOCUMENTO-NOSIS-PUBLICO-01: where the data came from, the tax id the source showed and the
+    // three compared data (normalized). Nothing else of the source is kept.
+    source?: 'nosis_public'
+    sourceTaxId?: string | null
+    comparison?: DetalleComparacionDocumental | null
+    checkedAt?: string
   } | null
   attempts: number
   version: number

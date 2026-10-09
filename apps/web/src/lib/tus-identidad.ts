@@ -78,7 +78,13 @@ export interface DetalleVerificacionAdmin extends Omit<
     resultCount: number
     nameMatch: string | null
     cuilValid: boolean | null
+    // DOCUMENTO-NOSIS-PUBLICO-01: the three compared data, as the backend normalized them.
+    source?: 'nosis_public'
+    sourceTaxId?: string | null
+    checkedAt?: string
+    comparison?: ComparacionDocumentalWeb | null
   } | null
+  documentaryResult?: ResultadoDocumentalWeb | null
   verifiedAt: string | null
   rejectedAt: string | null
   documents: { front: boolean; back: boolean }
@@ -250,9 +256,25 @@ export const ETIQUETAS_ESTADO_IDENTIDAD: Record<EstadoIdentidad, string> = {
   retry_pending: 'Verificando',
   session_required: 'Verificando',
   review_required: 'En revisión',
-  verified: 'Verificado',
+  // Never "identidad biométrica": TUS checks the document, not who is holding it.
+  verified: 'Documento verificado',
   rejected: 'Rechazado',
   failed: 'En revisión',
+}
+
+// DOCUMENTO-NOSIS-PUBLICO-01. The outcome of a documentary verification (the backend decides it).
+export type ResultadoDocumentalWeb = 'VERIFIED' | 'MISMATCH' | 'NOT_FOUND' | 'MANUAL_REVIEW_REQUIRED' | 'PROVIDER_UNAVAILABLE'
+export const RESULTADO_DOCUMENTAL_TEXTO: Record<ResultadoDocumentalWeb, string> = {
+  VERIFIED: 'Documento verificado',
+  MISMATCH: 'Los datos no coinciden: revisión manual requerida',
+  NOT_FOUND: 'Sin resultados en la fuente: revisión manual requerida',
+  MANUAL_REVIEW_REQUIRED: 'Revisión manual requerida',
+  PROVIDER_UNAVAILABLE: 'La fuente no está disponible: se reintenta más tarde',
+}
+export interface ComparacionDocumentalWeb {
+  dni: { document: string | null; source: string | null; match: boolean }
+  name: { document: string | null; source: string | null; match: 'match' | 'partial' | 'mismatch' }
+  province: { document: string | null; source: string | null; match: 'match' | 'mismatch' | 'unavailable' }
 }
 
 export const MOTIVOS_REVISION_TEXTO: Record<string, string> = {
@@ -266,6 +288,9 @@ export const MOTIVOS_REVISION_TEXTO: Record<string, string> = {
   NAME_PARTIAL_MATCH: 'Coincidencia parcial de nombre (segundos nombres)',
   CUIL_INVALID: 'CUIL inválido',
   CUIL_DOCUMENT_MISMATCH: 'El CUIL no corresponde al DNI',
+  PROVINCE_MISMATCH: 'La provincia no coincide',
+  PROVINCE_UNAVAILABLE: 'Falta la provincia en el documento o en la fuente',
+  PROVIDER_RESPONSE_UNEXPECTED: 'La fuente respondió algo inesperado',
   IDENTITY_ALREADY_VERIFIED: 'Esa identidad ya está verificada por otro prestador',
   RETRIES_EXHAUSTED: 'Se agotaron los reintentos',
   MANUAL_REVIEW_REQUESTED: 'Revisión manual solicitada',

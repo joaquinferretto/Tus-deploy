@@ -29,7 +29,7 @@ export interface ResultadoProveedorIdentidad {
 }
 
 export interface IdentityVerificationProvider {
-  readonly id: 'nosis-browser' | 'nosis-api' | 'demo'
+  readonly id: 'nosis-browser' | 'nosis-api' | 'nosis-public' | 'demo'
   readonly method: MetodoVerificacionIdentidad
   // Session checks and navigation: never consume a rate-limit slot.
   prepararSesion(): Promise<void>

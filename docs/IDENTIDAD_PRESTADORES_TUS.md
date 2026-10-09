@@ -175,3 +175,71 @@ contenedores con la imagen oficial de Playwright:
 - `tests/foundation/tus-web-identidad.test.mjs`: cliente Web y superficies.
 
 Ningún test consulta personas reales: las personas de `DEMO_FIXTURES` y del mock son ficticias.
+
+## Verificación documental con el buscador público de Nosis (DOCUMENTO-NOSIS-PUBLICO-01, 2026-10-09)
+
+Proveedor `IDENTITY_PROVIDER=nosis-public`. Reutiliza todo el circuito de arriba (consentimiento, frente y dorso, OCR + visión,
+cola, worker, límite de consultas, auditoría, Admin, modelo de verificación); solo cambia de dónde salen los datos externos y
+se agrega la provincia como tercer dato.
+
+**Qué prueba y qué no.** Prueba que los datos del documento subido coinciden con los de una fuente externa. NO prueba quién
+sostiene el documento: no hay selfie ni prueba de vida. Por eso el texto es "Documento verificado" y nunca "identidad
+biométrica verificada". Es una señal opcional de confianza: no es requisito para publicar, aceptar trabajos, cobrar ni retirar.
+
+**Método de consulta.** HTTP directo, sin navegador ni login (`apps/api/src/tus/identidad/nosis-public.ts`,
+`NosisPublicLookupAdapter`): un `GET` a `https://informes.nosis.com/` (cookie de sesión del sitio) y un `POST` a
+`/Home/Buscar` con el DNI en `Texto`. La respuesta es JSON: `ExigirCaptcha`, `HayError`, `HayMasResultados` y
+`EntidadesEncontradas[]`. Forma observada con una única consulta real el 2026-10-09.
+
+**Qué se lee.** De cada resultado, únicamente `Documento` (CUIT/CUIL, del que se deriva el DNI: `20-45247702-6` → `45247702`),
+`RazonSocial` (nombre) y `Provincia`. `Actividad`, `UrlInforme`, `UrlClon`, `MensajeHabeasData` y cualquier otra clave se
+descartan dentro del adaptador: no se devuelven, no se guardan y no se loguean. Nunca se abre ni se compra un informe: el
+adaptador solo conoce las direcciones `/` y `/Home/Buscar`.
+
+**Captcha.** El sitio pide un reCAPTCHA "debido a la cantidad de búsquedas". El adaptador NUNCA lo responde: ante
+`ExigirCaptcha` (o HTTP 429) corta con `NOSIS_CHALLENGE_REQUIRED`, la verificación queda en `session_required` y el worker no
+consulta nada más hasta que un operador lo reanude. El formulario público envía dos campos de relleno cuando no hay captcha;
+el adaptador envía los mismos. **Pendiente del dueño:** confirmar que los términos de uso de Nosis permiten esta consulta
+automatizada.
+
+**Quién puede consultar.** Solo el worker, y solo el DNI de una verificación existente (subida por su propio usuario, con
+consentimiento). No existe ninguna ruta que reciba un DNI para buscar una persona: TUS no es un buscador de personas. Límite
+global existente: a lo sumo 7 consultas por hora, una por verificación; una verificación resuelta no vuelve a consultar.
+
+**Comparación.** Aprobación automática solo con las tres coincidencias:
+
+| Dato      | Regla                                                                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DNI       | exacto después de quitar puntos, espacios y guiones; el de la fuente es el contenido en su CUIT/CUIL (válido: prefijo, dígito verificador, DNI embebido) |
+| Nombre    | mismos tokens después de normalizar (mayúsculas, tildes, espacios, puntuación); apellido primero o al final; sin fuzzy                                  |
+| Provincia | una de las 24 jurisdicciones después de normalizar (con alias como CABA); un texto que no es una provincia no se aproxima                               |
+
+La provincia del documento es la que lee el lector de visión en el domicilio del dorso (la MRZ no la trae); se guarda dentro
+de la lectura (`visionReading.province`), nunca la calle ni el número.
+
+| Resultado                | Cuándo                                                                                                   | Estado guardado                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `VERIFIED`               | DNI + nombre + provincia coinciden                                                                       | `verified`, método `nosis_public`                 |
+| `MISMATCH`               | DNI distinto, nombre distinto o provincia distinta                                                       | `review_required` (o `rejected` por nombre)       |
+| `NOT_FOUND`              | sin resultados                                                                                           | `review_required` `NOSIS_NOT_FOUND`               |
+| `MANUAL_REVIEW_REQUIRED` | falta la provincia en alguna fuente, CUIL inválido, más de un resultado, coincidencia parcial de nombre, respuesta inesperada | `review_required` con su motivo |
+| `PROVIDER_UNAVAILABLE`   | error del sitio, timeout (se reintenta) o captcha (se detiene)                                           | `retry_pending` / `session_required`              |
+
+Motivos nuevos: `PROVINCE_MISMATCH`, `PROVINCE_UNAVAILABLE`, `PROVIDER_RESPONSE_UNEXPECTED`. El resultado lo calcula el backend
+(`resultadoDocumental`) y viaja en el detalle de Admin como `documentaryResult`.
+
+**Evidencia guardada** (en el `externalSnapshot` existente): fuente `nosis_public`, fecha, CUIT/CUIL mostrado y los tres datos
+comparados ya normalizados con su veredicto. No se guarda la respuesta del sitio.
+
+**Admin.** El detalle de la verificación muestra la tabla Dato / DNI / Nosis / Resultado para Documento, Nombre y Provincia, y
+el resultado final ("Documento verificado" o "Revisión manual requerida"). La verificación y el rechazo manuales con motivo y
+auditoría no cambian.
+
+**Migración.** `20261119100000_tus_identidad_nosis_publico`: solo amplía el CHECK del método para aceptar `nosis_public`.
+
+**Tests.** `tests/foundation/tus-identidad-nosis-publico.test.mjs` con fixtures de `tests/foundation/fixtures/nosis-publico/`
+(forma real, personas ficticias). La suite nunca consulta a Nosis. Smoke externo, manual y opcional:
+`scripts/identidad/nosis-publico-smoke.mjs` (una consulta, con un DNI autorizado y el argumento `--autorizado`; no corre en CI).
+
+**Relación con los gates.** En esta rama los gates de identidad de `main` no se tocan. Los elimina
+`feat/cobro-mercado-pago-vinculado`; esta rama se rebasa sobre ese `main` cuando se mergee.
