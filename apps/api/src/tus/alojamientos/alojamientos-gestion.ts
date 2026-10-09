@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import type { Prisma, PrismaClient } from '@prisma/client'
-import { MAXIMO_IMAGENES_ALOJAMIENTO, type AlojamientoPropioDTO, type BloqueoUnidadDTO, type EstadoAlojamiento, type EstadoUnidadAlojamiento, type MiReservaAlojamientoDTO, type ModalidadTarifaAlojamiento } from '@factory/contracts'
+import { ESTADOS_ALOJAMIENTO, MAXIMO_IMAGENES_ALOJAMIENTO, type AlojamientoAdminDTO, type PaginaAdminAlojamientos, type ReservaAlojamientoAdminDTO, type AlojamientoPropioDTO, type BloqueoUnidadDTO, type EstadoAlojamiento, type EstadoUnidadAlojamiento, type MiReservaAlojamientoDTO, type ModalidadTarifaAlojamiento } from '@factory/contracts'
 
 import { ErrorFotoPerfil, prepararFotoPerfil } from '../directorio/foto.ts'
 import { camposDesconocidos, entero, esInvalido, hora, identificador, monto, texto, textoOpcional } from '../validacion/entrada.ts'
 import { ErrorAlojamiento, ESTADOS_QUE_OCUPAN } from './alojamientos-service.ts'
 import type { Entrada } from './alojamientos-entrada.ts'
+
+// Reservations that still hold their dates (as `misAlojamientos` counts them).
+const ESTADOS_QUE_OCUPAN_ADMIN = ['confirmed', 'checked_in'] as const
 
 // ALOJAMIENTOS-GESTION-01: what a guest does with its reservations (see them, cancel them) and
 // what an owner does with its alojamientos (create, edit, publish, photos, price, blocked dates).
@@ -350,6 +353,102 @@ export class GestionAlojamientos {
     const estado: EstadoAlojamiento = publicado ? 'publicado' : fila.estado === 'borrador' ? 'borrador' : 'pausado'
     await this.prisma.alojamiento.update({ where: { id: alojamientoId }, data: { publicado, estado } })
     return { estado, publicado }
+  }
+
+  // ---- platform administration (ALOJAMIENTOS-ADMIN-01) ------------------------------------------
+  // Callers verified the platform-admin authority already (the router's `soloAdmin`).
+
+  // Every lodging whatever its state (drafts, paused and suspended too), with its owner.
+  async listarParaAdmin(filtro: { estado?: string; q?: string; pagina: number; tamano: number }, ahora = new Date()): Promise<PaginaAdminAlojamientos<AlojamientoAdminDTO>> {
+    const q = (filtro.q ?? '').trim().slice(0, 80)
+    const where: Prisma.AlojamientoWhereInput = {
+      ...(filtro.estado && (ESTADOS_ALOJAMIENTO as readonly string[]).includes(filtro.estado) ? { estado: filtro.estado } : {}),
+      ...(q ? { OR: [{ nombre: { contains: q, mode: 'insensitive' } }, { slug: { contains: q, mode: 'insensitive' } }] } : {}),
+    }
+    const [filas, total] = await Promise.all([
+      this.prisma.alojamiento.findMany({
+        where,
+        include: { tipo: true, barrio: true, _count: { select: { unidades: true, reservas: { where: { estado: { in: [...ESTADOS_QUE_OCUPAN_ADMIN] }, fechaFin: { gt: ahora } } } } } },
+        orderBy: [{ creadoEn: 'desc' }, { id: 'asc' }],
+        skip: (filtro.pagina - 1) * filtro.tamano,
+        take: filtro.tamano,
+      }),
+      this.prisma.alojamiento.count({ where }),
+    ])
+    const cuentas = await this.prisma.account.findMany({ where: { id: { in: [...new Set(filas.map((fila) => fila.propietarioId).filter((id): id is string => Boolean(id)))] } }, include: { user: true } })
+    const cuentaDe = new Map(cuentas.map((cuenta) => [cuenta.id, cuenta]))
+    return {
+      items: filas.map((a) => {
+        const cuenta = a.propietarioId ? cuentaDe.get(a.propietarioId) : undefined
+        return {
+          id: a.id,
+          nombre: a.nombre,
+          slug: a.slug,
+          tipoNombre: a.tipo.nombre,
+          estado: a.estado as EstadoAlojamiento,
+          publicado: a.publicado,
+          barrio: a.barrio?.nombre ?? null,
+          propietario: cuenta ? { cuentaId: cuenta.id, nombre: cuenta.user.displayName, email: cuenta.user.email } : null,
+          unidades: a._count.unidades,
+          reservasVigentes: a._count.reservas,
+          creadoEn: a.creadoEn.toISOString(),
+          actualizadoEn: a.actualizadoEn.toISOString(),
+        }
+      }),
+      page: filtro.pagina,
+      pageSize: filtro.tamano,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / filtro.tamano)),
+    }
+  }
+
+  // Reservations of every lodging, newest stay first.
+  async reservasParaAdmin(filtro: { estado?: string; pagina: number; tamano: number }): Promise<PaginaAdminAlojamientos<ReservaAlojamientoAdminDTO>> {
+    const where: Prisma.ReservaAlojamientoWhereInput = filtro.estado && /^[a-z_]{3,30}$/u.test(filtro.estado) ? { estado: filtro.estado } : {}
+    const [filas, total] = await Promise.all([
+      this.prisma.reservaAlojamiento.findMany({ where, include: { alojamiento: { select: { nombre: true } }, unidad: { select: { nombre: true } } }, orderBy: [{ fechaInicio: 'desc' }, { id: 'asc' }], skip: (filtro.pagina - 1) * filtro.tamano, take: filtro.tamano }),
+      this.prisma.reservaAlojamiento.count({ where }),
+    ])
+    return {
+      items: filas.map((r) => ({
+        id: r.id,
+        alojamientoId: r.alojamientoId,
+        alojamientoNombre: r.alojamiento.nombre,
+        unidadNombre: r.unidad.nombre,
+        clienteId: r.clienteId,
+        clienteNombre: r.clienteNombre,
+        fechaInicio: r.fechaInicio.toISOString(),
+        fechaFin: r.fechaFin.toISOString(),
+        cantidadPersonas: r.cantidadPersonas,
+        estado: r.estado,
+        total: Number(r.precioFinalSnapshot),
+        moneda: r.moneda,
+        creadoEn: r.creadoEn.toISOString(),
+      })),
+      page: filtro.pagina,
+      pageSize: filtro.tamano,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / filtro.tamano)),
+    }
+  }
+
+  // The administration SUSPENDS a lodging (it leaves the search and takes no new reservation; its
+  // owner cannot publish it again) or lifts that suspension (it comes back PAUSED: publishing it
+  // again is its owner's or the administration's own step). A mandatory note, audited. A
+  // suspension changes NO reservation: the ones already made stay as they are (cancelling them is
+  // its own explicit action, and there is no penalty or refund policy to apply here).
+  async suspender(alojamientoId: string, suspendido: boolean, actor: { id: string; correlationId: string; motivo: unknown }): Promise<{ estado: EstadoAlojamiento; publicado: boolean }> {
+    const motivo = typeof actor.motivo === 'string' ? actor.motivo.trim() : ''
+    if (motivo.length < 5 || motivo.length > 300) throw new ErrorAlojamiento(422, 'REASON_REQUIRED', 'Escribí el motivo administrativo (5 a 300 caracteres).')
+    return this.prisma.$transaction(async (tx) => {
+      const fila = await tx.alojamiento.findUnique({ where: { id: alojamientoId }, select: { estado: true, propietarioId: true } })
+      if (!fila) throw new ErrorAlojamiento(404, 'NOT_FOUND', 'Alojamiento no encontrado')
+      if (suspendido === (fila.estado === 'suspendido')) throw new ErrorAlojamiento(409, 'INVALID_STATE', suspendido ? 'Ese alojamiento ya está suspendido.' : 'Ese alojamiento no está suspendido.')
+      const estado: EstadoAlojamiento = suspendido ? 'suspendido' : 'pausado'
+      await tx.alojamiento.update({ where: { id: alojamientoId }, data: { estado, publicado: false } })
+      await tx.auditEvent.create({ data: { id: randomUUID(), tenantId: 'tus-platform', actorId: actor.id, correlationId: actor.correlationId, eventType: suspendido ? 'lodging.admin_suspended' : 'lodging.admin_suspension_lifted', outcome: 'success', metadata: { alojamientoId, previousState: fila.estado, newState: estado, reason: motivo, ownerAccountId: fila.propietarioId }, occurredAt: new Date() } })
+      return { estado, publicado: false }
+    })
   }
 
   // ---- blocked dates --------------------------------------------------------------------------

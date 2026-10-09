@@ -301,3 +301,48 @@ export interface AlojamientoPropioDTO {
 }
 
 export const MAXIMO_IMAGENES_ALOJAMIENTO = 12
+
+// ---- platform administration (ALOJAMIENTOS-ADMIN-01) ----------------------------------------------
+
+// One row of Admin -> Alojamientos: every lodging whatever its state, with who owns it.
+export interface AlojamientoAdminDTO {
+  id: string
+  nombre: string
+  slug: string
+  tipoNombre: string
+  estado: EstadoAlojamiento
+  publicado: boolean
+  barrio: string | null
+  // The owning account (null: managed by the platform).
+  propietario: { cuentaId: string; nombre: string; email: string } | null
+  unidades: number
+  // Reservations that still hold dates (confirmed or checked in, not finished).
+  reservasVigentes: number
+  creadoEn: string
+  actualizadoEn: string
+}
+
+// One row of Admin -> Alojamientos -> Reservas: a reservation of any lodging.
+export interface ReservaAlojamientoAdminDTO {
+  id: string
+  alojamientoId: string
+  alojamientoNombre: string
+  unidadNombre: string
+  clienteId: string | null
+  clienteNombre: string
+  fechaInicio: string
+  fechaFin: string
+  cantidadPersonas: number
+  estado: string
+  total: number
+  moneda: string
+  creadoEn: string
+}
+
+export interface PaginaAdminAlojamientos<T> {
+  items: T[]
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
+}
