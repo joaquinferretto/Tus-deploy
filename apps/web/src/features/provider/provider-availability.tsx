@@ -11,6 +11,7 @@ import {
 } from '@factory/contracts'
 
 import ui from '../../components/admin/admin-usuarios.module.css'
+import type { FranjaAgenda, TurnoDeFranja } from '@factory/contracts'
 import { turnosApi } from '../../lib/tus-turnos-client'
 import { AgendaSemanal } from '../turnos/agenda-semanal'
 import { ProviderAusencias } from './provider-ausencias'
@@ -51,7 +52,9 @@ const aHorarios = (dias: DiaForm[]): HorarioSemanalDTO[] =>
 // duration of the service (one turno after another, from the opening time), the taken turnos and
 // the blocks. Times are never invented here, and there is no interval to choose: how often a
 // turno starts is how long the service lasts.
-export function ProviderAvailability({ servicios, version = 0 }: { servicios: ServicioTurnosDTO[]; version?: number }): React.ReactNode {
+// AGENDA-MATRIZ-01: `onLibre` (a free time was tapped: load a manual turno there) and `onTurno`
+// (an occupied one: open its detail) make the agenda of the provider interactive.
+export function ProviderAvailability({ servicios, version = 0, onLibre, onTurno }: { servicios: ServicioTurnosDTO[]; version?: number; onLibre?: (franja: FranjaAgenda, oficioId: string) => void; onTurno?: (turno: TurnoDeFranja, franja: FranjaAgenda) => void }): React.ReactNode {
   const conTurnos = servicios.filter((servicio) => servicio.turnosHabilitados)
   const [oficioId, setOficioId] = useState('')
   const [dias, setDias] = useState<DiaForm[] | null>(null)
@@ -224,7 +227,8 @@ export function ProviderAvailability({ servicios, version = 0 }: { servicios: Se
                 ))}
               </select>
             </label>
-            {oficioId ? <AgendaSemanal origen={{ tipo: 'propia', oficioId }} soloLectura version={cambios + version} /> : null}
+            {oficioId ? <AgendaSemanal onSeleccion={(franja) => { if (franja) onLibre?.(franja, oficioId) }} onTurno={onTurno} origen={{ tipo: 'propia', oficioId }} soloLectura={!onLibre} version={cambios + version} /> : null}
+            {onLibre ? <p data-agenda-ayuda style={{ color: '#6b7280', fontSize: '0.85rem', margin: '8px 0 0' }}>Tocá un horario libre para agregar un turno manual, o un turno para ver su detalle.</p> : null}
           </>
         )}
       </section>

@@ -135,6 +135,7 @@ const check = (condition, message) => {
   totals.total += 1
   assert.ok(condition, message)
   totals.pass += 1
+  console.log(`PASS ${message}`)
 }
 
 async function main() {
@@ -152,9 +153,13 @@ async function main() {
   try {
     const init = spawnSync(exe('initdb'), ['-D', data, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--locale=C'], { encoding: 'utf8' })
     if (init.status !== 0) throw new Error(`initdb failed: ${init.stderr}`)
-    const start = spawnSync(exe('pg_ctl'), ['-D', data, '-o', `-p ${PG_PORT} -c listen_addresses=127.0.0.1 -c fsync=off -c lc_messages=C`, '-l', join(data, 'server.log'), '-w', 'start'], { encoding: 'utf8', timeout: 120_000 })
-    if (start.status !== 0) throw new Error(`pg_ctl start failed: ${start.stdout}${start.stderr}`)
+    // postgres inherits pg_ctl's handles on Windows: use file handles so its open handles never
+    // keep a spawnSync capture pipe alive after pg_ctl exits. Cleanup owns this data directory.
     pgIniciado = true
+    const pgLog = abrir('pg-start.log')
+    let start
+    try { start = spawnSync(exe('pg_ctl'), ['-D', data, '-o', `-p ${PG_PORT} -c listen_addresses=127.0.0.1 -c fsync=off -c lc_messages=C`, '-l', join(data, 'server.log'), '-w', 'start'], { stdio: ['ignore', pgLog, pgLog], timeout: 30_000 }) } finally { closeSync(pgLog) }
+    if (start.status !== 0) throw new Error(`pg_ctl start failed (${start.error?.code ?? start.status}); see ${artifacts}/pg-start.log`)
     const creada = spawnSync(exe('psql'), ['-h', '127.0.0.1', '-p', PG_PORT, '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE DATABASE tus_pagos'], { encoding: 'utf8' })
     if (creada.status !== 0) throw new Error(`create database: ${creada.stderr}`)
     const databaseUrl = `postgresql://postgres@127.0.0.1:${PG_PORT}/tus_pagos`
@@ -181,6 +186,7 @@ async function main() {
     writeFileSync(join(raiz, 'arranque.mts'), ARRANQUE)
     apiChild = spawn(process.execPath, [join(apiRoot, 'node_modules/tsx/dist/cli.mjs'), '--tsconfig', join(apiRoot, 'tsconfig.json'), join(raiz, 'arranque.mts')], { cwd: raiz, env: entorno, detached: false, windowsHide: true, stdio: ['ignore', logs.api, logs.api] })
     await esperar(`${api}/health`, apiChild, 'API')
+    check((await fetch(`${api}/ready`)).status === 200, 'the isolated API is ready')
     webChild = spawn(process.execPath, [join(webRoot, 'node_modules/next/dist/bin/next'), 'start', '--hostname', 'localhost', '--port', String(WEB_PORT)], { cwd: webRoot, env: { ...process.env, NODE_ENV: 'production', NEXT_PUBLIC_API_URL: api }, detached: false, windowsHide: true, stdio: ['ignore', logs.web, logs.web] })
     await esperar(web, webChild, 'Web')
 
@@ -240,6 +246,8 @@ let secretoAdmin = null
 
 async function recorrer(browser, viewport, estado, indice) {
   const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } })
+  // A stuck navigation/response must still reach the runner's cleanup before the shell deadline.
+  const deadline = setTimeout(() => { void context.close() }, 150_000)
   const page = await context.newPage()
   page.setDefaultTimeout(15_000)
   const e = viewport.name
@@ -272,6 +280,17 @@ async function recorrer(browser, viewport, estado, indice) {
     check((await llamar('PUT', '/tus/v1/perfil', { nombre, apellido, tipoDocumento: 'DNI', numeroDocumento: documento, localidadId: localidad.id, calle: 'San Martín', numero: '1234', codigoPostal: '3400' })).status === 200, `the personal profile of ${nombre} is complete`)
   }
   const inicio = (hora) => new Date(`${sumar(lunes, indice)}T${hora}:00.000-03:00`).toISOString()
+  const mostrarInicio = async (agenda, inicioElegido) => {
+    const objetivo = agenda.locator(`button[data-inicio="${inicioElegido}"]:visible`)
+    for (let semana = 0; semana < 5; semana += 1) {
+      await agenda.locator('[data-semana]').waitFor()
+      await page.waitForFunction(() => [...document.querySelectorAll('[data-agenda]')].every((a) => a.getAttribute('data-agenda') === 'lista'))
+      if (await objetivo.count()) return objetivo
+      if (viewport.width < 640) for (const dia of await agenda.getByRole('group', { name: 'Días de la semana' }).getByRole('button').all()) { await dia.click(); if (await objetivo.count()) return objetivo }
+      await agenda.getByRole('button', { name: 'Semana siguiente' }).click()
+    }
+    throw new Error(`${e}: the API never offered the requested test slot`)
+  }
   const texto = async (locator) => (await locator.innerText()).replace(/\s+/gu, ' ')
   // Mercado Pago approves the payment of the checkout that was just opened and notifies the API.
   const aprobar = async (quePago) => {
@@ -336,12 +355,89 @@ async function recorrer(browser, viewport, estado, indice) {
     // ---- 2. Two turnos of the priced service; the provider accepts both.
     const pedidos = {}
     for (const [clave, hora] of [['total', '10:00'], ['sena', '11:00'], ['tarde', '13:00']]) {
+      if (clave === 'total') {
+        await page.goto(`${web}/trabajadores/smoke-perfil?turno=1`, { waitUntil: 'networkidle' })
+        const agenda = page.locator('[data-agenda]')
+        const slot = await mostrarInicio(agenda, inicio(hora))
+        check(viewport.width > 640 ? await agenda.locator('table').isVisible() : !(await agenda.locator('table').isVisible()), `${e}: booking uses the responsive weekly agenda`)
+        await slot.click()
+        const enviada = page.waitForResponse((r) => r.url().includes('/smoke-perfil/turnos/solicitudes') && r.request().method() === 'POST')
+        await page.getByRole('button', { name: 'Solicitar reserva', exact: true }).click()
+        const response = await enviada
+        const pedido = await response.json()
+        check(response.status() === 201 && pedido.estado === 'pending' && pedido.origen === 'tus', `${e}: tapping a free slot requests the real reservation with origin TUS`)
+        pedidos[clave] = pedido.id
+        await page.locator('[data-solicitud-enviada]').waitFor()
+        await sinDesborde('booking from a free slot')
+        continue
+      }
       const pedido = await llamar('POST', '/tus/v1/prestadores/smoke-perfil/turnos/solicitudes', { oficioId, inicio: inicio(hora) })
       check(pedido.status === 201 && pedido.body.estado === 'pending', `${e}: the request of ${hora} is pending (${pedido.status} ${pedido.body?.code ?? ''})`)
       pedidos[clave] = pedido.body.id
     }
     await salir('the client')
     await entrar(PRESTADOR, 'the provider', 'PROVIDER')
+    // ---- 2b. AGENDA-MATRIZ-01: the provider's agenda says which turno is behind each time.
+    await page.goto(`${web}/prestador/turnos`, { waitUntil: 'networkidle' })
+    const agendaPropia = page.locator('[data-agenda]').first()
+    await page.waitForFunction(() => document.querySelector('[data-agenda]')?.getAttribute('data-agenda') === 'lista')
+    // The turnos of this run are next week (one day per viewport); on a narrow screen its day is opened.
+    const pendientes = agendaPropia.locator('button[data-estado-turno="pending"]:visible')
+    for (let i = 0; i < 3 && (await agendaPropia.locator('button[data-estado-turno="pending"]').count()) === 0; i += 1) {
+      await agendaPropia.getByRole('button', { name: 'Semana siguiente' }).click()
+      await page.waitForFunction(() => document.querySelector('[data-agenda]')?.getAttribute('data-agenda') === 'lista')
+    }
+    if ((await pendientes.count()) === 0) for (const dia of await agendaPropia.locator('[role="group"][aria-label="Días de la semana"] button').all()) { await dia.click(); if ((await pendientes.count()) > 0) break }
+    await pendientes.first().waitFor()
+    check((await pendientes.count()) >= 3 && (await texto(pendientes.first())).includes('Pendiente') && (await texto(pendientes.first())).includes('Ana'), `${e}: the three requests are read on the agenda as pending, with their client (${await texto(pendientes.first())})`)
+    await pendientes.first().click()
+    const detalleTurno = page.locator('[data-turno-detalle]')
+    await detalleTurno.waitFor()
+    check((await texto(detalleTurno)).includes('Pendiente') && (await texto(detalleTurno)).includes('Turno pedido por TUS') && Object.values(pedidos).includes(await detalleTurno.getAttribute('data-turno-detalle')), `${e}: tapping an occupied time opens the detail of that turno (${await texto(detalleTurno)})`)
+    await sinDesborde('the provider agenda with its turnos')
+    await page.screenshot({ path: join(artifacts, `${e}-prestador-matriz.png`), fullPage: true })
+    // A free time: "Agregar turno manual" right there, with the day and the hour already set.
+    const libre = agendaPropia.locator('button[data-estado="disponible"]:visible').last()
+    const inicioLibre = await libre.getAttribute('data-inicio')
+    await libre.click()
+    const formulario = page.locator('form').filter({ has: page.locator('input[type="datetime-local"]') })
+    await formulario.waitFor()
+    const cargado = await formulario.locator('input[type="datetime-local"]').inputValue()
+    check(new Date(`${cargado}:00.000-03:00`).toISOString() === inicioLibre, `${e}: tapping a free time opens the manual turno with that day and hour (${cargado})`)
+    await formulario.getByLabel('Nombre Cliente *', { exact: true }).fill('Doña Rosa')
+    await formulario.locator('input[type="tel"]').fill('3794 111222')
+    await formulario.locator('[data-buscar-cliente]').click()
+    await formulario.locator('[data-sin-coincidencias]').waitFor()
+    check((await texto(formulario.locator('[data-sin-coincidencias]'))).includes('queda con el contacto que cargues'), `${e}: no client of TUS has that phone: the turno stays a contact of the provider`)
+    await page.screenshot({ path: join(artifacts, `${e}-prestador-turno-manual.png`), fullPage: true })
+    check(await page.getByRole('dialog', { name: 'Nuevo turno manual' }).evaluate((d) => d.getBoundingClientRect().height <= innerHeight && d.getBoundingClientRect().top >= 0), `${e}: the manual dialog fits the viewport and scrolls internally`)
+    await formulario.locator('button[type="submit"]').click()
+    await page.waitForFunction((inicio) => [...document.querySelectorAll('[data-origen-turno="manual"]')].length > 0 && !document.querySelector('form input[type="datetime-local"]'), inicioLibre)
+    const filaManual = estado.psql(`SELECT "cliente_id" || '|' || "es_invitado" || '|' || "origen" || '|' || "estado" FROM public."reservas" WHERE "fecha_inicio" = '${inicioLibre}'::timestamptz AT TIME ZONE 'utc' AND "origen" = 'manual'`).stdout.trim()
+    check(filaManual === 'manual|true|manual|confirmed', `${e}: the manual turno is stored as a contact with no account, of origin MANUAL (${filaManual})`)
+    check((await page.locator('[data-turno-origen="manual"]').count()) >= 1 && (await texto(page.locator('[data-turno-origen="manual"]').first())).includes('Manual'), `${e}: the list of turnos tells the manual ones from the ones of TUS`)
+    const otroCliente = await llamar('POST', `/tus/v1/prestadores/smoke-perfil/turnos/solicitudes`, { oficioId, inicio: inicioLibre })
+    check(otroCliente.status === 409 && otroCliente.body.code === 'SLOT_OCCUPIED', `${e}: the manual turno blocks the same slot in the booking engine (${otroCliente.status} ${otroCliente.body?.code})`)
+    // Existing customer, linked by ID after explicit selection; changing the search clears it.
+    await agendaPropia.locator('button[data-estado="disponible"]:visible').last().click()
+    const vincular = page.getByRole('dialog', { name: 'Nuevo turno manual' })
+    await vincular.getByLabel('Email', { exact: true }).fill(CLIENTE.email)
+    await vincular.locator('[data-buscar-cliente]').click()
+    await vincular.locator('[data-coincidencia]').first().check()
+    await vincular.locator('[data-vinculado]').waitFor()
+    await vincular.getByLabel('Email', { exact: true }).fill('nadie-smoke@example.com')
+    check((await vincular.locator('[data-coincidencia]').count()) === 0 && (await vincular.locator('[data-vinculado]').count()) === 0, `${e}: changing the contact clears the selected account`)
+    await vincular.getByLabel('Email', { exact: true }).fill(CLIENTE.email)
+    await vincular.locator('[data-buscar-cliente]').click()
+    await vincular.locator('[data-coincidencia]').first().check()
+    const cuentaElegida = await vincular.locator('[data-coincidencia]').first().getAttribute('data-coincidencia')
+    const inicioVinculado = new Date(`${await vincular.getByLabel('Fecha y hora de inicio *', { exact: true }).inputValue()}:00.000-03:00`).toISOString()
+    const creadaManual = page.waitForResponse((r) => r.url().endsWith('/turnos/manual') && r.request().method() === 'POST')
+    await vincular.getByRole('button', { name: 'Crear turno', exact: true }).click()
+    check((await creadaManual).status() === 201, `${e}: the linked manual turno is created`)
+    await page.waitForFunction(() => !document.querySelector('dialog[open]'))
+    const vinculada = estado.psql(`SELECT "cliente_id" || '|' || "cliente_nombre" || '|' || "es_invitado" || '|' || "origen" FROM public."reservas" WHERE "fecha_inicio" = '${inicioVinculado}'::timestamptz AT TIME ZONE 'utc' AND "origen" = 'manual'`).stdout.trim()
+    check(vinculada === `${cuentaElegida}|Ana Cliente|false|manual`, `${e}: the existing customer is linked by ID, with its own name and no synthetic account`)
     for (const id of Object.values(pedidos)) {
       const acepto = await llamar('POST', `/tus/v1/prestador/turnos/${id}/aceptar`)
       check(acepto.status === 200 && acepto.body.estado === 'awaiting_payment', `${e}: accepting opens the payment (${acepto.status} ${acepto.body?.estado ?? acepto.body?.code})`)
@@ -396,16 +492,17 @@ async function recorrer(browser, viewport, estado, indice) {
     await elTurno(pedidos.sena).locator('[data-reprogramar]').click()
     const selector = elTurno(pedidos.sena).locator('[data-reprogramacion]')
     await selector.waitFor()
-    for (let i = 0; i < 4 && (await selector.locator('[data-horario-nuevo]').count()) === 0; i += 1) {
-      await page.waitForFunction((id) => !document.querySelector(`[data-turno-id="${id}"] [data-reprogramacion]`)?.textContent.includes('Consultando horarios'), pedidos.sena)
-      if ((await selector.locator('[data-horario-nuevo]').count()) === 0) await selector.locator('[data-semana-siguiente]').click()
-    }
-    await selector.locator('[data-horario-nuevo]').first().waitFor()
-    check((await texto(selector)).includes('más de 24 horas de anticipación'), `${e}: the picker says which times are offered`)
-    await sinDesborde('Mis turnos with the rescheduling picker')
+    // AGENDA-MATRIZ-01: the same weekly agenda as a booking (days across on a wide screen, one day at a time on a narrow one).
+    const matriz = selector.locator('[data-agenda]')
+    await page.waitForFunction((id) => document.querySelector(`[data-turno-id="${id}"] [data-reprogramacion] [data-agenda]`)?.getAttribute('data-agenda') === 'lista', pedidos.sena)
+    const libresVisibles = matriz.locator('button[data-estado="disponible"]:visible')
+    await libresVisibles.first().waitFor()
+    check((await texto(selector)).includes('más de 24 horas de anticipación') && (await matriz.locator('[data-estado-turno]').count()) === 0, `${e}: the agenda offers free times only, and shows nobody else's turno`)
+    check(viewport.width > 640 ? await matriz.locator('table').isVisible() : !(await matriz.locator('table').isVisible()), `${e}: ${viewport.width > 640 ? 'the whole week as a grid' : 'one day at a time, no wide table'}`)
+    await sinDesborde('Mis turnos with the rescheduling agenda')
     await page.screenshot({ path: join(artifacts, `${e}-cliente-reprogramar.png`), fullPage: true })
-    const elegido = await selector.locator('[data-horario-nuevo]').first().getAttribute('data-horario-nuevo')
-    await selector.locator('[data-horario-nuevo]').first().click()
+    const elegido = await libresVisibles.first().getAttribute('data-inicio')
+    await libresVisibles.first().click()
     const confirmacion = selector.locator('[data-reprogramacion-confirmar]')
     await confirmacion.waitFor()
     check(/^Vas a cambiar tu turno del .+ al .+\. Tus pagos y tu seña se mantienen\.$/u.test(await texto(confirmacion)), `${e}: the change is confirmed first, saying what stays (${await texto(confirmacion)})`)
@@ -434,7 +531,7 @@ async function recorrer(browser, viewport, estado, indice) {
       await page.getByRole('button', { name: 'Confirmar finalización' }).click()
       await page.waitForFunction((n) => document.querySelectorAll('[data-turno-cierre]').length >= n && !document.querySelector('textarea'), yaFinalizados + _ + 1)
     }
-    check((await page.locator('[data-finalizar]').count()) === 0 && (await page.getByRole('button', { name: 'Cancelar', exact: true }).count()) <= 1, `${e}: a finished turno is not finished twice nor cancelled from the list (the only one left belongs to the turno still waiting for its payment)`)
+    check((await page.locator('[data-finalizar]').count()) === 0 && (await page.locator('[data-turno-origen="tus"]').getByRole('button', { name: 'Cancelar', exact: true }).count()) <= 1, `${e}: a finished TUS turno is not finished twice nor cancelled from the list (manual turnos have their own actions)`)
     check((await texto(page.locator('[data-turno-cierre="esperando"]').first())).includes('Esperando la confirmación del cliente'), `${e}: finished, waiting for the client (with the date it confirms itself)`)
     check((await page.locator('[data-turno-cobro="liberados"]').count()) === indice, `${e}: finishing releases nothing by itself`)
     await sinDesborde('the provider turnos')
@@ -533,12 +630,13 @@ async function recorrer(browser, viewport, estado, indice) {
     console.error(`${e} url=${page.url()} http=${http.slice(-12).join(' | ')} errors=${errores.join(' | ')}`)
     throw error
   } finally {
+    clearTimeout(deadline)
     await context.close()
   }
 }
 
 // Refusals this smoke asks for on purpose.
 // (The two 409 of the checkout and of the cancellation are how the API asks for each confirmation.)
-const ESPERADOS = [/\/pago\/checkout 409$/u, /\/cancelar 409$/u, /\/auth\/session 401$/u, /\/auth\/refresh 401$/u, /smoke-perfil-2\/turnos\/solicitudes 409$/u, /\/turnos\/[^/]+\/estado 4\d\d$/u]
+const ESPERADOS = [/smoke-perfil\/turnos\/solicitudes 4\d\d$/u, /\/pago\/checkout 409$/u, /\/cancelar 409$/u, /\/auth\/session 401$/u, /\/auth\/refresh 401$/u, /smoke-perfil-2\/turnos\/solicitudes 409$/u, /\/turnos\/[^/]+\/estado 4\d\d$/u]
 
 await main()

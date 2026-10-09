@@ -2184,6 +2184,9 @@ model Reserva {
   solicitudExpiraEn  DateTime? @map("solicitud_expira_en")
   // TURNOS-REPROGRAMACION-01: what this turno was booked with (copied from its agenda, once).
   admiteReprogramacion Boolean @default(false) @map("admite_reprogramacion")
+  // AGENDA-MATRIZ-01: 'tus' | 'manual'. NULL on the rows that existed before (read by the old rule:
+  // manual when the client is 'manual'). ck_reservas_origen (SQL).
+  origen               String? @map("origen")
 
   tarifaId                 String?  @map("tarifa_id")
   tarifaNombre             String?  @map("tarifa_nombre")

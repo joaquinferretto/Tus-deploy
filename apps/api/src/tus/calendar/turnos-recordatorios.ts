@@ -139,7 +139,10 @@ export class ServicioRecordatoriosTurno {
           // Confirmed when that reminder was already due: it is not sent late ("tomorrow" would no
           // longer be true). The one of 2 hours is still computed, and sent if it still applies.
           const tarde = turno.fechaActualizacion.getTime() > programadoPara.getTime()
-          nuevos.push({ id: `rec-${randomUUID()}`, tenantId: turno.tenantId, reservaId: turno.id, destinatario, tipo, turnoInicio: turno.fechaInicio, programadoPara, estado: tarde ? 'skipped' : 'pending', motivo: tarde ? `confirmado_con_menos_de_${tipo}` : null, fechaCreacion: ahora, fechaActualizacion: ahora })
+          // A first sweep delayed after rescheduling must not create a retroactive 24h notice.
+          // Existing pending notices keep their normal delivery rules; the 2h notice still applies.
+          const retroactivo24 = tipo === '24h' && programadoPara.getTime() < ahora.getTime()
+          nuevos.push({ id: `rec-${randomUUID()}`, tenantId: turno.tenantId, reservaId: turno.id, destinatario, tipo, turnoInicio: turno.fechaInicio, programadoPara, estado: tarde || retroactivo24 ? 'skipped' : 'pending', motivo: tarde ? `confirmado_con_menos_de_${tipo}` : retroactivo24 ? 'programado_fuera_de_24h' : null, fechaCreacion: ahora, fechaActualizacion: ahora })
         }
     }
     if (nuevos.length === 0) return 0

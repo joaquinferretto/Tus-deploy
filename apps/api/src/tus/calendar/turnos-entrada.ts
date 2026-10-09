@@ -63,6 +63,8 @@ export interface TurnoEscrito extends ContactoInvitado {
 }
 
 const CAMPOS_TURNO = ['oficioId', 'tarifaId', 'inicio', 'fin', 'duracionMinutos', 'precioFinal', 'clienteNombre', 'clienteTelefono', 'clienteEmail', 'notas'] as const
+// AGENDA-MATRIZ-01: the account of an existing client the provider chose to link its manual turno to.
+export const CAMPO_CLIENTE_VINCULADO = 'clienteCuentaId'
 
 // A turno written by hand (by the provider in its own agenda, or forced by the administration).
 export function leerTurnoEscrito(body: Record<string, unknown>, now: number, extra: readonly string[] = []): Entrada<TurnoEscrito> {

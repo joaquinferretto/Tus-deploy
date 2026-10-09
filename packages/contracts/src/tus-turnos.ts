@@ -307,12 +307,29 @@ export function validarHorariosSemanales(input: unknown): ResultadoHorarios {
 // exception of the calendar (holiday, vacation, manual block). pasado: already gone.
 export type EstadoFranjaAgenda = 'disponible' | 'ocupado' | 'bloqueado' | 'pasado'
 
+// AGENDA-MATRIZ-01. Where a turno came from: requested through TUS, or loaded by its provider in
+// its own agenda (a turno it got by phone, in person...). Both occupy the agenda in the same way.
+export type OrigenTurno = 'tus' | 'manual'
+// The turno that occupies a time, as its PROVIDER reads it in its own agenda. Never sent in the
+// public agenda: a client only learns that the time is not available.
+export interface TurnoDeFranja {
+  id: string
+  estado: EstadoTurno
+  origen: OrigenTurno
+  cliente: string | null
+  // The recorded range, which may differ from the slot of the service being previewed.
+  inicio: string
+  fin: string
+}
+
 export interface FranjaAgenda {
   inicio: string
   fin: string
   // Local time of the agenda (HH:mm), the row of the weekly grid.
   hora: string
   estado: EstadoFranjaAgenda
+  // Only in the provider's own agenda.
+  turno?: TurnoDeFranja
 }
 
 // laboral: the provider works that day. no_laboral: day off in the weekly configuration.
@@ -325,6 +342,9 @@ export interface DiaAgenda {
   estado: EstadoDiaAgenda
   // Only starts where the whole service fits inside the working hours (never an impossible one).
   franjas: FranjaAgenda[]
+  // Own agenda only: recorded appointments, including past/off-grid manual appointments.
+  // They are display records, never extra bookable slots.
+  turnos?: FranjaAgenda[]
 }
 
 export interface AgendaSemanal {

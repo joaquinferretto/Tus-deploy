@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import type { Prisma, PrismaClient } from '@prisma/client'
-import { TUS_CONTRACT_VERSION } from '@factory/contracts'
 import {
   CODIGO_DEMASIADAS_SOLICITUDES,
   CODIGO_PAGO_NO_DISPONIBLE,
@@ -41,6 +40,7 @@ import {
   TRANSICIONES_TURNO,
   enmascararTelefono,
   esEstadoTurno,
+  normalizarTelefono,
   esIntervaloTurno,
   sumarDias,
   validarHorariosSemanales,
@@ -115,6 +115,8 @@ export interface EntradaTurnoManual {
   clienteTelefono?: string
   clienteEmail?: string
   notas?: string
+  // AGENDA-MATRIZ-01: an existing account of TUS the provider chose (never guessed) for this turno.
+  clienteCuentaId?: string
 }
 
 export interface EntradaAdminForzarTurno {
@@ -175,6 +177,7 @@ const nombreDeUsuario = (user: { displayName: string; firstName?: string | null;
 // reservas.fecha_inicio is a timestamp without time zone holding UTC; the agenda is in Argentina
 // time (UTC-3, no daylight saving).
 const fechaLocal = (instante: Date): string => new Date(instante.getTime() - 3 * 60 * 60_000).toISOString().slice(0, 10)
+const horaLocal = (instante: Date): string => new Date(instante.getTime() - 3 * 60 * 60_000).toISOString().slice(11, 16)
 
 // Exclusion constraint ex_reservas_sin_solapamiento (23P01) or a lost race on a unique key.
 function esSolapamiento(error: unknown): boolean {
@@ -354,10 +357,10 @@ export class ServicioTurnos {
     return { permitida: true, motivo: null }
   }
 
-  private async agendaDeReserva(row: FilaReserva): Promise<{ calendario: CalendarioAgenda; duracion: number; buffer: number }> {
-    const calendarioFila = await this.prisma.calendario.findUnique({ where: { id: row.calendarioId } })
+  private async agendaDeReserva(row: FilaReserva, db: PrismaClient | Prisma.TransactionClient = this.prisma): Promise<{ calendario: CalendarioAgenda; duracion: number; buffer: number }> {
+    const calendarioFila = await db.calendario.findUnique({ where: { id: row.calendarioId } })
     if (!calendarioFila) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
-    const servicio = row.servicioId ? await this.prisma.perfilServicio.findFirst({ where: { oficioId: row.servicioId, perfil: { tenantId: row.tenantId } }, select: { bufferMinutos: true } }).catch(() => null) : null
+    const servicio = row.servicioId ? await db.perfilServicio.findFirst({ where: { oficioId: row.servicioId, perfil: { tenantId: row.tenantId } }, select: { bufferMinutos: true } }) : null
     return { calendario: calendarioFila, duracion: row.duracionMinutos ?? Math.round((row.fechaFin.getTime() - row.fechaInicio.getTime()) / 60_000), buffer: servicio?.bufferMinutos ?? calendarioFila.bufferMinutos ?? 0 }
   }
 
@@ -374,7 +377,8 @@ export class ServicioTurnos {
     const estado = await this.reprogramacionDe(row, ahora)
     if (!estado.permitida) throw new ErrorCalendario(409, estado.motivo!, mensajeErrorTurno(estado.motivo!))
     const hoy = fechaLocal(new Date(ahora))
-    if (input.desde < hoy || input.desde > sumarDias(hoy, MAXIMO_DIAS_ADELANTE_AGENDA)) throw new ErrorCalendario(400, 'INVALID_DATE', 'Esa semana está fuera del período que se puede consultar')
+    // (A week is asked from its Monday, which may be some days before today: its past times are not a choice.)
+    if (input.desde < sumarDias(hoy, -DIAS_AGENDA) || input.desde > sumarDias(hoy, MAXIMO_DIAS_ADELANTE_AGENDA)) throw new ErrorCalendario(400, 'INVALID_DATE', 'Esa semana está fuera del período que se puede consultar')
     const { calendario, duracion, buffer } = await this.agendaDeReserva(row)
     const fechas = Array.from({ length: DIAS_AGENDA }, (_, index) => sumarDias(input.desde, index))
     const dias = await this.agendaDias(calendario, fechas, duracion, buffer, this.prisma, row.id)
@@ -398,10 +402,10 @@ export class ServicioTurnos {
     if (!reserva) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
     const nuevoInicio = new Date(input.inicio)
     if (typeof input.inicio !== 'string' || Number.isNaN(nuevoInicio.getTime())) throw new ErrorCalendario(400, 'INVALID_DATE', 'Fecha de inicio inválida')
-    const { calendario, duracion, buffer } = await this.agendaDeReserva(reserva)
+    const { calendario } = await this.agendaDeReserva(reserva)
     let row: FilaReserva
     try {
-      row = await this.conAgendaBloqueada(calendario, async (tx) => {
+      row = await this.conAgendaBloqueada(calendario, async (tx, agenda) => {
         const ahora = new Date(this.ahora())
         const actual = await tx.reserva.findUnique({ where: { id: reserva.id } })
         if (!actual) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
@@ -410,7 +414,8 @@ export class ServicioTurnos {
         if (nuevoInicio.getTime() === actual.fechaInicio.getTime()) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Elegí un horario distinto al que ya tiene el turno.')
         // The new time also respects the 24 hours: rescheduling never lands inside them.
         if (esCancelacionTardia(nuevoInicio, ahora.getTime())) throw new ErrorCalendario(409, CODIGO_REPROGRAMACION_DESTINO_CERCANO, MENSAJE_REPROGRAMACION_DESTINO_CERCANO)
-        await this.exigirDisponible(calendario, nuevoInicio, duracion, buffer, tx, actual.id)
+        const { duracion, buffer } = await this.agendaDeReserva(actual, tx)
+        await this.exigirDisponible(agenda, nuevoInicio, duracion, buffer, tx, actual.id)
         const movida = await tx.reserva.update({ where: { id: actual.id }, data: { fechaInicio: nuevoInicio, fechaFin: new Date(nuevoInicio.getTime() + duracion * 60_000), version: { increment: 1 }, fechaActualizacion: ahora } })
         await tx.reprogramacionTurno.create({ data: { id: `reprog-${randomUUID()}`, reservaId: movida.id, tenantId: movida.tenantId, actorId: input.clienteId, canal: input.canal, inicioAnterior: actual.fechaInicio, finAnterior: actual.fechaFin, inicioNuevo: movida.fechaInicio, finNuevo: movida.fechaFin, reprogramadoEn: ahora, politicaVersion: VERSION_POLITICA_CANCELACION } })
         // The reminders computed for the old time are never sent; the sweep computes the new ones.
@@ -628,7 +633,7 @@ export class ServicioTurnos {
    * posible con su estado real. Misma generación que la disponibilidad de un día y que la
    * validación de una reserva; la duración es la del servicio (o la de la tarifa elegida).
    */
-  async agendaSemanal(input: { prestadorId: string; oficioId: string; desde: string; tarifaId?: string; incluirNoVisible?: boolean }): Promise<AgendaSemanal> {
+  async agendaSemanal(input: { prestadorId: string; oficioId: string; desde: string; tarifaId?: string; incluirNoVisible?: boolean; conTurnos?: boolean }): Promise<AgendaSemanal> {
     if (!esFecha(input.desde)) throw new ErrorCalendario(400, 'INVALID_DATE', 'La fecha debe tener el formato YYYY-MM-DD')
     const hoy = fechaLocal(new Date())
     if (input.desde < sumarDias(hoy, -DIAS_AGENDA) || input.desde > sumarDias(hoy, MAXIMO_DIAS_ADELANTE_AGENDA)) {
@@ -645,13 +650,61 @@ export class ServicioTurnos {
 
     const calendario = await this.asegurarCalendarioPrestador(servicio.perfil.tenantId, servicio.perfil.prestadorId)
     const fechas = Array.from({ length: DIAS_AGENDA }, (_, index) => sumarDias(input.desde, index))
-    const dias = await this.agendaDias(calendario, fechas, duracion, servicio.config.bufferMinutos ?? calendario.bufferMinutos ?? 0)
+    const calculados = await this.agendaDias(calendario, fechas, duracion, servicio.config.bufferMinutos ?? calendario.bufferMinutos ?? 0)
+    // AGENDA-MATRIZ-01: only for the provider's own agenda, each time says WHICH turno occupies it.
+    // The availability above is untouched: this only reads the turnos of the week and labels them.
+    const dias = input.conTurnos ? await this.conTurnosDeLaSemana(calendario.id, calculados) : calculados
     const precio = tarifa?.precio ?? (servicio.config.precioBase === null ? null : Number(servicio.config.precioBase))
     const conSena = precio !== null && precio > 0 && this.senas ? await this.senas.requeridaPara(servicio.perfil.tenantId) : false
     const conPrecio = precio !== null && precio > 0
     // SERVICIO-A-PRESUPUESTAR-01: told with the agenda, so nobody chooses a time that cannot be requested.
     const requierePresupuesto = !conPrecio && this.senas ? await this.senas.exigePrecio(servicio.perfil.tenantId).catch(() => false) : false
     return { desde: input.desde, hasta, duracionMinutos: duracion, tarifas: servicio.tarifas, dias, precio: conPrecio ? precio : null, sena: conSena ? senaDePrecio(precio!) : null, modalidadCobro: conPrecio ? 'precio_fijo' : 'a_presupuestar', requierePresupuesto }
+  }
+
+  private async conTurnosDeLaSemana(calendarioId: string, dias: DiaAgenda[]): Promise<DiaAgenda[]> {
+    if (dias.length === 0) return dias
+    const desde = new Date(`${dias[0]!.fecha}T00:00:00.000-03:00`)
+    const hasta = new Date(`${dias.at(-1)!.fecha}T23:59:59.999-03:00`)
+    const ahora = Date.now()
+    const filas = (await this.prisma.reserva.findMany({ where: { calendarioId, estado: { in: ['pending', 'awaiting_payment', 'confirmed', 'completed'] }, fechaInicio: { lte: hasta }, fechaFin: { gte: desde } }, orderBy: { fechaInicio: 'asc' } }))
+      // A request whose validity ran out holds no time any more.
+      .filter((fila) => !((fila.estado === 'pending' || fila.estado === 'awaiting_payment') && fila.solicitudExpiraEn && fila.solicitudExpiraEn.getTime() <= ahora))
+    if (filas.length === 0) return dias
+    const clientes = await this.clientesDe(filas)
+    const detalle = (fila: FilaReserva) => ({ id: fila.id, estado: fila.estado as EstadoTurno, origen: (fila.origen === 'manual' || (fila.origen === null && fila.clienteId === 'manual') ? 'manual' : 'tus') as 'tus' | 'manual', cliente: fila.clienteNombre ?? clientes.get(fila.clienteId)?.nombre ?? null, inicio: fila.fechaInicio.toISOString(), fin: fila.fechaFin.toISOString() })
+    const turnoDe = (inicio: string, fin: string) => {
+      const fila = filas.find((item) => item.fechaInicio.getTime() < Date.parse(fin) && item.fechaFin.getTime() > Date.parse(inicio))
+      if (!fila) return null
+      return detalle(fila)
+    }
+    return dias.map((dia) => ({
+      ...dia,
+      franjas: dia.franjas.map((franja) => { const turno = franja.estado === 'disponible' ? null : turnoDe(franja.inicio, franja.fin); return turno ? { ...franja, turno } : franja }),
+      // A past day or a changed weekly rule may have no generated slots. Still show its actual
+      // appointments without changing any state computed by the availability engine above.
+      turnos: filas.filter((fila) => fechaLocal(fila.fechaInicio) === dia.fecha).map((fila) => ({ inicio: fila.fechaInicio.toISOString(), fin: fila.fechaFin.toISOString(), hora: horaLocal(fila.fechaInicio), estado: 'ocupado' as const, turno: detalle(fila) })),
+    }))
+  }
+
+  /**
+   * AGENDA-MATRIZ-01. An existing client of TUS for a manual turno, found ONLY by a datum the
+   * provider already has in full: the whole verified phone number or the whole email. Never by
+   * name and never by a part of anything (this is not a directory of the people of TUS). What
+   * comes back identifies the match without telling more than the provider knew: a short name.
+   * Several matches are all returned: the provider chooses; nothing is linked by approximation.
+   */
+  async buscarClienteParaTurno(input: { prestadorTenantId: string; telefono?: string; email?: string }): Promise<{ cuentaId: string; nombre: string; por: 'telefono' | 'email' }[]> {
+    if (!(await this.prisma.prestador.findFirst({ where: { tenantId: input.prestadorTenantId, estado: 'approved' }, select: { id: true } }))) throw new ErrorCalendario(403, 'FORBIDDEN', 'Solo un prestador activo puede buscar clientes para su agenda.')
+    const telefono = input.telefono ? normalizarTelefono(input.telefono) : null
+    const email = typeof input.email === 'string' && /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/u.test(input.email.trim()) ? input.email.trim().toLowerCase() : null
+    if (input.telefono && (!telefono || !telefono.ok)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Escribí el celular completo, con característica.')
+    if (input.email && !email) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Escribí el email completo.')
+    const condiciones = [...(telefono && telefono.ok ? [{ phoneNumber: telefono.e164, phoneVerifiedAt: { not: null } }] : []), ...(email ? [{ normalizedEmail: email }] : [])]
+    if (condiciones.length === 0) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Buscá por el celular o el email completos del cliente.')
+    const cuentas = await this.prisma.account.findMany({ where: { status: 'active', tenantId: { not: input.prestadorTenantId }, emailVerifiedAt: { not: null }, user: { OR: condiciones } }, include: { user: true }, take: 5 })
+    const corto = (nombre: string): string => { const partes = nombre.trim().split(/\s+/u); return partes.length > 1 ? `${partes[0]} ${partes.at(-1)![0]!.toUpperCase()}.` : (partes[0] ?? 'Cliente') }
+    return cuentas.map((cuenta) => ({ cuentaId: cuenta.id, nombre: corto(nombreDeUsuario(cuenta.user)), por: telefono && telefono.ok && cuenta.user.phoneNumber === telefono.e164 ? ('telefono' as const) : ('email' as const) }))
   }
 
   /**
@@ -862,6 +915,7 @@ export class ServicioTurnos {
             fechaFin: fin,
             estado: solicitud ? 'pending' : 'confirmed',
             solicitudExpiraEn: expiraEn,
+            origen: 'tus',
             // TURNOS-REPROGRAMACION-01: booked with what the agenda says NOW; never changed afterwards.
             admiteReprogramacion: (await tx.calendario.findUnique({ where: { id: calendario.id }, select: { permiteReprogramacion: true } }))?.permiteReprogramacion ?? false,
             version: 1,
@@ -1484,7 +1538,7 @@ export class ServicioTurnos {
 
     const calendario = await this.asegurarCalendarioPrestador(perfil.tenantId, perfil.prestadorId)
 
-    let tarifa = input.tarifaId ? perfil.tarifas.find((t) => t.id === input.tarifaId) : null
+    const tarifa = input.tarifaId ? perfil.tarifas.find((t) => t.id === input.tarifaId) : null
     const duracion =
       input.duracionMinutos ??
       tarifa?.duracionMinutos ??
@@ -1509,6 +1563,10 @@ export class ServicioTurnos {
 
     try {
       const row = await this.conAgendaBloqueada(calendario, async (tx) => {
+        // Revalidate the chosen account when saving; a stale search never links an inactive
+        // account. The relation is its id, and the name snapshot is the account's own name.
+        const vinculada = input.clienteCuentaId ? await tx.account.findFirst({ where: { id: input.clienteCuentaId, status: 'active', emailVerifiedAt: { not: null }, tenantId: { not: perfil.tenantId } }, include: { user: true } }) : null
+        if (input.clienteCuentaId && !vinculada) throw new ErrorCalendario(400, 'CLIENT_NOT_FOUND', 'No encontramos ese cliente activo. Buscalo de nuevo o cargá el turno como invitado.')
         // The provider's own block also holds for the turnos it loads by hand: the block is
         // removed first, so a turno and a block never cover the same time.
         const bloqueado = await tx.excepcionCalendario.findFirst({ where: { calendarioId: calendario.id, estado: 'active', fechaInicio: { lt: fin }, fechaFin: { gt: inicio } }, select: { id: true } })
@@ -1520,7 +1578,12 @@ export class ServicioTurnos {
             reservaId,
             servicioId: input.oficioId,
             calendarioId: calendario.id,
-            clienteId: 'manual',
+            // AGENDA-MATRIZ-01. Linked to an existing account when the provider chose one: the
+            // turno is that client's too ("Mis turnos", reminders). Nothing is charged through TUS
+            // (no client tenant: the payment services do not apply). Otherwise it is a contact of
+            // the provider, with no account behind it.
+            clienteId: vinculada?.id ?? 'manual',
+            origen: 'manual',
             fechaInicio: inicio,
             fechaFin: fin,
             estado: 'confirmed',
@@ -1533,10 +1596,10 @@ export class ServicioTurnos {
             precioLista: precio,
             precioFinal: precio,
             moneda: 'ARS',
-            clienteNombre: input.clienteNombre,
+            clienteNombre: vinculada ? nombreDeUsuario(vinculada.user) : nombreCliente,
             clienteTelefono: input.clienteTelefono ?? null,
             clienteEmail: input.clienteEmail ?? null,
-            esInvitado: true,
+            esInvitado: !vinculada,
             notas: input.notas ?? null,
           },
         })
@@ -2307,6 +2370,8 @@ export class ServicioTurnos {
       clienteTelefono: !verContacto ? null : cliente ? cliente.telefono : r['clienteTelefono'] ? String(r['clienteTelefono']) : null,
       clienteEmail: !verContacto ? null : cliente ? cliente.email : r['clienteEmail'] ? String(r['clienteEmail']) : null,
       esInvitado: Boolean(r['esInvitado']),
+      // AGENDA-MATRIZ-01 (rows from before the column: manual when their client is 'manual').
+      origen: r['origen'] === 'manual' || (r['origen'] == null && r['clienteId'] === 'manual') ? 'manual' : 'tus',
       modificadoPorAdminId: r['modificadoPorAdminId'] ? String(r['modificadoPorAdminId']) : null,
       creadoPorAdminId: r['creadoPorAdminId'] ? String(r['creadoPorAdminId']) : null,
       clienteCuentaId: r['esInvitado'] ? null : String(r['clienteId'] ?? '') || null,

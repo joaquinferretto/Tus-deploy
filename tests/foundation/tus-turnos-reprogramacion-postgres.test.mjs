@@ -108,7 +108,8 @@ test('REPROGRAMACION turnos PostgreSQL: off by default and frozen on each turno 
       const recAntes = (await prisma.recordatorioTurno.findMany({ where: { reservaId: m.pedido.id } })).map((x) => x.estado)
       const movido = await turnos.reprogramarTurno({ clienteId: ana.id, reservaId: m.pedido.id, inicio: a(4, '17:00'), canal: 'web' })
       const filaDespues = await fila(m)
-      out.elMismoTurno = [movido.id === m.pedido.id, filaDespues.reservaId === filaAntes.reservaId, filaDespues.estado, filaDespues.fechaInicio.toISOString() === a(4, '17:00'), filaDespues.fechaFin.getTime() - filaDespues.fechaInicio.getTime() === filaAntes.fechaFin.getTime() - filaAntes.fechaInicio.getTime(), filaDespues.version === filaAntes.version + 1, filaDespues.fechaCreacion.getTime() === filaAntes.fechaCreacion.getTime(), Number(filaDespues.precioFinal), filaDespues.clienteId === ana.id, filaDespues.tenantId === p.tenantId, filaDespues.servicioId === filaAntes.servicioId]
+       out.elMismoTurno = [movido.id === m.pedido.id, filaDespues.reservaId === filaAntes.reservaId, filaDespues.estado, filaDespues.fechaInicio.toISOString() === a(4, '17:00'), filaDespues.fechaFin.getTime() - filaDespues.fechaInicio.getTime() === filaAntes.fechaFin.getTime() - filaAntes.fechaInicio.getTime(), filaDespues.version === filaAntes.version + 1, filaDespues.fechaCreacion.getTime() === filaAntes.fechaCreacion.getTime(), Number(filaDespues.precioFinal), filaDespues.clienteId === ana.id, filaDespues.tenantId === p.tenantId, filaDespues.servicioId === filaAntes.servicioId]
+      out.origenPreservado = [filaAntes.origen, filaDespues.origen, movido.origen]
       out.dineroIgual = JSON.stringify(await dinero(m)) === JSON.stringify(antes)
       out.dinero = [antes.trabajo.length, antes.obligaciones.map((o) => o.slice(1)), antes.liquidaciones, antes.politica.length, antes.reembolsos]
       const sena = (await turnos.turnosCliente(ana.id)).find((x) => x.id === m.pedido.id)
@@ -169,6 +170,7 @@ test('REPROGRAMACION turnos PostgreSQL: off by default and frozen on each turno 
   assert.deepEqual(r.rechazos, [OCUPADO, 'SLOT_NOT_AVAILABLE', 'INVALID_PARAMS', 'INVALID_DATE', 'NOT_FOUND', true], 'occupied, outside the agenda, the same time, not a date, somebody else\'s turno: nothing moves')
   assert.deepEqual(r.carrera, [[OCUPADO, 'ok'], 1], 'two clients at once on the same free time: one turno there, the other is told it was taken')
   assert.deepEqual(r.elMismoTurno, [true, true, 'confirmed', true, true, true, true, 30000, true, true, true], 'the same turno: only its date and time change')
+  assert.deepEqual(r.origenPreservado, ['tus', 'tus', 'tus'], 'origin is structured and never changed by rescheduling')
   assert.equal(r.dineroIgual, true, 'order, obligations, payment intents, settlements, frozen commission, accepted policy and refunds: byte for byte the same')
   assert.deepEqual(r.dinero, [1, [['sena', 'paid', '1500000']], [['held', true, '1500000', r.dinero[2][0][3]]], 1, 0], 'one order, one deposit paid and held, one accepted policy, no refund, no second deposit')
   assert.deepEqual(r.vista, ['confirmed', 'paid', 15000, 15000, 'sena', 1, true, true])
@@ -182,6 +184,66 @@ test('REPROGRAMACION turnos PostgreSQL: off by default and frozen on each turno 
   assert.deepEqual(r.sinNuevaGracia, ['ok', 2, 'intermedia', 0, true], 'rescheduling 30 h after booking does not open a new grace period: the deposit is not refundable')
   assert.deepEqual(r.conLaFechaNueva, ['ultimo_momento', CERRADA], 'the time left is counted to the NEW date')
   assert.deepEqual(r.bloqueados, [[BLOQUEADA, BLOQUEADA], [BLOQUEADA, BLOQUEADA], [BLOQUEADA, BLOQUEADA]], 'a cancelled turno, one its provider already finished and one that is not confirmed yet cannot be moved')
+})
+
+test('REPROGRAMACION agenda vigente: un slot mostrado y tomado después se rechaza, respeta bloqueos/manuales/duración/descanso, retry no duplica y el barrido tardío no crea un 24h retroactivo', { skip, timeout: 120000 }, () => {
+  const r = runTypeScriptScenario(`${SETUP}
+    const out = {}
+    try {
+      const p = await prestador('vigente', 'Agenda vigente ' + run, [['Masaje', 30000]])
+      const ana = await cliente('ana')
+      const beto = await cliente('beto')
+      await turnos.guardarReprogramacionPrestador(p.tenantId, true)
+      const t = await turnoPagado(p, ana, 3, '10:00')
+      const rival = await turnoPagado(p, beto, 3, '11:00')
+      const dineroAntes = JSON.stringify(await dinero(t))
+      const original = await fila(t)
+      const oferta = await turnos.horariosParaReprogramar({ clienteId: ana.id, reservaId: t.pedido.id, desde: lunes })
+      out.mostradoLibre = oferta.dias.flatMap((d) => d.franjas).some((f) => f.inicio === a(4, '09:00') && f.estado === 'disponible')
+      await turnos.reprogramarTurno({ clienteId: beto.id, reservaId: rival.pedido.id, inicio: a(4, '09:00'), canal: 'web' })
+      out.agendaVieja = [await codigo(() => turnos.reprogramarTurno({ clienteId: ana.id, reservaId: t.pedido.id, inicio: a(4, '09:00'), canal: 'web' })), (await fila(t)).fechaInicio.toISOString() === original.fechaInicio.toISOString(), JSON.stringify(await dinero(t)) === dineroAntes]
+      const bloqueo = await turnos.bloquearHorario({ prestadorTenantId: p.tenantId, inicio: a(4, '10:00'), fin: a(4, '11:00'), motivo: 'Ausencia de prueba' })
+      const manual = await turnos.crearTurnoManual({ prestadorTenantId: p.tenantId, oficioId: oficio.id, inicio: a(4, '12:00'), clienteNombre: 'Invitada manual' })
+      const mover = (inicio) => codigo(() => turnos.reprogramarTurno({ clienteId: ana.id, reservaId: t.pedido.id, inicio, canal: 'web' }))
+      out.bloqueados = [await mover(a(4, '10:00')), await mover(a(4, '12:00')), manual.origen, Boolean(bloqueo.id)]
+      // The service changed its rest while the client was looking at the previous agenda.
+      await prisma.perfilServicio.updateMany({ where: { perfilId: p.perfilId, oficioId: oficio.id }, data: { bufferMinutos: 30 } })
+      const nueva = await turnos.horariosParaReprogramar({ clienteId: ana.id, reservaId: t.pedido.id, desde: lunes })
+      const viernes = nueva.dias.find((d) => d.fecha === c.sumarDias(lunes, 4))
+      out.descanso = [viernes.franjas.filter((f) => f.estado === 'disponible').map((f) => f.hora), await mover(a(4, '13:00'))]
+      const avisos = []
+      turnos.agregarNotificador({ solicitudRecibida: async () => {}, solicitudRespondida: async () => {}, turnoConfirmado: async () => {}, turnoCancelado: async () => {}, turnoReprogramado: async (aviso) => avisos.push(aviso) })
+      const elegido = a(4, '13:30')
+      const movido = await turnos.reprogramarTurno({ clienteId: ana.id, reservaId: t.pedido.id, inicio: elegido, canal: 'web' })
+      const trasMover = await fila(t)
+      out.invariantes = [movido.id === t.pedido.id, movido.origen === original.origen, trasMover.fechaCreacion.getTime() === original.fechaCreacion.getTime(), trasMover.duracionMinutos === original.duracionMinutos, trasMover.fechaFin.getTime() - trasMover.fechaInicio.getTime(), JSON.stringify(await dinero(t)) === dineroAntes]
+      const filasAntesRetry = await prisma.reprogramacionTurno.count({ where: { reservaId: t.pedido.id } })
+      out.retry = [await mover(elegido), await prisma.reprogramacionTurno.count({ where: { reservaId: t.pedido.id } }) === filasAntesRetry, JSON.stringify(await dinero(t)) === dineroAntes]
+      await turnos.procesarNotificacionesPendientes(); await turnos.procesarNotificacionesPendientes()
+      out.avisoUnaVez = avisos.filter((x) => x.reservaId === t.pedido.id).length
+      // The new time was >24h when chosen, but the first reminder sweep occurs 20h before it.
+      // No retroactive day-before notice is sent; both 2h notices are still scheduled and sent once.
+      let ahoraRec = Date.parse(elegido) - 20 * HORA
+      const enviados = []
+      const rec = new ServicioRecordatoriosTurno(prisma, async (id) => { const d = await turnos.datosDeRecordatorio(id); return d ? { ...d, prestadorCuentaId: beto.id } : null }, { recordatorio: async (aviso) => { enviados.push(aviso); return { enviado: true, via: 'ventana', plantilla: null, wamid: null } } }, () => ahoraRec)
+      await rec.procesar(500)
+      const registros = await prisma.recordatorioTurno.findMany({ where: { reservaId: t.pedido.id } })
+      out.barridoTardio = [registros.filter((x) => x.tipo === '24h').map((x) => x.estado).sort(), registros.filter((x) => x.tipo === '2h').map((x) => x.estado).sort(), enviados.filter((x) => x.reservaId === t.pedido.id).length]
+      ahoraRec = Date.parse(elegido) - 2 * HORA
+      await rec.procesar(500); await rec.procesar(500)
+      out.soloDosHoras = enviados.filter((x) => x.reservaId === t.pedido.id).map((x) => x.tipo).sort()
+    } finally { await cerrar() }
+    console.log(JSON.stringify(out))
+  `)
+  assert.equal(r.mostradoLibre, true)
+  assert.deepEqual(r.agendaVieja, ['SLOT_OCCUPIED', true, true])
+  assert.deepEqual(r.bloqueados, ['SLOT_NOT_AVAILABLE', 'SLOT_OCCUPIED', 'manual', true])
+  assert.deepEqual(r.descanso, [['13:30', '15:00', '16:30'], 'SLOT_OCCUPIED'])
+  assert.deepEqual(r.invariantes, [true, true, true, true, 3600000, true])
+  assert.deepEqual(r.retry, ['INVALID_PARAMS', true, true])
+  assert.equal(r.avisoUnaVez, 1)
+  assert.deepEqual(r.barridoTardio, [['skipped', 'skipped'], ['pending', 'pending'], 0])
+  assert.deepEqual(r.soloDosHoras, ['2h', '2h'])
 })
 
 test('REPROGRAMACION rutas y cableado: the routes take only what they need (the switch; the new start), the client is the session; the Web and the assistant call the same backend operations and decide nothing by themselves; the migration is additive', () => {

@@ -1,9 +1,10 @@
 'use client'
 
 import { FotosTurno } from '../turnos/fotos-turno'
-import { useState, useEffect, useCallback } from 'react'
-import { CODIGO_SOLICITUD_SIN_HORARIO, etiquetaEstadoTurno, etiquetaSenaTurno, formatearPesos, normalizarTelefono, type DetalleTurno, type ServicioTurnosDTO } from '@factory/contracts'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { CODIGO_SOLICITUD_SIN_HORARIO, etiquetaEstadoTurno, etiquetaSenaTurno, formatearPesos, normalizarTelefono, type DetalleTurno, type FranjaAgenda, type ServicioTurnosDTO, type TurnoDeFranja } from '@factory/contracts'
 import { TurnosError, diaTurno, horaTurno, turnosApi, turnosErrorDe, turnosFetch } from '../../lib/tus-turnos-client'
+import { etiquetaTurnoDeFranja } from '../turnos/agenda-semanal'
 import { claseEstadoTurno } from '../turnos/estado-turno'
 import { ProviderAvailability } from './provider-availability'
 import homeStyles from '../home/home.module.css'
@@ -27,10 +28,54 @@ export function ProviderTurnos(): React.ReactNode {
   const [manualInicio, setManualInicio] = useState('')
   const [manualCliente, setManualCliente] = useState('')
   const [manualTelefono, setManualTelefono] = useState('')
+  const [manualEmail, setManualEmail] = useState('')
   const [manualPrecio, setManualPrecio] = useState('')
   const [manualNotas, setManualNotas] = useState('')
   const [guardandoManual, setGuardandoManual] = useState(false)
   const [errorManual, setErrorManual] = useState<string | null>(null)
+  // AGENDA-MATRIZ-01. The manual turno may be linked to an existing client of TUS, found by its
+  // WHOLE phone number (the API never searches by name nor by a part of anything). The provider
+  // chooses the match; nothing is linked by itself.
+  const [coincidencias, setCoincidencias] = useState<{ cuentaId: string; nombre: string }[] | null>(null)
+  const [vinculo, setVinculo] = useState<{ cuentaId: string; nombre: string } | null>(null)
+  const [buscandoCliente, setBuscandoCliente] = useState(false)
+  const busquedaCliente = useRef(0)
+  const dialogoManual = useRef<HTMLDialogElement>(null)
+  const invalidarCliente = () => { busquedaCliente.current += 1; setCoincidencias(null); setVinculo(null); setBuscandoCliente(false) }
+  const limpiarManual = () => { invalidarCliente(); setManualCliente(''); setManualTelefono(''); setManualEmail(''); setManualPrecio(''); setManualNotas(''); setErrorManual(null) }
+  const cerrarManual = () => { invalidarCliente(); setModalManual(false) }
+  useEffect(() => {
+    const dialogo = dialogoManual.current
+    if (modalManual && dialogo && !dialogo.open) dialogo.showModal()
+    return () => { busquedaCliente.current += 1; dialogo?.close() }
+  }, [modalManual])
+  // The turno of the agenda the provider tapped.
+  const [detalle, setDetalle] = useState<{ turno: TurnoDeFranja; franja: FranjaAgenda } | null>(null)
+  const horaLocal = (iso: string) => new Date(Date.parse(iso) - 3 * 60 * 60_000).toISOString().slice(0, 16)
+  function abrirManualEn(franja: FranjaAgenda, oficioId: string) {
+    setManualOficio(oficioId)
+    setManualInicio(horaLocal(franja.inicio))
+    limpiarManual()
+    setDetalle(null)
+    setModalManual(true)
+  }
+  async function buscarCliente() {
+    const pedido = ++busquedaCliente.current
+    setBuscandoCliente(true)
+    setErrorManual(null)
+    setVinculo(null)
+    setCoincidencias(null)
+    try {
+      const respuesta = await turnosApi.buscarClienteTurno({ telefono: manualTelefono.trim(), email: manualEmail.trim() })
+      if (pedido === busquedaCliente.current) setCoincidencias(respuesta.items)
+    } catch (causa: unknown) {
+      if (pedido !== busquedaCliente.current) return
+      setCoincidencias(null)
+      setErrorManual(causa instanceof Error ? causa.message : 'No pudimos buscar el cliente.')
+    } finally {
+      if (pedido === busquedaCliente.current) setBuscandoCliente(false)
+    }
+  }
 
   // Modal bloqueo
   const [modalBloqueo, setModalBloqueo] = useState(false)
@@ -133,6 +178,7 @@ export function ProviderTurnos(): React.ReactNode {
       setFinalizando(null)
       setEvidencia('')
       cargarTurnos()
+      setVersionAgenda((value) => value + 1)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'No pudimos registrar la finalización.')
     } finally {
@@ -156,12 +202,12 @@ export function ProviderTurnos(): React.ReactNode {
 
   async function handleCrearManual(e: React.FormEvent) {
     e.preventDefault()
-    if (!manualOficio || !manualInicio || !manualCliente.trim()) {
+    if (!manualOficio || !manualInicio || (!vinculo && !manualCliente.trim())) {
       setErrorManual('Servicio, inicio y nombre de cliente son obligatorios.')
       return
     }
     // The same rules the API applies (it is the authority): each problem names its field.
-    const nombreCliente = manualCliente.replace(/\s+/gu, ' ').trim()
+    const nombreCliente = (vinculo?.nombre ?? manualCliente).replace(/\s+/gu, ' ').trim()
     if (nombreCliente.length < 2 || nombreCliente.length > 120) {
       setErrorManual('Nombre del cliente: ingresá entre 2 y 120 caracteres.')
       return
@@ -191,6 +237,8 @@ export function ProviderTurnos(): React.ReactNode {
           inicio: new Date(`${manualInicio}:00.000-03:00`).toISOString(),
           clienteNombre: nombreCliente,
           clienteTelefono: manualTelefono.trim() || undefined,
+          clienteEmail: manualEmail.trim() || undefined,
+          ...(vinculo ? { clienteCuentaId: vinculo.cuentaId } : {}),
           precioFinal: manualPrecio.trim() ? Number(manualPrecio.trim()) : undefined,
           notas: manualNotas.trim() || undefined,
         }),
@@ -198,11 +246,13 @@ export function ProviderTurnos(): React.ReactNode {
 
       if (!res.ok) throw await turnosErrorDe(res, 'No se pudo crear el turno manual')
 
-      setModalManual(false)
+      cerrarManual()
       cargarTurnos()
       setVersionAgenda((value) => value + 1)
     } catch (err: unknown) {
       setErrorManual(err instanceof Error ? err.message : 'Error inesperado')
+      if (err instanceof TurnosError && err.status === 409) setVersionAgenda((value) => value + 1)
+      if (err instanceof TurnosError && err.code === 'CLIENT_NOT_FOUND') invalidarCliente()
     } finally {
       setGuardandoManual(false)
     }
@@ -340,7 +390,30 @@ export function ProviderTurnos(): React.ReactNode {
       </section>
 
       {/* Disponibilidad semanal (intervalo, días y horarios) y la agenda que ven los clientes */}
-      <ProviderAvailability servicios={servicios} version={versionAgenda} />
+      <ProviderAvailability onLibre={abrirManualEn} onTurno={(turno, franja) => setDetalle({ turno, franja })} servicios={servicios} version={versionAgenda} />
+      {detalle ? (
+        <section aria-label="Detalle del turno" className={styles.panel} data-turno-detalle={detalle.turno.id}>
+          <h2 className={styles.panelTitle}>Detalle del turno</h2>
+          <p style={{ margin: 0 }}>
+             <strong>{diaTurno(detalle.turno.inicio)} a las {horaTurno(detalle.turno.inicio)} — {horaTurno(detalle.turno.fin)}</strong>
+          </p>
+          <p style={{ margin: '4px 0 0' }}>
+            {etiquetaTurnoDeFranja(detalle.turno)}
+            {detalle.turno.cliente ? ` · ${detalle.turno.cliente}` : ''}
+          </p>
+          <p className={styles.muted} style={{ fontSize: '0.9rem', margin: '4px 0 0' }}>
+            {detalle.turno.origen === 'manual' ? 'Turno manual: lo cargaste vos en tu agenda. No tiene pago por TUS.' : 'Turno pedido por TUS.'}
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+            <button className={homeStyles.buttonSecondary} data-ver-en-lista onClick={() => document.querySelector(`[data-turno-fila="${detalle.turno.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} type="button">
+              Ver en la lista
+            </button>
+            <button className={homeStyles.buttonSecondary} onClick={() => setDetalle(null)} type="button">
+              Cerrar
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {/* Botones de acción principales */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -366,8 +439,10 @@ export function ProviderTurnos(): React.ReactNode {
             type="button"
             className={homeStyles.buttonPrimary}
             onClick={() => {
+              limpiarManual()
+              setManualOficio(servicios.find((item) => item.turnosHabilitados)?.oficioId ?? '')
+              setManualInicio('')
               setModalManual(true)
-              setErrorManual(null)
             }}
           >
             + Turno manual
@@ -402,7 +477,7 @@ export function ProviderTurnos(): React.ReactNode {
             const horaFin = horaTurno(t.fin)
 
             return (
-              <div key={t.id} className={styles.panel} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+              <div key={t.id} className={styles.panel} data-turno-fila={t.id} data-turno-origen={t.origen ?? 'tus'} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>
                     {fecha} · {horaInicio} a {horaFin} hs
@@ -439,8 +514,9 @@ export function ProviderTurnos(): React.ReactNode {
                   {t.notas ? <div style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: 4 }}>Nota: {t.notas}</div> : null}
                 </div>
 
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                   <span className={claseEstadoTurno(t.estado)}>{etiquetaEstadoTurno(t.estado)}</span>
+                  <span data-origen={t.origen ?? 'tus'} style={{ border: '1px solid #d1d5db', borderRadius: 999, color: '#374151', fontSize: '0.75rem', padding: '2px 8px' }}>{t.origen === 'manual' ? 'Manual' : 'TUS'}</span>
 
                   {t.estado === 'confirmed' && t.pago && t.pago.pagado > 0 ? (
                     finalizando === t.id ? (
@@ -484,13 +560,12 @@ export function ProviderTurnos(): React.ReactNode {
 
       {/* Modal turno manual */}
       {modalManual && (
-        <div className={styles.modalBackdrop}>
-          <div className={styles.modalCard}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 12px 0' }}>Nuevo turno manual</h2>
+          <dialog aria-labelledby="turno-manual-titulo" className={styles.modalCard} onCancel={(event) => { if (guardandoManual) event.preventDefault(); else cerrarManual() }} ref={dialogoManual}>
+            <h2 id="turno-manual-titulo" style={{ fontSize: '1.25rem', fontWeight: 800, margin: '0 0 12px 0' }}>Nuevo turno manual</h2>
             <form onSubmit={handleCrearManual} style={{ display: 'grid', gap: 12 }}>
               <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Oficio / Servicio *</label>
-                <select className={styles.bookingControl} onChange={(e) => setManualOficio(e.target.value)} required value={manualOficio}>
+                <label htmlFor="manual-oficio" style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Oficio / Servicio *</label>
+                <select className={styles.bookingControl} id="manual-oficio" onChange={(e) => setManualOficio(e.target.value)} required value={manualOficio}>
                   <option value="">Elegí uno de tus servicios</option>
                   {servicios.map((item) => (
                     <option key={item.oficioId} value={item.oficioId}>
@@ -501,8 +576,9 @@ export function ProviderTurnos(): React.ReactNode {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Fecha y hora de inicio *</label>
+                <label htmlFor="manual-inicio" style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Fecha y hora de inicio *</label>
                 <input
+                  id="manual-inicio"
                   type="datetime-local"
                   required
                   value={manualInicio}
@@ -512,11 +588,13 @@ export function ProviderTurnos(): React.ReactNode {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Nombre Cliente *</label>
+                <label htmlFor="manual-cliente" style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Nombre Cliente *</label>
                 <input
+                  id="manual-cliente"
+                  disabled={vinculo !== null}
                   type="text"
                   required
-                  value={manualCliente}
+                  value={vinculo?.nombre ?? manualCliente}
                   onChange={(e) => setManualCliente(e.target.value)}
                   placeholder="Nombre y apellido"
                   minLength={2}
@@ -527,22 +605,49 @@ export function ProviderTurnos(): React.ReactNode {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Teléfono</label>
+                <label htmlFor="manual-telefono" style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Teléfono</label>
                 <input
+                  id="manual-telefono"
                   type="tel"
                   inputMode="tel"
                   value={manualTelefono}
-                  onChange={(e) => setManualTelefono(e.target.value)}
+                  onChange={(e) => { setManualTelefono(e.target.value); invalidarCliente() }}
                   placeholder="3794 123456"
                   maxLength={40}
                   autoComplete="off"
                   className={styles.bookingControl}
                 />
+                <label htmlFor="manual-email" style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', margin: '8px 0 4px' }}>Email</label>
+                <input className={styles.bookingControl} id="manual-email" maxLength={254} onChange={(event) => { setManualEmail(event.target.value); invalidarCliente() }} type="email" value={manualEmail} />
+                {/* AGENDA-MATRIZ-01: link the turno to an existing client of TUS (optional). */}
+                <div data-vincular-cliente style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+                  <button className={homeStyles.buttonSecondary} data-buscar-cliente disabled={buscandoCliente || (!manualTelefono.trim() && !manualEmail.trim())} onClick={() => void buscarCliente()} style={{ justifySelf: 'start' }} type="button">
+                    {buscandoCliente ? 'Buscando…' : 'Buscar cliente de TUS por celular o email'}
+                  </button>
+                  {coincidencias !== null && coincidencias.length === 0 ? <span data-sin-coincidencias style={{ color: '#6b7280', fontSize: '0.85rem' }}>No hay un cliente activo de TUS con esos datos verificados. El turno queda con el contacto que cargues acá.</span> : null}
+                  {coincidencias !== null && coincidencias.length > 0 ? (
+                    <fieldset style={{ border: 0, display: 'grid', gap: 4, margin: 0, padding: 0 }}>
+                      <legend style={{ fontSize: '0.85rem', padding: 0 }}>{coincidencias.length === 1 ? 'Encontramos este cliente:' : 'Hay más de un cliente con ese dato. Elegí cuál es:'}</legend>
+                      {coincidencias.map((item) => (
+                        <label key={item.cuentaId} style={{ alignItems: 'center', display: 'flex', gap: 8 }}>
+                          <input checked={vinculo?.cuentaId === item.cuentaId} data-coincidencia={item.cuentaId} name="cliente-vinculado" onChange={() => setVinculo(item)} type="radio" />
+                          {item.nombre}
+                        </label>
+                      ))}
+                      <label style={{ alignItems: 'center', display: 'flex', gap: 8 }}>
+                        <input checked={vinculo === null} name="cliente-vinculado" onChange={() => setVinculo(null)} type="radio" />
+                        No vincular (solo el contacto que cargo acá)
+                      </label>
+                      {vinculo ? <span data-vinculado style={{ color: '#065f46', fontSize: '0.85rem' }}>El turno le va a aparecer a {vinculo.nombre} en “Mis turnos”. No se le cobra nada por TUS.</span> : null}
+                    </fieldset>
+                  ) : null}
+                </div>
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Precio final ($ ARS)</label>
+                <label htmlFor="manual-precio" style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Precio final ($ ARS)</label>
                 <input
+                  id="manual-precio"
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
@@ -555,8 +660,9 @@ export function ProviderTurnos(): React.ReactNode {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Notas / Observaciones</label>
+                <label htmlFor="manual-notas" style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', marginBottom: 4 }}>Notas / Observaciones</label>
                 <textarea
+                  id="manual-notas"
                   rows={2}
                   value={manualNotas}
                   onChange={(e) => setManualNotas(e.target.value)}
@@ -576,7 +682,8 @@ export function ProviderTurnos(): React.ReactNode {
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
                 <button
                   type="button"
-                  onClick={() => setModalManual(false)}
+                  disabled={guardandoManual}
+                  onClick={cerrarManual}
                   className={homeStyles.buttonSecondary}
                   style={{ minHeight: 44, borderRadius: 'var(--tus-control-radius)' }}
                 >
@@ -592,8 +699,7 @@ export function ProviderTurnos(): React.ReactNode {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+          </dialog>
       )}
 
       {/* Modal bloqueo */}

@@ -81,7 +81,49 @@ En `/prestador/turnos`, debajo del horario semanal, la sección **Excepciones** 
 disponible") con Editar y Quitar, y el botón **Agregar ausencia** (todo el día, unas horas o
 varios días). La agenda de abajo muestra esos horarios como "No disponible".
 
-## Validación
+## Matriz semanal compartida (AGENDA-MATRIZ-01)
+
+`AgendaSemanal` se reutiliza para solicitar un turno, consultar la agenda propia y elegir un
+nuevo horario de reprogramación. En desktop muestra días en columnas y horarios en filas; en
+móvil se selecciona un día y no se muestra la tabla ancha. Los horarios y estados los devuelve
+el motor existente de API: la Web no calcula disponibilidad.
+
+- Cliente: solo franjas públicas; elegir una libre inicia la solicitud pendiente de aceptación.
+- Prestador: libre abre el formulario manual existente; ocupado abre el detalle del turno.
+  Distingue pendiente, esperando pago, confirmado, finalizado y bloqueado. Los cancelados
+  permanecen en la lista histórica y liberan su horario en la matriz.
+- La agenda propia conserva la semana seleccionada aunque esté llena. Devuelve también los
+  turnos registrados del día, incluso pasados o fuera de la grilla actual, como registros de
+  visualización privados. No son nuevas franjas reservables ni cambian la disponibilidad pública.
+- Reprogramación: el mismo componente consume los horarios permitidos por el backend. Se
+  confirma el cambio antes de enviar únicamente el nuevo inicio; el backend revalida >24 h y
+  disponibilidad con la agenda bloqueada. Se conserva el mismo turno, pagos, obligaciones,
+  settlement, comisión, política aceptada y fecha de creación (no reinicia la gracia). Los
+  recordatorios pendientes anteriores se invalidan y el sweep recalcula los nuevos.
+
+### Cliente de un turno manual
+
+El prestador puede buscar una cuenta activa por celular completo verificado o email completo
+verificado. Se devuelve un nombre abreviado y el ID de la cuenta, sin datos de contacto ajenos.
+El prestador elige explícitamente entre coincidencias; cambiar los datos de búsqueda invalida
+la selección. Al guardar, la API vuelve a comprobar la cuenta activa y usa su nombre real como
+snapshot; la relación es el ID, nunca el nombre. El turno vinculado aparece en “Mis turnos” sin
+crear una orden ni cobrar por TUS. Sin vínculo es un invitado: no se crea ninguna cuenta.
+
+La migración aditiva `20261117100000_tus_turnos_origen` agrega `reservas.origen` nullable con
+valores `tus` / `manual`. No reescribe filas históricas: su lectura conserva el fallback anterior
+(`cliente_id = 'manual'`). Los manuales ocupan la misma agenda y tienen la misma exclusión de
+solapamientos que las reservas de TUS. Titular de la cuenta y nombre público del prestador
+siguen siendo datos separados; ni la identidad ni los pagos comparan sus nombres.
+
+## Validación de la matriz
+
+- `tests/foundation/tus-agenda-matriz-postgres.test.mjs`: origen, invitados/vínculos activos,
+  privacidad, historial/fuera de grilla y carrera de turno manual contra solicitud.
+- `tests/foundation/tus-turnos-reprogramacion-postgres.test.mjs`: >24 h, concurrencia, mismos
+  pagos/comisión/política, gracia original y recordatorios recalculados.
+- `scripts/dev/pagos-servicios-smoke.mjs`: reserva desde slot, manual invitado/vinculado y
+  reprogramación con matriz a 1280 y 390, sin dinero real ni llamadas reales a Mercado Pago.
 
 - `tests/foundation/tus-turnos-ausencias-postgres.test.mjs` (PostgreSQL real, incluye la carrera
   turno contra ausencia).

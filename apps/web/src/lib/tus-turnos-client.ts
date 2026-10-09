@@ -107,6 +107,8 @@ export const turnosApi = {
   // CIERRE-TRABAJO-01: the provider finishes with evidence; the client confirms or reports a problem.
   finalizarTurno: (id: string, evidence: string) => json<unknown>(`/tus/v1/prestador/turnos/${encodeURIComponent(id)}/finalizar`, { method: 'POST', body: JSON.stringify({ evidence }) }, 'No pudimos registrar la finalización.'),
   confirmarTurno: (id: string) => json<unknown>(`/tus/v1/cliente/turnos/${encodeURIComponent(id)}/confirmar`, { method: 'POST' }, 'No pudimos confirmar el turno.'),
+  // AGENDA-MATRIZ-01: an existing client of TUS for a manual turno, by its WHOLE phone or email.
+  buscarClienteTurno: (dato: { telefono?: string; email?: string }) => json<{ items: { cuentaId: string; nombre: string; por: 'telefono' | 'email' }[] }>(`/tus/v1/prestador/turnos/clientes?${query(dato)}`, undefined, 'No pudimos buscar el cliente.'),
   // TURNOS-REPROGRAMACION-01: the provider's switch; the times a client can move its turno to
   // (the real agenda of its provider) and the change itself (only the new start travels).
   miReprogramacion: () => json<{ permite: boolean }>('/tus/v1/prestador/turnos/reprogramacion', undefined, 'No pudimos consultar la configuración.'),
