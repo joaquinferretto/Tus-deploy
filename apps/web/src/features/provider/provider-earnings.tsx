@@ -53,7 +53,6 @@ const ERRORES_SOLICITUD: Record<string, string> = {
   PAYOUT_BELOW_MINIMUM: 'Todavía no llegaste al mínimo para solicitar el pago de tus ganancias.',
   PAYMENT_ACCOUNT_REQUIRED: 'Vinculá tu cuenta de Mercado Pago para retirar tus ganancias.',
   PAYOUT_ALREADY_OPEN: 'Ya tenés una solicitud de pago en proceso.',
-  PROVIDER_IDENTITY_NOT_VERIFIED: 'Para solicitar el pago de tus ganancias tu identidad tiene que estar verificada.',
   INVALID_DESTINATION_EMAIL: 'Escribí el email de tu cuenta de Mercado Pago.',
 }
 
@@ -224,12 +223,14 @@ export function ProviderEarningsPanel({ session }: { session: TusWebSession }): 
                 {busy ? 'Solicitando…' : 'Solicitar pago'}
               </button>
             </form>
+          ) : summary.blockedReason === 'PAYMENT_ACCOUNT_REQUIRED' && BigInt(summary.availableMinor) > 0n ? (
+            <p data-retiro-sin-mercado-pago role="status">Tenés {formatMoney(summary.availableMinor, summary.currency)} disponibles. Vinculá Mercado Pago para retirar.</p>
           ) : blocked ? (
             <p role="status">{blocked}</p>
           ) : null}
           {summary.blockedReason === 'PAYMENT_ACCOUNT_REQUIRED' ? (
             <button disabled={busy} onClick={() => void connect()} type="button">
-              Conectar Mercado Pago
+              Vincular Mercado Pago
             </button>
           ) : null}
           {summary.openPayout ? (

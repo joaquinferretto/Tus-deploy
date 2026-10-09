@@ -292,6 +292,31 @@ export class ClienteOAuthMercadoPagoHttp implements PuertoOAuthMercadoPago {
   }
 }
 
+// PAGOS-MP-VINCULADO-01. What is audited of a link: never a token nor the whole account id.
+export interface EventoCuentaCobro {
+  action: 'payment_account.connected' | 'payment_account.reconnected' | 'payment_account.disconnected'
+  prestadorTenantId: string
+  actorId: string
+  correlationId: string
+  previousStatus: string
+  status: string
+  externalAccount: string | null
+  previousExternalAccount: string | null
+  at: string
+}
+
+export function enmascararCuentaExterna(id: string | null): string | null {
+  if (!id) return null
+  return id.length <= 3 ? '***' : `${'*'.repeat(id.length - 3)}${id.slice(-3)}`
+}
+
+// What the administration and the provider read of a link, with no technical detail.
+export type VinculoMercadoPago = 'no_vinculado' | 'vinculado' | 'requiere_reconexion'
+export function vinculoMercadoPago(status: string | null | undefined): VinculoMercadoPago {
+  if (status === 'connected') return 'vinculado'
+  return status === 'expired' || status === 'error' ? 'requiere_reconexion' : 'no_vinculado'
+}
+
 export interface ConfiguracionOAuthCobro {
   clientId: string
   redirectUri: string
@@ -311,9 +336,15 @@ export class ServicioCuentasCobro {
     private readonly boveda: BovedaCredencialesAesGcm | null,
     private readonly oauth: PuertoOAuthMercadoPago | null,
     private readonly now: () => number = () => Date.now(),
-    // IDENTITY-NOSIS: Mercado Pago can only be linked after the identity is verified.
-    private readonly identidadVerificada: ((tenantId: string) => Promise<boolean>) | null = null
+    // PAGOS-MP-VINCULADO-01: every link, reconnection and unlink is audited (who, which provider,
+    // the state before and after). Never a token; the Mercado Pago account only masked.
+    private readonly auditar: ((evento: EventoCuentaCobro) => Promise<void>) | null = null
   ) {}
+
+  // An audit that cannot be written never undoes a link or an unlink already made.
+  private async registrar(evento: EventoCuentaCobro): Promise<void> {
+    if (this.auditar) await this.auditar(evento).catch(() => undefined)
+  }
 
   get disponible(): boolean {
     return Boolean(this.config && this.boveda && this.oauth)
@@ -457,13 +488,9 @@ export class ServicioCuentasCobro {
     actorId: string
     correlationId: string
   }): Promise<{ authorizationUrl: string; expiresAt: string }> {
+    // PAGOS-MP-VINCULADO-01: linking Mercado Pago asks for nothing else of the provider. TUS does
+    // not repeat the verification Mercado Pago already makes of the owner of that account.
     const { config, boveda } = this.requerirConfiguracion()
-    if (this.identidadVerificada && !(await this.identidadVerificada(context.tenantId)))
-      throw new ErrorFinanzasServicio(
-        403,
-        'PROVIDER_IDENTITY_NOT_VERIFIED',
-        'verify your identity before linking a payment account'
-      )
     const state = randomBytes(32).toString('base64url')
     const verifier = randomBytes(48).toString('base64url')
     const challenge = createHash('sha256').update(verifier).digest('base64url')
@@ -566,6 +593,17 @@ export class ServicioCuentasCobro {
         current?.version ?? null
       )
       if (!saved) return redirect('error', 'CONCURRENT_MODIFICATION')
+      await this.registrar({
+        action: current && current.status !== 'not_connected' ? 'payment_account.reconnected' : 'payment_account.connected',
+        prestadorTenantId: estado.prestadorTenantId,
+        actorId: estado.actorId,
+        correlationId: input.correlationId,
+        previousStatus: current?.status ?? 'not_connected',
+        status: 'connected',
+        externalAccount: enmascararCuentaExterna(token.userId),
+        previousExternalAccount: enmascararCuentaExterna(current?.externalAccountId ?? null),
+        at: nowIso,
+      })
       return redirect('connected', null)
     } catch (error) {
       return redirect(
@@ -600,6 +638,17 @@ export class ServicioCuentasCobro {
         'CONCURRENT_MODIFICATION',
         'payment account changed concurrently'
       )
+    await this.registrar({
+      action: 'payment_account.disconnected',
+      prestadorTenantId: context.tenantId,
+      actorId: context.actorId,
+      correlationId: context.correlationId,
+      previousStatus: current.status,
+      status: 'revoked',
+      externalAccount: enmascararCuentaExterna(current.externalAccountId),
+      previousExternalAccount: enmascararCuentaExterna(current.externalAccountId),
+      at: nowIso,
+    })
     return proyectarCuenta(context.tenantId, next, this.now())
   }
 

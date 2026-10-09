@@ -15,7 +15,6 @@ import {
 } from '../../lib/tus-client'
 import type { TusWebSession } from '../../lib/tus-ui-contract'
 import { useTusSession } from '../session/use-tus-session'
-import { maskAccountId } from './payment-account-mask'
 import { ProviderEarningsPanel } from './provider-earnings'
 import styles from '../work/work.module.css'
 
@@ -52,11 +51,9 @@ export async function startMercadoPagoConnection(session: TusWebSession): Promis
     window.location.assign(authorizationUrl)
     return null
   } catch (error) {
-    return error instanceof TusRequestError && error.code === 'PROVIDER_IDENTITY_NOT_VERIFIED'
-      ? 'Primero completá la verificación de identidad. Después vas a poder conectar Mercado Pago.'
-      : error instanceof TusRequestError && error.status === 503
-        ? 'La conexión con Mercado Pago todavía no está habilitada en TUS.'
-        : 'No se pudo iniciar la conexión con Mercado Pago. Reintentá.'
+    return error instanceof TusRequestError && error.status === 503
+      ? 'La vinculación con Mercado Pago todavía no está habilitada en TUS.'
+      : 'No se pudo iniciar la vinculación con Mercado Pago. Reintentá.'
   }
 }
 
@@ -81,9 +78,9 @@ export function PaymentAccountPanel({ session }: { session: TusWebSession }): Re
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const result = params.get('mercadoPago')
-    if (result === 'connected') setNotice('Mercado Pago quedó conectado a TUS.')
+    if (result === 'connected') setNotice('Mercado Pago vinculado.')
     if (result === 'error')
-      setNotice(CALLBACK_ERRORS[params.get('reason') ?? ''] ?? 'No se pudo conectar Mercado Pago.')
+      setNotice(CALLBACK_ERRORS[params.get('reason') ?? ''] ?? 'No se pudo vincular Mercado Pago.')
     void load()
   }, [load])
 
@@ -99,13 +96,13 @@ export function PaymentAccountPanel({ session }: { session: TusWebSession }): Re
   }
 
   async function disconnect() {
-    if (busy || !window.confirm('¿Desconectar tu cuenta de Mercado Pago? No vas a poder cobrar online hasta reconectarla.')) return
+    if (busy || !window.confirm('¿Desvincular tu Mercado Pago? Vas a seguir cobrando por TUS, pero no vas a poder retirar tu saldo hasta volver a vincularlo.')) return
     setBusy(true)
     try {
       setAccount(await client().disconnectPaymentAccount(session))
-      setNotice('La cuenta quedó desconectada en TUS. Podés revocar el acceso también desde Mercado Pago.')
+      setNotice('Mercado Pago quedó desvinculado de TUS. Podés revocar el acceso también desde Mercado Pago.')
     } catch {
-      setNotice('No se pudo desconectar la cuenta. Reintentá.')
+      setNotice('No se pudo desvincular la cuenta. Reintentá.')
     } finally {
       setBusy(false)
     }
@@ -116,8 +113,9 @@ export function PaymentAccountPanel({ session }: { session: TusWebSession }): Re
     <section className={styles.card} aria-labelledby="pagos-mercado-pago">
       <h2 id="pagos-mercado-pago">Mercado Pago</h2>
       <p>
-        Los clientes pagan con Mercado Pago y el dinero se acredita en tu cuenta; TUS retiene su comisión. Nunca te
-        pedimos contraseñas, tokens ni CBU: la autorización se hace en Mercado Pago.
+        Tus clientes te pagan por TUS aunque no tengas Mercado Pago vinculado: tu parte queda en tu saldo. Vinculá
+        Mercado Pago para retirar tus ganancias. Es un paso: te llevamos a Mercado Pago, autorizás a TUS y volvés.
+        Nunca te pedimos contraseñas, tokens ni claves.
       </p>
       {notice ? <p role="status">{notice}</p> : null}
       {failed ? (
@@ -129,21 +127,20 @@ export function PaymentAccountPanel({ session }: { session: TusWebSession }): Re
       ) : (
         <>
           <p>
-            <strong>{connected ? 'Conectado' : account.status === 'not_connected' ? 'No conectado' : (STATUS_COPY[account.status] ?? 'No conectado')}</strong>
+            <strong data-mercado-pago={connected ? 'vinculado' : account.status === 'expired' || account.status === 'error' ? 'requiere_reconexion' : 'no_vinculado'}>{STATUS_COPY[account.status] ?? 'Mercado Pago sin vincular'}</strong>
           </p>
-          {connected && account.externalAccountId ? <p>Cuenta {maskAccountId(account.externalAccountId)}</p> : null}
           {connected && account.liveMode === false ? <p>Modo de prueba (sandbox).</p> : null}
-          {!connected ? <p>Podés seguir usando TUS, pero no vas a poder cobrar trabajos online hasta conectar Mercado Pago.</p> : null}
+          {!connected ? <p>Podés trabajar y cobrar igual. Solo vas a necesitar Mercado Pago vinculado para retirar tu saldo.</p> : null}
           {connected ? (
             <button disabled={busy} onClick={() => void disconnect()} type="button">
-              Desconectar
+              Desvincular
             </button>
           ) : account.connectAvailable ? (
             <button disabled={busy} onClick={() => void connect()} type="button">
-              {busy ? 'Conectando…' : account.status === 'expired' || account.status === 'error' ? 'Reconectar Mercado Pago' : 'Conectar Mercado Pago'}
+              {busy ? 'Abriendo Mercado Pago…' : account.status === 'not_connected' ? 'Vincular Mercado Pago para retirar tus ganancias' : 'Volver a vincular Mercado Pago'}
             </button>
           ) : (
-            <p role="status">La conexión con Mercado Pago todavía no está habilitada en TUS.</p>
+            <p role="status">La vinculación con Mercado Pago todavía no está habilitada en TUS.</p>
           )}
         </>
       )}

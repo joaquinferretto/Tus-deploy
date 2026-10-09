@@ -223,12 +223,8 @@ export class TusApplicationService {
     const publication = await this.marketplace.store.listings.find(commitment.listingId)
     if (!publication)
       throw new TrabajoError(404, 'NOT_FOUND', 'commitment publication was not found')
-    if (this.identity && !(await this.identity.identidadVerificada(context.tenantId)))
-      throw new TrabajoError(
-        403,
-        'PROVIDER_IDENTITY_NOT_VERIFIED',
-        'verify your identity before accepting work'
-      )
+    // PRESTADOR-SIN-KYC-01 (owner's decision): accepting work asks for no identity verification
+    // of TUS's own. The session, its permission and the ownership of the publication still decide.
     // WEB-08H: la reserva se valida y bloquea dentro de la transaccion que crea el trabajo.
     return this.work.acceptCommitment({
       tenantId: context.tenantId,

@@ -12,6 +12,7 @@ import {
   BovedaCredencialesAesGcm,
   ClienteOAuthMercadoPagoHttp,
   ServicioCuentasCobro,
+  type EventoCuentaCobro,
   type PuertoCuentasCobro,
   type PuertoOAuthMercadoPago,
 } from './cuentas-cobro.ts'
@@ -53,8 +54,8 @@ export function crearModuloPagosServicio(input: {
   produccionAutorizada?: () => Promise<boolean>
   // The same decision with its detail, next to the `settlement` gate, for the admin status.
   habilitaciones?: () => Promise<EstadoHabilitacionesPagos>
-  // IDENTITY-NOSIS gate (provider identity verified). Absent only in isolated unit compositions.
-  identidadVerificada?: (tenantId: string) => Promise<boolean>
+  // PAGOS-MP-VINCULADO-01: audit of every link, reconnection and unlink of a provider account.
+  auditarCuenta?: (evento: EventoCuentaCobro) => Promise<void>
   // Tests inject a fake HTTP transport for the Mercado Pago API.
   mercadoPago?: Pick<ConfiguracionProveedorMercadoPago, 'fetch' | 'apiBaseUrl'>
   payouts?: Pick<ConfiguracionPayoutsMercadoPago, 'fetch' | 'apiBaseUrl'>
@@ -97,7 +98,7 @@ export function crearModuloPagosServicio(input: {
     oauthListo ? boveda : null,
     oauth,
     now,
-    input.identidadVerificada ?? null
+    input.auditarCuenta ?? null
   )
   const produccionAutorizada = input.produccionAutorizada ?? (async () => false)
   // TUS-GANANCIAS-01: TUS's own account, to collect for providers without a linked account.
@@ -134,9 +135,9 @@ export function crearModuloPagosServicio(input: {
     politica: new PoliticaCobroPersistida(
       input.configuracion,
       operativo,
-      (tenantId) => cuentas.cuentaConectada(tenantId),
+      null,
       produccionAutorizada,
-      input.identidadVerificada ?? null,
+      null,
       // Only with the real adapter configured: a fake or missing provider never collects for TUS.
       () => plataforma !== null && proveedor.source === 'authorized'
     ),

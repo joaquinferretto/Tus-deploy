@@ -274,9 +274,9 @@ Meaning of the identity gates for `service-payments`:
 
 - `kyc` is the owner-approved record that provider identity verification is
   operating (IDENTITY-NOSIS: DNI, name and CUIL of the person). It is a
-  platform-level record. The per-provider fact is enforced separately on every
-  charge: a provider whose identity is not verified cannot be paid
-  (`PROVIDER_IDENTITY_NOT_VERIFIED`).
+  platform-level record. Since 2026-10-09 no per-provider identity
+  check is made on a charge: a provider is paid with its Mercado Pago linked
+  (`PROVIDER_ACCOUNT_NOT_CONNECTED` otherwise).
 - `kyb` is "merchant business verification". It is **not** met by identity
   data: a verified DNI, a valid CUIL or a linked Mercado Pago account do not
   amount to KYB, and nothing in the code treats them as such.

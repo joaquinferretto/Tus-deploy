@@ -277,14 +277,16 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
   constructor(
     private readonly store: PuertoConfiguracionPagos,
     private readonly operativo: () => EstadoOperativoPagos,
-    private readonly cuentaConectada: (prestadorTenantId: string) => Promise<boolean>,
+    // Kept for the callers: whether the provider linked its Mercado Pago is NOT consulted to charge
+    // (COBRO-POR-PLATAFORMA-01); it is asked when it requests a payout (ganancias.ts).
+    _cuentaVinculadaEnDesuso: unknown,
     // PAGOS-HABILITACION-TECNICA-01. Readiness for the public launch (legal, tax, KYC, KYB,
     // Mercado Pago and runtime approvals, by evidence). Reported; it does NOT decide whether a
     // payment can be charged: that is every real control checked in `disponibilidad`.
     private readonly lanzamientoPublico: () => Promise<boolean> = async () => false,
-    // IDENTITY-NOSIS: a provider receives money only after its identity is verified.
-    private readonly identidadVerificada:
-      ((prestadorTenantId: string) => Promise<boolean>) | null = null,
+    // PAGOS-MP-VINCULADO-01: TUS no longer asks for its own identity verification (KYC/KYB) to
+    // charge. The position is kept so callers need no change; whatever is passed is NOT consulted.
+    _verificacionPropiaEnDesuso: unknown = null,
     // TUS-GANANCIAS-01: TUS can collect with its own Mercado Pago account (platform access token
     // and user configured). Then a provider without a linked account can still be paid: TUS
     // collects and the provider's share becomes an earning to be paid out later.
@@ -316,19 +318,14 @@ export class PoliticaCobroPersistida implements PuertoPoliticaCobro {
     // different product and is not supported.
     if (rule.pspFeeBearer === 'platform')
       return { available: false, reason: 'PSP_FEE_POLICY_UNSUPPORTED' }
-    if (this.identidadVerificada && !(await this.identidadVerificada(input.prestadorTenantId)))
-      return { available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }
-    // PAGOS-RETENCION-01. An advance payment (anything paid before the service is done) must be
-    // money TUS can hold until the work reaches its release milestone, so TUS collects it with
-    // its own account, also for a provider with a linked one. A payment Mercado Pago pays
-    // straight to the provider (split) is in its hands the moment it is approved. Without an
-    // account of TUS an advance payment is NOT sent there: it is refused as a configuration
-    // error. The split stays for payments made after the service.
-    if (input.anticipado)
-      return this.cobroPlataforma() ? { available: true, reason: null, mode: 'plataforma' } : { available: false, reason: 'PLATFORM_ACCOUNT_REQUIRED' }
-    if (!(await this.cuentaConectada(input.prestadorTenantId)))
-      return this.cobroPlataforma() ? { available: true, reason: null, mode: 'plataforma' } : { available: false, reason: 'PROVIDER_ACCOUNT_NOT_CONNECTED' }
-    return { available: true, reason: null, mode: 'split' }
+    // COBRO-POR-PLATAFORMA-01 (owner's decision, 2026-10-09). Every payment of a client (deposit,
+    // total, balance) is collected by TUS with its own account: client -> TUS -> hold/release ->
+    // balance of the provider -> payout. The provider needs NOTHING to be paid by its clients: no
+    // identity verification of TUS's own and no Mercado Pago linked. Its linked account is only
+    // the DESTINATION of its payouts (asked for when it requests one), and having it linked never
+    // makes a payment skip the account of TUS (no split). Without an account of TUS a payment is
+    // refused as a configuration error; it is never sent anywhere else.
+    return this.cobroPlataforma() ? { available: true, reason: null, mode: 'plataforma' } : { available: false, reason: 'PLATFORM_ACCOUNT_REQUIRED' }
   }
 
   // Whether TUS holds every approval for the public launch. Information for an operator.

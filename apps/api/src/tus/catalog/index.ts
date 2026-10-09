@@ -65,8 +65,6 @@ export interface MarketplacePolicy {
   perfilHabilitacion?: PerfilHabilitacion
   alcanceHabilitacion?: string
   calendarResolver?: MarketplaceCalendarResolver
-  // IDENTITY-NOSIS: a provider publishes services only after its identity is verified.
-  identidadVerificada?: (tenantId: string) => Promise<boolean>
 }
 
 export interface MarketplaceCalendarResolver {
@@ -532,7 +530,6 @@ export class TusMarketplaceService {
   private readonly perfilHabilitacion: PerfilHabilitacion
   private readonly alcanceHabilitacion: string
   private readonly calendarResolver?: MarketplaceCalendarResolver
-  private readonly identidadVerificada?: (tenantId: string) => Promise<boolean>
 
   constructor(store: MarketplaceStorePort, policy: MarketplacePolicy = {}) {
     this.store = store
@@ -542,7 +539,6 @@ export class TusMarketplaceService {
     this.perfilHabilitacion = policy.perfilHabilitacion ?? 'native-local'
     this.alcanceHabilitacion = policy.alcanceHabilitacion ?? 'argentina-stage-1'
     this.calendarResolver = policy.calendarResolver
-    this.identidadVerificada = policy.identidadVerificada
   }
 
   async onboard(
@@ -747,16 +743,9 @@ export class TusMarketplaceService {
     if (listing.kind === 'product' && (listing.stock ?? 0) < 0)
       throw new MarketplaceError(400, 'INVALID_LISTING', 'product stock cannot be negative')
     if (listing.kind === 'service') validatePublishedService(listing)
-    if (
-      listing.kind === 'service' &&
-      this.identidadVerificada &&
-      !(await this.identidadVerificada(context.tenantId))
-    )
-      throw new MarketplaceError(
-        403,
-        'PROVIDER_IDENTITY_NOT_VERIFIED',
-        'verify your identity before publishing services'
-      )
+    // PRESTADOR-SIN-KYC-01 (owner's decision): publishing asks for an active account and a valid,
+    // approved provider (checked above). The identity verification of TUS is optional
+    // information (trust, moderation, a future badge): it never authorizes or blocks.
     const published = {
       ...listing,
       contractVersion: TUS_CONTRACT_VERSION,

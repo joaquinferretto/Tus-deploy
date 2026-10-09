@@ -15,9 +15,9 @@ import styles from './admin-usuarios.module.css'
 type AccionIdentidad = 'verificar' | 'rechazar' | 'revocar' | 'pendiente'
 const TITULO_ESTADO: Record<VerificacionIdentidadAdmin['estado'], string> = { pendiente: 'Pendiente', verificada: 'Identidad verificada', rechazada: 'Rechazada' }
 const CONFIRMACION: Record<AccionIdentidad, { texto: string; boton: string }> = {
-  verificar: { texto: 'Vas a marcar esta identidad como verificada manualmente. Esta acción habilita funciones sensibles como el cobro de señas y ganancias del prestador.', boton: 'Sí, verificar identidad' },
-  rechazar: { texto: 'Vas a rechazar la identidad de este prestador. No va a poder cobrar señas hasta que se verifique.', boton: 'Sí, rechazar' },
-  revocar: { texto: 'Vas a revocar la verificación de esta identidad. Los cobros nuevos del prestador vuelven a bloquearse. Los pagos, ganancias y liquidaciones que ya existen no cambian.', boton: 'Sí, revocar verificación' },
+  verificar: { texto: 'Vas a marcar esta identidad como verificada manualmente. Habilita lo que depende de la identidad en TUS, como publicar servicios y aceptar trabajos. No interviene en los cobros: para cobrar alcanza con vincular Mercado Pago.', boton: 'Sí, verificar identidad' },
+  rechazar: { texto: 'Vas a rechazar la identidad de este prestador. No afecta sus cobros: esos dependen de su Mercado Pago vinculado.', boton: 'Sí, rechazar' },
+  revocar: { texto: 'Vas a revocar la verificación de esta identidad. Sus cobros, pagos, ganancias y liquidaciones no cambian: dependen de su Mercado Pago vinculado.', boton: 'Sí, revocar verificación' },
   pendiente: { texto: 'Vas a volver esta identidad a pendiente para que pueda verificarse más adelante.', boton: 'Sí, volver a pendiente' },
 }
 function errorIdentidad(cause: unknown): string {
@@ -51,7 +51,7 @@ function VerificacionIdentidad({ cuentaId }: { cuentaId: string }): React.ReactN
     try {
       const respuesta = await adminApi.decidirIdentidad(cuentaId, accion, motivo.trim())
       setEstado(respuesta.verificacion)
-      setAviso(accion === 'verificar' ? 'Identidad verificada. El cobro de señas del prestador ya no depende de este paso.' : accion === 'revocar' ? 'Verificación revocada.' : accion === 'rechazar' ? 'Identidad rechazada.' : 'Identidad en pendiente.')
+      setAviso(accion === 'verificar' ? 'Identidad verificada.' : accion === 'revocar' ? 'Verificación revocada.' : accion === 'rechazar' ? 'Identidad rechazada.' : 'Identidad en pendiente.')
       setAccion(null)
     } catch (cause: unknown) {
       setError(errorIdentidad(cause))

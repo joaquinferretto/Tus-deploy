@@ -16,7 +16,7 @@ export const MECANISMOS_LIQUIDACION = ['mercado_pago_payouts', 'manual'] as cons
 export type MecanismoLiquidacion = (typeof MECANISMOS_LIQUIDACION)[number]
 
 // Why a payout cannot be requested now.
-export const MOTIVOS_SIN_LIQUIDACION = ['NO_FUNDS', 'BELOW_MINIMUM', 'PAYMENT_ACCOUNT_REQUIRED', 'IDENTITY_NOT_VERIFIED', 'PAYOUT_IN_PROGRESS'] as const
+export const MOTIVOS_SIN_LIQUIDACION = ['NO_FUNDS', 'BELOW_MINIMUM', 'PAYMENT_ACCOUNT_REQUIRED', 'PAYOUT_IN_PROGRESS'] as const
 export type MotivoSinLiquidacion = (typeof MOTIVOS_SIN_LIQUIDACION)[number]
 
 export interface SolicitudLiquidacionDTO {
@@ -169,7 +169,6 @@ export interface AuditoriaLiquidacionDTO {
 export function mensajeMotivoSinLiquidacion(motivo: MotivoSinLiquidacion | null): string | null {
   if (motivo === 'PAYMENT_ACCOUNT_REQUIRED') return 'Vinculá tu cuenta de Mercado Pago para retirar tus ganancias.'
   if (motivo === 'PAYOUT_IN_PROGRESS') return 'Ya tenés una solicitud de pago en proceso.'
-  if (motivo === 'IDENTITY_NOT_VERIFIED') return 'Para solicitar el pago de tus ganancias tu identidad tiene que estar verificada.'
   if (motivo === 'NO_FUNDS') return 'Todavía no tenés ganancias disponibles para solicitar.'
   if (motivo === 'BELOW_MINIMUM') return 'Todavía no llegaste al mínimo para solicitar el pago de tus ganancias.'
   return null

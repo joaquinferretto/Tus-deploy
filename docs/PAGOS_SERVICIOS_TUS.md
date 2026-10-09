@@ -154,3 +154,23 @@ otras más amplias las dos restricciones que topeaban la tasa en 30 % (ahora 100
 - Los servicios sin precio dejan de aceptar turnos donde la seña es cobrable.
 - Respaldo manual verificado y ensayo de `migrate-deploy` sobre el respaldo restaurado antes de
   aplicar la migración en producción.
+
+## Cómo cobra y cómo retira un prestador (COBRO-POR-PLATAFORMA-01, decisión del dueño, 2026-10-09)
+
+Flujo único del dinero: cliente → cuenta de Mercado Pago de TUS → retención/liberación → saldo del prestador en TUS → retiro.
+
+Para trabajar y para que sus clientes le paguen, un prestador necesita únicamente su cuenta TUS activa y un perfil de prestador válido/aprobado. NO necesita:
+
+- verificación de identidad propia de TUS (KYC/KYB): es un dato opcional y no bloquea nada (PRESTADOR-SIN-KYC-01);
+- Mercado Pago vinculado: puede publicar, recibir y aceptar solicitudes, aceptar turnos con seña, y sus clientes pueden pagar seña, total o saldo.
+
+Reglas:
+
+- Todo pago de un cliente (seña, total o saldo; antes o después de terminado el trabajo) lo cobra TUS con su propia cuenta. `PoliticaCobroPersistida.disponibilidad` responde modo `plataforma`, o `PLATFORM_ACCOUNT_REQUIRED` si faltan `MERCADO_PAGO_PLATFORM_ACCESS_TOKEN` y `MERCADO_PAGO_PLATFORM_USER_ID`. Nunca se envía a otra cuenta.
+- Tener Mercado Pago vinculado NO hace que un pago saltee la cuenta de TUS: la política de ejecución ya no entrega el modo `split`. El adaptador de split (cobro con el token del prestador y `marketplace_fee`) sigue en el código y en sus tests, pero ninguna composición productiva lo alcanza; quitarlo es una limpieza aparte.
+- Retención, liberación, comisión, idempotencia y conciliación no cambiaron: el pago anticipado queda retenido hasta el cierre del servicio; el pago de un trabajo ya terminado se libera con su aprobación; al liberarse, la parte del prestador pasa a su saldo interno.
+- Mercado Pago vinculado (OAuth) es el DESTINO DE LOS RETIROS. Se exige recién al pedir un retiro: sin cuenta vinculada el resumen responde `PAYMENT_ACCOUNT_REQUIRED` ("Tenés $X disponibles. Vinculá Mercado Pago para retirar.") y la solicitud se rechaza; con cuenta vinculada puede solicitarlo. El saldo no se transfiere solo: el prestador pide el retiro y la administración lo procesa (Mercado Pago Payouts si está configurado, u otro medio con su referencia).
+- Vinculación: `POST /tus/v1/prestador/cuenta-cobro/mercado-pago/conectar` devuelve la URL oficial de autorización (state de un solo uso + PKCE S256); Mercado Pago vuelve a `GET /tus/v1/integrations/mercado-pago/oauth/callback`; el backend canjea el código y guarda los tokens cifrados (AES-256-GCM, `TUS_PAYMENT_CREDENTIALS_KEY`). Nunca se le pide al prestador un token ni un id, y nada de eso llega al navegador. Da igual si la cuenta es de una persona, un monotributista o una empresa; el vínculo es por ids, nunca por nombres.
+- Estados que se muestran: No vinculado (`not_connected`, `revoked`), Vinculado (`connected`), Requiere reconexión (`expired`, `error`). En Admin, "No vinculado" significa que no tiene configurado el destino de sus retiros; no que no pueda trabajar ni cobrar.
+- Auditoría: `payment_account.connected`, `payment_account.reconnected` y `payment_account.disconnected` en `AuditEvent`, con actor, estado anterior y nuevo y la cuenta enmascarada. Nunca un token.
+- Identidad de TUS: dato opcional (confianza, moderación, soporte, futura insignia). `identidadVerificada()` solo se lee en el directorio para mostrar la insignia, el filtro "verificados" y el orden de los resultados. El módulo y su historial se conservan.

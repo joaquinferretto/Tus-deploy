@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   AlmacenReferenciasAuditoriaEnMemoria,
   InMemoryTusCommitmentStore,
@@ -68,7 +69,6 @@ export function createTusApplication(
   // `identity` (optional here) turns on the IDENTITY-NOSIS provider gates in memory as well.
   options: TusApplicationFactoryOptions = {},
 ): TusApplicationService {
-  const identidadVerificada = options.identity ? (tenantId: string) => options.identity!.identidadVerificada(tenantId) : undefined
   const commitments = new InMemoryTusCommitmentStore()
   const compensations = new InMemoryTusCompensationStore()
   const audits = new AlmacenReferenciasAuditoriaEnMemoria()
@@ -88,7 +88,6 @@ export function createTusApplication(
     perfilHabilitacion: options.perfilHabilitacion,
     alcanceHabilitacion: options.alcanceHabilitacion,
     calendarResolver: calendar,
-    identidadVerificada,
   })
   const commitmentLookup = async (commitmentId: string) => (await commitments.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
   const finance = new TusFinanceService({
@@ -125,7 +124,7 @@ export function createTusApplication(
   }) }, reservationSerializer), options.now)
   // In-memory composition never reads process.env: payments stay unavailable unless a test
   // injects its own module. The preview still works.
-  const servicePayments = crearModuloPagosServicio({ env: {}, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: options.now, identidadVerificada })
+  const servicePayments = crearModuloPagosServicio({ env: {}, configuracion: new AlmacenConfiguracionPagosEnMemoria(), cuentas: new AlmacenCuentasCobroEnMemoria(), now: options.now })
   const serviceFinance = new ServicioFinanzasServicios(
     new TransaccionFinanzasServicioEnMemoria(new AlmacenFinanzasServicioEnMemoria(), new IdentidadServicioEnMemoria(workStore, marketplaceStore), {
       completarPorPagoFinal: (input) => work.completarPorPagoFinal({ work: workStore, outbox: workOutbox }, input),
@@ -181,11 +180,11 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
   const evaluadorHabilitacion = new EvaluadorHabilitacion(new AlmacenPrismaEvidenciaHabilitacion(client))
   const marketplaceStore = new PrismaMarketplaceStore(client)
   const calendar = new ServiceCalendarService(new PrismaServiceCalendarStore(client))
-  // IDENTITY-NOSIS: always enforced with PostgreSQL. Until a provider is verified it cannot
-  // publish services, accept work, link Mercado Pago or receive payments.
+  // IDENTITY-NOSIS: the identity verification of TUS is OPTIONAL information (trust, moderation,
+  // support, a future badge). PRESTADOR-SIN-KYC-01: it authorizes nothing and blocks nothing; no
+  // service is given `identidadVerificada` as a gate (publishing, accepting, charging, payouts).
   const identity: ServicioVerificacionIdentidad = crearServicioIdentidad({ transaction: new TransaccionIdentidadPrisma(client as unknown as ClientePrismaIdentidad), env })
-  const identidadVerificada = (tenantId: string) => identity.identidadVerificada(tenantId)
-  const marketplace = new TusMarketplaceService(marketplaceStore, { evaluadorHabilitacion, calendarResolver: calendar, identidadVerificada })
+  const marketplace = new TusMarketplaceService(marketplaceStore, { evaluadorHabilitacion, calendarResolver: calendar })
   const commitmentStore = new PrismaTusCommitmentStore(client)
   const commitmentLookup = async (commitmentId: string) => (await commitmentStore.find(commitmentId)) ?? marketplace.store.commitments.find(commitmentId)
   const delivery = new TusDeliveryService({
@@ -207,7 +206,14 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
   const habilitacionPagos = crearHabilitacionPagosServicio(evaluadorHabilitacion, { tenantId: tenantPlataforma, profile: perfilPagos })
   // The registry writes for the same tenant, profile and scope that decision is evaluated for.
   const readinessEvidence = new ServicioEvidenciasHabilitacion(new AlmacenAdminEvidenciasPrisma(client as unknown as ClientePrismaEvidenciasHabilitacion), { tenantId: tenantPlataforma, profile: perfilPagos, scope: ALCANCE_PAGOS_SERVICIO })
-  const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient), produccionAutorizada: habilitacionPagos.autorizada, habilitaciones: habilitacionPagos.estado, identidadVerificada })
+  const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient), produccionAutorizada: habilitacionPagos.autorizada, habilitaciones: habilitacionPagos.estado,
+    // PAGOS-MP-VINCULADO-01: links and unlinks of Mercado Pago, with the other audit events.
+    auditarCuenta: async (evento) => {
+      await (client as unknown as { auditEvent: { create(input: { data: Record<string, unknown> }): Promise<unknown> } }).auditEvent.create({
+        data: { id: randomUUID(), tenantId: evento.prestadorTenantId, actorId: evento.actorId, correlationId: evento.correlationId, eventType: evento.action, outcome: 'success', metadata: { provider: 'mercado-pago', previousStatus: evento.previousStatus, status: evento.status, externalAccount: evento.externalAccount, previousExternalAccount: evento.previousExternalAccount }, occurredAt: new Date(evento.at) },
+      })
+    },
+  })
   // The provider is Mercado Pago only when every variable is present; otherwise unavailable.
   // The approved balance of a request-born work completes it with the SAME transactional client.
   const serviceFinance = new ServicioFinanzasServicios(
@@ -268,7 +274,7 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
     readinessEvidence,
     // Payouts are sent through Mercado Pago Payouts with TUS's own account when configured
     // (servicePayments.liquidaciones); otherwise nothing can be sent.
-    providerEarnings: new ServicioGananciasPrestador(new AlmacenSolicitudesLiquidacionPrisma(client as unknown as ClientePrismaGanancias), servicePayments.liquidaciones, identidadVerificada, () => Date.now(), {
+    providerEarnings: new ServicioGananciasPrestador(new AlmacenSolicitudesLiquidacionPrisma(client as unknown as ClientePrismaGanancias), servicePayments.liquidaciones, null, () => Date.now(), {
       // The minimum is administrative configuration (versioned payment configuration).
       minimoLiquidacion: () => servicePayments.configuracion.minimoLiquidacion(),
       // Requesting needs a usable link: OAuth still valid (renewed if close to expiry) and, in

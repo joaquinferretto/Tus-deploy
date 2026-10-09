@@ -67,9 +67,15 @@ test('FASE6 Web: /prestador/pagos shows only safe data (masked account), never a
   assert.deepEqual(result, { long: '•••• 4321', short: '••••', none: null })
   const read = (path) => readFileSync(join(root, path), 'utf8')
   const panel = read('apps/web/src/features/provider/provider-payments.tsx')
-  assert.match(panel, /Conectar Mercado Pago/u)
-  assert.match(panel, /No conectado/u)
-  assert.match(panel, /maskAccountId\(account\.externalAccountId\)/u)
+  // PAGOS-MP-VINCULADO-01: one step ("Vincular Mercado Pago"), three states, and no technical id
+  // on screen (not even the masked account).
+  assert.match(panel, /'Vincular Mercado Pago para retirar tus ganancias'/u)
+  assert.match(panel, /Tus clientes te pagan por TUS aunque no tengas Mercado Pago vinculado/u)
+  assert.match(panel, /'Volver a vincular Mercado Pago'/u)
+  assert.match(panel, /Desvincular/u)
+  assert.match(panel, /data-mercado-pago=\{connected \? 'vinculado' : account\.status === 'expired' \|\| account\.status === 'error' \? 'requiere_reconexion' : 'no_vinculado'\}/u)
+  assert.doesNotMatch(panel, /externalAccountId|verificación de identidad/u)
+  assert.match(read('apps/web/src/components/prestador/cuenta-cobro.tsx'), /connected: 'Mercado Pago vinculado'/u)
   assert.match(panel, /isMercadoPagoAuthorizationUrl\(authorizationUrl\)/u)
   // The browser never handles credentials: no inputs for tokens, secrets or CBU.
   assert.doesNotMatch(panel, /<input|accessToken|refreshToken|clientSecret|CBU"/u)

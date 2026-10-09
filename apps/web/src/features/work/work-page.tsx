@@ -638,9 +638,8 @@ const PAYMENT_STATUS: Record<string, string> = {
   charged_back: 'Contracargo',
 }
 const UNAVAILABLE: Record<string, string> = {
-  PROVIDER_ACCOUNT_NOT_CONNECTED: 'El prestador debe conectar Mercado Pago antes de poder cobrar este trabajo.',
+  PROVIDER_ACCOUNT_NOT_CONNECTED: 'TUS todavía no puede cobrar este trabajo. No es algo que tengas que resolver vos: avisale al equipo de TUS.',
   PLATFORM_ACCOUNT_REQUIRED: 'TUS todavía no puede cobrar pagos anticipados. No es algo que tengas que resolver vos: avisale al equipo de TUS.',
-  PROVIDER_IDENTITY_NOT_VERIFIED: 'El prestador debe verificar su identidad y conectar Mercado Pago antes de poder cobrar este trabajo.',
 }
 const money = (minor: string, currency: string) =>
   new Intl.NumberFormat('es-AR', { style: 'currency', currency }).format(Number(minor) / 100)

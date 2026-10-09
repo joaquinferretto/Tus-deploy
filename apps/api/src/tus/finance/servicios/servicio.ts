@@ -330,7 +330,6 @@ export interface EstadoPagosTrabajoServicio {
 // Availability reasons that belong to ONE provider (the platform itself has payments enabled).
 export const MOTIVOS_PRESTADOR_SIN_COBRO: ReadonlySet<string> = new Set([
   'PROVIDER_ACCOUNT_NOT_CONNECTED',
-  'PROVIDER_IDENTITY_NOT_VERIFIED',
   // PAGOS-RETENCION-01: TUS has no account of its own to hold an advance payment with. Never
   // "no deposit": the work is not confirmed for free and the payment is not sent elsewhere.
   'PLATFORM_ACCOUNT_REQUIRED',

@@ -711,10 +711,10 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
       registrar('settlement', ['legal', 'kyc', 'kyb', 'tax', 'mercadoPago', 'runtimeProvider'])
       out.sinAprobaciones = [await gates(), await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null, anticipado: true }), await anunciada()]
       const t1 = await solicitar('tok-ana', p, 2, '10:00', 'Espalda completa')
-      // The provider's identity is still required: unverified, it cannot accept a priced turno.
+      // PAGOS-MP-VINCULADO-01 (owner's decision): an identity TUS did not verify changes nothing
+      // of what the provider can charge (before: it could not accept a priced turno).
       identidad = false
-      const aSinIdentidad = await aceptar('tok-p', t1.body.id)
-      out.sinIdentidad = [await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null, anticipado: true }), aSinIdentidad.status, aSinIdentidad.body.code, (await fila(t1.body.id)).estado, await orden(t1.body.reservaId)]
+      out.sinIdentidad = [await real.disponibilidad({ prestadorTenantId: p.tenantId, prestadorId: p.prestadorId, categoria: null, anticipado: true }), (await fila(t1.body.id)).estado]
       identidad = true
       // If the check itself cannot be made, the acceptance fails; it never falls back to "no deposit".
       politica.disponibilidad = async () => { throw new Error('database unavailable') }
@@ -801,7 +801,7 @@ test('TURNOS seña PostgreSQL habilitación técnica: in production the deposit 
     [['service-payments', false, 'blocked', 'system:service-payments', 'argentina-stage-1'], ['settlement', false, 'blocked', 'system:service-payments', 'argentina-stage-1']], 0,
   ], 'the persisted evaluator reports both registries without evidence (settlement on its six core requirements), audits each decision and writes no evidence')
   assert.deepEqual(r.sinAprobaciones, [[false, true], { available: true, reason: null, mode: 'plataforma' }, true], 'no approval for the launch: the deposit is technically chargeable, and it is still what confirms a priced turno')
-  assert.deepEqual(r.sinIdentidad, [{ available: false, reason: 'PROVIDER_IDENTITY_NOT_VERIFIED' }, 409, 'PROVIDER_IDENTITY_REQUIRED', 'pending', null], 'an unverified provider cannot accept a priced turno: it stays pending, nothing is created')
+  assert.deepEqual(r.sinIdentidad, [{ available: true, reason: null, mode: 'plataforma' }, 'pending'], 'an identity TUS did not verify is not a reason: the deposit can be charged')
   assert.deepEqual(r.sinEvidencia, [201, { monto: 12500, moneda: 'ARS', estado: 'not_due' }, 200, 'awaiting_payment', { monto: 12500, moneda: 'ARS', estado: 'pending' }, 200, 12500, 'awaiting_payment'], 'production without any approval: accepting opens the payment of the deposit; neither accepting nor the checkout confirms')
   assert.deepEqual(r.sinVerificar, [503, 'PAYMENT_NOT_AVAILABLE', 'pending'], 'an unavailable check never turns into a confirmation')
   // Before, production without the approvals fell back to "no deposit" and this request was confirmed for free.
