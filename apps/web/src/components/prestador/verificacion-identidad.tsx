@@ -12,8 +12,9 @@ import {
 import { type TusWebSession } from '@/lib/tus-ui-contract'
 import { TusActionButton, TusStateMessage } from '../../app/tus/tus-ui'
 
-// IDENTITY-NOSIS: the provider verifies their identity (DNI front and back) before publishing
-// services, accepting work, linking Mercado Pago or receiving money. Sending only queues the
+// IDENTITY-NOSIS: the provider may verify their identity (DNI front and back). Optional since
+// PRESTADOR-SIN-KYC-01: it blocks nothing. (Earlier: required before publishing
+// services, accepting work, linking Mercado Pago or receiving money.) Sending only queues the
 // verification; the result arrives later.
 
 const EN_CURSO = new Set(['queued', 'processing', 'retry_pending', 'session_required'])
@@ -140,8 +141,8 @@ export function VerificacionIdentidad({
         <h2 id="provider-identity-title">Verificación de identidad.</h2>
       </div>
       <p className="tus-evidence-line">
-        Para publicar servicios, aceptar trabajos, conectar Mercado Pago y cobrar, TUS necesita
-        verificar tu identidad con el frente y el dorso de tu DNI.
+        Es opcional: verificar tu identidad con el frente y el dorso de tu DNI suma confianza a tu
+        perfil. No hace falta para publicar, aceptar trabajos ni cobrar.
       </p>
       {notice ? <p role="status">{notice}</p> : null}
       {state.status !== 'ready' || !view ? (
