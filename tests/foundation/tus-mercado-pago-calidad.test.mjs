@@ -12,14 +12,14 @@ test('MP calidad: the preference carries the item (id, title, description, quant
     const { ProveedorPagosMercadoPago } = await import('./apps/api/src/tus/finance/servicios/mercado-pago.ts')
     const enviados = []
     const fetchFalso = async (url, init) => { enviados.push({ url, method: init.method, headers: init.headers, body: init.body ? JSON.parse(init.body) : null }); return { ok: true, status: 201, json: async () => ({ id: 'pref-1', init_point: 'https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=pref-1', sandbox_init_point: 'https://sandbox.mercadopago.com.ar/checkout/v1/redirect?pref_id=pref-1' }), text: async () => '' } }
-    const base = { environment: 'production', webhookSecret: 'secreto-ficticio', notificationUrl: 'https://api.tusservicios.shop/tus/v1/integrations/mercado-pago/webhooks', webBaseUrl: 'https://tusservicios.shop/', plataforma: { accessToken: 'token-ficticio-de-plataforma', userId: '555' }, fetch: fetchFalso }
+    const base = { environment: 'production', webhookSecret: 'fictitious-webhook-secret', notificationUrl: 'https://api.tusservicios.shop/tus/v1/integrations/mercado-pago/webhooks', webBaseUrl: 'https://tusservicios.shop/', plataforma: { accessToken: 'fictitious-platform-token', userId: '555' }, fetch: fetchFalso }
     const cuentas = { tokenVigente: async () => { throw new Error('unused') } }
     const pedido = { paymentId: 'pago-abc', idempotencyKey: 'pago-abc', amountMinor: 1500000n, currency: 'ARS', prestadorTenantId: 'prestador', commissionMinor: 150000n, collectionMode: 'plataforma', title: 'Seña (50%) del turno TUS', description: 'Pago de un turno reservado en TUS', clienteTenantId: 'cliente', trabajoId: 'trabajo-1', returnPath: '/mis-turnos?pago=retorno' }
     const crear = async (config, extra = {}) => { enviados.length = 0; const res = await new ProveedorPagosMercadoPago({ ...base, ...config }, cuentas).crearPago({ ...pedido, ...extra }); return { res, enviado: enviados[0] } }
     const out = {}
     const completo = await crear({ categoriaItem: ' services ', descripcionResumen: 'TUS SERVICIOS DE CORRIENTES CAPITAL', comprador: async (tenant) => (tenant === 'cliente' ? { email: ' ana@example.com ', nombre: 'Ana María', apellido: 'Gómez' } : null) })
     out.completo = completo.enviado.body
-    out.transporte = [completo.enviado.url, completo.enviado.method, completo.enviado.headers['X-Idempotency-Key'], completo.enviado.headers.authorization === 'Bearer token-ficticio-de-plataforma', completo.res.checkoutUrl.startsWith('https://www.mercadopago.com.ar/')]
+    out.transporte = [completo.enviado.url, completo.enviado.method, completo.enviado.headers['X-Idempotency-Key'], completo.enviado.headers.authorization === 'Bearer fictitious-platform-token', completo.res.checkoutUrl.startsWith('https://www.mercadopago.com.ar/')]
     out.minimo = (await crear({})).enviado.body
     out.compradorParcial = (await crear({ comprador: async () => ({ email: 'no-es-un-email', nombre: '  ', apellido: 'Gómez' }) })).enviado.body.payer
     out.compradorFalla = (await crear({ comprador: async () => { throw new Error('base caída') } })).enviado.body.payer ?? null
