@@ -178,7 +178,7 @@ export function AdminPrestadorDetallePage({ id }: { id: string }): React.ReactNo
           <div data-nombre-derivado>
             <span>Nombre público</span>
             <p style={{ fontWeight: 600, margin: '4px 0', overflowWrap: 'anywhere' }}>{detalle.perfil.displayName}</p>
-            <p className={styles.muted} style={{ margin: 0 }}>En personas físicas se usa el nombre completo del titular de la cuenta.</p>
+            <p className={styles.muted} style={{ margin: 0 }}>En personas físicas se utiliza el nombre completo del titular de la cuenta.</p>
           </div>
         ) : (
           <label>Nombre público<input maxLength={60} minLength={2} onChange={(event) => setForm({ ...form, displayName: event.target.value })} required value={form.displayName} />{campo('displayName')}</label>
@@ -310,7 +310,7 @@ function TipoPrestador({ detalle, id, onGuardado, pedir }: { detalle: AdminPrest
         <div><dt className={styles.muted}>Tipo</dt><dd style={{ margin: 0 }}>{ETIQUETA_TIPO[actual]}</dd></div>
         <div><dt className={styles.muted}>Nombre público</dt><dd data-nombre-publico style={{ margin: 0, overflowWrap: 'anywhere' }}>{detalle.perfil.displayName}</dd></div>
       </dl>
-      {actual === 'persona_fisica' ? <p className={styles.muted} data-ayuda-persona style={{ margin: '0 0 0.5rem' }}>En personas físicas se usa el nombre completo del titular de la cuenta.</p> : null}
+      {actual === 'persona_fisica' ? <p className={styles.muted} data-ayuda-persona style={{ margin: '0 0 0.5rem' }}>En personas físicas se utiliza el nombre completo del titular de la cuenta.</p> : null}
       <fieldset style={{ border: 0, display: 'flex', flexWrap: 'wrap', gap: 16, margin: 0, padding: 0 }}>
         <legend className={styles.muted}>Presentarlo como</legend>
         {(['persona_fisica', 'empresa'] as const).map((opcion) => (

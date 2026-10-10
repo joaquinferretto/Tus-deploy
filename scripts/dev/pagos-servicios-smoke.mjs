@@ -687,7 +687,7 @@ async function recorrer(browser, viewport, estado, indice) {
     const formularioPerfil = page.locator('form[aria-label="Perfil del prestador"]')
     const derivado = formularioPerfil.locator('[data-nombre-derivado]')
     await derivado.waitFor()
-    check((await texto(derivado)) === 'Nombre público Gabriela Lopez En personas físicas se usa el nombre completo del titular de la cuenta.' && (await formularioPerfil.locator('input[minlength="2"]').count()) === 0 && (await seccionTipo.locator('[data-ayuda-persona]').isVisible()), `${e}: for a person the public name is shown, derived, with no field to type it (${await texto(derivado)})`)
+    check((await texto(derivado)) === 'Nombre público Gabriela Lopez En personas físicas se utiliza el nombre completo del titular de la cuenta.' && (await formularioPerfil.locator('input[minlength="2"]').count()) === 0 && (await seccionTipo.locator('[data-ayuda-persona]').isVisible()), `${e}: for a person the public name is shown, derived, with no field to type it (${await texto(derivado)})`)
     const nombreDirecto = await llamar('PUT', '/tus/v1/admin/prestadores/smoke-perfil', { displayName: 'Nombre Manual' })
     check(nombreDirecto.status === 422 && JSON.stringify(nombreDirecto.body).includes('PUBLIC_NAME_DERIVED') && estado.psql(`SELECT "nombre_publico" FROM public."perfiles_publicos_prestador" WHERE "id" = 'smoke-perfil'`).stdout.trim() === 'Gabriela Lopez', `${e}: the API refuses a public name typed for a person (${nombreDirecto.status} ${JSON.stringify(nombreDirecto.body).slice(0, 120)})`)
     await sinDesborde('Admin -> Prestador -> Tipo (persona física)')

@@ -257,7 +257,7 @@ test('TIPO de prestador, cableado, migración y pantalla: the route is of the pl
   assert.match(pantalla, /disabled=\{guardando \|\| sinCambios \|\| \(tipo === 'persona_fisica' && !titular\)\}/u)
   // A person has no field for its public name: neither in the old form of the Admin nor in the
   // form of the provider.
-  assert.match(pantalla, /detalle\.tipoPrestador === 'persona_fisica' \? \(\n\s+<div data-nombre-derivado>[\s\S]*?En personas físicas se usa el nombre completo del titular de la cuenta\.[\s\S]*?\) : \(\n\s+<label>Nombre público<input/u)
+  assert.match(pantalla, /detalle\.tipoPrestador === 'persona_fisica' \? \(\n\s+<div data-nombre-derivado>[\s\S]*?En personas físicas se utiliza el nombre completo del titular de la cuenta\.[\s\S]*?\) : \(\n\s+<label>Nombre público<input/u)
   const propio = read('apps/web/src/features/provider/provider-public-profile.tsx')
   assert.match(propio, /\{derivedName \? \(\n\s+<div className=\{authStyles\.field\} data-nombre-derivado>[\s\S]*?\) : \(\n\s+<TextField\n\s+error=\{error\('displayName'\)\}/u)
   // The one helper: nobody else capitalizes a name.
