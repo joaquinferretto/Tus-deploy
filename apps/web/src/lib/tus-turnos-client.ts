@@ -76,7 +76,11 @@ const query = (params: Record<string, string | number | undefined>) => {
 export const turnosApi = {
   // ---- provider (own agenda) ----
   misServicios: () => json<{ items: ServicioTurnosDTO[] }>('/tus/v1/prestador/turnos/servicios').then((result) => result.items),
-  // Days and hours only: how often a turno starts is the duration of the service (decided by the API).
+  // TURNOS-INTERVALO-01: how long a service lasts and every how long one of its turnos can start
+  // (null: when the previous one ends). The API generates the starts; the Web only shows them.
+  guardarConfiguracionDeServicio: (oficioId: string, body: { duracionMinutos?: number; intervaloInicioMinutos?: number | null }) =>
+    json<{ ok: true }>(`/tus/v1/prestador/servicios/${encodeURIComponent(oficioId)}/turnos-config`, { method: 'PUT', body: JSON.stringify(body) }, 'No pudimos guardar la configuración del servicio.'),
+  // Days and hours only: how often a turno starts belongs to each service (decided by the API).
   miDisponibilidadSemanal: () => json<{ items: HorarioSemanalDTO[] }>('/tus/v1/prestador/turnos/horarios').then((result) => result.items),
   guardarMiDisponibilidadSemanal: (horarios: HorarioSemanalDTO[]) =>
     json<{ items: HorarioSemanalDTO[] }>('/tus/v1/prestador/turnos/horarios', { method: 'PUT', body: JSON.stringify({ horarios }) }, 'No pudimos guardar tu disponibilidad.').then(

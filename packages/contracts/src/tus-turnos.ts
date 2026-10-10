@@ -518,11 +518,19 @@ export interface BloqueoAgendaDTO {
 
 // ---- services of a provider that can take turnos -----------------------------------------------
 
+// TURNOS-INTERVALO-01. Every how many minutes a turno of a service can start. Apart from its
+// duration: a 60 minute service can start every 30. `null`: when the previous turno ends.
+export const INTERVALOS_INICIO_TURNO = [15, 30, 45, 60] as const
+export type IntervaloInicioTurno = (typeof INTERVALOS_INICIO_TURNO)[number]
+
 export interface ServicioTurnosDTO {
   oficioId: string
   nombre: string
   turnosHabilitados: boolean
   duracionMinutos: number
+  // Rest after each turno, and every how long one can start (null: duration + rest).
+  bufferMinutos?: number
+  intervaloInicioMinutos?: IntervaloInicioTurno | null
   precioBase: number | null
   tarifas: TarifaServicioPublica[]
   // A turno of this provider is confirmed by paying its deposit (online payments are on).

@@ -59,6 +59,8 @@ import {
   type ServicioTurnosDTO,
   type SlotDisponible,
   type TarifaServicioPublica,
+  INTERVALOS_INICIO_TURNO,
+  type IntervaloInicioTurno,
 } from '@factory/contracts'
 import { cuentaDePrestador, type ClientePrismaVinculoPrestador } from '../directorio/cuenta-prestador.ts'
 import { ErrorFotoPerfil, prepararFotoPerfil } from '../directorio/foto.ts'
@@ -357,11 +359,11 @@ export class ServicioTurnos {
     return { permitida: true, motivo: null }
   }
 
-  private async agendaDeReserva(row: FilaReserva, db: PrismaClient | Prisma.TransactionClient = this.prisma): Promise<{ calendario: CalendarioAgenda; duracion: number; buffer: number }> {
+  private async agendaDeReserva(row: FilaReserva, db: PrismaClient | Prisma.TransactionClient = this.prisma): Promise<{ calendario: CalendarioAgenda; duracion: number; buffer: number; intervalo: number | null }> {
     const calendarioFila = await db.calendario.findUnique({ where: { id: row.calendarioId } })
     if (!calendarioFila) throw new ErrorCalendario(404, 'NOT_FOUND', 'Turno no encontrado')
-    const servicio = row.servicioId ? await db.perfilServicio.findFirst({ where: { oficioId: row.servicioId, perfil: { tenantId: row.tenantId } }, select: { bufferMinutos: true } }) : null
-    return { calendario: calendarioFila, duracion: row.duracionMinutos ?? Math.round((row.fechaFin.getTime() - row.fechaInicio.getTime()) / 60_000), buffer: servicio?.bufferMinutos ?? calendarioFila.bufferMinutos ?? 0 }
+    const servicio = row.servicioId ? await db.perfilServicio.findFirst({ where: { oficioId: row.servicioId, perfil: { tenantId: row.tenantId } }, select: { bufferMinutos: true, intervaloInicioMinutos: true } }) : null
+    return { calendario: calendarioFila, duracion: row.duracionMinutos ?? Math.round((row.fechaFin.getTime() - row.fechaInicio.getTime()) / 60_000), buffer: servicio?.bufferMinutos ?? calendarioFila.bufferMinutos ?? 0, intervalo: servicio?.intervaloInicioMinutos ?? null }
   }
 
   /**
@@ -379,9 +381,9 @@ export class ServicioTurnos {
     const hoy = fechaLocal(new Date(ahora))
     // (A week is asked from its Monday, which may be some days before today: its past times are not a choice.)
     if (input.desde < sumarDias(hoy, -DIAS_AGENDA) || input.desde > sumarDias(hoy, MAXIMO_DIAS_ADELANTE_AGENDA)) throw new ErrorCalendario(400, 'INVALID_DATE', 'Esa semana está fuera del período que se puede consultar')
-    const { calendario, duracion, buffer } = await this.agendaDeReserva(row)
+    const { calendario, duracion, buffer, intervalo } = await this.agendaDeReserva(row)
     const fechas = Array.from({ length: DIAS_AGENDA }, (_, index) => sumarDias(input.desde, index))
-    const dias = await this.agendaDias(calendario, fechas, duracion, buffer, this.prisma, row.id)
+    const dias = await this.agendaDias(calendario, fechas, duracion, buffer, intervalo, this.prisma, row.id)
     // Free, but 24 hours or less away, or the time the turno already has: not a choice here.
     const elegible = (inicio: string) => !esCancelacionTardia(inicio, ahora) && new Date(inicio).getTime() !== row.fechaInicio.getTime()
     return { desde: input.desde, hasta: fechas.at(-1)!, duracionMinutos: duracion, actual: row.fechaInicio.toISOString(), dias: dias.map((dia) => ({ ...dia, franjas: dia.franjas.map((franja) => (franja.estado === 'disponible' && !elegible(franja.inicio) ? { ...franja, estado: 'ocupado' as const } : franja)) })) }
@@ -414,8 +416,8 @@ export class ServicioTurnos {
         if (nuevoInicio.getTime() === actual.fechaInicio.getTime()) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Elegí un horario distinto al que ya tiene el turno.')
         // The new time also respects the 24 hours: rescheduling never lands inside them.
         if (esCancelacionTardia(nuevoInicio, ahora.getTime())) throw new ErrorCalendario(409, CODIGO_REPROGRAMACION_DESTINO_CERCANO, MENSAJE_REPROGRAMACION_DESTINO_CERCANO)
-        const { duracion, buffer } = await this.agendaDeReserva(actual, tx)
-        await this.exigirDisponible(agenda, nuevoInicio, duracion, buffer, tx, actual.id)
+        const { duracion, buffer, intervalo } = await this.agendaDeReserva(actual, tx)
+        await this.exigirDisponible(agenda, nuevoInicio, duracion, buffer, intervalo, tx, actual.id)
         const movida = await tx.reserva.update({ where: { id: actual.id }, data: { fechaInicio: nuevoInicio, fechaFin: new Date(nuevoInicio.getTime() + duracion * 60_000), version: { increment: 1 }, fechaActualizacion: ahora } })
         await tx.reprogramacionTurno.create({ data: { id: `reprog-${randomUUID()}`, reservaId: movida.id, tenantId: movida.tenantId, actorId: input.clienteId, canal: input.canal, inicioAnterior: actual.fechaInicio, finAnterior: actual.fechaFin, inicioNuevo: movida.fechaInicio, finNuevo: movida.fechaFin, reprogramadoEn: ahora, politicaVersion: VERSION_POLITICA_CANCELACION } })
         // The reminders computed for the old time are never sent; the sweep computes the new ones.
@@ -584,7 +586,7 @@ export class ServicioTurnos {
     }
 
     const calendario = await this.asegurarCalendarioPrestador(servicio.perfil.tenantId, servicio.perfil.prestadorId)
-    const slots = await this.slotsLibres(calendario, input.fecha, duracion, servicio.config.bufferMinutos ?? calendario.bufferMinutos ?? 0)
+    const slots = await this.slotsLibres(calendario, input.fecha, duracion, servicio.config.bufferMinutos ?? calendario.bufferMinutos ?? 0, servicio.config.intervaloInicioMinutos ?? null)
 
     return {
       slots,
@@ -650,7 +652,7 @@ export class ServicioTurnos {
 
     const calendario = await this.asegurarCalendarioPrestador(servicio.perfil.tenantId, servicio.perfil.prestadorId)
     const fechas = Array.from({ length: DIAS_AGENDA }, (_, index) => sumarDias(input.desde, index))
-    const calculados = await this.agendaDias(calendario, fechas, duracion, servicio.config.bufferMinutos ?? calendario.bufferMinutos ?? 0)
+    const calculados = await this.agendaDias(calendario, fechas, duracion, servicio.config.bufferMinutos ?? calendario.bufferMinutos ?? 0, servicio.config.intervaloInicioMinutos ?? null)
     // AGENDA-MATRIZ-01: only for the provider's own agenda, each time says WHICH turno occupies it.
     // The availability above is untouched: this only reads the turnos of the week and labels them.
     const dias = input.conTurnos ? await this.conTurnosDeLaSemana(calendario.id, calculados) : calculados
@@ -716,10 +718,12 @@ export class ServicioTurnos {
     fecha: string,
     duracion: number,
     buffer: number,
+    // TURNOS-INTERVALO-01: minutes between two possible starts (null: duration + rest).
+    intervalo: number | null,
     db: ClienteAgenda = this.prisma,
     ignorarReservaId?: string
   ): Promise<SlotDisponible[]> {
-    const [dia] = await this.agendaDias(calendario, [fecha], duracion, buffer, db, ignorarReservaId)
+    const [dia] = await this.agendaDias(calendario, [fecha], duracion, buffer, intervalo, db, ignorarReservaId)
     return dia!.franjas
       .filter((franja) => franja.estado === 'disponible')
       .map((franja) => ({ inicio: franja.inicio, fin: franja.fin, duracionMinutos: duracion, disponible: true }))
@@ -737,6 +741,8 @@ export class ServicioTurnos {
     fechas: string[],
     duracion: number,
     buffer: number,
+    // TURNOS-INTERVALO-01: minutes between two possible starts (null: duration + rest).
+    intervalo: number | null,
     db: ClienteAgenda = this.prisma,
     ignorarReservaId?: string
   ): Promise<DiaAgenda[]> {
@@ -745,9 +751,10 @@ export class ServicioTurnos {
     const reglas = await db.reglaCalendario.findMany({
       where: { calendarioId: calendario.id, diaSemana: diasSemana.length === 1 ? diasSemana[0]! : { in: diasSemana } },
     })
-    // The step between starts is the duration of the service plus its rest (agendaDelDia). The
-    // interval stored in the calendar and in each rule is LEGACY: kept in the database, not read.
-    const base = { reglas, duracionMinutos: duracion, bufferMinutos: buffer, ahora }
+    // The step between starts is the interval of the SERVICE or, with none, its duration plus its
+    // rest (agendaDelDia). The interval stored in the calendar and in each rule is LEGACY: kept in
+    // the database, not read.
+    const base = { reglas, duracionMinutos: duracion, bufferMinutos: buffer, intervaloMinutos: intervalo, ahora }
     // Without working hours in the range there is nothing to cross.
     if (reglas.length === 0) return fechas.map((fecha) => agendaDelDia({ ...base, fecha, reservas: [], bloqueos: [] }))
 
@@ -788,6 +795,8 @@ export class ServicioTurnos {
     inicio: Date,
     duracion: number,
     buffer: number,
+    // TURNOS-INTERVALO-01: minutes between two possible starts (null: duration + rest).
+    intervalo: number | null,
     db: ClienteAgenda = this.prisma,
     // TURNOS-REPROGRAMACION-01: the turno that is being moved does not occupy its own time.
     ignorarReservaId?: string
@@ -795,7 +804,7 @@ export class ServicioTurnos {
     if (inicio.getTime() <= Date.now()) {
       throw new ErrorCalendario(400, 'PAST_DATE', 'El horario elegido ya pasó.')
     }
-    const libres = await this.slotsLibres(calendario, fechaLocal(inicio), duracion, buffer, db, ignorarReservaId)
+    const libres = await this.slotsLibres(calendario, fechaLocal(inicio), duracion, buffer, intervalo, db, ignorarReservaId)
     if (libres.some((slot) => slot.inicio === inicio.toISOString())) return
     // Taken by another turno or by the rest time around it: "occupied", not "outside the hours".
     const descanso = buffer * 60_000
@@ -895,7 +904,7 @@ export class ServicioTurnos {
     try {
       const row = await this.conAgendaBloqueada(calendario, async (tx, agenda) => {
         // Decided with the agenda locked: nobody takes, blocks or reschedules this time meanwhile.
-        await this.exigirDisponible(agenda, inicio, duracion, descanso, tx)
+        await this.exigirDisponible(agenda, inicio, duracion, descanso, servicioConfig?.intervaloInicioMinutos ?? null, tx)
         if (solicitud) {
           // One person cannot keep an agenda waiting with many open requests.
           const abiertas = await tx.reserva.count({ where: { calendarioId: calendario.id, clienteId: input.clienteId, esInvitado: false, estado: 'pending' } })
@@ -2032,6 +2041,8 @@ export class ServicioTurnos {
       nombre: servicio.oficio.nombre,
       turnosHabilitados: perfil.aceptaTurnos && servicio.turnosHabilitados,
       duracionMinutos: servicio.duracionMinutos,
+      bufferMinutos: servicio.bufferMinutos,
+      intervaloInicioMinutos: (servicio.intervaloInicioMinutos ?? null) as IntervaloInicioTurno | null,
       precioBase: servicio.precioBase === null ? null : Number(servicio.precioBase),
       tarifas: perfil.tarifas
         .filter((tarifa) => tarifa.oficioId === servicio.oficioId)
@@ -2243,11 +2254,13 @@ export class ServicioTurnos {
     precioBase?: bigint
     duracionMinutos?: number
     bufferMinutos?: number
+    intervaloInicioMinutos?: number | null
     modalidad?: string
   }) {
     if (input.precioBase !== undefined && !montoValido(input.precioBase)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'El precio no es válido')
     if (input.duracionMinutos !== undefined && (!Number.isInteger(input.duracionMinutos) || input.duracionMinutos < 5 || input.duracionMinutos > 24 * 60)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'La duración no es válida')
     if (input.bufferMinutos !== undefined && (!Number.isInteger(input.bufferMinutos) || input.bufferMinutos < 0 || input.bufferMinutos > 240)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'El descanso entre turnos no es válido')
+    if (input.intervaloInicioMinutos !== undefined && input.intervaloInicioMinutos !== null && !(INTERVALOS_INICIO_TURNO as readonly number[]).includes(input.intervaloInicioMinutos)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Ese intervalo entre comienzos de turno no es válido')
     if (input.modalidad !== undefined && !['local', 'domicilio', 'mixto'].includes(input.modalidad)) throw new ErrorCalendario(400, 'INVALID_PARAMS', 'La modalidad no es válida')
     for (const campo of ['turnosHabilitados', 'solicitudesHabilitadas'] as const) if (input[campo] !== undefined && typeof input[campo] !== 'boolean') throw new ErrorCalendario(400, 'INVALID_PARAMS', 'Valor no válido')
     const ofrecido = await this.prisma.perfilServicio.findUnique({ where: { perfilId_oficioId: { perfilId: input.perfilId, oficioId: input.oficioId } }, select: { oficioId: true } })
@@ -2260,6 +2273,7 @@ export class ServicioTurnos {
         ...(input.precioBase !== undefined ? { precioBase: input.precioBase } : {}),
         ...(input.duracionMinutos !== undefined ? { duracionMinutos: input.duracionMinutos } : {}),
         ...(input.bufferMinutos !== undefined ? { bufferMinutos: input.bufferMinutos } : {}),
+        ...(input.intervaloInicioMinutos !== undefined ? { intervaloInicioMinutos: input.intervaloInicioMinutos } : {}),
         ...(input.modalidad !== undefined ? { modalidad: input.modalidad } : {}),
       },
     })

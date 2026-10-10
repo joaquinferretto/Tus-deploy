@@ -1,4 +1,4 @@
-import { normalizarTelefono } from '@factory/contracts'
+import { INTERVALOS_INICIO_TURNO, normalizarTelefono } from '@factory/contracts'
 
 import { normalizeEmail, validateEmail } from '../../auth-security/domain/validation.ts'
 import { INVALIDO, booleano, camposDesconocidos, entero, enumerado, esInvalido, identificador, instante, monto, textoOpcional, texto } from '../validacion/entrada.ts'
@@ -124,12 +124,14 @@ export interface ConfiguracionServicio {
   precioBase?: bigint
   duracionMinutos?: number
   bufferMinutos?: number
+  // TURNOS-INTERVALO-01: null puts the service back to "when the previous turno ends".
+  intervaloInicioMinutos?: number | null
   modalidad?: (typeof MODALIDADES_SERVICIO)[number]
 }
 
 // How a provider offers ONE of its services. Only these fields; each one of its own type.
 export function leerConfiguracionServicio(body: Record<string, unknown>): Entrada<ConfiguracionServicio> {
-  const sobran = camposDesconocidos(body, ['turnosHabilitados', 'solicitudesHabilitadas', 'precioBase', 'duracionMinutos', 'bufferMinutos', 'modalidad'])
+  const sobran = camposDesconocidos(body, ['turnosHabilitados', 'solicitudesHabilitadas', 'precioBase', 'duracionMinutos', 'bufferMinutos', 'intervaloInicioMinutos', 'modalidad'])
   if (sobran.length > 0) return falla(sobran[0]!, `Campo no reconocido: ${sobran[0]}.`)
   const valor: ConfiguracionServicio = {}
   for (const campo of ['turnosHabilitados', 'solicitudesHabilitadas'] as const) {
@@ -152,6 +154,11 @@ export function leerConfiguracionServicio(body: Record<string, unknown>): Entrad
     const buffer = entero(body['bufferMinutos'], BUFFER_TURNO)
     if (esInvalido(buffer)) return falla('bufferMinutos', `El descanso entre turnos debe ser un número entero de ${BUFFER_TURNO.min} a ${BUFFER_TURNO.max} minutos.`)
     valor.bufferMinutos = buffer
+  }
+  if (body['intervaloInicioMinutos'] === null) valor.intervaloInicioMinutos = null
+  else if (body['intervaloInicioMinutos'] !== undefined) {
+    if (!(INTERVALOS_INICIO_TURNO as readonly unknown[]).includes(body['intervaloInicioMinutos'])) return falla('intervaloInicioMinutos', `Un turno puede comenzar cada ${INTERVALOS_INICIO_TURNO.join(', ')} minutos.`)
+    valor.intervaloInicioMinutos = body['intervaloInicioMinutos'] as number
   }
   if (body['modalidad'] !== undefined && body['modalidad'] !== null && body['modalidad'] !== '') {
     const modalidad = enumerado(body['modalidad'], MODALIDADES_SERVICIO)

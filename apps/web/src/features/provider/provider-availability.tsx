@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import {
   DIAS_SEMANA,
+  INTERVALOS_INICIO_TURNO,
   validarHorariosSemanales,
   type BloqueoAgendaDTO,
   type HorarioSemanalDTO,
@@ -12,7 +13,7 @@ import {
 
 import ui from '../../components/admin/admin-usuarios.module.css'
 import type { FranjaAgenda, TurnoDeFranja } from '@factory/contracts'
-import { turnosApi } from '../../lib/tus-turnos-client'
+import { TurnosError, turnosApi } from '../../lib/tus-turnos-client'
 import { AgendaSemanal } from '../turnos/agenda-semanal'
 import { ProviderAusencias } from './provider-ausencias'
 import styles from '../turnos/agenda.module.css'
@@ -54,7 +55,7 @@ const aHorarios = (dias: DiaForm[]): HorarioSemanalDTO[] =>
 // turno starts is how long the service lasts.
 // AGENDA-MATRIZ-01: `onLibre` (a free time was tapped: load a manual turno there) and `onTurno`
 // (an occupied one: open its detail) make the agenda of the provider interactive.
-export function ProviderAvailability({ servicios, version = 0, onLibre, onTurno }: { servicios: ServicioTurnosDTO[]; version?: number; onLibre?: (franja: FranjaAgenda, oficioId: string) => void; onTurno?: (turno: TurnoDeFranja, franja: FranjaAgenda) => void }): React.ReactNode {
+export function ProviderAvailability({ servicios, version = 0, onLibre, onTurno, onServicios }: { servicios: ServicioTurnosDTO[]; onServicios?: () => void; version?: number; onLibre?: (franja: FranjaAgenda, oficioId: string) => void; onTurno?: (turno: TurnoDeFranja, franja: FranjaAgenda) => void }): React.ReactNode {
   const conTurnos = servicios.filter((servicio) => servicio.turnosHabilitados)
   const [oficioId, setOficioId] = useState('')
   const [dias, setDias] = useState<DiaForm[] | null>(null)
@@ -202,6 +203,8 @@ export function ProviderAvailability({ servicios, version = 0, onLibre, onTurno 
         </div>
       </section>
 
+      {conTurnos.length > 0 ? <ServiciosTurnos onGuardado={() => { onServicios?.(); setCambios((value) => value + 1) }} servicios={conTurnos} /> : null}
+
       <ProviderAusencias
         bloqueos={bloqueos}
         onCambio={() => {
@@ -233,5 +236,73 @@ export function ProviderAvailability({ servicios, version = 0, onLibre, onTurno 
         )}
       </section>
     </>
+  )
+}
+
+// TURNOS-INTERVALO-01. Two different things per service, side by side and in plain words: how long
+// the service lasts, and every how long one of its turnos can start. The API decides the starts.
+const INTERVALO_SEGUN_DURACION = 'duracion'
+function ServiciosTurnos({ servicios, onGuardado }: { servicios: ServicioTurnosDTO[]; onGuardado: () => void }): React.ReactNode {
+  return (
+    <section aria-labelledby="servicios-turnos-titulo" className={ui.panel} data-servicios-turnos>
+      <h2 id="servicios-turnos-titulo">Duración y comienzo de los turnos</h2>
+      <p className={ui.muted}>Para cada servicio elegís cuánto dura y cada cuánto puede comenzar un turno. Un turno siempre ocupa toda su duración: nunca se superponen dos.</p>
+      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))' }}>
+        {servicios.map((servicio) => <ServicioTurnos key={servicio.oficioId} onGuardado={onGuardado} servicio={servicio} />)}
+      </div>
+    </section>
+  )
+}
+
+function ServicioTurnos({ servicio, onGuardado }: { servicio: ServicioTurnosDTO; onGuardado: () => void }): React.ReactNode {
+  const conVariantes = servicio.tarifas.length > 0
+  const [duracion, setDuracion] = useState(String(servicio.duracionMinutos))
+  const [intervalo, setIntervalo] = useState(servicio.intervaloInicioMinutos ? String(servicio.intervaloInicioMinutos) : INTERVALO_SEGUN_DURACION)
+  const [guardando, setGuardando] = useState(false)
+  const [aviso, setAviso] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+  useEffect(() => { setDuracion(String(servicio.duracionMinutos)); setIntervalo(servicio.intervaloInicioMinutos ? String(servicio.intervaloInicioMinutos) : INTERVALO_SEGUN_DURACION) }, [servicio.duracionMinutos, servicio.intervaloInicioMinutos])
+  const minutos = Number(duracion)
+  const duracionValida = Number.isInteger(minutos) && minutos >= 5 && minutos <= 1440
+  const sinCambios = minutos === servicio.duracionMinutos && intervalo === (servicio.intervaloInicioMinutos ? String(servicio.intervaloInicioMinutos) : INTERVALO_SEGUN_DURACION)
+  async function guardar() {
+    if (!duracionValida) return setAviso({ kind: 'error', text: 'La duración va de 5 minutos a 24 horas.' })
+    setGuardando(true)
+    setAviso(null)
+    try {
+      await turnosApi.guardarConfiguracionDeServicio(servicio.oficioId, { ...(conVariantes ? {} : { duracionMinutos: minutos }), intervaloInicioMinutos: intervalo === INTERVALO_SEGUN_DURACION ? null : Number(intervalo) })
+      setAviso({ kind: 'ok', text: 'Guardado.' })
+      onGuardado()
+    } catch (error) {
+      setAviso({ kind: 'error', text: error instanceof TurnosError ? error.message : 'No pudimos guardar. Probá de nuevo.' })
+    } finally {
+      setGuardando(false)
+    }
+  }
+  return (
+    <div data-servicio-turnos={servicio.oficioId} style={{ border: '1px solid #e5e7eb', borderRadius: 12, display: 'grid', gap: 10, padding: 14 }}>
+      <strong>{servicio.nombre}</strong>
+      <label className={ui.field}>
+        <span>Duración del servicio</span>
+        {conVariantes ? (
+          <span className={ui.muted}>Según la variante: {servicio.tarifas.map((tarifa) => `${tarifa.nombre} (${tarifa.duracionMinutos} min)`).join(', ')}</span>
+        ) : (
+          <span style={{ alignItems: 'center', display: 'flex', gap: 8 }}>
+            <input aria-label={`${servicio.nombre}: duración en minutos`} data-duracion inputMode="numeric" max={1440} min={5} onChange={(event) => setDuracion(event.target.value)} step={5} style={{ maxWidth: 110 }} type="number" value={duracion} />
+            minutos
+          </span>
+        )}
+      </label>
+      <label className={ui.field}>
+        <span>Cada cuánto puede comenzar un turno</span>
+        <select aria-label={`${servicio.nombre}: cada cuánto puede comenzar un turno`} data-intervalo onChange={(event) => setIntervalo(event.target.value)} value={intervalo}>
+          <option value={INTERVALO_SEGUN_DURACION}>Cuando termina el anterior</option>
+          {INTERVALOS_INICIO_TURNO.map((opcion) => <option key={opcion} value={opcion}>Cada {opcion} minutos</option>)}
+        </select>
+      </label>
+      {aviso ? <p className={aviso.kind === 'ok' ? ui.alertOk : ui.alertError} role={aviso.kind === 'ok' ? 'status' : 'alert'} style={{ margin: 0 }}>{aviso.text}</p> : null}
+      <div>
+        <button className={ui.buttonPrimary} data-guardar-servicio disabled={guardando || sinCambios} onClick={() => void guardar()} type="button">{guardando ? 'Guardando…' : 'Guardar'}</button>
+      </div>
+    </div>
   )
 }

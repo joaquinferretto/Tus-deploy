@@ -390,7 +390,7 @@ export function ProviderTurnos(): React.ReactNode {
       </section>
 
       {/* Disponibilidad semanal (intervalo, días y horarios) y la agenda que ven los clientes */}
-      <ProviderAvailability onLibre={abrirManualEn} onTurno={(turno, franja) => setDetalle({ turno, franja })} servicios={servicios} version={versionAgenda} />
+      <ProviderAvailability onServicios={() => void turnosApi.misServicios().then(setServicios).catch(() => undefined)} onLibre={abrirManualEn} onTurno={(turno, franja) => setDetalle({ turno, franja })} servicios={servicios} version={versionAgenda} />
       {detalle ? (
         <section aria-label="Detalle del turno" className={styles.panel} data-turno-detalle={detalle.turno.id}>
           <h2 className={styles.panelTitle}>Detalle del turno</h2>

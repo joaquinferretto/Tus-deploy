@@ -3363,6 +3363,9 @@ model PerfilServicio {
   precioBase             BigInt?                @map("precio_base")
   duracionMinutos        Int                    @default(60) @map("duracion_minutos")
   bufferMinutos          Int                    @default(0) @map("buffer_minutos")
+  // TURNOS-INTERVALO-01 (20261122100000): every how many minutes a turno can start. NULL: when
+  // the previous one ends (duration + rest), as always. CHECK in SQL: NULL or 15, 30, 45, 60.
+  intervaloInicioMinutos Int?                   @map("intervalo_inicio_minutos")
   modalidad              String                 @default("presencial") @map("modalidad")
   perfil                 PerfilPublicoPrestador @relation(fields: [perfilId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_perfil_servicios_perfil")
   oficio                 OficioServicio         @relation(fields: [oficioId], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_perfil_servicios_oficio")
