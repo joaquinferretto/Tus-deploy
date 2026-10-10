@@ -11,9 +11,9 @@
 | HEAD | ver `git log -1`; nueva validación focal y Fase 4 parcial en este checkpoint |
 | Producción | `44e34fe` (API, Web y remotos). Nada de este plan está desplegado |
 | `main` local | `1107b40` = `44e34fe` + merge de `feat/prestador-tipo-persona-empresa` (sin push) |
-| Fase actual | Validación final (fases 5 a 20 cerradas o documentadas) |
-| Último paso terminado | Fases 6–13, 15, 17–20 implementadas o documentadas y commiteadas; Prisma validate/generate, typecheck, lint y builds limpios. Suite completa lanzada una vez |
-| Siguiente acción exacta | 1) Leer el resultado de la suite completa (`scratchpad/suite-final.log`; si no existe, correr `node scripts/test-runner.mjs` con el runner de PostgreSQL descartable) y corregir solo fallos reales. 2) Correr los smokes `scripts/dev/pagos-servicios-smoke.mjs` y `scripts/dev/alojamientos-ausencias-smoke.mjs` (requieren `cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:3101 npx next build`). 3) Auditoría del diff contra `44e34fe` (sin `.env`, secretos, `odd/`, `opencode.json`). 4) Reporte A–R. Pendiente aparte: rama `chore/security-dependencies` (no creada) y pantalla de calificación de alojamientos |
+| Fase actual | Terminado lo implementable: READY FOR PRE-DEPLOY (falta respaldo nuevo + ensayo de 3 migraciones) |
+| Último paso terminado | Validación final: Prisma validate/generate, typecheck, lint y builds limpios; suite completa 1375 tests, 1374 pass, 0 fail, 1 skipped; smoke de pagos 323/323 (390, 1280 y 1920) y de alojamientos 96/96; diff contra `44e34fe` auditado |
+| Siguiente acción exacta | Esperar al dueño. Para pre-deploy: 1) respaldo nuevo (`TUS_BACKUP_URL` en su terminal) y ensayo de las migraciones `20261121100000`, `20261122100000` y `20261123100000` sobre él en PostgreSQL 17; 2) decidir si el fix de Mercado Pago (`fix/mercado-pago-oauth-autorizacion`) sale antes por separado; 3) mergear `feat/experiencia-operativa-tus` a `main` solo con autorización. Trabajo pendiente sin bloqueo: rama `chore/security-dependencies` (parche de `proxy-addr` primero), pantalla de calificación de alojamientos, rediseño interno de Agenda/Trabajos/Ganancias |
 | Procesos vivos | ninguno (los smokes y tests son autocontenidos) |
 | Archivos fuera de alcance | `opencode.json`, `odd/`, `.env`, secretos, respaldos, logs |
 
