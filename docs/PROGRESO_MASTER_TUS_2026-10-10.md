@@ -11,9 +11,9 @@
 | HEAD | ver `git log -1` (este archivo se commitea con cada fase) |
 | Producción | `44e34fe` (API, Web y remotos). Nada de este plan está desplegado |
 | `main` local | `1107b40` = `44e34fe` + merge de `feat/prestador-tipo-persona-empresa` (sin push) |
-| Fase actual | 3 — búsqueda geográfica del cliente |
-| Último paso terminado | Fase 2: intervalo de comienzo por servicio (backend, pantalla, tests PG) |
-| Siguiente acción exacta | Auditar `apps/api/src/tus/directorio/servicio.ts` (búsqueda, cobertura, `publicArea`) y `apps/web/src/features/directory/worker-directory.tsx`; diseñar los tres modos (cerca de mí 8 km / localidad / provincia) |
+| Fase actual | 4 — cobertura geográfica del prestador |
+| Último paso terminado | Fase 3: búsqueda cerca de mí (8 km) / localidad / provincia (`5a5cbe5`). Además: fix de vinculación de Mercado Pago (rama `fix/mercado-pago-oauth-autorizacion` `d781db8`, mergeada acá, sin desplegar) |
+| Siguiente acción exacta | Fase 4 en `apps/web/src/features/provider/provider-public-profile.tsx`: línea ~175 la opción `Usar fallback si existe` (auditar qué significa: zona tomada de la identidad verificada, `identityFallback` en `directorio/modelo.ts`) y reemplazarla por texto humano o quitarla; línea ~216 `Radio de cobertura en km (opcional)` → `¿Hasta qué distancia te desplazás?` con su texto auxiliar, y mostrarlo solo si la modalidad es a domicilio o ambas. Después Fase 5 (lugar fijo: nombre, dirección, descripción) |
 | Procesos vivos | ninguno (los smokes y tests son autocontenidos) |
 | Archivos fuera de alcance | `opencode.json`, `odd/`, `.env`, secretos, respaldos, logs |
 
@@ -42,13 +42,13 @@ En `feat/experiencia-operativa-tus`: ver `git log main..HEAD`.
 | 0 Persona física / Empresa | HECHA | Los 3 perfiles históricos quedan Empresa con su nombre (decisión del dueño). Cambio de tipo solo por Admin |
 | 1 Respaldo y ensayo | PARCIAL | Ensayo hecho sobre el respaldo existente `2026-10-10T00-03-50`. **Respaldo NUEVO: bloqueado** (ver Bloqueos). Merge local a `main` hecho |
 | 2 Agenda: duración vs intervalo | HECHA | Ver abajo |
-| 3 Búsqueda geográfica | pendiente | |
+| 3 Búsqueda geográfica | HECHA | `apps/api/src/tus/directorio/busqueda-geografica.ts`; test `tus-busqueda-geografica.test.mjs` 2/2. Sin smoke de navegador todavía |
 | 4 Cobertura del prestador | pendiente | |
 | 5 Atiendo en un lugar | pendiente | |
 | 6–9 UX/UI, panel, solicitudes, ayuda | pendiente | |
 | 10 Opiniones de turnos | pendiente | |
 | 11 Rate limit auth/admin | pendiente | |
-| 12–13 Mercado Pago OAuth / calidad | pendiente | Solo auditoría y documentación; sin vincular cuentas ni pagos reales |
+| 12–13 Mercado Pago OAuth / calidad | PARCIAL (bug de autorización corregido; falta auditoría de calidad y `docs/MERCADO_PAGO_CALIDAD_100.md`) | Solo auditoría y documentación; sin vincular cuentas ni pagos reales |
 | 14 Nosis | pendiente | Rama aparte, apagada |
 | 15 Rotación de credencial DB | pendiente | Solo runbook |
 | 16 Dependencias | pendiente | Rama `chore/security-dependencies` |
@@ -78,6 +78,8 @@ Solución: `perfil_servicios.intervalo_inicio_minutos` (por servicio). `NULL` = 
 ## Tests pendientes
 
 - Tests existentes de turnos/agenda tras el cambio de firma interna (correr los afectados).
+- Tras Fase 2: 25 archivos de turnos afectados, 94 pass / 0 fail después de corregir el orden de props en `provider-turnos.tsx`.
+- Tras Fase 3 no se corrieron lint, build ni los tests existentes del directorio: hacerlo antes de seguir.
 - Lint, build y **una** suite completa al final. Smokes de navegador al final de las fases de UI.
 
 ## Decisiones tomadas (sin consultar, reversibles)
