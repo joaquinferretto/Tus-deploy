@@ -212,7 +212,7 @@ async function main() {
           const oficio = await prisma.oficioServicio.findFirst({ where: { activo: true }, orderBy: { orden: 'asc' } })
           await prisma.tusTenant.upsert({ where: { id: tenantId }, update: {}, create: { id: tenantId, slug: tenantId, name: 'Prestador Smoke', status: 'active', createdAt: ahora, updatedAt: ahora } })
           await prisma.prestador.create({ data: { id: 'smoke-p', tenantId, prestadorId: 'smoke-prestador', cohorte: 'repairs-trades', ubicacionId: 'ubicacion', zonaHoraria: 'America/Argentina/Buenos_Aires', rolesPersonal: ['owner'], versionPoliticaOperativa: 'v1', estado: 'approved', cuentaId, fechaCreacion: ahora, fechaActualizacion: ahora } })
-          await prisma.perfilPublicoPrestador.create({ data: { id: 'smoke-perfil', tenantId, prestadorId: 'smoke-prestador', nombrePublico: 'Prestador Smoke', oficio: oficio.id, zona: 'Centro', visible: true, fechaCreacion: ahora, fechaActualizacion: ahora, servicios: { create: [{ oficioId: oficio.id, duracionMinutos: 60, precioBase: 20000n }] } } })
+          await prisma.perfilPublicoPrestador.create({ data: { id: 'smoke-perfil', tenantId, prestadorId: 'smoke-prestador', nombrePublico: 'Prestador Smoke', tipoPrestador: 'empresa', oficio: oficio.id, zona: 'Centro', visible: true, fechaCreacion: ahora, fechaActualizacion: ahora, servicios: { create: [{ oficioId: oficio.id, duracionMinutos: 60, precioBase: 20000n }] } } })
           await prisma.verificacionIdentidad.create({ data: { id: 'smoke-verificacion', tenantId, usuarioId, proveedorId: 'smoke', numeroDocumento: '30111222', metodoVerificacion: 'manual', estado: 'verified', fechaCreacion: ahora, verificadaEn: ahora, fechaActualizacion: ahora } })
           await prisma.tusTenant.create({ data: { id: 'smoke-presupuesta', slug: 'smoke-presupuesta', name: 'A Presupuestar', status: 'active', createdAt: ahora, updatedAt: ahora } })
           await prisma.prestador.create({ data: { id: 'smoke-p2', tenantId: 'smoke-presupuesta', prestadorId: 'smoke-prestador-2', cohorte: 'repairs-trades', ubicacionId: 'ubicacion', zonaHoraria: 'America/Argentina/Buenos_Aires', rolesPersonal: ['owner'], versionPoliticaOperativa: 'v1', estado: 'approved', fechaCreacion: ahora, fechaActualizacion: ahora } })
@@ -641,9 +641,10 @@ async function recorrer(browser, viewport, estado, indice) {
     await page.reload({ waitUntil: 'networkidle' })
     check(!(await page.locator('body').innerText()).includes(claveTemporal) && (await page.locator('[data-contrasena-temporal]').getAttribute('data-contrasena-temporal')) === 'pendiente-de-cambio', `${e}: after reloading the password cannot be read again; the account is waiting for its owner to choose one`)
     // ---- PRESTADOR-TIPO-01: Admin -> Prestadores -> detalle -> "Tipo de prestador". The holder of
-    //      the account is Gabriela Lopez; the provider is shown as "Prestador Smoke". Both ways,
-    //      with the confirmation, and the public profile follows the name. It ends as it started
-    //      ("Prestador Smoke"), which the rest of this smoke reads.
+    //      the account is Gabriela Lopez; the provider is a business shown as "Prestador Smoke".
+    //      Both ways, with the confirmation, and the public profile follows the name. As a person
+    //      its public name is the full name of the holder and nobody types it (neither the form
+    //      nor a direct request). It ends as it started.
     const antesDelTipo = estado.psql(`SELECT (SELECT count(*) FROM public."reservas") || '|' || (SELECT count(*) FROM public."trabajos") || '|' || (SELECT count(*) FROM public."movimientos_ganancia_prestador") || '|' || (SELECT count(*) FROM public."perfiles_publicos_prestador") || '|' || (SELECT "firstName" || ' ' || "lastName" FROM public."User" u JOIN public."Account" a ON a."userId" = u."id" JOIN public."prestadores" p ON p."cuenta_id" = a."id" WHERE p."prestador_id" = 'smoke-prestador')`).stdout.trim()
     const seccionTipo = page.locator('[data-tipo-prestador]')
     const abrirTipo = async () => { await page.evaluate(() => window.next.router.push('/tus/admin/prestadores/smoke-perfil')); await page.waitForURL(/prestadores.smoke-perfil/u); await seccionTipo.waitFor() }
@@ -681,8 +682,14 @@ async function recorrer(browser, viewport, estado, indice) {
     await seccionTipo.locator('[data-tipo-opcion="persona_fisica"]').check()
     check((await texto(seccionTipo.locator('[data-vista-previa]'))) === 'El nombre público pasará a: Gabriela Lopez', `${e}: the name it will take is previewed (${await texto(seccionTipo.locator('[data-vista-previa]'))})`)
     const aPersona1 = await cambiarTipo('persona_fisica')
-    check(aPersona1 === '' || aPersona1.includes('El prestador pasará a Persona física y su nombre público será Gabriela Lopez. Sus servicios, turnos e historial no se modificarán.'), `${e}: to Persona física is confirmed with its text (${aPersona1})`)
+    check(aPersona1.includes('El prestador pasará a Persona física y su nombre público será Gabriela Lopez. Sus servicios, turnos e historial no se modificarán.'), `${e}: to Persona física is confirmed with its text (${aPersona1})`)
     await page.waitForFunction(() => document.querySelector('[data-nombre-publico]')?.textContent === 'Gabriela Lopez')
+    const formularioPerfil = page.locator('form[aria-label="Perfil del prestador"]')
+    const derivado = formularioPerfil.locator('[data-nombre-derivado]')
+    await derivado.waitFor()
+    check((await texto(derivado)) === 'Nombre público Gabriela Lopez En personas físicas se usa el nombre completo del titular de la cuenta.' && (await formularioPerfil.locator('input[minlength="2"]').count()) === 0 && (await seccionTipo.locator('[data-ayuda-persona]').isVisible()), `${e}: for a person the public name is shown, derived, with no field to type it (${await texto(derivado)})`)
+    const nombreDirecto = await llamar('PUT', '/tus/v1/admin/prestadores/smoke-perfil', { displayName: 'Nombre Manual' })
+    check(nombreDirecto.status === 422 && JSON.stringify(nombreDirecto.body).includes('PUBLIC_NAME_DERIVED') && estado.psql(`SELECT "nombre_publico" FROM public."perfiles_publicos_prestador" WHERE "id" = 'smoke-perfil'`).stdout.trim() === 'Gabriela Lopez', `${e}: the API refuses a public name typed for a person (${nombreDirecto.status} ${JSON.stringify(nombreDirecto.body).slice(0, 120)})`)
     await sinDesborde('Admin -> Prestador -> Tipo (persona física)')
     await page.screenshot({ path: join(artifacts, `${e}-admin-tipo-persona-fisica.png`), fullPage: true })
     await publico('Gabriela Lopez')
@@ -693,6 +700,8 @@ async function recorrer(browser, viewport, estado, indice) {
     check(aEmpresa.includes('El prestador pasará a Empresa. Sus servicios, turnos e historial no se modificarán.'), `${e}: to Empresa is confirmed with its text (${aEmpresa})`)
     await page.waitForFunction(() => document.querySelector('[data-nombre-publico]')?.textContent === 'Lopez Servicios')
     check((await texto(seccionTipo.locator('[data-titular]'))) === 'Gabriela Lopez', `${e}: the holder of the account is the same`)
+    await formularioPerfil.locator('input[minlength="2"]').waitFor()
+    check((await formularioPerfil.locator('input[minlength="2"]').inputValue()) === 'Lopez Servicios' && (await derivado.count()) === 0, `${e}: a business has its field for the public name`)
     await sinDesborde('Admin -> Prestador -> Tipo (empresa)')
     await page.screenshot({ path: join(artifacts, `${e}-admin-tipo-empresa.png`), fullPage: true })
     await publico('Lopez Servicios')
@@ -706,7 +715,13 @@ async function recorrer(browser, viewport, estado, indice) {
     await page.waitForFunction(() => document.querySelector('[data-nombre-publico]')?.textContent === 'Prestador Smoke')
     check(estado.psql(`SELECT (SELECT count(*) FROM public."reservas") || '|' || (SELECT count(*) FROM public."trabajos") || '|' || (SELECT count(*) FROM public."movimientos_ganancia_prestador") || '|' || (SELECT count(*) FROM public."perfiles_publicos_prestador") || '|' || (SELECT "firstName" || ' ' || "lastName" FROM public."User" u JOIN public."Account" a ON a."userId" = u."id" JOIN public."prestadores" p ON p."cuenta_id" = a."id" WHERE p."prestador_id" = 'smoke-prestador')`).stdout.trim() === antesDelTipo, `${e}: the same turnos, works, earnings, profiles and holder after changing the type (${antesDelTipo})`)
     check(Number(estado.psql(`SELECT count(*) FROM public."AuditEvent" WHERE "eventType" IN ('provider.type_changed', 'provider.public_name_changed')`).stdout.trim()) >= 4, `${e}: every change of type is audited`)
-    await page.goto(`${web}/tus/admin/alojamientos`, { waitUntil: 'networkidle' })
+    // ALOJAMIENTOS-ADMIN-01: by the menu of the Admin, as every other module.
+    const enlaceAlojamientos = page.locator('#admin-sidebar a[href="/tus/admin/alojamientos"]')
+    const botonMenu = page.locator('button[aria-controls="admin-sidebar"]')
+    if (await botonMenu.isVisible() && (await botonMenu.getAttribute('aria-expanded')) !== 'true') await botonMenu.click()
+    check(await enlaceAlojamientos.isVisible() && (await texto(enlaceAlojamientos)) === 'Alojamientos', `${e}: the menu of the Admin has "Alojamientos"`)
+    await enlaceAlojamientos.click()
+    await page.waitForURL(/\/tus\/admin\/alojamientos/u)
     await page.locator('[data-admin-alojamientos="alojamientos"]').waitFor()
     await page.getByRole('button', { name: 'Reservas', exact: true }).click()
     await page.locator('[data-admin-alojamientos="reservas"]').waitFor()
@@ -755,6 +770,6 @@ async function recorrer(browser, viewport, estado, indice) {
 
 // Refusals this smoke asks for on purpose.
 // (The two 409 of the checkout and of the cancellation are how the API asks for each confirmation.)
-const ESPERADOS = [/\/tus\/v1\/perfil 401$/u, /\/auth\/sign-in 401$/u, /\/contrasena-temporal 422$/u, /smoke-perfil\/turnos\/solicitudes 4\d\d$/u, /\/pago\/checkout 409$/u, /\/cancelar 409$/u, /\/auth\/session 401$/u, /\/auth\/refresh 401$/u, /smoke-perfil-2\/turnos\/solicitudes 409$/u, /\/turnos\/[^/]+\/estado 4\d\d$/u]
+const ESPERADOS = [/\/admin\/prestadores\/smoke-perfil 422$/u, /\/tus\/v1\/perfil 401$/u, /\/auth\/sign-in 401$/u, /\/contrasena-temporal 422$/u, /smoke-perfil\/turnos\/solicitudes 4\d\d$/u, /\/pago\/checkout 409$/u, /\/cancelar 409$/u, /\/auth\/session 401$/u, /\/auth\/refresh 401$/u, /smoke-perfil-2\/turnos\/solicitudes 409$/u, /\/turnos\/[^/]+\/estado 4\d\d$/u]
 
 await main()
