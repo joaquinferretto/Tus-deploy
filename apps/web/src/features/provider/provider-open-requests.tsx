@@ -1,5 +1,6 @@
 'use client'
 
+import layout from '../layout/layout.module.css'
 import { useCallback, useEffect, useState } from 'react'
 
 import type { PostulacionPrestador } from '@factory/contracts'
@@ -95,11 +96,12 @@ export function ProviderOpenRequests(): React.ReactNode {
             No pudimos cargar las solicitudes. Probá de nuevo en unos minutos.
           </p>
         ) : requests.length === 0 ? (
-          <div className={styles.state} role="status">
-            No hay solicitudes abiertas {category ? `de ${tradeOf(catalog.data, category).label}` : ''} en este momento.
+          <div className={layout.empty} role="status">
+            <strong>No hay solicitudes abiertas {category ? `de ${tradeOf(catalog.data, category).label}` : ''} en este momento</strong>
+            <p>Las que publiquen los clientes para tus servicios aparecen acá.</p>
           </div>
         ) : (
-          <ul className={styles.grid} style={{ gridTemplateColumns: '1fr' }}>
+          <ul className={`${styles.grid} ${layout.cardGrid}`}>
             {requests.map((request) => (
               <OpenRequest
                 application={appliedTo.get(request.id) ?? null}
@@ -120,7 +122,7 @@ export function ProviderOpenRequests(): React.ReactNode {
         {applications.length === 0 ? (
           <p className={styles.muted}>Todavía no te postulaste a ninguna solicitud.</p>
         ) : (
-          <ul className={styles.grid} style={{ gridTemplateColumns: '1fr' }}>
+          <ul className={`${styles.grid} ${layout.cardGrid}`}>
             {applications.map((application) => (
               <li className={styles.card} key={application.id}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between' }}>

@@ -1,5 +1,6 @@
 'use client'
 
+import layout from '../layout/layout.module.css'
 import { useCallback, useEffect, useState } from 'react'
 
 import authStyles from '../auth/auth.module.css'
@@ -85,7 +86,7 @@ export function ProviderUrgent(): React.ReactNode {
   const visibles = offers.filter((offer) => offer.open || offer.assigned).concat(offers.filter((offer) => !offer.open && !offer.assigned).slice(0, 3))
 
   return (
-    <section aria-labelledby="servicios-urgentes" data-urgentes-prestador>
+    <section aria-labelledby="servicios-urgentes" data-urgentes-prestador style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 14, padding: '14px 16px' }}>
       <h2 className={styles.title} id="servicios-urgentes" style={{ fontSize: '1.15rem' }}>
         Servicios urgentes
       </h2>
@@ -127,7 +128,7 @@ export function ProviderUrgent(): React.ReactNode {
         </p>
       ) : null}
       {visibles.length > 0 ? (
-        <ul className={styles.grid} style={{ gridTemplateColumns: '1fr', marginTop: 12 }}>
+        <ul className={`${styles.grid} ${layout.cardGrid}`} style={{ marginTop: 12 }}>
           {visibles.map((offer) => (
             <li className={styles.card} data-urgente-oferta={offer.offer} key={offer.id}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between' }}>

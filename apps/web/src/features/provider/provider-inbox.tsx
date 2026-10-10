@@ -1,5 +1,6 @@
 'use client'
 
+import layout from '../layout/layout.module.css'
 import { useEffect, useState } from 'react'
 
 import type { SolicitudRecibidaPrestador } from '@factory/contracts'
@@ -80,28 +81,31 @@ export function ProviderInbox(): React.ReactNode {
     )
   if (items.length === 0)
     return (
-      <div className={styles.state} role="status">
-        Todavía no recibiste solicitudes. Completá tu perfil público para aparecer en “Buscar trabajador”.
-        <div className={styles.stateActions}>
-          <a className={homeStyles.buttonSecondary} href="/prestador/perfil-publico">
-            Editar mi perfil público
-          </a>
-        </div>
+      <div className={layout.empty} data-sin-solicitudes role="status">
+        <strong>No hay solicitudes nuevas por ahora</strong>
+        <p>Cuando aparezca una solicitud compatible con tu perfil, la vas a ver acá.</p>
+        <a className={homeStyles.buttonSecondary} href="/prestador/perfil-publico">
+          Editar mis servicios
+        </a>
       </div>
     )
 
   return (
-    <ul className={styles.grid} style={{ gridTemplateColumns: '1fr' }}>
+    <ul className={`${styles.grid} ${layout.cardGrid}`}>
       {items.map((item) => (
         <li className={styles.card} key={item.id}>
+          {/* Who asks, what for, and where/when — in that order. */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between' }}>
-            <strong>{item.title}</strong>
+            <strong data-solicitante>{item.requesterName}</strong>
             <span className={item.assignment === 'pendiente' ? styles.available : styles.muted}>{ASSIGNMENT[item.assignment] ?? item.assignment}</span>
           </div>
-          {item.description ? <p style={{ margin: 0 }}>{item.description}</p> : null}
+          <p style={{ fontWeight: 600, margin: 0, overflowWrap: 'anywhere' }}>{item.title}</p>
+          {item.description ? <p style={{ margin: 0, overflowWrap: 'anywhere' }}>{item.description}</p> : null}
           <p className={styles.muted} style={{ fontSize: '0.9rem', margin: 0 }}>
-            {tradeOf(catalog.data, item.category).label} · {item.requesterName} · {item.approximateArea} (zona aproximada) · {budgetLabel(item.budgetMax)} ·{' '}
-            {urgencyLabel(item.urgency)} · {timeAgoLabel(item.createdAt)} · vía {ORIGINS[item.origin] ?? item.origin}
+            {tradeOf(catalog.data, item.category).label} · {item.approximateArea} (zona aproximada) · {timeAgoLabel(item.createdAt)}
+          </p>
+          <p className={styles.muted} style={{ fontSize: '0.85rem', margin: 0 }}>
+            {budgetLabel(item.budgetMax)} · {urgencyLabel(item.urgency)} · vía {ORIGINS[item.origin] ?? item.origin}
           </p>
           {item.images.length > 0 ? <PrivateImages paths={item.images} session={session.session} /> : null}
           {item.workId ? <a href={`/trabajos/${encodeURIComponent(item.workId)}`}>Ver trabajo</a> : null}
