@@ -11,9 +11,9 @@
 | HEAD | ver `git log -1`; nueva validación focal y Fase 4 parcial en este checkpoint |
 | Producción | `44e34fe` (API, Web y remotos). Nada de este plan está desplegado |
 | `main` local | `1107b40` = `44e34fe` + merge de `feat/prestador-tipo-persona-empresa` (sin push) |
-| Fase actual | 6 — UX/UI general (layouts contained / wide / dashboard) |
-| Último paso terminado | Fase 5: lugar fijo de atención (nombre público, dirección privada). Tests PG 2/2, 73 archivos afectados en verde, smoke 310/310 a 1280 y 390 |
-| Siguiente acción exacta | Fase 6: auditar los contenedores de ancho en `apps/web/src` (buscar `max-width` en `*.module.css` de `components/admin`, `features/provider`, `features/home/site-page`, `app/prestador/layout.tsx`, `features/turnos`, `features/work`, `features/alojamientos`) y definir tres variantes reutilizables (contained / wide / dashboard) en un solo lugar; aplicarlas a las pantallas operativas sin tocar Ayuda/login. Verificar a 390, 1280 y 1920 |
+| Fase actual | Validación final (fases 5 a 20 cerradas o documentadas) |
+| Último paso terminado | Fases 6–13, 15, 17–20 implementadas o documentadas y commiteadas; Prisma validate/generate, typecheck, lint y builds limpios. Suite completa lanzada una vez |
+| Siguiente acción exacta | 1) Leer el resultado de la suite completa (`scratchpad/suite-final.log`; si no existe, correr `node scripts/test-runner.mjs` con el runner de PostgreSQL descartable) y corregir solo fallos reales. 2) Correr los smokes `scripts/dev/pagos-servicios-smoke.mjs` y `scripts/dev/alojamientos-ausencias-smoke.mjs` (requieren `cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:3101 npx next build`). 3) Auditoría del diff contra `44e34fe` (sin `.env`, secretos, `odd/`, `opencode.json`). 4) Reporte A–R. Pendiente aparte: rama `chore/security-dependencies` (no creada) y pantalla de calificación de alojamientos |
 | Procesos vivos | ninguno (los smokes y tests son autocontenidos) |
 | Archivos fuera de alcance | `opencode.json`, `odd/`, `.env`, secretos, respaldos, logs |
 
@@ -46,16 +46,16 @@ En `feat/experiencia-operativa-tus`: ver `git log main..HEAD`.
 | 3 Búsqueda geográfica | HECHA | `apps/api/src/tus/directorio/busqueda-geografica.ts`; 2/2. Smoke 1280/390 pasó después de permitir geolocalización solo al mismo origen |
 | 4 Cobertura del prestador | HECHA (local) | Copy humano; radio solo domicilio/mixto y rechazo en modo local; consulta por barrio en directorio/asistente usa misma regla de ubicación/modalidad/zonas/radio; localidad/provincia conserva ubicación base más zonas y radio cuando existe punto de referencia |
 | 5 Atiendo en un lugar | HECHA (local) | Ver "Fase 5" abajo. **PENDIENTE ENSAYO SOBRE RESPALDO PRODUCTIVO NUEVO** de la migración `20261123100000` |
-| 6–9 UX/UI, panel, solicitudes, ayuda | pendiente | |
-| 10 Opiniones de turnos | pendiente | |
-| 11 Rate limit auth/admin | pendiente | |
-| 12–13 Mercado Pago OAuth / calidad | PARCIAL (bug de autorización corregido; falta auditoría de calidad y `docs/MERCADO_PAGO_CALIDAD_100.md`) | Solo auditoría y documentación; sin vincular cuentas ni pagos reales |
-| 14 Nosis | pendiente | Rama aparte, apagada |
-| 15 Rotación de credencial DB | pendiente | Solo runbook |
-| 16 Dependencias | pendiente | Rama `chore/security-dependencies` |
-| 17 Alojamientos | pendiente | Solo no financiero |
-| 18–19 Prueba real / refunds | pendiente | Solo checklist y reporte |
-| 20 Documentación | en curso | |
+| 6–9 UX/UI, panel, solicitudes, ayuda | HECHAS (local) | Ver "Fases 6 a 9" abajo |
+| 10 Opiniones de turnos | HECHA (local) | Bug real confirmado y corregido: el trabajo de un turno nunca llegaba a `completed`. Ver abajo |
+| 11 Rate limit auth/admin | HECHA (local) | `GET /auth/mfa/status` ya no gasta el cupo estricto; el resto igual |
+| 12–13 Mercado Pago OAuth / calidad | HECHAS (local) | Fix OAuth integrado y sus tests en verde; preferencia preparada y `docs/MERCADO_PAGO_CALIDAD_100.md`. La medición real necesita un payment ID productivo |
+| 14 Nosis | REVISADA, sin cambios | Rama `feat/identidad-documento-nosis-publico` en `71d3c84`, basada en `b53125f` (anterior a este plan), fuera de `main`, apagada por configuración. No se rebasó ni se hicieron consultas reales. Su migración `20261119100000` tiene fecha anterior a cuatro ya creadas: revisar el orden antes de mergearla |
+| 15 Rotación de credencial DB | DOCUMENTADA | `docs/runbooks/rotacion-credencial-postgresql.md`. No ejecutada: la hace el dueño |
+| 16 Dependencias | AUDITADA, sin cambios | `docs/security/AUDITORIA_DEPENDENCIAS_2026-10-10.md` (5 críticas, 47 altas; la relevante en producción es `proxy-addr`). Rama `chore/security-dependencies` NO creada |
+| 17 Alojamientos | PARCIAL | Aviso por email al propietario (reserva y cancelación). Falta la pantalla de calificación. Decisiones financieras abiertas, sin tocar |
+| 18–19 Prueba real / refunds | DOCUMENTADAS | `docs/PRUEBA_PAGO_REAL_TUS.md` y `docs/AUDITORIA_REEMBOLSOS_Y_CANCELACIONES_2026-10-10.md`. Nada ejecutado con dinero real |
+| 20 Documentación | HECHA | `docs/EXPERIENCIA_OPERATIVA_TUS.md`, manual del prestador (`docs/conocimiento`), decisiones |
 
 ## Fase 2 — auditoría y solución
 
@@ -111,3 +111,32 @@ Solución: `perfil_servicios.intervalo_inicio_minutos` (por servicio). `NULL` = 
 - **Compatibilidad:** un perfil histórico `local` sin dirección sigue publicándose y recibiendo turnos; Admin puede editarlo sin dirección; su próximo guardado propio la pide.
 - **No hecho:** la dirección no se incluye en los avisos de WhatsApp/email de turno confirmado (el cliente la ve en Mis turnos). No hay geocodificación de la dirección: el punto del mapa sigue siendo el de Prestador → Ubicación.
 - **Aserciones viejas actualizadas (con comentario):** `tus-provider-location.test.mjs` (el modelo del perfil ahora admite las columnas `lugar*`; la dirección de la identidad sigue fuera) y los perfiles `local`/`mixto` de dos tests, que ahora envían dirección.
+
+## Fases 6 a 9 — pantallas
+
+- **Anchos (UX-ANCHO-01):** `apps/web/src/features/layout/layout.module.css` define `contained` (800), `wide` (1180) y `dashboard` (1680), `cardGrid`, `split`, `tabs` y `empty`. Lo usan el panel de prestador, Mis solicitudes, Trabajos (dashboard), Mi perfil público y Mis turnos (wide). Esas pantallas no muestran el footer público (`SitePage footer={false}`).
+- **Panel de prestador:** una sola navegación en pestañas (Solicitudes, Agenda, Trabajos, Servicios y perfil, Ganancias, Ubicación; el manual al costado). Dentro del panel el encabezado no repite esos enlaces. Las rutas no cambiaron.
+- **Solicitudes:** tarjetas con el solicitante primero, grilla que usa el ancho, estados vacíos breves, urgencias en un panel al costado. Las fotos del cliente (hasta 2) ya existían y estaban validadas: no se tocó el almacenamiento.
+- **Ayuda:** en escritorio, índice fijo al costado y portadas en dos columnas; el texto conserva su ancho de lectura.
+- **Medido en el smoke** a 390, 1280 y 1920 (el panel mide 1280 px a 1280 y 1680 px a 1920; sin desborde en ninguna).
+- **No hecho:** Admin y Alojamientos no se rediseñaron (ya usaban el ancho). El contenido interno de Agenda, Trabajos y Ganancias no se reorganizó más allá del ancho y la navegación. Es un primer pase de estructura, no el rediseño visual completo que pide la Fase 6/7.
+- **Aserciones viejas actualizadas:** `tus-prestador-pagos.test.mjs` (la pestaña se llama "Ganancias").
+
+## Fase 10 — opiniones de turnos
+
+- **Bug confirmado en el código de producción:** `work/cierre.ts` excluía a propósito a los turnos de `completarSiPagado` y `completarPorPagoFinal` exigía `in_progress`; el trabajo de un turno no tiene paso de "iniciar", así que quedaba `accepted` para siempre y `calificaciones` (y el trigger de la base) exigen `completed`. La reserva sí pasaba a `completed`.
+- **Corrección:** el cierre confirmado (cliente o ventana de 72 h) con el total pago, o el saldo aprobado después del cierre, completan el trabajo del turno (transición `accepted → completed`, motivo `work.completed_after_final_payment`).
+- **Tests:** `tus-opiniones-turnos-postgres.test.mjs` 2/2 y 23 archivos de cierre/trabajo/calificaciones 89/0. La liberación de dinero no cambió.
+- **No verificado:** que la Web ofrezca al cliente el botón para opinar sobre un turno (la API lo admite).
+
+## Fase 11 — límite de autenticación
+
+Causa: `authRateLimitMiddleware` (40/15 min por IP) montado sobre el prefijo `/auth/mfa` incluía `GET /auth/mfa/status`, que cada carga del Admin consulta. `/auth/session` no estaba bajo ese límite. Ahora esa lectura se saltea (sigue bajo el límite general de 1500/15 min). Test: `tus-auth-limite.test.mjs`.
+
+## Fase 13 — Mercado Pago, calidad
+
+Agregado a la preferencia: `items[].description` y `payer` (email, nombre, apellido) cuando el tenant del cliente tiene una sola cuenta activa. Opcionales y apagados hasta configurarlos: `MERCADO_PAGO_ITEM_CATEGORY_ID`, `MERCADO_PAGO_STATEMENT_DESCRIPTOR`. La documentación oficial no publica la lista de criterios campo por campo: la medición real (con un payment ID productivo) dirá qué descuenta.
+
+## Fase 17 — alojamientos
+
+`apps/api/src/tus/alojamientos/alojamientos-avisos.ts`: email al propietario al confirmarse una reserva y al cancelarla el huésped. Sin transporte de email configurado no hay notificador. Test: `tus-alojamientos-avisos.test.mjs`. No hay aviso por "modificación de reserva" porque esa operación no existe.
