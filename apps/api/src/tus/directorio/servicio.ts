@@ -21,7 +21,7 @@ import { esOficio, normalizarTexto, oficio, type OficioId } from './oficios.ts'
 import { asociarPunto, resolverPuntoMapa, type GeocodificadorInverso, type PuntoMapa } from '../geo/resolucion.ts'
 import { coordenadasValidas } from '../geo/geometria.ts'
 import type { AlmacenPerfiles, FuentesDirectorio } from './puertos.ts'
-import { coincideCerca, distanciaPublica, leerPunto, localidadesDePerfil, localidadesDeProvincia } from './busqueda-geografica.ts'
+import { coincideCerca, coincideEnZona, distanciaPublica, leerPunto, localidadesDePerfil, localidadesDeProvincia } from './busqueda-geografica.ts'
 import { barriosDeUbicacion, catalogoVigente, oficiosVigentes } from '../catalogo/vigente.ts'
 import { ErrorFotoPerfil, prepararFotoPerfil, rutaFotoPerfil, type AlmacenFotosPerfil, type CodigoFoto, type FotoPerfil } from './foto.ts'
 
@@ -334,8 +334,8 @@ export class ServicioDirectorio {
     }
     // A zone of the catalog ("Norte") covers its neighbourhoods; a neighbourhood covers itself.
     if (zona) {
-      const lugares = barriosDeUbicacion(zona).map((item) => normalizarTexto(item))
-      items = items.filter(({ ubicacion }) => ubicacion.serviceZones.some((item) => lugares.includes(normalizarTexto(item))) || lugares.includes(normalizarTexto(ubicacion.publicArea)))
+       const catalogo = catalogoVigente()
+       items = items.filter(({ perfil, ubicacion }) => coincideEnZona(catalogo, perfil, { zonas: ubicacion.serviceZones, areaPublica: ubicacion.publicArea }, zona))
     }
     // GEO-BUSQUEDA-01. Where the client looks. An incomplete request (no point, an unknown town)
     // is not a geographic filter: the search still answers.
@@ -424,10 +424,9 @@ export class ServicioDirectorio {
     if (!esOficio(input.oficio)) return { items: [], reason: 'invalid_profession' }
     const zona = typeof input.zona === 'string' && input.zona.trim() ? input.zona.trim() : null
     const limite = Math.max(1, Math.min(CANDIDATOS_MAXIMOS, input.limite ?? CANDIDATOS_MAXIMOS))
-    const normalizarZona = (value: string) => normalizarTexto(value).replace(/^barrio\s+/u, '')
     const visibles = await this.enriquecerVisibles([input.oficio as OficioId])
     const compatibles = input.exigirCobertura && zona
-      ? visibles.filter(item => item.ubicacion.serviceZones.some(value => barriosDeUbicacion(zona).some((lugar) => normalizarZona(value) === normalizarZona(lugar))))
+      ? visibles.filter(item => coincideEnZona(catalogoVigente(), item.perfil, { zonas: item.ubicacion.serviceZones, areaPublica: item.ubicacion.publicArea }, zona))
       : visibles
     const items = this.ordenar(compatibles, 'relevancia', zona).slice(0, limite)
     return {

@@ -42,6 +42,8 @@ test('BÚSQUEDA geográfica: near me is 8 km AND the coverage of the provider (o
     const enOtro = await buscar({ ambito: 'cerca', lat: String(mio.lat), lng: String(mio.lng) })
     out.enCentro = enCentro.quienes
     out.enOtro = enOtro.quienes
+    out.zonaOtro = (await buscar({ zona: otro.nombre })).quienes
+    out.candidatosOtro = (await directorio.buscarCandidatos({ oficio: 'plomeria', zona: otro.nombre, exigirCobertura: true })).items.map((i) => nombre[i.id]).sort()
     out.lejos = (await buscar({ ambito: 'cerca', lat: lejos.lat, lng: lejos.lng })).quienes
     // The distance: whole kilometres, never less than one, the nearest first.
     out.distancias = [enOtro.items.every((i) => Number.isInteger(i.distanceKm) && i.distanceKm >= 1), enOtro.items.map((i) => i.distanceKm).every((km, i, lista) => i === 0 || lista[i - 1] <= km), Math.abs(enOtro.items.find((i) => nombre[i.id] === 'local').distanceKm - Math.max(1, Math.round(kmOtro))) <= 1]
@@ -76,6 +78,8 @@ test('BÚSQUEDA geográfica: near me is 8 km AND the coverage of the provider (o
   assert.equal(r.kmOtro, true)
   assert.deepEqual(r.enCentro, ['domicilioCentro', 'domicilioDos', 'domicilioRadio', 'domicilioRadioCorto', 'local', 'mixto'], 'a client in the centre: the place nearby, those who go to the centre (also the one based elsewhere that covers it) and the mixed one')
   assert.deepEqual(r.enOtro, ['domicilioDos', 'domicilioRadio', 'local', 'mixto'], 'a client a few km away: the place and the mixed one by distance, who covers that neighbourhood, who travels 7 km; NOT who only goes to the centre nor who travels 1 km, although both are near')
+  assert.deepEqual(r.zonaOtro, ['domicilioDos', 'domicilioRadio', 'mixto'], 'the barrio filter uses actual modality, declared zones and radius, not a place-only provider based elsewhere')
+  assert.deepEqual(r.candidatosOtro, r.zonaOtro, 'the assistant uses exactly the same coverage check when required')
   assert.deepEqual(r.lejos, [], 'more than 8 km away: nobody')
   assert.deepEqual(r.distancias, [true, true, true])
   assert.equal(r.hayNumeros, true, 'the answer does carry coordinates (the public points of the providers)')

@@ -11,9 +11,9 @@
 | HEAD | ver `git log -1`; nueva validación focal y Fase 4 parcial en este checkpoint |
 | Producción | `44e34fe` (API, Web y remotos). Nada de este plan está desplegado |
 | `main` local | `1107b40` = `44e34fe` + merge de `feat/prestador-tipo-persona-empresa` (sin push) |
-| Fase actual | 4 — cobertura geográfica del prestador (parcial: copy/radio/smoke hechos) |
-| Último paso terminado | Validación focal de Fases 2–3 (40/40 PG, smoke 46/46 a 1280/390) y corrección del bloqueo de geolocalización por Permissions-Policy; Fase 4: radio solo para domicilio/mixto, texto humano y regla del servidor. OAuth `d781db8` ya integrado, sin deploy |
-| Siguiente acción exacta | Fase 4: revisar matching por zona principal/barrios/radio/localidad/provincia en `directorio/busqueda-geografica.ts` y `ServicioDirectorio.listar/buscarCandidatos`, usando tests de cobertura real; comprobar que ninguna búsqueda devuelve prestador fuera de su modalidad/cobertura. Luego Fase 5: auditar rutas/DTO de ubicación antes de agregar lugar fijo (nombre, dirección privada, descripción), migración aditiva y visibilidad pre/post reserva. No tocar pagos |
+| Fase actual | 5 — lugar fijo de atención |
+| Último paso terminado | Fases 2–3: 40/40 tests PG y smoke 46/46 a 1280/390. Fase 4: texto/radio por modalidad y matching compartido por barrio, radio y localidad. OAuth `d781db8` ya integrado, sin deploy |
+| Siguiente acción exacta | Fase 5: auditar `apps/api/src/tus/directorio/{modelo,servicio,http,almacenes}.ts`, `apps/api/src/tus/geo/resolucion.ts`, `apps/api/prisma/schema.prisma` y los contratos de perfil/turno. Crear campos aditivos de lugar fijo (nombre opcional, dirección obligatoria para `local`/`mixto`, descripción opcional), guardados por el prestador; no exponer dirección privada en el directorio público. Entregar dirección al cliente de un turno confirmado mediante lectura autorizada. Probar en PG16 descartable y Web. No migrar producción |
 | Procesos vivos | ninguno (los smokes y tests son autocontenidos) |
 | Archivos fuera de alcance | `opencode.json`, `odd/`, `.env`, secretos, respaldos, logs |
 
@@ -43,7 +43,7 @@ En `feat/experiencia-operativa-tus`: ver `git log main..HEAD`.
 | 1 Respaldo y ensayo | PARCIAL | Ensayo hecho sobre el respaldo existente `2026-10-10T00-03-50`. **Respaldo NUEVO: bloqueado** (ver Bloqueos). Merge local a `main` hecho |
 | 2 Agenda: duración vs intervalo | HECHA | Ver abajo |
 | 3 Búsqueda geográfica | HECHA | `apps/api/src/tus/directorio/busqueda-geografica.ts`; 2/2. Smoke 1280/390 pasó después de permitir geolocalización solo al mismo origen |
-| 4 Cobertura del prestador | PARCIAL | Copy humano, radio solo domicilio/mixto y rechazo del radio en modo local por API; falta completar auditoría de matching real |
+| 4 Cobertura del prestador | HECHA (local) | Copy humano; radio solo domicilio/mixto y rechazo en modo local; consulta por barrio en directorio/asistente usa misma regla de ubicación/modalidad/zonas/radio; localidad/provincia conserva ubicación base más zonas y radio cuando existe punto de referencia |
 | 5 Atiendo en un lugar | pendiente | |
 | 6–9 UX/UI, panel, solicitudes, ayuda | pendiente | |
 | 10 Opiniones de turnos | pendiente | |
@@ -73,6 +73,7 @@ Solución: `perfil_servicios.intervalo_inicio_minutos` (por servicio). `NULL` = 
 - 100 archivos afectados por Persona/Empresa: 574 pass, 0 fail (PG).
 - Smoke `pagos-servicios-smoke.mjs`: 284/284 (1280 y 390). Smoke `alojamientos-ausencias-smoke.mjs`: 96/96.
 - `tus-turnos-intervalo-postgres.test.mjs`: 2/2 (PG).
+- Fase 4: `tus-busqueda-geografica.test.mjs` 2/2, `tus-admin-providers.test.mjs` 3/3, `tus-catalogo.test.mjs` 3/3, typecheck API. La búsqueda por barrio excluye prestadores de solo local en otro barrio y los radios insuficientes. Sin N+1 ni geocodificador nuevo.
 - typecheck API y Web limpios tras Fase 2.
 
 ## Tests pendientes

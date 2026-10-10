@@ -62,9 +62,10 @@ export function barrioDePunto(catalogo: CatalogoTus, punto: Punto): BarrioCatalo
 
 // Neighbourhood names a list of coverage names stands for ("Norte", a zone, is all its barrios).
 function barriosCubiertos(catalogo: CatalogoTus, nombres: readonly string[]): BarrioCatalogo[] {
-  const claves = new Set(nombres.map((nombre) => normalizarTexto(nombre)))
-  const zonas = new Set(catalogo.zonas.filter((zona) => zona.activo && claves.has(normalizarTexto(zona.nombre))).map((zona) => zona.id))
-  return catalogo.barrios.filter((barrio) => barrio.activo && (claves.has(normalizarTexto(barrio.nombre)) || (barrio.zonaId !== null && zonas.has(barrio.zonaId))))
+  const clave = (nombre: string) => normalizarTexto(nombre).replace(/^barrio\s+/u, '')
+  const claves = new Set(nombres.map(clave))
+  const zonas = new Set(catalogo.zonas.filter((zona) => zona.activo && claves.has(clave(zona.nombre))).map((zona) => zona.id))
+  return catalogo.barrios.filter((barrio) => barrio.activo && (claves.has(clave(barrio.nombre)) || (barrio.zonaId !== null && zonas.has(barrio.zonaId))))
 }
 
 export interface CoberturaDePerfil {
@@ -88,13 +89,33 @@ export function coincideCerca(catalogo: CatalogoTus, perfil: PerfilPublico, cobe
   return { ok: porZona || porRadio, km }
 }
 
+// A request in a named neighbourhood: a place-only provider is relevant at its own location;
+// home visits require declared neighbourhoods or a radius reaching that neighbourhood. Mixed
+// providers can match by either route. No fuzzy text or guessed coverage is used.
+export function coincideEnZona(catalogo: CatalogoTus, perfil: PerfilPublico, cobertura: CoberturaDePerfil, zona: string): boolean {
+  const buscados = barriosCubiertos(catalogo, [zona])
+  if (buscados.length === 0) return false
+  const propios = perfil.barrioId ? catalogo.barrios.filter((b) => b.id === perfil.barrioId && b.activo) : barriosCubiertos(catalogo, perfil.zona ? [perfil.zona] : [])
+  const enLugar = propios.some((propio) => buscados.some((buscado) => buscado.id === propio.id))
+  if (perfil.modalidadAtencion === 'local') return enLugar
+  const declarados = barriosCubiertos(catalogo, [...cobertura.zonas, cobertura.areaPublica])
+  const porZona = declarados.some((declarado) => buscados.some((buscado) => buscado.id === declarado.id))
+  const base = puntoBaseDePerfil(catalogo, perfil)
+  const porRadio = base !== null && perfil.radioCoberturaKm !== null && buscados.some((barrio) => coordenadasValidas(barrio.lat, barrio.lng) && distanciaKm(base, { lat: barrio.lat!, lng: barrio.lng! }) <= perfil.radioCoberturaKm!)
+  return (perfil.modalidadAtencion === 'mixto' && enLugar) || porZona || porRadio
+}
+
 // Towns where a provider works: those of the neighbourhoods it declared and of its own.
 export function localidadesDePerfil(catalogo: CatalogoTus, perfil: PerfilPublico, cobertura: CoberturaDePerfil): Set<string> {
-  const ids = new Set(barriosCubiertos(catalogo, [...cobertura.zonas, cobertura.areaPublica, ...(perfil.zona ? [perfil.zona] : [])]).map((barrio) => barrio.localidadId))
+  const ids = new Set(barriosCubiertos(catalogo, [...(perfil.zona ? [perfil.zona] : []), ...(perfil.modalidadAtencion === 'local' ? [] : [...cobertura.zonas, cobertura.areaPublica])]).map((barrio) => barrio.localidadId))
   const propio = perfil.barrioId ? catalogo.barrios.find((barrio) => barrio.id === perfil.barrioId) : undefined
   if (propio) ids.add(propio.localidadId)
   const zona = perfil.zonaId ? catalogo.zonas.find((item) => item.id === perfil.zonaId) : undefined
   if (zona) ids.add(zona.localidadId)
+  if (perfil.modalidadAtencion !== 'local' && perfil.radioCoberturaKm !== null) {
+    const base = puntoBaseDePerfil(catalogo, perfil)
+    if (base) for (const localidad of catalogo.localidades) if (localidad.activo && coordenadasValidas(localidad.lat, localidad.lng) && distanciaKm(base, { lat: localidad.lat!, lng: localidad.lng! }) <= perfil.radioCoberturaKm) ids.add(localidad.id)
+  }
   return ids
 }
 
