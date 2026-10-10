@@ -32,13 +32,13 @@ const SETUP = `
 
 test('provider location priority uses configured zones, identity fallback, then no location', () => {
   const result = runTypeScriptScenario(`${SETUP}
-    const configured = await provider('configured', { displayName: 'Ana Configurada', profession: 'plomeria', zone: 'Centro', serviceZones: ['Centro', 'Camba Cuá'], serviceMode: 'mixto', coverageRadiusKm: 10 })
+    const configured = await provider('configured', { displayName: 'Ana Configurada', profession: 'plomeria', zone: 'Centro', serviceZones: ['Centro', 'Camba Cuá'], serviceMode: 'mixto', coverageRadiusKm: 10, placeAddress: 'Junín 1234' })
     const fallback = await provider('fallback', { displayName: 'Bruno Fallback', profession: 'electricidad', zone: '', serviceZones: [], serviceMode: 'domicilio', coverageRadiusKm: null }, { barrio: 'Camba Cuá', localidad: 'Corrientes Capital', provincia: 'Corrientes' })
     const empty = await provider('empty', { displayName: 'Carla Sin Zona', profession: 'pintura', zone: '', serviceZones: [], serviceMode: 'domicilio', coverageRadiusKm: null })
     const configuredList = await directorio.listar({ q: 'Centro' })
     const fallbackList = await directorio.listar({ zona: 'Camba Cuá' })
     const emptyProfile = await directorio.perfil(empty.perfil.id)
-    const replaced = await directorio.guardarPerfil(context('fallback'), { displayName: 'Bruno Fallback', profession: 'electricidad', zone: 'Centro', serviceZones: ['Centro'], serviceMode: 'local', coverageRadiusKm: null })
+    const replaced = await directorio.guardarPerfil(context('fallback'), { displayName: 'Bruno Fallback', profession: 'electricidad', zone: 'Centro', serviceZones: ['Centro'], serviceMode: 'local', coverageRadiusKm: null, placeAddress: 'Junín 1234' })
     const restored = await directorio.guardarPerfil(context('fallback'), { displayName: 'Bruno Fallback', profession: 'electricidad', zone: '', serviceZones: [], serviceMode: 'domicilio', coverageRadiusKm: null })
     console.log(JSON.stringify({ configured: configured.perfil, fallback: fallback.perfil, empty: emptyProfile, configuredList, fallbackList, replaced: replaced.perfil, restored: restored.perfil }))
   `)
@@ -73,5 +73,9 @@ test('provider public location migration is additive and keeps exact identity ad
   assert.doesNotMatch(migration, /direccion|calle|altura|documento|dni|cuil/iu)
   assert.match(schema, /zonasCobertura\s+String\[\]/u)
   assert.match(schema, /modalidadAtencion\s+String/u)
-  assert.doesNotMatch(schema.slice(schema.indexOf('model PerfilPublicoPrestador'), schema.indexOf('model ImagenSolicitud')), /direccion|calle|altura|dni|cuil/iu)
+  // LUGAR-FIJO-01 (2026-10-10): the profile now carries the address of the PLACE where the provider
+  // attends (lugar_*: its business, private, given only after a confirmed turno). The address of
+  // the IDENTITY (the home of the person) still never enters the profile: nothing else names one.
+  const modeloPerfil = schema.slice(schema.indexOf('model PerfilPublicoPrestador'), schema.indexOf('model ImagenSolicitud')).split(/\r?\n/u).filter((linea) => !/^\s*(\/\/|lugar(Nombre|Direccion|Descripcion)\s)/u.test(linea)).join(' ')
+  assert.doesNotMatch(modeloPerfil, /direccion|calle|altura|dni|cuil/iu)
 })

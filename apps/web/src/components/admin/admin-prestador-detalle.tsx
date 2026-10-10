@@ -221,6 +221,23 @@ export function AdminPrestadorDetallePage({ id }: { id: string }): React.ReactNo
         </label>
         <label>Radio de cobertura (km, opcional)<input max={100} min={1} onChange={(event) => setForm({ ...form, coverageRadiusKm: event.target.value })} type="number" value={form.coverageRadiusKm} />{campo('coverageRadiusKm')}</label>
 
+        {/* LUGAR-FIJO-01: read here; the provider writes it in its own profile. */}
+        {detalle.perfil.serviceMode !== 'domicilio' ? (
+          <div data-lugar-fijo>
+            <span>Lugar donde atiende</span>
+            {detalle.perfil.placeAddress ? (
+              <p style={{ margin: '4px 0', overflowWrap: 'anywhere' }}>
+                {detalle.perfil.placeName ? <><strong>{detalle.perfil.placeName}</strong><br /></> : null}
+                {detalle.perfil.placeAddress}
+                {detalle.perfil.placeDescription ? <><br /><span className={styles.muted}>{detalle.perfil.placeDescription}</span></> : null}
+              </p>
+            ) : (
+              <p className={styles.muted} style={{ margin: '4px 0' }}>Todavía no cargó la dirección del lugar.</p>
+            )}
+            <p className={styles.muted} style={{ margin: 0 }}>La dirección es privada: solo la ve el cliente con un turno confirmado.</p>
+          </div>
+        ) : null}
+
         <h2>Estado</h2>
         <label style={{ alignItems: 'center', display: 'flex', flexDirection: 'row', gap: 8 }}>
           <input checked={form.visible} onChange={(event) => setForm({ ...form, visible: event.target.checked })} type="checkbox" />

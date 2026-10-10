@@ -1,4 +1,4 @@
-import type { CandidatoPrestador, DisponibilidadPublica, PerfilPrestadorPublico, PrestadorPublico } from '@factory/contracts'
+import { LIMITES_LUGAR_ATENCION, type CandidatoPrestador, type DisponibilidadPublica, type LugarAtencionPrivado, type PerfilPrestadorPublico, type PrestadorPublico } from '@factory/contracts'
 
 import { contieneContacto, zonasCorrientes } from '../solicitudes/modelo.ts'
 import { buscarBarrio, catalogoVigente, ubicacionesReconocibles } from '../catalogo/vigente.ts'
@@ -28,6 +28,10 @@ export interface PerfilPublico {
   zonasCobertura: string[]
   modalidadAtencion: 'local' | 'domicilio' | 'mixto'
   radioCoberturaKm: number | null
+  // LUGAR-FIJO-01. Where it attends ('local' | 'mixto'). The address and the note are private.
+  lugarNombre?: string | null
+  lugarDireccion?: string | null
+  lugarDescripcion?: string | null
   descripcion: string | null
   aniosExperiencia: number | null
   visible: boolean
@@ -100,7 +104,7 @@ export type { CandidatoPrestador, PerfilPrestadorPublico, PrestadorPublico }
 
 // ---- validación del perfil que edita el prestador ----------------------------------------------
 
-export type CampoPerfil = 'displayName' | 'profession' | 'zone' | 'serviceZones' | 'serviceMode' | 'coverageRadiusKm' | 'description' | 'yearsOfExperience' | 'visible'
+export type CampoPerfil = 'displayName' | 'profession' | 'zone' | 'serviceZones' | 'serviceMode' | 'coverageRadiusKm' | 'description' | 'yearsOfExperience' | 'visible' | 'placeName' | 'placeAddress' | 'placeDescription'
 
 export interface EntradaPerfil {
   nombrePublico: string
@@ -113,9 +117,14 @@ export interface EntradaPerfil {
   descripcion: string | null
   aniosExperiencia: number | null
   visible: boolean
+  // LUGAR-FIJO-01. Present only when the modality has a place ('local' | 'mixto'): what was sent,
+  // validated. Absent for 'domicilio': the place stored before, if any, is left as it is.
+  lugar?: { nombre: string | null; direccion: string | null; descripcion: string | null }
 }
 
-export function validarPerfil(body: Record<string, unknown>): { ok: true; valor: EntradaPerfil } | { ok: false; campos: CampoPerfil[] } {
+// `lugarOpcional` (the administration): a place may be left without its address. The provider's
+// own form must give it when it attends at a place.
+export function validarPerfil(body: Record<string, unknown>, opciones: { lugarOpcional?: boolean } = {}): { ok: true; valor: EntradaPerfil } | { ok: false; campos: CampoPerfil[] } {
   const campos: CampoPerfil[] = []
   const texto = (value: unknown) => (typeof value === 'string' ? value.replace(/\s+/gu, ' ').trim() : '')
   const nombre = texto(body['displayName'])
@@ -143,6 +152,18 @@ export function validarPerfil(body: Record<string, unknown>): { ok: true; valor:
   if (radioCoberturaKm !== null && (typeof radioCoberturaKm !== 'number' || !Number.isInteger(radioCoberturaKm) || radioCoberturaKm < 1 || radioCoberturaKm > 100)) campos.push('coverageRadiusKm')
   if (modalidadAtencion === 'local' && radioCoberturaKm !== null) campos.push('coverageRadiusKm')
   if (descripcion.length > 600 || contieneContacto(descripcion)) campos.push('description')
+  // LUGAR-FIJO-01. Only for a modality with a place. Each value is a string or absent/null (an
+  // empty or blank string is "nothing"); the address is required, the other two are optional.
+  const conLugar = modalidadAtencion === 'local' || modalidadAtencion === 'mixto'
+  const deLugar = (clave: string) => (body[clave] === undefined || body[clave] === null ? '' : typeof body[clave] === 'string' ? texto(body[clave]) : null)
+  const lugarNombre = deLugar('placeName')
+  const lugarDireccion = deLugar('placeAddress')
+  const lugarDescripcion = deLugar('placeDescription')
+  if (conLugar) {
+    if (lugarNombre === null || (lugarNombre !== '' && (lugarNombre.length < LIMITES_LUGAR_ATENCION.nombre.min || lugarNombre.length > LIMITES_LUGAR_ATENCION.nombre.max || contieneContacto(lugarNombre)))) campos.push('placeName')
+    if (lugarDireccion === null || (lugarDireccion === '' ? !opciones.lugarOpcional : lugarDireccion.length < LIMITES_LUGAR_ATENCION.direccion.min || lugarDireccion.length > LIMITES_LUGAR_ATENCION.direccion.max)) campos.push('placeAddress')
+    if (lugarDescripcion === null || lugarDescripcion.length > LIMITES_LUGAR_ATENCION.descripcion.max) campos.push('placeDescription')
+  }
   if (experiencia !== null && (typeof experiencia !== 'number' || !Number.isInteger(experiencia) || experiencia < 0 || experiencia > 70)) campos.push('yearsOfExperience')
   if (typeof visible !== 'boolean') campos.push('visible')
   if (campos.length > 0) return { ok: false, campos }
@@ -159,8 +180,17 @@ export function validarPerfil(body: Record<string, unknown>): { ok: true; valor:
       descripcion: descripcion || null,
       aniosExperiencia: experiencia as number | null,
       visible: visible as boolean,
+      ...(conLugar ? { lugar: { nombre: lugarNombre || null, direccion: lugarDireccion || null, descripcion: lugarDescripcion || null } } : {}),
     },
   }
+}
+
+// LUGAR-FIJO-01. The place of a profile WITH its address (private), or null when it attends at no
+// place or has not said where. The one function that builds it: every reader calls this, after
+// deciding that the reader may have it.
+export function lugarPrivadoDe(perfil: { modalidadAtencion: string; lugarNombre?: string | null; lugarDireccion?: string | null; lugarDescripcion?: string | null }): LugarAtencionPrivado | null {
+  if ((perfil.modalidadAtencion !== 'local' && perfil.modalidadAtencion !== 'mixto') || !perfil.lugarDireccion) return null
+  return { nombre: perfil.lugarNombre ?? null, direccion: perfil.lugarDireccion, descripcion: perfil.lugarDescripcion ?? null }
 }
 
 // ---- proyecciones públicas ----------------------------------------------------------------------
@@ -219,6 +249,8 @@ export function proyectarPublico(perfil: PerfilPublico, hechos: HechosPrestador,
       const item = oficio(id)
       return { id: item.id, label: item.label, title: item.profesion, categoryId: item.categoriaId ?? null }
     }),
+    // LUGAR-FIJO-01: only the NAME of the place is public; its address never leaves through here.
+    place: perfil.modalidadAtencion !== 'domicilio' && perfil.lugarNombre ? { name: perfil.lugarNombre } : null,
     approximateArea: resolved.publicArea,
     publicArea: resolved.publicArea,
     serviceZones: resolved.serviceZones,

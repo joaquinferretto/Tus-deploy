@@ -26,6 +26,9 @@ const FIELD_MESSAGES: Record<string, string> = {
    coverageRadiusKm: 'Ingresá una distancia entre 1 y 100 km si atendés a domicilio.',
   description: 'Hasta 600 caracteres, sin teléfonos, emails ni links.',
   yearsOfExperience: 'Ingresá los años como número entero (0 a 70).',
+  placeName: 'El nombre del lugar va de 2 a 80 caracteres, sin teléfonos ni emails.',
+  placeAddress: 'Escribí la dirección del lugar donde atendés (calle y número).',
+  placeDescription: 'La indicación para llegar puede tener hasta 240 caracteres.',
 }
 
 // The provider chooses what the directory shows. Verification, completed jobs and hours are
@@ -33,7 +36,7 @@ const FIELD_MESSAGES: Record<string, string> = {
 export function ProviderPublicProfile(): React.ReactNode {
   const session = useTusSession(RETURN_TO)
   const [catalog, setCatalog] = useState<{ items: OficioPublico[]; zones: string[]; categories?: CategoriaPublica[] }>({ items: [], zones: [] })
-  const [values, setValues] = useState({ displayName: '', professions: [] as string[], zone: '', serviceZones: [] as string[], serviceMode: 'domicilio' as 'local' | 'domicilio' | 'mixto', coverageRadiusKm: '', description: '', years: '', visible: true })
+  const [values, setValues] = useState({ displayName: '', professions: [] as string[], zone: '', serviceZones: [] as string[], serviceMode: 'domicilio' as 'local' | 'domicilio' | 'mixto', coverageRadiusKm: '', description: '', years: '', visible: true, placeName: '', placeAddress: '', placeDescription: '' })
   const [status, setStatus] = useState<'loading' | 'ready' | 'saving' | 'saved' | 'not_provider' | 'error'>('loading')
   const [fields, setFields] = useState<string[]>([])
   const [message, setMessage] = useState('')
@@ -64,6 +67,9 @@ export function ProviderPublicProfile(): React.ReactNode {
             description: mine.profile.description ?? '',
             years: mine.profile.yearsOfExperience === null ? '' : String(mine.profile.yearsOfExperience),
             visible: mine.profile.visible,
+            placeName: mine.profile.ownPlace?.nombre ?? '',
+            placeAddress: mine.profile.ownPlace?.direccion ?? '',
+            placeDescription: mine.profile.ownPlace?.descripcion ?? '',
           })
         }
         setStatus('ready')
@@ -91,6 +97,9 @@ export function ProviderPublicProfile(): React.ReactNode {
         description: values.description.trim(),
         yearsOfExperience: years,
         visible: values.visible,
+        // LUGAR-FIJO-01: sent only when the provider attends at a place; going to homes only, what
+        // was stored stays as it is.
+        ...(values.serviceMode !== 'domicilio' ? { placeName: values.placeName.trim(), placeAddress: values.placeAddress.trim(), placeDescription: values.placeDescription.trim() } : {}),
       })
       setPublicId(result.profile.id)
       setStatus('saved')
@@ -223,6 +232,15 @@ export function ProviderPublicProfile(): React.ReactNode {
            </div>
          ) : null}
       </div>
+      {values.serviceMode !== 'domicilio' ? (
+        <fieldset className={authStyles.field} data-lugar-fijo>
+          <legend>Lugar donde atendés</legend>
+          <TextField error={error('placeName')} id="perfil-lugar-nombre" label="Nombre del lugar (opcional)" maxLength={80} onChange={(event) => setValues((current) => ({ ...current, placeName: event.target.value }))} placeholder="Ej.: Consultorio Ferretto" value={values.placeName} />
+          <TextField error={error('placeAddress')} id="perfil-lugar-direccion" label="Dirección" maxLength={160} onChange={(event) => setValues((current) => ({ ...current, placeAddress: event.target.value }))} placeholder="Ej.: Av. 3 de Abril 1250" value={values.placeAddress} />
+          <TextField error={error('placeDescription')} id="perfil-lugar-descripcion" label="Cómo llegar (opcional)" maxLength={240} onChange={(event) => setValues((current) => ({ ...current, placeDescription: event.target.value }))} placeholder="Ej.: Primer piso, timbre 2. Entrada por calle Mendoza." value={values.placeDescription} />
+          <p className={styles.muted}>El nombre del lugar se muestra en tu perfil. La dirección y la indicación para llegar solo las ve el cliente cuando su turno está confirmado.</p>
+        </fieldset>
+      ) : null}
       <p className={authStyles.notice}>
         {publicId && values.serviceZones.length === 0 && values.zone === ''
           ? 'Si tu identidad está verificada y tiene una zona válida, se mostrará una referencia aproximada. Tu dirección exacta nunca se publica.'

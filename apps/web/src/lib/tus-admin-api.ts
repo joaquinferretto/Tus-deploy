@@ -194,6 +194,10 @@ export interface AdminPrestadorDetalle {
     serviceZones: string[]
     serviceMode: 'local' | 'domicilio' | 'mixto'
     coverageRadiusKm: number | null
+    // LUGAR-FIJO-01: the place where it attends, with its private address (administration only).
+    placeName?: string | null
+    placeAddress?: string | null
+    placeDescription?: string | null
     description: string | null
     yearsOfExperience: number | null
     visible: boolean

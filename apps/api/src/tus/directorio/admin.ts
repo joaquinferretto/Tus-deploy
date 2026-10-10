@@ -15,9 +15,9 @@ export function crearAltaPrestadorAdmin(deps: {
 }) {
   return async (admin: TusAuthenticatedTenantContext, body: Record<string, unknown>) => {
     if (!admin.permissions.includes('tus:providers:admin')) return { status: 403, code: 'FORBIDDEN' }
-    const allowed = new Set(['email', 'displayName', 'profession', 'zone', 'serviceZones', 'serviceMode', 'coverageRadiusKm', 'description', 'yearsOfExperience', 'visible'])
+    const allowed = new Set(['email', 'displayName', 'profession', 'zone', 'serviceZones', 'serviceMode', 'coverageRadiusKm', 'description', 'yearsOfExperience', 'visible', 'placeName', 'placeAddress', 'placeDescription'])
     if (Object.keys(body).some(key => !allowed.has(key))) return { status: 422, code: 'INVALID_PROFILE' }
-    const validation = validarPerfil(body)
+    const validation = validarPerfil(body, { lugarOpcional: true })
     if (!validation.ok) return { status: 422, code: 'INVALID_PROFILE', fields: validation.campos }
     const email = typeof body['email'] === 'string' ? body['email'].trim().toLowerCase() : ''
     if (!email || email.length > 254) return { status: 422, code: 'INVALID_EMAIL' }
@@ -71,7 +71,7 @@ export function crearAltaPrestadorAdmin(deps: {
     const target = { ...admin, tenantId: account.tenantId, roles: ['owner'], permissions: ['tus:marketplace:write'] }
     // (PRESTADOR-TIPO-01: a NEW provider registered with a name that is not the one of its holder
     // is a business; an existing person keeps its derived name and another one is refused.)
-    const result = await deps.directorio.guardarPerfil(target, body, { nombreLibreAlCrear: true })
+    const result = await deps.directorio.guardarPerfil(target, body, { nombreLibreAlCrear: true, lugarOpcional: true })
     if (!result.ok) return { status: 422, code: result.code }
     await marketplace.store.audit.append([{
       auditId: randomUUID(), tenantId: account.tenantId, actorId: admin.subjectId,
@@ -86,7 +86,7 @@ export function crearAltaPrestadorAdmin(deps: {
 // Admin edition of an existing provider (FASE directorio): every business field of the public
 // profile, the services (N:M), coverage and the provider approval. Never the tenant, the internal
 // ids or anything of the account's credentials (the account has its own safe operations).
-export const CAMPOS_PERFIL_ADMIN = ['displayName', 'profession', 'professions', 'zone', 'serviceZones', 'serviceMode', 'coverageRadiusKm', 'description', 'yearsOfExperience', 'visible'] as const
+export const CAMPOS_PERFIL_ADMIN = ['displayName', 'profession', 'professions', 'zone', 'serviceZones', 'serviceMode', 'coverageRadiusKm', 'description', 'yearsOfExperience', 'visible', 'placeName', 'placeAddress', 'placeDescription'] as const
 export const ESTADOS_PRESTADOR_ADMIN = ['approved', 'suspended'] as const
 
 export function crearEdicionPrestadorAdmin(deps: { application: TusApplicationService; directorio: ServicioDirectorio }) {
@@ -95,6 +95,10 @@ export function crearEdicionPrestadorAdmin(deps: { application: TusApplicationSe
     displayName: perfil.nombrePublico,
     // PRESTADOR-TIPO-01: read only here; it is changed by its own audited operation.
     providerType: perfil.tipoPrestador ?? 'persona_fisica',
+    // LUGAR-FIJO-01: the administration reads the place with its address (this view is never public).
+    placeName: perfil.lugarNombre ?? null,
+    placeAddress: perfil.lugarDireccion ?? null,
+    placeDescription: perfil.lugarDescripcion ?? null,
     profession: perfil.oficio,
     professions: [...perfil.oficios],
     zone: perfil.zona,

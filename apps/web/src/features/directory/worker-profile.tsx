@@ -93,7 +93,7 @@ export function WorkerProfile({ id }: { id: string }): React.ReactNode {
         <div>
           <h1 className={styles.title}>{worker.displayName}</h1>
           <p className={styles.profession}>
-            {worker.profession.title} · {worker.publicArea} (zona aproximada)
+            {worker.profession.title} · {worker.place?.name ? `${worker.place.name} · ` : ''}{worker.publicArea} (zona aproximada)
           </p>
           <p className={styles.muted}>
             Servicios: {servicesLabel(worker)}

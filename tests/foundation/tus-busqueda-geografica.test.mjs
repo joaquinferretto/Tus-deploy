@@ -26,12 +26,12 @@ test('BÚSQUEDA geográfica: near me is 8 km AND the coverage of the provider (o
     const kmOtro = geo.distanciaKm(p(centro), p(otro))
     const lejos = { lat: centro.lat + 0.2, lng: centro.lng }
     const ids = {
-      local: await alta('local', { displayName: 'Taller Fijo', zone: centro.nombre, serviceMode: 'local' }),
+      local: await alta('local', { displayName: 'Taller Fijo', zone: centro.nombre, serviceMode: 'local', placeAddress: 'Junín 1234' }),
       domicilioCentro: await alta('dom-centro', { displayName: 'Va Solo Al Centro', zone: centro.nombre, serviceZones: [centro.nombre], serviceMode: 'domicilio' }),
       domicilioRadio: await alta('dom-radio', { displayName: 'Va Con Radio', zone: centro.nombre, serviceZones: [centro.nombre], serviceMode: 'domicilio', coverageRadiusKm: 7 }),
       domicilioRadioCorto: await alta('dom-corto', { displayName: 'Va Un Kilometro', zone: centro.nombre, serviceZones: [centro.nombre], serviceMode: 'domicilio', coverageRadiusKm: 1 }),
       domicilioDos: await alta('dom-dos', { displayName: 'Va A Los Dos', zone: otro.nombre, serviceZones: [otro.nombre, centro.nombre], serviceMode: 'domicilio' }),
-      mixto: await alta('mixto', { displayName: 'Local Y Domicilio', zone: otro.nombre, serviceZones: [otro.nombre], serviceMode: 'mixto' }),
+      mixto: await alta('mixto', { displayName: 'Local Y Domicilio', zone: otro.nombre, serviceZones: [otro.nombre], serviceMode: 'mixto', placeAddress: 'Junín 1234' }),
     }
     const nombre = Object.fromEntries(Object.entries(ids).map(([k, v]) => [v, k]))
     const buscar = async (filtros) => { const res = await directorio.listar(filtros); return { quienes: res.items.map((i) => nombre[i.id]).sort(), items: res.items, texto: JSON.stringify(res) } }
@@ -58,7 +58,7 @@ test('BÚSQUEDA geográfica: near me is 8 km AND the coverage of the provider (o
     const catalogo = catalogoVigente()
     const { validarPerfil } = await import('./apps/api/src/tus/directorio/modelo.ts')
     const { resolverUbicacionPublicaPrestador } = await import('./apps/api/src/tus/directorio/ubicacion.ts')
-    const basePerfil = { displayName: 'Profesional de prueba', profession: 'plomeria', zone: centro.nombre, serviceZones: [centro.nombre] }
+    const basePerfil = { displayName: 'Profesional de prueba', profession: 'plomeria', zone: centro.nombre, serviceZones: [centro.nombre], placeAddress: 'Junín 1234' }
     out.modalidades = {
       localConRadio: validarPerfil({ ...basePerfil, serviceMode: 'local', coverageRadiusKm: 12 }),
       localSinRadio: validarPerfil({ ...basePerfil, serviceMode: 'local', coverageRadiusKm: null }),

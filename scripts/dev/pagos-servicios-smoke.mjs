@@ -215,7 +215,7 @@ async function main() {
           const oficio = await prisma.oficioServicio.findFirst({ where: { activo: true }, orderBy: { orden: 'asc' } })
           await prisma.tusTenant.upsert({ where: { id: tenantId }, update: {}, create: { id: tenantId, slug: tenantId, name: 'Prestador Smoke', status: 'active', createdAt: ahora, updatedAt: ahora } })
           await prisma.prestador.create({ data: { id: 'smoke-p', tenantId, prestadorId: 'smoke-prestador', cohorte: 'repairs-trades', ubicacionId: 'ubicacion', zonaHoraria: 'America/Argentina/Buenos_Aires', rolesPersonal: ['owner'], versionPoliticaOperativa: 'v1', estado: 'approved', cuentaId, fechaCreacion: ahora, fechaActualizacion: ahora } })
-          await prisma.perfilPublicoPrestador.create({ data: { id: 'smoke-perfil', tenantId, prestadorId: 'smoke-prestador', nombrePublico: 'Prestador Smoke', tipoPrestador: 'empresa', oficio: oficio.id, zona: 'Centro', visible: true, fechaCreacion: ahora, fechaActualizacion: ahora, servicios: { create: [{ oficioId: oficio.id, duracionMinutos: 60, precioBase: 20000n }] } } })
+          await prisma.perfilPublicoPrestador.create({ data: { id: 'smoke-perfil', tenantId, prestadorId: 'smoke-prestador', nombrePublico: 'Prestador Smoke', tipoPrestador: 'empresa', modalidadAtencion: 'local', lugarNombre: 'Consultorio Smoke', lugarDireccion: 'Av. 3 de Abril 1250', lugarDescripcion: 'Primer piso, timbre 2.', oficio: oficio.id, zona: 'Centro', visible: true, fechaCreacion: ahora, fechaActualizacion: ahora, servicios: { create: [{ oficioId: oficio.id, duracionMinutos: 60, precioBase: 20000n }] } } })
           await prisma.verificacionIdentidad.create({ data: { id: 'smoke-verificacion', tenantId, usuarioId, proveedorId: 'smoke', numeroDocumento: '30111222', metodoVerificacion: 'manual', estado: 'verified', fechaCreacion: ahora, verificadaEn: ahora, fechaActualizacion: ahora } })
           await prisma.tusTenant.create({ data: { id: 'smoke-presupuesta', slug: 'smoke-presupuesta', name: 'A Presupuestar', status: 'active', createdAt: ahora, updatedAt: ahora } })
           await prisma.prestador.create({ data: { id: 'smoke-p2', tenantId: 'smoke-presupuesta', prestadorId: 'smoke-prestador-2', cohorte: 'repairs-trades', ubicacionId: 'ubicacion', zonaHoraria: 'America/Argentina/Buenos_Aires', rolesPersonal: ['owner'], versionPoliticaOperativa: 'v1', estado: 'approved', fechaCreacion: ahora, fechaActualizacion: ahora } })
@@ -422,6 +422,9 @@ async function recorrer(browser, viewport, estado, indice) {
     for (const [clave, hora] of [['total', '10:00'], ['sena', '11:00'], ['tarde', '13:00']]) {
       if (clave === 'total') {
         await page.goto(`${web}/trabajadores/smoke-perfil?turno=1`, { waitUntil: 'networkidle' })
+        // LUGAR-FIJO-01: before a turno, the name of the place and its area; never its address.
+        const publicoLugar = await page.locator('body').innerText()
+        check(publicoLugar.includes('Consultorio Smoke') && !publicoLugar.includes('3 de Abril') && !publicoLugar.includes('timbre'), `${e}: the public profile names the place and does not give its address`)
         const agenda = page.locator('[data-agenda]')
         const slot = await mostrarInicio(agenda, inicio(hora))
         check(viewport.width > 640 ? await agenda.locator('table').isVisible() : !(await agenda.locator('table').isVisible()), `${e}: booking uses the responsive weekly agenda`)
@@ -514,6 +517,7 @@ async function recorrer(browser, viewport, estado, indice) {
     await misTurnos(pedidos.total)
     const modalidad = elTurno(pedidos.total).locator('[data-turno-modalidad]')
     await modalidad.waitFor()
+    check((await elTurno(pedidos.total).getAttribute('data-turno')) === 'awaiting_payment' && (await elTurno(pedidos.total).locator('[data-lugar-atencion]').count()) === 0 && !(await texto(elTurno(pedidos.total))).includes('3 de Abril'), `${e}: accepted but not paid: the client is not given the address yet`)
     const opciones = await texto(modalidad)
     check(opciones.includes('Pagar seña') && opciones.includes('10.000') && opciones.includes('Pagar total') && opciones.includes('20.000'), `${e}: deposit or total, with the amounts of the API (${opciones})`)
     await sinDesborde('Mis turnos with the choice')
@@ -536,6 +540,10 @@ async function recorrer(browser, viewport, estado, indice) {
     await elTurno(pedidos.total).locator('[data-turno-pago="total"]').waitFor()
     check((await elTurno(pedidos.total).getAttribute('data-turno')) === 'confirmed' && (await elTurno(pedidos.total).locator('[data-turno-modalidad]').count()) === 0, `${e}: paid in total: confirmed, and the choice is closed`)
     check(!(await texto(elTurno(pedidos.total))).includes('Saldo pendiente'), `${e}: a turno paid in total has no balance`)
+    const lugarConfirmado = elTurno(pedidos.total).locator('[data-lugar-atencion]')
+    await lugarConfirmado.waitFor()
+    check((await texto(lugarConfirmado)) === 'Lugar de atención Consultorio Smoke Av. 3 de Abril 1250 Primer piso, timbre 2.', `${e}: confirmed: the client reads where to go (${await texto(lugarConfirmado)})`)
+    await sinDesborde('Mis turnos with the place of a confirmed turno')
     await elTurno(pedidos.sena).locator('[data-pagar="sena"]').click()
     const politicaSena = elTurno(pedidos.sena).locator('[data-politica-cancelacion]')
     await politicaSena.waitFor()
@@ -667,6 +675,21 @@ async function recorrer(browser, viewport, estado, indice) {
     const observado = page.locator('[data-turno-cierre="observado"]')
     check((await observado.count()) === 1 && (await texto(observado)).includes('los fondos siguen retenidos') && (await page.locator('[data-turno-cobro="retenidos"]').count()) >= indice + 1, `${e}: the reported turno stays retained although it is fully paid`)
     await page.screenshot({ path: join(artifacts, `${e}-prestador-liberado-y-observado.png`), fullPage: true })
+    // ---- LUGAR-FIJO-01: Prestador -> Perfil. The fields of the place follow the modality: at a
+    //      place (name, address, how to get in; no travel distance), going to homes (no place; the
+    //      distance), both (everything). Nothing is saved here.
+    await page.goto(`${web}/prestador/perfil-publico`, { waitUntil: 'networkidle' })
+    const lugarFijo = page.locator('[data-lugar-fijo]')
+    const radio = page.locator('[data-radio-desplazamiento]')
+    await lugarFijo.waitFor()
+    check((await page.locator('#perfil-lugar-direccion').inputValue()) === 'Av. 3 de Abril 1250' && (await page.locator('#perfil-lugar-nombre').inputValue()) === 'Consultorio Smoke' && (await radio.count()) === 0, `${e}: at a place: its own place is shown to the provider, with no travel distance`)
+    await sinDesborde('Prestador -> Perfil (lugar fijo)')
+    await page.screenshot({ path: join(artifacts, `${e}-prestador-lugar-fijo.png`), fullPage: true })
+    await page.locator('#perfil-modalidad').selectOption('domicilio')
+    check((await lugarFijo.count()) === 0 && (await radio.count()) === 1, `${e}: going to homes: no place, the travel distance`)
+    await page.locator('#perfil-modalidad').selectOption('mixto')
+    check((await lugarFijo.count()) === 1 && (await radio.count()) === 1 && (await page.locator('#perfil-lugar-direccion').inputValue()) === 'Av. 3 de Abril 1250', `${e}: both: the place (as it was) and the travel distance`)
+    await sinDesborde('Prestador -> Perfil (ambas)')
     // ---- MP-OAUTH-AUTORIZACION-01: Prestador -> Pagos -> "Vincular Mercado Pago". The provider has
     //      no linked account and no verified-identity requirement: ONE click (even a double one)
     //      is ONE request, answered with the address of Mercado Pago (PKCE, the configured

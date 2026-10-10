@@ -63,6 +63,7 @@ import {
   type IntervaloInicioTurno,
 } from '@factory/contracts'
 import { cuentaDePrestador, type ClientePrismaVinculoPrestador } from '../directorio/cuenta-prestador.ts'
+import { lugarPrivadoDe } from '../directorio/modelo.ts'
 import { ErrorFotoPerfil, prepararFotoPerfil } from '../directorio/foto.ts'
 import { agendaDelDia } from './agenda.ts'
 
@@ -1415,6 +1416,10 @@ export class ServicioTurnos {
         ...this.mapearDetalleTurno(row, perfil?.nombrePublico ?? 'Prestador', { oficioNombre: row.servicioId ? oficios.get(row.servicioId) : undefined }),
         // Public profile id: the link back to the professional.
         ...(perfil ? { prestadorId: perfil.id } : {}),
+        // LUGAR-FIJO-01. Where to go: ONLY here (the turnos of the client of the session, found
+        // by its own account id) and ONLY while the turno is confirmed. A request, an unpaid, a
+        // cancelled, a rejected or a past turno carries no address.
+        ...(perfil && row.estado === 'confirmed' ? { lugarAtencion: lugarPrivadoDe(perfil) } : {}),
       }
     }))
   }

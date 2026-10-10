@@ -3115,6 +3115,12 @@ model PerfilPublicoPrestador {
   zonasCobertura     String[] @default([]) @map("zonas_cobertura")
   modalidadAtencion  String   @default("domicilio") @map("modalidad_atencion")
   radioCoberturaKm   Int?     @map("radio_cobertura_km")
+  // LUGAR-FIJO-01 (20261123100000): where the provider attends ('local' | 'mixto'). The name may
+  // be published; the address and the note are PRIVATE (owner, administration, and the client of
+  // a confirmed turno). ck_perfiles_publicos_prestador_lugar (SQL): lengths.
+  lugarNombre        String?  @map("lugar_nombre")
+  lugarDireccion     String?  @map("lugar_direccion")
+  lugarDescripcion   String?  @map("lugar_descripcion")
   descripcion        String?  @map("descripcion")
   aniosExperiencia   Int?     @map("anios_experiencia")
   visible            Boolean  @default(true) @map("visible")

@@ -227,6 +227,15 @@ export function MisTurnosPage(): React.ReactNode {
                   <span>
                     Estado: <span className={claseEstadoTurno(turno.estado)}>{etiquetaEstadoTurno(turno.estado)}</span>
                   </span>
+                  {/* LUGAR-FIJO-01: the API sends it only for the client's own confirmed turno. */}
+                  {turno.lugarAtencion ? (
+                    <span data-lugar-atencion style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 10, display: 'grid', gap: 2, overflowWrap: 'anywhere', padding: '8px 10px' }}>
+                      <strong>Lugar de atención</strong>
+                      {turno.lugarAtencion.nombre ? <span>{turno.lugarAtencion.nombre}</span> : null}
+                      <span>{turno.lugarAtencion.direccion}</span>
+                      {turno.lugarAtencion.descripcion ? <span className={styles.muted}>{turno.lugarAtencion.descripcion}</span> : null}
+                    </span>
+                  ) : null}
                   {turno.precioFinal != null && turno.precioFinal > 0 ? (
                     <span data-turno-cobro>
                       Precio: <strong>{formatearPesos(turno.precioFinal)}</strong>

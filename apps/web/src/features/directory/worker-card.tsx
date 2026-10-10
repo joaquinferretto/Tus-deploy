@@ -51,6 +51,7 @@ export function WorkerCard({
         </div>
         <p className={styles.compactFacts}>
           {typeof worker.distanceKm === 'number' ? `A ${worker.distanceKm} km · ` : ''}
+          {worker.place?.name ? `${worker.place.name} · ` : ''}
           {worker.publicArea}
           {rating ? ` · ${rating}` : ''}
           {worker.startingPrice ? ` · Desde ${PESOS.format(worker.startingPrice.amount)}` : ''}

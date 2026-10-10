@@ -62,8 +62,15 @@ export interface FiltrosDirectorio {
   localidadId?: unknown
 }
 
+// What the OWNER of a profile (and the administration) reads: the public projection plus the
+// place with its private address (LUGAR-FIJO-01). Never returned by a public route.
+export type PerfilPropio = PerfilPrestadorPublico & { visible: boolean; ownPlace: { nombre: string | null; direccion: string | null; descripcion: string | null } | null }
+// What is stored of the place, whatever the modality (the form shows it again when it applies).
+const lugarPropio = (perfil: PerfilPublico): PerfilPropio['ownPlace'] =>
+  perfil.lugarNombre || perfil.lugarDireccion || perfil.lugarDescripcion ? { nombre: perfil.lugarNombre ?? null, direccion: perfil.lugarDireccion ?? null, descripcion: perfil.lugarDescripcion ?? null } : null
+
 export type ResultadoPerfil =
-  | { ok: true; perfil: PerfilPrestadorPublico & { visible: boolean } }
+  | { ok: true; perfil: PerfilPropio }
   | { ok: false; code: 'INVALID_PROFILE'; fields: CampoPerfil[] }
   | { ok: false; code: 'PROVIDER_REQUIRED'; fields?: undefined }
   // PRESTADOR-TIPO-01: the public name of a provider presented as a person is derived from the
@@ -137,14 +144,14 @@ export class ServicioDirectorio {
 
   // ---- perfil del prestador autenticado -------------------------------------------------------
 
-  async miPerfil(context: TusAuthenticatedTenantContext): Promise<(PerfilPrestadorPublico & { visible: boolean }) | null> {
+  async miPerfil(context: TusAuthenticatedTenantContext): Promise<PerfilPropio | null> {
     const perfil = await this.deps.perfiles.porTenant(context.tenantId)
     if (!perfil) return null
     const [hechos, fallback] = await Promise.all([
       this.hechosConCalificacion(context.tenantId),
       this.deps.fuentes.ubicacionIdentidadVerificada?.(context.tenantId) ?? Promise.resolve(null),
     ])
-    return { ...proyectarPerfil(perfil, hechos, this.now(), resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible }
+    return { ...proyectarPerfil(perfil, hechos, this.now(), resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible, ownPlace: lugarPropio(perfil) }
   }
 
   // What the forms need to know about the public name: the type and, when it is derived (a
@@ -158,7 +165,7 @@ export class ServicioDirectorio {
 
   // `nombreLibreAlCrear` (the administration registering a provider): a NEW profile given a name
   // that is not the one of its holder is created as a business. It never applies to an edit.
-  async guardarPerfil(context: TusAuthenticatedTenantContext, body: Record<string, unknown>, opciones: { nombreLibreAlCrear?: boolean } = {}): Promise<ResultadoPerfil> {
+  async guardarPerfil(context: TusAuthenticatedTenantContext, body: Record<string, unknown>, opciones: { nombreLibreAlCrear?: boolean; lugarOpcional?: boolean } = {}): Promise<ResultadoPerfil> {
     const prestador = await this.deps.fuentes.prestador(context.tenantId)
     if (!prestador) return { ok: false, code: 'PROVIDER_REQUIRED' }
     const actual = await this.deps.perfiles.porTenant(context.tenantId)
@@ -176,8 +183,13 @@ export class ServicioDirectorio {
         tipoPrestador = 'empresa'
       } else if (fijo) body = { ...body, displayName: fijo }
     }
-    const validacion = validarPerfil(body)
+    // LUGAR-FIJO-01. A request that does not name the place keeps the one stored (an older client,
+    // or the administration editing something else). `lugarOpcional`: the administration may
+    // leave a place without its address; the provider's own save must give it.
+    body = { ...(actual ? { placeName: actual.lugarNombre ?? null, placeAddress: actual.lugarDireccion ?? null, placeDescription: actual.lugarDescripcion ?? null } : {}), ...body }
+    const validacion = validarPerfil(body, { lugarOpcional: opciones.lugarOpcional === true })
     if (!validacion.ok) return { ok: false, code: 'INVALID_PROFILE', fields: validacion.campos }
+    const { lugar, ...valor } = validacion.valor
     const ahora = this.now()
     const perfil: PerfilPublico = {
       id: actual?.id ?? this.newId(),
@@ -187,7 +199,11 @@ export class ServicioDirectorio {
       ...GEOGRAFIA_VACIA,
       ...(actual ? pickGeografia(actual) : {}),
       fotoSha256: actual?.fotoSha256 ?? null,
-      ...validacion.valor,
+      ...valor,
+      // Going to homes only: the place stored before is kept (it comes back if the modality does).
+      lugarNombre: lugar ? lugar.nombre : actual?.lugarNombre ?? null,
+      lugarDireccion: lugar ? lugar.direccion : actual?.lugarDireccion ?? null,
+      lugarDescripcion: lugar ? lugar.descripcion : actual?.lugarDescripcion ?? null,
       tipoPrestador,
       creadoEn: actual?.creadoEn ?? ahora,
       actualizadoEn: ahora,
@@ -197,7 +213,7 @@ export class ServicioDirectorio {
       this.hechosConCalificacion(context.tenantId),
       this.deps.fuentes.ubicacionIdentidadVerificada?.(context.tenantId) ?? Promise.resolve(null),
     ])
-    return { ok: true, perfil: { ...proyectarPerfil(perfil, hechos, ahora, resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible } }
+    return { ok: true, perfil: { ...proyectarPerfil(perfil, hechos, ahora, resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible, ownPlace: lugarPropio(perfil) } }
   }
 
   // ---- foto de perfil ---------------------------------------------------------------------------
@@ -570,7 +586,7 @@ export class ServicioDirectorio {
     const perfil = await this.deps.perfiles.porId(id)
     if (!perfil) return { ok: false, code: 'NOT_FOUND' }
     const context = { tenantId: perfil.tenantId, subjectId: 'platform-admin', sessionId: 'admin', roles: ['owner'], permissions: ['tus:marketplace:write'], correlationId: 'admin' }
-    return this.guardarPerfil(context, body)
+    return this.guardarPerfil(context, body, { lugarOpcional: true })
   }
 
   async cambiarVisibilidadAdmin(id: string, visible: boolean): Promise<{ id: string; tenantId: string; visible: boolean } | null> {

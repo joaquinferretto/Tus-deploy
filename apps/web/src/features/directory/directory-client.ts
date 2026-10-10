@@ -130,8 +130,8 @@ export function createDirectoryClient(fetchImpl: Fetch = fetchWithSession) {
       call<ResultadoCandidatos>(fetchImpl, '/tus/v1/asistente/candidatos', { method: 'POST', body: JSON.stringify(input) }, session),
     // Provider side.
     // `publicName` (PRESTADOR-TIPO-01): for a person the public name is derived, not typed.
-    myProfile: (session: TusWebSession) => call<{ profile: (PerfilPrestadorPublico & { visible: boolean }) | null; publicName?: { type: 'persona_fisica' | 'empresa'; derived: string | null } }>(fetchImpl, '/tus/v1/prestador/perfil-publico', {}, session),
-    saveProfile: (session: TusWebSession, input: { displayName: string; profession: string; professions?: string[]; zone: string; serviceZones: string[]; serviceMode: 'local' | 'domicilio' | 'mixto'; coverageRadiusKm: number | null; description: string; yearsOfExperience: number | null; visible: boolean }) =>
+    myProfile: (session: TusWebSession) => call<{ profile: (PerfilPrestadorPublico & { visible: boolean; ownPlace?: { nombre: string | null; direccion: string | null; descripcion: string | null } | null }) | null; publicName?: { type: 'persona_fisica' | 'empresa'; derived: string | null } }>(fetchImpl, '/tus/v1/prestador/perfil-publico', {}, session),
+    saveProfile: (session: TusWebSession, input: { displayName: string; profession: string; professions?: string[]; zone: string; serviceZones: string[]; serviceMode: 'local' | 'domicilio' | 'mixto'; coverageRadiusKm: number | null; description: string; yearsOfExperience: number | null; visible: boolean; placeName?: string; placeAddress?: string; placeDescription?: string }) =>
       call<{ profile: PerfilPrestadorPublico & { visible: boolean } }>(fetchImpl, '/tus/v1/prestador/perfil-publico', { method: 'PUT', body: JSON.stringify(input) }, session),
     // Own profile photo: the raw file as the body (the API reads its real type from the bytes and
     // takes the provider from the session; there is no id, name or URL to send).

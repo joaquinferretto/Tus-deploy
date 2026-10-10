@@ -115,6 +115,8 @@ export interface PrestadorPublico {
   initials: string
   // GEO-BUSQUEDA-01: only in a "near me" search, how far the provider is, in whole kilometres.
   distanceKm?: number | null
+  // LUGAR-FIJO-01: the NAME of the place where it attends, when it has one. Never its address.
+  place?: { name: string } | null
   // API path of the provider's profile photo (/tus/v1/public/prestadores/:id/foto?v=...); null
   // without a photo. Absent in older payloads. Never an external URL.
   photoUrl?: string | null
@@ -159,6 +161,15 @@ export interface SolicitudReservaTurno {
   notas?: string
 }
 
+// LUGAR-FIJO-01. The place of a provider WITH its address: private. Given by the API only to the
+// provider itself, to the administration and to the client of a confirmed turno with it.
+export interface LugarAtencionPrivado {
+  nombre: string | null
+  direccion: string
+  descripcion: string | null
+}
+export const LIMITES_LUGAR_ATENCION = { nombre: { min: 2, max: 80 }, direccion: { min: 5, max: 160 }, descripcion: { max: 240 } } as const
+
 export interface DetalleTurno {
   id: string
   // Pictures the client attached to the request (0 to 2); read through the turno's image route.
@@ -196,6 +207,9 @@ export interface DetalleTurno {
   clienteCuentaId?: string | null
   notas?: string | null
   fechaCreacion: string
+  // LUGAR-FIJO-01: where to go. Only on the turnos of the client itself, only while the turno is
+  // CONFIRMED and the provider attends at a place. Never on a public or a provider-side reading.
+  lugarAtencion?: LugarAtencionPrivado | null
   // Deposit of the turno (tus-turnos.ts): derived by the backend, never stored on the reservation.
   sena?: { monto: number; moneda: string; estado: string } | null
   // PAGOS-MODALIDAD-01: the whole financial state (PagoTurnoDTO of tus-turnos). null: no online payment applies.
