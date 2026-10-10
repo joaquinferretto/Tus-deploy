@@ -247,7 +247,7 @@ let secretoAdmin = null
 async function recorrer(browser, viewport, estado, indice) {
   const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } })
   // A stuck navigation/response must still reach the runner's cleanup before the shell deadline.
-  const deadline = setTimeout(() => { void context.close() }, 150_000)
+  const deadline = setTimeout(() => { void context.close() }, 210_000)
   const page = await context.newPage()
   page.setDefaultTimeout(15_000)
   const e = viewport.name
@@ -640,6 +640,72 @@ async function recorrer(browser, viewport, estado, indice) {
     await page.screenshot({ path: join(artifacts, `${e}-admin-contrasena-temporal.png`), fullPage: true })
     await page.reload({ waitUntil: 'networkidle' })
     check(!(await page.locator('body').innerText()).includes(claveTemporal) && (await page.locator('[data-contrasena-temporal]').getAttribute('data-contrasena-temporal')) === 'pendiente-de-cambio', `${e}: after reloading the password cannot be read again; the account is waiting for its owner to choose one`)
+    // ---- PRESTADOR-TIPO-01: Admin -> Prestadores -> detalle -> "Tipo de prestador". The holder of
+    //      the account is Gabriela Lopez; the provider is shown as "Prestador Smoke". Both ways,
+    //      with the confirmation, and the public profile follows the name. It ends as it started
+    //      ("Prestador Smoke"), which the rest of this smoke reads.
+    const antesDelTipo = estado.psql(`SELECT (SELECT count(*) FROM public."reservas") || '|' || (SELECT count(*) FROM public."trabajos") || '|' || (SELECT count(*) FROM public."movimientos_ganancia_prestador") || '|' || (SELECT count(*) FROM public."perfiles_publicos_prestador") || '|' || (SELECT "firstName" || ' ' || "lastName" FROM public."User" u JOIN public."Account" a ON a."userId" = u."id" JOIN public."prestadores" p ON p."cuenta_id" = a."id" WHERE p."prestador_id" = 'smoke-prestador')`).stdout.trim()
+    const seccionTipo = page.locator('[data-tipo-prestador]')
+    const abrirTipo = async () => { await page.evaluate(() => window.next.router.push('/tus/admin/prestadores/smoke-perfil')); await page.waitForURL(/prestadores.smoke-perfil/u); await seccionTipo.waitFor() }
+    const dialogo = page.locator('dialog[open]')
+    // Chooses a type (and, for a business, its public name), saves, and answers the confirmation
+    // that a change of type asks for. Returns the text of that confirmation ('' when none).
+    const cambiarTipo = async (tipo, nombre) => {
+      const cambiaTipo = (await seccionTipo.getAttribute('data-tipo-prestador')) !== tipo
+      await seccionTipo.locator(`[data-tipo-opcion="${tipo}"]`).check()
+      if (nombre !== undefined) await seccionTipo.locator('[data-nombre-empresa]').fill(nombre)
+      await seccionTipo.locator('[data-guardar-tipo]').click()
+      let pregunta = ''
+      if (cambiaTipo) { await dialogo.waitFor(); pregunta = await texto(dialogo); await dialogo.getByRole('button', { name: 'Sí, cambiar' }).click() }
+      await page.waitForFunction((esperado) => document.querySelector('[data-tipo-prestador]')?.getAttribute('data-tipo-prestador') === esperado && !document.querySelector('dialog[open]'), tipo)
+      return pregunta
+    }
+    // What a client is given: the public API of the directory, and (once) its page, in another
+    // tab. The Admin is NOT loaded again for this: every load asks /auth/mfa/status, and the
+    // sensitive routes of /auth share 40 requests per IP every 15 minutes, which this smoke
+    // nearly uses up. So the detail is reached inside the Admin that is already open (the router
+    // of the application; the layout and its second factor stay as they are).
+    const publico = async (nombre) => check(JSON.stringify((await llamar('GET', '/tus/v1/public/prestadores/smoke-perfil')).body).includes(`"${nombre}"`), `${e}: the directory gives the provider as ${nombre}`)
+    const paginaPublica = async (nombre) => {
+      const otra = await context.newPage()
+      otra.on('pageerror', (error) => errores.push(error.message))
+      await otra.goto(`${web}/trabajadores/smoke-perfil`, { waitUntil: 'networkidle' })
+      await otra.waitForFunction((esperado) => document.body.innerText.includes(esperado), nombre)
+      check(await otra.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${e}: the public profile as ${nombre} does not scroll sideways`)
+      await otra.screenshot({ path: join(artifacts, `${e}-perfil-publico-empresa.png`), fullPage: true })
+      await otra.close()
+    }
+    await abrirTipo()
+    check((await texto(seccionTipo.locator('[data-titular]'))) === 'Gabriela Lopez' && (await texto(seccionTipo.locator('[data-nombre-publico]'))) === 'Prestador Smoke', `${e}: Admin shows the holder of the account and the public name apart (${await texto(seccionTipo)})`)
+    // -> Persona física: previewed, then the public name is the name of the holder.
+    await seccionTipo.locator('[data-tipo-opcion="persona_fisica"]').check()
+    check((await texto(seccionTipo.locator('[data-vista-previa]'))) === 'El nombre público pasará a: Gabriela Lopez', `${e}: the name it will take is previewed (${await texto(seccionTipo.locator('[data-vista-previa]'))})`)
+    const aPersona1 = await cambiarTipo('persona_fisica')
+    check(aPersona1 === '' || aPersona1.includes('El prestador pasará a Persona física y su nombre público será Gabriela Lopez. Sus servicios, turnos e historial no se modificarán.'), `${e}: to Persona física is confirmed with its text (${aPersona1})`)
+    await page.waitForFunction(() => document.querySelector('[data-nombre-publico]')?.textContent === 'Gabriela Lopez')
+    await sinDesborde('Admin -> Prestador -> Tipo (persona física)')
+    await page.screenshot({ path: join(artifacts, `${e}-admin-tipo-persona-fisica.png`), fullPage: true })
+    await publico('Gabriela Lopez')
+    // -> Empresa: the field comes with the current public name; with a trade name.
+    await seccionTipo.locator('[data-tipo-opcion="empresa"]').check()
+    check((await seccionTipo.locator('[data-nombre-empresa]').inputValue()) === 'Gabriela Lopez', `${e}: the name of the business starts as the current public name`)
+    const aEmpresa = await cambiarTipo('empresa', 'Lopez Servicios')
+    check(aEmpresa.includes('El prestador pasará a Empresa. Sus servicios, turnos e historial no se modificarán.'), `${e}: to Empresa is confirmed with its text (${aEmpresa})`)
+    await page.waitForFunction(() => document.querySelector('[data-nombre-publico]')?.textContent === 'Lopez Servicios')
+    check((await texto(seccionTipo.locator('[data-titular]'))) === 'Gabriela Lopez', `${e}: the holder of the account is the same`)
+    await sinDesborde('Admin -> Prestador -> Tipo (empresa)')
+    await page.screenshot({ path: join(artifacts, `${e}-admin-tipo-empresa.png`), fullPage: true })
+    await publico('Lopez Servicios')
+    await paginaPublica('Lopez Servicios')
+    // -> Persona física again, confirmed; then back to how the smoke found it.
+    const aPersona2 = await cambiarTipo('persona_fisica')
+    check(aPersona2.includes('El prestador pasará a Persona física y su nombre público será Gabriela Lopez. Sus servicios, turnos e historial no se modificarán.'), `${e}: back to Persona física is confirmed with its text (${aPersona2})`)
+    await page.waitForFunction(() => document.querySelector('[data-nombre-publico]')?.textContent === 'Gabriela Lopez')
+    await publico('Gabriela Lopez')
+    await cambiarTipo('empresa', 'Prestador Smoke')
+    await page.waitForFunction(() => document.querySelector('[data-nombre-publico]')?.textContent === 'Prestador Smoke')
+    check(estado.psql(`SELECT (SELECT count(*) FROM public."reservas") || '|' || (SELECT count(*) FROM public."trabajos") || '|' || (SELECT count(*) FROM public."movimientos_ganancia_prestador") || '|' || (SELECT count(*) FROM public."perfiles_publicos_prestador") || '|' || (SELECT "firstName" || ' ' || "lastName" FROM public."User" u JOIN public."Account" a ON a."userId" = u."id" JOIN public."prestadores" p ON p."cuenta_id" = a."id" WHERE p."prestador_id" = 'smoke-prestador')`).stdout.trim() === antesDelTipo, `${e}: the same turnos, works, earnings, profiles and holder after changing the type (${antesDelTipo})`)
+    check(Number(estado.psql(`SELECT count(*) FROM public."AuditEvent" WHERE "eventType" IN ('provider.type_changed', 'provider.public_name_changed')`).stdout.trim()) >= 4, `${e}: every change of type is audited`)
     await page.goto(`${web}/tus/admin/alojamientos`, { waitUntil: 'networkidle' })
     await page.locator('[data-admin-alojamientos="alojamientos"]').waitFor()
     await page.getByRole('button', { name: 'Reservas', exact: true }).click()
