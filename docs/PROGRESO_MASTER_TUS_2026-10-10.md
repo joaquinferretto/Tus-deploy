@@ -8,12 +8,12 @@
 | Campo | Valor |
 | --- | --- |
 | Rama actual | `feat/experiencia-operativa-tus` (desde `main` local) |
-| HEAD | ver `git log -1` (este archivo se commitea con cada fase) |
+| HEAD | ver `git log -1`; nueva validación focal y Fase 4 parcial en este checkpoint |
 | Producción | `44e34fe` (API, Web y remotos). Nada de este plan está desplegado |
 | `main` local | `1107b40` = `44e34fe` + merge de `feat/prestador-tipo-persona-empresa` (sin push) |
-| Fase actual | 4 — cobertura geográfica del prestador |
-| Último paso terminado | Fase 3: búsqueda cerca de mí (8 km) / localidad / provincia (`5a5cbe5`). Además: fix de vinculación de Mercado Pago (rama `fix/mercado-pago-oauth-autorizacion` `d781db8`, mergeada acá, sin desplegar) |
-| Siguiente acción exacta | Fase 4 en `apps/web/src/features/provider/provider-public-profile.tsx`: línea ~175 la opción `Usar fallback si existe` (auditar qué significa: zona tomada de la identidad verificada, `identityFallback` en `directorio/modelo.ts`) y reemplazarla por texto humano o quitarla; línea ~216 `Radio de cobertura en km (opcional)` → `¿Hasta qué distancia te desplazás?` con su texto auxiliar, y mostrarlo solo si la modalidad es a domicilio o ambas. Después Fase 5 (lugar fijo: nombre, dirección, descripción) |
+| Fase actual | 4 — cobertura geográfica del prestador (parcial: copy/radio/smoke hechos) |
+| Último paso terminado | Validación focal de Fases 2–3 (40/40 PG, smoke 46/46 a 1280/390) y corrección del bloqueo de geolocalización por Permissions-Policy; Fase 4: radio solo para domicilio/mixto, texto humano y regla del servidor. OAuth `d781db8` ya integrado, sin deploy |
+| Siguiente acción exacta | Fase 4: revisar matching por zona principal/barrios/radio/localidad/provincia en `directorio/busqueda-geografica.ts` y `ServicioDirectorio.listar/buscarCandidatos`, usando tests de cobertura real; comprobar que ninguna búsqueda devuelve prestador fuera de su modalidad/cobertura. Luego Fase 5: auditar rutas/DTO de ubicación antes de agregar lugar fijo (nombre, dirección privada, descripción), migración aditiva y visibilidad pre/post reserva. No tocar pagos |
 | Procesos vivos | ninguno (los smokes y tests son autocontenidos) |
 | Archivos fuera de alcance | `opencode.json`, `odd/`, `.env`, secretos, respaldos, logs |
 
@@ -42,8 +42,8 @@ En `feat/experiencia-operativa-tus`: ver `git log main..HEAD`.
 | 0 Persona física / Empresa | HECHA | Los 3 perfiles históricos quedan Empresa con su nombre (decisión del dueño). Cambio de tipo solo por Admin |
 | 1 Respaldo y ensayo | PARCIAL | Ensayo hecho sobre el respaldo existente `2026-10-10T00-03-50`. **Respaldo NUEVO: bloqueado** (ver Bloqueos). Merge local a `main` hecho |
 | 2 Agenda: duración vs intervalo | HECHA | Ver abajo |
-| 3 Búsqueda geográfica | HECHA | `apps/api/src/tus/directorio/busqueda-geografica.ts`; test `tus-busqueda-geografica.test.mjs` 2/2. Sin smoke de navegador todavía |
-| 4 Cobertura del prestador | pendiente | |
+| 3 Búsqueda geográfica | HECHA | `apps/api/src/tus/directorio/busqueda-geografica.ts`; 2/2. Smoke 1280/390 pasó después de permitir geolocalización solo al mismo origen |
+| 4 Cobertura del prestador | PARCIAL | Copy humano, radio solo domicilio/mixto y rechazo del radio en modo local por API; falta completar auditoría de matching real |
 | 5 Atiendo en un lugar | pendiente | |
 | 6–9 UX/UI, panel, solicitudes, ayuda | pendiente | |
 | 10 Opiniones de turnos | pendiente | |
@@ -80,6 +80,7 @@ Solución: `perfil_servicios.intervalo_inicio_minutos` (por servicio). `NULL` = 
 - Tests existentes de turnos/agenda tras el cambio de firma interna (correr los afectados).
 - Tras Fase 2: 25 archivos de turnos afectados, 94 pass / 0 fail después de corregir el orden de props en `provider-turnos.tsx`.
 - Tras Fase 3 no se corrieron lint, build ni los tests existentes del directorio: hacerlo antes de seguir.
+- **Actualización:** 8 archivos focales de directorio/geo/agenda = **40 pass, 0 fail, 0 skipped**, PostgreSQL 16.15 descartable, migraciones fresh aplicadas; typecheck API/Web y lint de áreas Fases 2–3 pass. Build Web pass con warnings preexistentes en archivos ajenos. Smoke focal `pagos-servicios-smoke.mjs --agenda-geografia` **46/46** en 1280/390, URL de API local y proveedor de pago ficticio. Root `.env` y `factory_local` nunca se usaron. Suite completa aún no corrida.
 - Lint, build y **una** suite completa al final. Smokes de navegador al final de las fases de UI.
 
 ## Decisiones tomadas (sin consultar, reversibles)
@@ -88,6 +89,8 @@ Solución: `perfil_servicios.intervalo_inicio_minutos` (por servicio). `NULL` = 
 - Alta de prestador por Admin con un nombre distinto al del titular: queda Empresa.
 - La migración de tipo no reescribe nombres (evita depender del locale de la base para capitalizar).
 - Intervalo de comienzo: por servicio, nullable, valores 15/30/45/60. El descanso (`buffer_minutos`) sigue aplicando a la ocupación.
+- `Permissions-Policy: geolocation=(self)` habilita SOLO el pedido explícito "Cerca de mí" en la propia Web; `camera`, `microphone`, `payment` y demás permisos permanecen bloqueados. El navegador no persiste la ubicación.
+- Perfil local no puede declarar radio de desplazamiento: el frontend lo oculta y envía null; API rechaza uno falsificado y la proyección pública no publica radios heredados en modalidad local.
 
 ## Bloqueos reales
 

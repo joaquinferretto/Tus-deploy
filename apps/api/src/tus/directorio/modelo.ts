@@ -141,6 +141,7 @@ export function validarPerfil(body: Record<string, unknown>): { ok: true; valor:
   if (!zonasValidas) campos.push('serviceZones')
   if (!modalidadAtencion) campos.push('serviceMode')
   if (radioCoberturaKm !== null && (typeof radioCoberturaKm !== 'number' || !Number.isInteger(radioCoberturaKm) || radioCoberturaKm < 1 || radioCoberturaKm > 100)) campos.push('coverageRadiusKm')
+  if (modalidadAtencion === 'local' && radioCoberturaKm !== null) campos.push('coverageRadiusKm')
   if (descripcion.length > 600 || contieneContacto(descripcion)) campos.push('description')
   if (experiencia !== null && (typeof experiencia !== 'number' || !Number.isInteger(experiencia) || experiencia < 0 || experiencia > 70)) campos.push('yearsOfExperience')
   if (typeof visible !== 'boolean') campos.push('visible')
@@ -154,7 +155,7 @@ export function validarPerfil(body: Record<string, unknown>): { ok: true; valor:
       zona,
       zonasCobertura: zonasCobertura.length > 0 ? zonasCobertura : zona ? [zona] : [],
       modalidadAtencion: modalidadAtencion!,
-      radioCoberturaKm: radioCoberturaKm as number | null,
+       radioCoberturaKm: modalidadAtencion === 'local' ? null : radioCoberturaKm as number | null,
       descripcion: descripcion || null,
       aniosExperiencia: experiencia as number | null,
       visible: visible as boolean,

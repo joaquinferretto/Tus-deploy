@@ -54,6 +54,17 @@ test('BÚSQUEDA geográfica: near me is 8 km AND the coverage of the provider (o
     out.incompleto = [(await buscar({ ambito: 'cerca' })).quienes.length === todos.length, (await buscar({ ambito: 'cerca', lat: 'x', lng: 200 })).quienes.length === todos.length, (await buscar({ ambito: 'localidad', localidadId: 'no-existe' })).quienes.length === todos.length, (await buscar({ ambito: 'cerca' })).items.every((i) => i.distanceKm === undefined)]
     // Town and province.
     const catalogo = catalogoVigente()
+    const { validarPerfil } = await import('./apps/api/src/tus/directorio/modelo.ts')
+    const { resolverUbicacionPublicaPrestador } = await import('./apps/api/src/tus/directorio/ubicacion.ts')
+    const basePerfil = { displayName: 'Profesional de prueba', profession: 'plomeria', zone: centro.nombre, serviceZones: [centro.nombre] }
+    out.modalidades = {
+      localConRadio: validarPerfil({ ...basePerfil, serviceMode: 'local', coverageRadiusKm: 12 }),
+      localSinRadio: validarPerfil({ ...basePerfil, serviceMode: 'local', coverageRadiusKm: null }),
+      domicilioConRadio: validarPerfil({ ...basePerfil, serviceMode: 'domicilio', coverageRadiusKm: 12 }),
+      mixtoConRadio: validarPerfil({ ...basePerfil, serviceMode: 'mixto', coverageRadiusKm: 12 }),
+      radioHistoricoLocal: resolverUbicacionPublicaPrestador({ zone: centro.nombre, serviceZones: [centro.nombre], mode: 'local', radiusKm: 12 }).coverage.radiusKm,
+      zonaVerificada: resolverUbicacionPublicaPrestador({ zone: null, serviceZones: [], mode: 'domicilio', radiusKm: null, identityFallback: { barrio: centro.nombre, localidad: null, provincia: null } }).publicArea,
+    }
     const localidad = catalogo.localidades.find((l) => l.id === centro.localidadId)
     out.localidad = [(await buscar({ ambito: 'localidad', localidadId: localidad.id })).quienes.length === todos.length, (await buscar({ ambito: 'provincia', localidadId: localidad.id })).quienes.length === todos.length]
     const otraLocalidad = catalogo.localidades.find((l) => l.id !== localidad.id && !catalogo.barrios.some((b) => b.localidadId === l.id))
@@ -71,6 +82,7 @@ test('BÚSQUEDA geográfica: near me is 8 km AND the coverage of the provider (o
   assert.deepEqual(r.privacidad, [false, false, false], 'the point of the client is not in the answer')
   assert.deepEqual(r.incompleto, [true, true, true, true])
   assert.deepEqual(r.localidad, [true, true])
+  assert.deepEqual([r.modalidades.localConRadio.ok, r.modalidades.localConRadio.campos, r.modalidades.localSinRadio.ok, r.modalidades.localSinRadio.valor.radioCoberturaKm, r.modalidades.domicilioConRadio.valor.radioCoberturaKm, r.modalidades.mixtoConRadio.valor.radioCoberturaKm, r.modalidades.radioHistoricoLocal, r.modalidades.zonaVerificada], [false, ['coverageRadiusKm'], true, null, 12, 12, null, 'Centro'], 'solo los servicios a domicilio publican radio; la zona verificada se usa sin inventarla')
   if (Array.isArray(r.otraLocalidad)) assert.deepEqual(r.otraLocalidad, [0, true], 'a town where nobody works: nobody')
   assert.deepEqual(r.puros, [8, { lat: -27.471, lng: -58.84 }, null, null, 1, 8, true, null])
 })
@@ -88,6 +100,10 @@ test('BÚSQUEDA geográfica, ruta y pantalla: the public route passes where to l
   const pantalla = read('apps/web/src/features/directory/worker-directory.tsx')
   for (const texto of ['¿Dónde querés buscar?', 'Cerca de mí', 'Prestadores dentro de 8 km de tu ubicación actual.', 'En mi localidad', 'En toda mi provincia', 'No pudimos usar tu ubicación. Buscamos en tu localidad']) assert.ok(pantalla.includes(texto), texto)
   assert.match(pantalla, /navigator\.geolocation\.getCurrentPosition\(/u)
+  assert.match(read('apps/web/next.config.js'), /geolocation=\(self\)/u, 'the same-origin search page must be permitted to request location explicitly')
+  const perfil = read('apps/web/src/features/provider/provider-public-profile.tsx')
+  assert.doesNotMatch(perfil, /Usar fallback si existe|Radio de cobertura en km/u)
+  assert.match(perfil, /values\.serviceMode !== 'local' \? \(/u)
   assert.doesNotMatch(pantalla, /localStorage|sessionStorage|document\.cookie/u, 'the position is not saved')
   assert.doesNotMatch(pantalla, /useEffect\([^)]*geolocation/u, 'asked only when the person chooses "Cerca de mí"')
 })

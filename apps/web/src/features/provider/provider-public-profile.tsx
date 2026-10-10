@@ -23,7 +23,7 @@ const FIELD_MESSAGES: Record<string, string> = {
   zone: 'Elegí un barrio válido.',
   serviceZones: 'Elegí hasta 8 zonas válidas.',
   serviceMode: 'Elegí cómo atendés.',
-  coverageRadiusKm: 'Ingresá un radio entre 1 y 100 km.',
+   coverageRadiusKm: 'Ingresá una distancia entre 1 y 100 km si atendés a domicilio.',
   description: 'Hasta 600 caracteres, sin teléfonos, emails ni links.',
   yearsOfExperience: 'Ingresá los años como número entero (0 a 70).',
 }
@@ -79,7 +79,7 @@ export function ProviderPublicProfile(): React.ReactNode {
     setMessage('')
     try {
       const years = values.years.trim() === '' ? null : Number(values.years)
-      const coverageRadiusKm = values.coverageRadiusKm.trim() === '' ? null : Number(values.coverageRadiusKm)
+       const coverageRadiusKm = values.serviceMode === 'local' || values.coverageRadiusKm.trim() === '' ? null : Number(values.coverageRadiusKm)
       const result = await client.saveProfile(session.session, {
         displayName: values.displayName.trim(),
         profession: values.professions[0] ?? '',
@@ -172,7 +172,7 @@ export function ProviderPublicProfile(): React.ReactNode {
         <div className={authStyles.field}>
           <label htmlFor="perfil-barrio">Zona principal (opcional)</label>
           <select className={authStyles.input} id="perfil-barrio" onChange={(event) => setValues((current) => ({ ...current, zone: event.target.value }))} value={values.zone}>
-            <option value="">Usar fallback si existe</option>
+             <option value="">Usar mi zona verificada si está disponible</option>
             {catalog.zones.map((zone) => (
               <option key={zone} value={zone}>
                 {zone}
@@ -209,14 +209,19 @@ export function ProviderPublicProfile(): React.ReactNode {
           </select>
           <FieldError id="perfil-modalidad-error" message={error('serviceMode')} />
         </div>
-        <TextField
-          error={error('coverageRadiusKm')}
-          id="perfil-radio"
-          inputMode="numeric"
-          label="Radio de cobertura en km (opcional)"
-          onChange={(event) => setValues((current) => ({ ...current, coverageRadiusKm: event.target.value }))}
-          value={values.coverageRadiusKm}
-        />
+         {values.serviceMode !== 'local' ? (
+           <div data-radio-desplazamiento>
+             <TextField
+               error={error('coverageRadiusKm')}
+               id="perfil-radio"
+               inputMode="numeric"
+               label="¿Hasta qué distancia te desplazás? (km, opcional)"
+               onChange={(event) => setValues((current) => ({ ...current, coverageRadiusKm: event.target.value }))}
+               value={values.coverageRadiusKm}
+             />
+             <p className={styles.muted}>Además de los barrios elegidos, podés atender a domicilio hasta esa distancia desde tu ubicación de trabajo. Si no te desplazás fuera de tus zonas, dejalo vacío.</p>
+           </div>
+         ) : null}
       </div>
       <p className={authStyles.notice}>
         {publicId && values.serviceZones.length === 0 && values.zone === ''

@@ -35,7 +35,7 @@ export function resolverUbicacionPublicaPrestador(input: {
   const configured = uniqueZones([input.zone, ...input.serviceZones])
   const coverage = {
     mode: input.mode ?? DEFAULT_MODE,
-    radiusKm: input.radiusKm,
+     radiusKm: input.mode === 'local' ? null : input.radiusKm,
   } satisfies CoberturaPublicaPrestador
 
   if (configured.length > 0) {
