@@ -11,7 +11,7 @@ version: 1
 visibility: public
 audience: provider
 language: es
-updated: 2026-10-04
+updated: 2026-10-10
 ---
 
 # Disponibilidad y agenda
@@ -20,9 +20,19 @@ Tu disponibilidad se configura en [Turnos](/prestador/turnos), dentro del panel 
 
 ## Días y horarios
 
-Elegís qué días trabajás, en qué horario y cada cuánto puede empezar un turno. La duración de cada turno es la del
-servicio. Un horario general se usa en todos los días, salvo en los que personalices. Dos horarios del mismo día no se
-pueden superponer.
+Elegís qué días trabajás y en qué horario. Un horario general se usa en todos los días, salvo en los que personalices.
+Dos horarios del mismo día no se pueden superponer.
+
+## Duración y comienzo de los turnos
+
+Para cada servicio elegís dos cosas distintas:
+
+- **Duración del servicio**: cuánto dura un turno (por ejemplo, 60 minutos).
+- **Cada cuánto puede comenzar un turno**: cuando termina el anterior, o cada 15, 30, 45 o 60 minutos.
+
+Un servicio de 60 minutos que puede comenzar cada 30 se ofrece a las 9:00, 9:30, 10:00, 10:30… Cada turno sigue
+ocupando sus 60 minutos: cuando un cliente toma el de las 10:00, dejan de ofrecerse los que se le superponen. Nunca se
+reservan dos turnos encimados.
 
 ## Bloqueos
 

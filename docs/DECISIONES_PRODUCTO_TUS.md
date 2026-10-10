@@ -73,6 +73,9 @@ crear/aceptar un presupuesto.
   pero no se exige descanso después del cierre.
 - `Calendario.granularidadMinutos` y `ReglaCalendario.intervaloMinutos` quedan legacy por compatibilidad: se conservan
   sin migración destructiva, pero no deciden los slots nuevos.
+- **TURNOS-INTERVALO-01 (2026-10-10):** cada servicio puede fijar cada cuánto puede comenzar un turno
+  (`perfil_servicios.intervalo_inicio_minutos`: 15, 30, 45 o 60). Sin valor, el paso sigue siendo `duración + descanso`.
+  Ver `docs/EXPERIENCIA_OPERATIVA_TUS.md`.
 - Las reservas confirmadas ocupan capacidad solo cuando sus intervalos se superponen.
 
 ### D2-07: Persistencia sin cambio físico en D2
