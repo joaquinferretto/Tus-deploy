@@ -65,6 +65,11 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
         atiendeHoy: request.query['hoy'],
         orden: request.query['orden'],
         pagina: request.query['pagina'],
+        // GEO-BUSQUEDA-01: where the client looks (never stored, never logged by this route).
+        ambito: request.query['ambito'],
+        lat: request.query['lat'],
+        lng: request.query['lng'],
+        localidadId: request.query['localidadId'],
       })
       response.setHeader('cache-control', 'private, no-store')
       response.status(200).json(resultado)

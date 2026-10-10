@@ -55,6 +55,9 @@ declare const styles: {
   readonly requester: string
   readonly requesterLabel: string
   readonly resultCount: string
+  readonly scope: string
+  readonly scopeNotice: string
+  readonly scopeOption: string
   readonly searchField: string
   readonly searchRow: string
   readonly select: string

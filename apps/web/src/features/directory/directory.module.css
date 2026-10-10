@@ -868,3 +868,58 @@ dialog.modalCard::backdrop { background: rgba(20, 33, 61, 0.35); }
     flex-direction: column;
   }
 }
+
+/* GEO-BUSQUEDA-01: "¿Dónde querés buscar?" — three large, plain choices. */
+.scope {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  margin: 0 0 16px;
+  padding: 12px 14px 14px;
+}
+
+.scope legend {
+  font-weight: 700;
+  padding: 0 6px;
+}
+
+.scopeOption {
+  align-items: flex-start;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  min-height: 56px;
+  padding: 10px 12px;
+}
+
+.scopeOption:has(input:checked) {
+  border-color: #f97316;
+  box-shadow: 0 0 0 1px #f97316 inset;
+}
+
+.scopeOption input {
+  flex: none;
+  height: 20px;
+  margin-top: 2px;
+  width: 20px;
+}
+
+.scopeOption span {
+  display: grid;
+  gap: 2px;
+}
+
+.scopeOption small {
+  color: #4b5563;
+  font-size: 0.9rem;
+}
+
+.scopeNotice {
+  color: #9a3412;
+  grid-column: 1 / -1;
+  margin: 0;
+}

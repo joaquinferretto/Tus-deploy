@@ -73,6 +73,12 @@ export interface DirectoryFilters {
   hoy?: boolean
   orden?: 'relevancia' | 'trabajos' | 'cercania'
   pagina?: number
+  // GEO-BUSQUEDA-01: where to look. 'cerca' needs the point (used by the API to measure, never
+  // stored); 'localidad' and 'provincia' need a town of the catalog. The API decides who matches.
+  ambito?: 'cerca' | 'localidad' | 'provincia'
+  lat?: number
+  lng?: number
+  localidadId?: string
 }
 
 export function directoryQuery(filters: DirectoryFilters): string {
@@ -86,6 +92,15 @@ export function directoryQuery(filters: DirectoryFilters): string {
   if (filters.orden && filters.orden !== 'relevancia') params.set('orden', filters.orden)
   if (filters.pagina && filters.pagina > 1) params.set('pagina', String(filters.pagina))
   if (filters.mapa) params.set('mapa', '1')
+  if (filters.ambito === 'cerca' && typeof filters.lat === 'number' && typeof filters.lng === 'number') {
+    params.set('ambito', 'cerca')
+    // About 100 metres: enough to measure 8 km, and never the exact position.
+    params.set('lat', filters.lat.toFixed(3))
+    params.set('lng', filters.lng.toFixed(3))
+  } else if ((filters.ambito === 'localidad' || filters.ambito === 'provincia') && filters.localidadId) {
+    params.set('ambito', filters.ambito)
+    params.set('localidadId', filters.localidadId)
+  }
   const query = params.toString()
   return query ? `?${query}` : ''
 }

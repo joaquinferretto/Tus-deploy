@@ -113,6 +113,8 @@ export interface PrestadorPublico {
   id: string
   displayName: string
   initials: string
+  // GEO-BUSQUEDA-01: only in a "near me" search, how far the provider is, in whole kilometres.
+  distanceKm?: number | null
   // API path of the provider's profile photo (/tus/v1/public/prestadores/:id/foto?v=...); null
   // without a photo. Absent in older payloads. Never an external URL.
   photoUrl?: string | null

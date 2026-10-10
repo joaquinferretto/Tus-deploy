@@ -30,7 +30,7 @@ export function WorkerCard({
   chooseLabel?: string
   compact?: boolean
 }): React.ReactNode {
-  const distance = 'distanceKm' in worker && worker.distanceKm !== null ? worker.distanceKm : null
+  const distance = 'distanceKm' in worker && typeof worker.distanceKm === 'number' ? worker.distanceKm : null
   if (compact) {
     const rating = ratingLabel(worker.rating)
     return (
@@ -50,6 +50,7 @@ export function WorkerCard({
           </div>
         </div>
         <p className={styles.compactFacts}>
+          {typeof worker.distanceKm === 'number' ? `A ${worker.distanceKm} km · ` : ''}
           {worker.publicArea}
           {rating ? ` · ${rating}` : ''}
           {worker.startingPrice ? ` · Desde ${PESOS.format(worker.startingPrice.amount)}` : ''}

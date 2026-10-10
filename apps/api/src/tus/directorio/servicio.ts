@@ -21,6 +21,7 @@ import { esOficio, normalizarTexto, oficio, type OficioId } from './oficios.ts'
 import { asociarPunto, resolverPuntoMapa, type GeocodificadorInverso, type PuntoMapa } from '../geo/resolucion.ts'
 import { coordenadasValidas } from '../geo/geometria.ts'
 import type { AlmacenPerfiles, FuentesDirectorio } from './puertos.ts'
+import { coincideCerca, distanciaPublica, leerPunto, localidadesDePerfil, localidadesDeProvincia } from './busqueda-geografica.ts'
 import { barriosDeUbicacion, catalogoVigente, oficiosVigentes } from '../catalogo/vigente.ts'
 import { ErrorFotoPerfil, prepararFotoPerfil, rutaFotoPerfil, type AlmacenFotosPerfil, type CodigoFoto, type FotoPerfil } from './foto.ts'
 
@@ -53,6 +54,12 @@ export interface FiltrosDirectorio {
   atiendeHoy?: unknown
   orden?: unknown
   pagina?: unknown
+  // GEO-BUSQUEDA-01 (busqueda-geografica.ts): 'cerca' with a point, 'localidad' or 'provincia'
+  // with a town of the catalog. The point is used to measure and nothing else.
+  ambito?: unknown
+  lat?: unknown
+  lng?: unknown
+  localidadId?: unknown
 }
 
 export type ResultadoPerfil =
@@ -330,13 +337,31 @@ export class ServicioDirectorio {
       const lugares = barriosDeUbicacion(zona).map((item) => normalizarTexto(item))
       items = items.filter(({ ubicacion }) => ubicacion.serviceZones.some((item) => lugares.includes(normalizarTexto(item))) || lugares.includes(normalizarTexto(ubicacion.publicArea)))
     }
+    // GEO-BUSQUEDA-01. Where the client looks. An incomplete request (no point, an unknown town)
+    // is not a geographic filter: the search still answers.
+    const catalogo = catalogoVigente()
+    const punto = filtros.ambito === 'cerca' ? leerPunto(filtros.lat, filtros.lng) : null
+    const localidadId = typeof filtros.localidadId === 'string' && catalogo.localidades.some((item) => item.id === filtros.localidadId) ? filtros.localidadId : null
+    const distancias = new Map<string, number>()
+    if (punto) {
+      items = items.filter((item) => {
+        const cerca = coincideCerca(catalogo, item.perfil, { zonas: item.ubicacion.serviceZones, areaPublica: item.ubicacion.publicArea }, punto)
+        if (cerca.ok && cerca.km !== null) distancias.set(item.perfil.id, cerca.km)
+        return cerca.ok
+      })
+    } else if (localidadId && (filtros.ambito === 'localidad' || filtros.ambito === 'provincia')) {
+      const buscadas = filtros.ambito === 'provincia' ? localidadesDeProvincia(catalogo, localidadId) : new Set([localidadId])
+      items = items.filter((item) => [...localidadesDePerfil(catalogo, item.perfil, { zonas: item.ubicacion.serviceZones, areaPublica: item.ubicacion.publicArea })].some((id) => buscadas.has(id)))
+    }
     if (filtros.verificados === true || filtros.verificados === 'true' || filtros.verificados === '1') items = items.filter((item) => item.publico.verified)
     if (filtros.atiendeHoy === true || filtros.atiendeHoy === 'true' || filtros.atiendeHoy === '1') items = items.filter((item) => item.publico.availability.status === 'atiende_hoy')
 
-    const ordenados = this.ordenar(items, orden, zona)
+    // Near me: the nearest first (the usual order breaks ties); every item says how far, rounded.
+    const porOrden = this.ordenar(items, orden, zona)
+    const ordenados = punto ? porOrden.map((item, indice) => ({ item, indice })).sort((a, b) => distanciaPublica(distancias.get(a.item.perfil.id)!) - distanciaPublica(distancias.get(b.item.perfil.id)!) || a.indice - b.indice).map(({ item }) => item) : porOrden
     const inicio = (pagina - 1) * tamano
     return {
-      items: ordenados.slice(inicio, inicio + tamano).map((item) => item.publico),
+      items: ordenados.slice(inicio, inicio + tamano).map((item) => (punto ? { ...item.publico, distanceKm: distanciaPublica(distancias.get(item.perfil.id)!) } : item.publico)),
       total: ordenados.length,
       page: pagina,
       hasMore: inicio + tamano < ordenados.length,
