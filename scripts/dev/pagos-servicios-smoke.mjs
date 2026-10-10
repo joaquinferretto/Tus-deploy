@@ -602,6 +602,24 @@ async function recorrer(browser, viewport, estado, indice) {
     const observado = page.locator('[data-turno-cierre="observado"]')
     check((await observado.count()) === 1 && (await texto(observado)).includes('los fondos siguen retenidos') && (await page.locator('[data-turno-cobro="retenidos"]').count()) >= indice + 1, `${e}: the reported turno stays retained although it is fully paid`)
     await page.screenshot({ path: join(artifacts, `${e}-prestador-liberado-y-observado.png`), fullPage: true })
+    // ---- MP-OAUTH-AUTORIZACION-01: Prestador -> Pagos -> "Vincular Mercado Pago". The provider has
+    //      no linked account and no verified-identity requirement: ONE click (even a double one)
+    //      is ONE request, answered with the address of Mercado Pago (PKCE, the configured
+    //      redirect URI). Mercado Pago itself is never opened: the route above answers for it.
+    await page.goto(`${web}/prestador/pagos`, { waitUntil: 'networkidle' })
+    await page.locator('[data-mercado-pago="no_vinculado"]').waitFor()
+    await sinDesborde('Prestador -> Pagos')
+    const conexiones = []
+    const alConectar = (respuesta) => { if (respuesta.url().includes('/mercado-pago/connect') && respuesta.request().method() === 'POST') conexiones.push(respuesta.status()) }
+    page.on('response', alConectar)
+    const irAMercadoPago = page.waitForURL(/auth\.mercadopago\.com\/authorization/u)
+    await page.getByRole('button', { name: 'Vincular Mercado Pago para retirar tus ganancias' }).dblclick()
+    await irAMercadoPago
+    page.off('response', alConectar)
+    const autorizacion = new URL(page.url())
+    check(conexiones.length === 1 && conexiones[0] === 201, `${e}: one action on "Vincular Mercado Pago" is one request, accepted (${conexiones.join(',')})`)
+    check(autorizacion.searchParams.get('code_challenge_method') === 'S256' && Boolean(autorizacion.searchParams.get('code_challenge')) && Boolean(autorizacion.searchParams.get('state')) && autorizacion.searchParams.get('redirect_uri') === `${api}/tus/v1/integrations/mercado-pago/oauth/callback`, `${e}: the provider is sent to Mercado Pago with PKCE and the configured redirect URI`)
+    check(estado.psql(`SELECT count(*) FROM public."cuentas_cobro_prestador" WHERE "estado" = 'connected'`).stdout.trim() === '0', `${e}: nothing is linked until Mercado Pago answers`)
     await salir('the provider')
 
     // ---- 7. Admin -> Pagos: the problem, and its resolution.
