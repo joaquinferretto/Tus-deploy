@@ -675,6 +675,39 @@ async function recorrer(browser, viewport, estado, indice) {
     const observado = page.locator('[data-turno-cierre="observado"]')
     check((await observado.count()) === 1 && (await texto(observado)).includes('los fondos siguen retenidos') && (await page.locator('[data-turno-cobro="retenidos"]').count()) >= indice + 1, `${e}: the reported turno stays retained although it is fully paid`)
     await page.screenshot({ path: join(artifacts, `${e}-prestador-liberado-y-observado.png`), fullPage: true })
+    // ---- UX-ANCHO-01: the operating screens use the width (also at 1920), with the modules as
+    //      tabs and no footer; the Help keeps a reading width, with its index at the side.
+    await page.goto(`${web}/prestador/solicitudes`, { waitUntil: 'networkidle' })
+    await page.locator('[data-nav-prestador]').waitFor()
+    await page.locator('[data-urgentes-prestador]').waitFor()
+    check((await page.locator('[data-nav-prestador] a').count()) === 7 && (await page.locator('[data-nav-prestador] a[aria-current="page"]').innerText()) === 'Solicitudes' && (await page.locator('footer').count()) === 0, `${e}: the provider panel: its modules as tabs, the current one marked, no footer`)
+    await sinDesborde('Prestador -> Solicitudes')
+    await page.screenshot({ path: join(artifacts, `${e}-prestador-solicitudes.png`), fullPage: true })
+    if (viewport.width >= 1280) {
+      const anchoDe = () => page.evaluate(() => document.querySelector('[data-nav-prestador]').parentElement.getBoundingClientRect().width)
+      const a1280 = await anchoDe()
+      await page.setViewportSize({ width: 1920, height: 1080 })
+      await page.waitForTimeout(300)
+      const a1920 = await anchoDe()
+      const ladoALado = await page.evaluate(() => { const u = document.querySelector('[data-urgentes-prestador]').getBoundingClientRect(); const n = document.querySelector('[data-nav-prestador]').getBoundingClientRect(); return u.left > n.left + n.width / 2 })
+      check(a1280 >= 1180 && a1920 >= 1560 && a1920 <= 1680 && ladoALado, `${e}: the panel uses the width: ${Math.round(a1280)} px at 1280, ${Math.round(a1920)} px at 1920, urgencies at the side`)
+      await sinDesborde('Prestador -> Solicitudes at 1920')
+      await page.screenshot({ path: join(artifacts, `desktop-1920-prestador-solicitudes.png`), fullPage: true })
+      for (const ruta of ['/prestador/turnos', '/prestador/pagos', '/trabajos', '/mis-turnos']) {
+        await page.goto(`${web}${ruta}`, { waitUntil: 'networkidle' })
+        await sinDesborde(`${ruta} at 1920`)
+        await page.screenshot({ path: join(artifacts, `desktop-1920${ruta.replaceAll('/', '-')}.png`), fullPage: true })
+      }
+      await page.goto(`${web}/ayuda/prestadores/disponibilidad`, { waitUntil: 'networkidle' })
+      const ayuda = await page.evaluate(() => { const indice = document.querySelector('article nav[aria-label="En esta página"]'); const parrafo = document.querySelector('article h2 ~ p, article div p'); return indice && parrafo ? { indice: indice.getBoundingClientRect().left, texto: parrafo.getBoundingClientRect().left, ancho: parrafo.getBoundingClientRect().width, fijo: getComputedStyle(indice).position } : null })
+      check(ayuda !== null && ayuda.indice < ayuda.texto && ayuda.ancho <= 780 && ayuda.fijo === 'sticky', `${e}: the Help at 1920: the index at the side, the text at a reading width (${JSON.stringify(ayuda)})`)
+      await sinDesborde('Ayuda at 1920')
+      await page.screenshot({ path: join(artifacts, `desktop-1920-ayuda.png`), fullPage: true })
+      await page.setViewportSize({ width: viewport.width, height: viewport.height })
+    } else {
+      await page.goto(`${web}/ayuda/prestadores/disponibilidad`, { waitUntil: 'networkidle' })
+      await sinDesborde('Ayuda at 390')
+    }
     // ---- LUGAR-FIJO-01: Prestador -> Perfil. The fields of the place follow the modality: at a
     //      place (name, address, how to get in; no travel distance), going to homes (no place; the
     //      distance), both (everything). Nothing is saved here.
