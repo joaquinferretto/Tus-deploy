@@ -58,6 +58,8 @@ export function crearModuloPagosServicio(input: {
   auditarCuenta?: (evento: EventoCuentaCobro) => Promise<void>
   // Tests inject a fake HTTP transport for the Mercado Pago API.
   mercadoPago?: Pick<ConfiguracionProveedorMercadoPago, 'fetch' | 'apiBaseUrl'>
+  // MP-CALIDAD-01: who pays, for the `payer` of the checkout (optional).
+  comprador?: ConfiguracionProveedorMercadoPago['comprador']
   payouts?: Pick<ConfiguracionPayoutsMercadoPago, 'fetch' | 'apiBaseUrl'>
 }): ModuloPagosServicio {
   const now = input.now ?? (() => Date.now())
@@ -116,6 +118,10 @@ export function crearModuloPagosServicio(input: {
             marketplace: env['MERCADO_PAGO_MARKETPLACE']?.trim() || null,
             plataforma,
             now,
+            // MP-CALIDAD-01: sent only when configured (see docs/MERCADO_PAGO_CALIDAD_100.md).
+            categoriaItem: env['MERCADO_PAGO_ITEM_CATEGORY_ID']?.trim() || null,
+            descripcionResumen: env['MERCADO_PAGO_STATEMENT_DESCRIPTOR']?.trim() || null,
+            ...(input.comprador ? { comprador: input.comprador } : {}),
             ...input.mercadoPago,
           },
           cuentas

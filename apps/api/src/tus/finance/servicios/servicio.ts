@@ -1128,6 +1128,9 @@ export class ServicioFinanzasServicios {
         commissionMinor: intent.commission?.commissionMinor ?? null,
         collectionMode: intent.collectionMode ?? 'split',
         title: claim.title ?? 'Servicio TUS',
+        // MP-CALIDAD-01: the item says what is paid, and the adapter may name who pays.
+        description: claim.deTurno ? 'Pago de un turno reservado en TUS' : 'Pago de un servicio contratado en TUS',
+        clienteTenantId: intent.tenantId,
         trabajoId: intent.trabajoId,
         // Request-born works return to their page and a turno to "Mis turnos"; the return never
         // confirms a payment.

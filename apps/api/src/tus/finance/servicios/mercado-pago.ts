@@ -54,6 +54,16 @@ export interface ConfiguracionProveedorMercadoPago {
   // user id, from the Mercado Pago Developers panel). With it TUS collects for a provider that
   // has no linked account; without it such a provider cannot be charged (as before).
   plataforma?: { accessToken: string; userId: string } | null
+  // MP-CALIDAD-01 (integration quality of Mercado Pago). All optional; absent, nothing is sent.
+  // - categoriaItem: `items[].category_id`, one of the categories of Mercado Pago (configured, not
+  //   guessed: MERCADO_PAGO_ITEM_CATEGORY_ID).
+  // - descripcionResumen: `statement_descriptor`, what the buyer reads on its card statement
+  //   (MERCADO_PAGO_STATEMENT_DESCRIPTOR).
+  // - comprador: who pays (email, first and last name) for `payer`. A failure never stops a
+  //   checkout: the preference is created without the buyer.
+  categoriaItem?: string | null
+  descripcionResumen?: string | null
+  comprador?: (clienteTenantId: string) => Promise<{ email?: string | null; nombre?: string | null; apellido?: string | null } | null>
 }
 
 // Largest minor amount rendered exactly as a JSON number with two decimals.
@@ -102,17 +112,33 @@ export class ProveedorPagosMercadoPago implements PuertoProveedorPagosServicio {
         ? input.returnPath
         : `/tus/compromisos?pago=retorno&trabajo=${encodeURIComponent(input.trabajoId ?? '')}`
     const back = `${this.config.webBaseUrl.replace(/\/+$/u, '')}${path}`
+    // MP-CALIDAD-01. The buyer, when TUS knows who pays. Only an email that looks like one and
+    // names that are text; nothing else of the person is sent.
+    const comprador = input.clienteTenantId && this.config.comprador ? await this.config.comprador(input.clienteTenantId).catch(() => null) : null
+    const texto = (value: unknown, maximo: number) => (typeof value === 'string' && value.trim() ? value.trim().slice(0, maximo) : null)
+    const email = texto(comprador?.email, 254)
+    const payer = {
+      ...(email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email) ? { email } : {}),
+      ...(texto(comprador?.nombre, 80) ? { name: texto(comprador?.nombre, 80)! } : {}),
+      ...(texto(comprador?.apellido, 80) ? { surname: texto(comprador?.apellido, 80)! } : {}),
+    }
+    const categoria = texto(this.config.categoriaItem, 60)
+    const resumen = texto(this.config.descripcionResumen, 22)
     const body = {
       items: [
         {
           id: input.paymentId,
           title: (input.title ?? 'Servicio TUS').slice(0, 250),
+          description: (texto(input.description, 250) ?? input.title ?? 'Servicio TUS').slice(0, 250),
+          ...(categoria ? { category_id: categoria } : {}),
           quantity: 1,
           currency_id: input.currency,
           unit_price: aNumeroExacto(input.amountMinor, input.currency),
         },
       ],
       external_reference: input.paymentId,
+      ...(Object.keys(payer).length > 0 ? { payer } : {}),
+      ...(resumen ? { statement_descriptor: resumen } : {}),
       ...(porPlataforma ? {} : { marketplace_fee: aNumeroExacto(input.commissionMinor, input.currency) }),
       ...(this.config.marketplace && !porPlataforma ? { marketplace: this.config.marketplace } : {}),
       notification_url: this.config.notificationUrl,

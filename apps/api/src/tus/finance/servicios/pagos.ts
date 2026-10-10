@@ -146,6 +146,11 @@ export interface SolicitudCheckout {
   // TUS-GANANCIAS-01: 'plataforma' collects with TUS's own account (no marketplace_fee).
   collectionMode?: 'split' | 'plataforma'
   title?: string
+  // MP-CALIDAD-01: what is being paid, in a sentence (the item description of the checkout).
+  description?: string
+  // MP-CALIDAD-01: the tenant of the client that pays. The provider adapter may ask who it is to
+  // send the buyer to the checkout (better approval, less fraud rejections). Never required.
+  clienteTenantId?: string
   trabajoId?: string
   // Web path the browser returns to (default: the marketplace workspace). Never a confirmation.
   returnPath?: string

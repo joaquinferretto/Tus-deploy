@@ -207,6 +207,13 @@ export function createPrismaTusApplication(client: TusPrismaClient, env: Record<
   // The registry writes for the same tenant, profile and scope that decision is evaluated for.
   const readinessEvidence = new ServicioEvidenciasHabilitacion(new AlmacenAdminEvidenciasPrisma(client as unknown as ClientePrismaEvidenciasHabilitacion), { tenantId: tenantPlataforma, profile: perfilPagos, scope: ALCANCE_PAGOS_SERVICIO })
   const servicePayments = crearModuloPagosServicio({ env, configuracion: new ConfiguracionPagosPrisma(paymentsClient), cuentas: new CuentasCobroPrisma(paymentsClient), produccionAutorizada: habilitacionPagos.autorizada, habilitaciones: habilitacionPagos.estado,
+    // MP-CALIDAD-01: who pays, for the checkout. Only when the tenant of the client has exactly one
+    // active account (nothing is guessed); its email and its name, nothing else.
+    comprador: async (tenantId) => {
+      const cuentas = await (client as unknown as { account: { findMany(input: unknown): Promise<Array<{ user: { email: string | null; firstName: string | null; lastName: string | null } }>> } }).account.findMany({ where: { tenantId, status: 'active' }, include: { user: true }, take: 2 })
+      const usuario = cuentas.length === 1 ? cuentas[0]!.user : null
+      return usuario ? { email: usuario.email, nombre: usuario.firstName, apellido: usuario.lastName } : null
+    },
     // PAGOS-MP-VINCULADO-01: links and unlinks of Mercado Pago, with the other audit events.
     auditarCuenta: async (evento) => {
       await (client as unknown as { auditEvent: { create(input: { data: Record<string, unknown> }): Promise<unknown> } }).auditEvent.create({
