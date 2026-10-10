@@ -38,6 +38,8 @@ export function ProviderPublicProfile(): React.ReactNode {
   const [fields, setFields] = useState<string[]>([])
   const [message, setMessage] = useState('')
   const [publicId, setPublicId] = useState<string | null>(null)
+  // PRESTADOR-TIPO-01: the name of a person is the full name of the holder of the account.
+  const [derivedName, setDerivedName] = useState<string | null>(null)
   const [photo, setPhoto] = useState<{ url: string | null; initials: string }>({ url: null, initials: '' })
 
   useEffect(() => {
@@ -46,11 +48,14 @@ export function ProviderPublicProfile(): React.ReactNode {
     void Promise.all([client.catalog(), client.myProfile(session.session)])
       .then(([loadedCatalog, mine]) => {
         setCatalog(loadedCatalog)
+        const derived = mine.publicName?.type === 'persona_fisica' ? mine.publicName.derived : null
+        setDerivedName(derived)
+        if (derived) setValues((current) => ({ ...current, displayName: derived }))
         if (mine.profile) {
           setPublicId(mine.profile.id)
           setPhoto({ url: mine.profile.photoUrl ?? null, initials: mine.profile.initials })
           setValues({
-            displayName: mine.profile.displayName,
+            displayName: derived ?? mine.profile.displayName,
             professions: mine.profile.professions?.map((item) => item.id) ?? [mine.profile.profession.id],
             zone: mine.profile.serviceZones[0] ?? '',
             serviceZones: mine.profile.serviceZones,
@@ -91,6 +96,7 @@ export function ProviderPublicProfile(): React.ReactNode {
       setStatus('saved')
     } catch (error) {
       if (error instanceof DirectoryRequestError && error.code === 'INVALID_PROFILE') setFields(error.fields)
+      else if (error instanceof DirectoryRequestError && error.code === 'PUBLIC_NAME_DERIVED') setMessage('Tu nombre público es tu nombre completo y no se puede cambiar desde acá. Si trabajás como empresa, escribinos desde Ayuda.')
       else if (error instanceof DirectoryRequestError && error.code === 'PROVIDER_REQUIRED') {
         setStatus('not_provider')
         return
@@ -135,14 +141,22 @@ export function ProviderPublicProfile(): React.ReactNode {
         Esto es lo que ven los clientes en “Buscar trabajador”. No publiques teléfono, email ni dirección: solo zonas aproximadas. La verificación,
         los trabajos realizados y tus horarios los calcula TUS.
       </p>
-      <TextField
-        error={error('displayName')}
-        id="perfil-nombre"
-        label="Nombre público"
-        maxLength={60}
-        onChange={(event) => setValues((current) => ({ ...current, displayName: event.target.value }))}
-        value={values.displayName}
-      />
+      {derivedName ? (
+        <div className={authStyles.field} data-nombre-derivado>
+          <span>Nombre público</span>
+          <p style={{ fontWeight: 600, margin: '4px 0', overflowWrap: 'anywhere' }}>{derivedName}</p>
+          <p className={authStyles.notice} style={{ margin: 0 }}>Es tu nombre completo, tomado de tus datos personales. Si trabajás como empresa y querés mostrar un nombre comercial, escribinos desde Ayuda.</p>
+        </div>
+      ) : (
+        <TextField
+          error={error('displayName')}
+          id="perfil-nombre"
+          label="Nombre público"
+          maxLength={60}
+          onChange={(event) => setValues((current) => ({ ...current, displayName: event.target.value }))}
+          value={values.displayName}
+        />
+      )}
       <fieldset className={authStyles.field}>
         <legend>Servicios que ofrecés</legend>
         <ServicePicker

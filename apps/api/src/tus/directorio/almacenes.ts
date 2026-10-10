@@ -124,6 +124,7 @@ function desdeFila(fila: Fila): PerfilPublico {
     tenantId: String(fila['tenantId']),
     prestadorId: String(fila['prestadorId']),
     nombrePublico: String(fila['nombrePublico']),
+    tipoPrestador: fila['tipoPrestador'] === 'empresa' ? 'empresa' : 'persona_fisica',
     oficio: fila['oficio'] as OficioId,
     oficios: oficiosDeFila(fila),
     latitud: typeof fila['latitud'] === 'number' ? fila['latitud'] : null,
@@ -173,7 +174,9 @@ export class AlmacenPerfilesPrisma implements AlmacenPerfiles {
     const escribir = async (client: ClientePrismaDirectorio) => {
       const fila = await client.perfilPublicoPrestador.upsert({
         where: { tenantId_prestadorId: { tenantId: perfil.tenantId, prestadorId: perfil.prestadorId } },
-        create: { id: perfil.id, tenantId: perfil.tenantId, prestadorId: perfil.prestadorId, ...datos, fechaCreacion: new Date(perfil.creadoEn) },
+        // (PRESTADOR-TIPO-01: the type is set when the profile is created; afterwards only its own
+        // audited operation changes it, never a save of the profile.)
+        create: { id: perfil.id, tenantId: perfil.tenantId, prestadorId: perfil.prestadorId, ...datos, tipoPrestador: perfil.tipoPrestador ?? 'persona_fisica', fechaCreacion: new Date(perfil.creadoEn) },
         update: datos,
       })
       if (!client.perfilServicio) return

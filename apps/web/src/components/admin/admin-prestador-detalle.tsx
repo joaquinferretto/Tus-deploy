@@ -168,9 +168,21 @@ export function AdminPrestadorDetallePage({ id }: { id: string }): React.ReactNo
         )
       })() : null}
 
+      {detalle.tipoPrestador ? <TipoPrestador detalle={detalle} id={id} onGuardado={(value) => { aplicar(value); setAviso(value.cambio ? 'Tipo de prestador actualizado.' : 'No había nada para cambiar.') }} pedir={pedir} /> : null}
+
       <form aria-label="Perfil del prestador" className={`${styles.card} ${styles.form}`} onSubmit={guardar}>
         <h2>Perfil profesional</h2>
-        <label>Nombre público<input maxLength={60} minLength={2} onChange={(event) => setForm({ ...form, displayName: event.target.value })} required value={form.displayName} />{campo('displayName')}</label>
+        {/* PRESTADOR-TIPO-01: the name of a person is derived from the holder of the account; only a
+            business has a name to type. The API refuses it too. */}
+        {detalle.tipoPrestador === 'persona_fisica' ? (
+          <div data-nombre-derivado>
+            <span>Nombre público</span>
+            <p style={{ fontWeight: 600, margin: '4px 0', overflowWrap: 'anywhere' }}>{detalle.perfil.displayName}</p>
+            <p className={styles.muted} style={{ margin: 0 }}>En personas físicas se utiliza el nombre completo del titular de la cuenta.</p>
+          </div>
+        ) : (
+          <label>Nombre público<input maxLength={60} minLength={2} onChange={(event) => setForm({ ...form, displayName: event.target.value })} required value={form.displayName} />{campo('displayName')}</label>
+        )}
         <label>Descripción<textarea maxLength={600} onChange={(event) => setForm({ ...form, description: event.target.value })} rows={4} value={form.description} />{campo('description')}</label>
         <label>Años de experiencia<input max={70} min={0} onChange={(event) => setForm({ ...form, yearsOfExperience: event.target.value })} type="number" value={form.yearsOfExperience} />{campo('yearsOfExperience')}</label>
 
@@ -249,4 +261,84 @@ function validarLocal(cambios: CambiosPrestador): string[] {
   if (anios !== undefined && anios !== null && (!Number.isInteger(anios) || anios < 0 || anios > 70)) errores.push('yearsOfExperience')
   if ((cambios.description ?? '').length > 600) errores.push('description')
   return errores
+}
+
+// PRESTADOR-TIPO-01. Persona física <-> Empresa. Only how the provider is presented: the same
+// account, provider, services, turnos and history. To "Persona física" the public name becomes the
+// name of the holder of the account (the API takes it from the account; it is previewed here). To
+// "Empresa" the public name can be kept or replaced by a trade name. The holder never changes.
+const ETIQUETA_TIPO: Record<'persona_fisica' | 'empresa', string> = { persona_fisica: 'Persona física', empresa: 'Empresa' }
+function TipoPrestador({ detalle, id, onGuardado, pedir }: { detalle: AdminPrestadorDetalle; id: string; onGuardado: (value: AdminPrestadorDetalle & { cambio: boolean }) => void; pedir: ReturnType<typeof useConfirmacion>[1] }): React.ReactNode {
+  const actual = detalle.tipoPrestador ?? 'persona_fisica'
+  const [tipo, setTipo] = useState<'persona_fisica' | 'empresa'>(actual)
+  const [nombre, setNombre] = useState(detalle.perfil.displayName)
+  const [motivo, setMotivo] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => { setTipo(actual); setNombre(detalle.perfil.displayName); setMotivo(''); setError('') }, [actual, detalle.perfil.displayName])
+  const titular = detalle.titular?.nombreCompleto ?? null
+  const nombreFinal = tipo === 'persona_fisica' ? titular : nombre.replace(/\s+/gu, ' ').trim() || detalle.perfil.displayName
+  const sinCambios = tipo === actual && nombreFinal === detalle.perfil.displayName
+  const enviar = async () => {
+    setGuardando(true)
+    setError('')
+    try {
+      onGuardado(await adminApi.cambiarTipoPrestador(id, { tipo, ...(tipo === 'empresa' ? { nombrePublico: nombre } : {}), ...(motivo.trim() ? { motivo: motivo.trim() } : {}) }))
+    } catch (cause: unknown) {
+      const code = cause instanceof AdminApiError ? cause.code : ''
+      setError(code === 'HOLDER_NAME_REQUIRED' ? 'El titular de la cuenta no tiene nombre y apellido cargados. Completalos primero en Usuarios → Identidad.' : code === 'HOLDER_NAME_TOO_LONG' ? 'El nombre y apellido del titular superan los 60 caracteres del nombre público.' : code === 'INVALID_PUBLIC_NAME' ? 'El nombre público necesita entre 2 y 60 caracteres, sin teléfonos, emails ni enlaces.' : adminErrorMessage(cause))
+    } finally {
+      setGuardando(false)
+    }
+  }
+  const guardar = () => {
+    if (tipo === actual) return void enviar()
+    pedir({
+      titulo: `¿Pasar a ${ETIQUETA_TIPO[tipo]}?`,
+      detalle: tipo === 'persona_fisica'
+        ? `El prestador pasará a Persona física y su nombre público será ${titular}. Sus servicios, turnos e historial no se modificarán.`
+        : 'El prestador pasará a Empresa. Sus servicios, turnos e historial no se modificarán.',
+      confirmar: 'Sí, cambiar',
+      onConfirm: enviar,
+    })
+  }
+  return (
+    <section aria-labelledby="prestador-tipo" className={styles.card} data-tipo-prestador={actual}>
+      <h2 id="prestador-tipo">Tipo de prestador</h2>
+      <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: '0.75rem', margin: '0.5rem 0' }}>
+        <div><dt className={styles.muted}>Titular de la cuenta</dt><dd data-titular style={{ margin: 0, overflowWrap: 'anywhere' }}>{titular ?? <span className={styles.muted}>Sin nombre y apellido cargados</span>}</dd></div>
+        <div><dt className={styles.muted}>Tipo</dt><dd style={{ margin: 0 }}>{ETIQUETA_TIPO[actual]}</dd></div>
+        <div><dt className={styles.muted}>Nombre público</dt><dd data-nombre-publico style={{ margin: 0, overflowWrap: 'anywhere' }}>{detalle.perfil.displayName}</dd></div>
+      </dl>
+      {actual === 'persona_fisica' ? <p className={styles.muted} data-ayuda-persona style={{ margin: '0 0 0.5rem' }}>En personas físicas se utiliza el nombre completo del titular de la cuenta.</p> : null}
+      <fieldset style={{ border: 0, display: 'flex', flexWrap: 'wrap', gap: 16, margin: 0, padding: 0 }}>
+        <legend className={styles.muted}>Presentarlo como</legend>
+        {(['persona_fisica', 'empresa'] as const).map((opcion) => (
+          <label key={opcion} style={{ alignItems: 'center', display: 'flex', gap: 6 }}>
+            <input checked={tipo === opcion} data-tipo-opcion={opcion} name="tipo-prestador" onChange={() => { setTipo(opcion); setError('') }} type="radio" value={opcion} />
+            {ETIQUETA_TIPO[opcion]}
+          </label>
+        ))}
+      </fieldset>
+      {tipo === 'empresa' ? (
+        <label style={{ display: 'grid', gap: 4, marginTop: 8 }}>
+          Nombre público del prestador
+          <input data-nombre-empresa maxLength={60} onChange={(event) => setNombre(event.target.value)} value={nombre} />
+          <span className={styles.muted}>Podés cambiarlo por el nombre comercial de la empresa, o dejarlo como está. El titular de la cuenta no cambia.</span>
+        </label>
+      ) : (
+        <p data-vista-previa style={{ marginBottom: 0 }}>
+          {titular ? <>El nombre público pasará a: <strong>{titular}</strong></> : <span className={styles.error}>Para pasar a Persona física el titular necesita nombre y apellido. Completalos primero en Usuarios → Identidad.</span>}
+        </p>
+      )}
+      <label style={{ display: 'grid', gap: 4, marginTop: 8 }}>
+        Motivo (opcional)
+        <input data-motivo-tipo maxLength={300} onChange={(event) => setMotivo(event.target.value)} value={motivo} />
+      </label>
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+        <button className={styles.buttonPrimary} data-guardar-tipo disabled={guardando || sinCambios || (tipo === 'persona_fisica' && !titular)} onClick={guardar} type="button">{guardando ? 'Guardando…' : 'Guardar tipo'}</button>
+      </div>
+    </section>
+  )
 }

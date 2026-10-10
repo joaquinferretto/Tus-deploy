@@ -69,7 +69,9 @@ export function crearAltaPrestadorAdmin(deps: {
     if (prestador.status !== 'approved') return { status: 409, code: 'PROVIDER_NOT_APPROVED' }
     // The target tenant is resolved from the verified account, never from input.
     const target = { ...admin, tenantId: account.tenantId, roles: ['owner'], permissions: ['tus:marketplace:write'] }
-    const result = await deps.directorio.guardarPerfil(target, body)
+    // (PRESTADOR-TIPO-01: a NEW provider registered with a name that is not the one of its holder
+    // is a business; an existing person keeps its derived name and another one is refused.)
+    const result = await deps.directorio.guardarPerfil(target, body, { nombreLibreAlCrear: true })
     if (!result.ok) return { status: 422, code: result.code }
     await marketplace.store.audit.append([{
       auditId: randomUUID(), tenantId: account.tenantId, actorId: admin.subjectId,
@@ -91,6 +93,8 @@ export function crearEdicionPrestadorAdmin(deps: { application: TusApplicationSe
   const vista = (perfil: NonNullable<Awaited<ReturnType<ServicioDirectorio['perfilParaAdmin']>>>) => ({
     id: perfil.id,
     displayName: perfil.nombrePublico,
+    // PRESTADOR-TIPO-01: read only here; it is changed by its own audited operation.
+    providerType: perfil.tipoPrestador ?? 'persona_fisica',
     profession: perfil.oficio,
     professions: [...perfil.oficios],
     zone: perfil.zona,

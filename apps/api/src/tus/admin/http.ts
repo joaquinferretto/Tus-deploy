@@ -151,6 +151,11 @@ export interface DependenciasAdmin {
   cuentasDePrestadores?: (tenantIds: readonly string[]) => Promise<CuentasPrestadores>
   // Whether the deposit of each provider can be charged, and why not (never a secret).
   cobroDeSenas?: (tenantIds: readonly string[]) => Promise<Map<string, { disponible: boolean; motivo: string | null; modo: 'plataforma' | 'split' | null }>>
+  // PRESTADOR-TIPO-01: the type of a provider (persona fisica | empresa) and the holder it shows.
+  tipoPrestador?: {
+    estado(perfilId: string): Promise<{ tipo: string; nombrePublico: string; titular: { cuentaId: string | null; nombre: string | null; apellido: string | null; nombreCompleto: string | null } } | null>
+    cambiar(actor: TusAuthenticatedTenantContext, perfilId: string, body: Record<string, unknown>): Promise<{ ok: true; cambio: boolean; tipo: string; nombrePublico: string } | { ok: false; status: number; code: string }>
+  }
   prestadorAdmin?: {
     leer(id: string): Promise<{ perfil: Record<string, unknown>; tenantId: string; prestador: { estado: string; aprobado: boolean } | null } | null>
     guardar(admin: TusAuthenticatedTenantContext, id: string, body: Record<string, unknown>): Promise<{ status: number; code?: string; fields?: string[] } & Record<string, unknown>>
@@ -439,8 +444,12 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
       deps.cuentasDePrestadores ? deps.cuentasDePrestadores([leido.tenantId]) : Promise.resolve(null),
     ])
     const cobros = deps.cobroDeSenas ? await deps.cobroDeSenas([leido.tenantId]).catch(() => null) : null
+    const tipo = deps.tipoPrestador ? await deps.tipoPrestador.estado(id) : null
     return {
       perfil: leido.perfil,
+      // PRESTADOR-TIPO-01: the holder of the account (the real person) next to the type; the
+      // public name of the provider is `perfil.displayName`.
+      ...(tipo ? { tipoPrestador: tipo.tipo, titular: { nombre: tipo.titular.nombre, apellido: tipo.titular.apellido, nombreCompleto: tipo.titular.nombreCompleto } } : {}),
       prestador: leido.prestador,
       cuenta: cuenta ? { id: cuenta.id, nombre: cuenta.nombre, email: cuenta.email, estado: cuenta.estado, verificado: cuenta.verificado, telefonoVerificado: cuenta.telefono?.verificado ?? false, telefono: cuenta.telefono?.numero ?? null } : null,
       ubicacion,
@@ -466,6 +475,22 @@ export function crearRouterAdmin(deps: DependenciasAdmin): Router {
     const result = await deps.prestadorAdmin.guardar(context, id, cuerpo(request))
     if (result.status !== 200) return void response.status(result.status).json({ error: { code: result.code ?? 'INVALID_PROFILE', message: 'provider update rejected', ...(result.fields ? { fields: result.fields } : {}) } })
     response.status(200).json(await detallePrestador(id))
+  }))
+
+  // PRESTADOR-TIPO-01. Persona física <-> Empresa. Platform administration only. The body carries
+  // only the type, the optional public name of a business and an optional note; the profile is the
+  // one of the path and the actor the session. To persona física the public name becomes the first
+  // and last name of the holder of the account (never typed here).
+  router.post('/tus/v1/admin/prestadores/:id/tipo', asyncHandler(async (request, response) => {
+    const context = await guard(request, response)
+    if (!context) return
+    if (!deps.tipoPrestador || !deps.prestadorAdmin) return void response.status(503).json({ error: { code: 'UNAVAILABLE', message: 'provider type unavailable' } })
+    const body = cuerpo(request)
+    if (Object.keys(body).some((key) => key !== 'tipo' && key !== 'nombrePublico' && key !== 'motivo')) return void response.status(422).json({ error: { code: 'INVALID_CHANGE', message: 'only the type, the public name and a note can be sent here' } })
+    const id = String(request.params['id'] ?? '')
+    const resultado = await deps.tipoPrestador.cambiar(context, id, body)
+    if (!resultado.ok) return void response.status(resultado.status).json({ error: { code: resultado.code, message: 'provider type change rejected' } })
+    response.status(200).json({ ...(await detallePrestador(id)), cambio: resultado.cambio })
   }))
 
   router.get('/tus/v1/admin/prestadores', asyncHandler(async (request, response) => {

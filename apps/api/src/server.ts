@@ -71,6 +71,7 @@ import { crearIdentidadUsuarioAdmin, crearVerificacionIdentidadAdmin } from './t
 import { crearRouterTelefono } from './auth-security/phone/http.ts'
 import type { RawQueryClient } from './auth-security/adapters/postgres/postgres-rate-limiter.ts'
 import { leerAdminsPlataforma } from './auth-security/application/auth-service.ts'
+import { crearTipoPrestadorAdmin, type ClientePrismaTipoPrestador } from './tus/directorio/tipo-prestador.ts'
 import { createAuthRouter } from './auth-security/http/auth-router.ts'
 import { createFederatedAuth, createFederatedAuthRouter, readGoogleAuthSettings } from './auth-security/federated/composition.ts'
 import type { FederatedPrismaClient } from './auth-security/federated/adapters/stores.ts'
@@ -175,7 +176,10 @@ export function createApp(options: CreateAppOptions = {}): Application {
     almacen: new AlmacenCalificacionesPrisma(prisma as unknown as ClientePrismaCalificaciones),
     trabajos: { buscarAccesible: (input) => new PrismaTrabajoStore(prisma).findAccessible(input) },
   })
-  const directorio = crearServicioDirectorio({ application, prisma: prisma as unknown as ClientePrismaDirectorio, calificaciones: (tenantIds) => calificaciones.resumen(tenantIds), operacionAdmin: operacionAdminPrisma(prisma as unknown as Parameters<typeof operacionAdminPrisma>[0]), geocodificador: crearGeocodificador(process.env) })
+  // PRESTADOR-TIPO-01: one instance for the directory (the rule of the public name), the personal
+  // profile (the provider follows its holder) and the administration (the change of type).
+  const tipoPrestador = crearTipoPrestadorAdmin(prisma as unknown as ClientePrismaTipoPrestador)
+  const directorio = crearServicioDirectorio({ reglaNombre: (tenantId) => tipoPrestador.reglaNombre(tenantId), application, prisma: prisma as unknown as ClientePrismaDirectorio, calificaciones: (tenantIds) => calificaciones.resumen(tenantIds), operacionAdmin: operacionAdminPrisma(prisma as unknown as Parameters<typeof operacionAdminPrisma>[0]), geocodificador: crearGeocodificador(process.env) })
   // Every match (client picks an application / provider accepts a direct request) creates the
   // work in the same PostgreSQL transaction that assigns the request.
   const solicitudes = crearServicioSolicitudes({ cuentas: auth.store, destinos: directorio, prisma: prisma as unknown as ClientePrismaSolicitudes, ...(application.work ? { trabajos: application.work } : {}) })
@@ -207,7 +211,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
   // services as every other payment (no parallel Mercado Pago integration).
   servicioTurnos.conSenas(new ServicioSenaTurnos(prisma as unknown as PrismaClient, pagosSenaDeAplicacion(application)))
   // Personal profile (names, document, residence) and normalized geography.
-  const perfiles = new ServicioPerfil(new AlmacenPerfilPrisma(prisma as unknown as ClientePrismaPerfil))
+  const perfiles = new ServicioPerfil(new AlmacenPerfilPrisma(prisma as unknown as ClientePrismaPerfil, (accountId) => tipoPrestador.sincronizarTitular(accountId)))
   const whatsapp = options.tusRouter
     ? undefined
     : crearModuloWhatsappPrisma(prisma, application, auth.store, process.env, { directorio, solicitudes, turnos: servicioTurnos, urgentes, recordatorios }, telefonos)
@@ -371,6 +375,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
         ...(application.identity ? { verificacionIdentidad: crearVerificacionIdentidadAdmin({ identidad: application.identity, leerUsuario: (accountId) => auth.service.getAccountAsAdmin(accountId), perfilUsuario: (accountId) => perfiles.perfilAdmin(accountId), auditar: (input) => auth.service.recordAdminIdentityChange(input) }) } : {}),
         telefonoAdmin: telefonos,
         prestadorAdmin: crearEdicionPrestadorAdmin({ application, directorio }),
+        tipoPrestador,
         conteos,
         catalogo: new ServicioCatalogo({
           almacen: almacenCatalogo,

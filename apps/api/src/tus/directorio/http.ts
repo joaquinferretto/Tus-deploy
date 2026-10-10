@@ -184,7 +184,8 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
     asyncHandler(async (request: Request, response: Response) => {
       const context = await autenticar(request, response, sessions)
       if (!context) return
-      response.status(200).json({ profile: await servicio.miPerfil(context) })
+      // `publicName`: PRESTADOR-TIPO-01, what the form shows instead of a field when it is derived.
+      response.status(200).json({ profile: await servicio.miPerfil(context), publicName: await servicio.reglaNombrePublico(context.tenantId) })
     })
   )
 
@@ -201,6 +202,7 @@ export function crearRouterDirectorio({ servicio, sessions, adminSave }: {
       const result = await servicio.guardarPerfil(context, body)
       if (result.ok) response.status(200).json({ profile: result.perfil })
       else if (result.code === 'INVALID_PROFILE') response.status(422).json({ code: result.code, error: 'The profile has invalid fields', fields: result.fields })
+      else if (result.code === 'PUBLIC_NAME_DERIVED') enviarError(response, 422, result.code, 'The public name of a person is the full name of the holder of the account')
       else enviarError(response, 409, result.code, 'Complete your provider onboarding first')
     })
   )

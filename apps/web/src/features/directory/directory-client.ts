@@ -114,7 +114,8 @@ export function createDirectoryClient(fetchImpl: Fetch = fetchWithSession) {
     candidates: (session: TusWebSession, input: { profession: string; zone: string | null }) =>
       call<ResultadoCandidatos>(fetchImpl, '/tus/v1/asistente/candidatos', { method: 'POST', body: JSON.stringify(input) }, session),
     // Provider side.
-    myProfile: (session: TusWebSession) => call<{ profile: (PerfilPrestadorPublico & { visible: boolean }) | null }>(fetchImpl, '/tus/v1/prestador/perfil-publico', {}, session),
+    // `publicName` (PRESTADOR-TIPO-01): for a person the public name is derived, not typed.
+    myProfile: (session: TusWebSession) => call<{ profile: (PerfilPrestadorPublico & { visible: boolean }) | null; publicName?: { type: 'persona_fisica' | 'empresa'; derived: string | null } }>(fetchImpl, '/tus/v1/prestador/perfil-publico', {}, session),
     saveProfile: (session: TusWebSession, input: { displayName: string; profession: string; professions?: string[]; zone: string; serviceZones: string[]; serviceMode: 'local' | 'domicilio' | 'mixto'; coverageRadiusKm: number | null; description: string; yearsOfExperience: number | null; visible: boolean }) =>
       call<{ profile: PerfilPrestadorPublico & { visible: boolean } }>(fetchImpl, '/tus/v1/prestador/perfil-publico', { method: 'PUT', body: JSON.stringify(input) }, session),
     // Own profile photo: the raw file as the body (the API reads its real type from the bytes and
