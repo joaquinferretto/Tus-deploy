@@ -133,7 +133,7 @@ export interface DependenciasCierre {
   // The economic evaluation of the finance service: releases the payments of the work when it is
   // fully paid, and says what is left to pay otherwise. It never releases anything twice.
   evaluarPagos?(input: { tenantId: string; trabajoId: string; correlationId: string }): Promise<ResultadoEconomicoCierre>
-  // PAGOS-MODALIDAD-01. A work (not a turno) whose total was paid in advance has no final payment
+  // PAGOS-MODALIDAD-01. A work or a turno whose total was paid in advance has no final payment
   // left to complete it: its confirmed closing does. true when it completed the work now.
   completarSiPagado?(input: { trabajo: Trabajo; correlationId: string; at: string }): Promise<boolean>
   // Whatever of other domains forbids an AUTOMATIC confirmation: a refund in progress, a payment
@@ -267,7 +267,9 @@ export class ServicioCierreTrabajo {
     // The effects are safe to repeat: a confirmation whose effects were interrupted is completed
     // by asking again (or by the next run of the automatic confirmation).
     if (trabajo.origin === 'turno' && trabajo.reservaId) await this.dependencias.completarReserva?.({ prestadorTenantId: trabajo.prestadorTenantId, reservaId: trabajo.reservaId, at: actual.confirmedAt })
-    if (trabajo.origin !== 'turno') await this.dependencias.completarSiPagado?.({ trabajo, correlationId, at: actual.confirmedAt })
+    // (OPINIONES-TURNOS-01: also the work of a turno. It used to stay accepted for ever, so a turno
+    // that was attended, confirmed and fully paid could never be rated.)
+    await this.dependencias.completarSiPagado?.({ trabajo, correlationId, at: actual.confirmedAt })
     const pagos = this.dependencias.evaluarPagos ? await this.dependencias.evaluarPagos({ ...scope, correlationId }) : null
     if (confirmada) await this.avisos.confirmado?.(trabajo, pagos).catch(() => undefined)
     return { cierre: actual, status: confirmada ? 'confirmed' : 'already_confirmed', pagos }

@@ -1251,7 +1251,13 @@ export class ServicioTrabajo {
     const work = await repositories.work.findAccessible({ tenantId: input.tenantId, trabajoId: input.trabajoId })
     if (!work) return 'not_in_progress'
     if (work.status === ESTADOS_TRABAJO.COMPLETADO) return 'already_completed'
-    if (work.status !== ESTADOS_TRABAJO.EN_PROGRESO) return 'not_in_progress'
+    // OPINIONES-TURNOS-01. The work of a TURNO has no "start" step: nobody presses "iniciar", so it
+    // stays accepted while the turno is confirmed, attended and closed. Its two callers reach here
+    // only after the closing was confirmed (by the client or by the 72 hour window) AND the total
+    // is paid, which IS its valid end: it is completed from accepted. Without this a turno never
+    // reached the state a review needs. A request-born work still has to be in progress.
+    const turnoCerrado = work.origin === 'turno' && work.status === ESTADOS_TRABAJO.ACEPTADO
+    if (work.status !== ESTADOS_TRABAJO.EN_PROGRESO && !turnoCerrado) return 'not_in_progress'
     const context = {
       tenantId: work.tenantId,
       actorId: 'system:mercado-pago',
