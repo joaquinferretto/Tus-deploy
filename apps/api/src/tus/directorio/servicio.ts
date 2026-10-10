@@ -59,6 +59,9 @@ export type ResultadoPerfil =
   | { ok: true; perfil: PerfilPrestadorPublico & { visible: boolean } }
   | { ok: false; code: 'INVALID_PROFILE'; fields: CampoPerfil[] }
   | { ok: false; code: 'PROVIDER_REQUIRED'; fields?: undefined }
+  // PRESTADOR-TIPO-01: the public name of a provider presented as a person is derived from the
+  // holder of its account; another name was sent.
+  | { ok: false; code: 'PUBLIC_NAME_DERIVED'; fields?: undefined }
 
 interface Enriquecido {
   perfil: PerfilPublico
@@ -116,6 +119,9 @@ export class ServicioDirectorio {
       newId?: () => string
       // Reverse geocoder: only to MATCH existing areas when no polygon contains a saved point.
       geocodificador?: GeocodificadorInverso | null
+      // PRESTADOR-TIPO-01: the type of the provider of a tenant and, for a person, the public
+      // name it must carry (tipo-prestador.ts). Absent (tests in memory): every name is free.
+      reglaNombre?: (tenantId: string) => Promise<{ tipo: 'persona_fisica' | 'empresa'; nombre: string | null }>
     }
   ) {
     this.now = deps.now ?? Date.now
@@ -134,12 +140,37 @@ export class ServicioDirectorio {
     return { ...proyectarPerfil(perfil, hechos, this.now(), resolverUbicacionDePerfil(perfil, fallback)), visible: perfil.visible }
   }
 
-  async guardarPerfil(context: TusAuthenticatedTenantContext, body: Record<string, unknown>): Promise<ResultadoPerfil> {
+  // What the forms need to know about the public name: the type and, when it is derived (a
+  // person), the name it carries. Also for a provider with no profile yet.
+  async reglaNombrePublico(tenantId: string): Promise<{ type: 'persona_fisica' | 'empresa'; derived: string | null }> {
+    const actual = await this.deps.perfiles.porTenant(tenantId)
+    const regla = this.deps.reglaNombre ? await this.deps.reglaNombre(tenantId) : null
+    const type = actual?.tipoPrestador ?? regla?.tipo ?? 'persona_fisica'
+    return { type, derived: regla?.tipo === 'persona_fisica' ? regla.nombre ?? actual?.nombrePublico ?? null : null }
+  }
+
+  // `nombreLibreAlCrear` (the administration registering a provider): a NEW profile given a name
+  // that is not the one of its holder is created as a business. It never applies to an edit.
+  async guardarPerfil(context: TusAuthenticatedTenantContext, body: Record<string, unknown>, opciones: { nombreLibreAlCrear?: boolean } = {}): Promise<ResultadoPerfil> {
     const prestador = await this.deps.fuentes.prestador(context.tenantId)
     if (!prestador) return { ok: false, code: 'PROVIDER_REQUIRED' }
+    const actual = await this.deps.perfiles.porTenant(context.tenantId)
+    // PRESTADOR-TIPO-01. A person carries the full name of the holder of its account: it is never
+    // typed. Sending that same name (or the one stored) is accepted and the derived one is saved;
+    // any other name is refused, whoever sends it.
+    const regla = this.deps.reglaNombre ? await this.deps.reglaNombre(context.tenantId) : null
+    let tipoPrestador = actual?.tipoPrestador ?? regla?.tipo ?? 'persona_fisica'
+    if (regla?.tipo === 'persona_fisica') {
+      const fijo = regla.nombre ?? actual?.nombrePublico ?? null
+      const enviado = typeof body['displayName'] === 'string' ? body['displayName'].replace(/\s+/gu, ' ').trim() : ''
+      const igual = (a: string, b: string) => a.toLocaleLowerCase('es') === b.toLocaleLowerCase('es')
+      if (fijo && enviado && !igual(enviado, fijo) && !(actual && igual(enviado, actual.nombrePublico))) {
+        if (actual || !opciones.nombreLibreAlCrear) return { ok: false, code: 'PUBLIC_NAME_DERIVED' }
+        tipoPrestador = 'empresa'
+      } else if (fijo) body = { ...body, displayName: fijo }
+    }
     const validacion = validarPerfil(body)
     if (!validacion.ok) return { ok: false, code: 'INVALID_PROFILE', fields: validacion.campos }
-    const actual = await this.deps.perfiles.porTenant(context.tenantId)
     const ahora = this.now()
     const perfil: PerfilPublico = {
       id: actual?.id ?? this.newId(),
@@ -150,6 +181,7 @@ export class ServicioDirectorio {
       ...(actual ? pickGeografia(actual) : {}),
       fotoSha256: actual?.fotoSha256 ?? null,
       ...validacion.valor,
+      tipoPrestador,
       creadoEn: actual?.creadoEn ?? ahora,
       actualizadoEn: ahora,
     }

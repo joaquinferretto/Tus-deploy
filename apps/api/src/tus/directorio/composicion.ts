@@ -27,6 +27,8 @@ export function crearServicioDirectorio(input: {
   newId?: () => string
   // Reverse geocoder used only when a saved point falls in no stored polygon.
   geocodificador?: GeocodificadorInverso | null
+  // PRESTADOR-TIPO-01 (tipo-prestador.ts).
+  reglaNombre?: (tenantId: string) => Promise<{ tipo: 'persona_fisica' | 'empresa'; nombre: string | null }>
 }): ServicioDirectorio {
   const contar = input.contarCompletados ?? (input.prisma ? contarCompletadosPrisma(input.prisma) : async () => 0)
   const memoria = input.prisma ? null : new AlmacenPerfilesEnMemoria()
@@ -54,5 +56,6 @@ export function crearServicioDirectorio(input: {
     ...(input.now ? { now: input.now } : {}),
     ...(input.newId ? { newId: input.newId } : {}),
     geocodificador: input.geocodificador ?? null,
+    ...(input.reglaNombre ? { reglaNombre: input.reglaNombre } : {}),
   })
 }

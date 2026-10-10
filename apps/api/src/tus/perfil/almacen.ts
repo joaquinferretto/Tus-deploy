@@ -152,7 +152,9 @@ const texto = (value: unknown) => (value === null || value === undefined ? null 
 const numero = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null)
 
 export class AlmacenPerfilPrisma implements AlmacenPerfil {
-  constructor(private readonly client: ClientePrismaPerfil) {}
+  // `alGuardarNombre` (PRESTADOR-TIPO-01): called after the first or last name of an account was
+  // written, so the provider presented as a person follows its holder.
+  constructor(private readonly client: ClientePrismaPerfil, private readonly alGuardarNombre?: (accountId: string) => Promise<unknown>) {}
 
   async paises(): Promise<PaisDTO[]> {
     const filas = await this.client.pais.findMany({ where: { activo: true }, orderBy: [{ orden: 'asc' }, { nombre: 'asc' }] })
@@ -221,6 +223,7 @@ export class AlmacenPerfilPrisma implements AlmacenPerfil {
     if (!fila) return 'no_encontrado' as const
     try {
       await this.client.user.update({ where: { id: String(fila['userId']) }, data: { ...datos, profileUpdatedAt: new Date(datos.profileUpdatedAt) } })
+      await this.alGuardarNombre?.(accountId)
       return 'ok' as const
     } catch (error) {
       // uq_user_documento: the document belongs to another person.
@@ -234,6 +237,7 @@ export class AlmacenPerfilPrisma implements AlmacenPerfil {
     if (!fila) return 'no_encontrado' as const
     try {
       await this.client.user.update({ where: { id: String(fila['userId']) }, data: { ...datos, profileUpdatedAt: new Date(datos.profileUpdatedAt) } })
+      await this.alGuardarNombre?.(accountId)
       return 'ok' as const
     } catch (error) {
       // uq_user_documento: the document belongs to another person (also under a race).

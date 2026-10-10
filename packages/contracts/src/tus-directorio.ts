@@ -371,3 +371,20 @@ export function esPaginaDirectorio(value: unknown): value is PaginaDirectorio {
 export const TIPOS_PRESTADOR = ['persona_fisica', 'empresa'] as const
 export type TipoPrestador = (typeof TIPOS_PRESTADOR)[number]
 export const ETIQUETA_TIPO_PRESTADOR: Record<TipoPrestador, string> = { persona_fisica: 'Persona física', empresa: 'Empresa' }
+
+// The ONE way a proper name is capitalized in TUS: spaces collapsed, everything in lower case and
+// the first letter of every part in upper case (a part starts at the beginning and after anything
+// that is neither a letter nor a digit: a space, a hyphen, an apostrophe). The letters themselves
+// are never replaced: "MARÍA  josé" -> "María José", "o'connor" -> "O'Connor",
+// "garcia-lopez" -> "Garcia-Lopez".
+export function capitalizarNombrePropio(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim().toLocaleLowerCase('es').replace(/(^|[^\p{L}\p{N}])(\p{L})/gu, (_todo, antes: string, letra: string) => antes + letra.toLocaleUpperCase('es'))
+}
+
+// The public name of a provider presented as a person: EVERY first name and EVERY last name of
+// the holder of its account, capitalized. Null when either is missing: a name is never made up.
+export function nombrePublicoPersonaFisica(nombre: string | null | undefined, apellido: string | null | undefined): string | null {
+  const nombres = capitalizarNombrePropio(nombre ?? '')
+  const apellidos = capitalizarNombrePropio(apellido ?? '')
+  return nombres && apellidos ? `${nombres} ${apellidos}` : null
+}

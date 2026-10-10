@@ -41,6 +41,7 @@ export function PrestadoresAdmin({ onSaved }: { onSaved?: () => void } = {}) {
         setMessage(response.status === 403 ? 'Volvé a Seguridad y confirmá tu segundo factor; después iniciá sesión nuevamente si te faltan permisos.'
           : result.code === 'VERIFIED_ACCOUNT_REQUIRED' ? 'Ese email tiene un registro pendiente de confirmar de otra persona: usá otro email.'
           : result.code === 'PROVIDER_NOT_APPROVED' ? 'El prestador no está aprobado. Esta pantalla no cambia ese estado.'
+          : result.code === 'PUBLIC_NAME_DERIVED' ? 'Ese prestador es una persona física: su nombre público es el nombre completo del titular de la cuenta y no se escribe a mano. Para usar un nombre comercial, pasalo a Empresa desde su detalle.'
           : result.fields?.length ? `Revisá los campos: ${result.fields.join(', ')}.` : 'No pudimos guardar el perfil. Revisá los datos e intentá nuevamente.')
         return
       }
@@ -57,6 +58,7 @@ export function PrestadoresAdmin({ onSaved }: { onSaved?: () => void } = {}) {
     <form className="tus-support-form" onSubmit={event => void save(event)}>
       <label htmlFor="provider-email">Email de la cuenta del prestador</label><input id="provider-email" name="email" type="email" maxLength={254} required autoComplete="off" />
       <label htmlFor="provider-name">Nombre público</label><input id="provider-name" name="displayName" minLength={2} maxLength={60} required />
+      <small>Una persona física se muestra con el nombre completo del titular de la cuenta. Si cargás un prestador nuevo con otro nombre, queda como Empresa.</small>
       <label htmlFor="provider-profession">Oficio</label><select id="provider-profession" name="profession" required defaultValue=""><option value="" disabled>Elegí un oficio</option>{catalog?.items.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       <label htmlFor="provider-zone">Barrio / zona</label><select id="provider-zone" name="zone" required defaultValue=""><option value="" disabled>Elegí una zona</option>{catalog?.zones.map(zone => <option key={zone} value={zone}>{zone}</option>)}</select>
       <label htmlFor="provider-mode">Modalidad</label><select id="provider-mode" name="serviceMode" defaultValue="domicilio"><option value="domicilio">A domicilio</option><option value="local">En su local</option><option value="mixto">Ambas</option></select>
