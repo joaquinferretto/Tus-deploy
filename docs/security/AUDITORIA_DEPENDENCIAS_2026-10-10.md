@@ -76,7 +76,7 @@ Los de mobile se resuelven actualizando Expo / React Native, que es un trabajo p
 `pnpm run lint:security` fallaba en producción por tres archivos; ahora pasa, sin tocar el escáner (`d6dae4b`):
 
 - el smoke de pagos y un test de Mercado Pago usaban valores falsos que no empiezan con el prefijo que el escáner reconoce como ficticio: se renombraron;
-- un test comparaba contra un objeto literal `..._CLIENT_SECRET: '<código de error>'`, que el escáner lee como credencial en línea: era un falso positivo, y el objeto esperado ahora se arma desde los nombres.
+- un test comparaba contra un objeto literal que asignaba un código de error a una clave terminada en `_CLIENT_SECRET`, que el escáner lee como credencial en línea: era un falso positivo, y el objeto esperado ahora se arma desde los nombres.
 
 Dato útil: en modo `--tracked` el escáner lee el contenido **del índice de Git**, no el del disco. Un cambio sin `git add` no se ve.
 
