@@ -49,11 +49,21 @@ export const webhookRateLimitMiddleware = rateLimit({
 
 const authRedisStore = createRedisStore('rl:auth:')
 
+// AUTH-LIMITE-01. Reads of the own session state that an authenticated screen makes on every load
+// (the administration asks whether its second factor is active). They try no secret: a wrong
+// answer teaches nothing, so they do not spend the budget of the sensitive operations. They are
+// still under the general limit above. Everything else under the sensitive prefixes (sign-in,
+// registration, recovery, verification, every MFA challenge and change) keeps the strict limit.
+export const LECTURAS_DE_SESION = ['/auth/mfa/status'] as const
+export const esLecturaDeSesion = (method: string, originalUrl: string): boolean =>
+  (method === 'GET' || method === 'HEAD') && (LECTURAS_DE_SESION as readonly string[]).includes(originalUrl.split('?')[0]!.replace(/\/+$/u, ''))
+
 export const authRateLimitMiddleware = rateLimit({
   ...(authRedisStore ? { store: authRedisStore } : {}),
   windowMs: 15 * 60 * 1000,
   // Per IP on login/reset/verify/MFA; per-email and per-account limits live in PostgreSQL.
   max: 40,
+  skip: (req) => esLecturaDeSesion(req.method, req.originalUrl),
   message: {
     error: 'Too many authentication attempts from this IP, please try again later.',
   },
