@@ -11,9 +11,9 @@
 | HEAD | ver `git log -1`; nueva validación focal y Fase 4 parcial en este checkpoint |
 | Producción | `44e34fe` (API, Web y remotos). Nada de este plan está desplegado |
 | `main` local | `1107b40` = `44e34fe` + merge de `feat/prestador-tipo-persona-empresa` (sin push) |
-| Fase actual | 5 — lugar fijo de atención |
-| Último paso terminado | Fases 2–3: 40/40 tests PG y smoke 46/46 a 1280/390. Fase 4: texto/radio por modalidad y matching compartido por barrio, radio y localidad. OAuth `d781db8` ya integrado, sin deploy |
-| Siguiente acción exacta | Fase 5: auditar `apps/api/src/tus/directorio/{modelo,servicio,http,almacenes}.ts`, `apps/api/src/tus/geo/resolucion.ts`, `apps/api/prisma/schema.prisma` y los contratos de perfil/turno. Crear campos aditivos de lugar fijo (nombre opcional, dirección obligatoria para `local`/`mixto`, descripción opcional), guardados por el prestador; no exponer dirección privada en el directorio público. Entregar dirección al cliente de un turno confirmado mediante lectura autorizada. Probar en PG16 descartable y Web. No migrar producción |
+| Fase actual | 6 — UX/UI general (layouts contained / wide / dashboard) |
+| Último paso terminado | Fase 5: lugar fijo de atención (nombre público, dirección privada). Tests PG 2/2, 73 archivos afectados en verde, smoke 310/310 a 1280 y 390 |
+| Siguiente acción exacta | Fase 6: auditar los contenedores de ancho en `apps/web/src` (buscar `max-width` en `*.module.css` de `components/admin`, `features/provider`, `features/home/site-page`, `app/prestador/layout.tsx`, `features/turnos`, `features/work`, `features/alojamientos`) y definir tres variantes reutilizables (contained / wide / dashboard) en un solo lugar; aplicarlas a las pantallas operativas sin tocar Ayuda/login. Verificar a 390, 1280 y 1920 |
 | Procesos vivos | ninguno (los smokes y tests son autocontenidos) |
 | Archivos fuera de alcance | `opencode.json`, `odd/`, `.env`, secretos, respaldos, logs |
 
@@ -34,6 +34,7 @@ En `feat/experiencia-operativa-tus`: ver `git log main..HEAD`.
 
 1. `20261121100000_tus_prestador_tipo` — columna `perfiles_publicos_prestador.tipo_prestador` + CHECK; clasifica los perfiles existentes (persona física solo si el nombre público ya es el nombre completo del titular; el resto Empresa). No reescribe nombres públicos. **Ensayada** sobre el respaldo `2026-10-10T00-03-50` en PostgreSQL 17 (96 → 97, segunda corrida limpia, ninguna otra tabla tocada, los 3 perfiles quedan Empresa con su nombre).
 2. `20261122100000_tus_servicio_intervalo_inicio` — columna nullable `perfil_servicios.intervalo_inicio_minutos` + CHECK (NULL, 15, 30, 45, 60). Sin default: los servicios existentes conservan su comportamiento. Pendiente de ensayo sobre respaldo.
+3. `20261123100000_tus_prestador_lugar_fijo` — tres columnas nullable en `perfiles_publicos_prestador` (`lugar_nombre`, `lugar_direccion`, `lugar_descripcion`) + CHECK de longitudes. Sin default ni backfill: los perfiles existentes no cambian. Ensayada en PostgreSQL 16 descartable (migrate deploy desde cero, por el runner de tests). **Pendiente de ensayo sobre un respaldo productivo nuevo.**
 
 ## Fases
 
@@ -44,7 +45,7 @@ En `feat/experiencia-operativa-tus`: ver `git log main..HEAD`.
 | 2 Agenda: duración vs intervalo | HECHA | Ver abajo |
 | 3 Búsqueda geográfica | HECHA | `apps/api/src/tus/directorio/busqueda-geografica.ts`; 2/2. Smoke 1280/390 pasó después de permitir geolocalización solo al mismo origen |
 | 4 Cobertura del prestador | HECHA (local) | Copy humano; radio solo domicilio/mixto y rechazo en modo local; consulta por barrio en directorio/asistente usa misma regla de ubicación/modalidad/zonas/radio; localidad/provincia conserva ubicación base más zonas y radio cuando existe punto de referencia |
-| 5 Atiendo en un lugar | pendiente | |
+| 5 Atiendo en un lugar | HECHA (local) | Ver "Fase 5" abajo. **PENDIENTE ENSAYO SOBRE RESPALDO PRODUCTIVO NUEVO** de la migración `20261123100000` |
 | 6–9 UX/UI, panel, solicitudes, ayuda | pendiente | |
 | 10 Opiniones de turnos | pendiente | |
 | 11 Rate limit auth/admin | pendiente | |
@@ -101,3 +102,12 @@ Solución: `perfil_servicios.intervalo_inicio_minutos` (por servicio). `NULL` = 
 
 - Opiniones de turnos: en el cableado de tests el trabajo de un turno queda `accepted` aun pagado y confirmado (Fase 10).
 - Limitador de `/auth`: 40 pedidos / 15 min por IP incluye `/auth/mfa/status` en cada carga del Admin (Fase 11).
+
+## Fase 5 — lugar fijo de atención (LUGAR-FIJO-01)
+
+- **Datos:** `lugar_nombre` (opcional, 2–80, sin datos de contacto), `lugar_direccion` (obligatoria al guardar el propio perfil con modalidad `local` o `mixto`, 5–160), `lugar_descripcion` (opcional, hasta 240). A domicilio no se pide nada; si el prestador vuelve a domicilio el lugar guardado se conserva y deja de entregarse.
+- **Privacidad (decidida en la API):** el directorio, la búsqueda, las cards y el perfil público solo llevan `place.name`. La dirección y la indicación salen por tres lecturas únicamente: el propio prestador (`ownPlace` en `GET/PUT /tus/v1/prestador/perfil-publico`), Admin (`placeAddress` en el detalle del prestador) y el cliente dueño de un turno en estado `confirmed` (`lugarAtencion` en `GET /tus/v1/cliente/turnos`, buscado por la cuenta de la sesión). Pendiente, impago (`awaiting_payment`), rechazado, cancelado o completado: sin dirección.
+- **Estado canónico:** `confirmed` (el turno se confirma al acreditarse la seña o el total).
+- **Compatibilidad:** un perfil histórico `local` sin dirección sigue publicándose y recibiendo turnos; Admin puede editarlo sin dirección; su próximo guardado propio la pide.
+- **No hecho:** la dirección no se incluye en los avisos de WhatsApp/email de turno confirmado (el cliente la ve en Mis turnos). No hay geocodificación de la dirección: el punto del mapa sigue siendo el de Prestador → Ubicación.
+- **Aserciones viejas actualizadas (con comentario):** `tus-provider-location.test.mjs` (el modelo del perfil ahora admite las columnas `lugar*`; la dirección de la identidad sigue fuera) y los perfiles `local`/`mixto` de dos tests, que ahora envían dirección.
