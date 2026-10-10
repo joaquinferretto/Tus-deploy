@@ -44,17 +44,42 @@ export function ProviderPayments(): React.ReactNode {
 }
 
 // Shared by the Mercado Pago and the earnings panels: starts the OAuth link in Mercado Pago.
-export async function startMercadoPagoConnection(session: TusWebSession): Promise<string | null> {
-  try {
-    const { authorizationUrl } = await client().connectPaymentAccount(session)
-    if (!isMercadoPagoAuthorizationUrl(authorizationUrl)) return 'TUS devolvió una dirección de autorización no válida.'
-    window.location.assign(authorizationUrl)
-    return null
-  } catch (error) {
-    return error instanceof TusRequestError && error.status === 503
-      ? 'La vinculación con Mercado Pago todavía no está habilitada en TUS.'
-      : 'No se pudo iniciar la vinculación con Mercado Pago. Reintentá.'
-  }
+// MP-OAUTH-AUTORIZACION-01. ONE attempt at a time for the whole page (two panels offer the same
+// action and a double click is not two links), and every known refusal says what to do.
+let conexionEnCurso: Promise<string | null> | null = null
+export const MENSAJES_CONEXION_MERCADO_PAGO: Record<string, string> = {
+  UNAUTHORIZED: 'Tu sesión venció. Ingresá de nuevo para vincular Mercado Pago.',
+  FORBIDDEN: 'Tu sesión no puede vincular Mercado Pago. Cerrá sesión, volvé a ingresar y probá de nuevo.',
+  PROVIDER_REQUIRED: 'Para vincular Mercado Pago primero completá tu perfil de prestador.',
+  PROVIDER_SUSPENDED: 'Tu perfil de prestador está suspendido. Escribinos desde Ayuda.',
+  PAYMENTS_UNAVAILABLE: 'La vinculación con Mercado Pago todavía no está habilitada en TUS.',
+  OAUTH_UNAVAILABLE: 'La vinculación con Mercado Pago todavía no está habilitada en TUS.',
+}
+export function mensajeDeConexionMercadoPago(error: unknown): string {
+  if (!(error instanceof TusRequestError)) return 'No pudimos conectar con TUS. Revisá tu conexión y probá de nuevo.'
+  const conocido = error.code ? MENSAJES_CONEXION_MERCADO_PAGO[error.code] : undefined
+  if (conocido) return conocido
+  if (error.status === 401) return MENSAJES_CONEXION_MERCADO_PAGO['UNAUTHORIZED']!
+  if (error.status === 503) return MENSAJES_CONEXION_MERCADO_PAGO['PAYMENTS_UNAVAILABLE']!
+  if ((error.status ?? 0) >= 500) return 'Mercado Pago no está respondiendo. Probá de nuevo en unos minutos.'
+  return 'No se pudo iniciar la vinculación con Mercado Pago. Probá de nuevo.'
+}
+export function startMercadoPagoConnection(session: TusWebSession): Promise<string | null> {
+  if (conexionEnCurso) return conexionEnCurso
+  conexionEnCurso = (async () => {
+    try {
+      const { authorizationUrl } = await client().connectPaymentAccount(session)
+      if (!isMercadoPagoAuthorizationUrl(authorizationUrl)) return 'TUS devolvió una dirección de autorización no válida.'
+      window.location.assign(authorizationUrl)
+      // The browser is leaving for Mercado Pago: the attempt stays "in course" until it does.
+      await new Promise((resolve) => setTimeout(resolve, 4000))
+      return null
+    } catch (error) {
+      if (error instanceof TusRequestError && error.status === 401) window.location.assign(`/sign-in?returnTo=${encodeURIComponent(RETURN_TO)}`)
+      return mensajeDeConexionMercadoPago(error)
+    }
+  })().finally(() => { conexionEnCurso = null })
+  return conexionEnCurso
 }
 
 export function PaymentAccountPanel({ session }: { session: TusWebSession }): React.ReactNode {
@@ -137,7 +162,7 @@ export function PaymentAccountPanel({ session }: { session: TusWebSession }): Re
             </button>
           ) : account.connectAvailable ? (
             <button disabled={busy} onClick={() => void connect()} type="button">
-              {busy ? 'Abriendo Mercado Pago…' : account.status === 'not_connected' ? 'Vincular Mercado Pago para retirar tus ganancias' : 'Volver a vincular Mercado Pago'}
+              {busy ? 'Conectando…' : account.status === 'not_connected' ? 'Vincular Mercado Pago para retirar tus ganancias' : 'Volver a vincular Mercado Pago'}
             </button>
           ) : (
             <p role="status">La vinculación con Mercado Pago todavía no está habilitada en TUS.</p>

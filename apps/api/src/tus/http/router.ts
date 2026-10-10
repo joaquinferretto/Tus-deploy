@@ -1220,25 +1220,51 @@ export function createTusHttpRouter({
     }
   })
 
+  // MP-OAUTH-AUTORIZACION-01. Who may read, link or unlink the Mercado Pago account of a provider:
+  // the signed-in owner of THAT provider, and nobody else. The tenant is the one of the session
+  // (a tenant, actor or session sent by the client is refused). Nothing else is asked: neither a
+  // verified identity, nor readiness, nor earnings, nor a linked account. Each refusal has its own
+  // answer, so the Web can say what to do: 401 no session (it used to be a 403 that looked like a
+  // refusal of the policy), 403 FORBIDDEN, 403 PROVIDER_REQUIRED, 503 PAYMENTS_UNAVAILABLE.
+  const cuentaDeCobroDe = async (request: Request, response: Response, body: Record<string, unknown>, accion: string, denegado: string): Promise<TusAuthenticatedTenantContext | null> => {
+    const context = await authenticate(request, sessions)
+    response.setHeader('cache-control', 'no-store')
+    if (!context) {
+      sendError(response, 401, 'UNAUTHORIZED', 'A valid TUS session is required')
+      return null
+    }
+    if (hasSpoofedAuthority(body, request, context)) {
+      await recordAuthorizationDenied(onAuthorizationDenied, accion, context, 'spoofed_authority')
+      sendError(response, 403, 'FORBIDDEN', denegado)
+      return null
+    }
+    if (!hasPermission(context, 'tus:marketplace:write')) {
+      sendError(response, 403, 'FORBIDDEN', denegado)
+      return null
+    }
+    if (!application.servicePayments) {
+      sendError(response, 503, 'PAYMENTS_UNAVAILABLE', 'TUS service payments are not available')
+      return null
+    }
+    // Only a provider has a payment account (an account that is only a client has none to link).
+    if (application.marketplace && !(await application.marketplace.store.merchant.find(context.tenantId))) {
+      sendError(response, 403, 'PROVIDER_REQUIRED', 'Only a provider can link a Mercado Pago account')
+      return null
+    }
+    return context
+  }
+
   // WEB-09D: provider (prestador) Mercado Pago account link. Tokens never leave the server.
   router.get(
     ['/tus/v1/provider/payment-account', '/tus/v1/prestador/cuenta-cobro'],
     async (request: Request, response: Response) => {
-      const context = await authenticate(request, sessions)
-      if (
-        !context ||
-        !hasPermission(context, 'tus:marketplace:write') ||
-        hasSpoofedAuthority({}, request, context) ||
-        !application.servicePayments
-      ) {
-        sendError(response, 403, 'FORBIDDEN', 'TUS payment account access is not authorized')
-        return
-      }
+      const context = await cuentaDeCobroDe(request, response, {}, 'tus.payment_account.read', 'TUS payment account access is not authorized')
+      if (!context) return
       try {
         response
           .status(200)
           .json(
-            await application.servicePayments.cuentas.estadoCuenta({ tenantId: context.tenantId })
+            await application.servicePayments!.cuentas.estadoCuenta({ tenantId: context.tenantId })
           )
       } catch (error) {
         sendServiceFinanceError(response, error)
@@ -1252,19 +1278,11 @@ export function createTusHttpRouter({
       '/tus/v1/prestador/cuenta-cobro/mercado-pago/conectar',
     ],
     async (request: Request, response: Response) => {
-      const context = await authenticate(request, sessions)
-      if (
-        !context ||
-        !hasPermission(context, 'tus:marketplace:write') ||
-        hasSpoofedAuthority(asRecord(request.body), request, context) ||
-        !application.servicePayments
-      ) {
-        sendError(response, 403, 'FORBIDDEN', 'TUS payment account linking is not authorized')
-        return
-      }
+      const context = await cuentaDeCobroDe(request, response, asRecord(request.body), 'tus.payment_account.connect', 'TUS payment account linking is not authorized')
+      if (!context) return
       try {
         response.status(201).json(
-          await application.servicePayments.cuentas.iniciarConexion({
+          await application.servicePayments!.cuentas.iniciarConexion({
             tenantId: context.tenantId,
             actorId: context.subjectId,
             correlationId: context.correlationId,
@@ -1279,19 +1297,11 @@ export function createTusHttpRouter({
   router.post(
     ['/tus/v1/provider/payment-account/disconnect', '/tus/v1/prestador/cuenta-cobro/desconectar'],
     async (request: Request, response: Response) => {
-      const context = await authenticate(request, sessions)
-      if (
-        !context ||
-        !hasPermission(context, 'tus:marketplace:write') ||
-        hasSpoofedAuthority(asRecord(request.body), request, context) ||
-        !application.servicePayments
-      ) {
-        sendError(response, 403, 'FORBIDDEN', 'TUS payment account linking is not authorized')
-        return
-      }
+      const context = await cuentaDeCobroDe(request, response, asRecord(request.body), 'tus.payment_account.disconnect', 'TUS payment account linking is not authorized')
+      if (!context) return
       try {
         response.status(200).json(
-          await application.servicePayments.cuentas.desconectar({
+          await application.servicePayments!.cuentas.desconectar({
             tenantId: context.tenantId,
             actorId: context.subjectId,
             correlationId: context.correlationId,

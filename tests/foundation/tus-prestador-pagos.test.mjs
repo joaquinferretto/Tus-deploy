@@ -42,7 +42,8 @@ test('FASE6 HTTP: OAuth callback returns to /prestador/pagos; linking needs the 
     } finally { server.close() }
   `)
   assert.equal(result.customerConnect, 403)
-  assert.equal(result.anonymousStatus, 403)
+  // MP-OAUTH-AUTORIZACION-01: no session is 401 (sign in), not a 403 that looks like a refusal of the policy.
+  assert.equal(result.anonymousStatus, 401)
   assert.equal(result.spoofed, 403)
   assert.equal(result.started, 201)
   assert.equal(result.forged.status, 303)
