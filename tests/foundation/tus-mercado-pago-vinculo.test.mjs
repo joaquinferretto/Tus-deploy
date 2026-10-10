@@ -24,7 +24,7 @@ test('Mercado Pago vinculado: linked or not, a provider is paid through the acco
     let renovar = 'ok'
     const oauth = {
       intercambiarCodigo: async (input) => { const userId = cuentasMp[input.code]; if (!userId) throw Object.assign(new Error('rejected'), { code: 'PROVIDER_OAUTH_FAILED' }); return { accessToken: 'APP_USR-token-' + userId, refreshToken: 'TG-refresh-' + userId, publicKey: 'APP_USR-public', userId, scopes: ['offline_access', 'read', 'write'], liveMode: true, expiresInSeconds: 3600 } },
-      renovarToken: async () => { if (renovar !== 'ok') throw new Error('refresh rejected'); return { accessToken: 'APP_USR-renovado', refreshToken: 'TG-renovado', publicKey: null, userId: '111222333', scopes: [], liveMode: true, expiresInSeconds: 3600 } },
+      renovarToken: async () => { if (renovar !== 'ok') throw new Error('refresh rejected'); return { accessToken: 'fictitious-APP_USR-renovado', refreshToken: 'TG-renovado', publicKey: null, userId: '111222333', scopes: [], liveMode: true, expiresInSeconds: 3600 } },
     }
     const auditoria = []
     const config = { clientId: 'app-id', redirectUri: 'https://api.example.test/tus/v1/integrations/mercado-pago/oauth/callback', webBaseUrl: 'https://web.example.test' }

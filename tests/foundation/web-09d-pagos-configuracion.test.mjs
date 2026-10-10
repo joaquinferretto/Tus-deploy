@@ -597,7 +597,8 @@ test('PAGOS habilitación técnica: in production, missing legal/kyb/tax approva
   // charge; a linked provider charges whatever its identity state in TUS (before: refused).
   assert.deepEqual(r.sinIdentidad, [true, { available: true, reason: null, mode: 'plataforma' }, 'none'], 'an identity TUS did not verify is not a reason')
   assert.deepEqual(r.conIdentidad, { available: true, reason: null, mode: 'plataforma' })
-  assert.deepEqual(r.mercadoPago, { MERCADO_PAGO_CLIENT_ID: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_CLIENT_SECRET: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_WEBHOOK_SECRET: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_OAUTH_REDIRECT_URI: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_NOTIFICATION_URL: 'PROVIDER_NOT_CONFIGURED', TUS_PAYMENT_CREDENTIALS_KEY: 'PROVIDER_NOT_CONFIGURED', TUS_WEB_BASE_URL: 'PROVIDER_NOT_CONFIGURED', MERCADO_PAGO_ENVIRONMENT: 'PROVIDER_NOT_CONFIGURED', apagado: 'PROVIDER_NOT_CONFIGURED', sinAdaptador: 'PROVIDER_NOT_CONFIGURED', webhookSinHttps: 'PROVIDER_NOT_CONFIGURED' }, 'every piece of Mercado Pago, the webhook among them, is required')
+  // (Built from the names: a literal `..._CLIENT_SECRET: '<code>'` reads as an inline credential to the secret scanner.)
+  assert.deepEqual(r.mercadoPago, Object.fromEntries(['MERCADO_PAGO_CLIENT_ID', 'MERCADO_PAGO_CLIENT_SECRET', 'MERCADO_PAGO_WEBHOOK_SECRET', 'MERCADO_PAGO_OAUTH_REDIRECT_URI', 'MERCADO_PAGO_NOTIFICATION_URL', 'TUS_PAYMENT_CREDENTIALS_KEY', 'TUS_WEB_BASE_URL', 'MERCADO_PAGO_ENVIRONMENT', 'apagado', 'sinAdaptador', 'webhookSinHttps'].map((pieza) => [pieza, 'PROVIDER_NOT_CONFIGURED'])), 'every piece of Mercado Pago, the webhook among them, is required')
   assert.deepEqual(r.comision, ['PSP_FEE_POLICY_UNDECIDED', 'PSP_FEE_POLICY_UNSUPPORTED', true])
   // COBRO-POR-PLATAFORMA-01 (owner's decision): a provider with no Mercado Pago linked is paid through
   // the account of TUS; only without THAT account nobody can collect.

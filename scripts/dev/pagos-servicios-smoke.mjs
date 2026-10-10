@@ -177,7 +177,7 @@ async function main() {
       TUS_PLATFORM_ADMIN_EMAILS: ADMIN.email, TUS_ADMIN_BOOTSTRAP_CODE: BOOTSTRAP,
       TUS_MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
       // Fictitious sandbox credentials: every call to Mercado Pago is answered by the stand-in.
-      TUS_MERCADOPAGO_ENABLED: 'true', MERCADO_PAGO_ENVIRONMENT: 'sandbox', MERCADO_PAGO_CLIENT_ID: 'app-smoke', MERCADO_PAGO_CLIENT_SECRET: 'secreto-ficticio-del-smoke',
+      TUS_MERCADOPAGO_ENABLED: 'true', MERCADO_PAGO_ENVIRONMENT: 'sandbox', MERCADO_PAGO_CLIENT_ID: 'app-smoke', MERCADO_PAGO_CLIENT_SECRET: 'fictitious-smoke-client-secret',
       MERCADO_PAGO_WEBHOOK_SECRET: WEBHOOK_SECRET, MERCADO_PAGO_OAUTH_REDIRECT_URI: `${api}/tus/v1/integrations/mercado-pago/oauth/callback`, MERCADO_PAGO_NOTIFICATION_URL: 'https://api.tus.test/tus/v1/integrations/mercado-pago/webhooks',
       TUS_PAYMENT_CREDENTIALS_KEY: Buffer.alloc(32, 5).toString('base64'), TUS_WEB_BASE_URL: web,
       MERCADO_PAGO_PLATFORM_ACCESS_TOKEN: PLATFORM_TOKEN, MERCADO_PAGO_PLATFORM_USER_ID: '555', TUS_MERCADOPAGO_PAYOUTS_ENABLED: 'false',
