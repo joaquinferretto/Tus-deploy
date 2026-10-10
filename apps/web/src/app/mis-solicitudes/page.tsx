@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function Page(): React.ReactNode {
   return (
-    <SitePage logo={<TusLogo variant="header" />}>
+    <SitePage footer={false} logo={<TusLogo variant="header" />}>
       <MyRequestsPage />
     </SitePage>
   )

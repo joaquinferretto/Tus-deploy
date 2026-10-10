@@ -5,6 +5,7 @@ import { SitePage } from '@/features/home/site-page'
 import { HelpLink } from '@/features/help/help-link'
 import { ProviderTurnos } from '@/features/provider/provider-turnos'
 import styles from '@/features/directory/directory.module.css'
+import layout from '@/features/layout/layout.module.css'
 import { ProviderNav } from '@/features/provider/provider-nav'
 
 export const metadata: Metadata = {
@@ -14,8 +15,8 @@ export const metadata: Metadata = {
 
 export default function Page(): React.ReactNode {
   return (
-    <SitePage logo={<TusLogo variant="header" />}>
-      <div className={styles.narrow}>
+    <SitePage footer={false} logo={<TusLogo variant="header" />}>
+      <div className={`${styles.narrow} ${layout.dashboard}`}>
         <h1 className={styles.title}>Mis Turnos y Agenda</h1>
         <ProviderNav />
         <p className={styles.subtitle}>

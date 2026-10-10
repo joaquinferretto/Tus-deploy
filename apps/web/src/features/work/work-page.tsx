@@ -1,5 +1,6 @@
 'use client'
 
+import layout from '../layout/layout.module.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { WorkSummary, WorkMessage } from '@factory/contracts'
 import { WORK_MESSAGE_MAX_LENGTH } from '@factory/contracts'
@@ -42,7 +43,7 @@ export function WorkPage({ id }: { id?: string }): React.ReactNode {
       window.location.replace(`/sign-in?returnTo=${encodeURIComponent(path)}`)
   }, [auth.status, path])
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${layout.dashboard}`}>
       {auth.status === 'authenticated' && platformOnly && !id ? (
         <section>
           <h1>Mis trabajos</h1>

@@ -102,7 +102,9 @@ export function PublicHeader({ logo }: { logo: React.ReactNode }): React.ReactNo
       <span aria-label="Comprobando sesión" className={styles.sessionLoading} role="status" />
     ) : auth.status === 'signed-in' ? (
       <>
-        {links.filter((link) => !link.soloMenu).map((link) => (
+        {/* UX-ANCHO-01: inside the provider panel its own tabs are the navigation; the shortcuts
+            of the header would be the same links twice (they stay in the account menu). */}
+        {pathname.startsWith('/prestador/') ? null : links.filter((link) => !link.soloMenu).map((link) => (
           <Link className={link.primary ? styles.buttonPrimary : styles.buttonSecondary} href={link.href as Route} key={link.href}>
             {link.label}
           </Link>

@@ -1,0 +1,135 @@
+/* UX-ANCHO-01. The ONE place that decides how wide a page of TUS is. Three widths:
+ *
+ *   contained  reading: help, articles, sign-in, long text (a comfortable line length);
+ *   wide       a form or a list with some context next to it;
+ *   dashboard  operating screens (provider, agenda, requests, works, payments, lodging): they use
+ *              the screen, up to a limit that keeps a 1920 px monitor readable.
+ *
+ * A page keeps the class that styles its content (.narrow, .page...) and adds ONE of these, which
+ * wins over the width that class brought (hence !important: it is the point of this file). */
+.contained,
+.wide,
+.dashboard {
+  box-sizing: border-box;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: clamp(16px, 3vw, 40px) !important;
+  padding-right: clamp(16px, 3vw, 40px) !important;
+  width: 100%;
+}
+
+.contained {
+  max-width: 800px !important;
+}
+
+.wide {
+  max-width: 1180px !important;
+}
+
+.dashboard {
+  max-width: 1680px !important;
+}
+
+/* Cards that fill the width: one column on a phone, as many as fit on a desk. */
+.cardGrid {
+  display: grid !important;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)) !important;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cardGrid > * {
+  min-width: 0;
+}
+
+/* Two columns on a desk (content + aside), one on a phone. */
+.split {
+  align-items: start;
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 1100px) {
+  .split {
+    grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  }
+}
+
+/* The navigation of a private area: the modules, as tabs. Orange marks where the person is. */
+.tabs {
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 20px;
+  padding: 0;
+}
+
+.tabs a {
+  border-bottom: 3px solid transparent;
+  border-radius: 8px 8px 0 0;
+  color: var(--tus-ink, #172b3a);
+  font-weight: 600;
+  margin-bottom: -1px;
+  min-height: 44px;
+  padding: 10px 14px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tabs a:hover {
+  background: #fff7ed;
+}
+
+.tabs a[aria-current='page'] {
+  border-bottom-color: var(--tus-orange, #ff5a00);
+  color: var(--tus-orange, #ff5a00);
+}
+
+.tabs .tabAside {
+  color: #4b5563;
+  font-weight: 500;
+  margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .tabs a {
+    flex: none;
+    padding: 10px 12px;
+  }
+
+  .tabs .tabAside {
+    margin-left: 0;
+  }
+}
+
+/* A short, calm "nothing here yet": never a giant empty box. */
+.empty {
+  background: #fff;
+  border: 1px dashed #d1d5db;
+  border-radius: 14px;
+  color: #374151;
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  padding: 18px 20px;
+}
+
+.empty strong {
+  color: var(--tus-ink, #172b3a);
+  font-size: 1.05rem;
+}
+
+.empty p {
+  margin: 0;
+}

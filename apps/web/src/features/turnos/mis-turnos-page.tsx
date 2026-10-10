@@ -1,5 +1,6 @@
 'use client'
 
+import layout from '../layout/layout.module.css'
 import { FotosTurno } from './fotos-turno'
 import type { Route } from 'next'
 import Link from 'next/link'
@@ -173,7 +174,7 @@ export function MisTurnosPage(): React.ReactNode {
   }
 
   return (
-    <div className={styles.narrow}>
+    <div className={`${styles.narrow} ${layout.wide}`}>
       <h1 className={styles.title}>Mis turnos</h1>
       <p className={styles.subtitle}>Solicitás el turno, el prestador lo acepta y tu pago (la seña o el total) lo confirma.</p>
       <div className={styles.stateActions} style={{ justifyContent: 'flex-start', margin: '16px 0 8px' }}>

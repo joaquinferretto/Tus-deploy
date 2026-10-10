@@ -84,5 +84,6 @@ test('FASE6 Web: /prestador/pagos shows only safe data (masked account), never a
   // The provider navigation is ONE component (it used to be written by hand on every page).
   for (const page of ['apps/web/src/app/prestador/solicitudes/page.tsx', 'apps/web/src/app/prestador/perfil-publico/page.tsx'])
     assert.ok(read(page).includes('<ProviderNav />'), page)
-  assert.ok(read('apps/web/src/features/provider/provider-nav.tsx').includes("{ href: '/prestador/pagos', label: 'Pagos' }"))
+  // UX-ANCHO-01 (2026-10-10): the tab of the panel is called "Ganancias"; the route is the same.
+  assert.ok(read('apps/web/src/features/provider/provider-nav.tsx').includes("{ href: '/prestador/pagos', label: 'Ganancias' }"))
 })

@@ -1,5 +1,6 @@
 'use client'
 
+import layout from '../layout/layout.module.css'
 import { useEffect } from 'react'
 
 import styles from '../directory/directory.module.css'
@@ -21,7 +22,7 @@ export function MyRequestsPage(): React.ReactNode {
   }, [session.status])
 
   return (
-    <div className={styles.narrow}>
+    <div className={`${styles.narrow} ${layout.dashboard}`}>
       <h1 className={styles.title}>Mis solicitudes</h1>
       {platformOnly ? null : (
         <>
