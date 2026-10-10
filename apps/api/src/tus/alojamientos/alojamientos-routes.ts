@@ -16,11 +16,16 @@ const rechazar = (res: Response, entrada: Extract<Entrada<unknown>, { ok: false 
 // admin con MFA elevado (MfaAdminSessionResolver).
 const ADMIN = 'tus:providers:admin'
 
+import type { AvisosAlojamientos } from './alojamientos-avisos.ts'
+
 export interface OpcionesRutasAlojamientos {
   // Misma sesión que el resto de TUS (Bearer o cookie HttpOnly + X-Correlation-Id).
   sessions: TusSessionResolverPort
   // Confirma una reserva sin pago real: solo desarrollo local y tests. Apagado si no se indica.
   pagoSimuladoHabilitado?: boolean
+  // ALOJAMIENTOS-AVISOS-01: tells the owner of a reservation and of its cancellation. Absent:
+  // nobody is told (the reservation works the same).
+  avisos?: AvisosAlojamientos | null
 }
 
 // Autorización (docs/security/ENDPOINT_SECURITY_MATRIX.md §11):
@@ -284,6 +289,8 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
       }
       if (new Date(entrada.valor.fechaInicio).toISOString().slice(0, 10) < hoyCalendario(new Date())) return rechazar(res, { ok: false, campo: 'fechaInicio', mensaje: 'La fecha de entrada ya pasó.' })
       const reserva = await alojamientosService.crearHoldReserva({ ...entrada.valor, clienteId: context.subjectId, inmediata: true })
+      // After the reservation exists; a notice that fails never undoes it.
+      void opciones.avisos?.reservaRecibida(reserva.id).catch(() => undefined)
       return res.status(201).json(reserva)
     } catch (err) {
       return manejarError(err, res)
@@ -298,6 +305,7 @@ export function crearRutasAlojamientos(prisma: PrismaClient, opciones: OpcionesR
       const entrada = leerCancelacion(cuerpo(req))
       if (!entrada.ok) return rechazar(res, entrada)
       await gestion.cancelarComoCliente(req.params['id']!, context.subjectId, entrada.valor.motivo)
+      void opciones.avisos?.reservaCancelada(req.params['id']!).catch(() => undefined)
       return res.json({ ok: true })
     } catch (err) {
       return manejarError(err, res)

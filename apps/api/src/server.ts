@@ -71,6 +71,7 @@ import { crearIdentidadUsuarioAdmin, crearVerificacionIdentidadAdmin } from './t
 import { crearRouterTelefono } from './auth-security/phone/http.ts'
 import type { RawQueryClient } from './auth-security/adapters/postgres/postgres-rate-limiter.ts'
 import { leerAdminsPlataforma } from './auth-security/application/auth-service.ts'
+import { AvisosAlojamientosEmail, type ClientePrismaAvisosAlojamientos } from './tus/alojamientos/alojamientos-avisos.ts'
 import { crearTipoPrestadorAdmin, type ClientePrismaTipoPrestador } from './tus/directorio/tipo-prestador.ts'
 import { createAuthRouter } from './auth-security/http/auth-router.ts'
 import { createFederatedAuth, createFederatedAuthRouter, readGoogleAuthSettings } from './auth-security/federated/composition.ts'
@@ -348,6 +349,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
     app.use('/api/alojamientos', crearRutasAlojamientos(prisma as unknown as PrismaClient, {
       sessions,
       pagoSimuladoHabilitado: process.env['NODE_ENV'] === 'development' || process.env['NODE_ENV'] === 'test',
+      avisos: AvisosAlojamientosEmail.desdeEnv(prisma as unknown as ClientePrismaAvisosAlojamientos, process.env),
     }))
     // Platform administration panel (read views + publish/hide a profile), behind the MFA gate.
     // Usage counts of the catalog lists come from aggregate queries (GROUP BY), never per row.
