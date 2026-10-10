@@ -35,6 +35,9 @@ const api = `http://localhost:${API_PORT}`
 const web = `http://localhost:${WEB_PORT}`
 const control = `http://127.0.0.1:${CONTROL_PORT}`
 const artifacts = join(tmpdir(), `tus-pagos-servicios-${Date.now()}`)
+// Focal integration smoke of the already implemented interval/geographic controls, without
+// rerunning the closed Persona/Empresa, OAuth or economic flow.
+const soloAgendaGeografia = process.argv.includes('--agenda-geografia')
 const CLAVE = 'una frase larga y segura 2026'
 const CLIENTE = { email: 'cliente-smoke@example.com', password: CLAVE, displayName: 'Ana Cliente' }
 const PRESTADOR = { email: 'prestador-smoke@example.com', password: CLAVE, displayName: 'Prestador Smoke' }
@@ -228,7 +231,10 @@ async function main() {
     browser = await chromium.launch({ headless: true, ...(existsSync(chrome) ? { executablePath: chrome } : {}) })
     const estado = { psql, listo: false }
     let indice = 0
-    for (const viewport of [{ name: 'desktop-1280', width: 1280, height: 900 }, { name: 'mobile-390', width: 390, height: 844 }]) await recorrer(browser, viewport, estado, indice++)
+    for (const viewport of [{ name: 'desktop-1280', width: 1280, height: 900 }, { name: 'mobile-390', width: 390, height: 844 }]) {
+      if (soloAgendaGeografia) await recorrerAgendaGeografia(browser, viewport)
+      else await recorrer(browser, viewport, estado, indice++)
+    }
   } finally {
     await browser?.close()
     await stop(webChild)
@@ -243,6 +249,65 @@ async function main() {
 }
 
 let secretoAdmin = null
+
+async function recorrerAgendaGeografia(browser, viewport) {
+  const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, permissions: ['geolocation'], geolocation: { latitude: -27.471, longitude: -58.834 } })
+  const deadline = setTimeout(() => { void context.close() }, 120_000)
+  const page = await context.newPage()
+  page.setDefaultTimeout(15_000)
+  const errores = []
+  page.on('pageerror', (error) => errores.push(error.message))
+  const llamar = (method, path, body) => page.evaluate(async ({ api, method, path, body }) => {
+    const r = await fetch(api + path, { method, credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Correlation-Id': crypto.randomUUID() }, ...(body ? { body: JSON.stringify(body) } : {}) })
+    return { status: r.status, body: await r.json().catch(() => null) }
+  }, { api, method, path, body })
+  const sinDesborde = async (vista) => check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${viewport.name}: ${vista} sin overflow`)
+  try {
+    await page.goto(`${web}/ayuda`, { waitUntil: 'networkidle' })
+    check((await llamar('POST', '/auth/sign-in', PRESTADOR)).status === 200, `${viewport.name}: sesión de prestador ficticio`)
+    const pais = (await llamar('GET', '/tus/v1/geografia/paises')).body.items[0]
+    const provincia = (await llamar('GET', `/tus/v1/geografia/provincias?paisId=${pais.id}`)).body.items[0]
+    const localidad = (await llamar('GET', `/tus/v1/geografia/localidades?provinciaId=${provincia.id}`)).body.items[0]
+    check((await llamar('PUT', '/tus/v1/perfil', { nombre: 'Gabriela', apellido: 'Lopez', tipoDocumento: 'DNI', numeroDocumento: '30111222', localidadId: localidad.id, calle: 'San Martín', numero: '1234', codigoPostal: '3400' })).status === 200, `${viewport.name}: perfil completo en DB descartable`)
+    check((await llamar('POST', '/auth/session/mode', { mode: 'PROVIDER' })).status === 200, `${viewport.name}: modo prestador`)
+    await page.goto(`${web}/prestador/turnos`, { waitUntil: 'networkidle' })
+    const servicio = page.locator(`[data-servicio-turnos="${oficioId}"]`)
+    await servicio.waitFor()
+    const selector = servicio.locator('[data-intervalo]')
+    check((await selector.locator('option').allTextContents()).length === 5, `${viewport.name}: cinco opciones de comienzo existentes`)
+    for (const intervalo of ['15', '30', '45', '60', 'duracion']) {
+      await selector.selectOption(intervalo)
+      const guardar = servicio.getByRole('button', { name: /Guardar/ })
+      if (!(await guardar.isDisabled())) {
+        await guardar.click()
+        await page.waitForFunction((id) => document.querySelector(`[data-servicio-turnos="${id}"]`)?.textContent.includes('Guardado.'), oficioId)
+      }
+      const config = (await llamar('GET', '/tus/v1/prestador/turnos/servicios')).body.items.find((s) => s.oficioId === oficioId)
+      check(config.intervaloInicioMinutos === (intervalo === 'duracion' ? null : Number(intervalo)), `${viewport.name}: intervalo ${intervalo} guardado por API`)
+    }
+    await sinDesborde('Agenda: duración e intervalo')
+    await page.screenshot({ path: join(artifacts, `${viewport.name}-agenda-intervalo.png`), fullPage: true })
+    await page.goto(`${web}/trabajadores`, { waitUntil: 'networkidle' })
+    const elegir = async (scope, label) => {
+      const response = page.waitForResponse((r) => r.url().startsWith(api + '/tus/v1/public/prestadores?') && new URL(r.url()).searchParams.get('ambito') === scope)
+      await page.getByRole('radio', { name: label }).check()
+      const r = await response
+      check(r.status() === 200, `${viewport.name}: búsqueda ${scope} consultada al backend`)
+      const params = new URL(r.url()).searchParams
+      check(scope === 'cerca' ? params.has('lat') && params.has('lng') : params.has('localidadId'), `${viewport.name}: filtro ${scope} completo`)
+      await page.getByRole('region', { name: 'Resultados' }).locator('a[href="/trabajadores/smoke-perfil"]').waitFor()
+      await sinDesborde(`Directorio ${scope}`)
+      await page.screenshot({ path: join(artifacts, `${viewport.name}-directorio-${scope}.png`), fullPage: true })
+    }
+    await elegir('cerca', /^Cerca de mí/)
+    await elegir('localidad', /^En mi localidad/)
+    await elegir('provincia', /^En toda mi provincia/)
+    check(errores.length === 0, `${viewport.name}: sin errores de página`)
+  } catch (error) {
+    await page.screenshot({ path: join(artifacts, `${viewport.name}-agenda-geo-failed.png`), fullPage: true }).catch(() => undefined)
+    throw error
+  } finally { clearTimeout(deadline); await context.close() }
+}
 
 async function recorrer(browser, viewport, estado, indice) {
   const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } })

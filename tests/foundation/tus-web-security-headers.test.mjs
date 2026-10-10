@@ -58,7 +58,7 @@ test('WEB headers: middleware enforces the CSP on documents and next.config sets
     ['Referrer-Policy', 'strict-origin-when-cross-origin'],
     ['Cross-Origin-Opener-Policy', 'same-origin'],
   ]) assert.ok(config.includes(`{ key: '${name}', value: '${value}' }`), name)
-  assert.match(config, /key: 'Permissions-Policy'[\s\S]*camera=\(\), microphone=\(\), geolocation=\(\)/u)
+  assert.match(config, /key: 'Permissions-Policy'[\s\S]*camera=\(\), microphone=\(\), geolocation=\(self\)/u)
   assert.match(config, /poweredByHeader: false/u)
   assert.match(config, /source: '\/:path\*', headers: securityHeaders/u)
 })
