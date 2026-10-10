@@ -3107,6 +3107,9 @@ model PerfilPublicoPrestador {
   tenantId           String   @map("tenant_id")
   prestadorId        String   @map("prestador_id")
   nombrePublico      String   @map("nombre_publico")
+  // PRESTADOR-TIPO-01 (20261121100000): 'persona_fisica' | 'empresa' (CHECK in SQL). Presentation
+  // only; the holder of the account is "User".firstName / lastName.
+  tipoPrestador      String   @default("persona_fisica") @map("tipo_prestador")
   oficio             String   @map("oficio")
   zona               String?  @map("zona")
   zonasCobertura     String[] @default([]) @map("zonas_cobertura")

@@ -365,3 +365,9 @@ export function esPrestadorPublico(value: unknown): value is PrestadorPublico {
 export function esPaginaDirectorio(value: unknown): value is PaginaDirectorio {
   return esRegistro(value) && Array.isArray(value['items']) && value['items'].every(esPrestadorPublico) && Number.isInteger(value['total']) && Number.isInteger(value['page']) && typeof value['hasMore'] === 'boolean'
 }
+
+// PRESTADOR-TIPO-01. How a provider is presented in TUS. Presentation only: never a requirement
+// to work, to charge or to withdraw.
+export const TIPOS_PRESTADOR = ['persona_fisica', 'empresa'] as const
+export type TipoPrestador = (typeof TIPOS_PRESTADOR)[number]
+export const ETIQUETA_TIPO_PRESTADOR: Record<TipoPrestador, string> = { persona_fisica: 'Persona física', empresa: 'Empresa' }

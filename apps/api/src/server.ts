@@ -71,6 +71,7 @@ import { crearIdentidadUsuarioAdmin, crearVerificacionIdentidadAdmin } from './t
 import { crearRouterTelefono } from './auth-security/phone/http.ts'
 import type { RawQueryClient } from './auth-security/adapters/postgres/postgres-rate-limiter.ts'
 import { leerAdminsPlataforma } from './auth-security/application/auth-service.ts'
+import { crearTipoPrestadorAdmin, type ClientePrismaTipoPrestador } from './tus/directorio/tipo-prestador.ts'
 import { createAuthRouter } from './auth-security/http/auth-router.ts'
 import { createFederatedAuth, createFederatedAuthRouter, readGoogleAuthSettings } from './auth-security/federated/composition.ts'
 import type { FederatedPrismaClient } from './auth-security/federated/adapters/stores.ts'
@@ -371,6 +372,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
         ...(application.identity ? { verificacionIdentidad: crearVerificacionIdentidadAdmin({ identidad: application.identity, leerUsuario: (accountId) => auth.service.getAccountAsAdmin(accountId), perfilUsuario: (accountId) => perfiles.perfilAdmin(accountId), auditar: (input) => auth.service.recordAdminIdentityChange(input) }) } : {}),
         telefonoAdmin: telefonos,
         prestadorAdmin: crearEdicionPrestadorAdmin({ application, directorio }),
+        tipoPrestador: crearTipoPrestadorAdmin(prisma as unknown as ClientePrismaTipoPrestador),
         conteos,
         catalogo: new ServicioCatalogo({
           almacen: almacenCatalogo,

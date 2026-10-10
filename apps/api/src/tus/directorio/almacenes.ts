@@ -124,6 +124,7 @@ function desdeFila(fila: Fila): PerfilPublico {
     tenantId: String(fila['tenantId']),
     prestadorId: String(fila['prestadorId']),
     nombrePublico: String(fila['nombrePublico']),
+    tipoPrestador: fila['tipoPrestador'] === 'empresa' ? 'empresa' : 'persona_fisica',
     oficio: fila['oficio'] as OficioId,
     oficios: oficiosDeFila(fila),
     latitud: typeof fila['latitud'] === 'number' ? fila['latitud'] : null,

@@ -17,6 +17,9 @@ export interface PerfilPublico {
   tenantId: string
   prestadorId: string
   nombrePublico: string
+  // PRESTADOR-TIPO-01. Read from the store; written only by the administration's own operation
+  // (tipo-prestador.ts). Absent: 'persona_fisica'.
+  tipoPrestador?: 'persona_fisica' | 'empresa'
   // Principal service (shown first); always the first element of `oficios`.
   oficio: OficioId
   // Every service the provider offers (perfil_servicios, N:M), principal first, no duplicates.

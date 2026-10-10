@@ -91,6 +91,8 @@ export function crearEdicionPrestadorAdmin(deps: { application: TusApplicationSe
   const vista = (perfil: NonNullable<Awaited<ReturnType<ServicioDirectorio['perfilParaAdmin']>>>) => ({
     id: perfil.id,
     displayName: perfil.nombrePublico,
+    // PRESTADOR-TIPO-01: read only here; it is changed by its own audited operation.
+    providerType: perfil.tipoPrestador ?? 'persona_fisica',
     profession: perfil.oficio,
     professions: [...perfil.oficios],
     zone: perfil.zona,

@@ -176,6 +176,10 @@ export const DESTINO_WHATSAPP: Record<DestinoWhatsappPrestador, { texto: string;
 }
 
 export interface AdminPrestadorDetalle {
+  // PRESTADOR-TIPO-01: how the provider is presented, and the real holder of its account (the
+  // public name is `perfil.displayName`). All three come from the API.
+  tipoPrestador?: 'persona_fisica' | 'empresa'
+  titular?: { nombre: string | null; apellido: string | null; nombreCompleto: string | null }
   // Present when the API resolves the account behind the profile.
   cuentaAsociada?: AdminCuentaPrestador | null
   cobroSena?: AdminCobroSena | null
@@ -437,6 +441,9 @@ export const adminApi = {
     call<{ done: true; debeCambiarContrasena: true; contrasenaTemporal?: string }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/contrasena-temporal`, body),
   accionUsuario: (id: string, action: 'revoke_sessions' | 'password_reset') => call<{ done: true }>(`/tus/v1/admin/usuarios/${encodeURIComponent(id)}/acciones`, { action }),
   prestador: (id: string) => call<AdminPrestadorDetalle>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}`),
+  // PRESTADOR-TIPO-01: persona física <-> empresa. The API decides the resulting public name.
+  cambiarTipoPrestador: (id: string, body: { tipo: 'persona_fisica' | 'empresa'; nombrePublico?: string; motivo?: string }) =>
+    call<AdminPrestadorDetalle & { cambio: boolean }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/tipo`, body),
   editarPrestador: (id: string, body: CambiosPrestador) => call<AdminPrestadorDetalle>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}`, body, 'PUT'),
   ubicacionPrestador: (id: string) => call<{ location: AdminUbicacionPrestador }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/ubicacion`),
   guardarUbicacionPrestador: (id: string, input: { lat: number; lng: number; showExact: boolean }) => call<{ location: AdminUbicacionPrestador }>(`/tus/v1/admin/prestadores/${encodeURIComponent(id)}/ubicacion`, input, 'PUT'),
